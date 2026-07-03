@@ -68,6 +68,156 @@ The pipeline runs to completion — Claude prompts execute, files change in the 
 
 ---
 
+## Drive one ticket end-to-end (shepherd)
+
+Run a single ticket through every stage sequentially — no cron, no queue, no other tickets competing.
+
+```sh
+./scripts/shepherd.sh --no-tmux EXP-123
+```
+
+Uses `.worktrees/shepherd/` by default; pass `--worktree DIR` for a per-ticket checkout. Combine with dry-run:
+
+```sh
+BUREAU_DRY_RUN=1 ./scripts/shepherd.sh --no-tmux EXP-123
+```
+
+**When to use:** smoke-testing a fresh `.bureau.json` against a real Linear ticket, driving a single stuck ticket back into motion, or shipping a one-off without spinning up the whole queue.
+
+**When not to:** batch runs — that's what orchestrate is for. Continuous cron — that's what `start-bureau-v2.sh` is for.
+
+---
+
+## Ship a batch (orchestrate + conflict-aware-schedule)
+
+Two-step handshake: a "brain" workflow plans, bash executes. The planner predicts each ticket's file footprint, builds the collision graph, and emits `{ serialChains, parallelSafe }`. Then orchestrate spawns one worktree lane per non-colliding ticket.
+
+```sh
+# 1. Plan — the conflict-aware-schedule brain writes schedule.json
+./scripts/orchestrate.sh --plan EXP-7 EXP-8 EXP-9 EXP-12 > schedule.json
+
+# 2. Execute — parallel-safe lanes, serial for the collision chains
+./scripts/orchestrate.sh --execute --schedule schedule.json --max-concurrent 3
+```
+
+Each lane runs in its own git worktree (`.worktrees/shepherd-lane-N`) so builds never collide. Cap `--max-concurrent` at roughly `cpu-cores` and your Claude quota headroom, whichever is lower.
+
+**When to use:** shipping a batch of ready-to-go tickets with mixed file footprints. The pattern is SELECT → PLAN → EXECUTE → BABYSIT — see [OPERATOR-CHEATSHEET.md](OPERATOR-CHEATSHEET.md) for the full walkthrough.
+
+---
+
+## Port from upstream (upstream-port)
+
+Fast-path cherry-pick from a configured upstream — skips the shepherd ceremony for mechanical ports.
+
+```jsonc
+// .bureau.json
+{
+  "repo": {
+    "upstream": "ultraworkers/claw-code",
+    "upstream_port": {
+      "build_cmd": "cargo build --release -p your-cli",
+      "test_cmd":  "cargo test --workspace --no-fail-fast",
+      "work_dir":  "rust"
+    }
+  }
+}
+```
+
+```sh
+./scripts/upstream-port.sh --sha 53953a8               # port one upstream commit
+./scripts/upstream-port.sh --pr  3024                  # or a merged upstream PR
+./scripts/upstream-port.sh --sha 53953a8 --with-llm    # LLM-assisted conflict resolution
+```
+
+`--with-llm` invokes Claude *once* on a `git apply --3way` conflict — Claude translates the upstream intent against your local code. Off by default. PR title carries `(LLM-assisted)` so reviewers know to look harder.
+
+**When to use:** you maintain a fork of an actively developed upstream and want mechanical ports without the full shepherd pipeline.
+
+**When not to:** the ports touch large files diverged materially from upstream. `--with-llm` helps here but eventually a real spec + shepherd run is cheaper than fighting the diff.
+
+---
+
+## Cost tracking + reporting
+
+```jsonc
+// .bureau.json
+{
+  "session": { "cost_tracking": true }
+}
+```
+
+Every pipeline stage appends token counts + estimated $ to `~/.bureau/cost/<issue>.jsonl`. Report:
+
+```sh
+./scripts/bureau-status.sh --cost
+```
+
+Prints a per-issue, per-stage $ + token summary. Zero overhead when disabled — the write only fires when the flag reads true.
+
+**When to use:** as adoption ramps. Pairs with the token-efficiency stack — turn `cost_tracking` on, measure the baseline, flip `use_goal_loop` / `caveman_level` / `headroom_wrap`, measure the delta.
+
+**Env quick-toggle:** `BUREAU_COST_TRACKING=1` — same effect without editing JSON.
+
+---
+
+## Mixed provider — Codex on code_review
+
+Off-quota code review by routing that one stage through Codex, keeping everything else on Claude.
+
+```jsonc
+// .bureau.json
+{
+  "agents": {
+    "runner": "claude",
+    "code_review": { "runner": "codex" }
+  }
+}
+```
+
+Codex reads the diff and writes review comments; it never mutates the branch, so its restrictive exec sandbox is fine. `implement`, `qa`, `spec` stay on Claude where they need network + git-metadata writes.
+
+Codex model selection is separate from the Claude-side `agents.<stage>.model`:
+
+```sh
+export BUREAU_CODEX_MODEL_CODE_REVIEW=o3
+./scripts/queue-loop.sh code-review 5
+```
+
+**When to use:** your Claude session quota is the bottleneck and code-review is your heaviest stage. Codex is billed separately — this shifts spend without changing quality.
+
+**When NOT to use:** don't route `qa` or `implement` to Codex. Its exec sandbox has no network listeners, no trust-store, and no git-metadata writes — build/test suites fail spuriously and the stage false-halts with `needs-human`. `claude_cmd_for_stage()` fires a stderr warning if you try anyway.
+
+---
+
+## Session-usage throttle
+
+Pause new work when Claude session usage approaches the quota. Needs a producer to write the signal file — nothing ships in Bureau to populate it (ClaudeWatch is the community-standard tool; you can also write your own).
+
+```jsonc
+// .bureau.json
+{
+  "session": {
+    "usage_threshold_pct":    80,
+    "pause_on_stale_data":  false
+  }
+}
+```
+
+`~/.bureau/session-usage.json` is the signal Bureau reads. Format:
+
+```json
+{ "pct": 74.3, "timestamp": "2026-07-01T10:00:00Z" }
+```
+
+The `pause_on_stale_data` toggle decides what to do when the signal is older than 5 min: `false` (default) = assume we're fine and keep working, `true` = assume the worst and pause.
+
+**When to use:** long unattended cron runs where hitting quota mid-tick would strand an issue in an inconsistent state. The throttle pauses the *next* work unit, letting the current tick complete cleanly.
+
+**Emergency bypass:** `BUREAU_DISABLE_THROTTLE=1` for the current process only. Doesn't touch JSON.
+
+---
+
 ## Monitor escalations
 
 Every `needs-human` event lands as one tab-separated line in `logs/escalations.log`. Tail it from anywhere:
