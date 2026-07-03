@@ -1,0 +1,17 @@
+I tried to investigate T001 but couldn't determine the right approach. No code changes this run.
+
+```json
+{
+  "status": "PARTIAL",
+  "tasks_done": 0,
+  "tasks_skipped": 0,
+  "tasks_needs_human": 0,
+  "fixed_review_items": [],
+  "notes": {
+    "needs_human": [],
+    "skipped": [],
+    "deviations": []
+  },
+  "prose_notes": "Stuck on T001 — no commit produced."
+}
+```

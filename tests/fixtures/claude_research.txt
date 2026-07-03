@@ -1,0 +1,15 @@
+<!-- bureau-research: stripe-webhooks,nextjs-app-router -->
+
+## Stripe Webhooks (current: 2026-05 API version `2026-04-30`)
+
+- Endpoint receivers must respond `2xx` within 5s or Stripe retries with backoff.
+- Signing: `Stripe-Signature` header carries `t=<ts>,v1=<sig>`. Verify with `stripe.webhooks.constructEvent(body, header, secret)` from `stripe@^15.0.0`.
+- Breaking change since 2024-Q3: `payment_intent.succeeded` no longer fires the legacy `charge.succeeded` event by default — toggle via the `automatic_payment_methods` flag at PI creation.
+
+## Next.js App Router
+
+- Use `Route Handlers` in `app/api/<segment>/route.ts` exporting `POST`.
+- `req.text()` not `req.json()` — the Stripe signature is computed over the raw body.
+- Set `export const runtime = "nodejs"` (Edge runtime can't verify Stripe signatures).
+
+Sources: https://docs.stripe.com/webhooks · https://nextjs.org/docs/app/api-reference/file-conventions/route

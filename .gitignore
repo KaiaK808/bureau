@@ -1,0 +1,21 @@
+.DS_Store
+*.swp
+
+# design system handoff bundles — extracted into docs/site/, source not committed
+docs/*.tar.gz
+docs/*.zip
+
+# operator-local Claude Code permissions / settings — never committed
+.claude/settings.local.json
+
+# serena MCP server's project index — session-local, never committed
+.serena/
+
+# Secrets, keys, log-of-arbitrary-content — never committed.
+# `.env.example` is explicitly allowed via the negation below.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.log

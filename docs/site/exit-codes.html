@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Exit codes &amp; alerts · bureau-init</title>
+<meta name="description" content="What each pipeline failure code means and how Telegram alerts behave under the supervisor." />
+<link rel="stylesheet" href="assets/colors_and_type.css" />
+<link rel="stylesheet" href="assets/docs.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<header class="bhb-topbar">
+  <a href="index.html" class="wordmark">BRAIN<span class="accent">·</span>HUGGERS BUREAU <span style="color:var(--fg-3)">/</span> bureau-init</a>
+  <div class="meta">
+    <span><span class="pulse">●</span> CRON RUNNING</span>
+    <span>FILE #02 · EXIT CODES</span>
+    <span><a href="https://github.com/KaiaK808/bureau" style="color:inherit;">GITHUB ↗</a></span>
+  </div>
+</header>
+
+<div class="bhb-shell">
+
+  <aside class="bhb-sidebar">
+    <div class="group-label">Field manual</div>
+    <nav>
+      <a href="index.html"><span class="file">FILE #00</span> Index</a>
+      <a href="configuration.html"><span class="file">FILE #01</span> Configuration</a>
+      <a href="exit-codes.html" class="active"><span class="file">FILE #02</span> Exit codes</a>
+      <a href="recipes.html"><span class="file">FILE #03</span> Recipes</a>
+      <a href="troubleshooting.html"><span class="file">FILE #04</span> Troubleshooting</a>
+    </nav>
+
+    <div class="group-label">On this page</div>
+    <div class="external-list">
+      <a href="#table">Exit code table</a>
+      <a href="#alerts">Telegram alerts</a>
+      <a href="#supervisor">Auto-restart supervisor</a>
+      <a href="#single-flight">Single-flight observability</a>
+    </div>
+  </aside>
+
+  <main class="bhb-main">
+
+    <div class="bhb-page-meta">
+      <span>FILE #02 · EXIT CODES &amp; ALERTS</span>
+      <span><span class="bhb-tag report"><span class="dot"></span>FIELD REPORT</span></span>
+    </div>
+
+    <h1>Exit codes &amp; alerts</h1>
+    <p class="lede" style="font-size:18px;color:var(--fg-2);max-width:680px;line-height:var(--lh-relaxed);">
+      Every pipeline script exits with a code that classifies its outcome.
+      <code>queue-loop.sh</code> reads the code, maps it to an alert class, and (optionally) fires a Telegram message — throttled so a stuck issue doesn't spam you 30 times an hour.
+    </p>
+
+    <h2 id="table">Exit code table</h2>
+
+    <table>
+      <thead><tr><th>Exit</th><th>Class</th><th>Meaning</th><th>Common cause</th></tr></thead>
+      <tbody>
+        <tr><td><code>0</code></td><td>ok</td><td>Pipeline completed successfully</td><td>—</td></tr>
+        <tr><td><code>2</code></td><td>queue-empty</td><td>No pickable issue in the polled state</td><td>Normal — happens every tick when there's no work</td></tr>
+        <tr><td><code>10</code></td><td>linear-down</td><td><code>LINEAR_API_KEY</code> missing or invalid</td><td>Forgot to set it in <code>.env</code>, or the key was revoked</td></tr>
+        <tr><td><code>11</code></td><td>worktree-dirty</td><td>Uncommitted changes in the worktree</td><td>Manual edits in <code>.worktrees/queue-&lt;mode&gt;/</code></td></tr>
+        <tr><td><code>12</code></td><td>no-branch</td><td><code>bureau-branch</code> marker missing or points at a non-existent branch</td><td>Spec didn't post a digest, or the branch was deleted</td></tr>
+        <tr><td><code>13</code></td><td>no-tasks</td><td><code>tasks.md</code> expected but missing</td><td>speckit-tasks produced an empty file; routed back to Spec</td></tr>
+        <tr><td><code>14</code></td><td>build-failed</td><td>Build precondition failed</td><td>Test suite red, type-check failed, lint errors</td></tr>
+        <tr><td><code>15</code></td><td>no-pr</td><td>PR expected but not found</td><td>Implement didn't create one, or it was closed manually</td></tr>
+        <tr><td><code>16</code></td><td>claude-unauth</td><td><code>claude</code> CLI not logged in</td><td>Run <code>claude</code> interactively once to refresh OAuth</td></tr>
+        <tr><td><code>17</code></td><td>rebase-needed</td><td><code>merge_origin_main_or_abort</code> hit a non-trivial conflict</td><td>Routed back to recovery state for human intervention</td></tr>
+        <tr><td><code>18</code></td><td>gh-failed</td><td><code>gh</code> CLI command failed</td><td>API rate limit, missing permissions, branch protection</td></tr>
+        <tr><td><code>19</code></td><td>rebase-rejected</td><td><code>git push --force-with-lease</code> rejected</td><td>Concurrent push to the same branch</td></tr>
+      </tbody>
+    </table>
+
+    <p>Exit codes outside this table (e.g. <code>1</code>) classify as <code>error-1</code> — usually a bug in the pipeline script or an unhandled bash error.</p>
+
+    <h2 id="alerts">Telegram alerts</h2>
+
+    <p><code>alert_telegram</code> (in <code>bureau-config.sh</code>) sends a message when:</p>
+
+    <ol>
+      <li><code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_ALERT_CHAT_ID</code> are both set in <code>.env</code></li>
+      <li>The exit code maps to a non-OK class</li>
+      <li>The <code>(issue, class)</code> pair hasn't already alerted in the past hour</li>
+    </ol>
+
+    <p>Throttling lives at <code>/tmp/bureau-alerts.log</code> — one line per <code>(issue, class, timestamp)</code>. Bypass it by deleting the file.</p>
+
+    <div class="bhb-callout">
+      <span class="label">Silent in dev</span>
+      When credentials are unset, <code>alert_telegram</code> is a no-op. Dev environments never break because of it.
+    </div>
+
+    <h3>Alert content</h3>
+    <p>A typical alert includes:</p>
+    <ul>
+      <li>The pipeline that failed (<code>spec</code>, <code>qa</code>, etc.)</li>
+      <li>The Linear issue identifier (<code>EXP-491</code>)</li>
+      <li>The exit code class</li>
+      <li>A short reason from the pipeline</li>
+      <li>Tail of the queue log when the supervisor gives up (last 30 lines)</li>
+    </ul>
+
+    <h2 id="supervisor">Auto-restart supervisor</h2>
+
+    <p><code>queue-loop-supervised.sh</code> wraps <code>queue-loop.sh</code> and restarts it after a crash with exponential backoff. It only fires a Telegram alert at the <em>give-up</em> threshold, not on every restart.</p>
+
+    <pre data-file="BACKOFF SCHEDULE"><code>Crash 1 → wait  10 s → restart
+Crash 2 → wait  30 s → restart
+Crash 3 → wait  60 s → restart
+Crash 4+→ wait 300 s → restart  (capped at 5 min)
+
+After BUREAU_SUPERVISOR_MAX_CRASHES (default 5)
+consecutive crashes → fire `supervisor` alert
+                       with tail of logs/queue-&lt;mode&gt;.log
+                       and exit 1.
+
+Counter resets after BUREAU_SUPERVISOR_STABILITY_WINDOW
+seconds (default 1 h) of clean runtime.</code></pre>
+
+    <p><code>SIGINT</code> / <code>SIGTERM</code> are forwarded to the child, so <code>Ctrl+C</code> in the tmux pane stops everything cleanly without triggering the restart logic.</p>
+
+    <p>To opt out for a debugging session, call <code>./scripts/queue-loop.sh &lt;mode&gt; &lt;interval&gt;</code> directly from a workbench pane instead of attaching to the agent window.</p>
+
+    <h2 id="single-flight">Single-flight observability</h2>
+
+    <p>When <code>agents.max_concurrent_issues</code> is non-zero, <code>spec-pipeline.sh</code> exits <code>2</code> (queue-empty) once the cap is hit — even if there's an eligible issue in Triage. This is intentional: the cap is enforced <em>before</em> state mutations.</p>
+
+    <p>If you see spec consistently exiting 2 while Triage has eligible issues, check:</p>
+
+    <pre data-file="LOG TAIL"><code>grep "in-flight cap reached" logs/queue-spec.log</code></pre>
+
+    <p>The pipeline logs the actual count vs. cap on every gate decision.</p>
+
+  </main>
+</div>
+
+<footer class="bhb-footer">
+  <span>BUREAU-INIT · MIT · NO WARRANTY</span>
+  <span>BUILT IN HAMBURG · ON THE SEAM</span>
+  <span><a href="https://github.com/KaiaK808/bureau">SOURCE ↗</a></span>
+</footer>
+
+</body>
+</html>

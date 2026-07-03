@@ -1,0 +1,41 @@
+name: CI
+# Scaffolded by /bureau-init. Defaults to GitHub-hosted `ubuntu-latest` for
+# safety (see the security block at the bottom). Repos with a private,
+# non-production self-hosted runner can flip `runs-on` to their own labels
+# below and remove the ubuntu-latest fallback.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]   # ready_for_review = draft→ready re-trigger for the merge gate
+    paths-ignore: ['**.md', 'specs/**']
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'specs/**']
+concurrency:                          # kill superseded runs — shepherd pushes 1–3×/iter
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read                      # least privilege — narrow if you add write steps
+jobs:
+  test:
+    name: build + test
+    if: github.event.pull_request.draft != true   # skip speculative mid-implementation PRs
+    runs-on: ubuntu-latest                          # ← swap to your [self-hosted, ...] labels ONLY if the runner is private + non-production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # >>> REPLACE with your repo's test command <<<
+      # bureau-init-style repo:
+      - run: bash tests/run.sh
+      # …or a Rust repo:
+      # - uses: dtolnay/rust-toolchain@stable
+      # - uses: Swatinem/rust-cache@v2
+      # - run: cargo build --workspace --all-targets
+      # - run: cargo test --workspace --no-fail-fast
+# ⚠ SECURITY: `pull_request` events run arbitrary code from fork PRs. If you
+# route this workflow to a SELF-HOSTED runner, that runner is one bad fork PR
+# away from arbitrary code execution on the host — treat any self-hosted
+# runner used here as PUBLIC-untrusted. Mitigations:
+#   1. Only self-host on a box you'd hand a stranger the shell of.
+#   2. Turn on Settings → Actions → General → Fork PRs → Require approval for
+#      all outside collaborators.
+#   3. Never pair `pull_request_target` with `actions/checkout` of the PR head.

@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Troubleshooting · bureau-init</title>
+<meta name="description" content="When the pipeline misbehaves, start here. Most symptoms have a one-line fix." />
+<link rel="stylesheet" href="assets/colors_and_type.css" />
+<link rel="stylesheet" href="assets/docs.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<header class="bhb-topbar">
+  <a href="index.html" class="wordmark">BRAIN<span class="accent">·</span>HUGGERS BUREAU <span style="color:var(--fg-3)">/</span> bureau-init</a>
+  <div class="meta">
+    <span><span class="pulse">●</span> CRON RUNNING</span>
+    <span>FILE #04 · TROUBLESHOOTING</span>
+    <span><a href="https://github.com/KaiaK808/bureau" style="color:inherit;">GITHUB ↗</a></span>
+  </div>
+</header>
+
+<div class="bhb-shell">
+
+  <aside class="bhb-sidebar">
+    <div class="group-label">Field manual</div>
+    <nav>
+      <a href="index.html"><span class="file">FILE #00</span> Index</a>
+      <a href="configuration.html"><span class="file">FILE #01</span> Configuration</a>
+      <a href="exit-codes.html"><span class="file">FILE #02</span> Exit codes</a>
+      <a href="recipes.html"><span class="file">FILE #03</span> Recipes</a>
+      <a href="troubleshooting.html" class="active"><span class="file">FILE #04</span> Troubleshooting</a>
+    </nav>
+
+    <div class="group-label">On this page</div>
+    <div class="external-list">
+      <a href="#setup">Setup</a>
+      <a href="#runtime">Pipeline runtime</a>
+      <a href="#tmux">tmux</a>
+      <a href="#linear-divergence">Linear state divergence</a>
+      <a href="#claude">Claude / auth</a>
+      <a href="#supervisor">Supervisor</a>
+      <a href="#drift">Drift / upgrades</a>
+    </div>
+  </aside>
+
+  <main class="bhb-main">
+
+    <div class="bhb-page-meta">
+      <span>FILE #04 · TROUBLESHOOTING</span>
+      <span><span class="bhb-tag field"><span class="dot"></span>FIELDWORK</span></span>
+    </div>
+
+    <h1>Troubleshooting</h1>
+    <p class="lede" style="font-size:18px;color:var(--fg-2);max-width:680px;line-height:var(--lh-relaxed);">
+      When the pipeline misbehaves, start here. Most symptoms have a one-line fix.
+    </p>
+
+    <h2 id="setup">Setup</h2>
+
+    <h3><code>MISSING: &lt;tool&gt;</code> at Phase 0</h3>
+    <p>Install the named tool, then re-run <code>/bureau-init</code>. macOS one-liner:</p>
+    <pre data-file="SHELL"><code>brew install jq tmux gh</code></pre>
+
+    <h3><code>This repo already has a bureau pipeline configured</code></h3>
+    <ul>
+      <li><code>/bureau-init --update</code> — change teams / labels / states / agents</li>
+      <li><code>/bureau-init --resync-scripts</code> — pull the latest pipeline scripts</li>
+      <li><code>rm .bureau.json</code> — start from scratch</li>
+    </ul>
+
+    <h3>Linear MCP not available during setup</h3>
+    <p>In Claude Code, run <code>/mcp</code>, authenticate <code>linear-server</code>, restart the session.</p>
+
+    <h3><code>LINEAR_API_KEY</code> not set</h3>
+    <p>Interactive setup completes without it, but agents fail on first run. Add to <code>.env</code> before launching:</p>
+    <pre data-file=".env"><code>echo 'LINEAR_API_KEY=lin_api_xxxxxxxxxxxx' &gt;&gt; .env</code></pre>
+
+    <h2 id="runtime">Pipeline runtime</h2>
+
+    <h3>Agents running but not picking up issues</h3>
+    <p>Check the issue:</p>
+    <ul>
+      <li>Has the eligibility label (e.g. <code>lane-2</code>) — <code>pick_issue</code> filters by label <em>name</em></li>
+      <li>Is in the <code>Triage</code> state for the team configured in <code>.bureau.json</code></li>
+      <li>Has no parking labels (<code>needs-human</code>, <code>blocked</code>, <code>wip</code>)</li>
+      <li>Is not blocked by another issue (Linear <code>blockedBy</code> relation)</li>
+    </ul>
+
+    <h3>Pipeline exits 2 every tick despite eligible issues</h3>
+    <p>Check whether <code>agents.max_concurrent_issues</code> is set. If yes, an in-flight issue (or several) is occupying the cap. See <a href="recipes.html#single-flight">FILE #03 → single-flight</a>. Find them with:</p>
+    <pre data-file="LOG TAIL"><code>grep "in-flight cap reached" logs/queue-spec.log</code></pre>
+
+    <h3><code>⚠ bureau-init template drift: N differ, M new</code></h3>
+    <p>The skill template has been updated since this repo was initialized. Run:</p>
+    <pre data-file="SHELL"><code>claude /bureau-init --resync-scripts</code></pre>
+    <p>Per-file confirmation, ~40-line diff preview. Local tweaks preserved unless you confirm an overwrite.</p>
+
+    <h3>Issue stranded between states</h3>
+    <p>The spec pipeline installs an EXIT trap that routes back to Triage on crash. If an issue is genuinely stuck:</p>
+    <ol>
+      <li>Check <code>logs/escalations.log</code> first — every <code>needs-human</code> event lands here as one TSV line: <code>grep ESCALATED logs/escalations.log | grep EXP-XXX</code></li>
+      <li>Check <code>logs/queue-&lt;stage&gt;.log</code> for the last error</li>
+      <li>Check <code>logs/supervisor-&lt;stage&gt;.log</code> if you're using <code>queue-loop-supervised.sh</code></li>
+      <li>Manually move the issue back in Linear</li>
+    </ol>
+    <p>If the issue was in Build and crashed, the worktree under <code>.worktrees/queue-implement/</code> may have uncommitted work. Inspect before resetting.</p>
+
+    <h3>Pipeline keeps hitting <code>merge_origin_main_or_abort</code> conflicts</h3>
+    <p>Symptom: every cron tick re-runs the merge, conflicts pile up, the same branch reappears tick after tick.</p>
+    <p>Two complementary fixes:</p>
+    <ol>
+      <li><strong>Single-flight mode</strong> (<code>agents.max_concurrent_issues: 1</code>) — branches don't race against each other</li>
+      <li><strong>Trivial-conflict resolver</strong> — already shipped; lockfiles, generated files, and known-mergeable patterns auto-resolve</li>
+    </ol>
+    <p>For non-trivial conflicts, the pipeline exits 17 (rebase-needed) and routes for human intervention.</p>
+
+    <h2 id="tmux">tmux</h2>
+
+    <h3><code>WARNING: Old 'bureau' session is still running</code></h3>
+    <p>Harmless. The script checks for a legacy session named literally <code>bureau</code> (no <code>-v2</code>). If you never ran the v1 pipeline, ignore it — or delete the check block at the top of <code>start-bureau-v2.sh</code>.</p>
+
+    <h3>tmux session already exists on startup</h3>
+    <p><code>start-bureau-v2.sh</code> kills its own session (<code>bureau-v2-&lt;basename&gt;</code>) before recreating it. If you see unrelated stale sessions:</p>
+    <pre data-file="SHELL"><code>tmux ls
+tmux kill-session -t &lt;name&gt;</code></pre>
+
+    <h3>Pane shrunk to 0 rows / "no space for new pane"</h3>
+    <p>Already fixed — <code>start-bureau-v2.sh</code> re-tiles after every split. If you see this on an old install, run <code>/bureau-init --resync-scripts</code>.</p>
+
+    <h2 id="linear-divergence">Linear state divergence</h2>
+
+    <h3>PR is OPEN but Linear says Done</h3>
+    <p>The verify-merge fix in <code>code-review-pipeline.sh</code> should prevent this — after <code>gh pr merge</code>, the pipeline confirms the actual PR state before claiming Done. If you see this on an old install, resync scripts.</p>
+
+    <h3>Issue marked Done but no PR exists</h3>
+    <p>Check the bureau-branch comment marker. If it points at a branch that was deleted before merge, the pipeline may have lost the PR reference. Manually re-open the issue and route through Build Review.</p>
+
+    <h2 id="claude">Claude / auth</h2>
+
+    <h3>Pipeline fails with <code>claude-unauth</code> (exit 16)</h3>
+    <p>Run <code>claude</code> interactively once to refresh OAuth. The headless <code>claude -p</code> calls used by the pipeline can't refresh tokens themselves.</p>
+
+    <h3>Headless Claude calls hang or timeout</h3>
+    <p>Usually a network issue. Confirm:</p>
+    <pre data-file="SHELL"><code>claude -p "say hi" --print --dangerously-skip-permissions</code></pre>
+    <p>If that hangs, restart Claude Code or check your connection.</p>
+
+    <h3>Speckit phases produce empty <code>tasks.md</code></h3>
+    <p>The spec pipeline routes back to Triage automatically. To debug:</p>
+    <pre data-file="SHELL"><code>ls -la specs/&lt;NNN-feature&gt;/
+cat logs/queue-spec.log | tail -100</code></pre>
+    <p>Most common cause: the Linear issue description was too thin for <code>/speckit-tasks</code> to extract anything. Add acceptance criteria to the description and re-trigger.</p>
+
+    <h2 id="supervisor">Supervisor</h2>
+
+    <h3>Telegram alert: "supervisor giving up"</h3>
+    <p>The supervisor crashed <code>BUREAU_SUPERVISOR_MAX_CRASHES</code> times in a row. The alert includes the tail of <code>logs/queue-&lt;mode&gt;.log</code>. Common causes:</p>
+    <ul>
+      <li>Bash syntax error introduced by an unfinished script edit</li>
+      <li>Missing config key after a partial <code>/bureau-init --update</code></li>
+      <li><code>LINEAR_API_KEY</code> revoked</li>
+    </ul>
+    <p>After fixing, restart with <code>./scripts/start-bureau-v2.sh</code> or just re-run <code>./scripts/queue-loop-supervised.sh &lt;mode&gt; &lt;interval&gt;</code>.</p>
+
+    <h3>Crash counter stuck high</h3>
+    <p>Restart the supervisor — counters are in-process, so a fresh launch resets them. Or wait <code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code> seconds (default 1 h) of clean runtime for the auto-reset.</p>
+
+    <h2 id="drift">Drift / upgrades</h2>
+
+    <h3>Old commands at <code>.claude/commands/speckit.*.md</code></h3>
+    <p>Pre-v0.7.5 speckit installed via slash commands. The new install lives at <code>.claude/skills/speckit-*/</code>. After running <code>/bureau-init --resync-speckit</code>, clean up:</p>
+    <pre data-file="SHELL"><code>rm .claude/commands/speckit.*.md</code></pre>
+
+    <h3>Constitution missing after speckit resync</h3>
+    <p><code>--resync-speckit</code> backs up <code>.specify/memory/constitution.md</code> before re-running <code>specify init</code> and restores it after. If the file is still missing, look for <code>.specify/memory/constitution.md.bak</code>.</p>
+
+  </main>
+</div>
+
+<footer class="bhb-footer">
+  <span>BUREAU-INIT · MIT · NO WARRANTY</span>
+  <span>BUILT IN HAMBURG · ON THE SEAM</span>
+  <span><a href="https://github.com/KaiaK808/bureau">SOURCE ↗</a></span>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,41 @@
+#!/bin/bash
+# gh CLI shim for tests. The implement pipeline calls:
+#   gh pr list --head BRANCH --json number --jq '.[0].number'   → PR number or empty
+#   gh pr view  N --json url --jq '.url'                         → PR URL
+#   gh pr create [--draft] --title T --body B                    → URL on stdout
+#   gh pr ready N                                                → noop
+#
+# Behaviour:
+#   GH_STUB_EXISTING_PR=<num>  → pr list returns this number; pr view returns URL
+#   (unset)                    → pr list returns empty; pr create returns a URL
+#   GH_STUB_CALLS=<file>       → append each invocation as a tab-separated line
+set -uo pipefail
+
+calls_log="${GH_STUB_CALLS:-${SANDBOX:-/tmp}/gh_calls.log}"
+{ printf 'gh'; for a in "$@"; do printf '\t%s' "$a"; done; printf '\n'; } >> "$calls_log"
+
+if [ "${1:-}" = "pr" ]; then
+  shift
+  case "${1:-}" in
+    list)
+      if [ -n "${GH_STUB_EXISTING_PR:-}" ]; then
+        echo "${GH_STUB_EXISTING_PR}"
+      else
+        echo ""
+      fi
+      ;;
+    view)
+      # gh pr view <num> --json url --jq '.url'
+      num="${2:-99}"
+      echo "https://github.com/test/repo/pull/${num}"
+      ;;
+    create)
+      # Print URL on stdout (what the pipeline captures).
+      echo "https://github.com/test/repo/pull/${GH_STUB_NEW_PR:-99}"
+      ;;
+    ready)
+      # noop
+      ;;
+    *) ;;
+  esac
+fi

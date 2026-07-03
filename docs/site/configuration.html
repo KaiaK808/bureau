@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Configuration · bureau-init</title>
+<meta name="description" content="Every .bureau.json key + every BUREAU_* env var, with defaults and resolution order." />
+<link rel="stylesheet" href="assets/colors_and_type.css" />
+<link rel="stylesheet" href="assets/docs.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<header class="bhb-topbar">
+  <a href="index.html" class="wordmark">BRAIN<span class="accent">·</span>HUGGERS BUREAU <span style="color:var(--fg-3)">/</span> bureau-init</a>
+  <div class="meta">
+    <span><span class="pulse">●</span> CRON RUNNING</span>
+    <span>FILE #01 · CONFIGURATION</span>
+    <span><a href="https://github.com/KaiaK808/bureau" style="color:inherit;">GITHUB ↗</a></span>
+  </div>
+</header>
+
+<div class="bhb-shell">
+
+  <aside class="bhb-sidebar">
+    <div class="group-label">Field manual</div>
+    <nav>
+      <a href="index.html"><span class="file">FILE #00</span> Index</a>
+      <a href="configuration.html" class="active"><span class="file">FILE #01</span> Configuration</a>
+      <a href="exit-codes.html"><span class="file">FILE #02</span> Exit codes</a>
+      <a href="recipes.html"><span class="file">FILE #03</span> Recipes</a>
+      <a href="troubleshooting.html"><span class="file">FILE #04</span> Troubleshooting</a>
+    </nav>
+
+    <div class="group-label">On this page</div>
+    <div class="external-list">
+      <a href="#linear">.linear</a>
+      <a href="#agents">.agents</a>
+      <a href="#repo">.repo</a>
+      <a href="#supervisor">.supervisor</a>
+      <a href="#env">Environment vars</a>
+      <a href="#resolution">Resolution order</a>
+    </div>
+  </aside>
+
+  <main class="bhb-main">
+
+    <div class="bhb-page-meta">
+      <span>FILE #01 · CONFIGURATION REFERENCE</span>
+      <span><span class="bhb-tag active"><span class="dot"></span>ACTIVE BUILD</span></span>
+    </div>
+
+    <h1>Configuration</h1>
+    <p class="lede" style="font-size:18px;color:var(--fg-2);max-width:680px;line-height:var(--lh-relaxed);">
+      Every knob bureau-init exposes — what it controls, where it lives, what the default is.
+      Two surfaces: <code>.bureau.json</code> (persisted per-repo) and <code>BUREAU_*</code> environment variables (runtime overrides).
+    </p>
+
+    <div class="bhb-callout">
+      <span class="label">Defaults are sane</span>
+      A fresh <code>/bureau-init</code> produces a working pipeline with no further editing. Everything below is for fine-tuning.
+    </div>
+
+    <h2 id="linear"><code>.linear</code></h2>
+
+    <h3>Team identity</h3>
+    <table>
+      <thead><tr><th>Key</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>linear.teams[0].id</code></td><td>UUID</td><td>yes</td><td>Linear team UUID</td></tr>
+        <tr><td><code>linear.teams[0].key</code></td><td>string</td><td>yes</td><td>Team key (e.g. <code>EXP</code>) — used in issue identifiers</td></tr>
+        <tr><td><code>linear.teams[0].name</code></td><td>string</td><td>yes</td><td>Display name; cosmetic only</td></tr>
+        <tr><td><code>linear.projects</code></td><td>array</td><td>optional</td><td>Project UUIDs to scope <code>pick_issue</code>. Empty = entire team</td></tr>
+      </tbody>
+    </table>
+
+    <h3>States</h3>
+    <table>
+      <thead><tr><th>Key</th><th>Required</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>states.triage</code></td><td>yes</td><td>Where eligible issues live before pickup</td></tr>
+        <tr><td><code>states.spec</code></td><td>yes</td><td>Spec writing</td></tr>
+        <tr><td><code>states.spec_review</code></td><td>yes</td><td>Spec validation</td></tr>
+        <tr><td><code>states.design</code></td><td>yes</td><td>Required only when <code>agents.ux: true</code></td></tr>
+        <tr><td><code>states.build</code></td><td>yes</td><td>Implementation</td></tr>
+        <tr><td><code>states.build_review</code></td><td>yes</td><td>Code review</td></tr>
+        <tr><td><code>states.done</code></td><td>yes</td><td>Terminal success state</td></tr>
+        <tr><td><code>states.qa</code></td><td>optional</td><td>Required if <code>agents.qa: true</code></td></tr>
+        <tr><td><code>states.copy</code></td><td>optional</td><td>Required if <code>agents.copy: true</code></td></tr>
+        <tr><td><code>states.merge</code></td><td>optional</td><td>Required if <code>agents.merge: true</code> (gated stage between Build Review and Done)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Labels</h3>
+    <table>
+      <thead><tr><th>Key</th><th>Required</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>labels.lane2.id</code> + <code>.name</code></td><td>yes</td><td>Eligibility label (commonly <code>lane-2</code>) — only labelled issues enter the pipeline. <code>pick_issue</code> filters by name, so keep these in sync</td></tr>
+        <tr><td><code>labels.needs_human.id</code></td><td>yes</td><td>Park label — applied on unrecoverable failure</td></tr>
+        <tr><td><code>labels.needs_ux.id</code></td><td>yes</td><td>Routes Spec Review → Design</td></tr>
+        <tr><td><code>labels.ai_implementable.id</code></td><td>yes</td><td>Required from Build onwards</td></tr>
+        <tr><td><code>labels.needs_copy.name</code></td><td>optional</td><td>Required if <code>agents.copy: true</code>; routes Spec Review (or UX) → Copy</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="agents"><code>.agents</code></h2>
+    <p>Which pipelines run, how often they poll, how aggressive they are.</p>
+
+    <h3>Toggles</h3>
+    <table>
+      <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>agents.spec</code></td><td><code>true</code></td><td>Triage → Spec Review</td></tr>
+        <tr><td><code>agents.spec_review</code></td><td><code>true</code></td><td>Spec Review → Build / Design / Copy</td></tr>
+        <tr><td><code>agents.ux</code></td><td><code>false</code></td><td>Design → Build / Copy</td></tr>
+        <tr><td><code>agents.copy</code></td><td><code>false</code></td><td>Copy → Build</td></tr>
+        <tr><td><code>agents.implement</code></td><td><code>true</code></td><td>Build → Build Review (+ QA if enabled)</td></tr>
+        <tr><td><code>agents.qa</code></td><td><code>false</code></td><td>Build → QA → Build Review</td></tr>
+        <tr><td><code>agents.code_review</code></td><td><code>true</code></td><td>Build Review → Done (or Merge)</td></tr>
+        <tr><td><code>agents.merge</code></td><td><code>false</code></td><td>Gated merge after code-review APPROVE</td></tr>
+        <tr><td><code>agents.rebase</code></td><td><code>false</code></td><td>Force-pushes to remote — opt-in for that reason</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Tuning</h3>
+    <table>
+      <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>agents.poll_interval_minutes</code></td><td><code>30</code></td><td>Cron tick frequency</td></tr>
+        <tr><td><code>agents.workbench_panes</code></td><td><code>2</code></td><td>Interactive <code>claude</code> panes spawned in the workbench window</td></tr>
+        <tr><td><code>agents.max_review_cycles</code></td><td><code>3</code></td><td>Code-review re-iterations before <code>needs-human</code></td></tr>
+        <tr><td><code>agents.code_review_sampling_threshold</code></td><td><code>500</code></td><td>Diff line-count above which code-review switches to sampling mode</td></tr>
+        <tr><td><code>agents.max_concurrent_issues</code></td><td><code>0</code></td><td>Repo-wide cap on issues in flight. <code>0</code> = unlimited; <code>1</code> = single-flight. See <a href="recipes.html#single-flight">FILE #03</a></td></tr>
+        <tr><td><code>agents.merge_strategy</code></td><td><code>"squash"</code></td><td>One of <code>squash</code>, <code>merge</code>, <code>rebase</code>. Validated at config-load — invalid values fall back to <code>squash</code></td></tr>
+        <tr><td><code>agents.merge_require_green_ci</code></td><td><code>true</code></td><td>Bureau-enforced "all check-runs on PR head SHA completed + green" gate, independent of GitHub's <code>mergeStateStatus</code>. Catches the "no required-checks rule configured" hole where CLEAN passes with red CI</td></tr>
+        <tr><td><code>agents.merge_require_up_to_date</code></td><td><code>true</code></td><td>Bureau-enforced "PR baseRefOid == origin/main HEAD" gate. Catches the async-cache race where <code>mergeStateStatus</code> still reads CLEAN after main has advanced</td></tr>
+        <tr><td><code>agents.merge_min_required_checks</code></td><td><code>1</code></td><td>Minimum completed check-runs required on the PR head SHA before <code>merge_require_green_ci</code> will pass. Prevents a PR with zero registered workflows from passing vacuously</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Per-stage model overrides</h3>
+    <table>
+      <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>agents.model</code></td><td>unset</td><td>Default model for every stage. Falls through to the user's <code>claude</code> CLI default</td></tr>
+        <tr><td><code>agents.&lt;stage&gt;.model</code></td><td>unset</td><td>Per-stage override. <code>&lt;stage&gt;</code> is one of <code>spec</code>, <code>spec_review</code>, <code>ux</code>, <code>copy</code>, <code>implement</code>, <code>qa</code>, <code>code_review</code>, <code>merge</code>. Set via <code>/bureau-init --update</code> (Models option) or auto-prompted at the tail of <code>/bureau-init --resync-scripts</code></td></tr>
+      </tbody>
+    </table>
+
+    <div class="bhb-callout">
+      <span class="label">Provider mixing</span>
+      Anthropic models with reasoning enabled can only pair with other Anthropic models in the same context. Bureau is fine — every pipeline run is a fresh <code>claude -p</code> subprocess, so cross-provider stage assignment works as long as each stage's full conversation stays within its provider.
+    </div>
+
+    <h2 id="repo"><code>.repo</code></h2>
+    <table>
+      <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>repo.branch_prefix</code></td><td><code>"feat"</code></td><td>Prefix for spec branches (<code>feat/001-add-login</code>)</td></tr>
+        <tr><td><code>repo.commit_prefix</code></td><td><code>""</code></td><td>Optional prefix for commit messages</td></tr>
+        <tr><td><code>repo.specs_dir</code></td><td><code>"specs"</code></td><td>Directory where speckit writes specs — must match <code>.specify/</code>'s configured path</td></tr>
+        <tr><td><code>repo.copy_voice_file</code></td><td>unset</td><td>Required if <code>agents.copy: true</code>. Path to a markdown file describing voice/tone</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="supervisor"><code>.supervisor</code></h2>
+    <table>
+      <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>supervisor.max_crashes</code></td><td><code>5</code></td><td>Consecutive crashes before the supervisor gives up + fires a Telegram alert. Override via <code>BUREAU_SUPERVISOR_MAX_CRASHES</code></td></tr>
+        <tr><td><code>supervisor.stability_window</code></td><td><code>3600</code></td><td>Seconds of clean runtime before the crash counter resets. Override via <code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="env">Environment variables</h2>
+
+    <h3>Runtime mode</h3>
+    <table>
+      <thead><tr><th>Var</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>BUREAU_DRY_RUN=1</code></td><td>Short-circuits all Linear mutations, comments, label changes, <code>git push</code>, <code>gh pr create</code>. Logs intent + returns success</td></tr>
+        <tr><td><code>BUREAU_SESSION_NAME</code></td><td>Override the default tmux session name (<code>bureau-v2-&lt;repo-basename&gt;</code>)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>External services</h3>
+    <table>
+      <thead><tr><th>Var</th><th>Required when</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>LINEAR_API_KEY</code></td><td>always (agents)</td><td>Set in <code>.env</code>. Headless agents use direct REST</td></tr>
+        <tr><td><code>TELEGRAM_BOT_TOKEN</code></td><td>optional</td><td>Failure alerts. No-op when unset</td></tr>
+        <tr><td><code>TELEGRAM_ALERT_CHAT_ID</code></td><td>optional</td><td>Chat/channel ID. Must be set alongside the token</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="implement-retry">Implement-pipeline retry loop</h3>
+    <p>Env-only knobs (no <code>.bureau.json</code> equivalent). <code>implement-pipeline.sh</code> invokes Claude inside a bounded retry loop and parks the issue with <code>needs-human</code> if it doesn't reach <code>status: COMPLETE</code> within the budget.</p>
+    <table>
+      <thead><tr><th>Var</th><th>Default</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>BUREAU_IMPL_MAX_ITER</code></td><td><code>3</code></td><td>Max Claude passes per tick. Each iter parses the JSON status block, pushes commits, and decides continue/stop</td></tr>
+        <tr><td><code>BUREAU_IMPL_ITER_TIMEOUT</code></td><td><code>1800</code></td><td>Per-iter wall-time cap (seconds). Uses <code>timeout</code> (Linux) or <code>gtimeout</code> (macOS via <code>brew install coreutils</code>). Degrades to cumulative-only with a WARN if neither is on PATH</td></tr>
+        <tr><td><code>BUREAU_IMPL_TOTAL_TIMEOUT</code></td><td><code>5400</code></td><td>Cumulative wall-time cap (seconds) across all iters in one tick. Hard upper bound on cost per issue per tick</td></tr>
+      </tbody>
+    </table>
+    <p>Defaults give ≤90 min worst case per tick before parking. Single-strike stuck detector: if an iter produces no <code>[X]</code> marks, no review fixes, AND no commits, the issue is parked immediately — Claude is spinning, not making progress.</p>
+
+    <p>Terminal states map to PR state + Linear:</p>
+    <table>
+      <thead><tr><th>Status</th><th>PR</th><th>needs-human label</th><th>State move</th><th><code>logs/escalations.log</code></th></tr></thead>
+      <tbody>
+        <tr><td><code>COMPLETE</code></td><td>flipped to ready (<code>gh pr ready</code>)</td><td>no</td><td>→ QA / Build Review</td><td>no</td></tr>
+        <tr><td><code>NEEDS_HUMAN</code> / <code>STUCK</code> / <code>CAP_TIME</code> / <code>PARTIAL</code></td><td>draft</td><td>yes</td><td>stays in Build</td><td>yes</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Per-stage model env shortcuts</h3>
+    <p>Read by <code>claude_cmd_for_stage()</code> in <code>bureau-config.sh</code>. Useful for one-off experiments — the <code>.bureau.json</code> keys are the canonical surface.</p>
+    <table>
+      <thead><tr><th>Var</th><th>Stage</th></tr></thead>
+      <tbody>
+        <tr><td><code>BUREAU_MODEL_DEFAULT</code></td><td>all</td></tr>
+        <tr><td><code>BUREAU_MODEL_SPEC</code></td><td>spec</td></tr>
+        <tr><td><code>BUREAU_MODEL_SPEC_REVIEW</code></td><td>spec_review</td></tr>
+        <tr><td><code>BUREAU_MODEL_UX</code></td><td>ux</td></tr>
+        <tr><td><code>BUREAU_MODEL_COPY</code></td><td>copy</td></tr>
+        <tr><td><code>BUREAU_MODEL_IMPLEMENT</code></td><td>implement</td></tr>
+        <tr><td><code>BUREAU_MODEL_QA</code></td><td>qa</td></tr>
+        <tr><td><code>BUREAU_MODEL_CODE_REVIEW</code></td><td>code_review</td></tr>
+        <tr><td><code>BUREAU_MODEL_MERGE</code></td><td>merge</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="resolution">Resolution order</h2>
+    <p>For any value that exists in both <code>.bureau.json</code> and the environment:</p>
+    <ol>
+      <li>Per-stage env var (e.g. <code>BUREAU_MODEL_IMPLEMENT</code>)</li>
+      <li>Stage key in <code>.bureau.json</code> (e.g. <code>agents.implement.model</code>)</li>
+      <li>Default env var (e.g. <code>BUREAU_MODEL_DEFAULT</code>)</li>
+      <li>Default key (e.g. <code>agents.model</code>)</li>
+      <li>CLI / shell default (no flag passed)</li>
+    </ol>
+    <p><code>bureau-config.sh</code> is the source of truth — when in doubt, grep it for <code>bureau_get</code> calls to see exact precedence.</p>
+
+  </main>
+</div>
+
+<footer class="bhb-footer">
+  <span>BUREAU-INIT · MIT · NO WARRANTY</span>
+  <span>BUILT IN HAMBURG · ON THE SEAM</span>
+  <span><a href="https://github.com/KaiaK808/bureau">SOURCE ↗</a></span>
+</footer>
+
+</body>
+</html>

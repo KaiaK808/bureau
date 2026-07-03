@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Recipes · bureau-init</title>
+<meta name="description" content="Common config patterns: single-flight, mixed models, dry-run, multi-repo, custom merge strategy, memory loop." />
+<link rel="stylesheet" href="assets/colors_and_type.css" />
+<link rel="stylesheet" href="assets/docs.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<header class="bhb-topbar">
+  <a href="index.html" class="wordmark">BRAIN<span class="accent">·</span>HUGGERS BUREAU <span style="color:var(--fg-3)">/</span> bureau-init</a>
+  <div class="meta">
+    <span><span class="pulse">●</span> CRON RUNNING</span>
+    <span>FILE #03 · RECIPES</span>
+    <span><a href="https://github.com/KaiaK808/bureau" style="color:inherit;">GITHUB ↗</a></span>
+  </div>
+</header>
+
+<div class="bhb-shell">
+
+  <aside class="bhb-sidebar">
+    <div class="group-label">Field manual</div>
+    <nav>
+      <a href="index.html"><span class="file">FILE #00</span> Index</a>
+      <a href="configuration.html"><span class="file">FILE #01</span> Configuration</a>
+      <a href="exit-codes.html"><span class="file">FILE #02</span> Exit codes</a>
+      <a href="recipes.html" class="active"><span class="file">FILE #03</span> Recipes</a>
+      <a href="troubleshooting.html"><span class="file">FILE #04</span> Troubleshooting</a>
+    </nav>
+
+    <div class="group-label">On this page</div>
+    <div class="external-list">
+      <a href="#single-flight">Single-flight</a>
+      <a href="#mixed-models">Mixed models</a>
+      <a href="#dry-run">Dry-run</a>
+      <a href="#escalations">Monitor escalations</a>
+      <a href="#retry-budget">Tune retry budget</a>
+      <a href="#telegram">Telegram alerts</a>
+      <a href="#multi-repo">Multi-repo</a>
+      <a href="#session-name">Session name</a>
+      <a href="#sampling">Sampling threshold</a>
+      <a href="#merge-strategy">Merge strategy</a>
+      <a href="#supervisor">Tighter supervisor</a>
+      <a href="#memory-loop">Memory loop</a>
+    </div>
+  </aside>
+
+  <main class="bhb-main">
+
+    <div class="bhb-page-meta">
+      <span>FILE #03 · RECIPES</span>
+      <span><span class="bhb-tag docs"><span class="dot"></span>DOCUMENTING</span></span>
+    </div>
+
+    <h1>Recipes</h1>
+    <p class="lede" style="font-size:18px;color:var(--fg-2);max-width:680px;line-height:var(--lh-relaxed);">
+      Common config patterns. Drop into <code>.bureau.json</code> or your launch command as needed. None of these are defaults — bureau ships with an opinionated baseline; recipes are for fine-tuning.
+    </p>
+
+    <h2 id="single-flight">Single-flight pipeline</h2>
+    <p>Process exactly one issue end-to-end before another enters Spec. Eliminates cross-issue rebase storms in active repos.</p>
+
+    <pre data-file=".bureau.json"><code>{
+  "agents": {
+    "max_concurrent_issues": 1
+  }
+}</code></pre>
+
+    <p><strong>When to use:</strong> repos with &gt; 3 simultaneous feature tickets where <code>origin/main</code> advances faster than the pipeline can drain. Symptom: every cron tick re-runs <code>merge_origin_main_or_abort</code> against a different main, conflicts pile up.</p>
+    <p><strong>When not to:</strong> small repos where parallelism actually helps. The cap is a knob, not a default.</p>
+
+    <div class="bhb-callout">
+      <span class="label">Parking is safe</span>
+      A single stuck issue (e.g. <code>needs-human</code> parking) does <em>not</em> deadlock the cap — <code>count_in_flight_issues</code> excludes parked issues.
+    </div>
+
+    <h2 id="mixed-models">Mixed models per stage</h2>
+    <p>Strong reasoning model for spec, fast cheap model for spec-review, an <em>adversarial</em> model for code-review (catches what the implementer missed).</p>
+
+    <pre data-file=".bureau.json"><code>{
+  "agents": {
+    "model": "claude-sonnet-4-6",
+    "spec":         { "model": "claude-opus-4-7" },
+    "spec_review":  { "model": "claude-haiku-4-5-20251001" },
+    "implement":    { "model": "claude-opus-4-7" },
+    "code_review":  { "model": "claude-haiku-4-5-20251001" }
+  }
+}</code></pre>
+
+    <p>Resolution: per-stage &gt; <code>agents.model</code> &gt; CLI default. Absent keys fall through.</p>
+
+    <div class="bhb-callout">
+      <span class="label">Provider mixing</span>
+      Anthropic models with reasoning enabled require other Anthropic models in the same context. Bureau is fine — every pipeline run is a fresh subprocess. Cross-provider stage assignment works as long as each stage's full conversation stays within its provider.
+    </div>
+
+    <h2 id="dry-run">Dry-run</h2>
+    <p>Validate a fresh checkout against a real Linear team without polluting state. No Linear mutations, no comments, no PRs, no <code>git push</code>.</p>
+
+    <pre data-file="SHELL"><code>BUREAU_DRY_RUN=1 ./scripts/queue-loop.sh implement 1</code></pre>
+
+    <p>Or pass the flag directly:</p>
+
+    <pre data-file="SHELL"><code>./scripts/queue-loop.sh all 5 --dry-run</code></pre>
+
+    <p>The pipeline runs to completion — Claude prompts execute, files change in the worktree — but every mutation logs <code>DRY-RUN:</code> instead of hitting the network. Useful for:</p>
+    <ul>
+      <li>Smoke-testing a new agent config before turning it on</li>
+      <li>Verifying a model swap doesn't break parsing</li>
+      <li>Confirming <code>pick_issue</code> returns the issue you expect</li>
+    </ul>
+
+    <h2 id="escalations">Monitor escalations</h2>
+    <p>Every <code>needs-human</code> event lands as one tab-separated line in <code>logs/escalations.log</code>. Tail it from anywhere:</p>
+
+    <pre data-file="SHELL"><code>tail -F logs/escalations.log</code></pre>
+
+    <p>Line format:</p>
+
+    <pre data-file="logs/escalations.log"><code>2026-05-13T19:18:23Z<TAB>ESCALATED<TAB>EXP-402<TAB>code-review<TAB>cycle=3<TAB>reason="REQUEST_CHANGES exceeded max_review_cycles"<TAB>pr=56<TAB>branch=049-parliament-debate</code></pre>
+
+    <p>Filter to today's escalations from a specific pipeline:</p>
+
+    <pre data-file="SHELL"><code>grep ESCALATED logs/escalations.log | grep "$(date -u +%Y-%m-%d)" | grep code-review</code></pre>
+
+    <p>The matching JSON event also fires to <code>logs/events.jsonl</code> (so <code>/bureau-learnings</code> picks escalations up automatically). The TSV exists for monitors that prefer flat-text grep over jq.</p>
+
+    <p>Hooks fire at five sites: code-review (cycle-limit / merge-fail-after-approve / BLOCK), qa (NEEDS_HUMAN verdict), implement (retry-loop terminal). Logs only on <code>add_issue_label</code> success — Linear API hiccups don't produce phantom escalations.</p>
+
+    <h2 id="retry-budget">Tune the implement retry budget</h2>
+    <p><code>implement-pipeline.sh</code> runs up to <code>BUREAU_IMPL_MAX_ITER</code> Claude passes per cron tick (default <code>3</code>), each capped at <code>BUREAU_IMPL_ITER_TIMEOUT</code> seconds (default <code>1800</code>), with <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> (default <code>5400</code>) bounding cumulative cost.</p>
+
+    <p>Aggressive (small batches, fast feedback):</p>
+    <pre data-file=".env"><code>BUREAU_IMPL_MAX_ITER=2
+BUREAU_IMPL_ITER_TIMEOUT=600
+BUREAU_IMPL_TOTAL_TIMEOUT=1800</code></pre>
+
+    <p>Patient (long-running specs, fewer escalations):</p>
+    <pre data-file=".env"><code>BUREAU_IMPL_MAX_ITER=5
+BUREAU_IMPL_ITER_TIMEOUT=2400
+BUREAU_IMPL_TOTAL_TIMEOUT=10800</code></pre>
+
+    <p>Single-strike stuck detection (no <code>[X]</code> marks AND no review fixes AND no commits in an iter ⇒ park) is independent of these knobs — Claude spinning without progress always bails fast regardless of remaining iterations.</p>
+
+    <div class="bhb-callout">
+      <span class="label">macOS</span>
+      The per-iter cap needs GNU <code>timeout</code>. Run <code>brew install coreutils</code> for <code>gtimeout</code>; without it the script falls back to cumulative-only with a WARN.
+    </div>
+
+    <h2 id="telegram">Telegram alerts</h2>
+    <p>Get a message when a pipeline fails. No-op when the credentials aren't set, so dev environments stay quiet.</p>
+
+    <p>In the target repo's <code>.env</code>:</p>
+    <pre data-file=".env"><code>TELEGRAM_BOT_TOKEN=123456:ABC-XYZ
+TELEGRAM_ALERT_CHAT_ID=-100123456789</code></pre>
+
+    <p>Throttling: max 1 alert per <code>(issue, class)</code> per hour, tracked at <code>/tmp/bureau-alerts.log</code>. Bypass by deleting the file. See <a href="exit-codes.html#alerts">FILE #02</a> for the full classification.</p>
+
+    <h2 id="multi-repo">Multi-repo, side-by-side</h2>
+    <p>Each repo gets its own tmux session, scoped by folder name. Run unlimited pipelines in parallel:</p>
+
+    <pre data-file="SHELL"><code>cd ~/projects/sofa          &amp;&amp; ./scripts/start-bureau-v2.sh   # → bureau-v2-sofa
+cd ~/projects/brainhuggers  &amp;&amp; ./scripts/start-bureau-v2.sh   # → bureau-v2-brainhuggers
+tmux ls | grep bureau-v2-                                      # both listed</code></pre>
+
+    <div class="bhb-callout">
+      <span class="label">Caveat</span>
+      The Linear API key is per-user across all repos. Make sure each repo's <code>.bureau.json</code> points at a <em>different Linear project</em> — otherwise two workers race on the same issues.
+    </div>
+
+    <h2 id="session-name">Override the session name</h2>
+    <pre data-file="SHELL"><code>BUREAU_SESSION_NAME=nightshift ./scripts/start-bureau-v2.sh
+tmux attach -t nightshift</code></pre>
+    <p>Useful when you want a single named session you can find without remembering the basename.</p>
+
+    <h2 id="sampling">Sampling-mode threshold for code-review</h2>
+    <p>Repos with mature CI / type-safety can review larger diffs exhaustively. Repos without CI need stricter sampling.</p>
+
+    <pre data-file=".bureau.json"><code>{
+  "agents": {
+    "code_review_sampling_threshold": 1000
+  }
+}</code></pre>
+
+    <p>Default is <code>500</code> lines. Above this, code-review specialists shift to sampling-by-class. Tune up for confidence in tooling, down for legacy code.</p>
+
+    <h2 id="merge-strategy">Custom merge strategy</h2>
+    <p>Repos with linear-history-via-rebase policies should opt out of squash:</p>
+
+    <pre data-file=".bureau.json"><code>{
+  "agents": {
+    "merge_strategy": "rebase"
+  }
+}</code></pre>
+
+    <p>Valid values: <code>squash</code> (default), <code>merge</code>, <code>rebase</code>. Anything else falls back to <code>squash</code> with a warning.</p>
+
+    <h2 id="supervisor">Tighter supervisor</h2>
+    <p>For long-running headless deployments, raise the give-up threshold so a transient flaky tick doesn't kill the pipeline:</p>
+
+    <pre data-file=".bureau.json"><code>{
+  "supervisor": {
+    "max_crashes": 10,
+    "stability_window": 7200
+  }
+}</code></pre>
+
+    <p>Or override at launch:</p>
+    <pre data-file="SHELL"><code>BUREAU_SUPERVISOR_MAX_CRASHES=10 ./scripts/start-bureau-v2.sh</code></pre>
+
+    <h2 id="memory-loop">Memory loop (logs → <code>LESSONS.md</code>)</h2>
+    <p>Mine the pipeline's own runs for recurring failure modes and review-feedback patterns, then feed a human-curated summary back into future spec and code-review prompts.</p>
+
+    <h3 style="margin-top:24px;">How it works</h3>
+    <ol>
+      <li><strong><code>queue-loop.sh</code> emits events.</strong> Every time the queue picks a real candidate, <code>run_script</code> writes two JSONL lines to <code>logs/events.jsonl</code> — one <code>stage_start</code>, one <code>stage_end</code> with <code>issue</code>, <code>branch</code>, <code>exit_code</code>, <code>class</code>, <code>duration_s</code>. Queue-empty ticks emit nothing.</li>
+      <li><strong><code>/bureau-learnings</code> drafts <code>LESSONS.md</code>.</strong> After a week of activity, run the slash command. It filters events to the last 30 days, pulls Linear comments for failed and successfully-reviewed issues, clusters failure modes by <code>(class, first-file-in-trace)</code> and review feedback by repeated 4–8-word n-grams. Requires &ge;3 distinct issues per finding — empty sections are labeled "below threshold," <em>not</em> filled with fabricated patterns.</li>
+      <li><strong>You curate.</strong> Review the diff, delete bullets you disagree with, then <code>git add LESSONS.md &amp;&amp; git commit</code>. Anything you dismiss will be re-proposed by future runs if the pattern persists.</li>
+      <li><strong>Pipelines read it back, advisory only.</strong> <code>build_lessons_context</code> in <code>bureau-config.sh</code> wraps the file with a "treat as advisory, not binding" preamble and injects it into the spec Phase 1 prompt and the three code-review specialist prompts. Other stages do not include it. Absent or whitespace-only file → no-op.</li>
+    </ol>
+
+    <pre data-file="logs/events.jsonl"><code>{"ts":"2026-05-11T14:23:01Z","event":"stage_end","mode":"all","stage":"code-review-pipeline.sh","issue":"EXP-512","branch":"037-foo","exit_code":14,"class":"build-failed","duration_s":287}</code></pre>
+
+    <p><code>logs/</code> is gitignored. <code>events.jsonl</code> is append-only — truncate it manually if it grows large; no auto-rotation in v1.</p>
+
+    <h3 style="margin-top:24px;">Event schema</h3>
+    <table>
+      <thead>
+        <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>ts</code></td><td>string</td><td>ISO-8601 UTC, auto-injected</td></tr>
+        <tr><td><code>event</code></td><td>string</td><td><code>stage_start</code> | <code>stage_end</code></td></tr>
+        <tr><td><code>mode</code></td><td>string</td><td><code>queue-loop.sh</code> mode (<code>spec</code>, <code>implement</code>, <code>all</code>, …)</td></tr>
+        <tr><td><code>stage</code></td><td>string</td><td>Pipeline script name (e.g. <code>spec-pipeline.sh</code>)</td></tr>
+        <tr><td><code>issue</code></td><td>string</td><td>Linear identifier (e.g. <code>EXP-512</code>)</td></tr>
+        <tr><td><code>branch</code></td><td>string</td><td>Spec branch from <code>&lt;!-- bureau-branch: --&gt;</code> marker (omitted if not yet resolved)</td></tr>
+        <tr><td><code>exit_code</code></td><td>number</td><td>Pipeline exit status (only on <code>stage_end</code>)</td></tr>
+        <tr><td><code>class</code></td><td>string</td><td>Per <a href="exit-codes.html">FILE #02</a>: <code>ok</code>, <code>queue-empty</code>, <code>linear-down</code>, <code>build-failed</code>, …</td></tr>
+        <tr><td><code>duration_s</code></td><td>number</td><td>Wall-time seconds (only on <code>stage_end</code>)</td></tr>
+      </tbody>
+    </table>
+
+    <p>To add your own fields from a pipeline script, call <code>emit_event "event=..." "key=value" ...</code> — values matching <code>^-?[0-9]+$</code> are auto-typed as JSON numbers. The helper is silent-on-failure (any error logs to stderr and returns 0), so it can never wedge a cron-driven pipeline.</p>
+
+    <div class="bhb-callout">
+      <span class="label">Why human-in-the-loop</span>
+      Low-volume early data produces noisy clusters. Auto-applying would amplify garbage. Human curation gates the feedback loop and keeps signal high. No vector DB, no embeddings, no external LLM — just <code>jq</code> over <code>events.jsonl</code> plus Linear MCP comment lookups.
+    </div>
+
+  </main>
+</div>
+
+<footer class="bhb-footer">
+  <span>BUREAU-INIT · MIT · NO WARRANTY</span>
+  <span>BUILT IN HAMBURG · ON THE SEAM</span>
+  <span><a href="https://github.com/KaiaK808/bureau">SOURCE ↗</a></span>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,323 @@
+/* ===================================================================
+   Brainhuggers Bureau — colors_and_type.css
+   --------------------------------------------------------------------
+   Source of truth for the design system. Import this file first and
+   every other card, UI kit and HTML artifact will inherit the tokens.
+
+   Foundations are lifted verbatim from the production codebase:
+     src/styles/tokens.css      → colors, spacing, animation, sound
+     src/styles/fonts.css       → @font-face for Babcock + Silka
+     src/components/ui/Typography.tsx → variant semantics
+
+   Philosophy: hot pink (#ff2d55) on near-black (#0a0a0b). The brand
+   runs "on the seam" between human intuition and machine hallucination,
+   so the UI is meant to *glitch* — ghost layers, hue-rotate, scanlines,
+   weird Unicode swaps. Everything else is quiet monochrome so the
+   noise has something to vibrate against.
+   =================================================================== */
+
+/* --- Type stacks (system-only, no font files shipped) -----------
+ *
+ * The public docs site uses a system font stack for the Babcock (display)
+ * and Silka (body) roles. Rationale: the previously-referenced font
+ * files were proprietary Atipo Foundry commercial faces whose EULA does
+ * NOT grant redistribution — MIT-licensing this repo cannot grant a
+ * right the author doesn't hold. See red-team audit finding #2.
+ *
+ * Downstream sites that hold a valid Atipo license may layer their own
+ * @font-face blocks above this file to restore Babcock + Silka; the
+ * variable names below stay stable so consumers don't rewire tokens.
+ *
+ * The visual brand signature (hot-pink on near-black, hex lattice,
+ * bureau-file cards, mis-struck seal) is delivered through the docs
+ * chrome + hero imagery, not through the display type. System sans
+ * still reads as "quiet monochrome" per the philosophy note above.
+ *
+ * `--font-display` and `--font-body` below still name 'Babcock' and
+ * 'Silka' as the FIRST family, so a consumer who ships their own
+ * licensed @font-face blocks re-activates them transparently — no
+ * token rewiring needed.
+ * -------------------------------------------------------------- */
+
+:root {
+  /* ============================================================
+     COLOR SYSTEM
+     ============================================================ */
+
+  /* Surfaces (all near-black, low chroma) */
+  --bg-primary: rgb(10, 10, 11);        /* page background */
+  --bg-secondary: rgb(17, 17, 19);      /* subtle alt panel */
+  --bg-card: rgb(20, 20, 22);           /* bureau-file card */
+  --bg-gallery-start: rgba(12, 12, 14, 0.9);
+  --bg-gallery-end:   rgba(6, 6, 8, 0.95);
+
+  /* Signature accent — hot pink / red */
+  --accent-primary: rgb(255, 45, 85);   /* #ff2d55 — THE brand color */
+  --accent-secondary: rgb(255, 107, 138);
+  --accent-glow: rgba(255, 45, 85, 0.4);
+
+  /* Secondary accents — used for status tags, glitch ghost layers */
+  --accent-blue:   rgb(59, 130, 246);
+  --accent-green:  rgb(34, 197, 94);
+  --accent-yellow: rgb(251, 191, 36);
+  --accent-purple: rgb(168, 85, 247);
+  --accent-magenta:rgb(236, 72, 153);
+  --accent-cyan:   rgb(14, 165, 233);
+
+  /* Effects — overlays + shadows + coloured glows */
+  --fx-overlay-strong:  rgba(5, 6, 14, 0.82);
+  --fx-overlay-soft:    rgba(10, 10, 11, 0.80);
+  --fx-header-glass:    rgba(10, 10, 11, 0.95);
+  --fx-shadow-deep:     rgba(0, 0, 0, 0.4);
+  --fx-shadow-soft:     rgba(0, 0, 0, 0.1);
+  --fx-glow-cyan:       rgba(90, 200, 255, 0.20);
+  --fx-glow-magenta:    rgba(236, 72, 153, 0.25);
+  --fx-glow-purple:     rgba(168, 85, 247, 0.20);
+  --fx-glow-blue:       rgba(59, 130, 246, 0.20);
+  --fx-glow-yellow:     rgba(251, 191, 36, 0.15);
+  --fx-glow-green:      rgba(34, 197, 94, 0.20);
+
+  /* Foreground text */
+  --fg-1: rgb(250, 250, 250); /* primary */
+  --fg-2: rgb(161, 161, 166); /* secondary — paragraph body */
+  --fg-3: rgb(120, 120, 125); /* muted — meta, captions */
+
+  /* Borders */
+  --border-default: rgb(44, 44, 46);
+  --border-glow:    rgb(255, 45, 85);
+
+  /* Neutral ramp (50→950) */
+  --n-50:  rgb(250, 250, 250);
+  --n-100: rgb(235, 235, 235);
+  --n-200: rgb(200, 200, 200);
+  --n-300: rgb(161, 161, 166);
+  --n-400: rgb(120, 120, 125);
+  --n-500: rgb(90,  90,  95);
+  --n-600: rgb(60,  60,  65);
+  --n-700: rgb(44,  44,  46);
+  --n-800: rgb(30,  30,  32);
+  --n-900: rgb(17,  17,  19);
+  --n-950: rgb(10,  10,  11);
+
+  /* Semantic — tied to bureau file statuses */
+  --semantic-success: var(--accent-green);  /* FIELDWORK   */
+  --semantic-error:   var(--accent-primary);/* ACTIVE BUILD*/
+  --semantic-warning: rgb(255, 200, 87);    /* FIELD REPORT*/
+  --semantic-info:    var(--accent-cyan);   /* DOCUMENTING */
+  --semantic-neutral: var(--n-400);         /* INCUBATING  */
+
+  /* ============================================================
+     TYPOGRAPHY
+     ============================================================
+     Two families only:
+       Babcock — display / headings (grotesque, tightly spaced)
+       Silka   — body copy
+     Mono is JetBrains Mono (Google Font) for meta / file ids /
+     status tags. Uppercase + letter-spacing is the house rule. */
+
+  --font-display: 'Babcock', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body:    'Silka',   -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, Menlo, 'Courier New', monospace;
+
+  /* Size ramp (matches production tokens.css) */
+  --fs-xs:  12px;
+  --fs-sm:  14px;
+  --fs-base:16px;
+  --fs-lg:  18px;
+  --fs-xl:  20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 30px;
+  --fs-4xl: 36px;
+  --fs-5xl: 48px;
+  --fs-6xl: 60px;
+  --fs-7xl: 72px;
+  --fs-8xl: 96px;
+
+  --fw-light:     300;
+  --fw-normal:    400;
+  --fw-medium:    500;
+  --fw-semibold:  600;
+  --fw-bold:      700;
+  --fw-extrabold: 800;
+
+  --lh-none:    1;
+  --lh-tight:   1.25;
+  --lh-snug:    1.375;
+  --lh-normal:  1.5;
+  --lh-relaxed: 1.625;
+  --lh-loose:   2;
+
+  --ls-tighter: -0.05em;
+  --ls-tight:   -0.025em;
+  --ls-normal:  0;
+  --ls-wide:    0.025em;
+  --ls-wider:   0.05em;
+  --ls-widest:  0.10em;
+
+  /* ============================================================
+     SPACING / RADIUS / SHADOW
+     ============================================================ */
+  --sp-0:  0px;
+  --sp-1:  4px;
+  --sp-2:  8px;
+  --sp-3:  12px;
+  --sp-4:  16px;
+  --sp-5:  20px;
+  --sp-6:  24px;
+  --sp-8:  32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
+  --sp-20: 80px;
+  --sp-24: 96px;
+  --sp-32: 128px;
+
+  /* The Bureau is a hard-edged brand. Radii are small or zero.
+     Cards are sharp rectangles; only interactive pills (buttons)
+     get 8px. */
+  --radius-none: 0px;
+  --radius-sm:   2px;
+  --radius-md:   4px;
+  --radius-lg:   8px;
+
+  /* Glow "shadows" — coloured, not black-drop. These are the brand. */
+  --shadow-none:    none;
+  --shadow-soft:    0 0 8px rgba(255, 255, 255, 0.03);
+  --shadow-glow-sm: 0 0 8px  var(--accent-glow);
+  --shadow-glow-md: 0 0 20px var(--accent-glow);
+  --shadow-glow-lg: 0 0 20px var(--accent-glow), 0 0 40px var(--accent-glow);
+  --shadow-card-hover: 0 0 20px var(--accent-glow);
+  --shadow-card-open:  0 0 24px var(--accent-glow);
+
+  /* ============================================================
+     MOTION
+     ============================================================ */
+  --dur-fast:   150ms;
+  --dur-normal: 250ms;
+  --dur-slow:   400ms;
+  --dur-slower: 600ms;
+  --dur-glitch: 300ms;
+
+  --ease-linear:      linear;
+  --ease-in:          cubic-bezier(0.4, 0, 1, 1);
+  --ease-out:         cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out:      cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring:      cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+  --t-default:   all 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --t-colors:    color, background-color, border-color 200ms cubic-bezier(0, 0, 0.2, 1);
+  --t-transform: transform 300ms cubic-bezier(0, 0, 0.2, 1);
+  --t-opacity:   opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* =====================================================================
+   SEMANTIC / BASE ELEMENT STYLES
+   These pre-style raw HTML so cards + demos don't need per-element CSS.
+   Pattern: uppercase, wide tracking, Babcock for display, Silka for body.
+   ===================================================================== */
+
+html, body {
+  background: var(--bg-primary);
+  color: var(--fg-1);
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  line-height: var(--lh-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  margin: 0;
+}
+
+/* Headlines — Babcock, uppercase, wide-tracked. Matches Hero/Manifesto. */
+h1, h2, h3, h4, h5, h6, .bhb-display {
+  font-family: var(--font-display);
+  color: var(--fg-1);
+  letter-spacing: var(--ls-widest); /* 0.10em */
+  text-transform: uppercase;
+  line-height: var(--lh-tight);
+  margin: 0;
+}
+
+h1 { font-size: clamp(3rem, 8vw, 6rem); font-weight: var(--fw-bold);     letter-spacing: 0.10em; }
+h2 { font-size: var(--fs-4xl);          font-weight: var(--fw-bold);     }
+h3 { font-size: var(--fs-lg);           font-weight: var(--fw-semibold); letter-spacing: 0.06em; }
+h4 { font-size: var(--fs-2xl);          font-weight: var(--fw-semibold); letter-spacing: 0.05em; }
+h5 { font-size: var(--fs-xl);           font-weight: var(--fw-medium);   }
+h6 { font-size: var(--fs-lg);           font-weight: var(--fw-medium);   }
+
+p, .bhb-body {
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  color: var(--fg-2);
+  line-height: var(--lh-normal);
+  margin: 0;
+}
+
+small, .bhb-small {
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  color: var(--fg-2);
+}
+
+.bhb-caption {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+code, pre, kbd, samp, .bhb-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  letter-spacing: 0.04em;
+}
+
+/* Mono meta line — used for FILE #001, status tags, meta rows */
+.bhb-meta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Italic lead / accent paragraph — used in manifesto cells */
+.bhb-lead {
+  font-family: var(--font-body);
+  font-style: italic;
+  color: var(--fg-1);
+}
+.bhb-accent {
+  font-family: var(--font-body);
+  font-style: italic;
+  color: var(--accent-primary);
+}
+
+/* Pull quote — huge uppercase pink, Babcock */
+.bhb-pullquote {
+  font-family: var(--font-display);
+  font-size: var(--fs-4xl);
+  color: var(--accent-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  line-height: var(--lh-tight);
+}
+
+a {
+  color: var(--accent-primary);
+  text-decoration: none;
+  transition: var(--t-default);
+}
+a:hover { text-shadow: 0 0 20px var(--accent-glow); }
+
+hr, .bhb-rule {
+  border: none;
+  border-top: 1px solid var(--border-default);
+  height: 0;
+  margin: var(--sp-6) 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}

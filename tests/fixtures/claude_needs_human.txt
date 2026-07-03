@@ -1,0 +1,17 @@
+T002 conflicts with a pinned constitution decision. Halting.
+
+```json
+{
+  "status": "NEEDS_HUMAN",
+  "tasks_done": 1,
+  "tasks_skipped": 0,
+  "tasks_needs_human": 1,
+  "fixed_review_items": [],
+  "notes": {
+    "needs_human": [{"task_id": "T002", "reason": "conflicts with CLAUDE.md decision"}],
+    "skipped": [],
+    "deviations": []
+  },
+  "prose_notes": ""
+}
+```

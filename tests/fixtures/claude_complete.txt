@@ -1,0 +1,17 @@
+All three tasks implemented and committed.
+
+```json
+{
+  "status": "COMPLETE",
+  "tasks_done": 3,
+  "tasks_skipped": 0,
+  "tasks_needs_human": 0,
+  "fixed_review_items": [],
+  "notes": {
+    "needs_human": [],
+    "skipped": [],
+    "deviations": []
+  },
+  "prose_notes": "Straightforward run."
+}
+```

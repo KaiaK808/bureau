@@ -1,0 +1,56 @@
+Bureau
+Copyright (c) 2026 Kai Ebert
+
+This project is licensed under the MIT License (see LICENSE).
+
+────────────────────────────────────────────────────────────
+Third-party asset provenance
+────────────────────────────────────────────────────────────
+
+The MIT LICENSE covers Bureau's source code (bash scripts, SKILL.md,
+documentation prose, CSS, HTML rendering). It does NOT automatically
+extend to every asset in this repo. Third-party assets:
+
+1. Hero image — `docs/assets/hero.png`
+   AI-generated via the codex CLI (gpt-image), rendered from a prompt
+   authored for this project. Not derived from any pre-existing
+   copyrighted work. Distributed under the same MIT terms.
+
+2. Design system tokens — `docs/site/assets/colors_and_type.css`
+   Color / spacing / motion values are carried over verbatim from
+   Kai's private Brainhuggers codebase (production tokens.css). The
+   values themselves are functional facts (RGB triples, pixel counts,
+   easing curves) and are contributed to Bureau under the MIT
+   license. The overall visual "look" — hot pink on near-black — is
+   the same design language used by the Brainhuggers brand, but no
+   proprietary Brainhuggers materials (logos, wordmarks, imagery)
+   ship in this repo.
+
+3. Type stack — system-sans only
+   The `--font-display` and `--font-body` CSS variables name
+   'Babcock' and 'Silka' as the first font-family for backwards
+   compatibility with private-copy consumers holding a valid Atipo
+   Foundry license. Bureau ships NO font files; system-sans is the
+   fallback and the only stack most viewers will see.
+
+4. Speckit integration
+   Bureau's `/bureau-init` skill delegates to `spec-kit`
+   (github.com/github/spec-kit) via `specify init`. Speckit is
+   pinned to a specific version (see `BUREAU_SPECKIT_VERSION` in
+   SKILL.md) and installed by the operator; Bureau does not
+   redistribute speckit code.
+
+5. Third-party skills referenced in docs (caveman, Headroom, etc.)
+   are external projects with their own licenses. Bureau's
+   docs/token-efficiency.md links to them but redistributes no
+   code from them.
+
+────────────────────────────────────────────────────────────
+Bureau seal + brand marks
+────────────────────────────────────────────────────────────
+
+The mis-struck Bureau seal (a symbiont curled into a capital B) and
+the "Brainhuggers" wordmark are Kai's trademarks, not covered by the
+MIT license. Downstream forks are free to use the MIT-licensed code
+but must not redistribute the seal or the wordmark. This is a
+convention, not enforced; use good judgment.

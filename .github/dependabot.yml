@@ -1,0 +1,23 @@
+version: 2
+# Dependabot config for Bureau. Bureau's own runtime code is bash + jq + gh + git;
+# it has no package ecosystem to scan. The one attack surface we CAN auto-update
+# is the GitHub Actions we use in the CI workflow — pinning those to SHAs (per
+# supply-chain hygiene) means we need a bot to bump the SHAs when actions are
+# updated. That's what this is.
+#
+# The `templates/` directory is deliberately excluded — those workflows are
+# scaffold code for adopters, not workflows we run ourselves.
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope

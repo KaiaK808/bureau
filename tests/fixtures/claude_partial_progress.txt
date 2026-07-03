@@ -1,0 +1,17 @@
+Made it through the first task. The second needs another pass.
+
+```json
+{
+  "status": "PARTIAL",
+  "tasks_done": 1,
+  "tasks_skipped": 0,
+  "tasks_needs_human": 0,
+  "fixed_review_items": [],
+  "notes": {
+    "needs_human": [],
+    "skipped": [],
+    "deviations": []
+  },
+  "prose_notes": "Ran out of time on T002 — context window pressure."
+}
+```

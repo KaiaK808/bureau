@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Security vulnerability
+    url: https://github.com/KaiaK808/bureau/blob/main/SECURITY.md
+    about: Do NOT open a public issue for a security vulnerability. See SECURITY.md for the direct email address.
+  - name: 💬 Question or discussion
+    url: https://github.com/KaiaK808/bureau/discussions
+    about: For open-ended questions, ideas, or discussion (not a bug or feature request), use GitHub Discussions.
