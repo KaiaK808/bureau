@@ -110,7 +110,7 @@ Restart Claude Code (or start a new session). `/bureau-init` should now autocomp
 
 | Form | What it does |
 |---|---|
-| `/bureau-init` | First-time setup in a new repo. 9-phase interactive walk-through: prereqs → Linear discovery → agent selection → writes `.bureau.json` → speckit init → installs slash commands + pipeline scripts |
+| `/bureau-init` | First-time setup in a new repo. 8-phase interactive walk-through (Phase 0–7): prereqs → Linear discovery → agent selection → writes `.bureau.json` → speckit init → installs slash commands + pipeline scripts → CLAUDE.md + `.env` + CI scaffold → validation |
 | `/bureau-init --update` | Change teams / labels / states / agents / poll interval / branch prefix. Re-runs Linear discovery only for the sections you pick. Leaves everything else alone |
 | `/bureau-init --resync-scripts` | Pull in the latest pipeline scripts from the skill template. Per-file confirmation; local customizations are preserved unless you confirm an overwrite. Does NOT touch `.bureau.json`, `.specify/`, or `.claude/skills/speckit-*` |
 | `/bureau-init --resync-speckit` | Re-run `specify init` for the bureau-init-pinned spec-kit version (currently v0.7.5). Backs up + restores `.specify/memory/constitution.md`. Refreshes `.specify/templates/`, `.specify/scripts/`, and `.claude/skills/speckit-*/SKILL.md`. Does NOT touch pipeline scripts or `.bureau.json` |
@@ -123,7 +123,9 @@ Restart Claude Code (or start a new session). `/bureau-init` should now autocomp
 3. **Phase 2** — pick which agents to enable (`spec`, `spec-review`, `ux`, `copy`, `implement`, `qa`, `code-review`, `merge`, `rebase`), poll interval, workbench panes. `merge` and `rebase` are off by default; `rebase` force-pushes to remote and is opt-in for that reason
 4. **Phase 3** — writes `.bureau.json` (gitignored; contains workspace UUIDs)
 5. **Phase 4** — initializes speckit by delegating to `specify init --here --integration claude` (pinned to v0.7.5). Installs `.specify/` + native skills under `.claude/skills/speckit-*/SKILL.md`
-6. **Phases 5–9** — installs Bureau's Linear slash commands at `.claude/commands/` and pipeline scripts at `scripts/`
+6. **Phase 5** — installs Bureau's Linear slash commands at `.claude/commands/` and pipeline scripts at `scripts/`
+7. **Phase 6** — writes / merges `CLAUDE.md`, creates `.env.example`, updates `.gitignore`, and offers to scaffold `.github/workflows/ci.yml`
+8. **Phase 7** — validation pass: sanity-checks the install and prints a summary report
 
 ---
 
@@ -139,24 +141,39 @@ Restart Claude Code (or start a new session). `/bureau-init` should now autocomp
   workflows/              # speckit's interactive workflow yaml — bureau-init bypasses this
 .claude/skills/           # native speckit skills: /speckit-specify, /speckit-plan, …
 .claude/commands/         # Bureau's Linear commands: /linear-to-spec, /check-linear-queue, /bureau-learnings, …
-.github/workflows/ci.yml  # opt-in: scaffolded CI, wired to the self-hosted runner (swap runs-on if you don't have it)
+.github/workflows/ci.yml  # opt-in: scaffolded CI. Defaults to ubuntu-latest; self-hosted is an opt-in for private, non-production runners
 LESSONS.md                # optional, committed: human-curated learnings drafted by /bureau-learnings
 logs/events.jsonl         # one JSONL event per pipeline stage run (gitignored, mined by /bureau-learnings)
 logs/escalations.log      # one TSV line per `needs-human` escalation (gitignored, designed for `tail -F | grep`)
 scripts/
-  start-bureau-v2.sh      # launch the tmux pipeline
-  bureau-status.sh        # check state from outside tmux
-  spec-pipeline.sh        # individual agent entrypoints
-  spec-review-pipeline.sh
-  ux-pipeline.sh
-  copy-pipeline.sh        # opt-in: needs-copy → Build
-  implement-pipeline.sh
-  qa-pipeline.sh          # opt-in: runs tests, writes missing ones, → Build Review
-  code-review-pipeline.sh
-  queue-loop.sh           # per-agent poller
-  grab-issue.sh           # Linear issue locking
-  complete-issue.sh       # state transition helper
-  bureau-config.sh        # reads .bureau.json (sourced by the above)
+  # ─── Drivers (what you invoke) ───────────────────────────────────────
+  start-bureau-v2.sh         # continuous mode — launches the tmux pipeline (one window per agent, cron-friendly)
+  start-agents.sh            # lower-level: start a single agent's queue-loop in the current pane
+  shepherd.sh                # single-ticket end-to-end — runs one ticket through every stage sequentially
+  orchestrate.sh             # batch mode — plans + executes N tickets in parallel-safe worktree lanes
+  upstream-port.sh           # fast-path cherry-pick from a configured upstream, skipping the shepherd ceremony
+  bureau-status.sh           # read pipeline state without attaching to tmux
+
+  # ─── Per-stage workers (queue-loop calls these) ──────────────────────
+  spec-pipeline.sh           # Triage → Spec
+  spec-review-pipeline.sh    # Spec → Spec Review
+  ux-pipeline.sh             # opt-in: needs-ux → Design → Build
+  copy-pipeline.sh           # opt-in: needs-copy → Build
+  implement-pipeline.sh      # Build → QA (or Build Review if QA off)
+  qa-pipeline.sh             # opt-in: runs tests, writes missing ones, → Build Review or bounces to Build
+  code-review-pipeline.sh    # Build Review → Merge or Changes-Requested-back-to-Build
+  merge-pipeline.sh          # opt-in: gated merge — pr_ci_is_green + pr_base_is_current + no blocking labels
+  rebase-pipeline.sh         # opt-in: force-pushes to remote when a branch falls behind main
+
+  # ─── Loop mechanics + helpers ────────────────────────────────────────
+  queue-loop.sh              # per-agent poller — one process per stage, cron tick fires the matching pipeline
+  queue-loop-supervised.sh   # queue-loop wrapper with auto-restart + backoff on crash
+  bureau-config.sh           # reads .bureau.json (sourced by every pipeline script)
+  codex-stage-runner.sh      # backend for stages routed to Codex (opt-in via agents.<stage>.runner=codex)
+  crosscheck-specs.sh        # dry-run helper: reports spec-vs-in-flight PR file collisions before you shepherd
+  setup-merge-drivers.sh     # installs git merge drivers (union for CHANGELOG, ours for lockfiles)
+  grab-issue.sh              # Linear issue locking helper
+  complete-issue.sh          # Linear state transition helper
 specs/                    # specs land here (one folder per feature)
 ```
 
@@ -211,6 +228,68 @@ tmux ls | grep bureau-v2-                                      # both listed
 ```
 
 **Caveat:** the Linear API key is per-user across all your repos. Make sure each repo's `.bureau.json` points at a **different Linear project** — otherwise two workers will race on the same issues.
+
+### Drive a single ticket end-to-end (shepherd)
+
+Sometimes you want one ticket run through every stage right now — no cron ticks, no other tickets competing. That's `shepherd.sh`:
+
+```sh
+./scripts/shepherd.sh --no-tmux EXP-123
+```
+
+Runs `Triage → Spec → Spec-Review → Build → QA → Code-Review → Merge` sequentially for the named ticket, in `.worktrees/shepherd/` by default. Useful for smoke-testing your `.bureau.json` config, driving a single stuck ticket, or shipping a one-off without spinning up the whole queue. Pass `--worktree DIR` to isolate the checkout somewhere else.
+
+### Ship a batch (orchestrate + conflict-aware-schedule)
+
+For multiple tickets ready to go, `orchestrate.sh` runs them in parallel-safe worktree lanes. A "brain" workflow (`templates/workflows/conflict-aware-schedule.js`) predicts each ticket's file footprint, builds the collision graph, and emits:
+
+```json
+{ "serialChains": [["EXP-12","EXP-9"]], "parallelSafe": ["EXP-7","EXP-8"] }
+```
+
+File-colliders get serialized; independents run in parallel. Then:
+
+```sh
+./scripts/orchestrate.sh --execute --schedule schedule.json --max-concurrent 3
+```
+
+Each lane runs in its own git worktree (`.worktrees/shepherd-lane-N`) so builds never collide. Full walk-through of the executor pattern (SELECT → PLAN → EXECUTE → BABYSIT) lives in the [operator cheat-sheet](docs/OPERATOR-CHEATSHEET.md).
+
+### Port from upstream (upstream-port)
+
+If you're a fork of another repo, `upstream-port.sh` skips the shepherd ceremony for cherry-pick-shaped changes:
+
+```sh
+./scripts/upstream-port.sh --sha 53953a8               # port a single commit
+./scripts/upstream-port.sh --pr  3024                  # or a merged upstream PR
+./scripts/upstream-port.sh --sha 53953a8 --with-llm    # let Claude resolve conflicts
+```
+
+Configure the upstream in `.bureau.json` (`repo.upstream`, `repo.upstream_port.build_cmd`, `repo.upstream_port.test_cmd`). `--with-llm` invokes Claude *once* on a `git apply --3way` conflict to translate upstream intent against the local code; PR title carries a `(LLM-assisted)` marker. Off by default — you have to ask.
+
+### Single-flight mode (drain before refilling)
+
+Active repos with many concurrent feature tickets accumulate branch divergence faster than the pipeline can drain them. Symptom: every cron tick re-runs `merge_origin_main_or_abort` against an ever-advancing `origin/main`, conflicts pile up, the loop spins. Two knobs:
+
+```jsonc
+{
+  "agents": {
+    "max_concurrent_issues": 1   // 0 = unlimited (default). 1 = drain one issue end-to-end before Spec picks another.
+  }
+}
+```
+
+Combined with `queue-loop.sh`'s stage-priority reverse-sort (Merge/Rebase first, Spec last), the pipeline drains before refilling — attention goes to the tickets closest to Done. Full write-up in [recipes.md](docs/recipes.md).
+
+### Dry-run mode
+
+Every pipeline script honors `BUREAU_DRY_RUN=1` — instead of pushing branches, calling `gh pr create`, moving Linear states, or posting comments, it prints what it *would* have done. Safe first-run for a new `.bureau.json`:
+
+```sh
+BUREAU_DRY_RUN=1 ./scripts/shepherd.sh --no-tmux EXP-123
+```
+
+You'll see the full stage sequence, the prompts, and the "would move to state X" traces without any external mutation. Recommended for smoke-testing before you point the pipeline at a real Linear board.
 
 ### Template drift warnings
 
@@ -359,20 +438,29 @@ Two workarounds until dependency-awareness lands:
 ## Repo layout (for contributors)
 
 ```
-SKILL.md                       # 7-phase flow Claude follows when /bureau-init fires. Source of truth.
+SKILL.md                       # 8-phase flow (Phase 0–7) Claude follows when /bureau-init fires. Source of truth.
 README.md                      # User-facing install + usage (this file).
 CLAUDE.md                      # Claude Code guidance for this repo.
+CONTRIBUTING.md                # How to try Bureau, file a bug, send a PR. Read before opening one.
+SECURITY.md                    # Vulnerability reporting policy.
+CHANGELOG.md                   # Notable changes, PR-link driven.
+NOTICE                         # Third-party asset provenance.
 docs/landscape.md              # Competitive landscape research (reference).
 templates/
   scripts/*.sh                 # Pipeline scripts. Copied verbatim into the target repo's scripts/.
   commands/*.md                # Slash-command definitions. Copied into the target repo's .claude/commands/.
-  speckit/                     # spec-kit framework templates. Copied into the target repo's .specify/.
+  workflows/*.js               # "Brain" workflows (e.g. conflict-aware-schedule). Copied into .claude/workflows/.
+  .github/workflows/ci.yml     # Optional CI scaffold. Copied to target repo on Phase 6 confirmation.
 ```
 
+Note: **spec-kit is not vendored here** — Phase 4 delegates to the upstream `specify` CLI (pinned via `BUREAU_SPECKIT_VERSION`). No `templates/speckit/` directory exists.
+
 **Working rule:** when `SKILL.md` and a template disagree, the template wins. Update `SKILL.md` to match.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the PR workflow, test-suite invocation (`bash tests/run.sh`), and what's out of scope.
 
 ---
 
 ## Origin & license
 
-Built by Kai Ebert / Brainhuggers for internal use. Share freely. No warranty — this is a dev tool that writes code and talks to your Linear workspace; run it on repos you're comfortable auto-committing to.
+Built by [Kai Ebert](https://github.com/KaiaK808) / Brainhuggers. Open-sourced under the MIT license — see [LICENSE](LICENSE). No warranty; this is a dev tool that writes code and talks to your Linear workspace, so run it on repos you're comfortable auto-committing to. Security policy in [SECURITY.md](SECURITY.md); code of conduct in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
