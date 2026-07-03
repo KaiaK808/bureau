@@ -22,6 +22,35 @@ scripts/shepherd.sh --no-tmux EXP-123
 ```
 Runs that ticket through every stage to a terminal state. Builds in `.worktrees/shepherd` by default; pass `--worktree DIR` for a per-ticket checkout.
 
+**Dry-run overlay** — safe first-run when you're not sure what shepherd will do:
+
+```bash
+BUREAU_DRY_RUN=1 scripts/shepherd.sh --no-tmux EXP-123
+```
+
+Logs `DRY-RUN:` at every mutation site (Linear state moves, comments, `git push`, `gh pr create`). Nothing external changes; Claude prompts still run, files still change in the worktree, so you see the full decision sequence.
+
+## Continuous mode (queue-loop as cron worker)
+
+For always-on operation instead of on-demand shepherding:
+
+```bash
+scripts/start-bureau-v2.sh                    # → tmux session bureau-v2-<basename>
+tmux attach -t bureau-v2-$(basename "$PWD")   # watch it work
+```
+
+One `queue-loop.sh` per enabled agent polls Linear on `agents.poll_interval_minutes`. Each tick picks one issue and runs its stage. Kill with `tmux kill-session`.
+
+Override the session name for parallel repos:
+
+```bash
+cd ~/projects/sofa         && scripts/start-bureau-v2.sh   # → bureau-v2-sofa
+cd ~/projects/brainhuggers && scripts/start-bureau-v2.sh   # → bureau-v2-brainhuggers
+BUREAU_SESSION_NAME=nightshift scripts/start-bureau-v2.sh  # → nightshift
+```
+
+**Multi-repo caveat.** `LINEAR_API_KEY` is per-operator, one key across all repos — make sure each repo's `.bureau.json` points at a **different Linear project** or two workers will race on the same issues.
+
 ## Run a BATCH — the executor (the agent as conductor)
 
 Four moves:
@@ -101,6 +130,38 @@ Three independent flags in `.bureau.json` `agents.*` — all default OFF. Concep
 | `caveman_level: "full"` | Compresses review-prose output ~65%. Installs JuliusBrussee/skills at /bureau-init time; scoped to review stages only — commits + PR bodies stay normal. |
 
 Flip live; no script regen needed. Rollback = set the flag back.
+
+## Needs-human recovery
+
+When a ticket parks with `needs-human`, the loud-failure contract wrote an audit trail. Read the story:
+
+```bash
+# Every needs-human event as one TSV line — filter to today, filter to stage
+grep ESCALATED logs/escalations.log \
+  | grep "$(date -u +%Y-%m-%d)" \
+  | grep code-review
+
+# The matching JSON event (used by /bureau-learnings)
+grep "EXP-402" logs/events.jsonl | jq '.'
+
+# Per-stage session log for the pipeline that halted
+tail -100 logs/queue-<stage>.log
+```
+
+Recovery, in order:
+1. Read the last needs-human comment on the Linear issue — it names the halt class + reason.
+2. Real CI on the PR is the truth. Verify a parked "test-failed" halt against actual CI before believing the pipeline.
+3. Fix the underlying issue (spec, code, config, or the ticket description), then remove the `needs-human` label. On the next tick the queue picks it up from wherever it landed. Or use `shepherd.sh --no-tmux` to force-drive it now.
+
+## Memory loop (logs → LESSONS.md)
+
+`queue-loop.sh` appends one JSONL event per stage run to `logs/events.jsonl`. Weekly, drain it into curated learnings:
+
+```
+/bureau-learnings
+```
+
+Slash command mines the events + Linear comments and drafts `LESSONS.md`. The draft is never auto-committed — read the diff, cut what doesn't ring true, `git add LESSONS.md` when you're happy. Spec + code-review pipelines selectively include `LESSONS.md` in their prompts as advisory context (not pinned rules). To dismiss a finding, delete its bullet; if the pattern recurs, next `/bureau-learnings` will re-propose it.
 
 ## Status
 
