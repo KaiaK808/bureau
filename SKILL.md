@@ -357,6 +357,12 @@ Also ask:
 - **Workbench panes**: "How many interactive Claude sessions in the workbench? (default: 2)"
 - **Branch prefix**: "Branch prefix for feature branches? (default: feat)" — suggest based on team key
 
+**Backend routing (optional, advanced).** By default every stage runs on Claude (`agents.runner: "claude"`). Some stages can be routed to Codex to move spend off the Claude quota — but only review-shaped stages are safe. If the user mentions running out of Claude quota, mention this option:
+
+> `code_review` (and `spec_review`, `research`) can be routed to Codex via `agents.<stage>.runner: "codex"`. Codex reads diffs and writes review comments but its exec sandbox has no network, no trust-store, and no git-metadata writes — routing `qa` or `implement` there causes false-halts. `claude_cmd_for_stage()` fires a stderr warning if you configure an unsafe stage.
+
+Recipe walk-through: [docs/recipes.md → Mixed provider](docs/recipes.md#mixed-provider). Full flag schema: [docs/configuration.md → `agents.runner`](docs/configuration.md).
+
 ---
 
 ### Phase 3 — Write .bureau.json
@@ -408,15 +414,32 @@ Generate the config file from all collected information:
     "poll_interval_minutes": 30,
     "workbench_panes": 2,
     "max_review_cycles": 3,
+    "max_concurrent_issues": 0,
+    "code_review_sampling_threshold": 500,
+    "merge_min_required_checks": 1,
     "use_goal_loop": false,
     "headroom_wrap": false,
-    "caveman_level": "off"
+    "caveman_level": "off",
+    "runner": "claude",
+    "code_review": { "runner": "claude" }
+  },
+  "session": {
+    "cost_tracking": false,
+    "usage_threshold_pct": 80,
+    "pause_on_stale_data": false
   },
   "repo": {
     "branch_prefix": "feat",
     "commit_prefix": "CLI",
     "specs_dir": "specs",
-    "copy_voice_file": "docs/copy-voice.md"
+    "copy_voice_file": "docs/copy-voice.md",
+    "upstream": "ultraworkers/claw-code",
+    "upstream_port": {
+      "build_cmd": "cargo build --release",
+      "test_cmd": "cargo test --workspace --no-fail-fast",
+      "work_dir": "rust"
+    },
+    "path_prefix_strip": ""
   }
 }
 ```
@@ -730,26 +753,52 @@ pick_issue() {
 
 Generate these scripts, each sourcing `bureau-config.sh` for all IDs and config. The scripts should be functionally identical to the ones described in Appendix B below, but with all hardcoded values replaced by `$BUREAU_*` variables.
 
-Scripts to generate:
-1. `scripts/bureau-config.sh` — config reader (from step 5a)
-2. `scripts/queue-loop.sh` — orchestrator loop
-3. `scripts/spec-pipeline.sh` — Triage → Spec Review
-4. `scripts/spec-review-pipeline.sh` — Spec Review → Build/Design
-5. `scripts/ux-pipeline.sh` — Design → Build (only if ux agent enabled)
-6. `scripts/copy-pipeline.sh` — Copy → Build (only if copy agent enabled; no-op at runtime if states.copy absent)
-7. `scripts/implement-pipeline.sh` — Build → QA (if qa enabled) or Build Review
-8. `scripts/qa-pipeline.sh` — QA → Build Review (only if qa agent enabled; no-op at runtime if states.qa absent)
-9. `scripts/code-review-pipeline.sh` — Build Review → Merge|Done (Done is the path when merge agent disabled; Merge when enabled)
-9a. `scripts/merge-pipeline.sh` — Merge → Done (only if merge agent enabled; gated PR merger; no-op at runtime if states.merge absent)
-9b. `scripts/rebase-pipeline.sh` — DIRTY bureau-only PR → Build Review (only if rebase agent enabled; force-pushes; no-op at runtime if states.merge absent)
-10. `scripts/start-agents.sh` — tmux launcher
-11. `scripts/start-bureau-v2.sh` — enhanced tmux launcher with dashboard + workbench
-12. `scripts/bureau-status.sh` — live dashboard
-13. `scripts/grab-issue.sh` — manual issue pickup
-14. `scripts/complete-issue.sh` — manual issue completion
-15. `scripts/crosscheck-specs.sh` — spec vs PR file conflict checker
+Scripts to generate — all copied verbatim from `~/.claude/skills/bureau-init/templates/scripts/`, source of truth is that directory:
+
+**Drivers (what the operator invokes)**
+
+1. `scripts/start-bureau-v2.sh` — enhanced tmux launcher with dashboard + workbench (continuous queue mode)
+2. `scripts/start-agents.sh` — lower-level tmux launcher for a single agent's queue-loop
+3. `scripts/shepherd.sh` — single-ticket end-to-end driver (runs one ticket through every stage sequentially, in `.worktrees/shepherd/`)
+4. `scripts/orchestrate.sh` — batch executor (plan/execute handshake with `conflict-aware-schedule` brain; each ticket runs in its own worktree lane)
+5. `scripts/upstream-port.sh` — fast-path cherry-pick from a configured upstream (`repo.upstream`); optional `--with-llm` for Claude-assisted conflict resolution
+6. `scripts/bureau-status.sh` — live dashboard; `--cost` sub-mode reports per-issue token/$ when cost tracking is on
+
+**Per-stage workers (queue-loop calls these)**
+
+7. `scripts/spec-pipeline.sh` — Triage → Spec Review
+8. `scripts/spec-review-pipeline.sh` — Spec Review → Build/Design/Copy
+9. `scripts/ux-pipeline.sh` — Design → Build (only if `agents.ux` enabled)
+10. `scripts/copy-pipeline.sh` — Copy → Build (only if `agents.copy` enabled; no-op at runtime if `states.copy` absent)
+11. `scripts/implement-pipeline.sh` — Build → QA (if qa enabled) or Build Review
+12. `scripts/qa-pipeline.sh` — QA → Build Review (only if `agents.qa` enabled; no-op at runtime if `states.qa` absent)
+13. `scripts/code-review-pipeline.sh` — Build Review → Merge|Done (Done is the path when `agents.merge` disabled; Merge when enabled)
+14. `scripts/merge-pipeline.sh` — Merge → Done (only if `agents.merge` enabled; gated by `pr_ci_is_green` + `pr_base_is_current`; no-op at runtime if `states.merge` absent)
+15. `scripts/rebase-pipeline.sh` — DIRTY bureau-only PR → Build Review (only if `agents.rebase` enabled; force-pushes)
+
+**Loop mechanics + helpers**
+
+16. `scripts/bureau-config.sh` — config reader (from step 5a), sourced by every pipeline
+17. `scripts/queue-loop.sh` — per-agent poller; one process per stage
+18. `scripts/queue-loop-supervised.sh` — queue-loop wrapper with auto-restart + backoff on crash (uses `supervisor.max_crashes`)
+19. `scripts/codex-stage-runner.sh` — backend for stages routed to Codex (`agents.<stage>.runner: "codex"`); only safe for review-shaped stages (code_review, spec_review, research)
+20. `scripts/crosscheck-specs.sh` — dry-run helper: reports spec-vs-in-flight PR file collisions before you shepherd
+21. `scripts/setup-merge-drivers.sh` — installs git merge drivers (union for CHANGELOG, ours for lockfiles) so trivial conflicts auto-resolve
+22. `scripts/grab-issue.sh` — Linear issue locking helper
+23. `scripts/complete-issue.sh` — Linear state transition helper
 
 Make all scripts executable: `chmod +x scripts/*.sh`
+
+**Operational modes this install unlocks**
+
+The scripts above expose four operator entry points, each documented in the [README's "Running the pipeline" section](README.md#running-the-pipeline) and in the [operator cheat-sheet](docs/OPERATOR-CHEATSHEET.md):
+
+- **Continuous cron mode** — `./scripts/start-bureau-v2.sh` — poll Linear on `agents.poll_interval_minutes`, dispatch per stage
+- **Single-ticket mode** — `./scripts/shepherd.sh --no-tmux EXP-123` — one ticket end-to-end, ignore the queue
+- **Batch mode** — `./scripts/orchestrate.sh --execute --schedule schedule.json --max-concurrent 3` — parallel worktree lanes
+- **Fast-path port mode** — `./scripts/upstream-port.sh --sha <upstream-sha>` — cherry-pick without shepherd ceremony
+- **Dry-run overlay** — `BUREAU_DRY_RUN=1 <any of the above>` — logs intent, no Linear/GitHub mutations
+- **Multi-repo** — sessions scope by `basename $PWD`, so `cd repo-a && ./scripts/start-bureau-v2.sh` and `cd repo-b && ./scripts/start-bureau-v2.sh` don't collide
 
 **Critical changes from the hardcoded originals:**
 
@@ -1212,9 +1261,14 @@ Every pipeline script:
 | 11 | worktree-dirty | uncommitted changes in worktree |
 | 12 | no-branch | bureau-branch marker missing or points at a non-existent branch |
 | 13 | no-tasks | tasks.md expected but missing |
-| 14 | build-failed | build precondition failed |
-| 15 | no-pr | PR expected but not found |
+| 14 | build-failed | build precondition failed (or `upstream-port.sh` build_cmd non-zero) |
+| 15 | no-pr | PR expected but not found (or `upstream-port.sh` test_cmd non-zero — overloaded code) |
 | 16 | claude-unauth | `claude` CLI not logged in |
+| 17 | rebase-needed | `upstream-port.sh` `git apply --3way` produced conflicts (`--with-llm` offers retry) |
+| 18 | gh-failed | overloaded catch-all for `gh` failures — auth, rate-limit, branch protection, permission |
+| 19 | rebase-rejected | `git push --force-with-lease` refused (concurrent push since last fetch) |
+
+Anything outside this table (1 / 128 / 141) surfaces to `queue-loop` as `error-<N>` and follows the same throttled-alert path; usually indicates a bash bug (128 = git worktree collision; 141 = SIGPIPE; 1 = uncaught error).
 
 `queue-loop.sh` captures the exit code, maps it to a class, and calls `alert_telegram` (throttled to max 1 alert per issue/class/hour via `/tmp/bureau-alerts.log`). The alerter is a best-effort no-op when `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ALERT_CHAT_ID` are unset, so dev environments don't break.
 
@@ -1418,8 +1472,23 @@ resolves the model in this order (first non-empty wins):
 4. *(no `--model` flag — claude CLI default)*
 
 Stages with their own slot: `spec`, `spec_review`, `ux`, `copy`,
-`implement`, `qa`, `code_review`, `merge`. (Triage and rebase never call
-Claude — they're glue.)
+`implement`, `qa`, `code_review`, `merge`, `research`, `upstream_port`.
+(Triage and rebase never call Claude — they're glue.)
+
+**Runtime env overrides** (rarely useful for normal operation, but handy for one-off experiments):
+
+| Env var | Overrides |
+|---|---|
+| `BUREAU_MODEL_<STAGE>` | Per-stage Claude model — see the resolution ladder above |
+| `BUREAU_MODEL_DEFAULT` | Workspace-wide default Claude model |
+| `BUREAU_RUNNER_<STAGE>` | Per-stage backend — `claude` or `codex` |
+| `BUREAU_RUNNER_DEFAULT` | Workspace-wide default backend |
+| `BUREAU_CODEX_MODEL_<STAGE>` | Codex model id for a stage routed to Codex |
+| `BUREAU_CODEX_MODEL_DEFAULT` | Workspace-wide default Codex model |
+| `BUREAU_COST_TRACKING=1` | Turn on cost tracking without editing `.bureau.json` (equivalent to `session.cost_tracking: true`) |
+| `BUREAU_FORCE_ALL_AGENTS=1` | Bypass `agent_enabled()` — every agent's queue-loop runs regardless of `.bureau.json` toggles. Useful when driving `shepherd.sh` end-to-end against a repo with agents disabled for cron |
+| `BUREAU_DISABLE_THROTTLE=1` | Emergency bypass for the session-usage throttle. Doesn't touch `.bureau.json` |
+| `BUREAU_DRY_RUN=1` | Log intent instead of mutating Linear / GitHub / git. Safe for smoke-testing |
 
 Recommended model defaults at the time of writing (Mar 2026):
 
