@@ -77,6 +77,229 @@ For non-trivial conflicts, the pipeline exits 17 (rebase-needed) and routes for 
 
 ---
 
+## Exit-code symptom map
+
+Each pipeline script exits with a classified code — see `docs/exit-codes.md` for the canonical table. What to do when you see each:
+
+### Exit 10 (linear-down) — Linear API unreachable or auth-rejected
+
+Every stage hits the Linear GraphQL endpoint before any state mutation. Exit 10 means either the API returned an error or `LINEAR_API_KEY` isn't valid.
+
+- Check `.env` — `LINEAR_API_KEY` set and not expired?
+- Check Linear's status page. Rare, but happens.
+- `curl -sS -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" -d '{"query":"query { viewer { id } }"}' https://api.linear.app/graphql` — should return your user id
+
+### Exit 11 (worktree-dirty) — uncommitted changes block progression
+
+`precondition_clean_worktree` refuses to proceed with staged or unstaged changes in the target worktree. Typically someone made a manual edit or a prior tick was killed mid-work.
+
+```sh
+cd .worktrees/queue-<mode>            # or shepherd, or shepherd-lane-N
+git status
+git stash                             # or git reset --hard, if you're sure
+```
+
+Then re-run. Don't `rm -rf` the worktree — use `git worktree remove`.
+
+### Exit 12 (no-branch) — `bureau-branch:` marker missing
+
+Downstream stages resolve the branch via a `<!-- bureau-branch: ... -->` marker comment posted by spec-pipeline. Exit 12 means the marker is absent or points at a non-existent branch.
+
+- Check the Linear issue's comment history — is the digest comment there?
+- If deleted or edited, re-run spec-pipeline: `./scripts/queue-loop.sh spec 1` for the issue
+
+### Exit 13 (no-tasks) — `tasks.md` expected but missing or unmatched
+
+Implement-pipeline resolves the tasks.md file by matching the branch's leading number (e.g. `091-foo`) to a spec dir (`specs/091-*/tasks.md`).
+
+- Confirm `specs/NNN-slug/tasks.md` exists for the branch you're on
+- If the branch name got truncated by Linear's auto-branch feature, the number should still match — the fallback slug-substring match only kicks in for legacy branches without numeric prefix
+
+### Exit 14 (build-failed) — implement / upstream-port build gate failed
+
+The build command (`cargo build`, `npm run build`, `bash tests/run.sh`, etc.) returned non-zero. For **upstream-port.sh**, the command comes from `repo.upstream_port.build_cmd` — verify it's right for the target repo.
+
+- Tail: `tail -40 /tmp/upstream-port-build.*` (or check the pipeline log)
+- Common culprit: your build depends on a service (postgres, redis) that isn't running in the worktree
+
+### Exit 15 (no-pr / test-failed) — test gate failed OR expected PR doesn't exist
+
+**Overloaded code.** In queue-loop.sh scripts: no PR was found for the branch after the stage that should have created one. In upstream-port.sh: the test command (`repo.upstream_port.test_cmd`) returned non-zero.
+
+- For "no-PR": check `gh pr list --head <branch>` — was one created? Was it closed manually?
+- For "test-failed": look at the tail of `/tmp/upstream-port-test.*` for the failing test names
+
+### Exit 17 (rebase-needed) — `git apply --3way` produced conflicts
+
+Only fires in **upstream-port.sh**. Config-driven path translations (`.bureau-port-map.json`) already tried; the diff still has content conflicts.
+
+- Re-run with `--with-llm` to let Claude take a swing at translation (opt-in, cost gate applies)
+- Or escalate to a full shepherd ticket: create a Linear issue with the upstream link and let the normal pipeline handle it
+
+### Exit 18 (gh-failed) — overloaded catch-all for `gh` failures
+
+Broader than the exit-codes table suggests. Any `gh` sub-command failure (auth, rate-limit, permission, branch-protection rejection) surfaces as 18.
+
+- First: `gh auth status` — token expired?
+- Rate limit: `gh api rate_limit` — under 100 requests-remaining, cool off for an hour
+- Branch protection: check if the PR needs a review approval you don't have (bot accounts sometimes hit this)
+
+### Exit 19 (rebase-rejected) — `git push --force-with-lease` refused
+
+`rebase-pipeline.sh` uses `--force-with-lease` for safety. Refusal means someone else pushed to the same branch since your `git fetch`.
+
+- `git fetch origin && git push --force-with-lease` — should now succeed if the concurrent pusher is you (different terminal)
+- Otherwise: someone/something else is pushing. Investigate before retrying.
+
+### Exit 1 / 128 / 141 — `error-<N>` catch-all
+
+Anything outside the classified table maps to `error-<N>` in `queue-loop`'s alert throttling. Usually a bug in the pipeline script or an unhandled bash error.
+
+- `128` from git: often a worktree collision (`git worktree add` where the branch is already checked out elsewhere). Run `git worktree list` — remove the stale worktree with `git worktree remove --force`.
+- `141` from a piped command: SIGPIPE, usually harmless — some upstream in a pipe stopped consuming stdout early. If it's reproducible in a specific stage, that's a bug — file an issue.
+- `1` catch-all: read the last 20 lines of stderr; that's where the actual error will be.
+
+---
+
+## Driver failures (shepherd / orchestrate / upstream-port)
+
+### `shepherd.sh` bailed mid-run — how to resume
+
+Shepherd runs stages sequentially. If a stage fails, the issue stays in whatever state that stage moved it to, and `logs/escalations.log` records the terminal state.
+
+To resume, you can either:
+
+- Re-run the whole shepherd — the state guard skips already-completed stages
+- Fix the underlying issue (spec, code, config), then `./scripts/shepherd.sh --no-tmux EXP-N` again — it picks up from the current Linear state
+
+Combine with `BUREAU_DRY_RUN=1` first to preview what shepherd will do without mutating anything.
+
+### `orchestrate.sh --execute` — one lane failed, do the others continue?
+
+**Yes** — lanes run in independent worktrees, so a lane failure never blocks siblings. But: **serial chains** stop at the first failure. If `EXP-9 → EXP-12` is a chain and EXP-9's Build fails, EXP-12 stays in Triage until you fix EXP-9.
+
+To recover:
+
+```sh
+# See lane status
+./scripts/bureau-status.sh
+
+# Rerun a specific lane
+./scripts/shepherd.sh --no-tmux EXP-9 --worktree .worktrees/shepherd-lane-2
+```
+
+Or re-run the whole orchestrate with the same schedule — completed tickets are skipped, failed ones retry.
+
+### `upstream-port.sh` exit 15 — test gate false-negative
+
+Sometimes the test command passes locally but not inside the worktree — usually a service dependency (postgres, redis) or a missing env var.
+
+- Tail the failing test names from the log
+- If it's environment: set the needed env in `.env` and re-run
+- If it's flaky: `BUREAU_UPSTREAM_PORT_TEST="cargo test --workspace --no-fail-fast -- --skip flaky_test_name" ./scripts/upstream-port.sh ...`
+
+---
+
+## Stage-specific failures
+
+### Merge gate refuses to merge a PR that looks green
+
+`merge-pipeline.sh` enforces THREE independent gates: `pr_ci_is_green` (all check-runs completed + success), `pr_base_is_current` (`baseRefOid == origin/main HEAD`), and `mergeStateStatus == CLEAN` (GitHub's own answer). All three must pass.
+
+To diagnose:
+
+```sh
+gh pr view <N> --json statusCheckRollup,baseRefOid,mergeStateStatus
+git fetch origin && git rev-parse origin/main
+```
+
+- **`mergeStateStatus` isn't CLEAN**: usually `BEHIND` (need to rebase) or `BLOCKED` (missing review approval)
+- **`baseRefOid` doesn't match `origin/main`**: main has moved since the PR opened. Rebase.
+- **`statusCheckRollup` has a `FAILURE` or an in-progress check**: wait or fix the failing check
+
+The safety net exists because GitHub's `mergeStateStatus == CLEAN` is async-cached — it can lie for 30-60 seconds after main advances. Bureau's gates catch that.
+
+### Code-review hit `BUREAU_MAX_REVIEW_CYCLES` — what now?
+
+`agents.max_review_cycles` (default 3) caps how many `REQUEST_CHANGES → Build → Build Review` round-trips before parking.
+
+- Read the last review comment on the PR — it lists what the reviewer keeps flagging
+- If it's a legit disagreement, take over manually and either merge past it or fix
+- If the reviewer's wrong, tune `agents.code_review.model` to something with better judgment
+
+Cycle count survives across sessions via Linear labels (`bureau-review-cycle-N`), so restarting the pipeline doesn't reset it.
+
+### QA returned `NEEDS_HUMAN` verdict
+
+QA parks a ticket with `needs-human` when it can't decide whether a failure is legitimate (test genuinely fails) or spurious (env issue, flaky test, missing service).
+
+```sh
+# See what QA saw
+grep "$ISSUE" logs/events.jsonl | jq -r 'select(.event=="qa_verdict")'
+```
+
+Typically: pull the branch locally, run the tests yourself, and either fix the code or mark the test as skip/ignore with a rationale.
+
+### Codex-stage-runner failed spuriously
+
+Symptom: a stage routed to Codex (`agents.<stage>.runner: "codex"`) fails with weird errors — timeouts on network calls, missing git objects, "sandbox denied write" errors.
+
+Root cause: only `code_review` / `spec_review` / `research` are safe to route to Codex. Codex's exec sandbox has no network listeners, no git-metadata writes, no trust-store. `qa` and `implement` need all of those and false-halt inside the sandbox.
+
+Fix: route the stage back to Claude. `claude_cmd_for_stage()` fires a stderr warning when you set an unsafe stage to Codex — grep the pipeline log for that warning.
+
+---
+
+## Operational
+
+### Agents pause and don't restart — session throttle triggered
+
+If `session.usage_threshold_pct` is set (default 80) and a usage signal at `~/.bureau/session-usage.json` reports above threshold, the queue-loop pauses before starting a new work unit.
+
+To confirm: `cat ~/.bureau/session-usage.json` (or wherever `BUREAU_USAGE_FILE` points). If `pct > threshold`, that's why.
+
+**Emergency bypass:** `BUREAU_DISABLE_THROTTLE=1 ./scripts/queue-loop.sh ...` for the current process only. Doesn't touch `.bureau.json`.
+
+**Signal source:** ClaudeWatch is the community-standard writer. Without a producer, the throttle silently disables (no signal = keep working). If you want stricter behaviour, set `session.pause_on_stale_data: true` — but only after you have a producer.
+
+### Worktree collision — "branch already checked out at another worktree"
+
+Git refuses to check out the same branch in two worktrees. `queue-loop.sh` calls `free_branch_from_other_worktrees` to avoid this, but manual worktree operations can strand the state.
+
+```sh
+git worktree list                     # see all worktrees
+git worktree remove --force <path>    # if a worktree is defunct
+```
+
+### Rebase-pipeline aborted mid-rebase
+
+`rebase-pipeline.sh` runs `git rebase origin/main`. If a conflict appears in a hunk the auto-resolver can't handle, the rebase aborts and the ticket gets `needs-human`.
+
+Recovery:
+
+```sh
+cd .worktrees/queue-rebase
+git status                            # should show "rebase in progress"
+# Resolve conflicts manually, then:
+git add -A && git rebase --continue
+# Or abort and let someone else deal with it:
+git rebase --abort
+```
+
+Then remove the `needs-human` label from the Linear issue.
+
+### Using `BUREAU_DRY_RUN` to debug a specific stage
+
+Fastest way to reproduce a stage's decision-making without side effects:
+
+```sh
+BUREAU_DRY_RUN=1 ./scripts/<stage>-pipeline.sh <ISSUE-ID>
+```
+
+Every mutation logs `DRY-RUN:` instead of executing. Very fast, safe to spam.
+
+---
+
 ## Token-efficiency layers
 
 ### Implement parks `status=STUCK` on a ticket that's actually complete
