@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5 — pinned by SHA per supply-chain hygiene; Dependabot will open bump PRs
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0   # v5 — pinned by SHA per supply-chain hygiene; Dependabot will open bump PRs
 
       - name: Install test-only deps (jq is preinstalled)
         run: |
