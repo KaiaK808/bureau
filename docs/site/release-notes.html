@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6cf9a6f2df9492278860fcf72d570d7ad7703f8b14b96bc77a44cdfbf1536a91">
+<meta name="bureau-source-sha256" content="993ba7b4575310e9a1de624f63233f04b6418549814a0a9961672609b679eb51">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -16,12 +16,16 @@
 <a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
 </nav></aside>
 <main class="bhb-main"><h1
-id="claudecodex-support--draft-release-notes">Claude/Codex support —
-draft release notes</h1>
-<p><strong>Unreleased.</strong> No version, tag or GitHub Release has
-been selected or published. These notes describe the candidate source
-changes; the final release requires the verified commit and version
-described in the <a href="releases.html">release process</a>.</p>
+id="bureau-v200--claude-code-and-codex">Bureau v2.0.0 — Claude Code and
+Codex</h1>
+<p><strong>Stable release · 2026-09-07 · source tag
+<code>v2.0.0</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">GitHub
+Release</a> records publication and the exact tagged commit. This is the
+first versioned release; the initial public snapshot's v1.0.0 label did
+not have a corresponding tag or release. The major version identifies
+operational changes for existing workers and upgrades, independently of
+configuration schema numbers.</p>
 <p>Bureau can install interfaces for Claude Code, Codex, or both. Codex
 app tasks can prepare, perform, validate and resume individual Linear
 stages in their current checkout. Background stages can select Claude or
@@ -49,20 +53,26 @@ documentation.</li>
 <li>Updated field manual retaining the official repository's
 configuration, recipe and troubleshooting coverage.</li>
 </ul>
-<p>See the <a href="../../CHANGELOG.md">changelog</a>, <a
-href="migration.html">migration guide</a> and <a
-href="configuration.html">configuration reference</a>. The source
-repository is <a
+<p>The integration is <a
+href="https://github.com/KaiaK808/bureau/pull/9">PR #9</a>. See the <a
+href="../../CHANGELOG.md">changelog</a>, <a href="migration.html">migration
+guide</a> and <a href="configuration.html">configuration reference</a>.
+The source repository is <a
 href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a>.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p>Update the actual source skill checkout to the reviewed
-<code>main</code> commit or a published release tag, refresh skill
-discovery, and then resync each adopting repository. Updating the source
-alone, or running <code>/bureau-init --update</code>, does not replace
-installed scripts. Check the source remote before updating.</p>
+<p>Select tag <code>v2.0.0</code> in the actual source skill checkout
+using the <a href="migration.html#select-the-source-release">source-update
+procedure</a>, refresh skill discovery, and then resync each adopting
+repository. Updating the source alone, or running
+<code>/bureau-init --update</code>, does not replace installed scripts.
+Check the source remote, preserve changes and record the old commit
+before updating; tag-pinned installations do not use
+<code>git pull</code>.</p>
 <p>In Claude Code, after updating the source:</p>
 <pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
+<p>In a Codex app task, use:</p>
+<pre class="text"><code>$bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
 <p>Use <code>--target claude</code> to retain Claude-only interfaces.
 Refresh Spec Kit separately with <code>--resync-speckit</code> and
 existing planning workflows with <code>--resync-workflows</code> where
@@ -84,8 +94,13 @@ team.</p>
 reproducible source fixtures, isolated live provider smoke and a
 maintainer-reported private adoption. The source suite contains 35
 suites covering installation, runtime, providers, recovery, review stops
-and rendered documentation. The selected release commit must pass its
-own full Linux/macOS CI before tagging.</p>
+and rendered documentation. Release qualification requires all 35
+suites, Bash syntax, ShellCheck and documentation checks on Linux/macOS
+before tagging. The runtime and installer are unchanged from the
+live-qualified <a
+href="https://github.com/KaiaK808/bureau/commit/926015031cd95fa058dc159c8f927152fcf6b8f1">integration
+baseline</a>; release preparation updates documentation and reporting
+metadata.</p>
 <p>Representative live adoption exercised app stages, bounded Codex and
 mixed-provider routes, interruption/resume, project tests and durable
 review stops. It did not enable recurring dispatch or qualify a live

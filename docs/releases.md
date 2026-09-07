@@ -4,9 +4,11 @@ Bureau ships a source skill and templates that are copied into adopting reposito
 
 ## Current release status
 
-The Claude/Codex support in this source tree is **Unreleased**. No versioned tag or GitHub Release has been published. The [changelog](../CHANGELOG.md), [draft release notes](release-notes.md) and [acceptance record](codex-acceptance.md) describe the changes and available evidence. A branch must be merged before users following `main` receive it; source updates still require resyncing each adopting repository.
+This source tree contains **Bureau v2.0.0**, dated **2026-09-07**, for stable publication. The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) is the publication record and identifies the exact tagged commit. The [changelog](../CHANGELOG.md), [release notes](release-notes.md) and [acceptance record](codex-acceptance.md) describe the changes and available evidence. Source updates still require resyncing each adopting repository.
 
-The official repository is [KaiaK808/bureau](https://github.com/KaiaK808/bureau). Its initial commit used a `v1.0.0` label, but no corresponding tag or GitHub Release exists. Maintainers must select the first published version with that history in mind; this guide does not assign one retroactively. Configuration schema `version: 2` is not a Bureau v2 release. Publishing a tag and release remains a separate maintainer operation.
+The official repository is [KaiaK808/bureau](https://github.com/KaiaK808/bureau). Its initial commit used a `v1.0.0` label, but had no corresponding tag or GitHub Release. v2.0.0 is the first versioned release, marking operational changes for worker ownership and legacy upgrades; no v1 release is assigned retroactively. Configuration schema `version: 2` is independent of the Bureau release version, and v1 configurations remain supported.
+
+The qualified integration baseline is [926015031cd95fa058dc159c8f927152fcf6b8f1](https://github.com/KaiaK808/bureau/commit/926015031cd95fa058dc159c8f927152fcf6b8f1). Release preparation changes documentation and the bug-report template only. Verify that runtime, installer, templates and tests remain identical to that baseline, then require full CI on the final release commit. Record that final commit in the GitHub Release body; a committed document cannot contain its own final commit hash.
 
 ## Release contract
 
@@ -23,7 +25,7 @@ The official repository is [KaiaK808/bureau](https://github.com/KaiaK808/bureau)
 3. Verify the adoption instructions against the selected commit. List each required resync scope, any configuration/provider changes, new dependencies, protected old worktrees and rollback limits. Include what remains opt-in.
 4. Move the shipped Unreleased entries to `## [VERSION] - YYYY-MM-DD` in CHANGELOG.md, using the actual version/date, and leave a fresh Unreleased section. Update the release-status paragraphs in this guide and the upgrade guide; record the selected source commit and replace the draft status only when publication is ready.
 5. Regenerate the HTML manual with `python3 scripts/render_docs.py` and run `bash tests/test_docs.sh`. Commit the release documentation, then wait for that exact commit's checks. The release tag must include its own notes.
-6. Publish an annotated (or signed, when configured) tag on the verified commit and a GitHub Release with the same version. Mark a candidate as a prerelease. Review the rendered release notes and links before announcing availability.
+6. Publish an annotated (or signed, when configured) tag on the verified commit and a GitHub Release with the same version. Push only that exact tag, never all local tags. Mark a candidate as a prerelease; mark a stable release as latest. Use tag-bound documentation links and record the final commit in the GitHub Release body. Review the rendered release notes and links before announcing availability.
 7. Give existing users the two-step source-update/resync instructions. Record follow-up issues and known limitations; do not silently change released instructions into claims of validation that did not occur.
 
 Example publication commands, **only after** the maintainer has selected a real version and verified commit:
@@ -35,10 +37,10 @@ Example publication commands, **only after** the maintainer has selected a real 
 git tag -a "$BUREAU_RELEASE" "$BUREAU_RELEASE_COMMIT" -m "Bureau $BUREAU_RELEASE"
 git push origin "refs/tags/$BUREAU_RELEASE"
 gh release create "$BUREAU_RELEASE" --verify-tag \
-  --title "Bureau $BUREAU_RELEASE" --notes-file "$BUREAU_RELEASE_NOTES"
+  --title "Bureau $BUREAU_RELEASE" --notes-file "$BUREAU_RELEASE_NOTES" --latest
 ```
 
-Add `--prerelease` to the final command for a candidate. A tag/release is published only as an explicitly authorized release operation, not as a side effect of writing docs or updating a PR.
+For a candidate, replace `--latest` with `--prerelease --latest=false`. After publishing, verify the remote tag's peeled commit, the release flags and links, and installation from a fresh tag checkout. A tag/release is published only as an explicitly authorized release operation, not as a side effect of writing docs or updating a PR.
 
 ## Release-note outline
 

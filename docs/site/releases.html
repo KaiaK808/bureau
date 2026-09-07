@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6f682e22a3ec3aa642e4e43f40e62f4566282559e1cdf247172dcea1b0250925">
+<meta name="bureau-source-sha256" content="706a17574ee1a8efce27935c850ac85a12e5141887180f204587ade1da897110">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,22 +24,30 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>The Claude/Codex support in this source tree is
-<strong>Unreleased</strong>. No versioned tag or GitHub Release has been
-published. The <a href="../../CHANGELOG.md">changelog</a>, <a
-href="release-notes.html">draft release notes</a> and <a
+<p>This source tree contains <strong>Bureau v2.0.0</strong>, dated
+<strong>2026-09-07</strong>, for stable publication. The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">GitHub
+Release</a> is the publication record and identifies the exact tagged
+commit. The <a href="../../CHANGELOG.md">changelog</a>, <a
+href="release-notes.html">release notes</a> and <a
 href="codex-acceptance.html">acceptance record</a> describe the changes
-and available evidence. A branch must be merged before users following
-<code>main</code> receive it; source updates still require resyncing
-each adopting repository.</p>
+and available evidence. Source updates still require resyncing each
+adopting repository.</p>
 <p>The official repository is <a
 href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a>. Its
-initial commit used a <code>v1.0.0</code> label, but no corresponding
-tag or GitHub Release exists. Maintainers must select the first
-published version with that history in mind; this guide does not assign
-one retroactively. Configuration schema <code>version: 2</code> is not a
-Bureau v2 release. Publishing a tag and release remains a separate
-maintainer operation.</p>
+initial commit used a <code>v1.0.0</code> label, but had no
+corresponding tag or GitHub Release. v2.0.0 is the first versioned
+release, marking operational changes for worker ownership and legacy
+upgrades; no v1 release is assigned retroactively. Configuration schema
+<code>version: 2</code> is independent of the Bureau release version,
+and v1 configurations remain supported.</p>
+<p>The qualified integration baseline is <a
+href="https://github.com/KaiaK808/bureau/commit/926015031cd95fa058dc159c8f927152fcf6b8f1">926015031cd95fa058dc159c8f927152fcf6b8f1</a>.
+Release preparation changes documentation and the bug-report template
+only. Verify that runtime, installer, templates and tests remain
+identical to that baseline, then require full CI on the final release
+commit. Record that final commit in the GitHub Release body; a committed
+document cannot contain its own final commit hash.</p>
 <h2 id="release-contract">Release contract</h2>
 <ul>
 <li>Use <code>vMAJOR.MINOR.PATCH</code> tags, with an <code>-rc.N</code>
@@ -92,9 +100,11 @@ publication is ready.</li>
 then wait for that exact commit's checks. The release tag must include
 its own notes.</li>
 <li>Publish an annotated (or signed, when configured) tag on the
-verified commit and a GitHub Release with the same version. Mark a
-candidate as a prerelease. Review the rendered release notes and links
-before announcing availability.</li>
+verified commit and a GitHub Release with the same version. Push only
+that exact tag, never all local tags. Mark a candidate as a prerelease;
+mark a stable release as latest. Use tag-bound documentation links and
+record the final commit in the GitHub Release body. Review the rendered
+release notes and links before announcing availability.</li>
 <li>Give existing users the two-step source-update/resync instructions.
 Record follow-up issues and known limitations; do not silently change
 released instructions into claims of validation that did not occur.</li>
@@ -107,10 +117,13 @@ maintainer has selected a real version and verified commit:</p>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> tag <span class="at">-a</span> <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE_COMMIT</span><span class="st">&quot;</span> <span class="at">-m</span> <span class="st">&quot;Bureau </span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span></span>
 <span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> push origin <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span></span>
 <span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> release create <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="at">--verify-tag</span> <span class="dt">\</span></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--title</span> <span class="st">&quot;Bureau </span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="at">--notes-file</span> <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE_NOTES</span><span class="st">&quot;</span></span></code></pre></div>
-<p>Add <code>--prerelease</code> to the final command for a candidate. A
-tag/release is published only as an explicitly authorized release
-operation, not as a side effect of writing docs or updating a PR.</p>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--title</span> <span class="st">&quot;Bureau </span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="at">--notes-file</span> <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE_NOTES</span><span class="st">&quot;</span> <span class="at">--latest</span></span></code></pre></div>
+<p>For a candidate, replace <code>--latest</code> with
+<code>--prerelease --latest=false</code>. After publishing, verify the
+remote tag's peeled commit, the release flags and links, and
+installation from a fresh tag checkout. A tag/release is published only
+as an explicitly authorized release operation, not as a side effect of
+writing docs or updating a PR.</p>
 <h2 id="release-note-outline">Release-note outline</h2>
 <div class="sourceCode" id="cb2"><pre
 class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">## What changed</span></span>
