@@ -8,15 +8,19 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
+BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
+set -a
+# shellcheck disable=SC1090
 if [ -f .env ]; then source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then source "$SCRIPT_REPO/.env"
-else echo "ERROR: No .env found"; exit 1; fi
+elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
+set +a
 
 # Honor BUREAU_MODEL_CODE_REVIEW / .agents.code_review.model like every other
 # pipeline (EXP-490). Without this, code review silently ignored the per-stage
 # model knob and stuck to the CLI default — making it ineligible for the
 # cheap-model migration the per-stage map was designed for.
-CLAUDE=$(claude_cmd_for_stage "code_review")
+CLAUDE=(run_stage_for code_review)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 REVIEW_TMP=$(mktemp -d)
 # Preserve REVIEW_TMP only on real failures. 0 = success, 2 = queue-empty —
@@ -32,6 +36,7 @@ _review_cleanup() {
 trap _review_cleanup EXIT
 
 precondition_linear
+precondition_runner code_review
 
 if [ -n "${1:-}" ]; then
   ISSUE="$1"
@@ -48,6 +53,8 @@ else
 fi
 
 # State guard runs unconditionally — see implement-pipeline.sh for rationale.
+bureau_stage_enter "$ISSUE" "$@"
+
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
 if [ "$ACTUAL_STATE" != "Build Review" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Build Review'. Skipping."
@@ -69,7 +76,7 @@ echo "  $ISSUE: $ISSUE_TITLE"
 echo "→ Finding branch and PR..."
 BRANCH=$(get_issue_branch "$ISSUE")
 
-if [ -z "$BRANCH" ] || [[ "$BRANCH" == *" "* ]]; then
+if [ -z "$BRANCH" ] || [[ "$BRANCH" == -* ]] || ! git check-ref-format "refs/heads/$BRANCH" >/dev/null 2>&1; then
   echo "  ERROR: no bureau-branch marker found for $ISSUE."
   post_comment "$ISSUE" "❌ Code review aborted — no bureau-branch marker. Moving back to Build."
   move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
@@ -77,8 +84,19 @@ if [ -z "$BRANCH" ] || [[ "$BRANCH" == *" "* ]]; then
 fi
 echo "  Branch: $BRANCH"
 
+# Recheck under the worker's issue lease: another tick may have selected this
+# ticket just before the previous reviewer saved its stop and released ownership.
+if bureau_stop_requested; then
+  REVIEW_STOP=$(printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" check "$ISSUE" \
+    --branch "$BRANCH" --state "$ACTUAL_STATE") || exit 18
+  if [ "$(printf '%s' "$REVIEW_STOP" | jq -r .stopped)" = true ]; then
+    echo "Review already approved at the unchanged head; still stopped before merge."
+    exit 20
+  fi
+fi
+
 PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
-if [ -z "$PR_NUMBER" ]; then
+if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
   echo "  ERROR: no PR found for branch $BRANCH"
   post_comment "$ISSUE" "❌ Code review aborted — no open PR for branch \`$BRANCH\`. Moving back to Build."
   move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
@@ -95,32 +113,44 @@ if [ "$PR_STATE" = "MERGED" ]; then
   move_issue "$ISSUE" "$BUREAU_STATE_DONE"
   exit 0
 fi
-
-git fetch origin
-# Release the branch from any other worktree before attaching here.
-free_branch_from_other_worktrees "$BRANCH" "$(pwd)"
-if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-  git checkout -B "$BRANCH" "origin/$BRANCH"
-elif git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-  git checkout "$BRANCH"
-else
-  echo "  ERROR: branch '$BRANCH' not found locally or on origin."
-  post_comment "$ISSUE" "❌ Code review aborted — branch \`$BRANCH\` does not exist. Moving back to Build."
-  move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
-  exit 12
+if [ "$PR_STATE" != OPEN ]; then
+  echo "  ERROR: PR #$PR_NUMBER is not confirmed open."
+  exit 15
 fi
 
-if ! merge_origin_main_or_abort "$ISSUE" "Code Review"; then
+# Read the target from this PR, not the repository's default branch. Fetch both
+# branch tips explicitly, then use immutable commits throughout the review.
+PR_REFS=$(gh pr view "$PR_NUMBER" --json baseRefName,headRefName) || exit 18
+PR_BASE_REF=$(printf '%s' "$PR_REFS" | jq -er --arg branch "$BRANCH" \
+  'select(.headRefName == $branch) | .baseRefName | select(type == "string" and length > 0)') || {
+  echo "  ERROR: cannot resolve the matching PR head and base branch."
+  exit 18
+}
+if [[ "$PR_BASE_REF" == -* ]] || ! git check-ref-format "refs/heads/$PR_BASE_REF" >/dev/null 2>&1; then
+  echo "  ERROR: PR base is not a safe branch ref."
+  exit 18
+fi
+git fetch --no-tags origin \
+  "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
+  "+refs/heads/$PR_BASE_REF:refs/remotes/origin/$PR_BASE_REF" || exit 18
+REVIEW_HEAD=$(git rev-parse --verify "refs/remotes/origin/$BRANCH^{commit}") || exit 18
+REVIEW_BASE=$(git rev-parse --verify "refs/remotes/origin/$PR_BASE_REF^{commit}") || exit 18
+REVIEW_DIFF="$REVIEW_BASE...$REVIEW_HEAD"
+# Refuse another checkout's ownership before attaching this registered worker.
+free_branch_from_other_worktrees "$BRANCH" "$(pwd)"
+git checkout -B "$BRANCH" "$REVIEW_HEAD"
+
+# Review may merge its target locally for the build check. The durable boundary
+# tracks the two fetched remote inputs, not that unpublished local merge SHA.
+if ! merge_origin_main_or_abort "$ISSUE" "Code Review" "$REVIEW_BASE"; then
   move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
   exit 17
 fi
 
-DIFF_REF="$BRANCH"
-git rev-parse "$BRANCH" >/dev/null 2>&1 || DIFF_REF="origin/$BRANCH"
-FILES_CHANGED=$(git diff --name-only origin/main..."$DIFF_REF" 2>/dev/null || echo "")
+FILES_CHANGED=$(git diff --name-only "$REVIEW_DIFF" --) || exit 18
 FILES_COUNT=$(echo "$FILES_CHANGED" | grep -c . || true)
 # shortstat: " 3 files changed, 42 insertions(+), 7 deletions(-)"
-DIFF_SHORTSTAT=$(git diff --shortstat origin/main..."$DIFF_REF" 2>/dev/null | sed 's/^[[:space:]]*//' || echo "")
+DIFF_SHORTSTAT=$(git diff --shortstat "$REVIEW_DIFF" -- | sed 's/^[[:space:]]*//') || exit 18
 DIFF_TOTAL=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+[[:space:]]*insertion|[0-9]+[[:space:]]*deletion' | awk '{s+=$1} END{print s+0}')
 DIFF_STATS="${DIFF_SHORTSTAT:-no diff} (~${DIFF_TOTAL:-0} line changes)"
 echo "  Files changed: $FILES_COUNT | $DIFF_STATS"
@@ -190,7 +220,7 @@ if [ "$_cav" != "off" ]; then
 fi
 
 echo "  Starting correctness review..."
-$CLAUDE "${CAVEMAN_PREFIX}You are a CORRECTNESS specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
+"${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a CORRECTNESS specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
 
 $SPEC_CONTEXT
 
@@ -200,7 +230,7 @@ $CYCLE_NOTE
 
 Diff: $DIFF_STATS$DIFF_GUIDANCE
 
-Run 'git diff origin/main...$BRANCH'. Check: logic errors, null/undefined, race conditions, error handling, acceptance criteria satisfaction, task completion.
+PR target: $PR_BASE_REF. Review the pinned PR inputs with 'git diff $REVIEW_DIFF --'. The checkout may include a local validation merge of that base; keep findings scoped to this immutable diff. Check: logic errors, null/undefined, race conditions, error handling, acceptance criteria satisfaction, task completion.
 
 For every finding, cite file:line. Classify CRITICAL (data-loss / silent corruption) / BUG (real defect) / MINOR (style, nit) / SKIP (contradicts a pinned decision — include citation to the pin).
 
@@ -212,7 +242,7 @@ Emit human-readable prose for the PR reviewer, then a SINGLE fenced json block a
 CORRECT_PID=$!
 
 echo "  Starting security review..."
-$CLAUDE "${CAVEMAN_PREFIX}You are a SECURITY specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
+"${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a SECURITY specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
 
 $SPEC_CONTEXT
 
@@ -222,7 +252,7 @@ $CYCLE_NOTE
 
 Diff: $DIFF_STATS$DIFF_GUIDANCE
 
-Run 'git diff origin/main...$BRANCH'. Check: injection, auth/authz, secrets, data exposure, CORS/CSRF, dependency vulns, input validation.
+PR target: $PR_BASE_REF. Review the pinned PR inputs with 'git diff $REVIEW_DIFF --'. The checkout may include a local validation merge of that base; keep findings scoped to this immutable diff. Check: injection, auth/authz, secrets, data exposure, CORS/CSRF, dependency vulns, input validation.
 
 For every finding, cite file:line. Classify CRITICAL / BUG / MINOR / SKIP (with pin citation).
 
@@ -234,7 +264,7 @@ Emit human-readable prose, then a SINGLE fenced json block:
 SEC_PID=$!
 
 echo "  Starting performance review..."
-$CLAUDE "${CAVEMAN_PREFIX}You are a PERFORMANCE specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
+"${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a PERFORMANCE specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
 
 $SPEC_CONTEXT
 
@@ -244,7 +274,7 @@ $CYCLE_NOTE
 
 Diff: $DIFF_STATS$DIFF_GUIDANCE
 
-Run 'git diff origin/main...$BRANCH'. Check: database N+1, rendering blocks, bundle size regression, memory leaks, network waterfalls, algorithmic complexity relative to the baseline.
+PR target: $PR_BASE_REF. Review the pinned PR inputs with 'git diff $REVIEW_DIFF --'. The checkout may include a local validation merge of that base; keep findings scoped to this immutable diff. Check: database N+1, rendering blocks, bundle size regression, memory leaks, network waterfalls, algorithmic complexity relative to the baseline.
 
 Performance is the most likely axis to over-flag. Only raise BUG for measurable regressions — not speculative micro-optimisations.
 
@@ -287,7 +317,7 @@ done
 echo ""
 echo "  Merging findings..."
 
-MERGED_REVIEW=$($CLAUDE "${CAVEMAN_PREFIX}Merge these three specialist reviews into a single verdict for PR #$PR_NUMBER ($ISSUE — $ISSUE_TITLE).
+MERGED_REVIEW=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-review.schema.json" "${CAVEMAN_PREFIX}Merge these three specialist reviews into a single verdict for PR #$PR_NUMBER ($ISSUE — $ISSUE_TITLE).
 
 ### Correctness
 $CORRECTNESS_REVIEW
@@ -371,10 +401,28 @@ fi
 
 BUILD FAILURE: Must be fixed."
 
+# A provider can take long enough for the PR to be retargeted or either remote
+# branch to advance. Preserve its evidence without publishing a stale verdict.
+CURRENT_PR=$(gh pr view "$PR_NUMBER" --json state,baseRefName,headRefName) || exit 18
+if ! printf '%s' "$CURRENT_PR" | jq -e --arg head "$BRANCH" --arg base "$PR_BASE_REF" \
+  '.state == "OPEN" and .headRefName == $head and .baseRefName == $base' >/dev/null; then
+  echo "  ERROR: PR identity or target changed during review; retained review output needs reconciliation."
+  exit 18
+fi
+CURRENT_REFS=$(git ls-remote --exit-code origin "refs/heads/$BRANCH" "refs/heads/$PR_BASE_REF") || exit 18
+CURRENT_HEAD=$(printf '%s' "$CURRENT_REFS" | awk -v ref="refs/heads/$BRANCH" '$2 == ref {print $1}')
+CURRENT_BASE=$(printf '%s' "$CURRENT_REFS" | awk -v ref="refs/heads/$PR_BASE_REF" '$2 == ref {print $1}')
+if [ "$CURRENT_HEAD" != "$REVIEW_HEAD" ] || [ "$CURRENT_BASE" != "$REVIEW_BASE" ]; then
+  echo "  ERROR: PR head or base advanced during review; retained review output needs reconciliation."
+  exit 18
+fi
+
 REVIEW_COMMENT="## Code Review v2 — $ISSUE
 
 **Verdict**: $VERDICT
 **Build**: $([ "$BUILD_OK" = true ] && echo "Passed" || echo "FAILED")
+**Reviewed head**: \`$REVIEW_HEAD\`
+**Target**: \`$PR_BASE_REF\` at \`$REVIEW_BASE\`
 
 ---
 
@@ -390,59 +438,25 @@ echo "  Posted review to PR #$PR_NUMBER"
 case "$VERDICT" in
   APPROVE)
     echo "  Code review PASSED"
-    # Two-phase split: when the merge agent is enabled AND a Merge state is
-    # configured, hand the PR off to merge-pipeline.sh (which gates on
-    # mergeStateStatus=CLEAN, no unresolved threads, etc.) instead of merging
-    # here. This lets review and merge run on independent cadences and gives
-    # the merge gate a single chokepoint to audit.
-    #
-    # When merge agent is disabled (default), preserve the original behavior:
-    # squash-merge here and move straight to Done. Backward-compatible — repos
-    # that don't opt into the merge agent see no change.
-    if agent_enabled "merge" && [ -n "${BUREAU_STATE_MERGE:-}" ]; then
-      echo "  Routing to Merge state (merge agent will gate and merge)."
+    if bureau_stop_requested; then
+      # Save before the owning worker releases its lease, closing the gap where
+      # another tick could start the same paid review. Record the reviewed inputs.
+      if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
+        printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+          --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" >/dev/null
+      fi
+      post_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested."
+      echo "Review complete; stopped before merge."
+      exit 20
+    elif agent_enabled "merge" && [ -n "${BUREAU_STATE_MERGE:-}" ]; then
       post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaiting merge gate."
       move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
       NEXT_STATE="Merge"
     else
-      echo "  Merging PR #$PR_NUMBER..."
-      # Remote branch deletion should be handled by the GitHub repo setting
-      # `deleteBranchOnMerge: true` (enable with `gh repo edit
-      # --delete-branch-on-merge`). Local branch cleanup is handled by
-      # queue-loop.sh's worktree reset cycle (EXP-415 Part A). We deliberately
-      # do NOT pass --delete-branch: inside .worktrees/queue-code-review gh fails
-      # either because main is held by the primary worktree (sofa PR #5 / #6) or
-      # because detached HEAD has no current branch (sofa PR #9).
-      #
-      # Verify the merge actually succeeded before claiming it. The original
-      # `|| echo "Auto-merge failed"` swallowed the failure and the next two
-      # lines posted "PR merged" + moved to Done unconditionally — producing
-      # the recurring state-divergence bug where Linear reports Done but the
-      # PR sits OPEN on GitHub. Now we capture the exit code, double-check
-      # via `gh pr view` (which reads the authoritative MERGED state), and
-      # only on real success post the merged comment + route to Done.
-      # Otherwise route the issue to needs-human and exit 18 (gh-failed).
-      gh pr merge "$PR_NUMBER" --squash
-      MERGE_EXIT=$?
-      sleep 1  # let GitHub propagate the state
-      ACTUAL_PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
-      if [ "$MERGE_EXIT" = "0" ] && [ "$ACTUAL_PR_STATE" = "MERGED" ]; then
-        post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER merged. Moving to Done."
-        move_issue "$ISSUE" "$BUREAU_STATE_DONE"
-        NEXT_STATE="Done"
-      else
-        echo "  Merge attempt failed (exit=$MERGE_EXIT, PR state=$ACTUAL_PR_STATE) — routing to needs-human."
-        if add_issue_label "$ISSUE" "needs-human"; then
-          log_escalation "$ISSUE" "code-review" "${REVIEW_CYCLE_COUNT:-0}" \
-            "gh pr merge failed exit=$MERGE_EXIT state=$ACTUAL_PR_STATE" \
-            "$PR_NUMBER" "$BRANCH"
-        else
-          echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
-        fi
-        post_comment "$ISSUE" "⚠️ Code review **APPROVED** but \`gh pr merge\` failed (exit $MERGE_EXIT, PR state $ACTUAL_PR_STATE). Branch may need rebase, the PR may have a branch-protection block, or the merge agent may not be configured. Inspect manually."
-        NEXT_STATE="Build Review (needs-human)"
-        exit 18
-      fi
+      # Keep inline completion, but use exactly the same full gate set and JIT
+      # checks as the dedicated merge worker, including when no Merge state exists.
+      BUREAU_INLINE_MERGE=1 bash "$SCRIPT_REPO/scripts/merge-pipeline.sh" "$ISSUE"
+      NEXT_STATE="Done"
     fi
     ;;
   REQUEST_CHANGES)

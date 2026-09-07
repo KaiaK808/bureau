@@ -87,7 +87,8 @@ export BUREAU_SPECS_DIR="specs"
 
 # Preconditions: no-op success
 precondition_linear() { return 0; }
-precondition_claude_auth() { return 0; }
+bureau_is_paused() { return 1; }
+precondition_claude_auth() { echo auth >> "$LABEL_LOG"; return 0; }
 
 # State helpers — UUID ↔ name map
 _uuid_to_name() {
@@ -178,6 +179,13 @@ PIPELINE_EOF
   _make_stub_pipeline code-review-pipeline.sh "$BUREAU_STATE_MERGE_SIM"
   _make_stub_pipeline merge-pipeline.sh       "$BUREAU_STATE_DONE_SIM"
 
+  # Real ownership wrapper around the simulated stage state machine.
+  git -C "$sb" init -q
+  cp "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$sb/scripts/"
+  cp "$REPO_ROOT/templates/scripts/bureau-worker.sh" "$sb/scripts/"
+  cat >> "$sb/scripts/bureau-config.sh" <<'RUNTIME'
+BUREAU_RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-runtime.py"
+RUNTIME
   # Copy real shepherd
   cp "$REAL_SHEPHERD" "$sb/scripts/shepherd.sh"
   chmod +x "$sb/scripts/shepherd.sh"
@@ -261,7 +269,9 @@ test_no_merge() {
   local sb; sb=$(make_sandbox nomerge)
   echo "s1" > "$sb/state.txt"
 
-  run_shepherd "$sb" --no-merge EXP-2
+  local rc=0
+  run_shepherd "$sb" --no-merge EXP-2 || rc=$?
+  assert_eq "$rc" "20" "stopped before merge must not report Done"
 
   local got
   got=$(tr '\n' ' ' < "$sb/invocations.log" | sed 's/ $//')
@@ -281,7 +291,9 @@ test_dry_run() {
   local sb; sb=$(make_sandbox dryrun)
   echo "s5" > "$sb/state.txt"   # Build
 
-  run_shepherd "$sb" --dry-run EXP-3
+  run_shepherd "$sb" --dry-run --from-stage triage EXP-3
+  [ ! -s "$sb/labels.log" ] || { echo "FAIL dry-run called auth or label mutation"; return 1; }
+  assert_eq "$(cat "$sb/state.txt")" s5 "dry-run preserves state" || return 1
 
   [ ! -s "$sb/invocations.log" ] \
     || { echo "FAIL: --dry-run invoked a pipeline"; cat "$sb/invocations.log"; return 1; }

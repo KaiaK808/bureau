@@ -8,14 +8,19 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
+BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
+set -a
+# shellcheck disable=SC1090
 if [ -f .env ]; then source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then source "$SCRIPT_REPO/.env"
-else echo "ERROR: No .env found"; exit 1; fi
+elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
+set +a
 
-CLAUDE=$(claude_cmd_for_stage "spec_review")
+CLAUDE=(run_stage_for spec_review)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 
 precondition_linear
+precondition_runner spec_review
 
 if [ -n "${1:-}" ]; then
   ISSUE="$1"
@@ -32,6 +37,8 @@ else
 fi
 
 # State guard runs unconditionally — see implement-pipeline.sh for rationale.
+bureau_stage_enter "$ISSUE" "$@"
+
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
 if [ "$ACTUAL_STATE" != "Spec Review" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Spec Review'. Skipping."
@@ -105,7 +112,7 @@ echo "Phase 1/2: review specs against codebase"
 
 SPEC_CONTEXT=$(build_spec_context "$SPEC_DIR")
 
-REVIEW_RESULT=$($CLAUDE "You are the spec reviewer for $ISSUE ($ISSUE_TITLE). Validate, don't rewrite.
+REVIEW_RESULT=$("${CLAUDE[@]}" "You are the spec reviewer for $ISSUE ($ISSUE_TITLE). Validate, don't rewrite.
 
 $SPEC_CONTEXT
 
@@ -129,7 +136,7 @@ End your response with a single fenced json block (the shell parses it):
 
 \`\`\`json
 {\"review_status\":\"PASS|FAIL\",\"ui_work_needed\":true,\"issues_found\":0,\"issues_fixed\":0,\"remaining_issues\":[],\"summary\":\"2-3 sentences\"}
-\`\`\`" 2>&1)
+\`\`\`")
 
 echo "$REVIEW_RESULT"
 
@@ -152,14 +159,11 @@ case "$UI_NEEDED_RAW" in
   *) UI_NEEDED="NO" ;;
 esac
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  git add -A
-  git commit -m "$ISSUE: spec-review adjustments" --allow-empty || true
-  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
-  else
-    git push origin HEAD || true
-  fi
+commit_stage_changes spec_review "$ISSUE"
+if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+  echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
+else
+  git push origin HEAD || exit 18
 fi
 
 REVIEW_SUMMARY=$(parse_claude_json "$REVIEW_RESULT" '.summary // "no summary"')

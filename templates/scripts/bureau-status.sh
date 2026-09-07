@@ -106,8 +106,7 @@ show_effective_config() {
   echo -e "  ${BOLD}AGENTS${RESET}  (on/off toggles)"
   local a
   for a in spec spec_review ux copy implement qa code_review merge rebase; do
-    local v; v=$(bureau_get ".agents.$a // false")
-    if [ "$v" = "false" ] || [ "$v" = "null" ]; then
+    if ! agent_enabled "$a"; then
       _row agents "$a" "json" "off"
     else
       _row agents "$a" "json" "ON"
@@ -140,21 +139,12 @@ show_effective_config() {
   _row supervisor stability_window "$row_source" "$row_value"
   echo ""
 
-  echo -e "  ${BOLD}MODELS${RESET}  (per-stage; env shortcut overrides .bureau.json)"
-  _resolve_env_over_json BUREAU_MODEL_DEFAULT     ".agents.model"             "(claude CLI default)"
-  _row model agents.model         "$row_source" "$row_value"
-  local stage
-  for stage in spec spec_review ux copy implement qa code_review merge; do
-    local upper; upper=$(printf '%s' "$stage" | tr '[:lower:]' '[:upper:]')
-    local env_var="BUREAU_MODEL_${upper}"
-    if [ -n "${!env_var+x}" ] && [ -n "${!env_var}" ]; then
-      row_value="${!env_var}"; row_source="env *"
-    else
-      local v; v=$(bureau_get_agent_model "$stage")
-      if [ -n "$v" ]; then row_value="$v"; row_source="json"
-      else row_value="(inherits default)"; row_source="def"; fi
-    fi
-    _row model "agents.${stage}.model" "$row_source" "$row_value"
+  echo -e "  ${BOLD}PROVIDERS AND MODELS${RESET}  (resolved by the execution adapter)"
+  local stage effective
+  for stage in spec spec_review research ux copy implement qa code_review; do
+    agent_enabled "$stage" || continue
+    effective=$(python3 "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" --config "$BUREAU_CONFIG" --stage "$stage" --describe) || return $?
+    printf '    %s: %s\n' "$stage" "$(printf '%s' "$effective" | jq -r '.runner + " / " + (.model // "CLI default") + " / " + .sandbox')"
   done
   echo ""
 

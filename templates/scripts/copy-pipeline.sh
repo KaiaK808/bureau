@@ -13,14 +13,19 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
+BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
+set -a
+# shellcheck disable=SC1090
 if [ -f .env ]; then source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then source "$SCRIPT_REPO/.env"
-else echo "ERROR: No .env found"; exit 1; fi
+elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
+set +a
 
-CLAUDE=$(claude_cmd_for_stage "copy")
+CLAUDE=(run_stage_for copy)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 
 precondition_linear
+precondition_runner copy
 
 # Opt-in gate — no configured Copy state or label ⇒ nothing to do.
 if [ -z "${BUREAU_STATE_COPY:-}" ] || [ -z "${BUREAU_LABEL_NEEDS_COPY_NAME:-}" ]; then
@@ -43,6 +48,8 @@ else
 fi
 
 # State guard runs unconditionally — see implement-pipeline.sh for rationale.
+bureau_stage_enter "$ISSUE" "$@"
+
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
 if [ "$ACTUAL_STATE" != "Copy" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Copy'. Skipping."
@@ -114,7 +121,7 @@ echo "Phase 1/2: polish copy"
 
 NEGATIVE_CONSTRAINTS=$(build_negative_constraints)
 
-$CLAUDE "You are the copywriter for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
+"${CLAUDE[@]}" "You are the copywriter for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
 
 $SPEC_CONTEXT
 
@@ -153,14 +160,11 @@ Emit a fenced json block at the end. \`changes\` records each rewrite with befor
 }
 \`\`\`" 2>&1
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  git add -A
-  git commit -m "$ISSUE: copy polish" --allow-empty || true
-  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
-  else
-    git push origin HEAD || true
-  fi
+commit_stage_changes copy "$ISSUE"
+if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+  echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
+else
+  git push origin HEAD || exit 18
 fi
 
 echo ""

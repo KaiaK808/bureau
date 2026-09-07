@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="c81268d081d4888bbb35fa511e112d7dcdbbe42672cfb3be0a0f3976451852cf">
+<title>stage-protocol · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="shared-stage-execution-and-ownership">Shared stage execution and
+ownership</h1>
+<p>Bureau supports two workspace modes. App work uses the current
+checkout through <code>python3 scripts/bureau-runtime.py</code>;
+background scripts run through <code>bureau-worker.sh</code> in
+explicitly registered disposable worktrees. Direct background stage
+execution in a user checkout is refused. These controls do not bypass
+Codex permissions for the checkout or shared Git directory.</p>
+<p>The shared Git directory stores <code>bureau/leases.json</code>, run
+records and disposable-worker registration. Claims cover both issue ID
+and canonical checkout path, using an OS file lock around updates. An
+app and a worker cannot own the same local issue or checkout
+concurrently. A worker releases its own branch after a stage. Held
+branches in other worktrees cause exit 21 rather than detaching the
+owner. Existing <code>.worktrees/</code> directories are not implicitly
+disposable; inspect and retire or hand off an old worker before starting
+a new registered one.</p>
+<h2 id="app-stages">App stages</h2>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py status</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py prepare TEAM-123 implement <span class="at">--owner</span> app-task</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Follow scripts/bureau-stage.md in the current task and write result.json.</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py finish RUN_ID <span class="at">--result</span> result.json</span></code></pre></div>
+<p>The prepare response records issue/state identity, configuration
+hash, current HEAD, branch, canonical marker and project context. Attach
+an existing canonical branch before preparing. Finish requires a
+matching run/stage, live ownership, current result HEAD, unchanged
+configuration and unchanged issue state. The branch and canonical marker
+must still agree; review additionally requires the prepared HEAD.
+Complete spec work needs spec/plan/tasks artifacts in one feature folder
+under specs_dir; implementation/QA need successful test evidence.
+Partial/blocked results retain the current Linear state and save their
+explanation. Blocked outcomes and BLOCK reviews also apply the
+configured needs-human label before releasing ownership; every
+background queue excludes that label. A label failure keeps the run
+pending for retry. Resolve the blocker and explicitly remove its label
+before resuming background processing. Completion posts the canonical
+branch marker and a run marker, then moves to the configured state UUID.
+Repeating the identical result is idempotent, including recovery after a
+successful state move interrupted before local completion. Once finish
+records its pending result, retries must use that exact result and
+target state. Spec-review routing reads current configured labels at
+finish, including labels added during review. App REQUEST_CHANGES
+comments are consumed by the background implementation loop.</p>
+<p>For resume, inspect <code>status --run RUN_ID</code>, the actual
+branch/diff and current Linear state. Continue unfinished work using its
+run ID. If the state/configuration/head makes the result stale, preserve
+the work, release the old run, and prepare a fresh stage after
+reconciling the change. <code>release RUN_ID</code> refuses a live
+background PID or a recorded live process group. An interrupted
+background run retains its issue/workspace claims and loses
+disposable-worker registration, even if its immediate shell already
+exited. Inspect the saved work and the process-group record at
+<code>&lt;shared-git-dir&gt;/bureau/processes/RUN_ID.json</code>, verify
+current process identities, stop any remaining writers, then release the
+run explicitly. The preserved checkout remains unregistered: adopt it
+for app recovery or explicitly retire it before creating another
+disposable worker. Process inspection failures and reused live group IDs
+fail closed; do not kill a process solely because an old record mentions
+its ID. After a machine crash, inspect the old run before releasing it;
+app leases have no implicit expiry. This is local coordination, not a
+distributed lock or an atomic Linear compare-and-swap across hosts.</p>
+<h2 id="configuration-and-merge-boundaries">Configuration and merge
+boundaries</h2>
+<p><code>BUREAU_CONFIG</code> is an explicit path and is honored even
+from a linked worktree. Otherwise discovery checks the current root,
+primary checkout, and script installation root. <code>setup</code>
+copies ignored <code>.bureau.json</code> and <code>.env</code> from the
+discovered source into a new app worktree only when absent; existing
+files stay intact. Credentials remain local. Core operations use the
+direct API-key path for Linear state changes; available Linear tools can
+still serve interactive discovery.</p>
+<p><code>BUREAU_NO_MERGE=1</code> applies to direct merge, review, queue
+and shepherd paths; queue/shepherd also accept <code>--no-merge</code>.
+Code review exits 20 after approval when the stop is requested.
+Otherwise inline merging delegates to the same gated merge pipeline used
+by the Merge worker, including when no Merge state is configured. The
+app prepare/finish protocol stops after review by default. Its
+<code>--allow-merge</code> option permits routing into a configured
+Merge queue; it never executes a merge itself.</p>
+<p>New shell-generated commits carry
+<code>Bureau-Generated: true</code>. The ownership check still
+recognizes legacy Claude trailers/spec commits and merge commits. An
+unresolved Git reference fails the ownership check rather than counting
+as safe.</p>
+<p><code>status</code> is read-only. Shepherd's dry run describes a
+requested <code>--from-stage</code> without executing it and does not
+authenticate a model, claim an issue, or invoke a stage. Use these
+inspection paths before starting work.</p></main>
+</div>
+</body>
+</html>

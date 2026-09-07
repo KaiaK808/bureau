@@ -1,190 +1,611 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Troubleshooting · bureau-init</title>
-<meta name="description" content="When the pipeline misbehaves, start here. Most symptoms have a one-line fix." />
-<link rel="stylesheet" href="assets/colors_and_type.css" />
-<link rel="stylesheet" href="assets/docs.css" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="6b595bf4c24c13daf0b0bf91d0fa3933dd90c316a932cf979456567720e82acf">
+<title>troubleshooting · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
 </head>
 <body>
-
-<header class="bhb-topbar">
-  <a href="index.html" class="wordmark">BRAIN<span class="accent">·</span>HUGGERS BUREAU <span style="color:var(--fg-3)">/</span> bureau-init</a>
-  <div class="meta">
-    <span><span class="pulse">●</span> CRON RUNNING</span>
-    <span>FILE #04 · TROUBLESHOOTING</span>
-    <span><a href="https://github.com/KaiaK808/bureau" style="color:inherit;">GITHUB ↗</a></span>
-  </div>
-</header>
-
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
 <div class="bhb-shell">
-
-  <aside class="bhb-sidebar">
-    <div class="group-label">Field manual</div>
-    <nav>
-      <a href="index.html"><span class="file">FILE #00</span> Index</a>
-      <a href="configuration.html"><span class="file">FILE #01</span> Configuration</a>
-      <a href="exit-codes.html"><span class="file">FILE #02</span> Exit codes</a>
-      <a href="recipes.html"><span class="file">FILE #03</span> Recipes</a>
-      <a href="troubleshooting.html" class="active"><span class="file">FILE #04</span> Troubleshooting</a>
-    </nav>
-
-    <div class="group-label">On this page</div>
-    <div class="external-list">
-      <a href="#setup">Setup</a>
-      <a href="#runtime">Pipeline runtime</a>
-      <a href="#tmux">tmux</a>
-      <a href="#linear-divergence">Linear state divergence</a>
-      <a href="#claude">Claude / auth</a>
-      <a href="#supervisor">Supervisor</a>
-      <a href="#drift">Drift / upgrades</a>
-    </div>
-  </aside>
-
-  <main class="bhb-main">
-
-    <div class="bhb-page-meta">
-      <span>FILE #04 · TROUBLESHOOTING</span>
-      <span><span class="bhb-tag field"><span class="dot"></span>FIELDWORK</span></span>
-    </div>
-
-    <h1>Troubleshooting</h1>
-    <p class="lede" style="font-size:18px;color:var(--fg-2);max-width:680px;line-height:var(--lh-relaxed);">
-      When the pipeline misbehaves, start here. Most symptoms have a one-line fix.
-    </p>
-
-    <h2 id="setup">Setup</h2>
-
-    <h3><code>MISSING: &lt;tool&gt;</code> at Phase 0</h3>
-    <p>Install the named tool, then re-run <code>/bureau-init</code>. macOS one-liner:</p>
-    <pre data-file="SHELL"><code>brew install jq tmux gh</code></pre>
-
-    <h3><code>This repo already has a bureau pipeline configured</code></h3>
-    <ul>
-      <li><code>/bureau-init --update</code> — change teams / labels / states / agents</li>
-      <li><code>/bureau-init --resync-scripts</code> — pull the latest pipeline scripts</li>
-      <li><code>rm .bureau.json</code> — start from scratch</li>
-    </ul>
-
-    <h3>Linear MCP not available during setup</h3>
-    <p>In Claude Code, run <code>/mcp</code>, authenticate <code>linear-server</code>, restart the session.</p>
-
-    <h3><code>LINEAR_API_KEY</code> not set</h3>
-    <p>Interactive setup completes without it, but agents fail on first run. Add to <code>.env</code> before launching:</p>
-    <pre data-file=".env"><code>echo 'LINEAR_API_KEY=lin_api_xxxxxxxxxxxx' &gt;&gt; .env</code></pre>
-
-    <h2 id="runtime">Pipeline runtime</h2>
-
-    <h3>Agents running but not picking up issues</h3>
-    <p>Check the issue:</p>
-    <ul>
-      <li>Has the eligibility label (e.g. <code>lane-2</code>) — <code>pick_issue</code> filters by label <em>name</em></li>
-      <li>Is in the <code>Triage</code> state for the team configured in <code>.bureau.json</code></li>
-      <li>Has no parking labels (<code>needs-human</code>, <code>blocked</code>, <code>wip</code>)</li>
-      <li>Is not blocked by another issue (Linear <code>blockedBy</code> relation)</li>
-    </ul>
-
-    <h3>Pipeline exits 2 every tick despite eligible issues</h3>
-    <p>Check whether <code>agents.max_concurrent_issues</code> is set. If yes, an in-flight issue (or several) is occupying the cap. See <a href="recipes.html#single-flight">FILE #03 → single-flight</a>. Find them with:</p>
-    <pre data-file="LOG TAIL"><code>grep "in-flight cap reached" logs/queue-spec.log</code></pre>
-
-    <h3><code>⚠ bureau-init template drift: N differ, M new</code></h3>
-    <p>The skill template has been updated since this repo was initialized. Run:</p>
-    <pre data-file="SHELL"><code>claude /bureau-init --resync-scripts</code></pre>
-    <p>Per-file confirmation, ~40-line diff preview. Local tweaks preserved unless you confirm an overwrite.</p>
-
-    <h3>Issue stranded between states</h3>
-    <p>The spec pipeline installs an EXIT trap that routes back to Triage on crash. If an issue is genuinely stuck:</p>
-    <ol>
-      <li>Check <code>logs/escalations.log</code> first — every <code>needs-human</code> event lands here as one TSV line: <code>grep ESCALATED logs/escalations.log | grep EXP-XXX</code></li>
-      <li>Check <code>logs/queue-&lt;stage&gt;.log</code> for the last error</li>
-      <li>Check <code>logs/supervisor-&lt;stage&gt;.log</code> if you're using <code>queue-loop-supervised.sh</code></li>
-      <li>Manually move the issue back in Linear</li>
-    </ol>
-    <p>If the issue was in Build and crashed, the worktree under <code>.worktrees/queue-implement/</code> may have uncommitted work. Inspect before resetting.</p>
-
-    <h3>Pipeline keeps hitting <code>merge_origin_main_or_abort</code> conflicts</h3>
-    <p>Symptom: every cron tick re-runs the merge, conflicts pile up, the same branch reappears tick after tick.</p>
-    <p>Two complementary fixes:</p>
-    <ol>
-      <li><strong>Single-flight mode</strong> (<code>agents.max_concurrent_issues: 1</code>) — branches don't race against each other</li>
-      <li><strong>Trivial-conflict resolver</strong> — already shipped; lockfiles, generated files, and known-mergeable patterns auto-resolve</li>
-    </ol>
-    <p>For non-trivial conflicts, the pipeline exits 17 (rebase-needed) and routes for human intervention.</p>
-
-    <h2 id="tmux">tmux</h2>
-
-    <h3><code>WARNING: Old 'bureau' session is still running</code></h3>
-    <p>Harmless. The script checks for a legacy session named literally <code>bureau</code> (no <code>-v2</code>). If you never ran the v1 pipeline, ignore it — or delete the check block at the top of <code>start-bureau-v2.sh</code>.</p>
-
-    <h3>tmux session already exists on startup</h3>
-    <p><code>start-bureau-v2.sh</code> kills its own session (<code>bureau-v2-&lt;basename&gt;</code>) before recreating it. If you see unrelated stale sessions:</p>
-    <pre data-file="SHELL"><code>tmux ls
-tmux kill-session -t &lt;name&gt;</code></pre>
-
-    <h3>Pane shrunk to 0 rows / "no space for new pane"</h3>
-    <p>Already fixed — <code>start-bureau-v2.sh</code> re-tiles after every split. If you see this on an old install, run <code>/bureau-init --resync-scripts</code>.</p>
-
-    <h2 id="linear-divergence">Linear state divergence</h2>
-
-    <h3>PR is OPEN but Linear says Done</h3>
-    <p>The verify-merge fix in <code>code-review-pipeline.sh</code> should prevent this — after <code>gh pr merge</code>, the pipeline confirms the actual PR state before claiming Done. If you see this on an old install, resync scripts.</p>
-
-    <h3>Issue marked Done but no PR exists</h3>
-    <p>Check the bureau-branch comment marker. If it points at a branch that was deleted before merge, the pipeline may have lost the PR reference. Manually re-open the issue and route through Build Review.</p>
-
-    <h2 id="claude">Claude / auth</h2>
-
-    <h3>Pipeline fails with <code>claude-unauth</code> (exit 16)</h3>
-    <p>Run <code>claude</code> interactively once to refresh OAuth. The headless <code>claude -p</code> calls used by the pipeline can't refresh tokens themselves.</p>
-
-    <h3>Headless Claude calls hang or timeout</h3>
-    <p>Usually a network issue. Confirm:</p>
-    <pre data-file="SHELL"><code>claude -p "say hi" --print --dangerously-skip-permissions</code></pre>
-    <p>If that hangs, restart Claude Code or check your connection.</p>
-
-    <h3>Speckit phases produce empty <code>tasks.md</code></h3>
-    <p>The spec pipeline routes back to Triage automatically. To debug:</p>
-    <pre data-file="SHELL"><code>ls -la specs/&lt;NNN-feature&gt;/
-cat logs/queue-spec.log | tail -100</code></pre>
-    <p>Most common cause: the Linear issue description was too thin for <code>/speckit-tasks</code> to extract anything. Add acceptance criteria to the description and re-trigger.</p>
-
-    <h2 id="supervisor">Supervisor</h2>
-
-    <h3>Telegram alert: "supervisor giving up"</h3>
-    <p>The supervisor crashed <code>BUREAU_SUPERVISOR_MAX_CRASHES</code> times in a row. The alert includes the tail of <code>logs/queue-&lt;mode&gt;.log</code>. Common causes:</p>
-    <ul>
-      <li>Bash syntax error introduced by an unfinished script edit</li>
-      <li>Missing config key after a partial <code>/bureau-init --update</code></li>
-      <li><code>LINEAR_API_KEY</code> revoked</li>
-    </ul>
-    <p>After fixing, restart with <code>./scripts/start-bureau-v2.sh</code> or just re-run <code>./scripts/queue-loop-supervised.sh &lt;mode&gt; &lt;interval&gt;</code>.</p>
-
-    <h3>Crash counter stuck high</h3>
-    <p>Restart the supervisor — counters are in-process, so a fresh launch resets them. Or wait <code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code> seconds (default 1 h) of clean runtime for the auto-reset.</p>
-
-    <h2 id="drift">Drift / upgrades</h2>
-
-    <h3>Old commands at <code>.claude/commands/speckit.*.md</code></h3>
-    <p>Pre-v0.7.5 speckit installed via slash commands. The new install lives at <code>.claude/skills/speckit-*/</code>. After running <code>/bureau-init --resync-speckit</code>, clean up:</p>
-    <pre data-file="SHELL"><code>rm .claude/commands/speckit.*.md</code></pre>
-
-    <h3>Constitution missing after speckit resync</h3>
-    <p><code>--resync-speckit</code> backs up <code>.specify/memory/constitution.md</code> before re-running <code>specify init</code> and restores it after. If the file is still missing, look for <code>.specify/memory/constitution.md.bak</code>.</p>
-
-  </main>
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1 id="troubleshooting">Troubleshooting</h1>
+<p>When the pipeline misbehaves, start here. Start with
+<code>python3 scripts/bureau-doctor.py</code> (or the source installer’s
+<code>doctor</code> action before scripts are installed). It reports
+config provenance, interfaces, effective providers and drift without
+making remote calls.</p>
+<hr />
+<h2 id="setup">Setup</h2>
+<h3 id="missing-tool-at-phase-0"><code>MISSING: &lt;tool&gt;</code> at
+Phase 0</h3>
+<p>Install the tool reported for the selected mode, then rerun setup.
+App tasks need the portable helpers but do not require a background
+Claude/Codex CLI or tmux. Background mode needs the selected provider
+executables; GitHub operations need <code>gh</code>, and tmux is
+required only for tmux launchers. Use
+<code>python3 scripts/bureau-doctor.py --mode app</code> or
+<code>--mode background</code> to check the appropriate
+dependencies.</p>
+<h3
+id="this-repo-already-has-a-bureau-pipeline-configured"><code>This repo already has a bureau pipeline configured</code></h3>
+<ul>
+<li><code>/bureau-init --update</code> — change teams / labels / states
+/ agents</li>
+<li>Update the installed Bureau source first, then request scoped
+interface/script resync in each target repository; see <a
+href="migration.html">migration</a></li>
+<li>Preview the <a href="migration.html">additive migration</a>; preserve
+existing IDs and settings</li>
+</ul>
+<h3 id="linear-mcp-not-available-during-setup">Linear MCP not available
+during setup</h3>
+<p>Discover the available Linear connector in the current host. In
+Claude Code, use <code>/mcp</code>; in Codex, use the installed Linear
+tool capabilities. Shared runtime transitions still require the
+configured API key.</p>
+<h3 id="linear_api_key-not-set"><code>LINEAR_API_KEY</code> not set</h3>
+<p>Interactive setup completes without it, but agents fail on first run.
+Add to <code>.env</code> before launching:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="bu">echo</span> <span class="st">&#39;LINEAR_API_KEY=lin_api_xxxxxxxxxxxx&#39;</span> <span class="op">&gt;&gt;</span> .env</span></code></pre></div>
+<hr />
+<h2 id="pipeline-runtime">Pipeline runtime</h2>
+<h3 id="agents-running-but-not-picking-up-issues">Agents running but not
+picking up issues</h3>
+<p>Check the issue:</p>
+<ul>
+<li>Has the eligibility label (e.g. <code>lane-2</code>) —
+<code>pick_issue</code> filters by label <em>name</em></li>
+<li>Is in the <code>Triage</code> state for the team configured in
+<code>.bureau.json</code></li>
+<li>Has no parking labels (<code>needs-human</code>,
+<code>blocked</code>, <code>wip</code>)</li>
+<li>Is not blocked by another issue (Linear <code>blockedBy</code>
+relation)</li>
+</ul>
+<h3 id="pipeline-exits-2-every-tick-despite-eligible-issues">Pipeline
+exits 2 every tick despite eligible issues</h3>
+<p>Check whether <code>agents.max_concurrent_issues</code> is set. If
+yes, an in-flight issue (or several) is occupying the cap. See <a
+href="recipes.html#single-flight-pipeline">recipes → single-flight</a>.
+Find them with:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;in-flight cap reached&quot;</span> logs/queue-spec.log</span></code></pre></div>
+<h3
+id="-bureau-init-template-drift-n-differ-m-new"><code>⚠ bureau-init template drift: N differ, M new</code></h3>
+<p>The skill template has been updated since this repo was initialized.
+Run:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># In the current assistant: $bureau-init --resync-scripts (Codex)</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="co"># or /bureau-init --resync-scripts (Claude)</span></span></code></pre></div>
+<p>Inspect the deterministic preview. Unknown/customized files stop the
+selected asset batch; resolve each named conflict while preserving local
+changes, then reapply the coherent batch. <code>--update</code> changes
+configuration only. See <a href="migration.html">migration</a> for source
+update and per-target resync steps.</p>
+<h3 id="issue-stranded-between-states">Issue stranded between
+states</h3>
+<p>The spec pipeline installs an EXIT trap that routes back to Triage on
+crash. If an issue is genuinely stuck:</p>
+<ol type="1">
+<li>Check <code>logs/escalations.log</code> and the latest issue comment
+— background escalation sites log after a successful human-label update.
+<code>grep ESCALATED logs/escalations.log | grep EXP-XXX</code>.</li>
+<li>Check <code>logs/queue-&lt;stage&gt;.log</code> for the last
+error.</li>
+<li>Check <code>logs/supervisor-&lt;stage&gt;.log</code> if you're using
+<code>queue-loop-supervised.sh</code>.</li>
+<li>Inspect <code>bureau-runtime.py status</code> and the saved run
+before reconciling state; stale results cannot safely advance it.</li>
+</ol>
+<p>If the issue was in Build and crashed, the worktree under
+<code>.worktrees/queue-implement/</code> may have uncommitted work.
+Inspect before resetting.</p>
+<h3
+id="pipeline-keeps-hitting-merge_origin_main_or_abort-conflicts">Pipeline
+keeps hitting <code>merge_origin_main_or_abort</code> conflicts</h3>
+<p>Symptom: every cron tick re-runs the merge, conflicts pile up, the
+same branch reappears tick after tick.</p>
+<p>Two complementary fixes:</p>
+<ol type="1">
+<li><strong>Single-flight mode</strong>
+(<code>agents.max_concurrent_issues: 1</code>) — branches don't race
+against each other.</li>
+<li><strong>Trivial-conflict resolver</strong> — already shipped;
+lockfiles, generated files, and known-mergeable patterns
+auto-resolve.</li>
+</ol>
+<p>Non-trivial conflicts stop the stage; inspect its exact exit class
+and preserved checkout. <code>upstream-port.sh</code> uses exit 17 for
+patch conflicts. Do not repeatedly reset or rerun a conflicted
+worker.</p>
+<hr />
+<h2 id="exit-code-symptom-map">Exit-code symptom map</h2>
+<p>Each pipeline script exits with a classified code — see
+<code>docs/exit-codes.md</code> for the canonical table. What to do when
+you see each:</p>
+<h3
+id="exit-10-linear-down--linear-api-unreachable-or-auth-rejected">Exit
+10 (linear-down) — Linear API unreachable or auth-rejected</h3>
+<p>The Linear precondition reports exit 10 when the API check fails.
+Inspect its response and the trusted API-key configuration before
+changing ticket state; do not diagnose it by starting a model.</p>
+<ul>
+<li>Check <code>.env</code> — <code>LINEAR_API_KEY</code> set and not
+expired?</li>
+<li>Check Linear's status page. Rare, but happens.</li>
+<li><code>curl -sS -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" -d '{"query":"query { viewer { id } }"}' https://api.linear.app/graphql</code>
+— should return your user id</li>
+</ul>
+<h3
+id="exit-11-worktree-dirty--uncommitted-changes-block-progression">Exit
+11 (worktree-dirty) — uncommitted changes block progression</h3>
+<p>The stage requires a clean checkout but finds local changes, possibly
+preserved from an interruption.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py status</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> worktree list</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Inspect the exact workspace reported by the run:</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_WORKSPACE</span><span class="st">&quot;</span> status <span class="at">--short</span></span></code></pre></div>
+<p>Inspect the owner and save the work before deciding how to resume.
+Existing unregistered workers and app checkouts cannot be made
+disposable by clearing files. Do not reset, clean, forcibly remove or
+detach another task's checkout. See <a
+href="stage-protocol.html">ownership and resume</a>.</p>
+<h3 id="exit-12-no-branch--bureau-branch-marker-missing">Exit 12
+(no-branch) — <code>bureau-branch:</code> marker missing</h3>
+<p>Downstream stages resolve the branch via a
+<code>&lt;!-- bureau-branch: ... --&gt;</code> marker comment posted by
+spec-pipeline. Exit 12 means the marker is absent or points at a
+non-existent branch.</p>
+<ul>
+<li>Check the Linear issue's comment history — is the digest comment
+there?</li>
+<li>Reconstruct a missing marker only from the verified issue branch and
+completed spec evidence. Reconcile the issue state and use the selected
+app stage or named-ticket driver; <code>queue-loop.sh spec 1</code>
+polls all eligible tickets at a one-minute interval and is not an
+issue-specific repair.</li>
+</ul>
+<h3
+id="exit-13-no-tasks--tasksmd-expected-but-missing-or-unmatched">Exit 13
+(no-tasks) — <code>tasks.md</code> expected but missing or
+unmatched</h3>
+<p>Confirm the approved feature directory contains <code>tasks.md</code>
+and matches the issue's canonical branch. Do not infer a
+<code>codex/*</code> branch from Linear's generated branch name. For
+retained Spec Kit helpers, pass both <code>SPECIFY_FEATURE</code> and
+<code>SPECIFY_FEATURE_DIRECTORY</code> for that exact feature; see <a
+href="migration.html">legacy migration</a>. Inspect ambiguous numeric
+prefixes instead of guessing another feature.</p>
+<h3
+id="exit-14-build-failed--implement--upstream-port-build-gate-failed">Exit
+14 (build-failed) — implement / upstream-port build gate failed</h3>
+<p>The build command (<code>cargo build</code>,
+<code>npm run build</code>, <code>bash tests/run.sh</code>, etc.)
+returned non-zero. For <strong>upstream-port.sh</strong>, the command
+comes from <code>repo.upstream_port.build_cmd</code> — verify it's right
+for the target repo.</p>
+<ul>
+<li>Tail: <code>tail -40 /tmp/upstream-port-build.*</code> (or check the
+pipeline log)</li>
+<li>Common culprit: your build depends on a service (postgres, redis)
+that isn't running in the worktree</li>
+</ul>
+<h3
+id="exit-15-no-pr--test-failed--test-gate-failed-or-expected-pr-doesnt-exist">Exit
+15 (no-pr / test-failed) — test gate failed OR expected PR doesn't
+exist</h3>
+<p><strong>Overloaded code.</strong> In queue-loop.sh scripts: no PR was
+found for the branch after the stage that should have created one. In
+upstream-port.sh: the test command
+(<code>repo.upstream_port.test_cmd</code>) returned non-zero.</p>
+<ul>
+<li>For "no-PR": check <code>gh pr list --head &lt;branch&gt;</code> —
+was one created? Was it closed manually?</li>
+<li>For "test-failed": look at the tail of
+<code>/tmp/upstream-port-test.*</code> for the failing test names</li>
+</ul>
+<h3 id="exit-17-rebase-needed--git-apply---3way-produced-conflicts">Exit
+17 (rebase-needed) — <code>git apply --3way</code> produced
+conflicts</h3>
+<p>In <strong>upstream-port.sh</strong>, configured path translations
+have been applied but <code>git apply --3way</code> still has content
+conflicts. Inspect the specific caller when this class appears
+elsewhere.</p>
+<ul>
+<li>If appropriate, retry with <code>--with-llm</code> for the
+configured <code>upstream_port</code> provider; the explicit cost gate
+applies and non-interactive use also requires <code>--yes</code></li>
+<li>Or escalate to a full shepherd ticket: create a Linear issue with
+the upstream link and let the normal pipeline handle it</li>
+</ul>
+<h3 id="exit-18-gh-failed--overloaded-catch-all-for-gh-failures">Exit 18
+(gh-failed) — overloaded catch-all for <code>gh</code> failures</h3>
+<p><code>upstream-port.sh</code> uses exit 18 for GitHub failures and
+preflight errors such as invalid arguments, dirty checkout or an
+existing branch. Other scripts can propagate a different status; read
+the emitting command.</p>
+<ul>
+<li>First: <code>gh auth status</code> — token expired?</li>
+<li>Rate limit: inspect <code>gh api rate_limit</code> and the reported
+reset time</li>
+<li>Branch protection: check if the PR needs a review approval you don't
+have (bot accounts sometimes hit this)</li>
+</ul>
+<h3
+id="exit-19-rebase-rejected--git-push---force-with-lease-refused">Exit
+19 (rebase-rejected) — <code>git push --force-with-lease</code>
+refused</h3>
+<p><code>rebase-pipeline.sh</code> uses <code>--force-with-lease</code>
+for safety. Refusal means someone else pushed to the same branch since
+your <code>git fetch</code>.</p>
+<ul>
+<li>Preserve the local rebased HEAD, fetch and compare the newly
+published commits before any retry. Refreshing the remote-tracking ref
+and immediately force-pushing can defeat the protection that just
+stopped the run.</li>
+<li>Reconcile the other writer's work and ownership before a separately
+authorized push.</li>
+</ul>
+<h3 id="exit-1--128--141--error-n-catch-all">Exit 1 / 128 / 141 —
+<code>error-&lt;N&gt;</code> catch-all</h3>
+<p>Anything outside the classified table maps to
+<code>error-&lt;N&gt;</code> in <code>queue-loop</code>'s alert
+throttling. Usually a bug in the pipeline script or an unhandled bash
+error.</p>
+<ul>
+<li><code>128</code> from git: inspect <code>git worktree list</code>
+and runtime ownership. A held branch requires a coordinated handoff, not
+forced removal of the other checkout.</li>
+<li><code>141</code> indicates SIGPIPE. Inspect whether a consumer
+exited early and whether the stage produced a valid result; do not count
+this as a successful stage automatically.</li>
+<li><code>1</code> catch-all: read the last 20 lines of stderr; that's
+where the actual error will be.</li>
+</ul>
+<hr />
+<h2 id="driver-failures-shepherd--orchestrate--upstream-port">Driver
+failures (shepherd / orchestrate / upstream-port)</h2>
+<h3
+id="shepherdsh-bailed-mid-run--how-to-resume"><code>shepherd.sh</code>
+bailed mid-run — how to resume</h3>
+<p>Inspect the issue's current state, blocker comment, saved run and
+checkout. Resolve the cause and any human label before rerunning
+<code>bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123</code>. The
+state guard skips completed stages, but an unfinished/unregistered
+checkout can still refuse reuse; preserve its work and reconcile
+ownership first. Use a dry-run to inspect routing only. Exit 20 is the
+requested review stop, 25 is pause/human attention, and 26 is a
+cancelled ticket; none is Done.</p>
+<h3
+id="orchestratesh---execute--one-lane-failed-do-the-others-continue"><code>orchestrate.sh --execute</code>
+— one lane failed, do the others continue?</h3>
+<p><strong>Yes</strong> — independent lanes can continue. A serial chain
+stops at its first nonzero result, including review-stop 20 and
+human-attention 25. Dependent tickets are not complete merely because
+their predecessor reached review.</p>
+<p>To recover:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># See lane status</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/bureau-status.sh</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Rerun a specific lane</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/shepherd.sh</span> <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-9 <span class="at">--worktree</span> .worktrees/shepherd-lane-2</span></code></pre></div>
+<p>Inspect that lane's saved work and ownership before reuse. After
+resolving the blocker, recheck the schedule and current ticket states;
+completed tickets are skipped, but preserved workers are not
+automatically reset.</p>
+<h3
+id="upstream-portsh-exit-15--test-gate-false-negative"><code>upstream-port.sh</code>
+exit 15 — test gate false-negative</h3>
+<p>Sometimes the test command passes locally but not inside the worktree
+— usually a service dependency (postgres, redis) or a missing env
+var.</p>
+<ul>
+<li>Tail the failing test names from the log</li>
+<li>If it's environment: set the needed env in <code>.env</code> and
+re-run</li>
+<li>If flaky, reproduce and record the failure. Correct the test or
+document any explicitly accepted exclusion; silently skipping it does
+not establish a passing acceptance gate.</li>
+</ul>
+<hr />
+<h2 id="stage-specific-failures">Stage-specific failures</h2>
+<h3 id="merge-gate-refuses-to-merge-a-pr-that-looks-green">Merge gate
+refuses to merge a PR that looks green</h3>
+<p><code>merge-pipeline.sh</code> enforces THREE independent gates:
+<code>pr_ci_is_green</code> (all check-runs completed + success),
+<code>pr_base_is_current</code>
+(<code>baseRefOid == origin/main HEAD</code>), and
+<code>mergeStateStatus == CLEAN</code> (GitHub's own answer). All three
+must pass.</p>
+<p>To diagnose:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> pr view <span class="op">&lt;</span>N<span class="op">&gt;</span> --json statusCheckRollup,baseRefOid,mergeStateStatus</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch origin <span class="kw">&amp;&amp;</span> <span class="fu">git</span> rev-parse origin/main</span></code></pre></div>
+<ul>
+<li><strong><code>mergeStateStatus</code> isn't CLEAN</strong>: usually
+<code>BEHIND</code> (need to rebase) or <code>BLOCKED</code> (missing
+review approval)</li>
+<li><strong><code>baseRefOid</code> doesn't match
+<code>origin/main</code></strong>: main has moved since the PR opened.
+Rebase.</li>
+<li><strong><code>statusCheckRollup</code> has a <code>FAILURE</code> or
+an in-progress check</strong>: wait or fix the failing check</li>
+</ul>
+<p>GitHub's mergeability state is cached. Bureau independently checks
+actual head checks and current base state, and repeats the gates just
+before merging. Background review of a stacked PR uses its actual PR
+base; that does not weaken the separate merge gate.</p>
+<h3 id="code-review-hit-bureau_max_review_cycles--what-now">Code-review
+hit <code>BUREAU_MAX_REVIEW_CYCLES</code> — what now?</h3>
+<p><code>agents.max_review_cycles</code> (default 3) caps how many
+<code>REQUEST_CHANGES → Build → Build Review</code> round-trips before
+parking.</p>
+<ul>
+<li>Read the last review comment on the PR — it lists what the reviewer
+keeps flagging</li>
+<li>Resolve substantive findings or explicitly adjudicate disagreements;
+preserve the required CI/base gates</li>
+<li>If changing the reviewer, use the compatibility-aware Models update
+flow and confirm the effective provider/model</li>
+</ul>
+<p>The background pipeline counts matching Changes Requested comments in
+Linear. Restarting it does not remove that history.</p>
+<h3 id="qa-returned-needs_human-verdict">QA returned
+<code>NEEDS_HUMAN</code> verdict</h3>
+<p>QA parks a ticket with <code>needs-human</code> when it can't decide
+whether a failure is legitimate (test genuinely fails) or spurious (env
+issue, flaky test, missing service).</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># See what QA saw</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;</span><span class="va">$ISSUE</span><span class="st">&quot;</span> logs/events.jsonl <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">&#39;select(.event==&quot;qa_verdict&quot;)&#39;</span></span></code></pre></div>
+<p>Typically: pull the branch locally, run the tests yourself, and
+either fix the code or mark the test as skip/ignore with a
+rationale.</p>
+<h3 id="codex-stage-runner-failed-spuriously">Codex-stage-runner failed
+spuriously</h3>
+<p>Current pipelines use <code>bureau-provider.py</code>; the old
+<code>codex-stage-runner.sh</code> command-string wrapper is a
+compatibility entry point. Inspect <code>logs/provider-runs/RUN/</code>,
+the resolved provider settings and exit class. Codex implementation/QA
+are supported through the shell executor, which handles Git publication
+and independent <code>repo.test_command</code> execution. A sandbox
+denial or missing service is an environment blocker (24), not proof that
+every write/test stage must use Claude. Resync the coherent runtime if
+an old unsafe-stage warning remains, then qualify the required
+capabilities; do not disable sandboxing or silently switch
+providers.</p>
+<h2 id="operational">Operational</h2>
+<h3
+id="agents-pause-and-dont-restart--session-throttle-triggered">Agents
+pause and don't restart — session throttle triggered</h3>
+<p>Inspect the selected provider's usage signal and
+<code>session.usage_threshold_pct</code> (default 80). Claude can use
+<code>BUREAU_USAGE_FILE</code> or its legacy sources; Codex uses
+<code>BUREAU_CODEX_USAGE_FILE</code> or a shared file tagged
+<code>"provider":"codex"</code>. Numeric <code>updated_epoch</code> and
+<code>reset_epoch</code> fields use Unix seconds.</p>
+<p>Missing signals allow dispatch. With
+<code>pause_on_stale_data: false</code>, signals older than five minutes
+are ignored; true continues applying the threshold to their reported
+percentage. A bounded tick returns until a later invocation instead of
+sleeping. <code>BUREAU_DISABLE_THROTTLE=1</code> deliberately bypasses
+only this guard. Also inspect the separate
+<code>bureau-runtime.py pause</code> marker before assuming quota is the
+cause.</p>
+<h3
+id="worktree-collision--branch-already-checked-out-at-another-worktree">Worktree
+collision — "branch already checked out at another worktree"</h3>
+<p>Git refuses to attach a branch already held elsewhere.
+<code>free_branch_from_other_worktrees</code> reports the holder and
+does not detach it. Inspect <code>git worktree list</code> and
+<code>python3 scripts/bureau-runtime.py status</code>, contact the owner
+and arrange a handoff. An old-looking path is not proof of abandoned
+work. Only remove a checkout after its owner, saved work and interrupted
+processes have been reconciled.</p>
+<h3 id="rebase-pipeline-aborted-mid-rebase">Rebase-pipeline aborted
+mid-rebase</h3>
+<p>The pipeline attempts <code>git rebase origin/main</code> only for
+Bureau-owned divergence. On conflict it calls
+<code>git rebase --abort</code> and requests human attention, so a
+completed failure normally leaves no rebase in progress. Inspect the
+exact worker with <code>git status</code> first. Preserve its HEAD and
+changes, then perform the appropriate manual reconciliation; use
+<code>git rebase --continue</code> only if Git actually reports an
+active rebase. Resolve the blocker before removing the human label and
+resuming.</p>
+<h3 id="using-bureau_dry_run-to-debug-a-specific-stage">Using
+<code>BUREAU_DRY_RUN</code> to debug a specific stage</h3>
+<p>Use a queue preview for one stage or a named-ticket shepherd
+preview:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/queue-loop.sh code-review 1</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<p>The queue example continues polling until stopped; <code>1</code> is
+its interval in minutes. Previews can read Linear, but do not invoke
+creative work or reset workers. Calling a background pipeline directly
+inside an app checkout can correctly return ownership conflict 21
+instead of performing a preview. Use the app prepare/finish protocol for
+current-task work.</p>
+<h2 id="token-efficiency-layers">Token-efficiency layers</h2>
+<h3
+id="implement-parks-statusstuck-on-a-ticket-thats-actually-complete">Implement
+parks <code>status=STUCK</code> on a ticket that's actually
+complete</h3>
+<p>Inspect the current result, task marks and branch commits before
+changing the loop. The portable loop treats an unproductive first
+<code>PARTIAL</code> iteration differently from a valid
+<code>COMPLETE</code> result; it also rejects an empty completion
+without branch commits. Older installations had different
+stuck-detection rules. Update source and resync scripts coherently
+before diagnosing an obsolete path. Claude <code>/goal</code> is
+optional and does not replace Git/test evidence; Codex retains the
+bounded loop.</p>
+<h3
+id="headroom-command-not-found-after-headroom_wrap-true"><code>headroom: command not found</code>
+after <code>headroom_wrap: true</code></h3>
+<p>The flag is read live; turning it on doesn't auto-install Headroom.
+Install on the host running the pipeline (typically the operator's local
+box, not the CI runner):</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="st">&quot;headroom-ai[all]&quot;</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">headroom</span> <span class="at">--version</span>    <span class="co"># confirm</span></span></code></pre></div>
+<p>If <code>pip</code> resolves to a Python that doesn't have user-level
+installs on PATH, prefer <code>pip install --user</code> and add
+<code>~/.local/bin</code> to PATH, or use a venv. The provider adapter
+checks for the wrapper and reports a missing executable.</p>
+<h3 id="caveman-style-leaked-into-a-commit-message-or-pr-body">Caveman
+style leaked into a commit message or PR body</h3>
+<p>By design, caveman is scoped to per-stage review prose only — commit
+messages and PR titles/bodies stay in normal register. If you see
+telegraphic caveman-speak in commits or PRs, the leak path is via the
+per-stage prompt prefixes in <code>code-review-pipeline.sh</code>
+getting applied where they shouldn't.</p>
+<p>Audit:
+<code>grep -n "caveman\|/caveman" templates/scripts/code-review-pipeline.sh templates/scripts/merge-pipeline.sh</code>.
+The prefix should only appear in review-prose construction sites. If
+it's in a commit-message or PR-body builder, that's the bug — file an
+upstream ticket and pin <code>caveman_level: "off"</code> until
+fixed.</p>
+<h3
+id="goal-is-a-no-op-turn-loops-forever-or-exits-without-evaluation"><code>/goal</code>
+is a no-op (turn loops forever or exits without evaluation)</h3>
+<p>Verify that the selected Claude installation supports
+<code>/goal</code>. The opt-in path does not automatically detect every
+unsupported CLI behavior. Disable <code>agents.use_goal_loop</code> to
+use the portable bounded loop, or qualify a compatible Claude
+installation before enabling it. The adapter applies the total timeout;
+Codex ignores this Claude-only flag.</p>
+<h2 id="tmux">tmux</h2>
+<h3
+id="warning-old-bureau-session-is-still-running"><code>WARNING: Old 'bureau' session is still running</code></h3>
+<p>The launcher found a legacy session named <code>bureau</code>.
+Inspect it and its workers before starting another dispatcher; do not
+delete the warning or kill a session whose owner/work is unknown.</p>
+<h3 id="tmux-session-already-exists-on-startup">tmux session already
+exists on startup</h3>
+<p>The launcher recreates its own named session. Before rerunning it,
+pause dispatch and inspect active workers; killing or recreating a tmux
+session alone does not prove nested provider processes stopped. Preserve
+unfinished work and runtime leases until inspection confirms a safe
+handoff. Use <code>tmux ls</code> to identify the exact session rather
+than terminating unrelated sessions.</p>
+<h3 id="pane-shrunk-to-0-rows--no-space-for-new-pane">Pane shrunk to 0
+rows / "no space for new pane"</h3>
+<p>Already fixed — <code>start-bureau-v2.sh</code> re-tiles after every
+split. If you see this on an old install, run
+<code>/bureau-init --resync-scripts</code>.</p>
+<hr />
+<h2 id="linear-state-divergence">Linear state divergence</h2>
+<h3 id="pr-is-open-but-linear-says-done">PR is OPEN but Linear says
+Done</h3>
+<p>The verify-merge fix in <code>code-review-pipeline.sh</code> should
+prevent this — after <code>gh pr merge</code>, the pipeline confirms the
+actual PR state before claiming Done. If you see this on an old install,
+resync scripts.</p>
+<h3 id="issue-marked-done-but-no-pr-exists">Issue marked Done but no PR
+exists</h3>
+<p>Check the bureau-branch comment marker. If it points at a branch that
+was deleted before merge, the pipeline may have lost the PR reference.
+Manually re-open the issue and route through Build Review.</p>
+<hr />
+<h2 id="claude--auth">Claude / auth</h2>
+<h3 id="pipeline-fails-with-claude-unauth-exit-16">Pipeline fails with
+<code>claude-unauth</code> (exit 16)</h3>
+<p>Exit 16 now covers the selected provider. Inspect
+<code>claude auth status --json</code> or
+<code>codex login status</code> and complete that provider's normal
+login flow. Bureau checks authentication without a probe generation.
+This is separate from the Linear API key used for ticket CRUD.</p>
+<h3 id="headless-claude-calls-hang-or-timeout">Headless Claude calls
+hang or timeout</h3>
+<p>Inspect the adapter's preserved stdout/stderr and result metadata
+before retrying. Confirm provider login, network availability and the
+configured timeout. Exit 124 indicates the bound was reached, 130
+cancellation, and 24 an environment/permission failure. A retry requires
+inspection of interrupted ownership; avoid an unbounded probe or a
+permissions bypass as a diagnostic shortcut.</p>
+<h3 id="speckit-phases-produce-empty-tasksmd">Speckit phases produce
+empty <code>tasks.md</code></h3>
+<p>The spec pipeline routes back to Triage automatically. To debug:</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> <span class="at">-la</span> specs/<span class="op">&lt;</span>NNN-feature<span class="op">&gt;</span>/</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> logs/queue-spec.log <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-100</span></span></code></pre></div>
+<p>Most common cause: the Linear issue description was too thin for
+<code>/speckit-tasks</code> to extract anything. Add acceptance criteria
+to the description and re-trigger.</p>
+<hr />
+<h2 id="supervisor">Supervisor</h2>
+<h3 id="telegram-alert-supervisor-giving-up">Telegram alert: "supervisor
+giving up"</h3>
+<p>The supervisor crashed <code>BUREAU_SUPERVISOR_MAX_CRASHES</code>
+times in a row. The alert includes the tail of
+<code>logs/queue-&lt;mode&gt;.log</code>. Common causes:</p>
+<ul>
+<li>Bash syntax error introduced by an unfinished script edit</li>
+<li>Missing config key after a partial
+<code>/bureau-init --update</code></li>
+<li><code>LINEAR_API_KEY</code> revoked</li>
+</ul>
+<p>After fixing, restart with <code>./scripts/start-bureau-v2.sh</code>
+or just re-run
+<code>./scripts/queue-loop-supervised.sh &lt;mode&gt; &lt;interval&gt;</code>.</p>
+<h3 id="crash-counter-stuck-high">Crash counter stuck high</h3>
+<p>Restart the supervisor — counters are in-process, so a fresh launch
+resets them. Or wait <code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code>
+seconds (default 1 h) of clean runtime for the auto-reset.</p>
+<hr />
+<h2 id="drift--upgrades">Drift / upgrades</h2>
+<h3 id="old-commands-at-claudecommandsspeckitmd">Old commands at
+<code>.claude/commands/speckit.*.md</code></h3>
+<p>Older Spec Kit integrations used command files. Refresh Spec Kit
+separately with the pinned installer and intended targets, preserving
+the active integration unless a switch is requested. Verify the new
+<code>.claude/skills</code> and/or <code>.agents/skills</code> entry
+points before reviewing obsolete files for removal. Preserve customized
+command content; do not delete the old glob blindly.</p>
+<h3 id="constitution-missing-after-speckit-resync">Constitution missing
+after speckit resync</h3>
+<p>The current installer snapshots and restores an existing
+constitution, including on a failed Spec Kit invocation; it does not
+promise a persistent <code>.bak</code> file. Stop further resync,
+inspect the installer error and your pre-upgrade backup, and restore the
+actual constitution rather than generating a replacement. See <a
+href="migration.html">migration and rollback</a>.</p>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="configuration.html">Configuration</a> — config keys + env
+vars</li>
+<li><a href="exit-codes.html">Exit codes</a> — what each failure code
+means</li>
+<li><a href="recipes.html">Recipes</a> — common config patterns</li>
+</ul>
+<h2 id="app-ownership-and-permissions">App ownership and
+permissions</h2>
+<p>An ownership conflict is not permission to detach another checkout.
+Inspect <code>bureau-runtime.py status</code>, locate the owner, and
+resume or perform an authorized handoff. <code>release RUN_ID</code>
+refuses a live background owner. App leases do not expire automatically:
+release only after confirming the old task has stopped. Unfinished
+workers retain progress and lose their disposable registration so later
+ticks cannot erase it.</p>
+<p>For exit 24, inspect the exact denied operation. Codex leaves Git
+commits to the shell executor, and the executor independently runs
+configured implementation/QA tests. App test actions run under app
+permissions. Grant a needed capability through the supported host flow
+or report the environment blocker; do not weaken merge gates or report
+unrun tests as passed.</p>
+<p>A prepared stage records the current branch, canonical issue marker,
+state, config and HEAD. If any change unexpectedly, reconcile the actual
+branch/ticket and prepare a fresh run. Never rewrite a result's HEAD
+merely to pass validation.</p>
+<h2 id="quota-and-missing-cost">Quota and missing cost</h2>
+<p>Codex does not consume ClaudeWatch signals. Configure a
+provider-tagged usage signal, or use the app's account-usage tool for
+interactive supervision. <code>null</code>/<code>unavailable</code> cost
+means the CLI supplied no estimate; it does not mean the work was free.
+A bounded tick waits until a later invocation instead of sleeping
+through the schedule.</p></main>
 </div>
-
-<footer class="bhb-footer">
-  <span>BUREAU-INIT · MIT · NO WARRANTY</span>
-  <span>BUILT IN HAMBURG · ON THE SEAM</span>
-  <span><a href="https://github.com/KaiaK808/bureau">SOURCE ↗</a></span>
-</footer>
-
 </body>
 </html>

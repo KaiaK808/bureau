@@ -28,6 +28,9 @@
 #                                        (true). Default: empty → always 1 (false).
 set -uo pipefail
 
+# Exercise the production stop capture and predicate, including .env overrides.
+source "$(dirname "${BASH_SOURCE[0]}")/stop-boundary.sh"
+
 _calls_log="${SANDBOX:?SANDBOX must be set by harness}/calls.log"
 : > "$_calls_log"
 
@@ -89,7 +92,7 @@ record_stage_cost() { return 0; }
 # Token-efficiency flag helpers. Defaults match the real bureau-config.sh:
 # read BUREAU_* env first, otherwise off. Tests opt into the /goal path by
 # exporting BUREAU_USE_GOAL_LOOP=1 before invoking the pipeline.
-use_goal_loop_enabled() { [ "${BUREAU_USE_GOAL_LOOP:-}" = "1" ]; }
+use_goal_loop_enabled() { [ "${BUREAU_STUB_RUNNER:-claude}" = claude ] && [ "${BUREAU_USE_GOAL_LOOP:-}" = "1" ]; }
 headroom_wrap_enabled() { [ "${BUREAU_HEADROOM_WRAP:-}" = "1" ]; }
 caveman_level() { printf '%s' "${BUREAU_CAVEMAN_LEVEL:-off}"; }
 
@@ -168,6 +171,7 @@ post_comment() { _record "post_comment" "$1" "$2"; return 0; }
 move_issue() { _record "move_issue" "$1" "$2"; return 0; }
 
 build_spec_context() { echo ""; }
+build_lessons_context() { echo ""; }
 build_negative_constraints() { echo ""; }
 
 emit_event() { _record "emit_event" "$@"; return 0; }
@@ -189,18 +193,15 @@ log_escalation() {
   return 0
 }
 
-# parse_claude_json — REAL implementation, copied verbatim from
-# templates/scripts/bureau-config.sh:921. Tests rely on the production parser
-# behaviour, not a re-implementation.
-parse_claude_json() {
-  local raw="$1" filter="$2"
-  local block
-  block=$(printf '%s' "$raw" \
-    | awk 'BEGIN{b=""; in_block=0}
-      /^```json[[:space:]]*$/ { in_block=1; b=""; next }
-      /^```[[:space:]]*$/       { if (in_block) { saved=b; in_block=0 } next }
-      { if (in_block) b = b $0 "\n" }
-      END { print saved }')
-  [ -z "$block" ] && return 0
-  printf '%s' "$block" | jq -r "$filter" 2>/dev/null || true
-}
+# Use the production parser extracted by the harness; do not mirror it.
+source "$(dirname "$0")/parse-result.sh"
+
+# Ownership is exercised separately against the production runtime.
+bureau_stage_enter() { :; }
+
+run_stage_for() { shift; "$FAKE_CLAUDE_BIN" "$@"; }
+precondition_runner() { _record precondition_runner "$1"; }
+resolve_runner_for_stage() { echo "${BUREAU_STUB_RUNNER:-claude}"; }
+commit_codex_changes() { :; }
+
+bureau_get() { jq -r "$1" "${BUREAU_CONFIG:-.bureau.json}"; }

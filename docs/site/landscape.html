@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="191db5b3ae483283b20f08bc8be0a5b75370dc04c2def39117b34d6af4bcf66c">
+<title>landscape · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="competitive-landscape--agent-pipeline-orchestration">Competitive
+Landscape — Agent Pipeline Orchestration</h1>
+<blockquote>
+<p>Researched 2026-04-10. Updated as the space evolves.</p>
+</blockquote>
+<h2 id="bureau-init-positioning">Bureau-Init Positioning</h2>
+<p>Bureau-init is a <strong>CLI-native, self-hosted, spec-driven
+multi-agent pipeline</strong> that orchestrates AI coding agents across
+the full issue-to-merge lifecycle. It integrates with Linear for state
+management, uses spec-kit for structured artifact generation, and runs
+agents in tmux.</p>
+<p><strong>Unique differentiators:</strong></p>
+<ol type="1">
+<li><strong>Linear-native</strong> — almost nothing else integrates with
+Linear</li>
+<li><strong>Spec-driven pipeline</strong> — specify → clarify → plan →
+tasks → implement (not just issue → code)</li>
+<li><strong>Repo-agnostic + pluggable</strong> — not locked to one
+ecosystem, configurable via <code>.bureau.json</code></li>
+<li><strong>Self-hosted, CLI-native</strong> — no SaaS dependency, bash
+scripts + Claude Code</li>
+</ol>
+<hr />
+<h2 id="1-full-pipeline-tools-issue--spec--code--review--merge">1.
+Full-Pipeline Tools (Issue → Spec → Code → Review → Merge)</h2>
+<h3 id="autonomous-dev-team">autonomous-dev-team</h3>
+<ul>
+<li><strong>URL:</strong> github.com/zxkane/autonomous-dev-team</li>
+<li><strong>Type:</strong> Open source</li>
+<li><strong>What it does:</strong> Turns GitHub issues into merged PRs
+with zero human intervention. Powered by OpenClaw, supports Claude Code,
+Codex CLI, and Kiro CLI. Has a dev agent (implements + tests + opens
+PR), a review agent (reviews + approves/rejects), and a dispatcher.</li>
+<li><strong>Overlap:</strong> Very high — closest direct competitor.
+GitHub-centric, not Linear. No spec generation phase. No tmux management
+UI.</li>
+<li><strong>Steal:</strong> Dispatcher pattern, multi-CLI support.</li>
+</ul>
+<h3 id="metagpt--mgx">MetaGPT / MGX</h3>
+<ul>
+<li><strong>URL:</strong> github.com/FoundationAgents/MetaGPT</li>
+<li><strong>Type:</strong> Open source</li>
+<li><strong>What it does:</strong> Simulates a software company with
+product managers, architects, project managers, and engineers as agents.
+Takes a one-line requirement and outputs user stories, competitive
+analysis, requirements, data structures, APIs, docs, then code. 85.9%
+Pass@1.</li>
+<li><strong>Overlap:</strong> The spec-generation pipeline (requirement
+→ structured artifacts → code) is very similar to speckit. MetaGPT is
+more "greenfield project generation" than "ongoing issue pipeline." No
+issue tracker integration.</li>
+<li><strong>Steal:</strong> Role decomposition pattern (PM, architect,
+engineer).</li>
+</ul>
+<h3 id="factoryai">Factory.ai</h3>
+<ul>
+<li><strong>URL:</strong> factory.ai</li>
+<li><strong>Type:</strong> Commercial</li>
+<li><strong>What it does:</strong> "Agent-native software development"
+platform. Droids autonomously handle feature dev, migrations, code
+review, and testing. Customers: MongoDB, Zapier, Bayer. 200% QoQ growth
+in 2025.</li>
+<li><strong>Overlap:</strong> Full lifecycle (issue → code → review) but
+hosted commercial. Bureau-init is the open/self-hosted alternative.</li>
+<li><strong>Position:</strong> Factory is the enterprise commercial
+benchmark.</li>
+</ul>
+<h3 id="devin">Devin</h3>
+<ul>
+<li><strong>URL:</strong> devin.ai</li>
+<li><strong>Type:</strong> Commercial ($20/month)</li>
+<li><strong>What it does:</strong> Cognition's autonomous AI software
+engineer. Takes tasks, breaks them down, writes code, runs tests, opens
+PRs.</li>
+<li><strong>Overlap:</strong> Highest-profile "autonomous dev agent" but
+monolithic single agent, not a multi-agent pipeline. No spec phase. No
+Linear.</li>
+</ul>
+<h3 id="sweepdev">Sweep.dev</h3>
+<ul>
+<li><strong>URL:</strong> sweep.dev</li>
+<li><strong>Type:</strong> Open source (GitHub App)</li>
+<li><strong>What it does:</strong> Transforms GitHub issues directly
+into PRs. Understands codebase context for multi-file changes.</li>
+<li><strong>Overlap:</strong> Close on issue-to-PR axis. GitHub-only, no
+spec, no multi-agent, no Linear.</li>
+</ul>
+<h3 id="codegen">Codegen</h3>
+<ul>
+<li><strong>URL:</strong> codegen.com</li>
+<li><strong>Type:</strong> Commercial (SOC 2, on-prem)</li>
+<li><strong>What it does:</strong> Agent orchestration infrastructure.
+Has ClickUp integration for non-engineering roles.</li>
+<li><strong>Overlap:</strong> Enterprise-grade alternative. ClickUp
+integration analogous to Linear integration.</li>
+</ul>
+<h3 id="github-copilot-coding-agent">GitHub Copilot Coding Agent</h3>
+<ul>
+<li><strong>URL:</strong> github.com (built-in)</li>
+<li><strong>Type:</strong> Commercial (included in Copilot)</li>
+<li><strong>What it does:</strong> Fully autonomous background worker —
+assign a GitHub issue, it creates a PR asynchronously. Plus Agentic
+Workflows (GitHub Actions + coding agents).</li>
+<li><strong>Overlap:</strong> GitHub's native answer. Locked to GitHub
+ecosystem. No Linear, no spec, no multi-agent.</li>
+</ul>
+<hr />
+<h2 id="2-claude-code-specific-orchestrators">2. Claude Code-Specific
+Orchestrators</h2>
+<h3 id="claude_code_agent_farm">claude_code_agent_farm</h3>
+<ul>
+<li><strong>URL:</strong>
+github.com/Dicklesworthstone/claude_code_agent_farm</li>
+<li><strong>Type:</strong> Open source</li>
+<li><strong>What it does:</strong> Runs 20+ Claude Code agents in
+parallel with automated bug fixing, best-practices sweeps, lock-based
+coordination, and real-time tmux monitoring.</li>
+<li><strong>Overlap:</strong> Very high on tmux + Claude Code axis.
+Focused on parallel execution rather than sequential pipeline. Great
+tmux pattern reference.</li>
+</ul>
+<h3 id="claude-fleet">Claude Fleet</h3>
+<ul>
+<li><strong>URL:</strong> sethdford.github.io/claude-fleet/</li>
+<li><strong>Type:</strong> Open source</li>
+<li><strong>What it does:</strong> TMUX or headless mode for CI/CD
+integration with Claude Code.</li>
+<li><strong>Overlap:</strong> Direct competitor on tmux orchestration
+layer. No Linear, no spec phase.</li>
+</ul>
+<h3 id="tmux-orchestrator">Tmux-Orchestrator</h3>
+<ul>
+<li><strong>URL:</strong> github.com/Jedward23/Tmux-Orchestrator</li>
+<li><strong>Type:</strong> Open source</li>
+<li><strong>What it does:</strong> Self-triggering agents that schedule
+check-ins, project managers assign tasks to engineers across codebases,
+persistence across laptop closure.</li>
+<li><strong>Overlap:</strong> Very close to queue-loop.sh + tmux
+pattern. Worth studying self-scheduling mechanism.</li>
+</ul>
+<h3 id="cli-agent-orchestrator-cao">CLI Agent Orchestrator (CAO)</h3>
+<ul>
+<li><strong>URL:</strong> github.com/awslabs/cli-agent-orchestrator</li>
+<li><strong>Type:</strong> Open source (AWS Labs)</li>
+<li><strong>What it does:</strong> Lightweight orchestration for
+managing multiple AI agent sessions in tmux terminals.</li>
+<li><strong>Overlap:</strong> AWS's answer. Government/enterprise
+pedigree. No issue tracker integration.</li>
+</ul>
+<h3 id="ruflo">Ruflo</h3>
+<ul>
+<li><strong>URL:</strong> github.com/ruvnet/ruflo</li>
+<li><strong>Type:</strong> Open source (25k+ stars)</li>
+<li><strong>What it does:</strong> 60+ agent swarms, 314 MCP tools, 16
+agent roles, neural self-learning routing. Native Claude Code + Codex
+integration.</li>
+<li><strong>Overlap:</strong> More ambitious scope (swarm intelligence,
+neural routing). Likely over-engineered for our use case.</li>
+</ul>
+<h3 id="ittybitty">IttyBitty</h3>
+<ul>
+<li><strong>URL:</strong> adamwulf.me</li>
+<li><strong>Type:</strong> Open source</li>
+<li><strong>What it does:</strong> "Easiest way to manage multiple
+Claude Code instances." Spawns Claude in tmux, Claude can spawn more
+instances recursively.</li>
+<li><strong>Overlap:</strong> Simple spawn-and-forget model. Bureau-init
+has more structure.</li>
+</ul>
+<h3 id="bernstein">Bernstein</h3>
+<ul>
+<li><strong>Type:</strong> Open source</li>
+<li><strong>What it does:</strong> Deterministic orchestrator that
+spawns parallel AI coding agents, verifies with tests, and auto-commits
+with zero LLM tokens on coordination overhead.</li>
+<li><strong>Steal:</strong> "Zero LLM tokens on coordination" —
+coordination is code, not prompts.</li>
+</ul>
+<hr />
+<h2 id="3-notable-architecture-patterns">3. Notable Architecture
+Patterns</h2>
+<h3 id="stackbilt-cc-taskrunner">Stackbilt cc-taskrunner</h3>
+<ul>
+<li><strong>URL:</strong> blog.stackbilt.dev</li>
+<li><strong>Type:</strong> Open source</li>
+<li><strong>What it does:</strong> Bash orchestrator that pulls tasks
+from a queue, spins up Claude Code sessions with structured prompts,
+handles lifecycle. Tasks classified as "auto_safe" (no approval) or
+requiring review.</li>
+<li><strong>Steal:</strong> auto_safe/review classification
+pattern.</li>
+</ul>
+<h3 id="three-body-agent-architecture">Three-Body Agent
+Architecture</h3>
+<ul>
+<li><strong>URL:</strong> leocardz.com</li>
+<li><strong>Type:</strong> Open source pattern</li>
+<li><strong>What it does:</strong> Three agents (Implementer, Fixer,
+Merger) orbit a codebase via GitHub Actions. Each has its own
+schedule.</li>
+<li><strong>Steal:</strong> The "Merger" agent that approves and merges
+— the piece most pipelines miss.</li>
+</ul>
+<h3 id="plandex">Plandex</h3>
+<ul>
+<li><strong>URL:</strong> plandex.ai</li>
+<li><strong>Type:</strong> Open source</li>
+<li><strong>What it does:</strong> Terminal-based, plan-driven
+development. Up to 2M token context, sandbox protection, cumulative diff
+review, version control for plans with branching.</li>
+<li><strong>Steal:</strong> Plan versioning with branching. Similar to
+speckit but single-agent.</li>
+</ul>
+<hr />
+<h2 id="4-general-purpose-agent-frameworks">4. General-Purpose Agent
+Frameworks</h2>
+<table>
+<thead>
+<tr>
+<th>Framework</th>
+<th>Type</th>
+<th>Key Feature</th>
+<th>Relevance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>LangGraph</strong></td>
+<td>Open source (MIT)</td>
+<td>Graph-based state machine, durable execution, checkpointing</td>
+<td>Most mature. Use if rebuilding as Python service.</td>
+</tr>
+<tr>
+<td><strong>CrewAI</strong></td>
+<td>Open source</td>
+<td>Role-based crews, event-driven Flows</td>
+<td>Good for spec/plan/implement pattern.</td>
+</tr>
+<tr>
+<td><strong>AG2 (AutoGen)</strong></td>
+<td>Open source (Microsoft)</td>
+<td>Event-driven, cross-framework AgentOS</td>
+<td>Interop story for mixing agent types.</td>
+</tr>
+<tr>
+<td><strong>OpenAI Agents SDK</strong></td>
+<td>Open source</td>
+<td>Lightweight, built-in tracing</td>
+<td>OpenAI-only.</td>
+</tr>
+<tr>
+<td><strong>Google ADK</strong></td>
+<td>Open source</td>
+<td>Gemini-optimized, hierarchical trees</td>
+<td>Gemini-only.</td>
+</tr>
+<tr>
+<td><strong>Anthropic Claude Agent SDK</strong></td>
+<td>Official</td>
+<td>Tool-use chains with sub-agents</td>
+<td>Foundation if moving beyond CLI.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-observability--tracing-tools">5. Observability / Tracing
+Tools</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Type</th>
+<th>Integration Effort</th>
+<th>Best For</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Helicone</strong></td>
+<td>Open source, proxy</td>
+<td>One line (change base URL)</td>
+<td>Cost/latency tracking. Ship first.</td>
+</tr>
+<tr>
+<td><strong>Langfuse</strong></td>
+<td>Open source, self-host</td>
+<td>Moderate (wrap CLI calls)</td>
+<td>Full tracing with prompt content. Ship second.</td>
+</tr>
+<tr>
+<td><strong>Arize Phoenix</strong></td>
+<td>Open source, self-host</td>
+<td>Moderate (OpenTelemetry)</td>
+<td>Eval-heavy workflows, RAG analysis.</td>
+</tr>
+<tr>
+<td><strong>Braintrust</strong></td>
+<td>Commercial ($800M)</td>
+<td>SDK integration</td>
+<td>Enterprise eval + scoring. Overkill initially.</td>
+</tr>
+<tr>
+<td><strong>LangSmith</strong></td>
+<td>Commercial (free tier)</td>
+<td>LangGraph-native</td>
+<td>Only if using LangGraph.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="recommended-stack-for-bureau-init">Recommended Stack for
+Bureau-Init</h3>
+<ol type="1">
+<li><strong>Helicone</strong> — flip a switch, get cost dashboard
+(EXP-397)</li>
+<li><strong>Langfuse</strong> — self-hosted deeper traces (EXP-398)</li>
+<li><strong>Flipside</strong> — our custom visualization layer on top
+(EXP-389)</li>
+</ol>
+<hr />
+<h2 id="6-desktop-apps-for-agent-management">6. Desktop Apps for Agent
+Management</h2>
+<h3 id="agents-ui">Agents UI</h3>
+<ul>
+<li><strong>URL:</strong> agents-ui.com</li>
+<li><strong>Type:</strong> Commercial Mac app</li>
+<li><strong>What it does:</strong> Tauri + Rust + bundled nushell +
+zellij. Runs Claude, Codex, Gemini side by side. Manages SSH hosts,
+files, sessions.</li>
+<li><strong>Relevance:</strong> GUI equivalent of Bureau's tmux setup.
+Model for our Mac app (EXP-388).</li>
+</ul>
+<h3 id="claudia">Claudia</h3>
+<ul>
+<li><strong>URL:</strong> GitHub (React + Rust + Tauri 2)</li>
+<li><strong>Type:</strong> Open source</li>
+<li><strong>What it does:</strong> Desktop app for managing Claude Code
+agents. Real-time usage analytics dashboard, cost monitoring.</li>
+<li><strong>Relevance:</strong> Analytics dashboard is what our
+observability layer could look like as a GUI.</li>
+</ul>
+<h3 id="agentsview">agentsview</h3>
+<ul>
+<li><strong>URL:</strong> github.com/wesm/agentsview</li>
+<li><strong>Type:</strong> Open source (Tauri + Go)</li>
+<li><strong>What it does:</strong> Browses, searches, analyzes AI agent
+coding sessions. Supports Claude Code, Codex, Gemini, OpenCode, Copilot.
+Activity heatmaps, tool usage, velocity metrics.</li>
+<li><strong>Relevance:</strong> Post-hoc analysis companion. Run agents
+with bureau-init, analyze with agentsview (EXP-399).</li>
+</ul>
+<hr />
+<h2 id="7-emerging-protocols">7. Emerging Protocols</h2>
+<table>
+<thead>
+<tr>
+<th>Protocol</th>
+<th>Org</th>
+<th>Purpose</th>
+<th>Relevance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>MCP</strong> (Model Context Protocol)</td>
+<td>Anthropic</td>
+<td>Tool access layer</td>
+<td>Already used by Claude Code.</td>
+</tr>
+<tr>
+<td><strong>ACP</strong> (Agent Communication Protocol)</td>
+<td>Linux Foundation</td>
+<td>REST-based agent-to-agent messaging</td>
+<td>Future interop layer (EXP-400).</td>
+</tr>
+<tr>
+<td><strong>A2A</strong> (Agent-to-Agent Protocol)</td>
+<td>Google</td>
+<td>Multi-agent task execution</td>
+<td>Competing standard with ACP.</td>
+</tr>
+<tr>
+<td><strong>Agent Protocol</strong></td>
+<td>Community</td>
+<td>Open standard for agent interfaces</td>
+<td>Generic, less traction.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="summary-matrix">Summary Matrix</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Full Pipeline</th>
+<th>Issue Tracker</th>
+<th>Spec Phase</th>
+<th>Multi-Agent</th>
+<th>Self-Hosted</th>
+<th>CLI-Native</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>bureau-init</strong></td>
+<td>Yes</td>
+<td>Linear</td>
+<td>Yes (speckit)</td>
+<td>Yes (5 stages)</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>autonomous-dev-team</td>
+<td>Yes</td>
+<td>GitHub</td>
+<td>No</td>
+<td>Yes (3 roles)</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Factory.ai</td>
+<td>Yes</td>
+<td>Jira/GitHub</td>
+<td>Partial</td>
+<td>Yes</td>
+<td>No (SaaS)</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Devin</td>
+<td>Partial</td>
+<td>GitHub</td>
+<td>No</td>
+<td>No (monolith)</td>
+<td>No (SaaS)</td>
+<td>No</td>
+</tr>
+<tr>
+<td>MetaGPT</td>
+<td>Partial</td>
+<td>None</td>
+<td>Yes</td>
+<td>Yes (roles)</td>
+<td>Yes</td>
+<td>No (Python)</td>
+</tr>
+<tr>
+<td>claude_code_agent_farm</td>
+<td>No (parallel)</td>
+<td>None</td>
+<td>No</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>GitHub Copilot Agent</td>
+<td>Partial</td>
+<td>GitHub</td>
+<td>No</td>
+<td>No</td>
+<td>No (SaaS)</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Stackbilt cc-taskrunner</td>
+<td>Partial</td>
+<td>GitHub</td>
+<td>No</td>
+<td>No</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+</tbody>
+</table></main>
+</div>
+</body>
+</html>

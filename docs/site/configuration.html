@@ -1,257 +1,1116 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Configuration · bureau-init</title>
-<meta name="description" content="Every .bureau.json key + every BUREAU_* env var, with defaults and resolution order." />
-<link rel="stylesheet" href="assets/colors_and_type.css" />
-<link rel="stylesheet" href="assets/docs.css" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="aa0c107d52863af7dd6d56678ab1f062e7cb46146cc1a0053278c72900baeeb9">
+<title>configuration · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
 </head>
 <body>
-
-<header class="bhb-topbar">
-  <a href="index.html" class="wordmark">BRAIN<span class="accent">·</span>HUGGERS BUREAU <span style="color:var(--fg-3)">/</span> bureau-init</a>
-  <div class="meta">
-    <span><span class="pulse">●</span> CRON RUNNING</span>
-    <span>FILE #01 · CONFIGURATION</span>
-    <span><a href="https://github.com/KaiaK808/bureau" style="color:inherit;">GITHUB ↗</a></span>
-  </div>
-</header>
-
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
 <div class="bhb-shell">
-
-  <aside class="bhb-sidebar">
-    <div class="group-label">Field manual</div>
-    <nav>
-      <a href="index.html"><span class="file">FILE #00</span> Index</a>
-      <a href="configuration.html" class="active"><span class="file">FILE #01</span> Configuration</a>
-      <a href="exit-codes.html"><span class="file">FILE #02</span> Exit codes</a>
-      <a href="recipes.html"><span class="file">FILE #03</span> Recipes</a>
-      <a href="troubleshooting.html"><span class="file">FILE #04</span> Troubleshooting</a>
-    </nav>
-
-    <div class="group-label">On this page</div>
-    <div class="external-list">
-      <a href="#linear">.linear</a>
-      <a href="#agents">.agents</a>
-      <a href="#repo">.repo</a>
-      <a href="#supervisor">.supervisor</a>
-      <a href="#env">Environment vars</a>
-      <a href="#resolution">Resolution order</a>
-    </div>
-  </aside>
-
-  <main class="bhb-main">
-
-    <div class="bhb-page-meta">
-      <span>FILE #01 · CONFIGURATION REFERENCE</span>
-      <span><span class="bhb-tag active"><span class="dot"></span>ACTIVE BUILD</span></span>
-    </div>
-
-    <h1>Configuration</h1>
-    <p class="lede" style="font-size:18px;color:var(--fg-2);max-width:680px;line-height:var(--lh-relaxed);">
-      Every knob bureau-init exposes — what it controls, where it lives, what the default is.
-      Two surfaces: <code>.bureau.json</code> (persisted per-repo) and <code>BUREAU_*</code> environment variables (runtime overrides).
-    </p>
-
-    <div class="bhb-callout">
-      <span class="label">Defaults are sane</span>
-      A fresh <code>/bureau-init</code> produces a working pipeline with no further editing. Everything below is for fine-tuning.
-    </div>
-
-    <h2 id="linear"><code>.linear</code></h2>
-
-    <h3>Team identity</h3>
-    <table>
-      <thead><tr><th>Key</th><th>Type</th><th>Required</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>linear.teams[0].id</code></td><td>UUID</td><td>yes</td><td>Linear team UUID</td></tr>
-        <tr><td><code>linear.teams[0].key</code></td><td>string</td><td>yes</td><td>Team key (e.g. <code>EXP</code>) — used in issue identifiers</td></tr>
-        <tr><td><code>linear.teams[0].name</code></td><td>string</td><td>yes</td><td>Display name; cosmetic only</td></tr>
-        <tr><td><code>linear.projects</code></td><td>array</td><td>optional</td><td>Project UUIDs to scope <code>pick_issue</code>. Empty = entire team</td></tr>
-      </tbody>
-    </table>
-
-    <h3>States</h3>
-    <table>
-      <thead><tr><th>Key</th><th>Required</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>states.triage</code></td><td>yes</td><td>Where eligible issues live before pickup</td></tr>
-        <tr><td><code>states.spec</code></td><td>yes</td><td>Spec writing</td></tr>
-        <tr><td><code>states.spec_review</code></td><td>yes</td><td>Spec validation</td></tr>
-        <tr><td><code>states.design</code></td><td>yes</td><td>Required only when <code>agents.ux: true</code></td></tr>
-        <tr><td><code>states.build</code></td><td>yes</td><td>Implementation</td></tr>
-        <tr><td><code>states.build_review</code></td><td>yes</td><td>Code review</td></tr>
-        <tr><td><code>states.done</code></td><td>yes</td><td>Terminal success state</td></tr>
-        <tr><td><code>states.qa</code></td><td>optional</td><td>Required if <code>agents.qa: true</code></td></tr>
-        <tr><td><code>states.copy</code></td><td>optional</td><td>Required if <code>agents.copy: true</code></td></tr>
-        <tr><td><code>states.merge</code></td><td>optional</td><td>Required if <code>agents.merge: true</code> (gated stage between Build Review and Done)</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Labels</h3>
-    <table>
-      <thead><tr><th>Key</th><th>Required</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>labels.lane2.id</code> + <code>.name</code></td><td>yes</td><td>Eligibility label (commonly <code>lane-2</code>) — only labelled issues enter the pipeline. <code>pick_issue</code> filters by name, so keep these in sync</td></tr>
-        <tr><td><code>labels.needs_human.id</code></td><td>yes</td><td>Park label — applied on unrecoverable failure</td></tr>
-        <tr><td><code>labels.needs_ux.id</code></td><td>yes</td><td>Routes Spec Review → Design</td></tr>
-        <tr><td><code>labels.ai_implementable.id</code></td><td>yes</td><td>Required from Build onwards</td></tr>
-        <tr><td><code>labels.needs_copy.name</code></td><td>optional</td><td>Required if <code>agents.copy: true</code>; routes Spec Review (or UX) → Copy</td></tr>
-      </tbody>
-    </table>
-
-    <h2 id="agents"><code>.agents</code></h2>
-    <p>Which pipelines run, how often they poll, how aggressive they are.</p>
-
-    <h3>Toggles</h3>
-    <table>
-      <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>agents.spec</code></td><td><code>true</code></td><td>Triage → Spec Review</td></tr>
-        <tr><td><code>agents.spec_review</code></td><td><code>true</code></td><td>Spec Review → Build / Design / Copy</td></tr>
-        <tr><td><code>agents.ux</code></td><td><code>false</code></td><td>Design → Build / Copy</td></tr>
-        <tr><td><code>agents.copy</code></td><td><code>false</code></td><td>Copy → Build</td></tr>
-        <tr><td><code>agents.implement</code></td><td><code>true</code></td><td>Build → Build Review (+ QA if enabled)</td></tr>
-        <tr><td><code>agents.qa</code></td><td><code>false</code></td><td>Build → QA → Build Review</td></tr>
-        <tr><td><code>agents.code_review</code></td><td><code>true</code></td><td>Build Review → Done (or Merge)</td></tr>
-        <tr><td><code>agents.merge</code></td><td><code>false</code></td><td>Gated merge after code-review APPROVE</td></tr>
-        <tr><td><code>agents.rebase</code></td><td><code>false</code></td><td>Force-pushes to remote — opt-in for that reason</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Tuning</h3>
-    <table>
-      <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>agents.poll_interval_minutes</code></td><td><code>30</code></td><td>Cron tick frequency</td></tr>
-        <tr><td><code>agents.workbench_panes</code></td><td><code>2</code></td><td>Interactive <code>claude</code> panes spawned in the workbench window</td></tr>
-        <tr><td><code>agents.max_review_cycles</code></td><td><code>3</code></td><td>Code-review re-iterations before <code>needs-human</code></td></tr>
-        <tr><td><code>agents.code_review_sampling_threshold</code></td><td><code>500</code></td><td>Diff line-count above which code-review switches to sampling mode</td></tr>
-        <tr><td><code>agents.max_concurrent_issues</code></td><td><code>0</code></td><td>Repo-wide cap on issues in flight. <code>0</code> = unlimited; <code>1</code> = single-flight. See <a href="recipes.html#single-flight">FILE #03</a></td></tr>
-        <tr><td><code>agents.merge_strategy</code></td><td><code>"squash"</code></td><td>One of <code>squash</code>, <code>merge</code>, <code>rebase</code>. Validated at config-load — invalid values fall back to <code>squash</code></td></tr>
-        <tr><td><code>agents.merge_require_green_ci</code></td><td><code>true</code></td><td>Bureau-enforced "all check-runs on PR head SHA completed + green" gate, independent of GitHub's <code>mergeStateStatus</code>. Catches the "no required-checks rule configured" hole where CLEAN passes with red CI</td></tr>
-        <tr><td><code>agents.merge_require_up_to_date</code></td><td><code>true</code></td><td>Bureau-enforced "PR baseRefOid == origin/main HEAD" gate. Catches the async-cache race where <code>mergeStateStatus</code> still reads CLEAN after main has advanced</td></tr>
-        <tr><td><code>agents.merge_min_required_checks</code></td><td><code>1</code></td><td>Minimum completed check-runs required on the PR head SHA before <code>merge_require_green_ci</code> will pass. Prevents a PR with zero registered workflows from passing vacuously</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Per-stage model overrides</h3>
-    <table>
-      <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>agents.model</code></td><td>unset</td><td>Default model for every stage. Falls through to the user's <code>claude</code> CLI default</td></tr>
-        <tr><td><code>agents.&lt;stage&gt;.model</code></td><td>unset</td><td>Per-stage override. <code>&lt;stage&gt;</code> is one of <code>spec</code>, <code>spec_review</code>, <code>ux</code>, <code>copy</code>, <code>implement</code>, <code>qa</code>, <code>code_review</code>, <code>merge</code>. Set via <code>/bureau-init --update</code> (Models option) or auto-prompted at the tail of <code>/bureau-init --resync-scripts</code></td></tr>
-      </tbody>
-    </table>
-
-    <div class="bhb-callout">
-      <span class="label">Provider mixing</span>
-      Anthropic models with reasoning enabled can only pair with other Anthropic models in the same context. Bureau is fine — every pipeline run is a fresh <code>claude -p</code> subprocess, so cross-provider stage assignment works as long as each stage's full conversation stays within its provider.
-    </div>
-
-    <h2 id="repo"><code>.repo</code></h2>
-    <table>
-      <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>repo.branch_prefix</code></td><td><code>"feat"</code></td><td>Prefix for spec branches (<code>feat/001-add-login</code>)</td></tr>
-        <tr><td><code>repo.commit_prefix</code></td><td><code>""</code></td><td>Optional prefix for commit messages</td></tr>
-        <tr><td><code>repo.specs_dir</code></td><td><code>"specs"</code></td><td>Directory where speckit writes specs — must match <code>.specify/</code>'s configured path</td></tr>
-        <tr><td><code>repo.copy_voice_file</code></td><td>unset</td><td>Required if <code>agents.copy: true</code>. Path to a markdown file describing voice/tone</td></tr>
-      </tbody>
-    </table>
-
-    <h2 id="supervisor"><code>.supervisor</code></h2>
-    <table>
-      <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>supervisor.max_crashes</code></td><td><code>5</code></td><td>Consecutive crashes before the supervisor gives up + fires a Telegram alert. Override via <code>BUREAU_SUPERVISOR_MAX_CRASHES</code></td></tr>
-        <tr><td><code>supervisor.stability_window</code></td><td><code>3600</code></td><td>Seconds of clean runtime before the crash counter resets. Override via <code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code></td></tr>
-      </tbody>
-    </table>
-
-    <h2 id="env">Environment variables</h2>
-
-    <h3>Runtime mode</h3>
-    <table>
-      <thead><tr><th>Var</th><th>Effect</th></tr></thead>
-      <tbody>
-        <tr><td><code>BUREAU_DRY_RUN=1</code></td><td>Short-circuits all Linear mutations, comments, label changes, <code>git push</code>, <code>gh pr create</code>. Logs intent + returns success</td></tr>
-        <tr><td><code>BUREAU_SESSION_NAME</code></td><td>Override the default tmux session name (<code>bureau-v2-&lt;repo-basename&gt;</code>)</td></tr>
-      </tbody>
-    </table>
-
-    <h3>External services</h3>
-    <table>
-      <thead><tr><th>Var</th><th>Required when</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>LINEAR_API_KEY</code></td><td>always (agents)</td><td>Set in <code>.env</code>. Headless agents use direct REST</td></tr>
-        <tr><td><code>TELEGRAM_BOT_TOKEN</code></td><td>optional</td><td>Failure alerts. No-op when unset</td></tr>
-        <tr><td><code>TELEGRAM_ALERT_CHAT_ID</code></td><td>optional</td><td>Chat/channel ID. Must be set alongside the token</td></tr>
-      </tbody>
-    </table>
-
-    <h3 id="implement-retry">Implement-pipeline retry loop</h3>
-    <p>Env-only knobs (no <code>.bureau.json</code> equivalent). <code>implement-pipeline.sh</code> invokes Claude inside a bounded retry loop and parks the issue with <code>needs-human</code> if it doesn't reach <code>status: COMPLETE</code> within the budget.</p>
-    <table>
-      <thead><tr><th>Var</th><th>Default</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>BUREAU_IMPL_MAX_ITER</code></td><td><code>3</code></td><td>Max Claude passes per tick. Each iter parses the JSON status block, pushes commits, and decides continue/stop</td></tr>
-        <tr><td><code>BUREAU_IMPL_ITER_TIMEOUT</code></td><td><code>1800</code></td><td>Per-iter wall-time cap (seconds). Uses <code>timeout</code> (Linux) or <code>gtimeout</code> (macOS via <code>brew install coreutils</code>). Degrades to cumulative-only with a WARN if neither is on PATH</td></tr>
-        <tr><td><code>BUREAU_IMPL_TOTAL_TIMEOUT</code></td><td><code>5400</code></td><td>Cumulative wall-time cap (seconds) across all iters in one tick. Hard upper bound on cost per issue per tick</td></tr>
-      </tbody>
-    </table>
-    <p>Defaults give ≤90 min worst case per tick before parking. Single-strike stuck detector: if an iter produces no <code>[X]</code> marks, no review fixes, AND no commits, the issue is parked immediately — Claude is spinning, not making progress.</p>
-
-    <p>Terminal states map to PR state + Linear:</p>
-    <table>
-      <thead><tr><th>Status</th><th>PR</th><th>needs-human label</th><th>State move</th><th><code>logs/escalations.log</code></th></tr></thead>
-      <tbody>
-        <tr><td><code>COMPLETE</code></td><td>flipped to ready (<code>gh pr ready</code>)</td><td>no</td><td>→ QA / Build Review</td><td>no</td></tr>
-        <tr><td><code>NEEDS_HUMAN</code> / <code>STUCK</code> / <code>CAP_TIME</code> / <code>PARTIAL</code></td><td>draft</td><td>yes</td><td>stays in Build</td><td>yes</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Per-stage model env shortcuts</h3>
-    <p>Read by <code>claude_cmd_for_stage()</code> in <code>bureau-config.sh</code>. Useful for one-off experiments — the <code>.bureau.json</code> keys are the canonical surface.</p>
-    <table>
-      <thead><tr><th>Var</th><th>Stage</th></tr></thead>
-      <tbody>
-        <tr><td><code>BUREAU_MODEL_DEFAULT</code></td><td>all</td></tr>
-        <tr><td><code>BUREAU_MODEL_SPEC</code></td><td>spec</td></tr>
-        <tr><td><code>BUREAU_MODEL_SPEC_REVIEW</code></td><td>spec_review</td></tr>
-        <tr><td><code>BUREAU_MODEL_UX</code></td><td>ux</td></tr>
-        <tr><td><code>BUREAU_MODEL_COPY</code></td><td>copy</td></tr>
-        <tr><td><code>BUREAU_MODEL_IMPLEMENT</code></td><td>implement</td></tr>
-        <tr><td><code>BUREAU_MODEL_QA</code></td><td>qa</td></tr>
-        <tr><td><code>BUREAU_MODEL_CODE_REVIEW</code></td><td>code_review</td></tr>
-        <tr><td><code>BUREAU_MODEL_MERGE</code></td><td>merge</td></tr>
-      </tbody>
-    </table>
-
-    <h2 id="resolution">Resolution order</h2>
-    <p>For any value that exists in both <code>.bureau.json</code> and the environment:</p>
-    <ol>
-      <li>Per-stage env var (e.g. <code>BUREAU_MODEL_IMPLEMENT</code>)</li>
-      <li>Stage key in <code>.bureau.json</code> (e.g. <code>agents.implement.model</code>)</li>
-      <li>Default env var (e.g. <code>BUREAU_MODEL_DEFAULT</code>)</li>
-      <li>Default key (e.g. <code>agents.model</code>)</li>
-      <li>CLI / shell default (no flag passed)</li>
-    </ol>
-    <p><code>bureau-config.sh</code> is the source of truth — when in doubt, grep it for <code>bureau_get</code> calls to see exact precedence.</p>
-
-  </main>
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1 id="configuration-reference">Configuration
+reference</h1>
+<p>Every knob bureau-init exposes — what it controls, where it lives,
+and what the default is. Two surfaces:</p>
+<ul>
+<li><strong><code>.bureau.json</code></strong> — written by
+<code>/bureau-init</code> to the target repo's root. Gitignored. UUIDs +
+agent toggles.</li>
+<li><strong>Environment variables</strong> — runtime-only overrides read
+by the pipeline scripts. Not persisted; usually set inline
+(<code>BUREAU_DRY_RUN=1 ./scripts/queue-loop.sh ...</code>) or in
+<code>.env</code>.</li>
+</ul>
+<p>Setup captures the project-specific settings. Verify credentials,
+installed tools and real tests before running work. Current app tasks
+use the app-selected model; provider settings below select background
+CLIs.</p>
+<hr />
+<h2 id="bureaujson"><code>.bureau.json</code></h2>
+<h3 id="version-and-validation">Version and validation</h3>
+<p>Version 1 remains compatible; version 2 makes the legacy
+<code>agents.runner: "claude"</code> default explicit. Migration
+preserves existing fields, adds
+<code>agents.model_compatibility: "v1"</code> to retain legacy provider
+model selection, and saves a private exact backup.
+<code>bureau-doctor.py</code> validates shape/version and reports
+effective settings without contacting providers. See <a
+href="migration.html">migration and rollback</a>.</p>
+<h3 id="linear"><code>linear</code></h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linear.teams[0].id</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Linear team UUID</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].key</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Team key (e.g. <code>EXP</code>) — used in issue identifiers</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Display name; cosmetic only</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.triage</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Where eligible issues live before pickup</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.spec</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Spec writing</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.spec_review</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Spec validation</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.design</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>UX (only required when <code>agents.ux: true</code>)</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.build</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Implementation</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.build_review</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Code review</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.done</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Terminal success state</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.qa</code></td>
+<td>UUID</td>
+<td>optional</td>
+<td>Required if <code>agents.qa: true</code>; absent disables the QA
+state machine entirely</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.copy</code></td>
+<td>UUID</td>
+<td>optional</td>
+<td>Required if <code>agents.copy: true</code></td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.merge</code></td>
+<td>UUID</td>
+<td>optional</td>
+<td>Required if <code>agents.merge: true</code> (gated merge stage
+between Build Review and Done)</td>
+</tr>
+<tr>
+<td><code>linear.labels.lane2.id</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Eligibility label (commonly <code>lane-2</code>) — only issues with
+this label enter the pipeline</td>
+</tr>
+<tr>
+<td><code>linear.labels.lane2.name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Label display name — <code>pick_issue</code> filters by name, so
+keep these in sync</td>
+</tr>
+<tr>
+<td><code>linear.labels.needs_human.id</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Park label — applied on unrecoverable failure to take an issue out
+of the queue</td>
+</tr>
+<tr>
+<td><code>linear.labels.needs_ux.id</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Routes from Spec Review → Design</td>
+</tr>
+<tr>
+<td><code>linear.labels.ai_implementable.id</code></td>
+<td>UUID</td>
+<td>yes</td>
+<td>Required on issues for stages from Build onwards</td>
+</tr>
+<tr>
+<td><code>linear.labels.needs_copy.name</code></td>
+<td>string</td>
+<td>optional</td>
+<td>Required if <code>agents.copy: true</code>; routes from Spec Review
+(or UX) → Copy</td>
+</tr>
+<tr>
+<td><code>linear.projects</code></td>
+<td>array</td>
+<td>optional</td>
+<td>List of project UUIDs to scope <code>pick_issue</code>. Empty array
+= unscoped (entire team)</td>
+</tr>
+</tbody>
+</table>
+<p>The runtime uses the first configured team. State IDs are
+authoritative; display names may be customized.</p>
+<h3 id="agents"><code>agents</code></h3>
+<p>Which pipelines run, how often they poll, how aggressive they
+are.</p>
+<p><strong>Default semantics.</strong> An absent stage is disabled. A
+boolean controls the stage directly; an object such as
+<code>{"enabled":true,"runner":"codex"}</code> is enabled unless
+<code>enabled</code> is explicitly false. The setup defaults below
+describe the initial configuration, not a fallback that enables missing
+stages. Preserve existing choices during updates.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Setup default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agents.spec</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Triage → Spec Review</td>
+</tr>
+<tr>
+<td><code>agents.spec_review</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Spec Review → Build / Design / Copy</td>
+</tr>
+<tr>
+<td><code>agents.ux</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Design → Build / Copy. Off by default</td>
+</tr>
+<tr>
+<td><code>agents.copy</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Copy → Build. Off by default</td>
+</tr>
+<tr>
+<td><code>agents.implement</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Build → Build Review (+ QA if enabled)</td>
+</tr>
+<tr>
+<td><code>agents.qa</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Build → QA → Build Review. Off by default</td>
+</tr>
+<tr>
+<td><code>agents.code_review</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Build Review → Done (or Merge if enabled)</td>
+</tr>
+<tr>
+<td><code>agents.merge</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Gated merge after code-review APPROVE. Off by default</td>
+</tr>
+<tr>
+<td><code>agents.rebase</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Force-pushes to remote — opt-in for that reason</td>
+</tr>
+<tr>
+<td><code>agents.poll_interval_minutes</code></td>
+<td>number</td>
+<td><code>30</code></td>
+<td>Queue polling interval. Lower (e.g. <code>5</code>) for active work,
+higher for background</td>
+</tr>
+<tr>
+<td><code>agents.workbench_panes</code></td>
+<td>number</td>
+<td><code>2</code> background / <code>0</code> app</td>
+<td>Number of interactive provider panes in the tmux workbench; zero
+omits it</td>
+</tr>
+<tr>
+<td><code>agents.max_review_cycles</code></td>
+<td>number</td>
+<td><code>3</code></td>
+<td>Code-review re-iterations before the agent gives up and applies
+<code>needs-human</code></td>
+</tr>
+<tr>
+<td><code>agents.code_review_sampling_threshold</code></td>
+<td>number</td>
+<td><code>500</code></td>
+<td>Diff line-count above which code-review switches to sampling mode.
+Tune up for repos with strong CI</td>
+</tr>
+<tr>
+<td><code>agents.max_concurrent_issues</code></td>
+<td>number</td>
+<td><code>0</code></td>
+<td>Repo-wide cap on issues in flight. <code>0</code> = unlimited
+(default). <code>1</code> = single-flight (drain end-to-end before next
+Spec). See <a href="recipes.html#single-flight-pipeline">recipes</a></td>
+</tr>
+<tr>
+<td><code>agents.merge_strategy</code></td>
+<td>string</td>
+<td><code>"squash"</code></td>
+<td>One of <code>squash</code>, <code>merge</code>, <code>rebase</code>.
+Validated at config-load — invalid values fall back to
+<code>squash</code> with a warning</td>
+</tr>
+<tr>
+<td><code>agents.merge_require_green_ci</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Bureau-enforced "all check-runs on PR head SHA must be completed +
+green" gate, independent of GitHub's <code>mergeStateStatus</code>.
+Catches the "no required-checks rule configured" hole where CLEAN passes
+with red CI. Set false only for repos genuinely without CI (docs-only,
+prototypes)</td>
+</tr>
+<tr>
+<td><code>agents.merge_require_up_to_date</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Bureau-enforced "PR baseRefOid == origin/main HEAD" gate. Catches
+the async-cache race where <code>mergeStateStatus</code> still reads
+CLEAN after main has advanced. Set false only for repos using deliberate
+batch-merge workflows</td>
+</tr>
+<tr>
+<td><code>agents.merge_min_required_checks</code></td>
+<td>number</td>
+<td><code>1</code></td>
+<td>Minimum completed check-runs required on the PR head SHA before
+<code>merge_require_green_ci</code> will pass. Prevents a PR with zero
+registered workflows from passing vacuously. Set to <code>0</code> for
+repos with no CI at all (rare — prefer flipping
+<code>merge_require_green_ci</code> to <code>false</code> instead)</td>
+</tr>
+<tr>
+<td><code>agents.model</code></td>
+<td>string</td>
+<td>unset</td>
+<td>Generic default belonging to <code>agents.runner</code>; ignored for
+Codex under v1 model compatibility and not reused by a stage assigned to
+another provider</td>
+</tr>
+<tr>
+<td><code>agents.&lt;stage&gt;.model</code></td>
+<td>string</td>
+<td>unset</td>
+<td>Generic per-stage override; ignored for Codex under v1 model
+compatibility. Under v2 semantics it belongs to the stage's selected
+runner. Provider and environment settings also participate in
+resolution; see <a href="provider-runtime.html">exact precedence</a>. Set
+through the compatibility-aware Models group in
+<code>/bureau-init --update</code></td>
+</tr>
+</tbody>
+</table>
+<p>Stage settings apply to <code>spec</code>, <code>spec_review</code>,
+<code>ux</code>, <code>copy</code>, <code>implement</code>,
+<code>qa</code>, <code>code_review</code>, <code>merge</code> and
+<code>rebase</code>. Provider helpers also accept <code>research</code>,
+<code>upstream_port</code> and <code>upstream_summary</code> when
+invoked by their callers. Legacy string switches are preserved by
+migration; prefer booleans or objects for new settings.</p>
+<p>Version 1 configurations (including an absent version) and migrated
+configurations retaining <code>agents.model_compatibility: "v1"</code>
+preserve generic model fields as Claude settings. For Codex, use
+<code>agents.providers.codex.model</code> or a provider-specific stage
+environment override such as <code>BUREAU_CODEX_MODEL_IMPLEMENT</code>.
+A schema migration does not opt into v2 model semantics. Review the
+selected runners and generic fields before explicitly removing the
+compatibility marker from a version 2 config or setting it to
+<code>"v2"</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Provider key</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agents.runner</code></td>
+<td><code>claude</code></td>
+<td>Default background provider</td>
+</tr>
+<tr>
+<td><code>agents.&lt;stage&gt;.runner</code></td>
+<td>inherited</td>
+<td>Stage-specific <code>claude</code> or <code>codex</code></td>
+</tr>
+<tr>
+<td><code>agents.providers.&lt;provider&gt;.model</code></td>
+<td>CLI default</td>
+<td>Provider-specific model</td>
+</tr>
+<tr>
+<td><code>agents.&lt;stage&gt;.model</code></td>
+<td>inherited</td>
+<td>Generic stage model; Claude-only under v1 compatibility, selected
+runner under v2 semantics</td>
+</tr>
+<tr>
+<td><code>agents.model_compatibility</code></td>
+<td>based on schema version</td>
+<td><code>v1</code> preserves legacy model meaning; migration retains it
+until explicitly changed</td>
+</tr>
+<tr>
+<td><code>agents.&lt;stage&gt;.reasoning_effort</code></td>
+<td>unset</td>
+<td>Provider/model-supported reasoning value; provider defaults also
+supported</td>
+</tr>
+<tr>
+<td><code>agents.&lt;stage&gt;.sandbox</code></td>
+<td>stage-dependent</td>
+<td>Codex <code>read-only</code> or <code>workspace-write</code>;
+provider defaults also supported</td>
+</tr>
+<tr>
+<td><code>agents.&lt;stage&gt;.timeout_seconds</code></td>
+<td>900</td>
+<td>Adapter timeout, also configurable by provider</td>
+</tr>
+<tr>
+<td><code>agents.workbench_runner</code></td>
+<td>default runner</td>
+<td>Interactive bench provider; zero panes omits it</td>
+</tr>
+<tr>
+<td><code>agents.upstream_summary</code></td>
+<td>false</td>
+<td>Optional read-only upstream summary model pass</td>
+</tr>
+<tr>
+<td><code>session.cost_tracking</code></td>
+<td>false</td>
+<td>Persist available token usage and CLI cost estimates</td>
+</tr>
+<tr>
+<td><code>session.usage_threshold_pct</code></td>
+<td>80</td>
+<td>Pause at/above the available provider usage signal</td>
+</tr>
+<tr>
+<td><code>session.pause_on_stale_data</code></td>
+<td>false</td>
+<td>Honor old usage signals when explicitly selected</td>
+</tr>
+</tbody>
+</table>
+<p>Read <a href="provider-runtime.html">provider runtime</a> for exact
+model precedence, sandbox capabilities and structured results. Code
+review/research default to read-only; spec-review/implementation/QA can
+write within the permitted workspace. The executor runs actual
+implementation/QA tests separately. Unknown runners, malformed results
+and denied permissions are errors, never automatic fallback to
+Claude.</p>
+<h3 id="session"><code>session</code></h3>
+<p>Cost logging is opt-in. Usage throttling uses an operator-provided
+signal for the selected provider; no signal means unknown usage and
+dispatch proceeds.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>session.cost_tracking</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Enables available provider token and estimated-cost records at
+<code>${BUREAU_COST_DIR:-~/.bureau/cost}/&lt;issue&gt;.jsonl</code>.
+Report via <code>scripts/bureau-status.sh --cost</code>; missing cost
+stays unavailable. Env override:
+<code>BUREAU_COST_TRACKING=1</code></td>
+</tr>
+<tr>
+<td><code>session.usage_threshold_pct</code></td>
+<td>number</td>
+<td><code>80</code></td>
+<td>Pauses before a new work unit when the selected provider's reported
+usage is at or above this percentage. Needs an external signal producer;
+Claude and Codex signals are separate</td>
+</tr>
+<tr>
+<td><code>session.pause_on_stale_data</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>When true, continue applying the threshold to a signal older than
+five minutes. False ignores stale signals. Missing signals never cause a
+pause</td>
+</tr>
+</tbody>
+</table>
+<h3 id="repo"><code>repo</code></h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>repo.branch_prefix</code></td>
+<td>string</td>
+<td><code>"feat"</code></td>
+<td>Prefix for spec branches (<code>feat/001-add-login</code>)</td>
+</tr>
+<tr>
+<td><code>repo.commit_prefix</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Optional prefix for commit messages
+(<code>[EXP] feat(login): ...</code>)</td>
+</tr>
+<tr>
+<td><code>repo.specs_dir</code></td>
+<td>string</td>
+<td><code>"specs"</code></td>
+<td>Directory where speckit writes specs — must match
+<code>.specify/</code>'s configured path</td>
+</tr>
+<tr>
+<td><code>repo.test_command</code></td>
+<td>string</td>
+<td>unset</td>
+<td>Actual project tests; required for Codex implementation completion
+and the app tests action</td>
+</tr>
+<tr>
+<td><code>repo.copy_voice_file</code></td>
+<td>path</td>
+<td>unset</td>
+<td>Required if <code>agents.copy: true</code>. Path to a markdown file
+describing voice/tone (e.g. <code>docs/voice.md</code>)</td>
+</tr>
+<tr>
+<td><code>repo.upstream</code></td>
+<td>string</td>
+<td><code>"ultraworkers/claw-code"</code></td>
+<td>GitHub <code>owner/name</code> for <code>upstream-port.sh</code>
+cherry-picks. Env override: <code>BUREAU_UPSTREAM_REPO</code></td>
+</tr>
+<tr>
+<td><code>repo.upstream_port.build_cmd</code></td>
+<td>string</td>
+<td><code>"cargo build --release -p brainhuggers-cli"</code></td>
+<td>Shell command run inside <code>work_dir</code> after
+<code>git apply</code> succeeds. Non-zero exit → exit code 14. Env
+override: <code>BUREAU_UPSTREAM_PORT_BUILD</code></td>
+</tr>
+<tr>
+<td><code>repo.upstream_port.test_cmd</code></td>
+<td>string</td>
+<td><code>"cargo test --workspace --no-fail-fast"</code></td>
+<td>Shell command for post-build tests. Non-zero exit → exit code 15.
+Env override: <code>BUREAU_UPSTREAM_PORT_TEST</code></td>
+</tr>
+<tr>
+<td><code>repo.upstream_port.work_dir</code></td>
+<td>string</td>
+<td><code>"${SCRIPT_DIR}/../rust"</code></td>
+<td>Working directory for build + test commands. Env override:
+<code>BUREAU_UPSTREAM_PORT_WORK_DIR</code></td>
+</tr>
+<tr>
+<td><code>repo.path_prefix_strip</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Prefix stripped by <code>crosscheck-specs.sh</code> when comparing
+planned spec paths against in-flight PR file paths. Useful when specs
+reference paths with a repo-name prefix
+(<code>brainhuggers-bureau/</code>, <code>packages/foo/</code>). Env
+override: <code>BUREAU_PATH_PREFIX_STRIP</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="supervisor"><code>supervisor</code></h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>supervisor.max_crashes</code></td>
+<td>number</td>
+<td><code>5</code></td>
+<td>Consecutive crashes before the supervisor gives up and fires a
+Telegram alert. Read from env <code>BUREAU_SUPERVISOR_MAX_CRASHES</code>
+if set</td>
+</tr>
+<tr>
+<td><code>supervisor.stability_window</code></td>
+<td>number</td>
+<td><code>3600</code></td>
+<td>Seconds of clean runtime before the crash counter resets. Read from
+env <code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code> if set</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="environment-variables">Environment variables</h2>
+<h3 id="runtime-mode">Runtime mode</h3>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BUREAU_DRY_RUN=1</code></td>
+<td>Queue/shepherd previews read eligible work but do not launch
+creative stages or reset workers. Pipeline entry points return before
+stage work. This is a dispatch preview, not model/test
+qualification</td>
+</tr>
+<tr>
+<td><code>BUREAU_SESSION_NAME</code></td>
+<td>Override the default tmux session name
+(<code>bureau-v2-&lt;repo-basename&gt;</code>)</td>
+</tr>
+<tr>
+<td><code>BUREAU_SESSION</code></td>
+<td>tmux session selected by the launcher/status interface. The event
+helper records fields explicitly supplied by its caller; this variable
+does not automatically tag every event</td>
+</tr>
+<tr>
+<td><code>BUREAU_FORCE_ALL_AGENTS=1</code></td>
+<td>Bypasses <code>agent_enabled()</code> — every agent's queue-loop
+runs regardless of <code>.bureau.json</code> toggles. Useful when
+driving <code>shepherd.sh</code> end-to-end against a repo with agents
+intentionally disabled for cron</td>
+</tr>
+<tr>
+<td><code>BUREAU_DISABLE_THROTTLE=1</code></td>
+<td>Skips the usage guard for this process; does not change its
+threshold or <code>.bureau.json</code>. Provider quota errors can still
+stop work</td>
+</tr>
+<tr>
+<td><code>BUREAU_MAX_CONCURRENT</code></td>
+<td>Default lane cap for <code>orchestrate.sh</code> (3 when absent);
+<code>--max-concurrent</code> overrides it. This does not change the
+separate <code>agents.max_concurrent_issues</code> ticket cap</td>
+</tr>
+</tbody>
+</table>
+<h3 id="linear--external-services">Linear / external services</h3>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Required when</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LINEAR_API_KEY</code></td>
+<td>Always (agents)</td>
+<td>Set in <code>.env</code>. The interactive <code>/bureau-init</code>
+works without it via MCP; the headless agents need direct GraphQL
+access</td>
+</tr>
+<tr>
+<td><code>TELEGRAM_BOT_TOKEN</code></td>
+<td>Optional</td>
+<td>Telegram bot for failure alerts. No-op when unset</td>
+</tr>
+<tr>
+<td><code>TELEGRAM_ALERT_CHAT_ID</code></td>
+<td>Optional</td>
+<td>Chat/channel ID for alerts. Must be set alongside the token</td>
+</tr>
+</tbody>
+</table>
+<h3 id="implement-pipeline-retry-loop">Implement-pipeline retry
+loop</h3>
+<p>Env-only knobs (no <code>.bureau.json</code> equivalent).
+<code>implement-pipeline.sh</code> invokes the selected provider inside
+a bounded retry loop and parks the issue with <code>needs-human</code>
+if it doesn't reach <code>status: COMPLETE</code> within the budget.</p>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BUREAU_IMPL_MAX_ITER</code></td>
+<td><code>3</code></td>
+<td>Max provider passes per tick. Each iter parses the JSON status
+block, pushes commits, and decides continue/stop</td>
+</tr>
+<tr>
+<td><code>BUREAU_IMPL_ITER_TIMEOUT</code></td>
+<td><code>1800</code></td>
+<td>Per-iteration provider wall-time cap in seconds, limited by the
+remaining total budget and enforced by the Python adapter for both
+providers</td>
+</tr>
+<tr>
+<td><code>BUREAU_IMPL_TOTAL_TIMEOUT</code></td>
+<td><code>5400</code></td>
+<td>Budget in seconds for the implementation provider loop. Independent
+executor tests and publication can add time after it; this is not a
+monetary cap</td>
+</tr>
+</tbody>
+</table>
+<p>The default provider-loop budget is 90 minutes. An unproductive first
+<code>PARTIAL</code> iteration can become <code>STUCK</code>; prior
+productive iterations and legitimate <code>COMPLETE</code> results have
+separate handling. The executor checks Git evidence and, for Codex
+completion, the configured project tests. A provider's success text
+alone cannot complete the stage.</p>
+<p>Terminal states map to PR state + Linear:</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>PR</th>
+<th>needs-human label</th>
+<th>State move</th>
+<th><code>logs/escalations.log</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>COMPLETE</code></td>
+<td>flipped to ready (<code>gh pr ready</code>)</td>
+<td>no</td>
+<td>→ QA / Build Review</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>NEEDS_HUMAN</code> / <code>STUCK</code> /
+<code>CAP_TIME</code> / <code>PARTIAL</code></td>
+<td>draft</td>
+<td>yes</td>
+<td>stays in Build</td>
+<td>yes</td>
+</tr>
+</tbody>
+</table>
+<h3 id="token-efficiency-flags-bureaujson-agents">Token-efficiency flags
+(<code>.bureau.json</code> <code>agents.*</code>)</h3>
+<p>Three opt-in toggles change background implementation control flow,
+prompt compression and response style. All default off. See <a
+href="token-efficiency.html">token efficiency</a> for the historical
+rationale; provider support and actual measurements must be checked for
+the adopting repository.</p>
+<p>Provider calls read these settings at invocation time. Change them
+between work units so a stage does not change policy partway through its
+run.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Type</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agents.use_goal_loop</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Claude-only <code>/goal</code> implementation path, requiring a
+compatible Claude installation. It uses
+<code>BUREAU_IMPL_TOTAL_TIMEOUT</code>; Codex always uses the portable
+bounded loop</td>
+</tr>
+<tr>
+<td><code>agents.headroom_wrap</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Wrap Claude calls with <code>headroom wrap</code>; install the
+optional wrapper first. Codex calls are unaffected</td>
+</tr>
+<tr>
+<td><code>agents.caveman_level</code></td>
+<td>enum</td>
+<td><code>"off"</code></td>
+<td>Compact review-prose preference (<code>off</code>,
+<code>lite</code>, <code>full</code>, <code>ultra</code>,
+<code>wenyan</code>). Optional skill installation is a separate setup
+choice; commits and PR descriptions remain normal</td>
+</tr>
+</tbody>
+</table>
+<p>Env-var overrides follow the same <code>BUREAU_&lt;FLAG&gt;=1</code>
+pattern as <code>BUREAU_COST_TRACKING</code>:
+<code>BUREAU_USE_GOAL_LOOP=1</code>,
+<code>BUREAU_HEADROOM_WRAP=1</code>,
+<code>BUREAU_CAVEMAN_LEVEL=ultra</code>. Env wins over JSON when both
+are set.</p>
+<p>Rollback: each layer is independently flippable. If something
+misbehaves, set the offending flag to <code>false</code> (or
+<code>"off"</code>) and the pipeline reverts to the prior code path on
+the next tick — no scripts to re-generate, no state migration.</p>
+<h3
+id="per-stage-model-overrides-env-shortcuts-for-agentsstagemodel">Per-stage
+model overrides (env shortcuts for
+<code>agents.&lt;stage&gt;.model</code>)</h3>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Stage</th>
+<th>Resolution priority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BUREAU_MODEL_DEFAULT</code></td>
+<td>Claude stages</td>
+<td>Legacy fallback after configured models and provider defaults</td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_SPEC</code></td>
+<td>spec</td>
+<td>Below provider-specific stage override; ignored for Codex under v1
+compatibility</td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_SPEC_REVIEW</code></td>
+<td>spec_review</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_UX</code></td>
+<td>ux</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_COPY</code></td>
+<td>copy</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_IMPLEMENT</code></td>
+<td>implement</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_QA</code></td>
+<td>qa</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_CODE_REVIEW</code></td>
+<td>code_review</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_MERGE</code></td>
+<td>merge</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_RESEARCH</code></td>
+<td>research</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_UPSTREAM_PORT</code></td>
+<td>upstream_port</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>These are read by the provider adapter; provider-specific overrides
+take precedence. Under v1 model compatibility, generic overrides belong
+to Claude and are ignored for Codex. The <code>.bureau.json</code> keys
+are the canonical surface; env vars are useful for one-off experiments
+(<code>BUREAU_MODEL_CODE_REVIEW=claude-haiku-4-5-20251001 ./scripts/queue-loop.sh code-review 5</code>).</p>
+<h3 id="backend-routing-env-shortcuts-for-agentsstagerunner">Backend
+routing (env shortcuts for
+<code>agents.&lt;stage&gt;.runner</code>)</h3>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BUREAU_RUNNER_&lt;STAGE&gt;</code></td>
+<td>Override per-stage runner with <code>codex</code> or
+<code>claude</code>, e.g. <code>BUREAU_RUNNER_CODE_REVIEW=codex</code>.
+Wins over stage/default JSON</td>
+</tr>
+<tr>
+<td><code>BUREAU_CODEX_MODEL_&lt;STAGE&gt;</code></td>
+<td>Provider-specific stage model for Codex; use an identifier available
+to the account. Takes precedence over generic model settings</td>
+</tr>
+<tr>
+<td><code>BUREAU_CODEX_MODEL_DEFAULT</code></td>
+<td>Codex fallback after stage and provider JSON model settings</td>
+</tr>
+<tr>
+<td><code>BUREAU_CLAUDE_MODEL_&lt;STAGE&gt;</code> /
+<code>BUREAU_CLAUDE_MODEL_DEFAULT</code></td>
+<td>Equivalent provider-specific Claude overrides</td>
+</tr>
+</tbody>
+</table>
+<p>There is no <code>BUREAU_RUNNER_DEFAULT</code> override in the
+current adapter. Set <code>agents.runner</code> for the default
+provider.</p>
+<h3 id="cost-tracking">Cost tracking</h3>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BUREAU_COST_TRACKING=1</code></td>
+<td>(off)</td>
+<td>Equivalent to <code>session.cost_tracking: true</code> — enable
+without editing <code>.bureau.json</code></td>
+</tr>
+<tr>
+<td><code>BUREAU_COST_DIR</code></td>
+<td><code>~/.bureau/cost</code></td>
+<td>Where per-issue cost JSONL logs land. Legacy
+<code>~/.brainhuggers/bureau-cost</code> still works if set
+explicitly</td>
+</tr>
+<tr>
+<td><code>BUREAU_USAGE_FILE</code></td>
+<td><code>~/.bureau/session-usage.json</code></td>
+<td>Signal file the throttle reads. Legacy
+<code>BRAINHUGGERS_USAGE_FILE</code> honoured as a third-rung
+fallback</td>
+</tr>
+</tbody>
+</table>
+<h3 id="upstream-port">Upstream-port</h3>
+<p>Env overrides for the <code>repo.upstream_port.*</code> config
+family. Set inline when running <code>upstream-port.sh</code> against a
+repo whose defaults don't match.</p>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Overrides</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BUREAU_UPSTREAM_REPO</code></td>
+<td><code>repo.upstream</code></td>
+</tr>
+<tr>
+<td><code>BUREAU_UPSTREAM_PORT_BUILD</code></td>
+<td><code>repo.upstream_port.build_cmd</code></td>
+</tr>
+<tr>
+<td><code>BUREAU_UPSTREAM_PORT_TEST</code></td>
+<td><code>repo.upstream_port.test_cmd</code></td>
+</tr>
+<tr>
+<td><code>BUREAU_UPSTREAM_PORT_WORK_DIR</code></td>
+<td><code>repo.upstream_port.work_dir</code></td>
+</tr>
+<tr>
+<td><code>BUREAU_PATH_PREFIX_STRIP</code></td>
+<td><code>repo.path_prefix_strip</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="code-review-internals">Code-review internals</h3>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BUREAU_REVIEW_MERGE_CAP_KB</code></td>
+<td><code>60</code></td>
+<td>Tail-cap (KB) per specialist review before the merger prompt.
+Prevents ARG_MAX overflow when an individual review runs long (typical
+for codex-routed stages that emit heavy transcripts)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="miscellaneous">Miscellaneous</h3>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BUREAU_CONFIG</code></td>
+<td>discovered</td>
+<td>Explicit config path; otherwise resolve the current checkout and
+primary worktree. Keep the trusted private config out of commits</td>
+</tr>
+<tr>
+<td><code>BUREAU_ENV_FILE</code></td>
+<td>caller-dependent</td>
+<td>Explicit trusted environment file used by runtime helpers when
+needed; doctor/provider <code>--describe</code> do not source it</td>
+</tr>
+<tr>
+<td><code>BUREAU_SCRIPT_DIR</code></td>
+<td>derived from <code>$0</code></td>
+<td>Path to the target repo's <code>scripts/</code>. Auto-detected in
+normal use — set only when sourcing helpers from an unusual
+location</td>
+</tr>
+</tbody>
+</table>
+<p><code>BUREAU_HOME</code> and <code>BUREAU_SPECKIT_VERSION</code> are
+not supported runtime overrides. Use the documented individual paths;
+the Spec Kit 0.7.5 pin lives in
+<code>scripts/bureau_install.py</code>.</p>
+<h3 id="supervisor-1">Supervisor</h3>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BUREAU_SUPERVISOR_MAX_CRASHES</code></td>
+<td><code>5</code></td>
+<td>Override <code>supervisor.max_crashes</code></td>
+</tr>
+<tr>
+<td><code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code></td>
+<td><code>3600</code></td>
+<td>Override <code>supervisor.stability_window</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="resolution-and-provider-usage">Resolution and provider
+usage</h2>
+<p>The actual creative invocation uses <code>bureau-provider.py</code>.
+Runner precedence is per-stage <code>BUREAU_RUNNER_STAGE</code>, stage
+JSON, default JSON, then Claude. Model precedence is provider-specific
+stage environment, generic stage environment, stage JSON, provider JSON,
+generic default JSON only for its owning default runner, provider
+environment default, and the legacy Claude environment default. See <a
+href="provider-runtime.html">provider runtime</a>.</p>
+<p><code>BUREAU_REASONING_STAGE</code>,
+<code>BUREAU_SANDBOX_STAGE</code> and <code>BUREAU_STAGE_TIMEOUT</code>
+override the corresponding provider settings. <code>BUREAU_CONFIG</code>
+selects the explicit configuration file; otherwise the current checkout
+and primary worktree are checked. <code>BUREAU_NO_MERGE=1</code>
+preserves the review boundary in background code review/merge entry
+points.</p>
+<p><code>BUREAU_CODEX_USAGE_FILE</code> supplies an operator-provided
+Codex signal (<code>pct</code>, <code>reset_epoch</code>,
+<code>updated_epoch</code>). A shared <code>BUREAU_USAGE_FILE</code> is
+usable by Codex only when tagged <code>"provider":"codex"</code>. Claude
+retains its legacy/ClaudeWatch sources. No signal means unknown usage
+and dispatch proceeds; provider quota failures are classified
+separately. Bureau does not scrape private Codex account files. The
+app's account-usage tool is independent of CLI token evidence.</p>
+<p>Cost logs keep available CLI estimates separate from actual billed
+dollars (<code>null</code>). Missing Codex costs are never reported as
+zero. <code>bureau-status.sh --cost</code> displays
+<code>unavailable</code> when a total includes unknown values.</p>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="exit-codes.html">Exit codes &amp; alerts</a> — what each
+pipeline failure code means and how Telegram throttling works</li>
+<li><a href="recipes.html">Recipes</a> — common config patterns
+(single-flight, mixed models, dry-run)</li>
+<li><a href="troubleshooting.html">Troubleshooting</a> — when things
+break</li>
+</ul></main>
 </div>
-
-<footer class="bhb-footer">
-  <span>BUREAU-INIT · MIT · NO WARRANTY</span>
-  <span>BUILT IN HAMBURG · ON THE SEAM</span>
-  <span><a href="https://github.com/KaiaK808/bureau">SOURCE ↗</a></span>
-</footer>
-
 </body>
 </html>

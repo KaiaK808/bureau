@@ -1,0 +1,114 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "COMPLETE",
+        "PARTIAL",
+        "NEEDS_HUMAN",
+        "STUCK"
+      ]
+    },
+    "tasks_done": {
+      "type": "integer"
+    },
+    "tasks_skipped": {
+      "type": "integer"
+    },
+    "tasks_needs_human": {
+      "type": "integer"
+    },
+    "fixed_review_items": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "needs_human": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "task_id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id",
+              "reason"
+            ]
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "task_id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id",
+              "reason"
+            ]
+          }
+        },
+        "deviations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "task_id": {
+                "type": "string"
+              },
+              "what": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id",
+              "what",
+              "why"
+            ]
+          }
+        }
+      },
+      "required": [
+        "needs_human",
+        "skipped",
+        "deviations"
+      ]
+    },
+    "prose_notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "tasks_done",
+    "tasks_skipped",
+    "tasks_needs_human",
+    "fixed_review_items",
+    "notes",
+    "prose_notes"
+  ]
+}

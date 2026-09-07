@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="9b572840334f8f482d667cf10ba6967175cfa148639398263c4bb7a968a28aba">
+<title>provider-runtime · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1 id="background-providers">Background
+providers</h1>
+<p>Current app tasks use the app's selected model. Background jobs use
+<code>bureau-provider.py</code> through the <code>run_stage_for</code>
+shell function. The function passes prompts and system context through
+private files; the adapter builds argv arrays, streams the prompt on
+stdin, keeps provider diagnostics in separate logs, and returns only the
+final result. Legacy <code>claude_cmd_for_stage</code> remains for
+compatibility; shipped pipelines no longer execute its command
+strings.</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;version&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;spec&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;implement&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;qa&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;claude&quot;</span><span class="fu">},</span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;providers&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;codex&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;reasoning_effort&quot;</span><span class="fu">:</span> <span class="st">&quot;high&quot;</span><span class="fu">,</span> <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">900</span><span class="fu">}</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    <span class="fu">},</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;workbench_panes&quot;</span><span class="fu">:</span> <span class="dv">0</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash scripts/bureau-test.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Runner precedence: <code>BUREAU_RUNNER_STAGE</code>, stage runner,
+default runner, then Claude. Unknown runners are errors. Model
+precedence: provider-specific stage environment override
+(<code>BUREAU_CODEX_MODEL_IMPLEMENT</code>), generic stage environment
+override, stage model, provider model, default model when it belongs to
+the selected default runner, provider environment default, then Claude's
+legacy environment fallback. With no model setting the provider CLI
+chooses its configured default. A Claude default does not leak into a
+Codex stage. Use actual model identifiers available to the account;
+reasoning settings remain subject to the selected provider/model's
+support.</p>
+<p>That model precedence applies to version 2 configurations. Version 1
+(including configurations without a version) preserves the older rule:
+generic <code>BUREAU_MODEL_*</code>, <code>agents.model</code> and stage
+<code>model</code> fields belong to Claude and are ignored for Codex.
+Set Codex models through <code>BUREAU_CODEX_MODEL_STAGE</code>,
+<code>agents.providers.codex.model</code> or
+<code>BUREAU_CODEX_MODEL_DEFAULT</code>. A migrated configuration can
+retain this behavior with <code>agents.model_compatibility: "v1"</code>,
+including after future runner environment overrides. Remove that marker
+from a version 2 configuration, or explicitly set it to
+<code>"v2"</code>, only after reviewing generic model fields for their
+selected providers. Other marker values are rejected.</p>
+<p><code>agents.STAGE.sandbox</code> or
+<code>agents.providers.PROVIDER.sandbox</code> can select
+<code>read-only</code> or <code>workspace-write</code>;
+<code>BUREAU_SANDBOX_STAGE</code> overrides them. Code review and
+research default to read-only; spec review needs workspace-write because
+it repairs spec artifacts. Bureau does not turn off the Codex sandbox.
+Normal app/OS restrictions still apply. Codex leaves Git commits/pushes
+to the deterministic executor; successful implementation also runs
+<code>repo.test_command</code> outside the nested model sandbox. QA runs
+the configured command independently too. Permission/environment
+failures are reported separately from failed project tests.</p>
+<p>Authentication uses <code>codex login status</code> or
+<code>claude auth status --json</code> before creative work, without a
+probe generation. Missing executables/login return 16. Provider errors
+or malformed final results return 22; quota 23; environment/permission
+problems 24; timeout 124; cancellation 130. Timeout and cancellation
+finish by killing the provider process group even if its immediate CLI
+process has already exited; a surviving descendant cannot keep writing
+after the bounded invocation returns. Per-stage/provider
+<code>timeout_seconds</code> defaults to 900; implementation uses its
+existing iteration/total bounds through
+<code>BUREAU_STAGE_TIMEOUT</code>.</p>
+<p>JSON schema contracts cover implementation iterations, QA, and the
+merged review verdict. Both plain JSON and legacy fenced JSON are
+parsed; Claude envelopes are unwrapped. A provider's diagnostic stream
+cannot supply the verdict. Raw prompt/output/error evidence and metadata
+remain under <code>logs/provider-runs/RUN/</code>. Optional
+<code>session.cost_tracking</code> preserves the legacy usage envelope
+interface. Unknown dollar cost stays unavailable for Codex.</p>
+<p>Claude <code>/goal</code> and Headroom are Claude capabilities. A
+Codex implementation uses the portable bounded loop even when the old
+goal flag is enabled. Interactive bench panes use
+<code>agents.workbench_runner</code> or the default runner; zero panes
+omits the bench. Optional upstream summaries are disabled by default;
+enabling <code>agents.upstream_summary</code> uses a tool-free Claude or
+read-only Codex pass.</p>
+<p>A failed worker with uncommitted or unpublished progress loses its
+disposable registration. Its checkout remains available for
+inspection/resume instead of being erased by the next tick. A clean
+failure can retry normally. See <a href="stage-protocol.html">ownership
+and resume</a>.</p>
+<p>QA, spec review and copy publish newly created files as well as
+tracked edits through the shell executor. Local
+credentials/configuration and provider evidence remain outside these
+commits. Already-staged private files block publication without changing
+the index; inspect and unstage them before retrying. Commit or push
+failures stop routing so that the next stage cannot receive an
+unpublished result.</p>
+<p>Validation currently uses fake executors and real local Git/test
+commands. Run a representative live ticket in an adopting repository
+before relying on unattended Codex or mixed-provider
+operation.</p></main>
+</div>
+</body>
+</html>

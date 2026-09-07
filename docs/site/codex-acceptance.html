@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="82b8d2232b915cb91954fe8999ca1379b12985c3566a56e179e3e4831dc3d937">
+<title>codex-acceptance · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1 id="codex-acceptance-record">Codex acceptance
+record</h1>
+<p>This implementation adds app task operation and Codex/mixed-provider
+background execution. The automated checks cover installation and
+runtime contracts. They do not prove that an arbitrary real project or
+current provider model will finish its work unattended.</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Installation</td>
+<td>Claude/Codex/both matrix, paths with spaces and symlinked source,
+customized asset conflicts, managed instructions, constitution
+preservation, active integration ordering</td>
+</tr>
+<tr>
+<td>Actual Spec Kit</td>
+<td>Local 0.7.5 dual-integration smoke; adding Codex to legacy Claude
+without a Bureau manifest preserves the active host, custom constitution
+and native skill</td>
+</tr>
+<tr>
+<td>Current-task stages</td>
+<td>Real Git fixture through spec, implementation, independent QA and
+review; only Linear traffic is replaced</td>
+</tr>
+<tr>
+<td>Resume and coexistence</td>
+<td>Concurrent claims, stale state/HEAD/config/branch rejection, held
+branches, unregistered checkouts, interrupted execution and idempotent
+completion</td>
+</tr>
+<tr>
+<td>Provider adapters</td>
+<td>Fake CLI processes with real argv/stdin, large prompts, structured
+final output, diagnostic separation, auth/quota/errors, timeout and
+cancellation; process-group cleanup also covers descendants surviving an
+exited CLI</td>
+</tr>
+<tr>
+<td>Codex implementation</td>
+<td>Actual shell loop, real Git commits and independent project tests
+with a fake Codex executable; test failures cannot advance state</td>
+</tr>
+<tr>
+<td>App test action</td>
+<td>Local venv dependency and HTTP endpoint; loopback test passed
+outside the restricted tool sandbox, without external network calls</td>
+</tr>
+<tr>
+<td>Review target</td>
+<td>Real Git and fake providers verify actual PR base selection, pinned
+head/base diffs, retarget/base advancement invalidation, legacy
+review-stop compatibility and rejection of stale approvals</td>
+</tr>
+<tr>
+<td>Supervision</td>
+<td>Bounded tick outcomes, actual Done distinction, pause, conservative
+schedule failures, actual shared workflow core, provider-specific quota
+signals and quiet monitor</td>
+</tr>
+<tr>
+<td>Migration</td>
+<td>Exact backup, preview, repeat application, preservation of
+IDs/models/extensions and effective legacy Codex selection across runner
+overrides; malformed/future-version rejection, real Bureau interface
+checks and enabled-stage executable requirements</td>
+</tr>
+<tr>
+<td>Live provider smoke</td>
+<td>Codex CLI 0.153.4 fixed a seeded addition bug in a disposable
+repository; independent Python tests passed and the fixture committed
+it. Claude Code 2.1.261 returned a valid structured APPROVE review from
+supplied code/test evidence with tools disabled</td>
+</tr>
+<tr>
+<td>Platforms</td>
+<td>CI runs the full suite on GitHub-hosted Ubuntu and macOS; macOS uses
+<code>/bin/bash</code> 3.2. The HTTP fixture is mandatory in CI</td>
+</tr>
+</tbody>
+</table>
+<h2 id="live-adoption-and-evidence-boundaries">Live adoption and
+evidence boundaries</h2>
+<p>On 2026-09-07, a maintainer exercised a representative private
+adopting repository with existing instructions, legacy configuration,
+customized scripts and retained worktrees. Separate tickets covered:</p>
+<ul>
+<li>Current-app spec, implementation, real project tests, QA and review,
+ending with an APPROVE result while merge remained disabled.</li>
+<li>A bounded Codex background route with interruption, inspected
+recovery and resume, independent project tests, and an actual Codex
+review ending at the durable review stop (exit 20).</li>
+<li>A mixed-provider route with a terminated Codex implementation,
+preserved edits and ownership, inspected recovery, resumed
+implementation, independent project tests and an actual Claude review
+ending at the same durable stop.</li>
+</ul>
+<p>The installed runtime fixture suite and project-specific regression
+checks passed. Independent project tests passed, and the product-code
+tree remained unchanged in the subsequent review/documentation updates.
+Existing user worktrees and customizations were preserved; no recurring
+dispatch was enabled. These checks supplement the isolated provider
+smoke, which used Codex CLI 0.153.4 and Claude Code 2.1.261.</p>
+<p>The adopting repository, ticket records, provider logs and PR
+evidence are private. This paragraph is a maintainer-reported
+qualification summary, not publicly reproducible ticket evidence. Public
+source tests use fake provider/network boundaries as shown above. This
+work does not qualify arbitrary projects, app settings, recurring app
+automations, unattended scheduling, every provider/model combination, or
+a live automatic merge. Each adopting project still needs a bounded
+acceptance run:</p>
+<ol type="1">
+<li>Install both interfaces with existing user instructions and
+configuration; verify the active Spec Kit integration and all
+custom-asset resolutions.</li>
+<li>Run an app ticket through specification, implementation, project
+tests, QA and review; inspect its PR and stop-before-merge result.</li>
+<li>Interrupt and resume saved work, verifying ownership, branch
+identity and preserved artifacts before recovery.</li>
+<li>Exercise the intended Codex and mixed-provider background routes,
+including authentication, project dependency/network permissions, PR
+evidence and Linear transitions.</li>
+<li>Verify review-only execution and durable stops; enable recurring
+supervision only after qualification and only when requested.</li>
+</ol>
+<p>Use the configured provider/model available to the account.
+Environment restrictions are recorded separately from failing project
+tests. CLI token/cost estimates cannot substitute for billed account
+usage.</p></main>
+</div>
+</body>
+</html>

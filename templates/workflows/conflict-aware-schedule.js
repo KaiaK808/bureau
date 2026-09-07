@@ -40,47 +40,10 @@ Return: primary_areas (the top-level dirs/packages/modules touched) and predicte
 phase('BlastRadius')
 log(`Predicting blast radius for ${tickets.length} tickets...`)
 
-const radii = (await parallel(tickets.map(t => () =>
-  agent(blastPrompt(t), { label: `blast:${t.ticket}`, phase: 'BlastRadius', schema: BLAST_SCHEMA })
-))).filter(Boolean)
+const radii = (await parallel(tickets.map(t => async () => {
+  try { return await agent(blastPrompt(t), { label: `blast:${t.ticket}`, phase: 'BlastRadius', schema: BLAST_SCHEMA }) }
+  catch (error) { return {ticket: t.ticket, error: String(error)} }
+})))
 
-// Deterministic conflict graph + partition (union-find). Two tickets conflict
-// when their predicted file sets overlap — pure file-overlap, repo-agnostic.
-const norm = p => String(p).trim().replace(/^\.?\/*/, '')
-const setOf = r => new Set((r.predicted_paths || []).map(norm))
-const conflict = (a, b) => {
-  const A = setOf(a), B = setOf(b)
-  for (const p of A) if (B.has(p)) return `shared file ${p}`
-  return null
-}
-const n = radii.length
-const parent = radii.map((_, i) => i)
-const find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i] } return i }
-const union = (i, j) => { parent[find(i)] = find(j) }
-const edges = []
-for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-  const why = conflict(radii[i], radii[j])
-  if (why) { edges.push({ a: radii[i].ticket, b: radii[j].ticket, why }); union(i, j) }
-}
-const comps = {}
-for (let i = 0; i < n; i++) { const r = find(i); (comps[r] = comps[r] || []).push(radii[i]) }
-const groups = Object.values(comps)
-const parallelSafe = groups.filter(g => g.length === 1).map(g => g[0])
-const serialChains = groups.filter(g => g.length > 1)
-
-const esc = s => String(s || '').replace(/\|/g, '\\|').replace(/\n/g, ' ').trim()
-let md = `## Conflict-aware schedule — ${n} tickets\n\n`
-md += `### Blast radii\n\n| Ticket | Areas | Predicted paths |\n|---|---|---|\n`
-for (const r of radii) md += `| ${r.ticket} | ${esc((r.primary_areas || []).join(', '))} | ${esc((r.predicted_paths || []).join(', '))} |\n`
-md += `\n### Conflict edges (${edges.length})\n\n`
-md += edges.length ? edges.map(e => `- **${e.a} ↔ ${e.b}** — ${esc(e.why)}`).join('\n') : '- none — fully parallelizable'
-md += `\n\n### Schedule\n\n`
-md += `**Parallel-safe (run concurrently, separate worktrees):** ${parallelSafe.length ? parallelSafe.map(r => r.ticket).join(', ') : '(none)'}\n\n`
-if (serialChains.length) {
-  md += `**Must serialize (conflict components — one shepherd at a time):**\n`
-  for (const c of serialChains) md += `- chain: ${c.map(r => r.ticket).join(' → ')}\n`
-} else {
-  md += `**Must serialize:** (none — all disjoint)\n`
-}
-
-return { table: md, parallelSafe: parallelSafe.map(r => r.ticket), serialChains: serialChains.map(c => c.map(r => r.ticket)), edges }
+/* BUREAU_SCHEDULER_CORE */
+return buildSchedule(tickets, radii)

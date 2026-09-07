@@ -17,15 +17,14 @@ if ! command -v tmux &>/dev/null; then
   exit 1
 fi
 
-if ! command -v claude &>/dev/null; then
-  echo "ERROR: claude CLI required."
-  exit 1
-fi
+for stage in spec spec_review ux copy implement qa code_review research; do
+  if agent_enabled "$stage"; then precondition_runner "$stage"; fi
+done
 
 # Drift check: warn (non-blocking) if repo scripts differ from or are missing
 # relative to the skill template. Never mutates anything.
 check_script_drift() {
-  local template_dir="$HOME/.claude/skills/bureau-init/templates/scripts"
+  local template_dir="${BUREAU_TEMPLATE_DIR:-}"
   [ -d "$template_dir" ] || return 0
   local drift=0 missing=0
   # Repo scripts whose template counterpart differs
@@ -47,7 +46,7 @@ check_script_drift() {
   done
   if [ "$drift" -gt 0 ] || [ "$missing" -gt 0 ]; then
     echo "⚠  bureau-init template drift: $drift differ, $missing new"
-    echo "   → resync with:  claude /bureau-init --resync-scripts"
+    echo "   → resync with:  bureau-init --resync-scripts in your assistant"
     echo ""
   fi
 }
@@ -96,16 +95,19 @@ agent_enabled "merge" && add_agent_window "merge" "merge"
 
 # Workbench window
 BENCH_WIN=$WIN_NUM
-tmux new-window -t "$SESSION" -n bench
-tmux send-keys -t "$SESSION:bench" "echo '── Bench pane 0 ──' && claude" Enter
-
-for ((p=1; p<BENCH_PANES; p++)); do
-  tmux split-window -h -t "$SESSION:bench"
-  tmux send-keys -t "$SESSION:bench.$p" "echo '── Bench pane $p ──' && claude" Enter
-done
-
-tmux select-layout -t "$SESSION:bench" even-horizontal
-((WIN_NUM++))
+if [ "$BENCH_PANES" -gt 0 ]; then
+  BENCH_RUNNER=$(bureau_get '.agents.workbench_runner // .agents.runner // "claude"')
+  case "$BENCH_RUNNER" in claude|codex) ;; *) echo 'Unknown workbench runner' >&2; exit 22 ;; esac
+  command -v "$BENCH_RUNNER" >/dev/null || { echo "Missing $BENCH_RUNNER" >&2; exit 16; }
+  tmux new-window -t "$SESSION" -n bench
+  tmux send-keys -t "$SESSION:bench" "$BENCH_RUNNER" Enter
+  for ((p=1; p<BENCH_PANES; p++)); do
+    tmux split-window -h -t "$SESSION:bench"
+    tmux send-keys -t "$SESSION:bench.$p" "$BENCH_RUNNER" Enter
+  done
+  tmux select-layout -t "$SESSION:bench" even-horizontal
+  ((WIN_NUM++))
+fi
 
 # ── Pipeline overview window: all agent logs tailed + workbench panes ──
 OVERVIEW_WIN=$WIN_NUM
@@ -159,7 +161,7 @@ echo "  Attach:      tmux attach -t $SESSION"
 echo ""
 echo "  Dashboard:   Ctrl+B 0"
 echo "  Agents:      Ctrl+B 1-$AGENT_COUNT"
-echo "  Workbench:   Ctrl+B $BENCH_WIN  ($BENCH_PANES interactive Claude sessions)"
+[ "$BENCH_PANES" -gt 0 ] && echo "  Workbench: Ctrl+B $BENCH_WIN ($BENCH_PANES interactive sessions)"
 echo "  Overview:    Ctrl+B $OVERVIEW_WIN  (all agent logs tiled in one view)"
 echo "  Detach:      Ctrl+B d"
 echo "  Stop all:    tmux kill-session -t $SESSION"

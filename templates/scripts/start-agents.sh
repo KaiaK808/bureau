@@ -13,10 +13,9 @@ if ! command -v tmux &>/dev/null; then
   exit 1
 fi
 
-if ! command -v claude &>/dev/null; then
-  echo "ERROR: claude CLI required."
-  exit 1
-fi
+for stage in spec spec_review ux copy implement qa code_review research; do
+  if agent_enabled "$stage"; then precondition_runner "$stage"; fi
+done
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 

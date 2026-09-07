@@ -9,8 +9,8 @@ description: >
 
 The bureau pipeline emits a structured event per stage run to `logs/events.jsonl`
 (see `emit_event` in `scripts/bureau-config.sh`). This skill mines that log plus
-the Linear comments it references, clusters the signal, and writes a **draft**
-`LESSONS.md` at the repo root. The human reviews, edits, and commits.
+the Linear comments it references, clusters the signal, and proposes a **draft**
+`LESSONS.proposed.md` at the repo root. The human reviews and incorporates it into curated `LESSONS.md`.
 
 Pipelines selectively read `LESSONS.md` back in as advisory context (spec +
 code-review only). That feedback loop is the whole point — but it only works
@@ -32,7 +32,7 @@ Run from the repo root. Verify:
 - `.bureau.json` exists (needed for team/label context).
 - `jq` is available.
 
-If `events.jsonl` is missing or empty, write a one-line placeholder LESSONS.md:
+If `events.jsonl` is missing or empty, report that there are no events and leave existing lessons unchanged:
 
 ```markdown
 # Lessons learned
@@ -53,7 +53,9 @@ CUTOFF=$(date -u -v-30d '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '30 days
 Filter events.jsonl to the window:
 
 ```bash
-jq -c --arg cutoff "$CUTOFF" 'select(.ts >= $cutoff)' logs/events.jsonl > /tmp/events-window.jsonl
+BUREAU_LEARN_TMP="$(mktemp -d)"
+# Reuse this private directory throughout the run; remove it when done.
+jq -c --arg cutoff "$CUTOFF" 'select(.ts >= $cutoff)' logs/events.jsonl > "$BUREAU_LEARN_TMP/events-window.jsonl"
 ```
 
 If the windowed file is empty, treat it as the "no events" case from step 1.
@@ -67,11 +69,11 @@ A failure for our purposes is any `stage_end` event where `class` is not in
 jq -sc 'group_by(.issue) | map({
   issue: .[0].issue,
   failures: [.[] | select(.event=="stage_end" and (.class | IN("ok","queue-empty") | not))]
-}) | map(select(.failures | length > 0))' /tmp/events-window.jsonl > /tmp/failed-issues.json
+}) | map(select(.failures | length > 0))' "$BUREAU_LEARN_TMP/events-window.jsonl" > "$BUREAU_LEARN_TMP/failed-issues.json"
 ```
 
 For each failed issue:
-1. Call `mcp__linear-server__list_comments` for the issue. Pull the most recent
+1. Call `the available Linear list-comments tool` for the issue. Pull the most recent
    5 comments.
 2. From the comments, extract the **last error context** — pipelines post a
    crash trail via their EXIT traps. Look for:
@@ -89,7 +91,7 @@ fewer — say "below threshold" in the section preamble and move on.
 A successful-but-reviewed issue has a `stage_end` for
 `code-review-pipeline.sh` with `exit_code=0` in the window. For each such
 issue:
-1. Call `mcp__linear-server__list_comments`.
+1. Call `the available Linear list-comments tool`.
 2. Find the latest comment whose body contains `## Code Review v2 — `.
 3. Extract the body of that comment (everything after the marker line through
    the next horizontal rule or end-of-comment).
@@ -115,7 +117,7 @@ jq -sc '
       p50: (map(.duration_s) | sort | .[length/2|floor]),
       p90: (map(.duration_s) | sort | .[(length*0.9)|floor])
     })
-' /tmp/events-window.jsonl > /tmp/stage-timing.json
+' "$BUREAU_LEARN_TMP/events-window.jsonl" > "$BUREAU_LEARN_TMP/stage-timing.json"
 ```
 
 Include all stages with `n ≥ 5` runs. Skip the section if no stage clears the
@@ -123,7 +125,7 @@ bar.
 
 ### 6. Write the draft
 
-Overwrite `LESSONS.md` at the repo root. Use this structure:
+Write `LESSONS.proposed.md` at the repo root; preserve an existing LESSONS.md. Use this structure:
 
 ```markdown
 # Lessons learned
@@ -174,15 +176,15 @@ the pattern persists._
 After writing, print exactly:
 
 ```
-LESSONS.md draft written.
+LESSONS.proposed.md draft written.
 - N failure-mode clusters
 - N review-feedback clusters
 - N stages timed
-Review the diff, edit as needed, then `git add LESSONS.md && git commit`.
+Review the proposal, incorporate accepted additions into LESSONS.md, then commit the curated file.
 ```
 
 **Do not stage, do not commit, do not push.** If LESSONS.md already exists,
-overwrite it — the human's curated version is in git history and they'll merge
+read it as context and propose additions separately; the human can merge
 diffs by hand.
 
 ## Guardrails
@@ -200,8 +202,12 @@ diffs by hand.
 
 ## Error handling
 
-- `logs/events.jsonl` missing/empty → placeholder LESSONS.md, exit clean.
+- `logs/events.jsonl` missing/empty → report no events, preserve existing files, exit clean.
 - `jq` not installed → report and stop. Suggest `brew install jq`.
 - Linear MCP unavailable → continue with what events.jsonl alone gives you
   (skip the comment-extraction steps; failure-mode bullets list issue IDs only).
 - A specific issue's comments fail to fetch → skip that issue, keep going.
+
+## Preserve curation
+
+Read an existing LESSONS.md before drafting. Write a separate `LESSONS.proposed.md` containing proposed additions and the evidence behind them; do not replace curated lessons or erase them when the event window is empty. Incorporate the proposal into LESSONS.md only when the user requests it. Use unique temporary files and delete only those created for this run.

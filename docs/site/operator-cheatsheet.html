@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="560967def1299752df87cc91dd544bf54a0631d6e1e0e826dbe524ad8ef1006e">
+<title>OPERATOR-CHEATSHEET · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1 id="bureau-operator-cheat-sheet">Bureau
+operator cheat sheet</h1>
+<h2 id="current-codex-task">Current Codex task</h2>
+<p>Install Codex interfaces with
+<code>$bureau-init --target codex</code> or <code>both</code>. Then use
+<code>$bureau TEAM-123 through review</code> or the specific
+<code>spec</code>, <code>implement</code>, <code>qa</code>, and
+<code>review</code> operations. The current task performs the work using
+its selected model; it does not launch a nested Claude/Codex CLI.</p>
+<p>Inspect <code>$bureau status</code> before preparing work.
+<code>$bureau resume RUN_ID</code> reads the saved branch, artifacts and
+explanation. Follow the configured state IDs and canonical
+<code>bureau-branch</code> marker. Preserve current changes and other
+worktrees. Review stops before merge by default.</p>
+<p>The <a href="../../templates/skills/bureau/references/app-setup.md">app
+setup guide</a> provides worktree setup and terminal actions. Use
+<code>bash scripts/bureau-app.sh doctor</code> for read-only diagnostics
+and <code>bash scripts/bureau-app.sh test</code> for the real
+<code>repo.test_command</code>.</p>
+<h2 id="one-background-unit">One background unit</h2>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-doctor.py <span class="at">--mode</span> background</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/bureau-tick.sh <span class="at">--no-merge</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> logs/bureau-tick.json</span></code></pre></div>
+<p>At most one eligible stage runs in a claimed disposable worker. A
+successful process does not itself mean a completed ticket. Read
+<code>outcome</code>: waiting, advanced, completed, stopped_for_review,
+paused, blocked, or failed.</p>
+<p>For one named ticket across stages:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<p>The review boundary exits 20, human attention/pause 25, cancelled
+tickets 26. These prevent serial execution from treating halted work as
+Done. A full merge-enabled run requires authorization and all existing
+CI/base checks.</p>
+<p>Background code review compares the PR's fetched head against its
+actual target branch. For a dependent PR, this excludes changes already
+supplied by the parent PR. Both commits are pinned for the review;
+unavailable or invalid target metadata stops execution before provider
+calls. Retargeting the PR or advancing either remote branch reopens a
+saved review stop. Review approval does not bypass the separate merge
+gates.</p>
+<h2 id="continuous-mode">Continuous mode</h2>
+<p>For explicitly requested always-on operation:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/start-bureau-v2.sh</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> attach <span class="at">-t</span> <span class="st">&quot;bureau-v2-</span><span class="va">$(</span><span class="fu">basename</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span><span class="va">)</span><span class="st">&quot;</span></span></code></pre></div>
+<p>One supervised queue per enabled agent polls at
+<code>agents.poll_interval_minutes</code>. This legacy launcher can
+proceed through merge; use the bounded tick or
+<code>shepherd.sh --no-merge</code> when the requested boundary is
+review. The launcher requires tmux and the configured background
+providers; current app tasks do not.</p>
+<p>Use
+<code>BUREAU_SESSION_NAME=nightshift bash scripts/start-bureau-v2.sh</code>
+for a custom name. Different repositories need disjoint Linear project
+scopes: ownership is shared between worktrees of one Git repository, not
+between separate clones. Select one active team per configuration.</p>
+<p>To stop dispatch, run
+<code>python3 scripts/bureau-runtime.py pause</code>, inspect active
+runs and let their stages finish. Stop the selected tmux session only
+after accounting for its workers. Killing tmux alone does not prove that
+nested provider processes stopped.</p>
+<h2 id="dry-run-preview">Dry-run preview</h2>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<p>Queue/shepherd previews can read Linear but do not invoke creative
+work or reset worktrees. They do not qualify authentication for a model,
+project tests or an end-to-end ticket. Use a representative bounded live
+run after setup is coherent.</p>
+<h2 id="several-background-tickets">Several background tickets</h2>
+<ol type="1">
+<li>Select well-defined eligible tickets and inspect dependencies.</li>
+<li>Predict concrete repository-relative paths in the current task,
+saving <code>tickets</code> and <code>predictions</code> arrays. Use
+<code>node scripts/bureau-schedule-cli.mjs input.json &gt; schedule.json</code>.
+The installed Claude workflow uses the same partition core.</li>
+<li>Resolve every <code>blocked</code> prediction; failed/missing
+predictions stay in the output. Inspect the proposed components before
+execution.</li>
+<li>Run
+<code>bash scripts/orchestrate.sh --execute --schedule schedule.json --max-concurrent 3 --no-merge</code>.
+Each lane uses its own claimed disposable checkout. The shared Git
+history and merge gates still constrain concurrent changes.</li>
+</ol>
+<p>A schedule contains <code>parallelSafe</code>,
+<code>serialChains</code>, <code>edges</code>, and <code>blocked</code>.
+The executor rejects duplicate IDs, malformed schedules and unresolved
+predictions. Predictions are advisory and can underestimate conflicts;
+ownership does not eliminate eventual merge conflicts.</p>
+<h2 id="supervision-and-recovery">Supervision and recovery</h2>
+<ul>
+<li><code>python3 scripts/bureau-runtime.py pause</code> stops future
+dispatch; running stages finish. <code>unpause</code> resumes
+dispatch.</li>
+<li><code>python3 scripts/bureau-runtime.py status</code> reports claims
+and compact runs. <code>resume RUN_ID</code> retrieves full saved
+context and current ticket state.</li>
+<li>A failed worker with local/unpublished progress loses its disposable
+registration. Inspect and resume it instead of resetting it.</li>
+<li>Use the <a
+href="../../templates/skills/bureau/references/supervision.md">supervision
+guide</a> for native app automation when explicitly requested. One tick
+per wakeup; unchanged outcomes remain quiet.</li>
+<li><code>bash scripts/bureau-status.sh --cost</code> reports available
+CLI estimates. Configure <code>session.cost_tracking</code>; unknown
+cost is unavailable. Claude and Codex quota signals are
+independent.</li>
+</ul>
+<h2 id="provider-selection">Provider selection</h2>
+<p><code>agents.runner</code> selects the default background CLI;
+<code>agents.STAGE.runner</code> overrides it.
+<code>BUREAU_RUNNER_STAGE</code> is the environment override. Use
+provider-specific models and an actual <code>repo.test_command</code>.
+Code review/research default to read-only; implementation, QA and spec
+repair require their permitted write/test capabilities. The shell
+executor owns Codex commits and independent implementation/QA test
+runs.</p>
+<p>Claude <code>/goal</code> and Headroom apply only to Claude. Codex
+uses the portable bounded implementation loop. Environment restrictions
+must be reported separately from code failures. See <a
+href="provider-runtime.html">provider runtime</a>, <a
+href="exit-codes.html">exit codes</a>, <a
+href="migration.html">migration</a> and <a
+href="codex-acceptance.html">acceptance</a>.</p>
+<h2 id="ci-scaffolding">CI scaffolding</h2>
+<p>In the current assistant, request
+<code>$bureau-init --resync-ci</code> (Codex) or
+<code>/bureau-init --resync-ci</code> (Claude). Preview the proposed
+workflow and preserve an existing custom one unless replacement is
+authorized. The generated job uses GitHub-hosted
+<code>ubuntu-latest</code>; replace its example test command with the
+adopting repository's actual checks.</p>
+<p>A self-hosted runner executing public fork-PR code exposes that host
+to untrusted code. Keep the hosted default for ordinary installation; a
+deliberate self-hosted setup needs an isolated host and an explicit
+fork-PR approval policy. Never check out an untrusted PR head in a
+privileged <code>pull_request_target</code> job.</p>
+<h2 id="token-efficiency-toggles">Token-efficiency toggles</h2>
+<p>These optional settings remain off by default and affect background
+calls. See <a href="token-efficiency.html">token efficiency</a> and <a
+href="configuration.html">configuration</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agents.use_goal_loop: true</code></td>
+<td>Uses Claude's <code>/goal</code> capability for implementation.
+Codex retains the portable bounded loop. Verify support in the selected
+Claude installation first.</td>
+</tr>
+<tr>
+<td><code>agents.headroom_wrap: true</code></td>
+<td>Wraps Claude invocations with <code>headroom wrap</code>; install
+the wrapper before enabling it.</td>
+</tr>
+<tr>
+<td><code>agents.caveman_level: "full"</code></td>
+<td>Requests compact review prose. Commits and PR descriptions retain
+normal wording.</td>
+</tr>
+</tbody>
+</table>
+<p>Changing a runtime flag does not install its optional tools or
+rewrite project instructions. Roll back through <code>--update</code> or
+a reviewed configuration edit; asset resync is separate.</p>
+<h2 id="needs-human-recovery">Needs-human recovery</h2>
+<p>Read the issue's latest blocker comment, the owning run and stage
+log:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py status</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">rg</span> <span class="st">&#39;ESCALATED&#39;</span> logs/escalations.log</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ex">rg</span> <span class="st">&#39;TEAM-123&#39;</span> logs/events.jsonl</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="fu">tail</span> <span class="at">-100</span> logs/queue-code-review.log</span></code></pre></div>
+<p>Resolve the actual spec, code, configuration or environment problem.
+Verify project tests and required CI before removing the configured
+human label. A failed label update is not proof that the ticket is
+safely parked. Inspect any saved checkout and interrupted process groups
+before releasing ownership; do not reset it to make the next pick
+succeed. Once the blocker and ownership are reconciled, a bounded tick
+or <code>shepherd.sh --no-tmux --no-merge TEAM-123</code> can continue
+the selected work.</p>
+<h2 id="memory-loop-and-status">Memory loop and status</h2>
+<p>Use <code>$bureau-learnings</code> in Codex or
+<code>/bureau-learnings</code> in Claude to turn events and review
+feedback into <code>LESSONS.proposed.md</code>. Incorporate accepted
+findings into the existing <code>LESSONS.md</code> and review the diff
+before committing. Spec and code-review prompts consume accepted lessons
+as advisory context; the command does not auto-commit them.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/bureau-status.sh</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/bureau-status.sh <span class="at">--config</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/bureau-status.sh <span class="at">--cost</span></span></code></pre></div>
+<p>The status and cost views help inspect a run; unknown cost is
+unavailable, not zero. See <a href="recipes.html">recipes</a> for upstream
+ports, budgets, scheduling and usage-signal setup.</p></main>
+</div>
+</body>
+</html>

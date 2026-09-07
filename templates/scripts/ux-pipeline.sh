@@ -8,14 +8,19 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
+BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
+set -a
+# shellcheck disable=SC1090
 if [ -f .env ]; then source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then source "$SCRIPT_REPO/.env"
-else echo "ERROR: No .env found"; exit 1; fi
+elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
+set +a
 
-CLAUDE=$(claude_cmd_for_stage "ux")
+CLAUDE=(run_stage_for ux)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 
 precondition_linear
+precondition_runner ux
 
 if [ -n "${1:-}" ]; then
   ISSUE="$1"
@@ -34,6 +39,8 @@ fi
 # State guard runs unconditionally — see implement-pipeline.sh for rationale.
 # UX previously had no guard at all, so cron would happily run UX work on an
 # issue that had moved out of Design between queue-loop's preselect and now.
+bureau_stage_enter "$ISSUE" "$@"
+
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
 if [ "$ACTUAL_STATE" != "Design" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Design'. Skipping."
@@ -122,7 +129,7 @@ $PROJECT_DESC
 SPEC_CONTEXT=$(build_spec_context "$SPEC_DIR")
 NEGATIVE_CONSTRAINTS=$(build_negative_constraints)
 
-UX_RESULT=$($CLAUDE "You are the UX/UI design agent for $ISSUE ($ISSUE_TITLE).
+UX_RESULT=$("${CLAUDE[@]}" "You are the UX/UI design agent for $ISSUE ($ISSUE_TITLE).
 
 $SPEC_CONTEXT
 $PROJECT_CONTEXT
@@ -197,7 +204,7 @@ At the end, emit a fenced json block. \`components_net_new\` MUST include prop s
   \"open_questions\": [{\"q\": \"\", \"blocking\": false}],
   \"summary\": \"\"
 }
-\`\`\`" 2>&1)
+\`\`\`")
 echo "$UX_RESULT"
 
 echo ""
@@ -210,7 +217,7 @@ DESIGN_STATUS=$(parse_claude_json "$UX_RESULT" '.design_status // "COMPLETE"')
 DESIGN_SUMMARY=$(parse_claude_json "$UX_RESULT" '.summary // ""')
 
 git add -A
-git commit -m "$ISSUE: design artifacts" --allow-empty || true
+git commit -m "$ISSUE: design artifacts" -m "Bureau-Generated: true" --allow-empty || true
 if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
   echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
 else

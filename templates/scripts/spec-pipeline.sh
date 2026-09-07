@@ -8,15 +8,19 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
+BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
+set -a
+# shellcheck disable=SC1090
 if [ -f .env ]; then source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then source "$SCRIPT_REPO/.env"
-else echo "ERROR: No .env found"; exit 1; fi
+elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
+set +a
 
-CLAUDE=$(claude_cmd_for_stage "spec")
+CLAUDE=(run_stage_for spec)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 
 precondition_linear
-precondition_claude_auth
+precondition_runner spec
 
 # EXP-491: single-flight / bounded-parallelism gate. When
 # BUREAU_MAX_CONCURRENT_ISSUES is non-zero, refuse to pick new Triage work
@@ -49,6 +53,8 @@ else
 fi
 
 # State guard runs unconditionally — see implement-pipeline.sh for rationale.
+bureau_stage_enter "$ISSUE" "$@"
+
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
 if [ "$ACTUAL_STATE" != "Triage" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Triage'. Skipping."
@@ -113,8 +119,8 @@ if agent_enabled research \
    && printf '%s' "$ISSUE_DETAIL" | jq -e '.labels | index("needs-research")' >/dev/null 2>&1; then
   echo ""
   echo "Phase 0/5: research (needs-research label present)"
-  CLAUDE_RESEARCH=$(claude_cmd_for_stage "research")
-  RESEARCH_RAW=$($CLAUDE_RESEARCH "You are doing pre-spec research for a Linear issue. The spec/build agents that come after you have stale training data, so your job is to ground them in current docs.
+  CLAUDE_RESEARCH=(run_stage_for research)
+  RESEARCH_RAW=$("${CLAUDE_RESEARCH[@]}" "You are doing pre-spec research for a Linear issue. The spec/build agents that come after you have stale training data, so your job is to ground them in current docs.
 
 Issue: $ISSUE_TITLE
 Body:
@@ -178,8 +184,10 @@ $PROJECT_DESC
 
 # logs→memory: include human-curated LESSONS.md if present. Empty when absent.
 LESSONS_CONTEXT=$(build_lessons_context)
+SPECKIT_DIR=.claude/skills
+if [ "$(resolve_runner_for_stage spec)" = codex ]; then SPECKIT_DIR=.agents/skills; fi
 
-$CLAUDE "Read the file .claude/skills/speckit-specify/SKILL.md and follow its instructions exactly.
+"${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-specify/SKILL.md and follow its instructions exactly.
 
 Use this as input:
 
@@ -188,7 +196,7 @@ Source: Linear issue $ISSUE
 $PROJECT_CONTEXT
 $ISSUE_DESC
 $RESEARCH_CONTEXT
-$LESSONS_CONTEXT" 2>&1
+$LESSONS_CONTEXT"
 
 echo ""
 echo "  specify complete"
@@ -228,15 +236,15 @@ echo "  branch ready: $(git branch --show-current)"
 
 echo ""
 echo "Phase 2/5: plan"
-$CLAUDE "Read the file .claude/skills/speckit-plan/SKILL.md and follow its instructions exactly.
-Work on the most recent spec in the $BUREAU_SPECS_DIR/ directory." 2>&1
+"${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-plan/SKILL.md and follow its instructions exactly.
+Work on the most recent spec in the $BUREAU_SPECS_DIR/ directory."
 echo ""
 echo "  plan complete"
 
 echo ""
 echo "Phase 3/5: tasks"
-$CLAUDE "Read the file .claude/skills/speckit-tasks/SKILL.md and follow its instructions exactly.
-Work on the most recent spec in the $BUREAU_SPECS_DIR/ directory." 2>&1
+"${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-tasks/SKILL.md and follow its instructions exactly.
+Work on the most recent spec in the $BUREAU_SPECS_DIR/ directory."
 echo ""
 echo "  tasks complete"
 
@@ -276,7 +284,7 @@ git add -A
 # relying on the subject-line regex fallback.
 git commit --allow-empty 2>/dev/null \
   -m "$ISSUE: spec artifacts" \
-  -m "Co-authored-by: Claude <noreply@anthropic.com>" \
+  -m "Bureau-Generated: true" \
   || true
 if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
   echo "  [DRY_RUN] would: git push -u origin HEAD ($BRANCH)"
@@ -297,7 +305,7 @@ PREV_DIGEST=$(get_issue_comments "$ISSUE" \
   | jq -r '[.[] | select(.body | test("\\*\\*Spec Artifacts —"))][0].body // ""' 2>/dev/null || echo "")
 SPEC_DIGEST=""
 if [ -n "$SPEC_DIR" ]; then
-  SPEC_DIGEST=$($CLAUDE "Read the spec artifacts in $SPEC_DIR and write a digest for a Linear comment.
+  SPEC_DIGEST=$("${CLAUDE[@]}" "Read the spec artifacts in $SPEC_DIR and write a digest for a Linear comment.
 
 Previous digest on this issue (may be empty if this is the first spec run):
 ---PREV---

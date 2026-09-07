@@ -2,20 +2,54 @@
 # bureau-config.sh — reads .bureau.json for pipeline scripts
 # Source this file: source "$(dirname "$0")/bureau-config.sh"
 
-BUREAU_CONFIG=""
-
 _find_config() {
-  if [ -f ".bureau.json" ]; then
-    BUREAU_CONFIG=".bureau.json"
-  elif [ -f "$(cd "$(dirname "$0")/.." && pwd)/.bureau.json" ]; then
-    BUREAU_CONFIG="$(cd "$(dirname "$0")/.." && pwd)/.bureau.json"
+  local common primary candidate
+  if [ -n "${BUREAU_CONFIG:-}" ]; then
+    [ -f "$BUREAU_CONFIG" ] || { echo "ERROR: explicit BUREAU_CONFIG missing: $BUREAU_CONFIG" >&2; exit 1; }
   else
-    echo "ERROR: .bureau.json not found. Run /bureau-init to set up."
-    exit 1
+    common=$(git rev-parse --git-common-dir 2>/dev/null || true)
+    primary=""
+    [ -n "$common" ] && primary="$(cd "$common/.." && pwd)"
+    for candidate in "$PWD/.bureau.json" "${primary:-$PWD}/.bureau.json" "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.bureau.json"; do
+      if [ -f "$candidate" ]; then BUREAU_CONFIG="$candidate"; break; fi
+    done
+    [ -n "${BUREAU_CONFIG:-}" ] || { echo "ERROR: .bureau.json not found. Run bureau-init." >&2; exit 1; }
   fi
+  BUREAU_CONFIG="$(cd "$(dirname "$BUREAU_CONFIG")" && pwd)/$(basename "$BUREAU_CONFIG")"
+  export BUREAU_CONFIG
+  BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$(dirname "$BUREAU_CONFIG")/.env}"
 }
-
 _find_config
+# Capture the caller boundary separately from user-facing .env settings. An
+# older file may assign those settings again (even to the same value).
+if [ "${BUREAU_CALLER_STOP:-0}" = 1 ] || [ "${BUREAU_STOP_REQUESTED:-0}" = 1 ] || [ "${BUREAU_NO_MERGE:-0}" = 1 ]; then
+  if [ "${BUREAU_CALLER_STOP:-0}" != 1 ]; then BUREAU_CALLER_STOP=1; fi
+  export BUREAU_CALLER_STOP
+  readonly BUREAU_CALLER_STOP
+fi
+export BUREAU_STOP_REQUESTED="${BUREAU_STOP_REQUESTED:-${BUREAU_NO_MERGE:-0}}"
+bureau_stop_requested() {
+  [ "${BUREAU_CALLER_STOP:-0}" = 1 ] || [ "${BUREAU_STOP_REQUESTED:-0}" = 1 ] || [ "${BUREAU_NO_MERGE:-0}" = 1 ]
+}
+BUREAU_RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-runtime.py"
+
+# Re-enter after claiming the issue and checkout. The Python parent owns cleanup,
+# leaving each pipeline's EXIT traps intact. Nested stages reuse the driver's run.
+bureau_stage_enter() {
+  local issue="$1"; shift
+  if [ "${BUREAU_ACTIVE_ENTRY:-}" = "$0" ]; then
+    BUREAU_EXPECTED_STATE_ID=$(bureau_issue_snapshot "$issue" | jq -r '.state.id // empty')
+    [ -n "$BUREAU_EXPECTED_STATE_ID" ] || { echo "ERROR: missing entry state" >&2; exit 10; }
+    return 0
+  fi
+  if [ "${BUREAU_WORKSPACE_MODE:-current}" != disposable ] && [ "$(basename "$0")" != merge-pipeline.sh ]; then
+    echo "ERROR: background stages require a disposable Bureau worker. For the current app checkout use bureau-runtime.py prepare/finish." >&2
+    exit 21
+  fi
+  [ "${BUREAU_DRY_RUN:-0}" = 1 ] && { echo "[DRY_RUN] stage $(basename "$0") issue=$issue"; exit 0; }
+  if [ "$#" = 0 ]; then set -- "$issue"; fi
+  exec python3 "$BUREAU_RUNTIME" --repo "$PWD" exec --issue "$issue" --entry "$0" -- bash "$0" "$@"
+}
 
 bureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }
 
@@ -197,8 +231,70 @@ resolve_runner_for_stage() {
   if [ -z "$runner" ]; then
     runner=$(bureau_get '.agents.runner // empty')
   fi
-  [ "$runner" = "codex" ] && { echo "codex"; return; }
-  echo "claude"
+  runner="${runner:-claude}"
+  case "$runner" in claude|codex) echo "$runner" ;; *) echo "ERROR: unknown runner $runner" >&2; return 22 ;; esac
+}
+
+# Execute a creative pass without shell command strings or ARG_MAX-sized argv.
+run_stage_for() {
+  local stage="$1"; shift
+  local temp rc system="" schema=""
+  while [ "$#" -gt 1 ]; do
+    case "$1" in
+      --append-system-prompt) system="$2"; shift 2 ;;
+      --schema) schema="$2"; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  [ "$#" = 1 ] || { echo 'run_stage_for requires one prompt' >&2; return 22; }
+  temp=$(mktemp -d)
+  printf '%s' "$1" > "$temp/prompt"
+  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted." "$system" > "$temp/system"
+  local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
+  [ -n "$schema" ] && args+=(--schema "$schema")
+  if python3 "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" "${args[@]}"; then rc=0; else rc=$?; fi
+  rm -rf "$temp"
+  return "$rc"
+}
+
+precondition_runner() {
+  python3 "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" --stage "$1" --config "$BUREAU_CONFIG" --check >/dev/null || exit $?
+}
+
+commit_codex_changes() {
+  [ "$(resolve_runner_for_stage "$1")" = codex ] || return 0
+  commit_stage_changes "$@"
+}
+
+# Include newly created files as well as tracked changes. Keep local config,
+# credentials and evidence out of executor-authored commits.
+commit_stage_changes() {
+  [ -n "$(git status --porcelain)" ] || return 0
+  # An earlier tool may have staged private files already. Excluding them from
+  # our `git add` list alone would still include them in the final commit.
+  # Refuse without changing the index, leaving the operator's staged work intact.
+  python3 - <<'PY_STAGED' || return $?
+import subprocess, sys
+names = subprocess.check_output(['git', 'diff', '--cached', '--name-only', '--no-renames', '-z']).split(b'\0')
+private = [p for p in names if p in (b'.env', b'.bureau.json', b'.bureau-install.json') or p.startswith(b'logs/')]
+if private:
+    print('Refusing to commit staged private Bureau files; inspect and unstage them before retrying.', file=sys.stderr)
+    sys.exit(24)
+PY_STAGED
+  local paths
+  paths=$(mktemp)
+  python3 - "$paths" <<'PY_PATHS'
+import subprocess, sys
+from pathlib import Path
+names = subprocess.check_output(['git', 'ls-files', '-z', '--modified', '--deleted', '--others', '--exclude-standard']).split(b'\0')
+keep = [p for p in names if p and p not in (b'.env', b'.bureau.json', b'.bureau-install.json') and not p.startswith(b'logs/')]
+Path(sys.argv[1]).write_bytes(b'\0'.join(keep) + (b'\0' if keep else b''))
+PY_PATHS
+  if [ -s "$paths" ]; then
+    GIT_LITERAL_PATHSPECS=1 git add -A --pathspec-from-file="$paths" --pathspec-file-nul
+  fi
+  rm -f "$paths"
+  git diff --cached --quiet || git commit -m "$2: Bureau $1 changes" -m "Bureau-Generated: true"
 }
 
 # Build the model invocation for a stage. Default backend is `claude -p`;
@@ -220,15 +316,8 @@ claude_cmd_for_stage() {
     # QA (it commits tests). The stage name decides the safe default.
     local sandbox="workspace-write"
     case "$stage" in
-      code_review|spec_review|research) sandbox="read-only" ;;
-      *)
-        # Guardrail (stderr ONLY — stdout is the command string callers eval):
-        # Codex's exec sandbox has no network listeners, trust-store, or
-        # git-metadata writes, so stages that run the project's build/test suite
-        # (qa, implement) fail spuriously there and false-halt needs-human.
-        # Route ONLY review-type stages to Codex; keep qa/implement/spec on Claude.
-        echo "warning: stage '$stage' resolved to runner=codex, but Codex's sandbox can't run most build/test suites — expect spurious failures / needs-human halts. Route only code_review (diff-reading) to Codex; keep '$stage' on Claude." >&2
-        ;;
+      code_review|research) sandbox="read-only" ;;
+      *) sandbox="workspace-write" ;;
     esac
     # The `model` resolved above is a CLAUDE model id — must NOT be forwarded to
     # codex. Codex's model comes from a separate codex-specific source so the
@@ -298,6 +387,7 @@ headroom_wrap_enabled() {
 # instead of the bash for-loop when this is true. Closes the EXP-573 / EXP-571
 # / EXP-624 / EXP-627 stuck-detector tangle structurally.
 use_goal_loop_enabled() {
+  [ "$(resolve_runner_for_stage implement)" = claude ] || return 1
   [ "${BUREAU_USE_GOAL_LOOP:-}" = "1" ] && return 0
   command -v jq >/dev/null 2>&1 || return 1
   [ "$(jq -r '.agents.use_goal_loop // false' "${BUREAU_CONFIG:-.bureau.json}" 2>/dev/null)" = "true" ]
@@ -347,11 +437,14 @@ record_stage_cost() {
   local in out cost dir
   in=$(printf '%s' "$usage" | jq -r '.input_tokens // 0' 2>/dev/null)
   out=$(printf '%s' "$usage" | jq -r '.output_tokens // 0' 2>/dev/null)
-  cost=$(printf '%s' "$raw" | jq -r '.total_cost_usd // 0' 2>/dev/null)
+  cost=$(printf '%s' "$raw" | jq -r '.total_cost_usd // null' 2>/dev/null)
   dir="${BUREAU_COST_DIR:-$HOME/.bureau/cost}"
   mkdir -p "$dir" 2>/dev/null || return 0
-  printf '{"issue":"%s","stage":"%s","input_tokens":%s,"output_tokens":%s,"cost_usd":%s}\n' \
-    "$issue" "$stage" "${in:-0}" "${out:-0}" "${cost:-0}" >> "$dir/$issue.jsonl"
+  jq -cn --arg issue "$issue" --arg stage "$stage" \
+    --arg provider "$(printf '%s' "$raw" | jq -r '.provider // "claude"')" \
+    --argjson input "${in:-0}" --argjson output "${out:-0}" --argjson cost "${cost:-null}" \
+    '{issue:$issue,stage:$stage,provider:$provider,input_tokens:$input,output_tokens:$output,
+      cost_usd:$cost,estimated_cost_usd:$cost,actual_billed_cost_usd:null}' >> "$dir/$issue.jsonl"
 }
 
 # EXP-671 — aggregate the per-issue cost logs into a report. Used by
@@ -372,10 +465,10 @@ report_costs() {
     jq -rs --arg issue "$issue" '
       (group_by(.stage) | map({stage: .[0].stage,
          in: (map(.input_tokens) | add), out: (map(.output_tokens) | add),
-         cost: (map(.cost_usd) | add)})) as $byStage
+         cost: (if any(.cost_usd == null) then null else map(.cost_usd) | add end)})) as $byStage
       | "\($issue):",
-        ($byStage[] | "  \(.stage): \(.in) in · \(.out) out · $\(.cost * 1000 | round / 1000)"),
-        "  TOTAL: $\((($byStage | map(.cost) | add) * 1000 | round / 1000))"
+        ($byStage[] | "  \(.stage): \(.in) in · \(.out) out · $\(if .cost == null then "unavailable" else .cost * 1000 | round / 1000 end)"),
+        "  TOTAL: $\(if any($byStage[]; .cost == null) then "unavailable" else ($byStage | map(.cost) | add) * 1000 | round / 1000 end)"
     ' "$f"
   done
 }
@@ -389,7 +482,8 @@ report_costs() {
 agent_enabled() {
   [ "${BUREAU_FORCE_ALL_AGENTS:-0}" = "1" ] && return 0
   local val
-  val=$(bureau_get ".agents.$1 // false")
+  val=$(jq -r --arg stage "$1" '.agents[$stage] | if type == "object" then
+      if has("enabled") then .enabled else true end else . // false end' "$BUREAU_CONFIG")
   [ "$val" != "false" ] && [ "$val" != "null" ]
 }
 
@@ -426,6 +520,14 @@ move_issue() {
     echo "[DRY_RUN] move_issue $ref → $state_id" >&2
     return 0
   fi
+  if [ -n "${BUREAU_EXPECTED_STATE_ID:-}" ] && [ "$ref" = "${BUREAU_CURRENT_ISSUE:-}" ]; then
+    local current_state
+    current_state=$(bureau_issue_snapshot "$ref" | jq -r '.state.id // empty')
+    if [ "$current_state" != "$BUREAU_EXPECTED_STATE_ID" ]; then
+      echo "ERROR: $ref state changed during this stage; refusing stale transition" >&2
+      return 21
+    fi
+  fi
   local uuid
   uuid=$(_resolve_issue_uuid "$ref")
   if [ -z "$uuid" ]; then
@@ -444,7 +546,11 @@ move_issue() {
     echo "move_issue: $ref → $state_id failed: $result" >&2
     return 1
   fi
+  if [ -n "${BUREAU_EXPECTED_STATE_ID:-}" ] && [ "$ref" = "${BUREAU_CURRENT_ISSUE:-}" ]; then
+    BUREAU_EXPECTED_STATE_ID="$state_id"
+  fi
 }
+
 
 # Post a markdown comment to an issue.
 # Usage: post_comment <issue-id-or-key> <body>
@@ -551,7 +657,7 @@ get_issue_comments() {
   local ref="$1"
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { comments(first: 50) { nodes { body createdAt } } } } }" \
+  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { comments(first: 200) { nodes { body createdAt } } } } }" \
     | jq '(.data.issues.nodes[0].comments.nodes // []) | sort_by(.createdAt) | reverse'
 }
 
@@ -564,13 +670,25 @@ get_issue_detail() {
     | jq '(.data.issues.nodes[0] // {}) | {identifier, title, description, project: (.project // {name: null, description: null}), labels: ((.labels.nodes // []) | map(.name))}'
 }
 
-# Return issue state name as plain string (used for "is it still in X?" guards).
+# Raw identity/state snapshot for optimistic stage completion checks.
+bureau_issue_snapshot() {
+  local ref="$1" team_key="${1%%-*}" number="${1##*-}"
+  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id identifier title description state { id name } labels { nodes { name } } } } }" \
+    | jq '.data.issues.nodes[0] // {}'
+}
+
+# Canonical names for existing stage guards, resolved from configured UUIDs.
 get_issue_state() {
-  local ref="$1"
-  local team_key="${ref%%-*}"
-  local number="${ref##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { state { name } } } }" \
-    | jq -r '.data.issues.nodes[0].state.name // empty'
+  local snapshot id key
+  snapshot=$(bureau_issue_snapshot "$1")
+  id=$(printf '%s' "$snapshot" | jq -r '.state.id // empty')
+  key=$(jq -r --arg id "$id" '.linear.teams[0].states | to_entries[] | select(.value == $id and $id != "") | .key' "$BUREAU_CONFIG" | head -1)
+  case "$key" in
+    triage) echo Triage ;; spec) echo Spec ;; spec_review) echo 'Spec Review' ;;
+    design) echo Design ;; copy) echo Copy ;; build) echo Build ;; qa) echo QA ;;
+    build_review) echo 'Build Review' ;; merge) echo Merge ;; done) echo Done ;;
+    *) printf '%s' "$snapshot" | jq -r '.state.name // empty' ;;
+  esac
 }
 
 # Add a label (by name) to an issue.
@@ -654,7 +772,7 @@ remove_issue_label() {
 branch_is_bureau_only() {
   local branch="$1"
   local human_commits
-  human_commits=$(_bureau_human_commits "$branch")
+  human_commits=$(_bureau_human_commits "$branch") || return 1
   [ -z "$human_commits" ]
 }
 
@@ -667,15 +785,17 @@ _bureau_human_commits() {
   local branch="$1"
   # tolower() rather than gawk-only IGNORECASE so the helper works under BSD
   # awk (macOS) and gawk (Linux CI) alike.
-  git log "origin/main..origin/$branch" \
-    --format='%H|%P|%s|%(trailers:key=Co-authored-by,valueonly,separator=,)' 2>/dev/null \
-    | awk -F'|' '
+  local commits
+  commits=$(git log "origin/main..origin/$branch" \
+    --format='%H|%P|%s|%(trailers:key=Co-authored-by,valueonly,separator=,)|%(trailers:key=Bureau-Generated,valueonly,separator=,)' 2>/dev/null) || return 1
+  printf '%s\n' "$commits" | awk -F'|' '
         {
           n = split($2, parents, " ")
           is_merge   = (n > 1)
           is_spec    = (tolower($3) ~ /^[a-z]+-[0-9]+: spec artifacts$/)
           has_claude = (tolower($4) ~ /claude/)
-          if (!is_merge && !is_spec && !has_claude) print $1
+          has_bureau = ($5 == "true")
+          if (!is_merge && !is_spec && !has_claude && !has_bureau) print $1
         }'
 }
 
@@ -858,13 +978,30 @@ _epoch_hm() {
 
 # Echo "pct|reset_epoch|updated_epoch" from the first available signal, else
 # nothing. Lenient field aliases cover our file + ClaudeWatch-ish shapes.
+bureau_is_paused() {
+  local common
+  common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+  [ -f "$common/bureau/paused" ]
+}
+
 _session_usage_signal() {
   command -v jq >/dev/null 2>&1 || return 0
-  local f
-  for f in "${BUREAU_USAGE_FILE:-$HOME/.bureau/session-usage.json}" \
-           "$HOME/.claude/claudewatch-usage.json" \
-           "${BRAINHUGGERS_USAGE_FILE:-$HOME/.brainhuggers/session-usage.json}"; do
+  local provider="${1:-claude}" f
+  local files=()
+  if [ "$provider" = codex ]; then
+    files=("${BUREAU_CODEX_USAGE_FILE:-}" "${BUREAU_USAGE_FILE:-}")
+  else
+    files=("${BUREAU_USAGE_FILE:-$HOME/.bureau/session-usage.json}"
+           "$HOME/.claude/claudewatch-usage.json"
+           "${BRAINHUGGERS_USAGE_FILE:-$HOME/.brainhuggers/session-usage.json}")
+  fi
+  for f in "${files[@]}"; do
     [ -f "$f" ] || continue
+    if [ "$provider" = codex ] && [ "$f" != "${BUREAU_CODEX_USAGE_FILE:-}" ]; then
+      jq -e '.provider == "codex"' "$f" >/dev/null 2>&1 || continue
+    elif [ "$provider" = claude ]; then
+      jq -e '(.provider // "claude") == "claude"' "$f" >/dev/null 2>&1 || continue
+    fi
     local out
     out=$(jq -r '
       ( .pct // .usage_pct // .percent // .used_pct // empty ) as $p
@@ -905,13 +1042,15 @@ session_throttle_guard() {
   threshold=$(jq -r '.session.usage_threshold_pct // 80' "$cfg" 2>/dev/null || echo 80)
   stale_pause=$(jq -r '.session.pause_on_stale_data // false' "$cfg" 2>/dev/null || echo false)
 
+  local provider
+  provider=$(resolve_runner_for_stage "${1:-implement}") || return $?
   local iters=0
   while :; do
     local sig
-    sig=$(_session_usage_signal)
+    sig=$(_session_usage_signal "$provider")
     if [ -z "$sig" ]; then
       if [ -z "${_THROTTLE_NOSIGNAL_LOGGED:-}" ]; then
-        echo "[throttle] no usage signal — proceeding (set up ClaudeWatch or the usage-file hook to enable pausing)" >&2
+        echo "[throttle] no usage signal — proceeding (configure a usage file for this provider to enable pausing)" >&2
         _THROTTLE_NOSIGNAL_LOGGED=1
       fi
       return 0
@@ -923,6 +1062,7 @@ session_throttle_guard() {
     case "$decision" in
       proceed) return 0 ;;
       pause\ *)
+        [ "${BUREAU_THROTTLE_ONCE:-0}" != 1 ] || return 23
         local sec="${decision#pause }"
         echo "[throttle] usage ${pct}% ≥ ${threshold}% — pausing ${sec}s until ~$(_epoch_hm "$((now + sec))")" >&2
         sleep "$sec"
@@ -1091,10 +1231,12 @@ log_escalation() {
 # desired next state varies (qa/code-review → Build; implement is already in
 # Build → caller labels needs-human and stays).
 #
-# Caller must already be checked out on the branch. Helper fetches origin
+# Caller must already be checked out on the branch. By default the helper fetches origin
 # itself so its contract is self-contained — earlier callers relied on
 # queue-loop having pre-fetched, which masked silent staleness when the
 # pre-fetch failed (`|| true` in reset_worktree).
+# Code review may pass a third argument containing an already fetched commit
+# SHA for the PR's actual base. That immutable input is never refetched here.
 #
 # Usage:
 #   if ! merge_origin_main_or_abort "$ISSUE" "QA"; then
@@ -1102,14 +1244,18 @@ log_escalation() {
 #     exit 17
 #   fi
 merge_origin_main_or_abort() {
-  local issue="$1" stage_label="$2"
-  git fetch origin --quiet || true
-  if git merge-base --is-ancestor origin/main HEAD 2>/dev/null; then
-    echo "  Branch is up to date with origin/main."
+  local issue="$1" stage_label="$2" base_ref="${3:-origin/main}"
+  if [ "$#" -ge 3 ]; then
+    [[ "$base_ref" =~ ^[0-9a-f]{40,64}$ ]] && git cat-file -e "$base_ref^{commit}" || return 1
+  else
+    git fetch origin --quiet || true
+  fi
+  if git merge-base --is-ancestor "$base_ref" HEAD 2>/dev/null; then
+    echo "  Branch is up to date with $base_ref."
     return 0
   fi
-  echo "  Branch is behind origin/main — merging origin/main..."
-  if git merge --no-ff --no-edit origin/main; then
+  echo "  Branch is behind $base_ref — merging $base_ref..."
+  if git merge --no-ff --no-edit "$base_ref"; then
     return 0
   fi
   # Trivial-conflict auto-resolver. Legacy bureau branches predate the
@@ -1134,7 +1280,7 @@ merge_origin_main_or_abort() {
       case "$f" in
         .specify/feature.json) git checkout --ours "$f" 2>/dev/null && git add "$f" ;;
         CLAUDE.md|.gitignore)
-          sed -i.bak '/^<<<<<<< HEAD$/d; /^=======$/d; /^>>>>>>> origin\/main$/d' "$f" 2>/dev/null \
+          sed -i.bak "/^<<<<<<< HEAD$/d; /^=======$/d; /^>>>>>>> ${base_ref//\//\\/}$/d" "$f" 2>/dev/null \
             && rm -f "$f.bak" && git add "$f" ;;
         rust/Cargo.lock) git checkout --theirs "$f" 2>/dev/null && git add "$f" ;;
         logs/queue-*.log) git rm "$f" >/dev/null 2>&1 ;;
@@ -1147,7 +1293,7 @@ merge_origin_main_or_abort() {
       return 0
     fi
   fi
-  echo "  ERROR: merge of origin/main has conflicts. Aborting $stage_label."
+  echo "  ERROR: merge of $base_ref has conflicts. Aborting $stage_label."
   git merge --abort 2>/dev/null || true
   # Throttle the conflict comment to once per hour per issue. Without this,
   # an issue parked at needs-human (implement) re-runs the helper every tick
@@ -1158,7 +1304,7 @@ merge_origin_main_or_abort() {
     echo "  (conflict comment suppressed — already posted within the last hour)"
   else
     _throttle_record "$throttle_key"
-    post_comment "$issue" "❌ $stage_label pipeline cannot proceed — branch has conflicts with \`origin/main\`. Resolve them and re-run."
+    post_comment "$issue" "❌ $stage_label pipeline cannot proceed — branch has conflicts with \`$base_ref\`. Resolve them and re-run."
   fi
   return 1
 }
@@ -1207,82 +1353,59 @@ count_in_flight_issues() {
   ' 2>/dev/null || echo "0"
 }
 
-# Detach any worktree (other than $keep_wt) that currently holds $branch.
-# Git refuses to attach the same branch to two worktrees, so when two
-# pipelines touch the same spec branch back-to-back (e.g. code-review →
-# rework → implement, or spec → spec-review), the later pick would fail
-# with exit 128 unless the earlier worktree has released the branch. This
-# releases it by switching the other worktree to detached HEAD at the same
-# commit — no work is lost, the ref still points at the same sha.
-#
-# Usage: free_branch_from_other_worktrees <branch> <keep-worktree-path>
-# Safe to call from any worktree inside the repo (git worktree list is
-# repo-scoped, not cwd-scoped).
-#
-# Called twice per cron tick by design — once in queue-loop.sh's
-# reset_worktree (protects the cron path) and once in each pipeline script
-# (protects the manual-invocation path: e.g. `./implement-pipeline.sh ABC-1`
-# from a workbench pane, which never touches queue-loop). Both calls are
-# idempotent: detach if held, no-op if not. Removing either path's call
-# would regress one of the two invocation modes — keep both.
+# A held branch is an ownership conflict. Never detach another checkout.
 free_branch_from_other_worktrees() {
-  local branch="$1"
-  local keep_wt="$2"
+  local branch="$1" keep_wt="$2" other
   [ -z "$branch" ] && return 0
-  git worktree list --porcelain 2>/dev/null \
-    | awk -v b="refs/heads/$branch" -v keep="$keep_wt" '
-      /^worktree / { wt=$2; next }
-      /^branch / {
-        if ($2 == b && wt != keep) print wt
-      }
-    ' \
-    | while read -r other; do
-        [ -n "$other" ] && [ -d "$other" ] \
-          && git -C "$other" checkout --detach --quiet 2>/dev/null || true
-      done
+  # Git lists physical paths; callers can use a symlinked checkout (including
+  # macOS /tmp). Resolve even a not-yet-created worker before comparing owners.
+  keep_wt=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$keep_wt") || return 21
+  other=$(git worktree list --porcelain | awk -v b="refs/heads/$branch" -v keep="$keep_wt" '
+    /^worktree / { wt=substr($0, 10); next }
+    /^branch / { if (substr($0, 8) == b && wt != keep) print wt }')
+  if [ -n "$other" ]; then
+    echo "ERROR: branch $branch is held by $other; release or hand off that checkout explicitly." >&2
+    return 21
+  fi
 }
 
-# Hard-reset a worktree to a known state before invoking a pipeline.
-# Originally in queue-loop.sh; relocated so shepherd.sh (and future single-
-# shot drivers) can reuse it without sourcing the loop.
-#
-# Pipelines that start from main (spec-pipeline.sh) reset to origin/main.
-# Pipelines that build on an existing spec branch checkout that branch.
-# Either way, clean -fdx to strip any carryover.
-#
-# Reads $REPO_DIR from the caller's scope (every pipeline + queue-loop sets
-# it before sourcing this file).
+# Only a worker created and registered by Bureau may be reset. Merely residing
+# under .worktrees is not ownership; pre-existing directories are rejected.
 reset_worktree() {
-  local wt="$1"
-  local target_script="$2"
-  local target_branch="${3:-}"
-
-  if [ ! -d "$wt" ]; then
-    git -C "$REPO_DIR" fetch --quiet || true
-    git -C "$REPO_DIR" worktree add --detach "$wt" origin/main --quiet || true
+  local wt="$1" target_script="$2" target_branch="${3:-}" common registry key ref
+  [ "${BUREAU_WORKSPACE_MODE:-current}" = disposable ] || { echo "ERROR: reset requires disposable worker mode" >&2; return 21; }
+  [ -n "${BUREAU_RUN_ID:-}" ] || { echo "ERROR: reset requires an ownership claim" >&2; return 21; }
+  wt=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt")
+  python3 "$BUREAU_RUNTIME" --repo "$REPO_DIR" assert-owner --issue "${BUREAU_CURRENT_ISSUE:?missing issue claim}" --workspace "$wt" --run "$BUREAU_RUN_ID" || return 21
+  common=$(git -C "$REPO_DIR" rev-parse --git-common-dir)
+  case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
+  registry="$common/bureau/workers"
+  key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
+  if [ -e "$wt" ] && [ ! -f "$registry/$key" ]; then
+    echo "ERROR: refusing to reset unregistered worktree $wt" >&2; return 21
   fi
-
-  git -C "$wt" fetch origin --prune --quiet || true
-
-  case "$target_script" in
-    spec-pipeline.sh)
-      git -C "$wt" reset --hard origin/main --quiet || true
-      git -C "$wt" clean -fdx --quiet || true
-      git -C "$wt" checkout --detach origin/main --quiet || true
-      ;;
-    spec-review-pipeline.sh|implement-pipeline.sh|code-review-pipeline.sh|ux-pipeline.sh|qa-pipeline.sh|copy-pipeline.sh|merge-pipeline.sh|rebase-pipeline.sh)
-      if [ -n "$target_branch" ] \
-        && git -C "$wt" rev-parse --verify "origin/$target_branch" >/dev/null 2>&1; then
-        free_branch_from_other_worktrees "$target_branch" "$wt"
-        git -C "$wt" checkout -B "$target_branch" "origin/$target_branch" --quiet || true
-        git -C "$wt" reset --hard "origin/$target_branch" --quiet || true
-      else
-        git -C "$wt" reset --hard origin/main --quiet || true
-        git -C "$wt" checkout --detach origin/main --quiet || true
-      fi
-      git -C "$wt" clean -fdx --quiet || true
-      ;;
-  esac
+  if [ -d "$wt" ]; then
+    [ "$(git -C "$wt" rev-parse --absolute-git-dir)" = "$(cat "$registry/$key")" ] || { echo "ERROR: worker identity changed" >&2; return 21; }
+  fi
+  git -C "$REPO_DIR" fetch origin --prune --quiet || return 18
+  ref=origin/main
+  if [ "$target_script" != spec-pipeline.sh ]; then
+    [ -n "$target_branch" ] || return 12
+    ref="origin/$target_branch"
+    git -C "$REPO_DIR" rev-parse --verify "$ref" >/dev/null || return 12
+    free_branch_from_other_worktrees "$target_branch" "$wt" || return $?
+  fi
+  if [ ! -d "$wt" ]; then
+    git -C "$REPO_DIR" worktree add --detach "$wt" "$ref" --quiet || return 21
+    mkdir -p "$registry"
+    git -C "$wt" rev-parse --absolute-git-dir > "$registry/$key"
+  fi
+  git -C "$wt" checkout --detach --force "$ref" --quiet || return 21
+  git -C "$wt" reset --hard "$ref" --quiet || return 21
+  git -C "$wt" clean -fdx --quiet || return 21
+  if [ "$target_script" != spec-pipeline.sh ]; then
+    git -C "$wt" checkout -B "$target_branch" "$ref" --quiet || return 21
+  fi
 }
 
 # Map pipeline exit code → human-readable error class (for alerts, logs,
@@ -1298,10 +1421,19 @@ exit_class() {
     13)  echo "no-tasks" ;;
     14)  echo "build-failed" ;;
     15)  echo "no-pr" ;;
-    16)  echo "claude-unauth" ;;
+    16)  echo "provider-unauth" ;;
     17)  echo "rebase-needed" ;;
     18)  echo "gh-failed" ;;
     19)  echo "rebase-rejected" ;;
+    20)  echo "stopped-before-merge" ;;
+    21)  echo "ownership-conflict" ;;
+    22)  echo "provider-or-result-error" ;;
+    23)  echo "quota-wait" ;;
+    24)  echo "environment-blocked" ;;
+    25)  echo "needs-human-or-paused" ;;
+    26)  echo "cancelled-ticket" ;;
+    124) echo "timeout" ;;
+    130) echo "cancelled-run" ;;
     *)   echo "error-$1" ;;
   esac
 }
@@ -1322,12 +1454,7 @@ precondition_linear() {
 # Probes claude -p with a trivial prompt to detect "Not logged in" before any
 # state mutation — prevents stranding issues in Spec with zero work done.
 precondition_claude_auth() {
-  local out
-  out=$(claude -p --print --dangerously-skip-permissions "reply with ok" 2>&1 | head -5 || true)
-  if printf "%s" "$out" | grep -qi "Not logged in\|Please run /login\|authentication\|unauthorized"; then
-    echo "ERROR: claude CLI is not authenticated (run /login)" >&2
-    exit 16
-  fi
+  precondition_runner "${1:-spec}"
 }
 
 # Precondition: worktree is clean (no uncommitted changes). Exit 11 on failure.
@@ -1348,7 +1475,7 @@ precondition_clean_worktree() {
 # and Linear's MCP OAuth tokens expire after ~1h.
 #
 # Usage:
-#   pick_issue <state-uuid> <required-label-names-csv> [exclude-label-names-csv]
+#   pick_issue <state-uuid> <required-label-names-csv> [exclude-label-names-csv] [skip-issue-ids-csv]
 #
 # Filters: team=$BUREAU_TEAM_KEY, state by UUID, at least one required label,
 #          project ∈ $BUREAU_PROJECTS — all listed projects (if set), parent is null.
@@ -1370,6 +1497,7 @@ pick_issue() {
   local state_id="$1"
   local required_csv="$2"
   local exclude_csv="${3:-}"
+  local skip_csv="${4:-}"
 
   local required_gql
   required_gql=$(printf '%s' "$required_csv" | awk -F',' '
@@ -1419,8 +1547,9 @@ pick_issue() {
     -H "Content-Type: application/json" \
     -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
     -d "$payload" \
-  | jq -r --argjson excl "$exclude_json" '
+  | jq -r --argjson excl "$exclude_json" --arg skip "$skip_csv" '
     (.data.issues.nodes // [])
+    | map(select(.identifier as $id | ($skip | split(",") | index($id)) == null))
     | map(select(
         ([(.labels.nodes // [])[].name] | map(select(. as $n | $excl | index($n))) | length) == 0
       ))
@@ -1497,7 +1626,7 @@ pipeline_picker_args() {
   esac
 }
 
-# pipeline_pick_next <script-name>
+# pipeline_pick_next <script-name> [skip-issue-ids-csv]
 #   Reads the registry above, dispatches to pick_issue with the right args.
 #   Returns the picked issue identifier on stdout, empty on queue-empty or
 #   when an opt-in pipeline isn't configured for this repo.
@@ -1520,7 +1649,15 @@ pipeline_pick_next() {
   else
     exclude="shepherd-focused"
   fi
-  pick_issue "$state" "$required" "$exclude"
+  # App blocked results use the configured human gate in every stage.
+  local human_label
+  human_label=$(bureau_get '.linear.labels.needs_human.name // "needs-human"')
+  exclude="${exclude},needs-human,${human_label}"
+  if [ -n "${2:-}" ]; then
+    pick_issue "$state" "$required" "$exclude" "$2"
+  else
+    pick_issue "$state" "$required" "$exclude"
+  fi
 }
 
 # ── Shared prompt helpers ──────────────────────────────────────────
@@ -1534,6 +1671,8 @@ pipeline_pick_next() {
 build_spec_context() {
   local spec_dir="${1:-}"
   local ctx="SCOPE DISCIPLINE — READ BEFORE ACTING:"
+  ctx+=$'\n- scripts/bureau-stage.md — shared stage boundaries and evidence contract.'
+  [ -f "AGENTS.md" ] && ctx+=$'\n- AGENTS.md (repo root) — project instructions.'
   [ -f "SPEC.md" ]   && ctx+=$'\n- SPEC.md (repo root) — project source of truth.'
   [ -f "CLAUDE.md" ] && ctx+=$'\n- CLAUDE.md (repo root) — conventions and non-goals.'
   if [ -n "$spec_dir" ]; then
@@ -1588,22 +1727,16 @@ EOF
 # Usage: value=$(parse_claude_json "$OUTPUT" '.verdict')
 #   Returns empty string on parse failure — caller decides the fallback.
 parse_claude_json() {
-  local raw="$1" filter="$2"
-  # EXP-671 — cost-tracking mode wraps the agent text in a `claude --output-format
-  # json` envelope { "result": "<text>", "usage": {...} }. Unwrap to the inner
-  # text first; plain `--print` output and codex verdicts fall through unchanged
-  # (jq fails / no .result → empty → raw kept). Backward-compatible.
-  local inner
-  inner=$(printf '%s' "$raw" | jq -r 'if type=="object" and has("result") then .result else empty end' 2>/dev/null)
-  [ -n "$inner" ] && raw="$inner"
-  local block
-  # awk extracts the last ```json...``` block; sed strips the fences.
-  block=$(printf '%s' "$raw" \
-    | awk 'BEGIN{b=""; in_block=0}
-      /^```json[[:space:]]*$/ { in_block=1; b=""; next }
-      /^```[[:space:]]*$/       { if (in_block) { saved=b; in_block=0 } next }
-      { if (in_block) b = b $0 "\n" }
-      END { print saved }')
-  [ -z "$block" ] && return 0
-  printf '%s' "$block" | jq -r "$filter" 2>/dev/null || true
+  local raw="$1" filter="$2" text block
+  text=$(printf '%s' "$raw" | jq -r 'if type=="object" and (.result | type)=="string" then .result else empty end' 2>/dev/null || true)
+  [ -n "$text" ] || text="$raw"
+  if printf '%s' "$text" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    printf '%s' "$text" | jq -r "$filter" 2>/dev/null || true
+    return 0
+  fi
+  block=$(printf '%s' "$text" | awk 'BEGIN{b=""; in_block=0}
+    /^```json[[:space:]]*$/ {in_block=1; b=""; next}
+    /^```[[:space:]]*$/ {if(in_block){saved=b; in_block=0}; next}
+    {if(in_block)b=b $0 "\n"} END{print saved}')
+  [ -n "$block" ] && printf '%s' "$block" | jq -r "$filter" 2>/dev/null || true
 }

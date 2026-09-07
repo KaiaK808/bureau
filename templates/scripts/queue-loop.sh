@@ -26,6 +26,7 @@ POSITIONAL=()
 for arg in "$@"; do
   case "$arg" in
     --dry-run) export BUREAU_DRY_RUN=1 ;;
+    --no-merge) export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1 ;;
     *) POSITIONAL+=("$arg") ;;
   esac
 done
@@ -86,7 +87,11 @@ run_script() {
     echo "[$TIMESTAMP] $label — candidate: $picked" | tee -a "$LOG_FILE"
     target_branch=$(get_issue_branch "$picked" 2>/dev/null || true)
   fi
-  reset_worktree "$wt" "$script" "$target_branch"
+  [ -n "$picked" ] || return 2
+  if [ "${BUREAU_DRY_RUN:-0}" = 1 ]; then
+    echo "[DRY_RUN] candidate $picked stage=$script workspace=$wt"
+    return 0
+  fi
 
   # logs→memory: emit stage_start only when there's a real candidate so idle
   # queue-empty ticks don't bloat events.jsonl. Track wall time for the
@@ -98,15 +103,13 @@ run_script() {
       "issue=$picked" "branch=${target_branch:-}"
   fi
 
+  case "$script" in merge-pipeline.sh|rebase-pipeline.sh) ;; *)
+    BUREAU_THROTTLE_ONCE=1 session_throttle_guard "$(printf '%s' "${script%-pipeline.sh}" | tr '-' '_')" || return $?
+    ;;
+  esac
   local exit_code=0
-  cd "$wt"
-  if [ -n "$picked" ]; then
-    "$REPO_DIR/scripts/$script" "$picked" 2>&1 | tee -a "$LOG_FILE"
-  else
-    "$REPO_DIR/scripts/$script" 2>&1 | tee -a "$LOG_FILE"
-  fi
+  (cd "$REPO_DIR" && bash "$REPO_DIR/scripts/bureau-worker.sh" "$picked" "$script" "$wt" "$target_branch") 2>&1 | tee -a "$LOG_FILE"
   exit_code=${PIPESTATUS[0]}
-  cd "$REPO_DIR"
 
   TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
   local klass
@@ -140,6 +143,7 @@ run_one() {
 }
 
 while true; do
+  if bureau_is_paused; then sleep 30; continue; fi
   DID_WORK=false
 
   case "$MODE" in

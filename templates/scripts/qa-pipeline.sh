@@ -13,14 +13,19 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
+BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
+set -a
+# shellcheck disable=SC1090
 if [ -f .env ]; then source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then source "$SCRIPT_REPO/.env"
-else echo "ERROR: No .env found"; exit 1; fi
+elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
+set +a
 
-CLAUDE=$(claude_cmd_for_stage "qa")
+CLAUDE=(run_stage_for qa)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 
 precondition_linear
+precondition_runner qa
 
 # Opt-in gate — no configured QA state ⇒ nothing to do, treat as queue-empty.
 if [ -z "${BUREAU_STATE_QA:-}" ]; then
@@ -43,6 +48,8 @@ else
 fi
 
 # State guard runs unconditionally — see implement-pipeline.sh for rationale.
+bureau_stage_enter "$ISSUE" "$@"
+
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
 if [ "$ACTUAL_STATE" != "QA" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'QA'. Skipping."
@@ -106,6 +113,9 @@ TASKS_FILE=""
 # one of these, the operator can wire a `scripts/bureau-test.sh` shim and
 # re-run; don't let Claude invent test harnesses.
 detect_test_cmd() {
+  local configured
+  configured=$(bureau_get '.repo.test_command // empty')
+  if [ -n "$configured" ]; then printf '%s' "$configured"; return; fi
   if [ -f "scripts/bureau-test.sh" ]; then
     echo "bash scripts/bureau-test.sh"; return
   fi
@@ -216,7 +226,7 @@ else
 
   NEGATIVE_CONSTRAINTS_BODY=$(build_negative_constraints)
 
-  QA_RESULT=$($CLAUDE "You are the QA agent for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
+  QA_RESULT=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-qa.schema.json" "You are the QA agent for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
 
 $SPEC_CONTEXT
 
@@ -247,19 +257,18 @@ Emit a fenced json block at the very end:
 
 \`\`\`json
 {\"status\":\"GREEN|RED|NEEDS_HUMAN\",\"tests_added\":0,\"tests_failing\":0,\"coverage_notes\":\"\"}
-\`\`\`" 2>&1)
+\`\`\`")
   echo "$QA_RESULT"
 fi
 
-# Commit any changes Claude made (tests are additive — a dirty worktree is expected).
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  git add -A
-  git commit -m "$ISSUE: qa adjustments" --allow-empty || true
-  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
-  else
-    git push origin HEAD || true
-  fi
+# The executor publishes tracked edits and newly created tests, including when
+# Codex intentionally leaves all Git writes to us. A failed push must not route
+# the issue onward with tests that exist only in this disposable checkout.
+commit_stage_changes qa "$ISSUE"
+if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+  echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
+else
+  git push origin HEAD || exit 18
 fi
 
 echo ""

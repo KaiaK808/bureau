@@ -1,267 +1,553 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Recipes · bureau-init</title>
-<meta name="description" content="Common config patterns: single-flight, mixed models, dry-run, multi-repo, custom merge strategy, memory loop." />
-<link rel="stylesheet" href="assets/colors_and_type.css" />
-<link rel="stylesheet" href="assets/docs.css" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="b8ee7c738f98fcdf49e692c0714d0c71680b91153dd975171451d9f53825af3e">
+<title>recipes · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
 </head>
 <body>
-
-<header class="bhb-topbar">
-  <a href="index.html" class="wordmark">BRAIN<span class="accent">·</span>HUGGERS BUREAU <span style="color:var(--fg-3)">/</span> bureau-init</a>
-  <div class="meta">
-    <span><span class="pulse">●</span> CRON RUNNING</span>
-    <span>FILE #03 · RECIPES</span>
-    <span><a href="https://github.com/KaiaK808/bureau" style="color:inherit;">GITHUB ↗</a></span>
-  </div>
-</header>
-
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
 <div class="bhb-shell">
-
-  <aside class="bhb-sidebar">
-    <div class="group-label">Field manual</div>
-    <nav>
-      <a href="index.html"><span class="file">FILE #00</span> Index</a>
-      <a href="configuration.html"><span class="file">FILE #01</span> Configuration</a>
-      <a href="exit-codes.html"><span class="file">FILE #02</span> Exit codes</a>
-      <a href="recipes.html" class="active"><span class="file">FILE #03</span> Recipes</a>
-      <a href="troubleshooting.html"><span class="file">FILE #04</span> Troubleshooting</a>
-    </nav>
-
-    <div class="group-label">On this page</div>
-    <div class="external-list">
-      <a href="#single-flight">Single-flight</a>
-      <a href="#mixed-models">Mixed models</a>
-      <a href="#dry-run">Dry-run</a>
-      <a href="#escalations">Monitor escalations</a>
-      <a href="#retry-budget">Tune retry budget</a>
-      <a href="#telegram">Telegram alerts</a>
-      <a href="#multi-repo">Multi-repo</a>
-      <a href="#session-name">Session name</a>
-      <a href="#sampling">Sampling threshold</a>
-      <a href="#merge-strategy">Merge strategy</a>
-      <a href="#supervisor">Tighter supervisor</a>
-      <a href="#memory-loop">Memory loop</a>
-    </div>
-  </aside>
-
-  <main class="bhb-main">
-
-    <div class="bhb-page-meta">
-      <span>FILE #03 · RECIPES</span>
-      <span><span class="bhb-tag docs"><span class="dot"></span>DOCUMENTING</span></span>
-    </div>
-
-    <h1>Recipes</h1>
-    <p class="lede" style="font-size:18px;color:var(--fg-2);max-width:680px;line-height:var(--lh-relaxed);">
-      Common config patterns. Drop into <code>.bureau.json</code> or your launch command as needed. None of these are defaults — bureau ships with an opinionated baseline; recipes are for fine-tuning.
-    </p>
-
-    <h2 id="single-flight">Single-flight pipeline</h2>
-    <p>Process exactly one issue end-to-end before another enters Spec. Eliminates cross-issue rebase storms in active repos.</p>
-
-    <pre data-file=".bureau.json"><code>{
-  "agents": {
-    "max_concurrent_issues": 1
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1 id="recipes">Recipes</h1>
+<p>Configuration overlays and launch examples. Merge settings into the
+existing <code>.bureau.json</code>; preserve project IDs, credentials
+and unrelated choices. Examples that run background work use the
+review-only boundary.</p>
+<hr />
+<h2 id="single-flight-pipeline">Single-flight pipeline</h2>
+<p>Process exactly one issue end-to-end before another enters Spec.
+Eliminates cross-issue rebase storms in active repos.</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_concurrent_issues&quot;</span><span class="fu">:</span> <span class="dv">1</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p><strong>When to use:</strong> repos with &gt; 3 simultaneous feature
+tickets where <code>origin/main</code> advances faster than the pipeline
+can drain. Symptom: every cron tick re-runs
+<code>merge_origin_main_or_abort</code> against a different main,
+conflicts pile up.</p>
+<p><strong>When not to:</strong> small repos where parallelism actually
+helps. The cap is a knob, not a default.</p>
+<p>A single stuck issue (e.g. <code>needs-human</code> parking) does
+<em>not</em> deadlock the cap — <code>count_in_flight_issues</code>
+excludes parked issues.</p>
+<hr />
+<h2 id="mixed-models-per-stage">Mixed models per stage</h2>
+<p>Use a strong reasoning model for spec, a fast cheap model for
+spec-review, and an <em>adversarial</em> model for code-review (catches
+what the implementer missed).</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-sonnet-4-6&quot;</span><span class="fu">,</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;spec&quot;</span><span class="fu">:</span>         <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-opus-4-7&quot;</span> <span class="fu">},</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;spec_review&quot;</span><span class="fu">:</span>  <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-haiku-4-5-20251001&quot;</span> <span class="fu">},</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;implement&quot;</span><span class="fu">:</span>    <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-opus-4-7&quot;</span> <span class="fu">},</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review&quot;</span><span class="fu">:</span>  <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-haiku-4-5-20251001&quot;</span> <span class="fu">}</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>These are illustrative Claude model identifiers; use models available
+to the selected account. Provider/environment overrides also participate
+in <a href="provider-runtime.html">model precedence</a>. Legacy v1 model
+fields retain their Claude meaning after migration.</p>
+<p>For mixed providers, use a stage runner and provider-specific models.
+Example overlay (merge into the existing configuration):</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;agents&quot;</span><span class="fu">:{</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;claude&quot;</span><span class="fu">,</span><span class="dt">&quot;implement&quot;</span><span class="fu">:{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span><span class="kw">true</span><span class="fu">,</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;codex&quot;</span><span class="fu">},</span><span class="dt">&quot;qa&quot;</span><span class="fu">:{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span><span class="kw">true</span><span class="fu">,</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;codex&quot;</span><span class="fu">},</span><span class="dt">&quot;code_review&quot;</span><span class="fu">:{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span><span class="kw">true</span><span class="fu">,</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;claude&quot;</span><span class="fu">},</span><span class="dt">&quot;workbench_panes&quot;</span><span class="fu">:</span><span class="dv">0</span><span class="fu">},</span><span class="dt">&quot;repo&quot;</span><span class="fu">:{</span><span class="dt">&quot;test_command&quot;</span><span class="fu">:</span><span class="st">&quot;python3 -m unittest discover&quot;</span><span class="fu">}}</span></span></code></pre></div>
+<p>Set a real project test command. Leaving models unset uses each
+provider's CLI defaults. A generic Claude model does not leak into the
+Codex stages. Current app tasks use their selected model independently.
+See <a href="provider-runtime.html">provider runtime</a> and <a
+href="codex-acceptance.html">acceptance</a>.</p>
+<hr />
+<h2 id="dry-run">Dry-run</h2>
+<p>Validate a fresh checkout against a real Linear team without
+polluting state. No Linear mutations, no comments, no PRs, no
+<code>git push</code>.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="ex">./scripts/queue-loop.sh</span> implement 1</span></code></pre></div>
+<p>Or pass the flag directly:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/queue-loop.sh</span> all 5 <span class="at">--dry-run</span></span></code></pre></div>
+<p>Queue and shepherd dry-runs report candidate stages without invoking
+creative work or resetting worktrees. They can read Linear, so they
+still need appropriate credentials. A dry-run does not validate a
+model's output, install dependencies, run tests, or prove live workflow
+completion.</p>
+<p>For current-task work, use
+<code>$bureau TEAM-123 through review</code>. For a single background
+unit, use <code>bash scripts/bureau-tick.sh --no-merge</code>. See the
+<a href="operator-cheatsheet.html">operator guide</a>.</p>
+<hr />
+<h2 id="drive-one-ticket-end-to-end-shepherd">Drive one ticket
+end-to-end (shepherd)</h2>
+<p>Drive one selected ticket through its configured stages without
+starting continuous queues:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<p>The default disposable checkout is <code>.worktrees/shepherd/</code>;
+<code>--worktree DIR</code> selects another worker path. Existing
+unregistered or unfinished checkouts are preserved and can refuse reuse.
+Inspect ownership before resuming; never point a disposable worker at an
+app checkout.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<p>The preview reads state and reports the route without running the
+stages. In a live pass, exit 20 means the review boundary was reached,
+25 means pause/human attention, and 26 means cancellation. None means
+the ticket was merged. Omitting <code>--no-merge</code> permits the
+existing merge path, so do so only for an authorized end-to-end merge
+run.</p>
+<p><strong>When to use:</strong> a representative acceptance ticket or
+deliberate recovery after resolving its blocker. For batches use
+orchestrate; for explicitly requested continuous work use
+<code>start-bureau-v2.sh</code>.</p>
+<hr />
+<h2 id="ship-a-batch-orchestrate--conflict-aware-schedule">Ship a batch
+(orchestrate + conflict-aware-schedule)</h2>
+<p>Predict file footprints, partition overlaps, inspect the schedule,
+then execute it. The current app task can prepare
+<code>input.json</code>; Claude's installed workflow uses the same
+partition core. Example shape (replace the tickets and paths with actual
+predictions):</p>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;tickets&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-7&quot;</span><span class="fu">,</span><span class="dt">&quot;title&quot;</span><span class="fu">:</span><span class="st">&quot;Update guide&quot;</span><span class="fu">}</span><span class="ot">,</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-8&quot;</span><span class="fu">,</span><span class="dt">&quot;title&quot;</span><span class="fu">:</span><span class="st">&quot;Update parser&quot;</span><span class="fu">}</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;predictions&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-7&quot;</span><span class="fu">,</span><span class="dt">&quot;predicted_paths&quot;</span><span class="fu">:</span><span class="ot">[</span><span class="st">&quot;docs/guide.md&quot;</span><span class="ot">]</span><span class="fu">}</span><span class="ot">,</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-8&quot;</span><span class="fu">,</span><span class="dt">&quot;predicted_paths&quot;</span><span class="fu">:</span><span class="ot">[</span><span class="st">&quot;src/parser.py&quot;</span><span class="ot">]</span><span class="fu">}</span><span class="ot">]</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">node</span> scripts/bureau-schedule-cli.mjs input.json <span class="op">&gt;</span> schedule.json</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Inspect parallelSafe, serialChains, edges and blocked before execution.</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/orchestrate.sh <span class="at">--execute</span> <span class="at">--schedule</span> schedule.json <span class="at">--max-concurrent</span> 3 <span class="at">--no-merge</span></span></code></pre></div>
+<p>The planner exits 25 if predictions are missing or invalid; resolve
+every <code>blocked</code> entry before execution.
+<code>orchestrate.sh</code> does not have a <code>--plan</code> option.
+Each lane uses <code>.worktrees/shepherd-lane-N</code>; a stopped or
+failed ticket halts its serial chain while independent lanes can
+continue. Review-only execution therefore does not automatically drain a
+chain past an unmerged dependency.</p>
+<p>Limit concurrency according to local build capacity and the selected
+providers' available quota. Separate checkouts isolate files, but shared
+Git state, inaccurate predictions and later merges can still conflict.
+See the <a href="operator-cheatsheet.html">operator guide</a>.</p>
+<hr />
+<h2 id="port-from-upstream-upstream-port">Port from upstream
+(upstream-port)</h2>
+<p>Fast-path cherry-pick from a configured upstream — skips the shepherd
+ceremony for mechanical ports.</p>
+<pre class="jsonc"><code>// .bureau.json
+{
+  &quot;repo&quot;: {
+    &quot;upstream&quot;: &quot;ultraworkers/claw-code&quot;,
+    &quot;upstream_port&quot;: {
+      &quot;build_cmd&quot;: &quot;cargo build --release -p your-cli&quot;,
+      &quot;test_cmd&quot;:  &quot;cargo test --workspace --no-fail-fast&quot;,
+      &quot;work_dir&quot;:  &quot;rust&quot;
+    }
   }
 }</code></pre>
-
-    <p><strong>When to use:</strong> repos with &gt; 3 simultaneous feature tickets where <code>origin/main</code> advances faster than the pipeline can drain. Symptom: every cron tick re-runs <code>merge_origin_main_or_abort</code> against a different main, conflicts pile up.</p>
-    <p><strong>When not to:</strong> small repos where parallelism actually helps. The cap is a knob, not a default.</p>
-
-    <div class="bhb-callout">
-      <span class="label">Parking is safe</span>
-      A single stuck issue (e.g. <code>needs-human</code> parking) does <em>not</em> deadlock the cap — <code>count_in_flight_issues</code> excludes parked issues.
-    </div>
-
-    <h2 id="mixed-models">Mixed models per stage</h2>
-    <p>Strong reasoning model for spec, fast cheap model for spec-review, an <em>adversarial</em> model for code-review (catches what the implementer missed).</p>
-
-    <pre data-file=".bureau.json"><code>{
-  "agents": {
-    "model": "claude-sonnet-4-6",
-    "spec":         { "model": "claude-opus-4-7" },
-    "spec_review":  { "model": "claude-haiku-4-5-20251001" },
-    "implement":    { "model": "claude-opus-4-7" },
-    "code_review":  { "model": "claude-haiku-4-5-20251001" }
-  }
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/upstream-port.sh</span> <span class="at">--sha</span> 53953a8               <span class="co"># port one upstream commit</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/upstream-port.sh</span> <span class="at">--pr</span>  3024                  <span class="co"># or a merged upstream PR</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/upstream-port.sh</span> <span class="at">--sha</span> 53953a8 <span class="at">--with-llm</span>    <span class="co"># LLM-assisted conflict resolution</span></span></code></pre></div>
+<p><code>--with-llm</code> makes one bounded call through the configured
+<code>upstream_port</code> provider on a <code>git apply --3way</code>
+conflict. It is off by default; non-interactive use additionally
+requires <code>--yes</code>. Inspect the estimated work before opting
+in. The PR title carries <code>(LLM-assisted)</code>. Upstream PR-body
+summaries are a separate opt-in via
+<code>agents.upstream_summary</code>.</p>
+<p><strong>When to use:</strong> you maintain a fork of an actively
+developed upstream and want mechanical ports without the full shepherd
+pipeline.</p>
+<p><strong>When not to:</strong> the ports touch large files diverged
+materially from upstream. <code>--with-llm</code> helps here but
+eventually a real spec + shepherd run is cheaper than fighting the
+diff.</p>
+<hr />
+<h2 id="cost-tracking--reporting">Cost tracking + reporting</h2>
+<pre class="jsonc"><code>// .bureau.json
+{
+  &quot;session&quot;: { &quot;cost_tracking&quot;: true }
 }</code></pre>
-
-    <p>Resolution: per-stage &gt; <code>agents.model</code> &gt; CLI default. Absent keys fall through.</p>
-
-    <div class="bhb-callout">
-      <span class="label">Provider mixing</span>
-      Anthropic models with reasoning enabled require other Anthropic models in the same context. Bureau is fine — every pipeline run is a fresh subprocess. Cross-provider stage assignment works as long as each stage's full conversation stays within its provider.
-    </div>
-
-    <h2 id="dry-run">Dry-run</h2>
-    <p>Validate a fresh checkout against a real Linear team without polluting state. No Linear mutations, no comments, no PRs, no <code>git push</code>.</p>
-
-    <pre data-file="SHELL"><code>BUREAU_DRY_RUN=1 ./scripts/queue-loop.sh implement 1</code></pre>
-
-    <p>Or pass the flag directly:</p>
-
-    <pre data-file="SHELL"><code>./scripts/queue-loop.sh all 5 --dry-run</code></pre>
-
-    <p>The pipeline runs to completion — Claude prompts execute, files change in the worktree — but every mutation logs <code>DRY-RUN:</code> instead of hitting the network. Useful for:</p>
-    <ul>
-      <li>Smoke-testing a new agent config before turning it on</li>
-      <li>Verifying a model swap doesn't break parsing</li>
-      <li>Confirming <code>pick_issue</code> returns the issue you expect</li>
-    </ul>
-
-    <h2 id="escalations">Monitor escalations</h2>
-    <p>Every <code>needs-human</code> event lands as one tab-separated line in <code>logs/escalations.log</code>. Tail it from anywhere:</p>
-
-    <pre data-file="SHELL"><code>tail -F logs/escalations.log</code></pre>
-
-    <p>Line format:</p>
-
-    <pre data-file="logs/escalations.log"><code>2026-05-13T19:18:23Z<TAB>ESCALATED<TAB>EXP-402<TAB>code-review<TAB>cycle=3<TAB>reason="REQUEST_CHANGES exceeded max_review_cycles"<TAB>pr=56<TAB>branch=049-parliament-debate</code></pre>
-
-    <p>Filter to today's escalations from a specific pipeline:</p>
-
-    <pre data-file="SHELL"><code>grep ESCALATED logs/escalations.log | grep "$(date -u +%Y-%m-%d)" | grep code-review</code></pre>
-
-    <p>The matching JSON event also fires to <code>logs/events.jsonl</code> (so <code>/bureau-learnings</code> picks escalations up automatically). The TSV exists for monitors that prefer flat-text grep over jq.</p>
-
-    <p>Hooks fire at five sites: code-review (cycle-limit / merge-fail-after-approve / BLOCK), qa (NEEDS_HUMAN verdict), implement (retry-loop terminal). Logs only on <code>add_issue_label</code> success — Linear API hiccups don't produce phantom escalations.</p>
-
-    <h2 id="retry-budget">Tune the implement retry budget</h2>
-    <p><code>implement-pipeline.sh</code> runs up to <code>BUREAU_IMPL_MAX_ITER</code> Claude passes per cron tick (default <code>3</code>), each capped at <code>BUREAU_IMPL_ITER_TIMEOUT</code> seconds (default <code>1800</code>), with <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> (default <code>5400</code>) bounding cumulative cost.</p>
-
-    <p>Aggressive (small batches, fast feedback):</p>
-    <pre data-file=".env"><code>BUREAU_IMPL_MAX_ITER=2
-BUREAU_IMPL_ITER_TIMEOUT=600
-BUREAU_IMPL_TOTAL_TIMEOUT=1800</code></pre>
-
-    <p>Patient (long-running specs, fewer escalations):</p>
-    <pre data-file=".env"><code>BUREAU_IMPL_MAX_ITER=5
-BUREAU_IMPL_ITER_TIMEOUT=2400
-BUREAU_IMPL_TOTAL_TIMEOUT=10800</code></pre>
-
-    <p>Single-strike stuck detection (no <code>[X]</code> marks AND no review fixes AND no commits in an iter ⇒ park) is independent of these knobs — Claude spinning without progress always bails fast regardless of remaining iterations.</p>
-
-    <div class="bhb-callout">
-      <span class="label">macOS</span>
-      The per-iter cap needs GNU <code>timeout</code>. Run <code>brew install coreutils</code> for <code>gtimeout</code>; without it the script falls back to cumulative-only with a WARN.
-    </div>
-
-    <h2 id="telegram">Telegram alerts</h2>
-    <p>Get a message when a pipeline fails. No-op when the credentials aren't set, so dev environments stay quiet.</p>
-
-    <p>In the target repo's <code>.env</code>:</p>
-    <pre data-file=".env"><code>TELEGRAM_BOT_TOKEN=123456:ABC-XYZ
-TELEGRAM_ALERT_CHAT_ID=-100123456789</code></pre>
-
-    <p>Throttling: max 1 alert per <code>(issue, class)</code> per hour, tracked at <code>/tmp/bureau-alerts.log</code>. Bypass by deleting the file. See <a href="exit-codes.html#alerts">FILE #02</a> for the full classification.</p>
-
-    <h2 id="multi-repo">Multi-repo, side-by-side</h2>
-    <p>Each repo gets its own tmux session, scoped by folder name. Run unlimited pipelines in parallel:</p>
-
-    <pre data-file="SHELL"><code>cd ~/projects/sofa          &amp;&amp; ./scripts/start-bureau-v2.sh   # → bureau-v2-sofa
-cd ~/projects/brainhuggers  &amp;&amp; ./scripts/start-bureau-v2.sh   # → bureau-v2-brainhuggers
-tmux ls | grep bureau-v2-                                      # both listed</code></pre>
-
-    <div class="bhb-callout">
-      <span class="label">Caveat</span>
-      The Linear API key is per-user across all repos. Make sure each repo's <code>.bureau.json</code> points at a <em>different Linear project</em> — otherwise two workers race on the same issues.
-    </div>
-
-    <h2 id="session-name">Override the session name</h2>
-    <pre data-file="SHELL"><code>BUREAU_SESSION_NAME=nightshift ./scripts/start-bureau-v2.sh
-tmux attach -t nightshift</code></pre>
-    <p>Useful when you want a single named session you can find without remembering the basename.</p>
-
-    <h2 id="sampling">Sampling-mode threshold for code-review</h2>
-    <p>Repos with mature CI / type-safety can review larger diffs exhaustively. Repos without CI need stricter sampling.</p>
-
-    <pre data-file=".bureau.json"><code>{
-  "agents": {
-    "code_review_sampling_threshold": 1000
-  }
-}</code></pre>
-
-    <p>Default is <code>500</code> lines. Above this, code-review specialists shift to sampling-by-class. Tune up for confidence in tooling, down for legacy code.</p>
-
-    <h2 id="merge-strategy">Custom merge strategy</h2>
-    <p>Repos with linear-history-via-rebase policies should opt out of squash:</p>
-
-    <pre data-file=".bureau.json"><code>{
-  "agents": {
-    "merge_strategy": "rebase"
-  }
-}</code></pre>
-
-    <p>Valid values: <code>squash</code> (default), <code>merge</code>, <code>rebase</code>. Anything else falls back to <code>squash</code> with a warning.</p>
-
-    <h2 id="supervisor">Tighter supervisor</h2>
-    <p>For long-running headless deployments, raise the give-up threshold so a transient flaky tick doesn't kill the pipeline:</p>
-
-    <pre data-file=".bureau.json"><code>{
-  "supervisor": {
-    "max_crashes": 10,
-    "stability_window": 7200
-  }
-}</code></pre>
-
-    <p>Or override at launch:</p>
-    <pre data-file="SHELL"><code>BUREAU_SUPERVISOR_MAX_CRASHES=10 ./scripts/start-bureau-v2.sh</code></pre>
-
-    <h2 id="memory-loop">Memory loop (logs → <code>LESSONS.md</code>)</h2>
-    <p>Mine the pipeline's own runs for recurring failure modes and review-feedback patterns, then feed a human-curated summary back into future spec and code-review prompts.</p>
-
-    <h3 style="margin-top:24px;">How it works</h3>
-    <ol>
-      <li><strong><code>queue-loop.sh</code> emits events.</strong> Every time the queue picks a real candidate, <code>run_script</code> writes two JSONL lines to <code>logs/events.jsonl</code> — one <code>stage_start</code>, one <code>stage_end</code> with <code>issue</code>, <code>branch</code>, <code>exit_code</code>, <code>class</code>, <code>duration_s</code>. Queue-empty ticks emit nothing.</li>
-      <li><strong><code>/bureau-learnings</code> drafts <code>LESSONS.md</code>.</strong> After a week of activity, run the slash command. It filters events to the last 30 days, pulls Linear comments for failed and successfully-reviewed issues, clusters failure modes by <code>(class, first-file-in-trace)</code> and review feedback by repeated 4–8-word n-grams. Requires &ge;3 distinct issues per finding — empty sections are labeled "below threshold," <em>not</em> filled with fabricated patterns.</li>
-      <li><strong>You curate.</strong> Review the diff, delete bullets you disagree with, then <code>git add LESSONS.md &amp;&amp; git commit</code>. Anything you dismiss will be re-proposed by future runs if the pattern persists.</li>
-      <li><strong>Pipelines read it back, advisory only.</strong> <code>build_lessons_context</code> in <code>bureau-config.sh</code> wraps the file with a "treat as advisory, not binding" preamble and injects it into the spec Phase 1 prompt and the three code-review specialist prompts. Other stages do not include it. Absent or whitespace-only file → no-op.</li>
-    </ol>
-
-    <pre data-file="logs/events.jsonl"><code>{"ts":"2026-05-11T14:23:01Z","event":"stage_end","mode":"all","stage":"code-review-pipeline.sh","issue":"EXP-512","branch":"037-foo","exit_code":14,"class":"build-failed","duration_s":287}</code></pre>
-
-    <p><code>logs/</code> is gitignored. <code>events.jsonl</code> is append-only — truncate it manually if it grows large; no auto-rotation in v1.</p>
-
-    <h3 style="margin-top:24px;">Event schema</h3>
-    <table>
-      <thead>
-        <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
-      </thead>
-      <tbody>
-        <tr><td><code>ts</code></td><td>string</td><td>ISO-8601 UTC, auto-injected</td></tr>
-        <tr><td><code>event</code></td><td>string</td><td><code>stage_start</code> | <code>stage_end</code></td></tr>
-        <tr><td><code>mode</code></td><td>string</td><td><code>queue-loop.sh</code> mode (<code>spec</code>, <code>implement</code>, <code>all</code>, …)</td></tr>
-        <tr><td><code>stage</code></td><td>string</td><td>Pipeline script name (e.g. <code>spec-pipeline.sh</code>)</td></tr>
-        <tr><td><code>issue</code></td><td>string</td><td>Linear identifier (e.g. <code>EXP-512</code>)</td></tr>
-        <tr><td><code>branch</code></td><td>string</td><td>Spec branch from <code>&lt;!-- bureau-branch: --&gt;</code> marker (omitted if not yet resolved)</td></tr>
-        <tr><td><code>exit_code</code></td><td>number</td><td>Pipeline exit status (only on <code>stage_end</code>)</td></tr>
-        <tr><td><code>class</code></td><td>string</td><td>Per <a href="exit-codes.html">FILE #02</a>: <code>ok</code>, <code>queue-empty</code>, <code>linear-down</code>, <code>build-failed</code>, …</td></tr>
-        <tr><td><code>duration_s</code></td><td>number</td><td>Wall-time seconds (only on <code>stage_end</code>)</td></tr>
-      </tbody>
-    </table>
-
-    <p>To add your own fields from a pipeline script, call <code>emit_event "event=..." "key=value" ...</code> — values matching <code>^-?[0-9]+$</code> are auto-typed as JSON numbers. The helper is silent-on-failure (any error logs to stderr and returns 0), so it can never wedge a cron-driven pipeline.</p>
-
-    <div class="bhb-callout">
-      <span class="label">Why human-in-the-loop</span>
-      Low-volume early data produces noisy clusters. Auto-applying would amplify garbage. Human curation gates the feedback loop and keeps signal high. No vector DB, no embeddings, no external LLM — just <code>jq</code> over <code>events.jsonl</code> plus Linear MCP comment lookups.
-    </div>
-
-  </main>
+<p>Provider calls with available usage evidence record token counts and
+CLI estimates in <code>~/.bureau/cost/&lt;issue&gt;.jsonl</code>
+(overridable with <code>BUREAU_COST_DIR</code>). Report:</p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/bureau-status.sh</span> <span class="at">--cost</span></span></code></pre></div>
+<p>Prints a per-issue, per-stage summary. Unknown cost is
+<code>unavailable</code>, not zero, and CLI estimates are separate from
+actual billed dollars. Disabling the flag suppresses the optional cost
+records.</p>
+<p><strong>When to use:</strong> as adoption ramps. Pairs with the
+token-efficiency stack — turn <code>cost_tracking</code> on, measure the
+baseline, flip <code>use_goal_loop</code> / <code>caveman_level</code> /
+<code>headroom_wrap</code>, measure the delta.</p>
+<p><strong>Env quick-toggle:</strong>
+<code>BUREAU_COST_TRACKING=1</code> — same effect without editing
+JSON.</p>
+<hr />
+<h2 id="mixed-provider--codex-on-code_review">Mixed provider — Codex on
+code_review</h2>
+<p>Route background review through Codex while keeping the default
+provider Claude:</p>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;claude&quot;</span><span class="fu">,</span></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span> <span class="fu">}</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>The review model inspects the pinned PR head against its actual
+target branch. The shell pipeline publishes the review and performs
+state routing; an approval alone never authorizes merge.</p>
+<p>Codex-specific overrides work with both legacy and v2 model
+semantics:</p>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="bu">:</span> <span class="st">&quot;</span><span class="va">${CODEX_REVIEW_MODEL</span><span class="op">:?</span>Choose an available Codex model identifier<span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_CODEX_MODEL_CODE_REVIEW</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$CODEX_REVIEW_MODEL</span><span class="st">&quot;</span> <span class="dt">\</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<p>Use
+<code>python3 scripts/bureau-provider.py --stage code_review --describe</code>
+in the trusted launch environment to confirm resolution without invoking
+a model. Account for <code>.env</code> overrides; this command does not
+source that file.</p>
+<p>Codex implementation and QA also use the portable adapter. The shell
+executor owns commits and independent tests; configure a real
+<code>repo.test_command</code> and qualify the required environment
+capabilities. Do not infer full unattended support from installation
+alone. A provider change can affect output quality and usage, so measure
+it on a bounded ticket before broader adoption.</p>
+<hr />
+<h2 id="session-usage-throttle">Session-usage throttle</h2>
+<p>Pause new work when the selected provider's supplied usage signal
+reaches its threshold. Bureau does not produce account-usage signals
+itself. Supply one from an operator-controlled producer;
+ClaudeWatch-compatible files are supported for Claude.</p>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;session&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;usage_threshold_pct&quot;</span><span class="fu">:</span> <span class="dv">80</span><span class="fu">,</span> <span class="dt">&quot;pause_on_stale_data&quot;</span><span class="fu">:</span> <span class="kw">false</span> <span class="fu">}</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>The default Claude signal is
+<code>~/.bureau/session-usage.json</code>, or
+<code>BUREAU_USAGE_FILE</code>. Its numeric timestamp fields use Unix
+seconds, updated by the producer:</p>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span> <span class="dt">&quot;provider&quot;</span><span class="fu">:</span> <span class="st">&quot;claude&quot;</span><span class="fu">,</span> <span class="dt">&quot;pct&quot;</span><span class="fu">:</span> <span class="fl">74.3</span><span class="fu">,</span> <span class="dt">&quot;reset_epoch&quot;</span><span class="fu">:</span> <span class="dv">1788775200</span><span class="fu">,</span> <span class="dt">&quot;updated_epoch&quot;</span><span class="fu">:</span> <span class="dv">1788773400</span> <span class="fu">}</span></span></code></pre></div>
+<p>For Codex, set <code>BUREAU_CODEX_USAGE_FILE</code>, or point
+<code>BUREAU_USAGE_FILE</code> at a signal tagged
+<code>"provider":"codex"</code>. Claude usage never throttles Codex.</p>
+<p>When a signal is older than five minutes,
+<code>pause_on_stale_data: false</code> ignores it; <code>true</code>
+continues applying the configured percentage threshold to it. Missing
+signals mean unknown usage and allow dispatch in either mode. A bounded
+tick returns for a later invocation; continuous workers can wait until
+the signal clears. This guard does not prevent provider quota failures
+during an active call.</p>
+<p><code>BUREAU_DISABLE_THROTTLE=1</code> skips this guard for the
+current process without changing JSON. Use only as a deliberate override
+after inspecting the signal.</p>
+<hr />
+<h2 id="monitor-escalations">Monitor escalations</h2>
+<p>Background escalation sites append a tab-separated audit record after
+successfully adding the human label. Inspect the stage result and issue
+comment as well; a failed label update is not evidence of durable
+parking. Tail the log:</p>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="fu">tail</span> <span class="at">-F</span> logs/escalations.log</span></code></pre></div>
+<p>Line format:</p>
+<pre><code>2026-05-13T19:18:23Z&lt;TAB&gt;ESCALATED&lt;TAB&gt;EXP-402&lt;TAB&gt;code-review&lt;TAB&gt;cycle=3&lt;TAB&gt;reason=&quot;REQUEST_CHANGES exceeded max_review_cycles&quot;&lt;TAB&gt;pr=56&lt;TAB&gt;branch=049-parliament-debate</code></pre>
+<p>Filter to today's escalations from a specific pipeline:</p>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> ESCALATED logs/escalations.log <span class="kw">|</span> <span class="fu">grep</span> <span class="st">&quot;</span><span class="va">$(</span><span class="fu">date</span> <span class="at">-u</span> +%Y-%m-%d<span class="va">)</span><span class="st">&quot;</span> <span class="kw">|</span> <span class="fu">grep</span> code-review</span></code></pre></div>
+<p>The matching JSON event also fires to <code>logs/events.jsonl</code>
+(so <code>/bureau-learnings</code> picks escalations up automatically).
+The TSV exists for monitors that prefer flat-text grep over jq.</p>
+<p>Hooks fire at five sites: code-review (cycle-limit /
+merge-fail-after-approve / BLOCK), qa (NEEDS_HUMAN verdict), implement
+(retry-loop terminal). Logs only on <code>add_issue_label</code> success
+— Linear API hiccups don't produce phantom escalations.</p>
+<hr />
+<h2 id="tune-the-implement-retry-budget">Tune the implement retry
+budget</h2>
+<p><code>implement-pipeline.sh</code> runs up to
+<code>BUREAU_IMPL_MAX_ITER</code> provider passes per tick (default 3),
+each capped at <code>BUREAU_IMPL_ITER_TIMEOUT</code> seconds (default
+1800), with <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> (default 5400)
+bounding cumulative cost.</p>
+<p>Aggressive (small batches, fast feedback):</p>
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_MAX_ITER</span><span class="op">=</span>2</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_ITER_TIMEOUT</span><span class="op">=</span>600</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_TOTAL_TIMEOUT</span><span class="op">=</span>1800</span></code></pre></div>
+<p>Patient (long-running specs, fewer escalations):</p>
+<div class="sourceCode" id="cb22"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_MAX_ITER</span><span class="op">=</span>5</span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_ITER_TIMEOUT</span><span class="op">=</span>2400</span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_TOTAL_TIMEOUT</span><span class="op">=</span>10800</span></code></pre></div>
+<p>The stuck detector treats an unproductive first <code>PARTIAL</code>
+iteration differently from a later partial result after committed
+progress. Inspect the final status and Git evidence rather than assuming
+every zero-commit iteration is stuck.</p>
+<p>The Python provider adapter enforces the remaining per-iteration
+bound for both providers on macOS and Linux. <code>gtimeout</code> is
+not required for this path. Independent project tests and publication
+can extend the overall stage beyond the provider-loop budget.</p>
+<hr />
+<h2 id="token-efficiency-stack">Token-efficiency stack</h2>
+<p>Three optional settings address Claude implementation control flow
+(<code>use_goal_loop</code>), review wording
+(<code>caveman_level</code>) and Claude prompt compression
+(<code>headroom_wrap</code>). All start disabled; Codex retains the
+portable bounded implementation loop regardless of the goal flag. See <a
+href="configuration.html">configuration</a> and the <a
+href="token-efficiency.html">historical rationale</a>.</p>
+<p>Enable one change at a time through the configuration-only update
+flow, measure a representative ticket, then decide whether to keep
+it:</p>
+<ol type="1">
+<li>Verify <code>/goal</code> works in the selected Claude installation
+before enabling <code>agents.use_goal_loop</code>. The provider adapter
+still bounds the call with the total implementation timeout.</li>
+<li>Select <code>agents.caveman_level</code> only when compact review
+prose is useful to the team. Installing an optional skill or rewriting
+project instructions is a separate setup choice; resync does not
+automatically compress <code>CLAUDE.md</code>.</li>
+<li>Install the optional <code>headroom</code> wrapper before setting
+<code>agents.headroom_wrap</code>. The adapter reports a missing
+wrapper; it does not silently bypass it. Validate the installed tool and
+measure the resulting calls rather than assuming a particular
+compression ratio.</li>
+</ol>
+<p>Use <code>session.cost_tracking</code> to retain available usage
+estimates, keeping unknown costs unavailable. Rollback is a reviewed
+setting change back to <code>false</code> or <code>"off"</code>; it
+needs no asset regeneration. Change configuration between stages, not
+during a live run.</p>
+<hr />
+<h2 id="telegram-alerts">Telegram alerts</h2>
+<p>Get a message when a pipeline fails. No-op when the credentials
+aren't set, so dev environments stay quiet.</p>
+<p>In the target repo's <code>.env</code>:</p>
+<div class="sourceCode" id="cb23"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="va">TELEGRAM_BOT_TOKEN</span><span class="op">=</span>123456:ABC-XYZ</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="va">TELEGRAM_ALERT_CHAT_ID</span><span class="op">=</span>-100123456789</span></code></pre></div>
+<p>Throttling: max 1 alert per <code>(issue, class)</code> per hour,
+tracked at <code>/tmp/bureau-alerts.log</code>. Bypass by deleting the
+file.</p>
+<p>See <a href="exit-codes.html">exit codes</a> for the full alert
+classification.</p>
+<hr />
+<h2 id="multi-repo-side-by-side">Multi-repo, side-by-side</h2>
+<p>Each repo gets its own tmux session, scoped by folder name. Size
+parallel activity to machine capacity and provider quotas:</p>
+<div class="sourceCode" id="cb24"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/projects/app          <span class="kw">&amp;&amp;</span> <span class="ex">./scripts/start-bureau-v2.sh</span>   <span class="co"># → bureau-v2-app</span></span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/projects/api          <span class="kw">&amp;&amp;</span> <span class="ex">./scripts/start-bureau-v2.sh</span>   <span class="co"># → bureau-v2-api</span></span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> ls <span class="kw">|</span> <span class="fu">grep</span> bureau-v2-                                      <span class="co"># both listed</span></span></code></pre></div>
+<p><strong>Caveat:</strong> use disjoint Linear project scopes for
+independent repositories/clones. Ownership is shared by Git worktrees of
+one repository, not by unrelated clones. These continuous launchers can
+merge; use the bounded review-only commands when that is the requested
+boundary.</p>
+<hr />
+<h2 id="override-the-session-name">Override the session name</h2>
+<div class="sourceCode" id="cb25"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SESSION_NAME</span><span class="op">=</span>nightshift <span class="ex">./scripts/start-bureau-v2.sh</span></span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> attach <span class="at">-t</span> nightshift</span></code></pre></div>
+<p>Useful when you want a single named session you can find without
+remembering the basename.</p>
+<hr />
+<h2 id="sampling-mode-threshold-for-code-review">Sampling-mode threshold
+for code-review</h2>
+<p>Repos with mature CI / type-safety can review larger diffs
+exhaustively. Repos without CI need stricter sampling.</p>
+<div class="sourceCode" id="cb26"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review_sampling_threshold&quot;</span><span class="fu">:</span> <span class="dv">1000</span></span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Default is <code>500</code> lines. Above this, code-review
+specialists shift to sampling-by-class. Tune up for confidence in
+tooling, down for legacy code.</p>
+<hr />
+<h2 id="custom-merge-strategy">Custom merge strategy</h2>
+<p>Repos with linear-history-via-rebase policies should opt out of
+squash:</p>
+<div class="sourceCode" id="cb27"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_strategy&quot;</span><span class="fu">:</span> <span class="st">&quot;rebase&quot;</span></span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Valid values: <code>squash</code> (default), <code>merge</code>,
+<code>rebase</code>. Anything else falls back to <code>squash</code>
+with a warning.</p>
+<hr />
+<h2 id="tighter-supervisor">Tighter supervisor</h2>
+<p>For long-running headless deployments, raise the give-up threshold so
+a transient flaky tick doesn't kill the pipeline:</p>
+<div class="sourceCode" id="cb28"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;supervisor&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_crashes&quot;</span><span class="fu">:</span> <span class="dv">10</span><span class="fu">,</span></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;stability_window&quot;</span><span class="fu">:</span> <span class="dv">7200</span></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Or override at launch:</p>
+<div class="sourceCode" id="cb29"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SUPERVISOR_MAX_CRASHES</span><span class="op">=</span>10 <span class="ex">./scripts/start-bureau-v2.sh</span></span></code></pre></div>
+<hr />
+<h2 id="memory-loop-logs--lessonsmd">Memory loop (logs →
+<code>LESSONS.md</code>)</h2>
+<p>Mine the pipeline's own runs for recurring failure modes and
+review-feedback patterns, then feed a human-curated summary back into
+future spec + code-review prompts.</p>
+<h3 id="how-it-works">How it works</h3>
+<ol type="1">
+<li><p><strong><code>queue-loop.sh</code> emits events.</strong> Every
+time the queue picks a real candidate, <code>run_script</code> writes
+two JSONL lines to <code>logs/events.jsonl</code> — one
+<code>stage_start</code>, one <code>stage_end</code> with
+<code>issue</code>, <code>branch</code>, <code>exit_code</code>,
+<code>class</code>, <code>duration_s</code>. Queue-empty ticks emit
+nothing.</p>
+<div class="sourceCode" id="cb30"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;ts&quot;</span><span class="fu">:</span><span class="st">&quot;2026-05-11T14:23:01Z&quot;</span><span class="fu">,</span><span class="dt">&quot;event&quot;</span><span class="fu">:</span><span class="st">&quot;stage_end&quot;</span><span class="fu">,</span><span class="dt">&quot;mode&quot;</span><span class="fu">:</span><span class="st">&quot;all&quot;</span><span class="fu">,</span><span class="dt">&quot;stage&quot;</span><span class="fu">:</span><span class="st">&quot;code-review-pipeline.sh&quot;</span><span class="fu">,</span><span class="dt">&quot;issue&quot;</span><span class="fu">:</span><span class="st">&quot;EXP-512&quot;</span><span class="fu">,</span><span class="dt">&quot;branch&quot;</span><span class="fu">:</span><span class="st">&quot;037-foo&quot;</span><span class="fu">,</span><span class="dt">&quot;exit_code&quot;</span><span class="fu">:</span><span class="dv">14</span><span class="fu">,</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span><span class="st">&quot;build-failed&quot;</span><span class="fu">,</span><span class="dt">&quot;duration_s&quot;</span><span class="fu">:</span><span class="dv">287</span><span class="fu">}</span></span></code></pre></div>
+<p><code>logs/</code> is gitignored. <code>events.jsonl</code> is
+append-only — truncate it manually if it grows large; there's no
+auto-rotation in v1.</p></li>
+<li><p><strong><code>$bureau-learnings</code> or
+<code>/bureau-learnings</code> drafts
+<code>LESSONS.proposed.md</code>.</strong> After a week of pipeline
+activity, run the Codex skill or Claude command in the target repo.
+It:</p>
+<ul>
+<li>Filters events to the last 30 days.</li>
+<li>Pulls Linear comments for failed and successfully-reviewed issues
+(via the Linear MCP).</li>
+<li>Clusters failure modes by <code>(class, first-file-in-trace)</code>,
+review feedback by repeated 4–8-word n-grams.</li>
+<li>Requires ≥3 distinct issues per finding — empty sections are
+explicitly labeled "below threshold," <strong>not</strong> filled with
+fabricated patterns.</li>
+<li>Writes a draft <code>LESSONS.proposed.md</code> at the repo root
+with three sections (failure modes / review feedback / stage timing
+p50/p90).</li>
+<li><strong>Never stages, commits, or pushes.</strong></li>
+</ul></li>
+<li><p><strong>You curate.</strong> Read
+<code>LESSONS.proposed.md</code>, incorporate accepted findings into the
+existing <code>LESSONS.md</code>, preserve prior lessons, then review
+and commit that diff. Anything you dismiss will be re-proposed by future
+runs if the pattern persists — that's a feature, not a bug.</p></li>
+<li><p><strong>Pipelines read it back, advisory only.</strong>
+<code>bureau-config.sh::build_lessons_context</code> reads
+<code>LESSONS.md</code> from cwd (the worktree root) and wraps it with a
+"Treat as advisory, not binding" preamble. The result is injected
+into:</p>
+<ul>
+<li><code>spec-pipeline.sh</code> Phase 1 (<code>speckit-specify</code>)
+— where decisions are first shaped.</li>
+<li><code>code-review-pipeline.sh</code> — into all three specialist
+prompts (correctness, security, performance).</li>
+</ul>
+<p>Other stages (<code>ux</code>, <code>copy</code>, <code>qa</code>,
+<code>merge</code>, <code>rebase</code>) deliberately do
+<strong>not</strong> include it. If the file is absent or
+whitespace-only, injection is a no-op — pipelines run
+unchanged.</p></li>
+</ol>
+<h3 id="why-human-in-the-loop-not-auto-applied">Why human-in-the-loop
+(not auto-applied)</h3>
+<p>Low-volume early data produces noisy clusters. Auto-applying would
+amplify garbage. Human curation gates the feedback loop and keeps signal
+high. The current assistant analyzes the bounded event/comment evidence
+and proposes the draft. No vector database or embedding service is
+required; the existing lessons remain unchanged until the maintainer
+incorporates the proposal.</p>
+<h3 id="schema-fields">Schema fields</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ts</code></td>
+<td>string</td>
+<td>ISO-8601 UTC, auto-injected</td>
+</tr>
+<tr>
+<td><code>event</code></td>
+<td>string</td>
+<td><code>stage_start</code> | <code>stage_end</code></td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td>string</td>
+<td><code>queue-loop.sh</code> mode (<code>spec</code>,
+<code>implement</code>, <code>all</code>, …)</td>
+</tr>
+<tr>
+<td><code>stage</code></td>
+<td>string</td>
+<td>Pipeline script name (e.g. <code>spec-pipeline.sh</code>)</td>
+</tr>
+<tr>
+<td><code>issue</code></td>
+<td>string</td>
+<td>Linear identifier (e.g. <code>EXP-512</code>)</td>
+</tr>
+<tr>
+<td><code>branch</code></td>
+<td>string</td>
+<td>Spec branch from <code>&lt;!-- bureau-branch: --&gt;</code> marker
+(omitted if not yet resolved)</td>
+</tr>
+<tr>
+<td><code>exit_code</code></td>
+<td>number</td>
+<td>Pipeline exit status (only on <code>stage_end</code>)</td>
+</tr>
+<tr>
+<td><code>class</code></td>
+<td>string</td>
+<td>Mapping per <a
+href="exit-codes.html"><code>docs/exit-codes.md</code></a>:
+<code>ok</code>, <code>queue-empty</code>, <code>linear-down</code>,
+<code>build-failed</code>, …</td>
+</tr>
+<tr>
+<td><code>duration_s</code></td>
+<td>number</td>
+<td>Wall-time seconds between start and end (only on
+<code>stage_end</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>To add your own fields from a pipeline script, call
+<code>emit_event "event=..." "key=value" ...</code> — values matching
+<code>^-?[0-9]+$</code> are auto-typed as JSON numbers. The helper is
+silent-on-failure (any error logs to stderr and returns 0) so it can
+never wedge a cron-driven pipeline.</p>
+<hr />
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="configuration.html">Configuration</a> — full reference</li>
+<li><a href="exit-codes.html">Exit codes</a> — what each failure
+means</li>
+<li><a href="troubleshooting.html">Troubleshooting</a> — when things
+break</li>
+</ul></main>
 </div>
-
-<footer class="bhb-footer">
-  <span>BUREAU-INIT · MIT · NO WARRANTY</span>
-  <span>BUILT IN HAMBURG · ON THE SEAM</span>
-  <span><a href="https://github.com/KaiaK808/bureau">SOURCE ↗</a></span>
-</footer>
-
 </body>
 </html>

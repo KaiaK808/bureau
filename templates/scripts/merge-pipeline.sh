@@ -53,8 +53,10 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
+BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
+# shellcheck disable=SC1090
 if [ -f .env ]; then source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then source "$SCRIPT_REPO/.env"
+elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
 else echo "ERROR: No .env found"; exit 1; fi
 
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
@@ -79,9 +81,13 @@ else
   set --
 fi
 
+if bureau_stop_requested; then
+  echo "Merge stopped by BUREAU_NO_MERGE"
+  exit 20
+fi
 precondition_linear
 
-if [ -z "${BUREAU_STATE_MERGE:-}" ]; then
+if [ -z "${BUREAU_STATE_MERGE:-}" ] && [ "${BUREAU_INLINE_MERGE:-0}" != 1 ]; then
   echo "merge-pipeline: linear.teams[0].states.merge not configured in .bureau.json. Queue empty."
   exit 2
 fi
@@ -98,6 +104,8 @@ else
   fi
   echo "Picked: $ISSUE"
 fi
+
+if [ "$DRY_RUN" = false ]; then bureau_stage_enter "$ISSUE" "$@"; fi
 
 echo ""
 echo "═══════════════════════════════════════"
@@ -354,6 +362,7 @@ fi
 # between check and call). --auto would queue for later and silence the failure.
 # Strategy is configurable via .agents.merge_strategy in .bureau.json (default
 # squash). BUREAU_MERGE_STRATEGY is validated and clamped in bureau-config.sh.
+bureau_stop_requested && exit 20
 if gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY"; then
   post_comment "$ISSUE" "✅ Merge gates passed. PR #$PR_NUMBER merged (\`--$BUREAU_MERGE_STRATEGY\`). Moving to Done."
   move_issue "$ISSUE" "$BUREAU_STATE_DONE"
