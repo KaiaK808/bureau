@@ -42,9 +42,9 @@ source "$(dirname "$0")/bureau-config.sh"
 if [ -f .env ]; then
   # shellcheck disable=SC1091
   source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then
+elif [ -f "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}" ]; then
   # shellcheck disable=SC1091
-  source "$SCRIPT_REPO/.env"
+  source "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 else
   echo "ERROR: No .env found"
   exit 1
@@ -54,8 +54,8 @@ fi
 ORIG_ARGS=("$@")
 
 NO_TMUX=0
-DRY_RUN=0
-NO_MERGE=0
+DRY_RUN="${BUREAU_DRY_RUN:-0}"
+NO_MERGE="${BUREAU_NO_MERGE:-0}"
 RESPECT_CONFIG=0
 FROM_STAGE=""
 WORKTREE_OVERRIDE=""
@@ -164,25 +164,6 @@ if [ "$RESPECT_CONFIG" = 0 ]; then
   export BUREAU_FORCE_ALL_AGENTS=1
 fi
 
-precondition_linear
-precondition_claude_auth
-
-: "${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
-
-# --from-stage: pre-move the ticket before starting the loop.
-if [ -n "$FROM_STAGE" ]; then
-  STAGE_UPPER=$(printf '%s' "$FROM_STAGE" | tr '[:lower:]-' '[:upper:]_')
-  TARGET_STATE_VAR="BUREAU_STATE_${STAGE_UPPER}"
-  TARGET_STATE="${!TARGET_STATE_VAR:-}"
-  if [ -z "$TARGET_STATE" ]; then
-    echo "ERROR: --from-stage '$FROM_STAGE' has no matching state (looked up \$$TARGET_STATE_VAR)" >&2
-    echo "       Valid: triage, spec_review, design, copy, build, qa, build_review, merge" >&2
-    exit 1
-  fi
-  echo "[shepherd] --from-stage $FROM_STAGE → moving $ISSUE first"
-  move_issue "$ISSUE" "$TARGET_STATE"
-fi
-
 # State (human-readable name from get_issue_state) → pipeline script.
 # Returns empty for terminal/unknown states.
 state_to_pipeline() {
@@ -201,6 +182,7 @@ state_to_pipeline() {
 
 # ── Dry run: print the route from current state and exit ──────────────
 if [ "$DRY_RUN" = 1 ]; then
+  [ -n "$FROM_STAGE" ] && echo "  [dry-run] requested initial stage: $FROM_STAGE (no state move)"
   CUR=$(get_issue_state "$ISSUE" 2>/dev/null || echo "")
   echo "═══════════════════════════════════════"
   echo "  Shepherd dry-run: $ISSUE"
@@ -229,6 +211,30 @@ if [ "$DRY_RUN" = 1 ]; then
   exit 0
 fi
 
+[ "$NO_MERGE" = 1 ] && export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
+WORKTREE="${WORKTREE_OVERRIDE:-$REPO_DIR/.worktrees/shepherd}"
+if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
+  exec python3 "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" --no-tmux "${ORIG_ARGS[@]}"
+fi
+
+precondition_linear
+
+: "${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
+
+# --from-stage: pre-move the ticket before starting the loop.
+if [ -n "$FROM_STAGE" ]; then
+  STAGE_UPPER=$(printf '%s' "$FROM_STAGE" | tr '[:lower:]-' '[:upper:]_')
+  TARGET_STATE_VAR="BUREAU_STATE_${STAGE_UPPER}"
+  TARGET_STATE="${!TARGET_STATE_VAR:-}"
+  if [ -z "$TARGET_STATE" ]; then
+    echo "ERROR: --from-stage '$FROM_STAGE' has no matching state (looked up \$$TARGET_STATE_VAR)" >&2
+    echo "       Valid: triage, spec_review, design, copy, build, qa, build_review, merge" >&2
+    exit 1
+  fi
+  echo "[shepherd] --from-stage $FROM_STAGE → moving $ISSUE first"
+  move_issue "$ISSUE" "$TARGET_STATE"
+fi
+
 # ── Claim the ticket; trap to release on any exit path ────────────────
 echo "[shepherd] claiming $ISSUE (label: shepherd-focused)"
 add_issue_label "$ISSUE" "shepherd-focused" \
@@ -250,6 +256,7 @@ echo "  Tmux: $([ -n "${TMUX:-}" ] && echo "attached" || echo "inline")"
 echo "═══════════════════════════════════════"
 
 while true; do
+  if bureau_is_paused; then echo "[shepherd] paused"; exit 25; fi
   STATE=$(get_issue_state "$ISSUE" 2>/dev/null || echo "")
   if [ -z "$STATE" ]; then
     echo "[shepherd] WARN: could not read state for $ISSUE (linear transient?) — sleeping 60s"
@@ -262,11 +269,13 @@ while true; do
 
   # Terminal states
   case "$STATE" in
-    Done|Cancelled|Canceled|Duplicate)
+    Done)
       echo "[shepherd] terminal state '$STATE' — done"
       exit 0
       ;;
   esac
+
+  case "$STATE" in Cancelled|Canceled|Duplicate) echo "[shepherd] cancelled: $STATE"; exit 26 ;; esac
 
   # Human-attention guard. The picker (pipeline_pick_next in queue-loop)
   # excludes needs-human / blocked / wip via pick_issue's exclude_csv,
@@ -291,14 +300,14 @@ while true; do
   if [ -n "$HUMAN_LABEL_HIT" ]; then
     echo "[shepherd] '$HUMAN_LABEL_HIT' label present on $ISSUE @ '$STATE' — halting"
     post_comment "$ISSUE" "🐑 Shepherd halt: \`$HUMAN_LABEL_HIT\` label present at \`$STATE\`. The stage that just ran flagged this ticket for human review; shepherd will not re-run it. Remove the label and re-shepherd when ready." || true
-    exit 0
+    exit 25
   fi
 
   # --no-merge: halt at Merge boundary
   if [ "$NO_MERGE" = 1 ] && [ "$STATE" = "Merge" ]; then
     echo "[shepherd] reached Merge — halting per --no-merge"
     post_comment "$ISSUE" "🐑 Shepherd halted at Merge per \`--no-merge\`. Merge manually when ready." || true
-    exit 0
+    exit 20
   fi
 
   # Stuck detector
@@ -335,11 +344,12 @@ while true; do
   echo "[shepherd] → $PIPELINE  (branch: ${BRANCH:-<none yet>})"
   # EXP-670 — pause before this (claude-heavy) stage if session usage is near
   # the limit. No-op when no usage signal is available.
-  session_throttle_guard
-  reset_worktree "$WORKTREE" "$PIPELINE" "${BRANCH:-}"
+  case "$PIPELINE" in merge-pipeline.sh|rebase-pipeline.sh) ;; *)
+    session_throttle_guard "$(printf '%s' "${PIPELINE%-pipeline.sh}" | tr '-' '_')" ;;
+  esac
 
   set +e
-  ( cd "$WORKTREE" && bash "$REPO_DIR/scripts/$PIPELINE" "$ISSUE" )
+  ( cd "$REPO_DIR" && bash "$SCRIPT_REPO/scripts/bureau-worker.sh" "$ISSUE" "$PIPELINE" "$WORKTREE" "${BRANCH:-}" )
   RC=$?
   set -e
   CLASS=$(exit_class "$RC")
@@ -354,7 +364,7 @@ while true; do
       echo "[shepherd] $CLASS — sleeping 60s and retrying"
       sleep 60
       ;;
-    11|12|13|14|15|17|18|19)
+    11|12|13|14|15|17|18|19|20|21)
       echo "[shepherd] $PIPELINE halted ($CLASS) — aborting shepherd"
       alert_telegram "$ISSUE" "$PIPELINE" "$RC" "shepherd halt ($CLASS)" 2>/dev/null || true
       exit "$RC"

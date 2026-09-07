@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="c2f929c764b5098147d9cd63f34b8428554e339e1ffc32580575a544fd0963ed">
+<title>token-efficiency · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="optional-token-efficiency-settings">Optional token-efficiency
+settings</h1>
+<p>These options default off. They affect background execution; current
+Codex app tasks use the app's selected model, tools and user
+instructions. No measured Codex savings are claimed by this repository's
+fixture tests.</p>
+<table>
+<thead>
+<tr>
+<th>Setting under <code>agents</code></th>
+<th>Scope</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>use_goal_loop: true</code></td>
+<td>Claude implementation only</td>
+<td>Uses the existing Claude goal prompt path instead of the shell
+iteration loop</td>
+</tr>
+<tr>
+<td><code>headroom_wrap: true</code></td>
+<td>Claude provider only</td>
+<td>Executes <code>headroom wrap claude -- ...</code> with the normal
+adapter result contract</td>
+</tr>
+<tr>
+<td><code>caveman_level</code></td>
+<td>Configured review prose</td>
+<td>Requests abbreviated prose; normal commit messages and PR
+descriptions remain readable</td>
+</tr>
+</tbody>
+</table>
+<p>Codex uses the bounded implementation loop even when a legacy goal
+flag is set. It never receives Claude <code>/goal</code> flags or the
+Headroom wrapper. Provider final-output validation, ownership, state
+guards and merge gates apply regardless of these settings.</p>
+<p>The Claude goal path depends on the installed Claude CLI's goal
+capability. Check the local version and behavior before enabling it. The
+outer adapter still enforces its wall-time limit; a model-evaluated
+completion condition is not proof that tests passed. Inspect the actual
+result and independent evidence.</p>
+<p>Headroom must be installed on the background host before enabling the
+wrapper. The adapter reports a missing executable instead of silently
+omitting compression. When compressed context is insufficient, retrieve
+the original using the available tool; do not infer missing code or
+error details. See <a
+href="https://github.com/headroomlabs-ai/headroom">Headroom</a> for the
+external project.</p>
+<p>Caveman is an optional separate skill. Honor explicit user
+communication preferences, keep code/paths/errors exact, and retain
+enough reasoning for a reviewer to assess a finding. See <a
+href="https://github.com/JuliusBrussee/caveman">the skill project</a>
+for installation and supported modes.</p>
+<p>Enable one option at a time on representative work, compare the
+actual provider evidence, and turn it off if quality or reliability
+worsens. Changes take effect on subsequent invocations. Rollback is
+setting <code>use_goal_loop</code> or <code>headroom_wrap</code> to
+false, or <code>caveman_level</code> to <code>off</code>; no
+artifact/state deletion is needed.</p>
+<p><code>session.cost_tracking</code> records available token usage and
+CLI estimates. Missing Codex dollar cost remains unavailable. These
+records do not show actual billed cost or account quota; the app's
+account usage tool is separate. See <a
+href="configuration.html">configuration</a> and <a
+href="provider-runtime.html">provider runtime</a>.</p></main>
+</div>
+</body>
+</html>

@@ -27,7 +27,15 @@ if [ "${1:-}" = "pr" ]; then
     view)
       # gh pr view <num> --json url --jq '.url'
       num="${2:-99}"
-      echo "https://github.com/test/repo/pull/${num}"
+      case " $* " in
+        *' --json baseRefName,headRefName '*)
+          jq -n --arg head "${BUREAU_STUB_BRANCH:-test-branch}" '{baseRefName:"main",headRefName:$head}' ;;
+        *' --json state,baseRefName '*) echo '{"state":"OPEN","baseRefName":"main"}' ;;
+        *' --json state,baseRefName,headRefName '*)
+          jq -n --arg head "${BUREAU_STUB_BRANCH:-test-branch}" '{state:"OPEN",baseRefName:"main",headRefName:$head}' ;;
+        *' --json state '*) echo OPEN ;;
+        *) echo "https://github.com/test/repo/pull/${num}" ;;
+      esac
       ;;
     create)
       # Print URL on stdout (what the pipeline captures).

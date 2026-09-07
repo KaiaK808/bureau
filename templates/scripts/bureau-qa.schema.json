@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "GREEN",
+        "RED",
+        "NEEDS_HUMAN"
+      ]
+    },
+    "tests_added": {
+      "type": "integer"
+    },
+    "tests_failing": {
+      "type": "integer"
+    },
+    "coverage_notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "tests_added",
+    "tests_failing",
+    "coverage_notes"
+  ]
+}

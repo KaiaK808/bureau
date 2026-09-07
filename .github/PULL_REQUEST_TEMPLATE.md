@@ -26,7 +26,7 @@ Small PRs merge fast. Wide PRs get pushed back to smaller ones.
 
 ## Docs
 
-<!-- Docs travel with code. If this changes behaviour, which docs did you update? -->
+<!-- Docs travel with code. For user-facing changes, update CHANGELOG.md under Unreleased and state upgrade/resync actions, compatibility impact, and known limits. Link docs/migration.md changes when existing installs are affected. Config schema versions are not release numbers. -->
 
 ## After merge
 

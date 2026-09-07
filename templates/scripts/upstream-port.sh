@@ -211,23 +211,8 @@ Begin."
     esac
   fi
 
-  local claude_cmd
-  claude_cmd="$(claude_cmd_for_stage upstream_port)"
-  if [ -z "$claude_cmd" ]; then
-    echo "ERROR: --with-llm: claude_cmd_for_stage returned empty (no model resolved and no fallback)" >&2
-    git reset --hard HEAD >/dev/null 2>&1 || true
-    on_failure "$EXIT_CONFLICT" "llm no claude command"
-  fi
-
-  log_step "invoking ${claude_cmd%% *} for conflict resolution (5min cap)"
-  local timeout_bin=""
-  if command -v timeout >/dev/null 2>&1; then
-    timeout_bin="timeout 300s"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    timeout_bin="gtimeout 300s"
-  fi
-  # shellcheck disable=SC2086
-  if ! $timeout_bin $claude_cmd "$prompt" >/dev/null 2>&1; then
+  log_step "invoking configured upstream_port runner (5min cap)"
+  if ! BUREAU_STAGE_TIMEOUT=300 run_stage_for upstream_port "$prompt" >/dev/null; then
     echo "==> claude invocation failed or timed out — reverting" >&2
     git reset --hard HEAD >/dev/null 2>&1 || true
     on_failure "$EXIT_CONFLICT" "llm invocation failed"
@@ -736,8 +721,8 @@ Upstream commit: ${UPSTREAM_TITLE}
 Upstream link: ${UPSTREAM_LINK}${LLM_NOTE}"
 
 PR_BODY="$FALLBACK_BODY"
-if command -v claude >/dev/null 2>&1; then
-  log_step "generating PR body summary via claude (30s timeout)"
+if [ "$(bureau_get ' .agents.upstream_summary // false')" != false ]; then
+  log_step "generating PR body summary via configured runner (30s timeout)"
   DIFF_HEAD="$(head -n 80 "$TMP_DIFF" 2>/dev/null || true)"
   CLAUDE_PROMPT="In ≤4 sentences, summarise this upstream port for a PR body. \
 Be concrete (what changed and why), not generic. Upstream title: \
@@ -745,28 +730,17 @@ ${UPSTREAM_TITLE}
 
 First ~80 lines of the diff:
 ${DIFF_HEAD}"
-  # SECURITY: do NOT pass --dangerously-skip-permissions here. The prompt
-  # embeds upstream-controlled commit title + diff bytes; bypassing permission
-  # prompts would let a hostile upstream commit trigger arbitrary tool use.
-  # FR-011 makes this call non-load-bearing — a deterministic fallback body
-  # is always available.
-  CLAUDE_OUT=""
-  if command -v timeout >/dev/null 2>&1; then
-    CLAUDE_OUT="$(timeout 30s claude -p --print \
-      "$CLAUDE_PROMPT" 2>/dev/null || true)"
-  else
-    CLAUDE_OUT="$(claude -p --print \
-      "$CLAUDE_PROMPT" 2>/dev/null || true)"
-  fi
+  # Summary is optional and tool-free in Claude, read-only in Codex.
+  CLAUDE_OUT="$(BUREAU_STAGE_TIMEOUT=30 run_stage_for upstream_summary "$CLAUDE_PROMPT" 2>/dev/null || true)"
   if [ -n "$CLAUDE_OUT" ]; then
     PR_BODY="${CLAUDE_OUT}
 
 Upstream link: ${UPSTREAM_LINK}${LLM_NOTE}"
   else
-    log_step "claude summary unavailable — using deterministic fallback body"
+    log_step "provider summary unavailable — using deterministic fallback body"
   fi
 else
-  log_step "claude CLI not on PATH — using deterministic fallback body"
+  log_step "optional summary disabled — using deterministic fallback body"
 fi
 
 # --------------------------------------------------------------------------

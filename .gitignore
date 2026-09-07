@@ -19,3 +19,7 @@ docs/*.zip
 *.pem
 *.key
 *.log
+
+# Python helper import caches
+__pycache__/
+*.pyc

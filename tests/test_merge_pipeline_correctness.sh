@@ -74,6 +74,7 @@ EOF
 
 # ── TEST OVERRIDES ─────────────────────────────────────────────────
 precondition_linear()      { return 0; }
+bureau_stage_enter()       { :; } # ownership covered by runtime tests
 precondition_claude_auth() { return 0; }
 post_comment()             { echo "post_comment $1 :: $2" >> "$STUB_DIR/comments_posted.log"; }
 move_issue()               { echo "move_issue $1 -> $2"   >> "$STUB_DIR/state_changes.log"; }

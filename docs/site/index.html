@@ -1,258 +1,332 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>bureau-init · field manual</title>
-<meta name="description" content="bureau-init — bootstrap a Linear-driven multi-agent pipeline in any git repo. Field manual + configuration reference." />
-<link rel="stylesheet" href="assets/colors_and_type.css" />
-<link rel="stylesheet" href="assets/docs.css" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="37e2a5bd9bd0aa17324a2088711cf7e993f9731c2f390574261f0c259403dab1">
+<title>README · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
 </head>
 <body>
-
-<header class="bhb-topbar">
-  <a href="index.html" class="wordmark">BRAIN<span class="accent">·</span>HUGGERS BUREAU <span style="color:var(--fg-3)">/</span> bureau-init</a>
-  <div class="meta">
-    <span><span class="pulse">●</span> CRON RUNNING</span>
-    <span>FILED 2026-05-08</span>
-    <span><a href="https://github.com/KaiaK808/bureau" style="color:inherit;">GITHUB ↗</a></span>
-  </div>
-</header>
-
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
 <div class="bhb-shell">
-
-  <aside class="bhb-sidebar">
-    <div class="group-label">Field manual</div>
-    <nav>
-      <a href="index.html" class="active"><span class="file">FILE #00</span> Index</a>
-      <a href="configuration.html"><span class="file">FILE #01</span> Configuration</a>
-      <a href="exit-codes.html"><span class="file">FILE #02</span> Exit codes</a>
-      <a href="recipes.html"><span class="file">FILE #03</span> Recipes</a>
-      <a href="troubleshooting.html"><span class="file">FILE #04</span> Troubleshooting</a>
-    </nav>
-
-    <div class="group-label">On this page</div>
-    <div class="external-list">
-      <a href="#open-a-file">Open a file</a>
-      <a href="#quickstart">Quickstart</a>
-      <a href="#pipeline-architecture">Pipeline architecture</a>
-      <a href="#house-rules">House rules</a>
-      <a href="#recent-dispatches">Recent dispatches</a>
-    </div>
-
-    <div class="group-label">Transmissions</div>
-    <div class="external-list">
-      <a href="../landscape.md">Landscape ↗</a>
-      <a href="../../README.md">README ↗</a>
-      <a href="../../SKILL.md">SKILL.md ↗</a>
-      <a href="https://github.com/KaiaK808/bureau">Source ↗</a>
-    </div>
-  </aside>
-
-  <main class="bhb-main">
-
-    <section class="bhb-hero">
-      <div class="file-id">FILE #00 · BUREAU-INIT · OPERATIONS MANUAL</div>
-      <h1><span class="bhb-glitch" data-text="A FIELD AGENT">A FIELD AGENT</span><br/>FOR YOUR REPO.</h1>
-      <p class="lede">
-        bureau-init bootstraps an autonomous Linear → spec → code → review → merge pipeline in any git repo. Eight headless Claude agents, one tmux session, no backend.
-        <em>The brand finally gets a feedback loop.</em>
-      </p>
-    </section>
-
-    <section>
-      <h2 id="open-a-file">Open a file</h2>
-      <p>Five dossiers cover the full surface area. Each one is self-contained — read in any order.</p>
-
-      <div class="bhb-grid">
-        <a class="bhb-card" href="configuration.html">
-          <div class="top">
-            <span>FILE #01</span>
-            <span class="bhb-tag active"><span class="dot"></span>ACTIVE BUILD</span>
-          </div>
-          <div class="title">Configuration</div>
-          <div class="desc">Every <code>.bureau.json</code> key + every <code>BUREAU_*</code> env var, with defaults and resolution order.</div>
-          <div class="open">[ OPEN FILE ]</div>
-        </a>
-
-        <a class="bhb-card" href="exit-codes.html">
-          <div class="top">
-            <span>FILE #02</span>
-            <span class="bhb-tag report"><span class="dot"></span>FIELD REPORT</span>
-          </div>
-          <div class="title">Exit codes &amp; alerts</div>
-          <div class="desc">What each pipeline failure code means and how Telegram alerts behave under the supervisor.</div>
-          <div class="open">[ OPEN FILE ]</div>
-        </a>
-
-        <a class="bhb-card" href="recipes.html">
-          <div class="top">
-            <span>FILE #03</span>
-            <span class="bhb-tag docs"><span class="dot"></span>DOCUMENTING</span>
-          </div>
-          <div class="title">Recipes</div>
-          <div class="desc">Common config patterns: single-flight, mixed models, dry-run, multi-repo, custom merge strategy, memory loop.</div>
-          <div class="open">[ OPEN FILE ]</div>
-        </a>
-
-        <a class="bhb-card" href="troubleshooting.html">
-          <div class="top">
-            <span>FILE #04</span>
-            <span class="bhb-tag field"><span class="dot"></span>FIELDWORK</span>
-          </div>
-          <div class="title">Troubleshooting</div>
-          <div class="desc">When the pipeline misbehaves, start here. Most symptoms have a one-line fix.</div>
-          <div class="open">[ OPEN FILE ]</div>
-        </a>
-
-        <a class="bhb-card" href="../landscape.md">
-          <div class="top">
-            <span>FILE #99</span>
-            <span class="bhb-tag classified"><span class="dot"></span>CLASSIFIED</span>
-          </div>
-          <div class="title">Landscape</div>
-          <div class="desc">Competitive prior art and where bureau-init fits relative to Devin, SWE-Agent, Factory.ai, Codegen.</div>
-          <div class="open">[ READ MEMO ]</div>
-        </a>
-      </div>
-    </section>
-
-    <section>
-      <h2 id="quickstart">Quickstart</h2>
-      <p>Six steps from clean repo to autonomous pipeline. No backend, no DB — state lives in your repo and in Linear.</p>
-
-      <pre data-file="QUICKSTART.SH"><code># 1. Install the skill
-mkdir -p ~/.claude/skills
-git clone https://github.com/KaiaK808/bureau.git ~/.claude/skills/bureau-init
-
-# 2. In Claude Code, authenticate Linear MCP
-/mcp     # then choose linear-server
-
-# 3. Add your Linear API key to the target repo
-echo 'LINEAR_API_KEY=lin_api_xxxxxxxxxxxx' >> .env
-
-# 4. Bootstrap
-/bureau-init
-
-# 5. Launch the pipeline
-./scripts/start-bureau-v2.sh
-
-# 6. Watch it work
-tmux attach -t bureau-v2-$(basename "$PWD")</code></pre>
-
-      <div class="bhb-callout">
-        <span class="label">Prereqs</span>
-        Claude Code · git · jq · tmux · curl · a Linear account · GitHub CLI <code>gh</code> (recommended).
-        macOS: <code>brew install jq tmux gh</code>.
-      </div>
-    </section>
-
-    <section>
-      <h2 id="pipeline-architecture">Pipeline architecture</h2>
-      <p>Each Linear issue moves through a state machine. One agent per state. Each agent is a tmux pane running <code>queue-loop-supervised.sh</code>, polling its state at the configured interval.</p>
-
-      <pre data-file="STATE-MACHINE"><code>Triage ─▶ Spec ─▶ Spec Review ┬─▶ Design ─▶ Build ─▶ QA ─▶ Build Review ┬─▶ Merge ─▶ Done
-                              │                                          │
-                              └─▶ Copy ──────────────────▶ Build         └─▶ (auto-review loop)
-
-Labels:  lane-2 (eligibility) · needs-ux · needs-copy · needs-human (parking)
-Models:  per-stage override via .agents.&lt;stage&gt;.model — see configuration §agents</code></pre>
-
-      <table>
-        <thead>
-          <tr><th>Stage</th><th>Agent</th><th>What it produces</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>Triage → Spec Review</td><td>spec</td><td><code>specs/NNN-slug/spec.md</code> + <code>plan.md</code> + <code>tasks.md</code></td></tr>
-          <tr><td>Spec Review</td><td>spec_review</td><td>JSON verdict; routes to Build, Design, or Copy</td></tr>
-          <tr><td>Design</td><td>ux</td><td><code>design.md</code> with component sketches + JSON status</td></tr>
-          <tr><td>Copy</td><td>copy</td><td>Voice-aligned user-facing strings + before/after JSON</td></tr>
-          <tr><td>Build</td><td>implement</td><td>Implementation commits + PR + structured task notes</td></tr>
-          <tr><td>QA</td><td>qa</td><td>Test runs, missing tests written, GREEN/RED/NEEDS_HUMAN verdict</td></tr>
-          <tr><td>Build Review</td><td>code_review</td><td>3-specialist review (correctness · security · perf), merger verdict</td></tr>
-          <tr><td>Merge</td><td>merge</td><td><code>gh pr merge</code> with the configured strategy (squash · merge · rebase)</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2 id="house-rules">House rules</h2>
-      <p>Hard-learned. Each carries an EXP-### incident tag in <code>SKILL.md</code> Appendix B.</p>
-
-      <ul>
-        <li>Never spawn <code>$CLAUDE</code> for Linear CRUD. Linear glue goes through <code>bureau-config.sh</code> helpers — <code>$CLAUDE</code> is reserved for creative work.</li>
-        <li>Branches are resolved via the <code>&lt;!-- bureau-branch: ... --&gt;</code> marker comment, not Linear's <code>branchName</code>.</li>
-        <li>Preconditions run before state mutations. Every pipeline calls <code>precondition_linear</code> (exit 10) and <code>precondition_claude_auth</code> (exit 16) <em>before</em> any <code>move_issue</code>.</li>
-        <li>Exit codes are a protocol — see <a href="exit-codes.html">FILE #02</a>.</li>
-        <li>Worktrees reset between picks. <code>queue-loop.sh</code> fetches, hard-resets, and <code>clean -fdx</code> before each pick.</li>
-        <li><code>pick_issue</code> filters by label <em>name</em>, not UUID. Custom labels work even when only the main label's UUID was captured.</li>
-      </ul>
-    </section>
-
-    <section>
-      <h2 id="recent-dispatches">Recent dispatches</h2>
-      <p>Last few changes that shipped to the skill. <code>git pull</code> in <code>~/.claude/skills/bureau-init/</code> to receive them; existing target repos pick up template changes via <code>/bureau-init --resync-scripts</code>.</p>
-
-      <table>
-        <thead>
-          <tr><th>Filed</th><th>Ref</th><th>Dispatch</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>2026-05-14</td>
-            <td><code>merge-correctness</code></td>
-            <td>NRSR-enforced merge gates. <code>merge-pipeline.sh</code> now independently verifies every check-run on the PR's current head SHA is green (<code>pr_ci_is_green</code>) AND the PR base equals <code>origin/main</code> HEAD (<code>pr_base_is_current</code>), and re-runs the entire gate set just-in-time before <code>gh pr merge</code>. Closes the race where GitHub's <code>mergeStateStatus</code> async-cache let stale-base or red-CI PRs slip through. Toggles: <code>agents.merge_require_green_ci</code> and <code>agents.merge_require_up_to_date</code> (both default true). <a href="configuration.html">Configuration</a>.</td>
-          </tr>
-          <tr>
-            <td>2026-05-14</td>
-            <td><code>shepherd</code></td>
-            <td>Single-ticket end-to-end driver: <code>./scripts/shepherd.sh EXP-N</code> spawns a tmux window in the existing bureau session (or a dedicated <code>bureau-shepherd-&lt;slug&gt;</code> if none), forces all agents on by default (<code>BUREAU_FORCE_ALL_AGENTS=1</code>), claims the ticket with the <code>shepherd-focused</code> label so the cron queue stays out of the way, drives Triage → Done sequentially with stuck-detection at <code>MAX_STUCK=2</code>. Flags: <code>--dry-run</code> · <code>--no-tmux</code> · <code>--no-merge</code> · <code>--from-stage</code> · <code>--respect-config</code>.</td>
-          </tr>
-          <tr>
-            <td>2026-05-11</td>
-            <td><code>EXP-507..510</code></td>
-            <td>Memory loop. <code>queue-loop.sh</code> emits one JSONL event per stage to <code>logs/events.jsonl</code>; <code>/bureau-learnings</code> drafts a human-curated <code>LESSONS.md</code>; the committed file is selectively re-injected into spec Phase 1 and the three code-review specialist prompts. <a href="recipes.html#memory-loop">Recipe</a>.</td>
-          </tr>
-          <tr>
-            <td>2026-05-08</td>
-            <td><code>EXP-382</code></td>
-            <td>Auto-restart supervisor wrapping <code>queue-loop.sh</code> with exponential backoff + a Telegram "giving up" alert once the crash budget is spent. <a href="exit-codes.html#supervisor">Details</a>.</td>
-          </tr>
-          <tr>
-            <td>2026-05-08</td>
-            <td><code>EXP-490</code></td>
-            <td>Per-stage model override via <code>.agents.&lt;stage&gt;.model</code>. Lets you point spec at Opus and review at Haiku without forking the pipeline. <a href="recipes.html#mixed-models">Recipe</a>.</td>
-          </tr>
-          <tr>
-            <td>2026-05-08</td>
-            <td><code>EXP-491</code></td>
-            <td>Single-flight + stage-priority drain in <code>queue-loop.sh</code>. The <code>all</code> mode now fans out merge first and spec last, so existing tickets clear before new ones enter. <a href="recipes.html#single-flight">Recipe</a>.</td>
-          </tr>
-          <tr>
-            <td>2026-05-08</td>
-            <td><code>EXP-384</code></td>
-            <td>Dry-run mode (<code>BUREAU_DRY_RUN=1</code> or <code>--dry-run</code>) — pipelines run end-to-end but Linear, GitHub, and Telegram mutations log instead of fire. <a href="recipes.html#dry-run">Recipe</a>.</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div class="bhb-callout">
-        <span class="label">Full history</span>
-        <code>git log --oneline</code> in the skill repo for the authoritative list. This table is curated — small fixes and refactors don't make the cut.
-      </div>
-    </section>
-
-  </main>
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1 id="bureau">Bureau</h1>
+<p><a href="../../LICENSE"><img
+src="https://img.shields.io/badge/license-MIT-blue.svg"
+alt="License: MIT" /></a></p>
+<p>Bureau connects Linear tickets, Spec Kit artifacts, implementation,
+QA and review. Use it directly in a Codex app task, through Claude Code
+commands, or in a background pipeline with Claude, Codex, or a mixture
+of providers. State lives in Linear and Git; there is no application
+backend to host.</p>
+<p><img src="../assets/hero.png" alt="Bureau archive chamber" /></p>
+<h2 id="choose-how-to-work">Choose how to work</h2>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Where creative work runs</th>
+<th>Entry point</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Codex app task</td>
+<td>Current task, using its selected model and tools</td>
+<td><code>$bureau TEAM-123 through review</code></td>
+</tr>
+<tr>
+<td>Claude interactive</td>
+<td>Current Claude Code session</td>
+<td><code>/linear-to-spec TEAM-123</code>,
+<code>/linear-implement TEAM-123</code></td>
+</tr>
+<tr>
+<td>Bounded background tick</td>
+<td>Configured provider CLI in a claimed disposable worktree</td>
+<td><code>bash scripts/bureau-tick.sh --no-merge</code></td>
+</tr>
+<tr>
+<td>Continuous background pipeline</td>
+<td>Configured provider CLIs, supervised shell loops/tmux</td>
+<td><code>bash scripts/start-bureau-v2.sh</code></td>
+</tr>
+</tbody>
+</table>
+<p>App work preserves the current checkout. Background workers claim
+both the ticket and their own disposable checkout. Held branches and
+unfinished work are preserved for reconciliation. App review and bounded
+ticks stop before merge by default; continuous legacy pipelines can
+merge after approval and the full CI/base gate. Use
+<code>--no-merge</code> when supervising through review only.</p>
+<p>Codex support is implemented and covered by local fixtures. Before
+unattended adoption, qualify a representative live ticket in your
+repository. See the <a href="codex-acceptance.html">acceptance
+record</a> for verified coverage and remaining live checks.</p>
+<h2 id="install">Install</h2>
+<p>Keep one clone and expose it to the assistants you use:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills&quot;</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills/bureau-init&quot;</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optional Claude Code entry point:</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills&quot;</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills/bureau-init&quot;</span></span></code></pre></div>
+<p>Keep existing installations and links; do not overwrite them. In an
+adopting Git repository, invoke
+<code>$bureau-init --target codex</code>,
+<code>/bureau-init --target claude</code>, or select
+<code>--target both</code>. For both, choose which Spec Kit integration
+should remain active. Refresh skill discovery after installation.</p>
+<p>The installer discovers Linear settings, writes
+<code>.bureau.json</code>, initializes pinned Spec Kit 0.7.5, and
+installs only the selected interfaces. Codex uses
+<code>.agents/skills</code> and AGENTS.md; Claude uses
+<code>.claude/commands</code>, <code>.claude/skills</code> and
+CLAUDE.md. Existing project instructions and the constitution survive
+resync. Hashes in <code>.bureau-install.json</code> identify
+customizations before updates.</p>
+<p>First setup checks prerequisites, selects the host and operating
+mode, discovers one active Linear team and its projects/labels/states,
+collects agent choices, writes configuration, installs assets and
+validates the result. Existing choices are reused. Environment examples
+preserve credentials, and CI scaffolding is optional with
+<code>ubuntu-latest</code> as its default. See the <a
+href="../../references/setup.md">conditional setup procedure</a>.</p>
+<p>Installed assets include <code>.specify/</code> and the selected
+hosts' skills/instructions, shared runtime files under
+<code>scripts/</code>, optional Claude planning workflows under
+<code>.claude/workflows/</code>, and optional
+<code>.github/workflows/ci.yml</code>. <code>specs/</code> contains
+feature artifacts; <code>LESSONS.md</code> can hold curated learnings.
+Local configuration, installer bookkeeping and runtime logs remain
+ignored. Spec Kit comes from the pinned CLI; it is not vendored in this
+repository.</p>
+<table>
+<thead>
+<tr>
+<th>Dependency</th>
+<th>Needed for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Python 3.9+, Bash 3.2+, Git 2.26+, jq, curl</td>
+<td>Installation and shared runtime</td>
+</tr>
+<tr>
+<td><code>specify-cli</code> 0.7.5</td>
+<td>Spec Kit initialization/resync</td>
+</tr>
+<tr>
+<td>Linear account and <code>LINEAR_API_KEY</code> in ignored
+<code>.env</code></td>
+<td>Shared ticket reads/transitions; interactive tools can assist
+discovery</td>
+</tr>
+<tr>
+<td>GitHub CLI (<code>gh</code>)</td>
+<td>Background PR creation and merge operations</td>
+</tr>
+<tr>
+<td>Claude CLI and/or Codex CLI</td>
+<td>Only providers selected for background stages; not required to run a
+current Codex app task</td>
+</tr>
+<tr>
+<td>tmux</td>
+<td>Persistent pane launchers; not required for app tasks or one-shot
+ticks</td>
+</tr>
+<tr>
+<td>Node.js 18+</td>
+<td>Shared conflict-schedule CLI</td>
+</tr>
+</tbody>
+</table>
+<p>On macOS, <code>brew install jq gh tmux</code> supplies common
+background dependencies. Authenticate each selected provider and
+<code>gh</code> normally. Never put credentials in tracked files. The
+shell helpers use Linear's GraphQL API directly.</p>
+<h2 id="work-in-a-codex-app-task">Work in a Codex app task</h2>
+<p>After installation, use <code>$bureau spec TEAM-123</code>,
+<code>$bureau implement TEAM-123</code>,
+<code>$bureau qa TEAM-123</code>, <code>$bureau review TEAM-123</code>,
+or <code>$bureau TEAM-123 through review</code>. These work in the
+current task without launching a nested model.
+<code>$bureau status</code> inspects ownership and saved runs;
+<code>$bureau resume RUN_ID</code> continues preserved work.</p>
+<p>The <a href="../../templates/skills/bureau/references/app-setup.md">app
+setup guide</a> gives setup/status/test actions to add through app
+settings. <code>repo.test_command</code> must name the project's real
+tests. The app generates its own local-environment configuration; Bureau
+does not overwrite unrelated <code>.codex</code> settings.</p>
+<p>The <a href="stage-protocol.html">stage protocol</a> checks
+configured state IDs, ownership, current HEAD, canonical branch and
+completion evidence before posting a digest or advancing a ticket. A
+review request stops at review. Explicitly authorized merging still uses
+the existing complete merge gate.</p>
+<h2 id="background-execution">Background execution</h2>
+<p>Set <code>agents.runner</code> to <code>claude</code> (legacy
+default) or <code>codex</code>; stage objects can select another runner.
+Per-provider models avoid leaking a Claude model into a Codex stage. See
+<a href="provider-runtime.html">provider configuration</a>.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Read-only checks, then one bounded stage:</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-doctor.py <span class="at">--mode</span> background</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/bureau-tick.sh <span class="at">--no-merge</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co"># One named ticket, preserving the review boundary:</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Pause future dispatch; existing work finishes normally:</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py pause</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py unpause</span></code></pre></div>
+<p><code>logs/bureau-tick.json</code> distinguishes waiting,
+advancement, actual Done, review boundaries and failures. Provider
+evidence is under <code>logs/provider-runs/</code>. Missing account
+usage or dollar cost is unavailable, not zero. The <a
+href="../../templates/skills/bureau/references/supervision.md">supervision
+guide</a> covers quiet change notifications, native app scheduling when
+requested, and shared conflict scheduling. Installation does not start
+recurring automation.</p>
+<p>The existing single-ticket, batch and upstream-port modes remain
+available:</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Entry point</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>One ticket through review</td>
+<td><code>bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123</code></td>
+</tr>
+<tr>
+<td>Preview a batch schedule</td>
+<td><code>bash scripts/orchestrate.sh --execute --schedule schedule.json --max-concurrent 3 --no-merge --dry-run</code></td>
+</tr>
+<tr>
+<td>Execute that reviewed schedule</td>
+<td>Repeat without <code>--dry-run</code>; a review stop halts its
+serial lane</td>
+</tr>
+<tr>
+<td>Port a selected upstream change</td>
+<td><code>bash scripts/upstream-port.sh --sha COMMIT</code> or
+<code>--pr NUMBER</code>, after configuring that repository's upstream
+and build/test commands</td>
+</tr>
+</tbody>
+</table>
+<p>The <a href="../../references/operations.md">background operations
+reference</a> covers these modes, the installed driver/helper inventory,
+single-flight limits, multiple repositories and the scope of dry-run
+controls. <code>agents.max_concurrent_issues: 1</code> prevents Spec
+from admitting another issue while work is in flight; it does not
+replace ownership checks or schedule validation.</p>
+<h2 id="update-and-migrate">Update and migrate</h2>
+<p>Update the source clone that supplies <code>bureau-init</code>,
+refresh skill discovery, then resync <strong>each adopting
+repository</strong>. For the upcoming Claude/Codex release, run this in
+Claude Code after loading the new source skill:</p>
+<pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
+<p>Use <code>--target claude</code> to stay Claude-only. Refresh Spec
+Kit separately with <code>--resync-speckit --target both</code>; the
+existing active integration stays active unless you request a switch.
+Repos with installed Claude planning workflows also need
+<code>--resync-workflows</code>; script resync does not update them.
+<code>--update</code> is configuration-only. Updating the source clone
+alone does not change installed project files.</p>
+<p>Pause dispatch and preserve local work first. Resync previews
+conflicts; one unresolved conflict blocks the entire asset batch. The <a
+href="migration.html">upgrade and conflict guide</a> covers legacy
+installations without hashes, named replacements, retaining custom
+behavior, validation and rollback. Do not use a blanket overwrite or
+replace project instruction files wholesale.</p>
+<p>Version 1 configs remain supported. Optional schema-v2 migration
+preserves existing values, adds the absent legacy runner default and
+records <code>model_compatibility: "v1"</code> to retain model
+ownership. Its private backup covers configuration only. Installing
+Codex interfaces does not switch the background runner.</p>
+<p>The <a href="../../CHANGELOG.md">changelog</a> lists what changes and what
+adopters must do. This integration is <strong>unreleased</strong>; use
+the reviewed source revision identified by the installation or release
+instructions. The <a href="releases.html">release process</a> defines
+versioned tags, GitHub Release notes and qualification before
+publication.</p>
+<h2 id="documentation">Documentation</h2>
+<table>
+<thead>
+<tr>
+<th>Reference</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="configuration.html">Configuration</a></td>
+<td>State maps, stage toggles, provider settings and overrides</td>
+</tr>
+<tr>
+<td><a href="provider-runtime.html">Provider runtime</a></td>
+<td>Auth, permissions, structured results, timeouts and evidence</td>
+</tr>
+<tr>
+<td><a href="operator-cheatsheet.html">Operator cheat sheet</a></td>
+<td>App tasks, one-shot runs and batch scheduling</td>
+</tr>
+<tr>
+<td><a href="exit-codes.html">Exit codes</a></td>
+<td>Failure, quota, ownership and stop outcomes</td>
+</tr>
+<tr>
+<td><a href="recipes.html">Recipes</a></td>
+<td>Single-flight, provider mixing and dry-run examples</td>
+</tr>
+<tr>
+<td><a href="troubleshooting.html">Troubleshooting</a></td>
+<td>Diagnostics, recovery and permissions</td>
+</tr>
+<tr>
+<td><a href="token-efficiency.html">Token efficiency</a></td>
+<td>Optional Claude capabilities and their limits</td>
+</tr>
+<tr>
+<td><a href="migration.html">Upgrade guide</a></td>
+<td>Source update, per-repository resync, conflicts and rollback</td>
+</tr>
+<tr>
+<td><a href="releases.html">Releases</a></td>
+<td>Release status, versioning and publication checklist</td>
+</tr>
+<tr>
+<td><a href="codex-acceptance.html">Acceptance record</a></td>
+<td>Automated coverage and live adoption checks</td>
+</tr>
+</tbody>
+</table>
+<p>The same documents are <a href="index.html">available as
+styled HTML</a>. Contributions follow <a href="../../AGENTS.md">AGENTS.md</a>
+and <a href="../../CONTRIBUTING.md">CONTRIBUTING.md</a>. Run
+<code>bash tests/run.sh</code> for the local test harness.</p>
+<p>For contributors, <code>SKILL.md</code> routes into conditional
+<code>references/</code>; <code>scripts/bureau_install.py</code> owns
+installation. <code>templates/scripts/</code> is the runtime source,
+<code>templates/commands/</code> supplies Claude commands and rendered
+Codex skills, <code>templates/instructions/</code> supplies managed
+instructions, and <code>templates/workflows/</code> supplies optional
+planning workflows. Runtime templates win when prose disagrees.</p>
+<p>Built by <a href="https://github.com/KaiaK808">Kai Ebert</a> /
+Brainhuggers under the <a href="../../LICENSE">MIT license</a>. See <a
+href="../../SECURITY.md">SECURITY.md</a>, <a
+href="../../CODE_OF_CONDUCT.md">CODE_OF_CONDUCT.md</a> and <a
+href="../../NOTICE">NOTICE</a>. Bureau can write code and change Linear/GitHub
+state; select its operating scope for the repository you intend to
+use.</p></main>
 </div>
-
-<footer class="bhb-footer">
-  <span>BUREAU-INIT · MIT · NO WARRANTY</span>
-  <span>BUILT IN HAMBURG · ON THE SEAM</span>
-  <span><a href="https://github.com/KaiaK808/bureau">SOURCE ↗</a></span>
-</footer>
-
 </body>
 </html>

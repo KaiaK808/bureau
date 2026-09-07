@@ -148,4 +148,13 @@ if ! branch_is_bureau_only mixed-case-trailer; then
   exit 1
 fi
 
+# Provider-neutral shell checkpoints remain Bureau-owned; unresolved refs do not.
+git checkout -q main
+git checkout -q -b codex-checkpoint
+git commit -q --allow-empty -m 'EXP-9: bureau implement checkpoint (CI re-trigger)' -m 'Bureau-Generated: true'
+git push -q origin codex-checkpoint
+git fetch origin --quiet
+branch_is_bureau_only codex-checkpoint || { echo 'FAIL provider-neutral checkpoint'; exit 1; }
+if branch_is_bureau_only nonexistent-branch; then echo 'FAIL unresolved branch is not safe'; exit 1; fi
+
 echo "OK test_branch_is_bureau_only"

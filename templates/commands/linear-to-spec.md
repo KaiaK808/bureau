@@ -37,7 +37,11 @@ Compile all of this into a structured requirements summary.
 
 If the issue cannot be found, report the error and **stop**.
 
-### 2. Check prerequisites
+### 2. Prepare the shared spec stage
+
+Read `scripts/bureau-stage.md`. Run `python3 scripts/bureau-runtime.py prepare ISSUE spec` before changing files or Linear state. Keep the returned run ID and ownership claim until completion. Use `status` to find and resume an existing run instead of creating a second one. A missing API key for shared state operations is a setup blocker; authenticated Linear tools can still be used for discovery.
+
+Check prerequisites
 
 Before running speckit, verify that `.specify/memory/constitution.md` exists.
 If it does not, tell the user to run `/speckit-constitution` first and **stop**.
@@ -72,8 +76,7 @@ Invoke `/speckit-tasks` via the Skill tool to generate the task breakdown.
 
 ### 6. Create Linear sub-issues from tasks.md
 
-Parse the generated `tasks.md` and create a sub-issue for each task under the
-parent Linear issue.
+Parse the generated `tasks.md`. List existing sub-issues first, including all pages. Give each task a stable marker `<!-- bureau-task: PARENT-ID:T001 -->` in its description. Reuse a matching marker on retry; for legacy issues without markers, match a unique task ID/title and add its marker. If a legacy match is ambiguous, report it instead of creating a duplicate. Create only missing tasks under the parent issue.
 
 For each task:
 - **Title**: task name from tasks.md
@@ -116,14 +119,18 @@ reused by `/linear-implement` for the actual code changes.
    git push -u origin HEAD
    ```
 
-2. Post a comment on the Linear issue via `save_comment` with:
-   - The **branch name** (so `/linear-implement` can find it later)
+2. Include in the shared finish summary:
+   - First line exactly `<!-- bureau-branch: BRANCH -->` (the shared branch contract)
    - List of generated spec artifacts and their paths
    - Count of sub-issues created (ai-implementable vs needs-human)
    - Note: "Clarify was skipped — run `/speckit-clarify` during review if needed"
    - Note: "Spec branch pushed. Implementation will continue on this same branch."
 
-### 8. Output summary
+### 8. Finish and output summary
+
+Write the shared result JSON with actual HEAD and the three artifact paths. Use `python3 scripts/bureau-runtime.py finish RUN --result FILE`; it posts the canonical branch marker and moves to the configured `spec_review` UUID. Do not perform a second manual state transition. If interrupted, inspect `status --run RUN` and resume the same run; preserve completed sub-issues and artifacts.
+
+
 
 Provide a summary:
 - Link to the Linear issue

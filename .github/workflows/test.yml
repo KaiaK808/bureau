@@ -20,29 +20,37 @@ permissions:
 
 jobs:
   shell:
-    # GitHub-hosted Ubuntu. Was self-hosted on a production Hetzner box —
-    # the runner had access to secrets on that host, and `pull_request`
-    # events execute arbitrary code from fork PRs (every test file under
-    # tests/test_*.sh is fork-editable), which is the textbook RCE-on-
-    # runner class. GitHub-hosted removes that class entirely.
-    #
-    # jq + git are pre-installed on ubuntu-latest images; shellcheck is
-    # installed explicitly below (Ubuntu ships it, apt is fast).
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      BUREAU_REQUIRE_LOCAL_SERVER: '1'
+    defaults:
+      run:
+        shell: /bin/bash --noprofile --norc -eo pipefail {0}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0   # pinned by SHA per supply-chain hygiene; Dependabot will open bump PRs
 
       - name: Install test-only deps (jq is preinstalled)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends shellcheck
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends shellcheck python3-venv
+          else
+            command -v shellcheck >/dev/null || brew install shellcheck
+          fi
+          /bin/bash --version
+          python3 --version
+          node --version
 
       - name: Bash syntax check
         run: |
           for f in templates/scripts/*.sh tests/run.sh tests/lib/*.sh tests/test_*.sh; do
             [ -f "$f" ] || continue
-            bash -n "$f"
+            /bin/bash -n "$f"
           done
 
       - name: shellcheck pipeline scripts
@@ -65,4 +73,4 @@ jobs:
             templates/scripts/code-review-pipeline.sh
 
       - name: Run test harness
-        run: bash tests/run.sh
+        run: PATH="/bin:$PATH" /bin/bash tests/run.sh

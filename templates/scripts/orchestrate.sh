@@ -82,6 +82,16 @@ elif [ -n "$SCHEDULE_FILE" ]; then
   if ! command -v jq >/dev/null 2>&1; then
     echo "orchestrate: jq required to read --schedule" >&2; exit 2
   fi
+  if ! jq -e '
+    (.parallelSafe | type == "array") and (.serialChains | type == "array")
+    and ((.blocked // []) | length == 0)
+    and all(.serialChains[]; type == "array" and length > 0)
+    and ([.parallelSafe[], .serialChains[][]] as $ids |
+      all($ids[]; type == "string" and test("^[A-Z][A-Z0-9]*-[0-9]+$"))
+      and ($ids | length) == ($ids | unique | length))
+  ' "$SCHEDULE_FILE" >/dev/null; then
+    echo "orchestrate: invalid schedule or unresolved blast-radius predictions" >&2; exit 25
+  fi
   # Each serialChain → one lane.
   while IFS= read -r line; do
     [ -n "$line" ] && LANES+=("$line")

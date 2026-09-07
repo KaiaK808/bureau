@@ -5,11 +5,15 @@ Every knob bureau-init exposes — what it controls, where it lives, and what th
 - **`.bureau.json`** — written by `/bureau-init` to the target repo's root. Gitignored. UUIDs + agent toggles.
 - **Environment variables** — runtime-only overrides read by the pipeline scripts. Not persisted; usually set inline (`BUREAU_DRY_RUN=1 ./scripts/queue-loop.sh ...`) or in `.env`.
 
-Defaults are designed so a fresh `/bureau-init` produces a working pipeline with no further editing. Everything below is for fine-tuning.
+Setup captures the project-specific settings. Verify credentials, installed tools and real tests before running work. Current app tasks use the app-selected model; provider settings below select background CLIs.
 
 ---
 
 ## `.bureau.json`
+
+### Version and validation
+
+Version 1 remains compatible; version 2 makes the legacy `agents.runner: "claude"` default explicit. Migration preserves existing fields, adds `agents.model_compatibility: "v1"` to retain legacy provider model selection, and saves a private exact backup. `bureau-doctor.py` validates shape/version and reports effective settings without contacting providers. See [migration and rollback](migration.md).
 
 ### `linear`
 
@@ -36,13 +40,15 @@ Defaults are designed so a fresh `/bureau-init` produces a working pipeline with
 | `linear.labels.needs_copy.name` | string | optional | Required if `agents.copy: true`; routes from Spec Review (or UX) → Copy |
 | `linear.projects` | array | optional | List of project UUIDs to scope `pick_issue`. Empty array = unscoped (entire team) |
 
+The runtime uses the first configured team. State IDs are authoritative; display names may be customized.
+
 ### `agents`
 
 Which pipelines run, how often they poll, how aggressive they are.
 
-**Default semantics.** `agent_enabled()` treats an absent key as `false` (`bureau_get ".agents.<name> // false"`). The "Default" column below shows what `/bureau-init` writes into Phase 3's `.bureau.json` template — flipping a key from `true` to `false` is honoured, but *removing* the key entirely also disables the agent. Set explicitly when in doubt.
+**Default semantics.** An absent stage is disabled. A boolean controls the stage directly; an object such as `{"enabled":true,"runner":"codex"}` is enabled unless `enabled` is explicitly false. The setup defaults below describe the initial configuration, not a fallback that enables missing stages. Preserve existing choices during updates.
 
-| Key | Type | Phase-3 default | Notes |
+| Key | Type | Setup default | Notes |
 |---|---|---|---|
 | `agents.spec` | bool | `true` | Triage → Spec Review |
 | `agents.spec_review` | bool | `true` | Spec Review → Build / Design / Copy |
@@ -53,8 +59,8 @@ Which pipelines run, how often they poll, how aggressive they are.
 | `agents.code_review` | bool | `true` | Build Review → Done (or Merge if enabled) |
 | `agents.merge` | bool | `false` | Gated merge after code-review APPROVE. Off by default |
 | `agents.rebase` | bool | `false` | Force-pushes to remote — opt-in for that reason |
-| `agents.poll_interval_minutes` | number | `30` | Cron tick frequency. Lower (e.g. `5`) for active work, higher for background |
-| `agents.workbench_panes` | number | `2` | Number of interactive `claude` panes spawned in the workbench tmux window |
+| `agents.poll_interval_minutes` | number | `30` | Queue polling interval. Lower (e.g. `5`) for active work, higher for background |
+| `agents.workbench_panes` | number | `2` background / `0` app | Number of interactive provider panes in the tmux workbench; zero omits it |
 | `agents.max_review_cycles` | number | `3` | Code-review re-iterations before the agent gives up and applies `needs-human` |
 | `agents.code_review_sampling_threshold` | number | `500` | Diff line-count above which code-review switches to sampling mode. Tune up for repos with strong CI |
 | `agents.max_concurrent_issues` | number | `0` | Repo-wide cap on issues in flight. `0` = unlimited (default). `1` = single-flight (drain end-to-end before next Spec). See [recipes](recipes.md#single-flight-pipeline) |
@@ -62,22 +68,40 @@ Which pipelines run, how often they poll, how aggressive they are.
 | `agents.merge_require_green_ci` | bool | `true` | Bureau-enforced "all check-runs on PR head SHA must be completed + green" gate, independent of GitHub's `mergeStateStatus`. Catches the "no required-checks rule configured" hole where CLEAN passes with red CI. Set false only for repos genuinely without CI (docs-only, prototypes) |
 | `agents.merge_require_up_to_date` | bool | `true` | Bureau-enforced "PR baseRefOid == origin/main HEAD" gate. Catches the async-cache race where `mergeStateStatus` still reads CLEAN after main has advanced. Set false only for repos using deliberate batch-merge workflows |
 | `agents.merge_min_required_checks` | number | `1` | Minimum completed check-runs required on the PR head SHA before `merge_require_green_ci` will pass. Prevents a PR with zero registered workflows from passing vacuously. Set to `0` for repos with no CI at all (rare — prefer flipping `merge_require_green_ci` to `false` instead) |
-| `agents.model` | string | unset | Default model for every stage. Falls through to the user's `claude` CLI default when absent |
-| `agents.<stage>.model` | string | unset | Per-stage override. `<stage>` is one of `spec`, `spec_review`, `ux`, `copy`, `implement`, `qa`, `code_review`, `merge`, `research`, `upstream_port`. Resolution: stage → `agents.model` → CLI default. Set via `/bureau-init --update` (Models option group) or auto-prompted at the tail of `/bureau-init --resync-scripts` |
-| `agents.runner` | string | `"claude"` | Default backend for every stage. `"claude"` (default) or `"codex"`. `"codex"` routes stages through `codex-stage-runner.sh` — useful for stages whose spend hits your Claude quota (typically `code_review`). See [recipes](recipes.md#mixed-provider) |
-| `agents.<stage>.runner` | string | inherits `agents.runner` | Per-stage backend override. Only `code_review` / `spec_review` / `research` are safe to route to Codex — `qa` and `implement` need network + git-metadata writes that Codex's exec sandbox lacks (a stderr warning fires if you try). |
+| `agents.model` | string | unset | Generic default belonging to `agents.runner`; ignored for Codex under v1 model compatibility and not reused by a stage assigned to another provider |
+| `agents.<stage>.model` | string | unset | Generic per-stage override; ignored for Codex under v1 model compatibility. Under v2 semantics it belongs to the stage's selected runner. Provider and environment settings also participate in resolution; see [exact precedence](provider-runtime.md). Set through the compatibility-aware Models group in `/bureau-init --update` |
 
-**Provider mixing constraint.** Anthropic models with reasoning enabled can only pair with other Anthropic models in the same context. Bureau is fine here — every pipeline run is a fresh `claude -p` subprocess, so cross-provider stage assignment works as long as each stage's full conversation stays within its provider.
+Stage settings apply to `spec`, `spec_review`, `ux`, `copy`, `implement`, `qa`, `code_review`, `merge` and `rebase`. Provider helpers also accept `research`, `upstream_port` and `upstream_summary` when invoked by their callers. Legacy string switches are preserved by migration; prefer booleans or objects for new settings.
+
+Version 1 configurations (including an absent version) and migrated configurations retaining `agents.model_compatibility: "v1"` preserve generic model fields as Claude settings. For Codex, use `agents.providers.codex.model` or a provider-specific stage environment override such as `BUREAU_CODEX_MODEL_IMPLEMENT`. A schema migration does not opt into v2 model semantics. Review the selected runners and generic fields before explicitly removing the compatibility marker from a version 2 config or setting it to `"v2"`.
+
+| Provider key | Default | Purpose |
+|---|---|---|
+| `agents.runner` | `claude` | Default background provider |
+| `agents.<stage>.runner` | inherited | Stage-specific `claude` or `codex` |
+| `agents.providers.<provider>.model` | CLI default | Provider-specific model |
+| `agents.<stage>.model` | inherited | Generic stage model; Claude-only under v1 compatibility, selected runner under v2 semantics |
+| `agents.model_compatibility` | based on schema version | `v1` preserves legacy model meaning; migration retains it until explicitly changed |
+| `agents.<stage>.reasoning_effort` | unset | Provider/model-supported reasoning value; provider defaults also supported |
+| `agents.<stage>.sandbox` | stage-dependent | Codex `read-only` or `workspace-write`; provider defaults also supported |
+| `agents.<stage>.timeout_seconds` | 900 | Adapter timeout, also configurable by provider |
+| `agents.workbench_runner` | default runner | Interactive bench provider; zero panes omits it |
+| `agents.upstream_summary` | false | Optional read-only upstream summary model pass |
+| `session.cost_tracking` | false | Persist available token usage and CLI cost estimates |
+| `session.usage_threshold_pct` | 80 | Pause at/above the available provider usage signal |
+| `session.pause_on_stale_data` | false | Honor old usage signals when explicitly selected |
+
+Read [provider runtime](provider-runtime.md) for exact model precedence, sandbox capabilities and structured results. Code review/research default to read-only; spec-review/implementation/QA can write within the permitted workspace. The executor runs actual implementation/QA tests separately. Unknown runners, malformed results and denied permissions are errors, never automatic fallback to Claude.
 
 ### `session`
 
-Cost tracking + usage throttling. Both opt-in, both no-ops when the corresponding signal source is missing.
+Cost logging is opt-in. Usage throttling uses an operator-provided signal for the selected provider; no signal means unknown usage and dispatch proceeds.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `session.cost_tracking` | bool | `false` | When true, each pipeline stage appends token counts + estimated $ to `${BUREAU_COST_DIR:-~/.bureau/cost}/<issue>.jsonl`. Report via `scripts/bureau-status.sh --cost`. Zero overhead when disabled. Env override: `BUREAU_COST_TRACKING=1` |
-| `session.usage_threshold_pct` | number | `80` | If a wired usage signal reports Claude session usage above this pct, agents pause before starting a new work unit. Needs a producer (ClaudeWatch, or your own writer to `~/.bureau/session-usage.json`). No-op without one — the throttle silently disables |
-| `session.pause_on_stale_data` | bool | `false` | When true, treat a stale usage signal (older than 5 min) as "at threshold" and pause. Default false: no signal = keep working |
+| `session.cost_tracking` | bool | `false` | Enables available provider token and estimated-cost records at `${BUREAU_COST_DIR:-~/.bureau/cost}/<issue>.jsonl`. Report via `scripts/bureau-status.sh --cost`; missing cost stays unavailable. Env override: `BUREAU_COST_TRACKING=1` |
+| `session.usage_threshold_pct` | number | `80` | Pauses before a new work unit when the selected provider's reported usage is at or above this percentage. Needs an external signal producer; Claude and Codex signals are separate |
+| `session.pause_on_stale_data` | bool | `false` | When true, continue applying the threshold to a signal older than five minutes. False ignores stale signals. Missing signals never cause a pause |
 
 ### `repo`
 
@@ -86,6 +110,7 @@ Cost tracking + usage throttling. Both opt-in, both no-ops when the correspondin
 | `repo.branch_prefix` | string | `"feat"` | Prefix for spec branches (`feat/001-add-login`) |
 | `repo.commit_prefix` | string | `""` | Optional prefix for commit messages (`[EXP] feat(login): ...`) |
 | `repo.specs_dir` | string | `"specs"` | Directory where speckit writes specs — must match `.specify/`'s configured path |
+| `repo.test_command` | string | unset | Actual project tests; required for Codex implementation completion and the app tests action |
 | `repo.copy_voice_file` | path | unset | Required if `agents.copy: true`. Path to a markdown file describing voice/tone (e.g. `docs/voice.md`) |
 | `repo.upstream` | string | `"ultraworkers/claw-code"` | GitHub `owner/name` for `upstream-port.sh` cherry-picks. Env override: `BUREAU_UPSTREAM_REPO` |
 | `repo.upstream_port.build_cmd` | string | `"cargo build --release -p brainhuggers-cli"` | Shell command run inside `work_dir` after `git apply` succeeds. Non-zero exit → exit code 14. Env override: `BUREAU_UPSTREAM_PORT_BUILD` |
@@ -108,32 +133,32 @@ Cost tracking + usage throttling. Both opt-in, both no-ops when the correspondin
 
 | Var | Effect |
 |---|---|
-| `BUREAU_DRY_RUN=1` | Short-circuits all Linear mutations, all comments, all label changes, all `git push`, all `gh pr create`. Logs the intent and returns success. Use to validate a fresh checkout against a real Linear team without polluting state |
+| `BUREAU_DRY_RUN=1` | Queue/shepherd previews read eligible work but do not launch creative stages or reset workers. Pipeline entry points return before stage work. This is a dispatch preview, not model/test qualification |
 | `BUREAU_SESSION_NAME` | Override the default tmux session name (`bureau-v2-<repo-basename>`) |
-| `BUREAU_SESSION` | Free-form session tag written into `logs/events.jsonl` — helps distinguish parallel runs (`BUREAU_SESSION=nightbatch ./scripts/orchestrate.sh ...`). Auto-populated to `<host>-<pid>` when unset |
+| `BUREAU_SESSION` | tmux session selected by the launcher/status interface. The event helper records fields explicitly supplied by its caller; this variable does not automatically tag every event |
 | `BUREAU_FORCE_ALL_AGENTS=1` | Bypasses `agent_enabled()` — every agent's queue-loop runs regardless of `.bureau.json` toggles. Useful when driving `shepherd.sh` end-to-end against a repo with agents intentionally disabled for cron |
-| `BUREAU_DISABLE_THROTTLE=1` | Emergency bypass for the session-usage throttle. Sets `session.usage_threshold_pct` to effectively 100 for the current process only. Doesn't affect `.bureau.json` |
-| `BUREAU_MAX_CONCURRENT` | Env override for `agents.max_concurrent_issues`. Higher wins over lower — use to loosen a single-flight config without editing JSON |
+| `BUREAU_DISABLE_THROTTLE=1` | Skips the usage guard for this process; does not change its threshold or `.bureau.json`. Provider quota errors can still stop work |
+| `BUREAU_MAX_CONCURRENT` | Default lane cap for `orchestrate.sh` (3 when absent); `--max-concurrent` overrides it. This does not change the separate `agents.max_concurrent_issues` ticket cap |
 
 ### Linear / external services
 
 | Var | Required when | Notes |
 |---|---|---|
-| `LINEAR_API_KEY` | Always (agents) | Set in `.env`. The interactive `/bureau-init` works without it via MCP; the headless agents need direct REST access |
+| `LINEAR_API_KEY` | Always (agents) | Set in `.env`. The interactive `/bureau-init` works without it via MCP; the headless agents need direct GraphQL access |
 | `TELEGRAM_BOT_TOKEN` | Optional | Telegram bot for failure alerts. No-op when unset |
 | `TELEGRAM_ALERT_CHAT_ID` | Optional | Chat/channel ID for alerts. Must be set alongside the token |
 
 ### Implement-pipeline retry loop
 
-Env-only knobs (no `.bureau.json` equivalent). `implement-pipeline.sh` invokes Claude inside a bounded retry loop and parks the issue with `needs-human` if it doesn't reach `status: COMPLETE` within the budget.
+Env-only knobs (no `.bureau.json` equivalent). `implement-pipeline.sh` invokes the selected provider inside a bounded retry loop and parks the issue with `needs-human` if it doesn't reach `status: COMPLETE` within the budget.
 
 | Var | Default | Notes |
 |---|---|---|
-| `BUREAU_IMPL_MAX_ITER` | `3` | Max Claude passes per tick. Each iter parses the JSON status block, pushes commits, and decides continue/stop |
-| `BUREAU_IMPL_ITER_TIMEOUT` | `1800` | Per-iter wall-time cap (seconds). Uses `timeout` (Linux) or `gtimeout` (macOS via `brew install coreutils`). Degrades to cumulative-only with a WARN if neither is on PATH |
-| `BUREAU_IMPL_TOTAL_TIMEOUT` | `5400` | Cumulative wall-time cap (seconds) across all iters in one tick. Hard upper bound on cost per issue per tick |
+| `BUREAU_IMPL_MAX_ITER` | `3` | Max provider passes per tick. Each iter parses the JSON status block, pushes commits, and decides continue/stop |
+| `BUREAU_IMPL_ITER_TIMEOUT` | `1800` | Per-iteration provider wall-time cap in seconds, limited by the remaining total budget and enforced by the Python adapter for both providers |
+| `BUREAU_IMPL_TOTAL_TIMEOUT` | `5400` | Budget in seconds for the implementation provider loop. Independent executor tests and publication can add time after it; this is not a monetary cap |
 
-Defaults give ≤90 min worst case per tick before parking. Single-strike stuck detector: if an iter produces no `[X]` marks, no review fixes, AND no commits, the issue is parked immediately — Claude is spinning, not making progress.
+The default provider-loop budget is 90 minutes. An unproductive first `PARTIAL` iteration can become `STUCK`; prior productive iterations and legitimate `COMPLETE` results have separate handling. The executor checks Git evidence and, for Codex completion, the configured project tests. A provider's success text alone cannot complete the stage.
 
 Terminal states map to PR state + Linear:
 
@@ -144,15 +169,15 @@ Terminal states map to PR state + Linear:
 
 ### Token-efficiency flags (`.bureau.json` `agents.*`)
 
-Three opt-in toggles that change implementation-loop control flow, prompt compression, and response style. All default OFF. See `docs/token-efficiency.md` for the concept-level explainer and the brainhuggers-cli pilot data; this section is the flag reference.
+Three opt-in toggles change background implementation control flow, prompt compression and response style. All default off. See [token efficiency](token-efficiency.md) for the historical rationale; provider support and actual measurements must be checked for the adopting repository.
 
-Live JSON read on every invocation (same pattern as `cost_tracking`), so flipping a flag mid-flight doesn't require a queue-loop restart.
+Provider calls read these settings at invocation time. Change them between work units so a stage does not change policy partway through its run.
 
 | Flag | Type | Default | Effect |
 |---|---|---|---|
-| `agents.use_goal_loop` | bool | `false` | When true, `implement-pipeline.sh` drives via `claude -p "/goal CONDITION"` instead of the bash for-loop. Haiku evaluates the goal condition after every turn; `BUREAU_IMPL_MAX_ITER` becomes "stop after N turns" *inside* the goal condition rather than a bash bound; `BUREAU_IMPL_ITER_TIMEOUT` does not apply (turns end naturally, not on a wall-time cap). The stuck-detector tangle (EXP-573 / EXP-571 / EXP-624 / EXP-627) doesn't apply on this path. Requires Claude Code v2.1.139+ on the host. |
-| `agents.headroom_wrap` | bool | `false` | When true, `claude_cmd_for_stage` prefixes every claude invocation with `headroom wrap`, so Headroom's compression pipeline sits between the script and Anthropic. Reversible (CCR) — Claude can call `headroom_retrieve` to fetch originals. Requires `headroom` on PATH (`pip install "headroom-ai[all]"`). Scoped to the claude backend only — the codex runner path is left alone. |
-| `agents.caveman_level` | enum: `off`/`lite`/`full`/`ultra`/`wenyan` | `"off"` | `off` skips install entirely. The others trigger `npx skills@latest add JuliusBrussee/skills` at `/bureau-init` time (or Phase 6e on re-run) and apply `/caveman <level>` to review-prose-heavy stages only. Commit messages and PR titles/bodies stay in normal register. |
+| `agents.use_goal_loop` | bool | `false` | Claude-only `/goal` implementation path, requiring a compatible Claude installation. It uses `BUREAU_IMPL_TOTAL_TIMEOUT`; Codex always uses the portable bounded loop |
+| `agents.headroom_wrap` | bool | `false` | Wrap Claude calls with `headroom wrap`; install the optional wrapper first. Codex calls are unaffected |
+| `agents.caveman_level` | enum | `"off"` | Compact review-prose preference (`off`, `lite`, `full`, `ultra`, `wenyan`). Optional skill installation is a separate setup choice; commits and PR descriptions remain normal |
 
 Env-var overrides follow the same `BUREAU_<FLAG>=1` pattern as `BUREAU_COST_TRACKING`: `BUREAU_USE_GOAL_LOOP=1`, `BUREAU_HEADROOM_WRAP=1`, `BUREAU_CAVEMAN_LEVEL=ultra`. Env wins over JSON when both are set.
 
@@ -162,8 +187,8 @@ Rollback: each layer is independently flippable. If something misbehaves, set th
 
 | Var | Stage | Resolution priority |
 |---|---|---|
-| `BUREAU_MODEL_DEFAULT` | all | Lower than per-stage |
-| `BUREAU_MODEL_SPEC` | spec | Highest for that stage |
+| `BUREAU_MODEL_DEFAULT` | Claude stages | Legacy fallback after configured models and provider defaults |
+| `BUREAU_MODEL_SPEC` | spec | Below provider-specific stage override; ignored for Codex under v1 compatibility |
 | `BUREAU_MODEL_SPEC_REVIEW` | spec_review | |
 | `BUREAU_MODEL_UX` | ux | |
 | `BUREAU_MODEL_COPY` | copy | |
@@ -174,16 +199,18 @@ Rollback: each layer is independently flippable. If something misbehaves, set th
 | `BUREAU_MODEL_RESEARCH` | research | |
 | `BUREAU_MODEL_UPSTREAM_PORT` | upstream_port | |
 
-These are read by `claude_cmd_for_stage()` in `bureau-config.sh`. The `.bureau.json` keys are the canonical surface; env vars are useful for one-off experiments (`BUREAU_MODEL_CODE_REVIEW=claude-haiku-4-5-20251001 ./scripts/queue-loop.sh code-review 5`).
+These are read by the provider adapter; provider-specific overrides take precedence. Under v1 model compatibility, generic overrides belong to Claude and are ignored for Codex. The `.bureau.json` keys are the canonical surface; env vars are useful for one-off experiments (`BUREAU_MODEL_CODE_REVIEW=claude-haiku-4-5-20251001 ./scripts/queue-loop.sh code-review 5`).
 
 ### Backend routing (env shortcuts for `agents.<stage>.runner`)
 
 | Var | Effect |
 |---|---|
-| `BUREAU_RUNNER_<STAGE>` | Override per-stage runner. `codex` or `claude`. E.g. `BUREAU_RUNNER_CODE_REVIEW=codex`. Wins over `.bureau.json`, wins over `BUREAU_RUNNER_DEFAULT` |
-| `BUREAU_RUNNER_DEFAULT` | Default runner for stages that don't have a specific override |
-| `BUREAU_CODEX_MODEL_<STAGE>` | Codex model id for stages routed to Codex. E.g. `BUREAU_CODEX_MODEL_CODE_REVIEW=o3` |
-| `BUREAU_CODEX_MODEL_DEFAULT` | Codex model fallback for stages that don't have a specific override |
+| `BUREAU_RUNNER_<STAGE>` | Override per-stage runner with `codex` or `claude`, e.g. `BUREAU_RUNNER_CODE_REVIEW=codex`. Wins over stage/default JSON |
+| `BUREAU_CODEX_MODEL_<STAGE>` | Provider-specific stage model for Codex; use an identifier available to the account. Takes precedence over generic model settings |
+| `BUREAU_CODEX_MODEL_DEFAULT` | Codex fallback after stage and provider JSON model settings |
+| `BUREAU_CLAUDE_MODEL_<STAGE>` / `BUREAU_CLAUDE_MODEL_DEFAULT` | Equivalent provider-specific Claude overrides |
+
+There is no `BUREAU_RUNNER_DEFAULT` override in the current adapter. Set `agents.runner` for the default provider.
 
 ### Cost tracking
 
@@ -215,10 +242,11 @@ Env overrides for the `repo.upstream_port.*` config family. Set inline when runn
 
 | Var | Default | Notes |
 |---|---|---|
-| `BUREAU_CONFIG` | `.bureau.json` | Path to the config file. Rarely useful; scripts default to `$PWD/.bureau.json` |
-| `BUREAU_HOME` | `$HOME/.bureau` | Base directory for cost logs, session usage file, and other per-user Bureau state |
+| `BUREAU_CONFIG` | discovered | Explicit config path; otherwise resolve the current checkout and primary worktree. Keep the trusted private config out of commits |
+| `BUREAU_ENV_FILE` | caller-dependent | Explicit trusted environment file used by runtime helpers when needed; doctor/provider `--describe` do not source it |
 | `BUREAU_SCRIPT_DIR` | derived from `$0` | Path to the target repo's `scripts/`. Auto-detected in normal use — set only when sourcing helpers from an unusual location |
-| `BUREAU_SPECKIT_VERSION` | (constant in `SKILL.md`) | Pin for the `specify init` version used in Phase 4 and `--resync-speckit`. Bumped per Bureau release; overriding is a spike-only move |
+
+`BUREAU_HOME` and `BUREAU_SPECKIT_VERSION` are not supported runtime overrides. Use the documented individual paths; the Spec Kit 0.7.5 pin lives in `scripts/bureau_install.py`.
 
 ### Supervisor
 
@@ -229,19 +257,15 @@ Env overrides for the `repo.upstream_port.*` config family. Set inline when runn
 
 ---
 
-## Resolution order
+## Resolution and provider usage
 
-For any value that exists in both `.bureau.json` and the environment:
+The actual creative invocation uses `bureau-provider.py`. Runner precedence is per-stage `BUREAU_RUNNER_STAGE`, stage JSON, default JSON, then Claude. Model precedence is provider-specific stage environment, generic stage environment, stage JSON, provider JSON, generic default JSON only for its owning default runner, provider environment default, and the legacy Claude environment default. See [provider runtime](provider-runtime.md).
 
-1. Per-stage env var (e.g. `BUREAU_MODEL_IMPLEMENT`)
-2. Stage key in `.bureau.json` (e.g. `agents.implement.model`)
-3. Default env var (e.g. `BUREAU_MODEL_DEFAULT`)
-4. Default key (e.g. `agents.model`)
-5. CLI / shell default (no flag passed)
+`BUREAU_REASONING_STAGE`, `BUREAU_SANDBOX_STAGE` and `BUREAU_STAGE_TIMEOUT` override the corresponding provider settings. `BUREAU_CONFIG` selects the explicit configuration file; otherwise the current checkout and primary worktree are checked. `BUREAU_NO_MERGE=1` preserves the review boundary in background code review/merge entry points.
 
-`bureau-config.sh` is the source of truth — when in doubt, grep it for `bureau_get` calls to see exact precedence.
+`BUREAU_CODEX_USAGE_FILE` supplies an operator-provided Codex signal (`pct`, `reset_epoch`, `updated_epoch`). A shared `BUREAU_USAGE_FILE` is usable by Codex only when tagged `"provider":"codex"`. Claude retains its legacy/ClaudeWatch sources. No signal means unknown usage and dispatch proceeds; provider quota failures are classified separately. Bureau does not scrape private Codex account files. The app's account-usage tool is independent of CLI token evidence.
 
----
+Cost logs keep available CLI estimates separate from actual billed dollars (`null`). Missing Codex costs are never reported as zero. `bureau-status.sh --cost` displays `unavailable` when a total includes unknown values.
 
 ## See also
 

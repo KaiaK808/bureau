@@ -18,10 +18,22 @@ This page is the complete table + how the alerter behaves.
 | `13` | no-tasks | `tasks.md` expected but missing | `/speckit-tasks` produced an empty file; routed back to Spec |
 | `14` | build-failed | Build precondition failed | Test suite red, type-check failed, lint errors |
 | `15` | no-pr | PR expected but not found | Implement didn't create one, or it was closed manually |
-| `16` | claude-unauth | `claude` CLI not logged in | Run `claude` interactively once to refresh OAuth |
+| `16` | provider-unauth | Selected CLI missing or not authenticated | Authenticate the selected Claude/Codex CLI |
 | `17` | rebase-needed | `merge_origin_main_or_abort` hit a non-trivial conflict | Routed back to a recovery state for human intervention |
 | `18` | gh-failed | `gh` CLI command failed (e.g. `gh pr merge` rejected) | API rate limit, missing permissions, branch protection |
 | `19` | rebase-rejected | `git push --force-with-lease` rejected | Someone else pushed to the same branch concurrently |
+| `20` | stopped-before-merge | Review boundary reached | Expected with `--no-merge` |
+| `21` | ownership-conflict | Ticket, checkout or branch held; stale result | Inspect owner/run, preserve work and reconcile |
+| `22` | provider-or-result-error | Provider failed or final result invalid | Inspect provider evidence |
+| `23` | quota-wait | Selected provider quota reached | Wait for reset; do not switch providers silently |
+| `24` | environment-blocked | Permissions or required execution capability missing | Inspect denied operation separately from code/test failures |
+| `25` | needs-human-or-paused | Halt requiring attention or paused dispatch | Resolve the blocker or unpause explicitly |
+| `26` | cancelled-ticket | Ticket cancelled/duplicate | Not successful completion |
+| `124` | timeout | Provider exceeded time bound | Inspect preserved progress |
+| `130` | cancelled-run | Process interrupted | Inspect ownership and resume evidence |
+
+`bureau-tick.sh` additionally writes a JSON outcome. Quota waiting returns process exit 0 with result `exit_code:23` to allow the next scheduled tick. A stage exiting 0 with unchanged ticket state is `waiting`; only actual Done is `completed`. Shepherd and schedule execution return nonzero for review/human/cancellation boundaries so the next serial ticket does not start as though the first had completed.
+
 
 Exit codes outside this table (e.g. `1`) classify as `error-1` — usually a bug in the pipeline script or an unhandled bash error.
 

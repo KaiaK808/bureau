@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="6f682e22a3ec3aa642e4e43f40e62f4566282559e1cdf247172dcea1b0250925">
+<title>releases · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="releases-and-upgrade-communication">Releases and upgrade
+communication</h1>
+<p>Bureau ships a source skill and templates that are copied into
+adopting repositories. It has no application package to deploy. A source
+update and an adopting-repository resync are separate steps, so a
+release must document both the changes and the required operator
+actions.</p>
+<h2 id="current-release-status">Current release status</h2>
+<p>The Claude/Codex support in this source tree is
+<strong>Unreleased</strong>. No versioned tag or GitHub Release has been
+published. The <a href="../../CHANGELOG.md">changelog</a>, <a
+href="release-notes.html">draft release notes</a> and <a
+href="codex-acceptance.html">acceptance record</a> describe the changes
+and available evidence. A branch must be merged before users following
+<code>main</code> receive it; source updates still require resyncing
+each adopting repository.</p>
+<p>The official repository is <a
+href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a>. Its
+initial commit used a <code>v1.0.0</code> label, but no corresponding
+tag or GitHub Release exists. Maintainers must select the first
+published version with that history in mind; this guide does not assign
+one retroactively. Configuration schema <code>version: 2</code> is not a
+Bureau v2 release. Publishing a tag and release remains a separate
+maintainer operation.</p>
+<h2 id="release-contract">Release contract</h2>
+<ul>
+<li>Use <code>vMAJOR.MINOR.PATCH</code> tags, with an <code>-rc.N</code>
+suffix for release candidates. Before 1.0, put incompatible
+workflow/configuration changes in a minor release and compatible fixes
+in a patch release. After 1.0, use a major release for incompatible
+changes. Document operational changes even if the config schema remains
+compatible.</li>
+<li>Treat published tags as immutable. Correct a bad release with a new
+release and an explicit notice; never move the old tag to different
+source.</li>
+<li>Use <a href="../../CHANGELOG.md">CHANGELOG.md</a> as the canonical
+user-facing record. Each version gets a date, comparison link,
+additions/changes/fixes, upgrade actions and known limitations. Keep
+older untagged history separate instead of inventing past version
+numbers.</li>
+<li>Create a GitHub Release for the same tag, using the curated
+changelog entry and a link to the <a href="migration.html">upgrade
+guide</a>. Generated commit lists can supplement it; they do not replace
+migration/conflict instructions.</li>
+<li>State the supported/tested environments and evidence level:
+installer fixtures, real local workflows, live provider smoke, or live
+adopting-repository ticket. Do not turn passing mocks into a claim of
+unattended production compatibility.</li>
+</ul>
+<h2 id="before-publishing">Before publishing</h2>
+<ol type="1">
+<li>Choose the release scope and exact commit. Merge its reviewed PRs in
+dependency order; inspect the final combined diff and verify required CI
+on that commit. Do not tag an unmerged worktree or a commit with
+unresolved review findings.</li>
+<li>Run the repository checks and relevant installation/upgrade cases,
+including a legacy repo without a manifest, a customized script, user
+instructions, constitution preservation and config migration/rollback.
+For runtime releases, include the full Linux/macOS suite and the
+appropriate live acceptance described in the release notes.</li>
+<li>Verify the adoption instructions against the selected commit. List
+each required resync scope, any configuration/provider changes, new
+dependencies, protected old worktrees and rollback limits. Include what
+remains opt-in.</li>
+<li>Move the shipped Unreleased entries to
+<code>## [VERSION] - YYYY-MM-DD</code> in CHANGELOG.md, using the actual
+version/date, and leave a fresh Unreleased section. Update the
+release-status paragraphs in this guide and the upgrade guide; record
+the selected source commit and replace the draft status only when
+publication is ready.</li>
+<li>Regenerate the HTML manual with
+<code>python3 scripts/render_docs.py</code> and run
+<code>bash tests/test_docs.sh</code>. Commit the release documentation,
+then wait for that exact commit's checks. The release tag must include
+its own notes.</li>
+<li>Publish an annotated (or signed, when configured) tag on the
+verified commit and a GitHub Release with the same version. Mark a
+candidate as a prerelease. Review the rendered release notes and links
+before announcing availability.</li>
+<li>Give existing users the two-step source-update/resync instructions.
+Record follow-up issues and known limitations; do not silently change
+released instructions into claims of validation that did not occur.</li>
+</ol>
+<p>Example publication commands, <strong>only after</strong> the
+maintainer has selected a real version and verified commit:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="bu">:</span> <span class="st">&quot;</span><span class="va">${BUREAU_RELEASE</span><span class="op">:?</span>Set the selected release tag<span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="bu">:</span> <span class="st">&quot;</span><span class="va">${BUREAU_RELEASE_COMMIT</span><span class="op">:?</span>Set the verified release commit<span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="bu">:</span> <span class="st">&quot;</span><span class="va">${BUREAU_RELEASE_NOTES</span><span class="op">:?</span>Set the path to the reviewed release notes file<span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> tag <span class="at">-a</span> <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE_COMMIT</span><span class="st">&quot;</span> <span class="at">-m</span> <span class="st">&quot;Bureau </span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> push origin <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> release create <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="at">--verify-tag</span> <span class="dt">\</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--title</span> <span class="st">&quot;Bureau </span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="at">--notes-file</span> <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE_NOTES</span><span class="st">&quot;</span></span></code></pre></div>
+<p>Add <code>--prerelease</code> to the final command for a candidate. A
+tag/release is published only as an explicitly authorized release
+operation, not as a side effect of writing docs or updating a PR.</p>
+<h2 id="release-note-outline">Release-note outline</h2>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">## What changed</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>User-visible additions and fixes, with PR links.</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">## Upgrade from the previous release / legacy untagged install</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Update the source skill to this tag, refresh skill discovery, then run the stated resync scopes in each adopting repo.</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Required dependencies/configuration changes; conflict resolution and backup instructions.</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Changes that are optional, and defaults that affect dispatch or merging.</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="fu">## Compatibility and rollback</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Supported platforms/providers; legacy configuration behavior.</span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>How to preserve/restore customizations and unfinished work; external effects that rollback cannot undo.</span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="fu">## Validation and known limitations</span></span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Exact checks and live scenarios exercised on the release commit.</span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Remaining limitations and links to the acceptance record or follow-up issues.</span></code></pre></div>
+<p>Bug reports should include the installed source tag/commit (or
+explicitly say unknown for a legacy copy), selected provider/CLI version
+and relevant doctor output with credentials removed. A config schema
+number alone cannot identify the installed runtime release.</p></main>
+</div>
+</body>
+</html>

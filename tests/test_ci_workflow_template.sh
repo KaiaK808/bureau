@@ -78,18 +78,20 @@ if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&
   fi
 fi
 
-# ── 3. Installer is wired (SKILL.md) ───────────────────────────────────────
-# First-init step drops the template at the adopter's repo-root path.
-assert_grep "SKILL first-init cp"  'cp .*templates/\.github/workflows/ci\.yml \./\.github/workflows/ci\.yml' "$SKILL"
-assert_grep "SKILL mkdir workflows" 'mkdir -p \./\.github/workflows'         "$SKILL"
-# Install prompt makes the default explicit AND names the fork-PR-RCE class
-# so operators self-hosting on a public repo see the risk before they flip
-# the label.
-assert_grep "SKILL runner prompt"  'runs-on: ubuntu-latest'                  "$SKILL"
-assert_grep "SKILL fork-PR risk"   'fork-PR-RCE'                             "$SKILL"
-# Resync fast path is documented + listed in Usage.
-assert_grep "SKILL --resync-ci path"  'Fast path — `--resync-ci`'           "$SKILL"
-assert_grep "Usage lists --resync-ci" '/bureau-init --resync-ci'            "$SKILL"
+# ── 3. Installer routes and actual CI copy ────────────────────────────────
+assert_grep "Usage lists --resync-ci" '/bureau-init --resync-ci' "$SKILL"
+assert_grep "resync documents hosted runner" 'runs-on: ubuntu-latest' "$REPO_ROOT/references/resync.md"
+assert_grep "resync explains fork risk" 'fork-PR-RCE' "$REPO_ROOT/references/resync.md"
+TARGET="$(mktemp -d)"
+trap 'rm -rf "$TARGET"' EXIT
+git init -q "$TARGET"
+if python3 "$REPO_ROOT/scripts/bureau_install.py" assets --repo "$TARGET" --scope ci --apply >/dev/null &&
+   cmp -s "$CI_TEMPLATE" "$TARGET/.github/workflows/ci.yml"; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  fail_msgs+=("installer did not copy the CI template intact")
+fi
 
 # ── Report ─────────────────────────────────────────────────────────────────
 echo "passed: $pass  failed: $fail"

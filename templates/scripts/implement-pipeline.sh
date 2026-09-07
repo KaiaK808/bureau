@@ -14,11 +14,15 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
+BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
+set -a
+# shellcheck disable=SC1090
 if [ -f .env ]; then source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then source "$SCRIPT_REPO/.env"
-else echo "ERROR: No .env found"; exit 1; fi
+elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
+set +a
 
-CLAUDE=$(claude_cmd_for_stage "implement")
+CLAUDE=(run_stage_for implement)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 
 # Retry-loop bounds. MAX_ITER caps the number of Claude passes per tick.
@@ -30,18 +34,7 @@ MAX_ITER="${BUREAU_IMPL_MAX_ITER:-3}"
 ITER_TIMEOUT="${BUREAU_IMPL_ITER_TIMEOUT:-1800}"
 TOTAL_TIMEOUT="${BUREAU_IMPL_TOTAL_TIMEOUT:-5400}"
 
-# Resolve a `timeout`-style wrapper. coreutils ships `timeout` on Linux and as
-# `gtimeout` on macOS (via `brew install coreutils`). Fall back to running
-# $CLAUDE directly when neither is available — the cumulative TOTAL_TIMEOUT
-# check at the top of the loop still bounds total wall time, just not per-iter.
-if command -v timeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT_CMD="gtimeout"
-else
-  echo "  WARN: neither 'timeout' nor 'gtimeout' on PATH — per-iter timeout disabled (cumulative cap still enforced)." >&2
-  TIMEOUT_CMD=""
-fi
+# The provider adapter enforces per-pass timeouts on both macOS and Linux.
 
 # refresh_review_context: pull the latest "Code Review … Changes Requested"
 # comment for $1 and emit the prompt block the implement loop interpolates.
@@ -52,7 +45,7 @@ refresh_review_context() {
   local blob feedback
   blob=$(get_issue_branch_and_comments "$issue" 2>/dev/null || echo '{}')
   feedback=$(printf '%s' "$blob" \
-    | jq -r '[.comments[] | select(.body | test("Code Review.*Changes Requested|FIXES_NEEDED"))][0].body // empty' 2>/dev/null || echo "")
+    | jq -r '[.comments[] | select(.body | test("Code Review.*Changes Requested|FIXES_NEEDED|(?m)^VERDICT: REQUEST_CHANGES[[:space:]]*$"))][0].body // empty' 2>/dev/null || echo "")
   if [ -n "$feedback" ] && [ "${#feedback}" -gt 20 ]; then
     printf '\n--- Code Review Feedback (PRIORITY) ---\n%s\nAddress ALL fixes before remaining tasks.\n--- End feedback ---\n' "$feedback"
   fi
@@ -133,6 +126,7 @@ build_summary_comment() {
 }
 
 precondition_linear
+precondition_runner implement
 
 if [ -n "${1:-}" ]; then
   ISSUE="$1"
@@ -152,6 +146,8 @@ fi
 # spawns the pipeline seconds later; in that window the state can change
 # (parallel rebase agent, human intervention). Confirm the issue is still in
 # Build before doing any work.
+bureau_stage_enter "$ISSUE" "$@"
+
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
 if [ "$ACTUAL_STATE" != "Build" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Build'. Skipping."
@@ -381,13 +377,10 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   GOAL_CONDITION="every '[ ]' checkbox in $TASKS_FILE has become '[X]' AND a fenced JSON block at the end of the turn reports status=COMPLETE with tasks_done > 0. Report status=PARTIAL+commit-summary if you got real work done but couldn't finish; status=NEEDS_HUMAN if a task requires info not in the spec; status=STUCK if no progress is possible. Stop after $MAX_ITER turns regardless."
 
   set +e
-  if [ -n "$TIMEOUT_CMD" ]; then
-    RESULT=$($TIMEOUT_CMD "$TOTAL_TIMEOUT" $CLAUDE --append-system-prompt "$IMPL_SYSTEM" "/goal $GOAL_CONDITION" 2>&1)
-  else
-    RESULT=$($CLAUDE --append-system-prompt "$IMPL_SYSTEM" "/goal $GOAL_CONDITION" 2>&1)
-  fi
+  RESULT=$(BUREAU_STAGE_TIMEOUT="$TOTAL_TIMEOUT" "${CLAUDE[@]}" --append-system-prompt "$IMPL_SYSTEM" "/goal $GOAL_CONDITION")
   CLAUDE_EXIT=$?
   set -e
+  [ "$CLAUDE_EXIT" = 0 ] || exit "$CLAUDE_EXIT"
 
   record_stage_cost "$RESULT" "$ISSUE" "implement"
 
@@ -492,13 +485,14 @@ At the end of your work, emit a single fenced json block so the shell can summar
 \`\`\`"
 
   set +e
-  if [ -n "$TIMEOUT_CMD" ]; then
-    RESULT=$($TIMEOUT_CMD "$THIS_TIMEOUT" $CLAUDE "$PROMPT" 2>&1)
-  else
-    RESULT=$($CLAUDE "$PROMPT" 2>&1)
-  fi
+  RESULT=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-implement.schema.json" "$PROMPT")
   CLAUDE_EXIT=$?
   set -e
+  commit_codex_changes implement "$ISSUE"
+  if [ "$CLAUDE_EXIT" != 0 ]; then
+    echo "Provider pass failed with exit $CLAUDE_EXIT; preserved any changes. See provider evidence." >&2
+    exit "$CLAUDE_EXIT"
+  fi
 
   # EXP-671 — record this iteration's token usage + est. $ (no-op unless cost
   # tracking is enabled and the output carries a usage envelope).
@@ -630,9 +624,15 @@ if [ "$COMMITS_TOTAL" -gt 0 ]; then
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
     echo "  [DRY_RUN] would: git commit --allow-empty + push (CI checkpoint)"
   else
-    git commit --allow-empty -m "$ISSUE: bureau implement checkpoint (CI re-trigger)" --no-verify >/dev/null
+    git commit --allow-empty -m "$ISSUE: bureau implement checkpoint (CI re-trigger)" -m "Bureau-Generated: true" --no-verify >/dev/null
     git push origin HEAD || true
   fi
+fi
+
+if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then
+  TEST_COMMAND=$(bureau_get '.repo.test_command // empty')
+  [ -n "$TEST_COMMAND" ] || { echo 'Codex completion needs repo.test_command for independent verification.' >&2; exit 24; }
+  bash -c "$TEST_COMMAND" || exit 14
 fi
 
 PR_URL=""

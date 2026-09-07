@@ -31,8 +31,10 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
+BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
+# shellcheck disable=SC1090
 if [ -f .env ]; then source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then source "$SCRIPT_REPO/.env"
+elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
 else echo "ERROR: No .env found"; exit 1; fi
 
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
@@ -72,6 +74,8 @@ else
   fi
   echo "Picked: $ISSUE"
 fi
+
+if [ "$DRY_RUN" = false ]; then bureau_stage_enter "$ISSUE" "$@"; fi
 
 echo ""
 echo "═══════════════════════════════════════"

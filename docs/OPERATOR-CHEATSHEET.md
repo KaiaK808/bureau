@@ -1,171 +1,119 @@
-# Bureau Operator Cheat-Sheet
+# Bureau operator cheat sheet
 
-For an **agent driving the pipeline** in a repo that has bureau-init installed. Quick reference; deeper detail in [`configuration.md`](configuration.md), [`recipes.md`](recipes.md), and [`exit-codes.md`](exit-codes.md).
+## Current Codex task
 
-## Mental model
+Install Codex interfaces with `$bureau-init --target codex` or `both`. Then use `$bureau TEAM-123 through review` or the specific `spec`, `implement`, `qa`, and `review` operations. The current task performs the work using its selected model; it does not launch a nested Claude/Codex CLI.
 
-Issues are the unit of work. A ticket flows **Triage → Spec → Spec-Review → Build → QA → Code-Review → Merge → Done**, one LLM agent per stage. You don't write the code — you write a good **issue body** (it becomes the build spec) and drive the machinery.
+Inspect `$bureau status` before preparing work. `$bureau resume RUN_ID` reads the saved branch, artifacts and explanation. Follow the configured state IDs and canonical `bureau-branch` marker. Preserve current changes and other worktrees. Review stops before merge by default.
 
-Two kinds of artifact, on purpose:
-- **Deterministic bash** (`scripts/`): mechanical, cron-friendly, resumable — `shepherd.sh`, `orchestrate.sh`, the `*-pipeline.sh` stages.
-- **Brains** (`templates/workflows/*.js`, run as workflows): judgment that can't be hard-coded — e.g. `conflict-aware-schedule`. Brains *plan*; bash *executes*. The handshake is a small JSON file.
+The [app setup guide](../templates/skills/bureau/references/app-setup.md) provides worktree setup and terminal actions. Use `bash scripts/bureau-app.sh doctor` for read-only diagnostics and `bash scripts/bureau-app.sh test` for the real `repo.test_command`.
 
-## Setup (once per repo)
+## One background unit
 
-1. Run `/bureau-init` → scaffolds `scripts/`, `.bureau.json`, Linear + speckit wiring.
-2. Edit `.bureau.json`: Linear team + state IDs, project, per-stage `model`, optional per-stage `runner`. See [`configuration.md`](configuration.md).
-
-## Drive ONE ticket
-
-```bash
-scripts/shepherd.sh --no-tmux EXP-123
-```
-Runs that ticket through every stage to a terminal state. Builds in `.worktrees/shepherd` by default; pass `--worktree DIR` for a per-ticket checkout.
-
-**Dry-run overlay** — safe first-run when you're not sure what shepherd will do:
-
-```bash
-BUREAU_DRY_RUN=1 scripts/shepherd.sh --no-tmux EXP-123
+```sh
+python3 scripts/bureau-doctor.py --mode background
+bash scripts/bureau-tick.sh --no-merge
+cat logs/bureau-tick.json
 ```
 
-Logs `DRY-RUN:` at every mutation site (Linear state moves, comments, `git push`, `gh pr create`). Nothing external changes; Claude prompts still run, files still change in the worktree, so you see the full decision sequence.
+At most one eligible stage runs in a claimed disposable worker. A successful process does not itself mean a completed ticket. Read `outcome`: waiting, advanced, completed, stopped_for_review, paused, blocked, or failed.
 
-## Continuous mode (queue-loop as cron worker)
+For one named ticket across stages:
 
-For always-on operation instead of on-demand shepherding:
-
-```bash
-scripts/start-bureau-v2.sh                    # → tmux session bureau-v2-<basename>
-tmux attach -t bureau-v2-$(basename "$PWD")   # watch it work
+```sh
+bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123
 ```
 
-One `queue-loop.sh` per enabled agent polls Linear on `agents.poll_interval_minutes`. Each tick picks one issue and runs its stage. Kill with `tmux kill-session`.
+The review boundary exits 20, human attention/pause 25, cancelled tickets 26. These prevent serial execution from treating halted work as Done. A full merge-enabled run requires authorization and all existing CI/base checks.
 
-Override the session name for parallel repos:
+Background code review compares the PR's fetched head against its actual target branch. For a dependent PR, this excludes changes already supplied by the parent PR. Both commits are pinned for the review; unavailable or invalid target metadata stops execution before provider calls. Retargeting the PR or advancing either remote branch reopens a saved review stop. Review approval does not bypass the separate merge gates.
 
-```bash
-cd ~/projects/sofa         && scripts/start-bureau-v2.sh   # → bureau-v2-sofa
-cd ~/projects/brainhuggers && scripts/start-bureau-v2.sh   # → bureau-v2-brainhuggers
-BUREAU_SESSION_NAME=nightshift scripts/start-bureau-v2.sh  # → nightshift
+## Continuous mode
+
+For explicitly requested always-on operation:
+
+```sh
+bash scripts/start-bureau-v2.sh
+tmux attach -t "bureau-v2-$(basename "$PWD")"
 ```
 
-**Multi-repo caveat.** `LINEAR_API_KEY` is per-operator, one key across all repos — make sure each repo's `.bureau.json` points at a **different Linear project** or two workers will race on the same issues.
+One supervised queue per enabled agent polls at `agents.poll_interval_minutes`. This legacy launcher can proceed through merge; use the bounded tick or `shepherd.sh --no-merge` when the requested boundary is review. The launcher requires tmux and the configured background providers; current app tasks do not.
 
-## Run a BATCH — the executor (the agent as conductor)
+Use `BUREAU_SESSION_NAME=nightshift bash scripts/start-bureau-v2.sh` for a custom name. Different repositories need disjoint Linear project scopes: ownership is shared between worktrees of one Git repository, not between separate clones. Select one active team per configuration.
 
-Four moves:
+To stop dispatch, run `python3 scripts/bureau-runtime.py pause`, inspect active runs and let their stages finish. Stop the selected tmux session only after accounting for its workers. Killing tmux alone does not prove that nested provider processes stopped.
 
-### 1. SELECT — *decide what to shepherd*
-Pull **Triage** tickets that are well-specified (real spec-grade body), labelled build-ready (e.g. `ai-implementable`), and unblocked. Prefer independent + cheap first; respect dependencies. (Backlog/upstream-triage *brains* are repo-specific add-ons, not bundled here — for single upstream commits use `scripts/upstream-port.sh`.)
+## Dry-run preview
 
-### 2. PLAN — *which to parallelize* (don't decide by hand)
-Run the **`conflict-aware-schedule`** workflow (`templates/workflows/conflict-aware-schedule.js`) over the chosen tickets. It predicts each ticket's **file footprint**, builds the collision graph, and emits:
-```json
-{ "serialChains": [["EXP-12","EXP-9"]], "parallelSafe": ["EXP-7","EXP-8"] }
-```
-File-colliders are serialized; independents run in parallel. You can also hand-write this JSON.
-
-### 3. EXECUTE — *run it concurrently, on budget*
-```bash
-scripts/orchestrate.sh --execute --schedule schedule.json --max-concurrent 3
-```
-Each lane runs in its **own git worktree** (`.worktrees/shepherd-lane-N`) → builds never collide. Levers:
-
-| Lever | How | Buys you |
-|-------|-----|----------|
-| Concurrency | `--max-concurrent N` | parallel lanes (set N ≈ cores **and** quota headroom) |
-| Off-quota review | `BUREAU_RUNNER_CODE_REVIEW=codex` (or `.agents.code_review.runner` in `.bureau.json`) | `code_review` runs on Codex, off the Claude session quota |
-| Throttle | `.bureau.json` `usage_threshold_pct` + a wired usage signal | long unattended runs **pause near the quota limit** instead of stranding mid-build |
-| Cost visibility | `.bureau.json` `"cost_tracking": true` → `scripts/bureau-status.sh --cost` | per-stage $/token burn, so you size the next batch |
-
-### 4. BABYSIT + LAND
-Watch stage transitions (tail the orchestrate log). On green gates `merge-pipeline.sh` merges → **Done** autonomously. On a `needs-human` park → check the PR's **real CI** before believing it (in-sandbox QA false-negatives happen), then merge if green or fix/re-spec.
-
-### How it clicks together
-```
-backlog → conflict-aware-schedule (BRAIN: plan)
-              ↓ schedule.json { serialChains, parallelSafe }
-         orchestrate.sh --execute --max-concurrent N (BASH: concurrent worktree lanes)
-              ↓ per lane
-         shepherd.sh → spec → … → qa (Claude) → code_review (Codex) → merge
-              ↓
-         bureau-status --cost · throttle pauses near limit · you merge parks on green CI
+```sh
+BUREAU_DRY_RUN=1 bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123
 ```
 
-### Decision heuristics the agent owns
-- **Batch size** ← cost budget (cost tracking informs it; throttle protects it).
-- **Concurrency cap** ← cores ∧ quota headroom.
-- **Gate-on-human vs merge-if-green** ← is it outward-facing / taste-critical / first-of-a-kind? If yes, gate; else merge-if-green.
+Queue/shepherd previews can read Linear but do not invoke creative work or reset worktrees. They do not qualify authentication for a model, project tests or an end-to-end ticket. Use a representative bounded live run after setup is coherent.
 
-## Runner / cost — and the one hard rule
+## Several background tickets
 
-- `code_review` → **Codex** is safe + cheap (reads diffs only, off the Claude quota). Set `.agents.code_review.runner="codex"` or `BUREAU_RUNNER_CODE_REVIEW=codex`.
-- ⚠ **NEVER route `qa` (or any stage that runs the build/test suite) to Codex.** Codex's `exec` sandbox has no network listeners, trust-store, or git-metadata writes, so real suites fail spuriously → the stage false-halts `needs-human`. Keep **qa / implement / spec on Claude.** (`claude_cmd_for_stage` emits a stderr warning if you try.)
+1. Select well-defined eligible tickets and inspect dependencies.
+2. Predict concrete repository-relative paths in the current task, saving `tickets` and `predictions` arrays. Use `node scripts/bureau-schedule-cli.mjs input.json > schedule.json`. The installed Claude workflow uses the same partition core.
+3. Resolve every `blocked` prediction; failed/missing predictions stay in the output. Inspect the proposed components before execution.
+4. Run `bash scripts/orchestrate.sh --execute --schedule schedule.json --max-concurrent 3 --no-merge`. Each lane uses its own claimed disposable checkout. The shared Git history and merge gates still constrain concurrent changes.
 
-## Hard rules / gotchas
+A schedule contains `parallelSafe`, `serialChains`, `edges`, and `blocked`. The executor rejects duplicate IDs, malformed schedules and unresolved predictions. Predictions are advisory and can underestimate conflicts; ownership does not eliminate eventual merge conflicts.
 
-- **The issue body IS the spec.** Vague body → vague build. Always *What / Why / Target-modules / Acceptance* (+ a red-line for behaviour features).
-- **Worktree isolation → builds never conflict.** All conflicts are at **merge**, on shared files (a command registry/enum, dispatch arms, auto-gen docs). Mechanical: `git merge origin/main` per PR. Batching N features that each edit the *same* registry file = N−1 small keep-both resolutions.
-- **Real CI is the truth, not the in-pipeline QA.** Always verify a parked ticket's actual CI.
-- **Wrong-scope build** (spec generated from a stale body) → close the PR, fix the body, relaunch, gate the regenerated spec *before* build.
-- **Branch before committing**; never push the default branch directly.
-- **Exit codes are classified** (`{0 ok, 14 build, 15 test, 17 conflict, 18 gh/guard}`) — halts are loud, never silent. See [`exit-codes.md`](exit-codes.md).
+## Supervision and recovery
 
-## CI (the merge gate's source of truth)
+- `python3 scripts/bureau-runtime.py pause` stops future dispatch; running stages finish. `unpause` resumes dispatch.
+- `python3 scripts/bureau-runtime.py status` reports claims and compact runs. `resume RUN_ID` retrieves full saved context and current ticket state.
+- A failed worker with local/unpublished progress loses its disposable registration. Inspect and resume it instead of resetting it.
+- Use the [supervision guide](../templates/skills/bureau/references/supervision.md) for native app automation when explicitly requested. One tick per wakeup; unchanged outcomes remain quiet.
+- `bash scripts/bureau-status.sh --cost` reports available CLI estimates. Configure `session.cost_tracking`; unknown cost is unavailable. Claude and Codex quota signals are independent.
 
-`merge-pipeline.sh` enforces **green CI** independently of GitHub's `mergeStateStatus`, so the repo needs a real CI workflow. `/bureau-init` offers to scaffold one at `.github/workflows/ci.yml` (also `/bureau-init --resync-ci` to refresh it).
+## Provider selection
 
-- Default `runs-on: ubuntu-latest` (GitHub-hosted, safe for public repos). Swap to your own `[self-hosted, ...]` labels only if the runner is private + non-production.
-- The `- run: bash tests/run.sh` step is a **placeholder** — replace with your repo's real build/test command (the file carries commented Rust + bureau-init examples).
-- ⚠ **Self-hosted runners on public repos execute fork-PR code on your host** — textbook RCE class. If you must self-host: enable Settings → Actions → Fork PRs → "Require approval for outside collaborators", never pair `pull_request_target` with an `actions/checkout` of the PR head, and treat the runner as public-untrusted.
+`agents.runner` selects the default background CLI; `agents.STAGE.runner` overrides it. `BUREAU_RUNNER_STAGE` is the environment override. Use provider-specific models and an actual `repo.test_command`. Code review/research default to read-only; implementation, QA and spec repair require their permitted write/test capabilities. The shell executor owns Codex commits and independent implementation/QA test runs.
+
+Claude `/goal` and Headroom apply only to Claude. Codex uses the portable bounded implementation loop. Environment restrictions must be reported separately from code failures. See [provider runtime](provider-runtime.md), [exit codes](exit-codes.md), [migration](migration.md) and [acceptance](codex-acceptance.md).
+
+
+## CI scaffolding
+
+In the current assistant, request `$bureau-init --resync-ci` (Codex) or `/bureau-init --resync-ci` (Claude). Preview the proposed workflow and preserve an existing custom one unless replacement is authorized. The generated job uses GitHub-hosted `ubuntu-latest`; replace its example test command with the adopting repository's actual checks.
+
+A self-hosted runner executing public fork-PR code exposes that host to untrusted code. Keep the hosted default for ordinary installation; a deliberate self-hosted setup needs an isolated host and an explicit fork-PR approval policy. Never check out an untrusted PR head in a privileged `pull_request_target` job.
 
 ## Token-efficiency toggles
 
-Three independent flags in `.bureau.json` `agents.*` — all default OFF. Concept: [`docs/token-efficiency.md`](token-efficiency.md). Full schema: [`docs/configuration.md`](configuration.md).
+These optional settings remain off by default and affect background calls. See [token efficiency](token-efficiency.md) and [configuration](configuration.md).
 
-| Flag | Effect (one-line) |
+| Setting | Effect |
 |---|---|
-| `use_goal_loop: true` | implement-pipeline drives via `/goal` (Haiku evaluates per turn) instead of the bash for-loop. Retires the EXP-573 / EXP-571 / EXP-624 / EXP-627 stuck-detector lineage. Requires Claude Code ≥ 2.1.139. |
-| `headroom_wrap: true` | Prefix `headroom wrap` on every `claude` invocation. Requires `pip install "headroom-ai[all]"` on the host. |
-| `caveman_level: "full"` | Compresses review-prose output ~65%. Installs JuliusBrussee/skills at /bureau-init time; scoped to review stages only — commits + PR bodies stay normal. |
+| `agents.use_goal_loop: true` | Uses Claude's `/goal` capability for implementation. Codex retains the portable bounded loop. Verify support in the selected Claude installation first. |
+| `agents.headroom_wrap: true` | Wraps Claude invocations with `headroom wrap`; install the wrapper before enabling it. |
+| `agents.caveman_level: "full"` | Requests compact review prose. Commits and PR descriptions retain normal wording. |
 
-Flip live; no script regen needed. Rollback = set the flag back.
+Changing a runtime flag does not install its optional tools or rewrite project instructions. Roll back through `--update` or a reviewed configuration edit; asset resync is separate.
 
 ## Needs-human recovery
 
-When a ticket parks with `needs-human`, the loud-failure contract wrote an audit trail. Read the story:
+Read the issue's latest blocker comment, the owning run and stage log:
 
-```bash
-# Every needs-human event as one TSV line — filter to today, filter to stage
-grep ESCALATED logs/escalations.log \
-  | grep "$(date -u +%Y-%m-%d)" \
-  | grep code-review
-
-# The matching JSON event (used by /bureau-learnings)
-grep "EXP-402" logs/events.jsonl | jq '.'
-
-# Per-stage session log for the pipeline that halted
-tail -100 logs/queue-<stage>.log
+```sh
+python3 scripts/bureau-runtime.py status
+rg 'ESCALATED' logs/escalations.log
+rg 'TEAM-123' logs/events.jsonl
+tail -100 logs/queue-code-review.log
 ```
 
-Recovery, in order:
-1. Read the last needs-human comment on the Linear issue — it names the halt class + reason.
-2. Real CI on the PR is the truth. Verify a parked "test-failed" halt against actual CI before believing the pipeline.
-3. Fix the underlying issue (spec, code, config, or the ticket description), then remove the `needs-human` label. On the next tick the queue picks it up from wherever it landed. Or use `shepherd.sh --no-tmux` to force-drive it now.
+Resolve the actual spec, code, configuration or environment problem. Verify project tests and required CI before removing the configured human label. A failed label update is not proof that the ticket is safely parked. Inspect any saved checkout and interrupted process groups before releasing ownership; do not reset it to make the next pick succeed. Once the blocker and ownership are reconciled, a bounded tick or `shepherd.sh --no-tmux --no-merge TEAM-123` can continue the selected work.
 
-## Memory loop (logs → LESSONS.md)
+## Memory loop and status
 
-`queue-loop.sh` appends one JSONL event per stage run to `logs/events.jsonl`. Weekly, drain it into curated learnings:
+Use `$bureau-learnings` in Codex or `/bureau-learnings` in Claude to turn events and review feedback into `LESSONS.proposed.md`. Incorporate accepted findings into the existing `LESSONS.md` and review the diff before committing. Spec and code-review prompts consume accepted lessons as advisory context; the command does not auto-commit them.
 
+```sh
+bash scripts/bureau-status.sh
+bash scripts/bureau-status.sh --config
+bash scripts/bureau-status.sh --cost
 ```
-/bureau-learnings
-```
 
-Slash command mines the events + Linear comments and drafts `LESSONS.md`. The draft is never auto-committed — read the diff, cut what doesn't ring true, `git add LESSONS.md` when you're happy. Spec + code-review pipelines selectively include `LESSONS.md` in their prompts as advisory context (not pinned rules). To dismiss a finding, delete its bullet; if the pattern recurs, next `/bureau-learnings` will re-propose it.
-
-## Status
-
-```bash
-scripts/bureau-status.sh            # board state
-scripts/bureau-status.sh --cost     # per-stage cost (if cost_tracking enabled)
-```
+The status and cost views help inspect a run; unknown cost is unavailable, not zero. See [recipes](recipes.md) for upstream ports, budgets, scheduling and usage-signal setup.

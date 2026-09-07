@@ -1,6 +1,6 @@
 # Recipes
 
-Common config patterns. Drop these into `.bureau.json` or your launch command as needed.
+Configuration overlays and launch examples. Merge settings into the existing `.bureau.json`; preserve project IDs, credentials and unrelated choices. Examples that run background work use the review-only boundary.
 
 ---
 
@@ -40,9 +40,15 @@ Use a strong reasoning model for spec, a fast cheap model for spec-review, and a
 }
 ```
 
-Resolution: per-stage > `agents.model` > CLI default. Absent keys fall through.
+These are illustrative Claude model identifiers; use models available to the selected account. Provider/environment overrides also participate in [model precedence](provider-runtime.md). Legacy v1 model fields retain their Claude meaning after migration.
 
-**Provider mixing.** Anthropic models with reasoning enabled require other Anthropic models in the same context. Bureau is fine — every pipeline run is a fresh subprocess. Cross-provider stage assignment works as long as each stage's full conversation stays within its provider.
+For mixed providers, use a stage runner and provider-specific models. Example overlay (merge into the existing configuration):
+
+```json
+{"agents":{"runner":"claude","implement":{"enabled":true,"runner":"codex"},"qa":{"enabled":true,"runner":"codex"},"code_review":{"enabled":true,"runner":"claude"},"workbench_panes":0},"repo":{"test_command":"python3 -m unittest discover"}}
+```
+
+Set a real project test command. Leaving models unset uses each provider's CLI defaults. A generic Claude model does not leak into the Codex stages. Current app tasks use their selected model independently. See [provider runtime](provider-runtime.md) and [acceptance](codex-acceptance.md).
 
 ---
 
@@ -60,49 +66,52 @@ Or pass the flag directly:
 ./scripts/queue-loop.sh all 5 --dry-run
 ```
 
-The pipeline runs to completion — Claude prompts execute, files change in the worktree — but every mutation logs `DRY-RUN:` instead of hitting the network. Useful for:
+Queue and shepherd dry-runs report candidate stages without invoking creative work or resetting worktrees. They can read Linear, so they still need appropriate credentials. A dry-run does not validate a model's output, install dependencies, run tests, or prove live workflow completion.
 
-- Smoke-testing a new agent config before turning it on
-- Verifying a model swap (`BUREAU_MODEL_CODE_REVIEW=...`) doesn't break parsing
-- Confirming `pick_issue` returns the issue you expect
+For current-task work, use `$bureau TEAM-123 through review`. For a single background unit, use `bash scripts/bureau-tick.sh --no-merge`. See the [operator guide](OPERATOR-CHEATSHEET.md).
 
 ---
 
 ## Drive one ticket end-to-end (shepherd)
 
-Run a single ticket through every stage sequentially — no cron, no queue, no other tickets competing.
+Drive one selected ticket through its configured stages without starting continuous queues:
 
 ```sh
-./scripts/shepherd.sh --no-tmux EXP-123
+bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123
 ```
 
-Uses `.worktrees/shepherd/` by default; pass `--worktree DIR` for a per-ticket checkout. Combine with dry-run:
+The default disposable checkout is `.worktrees/shepherd/`; `--worktree DIR` selects another worker path. Existing unregistered or unfinished checkouts are preserved and can refuse reuse. Inspect ownership before resuming; never point a disposable worker at an app checkout.
 
 ```sh
-BUREAU_DRY_RUN=1 ./scripts/shepherd.sh --no-tmux EXP-123
+BUREAU_DRY_RUN=1 bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123
 ```
 
-**When to use:** smoke-testing a fresh `.bureau.json` against a real Linear ticket, driving a single stuck ticket back into motion, or shipping a one-off without spinning up the whole queue.
+The preview reads state and reports the route without running the stages. In a live pass, exit 20 means the review boundary was reached, 25 means pause/human attention, and 26 means cancellation. None means the ticket was merged. Omitting `--no-merge` permits the existing merge path, so do so only for an authorized end-to-end merge run.
 
-**When not to:** batch runs — that's what orchestrate is for. Continuous cron — that's what `start-bureau-v2.sh` is for.
+**When to use:** a representative acceptance ticket or deliberate recovery after resolving its blocker. For batches use orchestrate; for explicitly requested continuous work use `start-bureau-v2.sh`.
 
 ---
 
 ## Ship a batch (orchestrate + conflict-aware-schedule)
 
-Two-step handshake: a "brain" workflow plans, bash executes. The planner predicts each ticket's file footprint, builds the collision graph, and emits `{ serialChains, parallelSafe }`. Then orchestrate spawns one worktree lane per non-colliding ticket.
+Predict file footprints, partition overlaps, inspect the schedule, then execute it. The current app task can prepare `input.json`; Claude's installed workflow uses the same partition core. Example shape (replace the tickets and paths with actual predictions):
 
-```sh
-# 1. Plan — the conflict-aware-schedule brain writes schedule.json
-./scripts/orchestrate.sh --plan EXP-7 EXP-8 EXP-9 EXP-12 > schedule.json
-
-# 2. Execute — parallel-safe lanes, serial for the collision chains
-./scripts/orchestrate.sh --execute --schedule schedule.json --max-concurrent 3
+```json
+{
+  "tickets": [{"ticket":"TEAM-7","title":"Update guide"},{"ticket":"TEAM-8","title":"Update parser"}],
+  "predictions": [{"ticket":"TEAM-7","predicted_paths":["docs/guide.md"]},{"ticket":"TEAM-8","predicted_paths":["src/parser.py"]}]
+}
 ```
 
-Each lane runs in its own git worktree (`.worktrees/shepherd-lane-N`) so builds never collide. Cap `--max-concurrent` at roughly `cpu-cores` and your Claude quota headroom, whichever is lower.
+```sh
+node scripts/bureau-schedule-cli.mjs input.json > schedule.json
+# Inspect parallelSafe, serialChains, edges and blocked before execution.
+bash scripts/orchestrate.sh --execute --schedule schedule.json --max-concurrent 3 --no-merge
+```
 
-**When to use:** shipping a batch of ready-to-go tickets with mixed file footprints. The pattern is SELECT → PLAN → EXECUTE → BABYSIT — see [OPERATOR-CHEATSHEET.md](OPERATOR-CHEATSHEET.md) for the full walkthrough.
+The planner exits 25 if predictions are missing or invalid; resolve every `blocked` entry before execution. `orchestrate.sh` does not have a `--plan` option. Each lane uses `.worktrees/shepherd-lane-N`; a stopped or failed ticket halts its serial chain while independent lanes can continue. Review-only execution therefore does not automatically drain a chain past an unmerged dependency.
+
+Limit concurrency according to local build capacity and the selected providers' available quota. Separate checkouts isolate files, but shared Git state, inaccurate predictions and later merges can still conflict. See the [operator guide](OPERATOR-CHEATSHEET.md).
 
 ---
 
@@ -130,7 +139,7 @@ Fast-path cherry-pick from a configured upstream — skips the shepherd ceremony
 ./scripts/upstream-port.sh --sha 53953a8 --with-llm    # LLM-assisted conflict resolution
 ```
 
-`--with-llm` invokes Claude *once* on a `git apply --3way` conflict — Claude translates the upstream intent against your local code. Off by default. PR title carries `(LLM-assisted)` so reviewers know to look harder.
+`--with-llm` makes one bounded call through the configured `upstream_port` provider on a `git apply --3way` conflict. It is off by default; non-interactive use additionally requires `--yes`. Inspect the estimated work before opting in. The PR title carries `(LLM-assisted)`. Upstream PR-body summaries are a separate opt-in via `agents.upstream_summary`.
 
 **When to use:** you maintain a fork of an actively developed upstream and want mechanical ports without the full shepherd pipeline.
 
@@ -147,13 +156,13 @@ Fast-path cherry-pick from a configured upstream — skips the shepherd ceremony
 }
 ```
 
-Every pipeline stage appends token counts + estimated $ to `~/.bureau/cost/<issue>.jsonl`. Report:
+Provider calls with available usage evidence record token counts and CLI estimates in `~/.bureau/cost/<issue>.jsonl` (overridable with `BUREAU_COST_DIR`). Report:
 
 ```sh
 ./scripts/bureau-status.sh --cost
 ```
 
-Prints a per-issue, per-stage $ + token summary. Zero overhead when disabled — the write only fires when the flag reads true.
+Prints a per-issue, per-stage summary. Unknown cost is `unavailable`, not zero, and CLI estimates are separate from actual billed dollars. Disabling the flag suppresses the optional cost records.
 
 **When to use:** as adoption ramps. Pairs with the token-efficiency stack — turn `cost_tracking` on, measure the baseline, flip `use_goal_loop` / `caveman_level` / `headroom_wrap`, measure the delta.
 
@@ -163,64 +172,60 @@ Prints a per-issue, per-stage $ + token summary. Zero overhead when disabled —
 
 ## Mixed provider — Codex on code_review
 
-Off-quota code review by routing that one stage through Codex, keeping everything else on Claude.
+Route background review through Codex while keeping the default provider Claude:
 
-```jsonc
-// .bureau.json
+```json
 {
   "agents": {
     "runner": "claude",
-    "code_review": { "runner": "codex" }
+    "code_review": { "enabled": true, "runner": "codex" }
   }
 }
 ```
 
-Codex reads the diff and writes review comments; it never mutates the branch, so its restrictive exec sandbox is fine. `implement`, `qa`, `spec` stay on Claude where they need network + git-metadata writes.
+The review model inspects the pinned PR head against its actual target branch. The shell pipeline publishes the review and performs state routing; an approval alone never authorizes merge.
 
-Codex model selection is separate from the Claude-side `agents.<stage>.model`:
+Codex-specific overrides work with both legacy and v2 model semantics:
 
 ```sh
-export BUREAU_CODEX_MODEL_CODE_REVIEW=o3
-./scripts/queue-loop.sh code-review 5
+: "${CODEX_REVIEW_MODEL:?Choose an available Codex model identifier}"
+BUREAU_CODEX_MODEL_CODE_REVIEW="$CODEX_REVIEW_MODEL" \
+  bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123
 ```
 
-**When to use:** your Claude session quota is the bottleneck and code-review is your heaviest stage. Codex is billed separately — this shifts spend without changing quality.
+Use `python3 scripts/bureau-provider.py --stage code_review --describe` in the trusted launch environment to confirm resolution without invoking a model. Account for `.env` overrides; this command does not source that file.
 
-**When NOT to use:** don't route `qa` or `implement` to Codex. Its exec sandbox has no network listeners, no trust-store, and no git-metadata writes — build/test suites fail spuriously and the stage false-halts with `needs-human`. `claude_cmd_for_stage()` fires a stderr warning if you try anyway.
+Codex implementation and QA also use the portable adapter. The shell executor owns commits and independent tests; configure a real `repo.test_command` and qualify the required environment capabilities. Do not infer full unattended support from installation alone. A provider change can affect output quality and usage, so measure it on a bounded ticket before broader adoption.
 
 ---
 
 ## Session-usage throttle
 
-Pause new work when Claude session usage approaches the quota. Needs a producer to write the signal file — nothing ships in Bureau to populate it (ClaudeWatch is the community-standard tool; you can also write your own).
+Pause new work when the selected provider's supplied usage signal reaches its threshold. Bureau does not produce account-usage signals itself. Supply one from an operator-controlled producer; ClaudeWatch-compatible files are supported for Claude.
 
-```jsonc
-// .bureau.json
+```json
 {
-  "session": {
-    "usage_threshold_pct":    80,
-    "pause_on_stale_data":  false
-  }
+  "session": { "usage_threshold_pct": 80, "pause_on_stale_data": false }
 }
 ```
 
-`~/.bureau/session-usage.json` is the signal Bureau reads. Format:
+The default Claude signal is `~/.bureau/session-usage.json`, or `BUREAU_USAGE_FILE`. Its numeric timestamp fields use Unix seconds, updated by the producer:
 
 ```json
-{ "pct": 74.3, "timestamp": "2026-07-01T10:00:00Z" }
+{ "provider": "claude", "pct": 74.3, "reset_epoch": 1788775200, "updated_epoch": 1788773400 }
 ```
 
-The `pause_on_stale_data` toggle decides what to do when the signal is older than 5 min: `false` (default) = assume we're fine and keep working, `true` = assume the worst and pause.
+For Codex, set `BUREAU_CODEX_USAGE_FILE`, or point `BUREAU_USAGE_FILE` at a signal tagged `"provider":"codex"`. Claude usage never throttles Codex.
 
-**When to use:** long unattended cron runs where hitting quota mid-tick would strand an issue in an inconsistent state. The throttle pauses the *next* work unit, letting the current tick complete cleanly.
+When a signal is older than five minutes, `pause_on_stale_data: false` ignores it; `true` continues applying the configured percentage threshold to it. Missing signals mean unknown usage and allow dispatch in either mode. A bounded tick returns for a later invocation; continuous workers can wait until the signal clears. This guard does not prevent provider quota failures during an active call.
 
-**Emergency bypass:** `BUREAU_DISABLE_THROTTLE=1` for the current process only. Doesn't touch JSON.
+`BUREAU_DISABLE_THROTTLE=1` skips this guard for the current process without changing JSON. Use only as a deliberate override after inspecting the signal.
 
 ---
 
 ## Monitor escalations
 
-Every `needs-human` event lands as one tab-separated line in `logs/escalations.log`. Tail it from anywhere:
+Background escalation sites append a tab-separated audit record after successfully adding the human label. Inspect the stage result and issue comment as well; a failed label update is not evidence of durable parking. Tail the log:
 
 ```sh
 tail -F logs/escalations.log
@@ -246,7 +251,7 @@ Hooks fire at five sites: code-review (cycle-limit / merge-fail-after-approve / 
 
 ## Tune the implement retry budget
 
-`implement-pipeline.sh` runs up to `BUREAU_IMPL_MAX_ITER` Claude passes per cron tick (default 3), each capped at `BUREAU_IMPL_ITER_TIMEOUT` seconds (default 1800), with `BUREAU_IMPL_TOTAL_TIMEOUT` (default 5400) bounding cumulative cost.
+`implement-pipeline.sh` runs up to `BUREAU_IMPL_MAX_ITER` provider passes per tick (default 3), each capped at `BUREAU_IMPL_ITER_TIMEOUT` seconds (default 1800), with `BUREAU_IMPL_TOTAL_TIMEOUT` (default 5400) bounding cumulative cost.
 
 Aggressive (small batches, fast feedback):
 
@@ -264,48 +269,23 @@ BUREAU_IMPL_ITER_TIMEOUT=2400
 BUREAU_IMPL_TOTAL_TIMEOUT=10800
 ```
 
-Single-strike stuck detection (no `[X]` marks AND no review fixes AND no commits in an iter ⇒ park) is independent of these knobs — Claude spinning without progress always bails fast regardless of remaining iterations.
+The stuck detector treats an unproductive first `PARTIAL` iteration differently from a later partial result after committed progress. Inspect the final status and Git evidence rather than assuming every zero-commit iteration is stuck.
 
-On macOS the per-iter cap requires `brew install coreutils` (provides `gtimeout`). Without it the script falls back to cumulative-only with a WARN.
+The Python provider adapter enforces the remaining per-iteration bound for both providers on macOS and Linux. `gtimeout` is not required for this path. Independent project tests and publication can extend the overall stage beyond the provider-loop budget.
 
 ---
 
 ## Token-efficiency stack
 
-Three opt-in layers that compose: `/goal` (control flow), caveman (output style), Headroom (input compression). Each is independent — enable in priority order, measure, then add the next. Full concept docs: `docs/token-efficiency.md`. Flag schema: `docs/configuration.md`.
+Three optional settings address Claude implementation control flow (`use_goal_loop`), review wording (`caveman_level`) and Claude prompt compression (`headroom_wrap`). All start disabled; Codex retains the portable bounded implementation loop regardless of the goal flag. See [configuration](configuration.md) and the [historical rationale](token-efficiency.md).
 
-**Recommended ramp:**
+Enable one change at a time through the configuration-only update flow, measure a representative ticket, then decide whether to keep it:
 
-1. **`use_goal_loop: true` first.** Smallest behavioural surface — replaces the implement-pipeline retry loop with Claude Code's native `/goal` slash command. No new tools to install. Closes the EXP-573 / EXP-571 / EXP-624 / EXP-627 stuck-detector lineage structurally. Run an EXP-621-shape ticket end-to-end and confirm `status=COMPLETE → Build Review` happens via `/goal` rather than the bash loop.
+1. Verify `/goal` works in the selected Claude installation before enabling `agents.use_goal_loop`. The provider adapter still bounds the call with the total implementation timeout.
+2. Select `agents.caveman_level` only when compact review prose is useful to the team. Installing an optional skill or rewriting project instructions is a separate setup choice; resync does not automatically compress `CLAUDE.md`.
+3. Install the optional `headroom` wrapper before setting `agents.headroom_wrap`. The adapter reports a missing wrapper; it does not silently bypass it. Validate the installed tool and measure the resulting calls rather than assuming a particular compression ratio.
 
-   ```sh
-   jq '.agents.use_goal_loop = true' .bureau.json | sponge .bureau.json
-   ```
-
-   Requires Claude Code v2.1.139+ on the host. Verify with `claude --version`. On older builds the slash command is a no-op and the pipeline silently falls back through the existing iter loop — broken, not catastrophic, but worth catching early.
-
-2. **`caveman_level: "full"` next.** Compresses output and shrinks the per-session CLAUDE.md load. Trigger an install:
-
-   ```sh
-   jq '.agents.caveman_level = "full"' .bureau.json | sponge .bureau.json
-   # On the next /bureau-init or --resync-scripts, Phase 6e runs:
-   #   npx skills@latest add JuliusBrussee/skills
-   #   /caveman-compress CLAUDE.md
-   ```
-
-   Scoped to review prose only — commit messages and PR bodies are unaffected. Levels: `lite` (drop filler), `full` (default), `ultra` (telegraphic), `wenyan` (classical Chinese — only enable in repos with Chinese-reading reviewers).
-
-3. **`headroom_wrap: true` last.** Biggest impact (60-95% input reduction on tool-output-heavy stages), biggest surface — wraps the `claude` binary itself via `headroom wrap`. Install Headroom first:
-
-   ```sh
-   pip install "headroom-ai[all]"
-   headroom --version    # confirm
-   jq '.agents.headroom_wrap = true' .bureau.json | sponge .bureau.json
-   ```
-
-   The proxy isn't started — `headroom wrap` handles its own process management per invocation. CacheAligner stabilizes prompt-cache prefixes so per-iter calls actually hit the Anthropic cache (the pre-flag dynamic context shifted enough turn-to-turn that most prompt-cache hits were missed).
-
-Rollback at any layer: flip the flag back to `false` / `"off"` in `.bureau.json` and the pipeline reverts on the next tick — no script changes, no state migration.
+Use `session.cost_tracking` to retain available usage estimates, keeping unknown costs unavailable. Rollback is a reviewed setting change back to `false` or `"off"`; it needs no asset regeneration. Change configuration between stages, not during a live run.
 
 ---
 
@@ -328,15 +308,15 @@ See [exit codes](exit-codes.md) for the full alert classification.
 
 ## Multi-repo, side-by-side
 
-Each repo gets its own tmux session, scoped by folder name. Run unlimited pipelines in parallel:
+Each repo gets its own tmux session, scoped by folder name. Size parallel activity to machine capacity and provider quotas:
 
 ```sh
-cd ~/projects/sofa          && ./scripts/start-bureau-v2.sh   # → bureau-v2-sofa
-cd ~/projects/brainhuggers  && ./scripts/start-bureau-v2.sh   # → bureau-v2-brainhuggers
+cd ~/projects/app          && ./scripts/start-bureau-v2.sh   # → bureau-v2-app
+cd ~/projects/api          && ./scripts/start-bureau-v2.sh   # → bureau-v2-api
 tmux ls | grep bureau-v2-                                      # both listed
 ```
 
-**Caveat:** the Linear API key is per-user across all repos. Make sure each repo's `.bureau.json` points at a *different Linear project* — otherwise two workers race on the same issues.
+**Caveat:** use disjoint Linear project scopes for independent repositories/clones. Ownership is shared by Git worktrees of one repository, not by unrelated clones. These continuous launchers can merge; use the bounded review-only commands when that is the requested boundary.
 
 ---
 
@@ -418,15 +398,15 @@ Mine the pipeline's own runs for recurring failure modes and review-feedback pat
 
    `logs/` is gitignored. `events.jsonl` is append-only — truncate it manually if it grows large; there's no auto-rotation in v1.
 
-2. **`/bureau-learnings` drafts `LESSONS.md`.** After a week of pipeline activity, run the slash command in the target repo. It:
+2. **`$bureau-learnings` or `/bureau-learnings` drafts `LESSONS.proposed.md`.** After a week of pipeline activity, run the Codex skill or Claude command in the target repo. It:
    - Filters events to the last 30 days.
    - Pulls Linear comments for failed and successfully-reviewed issues (via the Linear MCP).
    - Clusters failure modes by `(class, first-file-in-trace)`, review feedback by repeated 4–8-word n-grams.
    - Requires ≥3 distinct issues per finding — empty sections are explicitly labeled "below threshold," **not** filled with fabricated patterns.
-   - Writes a draft `LESSONS.md` at the repo root with three sections (failure modes / review feedback / stage timing p50/p90).
+   - Writes a draft `LESSONS.proposed.md` at the repo root with three sections (failure modes / review feedback / stage timing p50/p90).
    - **Never stages, commits, or pushes.**
 
-3. **You curate.** Review the diff, delete bullets you disagree with, edit the wording, then `git add LESSONS.md && git commit`. Anything you dismiss will be re-proposed by future runs if the pattern persists — that's a feature, not a bug.
+3. **You curate.** Read `LESSONS.proposed.md`, incorporate accepted findings into the existing `LESSONS.md`, preserve prior lessons, then review and commit that diff. Anything you dismiss will be re-proposed by future runs if the pattern persists — that's a feature, not a bug.
 
 4. **Pipelines read it back, advisory only.** `bureau-config.sh::build_lessons_context` reads `LESSONS.md` from cwd (the worktree root) and wraps it with a "Treat as advisory, not binding" preamble. The result is injected into:
    - `spec-pipeline.sh` Phase 1 (`speckit-specify`) — where decisions are first shaped.
@@ -436,7 +416,7 @@ Mine the pipeline's own runs for recurring failure modes and review-feedback pat
 
 ### Why human-in-the-loop (not auto-applied)
 
-Low-volume early data produces noisy clusters. Auto-applying would amplify garbage. Human curation gates the feedback loop and keeps signal high. There is no vector DB, no embeddings, no external LLM in this path — just `jq` over `events.jsonl` plus Linear MCP comment lookups.
+Low-volume early data produces noisy clusters. Auto-applying would amplify garbage. Human curation gates the feedback loop and keeps signal high. The current assistant analyzes the bounded event/comment evidence and proposes the draft. No vector database or embedding service is required; the existing lessons remain unchanged until the maintainer incorporates the proposal.
 
 ### Schema fields
 

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="6cf9a6f2df9492278860fcf72d570d7ad7703f8b14b96bc77a44cdfbf1536a91">
+<title>release-notes · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="claudecodex-support--draft-release-notes">Claude/Codex support —
+draft release notes</h1>
+<p><strong>Unreleased.</strong> No version, tag or GitHub Release has
+been selected or published. These notes describe the candidate source
+changes; the final release requires the verified commit and version
+described in the <a href="releases.html">release process</a>.</p>
+<p>Bureau can install interfaces for Claude Code, Codex, or both. Codex
+app tasks can prepare, perform, validate and resume individual Linear
+stages in their current checkout. Background stages can select Claude or
+Codex independently of the app model.</p>
+<h2 id="changes">Changes</h2>
+<ul>
+<li>Native Codex skills and managed AGENTS.md guidance, preserving
+Claude interfaces and project instructions.</li>
+<li>Deterministic installation previews and manifests, per-file conflict
+resolution, legacy Spec Kit integration and Git-hook preservation.</li>
+<li>Shared issue/workspace ownership, protected user checkouts and
+interrupted-work recovery.</li>
+<li>Provider adapters with bounded execution and structured results,
+provider-specific models/usage, diagnostics and bounded
+supervision.</li>
+<li>Review stops that persist across repeated ticks and environment
+loading, including configurations without a separate merge stage.</li>
+<li>Provider timeout/cancellation cleanup that stops descendants even
+after the immediate CLI process exits.</li>
+<li>Reviews of dependent PRs use their actual target branch and pinned
+commits; retargeting or changing those commits prevents stale
+approval.</li>
+<li>Configuration migration, Linux/macOS checks, and upgrade/rollback
+documentation.</li>
+<li>Updated field manual retaining the official repository's
+configuration, recipe and troubleshooting coverage.</li>
+</ul>
+<p>See the <a href="../../CHANGELOG.md">changelog</a>, <a
+href="migration.html">migration guide</a> and <a
+href="configuration.html">configuration reference</a>. The source
+repository is <a
+href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a>.</p>
+<h2 id="upgrade-an-existing-installation">Upgrade an existing
+installation</h2>
+<p>Update the actual source skill checkout to the reviewed
+<code>main</code> commit or a published release tag, refresh skill
+discovery, and then resync each adopting repository. Updating the source
+alone, or running <code>/bureau-init --update</code>, does not replace
+installed scripts. Check the source remote before updating.</p>
+<p>In Claude Code, after updating the source:</p>
+<pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
+<p>Use <code>--target claude</code> to retain Claude-only interfaces.
+Refresh Spec Kit separately with <code>--resync-speckit</code> and
+existing planning workflows with <code>--resync-workflows</code> where
+used. Review the preview and each custom-file conflict before applying.
+CI scaffolding remains opt-in.</p>
+<p>Pause new dispatch first. Preserve local and ignored files,
+credentials, configuration, custom scripts and unfinished worktrees. A
+legacy install without a manifest must not be treated as permission to
+overwrite differing files. Old unregistered workers require an explicit
+inspected handoff before reuse.</p>
+<p>V1 configuration remains supported. Normal schema migration preserves
+generic model fields as Claude settings with
+<code>model_compatibility: v1</code>; select Codex models through
+provider-specific settings. Adding Codex interfaces does not switch the
+background provider. One configuration operates one active Linear
+team.</p>
+<h2 id="qualification-and-limits">Qualification and limits</h2>
+<p>The <a href="codex-acceptance.html">acceptance record</a> distinguishes
+reproducible source fixtures, isolated live provider smoke and a
+maintainer-reported private adoption. The source suite contains 35
+suites covering installation, runtime, providers, recovery, review stops
+and rendered documentation. The selected release commit must pass its
+own full Linux/macOS CI before tagging.</p>
+<p>Representative live adoption exercised app stages, bounded Codex and
+mixed-provider routes, interruption/resume, project tests and durable
+review stops. It did not enable recurring dispatch or qualify a live
+automatic merge. Actual project dependencies, network/OS permissions,
+model access and workload-specific results need qualification in each
+adopting repository.</p>
+<p>App review and bounded ticks stop before merge by default. Continuous
+background pipelines require explicit stop settings where merging is
+undesired. Enabling recurring dispatch remains a separate choice.</p>
+<p>Rollback restores a coherent installed asset/configuration set after
+inspecting ownership. It cannot undo already published commits, PRs,
+Linear transitions or completed work. Published release tags must remain
+immutable.</p></main>
+</div>
+</body>
+</html>

@@ -66,10 +66,12 @@ EOF
   SCRIPTS_DIR="$SANDBOX/scripts"
   mkdir -p "$SCRIPTS_DIR"
   local f
-  for f in "$REPO_ROOT/templates/scripts/"*.sh; do
-    cp "$f" "$SCRIPTS_DIR/"
+  for f in "$REPO_ROOT/templates/scripts/"*; do
+    [ ! -f "$f" ] || cp "$f" "$SCRIPTS_DIR/"
   done
   cp "$LIB_DIR/stub-bureau-config.sh" "$SCRIPTS_DIR/bureau-config.sh"
+  sed -n '/^parse_claude_json() {/,${p;}' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/parse-result.sh"
+  sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/stop-boundary.sh"
 
   # Minimal .env in the sandbox cwd so the pipeline's `source .env` succeeds.
   cat > "$SANDBOX/.env" <<'EOF'
