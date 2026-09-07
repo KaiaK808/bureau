@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d62859b1df69e2a4f83ce832614e67db3f7a15e0339aa6ac9c2ec95350598af2">
+<meta name="bureau-source-sha256" content="d2155df2d76fac97eab5651761a5ccb5db50c57388f7f414201a23200dd09aaf">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -22,40 +22,68 @@ skill</strong>, then resync its assets into <strong>each adopting
 repository</strong>. Updating the source clone alone leaves installed
 scripts and commands unchanged. <code>/bureau-init --update</code> edits
 configuration; it does not upgrade installed assets.</p>
-<p>The Claude/Codex changes in this source tree are
-<strong>Unreleased</strong>. No versioned tag or GitHub Release has been
-published. Use the official <a
-href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source;
-users following <code>main</code> receive these changes after their
-integration PR is merged. The commands below require that newer source
-skill. See the <a href="../../CHANGELOG.md">changelog</a>, <a
-href="release-notes.html">draft release notes</a> and <a
-href="releases.html">release process</a>.</p>
-<h2 id="quick-path-in-claude-code">Quick path in Claude Code</h2>
+<p>This guide upgrades legacy untagged installations to <strong>Bureau
+v2.0.0</strong> from the official <a
+href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source.
+The commands below require the v2.0.0 source skill. See the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">release</a>,
+<a href="../../CHANGELOG.md">changelog</a>, <a
+href="release-notes.html">release notes</a> and <a
+href="releases.html">release process</a>. The Bureau major version marks
+operational changes, including explicit worker ownership; it does not
+require configuration schema v2.</p>
+<h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is
 <code>~/.claude/skills/bureau-init</code>, but it may be a symlink or
 installed elsewhere. Check the loaded skill location; do not pull the
 adopting project's repository by mistake.</p>
 <p>In a terminal, inspect the source checkout:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SOURCE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills/bureau-init&quot;</span> <span class="co"># replace if installed elsewhere</span></span>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SOURCE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills/bureau-init&quot;</span> <span class="co"># replace with the actual loaded skill path</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> status <span class="at">--short</span> <span class="at">--branch</span></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> remote <span class="at">-v</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> describe <span class="at">--tags</span> <span class="at">--always</span> <span class="at">--dirty</span></span></code></pre></div>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> describe <span class="at">--tags</span> <span class="at">--always</span> <span class="at">--dirty</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
+<p>For a Codex-only install, the entry point may be
+<code>~/.agents/skills/bureau-init</code> or a configured skill
+directory. Follow its link to the actual source clone. Record the
+previous commit and branch/tag privately for rollback;
+<code>describe</code> alone may name a nearby tag instead of the
+installed commit.</p>
 <p>Confirm that <code>origin</code> identifies the official
-<code>KaiaK808/bureau</code> repository (HTTPS or SSH). If the checkout
-is clean and tracks its <code>main</code> branch, update it with:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> pull <span class="at">--ff-only</span></span></code></pre></div>
-<p>Preserve local source edits and resolve source-level Git conflicts
-separately. Do not reset the skill clone to force an update. For a
-tagged release, fetch tags and select the exact published tag instead of
-following <code>main</code>; a detached release checkout does not use
-<code>git pull</code>. Record the old and new source commit/tag for
-rollback.</p>
-<p>Refresh Claude Code's skill discovery or start a new session after
-changing the source. Then, <strong>inside each adopting
-repository</strong>, request the desired scope:</p>
+<code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
+source changes before continuing; do not reset the skill clone. With a
+clean checkout, select the exact release:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag v2.0.0 <span class="kw">&amp;&amp;</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> refs/tags/v2.0.0 <span class="kw">&amp;&amp;</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
+<p>Stop if fetching fails, especially if an existing local tag conflicts
+with the remote; do not force-replace it. Compare the resulting commit
+with the commit recorded in the GitHub Release and record it for
+rollback. This leaves the source on a detached release checkout. A later
+release upgrade repeats these steps with that release's tag; it does not
+use <code>git pull</code>.</p>
+<p>An intentionally <code>main</code>-tracking installation can instead
+use <code>git pull --ff-only</code> when its checkout is clean and its
+upstream is the official <code>origin/main</code>. This follows ongoing
+development rather than pinning v2.0.0. If the source is an
+archive-origin checkout, an unrelated history or a plain copied
+directory, keep it intact and install a separate official clone from the
+<a href="index.html#install">installation guide</a>; review how the
+loaded skill entry point should move before replacing any link. Do not
+merge unrelated histories or change the old checkout's remote as an
+upgrade shortcut.</p>
+<h2 id="resync-in-claude-code-or-codex">Resync in Claude Code or
+Codex</h2>
+<p>Refresh the assistant's skill discovery or start a new session after
+changing the source. Complete the <a
+href="#before-changing-an-adopting-repository">pre-upgrade checks</a>,
+including pausing dispatch and preserving local files. Then,
+<strong>inside each adopting repository</strong>, request the desired
+scope in Claude Code:</p>
 <pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
+<p>In a Codex app task, use:</p>
+<pre class="text"><code>$bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
 <p>This requests both Claude and Codex interfaces plus the shared
 runtime. To remain Claude-only, use <code>--target claude</code>. It
 does not switch the background model provider. Refresh existing Spec Kit
@@ -64,15 +92,19 @@ assets as a separate operation:</p>
 <p>If the repo uses Bureau's installed Claude planning workflows,
 refresh those too:</p>
 <pre class="text"><code>/bureau-init --resync-workflows --target both</code></pre>
-<p>Use the same target selection as above. Scripts/interfaces do not
-implicitly update <code>.claude/workflows/</code>. Existing project CI
-is separate; use <code>--resync-ci</code> only when a CI scaffold change
-is requested.</p>
+<p>Use the same target selection as above, and replace
+<code>/bureau-init</code> with <code>$bureau-init</code> when requesting
+these scopes in Codex. Scripts/interfaces do not implicitly update
+<code>.claude/workflows/</code>. Existing project CI is separate; use
+<code>--resync-ci</code> only when a CI scaffold change is
+requested.</p>
 <p>Existing active Spec Kit integration stays active. Add
 <code>--active-integration codex</code> only when you intend to switch
-it. Spec Kit resync requires the pinned <code>specify-cli</code> 0.7.5.
-Its customization/constitution preservation is separate from Bureau's
-asset conflict handling.</p>
+it. Spec Kit resync refreshes all discovered installed integrations as
+well as the requested target, so selecting one target does not exclude
+the other host's existing Spec Kit assets. It requires the pinned
+<code>specify-cli</code> 0.7.5. Its customization/constitution
+preservation is separate from Bureau's asset conflict handling.</p>
 <p>For a previously installed Git extension, the resync also installs
 missing native Codex hook skills and records their commands while
 preserving existing skills, hook configuration and other host
@@ -83,9 +115,9 @@ native hook-name mapping and the helper guidance below.</p>
 from newly generated scripts. Before a plan/task helper runs on a
 <code>codex/*</code> or detached checkout, resolve the issue's exact
 approved spec folder and pass both variables:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
 <p>Replace both example values with the real approved feature and
 configured specs path. Use the same pair for other helpers.
 <code>SPECIFY_FEATURE</code> alone can still follow stale
@@ -126,10 +158,21 @@ inspect <code>status</code>. On an older install, stop its
 launcher/scheduler normally. A stopped launcher does not prove an
 existing worker has exited.</li>
 <li>Preserve tracked changes, untracked work and local customizations.
-Keep exact private copies of configuration, credentials and conflicting
-assets outside the tracked tree. Git commits/diffs alone do not back up
-ignored <code>.env</code>, <code>.bureau.json</code> or untracked files.
-Never put credentials into a commit, PR or public support log.</li>
+Before applying asset scopes, use their previews to inventory affected
+paths and keep an exact private backup of all existing assets in those
+scopes, even files without conflicts. Include project instruction files,
+<code>.bureau-install.json</code>, <code>.gitignore</code>,
+configuration, credentials, and selected workflow/CI assets. Spec Kit
+preview lists commands rather than every file: before its resync, also
+back up the complete <code>.specify</code> tree and the project's
+<code>.claude</code> and <code>.agents</code> integration trees,
+including <code>speckit-*</code> skills for every discovered host.
+Record which paths did not exist so rollback can identify additions.
+Keep these backups outside the tracked tree. Git commits/diffs alone do
+not preserve ignored or untracked files; configuration such as
+<code>.bureau.json</code> may be tracked or ignored depending on the
+project. Never put credentials into a commit, PR or public support
+log.</li>
 <li>Do not reset or detach existing worker/app checkouts. The new
 runtime deliberately refuses to treat old unregistered
 <code>.worktrees/</code> directories as disposable. Finish, inspect and
@@ -140,8 +183,8 @@ href="stage-protocol.html">ownership/recovery protocol</a>.</li>
 conflicts</h2>
 <p>Run the helper from the refreshed source, with the adopting
 repository as the current directory:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Preview writes nothing. Exit code <code>3</code> means at least one
 asset conflict. Even with <code>--apply</code>, <strong>one unresolved
 conflict prevents every file in that asset batch from being
@@ -210,10 +253,10 @@ do not describe an incomplete scripts upgrade as a working new
 runtime.</li>
 </ul>
 <p>Example for a single reviewed script replacement:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
 <p>Other conflicts still block that example. Repeat
 <code>--overwrite</code> only for each reviewed path in the selected
 scope. There is no blanket force, skip-conflicts or automatic merge
@@ -237,8 +280,9 @@ migration</h2>
 <code>.bureau.json</code> or <code>.env</code>. Configuration version
 <code>2</code> is a schema version, not a Bureau release number. To
 adopt it, preview and then apply:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
 <p>Migration retains existing IDs, labels, models, switches and
 extension keys. It makes the existing Claude runner default explicit
 when absent and adds <code>agents.model_compatibility: "v1"</code> when
@@ -351,12 +395,25 @@ href="codex-acceptance.html">acceptance record</a> for what has and has
 not been exercised.</p>
 <h2 id="rollback">Rollback</h2>
 <p>Stop new dispatch and inspect active owners before restoring
-anything. Restore the known previous source revision or published tag in
-the source clone, then preview a scoped resync and review conflicts.
-Restore local customizations from their private backups. A configuration
-backup can be restored after comparing subsequent edits; compare
-compatibility with the selected runtime before replacing it. Keep
-<code>.env</code> private and intact.</p>
+anything. Preserve work created since the upgrade. Restore the recorded
+previous source commit/tag in a clean source checkout; for example,
+<code>git -C "$BUREAU_SOURCE" switch --detach PREVIOUS_COMMIT</code>,
+replacing the placeholder with the recorded commit. Restore the coherent
+pre-upgrade project asset set, instruction files and installer
+bookkeeping from the private backup, then reconcile subsequent local
+changes. Identify files newly installed by v2.0.0 and remove only
+confirmed upgrade additions that are absent from the old baseline and
+contain no later work.</p>
+<p>If the selected older source supports deterministic previews, use a
+scoped preview to verify its baseline and review every conflict. A
+legacy source may have no installer helper or manifest support: do not
+assume the v2.0.0 resync commands work there, or mix selected old
+scripts with the new runtime. Restore customized behavior from its
+matching backup. A configuration backup covers configuration only and
+can be restored after comparing subsequent edits and runtime
+compatibility. Keep <code>.env</code> private and intact. Run the
+restored project's tests and available diagnostics before considering a
+restart.</p>
 <p>Restoring source/configuration does not undo commits, Linear
 transitions or already-completed work. Preserve run records, provider
 logs, issue branches and checkpoints. Older runtimes may not honor new

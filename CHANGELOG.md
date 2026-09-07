@@ -1,14 +1,16 @@
 # Changelog
 
-User-visible changes and upgrade actions are recorded here. Published releases will use dated version sections and immutable Git tags; see the [release process](docs/releases.md). Earlier changes on `main` were not tagged and remain listed separately below. Configuration schema numbers are not Bureau release versions.
+User-visible changes and upgrade actions are recorded here. Releases use dated version sections and immutable Git tags; see the [release process](docs/releases.md). Earlier changes on `main` were not tagged and remain listed separately below. Configuration schema numbers are not Bureau release versions.
 
 An upgrade requires **updating the source skill and resyncing each adopting repository**. Neither `git pull` alone nor `/bureau-init --update` refreshes installed assets. Follow the [upgrade and conflict guide](docs/migration.md).
 
-## Unreleased
+## [Unreleased]
+
+## [2.0.0] - 2026-09-07
 
 ### Claude Code and Codex support
 
-This source tree includes the Claude/Codex integration and its review fixes. They remain **Unreleased** until a versioned tag and GitHub Release are published. Users following `main` receive a change only after its PR is merged; installing a source update still requires a target-repository resync. See the [draft release notes](docs/release-notes.md).
+Bureau v2.0.0 includes the Claude/Codex integration and its review fixes ([#9](https://github.com/KaiaK808/bureau/pull/9)). It is the first versioned release; the public initial snapshot was labeled v1.0.0 but had no corresponding tag or GitHub Release. The major version marks the operational changes for existing workers and upgrades. Installing a source update still requires a target-repository resync. See the [v2.0.0 release notes](docs/release-notes.md).
 
 #### Added
 
@@ -46,7 +48,7 @@ This source tree includes the Claude/Codex integration and its review fixes. The
 
 #### Upgrade actions and limitations
 
-- Refresh the source skill first, then use `/bureau-init --resync-interfaces --resync-scripts --target both` in each adopting repo (or `--target claude` to stay Claude-only). Refresh Spec Kit separately with `--resync-speckit`; refresh installed planning workflows with `--resync-workflows` if used. CI scaffolding stays opt-in.
+- Select source tag `v2.0.0` first, then use `/bureau-init --resync-interfaces --resync-scripts --target both` in each adopting repo (or `--target claude` to stay Claude-only). In Codex, use `$bureau-init` with the same arguments. Refresh Spec Kit separately with `--resync-speckit`; refresh installed planning workflows with `--resync-workflows` if used. CI scaffolding stays opt-in.
 - Pause dispatch, preserve local/ignored files and reconcile conflicts before starting the new runtime. Differing files without a prior manifest are conflicts, not disposable generated output. See the [per-file resolution procedure](docs/migration.md#preview-and-resolve-asset-conflicts).
 - Configuration migration is optional while v1 is supported. Review dependencies, model ownership, old worker checkouts and rollback limits in the [upgrade guide](docs/migration.md).
 - A representative live adoption exercised app stages, a bounded Codex route, a mixed-provider route, interruption/resume, real project tests and durable review stops. This is not a qualification of arbitrary projects or recurring unattended dispatch; private evidence is summarized separately from reproducible source checks in the [acceptance record](docs/codex-acceptance.md).
@@ -89,3 +91,6 @@ The following history predates versioned releases. It does not assign release nu
 - Baseline test-suite fixes
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
+
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v2.0.0...main
+[2.0.0]: https://github.com/KaiaK808/bureau/compare/6763c26c26aa96a41a92fbe95416fddbf4d48f69...v2.0.0

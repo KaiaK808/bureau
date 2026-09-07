@@ -21,10 +21,10 @@ Codex support is implemented and covered by local fixtures. Before unattended ad
 
 ## Install
 
-Keep one clone and expose it to the assistants you use:
+Install the stable v2.0.0 source, keep one clone and expose it to the assistants you use:
 
 ```sh
-git clone https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
+git clone --branch v2.0.0 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
 mkdir -p "$HOME/.agents/skills"
 ln -s "$HOME/bureau-init" "$HOME/.agents/skills/bureau-init"
 # Optional Claude Code entry point:
@@ -32,7 +32,7 @@ mkdir -p "$HOME/.claude/skills"
 ln -s "$HOME/bureau-init" "$HOME/.claude/skills/bureau-init"
 ```
 
-Keep existing installations and links; do not overwrite them. In an adopting Git repository, invoke `$bureau-init --target codex`, `/bureau-init --target claude`, or select `--target both`. For both, choose which Spec Kit integration should remain active. Refresh skill discovery after installation.
+Keep existing installations and links; do not overwrite them. This clone is pinned to the release in detached-HEAD state; future upgrades select another published tag as described in the [upgrade guide](docs/migration.md). In an adopting Git repository, invoke `$bureau-init --target codex`, `/bureau-init --target claude`, or select `--target both`. For both, choose which Spec Kit integration should remain active. Refresh skill discovery after installation.
 
 The installer discovers Linear settings, writes `.bureau.json`, initializes pinned Spec Kit 0.7.5, and installs only the selected interfaces. Codex uses `.agents/skills` and AGENTS.md; Claude uses `.claude/commands`, `.claude/skills` and CLAUDE.md. Existing project instructions and the constitution survive resync. Hashes in `.bureau-install.json` identify customizations before updates.
 
@@ -90,10 +90,16 @@ The [background operations reference](references/operations.md) covers these mod
 
 ## Update and migrate
 
-Update the source clone that supplies `bureau-init`, refresh skill discovery, then resync **each adopting repository**. For the upcoming Claude/Codex release, run this in Claude Code after loading the new source skill:
+Select `v2.0.0` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release), refresh skill discovery, then resync **each adopting repository**. In Claude Code, after loading the new source skill:
 
 ```text
 /bureau-init --resync-interfaces --resync-scripts --target both
+```
+
+In a Codex app task, request the same scopes with:
+
+```text
+$bureau-init --resync-interfaces --resync-scripts --target both
 ```
 
 Use `--target claude` to stay Claude-only. Refresh Spec Kit separately with `--resync-speckit --target both`; the existing active integration stays active unless you request a switch. Repos with installed Claude planning workflows also need `--resync-workflows`; script resync does not update them. `--update` is configuration-only. Updating the source clone alone does not change installed project files.
@@ -102,7 +108,7 @@ Pause dispatch and preserve local work first. Resync previews conflicts; one unr
 
 Version 1 configs remain supported. Optional schema-v2 migration preserves existing values, adds the absent legacy runner default and records `model_compatibility: "v1"` to retain model ownership. Its private backup covers configuration only. Installing Codex interfaces does not switch the background runner.
 
-The [changelog](CHANGELOG.md) lists what changes and what adopters must do. This integration is **unreleased**; use the reviewed source revision identified by the installation or release instructions. The [release process](docs/releases.md) defines versioned tags, GitHub Release notes and qualification before publication.
+The [v2.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) and [changelog](CHANGELOG.md) list what changes and what adopters must do. This is the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
 
 ## Documentation
 

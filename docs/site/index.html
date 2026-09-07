@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="37e2a5bd9bd0aa17324a2088711cf7e993f9731c2f390574261f0c259403dab1">
+<meta name="bureau-source-sha256" content="8fd73d636b9c6b012d9c72a004492344a9074b4fb6cafc6dcacdc78532c90114">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -69,16 +69,19 @@ unattended adoption, qualify a representative live ticket in your
 repository. See the <a href="codex-acceptance.html">acceptance
 record</a> for verified coverage and remaining live checks.</p>
 <h2 id="install">Install</h2>
-<p>Keep one clone and expose it to the assistants you use:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
+<p>Install the stable v2.0.0 source, keep one clone and expose it to the
+assistants you use:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v2.0.0 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills&quot;</span></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills/bureau-init&quot;</span></span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optional Claude Code entry point:</span></span>
 <span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills&quot;</span></span>
 <span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills/bureau-init&quot;</span></span></code></pre></div>
-<p>Keep existing installations and links; do not overwrite them. In an
-adopting Git repository, invoke
-<code>$bureau-init --target codex</code>,
+<p>Keep existing installations and links; do not overwrite them. This
+clone is pinned to the release in detached-HEAD state; future upgrades
+select another published tag as described in the <a
+href="migration.html">upgrade guide</a>. In an adopting Git
+repository, invoke <code>$bureau-init --target codex</code>,
 <code>/bureau-init --target claude</code>, or select
 <code>--target both</code>. For both, choose which Spec Kit integration
 should remain active. Refresh skill discovery after installation.</p>
@@ -229,11 +232,15 @@ controls. <code>agents.max_concurrent_issues: 1</code> prevents Spec
 from admitting another issue while work is in flight; it does not
 replace ownership checks or schedule validation.</p>
 <h2 id="update-and-migrate">Update and migrate</h2>
-<p>Update the source clone that supplies <code>bureau-init</code>,
-refresh skill discovery, then resync <strong>each adopting
-repository</strong>. For the upcoming Claude/Codex release, run this in
-Claude Code after loading the new source skill:</p>
+<p>Select <code>v2.0.0</code> in the source clone that supplies
+<code>bureau-init</code> using the <a
+href="migration.html#select-the-source-release">source-update
+instructions</a>, refresh skill discovery, then resync <strong>each
+adopting repository</strong>. In Claude Code, after loading the new
+source skill:</p>
 <pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
+<p>In a Codex app task, request the same scopes with:</p>
+<pre class="text"><code>$bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
 <p>Use <code>--target claude</code> to stay Claude-only. Refresh Spec
 Kit separately with <code>--resync-speckit --target both</code>; the
 existing active integration stays active unless you request a switch.
@@ -252,12 +259,14 @@ preserves existing values, adds the absent legacy runner default and
 records <code>model_compatibility: "v1"</code> to retain model
 ownership. Its private backup covers configuration only. Installing
 Codex interfaces does not switch the background runner.</p>
-<p>The <a href="../../CHANGELOG.md">changelog</a> lists what changes and what
-adopters must do. This integration is <strong>unreleased</strong>; use
-the reviewed source revision identified by the installation or release
-instructions. The <a href="releases.html">release process</a> defines
-versioned tags, GitHub Release notes and qualification before
-publication.</p>
+<p>The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">v2.0.0
+release</a> and <a href="../../CHANGELOG.md">changelog</a> list what changes
+and what adopters must do. This is the first tagged release; earlier
+source installs were untagged. The <a href="releases.html">release
+process</a> defines immutable tags, GitHub Release notes and
+qualification before publication. Bureau release numbers are independent
+of configuration schema versions.</p>
 <h2 id="documentation">Documentation</h2>
 <table>
 <thead>

@@ -36,9 +36,13 @@ labels: bug
 
 ## Environment
 
-- `claude --version`:
+- Bureau source tag and commit (run in the actual source clone; say "unknown" for a legacy copy): `git describe --tags --always --dirty` and `git rev-parse HEAD`
+- Operating mode: Codex app task / Claude Code interactive / bounded background / continuous background
+- Selected background provider and model, if used:
+- Relevant app/CLI versions (`codex --version` and/or `claude --version` only when those CLIs are used):
 - OS + version:
-- Bureau install SHA: `git -C ~/.claude/skills/bureau-init log -1 --oneline`
+- Source installation path and requested install target (`claude` / `codex` / `both`):
+- Relevant doctor output, with credentials and private project details removed:
 - Target repo language/stack (if relevant):
 - Which pipeline stage: (`implement` / `qa` / `code_review` / `merge` / etc.)
 

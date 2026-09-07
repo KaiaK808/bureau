@@ -2,33 +2,48 @@
 
 An upgrade has two steps: update the **Bureau source skill**, then resync its assets into **each adopting repository**. Updating the source clone alone leaves installed scripts and commands unchanged. `/bureau-init --update` edits configuration; it does not upgrade installed assets.
 
-The Claude/Codex changes in this source tree are **Unreleased**. No versioned tag or GitHub Release has been published. Use the official [KaiaK808/bureau](https://github.com/KaiaK808/bureau) source; users following `main` receive these changes after their integration PR is merged. The commands below require that newer source skill. See the [changelog](../CHANGELOG.md), [draft release notes](release-notes.md) and [release process](releases.md).
+This guide upgrades legacy untagged installations to **Bureau v2.0.0** from the official [KaiaK808/bureau](https://github.com/KaiaK808/bureau) source. The commands below require the v2.0.0 source skill. See the [release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0), [changelog](../CHANGELOG.md), [release notes](release-notes.md) and [release process](releases.md). The Bureau major version marks operational changes, including explicit worker ownership; it does not require configuration schema v2.
 
-## Quick path in Claude Code
+## Select the source release
 
 First update the actual source clone that supplies `/bureau-init`. Its usual location is `~/.claude/skills/bureau-init`, but it may be a symlink or installed elsewhere. Check the loaded skill location; do not pull the adopting project's repository by mistake.
 
 In a terminal, inspect the source checkout:
 
 ```sh
-BUREAU_SOURCE="$HOME/.claude/skills/bureau-init" # replace if installed elsewhere
+BUREAU_SOURCE="$HOME/.claude/skills/bureau-init" # replace with the actual loaded skill path
 git -C "$BUREAU_SOURCE" status --short --branch
 git -C "$BUREAU_SOURCE" remote -v
 git -C "$BUREAU_SOURCE" describe --tags --always --dirty
+git -C "$BUREAU_SOURCE" rev-parse HEAD
 ```
 
-Confirm that `origin` identifies the official `KaiaK808/bureau` repository (HTTPS or SSH). If the checkout is clean and tracks its `main` branch, update it with:
+For a Codex-only install, the entry point may be `~/.agents/skills/bureau-init` or a configured skill directory. Follow its link to the actual source clone. Record the previous commit and branch/tag privately for rollback; `describe` alone may name a nearby tag instead of the installed commit.
+
+Confirm that `origin` identifies the official `KaiaK808/bureau` repository (HTTPS or SSH). Preserve local source changes before continuing; do not reset the skill clone. With a clean checkout, select the exact release:
 
 ```sh
-git -C "$BUREAU_SOURCE" pull --ff-only
+git -C "$BUREAU_SOURCE" fetch origin tag v2.0.0 &&
+git -C "$BUREAU_SOURCE" switch --detach refs/tags/v2.0.0 &&
+git -C "$BUREAU_SOURCE" rev-parse HEAD
 ```
 
-Preserve local source edits and resolve source-level Git conflicts separately. Do not reset the skill clone to force an update. For a tagged release, fetch tags and select the exact published tag instead of following `main`; a detached release checkout does not use `git pull`. Record the old and new source commit/tag for rollback.
+Stop if fetching fails, especially if an existing local tag conflicts with the remote; do not force-replace it. Compare the resulting commit with the commit recorded in the GitHub Release and record it for rollback. This leaves the source on a detached release checkout. A later release upgrade repeats these steps with that release's tag; it does not use `git pull`.
 
-Refresh Claude Code's skill discovery or start a new session after changing the source. Then, **inside each adopting repository**, request the desired scope:
+An intentionally `main`-tracking installation can instead use `git pull --ff-only` when its checkout is clean and its upstream is the official `origin/main`. This follows ongoing development rather than pinning v2.0.0. If the source is an archive-origin checkout, an unrelated history or a plain copied directory, keep it intact and install a separate official clone from the [installation guide](../README.md#install); review how the loaded skill entry point should move before replacing any link. Do not merge unrelated histories or change the old checkout's remote as an upgrade shortcut.
+
+## Resync in Claude Code or Codex
+
+Refresh the assistant's skill discovery or start a new session after changing the source. Complete the [pre-upgrade checks](#before-changing-an-adopting-repository), including pausing dispatch and preserving local files. Then, **inside each adopting repository**, request the desired scope in Claude Code:
 
 ```text
 /bureau-init --resync-interfaces --resync-scripts --target both
+```
+
+In a Codex app task, use:
+
+```text
+$bureau-init --resync-interfaces --resync-scripts --target both
 ```
 
 This requests both Claude and Codex interfaces plus the shared runtime. To remain Claude-only, use `--target claude`. It does not switch the background model provider. Refresh existing Spec Kit assets as a separate operation:
@@ -43,9 +58,9 @@ If the repo uses Bureau's installed Claude planning workflows, refresh those too
 /bureau-init --resync-workflows --target both
 ```
 
-Use the same target selection as above. Scripts/interfaces do not implicitly update `.claude/workflows/`. Existing project CI is separate; use `--resync-ci` only when a CI scaffold change is requested.
+Use the same target selection as above, and replace `/bureau-init` with `$bureau-init` when requesting these scopes in Codex. Scripts/interfaces do not implicitly update `.claude/workflows/`. Existing project CI is separate; use `--resync-ci` only when a CI scaffold change is requested.
 
-Existing active Spec Kit integration stays active. Add `--active-integration codex` only when you intend to switch it. Spec Kit resync requires the pinned `specify-cli` 0.7.5. Its customization/constitution preservation is separate from Bureau's asset conflict handling.
+Existing active Spec Kit integration stays active. Add `--active-integration codex` only when you intend to switch it. Spec Kit resync refreshes all discovered installed integrations as well as the requested target, so selecting one target does not exclude the other host's existing Spec Kit assets. It requires the pinned `specify-cli` 0.7.5. Its customization/constitution preservation is separate from Bureau's asset conflict handling.
 
 For a previously installed Git extension, the resync also installs missing native Codex hook skills and records their commands while preserving existing skills, hook configuration and other host registrations. Core initialization alone did not perform this registration in older Bureau candidates. Refresh interfaces too for native hook-name mapping and the helper guidance below.
 
@@ -71,7 +86,7 @@ Check the [dependencies](../README.md#install) before using the new helper: Pyth
 
 1. Inspect `git status`, the current branch and active worktrees. Record the installed source revision if known. An old install may have no `.bureau-install.json`; absence of hashes is expected and must not be treated as permission to overwrite.
 2. Stop new dispatch and let running stages finish. With the new runtime, use `python3 scripts/bureau-runtime.py pause` and inspect `status`. On an older install, stop its launcher/scheduler normally. A stopped launcher does not prove an existing worker has exited.
-3. Preserve tracked changes, untracked work and local customizations. Keep exact private copies of configuration, credentials and conflicting assets outside the tracked tree. Git commits/diffs alone do not back up ignored `.env`, `.bureau.json` or untracked files. Never put credentials into a commit, PR or public support log.
+3. Preserve tracked changes, untracked work and local customizations. Before applying asset scopes, use their previews to inventory affected paths and keep an exact private backup of all existing assets in those scopes, even files without conflicts. Include project instruction files, `.bureau-install.json`, `.gitignore`, configuration, credentials, and selected workflow/CI assets. Spec Kit preview lists commands rather than every file: before its resync, also back up the complete `.specify` tree and the project's `.claude` and `.agents` integration trees, including `speckit-*` skills for every discovered host. Record which paths did not exist so rollback can identify additions. Keep these backups outside the tracked tree. Git commits/diffs alone do not preserve ignored or untracked files; configuration such as `.bureau.json` may be tracked or ignored depending on the project. Never put credentials into a commit, PR or public support log.
 4. Do not reset or detach existing worker/app checkouts. The new runtime deliberately refuses to treat old unregistered `.worktrees/` directories as disposable. Finish, inspect and retire or adopt them before reuse; see the [ownership/recovery protocol](stage-protocol.md).
 
 ## Preview and resolve asset conflicts
@@ -156,6 +171,8 @@ Qualify a representative ticket through the intended app/background path with th
 
 ## Rollback
 
-Stop new dispatch and inspect active owners before restoring anything. Restore the known previous source revision or published tag in the source clone, then preview a scoped resync and review conflicts. Restore local customizations from their private backups. A configuration backup can be restored after comparing subsequent edits; compare compatibility with the selected runtime before replacing it. Keep `.env` private and intact.
+Stop new dispatch and inspect active owners before restoring anything. Preserve work created since the upgrade. Restore the recorded previous source commit/tag in a clean source checkout; for example, `git -C "$BUREAU_SOURCE" switch --detach PREVIOUS_COMMIT`, replacing the placeholder with the recorded commit. Restore the coherent pre-upgrade project asset set, instruction files and installer bookkeeping from the private backup, then reconcile subsequent local changes. Identify files newly installed by v2.0.0 and remove only confirmed upgrade additions that are absent from the old baseline and contain no later work.
+
+If the selected older source supports deterministic previews, use a scoped preview to verify its baseline and review every conflict. A legacy source may have no installer helper or manifest support: do not assume the v2.0.0 resync commands work there, or mix selected old scripts with the new runtime. Restore customized behavior from its matching backup. A configuration backup covers configuration only and can be restored after comparing subsequent edits and runtime compatibility. Keep `.env` private and intact. Run the restored project's tests and available diagnostics before considering a restart.
 
 Restoring source/configuration does not undo commits, Linear transitions or already-completed work. Preserve run records, provider logs, issue branches and checkpoints. Older runtimes may not honor new ownership records, so never restart one against unfinished work managed by the newer runtime. Do not delete leases or reset worktrees as a rollback shortcut.
