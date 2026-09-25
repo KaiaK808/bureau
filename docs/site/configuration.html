@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2a2a537621297904abe612433ad8271ec4d851208ebdc36610dbd5b545e7c822">
+<meta name="bureau-source-sha256" content="4a70a2b38f1aa78254e144751057c95614e5e7d42b517e887cca3f817285a4de">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -302,7 +302,11 @@ Tune up for repos with strong CI</td>
 <td><code>0</code></td>
 <td>Repo-wide cap on issues in flight. <code>0</code> = unlimited
 (default). <code>1</code> = single-flight (drain end-to-end before next
-Spec). See <a href="recipes.html#single-flight-pipeline">recipes</a></td>
+Spec). Counts work: issues from Spec to before Done in the configured
+<code>linear.projects</code>, without children (an epic is not work, its
+sub-issues are), without
+<code>needs-human</code>/<code>blocked</code>/<code>wip</code>. See <a
+href="recipes.html#single-flight-pipeline">recipes</a></td>
 </tr>
 <tr>
 <td><code>agents.merge_strategy</code></td>

@@ -1799,8 +1799,18 @@ merge_origin_main_or_abort() {
 # (needs-human, blocked, wip) are excluded from the count — they're already
 # stalled, holding up the cap on them too would deadlock the loop.
 #
-# Output: integer count on stdout, "0" on any query failure (fail-open so a
-# Linear hiccup doesn't block work).
+# What counts is work, not tickets (carried over from slidefactory-core,
+# EXP-1462): only issues of the configured projects (.linear.projects, as in
+# pick_issue), and only issues without children — an epic is a bracket, not
+# work, and one on Spec used to hold every new run. Sub-issues count: the old
+# `parent: { null: true }` filter counted epics and skipped the work under
+# them, and without the project filter the cap counted other projects'
+# tickets (16 foreign ones held every spec stage in slidefactory).
+#
+# Output: integer count on stdout. A Linear answer that stays unusable returns
+# $BUREAU_EXIT_LINEAR_UNUSABLE instead of "0": the count used to fail open, so
+# the cap let new work in exactly while Linear was failing. (slidefactory keeps
+# it fail-open; the retry ladder bridges short outages here.)
 count_in_flight_issues() {
   # Build a comma-separated list of in-flight state UUIDs. Optional states
   # (qa, copy, merge) are only included when configured.
@@ -1815,9 +1825,20 @@ count_in_flight_issues() {
   state_ids="${state_ids%,}"  # strip trailing comma
   [ -z "$state_ids" ] && { echo "0"; return 0; }
 
+  local project_clause="" projects_gql
+  if [ -n "${BUREAU_PROJECTS:-}" ]; then
+    projects_gql=$(printf '%s' "$BUREAU_PROJECTS" | awk -F',' '
+      BEGIN{printf "["}
+      {for(i=1;i<=NF;i++) if($i!="") printf "%s\"%s\"", (i>1?",":""), $i}
+      END{printf "]"}
+    ')
+    [ "$projects_gql" != "[]" ] && project_clause=$(printf ', project: { id: { in: %s } }' "$projects_gql")
+  fi
+
+  # `children(first: 1)`: the rule only asks WHETHER an issue has children.
   local query
-  query=$(printf '{ issues(filter: { team: { key: { eq: "%s" } }, state: { id: { in: [%s] } }, parent: { null: true } }, first: 250) { nodes { labels { nodes { name } } } } }' \
-    "$BUREAU_TEAM_KEY" "$state_ids")
+  query=$(printf '{ issues(filter: { team: { key: { eq: "%s" } }, state: { id: { in: [%s] } }%s }, first: 250) { nodes { labels { nodes { name } } children(first: 1) { nodes { id } } } } }' \
+    "$BUREAU_TEAM_KEY" "$state_ids" "$project_clause")
 
   local payload
   payload=$(jq -n --arg q "$query" '{query: $q}')
@@ -1834,7 +1855,10 @@ count_in_flight_issues() {
          ([(.labels.nodes // [])[].name]
           | map(select(. == "needs-human" or . == "blocked" or . == "wip"))
           | length) == 0
-       )]
+       )
+     # A node without a `children` field counts: if the field is ever missing,
+     # the cap keeps counting instead of silently stopping.
+     | select(((.children.nodes // []) | length) == 0)]
     | length
   '
 }
