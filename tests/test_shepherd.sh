@@ -334,9 +334,70 @@ test_stuck() {
   return 0
 }
 
+# ── Scenario 5: a stage gives up on Linear (exit 27) → halt, made visible ──
+# The stub implement stage leaves a fault class in $_BUREAU_LINEAR_FAULT_FILE — the
+# file shepherd hands it through the real bureau-worker.sh and runtime — and exits 27.
+# $1 = what the stage writes into the fault file; $2 = "old" runs a shepherd without
+# the 27 arm (the negative control).
+_run_linear_halt() {
+  local sb="$1" fault="$2"
+  cat > "$sb/scripts/implement-pipeline.sh" <<STAGE_EOF
+#!/bin/bash
+set -euo pipefail
+source "\$(dirname "\$0")/bureau-config.sh"
+echo "implement-pipeline.sh" >> "\$INVOCATIONS_LOG"
+printf '%s\n' '$fault' > "\${_BUREAU_LINEAR_FAULT_FILE:?shepherd did not hand the fault file on}"
+exit 27
+STAGE_EOF
+  cat >> "$sb/scripts/bureau-config.sh" <<'REC_EOF'
+add_issue_label() { printf '%s\t%s\tsingle=%s\n' "+$1" "$2" "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" >> "$LABEL_LOG"; }
+post_comment()    { printf '%s\tsingle=%s\n' "$2" "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" >> "$LABEL_LOG.comments"; }
+alert_telegram()  { printf '%s\n' "$4" >> "$LABEL_LOG.alerts"; }
+REC_EOF
+  echo "s5" > "$sb/state.txt"   # Build → implement-pipeline.sh
+  set +e
+  run_shepherd "$sb" EXP-5
+  LINEAR_HALT_RC=$?
+  set -e
+}
+
+test_linear_unusable_halts() {
+  local sb; sb=$(make_sandbox linear_halt)
+  _run_linear_halt "$sb" graphql-errors
+  assert_eq "$LINEAR_HALT_RC" "27" "shepherd exit after a stage gave up on Linear" || return 1
+  grep -q "^+EXP-5"$'\t'"needs-human"$'\t'"single=1$" "$sb/labels.log" \
+    || { echo "FAIL: needs-human was not attempted once, on the single-attempt path"; cat "$sb/labels.log"; return 1; }
+  grep -q "gave up because Linear stayed unusable.*graphql-errors.*single=1$" "$sb/labels.log.comments" \
+    || { echo "FAIL: the halt comment does not name the fault class"; return 1; }
+  grep -q "graphql-errors" "$sb/labels.log.alerts" \
+    || { echo "FAIL: the alert does not name the fault class"; return 1; }
+  local runs; runs=$(wc -l < "$sb/invocations.log" | tr -d ' ')
+  assert_eq "$runs" "1" "the stage runs once; a halt is not retried" || return 1
+
+  # Anything but a name from the fixed list is reported as unknown, never repeated.
+  local sb2; sb2=$(make_sandbox linear_halt_text)
+  _run_linear_halt "$sb2" 'CANARY-ANSWER <html>'
+  grep -q "unknown" "$sb2/labels.log.alerts" || { echo "FAIL: a free-text fault was not reported as unknown"; return 1; }
+  if grep -rq "CANARY-ANSWER" "$sb2/labels.log.alerts" "$sb2/labels.log.comments" "$sb2/shepherd.out" "$sb2/shepherd.err"; then
+    echo "FAIL: text from the fault file reached an alert, a comment or the log"; return 1
+  fi
+
+  # Negative control: the shepherd without the 27 arm ends as "unexpected exit" and
+  # neither labels nor comments — the silence this arm exists to end.
+  local sb3; sb3=$(make_sandbox linear_halt_old)
+  awk '/^    27\)$/ { skip = 1 } skip && /^      ;;$/ { skip = 0; next } !skip { print }' \
+    "$sb3/scripts/shepherd.sh" > "$sb3/scripts/shepherd.old" && mv "$sb3/scripts/shepherd.old" "$sb3/scripts/shepherd.sh"
+  if grep -q '^    27)$' "$sb3/scripts/shepherd.sh"; then echo "FAIL: could not build the negative control"; return 1; fi
+  _run_linear_halt "$sb3" graphql-errors
+  if grep -q "needs-human" "$sb3/labels.log" 2>/dev/null || [ -s "$sb3/labels.log.comments" ]; then
+    echo "FAIL: negative control: the shepherd without the 27 arm still labels or comments, so this proves nothing"; return 1
+  fi
+  return 0
+}
+
 # ── Run all scenarios ──────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_no_merge test_dry_run test_stuck; do
+for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linear_unusable_halts; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

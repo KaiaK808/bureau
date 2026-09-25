@@ -191,6 +191,7 @@ Every pipeline script:
 | 24 | environment-blocked | required execution environment unavailable |
 | 25 | needs-human-or-paused | human attention or dispatch pause |
 | 26 | cancelled-ticket | ticket is cancelled |
+| 27 | linear-unusable | a Linear answer stayed unusable after every retry |
 | 124 | timeout | bounded execution timed out |
 | 130 | cancelled-run | invocation cancelled |
 

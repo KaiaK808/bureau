@@ -128,8 +128,13 @@ get_issue_state() {
   echo "${BUREAU_STUB_ISSUE_STATE:-Build}"
 }
 
+# BUREAU_STUB_DETAIL_RC / BUREAU_STUB_COMMENTS_RC make the read fail with that code
+# and no output, the way the real helper does when Linear stays unusable.
+# BUREAU_STUB_COMMENTS_RC_FROM=<n> lets the first n-1 comment reads succeed (the count
+# lives in a file: the helper runs inside $(…) subshells).
 get_issue_detail() {
   _record "get_issue_detail" "$1"
+  [ "${BUREAU_STUB_DETAIL_RC:-0}" = 0 ] || return "$BUREAU_STUB_DETAIL_RC"
   local labels_json="${BUREAU_STUB_LABELS:-[]}"
   jq -n --arg id "$1" --argjson labels "$labels_json" \
     '{identifier:$id, title:"Test issue", description:"A test issue.",
@@ -138,6 +143,12 @@ get_issue_detail() {
 
 get_issue_branch_and_comments() {
   _record "get_issue_branch_and_comments" "$1"
+  if [ "${BUREAU_STUB_COMMENTS_RC:-0}" != 0 ]; then
+    local calls
+    calls=$(( $(cat "$SANDBOX/.comment_reads" 2>/dev/null || echo 0) + 1 ))
+    echo "$calls" > "$SANDBOX/.comment_reads"
+    [ "$calls" -lt "${BUREAU_STUB_COMMENTS_RC_FROM:-1}" ] || return "$BUREAU_STUB_COMMENTS_RC"
+  fi
   local branch="${BUREAU_STUB_BRANCH:-test-branch}"
   jq -n --arg b "$branch" \
     '{branch:$b, comments:[]}'
@@ -175,11 +186,12 @@ branch_is_bureau_only() {
 }
 
 post_comment() { _record "post_comment" "$1" "$2"; return 0; }
-# Real check_squash_range and comment_on_branch_pr, cut from the real config by the
-# harness; they find squash-marker-check.sh through _BUREAU_SCRIPTS_DIR like the real one.
+# Real halt_if_linear_unusable (with its exit code), check_squash_range and
+# comment_on_branch_pr, cut from the real config by the harness; the squash guard finds
+# squash-marker-check.sh through _BUREAU_SCRIPTS_DIR like the real one.
 _BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
-source "$_BUREAU_SCRIPTS_DIR/squash-range.sh"
+source "$_BUREAU_SCRIPTS_DIR/real-helpers.sh"
 # The real evaluation is exercised by tests/test_crosscheck.sh; here it only records the call.
 crosscheck_open_prs() { _record "crosscheck_open_prs" "$1" "$2"; CROSSCHECK_RESULT=clean; return 0; }
 

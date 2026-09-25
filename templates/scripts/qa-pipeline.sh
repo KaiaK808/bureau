@@ -326,7 +326,7 @@ Full QA log: \`$QA_LOG_PATH\`"
     ;;
   NEEDS_HUMAN)
     echo "  QA: NEEDS_HUMAN — flagging and leaving in QA"
-    if add_issue_label "$ISSUE" "needs-human"; then
+    if add_issue_label "$ISSUE" "needs-human" || halt_if_linear_unusable $?; then
       log_escalation "$ISSUE" "qa" 0 "$QA_ESCALATION_REASON" 0 "$BRANCH"
     else
       echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2

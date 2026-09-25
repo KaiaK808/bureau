@@ -237,7 +237,25 @@ fi
 echo "[shepherd] claiming $ISSUE (label: shepherd-focused)"
 add_issue_label "$ISSUE" "shepherd-focused" \
   || echo "  WARN: failed to add shepherd-focused label" >&2
-trap 'echo "[shepherd] releasing $ISSUE"; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true' EXIT INT TERM
+# The fault class a stage leaves behind when it gives up on Linear (exit
+# $BUREAU_EXIT_LINEAR_UNUSABLE). The stage writes only a name from a fixed
+# list into this file (_bureau_linear_record in bureau-config.sh); only such a
+# name gets through _shepherd_fault_class below, so no answer text reaches an
+# alert or a comment.
+SHEPHERD_FAULT_FILE=$(mktemp "${TMPDIR:-/tmp}/bureau-linear-fault.XXXXXX")
+
+# _shepherd_fault_class — the fault class the last stage left behind, or
+# "unknown" when there is none or it is not one of the four names.
+_shepherd_fault_class() {
+  local value=""
+  [ -f "$SHEPHERD_FAULT_FILE" ] && value=$(head -1 "$SHEPHERD_FAULT_FILE" 2>/dev/null | tr -d '\r\n' || true)
+  case "$value" in
+    no-response | not-json | graphql-errors | no-data) printf '%s' "$value" ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+trap 'echo "[shepherd] releasing $ISSUE"; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT INT TERM
 
 # Per-ticket worktree override (d&a executor) — default preserves single-worktree
 # serial behavior exactly. `reset_worktree` auto-creates the dir if absent.
@@ -347,7 +365,9 @@ while true; do
   esac
 
   set +e
-  ( cd "$REPO_DIR" && bash "$SCRIPT_REPO/scripts/bureau-worker.sh" "$ISSUE" "$PIPELINE" "$WORKTREE" "${BRANCH:-}" )
+  : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
+  ( cd "$REPO_DIR" && _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" \
+      bash "$SCRIPT_REPO/scripts/bureau-worker.sh" "$ISSUE" "$PIPELINE" "$WORKTREE" "${BRANCH:-}" )
   RC=$?
   set -e
   CLASS=$(exit_class "$RC")
@@ -365,6 +385,22 @@ while true; do
     11|12|13|14|15|17|18|19|20|21)
       echo "[shepherd] $PIPELINE halted ($CLASS) — aborting shepherd"
       alert_telegram "$ISSUE" "$PIPELINE" "$RC" "shepherd halt ($CLASS)" 2>/dev/null || true
+      exit "$RC"
+      ;;
+    27)
+      # The stage gave up because Linear stayed unusable after every retry.
+      # Nothing was decided on an empty answer, so the halt is ours to make
+      # visible: alert first (Telegram does not need Linear), then label and
+      # comment with a SINGLE attempt each — Linear just failed every retry,
+      # and another full ladder per write would only delay the halt.
+      FAULT=$(_shepherd_fault_class)
+      echo "[shepherd] $PIPELINE halted ($CLASS, fault: $FAULT) — labeling needs-human and aborting shepherd"
+      alert_telegram "$ISSUE" "$PIPELINE" "$RC" "shepherd halt ($CLASS: $FAULT)" 2>/dev/null || true
+      export _BUREAU_LINEAR_SINGLE_ATTEMPT=1
+      add_issue_label "$ISSUE" "needs-human" \
+        || echo "[shepherd] WARN: could not add the 'needs-human' label to $ISSUE — Linear is still unusable" >&2
+      post_comment "$ISSUE" "🛑 Shepherd halt: \`$PIPELINE\` gave up because Linear stayed unusable after every retry (\`$FAULT\`). Nothing was decided on the empty answer. Needs human — re-shepherd once Linear answers again." \
+        || echo "[shepherd] WARN: could not post the halt comment on $ISSUE — Linear is still unusable" >&2
       exit "$RC"
       ;;
     *)

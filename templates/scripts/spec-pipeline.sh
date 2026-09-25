@@ -78,6 +78,9 @@ _spec_recovery() {
   case "$rc" in
     10) klass="linear-down" ;;
     11) klass="worktree-dirty" ;;
+    # Linear just failed every retry: the rollback's own writes get one
+    # attempt each, so the halt is not delayed by another full retry ladder.
+    27) klass="linear-unusable"; export _BUREAU_LINEAR_SINGLE_ATTEMPT=1 ;;
     16) klass="claude-unauth" ;;
     *)  klass="speckit-failed" ;;
   esac

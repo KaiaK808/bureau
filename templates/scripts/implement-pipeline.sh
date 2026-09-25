@@ -40,7 +40,9 @@ TOTAL_TIMEOUT="${BUREAU_IMPL_TOTAL_TIMEOUT:-5400}"
 refresh_review_context() {
   local issue="$1"
   local blob feedback
-  blob=$(get_issue_branch_and_comments "$issue" 2>/dev/null || echo '{}')
+  # No fallback to '{}': a failed read would drop the reviewer's requested
+  # fixes from the prompt without a word. The caller's `$(…)` ends the stage.
+  blob=$(get_issue_branch_and_comments "$issue") || return $?
   feedback=$(printf '%s' "$blob" \
     | jq -r '[.comments[] | select(.body | test("Code Review.*Changes Requested|FIXES_NEEDED|(?m)^VERDICT: REQUEST_CHANGES[[:space:]]*$"))][0].body // empty' 2>/dev/null || echo "")
   if [ -n "$feedback" ] && [ "${#feedback}" -gt 20 ]; then
@@ -685,7 +687,7 @@ case "$STATUS" in
       comment_on_branch_pr "$BRANCH" "$SQUASH_REPORT"
     fi
     PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
-    if add_issue_label "$ISSUE" "needs-human"; then
+    if add_issue_label "$ISSUE" "needs-human" || halt_if_linear_unusable $?; then
       log_escalation "$ISSUE" "implement" "$i" \
         "$STATUS: $TASKS_DONE_TOTAL tasks done across $i iter(s)" \
         "${PR_NUMBER:-0}" "$BRANCH"

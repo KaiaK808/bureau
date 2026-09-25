@@ -12,21 +12,17 @@ IDENTIFIER="${1:?Usage: complete-issue.sh ${BUREAU_TEAM_KEY}-73}"
 TEAM=$(echo "$IDENTIFIER" | sed 's/-[0-9]*//')
 NUMBER=$(echo "$IDENTIFIER" | sed 's/[A-Z]*-//')
 
-ISSUE_ID=$(curl -s -X POST https://api.linear.app/graphql \
-  -H "Content-Type: application/json" \
-  -H "Authorization: $API_KEY" \
-  -d "{\"query\": \"{ issues(filter: { team: { key: { eq: \\\"$TEAM\\\" } }, number: { eq: $NUMBER } }) { nodes { id } } }\"}" \
-  | jq -r '.data.issues.nodes[0].id')
+# Through linear_query: an unusable answer is retried and then ends this script
+# with $BUREAU_EXIT_LINEAR_UNUSABLE, instead of reading as "not found".
+FOUND=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$TEAM\\\" } }, number: { eq: $NUMBER } }) { nodes { id } } }")
+ISSUE_ID=$(printf '%s' "$FOUND" | jq -r '.data.issues.nodes[0].id')
 
 if [ -z "$ISSUE_ID" ] || [ "$ISSUE_ID" = "null" ]; then
   echo "$IDENTIFIER not found in Linear"
   exit 1
 fi
 
-RESULT=$(curl -s -X POST https://api.linear.app/graphql \
-  -H "Content-Type: application/json" \
-  -H "Authorization: $API_KEY" \
-  -d "{\"query\": \"mutation { issueUpdate(id: \\\"$ISSUE_ID\\\", input: { stateId: \\\"$BUREAU_STATE_BUILD_REVIEW\\\" }) { success } }\"}")
+RESULT=$(linear_query "mutation { issueUpdate(id: \\\"$ISSUE_ID\\\", input: { stateId: \\\"$BUREAU_STATE_BUILD_REVIEW\\\" }) { success } }")
 
 SUCCESS=$(echo "$RESULT" | jq -r '.data.issueUpdate.success')
 

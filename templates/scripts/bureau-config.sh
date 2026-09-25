@@ -163,20 +163,196 @@ BUREAU_SPECS_DIR=$(bureau_get '.repo.specs_dir // "specs"')
 # Projects filter (comma-separated UUIDs; empty = all projects in the team)
 BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 
-# Helper: query Linear GraphQL
+# ── Linear fetches: check the answer, retry, else stop with our own code ──
+# Carried over from slidefactory-core (EXP-1478), where every fetch used to be
+# passed on unchecked: an error page ended at `jq` with exit 5, while an answer
+# carrying `errors`, an empty answer and a failed connection all came back as
+# SUCCESS with an empty result — and the stage then decided on that empty
+# result (it moved a ticket from Build Review back to Build and reported a
+# missing branch marker).
+#
+# A fetch now counts as successful only when curl exited 0, the text is ONE JSON
+# object, that object carries an object `data`, and it has no non-empty
+# `errors`. Any other answer is unusable, gets exactly one fault class from the
+# fixed list (no-response, not-json, graphql-errors, no-data) and is retried
+# after a wait. If it stays unusable the fetch prints NOTHING and returns
+# $BUREAU_EXIT_LINEAR_UNUSABLE; no answer text and no key travels in a message.
+#
+# The code is 27 (`linear-unusable` in exit_class), not slidefactory's 20: in
+# this template 20 is `stopped-before-merge`. 10 (`linear-down`) stays the
+# precondition code for a missing or invalid key.
+#
+# Settings (first usable wins): environment (and therefore .env) →
+# .bureau.json `.linear.retry.*` → default. Defaults: three retries, waiting
+# 10, 30 and 60 seconds. Zero retries and a wait of 0 are valid.
+BUREAU_EXIT_LINEAR_UNUSABLE=27
+
+# _bureau_linear_classify <curl-exit> <answer> — prints the fault class, or
+# nothing when the answer is usable. Reads no value out of the answer.
+_bureau_linear_classify() {
+  local code="$1" answer="$2"
+  [ "$code" = 0 ] || { printf 'no-response'; return 0; }
+  case "$answer" in
+    *[![:space:]]*) ;;
+    *) printf 'no-response'; return 0 ;;
+  esac
+  local finding
+  # -s so that two JSON values in one body ("{} {}") are not read as one.
+  finding=$(printf '%s' "$answer" | jq -s -r '
+    if length != 1 then "not-json"
+    elif (.[0] | type) != "object" then "no-data"
+    elif (.[0].errors != null) and (.[0].errors != []) then "graphql-errors"
+    elif (.[0].data | type) != "object" then "no-data"
+    else "" end' 2>/dev/null) || finding="not-json"
+  case "$finding" in
+    '' | not-json | no-data | graphql-errors) ;;
+    *) finding="not-json" ;;
+  esac
+  printf '%s' "$finding"
+}
+
+# _bureau_linear_number <value> <max> — prints <value> as a number without
+# leading zeros, or nothing (exit 1) when it is not a whole number from 0 to
+# <max>. Digits only: no whitespace, no sign, no dot, no second word. The value
+# never reaches an arithmetic context before it has passed this check.
+_bureau_linear_number() {
+  local value="$1" max="$2"
+  case "$value" in
+    '' | *[!0123456789]*) return 1 ;;
+  esac
+  [ "${#value}" -gt 4 ] && return 1
+  value="${value#"${value%%[!0]*}"}"
+  [ -z "$value" ] && value=0
+  [ "$value" -le "$max" ] || return 1
+  printf '%s' "$value"
+}
+
+# _bureau_linear_setting <key> <value-from-env> <json-path> <default> <max>
+# An empty value counts as "not set", silently. Any other invalid value is
+# dropped: the next source applies, and one warning on stderr names the key or
+# the JSON path and NEVER the value.
+_bureau_linear_setting() {
+  local name="$1" from_env="$2" path="$3" default="$4" max="$5"
+  local number
+  if [ -n "$from_env" ]; then
+    if number=$(_bureau_linear_number "$from_env" "$max"); then
+      printf '%s' "$number"
+      return 0
+    fi
+    echo "warning: $name ignored: not a whole number of 0 to $max written in digits only; the next source applies" >&2
+  fi
+  local from_json
+  # Two guards, because a command substitution does not hand on what jq wrote.
+  # First: the value has to be digits only ALREADY INSIDE jq. A shell drops every
+  # embedded NUL byte while capturing (bash 3.2 and 5), so a `"0\u0000"` in the
+  # JSON would otherwise reach the check as a clean `0` and pass it — the retry
+  # would be off without a word. What is not digits only leaves jq as the word
+  # `invalid`, which _bureau_linear_number rejects like any other non-number, so
+  # the one place that decides what a number is stays the one place.
+  # Second: the trailing '#' is a marker, not part of the value, because the
+  # capture also strips every trailing newline — with the marker a `"0\n"`
+  # survives as far as the check. Only the last '#' is removed, so a value
+  # ending in '#' stays invalid as well.
+  from_json=$(jq -r "
+    try ($path) catch null
+    | if . == null then \"\" else (if type == \"string\" then . else tojson end) end
+    | (if (explode | all(. >= 48 and . <= 57)) then . else \"invalid\" end) + \"#\"" \
+    "$BUREAU_CONFIG" 2>/dev/null) || from_json="#"
+  from_json=${from_json%\#}
+  if [ -n "$from_json" ]; then
+    if number=$(_bureau_linear_number "$from_json" "$max"); then
+      printf '%s' "$number"
+      return 0
+    fi
+    echo "warning: $path ignored: not a whole number of 0 to $max written in digits only; the default applies" >&2
+  fi
+  printf '%s' "$default"
+}
+
+# _bureau_linear_record <fault-class> — remember the fault class of the LAST
+# attempt; shepherd.sh reads the file after a stage exited with
+# $BUREAU_EXIT_LINEAR_UNUSABLE. Writes only a name from the fixed list, never a
+# byte of the answer. Silent on every failure: a halt must not depend on a
+# writable file.
+_bureau_linear_record() {
+  local file="${_BUREAU_LINEAR_FAULT_FILE:-}"
+  [ -n "$file" ] || return 0
+  printf '%s\n' "$1" > "$file" 2>/dev/null || true
+  return 0
+}
+
+# _bureau_linear_fetch <payload> — one fetch, retried while the answer is
+# unusable. stdout: the usable answer, otherwise nothing. Exit: 0 or
+# $BUREAU_EXIT_LINEAR_UNUSABLE.
+#
+# The settings are read only once an answer is unusable: a healthy fetch waits
+# not at all, retries not at all and prints no extra line. On a halt path
+# (_BUREAU_LINEAR_SINGLE_ATTEMPT=1, set by shepherd.sh and by the spec stage's
+# rollback trap) a single attempt is made without any wait, so the total wait
+# of a halt stays bounded no matter how many writes the halt needs.
+_bureau_linear_fetch() {
+  local payload="$1"
+  local attempt=1 code answer fault wait
+  local planned=0 retries=0 w1=10 w2=30 w3=60
+  while : ; do
+    code=0
+    answer=$(curl -s -X POST https://api.linear.app/graphql \
+      -H "Content-Type: application/json" \
+      -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
+      -d "$payload") || code=$?
+    fault=$(_bureau_linear_classify "$code" "$answer")
+    if [ -z "$fault" ]; then
+      printf '%s' "$answer"
+      return 0
+    fi
+    if [ "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" = 1 ]; then
+      echo "linear: unusable answer ($fault) on a halt path — one attempt only, giving up" >&2
+      return "$BUREAU_EXIT_LINEAR_UNUSABLE"
+    fi
+    if [ "$planned" = 0 ]; then
+      retries=$(_bureau_linear_setting BUREAU_LINEAR_RETRIES "${BUREAU_LINEAR_RETRIES:-}" '.linear.retry.retries' 3 10)
+      w1=$(_bureau_linear_setting BUREAU_LINEAR_RETRY_WAIT_1 "${BUREAU_LINEAR_RETRY_WAIT_1:-}" '.linear.retry.wait_1' 10 600)
+      w2=$(_bureau_linear_setting BUREAU_LINEAR_RETRY_WAIT_2 "${BUREAU_LINEAR_RETRY_WAIT_2:-}" '.linear.retry.wait_2' 30 600)
+      w3=$(_bureau_linear_setting BUREAU_LINEAR_RETRY_WAIT_3 "${BUREAU_LINEAR_RETRY_WAIT_3:-}" '.linear.retry.wait_3' 60 600)
+      planned=1
+    fi
+    if [ "$attempt" -gt "$retries" ]; then
+      echo "linear: unusable answer ($fault) after $attempt attempt(s) — giving up with exit $BUREAU_EXIT_LINEAR_UNUSABLE" >&2
+      _bureau_linear_record "$fault"
+      return "$BUREAU_EXIT_LINEAR_UNUSABLE"
+    fi
+    case "$attempt" in
+      1) wait="$w1" ;;
+      2) wait="$w2" ;;
+      *) wait="$w3" ;;
+    esac
+    echo "linear: unusable answer ($fault), attempt $attempt of $((retries + 1)) — retrying in ${wait}s" >&2
+    sleep "$wait"
+    attempt=$((attempt + 1))
+  done
+}
+
+# halt_if_linear_unusable <exit-code> — for the few call sites that CATCH a
+# helper's exit code (`if add_issue_label …; then`). Ends the stage when the
+# code says "Linear stayed unusable"; returns 1 for every other non-zero code,
+# so the caller's own error branch runs exactly as before.
+halt_if_linear_unusable() {
+  if [ "${1:-0}" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+    echo "linear: the stage cannot decide without this answer — giving up with exit $BUREAU_EXIT_LINEAR_UNUSABLE" >&2
+    exit "$BUREAU_EXIT_LINEAR_UNUSABLE"
+  fi
+  return 1
+}
+
+# Helper: query Linear GraphQL. Every caller captures the answer first and
+# carries `|| return $?`: piped straight into jq, the fetch's exit code is lost.
 linear_query() {
-  curl -s -X POST https://api.linear.app/graphql \
-    -H "Content-Type: application/json" \
-    -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
-    -d "{\"query\": \"$1\"}"
+  _bureau_linear_fetch "{\"query\": \"$1\"}"
 }
 
 # Helper: run a raw GraphQL payload (for mutations that need variables).
 linear_raw() {
-  curl -s -X POST https://api.linear.app/graphql \
-    -H "Content-Type: application/json" \
-    -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
-    -d "$1"
+  _bureau_linear_fetch "$1"
 }
 
 # EXP-490: per-stage model resolution. Resolution order (first non-empty
@@ -518,8 +694,9 @@ _resolve_issue_uuid() {
   fi
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id } } }" \
-    | jq -r '.data.issues.nodes[0].id // empty'
+  local answer
+  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id } } }") || return $?
+  printf '%s' "$answer" | jq -r '.data.issues.nodes[0].id // empty'
 }
 
 # Move an issue to a new state.
@@ -536,15 +713,16 @@ move_issue() {
     return 0
   fi
   if [ -n "${BUREAU_EXPECTED_STATE_ID:-}" ] && [ "$ref" = "${BUREAU_CURRENT_ISSUE:-}" ]; then
-    local current_state
-    current_state=$(bureau_issue_snapshot "$ref" | jq -r '.state.id // empty')
+    local current_snapshot current_state
+    current_snapshot=$(bureau_issue_snapshot "$ref") || return $?
+    current_state=$(printf '%s' "$current_snapshot" | jq -r '.state.id // empty')
     if [ "$current_state" != "$BUREAU_EXPECTED_STATE_ID" ]; then
       echo "ERROR: $ref state changed during this stage; refusing stale transition" >&2
       return 21
     fi
   fi
   local uuid
-  uuid=$(_resolve_issue_uuid "$ref")
+  uuid=$(_resolve_issue_uuid "$ref") || return $?
   if [ -z "$uuid" ]; then
     echo "move_issue: could not resolve $ref to UUID" >&2
     return 1
@@ -554,7 +732,7 @@ move_issue() {
     '{query: "mutation($id: String!, $sid: String!) { issueUpdate(id: $id, input: { stateId: $sid }) { success } }",
       variables: {id: $id, sid: $sid}}')
   local result
-  result=$(linear_raw "$payload")
+  result=$(linear_raw "$payload") || return $?
   local ok
   ok=$(printf '%s' "$result" | jq -r '.data.issueUpdate.success // false')
   if [ "$ok" != "true" ]; then
@@ -576,7 +754,7 @@ post_comment() {
     return 0
   fi
   local uuid
-  uuid=$(_resolve_issue_uuid "$ref")
+  uuid=$(_resolve_issue_uuid "$ref") || return $?
   if [ -z "$uuid" ]; then
     echo "post_comment: could not resolve $ref to UUID" >&2
     return 1
@@ -586,7 +764,7 @@ post_comment() {
     '{query: "mutation($id: String!, $body: String!) { commentCreate(input: { issueId: $id, body: $body }) { success } }",
       variables: {id: $id, body: $body}}')
   local result
-  result=$(linear_raw "$payload")
+  result=$(linear_raw "$payload") || return $?
   local ok
   ok=$(printf '%s' "$result" | jq -r '.data.commentCreate.success // false')
   if [ "$ok" != "true" ]; then
@@ -820,7 +998,7 @@ get_issue_branch() {
   # spec pipeline near the top of the comment list; if it falls off the page,
   # downstream pipelines silently fall back to Linear's branchName which never
   # matches the sequential spec branch numbers.
-  data=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }")
+  data=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }") || return $?
   local marker
   marker=$(printf '%s' "$data" \
     | jq -r '
@@ -851,7 +1029,9 @@ get_issue_branch_and_comments() {
   local ref="$1"
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }" \
+  local answer
+  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }") || return $?
+  printf '%s' "$answer" \
     | jq '
       (.data.issues.nodes[0] // {}) as $issue
       | (($issue.comments.nodes // []) | sort_by(.createdAt) | reverse) as $comments
@@ -873,7 +1053,9 @@ get_issue_comments() {
   local ref="$1"
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { comments(first: 200) { nodes { body createdAt } } } } }" \
+  local answer
+  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { comments(first: 200) { nodes { body createdAt } } } } }") || return $?
+  printf '%s' "$answer" \
     | jq '(.data.issues.nodes[0].comments.nodes // []) | sort_by(.createdAt) | reverse'
 }
 
@@ -882,21 +1064,25 @@ get_issue_detail() {
   local ref="$1"
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { identifier title description project { name description } labels { nodes { name } } } } }" \
+  local answer
+  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { identifier title description project { name description } labels { nodes { name } } } } }") || return $?
+  printf '%s' "$answer" \
     | jq '(.data.issues.nodes[0] // {}) | {identifier, title, description, project: (.project // {name: null, description: null}), labels: ((.labels.nodes // []) | map(.name))}'
 }
 
 # Raw identity/state snapshot for optimistic stage completion checks.
 bureau_issue_snapshot() {
   local ref="$1" team_key="${1%%-*}" number="${1##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id identifier title description state { id name } labels { nodes { name } } } } }" \
+  local answer
+  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id identifier title description state { id name } labels { nodes { name } } } } }") || return $?
+  printf '%s' "$answer" \
     | jq '.data.issues.nodes[0] // {}'
 }
 
 # Canonical names for existing stage guards, resolved from configured UUIDs.
 get_issue_state() {
   local snapshot id key
-  snapshot=$(bureau_issue_snapshot "$1")
+  snapshot=$(bureau_issue_snapshot "$1") || return $?
   id=$(printf '%s' "$snapshot" | jq -r '.state.id // empty')
   key=$(jq -r --arg id "$id" '.linear.teams[0].states | to_entries[] | select(.value == $id and $id != "") | .key' "$BUREAU_CONFIG" | head -1)
   case "$key" in
@@ -916,14 +1102,15 @@ add_issue_label() {
     return 0
   fi
   local uuid
-  uuid=$(_resolve_issue_uuid "$ref")
+  uuid=$(_resolve_issue_uuid "$ref") || return $?
   if [ -z "$uuid" ]; then
     echo "add_issue_label: could not resolve $ref" >&2
     return 1
   fi
   local label_id
-  label_id=$(linear_query "{ issueLabels(filter: { name: { eq: \\\"$name\\\" } }, first: 1) { nodes { id } } }" \
-    | jq -r '.data.issueLabels.nodes[0].id // empty')
+  local label_answer
+  label_answer=$(linear_query "{ issueLabels(filter: { name: { eq: \\\"$name\\\" } }, first: 1) { nodes { id } } }") || return $?
+  label_id=$(printf '%s' "$label_answer" | jq -r '.data.issueLabels.nodes[0].id // empty')
   if [ -z "$label_id" ]; then
     echo "add_issue_label: no label named '$name'" >&2
     return 1
@@ -933,7 +1120,9 @@ add_issue_label() {
     '{query: "mutation($id: String!, $lid: String!) { issueAddLabel(id: $id, labelId: $lid) { success } }",
       variables: {id: $id, lid: $lid}}')
   local ok
-  ok=$(linear_raw "$payload" | jq -r '.data.issueAddLabel.success // false')
+  local label_result
+  label_result=$(linear_raw "$payload") || return $?
+  ok=$(printf '%s' "$label_result" | jq -r '.data.issueAddLabel.success // false')
   [ "$ok" = "true" ]
 }
 
@@ -950,21 +1139,24 @@ remove_issue_label() {
     return 0
   fi
   local uuid
-  uuid=$(_resolve_issue_uuid "$ref")
+  uuid=$(_resolve_issue_uuid "$ref") || return $?
   if [ -z "$uuid" ]; then
     echo "remove_issue_label: could not resolve $ref" >&2
     return 1
   fi
   local label_id
-  label_id=$(linear_query "{ issueLabels(filter: { name: { eq: \\\"$name\\\" } }, first: 1) { nodes { id } } }" \
-    | jq -r '.data.issueLabels.nodes[0].id // empty')
+  local label_answer
+  label_answer=$(linear_query "{ issueLabels(filter: { name: { eq: \\\"$name\\\" } }, first: 1) { nodes { id } } }") || return $?
+  label_id=$(printf '%s' "$label_answer" | jq -r '.data.issueLabels.nodes[0].id // empty')
   [ -z "$label_id" ] && return 0
   local payload
   payload=$(jq -n --arg id "$uuid" --arg lid "$label_id" \
     '{query: "mutation($id: String!, $lid: String!) { issueRemoveLabel(id: $id, labelId: $lid) { success } }",
       variables: {id: $id, lid: $lid}}')
   local ok
-  ok=$(linear_raw "$payload" | jq -r '.data.issueRemoveLabel.success // false')
+  local label_result
+  label_result=$(linear_raw "$payload") || return $?
+  ok=$(printf '%s' "$label_result" | jq -r '.data.issueRemoveLabel.success // false')
   [ "$ok" = "true" ]
 }
 
@@ -1554,10 +1746,12 @@ count_in_flight_issues() {
   local payload
   payload=$(jq -n --arg q "$query" '{query: $q}')
 
-  curl -s -X POST https://api.linear.app/graphql \
-    -H "Content-Type: application/json" \
-    -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
-    -d "$payload" 2>/dev/null \
+  # Through linear_raw, and no fallback to 0: a count read from an unusable
+  # answer used to come out as "0 in flight", which let the spec stage take a
+  # new ticket past the cap exactly while Linear was failing.
+  local answer
+  answer=$(linear_raw "$payload") || return $?
+  printf '%s' "$answer" \
   | jq '
     [(.data.issues.nodes // [])[]
      | select(
@@ -1566,7 +1760,7 @@ count_in_flight_issues() {
           | length) == 0
        )]
     | length
-  ' 2>/dev/null || echo "0"
+  '
 }
 
 # A held branch is an ownership conflict. Never detach another checkout.
@@ -1668,6 +1862,7 @@ exit_class() {
     24)  echo "environment-blocked" ;;
     25)  echo "needs-human-or-paused" ;;
     26)  echo "cancelled-ticket" ;;
+    27)  echo "linear-unusable" ;;
     124) echo "timeout" ;;
     130) echo "cancelled-run" ;;
     *)   echo "error-$1" ;;
@@ -1677,7 +1872,9 @@ exit_class() {
 # Precondition: verify LINEAR_API_KEY works. Exit 10 on failure.
 precondition_linear() {
   local out
-  out=$(linear_query "{ viewer { id } }" 2>/dev/null || true)
+  # No `2>/dev/null`: the retry lines of the fetch belong in the stage log.
+  # Exit 10 stays — it is the contract with shepherd and queue-loop.
+  out=$(linear_query "{ viewer { id } }" || true)
   local id
   id=$(printf '%s' "$out" | jq -r '.data.viewer.id // empty' 2>/dev/null || true)
   if [ -z "$id" ]; then
@@ -1778,11 +1975,13 @@ pick_issue() {
 
   # Sorted candidate list, one per line: <identifier>\t<open-blockers-csv>
   # The blockers column is empty when nothing blocks the candidate.
+  # Through linear_raw, so an unusable answer is retried and then ends the
+  # stage with $BUREAU_EXIT_LINEAR_UNUSABLE instead of reading as "queue
+  # empty" (exit 2).
+  local answer
+  answer=$(linear_raw "$payload") || return $?
   local candidates
-  candidates=$(curl -s -X POST https://api.linear.app/graphql \
-    -H "Content-Type: application/json" \
-    -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
-    -d "$payload" \
+  candidates=$(printf '%s' "$answer" \
   | jq -r --argjson excl "$exclude_json" --arg skip "$skip_csv" '
     (.data.issues.nodes // [])
     | map(select(.identifier as $id | ($skip | split(",") | index($id)) == null))

@@ -39,6 +39,7 @@ Version 1 remains compatible; version 2 makes the legacy `agents.runner: "claude
 | `linear.labels.ai_implementable.id` | UUID | yes | Required on issues for stages from Build onwards |
 | `linear.labels.needs_copy.name` | string | optional | Required if `agents.copy: true`; routes from Spec Review (or UX) → Copy |
 | `linear.projects` | array | optional | List of project UUIDs to scope `pick_issue`. Empty array = unscoped (entire team) |
+| `linear.retry.retries`, `linear.retry.wait_1` / `wait_2` / `wait_3` | integer | optional | Retry ladder for an unusable Linear answer (no response, not JSON, GraphQL `errors`, no `data`). Defaults 3 retries after 10, 30, 60 s. Env keys of the same name win; see [Linear / external services](#linear--external-services) |
 
 The runtime uses the first configured team. State IDs are authoritative; display names may be customized.
 
@@ -145,6 +146,8 @@ Cost logging is opt-in. Usage throttling uses an operator-provided signal for th
 | Var | Required when | Notes |
 |---|---|---|
 | `LINEAR_API_KEY` | Always (agents) | Set in `.env`. The interactive `/bureau-init` works without it via MCP; the headless agents need direct GraphQL access |
+| `BUREAU_LINEAR_RETRIES` | Optional | Retries after an unusable Linear answer, 0 to 10 (default 3). Beats `.linear.retry.retries` in `.bureau.json`. After the last retry the stage exits 27 (`linear-unusable`) |
+| `BUREAU_LINEAR_RETRY_WAIT_1` / `_2` / `_3` | Optional | Seconds before the first, second and every further retry, 0 to 600 (defaults 10, 30, 60). Beat `.linear.retry.wait_1` / `wait_2` / `wait_3`. A value that is not plain digits is dropped with a warning naming the key, never the value |
 | `TELEGRAM_BOT_TOKEN` | Optional | Telegram bot for failure alerts. No-op when unset |
 | `TELEGRAM_ALERT_CHAT_ID` | Optional | Chat/channel ID for alerts. Must be set alongside the token |
 

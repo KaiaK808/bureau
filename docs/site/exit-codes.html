@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ac430c9ffea7ecefdc6edf3bdf241f2e3d83190ff52faf3971fd7fad372983e9">
+<meta name="bureau-source-sha256" content="2490f78100aae6a2e7437f81046fce77206e70abfa71061f34924bc9d744dcd9">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -152,6 +152,18 @@ rejected)</td>
 <td>cancelled-ticket</td>
 <td>Ticket cancelled/duplicate</td>
 <td>Not successful completion</td>
+</tr>
+<tr>
+<td><code>27</code></td>
+<td>linear-unusable</td>
+<td>A Linear answer stayed unusable after every retry; the stage stopped
+instead of deciding on an empty result</td>
+<td>Linear outage, an error page, or a query Linear rejects. The
+shepherd halts: Telegram alert with the fault class
+(<code>no-response</code>, <code>not-json</code>,
+<code>graphql-errors</code>, <code>no-data</code>), then one attempt
+each at <code>needs-human</code> and a halt comment. Re-shepherd once
+Linear answers</td>
 </tr>
 <tr>
 <td><code>124</code></td>

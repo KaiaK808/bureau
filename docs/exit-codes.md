@@ -29,6 +29,7 @@ This page is the complete table + how the alerter behaves.
 | `24` | environment-blocked | Permissions or required execution capability missing | Inspect denied operation separately from code/test failures |
 | `25` | needs-human-or-paused | Halt requiring attention or paused dispatch | Resolve the blocker or unpause explicitly |
 | `26` | cancelled-ticket | Ticket cancelled/duplicate | Not successful completion |
+| `27` | linear-unusable | A Linear answer stayed unusable after every retry; the stage stopped instead of deciding on an empty result | Linear outage, an error page, or a query Linear rejects. The shepherd halts: Telegram alert with the fault class (`no-response`, `not-json`, `graphql-errors`, `no-data`), then one attempt each at `needs-human` and a halt comment. Re-shepherd once Linear answers |
 | `124` | timeout | Provider exceeded time bound | Inspect preserved progress |
 | `130` | cancelled-run | Process interrupted | Inspect ownership and resume evidence |
 

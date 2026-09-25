@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d0a6acf7e1c33d202213764b360a02616b6a52a9b1324ea30ad72aa19462a92b">
+<meta name="bureau-source-sha256" content="2a2a537621297904abe612433ad8271ec4d851208ebdc36610dbd5b545e7c822">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -180,6 +180,16 @@ of the queue</td>
 <td>optional</td>
 <td>List of project UUIDs to scope <code>pick_issue</code>. Empty array
 = unscoped (entire team)</td>
+</tr>
+<tr>
+<td><code>linear.retry.retries</code>, <code>linear.retry.wait_1</code>
+/ <code>wait_2</code> / <code>wait_3</code></td>
+<td>integer</td>
+<td>optional</td>
+<td>Retry ladder for an unusable Linear answer (no response, not JSON,
+GraphQL <code>errors</code>, no <code>data</code>). Defaults 3 retries
+after 10, 30, 60 s. Env keys of the same name win; see <a
+href="#linear--external-services">Linear / external services</a></td>
 </tr>
 </tbody>
 </table>
@@ -677,6 +687,22 @@ separate <code>agents.max_concurrent_issues</code> ticket cap</td>
 <td>Set in <code>.env</code>. The interactive <code>/bureau-init</code>
 works without it via MCP; the headless agents need direct GraphQL
 access</td>
+</tr>
+<tr>
+<td><code>BUREAU_LINEAR_RETRIES</code></td>
+<td>Optional</td>
+<td>Retries after an unusable Linear answer, 0 to 10 (default 3). Beats
+<code>.linear.retry.retries</code> in <code>.bureau.json</code>. After
+the last retry the stage exits 27 (<code>linear-unusable</code>)</td>
+</tr>
+<tr>
+<td><code>BUREAU_LINEAR_RETRY_WAIT_1</code> / <code>_2</code> /
+<code>_3</code></td>
+<td>Optional</td>
+<td>Seconds before the first, second and every further retry, 0 to 600
+(defaults 10, 30, 60). Beat <code>.linear.retry.wait_1</code> /
+<code>wait_2</code> / <code>wait_3</code>. A value that is not plain
+digits is dropped with a warning naming the key, never the value</td>
 </tr>
 <tr>
 <td><code>TELEGRAM_BOT_TOKEN</code></td>

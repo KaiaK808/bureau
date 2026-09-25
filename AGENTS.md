@@ -20,7 +20,7 @@ These are hard-learned rules (see the EXP-### tags in `bureau-config.sh` and ref
 
 4. **Exit codes are a protocol.** `queue-loop.sh` maps exit codes to alert classes and throttles Telegram alerts by `(issue, class)` per hour. The full vocabulary is `exit_class()` in `templates/scripts/bureau-config.sh`; preserve it:
 
-   | 0 ok · 2 queue-empty · 10 linear-down · 11 worktree-dirty · 12 no-branch · 13 no-tasks · 14 build-failed · 15 no-pr · 16 provider-unauth · 17 rebase-needed · 18 gh-failed · 19 rebase-rejected · 20 stopped-before-merge · 21 ownership-conflict · 22 provider-or-result-error · 23 quota-wait · 24 environment-blocked · 25 needs-human-or-paused · 26 cancelled-ticket · 124 timeout · 130 cancelled-run |
+   | 0 ok · 2 queue-empty · 10 linear-down · 11 worktree-dirty · 12 no-branch · 13 no-tasks · 14 build-failed · 15 no-pr · 16 provider-unauth · 17 rebase-needed · 18 gh-failed · 19 rebase-rejected · 20 stopped-before-merge · 21 ownership-conflict · 22 provider-or-result-error · 23 quota-wait · 24 environment-blocked · 25 needs-human-or-paused · 26 cancelled-ticket · 27 linear-unusable · 124 timeout · 130 cancelled-run |
 
    **Codes 20 and 21 are contested in the field and no change carrying them may be copied between installations verbatim.** slidefactory maps 20 to `linear-unusable` (EXP-1478) and msc maps 20 to `review-blocked` and 21 to `deps-unavailable` (EXP-1322, EXP-1375) — three meanings for two numbers. The template's vocabulary above is the only one that can hold all of it, so a local table is a local table: it stays out of `templates/scripts/`, and anything ported upstream is rewritten onto these codes first.
 
