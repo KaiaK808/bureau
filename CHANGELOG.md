@@ -6,6 +6,27 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+### Hardening carried over from the installations
+
+The hardening list from slidefactory-core and msc-planner in `docs/2026-09-25-drift-inventar.md`, each item with a test that runs the real code and a negative control against the broken form. Two items were already closed by the v2 runtime (model values reach the provider as one argument; `reset_worktree` returns its status and finds `.env` and `.bureau.json` via the main checkout) and now have a test or a note instead of a change. **Resync each adopting repository** to receive them.
+
+#### Changed
+
+- A review BLOCK (and any unknown verdict) ends the review stage with exit `25` instead of `0`. `shepherd.sh` now halts with an alert on every exit code except `0`, `2`, `10` and `16`; codes it did not list before (`22` to `26`) used to stop without an alert.
+- A Linear answer that is unusable (no response, not JSON, GraphQL `errors`, no `data`) is retried after 10, 30 and 60 seconds and then ends the stage with the new exit code `27` (`linear-unusable`); the shepherd halts, alerts with the fault class and tries `needs-human` and a halt comment once. Tune with `BUREAU_LINEAR_RETRIES` / `BUREAU_LINEAR_RETRY_WAIT_1..3` or `.linear.retry.*`.
+- The implement stage no longer writes `[skip ci]` into iteration commits and no longer adds an empty "CI re-trigger" commit. With a PR open, each iteration's push now runs CI.
+- `agents.max_concurrent_issues` counts leaf issues of the configured `linear.projects`: sub-issues count, epics and other projects do not.
+- The cross-check of a new spec against open PRs runs under macOS's `/bin/bash` 3.2 and reports clean, conflicts or incomplete; anything but an explicit clean posts a warning on the ticket.
+
+#### Fixed
+
+- `.env` is parsed, never sourced, by all sixteen pipeline scripts.
+- A red build can no longer soften a review BLOCK into rework.
+- Squash and merge set their own sanitised subject and body, so no CI suppressor reaches `main`; the implement and QA stages halt (`CI_MARKER` / `needs-human`) when a commit message in the squash range carries one.
+- Labels resolve to the issue's own team (then a workspace label), and a failed lookup is never reported as "no such label".
+- An npm project's `node_modules` is restored after the worktree reset (`npm ci --ignore-scripts`, clone on identical manifests); a failure stops with `24` instead of building red.
+- A failed implement push is reported with branch, exit code and git's output, and a detached HEAD pushes to `refs/heads/<branch>`.
+
 ## [2.0.0] - 2026-09-07
 
 ### Claude Code and Codex support
