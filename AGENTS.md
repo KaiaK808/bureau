@@ -18,15 +18,43 @@ These are hard-learned rules (see the EXP-### tags in `bureau-config.sh` and ref
 
 3. **Preconditions run before state mutations.** Keep `precondition_linear` (exit 10) and applicable provider authentication checks (exit 16) before `move_issue`. Current coverage differs by stage; do not infer that every stage already checks authentication. The spec pipeline additionally installs an EXIT trap immediately after its `Triage → Spec` move so a crash routes the issue back to Triage instead of stranding it.
 
-4. **Exit codes are a protocol.** `queue-loop.sh` maps exit codes to alert classes and throttles Telegram alerts by `(issue, class)` per hour. Preserve the mapping:
+4. **Exit codes are a protocol.** `queue-loop.sh` maps exit codes to alert classes and throttles Telegram alerts by `(issue, class)` per hour. The full vocabulary is `exit_class()` in `templates/scripts/bureau-config.sh`; preserve it:
 
-   | 0 ok · 2 queue-empty · 10 linear-down · 11 worktree-dirty · 12 no-branch · 13 no-tasks · 14 build-failed · 15 no-pr · 16 provider-unauth |
+   | 0 ok · 2 queue-empty · 10 linear-down · 11 worktree-dirty · 12 no-branch · 13 no-tasks · 14 build-failed · 15 no-pr · 16 provider-unauth · 17 rebase-needed · 18 gh-failed · 19 rebase-rejected · 20 stopped-before-merge · 21 ownership-conflict · 22 provider-or-result-error · 23 quota-wait · 24 environment-blocked · 25 needs-human-or-paused · 26 cancelled-ticket · 124 timeout · 130 cancelled-run |
+
+   **Codes 20 and 21 are contested in the field and no change carrying them may be copied between installations verbatim.** slidefactory maps 20 to `linear-unusable` (EXP-1478) and msc maps 20 to `review-blocked` and 21 to `deps-unavailable` (EXP-1322, EXP-1375) — three meanings for two numbers. The template's vocabulary above is the only one that can hold all of it, so a local table is a local table: it stays out of `templates/scripts/`, and anything ported upstream is rewritten onto these codes first.
 
 5. **Disposable worker worktrees are reset between picks.** `queue-loop.sh`'s `reset_worktree` fetches, resets to the correct ref (`origin/main` for spec, the issue's spec branch for everything else), and `clean -fdx`. Claims issue/workspace ownership first; `free_branch_from_other_worktrees` reports held branches without detaching them. Existing unregistered checkouts may not be reset. App stages use the current-workspace prepare/finish protocol.
 
 6. **`pick_issue` filters by label *name*, not UUID.** This lets custom labels (`ai-implementable`, `needs-human`, `needs-ux`) work even when `.bureau.json` only captured the main `lane-2` label's UUID.
 
 7. **The merge gate is strict.** `merge-pipeline.sh` enforces `pr_ci_is_green` and `pr_base_is_current` (in `bureau-config.sh`) **independently** of GitHub's `mergeStateStatus`, and re-runs the entire gate set just-in-time before `gh pr merge`. Don't weaken these. `mergeStateStatus == CLEAN` is async-cached and passes when no required checks are configured — relying on it caused a real incident where four PRs merged with red CI / stale base and broke main. The `.bureau.json` toggles `merge_require_green_ci` and `merge_require_up_to_date` exist for repos genuinely without CI (docs-only, prototypes). **Never flip them off as a debugging workaround** — the recurrence cost is "main goes red and nobody notices until a developer pulls."
+
+### Rules for the agent prompts inside the stage scripts
+
+The stage prompts are inline strings in the pipeline scripts (`code-review-pipeline.sh` carries three reviewer roles — correctness, security, performance). They are prompts, so they fail in prompt-shaped ways. These four rules come from a 34-agent fan-out measured on 2026-09-25; the first two are cheap to hold, the third is a wording change, the fourth is an open design decision.
+
+1. **A stage that spawns helpers says who writes.** "You write exactly this one file; your helpers report to you and touch no file." Observed failure: helpers wrote straight into the target artifact, and only an unprompted re-check of their citations kept unverified claims out of it.
+
+2. **A stage that shares a directory gives each agent its own subdirectory**, and shared tooling lives where agents are told not to write. Observed failure: a helper's throwaway script overwrote the parent's verification tool of the same name. Worktrees cover this for the standard stages; any fan-out inside a stage does not inherit that protection.
+
+3. **Never cap a count without stating the expected distribution.** "At most N" is read as "produce N": six agents given a cap of three all used exactly three. Where a review prompt asks for the most important findings, name the distribution expected across a normal PR and add "if you report three, name the one you would drop if you had to drop one."
+
+4. **Findings need a separate verification pass.** Review output today is produced and consumed without anyone asking whether a finding is real. In the measured run, a fresh agent that saw only the claim, the source and the artifact — never the author's reasoning — overturned 9 of 52 claims, including findings about problems that were already fixed and about files that did not exist in the cited form. A 100 % pass rate is the warning sign, not the goal. Adding this as a stage is an open decision: it costs one pass per finding, and it is a script change, so it waits on the drift inventory below.
+
+### Drift across installations (measured 2026-09-25)
+
+`templates/scripts/` is authoritative in name only. Of 23 shared scripts exactly one is byte-identical across template, slidefactory-core and msc-planner (`setup-merge-drivers.sh`); `bureau-config.sh` alone differs by 815 non-comment lines between template and slidefactory, and 40 of 53 shared functions have differing bodies. Neither installation was ever resynced: each was scaffolded once (msc 2026-07-20, slidefactory 2026-09-04, three days before the v2.0.0 tag) and has diverged since.
+
+The direction is not one arrow. **The template is ahead** on the v2 runtime (14 files neither installation has, including the `flock`-guarded `leases.json` ownership model) and on four capabilities the forks quietly lost: the `Bureau-Generated:` trailer check, the `needs-human` exclusion in `pipeline_pick_next`, the `cost_usd: null`-vs-zero distinction, and `pick_issue`'s `skip_csv` argument. **The installations are ahead** on incident-driven hardening the template never received, and no hardening was invented twice — the two local incident sets do not share a single EXP tag.
+
+**The worst line in the tree is one unconditional statement.** `code-review-pipeline.sh` ends the verdict step with `[ "$BUILD_OK" = false ] && VERDICT="REQUEST_CHANGES"` — byte-identical in the template (`:400`) and in slidefactory (`:380`). A build that is red for an environmental reason therefore rewrites a **BLOCK** into routine rework, skips `needs-human`, and routes a security-flagged ticket into autonomous fixing. msc replaced it with `apply_build_failure()` — a three-line decision table where BLOCK survives a red build, APPROVE and REQUEST_CHANGES collapse to REQUEST_CHANGES, and an unknown verdict falls closed to BLOCK — after exactly that happened on 2026-08-11 (EXP-1339, logged as CRITICAL / "stiller Datenverlust"). Port the table before anything else in this file.
+
+**A second silent nothing:** `crosscheck-specs.sh` opens with `declare -A` (`:13-14`), which macOS's stock `/bin/bash` 3.2 rejects at runtime with "invalid option". Every spec stage launched with the system bash therefore reports no file conflicts, always. slidefactory rewrote the script for bash 3.2 with three distinguishable outcomes and exit codes 0/3/4; msc fixed the crash with indexed arrays but exits 0 on every path, so its callers still cannot tell clean from conflicted.
+
+**The template also manufactures its own hazard:** `implement-pipeline.sh` amends `[skip ci]` onto every iteration commit and `merge-pipeline.sh` squash-merges without `--subject`/`--body`, so GitHub composes the merge message from that commit list and creates no CI run for the push to `main`. Both installations built a guard against exactly this, by two different mechanisms in two different trees — slidefactory detects and halts (`squash-marker-check.sh`, and it removed the amend entirely), msc neutralises at the merge (`merge-body.sh`). The template has neither.
+
+**Before any change to `templates/scripts/`, read the drift inventory in `docs/2026-09-25-drift-inventar.md`.** A template-first change that is resynced without it overwrites fixes that exist in exactly one place — among them the only safe `.env` reader (`bureau-env.sh`, slidefactory), the Linear retry-and-classify family, the review-verdict floor that keeps a red build from softening a BLOCK (msc), and the worktree dependency restore.
 
 ## Shipping
 
