@@ -1093,6 +1093,67 @@ get_issue_state() {
   esac
 }
 
+# _resolve_label_id <label-name> <issue-ref> — the UUID of the label <name> that
+# applies to the issue's team. stdout: the UUID, or empty for a well-formed
+# "no such label". Exit: 0; $BUREAU_EXIT_LINEAR_UNUSABLE when Linear stayed
+# unusable; 2 when the answer was usable but a matching label could not be
+# classified.
+#
+# Carried over from msc-planner (EXP-1340). The name-only lookup with
+# `first: 1` returned whichever label of that name the server listed first. In
+# a workspace where two teams both have `needs-human` (or `shepherd-focused`),
+# that was deterministically the other team's label, which cannot attach to
+# this team's issue — every attach failed, and remove_issue_label reported an
+# idempotent success while the label stayed on. So the name is queried across
+# the workspace, each candidate carrying its team, and chosen in strict order:
+#   1. the label owned by the issue's own team
+#   2. else a workspace-level label (team == null, valid for every team)
+#   3. else nothing
+# No server-side team filter on purpose: it would drop the workspace-level
+# labels of tier 2 before they reach the choice.
+#
+# A matching node without classifiable team metadata or without a usable id is
+# never skipped into "not found": that is exit 2, unless a usable winner exists
+# anyway. Empty output with exit 0 is reserved for a clean no-match.
+#
+# The team comes from an identifier like EXP-123; for a UUID reference the
+# configured team key applies.
+_resolve_label_id() {
+  local name="$1" ref="$2" team_key answer selection
+  case "$ref" in
+    [A-Z]*-[0-9]*) team_key="${ref%%-*}" ;;
+    *) team_key="$BUREAU_TEAM_KEY" ;;
+  esac
+  answer=$(linear_query "{ issueLabels(filter: { name: { eq: \\\"$name\\\" } }, first: 20) { nodes { id team { key } } } }") || return $?
+  selection=$(printf '%s' "$answer" | jq -r --arg tk "$team_key" '
+    def usable_node:
+      ( has("team")
+        and ( (.team == null)
+              or ( ((.team | type) == "object")
+                   and (.team | has("key"))
+                   and ((.team.key | type) == "string")
+                   and ((.team.key | length) > 0) ) ) )
+      and ((.id | type) == "string") and ((.id | length) > 0);
+    if (.data.issueLabels.nodes | type) != "array" then "malformed"
+    else
+      .data.issueLabels.nodes as $nodes
+      | ($nodes | map(select(usable_node)))    as $good
+      | (($good | length) < ($nodes | length)) as $malformed
+      | ( ([ $good[] | select(.team.key == $tk) ] | .[0])
+          // ([ $good[] | select(.team == null) ] | .[0]) ) as $win
+      | if $win != null then "id " + $win.id
+        elif $malformed then "malformed"
+        else "none" end
+    end') || selection="malformed"
+  case "$selection" in
+    "id "*) printf '%s' "${selection#id }" ;;
+    none) : ;;
+    *)
+      echo "_resolve_label_id: a label named '$name' could not be classified for team '$team_key'" >&2
+      return 2 ;;
+  esac
+}
+
 # Add a label (by name) to an issue.
 # Usage: add_issue_label <issue-id-or-key> <label-name>
 add_issue_label() {
@@ -1107,12 +1168,16 @@ add_issue_label() {
     echo "add_issue_label: could not resolve $ref" >&2
     return 1
   fi
-  local label_id
-  local label_answer
-  label_answer=$(linear_query "{ issueLabels(filter: { name: { eq: \\\"$name\\\" } }, first: 1) { nodes { id } } }") || return $?
-  label_id=$(printf '%s' "$label_answer" | jq -r '.data.issueLabels.nodes[0].id // empty')
+  local label_id status=0
+  label_id=$(_resolve_label_id "$name" "$ref") || status=$?
+  if [ "$status" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+    return "$status"
+  elif [ "$status" != 0 ]; then
+    echo "add_issue_label: label lookup failed for '$name'" >&2
+    return 1
+  fi
   if [ -z "$label_id" ]; then
-    echo "add_issue_label: no label named '$name'" >&2
+    echo "add_issue_label: no label named '$name' for this team or the workspace" >&2
     return 1
   fi
   local payload
@@ -1129,8 +1194,8 @@ add_issue_label() {
 # Remove a label (by name) from an issue. Mirrors add_issue_label.
 # Idempotent on both ends — Linear's issueRemoveLabel no-ops if the label
 # isn't currently applied; we also return success (without calling Linear) if
-# the label name doesn't exist in the workspace at all, because the caller
-# wants the label absent and it definitionally is.
+# no label of that name exists for the issue's team or the workspace, because
+# the caller wants the label absent and it definitionally is.
 # Usage: remove_issue_label <issue-id-or-key> <label-name>
 remove_issue_label() {
   local ref="$1" name="$2"
@@ -1144,10 +1209,17 @@ remove_issue_label() {
     echo "remove_issue_label: could not resolve $ref" >&2
     return 1
   fi
-  local label_id
-  local label_answer
-  label_answer=$(linear_query "{ issueLabels(filter: { name: { eq: \\\"$name\\\" } }, first: 1) { nodes { id } } }") || return $?
-  label_id=$(printf '%s' "$label_answer" | jq -r '.data.issueLabels.nodes[0].id // empty')
+  local label_id status=0
+  label_id=$(_resolve_label_id "$name" "$ref") || status=$?
+  # A lookup failure is never an idempotent success: that would acknowledge a
+  # release while the label may still be attached. Only a clean "no such label
+  # for this team or the workspace" stays idempotent.
+  if [ "$status" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+    return "$status"
+  elif [ "$status" != 0 ]; then
+    echo "remove_issue_label: label lookup failed for '$name'" >&2
+    return 1
+  fi
   [ -z "$label_id" ] && return 0
   local payload
   payload=$(jq -n --arg id "$uuid" --arg lid "$label_id" \

@@ -46,7 +46,7 @@ write_config
 
 # --- stubs ------------------------------------------------------------------------
 mkdir -p "$SB/bin" "$SB/forms"
-HEALTHY='{"data":{"viewer":{"id":"V1"},"issues":{"nodes":[{"id":"UUID-1","identifier":"EXP-1","title":"T","description":"D","branchName":"feat/x","state":{"id":"s5","name":"Build"},"labels":{"nodes":[]},"comments":{"nodes":[]},"inverseRelations":{"nodes":[]},"priority":1,"createdAt":"2026-09-01T00:00:00Z"}]},"issueLabels":{"nodes":[{"id":"L1"}]},"commentCreate":{"success":true},"issueUpdate":{"success":true},"issueAddLabel":{"success":true},"issueRemoveLabel":{"success":true}}}'
+HEALTHY='{"data":{"viewer":{"id":"V1"},"issues":{"nodes":[{"id":"UUID-1","identifier":"EXP-1","title":"T","description":"D","branchName":"feat/x","state":{"id":"s5","name":"Build"},"labels":{"nodes":[]},"comments":{"nodes":[]},"inverseRelations":{"nodes":[]},"priority":1,"createdAt":"2026-09-01T00:00:00Z"}]},"issueLabels":{"nodes":[{"id":"L1","team":{"key":"EXP"}}]},"commentCreate":{"success":true},"issueUpdate":{"success":true},"issueAddLabel":{"success":true},"issueRemoveLabel":{"success":true}}}'
 printf '%s' "$HEALTHY"                                                  > "$SB/forms/healthy"
 printf '%s' '{"data":{"issues":{"nodes":[]}}}'                          > "$SB/forms/nothing"
 printf '%s' '{"errors":[{"message":"CANARY-ANSWER boom"}],"data":null}' > "$SB/forms/errors"
