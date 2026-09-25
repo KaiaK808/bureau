@@ -1408,6 +1408,26 @@ reset_worktree() {
   fi
 }
 
+# A red build pulls the verdict down — but it NEVER softens a BLOCK.
+#
+# The review stage used to fold the build result in with one unconditional line:
+# `[ "$BUILD_OK" = false ] && VERDICT="REQUEST_CHANGES"`. A build is also red for
+# reasons that have nothing to do with the code — missing dependencies in the
+# worktree, no network, a broken stub — and in that case a BLOCK lost its
+# escalation: the finding stayed in the review text while the ticket went into
+# ordinary rework without `needs-human`. That happened in a live installation on
+# 2026-08-11 and was logged there as CRITICAL.
+#
+# The table is fail-closed: what it does not know becomes BLOCK. An unknown verdict
+# is a fault in the caller, and a fault in the caller must not reach a merge.
+apply_build_failure() {
+  case "${1:-}" in
+    BLOCK)                   echo "BLOCK" ;;
+    APPROVE|REQUEST_CHANGES) echo "REQUEST_CHANGES" ;;
+    *)                       echo "BLOCK" ;;
+  esac
+}
+
 # Map pipeline exit code → human-readable error class (for alerts, logs,
 # and shepherd's halt-classifier). Originally in queue-loop.sh; relocated
 # so single-shot drivers can reuse the same exit-code protocol.

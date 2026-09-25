@@ -397,9 +397,16 @@ if [ "$VERDICT" = "REQUEST_CHANGES" ] && [ "${REVIEW_CYCLE_COUNT:-0}" -ge "$MAX_
 **ESCALATED:** $REVIEW_CYCLE_COUNT review cycles (max $MAX_REVIEW_CYCLES). Needs human intervention."
 fi
 
-[ "$BUILD_OK" = false ] && VERDICT="REQUEST_CHANGES" && MERGED_REVIEW="$MERGED_REVIEW
+if [ "$BUILD_OK" = false ]; then
+  # A red build routes to rework but never softens a BLOCK — the table lives in
+  # scripts/bureau-config.sh, `apply_build_failure`. This used to be an unconditional
+  # assignment, which sent a security finding into autonomous rework whenever the build
+  # was red for an environmental reason.
+  VERDICT=$(apply_build_failure "$VERDICT")
+  MERGED_REVIEW="$MERGED_REVIEW
 
 BUILD FAILURE: Must be fixed."
+fi
 
 # A provider can take long enough for the PR to be retargeted or either remote
 # branch to advance. Preserve its evidence without publishing a stale verdict.
