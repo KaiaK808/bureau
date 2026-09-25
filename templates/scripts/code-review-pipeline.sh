@@ -500,3 +500,6 @@ echo "  PR: #${PR_NUMBER:-none}"
 echo "  Verdict: ${VERDICT:-UNKNOWN}"
 echo "  Next: $NEXT_STATE"
 echo "═══════════════════════════════════════"
+# The verdict alone decides the exit code: a BLOCK must not look like a clean
+# review to the driver (resolve_verdict_exit in bureau-config.sh).
+exit "$(resolve_verdict_exit "${VERDICT:-}")"

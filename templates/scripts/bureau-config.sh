@@ -2078,6 +2078,44 @@ apply_build_failure() {
 # Map pipeline exit code → human-readable error class (for alerts, logs,
 # and shepherd's halt-classifier). Originally in queue-loop.sh; relocated
 # so single-shot drivers can reuse the same exit-code protocol.
+# resolve_verdict_exit <verdict> → 0 | 25 — the review stage's exit code,
+# taken from the verdict alone. APPROVE and REQUEST_CHANGES end the stage
+# cleanly (their routing is done); BLOCK and anything unknown end with 25
+# (needs-human-or-paused), the same fail-closed direction as the stage's
+# `VERDICT="${VERDICT:-BLOCK}"`.
+#
+# Carried over from msc-planner (EXP-1322), with this template's code: msc
+# ends a BLOCK with 20, which here means stopped-before-merge. A BLOCK used to
+# label, comment and exit 0, indistinguishable from an approved review. The
+# queue picker skips the needs-human ticket, but a shepherd saw 0, found the
+# ticket still in Build Review and ran the review again on the same commit —
+# in msc such a second run flipped BLOCK to APPROVE with no code change and
+# merged. With 25 the shepherd halts (shepherd_rc_action below).
+resolve_verdict_exit() {
+  case "${1:-}" in
+    APPROVE|REQUEST_CHANGES) echo 0 ;;
+    *)                       echo 25 ;;
+  esac
+}
+
+# shepherd_rc_action <exit-code> → ok | retry | halt — how shepherd.sh answers a
+# stage's exit code, as a pure table.
+#
+# Carried over from msc-planner. The shepherd used to list its halt codes one
+# by one and send everything else to an "unexpected exit" that stopped without
+# an alert — so every code added later (22 to 26 here) halted silently. Now
+# halt is the default and only the exceptions are listed:
+#   ok    0 success · 2 queue-empty
+#   retry 10 linear-down · 16 provider-unauth (transient, throttled retry)
+# Everything else halts with an alert, unknown codes included.
+shepherd_rc_action() {
+  case "${1:-}" in
+    0|2)   echo "ok" ;;
+    10|16) echo "retry" ;;
+    *)     echo "halt" ;;
+  esac
+}
+
 exit_class() {
   case "$1" in
     0)   echo "ok" ;;

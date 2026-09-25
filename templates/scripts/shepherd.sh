@@ -373,21 +373,20 @@ while true; do
   CLASS=$(exit_class "$RC")
   echo "[shepherd] $PIPELINE exit=$RC ($CLASS)"
 
-  case "$RC" in
-    0|2)
+  # Halt is the default for every code but the four listed in
+  # shepherd_rc_action; a code added later cannot slip through unannounced.
+  ACTION=$(shepherd_rc_action "$RC")
+  [ "$ACTION" = halt ] && [ "$RC" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && ACTION=linear-halt
+  case "$ACTION" in
+    ok)
       # Success / queue-empty — re-read state on next iteration.
       ;;
-    10|16)
-      # Transient: linear-down / claude-unauth. Throttled re-attempt.
+    retry)
+      # Transient: linear-down / provider-unauth. Throttled re-attempt.
       echo "[shepherd] $CLASS — sleeping 60s and retrying"
       sleep 60
       ;;
-    11|12|13|14|15|17|18|19|20|21|24)
-      echo "[shepherd] $PIPELINE halted ($CLASS) — aborting shepherd"
-      alert_telegram "$ISSUE" "$PIPELINE" "$RC" "shepherd halt ($CLASS)" 2>/dev/null || true
-      exit "$RC"
-      ;;
-    27)
+    linear-halt)
       # The stage gave up because Linear stayed unusable after every retry.
       # Nothing was decided on an empty answer, so the halt is ours to make
       # visible: alert first (Telegram does not need Linear), then label and
@@ -404,7 +403,8 @@ while true; do
       exit "$RC"
       ;;
     *)
-      echo "[shepherd] unexpected exit $RC ($CLASS) — aborting"
+      echo "[shepherd] $PIPELINE halted ($CLASS) — aborting shepherd"
+      alert_telegram "$ISSUE" "$PIPELINE" "$RC" "shepherd halt ($CLASS)" 2>/dev/null || true
       exit "$RC"
       ;;
   esac
