@@ -91,6 +91,12 @@ if ! merge_origin_main_or_abort "$ISSUE" "QA"; then
   exit 17
 fi
 
+# After the checkout AND the merge of origin/main — both can change the
+# manifests. Idempotent: does nothing when node_modules already matches. A
+# failure here is infrastructure (registry, disk), not the PR: stop with 24
+# (environment-blocked) instead of building red and judging someone's code.
+restore_worktree_deps "$(pwd)" || exit 24
+
 # Locate the spec dir so build_spec_context has something to load.
 SPEC_DIR=""
 for d in "$BUREAU_SPECS_DIR"/*/; do

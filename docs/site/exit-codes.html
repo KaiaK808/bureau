@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2490f78100aae6a2e7437f81046fce77206e70abfa71061f34924bc9d744dcd9">
+<meta name="bureau-source-sha256" content="f48a745ce20e2be5cebf288067ad02b4a181ebb2f528320a3ba209798f80e04c">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -139,7 +139,12 @@ rejected)</td>
 <td><code>24</code></td>
 <td>environment-blocked</td>
 <td>Permissions or required execution capability missing</td>
-<td>Inspect denied operation separately from code/test failures</td>
+<td>Inspect denied operation separately from code/test failures. Also:
+an npm project's <code>node_modules</code> could not be restored after
+the worktree reset (<code>npm ci --ignore-scripts</code> failed twice,
+or no npm); the last lines of the npm log are in the stage output, the
+full log sits next to the stamp in <code>.git/bureau-deps/</code>. The
+shepherd halts and alerts</td>
 </tr>
 <tr>
 <td><code>25</code></td>

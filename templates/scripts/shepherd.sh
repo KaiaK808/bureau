@@ -382,7 +382,7 @@ while true; do
       echo "[shepherd] $CLASS — sleeping 60s and retrying"
       sleep 60
       ;;
-    11|12|13|14|15|17|18|19|20|21)
+    11|12|13|14|15|17|18|19|20|21|24)
       echo "[shepherd] $PIPELINE halted ($CLASS) — aborting shepherd"
       alert_telegram "$ISSUE" "$PIPELINE" "$RC" "shepherd halt ($CLASS)" 2>/dev/null || true
       exit "$RC"

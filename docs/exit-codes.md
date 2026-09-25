@@ -26,7 +26,7 @@ This page is the complete table + how the alerter behaves.
 | `21` | ownership-conflict | Ticket, checkout or branch held; stale result | Inspect owner/run, preserve work and reconcile |
 | `22` | provider-or-result-error | Provider failed or final result invalid | Inspect provider evidence |
 | `23` | quota-wait | Selected provider quota reached | Wait for reset; do not switch providers silently |
-| `24` | environment-blocked | Permissions or required execution capability missing | Inspect denied operation separately from code/test failures |
+| `24` | environment-blocked | Permissions or required execution capability missing | Inspect denied operation separately from code/test failures. Also: an npm project's `node_modules` could not be restored after the worktree reset (`npm ci --ignore-scripts` failed twice, or no npm); the last lines of the npm log are in the stage output, the full log sits next to the stamp in `.git/bureau-deps/`. The shepherd halts and alerts |
 | `25` | needs-human-or-paused | Halt requiring attention or paused dispatch | Resolve the blocker or unpause explicitly |
 | `26` | cancelled-ticket | Ticket cancelled/duplicate | Not successful completion |
 | `27` | linear-unusable | A Linear answer stayed unusable after every retry; the stage stopped instead of deciding on an empty result | Linear outage, an error page, or a query Linear rejects. The shepherd halts: Telegram alert with the fault class (`no-response`, `not-json`, `graphql-errors`, `no-data`), then one attempt each at `needs-human` and a halt comment. Re-shepherd once Linear answers |

@@ -1890,6 +1890,143 @@ reset_worktree() {
   fi
 }
 
+# restore_worktree_deps <worktree> — put node_modules back after reset_worktree's
+# `clean -fdx`, for an npm project. Returns 0 when there is nothing to do or the
+# dependencies are in place, 24 (environment-blocked) when they could not be
+# restored. The stages call it after their own checkout and merge of
+# origin/main (both can change the manifests) as `|| exit 24`.
+#
+# Carried over from msc-planner (EXP-1375). `clean -fdx` removes ignored files,
+# node_modules included, and nothing installed them again: the review stage's
+# build check ran without dependencies every time, the build was red, and the
+# red build turned four unanimous APPROVEs into REQUEST_CHANGES. Only for npm
+# (package.json AND package-lock.json); every other project returns 0 at once.
+#
+# Security, each point a review finding in msc:
+#   - `npm ci --ignore-scripts`, never without: otherwise the lifecycle scripts
+#     of the packages a PR lists run before anyone has reviewed the PR, on a
+#     machine with .env access.
+#   - A node_modules the branch tracks, or one that is a symlink, is discarded:
+#     `clean -fdx` does not remove tracked files, and a symlink could point the
+#     build at PR-supplied binaries. The `! -L` in the stamp check is the guard
+#     that carries; the removals are depth.
+#   - The stamp (SHA-256 of package.json + package-lock.json) lives in the
+#     shared .git, where no PR content can write, and so does the npm log.
+#
+# Correctness:
+#   - Fresh, not just present: the stamp is compared on every call, so a call
+#     after the final checkout picks up a lock file the branch changed.
+#   - Clone only on identical manifests (from the main checkout, copy-on-write
+#     where APFS allows); otherwise npm ci. Never a symlink to the main
+#     checkout's node_modules (Turbopack rejects it).
+#   - Mounted atomically: built next to the target, then renamed. A half-filled
+#     node_modules made builds fail with internal errors instead of a clear one.
+#   - Never in the main checkout itself: there node_modules is the clone source.
+#   - Paths come from `git rev-parse --git-common-dir`, not $REPO_DIR: a stage
+#     sets REPO_DIR to its own worktree.
+#   - Why 24 and not 0: with 0 the stage ran on, built red, and a registry
+#     outage became a REQUEST_CHANGES on code that was never the problem.
+restore_worktree_deps() {
+  local wt="$1"
+  local common main_repo stampdir stamp tmp want have src_want tracked log attempt reason
+
+  [ -f "$wt/package.json" ] || return 0
+  [ -f "$wt/package-lock.json" ] || return 0
+  command -v shasum >/dev/null 2>&1 || return 0
+
+  common=$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null) || return 0
+  case "$common" in
+    /*) : ;;
+    *)  common=$(cd "$wt" && cd "$common" 2>/dev/null && pwd) || return 0 ;;
+  esac
+  [ -d "$common" ] || return 0
+  main_repo=$(dirname "$common")
+  [ "$main_repo" = "$wt" ] && return 0
+  stampdir="$common/bureau-deps"
+  stamp="$stampdir/$(printf "%s" "$wt" | shasum -a 256 | cut -d" " -f1)"
+  tmp="$wt/.nm.tmp"
+
+  # Both manifests: package.json carries overrides and resolutions the lock
+  # file does not show.
+  want=$(cat "$wt/package.json" "$wt/package-lock.json" 2>/dev/null | shasum -a 256 | cut -d" " -f1)
+  [ -n "$want" ] || return 0
+
+  # `grep -c`, not `grep -q`: -q closes the pipe early, `git ls-files` gets
+  # SIGPIPE, and under pipefail the condition is always false. `$` is needed
+  # for a tracked symlink, which ls-files lists without a slash. Case-insensitive
+  # because macOS folds NODE_MODULES onto the same path.
+  tracked=$(git -C "$wt" ls-files 2>/dev/null | grep -ciE '^node_modules(/|$)' || true)
+  if [ "${tracked:-0}" -gt 0 ]; then
+    echo "  WARNING: node_modules is tracked in the branch — discarded (not trusted)."
+    rm -rf "$wt/node_modules"
+  fi
+  mkdir -p "$stampdir" 2>/dev/null
+  if [ -L "$wt/node_modules" ]; then
+    echo "  WARNING: node_modules is a symlink — discarded (not trusted)."
+    rm -f "$wt/node_modules"
+  fi
+
+  if [ -d "$wt/node_modules" ] && [ ! -L "$wt/node_modules" ] && [ -f "$stamp" ]; then
+    have=$(cat "$stamp" 2>/dev/null)
+    if [ "$have" = "$want" ]; then
+      echo "  Dependencies: unchanged, skipped"
+      return 0
+    fi
+  fi
+
+  rm -rf "$tmp"
+
+  if [ -d "$main_repo/node_modules" ] && [ -f "$main_repo/package.json" ] && [ -f "$main_repo/package-lock.json" ]; then
+    src_want=$(cat "$main_repo/package.json" "$main_repo/package-lock.json" 2>/dev/null | shasum -a 256 | cut -d" " -f1)
+    if [ "$src_want" = "$want" ]; then
+      if cp -Rc "$main_repo/node_modules" "$tmp" 2>/dev/null || cp -R "$main_repo/node_modules" "$tmp" 2>/dev/null; then
+        rm -rf "$wt/node_modules"
+        if mv "$tmp" "$wt/node_modules" 2>/dev/null; then
+          printf "%s" "$want" > "$stamp" 2>/dev/null
+          echo "  Dependencies: cloned from the main checkout"
+          return 0
+        fi
+      fi
+      rm -rf "$tmp"
+    fi
+  fi
+
+  if command -v npm >/dev/null 2>&1; then
+    # `npm ci` reads package.json from its working directory; a --prefix alone
+    # does not do that.
+    mkdir -p "$tmp"
+    cp "$wt/package.json" "$wt/package-lock.json" "$tmp/" 2>/dev/null
+    log="$stamp.npm-ci.log"
+    attempt=1
+    while [ "$attempt" -le 2 ]; do
+      # Reset per attempt, so message and log describe the same, last attempt.
+      reason="npm ci"
+      if ( cd "$tmp" && npm ci --ignore-scripts --no-audit --no-fund ) >"$log" 2>&1 \
+         && [ -d "$tmp/node_modules" ]; then
+        rm -rf "$wt/node_modules"
+        if mv "$tmp/node_modules" "$wt/node_modules" 2>>"$log"; then
+          printf "%s" "$want" > "$stamp" 2>/dev/null
+          rm -rf "$tmp"
+          echo "  Dependencies: installed with npm ci --ignore-scripts"
+          return 0
+        fi
+        reason="mounting node_modules"
+      fi
+      # One retry: the usual cause is a registry hiccup, gone the second time.
+      attempt=$((attempt + 1))
+    done
+    echo "  $reason failed ($((attempt - 1)) attempts) — last lines:"
+    tail -n 20 "$log" 2>/dev/null | sed "s/^/    | /"
+    rm -rf "$tmp"
+  fi
+
+  # A node_modules left here is stale by the stamp: remove it rather than build
+  # green on the wrong dependencies.
+  rm -rf "$wt/node_modules"
+  echo "  Dependencies: COULD NOT be restored — stopping (environment-blocked)"
+  return 24
+}
+
 # A red build pulls the verdict down — but it NEVER softens a BLOCK.
 #
 # The review stage used to fold the build result in with one unconditional line:

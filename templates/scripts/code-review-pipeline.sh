@@ -144,6 +144,12 @@ if ! merge_origin_main_or_abort "$ISSUE" "Code Review" "$REVIEW_BASE"; then
   exit 17
 fi
 
+# After the checkout AND the merge of origin/main — both can change the
+# manifests. Idempotent: does nothing when node_modules already matches. A
+# failure here is infrastructure (registry, disk), not the PR: stop with 24
+# (environment-blocked) instead of building red and judging someone's code.
+restore_worktree_deps "$(pwd)" || exit 24
+
 FILES_CHANGED=$(git diff --name-only "$REVIEW_DIFF" --) || exit 18
 FILES_COUNT=$(echo "$FILES_CHANGED" | grep -c . || true)
 # shortstat: " 3 files changed, 42 insertions(+), 7 deletions(-)"
