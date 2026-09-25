@@ -2,6 +2,16 @@
 # bureau-config.sh — reads .bureau.json for pipeline scripts
 # Source this file: source "$(dirname "$0")/bureau-config.sh"
 
+# bureau_load_env: every script under scripts/ reads its .env through this instead of
+# sourcing it, so no value in that file can run as a command. `KEY= value` under `source`
+# executes `value` and bash echoes it in the "command not found" message — into a log that
+# reaches Linear or GitHub. The reader parses instead of executing, restricts assignment to
+# an allow-list, disables a running `set -x` before the first expansion, and accepts the
+# arithmetic-bound keys only as plain digits (bash re-evaluates variable *content* inside
+# `$(( ))`). Written for bash 3.2.
+# shellcheck source=templates/scripts/bureau-env.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-env.sh"
+
 _find_config() {
   local common primary candidate
   if [ -n "${BUREAU_CONFIG:-}" ]; then

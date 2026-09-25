@@ -19,9 +19,9 @@ source "$(dirname "$0")/bureau-config.sh"
 # *reports* on the environment, so missing .env is non-fatal — the report
 # will show those secrets as UNSET, which is the truth in that case.
 if [ -f .env ]; then
-  set -a; source .env; set +a
+  bureau_load_env --export .env
 elif [ -f "$REPO_DIR/.env" ]; then
-  set -a; source "$REPO_DIR/.env"; set +a
+  bureau_load_env --export "$REPO_DIR/.env"
 fi
 
 LOG_DIR="$REPO_DIR/logs"

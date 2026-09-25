@@ -3,7 +3,7 @@
 set -euo pipefail
 
 source "$(dirname "$0")/bureau-config.sh"
-source .env 2>/dev/null || true
+bureau_load_env .env 2>/dev/null || true
 
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 

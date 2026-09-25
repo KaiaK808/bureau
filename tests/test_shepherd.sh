@@ -62,6 +62,7 @@ EOF
   # helper shepherd uses as a no-op or simulated mutation. The state machine
   # is a single file ($SANDBOX/state.txt) holding the current UUID.
   cat > "$sb/scripts/bureau-config.sh" <<'STUB_EOF'
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-env.sh"
 #!/bin/bash
 # STUB bureau-config.sh for shepherd test. Defines every helper shepherd
 # touches. The "Linear state machine" is a single file at $STATE_FILE.
@@ -181,6 +182,9 @@ PIPELINE_EOF
 
   # Real ownership wrapper around the simulated stage state machine.
   git -C "$sb" init -q
+  # bureau_load_env lives next to the config the pipelines source (see
+  # tests/test_env_read_safety.sh for why .env is parsed, not sourced).
+  cp "$REPO_ROOT/templates/scripts/bureau-env.sh" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-worker.sh" "$sb/scripts/"
   cat >> "$sb/scripts/bureau-config.sh" <<'RUNTIME'

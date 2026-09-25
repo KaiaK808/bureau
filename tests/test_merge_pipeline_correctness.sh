@@ -63,6 +63,9 @@ make_sandbox() {
 }
 EOF
 
+  # The real config sources bureau-env.sh next to itself; the pipelines read their
+  # .env through it instead of sourcing the file (tests/test_env_read_safety.sh).
+  cp "$REPO_ROOT/templates/scripts/bureau-env.sh" "$sb/scripts/"
   cp "$REAL_BUREAU_CONFIG"  "$sb/scripts/bureau-config.sh"
   cp "$REAL_MERGE_PIPELINE" "$sb/scripts/merge-pipeline.sh"
 

@@ -29,7 +29,7 @@ source "$(dirname "$0")/bureau-config.sh"
 
 # Load .env so alert_telegram has TELEGRAM_BOT_TOKEN + TELEGRAM_ALERT_CHAT_ID.
 if [ -f "$REPO_DIR/.env" ]; then
-  set -a; source "$REPO_DIR/.env"; set +a
+  bureau_load_env --export "$REPO_DIR/.env"
 fi
 
 MODE_LABEL="${1:-all}"

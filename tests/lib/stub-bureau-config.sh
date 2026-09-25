@@ -1,6 +1,11 @@
 #!/bin/bash
 # Test-only replacement for templates/scripts/bureau-config.sh.
 #
+# It sources the REAL templates/scripts/bureau-env.sh, exactly as the real config does,
+# because every pipeline reads its .env through `bureau_load_env` instead of sourcing it.
+# Stubbing that reader would hide the one thing it exists for — a value that runs as a
+# command — so the tests exercise the production reader against the sandbox .env.
+#
 # The real bureau-config.sh reads .bureau.json, talks to Linear over GraphQL,
 # and provides the helpers every pipeline calls (post_comment, move_issue,
 # add_issue_label, …). The pipeline does `source "$(dirname "$0")/bureau-config.sh"`
@@ -26,6 +31,9 @@
 #       BUREAU_STUB_AGENT_ENABLED=<csv> → colon-separated list of stage names
 #                                        for which agent_enabled returns 0
 #                                        (true). Default: empty → always 1 (false).
+# shellcheck source=templates/scripts/bureau-env.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-env.sh"
+
 set -uo pipefail
 
 # Exercise the production stop capture and predicate, including .env overrides.

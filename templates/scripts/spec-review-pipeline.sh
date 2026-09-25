@@ -9,12 +9,9 @@ SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
-set -a
-# shellcheck disable=SC1090
-if [ -f .env ]; then source .env
-elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+if [ -f .env ]; then bureau_load_env --export .env
+elif [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
 else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
-set +a
 
 CLAUDE=(run_stage_for spec_review)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"

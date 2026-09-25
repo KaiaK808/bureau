@@ -5,8 +5,8 @@ set -euo pipefail
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
-if [ -f .env ]; then source .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then source "$SCRIPT_REPO/.env"; fi
+if [ -f .env ]; then bureau_load_env --export .env
+elif [ -f "$SCRIPT_REPO/.env" ]; then bureau_load_env --export "$SCRIPT_REPO/.env"; fi
 
 echo "Scanning open PRs for changed files..."
 

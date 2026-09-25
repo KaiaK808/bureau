@@ -40,11 +40,9 @@ SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
 if [ -f .env ]; then
-  # shellcheck disable=SC1091
-  source .env
+  bureau_load_env --export .env
 elif [ -f "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}" ]; then
-  # shellcheck disable=SC1091
-  source "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
+  bureau_load_env --export "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 else
   echo "ERROR: No .env found"
   exit 1
