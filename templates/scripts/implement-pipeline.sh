@@ -53,6 +53,44 @@ refresh_review_context() {
 # open_or_update_pr_draft: ensure a draft PR exists for $BRANCH; emit its URL.
 # Used during intermediate iterations and on non-COMPLETE terminal states so
 # reviewers can see in-flight work without QA/code-review picking it up.
+# push_branch_loud <label>: push $BRANCH to origin; on failure say so loudly,
+# and carry on.
+#
+# Carried over from slidefactory-core (EXP-1462). Every push here used to end
+# in `|| true`, so a failed push left no trace: whether the branch was out
+# could only be learned by diffing origin against the worktree. Now a failure
+# names branch, exit code and git's own output on stderr, distinct from
+# progress noise. It stays non-fatal on purpose — a flaky network must not end
+# a ticket mid-flight; the end-of-run push retries.
+#
+# The trap: this script runs under `set -euo pipefail`, and
+#     push_out=$(git push …); rc=$?          # WRONG
+# aborts the run the moment the push fails. Only a command in an `if`
+# condition is exempt from `set -e`, and only in the else-branch of the
+# un-negated form is `$?` git's own code (`if ! …` has already turned it to 0).
+#
+# The target is HEAD:refs/heads/$BRANCH. Plain HEAD has no target when HEAD is
+# detached (slidefactory's EXP-1420 log shows two such pushes swallowed while
+# the run walked on to QA). slidefactory's HEAD:"$BRANCH" fixes that only while
+# the branch already exists on origin: for a new one git cannot tell that the
+# name is meant as a branch and refuses ("not a full refname").
+push_branch_loud() {
+  local label="$1" push_out rc
+  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+    echo "  [DRY_RUN] would: git push -u origin HEAD:refs/heads/$BRANCH ($label)"
+    return 0
+  fi
+  if push_out=$(git push -u origin HEAD:refs/heads/"$BRANCH" 2>&1); then
+    :
+  else
+    rc=$?
+    echo "  ✗✗ PUSH FAILED ($label): branch '$BRANCH' is NOT on origin — git exit $rc" >&2
+    printf '%s\n' "$push_out" | sed 's/^/       git: /' >&2
+    echo "  ✗✗ the work is only in this worktree until a later push succeeds" >&2
+  fi
+  return 0
+}
+
 open_or_update_pr_draft() {
   local issue="$1" title="$2"
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
@@ -405,11 +443,7 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   ITER_LOG+=$'\n'
   echo "$ITER_LOG"
 
-  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git push -u origin HEAD"
-  else
-    git push -u origin HEAD || true
-  fi
+  push_branch_loud "/goal run"
 
   # Lying-COMPLETE backstop (same belt-and-suspenders the iter-loop path
   # carries via the post-loop EXP-571/EXP-624 check). Haiku is good but not
@@ -520,11 +554,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
 
   # Push every iteration. queue-loop's reset_worktree hard-resets to origin
   # between picks (CLAUDE.md invariant 5) — unpushed commits would be wiped.
-  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git push -u origin HEAD"
-  else
-    git push -u origin HEAD || true
-  fi
+  push_branch_loud "iter $i"
 
   STATUS=$(parse_claude_json "$RESULT" '.status // "PARTIAL"')
   [ -z "$STATUS" ] && STATUS="PARTIAL"
@@ -633,7 +663,7 @@ echo ""
 echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 
 # One push over the finished state, before the PR is opened or marked ready
-# below. The per-iter pushes above are `|| true`, so this is the retry for any
+# below. The per-iter pushes above are non-fatal, so this is the retry for any
 # that failed. It used to be an empty "CI re-trigger" commit, paired with the
 # `[skip ci]` amend the iter loop no longer makes; with no suppressed pushes
 # there is nothing to re-trigger, so no commit is written here.
@@ -642,11 +672,7 @@ echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 # COMMITS_TOTAL nor the iter log). An unreadable comparison counts as ahead.
 AHEAD_OF_ORIGIN=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo 1)
 if [ "$COMMITS_TOTAL" -gt 0 ] || [ "$AHEAD_OF_ORIGIN" -gt 0 ]; then
-  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git push origin HEAD (end of run)"
-  else
-    git push origin HEAD || true
-  fi
+  push_branch_loud "end of run"
 fi
 
 if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then
