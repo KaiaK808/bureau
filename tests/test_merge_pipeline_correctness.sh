@@ -66,6 +66,8 @@ EOF
   # The real config sources bureau-env.sh next to itself; the pipelines read their
   # .env through it instead of sourcing the file (tests/test_env_read_safety.sh).
   cp "$REPO_ROOT/templates/scripts/bureau-env.sh" "$sb/scripts/"
+  # merge-pipeline.sh sources merge-body.sh next to itself for the merge message.
+  cp "$REPO_ROOT/templates/scripts/merge-body.sh" "$sb/scripts/"
   cp "$REAL_BUREAU_CONFIG"  "$sb/scripts/bureau-config.sh"
   cp "$REAL_MERGE_PIPELINE" "$sb/scripts/merge-pipeline.sh"
 
@@ -163,9 +165,18 @@ case "${1:-}" in
           fi
         fi
         ;;
-      view) cat "$STUB_DIR/pr_view.json" | project_and_filter ;;
+      view)
+        # The merge message read (--json title,body) can be made to fail on its own.
+        if [ "$JSON_FIELDS" = "title,body" ] && [ -f "$STUB_DIR/fail_title_body" ]; then
+          echo "HTTP 502" >&2
+          exit 1
+        fi
+        cat "$STUB_DIR/pr_view.json" | project_and_filter
+        ;;
       merge)
         echo "gh pr merge ${3:-?}" >> "$STUB_DIR/merge_calls.log"
+        # Full argv, NUL-separated: the body is multi-line.
+        printf '%s\0' "$@" > "$STUB_DIR/merge_argv"
         # Flip PR state to MERGED so any further view sees the new world.
         if [ -f "$STUB_DIR/pr_view.json" ]; then
           jq '.state = "MERGED"' "$STUB_DIR/pr_view.json" > "$STUB_DIR/pr_view.json.tmp" \
@@ -220,6 +231,8 @@ populate_happy_fixtures() {
   cat > "$sd/pr_view.json" <<'EOF'
 {
   "state":"OPEN",
+  "title":"EXP-1: test PR",
+  "body":"Summary of the change.",
   "mergeStateStatus":"CLEAN",
   "labels":[],
   "url":"https://github.com/test-owner/test-repo/pull/42",
@@ -445,9 +458,96 @@ test_jit_race() {
   return 0
 }
 
+# ── Merge message: subject and body are set, and carry no CI suppressor ──
+# merge_arg <sb> <flag>: the value that followed <flag> in the recorded `gh pr merge` argv.
+merge_arg() {
+  local want="$2" prev="" a
+  [ -f "$1/stub_data/merge_argv" ] || return 1
+  while IFS= read -r -d '' a; do
+    if [ "$prev" = "$want" ]; then printf '%s' "$a"; return 0; fi
+    prev="$a"
+  done < "$1/stub_data/merge_argv"
+  return 1
+}
+has_ci_marker() {
+  printf '%s' "$1" | grep -qiE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|skip-checks[[:space:]]*:'
+}
+# merge_message_is_clean <sb>: 0 when the merge carried a marker-free --subject and --body.
+merge_message_is_clean() {
+  local subject body
+  subject=$(merge_arg "$1" --subject) || { echo "no --subject passed to gh pr merge" >&2; return 1; }
+  body=$(merge_arg "$1" --body) || { echo "no --body passed to gh pr merge" >&2; return 1; }
+  if has_ci_marker "$subject" || has_ci_marker "$body"; then
+    echo "a CI suppressor reached the merge message: subject='$subject' body='$body'" >&2
+    return 1
+  fi
+  [ "$subject" = "EXP-1: fix the thing (skip ci)" ] || { echo "unexpected subject '$subject'" >&2; return 1; }
+  case "$body" in *"(CI SKIP)"*"skip checks: true"*) ;; *) echo "unexpected body '$body'" >&2; return 1 ;; esac
+}
+populate_marker_fixtures() {
+  populate_happy_fixtures "$1"
+  jq '.title = "EXP-1: fix the thing [skip ci]" | .body = "Summary [CI SKIP]\n\nskip-checks: true\n"' \
+    "$1/stub_data/pr_view.json" > "$1/stub_data/pr_view.json.tmp" \
+    && mv "$1/stub_data/pr_view.json.tmp" "$1/stub_data/pr_view.json"
+}
+
+test_merge_message_defanged() {
+  local sb; sb=$(make_sandbox merge_message)
+  populate_marker_fixtures "$sb"
+  run_pipeline "$sb"
+  if ! merge_message_is_clean "$sb"; then
+    echo "FAIL merge_message: the merge did not carry a clean subject and body" >&2
+    sed 's/^/  | /' "$sb/pipeline.out" >&2
+    return 1
+  fi
+  # Negative control: the same fixture through the merge call this change replaced.
+  local old; old=$(make_sandbox merge_message_old)
+  populate_marker_fixtures "$old"
+  perl -0pi -e 's/if _merge_pr; then/if gh pr merge "\$PR_NUMBER" "--\$BUREAU_MERGE_STRATEGY"; then/' \
+    "$old/scripts/merge-pipeline.sh"
+  grep -q 'if gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY"; then' "$old/scripts/merge-pipeline.sh" \
+    || { echo "FAIL merge_message: could not build the negative control" >&2; return 1; }
+  run_pipeline "$old"
+  [ -s "$old/stub_data/merge_calls.log" ] || { echo "FAIL merge_message: negative control did not merge at all" >&2; return 1; }
+  if merge_message_is_clean "$old" 2>/dev/null; then
+    echo "FAIL merge_message: the check also passes the old merge call, so it proves nothing" >&2
+    return 1
+  fi
+  return 0
+}
+
+test_merge_message_read_fails() {
+  local sb; sb=$(make_sandbox merge_read_fails)
+  populate_happy_fixtures "$sb"
+  touch "$sb/stub_data/fail_title_body"
+  run_pipeline "$sb"
+  local rc=$?
+  if [ -s "$sb/stub_data/merge_calls.log" ]; then
+    echo "FAIL merge_read_fails: merged with GitHub's default message after the title/body read failed" >&2
+    return 1
+  fi
+  [ "$rc" -eq 18 ] || { echo "FAIL merge_read_fails: exit $rc, wanted 18" >&2; return 1; }
+  grep -q '+EXP-1 needs-human' "$sb/stub_data/labels.log" 2>/dev/null \
+    || { echo "FAIL merge_read_fails: needs-human was not set" >&2; return 1; }
+  return 0
+}
+
+test_merge_rebase_stays_plain() {
+  local sb; sb=$(make_sandbox merge_rebase)
+  populate_marker_fixtures "$sb"
+  jq '.agents.merge_strategy = "rebase"' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
+  run_pipeline "$sb"
+  [ -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL merge_rebase: no merge" >&2; sed 's/^/  | /' "$sb/pipeline.out" >&2; return 1; }
+  if merge_arg "$sb" --body >/dev/null; then
+    echo "FAIL merge_rebase: --body passed to a rebase merge, which gh rejects" >&2
+    return 1
+  fi
+  return 0
+}
+
 # ── Run all ───────────────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch; do
+for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

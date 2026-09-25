@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="aa0c107d52863af7dd6d56678ab1f062e7cb46146cc1a0053278c72900baeeb9">
+<meta name="bureau-source-sha256" content="d0a6acf7e1c33d202213764b360a02616b6a52a9b1324ea30ad72aa19462a92b">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -760,8 +760,23 @@ alone cannot complete the stage.</p>
 <td>stays in Build</td>
 <td>yes</td>
 </tr>
+<tr>
+<td><code>CI_MARKER</code></td>
+<td>draft, report posted on the PR</td>
+<td>yes</td>
+<td>stays in Build</td>
+<td>yes</td>
+</tr>
 </tbody>
 </table>
+<p><code>CI_MARKER</code> overrides every other status,
+<code>COMPLETE</code> included: a commit message in
+<code>origin/main..HEAD</code> carries an entry of
+<code>scripts/ci-skip-markers.txt</code> (<code>[skip ci]</code> and the
+other forms GitHub honours), or the range could not be read. Reword the
+named messages, then remove <code>needs-human</code>. The QA stage runs
+the same check and flags <code>needs-human</code> instead of routing
+on.</p>
 <h3 id="token-efficiency-flags-bureaujson-agents">Token-efficiency flags
 (<code>.bureau.json</code> <code>agents.*</code>)</h3>
 <p>Three opt-in toggles change background implementation control flow,

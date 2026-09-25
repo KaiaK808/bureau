@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b6af4c8cd1a063411619c6962c19e10ff7a795bbacc3640ce12ee013f76113d2">
+<meta name="bureau-source-sha256" content="ac430c9ffea7ecefdc6edf3bdf241f2e3d83190ff52faf3971fd7fad372983e9">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -181,13 +181,14 @@ unhandled bash error.</p>
 <code>agents.use_goal_loop: true</code>, the implement-pipeline still
 produces the same terminal STATUS values (<code>COMPLETE</code> /
 <code>PARTIAL</code> / <code>NEEDS_HUMAN</code> / <code>STUCK</code> /
-<code>CAP_TIME</code>) and exits with the same codes the iter-loop path
-emits — <code>/goal</code> swaps the inner control flow but the
-downstream PR / Linear / exit-code shape is identical. Same for
-<code>agents.headroom_wrap</code> (wraps the claude binary, not the
-script's exit logic) and <code>agents.caveman_level</code> (only affects
-per-stage prose, not exit codes). See
-<code>docs/token-efficiency.md</code> for the rationale.</p>
+<code>CAP_TIME</code> / <code>CI_MARKER</code>) and exits with the same
+codes the iter-loop path emits — <code>/goal</code> swaps the inner
+control flow but the downstream PR / Linear / exit-code shape is
+identical. Same for <code>agents.headroom_wrap</code> (wraps the claude
+binary, not the script's exit logic) and
+<code>agents.caveman_level</code> (only affects per-stage prose, not
+exit codes). See <code>docs/token-efficiency.md</code> for the
+rationale.</p>
 <hr />
 <h2 id="telegram-alerts">Telegram alerts</h2>
 <p><code>alert_telegram</code> (in <code>bureau-config.sh</code>) sends

@@ -16,6 +16,7 @@
 #                            exit. With `timeout` wrapping us, only matters if
 #                            the iter timeout is shorter than the sleep.
 #   FAKE_CLAUDE_LOG        — file to append "iter N invoked" lines to.
+#   FAKE_CLAUDE_COMMIT_MSG — message for those commits (default "fake-claude iter N progress").
 #
 # The pipeline's $CLAUDE is unquoted on call, so this script receives the
 # prompt as its arguments. We ignore them — the prompt is irrelevant to the
@@ -46,7 +47,7 @@ if [ -n "${FAKE_CLAUDE_COMMIT_ON_ITERS:-}" ]; then
       progress_file="$SANDBOX/iter_${n}_progress.txt"
       date > "$progress_file"
       git -C "$SANDBOX" add "$(basename "$progress_file")" >/dev/null 2>&1 || true
-      git -C "$SANDBOX" commit -q -m "fake-claude iter $n progress" >/dev/null 2>&1 || true
+      git -C "$SANDBOX" commit -q -m "${FAKE_CLAUDE_COMMIT_MSG:-fake-claude iter $n progress}" >/dev/null 2>&1 || true
       break
     fi
   done

@@ -28,7 +28,8 @@
 # without CI (docs-only) or with deliberate batch-merge workflows.
 #
 # When eligible, runs `gh pr merge N --$BUREAU_MERGE_STRATEGY` (squash by
-# default; configurable via .agents.merge_strategy in .bureau.json). Deliberately
+# default; configurable via .agents.merge_strategy in .bureau.json), with a
+# sanitised --subject/--body for squash and merge (merge-body.sh). Deliberately
 # no --delete-branch and no --auto: see code-review-pipeline.sh:314-322 for the
 # worktree/detached-HEAD rationale; --auto would queue the merge for later, we
 # want loud immediate failure if a gate slipped between the check and the call.
@@ -52,6 +53,8 @@ unset CLAUDECODE 2>/dev/null || true
 REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
+# shellcheck source=templates/scripts/merge-body.sh
+source "$(dirname "$0")/merge-body.sh"
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 # shellcheck disable=SC1090
@@ -336,11 +339,25 @@ fi
 
 if [ "$DRY_RUN" = true ]; then
   echo "  [dry-run] would run: gh pr merge $PR_NUMBER --$BUREAU_MERGE_STRATEGY"
+  # Show the subject and body the real merge would set, so a dry run can audit
+  # them. Informational only: a failed read here does not end the dry run.
+  case "$BUREAU_MERGE_STRATEGY" in
+    squash|merge)
+      if _dry_json=$(gh pr view "$PR_NUMBER" --json title,body 2>/dev/null) \
+         && _dry_title=$(printf '%s' "$_dry_json" | jq -r '.title') \
+         && _dry_body=$(printf '%s' "$_dry_json" | jq -r '.body // ""'); then
+        echo "  [dry-run] merge subject: $(sanitize_ci_markers "$_dry_title")"
+        echo "  [dry-run] merge body:    $(build_merge_body "$_dry_title" "$_dry_body")"
+      else
+        echo "  [dry-run] could not read PR #$PR_NUMBER title/body for the merge message preview"
+      fi
+      ;;
+  esac
   echo "  [dry-run] would move $ISSUE to Done."
   exit 0
 fi
 
-echo "  Merging PR #$PR_NUMBER (squash)..."
+echo "  Merging PR #$PR_NUMBER ($BUREAU_MERGE_STRATEGY)..."
 # Just-in-time gate recheck. Closes the race between the initial gate query
 # (potentially seconds-to-minutes ago) and the merge call. Most importantly
 # this re-checks pr_base_is_current — the prior tick's merge of a different
@@ -362,14 +379,46 @@ fi
 # between check and call). --auto would queue for later and silence the failure.
 # Strategy is configurable via .agents.merge_strategy in .bureau.json (default
 # squash). BUREAU_MERGE_STRATEGY is validated and clamped in bureau-config.sh.
+#
+# Subject and body are set explicitly for squash and merge (merge-body.sh):
+# without --body GitHub composes the message from the branch's commit list, and
+# a CI suppressor anywhere in it stops the run on main. Rebase writes no merge
+# commit and gh takes no --body for it, so it merges plain — outside this
+# guarantee; check_squash_range is the layer that covers it.
+#
+# Runs as an `if` condition, where `set -e` is suspended inside the function,
+# so every read carries its own `|| return 1`: a failed `gh pr view` or `jq`
+# goes to the needs-human branch below instead of falling back to GitHub's
+# default message. The body is captured with a sentinel (`&& printf x`, then
+# `${…%x}`) so its trailing newlines survive command substitution while the
+# producer's exit code still propagates.
+_merge_pr() {
+  case "$BUREAU_MERGE_STRATEGY" in
+    squash|merge)
+      local _json _title _body _subject _mbody
+      _json=$(gh pr view "$PR_NUMBER" --json title,body) || return 1
+      _title=$(printf '%s' "$_json" | jq -r '.title') || return 1
+      _body=$(printf '%s' "$_json" | jq -j '.body // ""' && printf x) || return 1
+      _body=${_body%x}
+      _subject=$(sanitize_ci_markers "$_title")
+      _mbody=$(build_merge_body "$_title" "$_body" && printf x) || return 1
+      _mbody=${_mbody%x}
+      gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --subject "$_subject" --body "$_mbody"
+      ;;
+    *)
+      gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY"
+      ;;
+  esac
+}
+
 bureau_stop_requested && exit 20
-if gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY"; then
+if _merge_pr; then
   post_comment "$ISSUE" "✅ Merge gates passed. PR #$PR_NUMBER merged (\`--$BUREAU_MERGE_STRATEGY\`). Moving to Done."
   move_issue "$ISSUE" "$BUREAU_STATE_DONE"
   echo "  Merged. Issue moved to Done."
 else
   echo "  Merge call failed."
-  post_comment "$ISSUE" "❌ Merge attempted but \`gh pr merge\` failed despite gates passing. PR #$PR_NUMBER. Needs human."
+  post_comment "$ISSUE" "❌ Merge attempted but \`gh pr merge\` (or its title/body read) failed despite gates passing. PR #$PR_NUMBER. Needs human."
   add_issue_label "$ISSUE" "needs-human" \
     || echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
   exit 18

@@ -291,6 +291,28 @@ if [ "$FINAL_GREEN" = false ] && [ "$STATUS" = "GREEN" ]; then STATUS="RED"; fi
 
 SUMMARY=$(parse_claude_json "$QA_RESULT" '.coverage_notes // "no notes"')
 
+# The squash-range check, the same one the implement stage runs before its
+# hand-off: after the push above, so this stage's work is already on origin,
+# and before anything is routed on. Clean is one extra line. Not clean — a
+# commit in origin/main..HEAD carries a CI suppressor, or the range could not
+# be checked — means NEEDS_HUMAN whatever the suite said: GREEN would hand the
+# branch to Build Review, and RED would send it back to Build for a whole agent
+# round before the implement stage reports the same finding. The report goes
+# first in the summary, the escalation entry names it, the PR gets it too.
+QA_ESCALATION_REASON="QA flagged NEEDS_HUMAN"
+check_squash_range origin/main
+if [ "$SQUASH_CHECK" = "clean" ]; then
+  echo "  $SQUASH_REPORT"
+else
+  echo "$SQUASH_REPORT" >&2
+  STATUS="NEEDS_HUMAN"
+  SUMMARY="$SQUASH_REPORT
+
+$SUMMARY"
+  QA_ESCALATION_REASON="squash-range check $SQUASH_CHECK: a commit message carries a CI suppressor or the range could not be checked"
+  comment_on_branch_pr "$BRANCH" "$SQUASH_REPORT"
+fi
+
 case "$STATUS" in
   GREEN)
     echo "  QA: GREEN — moving to Build Review"
@@ -305,7 +327,7 @@ Full QA log: \`$QA_LOG_PATH\`"
   NEEDS_HUMAN)
     echo "  QA: NEEDS_HUMAN — flagging and leaving in QA"
     if add_issue_label "$ISSUE" "needs-human"; then
-      log_escalation "$ISSUE" "qa" 0 "QA flagged NEEDS_HUMAN" 0 "$BRANCH"
+      log_escalation "$ISSUE" "qa" 0 "$QA_ESCALATION_REASON" 0 "$BRANCH"
     else
       echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
     fi

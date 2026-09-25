@@ -71,6 +71,10 @@ EOF
   done
   cp "$LIB_DIR/stub-bureau-config.sh" "$SCRIPTS_DIR/bureau-config.sh"
   sed -n '/^parse_claude_json() {/,${p;}' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/parse-result.sh"
+  # The squash-range guard runs for real: its two functions come from the real config,
+  # and the script and marker list they read were copied above with every other file.
+  sed -n -e '/^check_squash_range() {/,/^}/p' -e '/^comment_on_branch_pr() {/,/^}/p' \
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/squash-range.sh"
   sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/stop-boundary.sh"
 
   # Minimal .env in the sandbox cwd so the pipeline's `source .env` succeeds.

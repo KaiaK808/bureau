@@ -166,6 +166,9 @@ Terminal states map to PR state + Linear:
 |---|---|---|---|---|
 | `COMPLETE` | flipped to ready (`gh pr ready`) | no | → QA / Build Review | no |
 | `NEEDS_HUMAN` / `STUCK` / `CAP_TIME` / `PARTIAL` | draft | yes | stays in Build | yes |
+| `CI_MARKER` | draft, report posted on the PR | yes | stays in Build | yes |
+
+`CI_MARKER` overrides every other status, `COMPLETE` included: a commit message in `origin/main..HEAD` carries an entry of `scripts/ci-skip-markers.txt` (`[skip ci]` and the other forms GitHub honours), or the range could not be read. Reword the named messages, then remove `needs-human`. The QA stage runs the same check and flags `needs-human` instead of routing on.
 
 ### Token-efficiency flags (`.bureau.json` `agents.*`)
 

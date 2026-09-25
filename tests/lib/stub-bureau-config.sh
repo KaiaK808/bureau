@@ -175,6 +175,11 @@ branch_is_bureau_only() {
 }
 
 post_comment() { _record "post_comment" "$1" "$2"; return 0; }
+# Real check_squash_range and comment_on_branch_pr, cut from the real config by the
+# harness; they find squash-marker-check.sh through _BUREAU_SCRIPTS_DIR like the real one.
+_BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$_BUREAU_SCRIPTS_DIR/squash-range.sh"
 # The real evaluation is exercised by tests/test_crosscheck.sh; here it only records the call.
 crosscheck_open_prs() { _record "crosscheck_open_prs" "$1" "$2"; CROSSCHECK_RESULT=clean; return 0; }
 

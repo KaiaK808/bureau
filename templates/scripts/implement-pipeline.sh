@@ -116,10 +116,14 @@ build_summary_comment() {
     STUCK)       header="🚧 Implementation stuck — no progress in last iteration (no commits, no [X] marks, no review fixes)." ;;
     CAP_TIME)    header="🚧 Implementation hit total time cap (${TOTAL_TIMEOUT}s) before completing." ;;
     PARTIAL)     header="🚧 Implementation made partial progress but exhausted iteration cap (${MAX_ITER}) without COMPLETE." ;;
+    CI_MARKER)   header="🚧 Halted before hand-off: a commit in the squash range carries an entry of scripts/ci-skip-markers.txt, or the range could not be checked. Nothing went to QA or Build Review. Reword the message(s) named below, then remove needs-human." ;;
     *)           header="🚧 Implementation ended with status=$status." ;;
   esac
   printf '%s\n\n**Total tasks done across iterations:** %s\n**Branch:** `%s`\n**PR:** %s\n\nIteration log:\n```\n%s```\n' \
     "$header" "$total_tasks" "$BRANCH" "$pr_url" "$iter_log"
+  if [ "$status" = "CI_MARKER" ]; then
+    printf '\nSquash-range check:\n```\n%s\n```\n' "$SQUASH_REPORT"
+  fi
 }
 
 precondition_linear
@@ -495,22 +499,16 @@ At the end of your work, emit a single fenced json block so the shell can summar
   # tracking is enabled and the output carries a usage envelope).
   record_stage_cost "$RESULT" "$ISSUE" "implement"
 
-  # CI cost control: amend HEAD's commit message with `[skip ci]` before the
-  # iter push. When a PR already exists for $BRANCH (typical for review-cycle
-  # re-picks), each push fires `pull_request: synchronize` and re-runs CI on
-  # work that isn't even finished. The post-loop block adds one no-skip-ci
-  # empty commit so CI runs exactly once on the final state.
-  # Only amend when this iter actually produced new commits — empty iters
-  # (Claude returned PARTIAL/STUCK without committing) skip the amend.
+  # How much this iter produced; the stuck detector, the iter log and
+  # COMMITS_TOTAL all read it.
+  #
+  # No commit message is touched here. This block used to amend `[skip ci]`
+  # onto every iteration commit to save CI runs on an open PR — and a squash
+  # merge without an explicit body carried that marker into the merge commit
+  # on main, where GitHub then ran no CI at all. merge-body.sh and
+  # check_squash_range are the two guards against a marker from any source.
   HEAD_AFTER=$(git rev-parse HEAD)
   COMMITS_THIS_ITER=$(git rev-list --count "$HEAD_BEFORE..$HEAD_AFTER" 2>/dev/null || echo 0)
-  if [ "$COMMITS_THIS_ITER" -gt 0 ]; then
-    iter_msg=$(git log -1 --format=%B HEAD)
-    case "$iter_msg" in
-      *"[skip ci]"*) ;;
-      *) git commit --amend -m "[skip ci] $iter_msg" --no-verify >/dev/null ;;
-    esac
-  fi
 
   # Push every iteration. queue-loop's reset_worktree hard-resets to origin
   # between picks (CLAUDE.md invariant 5) — unpushed commits would be wiped.
@@ -609,19 +607,36 @@ if [ "$STATUS" = "COMPLETE" ] && [ "$BRANCH_COMMITS_AHEAD" -eq 0 ]; then
 fi
 fi  # end of `if ! use_goal_loop_enabled` wrapper around iter-loop + post-loop overrides
 
+# The squash-range check over the finished state, for both paths, before
+# anything is handed on (check_squash_range in bureau-config.sh). Clean is one
+# extra line. Not clean — a commit message in origin/main..HEAD carries a CI
+# suppressor, or the range could not be read — overrides every status,
+# COMPLETE included: the stage ends in CI_MARKER, and the halt branch below
+# keeps the PR a draft, labels needs-human and puts the report on the PR.
+check_squash_range origin/main
+if [ "$SQUASH_CHECK" = "clean" ]; then
+  echo "  $SQUASH_REPORT"
+else
+  echo "$SQUASH_REPORT" >&2
+  STATUS="CI_MARKER"
+fi
+
 echo ""
 echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 
-# CI cost control: pair with the per-iter `[skip ci]` amend above. The iter
-# pushes don't trigger PR-sync CI; this empty commit at the end of the
-# implement run does, so CI runs exactly once per implement-pipeline tick
-# instead of once per iter. Skipped when nothing was committed — there's
-# nothing for CI to check.
-if [ "$COMMITS_TOTAL" -gt 0 ]; then
+# One push over the finished state, before the PR is opened or marked ready
+# below. The per-iter pushes above are `|| true`, so this is the retry for any
+# that failed. It used to be an empty "CI re-trigger" commit, paired with the
+# `[skip ci]` amend the iter loop no longer makes; with no suppressed pushes
+# there is nothing to re-trigger, so no commit is written here.
+# Pushes when the run committed or when this worktree holds anything origin
+# does not (a merge of origin/main before the loop is counted by neither
+# COMMITS_TOTAL nor the iter log). An unreadable comparison counts as ahead.
+AHEAD_OF_ORIGIN=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo 1)
+if [ "$COMMITS_TOTAL" -gt 0 ] || [ "$AHEAD_OF_ORIGIN" -gt 0 ]; then
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git commit --allow-empty + push (CI checkpoint)"
+    echo "  [DRY_RUN] would: git push origin HEAD (end of run)"
   else
-    git commit --allow-empty -m "$ISSUE: bureau implement checkpoint (CI re-trigger)" -m "Bureau-Generated: true" --no-verify >/dev/null
     git push origin HEAD || true
   fi
 fi
@@ -652,16 +667,22 @@ case "$STATUS" in
     echo "  Moved $ISSUE to $NEXT_STATE_LABEL"
     ;;
 
-  NEEDS_HUMAN|STUCK|CAP_TIME|PARTIAL)
+  NEEDS_HUMAN|STUCK|CAP_TIME|PARTIAL|CI_MARKER)
     # PARTIAL with real commits proceeds to downstream gates as ready-for-review
     # so CI fires on the ready_for_review transition (EXP-622 / FR-001). Every
     # other halt status — and PARTIAL with zero commits — stays draft (FR-002,
     # FR-003). The summary comment, needs-human label, escalation log, and
     # operator status report below are unchanged (FR-005).
+    # CI_MARKER stays draft like every other halt status: a ready PR would be
+    # exactly the hand-off the squash-range check refuses. Its report also goes
+    # on the PR, once the PR is sure to exist.
     if [ "$STATUS" = "PARTIAL" ] && [ "$COMMITS_TOTAL" -gt 0 ]; then
       PR_URL=$(open_or_update_pr_ready "$ISSUE" "$ISSUE_TITLE")
     else
       PR_URL=$(open_or_update_pr_draft "$ISSUE" "$ISSUE_TITLE")
+    fi
+    if [ "$STATUS" = "CI_MARKER" ]; then
+      comment_on_branch_pr "$BRANCH" "$SQUASH_REPORT"
     fi
     PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
     if add_issue_label "$ISSUE" "needs-human"; then

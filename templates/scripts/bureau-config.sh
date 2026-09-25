@@ -706,6 +706,96 @@ $body
   return 0
 }
 
+# check_squash_range: does any commit in the squash range carry a CI
+# suppressor? Runs squash-marker-check.sh against <base>..HEAD and leaves the
+# answer in two globals; the caller decides what a halt means.
+#
+# Carried over from slidefactory-core (EXP-1465). The second layer behind
+# merge-body.sh: that one defangs the message merge-pipeline.sh writes, this one
+# reads the commits themselves, which is what reaches main on a rebase merge or
+# a merge done by hand. The implement stage calls it before the hand-off, the
+# QA stage before it routes.
+#
+# Sets:
+#   SQUASH_CHECK   clean | found | unchecked
+#   SQUASH_REPORT  the script's one line (clean), its report (found), or a line
+#                  saying the range could not be checked followed by whatever
+#                  the script printed (unchecked)
+#
+# Exit 3 is a finding. Every other non-zero code — 2 from the script itself,
+# 1 from a bash that tripped, 127 for a missing script — is "unchecked", and
+# unchecked halts like a finding: a guard that waves through what it could not
+# read is the silent failure it exists to prevent.
+#
+# Always returns 0. The trap: the stages run under `set -euo pipefail`, and
+#     out=$(bash …/squash-marker-check.sh …); rc=$?          # WRONG
+# ends the stage at the first finding, before `rc=$?` is ever reached. Only a
+# command in an `if` condition is exempt from `set -e`, and in the else-branch
+# of the un-negated form `$?` is the script's own code.
+#
+# The script is found via $_BUREAU_SCRIPTS_DIR, never relative to the working
+# directory: stages run from worktrees.
+#
+# Usage: check_squash_range [<base>]   (base defaults to origin/main)
+check_squash_range() {
+  local basis="${1:-origin/main}" out rc
+  if out=$(bash "$_BUREAU_SCRIPTS_DIR/squash-marker-check.sh" "$basis" 2>&1); then
+    SQUASH_CHECK="clean"
+    SQUASH_REPORT="$out"
+  else
+    rc=$?
+    if [ "$rc" -eq 3 ]; then
+      SQUASH_CHECK="found"
+      SQUASH_REPORT="$out"
+    else
+      SQUASH_CHECK="unchecked"
+      SQUASH_REPORT="Squash range $basis..HEAD could not be checked (exit code $rc) — halting rather than passing it on unchecked.
+$out"
+    fi
+  fi
+  return 0
+}
+
+# comment_on_branch_pr: post <text> as a comment on the open PR of <branch>,
+# if there is one. Loud on failure, never fatal; always returns 0.
+#
+# Carried over from slidefactory-core (EXP-1465). A halt for a CI suppressor has
+# to show where the merge happens, not only in Linear. It is a comment and not
+# a flip back to draft on purpose: no stage makes that transition today.
+#
+# "No PR" covers three answers of `gh pr list --jq '.[0].number'`: empty, the
+# literal string "null" it prints when nothing matches, and gh failing —
+# whatever it printed then is not an answer. The text goes in on stdin
+# (--body-file -), so a multi-line report arrives unmangled.
+#
+# Dry-run: BUREAU_DRY_RUN=1 logs the intent and returns 0 without calling gh.
+#
+# Usage: comment_on_branch_pr <branch> <text>
+comment_on_branch_pr() {
+  local branch="$1" text="$2" pr out rc
+  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+    echo "[DRY_RUN] comment_on_branch_pr $branch ($(printf '%s' "$text" | head -c 80 | tr '\n' ' ')...)" >&2
+    return 0
+  fi
+  if pr=$(gh pr list --head "$branch" --json number --jq '.[0].number' 2>/dev/null); then
+    :
+  else
+    pr=""
+  fi
+  if [ -z "$pr" ] || [ "$pr" = "null" ]; then
+    echo "  no open PR for $branch — the finding stands in Linear and in logs/escalations.log"
+    return 0
+  fi
+  if out=$(printf '%s\n' "$text" | gh pr comment "$pr" --body-file - 2>&1); then
+    :
+  else
+    rc=$?
+    echo "  ✗ could not comment on PR #$pr (gh exit code $rc) — the finding stands in Linear and in logs/escalations.log" >&2
+    echo "$out" | sed 's/^/       gh: /' >&2
+  fi
+  return 0
+}
+
 # Resolve the working branch for an issue.
 # Lookup order:
 #   1. A bureau-branch marker comment posted by the spec pipeline. The marker

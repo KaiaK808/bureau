@@ -37,7 +37,7 @@ This page is the complete table + how the alerter behaves.
 
 Exit codes outside this table (e.g. `1`) classify as `error-1` — usually a bug in the pipeline script or an unhandled bash error.
 
-**Token-efficiency flags don't change the table.** Under `agents.use_goal_loop: true`, the implement-pipeline still produces the same terminal STATUS values (`COMPLETE` / `PARTIAL` / `NEEDS_HUMAN` / `STUCK` / `CAP_TIME`) and exits with the same codes the iter-loop path emits — `/goal` swaps the inner control flow but the downstream PR / Linear / exit-code shape is identical. Same for `agents.headroom_wrap` (wraps the claude binary, not the script's exit logic) and `agents.caveman_level` (only affects per-stage prose, not exit codes). See `docs/token-efficiency.md` for the rationale.
+**Token-efficiency flags don't change the table.** Under `agents.use_goal_loop: true`, the implement-pipeline still produces the same terminal STATUS values (`COMPLETE` / `PARTIAL` / `NEEDS_HUMAN` / `STUCK` / `CAP_TIME` / `CI_MARKER`) and exits with the same codes the iter-loop path emits — `/goal` swaps the inner control flow but the downstream PR / Linear / exit-code shape is identical. Same for `agents.headroom_wrap` (wraps the claude binary, not the script's exit logic) and `agents.caveman_level` (only affects per-stage prose, not exit codes). See `docs/token-efficiency.md` for the rationale.
 
 ---
 

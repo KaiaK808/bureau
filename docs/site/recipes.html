@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b8ee7c738f98fcdf49e692c0714d0c71680b91153dd975171451d9f53825af3e">
+<meta name="bureau-source-sha256" content="4ded75609926ef1ae6f4c60dc047e43adcbd5faf42058aa3ca021d66c79f5e0d">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -388,6 +388,12 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb27-1"><a href=
 <p>Valid values: <code>squash</code> (default), <code>merge</code>,
 <code>rebase</code>. Anything else falls back to <code>squash</code>
 with a warning.</p>
+<p>Squash and merge get a subject and body Bureau writes itself, with
+every CI suppressor (<code>[skip ci]</code> and the forms GitHub honours
+alongside it) defanged, so the push to <code>main</code> always runs CI.
+A rebase merge puts the branch commits on <code>main</code> as they are;
+there the squash-range check in the implement and QA stages is what
+stops a commit message carrying a suppressor.</p>
 <hr />
 <h2 id="tighter-supervisor">Tighter supervisor</h2>
 <p>For long-running headless deployments, raise the give-up threshold so
