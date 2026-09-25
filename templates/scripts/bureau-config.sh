@@ -494,8 +494,12 @@ PY_PATHS
 # (see that script's header). Emits `--model <m>` only when
 # resolve_model_for_stage finds one; otherwise the CLI's own default applies.
 #
-# Pipelines call this once into a local CLAUDE variable:
-#   CLAUDE=$(claude_cmd_for_stage "implement")
+# Legacy: no template script calls this any more — every stage and
+# upstream-port.sh go through run_stage_for, which starts the runner through
+# bureau-provider.py as an argument list. Kept for installations' own scripts
+# and tests/test_model_resolution.sh. Do NOT word-split its output
+# (`$(claude_cmd_for_stage …)` unquoted): a model value from .env then adds
+# runner options of its own (slidefactory EXP-1476, tests/test_model_argv.sh).
 claude_cmd_for_stage() {
   local stage="$1"
   local model runner
