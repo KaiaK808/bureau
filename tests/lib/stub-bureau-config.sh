@@ -175,6 +175,8 @@ branch_is_bureau_only() {
 }
 
 post_comment() { _record "post_comment" "$1" "$2"; return 0; }
+# The real evaluation is exercised by tests/test_crosscheck.sh; here it only records the call.
+crosscheck_open_prs() { _record "crosscheck_open_prs" "$1" "$2"; CROSSCHECK_RESULT=clean; return 0; }
 
 move_issue() { _record "move_issue" "$1" "$2"; return 0; }
 

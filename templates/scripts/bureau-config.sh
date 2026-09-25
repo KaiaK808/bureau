@@ -9,8 +9,13 @@
 # an allow-list, disables a running `set -x` before the first expansion, and accepts the
 # arithmetic-bound keys only as plain digits (bash re-evaluates variable *content* inside
 # `$(( ))`). Written for bash 3.2.
+#
+# _BUREAU_SCRIPTS_DIR is this file's own directory, resolved once at source time: helpers
+# that run a sibling script must take it from the checkout this config came from, never
+# from ./scripts/ relative to wherever the stage has cd'd to.
+_BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=templates/scripts/bureau-env.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-env.sh"
+source "$_BUREAU_SCRIPTS_DIR/bureau-env.sh"
 
 _find_config() {
   local common primary candidate
@@ -588,6 +593,117 @@ post_comment() {
     echo "post_comment: $ref failed: $result" >&2
     return 1
   fi
+}
+
+# crosscheck_open_prs: cross-check <tasks-file> against the open PRs and report
+# the outcome on <issue>. Always returns 0.
+#
+# Carried over from slidefactory-core (EXP-1469). "No file conflicts" is only
+# said after an explicit success: exit code 0 AND a last non-empty output line
+# "CROSSCHECK RESULT: clean …". Exit 3 with "conflicts" posts the conflict
+# warning as before. Every other pairing — an abort (bash itself exits 1 or 2),
+# 4 from the script, 127 for a missing script, empty output, a code that
+# disagrees with the word — is "incomplete" and posts exactly one warning. The
+# spec stage used to run the script with `|| true` and grep for "conflicts
+# detected", so an abort read as "No file conflicts with open PRs" on every run.
+#
+# The last non-empty line counts, never the first match: a PR title in the
+# report can itself read like a result line.
+#
+# Sets CROSSCHECK_RESULT to clean, conflicts or incomplete.
+#
+# The trap: the spec stage runs under `set -euo pipefail`, and
+#     out=$(bash …/crosscheck-specs.sh …); rc=$?          # WRONG
+# ends the stage at exit 3 or 4 before `rc=$?` is ever reached — and the
+# stage's `trap _spec_recovery EXIT` then routes the issue back to Triage. Only
+# a command in an `if` condition is exempt from `set -e`.
+#
+# The script is found via $_BUREAU_SCRIPTS_DIR, never ./scripts/: the result
+# line is a contract between script and evaluation, and both have to come from
+# the same checkout.
+#
+# Dry-run: post_comment logs the intent and writes nothing; no branch here.
+#
+# Usage: crosscheck_open_prs <issue> <tasks-file>
+crosscheck_open_prs() {
+  local issue="$1" tasks="$2" out rc line last="" pattern
+  local word="" compared="" paths="" unchecked="" reason heading body comment posted
+  if out=$(bash "$_BUREAU_SCRIPTS_DIR/crosscheck-specs.sh" "$tasks" 2>&1); then rc=0; else rc=$?; fi
+  printf '%s\n' "$out"
+
+  while IFS= read -r line; do
+    if [ -n "$line" ]; then
+      last="$line"
+    fi
+  done <<< "$out"
+  pattern='^CROSSCHECK RESULT: (clean|conflicts|incomplete) open=([0-9]+) compared=([0-9]+) paths=([0-9]+) unchecked=(-|#[0-9]+(,#[0-9]+)*)$'
+  if [[ $last =~ $pattern ]]; then
+    word="${BASH_REMATCH[1]}"
+    compared="${BASH_REMATCH[3]}"
+    paths="${BASH_REMATCH[4]}"
+    unchecked="${BASH_REMATCH[5]}"
+  fi
+
+  if [ "$rc" -eq 0 ] && [ "$word" = "clean" ]; then
+    CROSSCHECK_RESULT="clean"
+  elif [ "$rc" -eq 3 ] && [ "$word" = "conflicts" ]; then
+    CROSSCHECK_RESULT="conflicts"
+  else
+    CROSSCHECK_RESULT="incomplete"
+  fi
+
+  if [ "$CROSSCHECK_RESULT" = "clean" ]; then
+    echo "  No file conflicts with open PRs ($compared PRs compared, $paths planned paths)"
+    return 0
+  fi
+
+  if [ "$CROSSCHECK_RESULT" = "conflicts" ]; then
+    comment="⚠️ Crosscheck warning — spec conflicts with open PRs:
+
+\`\`\`
+$out
+\`\`\`"
+    if post_comment "$issue" "$comment"; then
+      posted="warning posted to $issue"
+    else
+      posted="warning could NOT be posted to $issue"
+    fi
+    echo "  File conflicts with open PRs — $posted"
+    return 0
+  fi
+
+  if [ -n "$unchecked" ] && [ "$unchecked" != "-" ]; then
+    reason="Not checked: ${unchecked//,/, } — their changed files could not be read."
+  elif [ -z "$word" ]; then
+    reason="The cross-check ended without a result line, so it did not run to completion."
+  else
+    reason="The cross-check could not read all of its inputs — see its output below."
+  fi
+  if [ -n "$word" ]; then
+    heading="Cross-check output:"
+    body="$out"
+  else
+    heading="Last 20 lines of the cross-check output:"
+    body=$(printf '%s\n' "$out" | tail -n 20)
+  fi
+  if [ -z "$body" ]; then
+    body="(no output)"
+  fi
+  comment="⚠️ Crosscheck incomplete — this spec was NOT fully checked against open PRs (exit code $rc).
+
+$reason
+
+$heading
+\`\`\`
+$body
+\`\`\`"
+  if post_comment "$issue" "$comment"; then
+    posted="warning posted to $issue"
+  else
+    posted="warning could NOT be posted to $issue"
+  fi
+  echo "  WARNING: crosscheck incomplete (exit $rc) — open PRs were NOT fully checked against this spec; $posted"
+  return 0
 }
 
 # Resolve the working branch for an issue.

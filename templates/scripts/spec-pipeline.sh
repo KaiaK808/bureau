@@ -249,17 +249,7 @@ echo ""
 echo "Phase 4/5: crosscheck"
 SPEC_TASKS=$(ls -td "$BUREAU_SPECS_DIR"/*/tasks.md 2>/dev/null | head -1 || true)
 if [ -n "$SPEC_TASKS" ]; then
-  CROSSCHECK_OUTPUT=$(./scripts/crosscheck-specs.sh "$SPEC_TASKS" 2>&1 || true)
-  echo "$CROSSCHECK_OUTPUT"
-  if echo "$CROSSCHECK_OUTPUT" | grep -q "conflicts detected"; then
-    post_comment "$ISSUE" "⚠️ Crosscheck warning — spec conflicts with open PRs:
-
-\`\`\`
-$CROSSCHECK_OUTPUT
-\`\`\`"
-  else
-    echo "  No file conflicts with open PRs"
-  fi
+  crosscheck_open_prs "$ISSUE" "$SPEC_TASKS"
 else
   echo "  No tasks.md found — skipping crosscheck"
 fi

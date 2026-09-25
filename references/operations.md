@@ -28,7 +28,7 @@ All runtime scripts come from the loaded skill's `templates/scripts/`, installed
 | Shared app/background operation | `bureau-runtime.py`, `bureau-app.sh`, `bureau-doctor.py`, `bureau-worker.sh`, `bureau-tick.sh`, `bureau-supervision.py`, `bureau-monitor.py` |
 | Provider and schedule adapters | `bureau-provider.py`, `codex-stage-runner.sh`, `bureau-schedule.mjs`, `bureau-schedule-cli.mjs`, plus the installed stage schemas |
 
-The merge stage independently checks CI, the current PR base and other gates immediately before merging. Rebase remains opt-in because it force-pushes eligible Bureau-owned history. `setup-merge-drivers.sh` registers the local `ours` driver used by `.gitattributes`; it does not install arbitrary union/lockfile policies. `crosscheck-specs.sh` helps inspect spec/PR file overlap. `bureau-status.sh --config` shows installed settings; `--cost` reads optional legacy cost reports, not billed account totals.
+The merge stage independently checks CI, the current PR base and other gates immediately before merging. Rebase remains opt-in because it force-pushes eligible Bureau-owned history. `setup-merge-drivers.sh` registers the local `ours` driver used by `.gitattributes`; it does not install arbitrary union/lockfile policies. `crosscheck-specs.sh` helps inspect spec/PR file overlap and says whether the check was complete (exit 0 clean, 3 conflicts, 4 incomplete, plus a `CROSSCHECK RESULT:` last line); the spec stage posts a warning on the ticket for anything but an explicit clean. `bureau-status.sh --config` shows installed settings; `--cost` reads optional legacy cost reports, not billed account totals.
 
 ## Optional settings
 
