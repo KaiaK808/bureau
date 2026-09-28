@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d2155df2d76fac97eab5651761a5ccb5db50c57388f7f414201a23200dd09aaf">
+<meta name="bureau-source-sha256" content="92acbc39a7623e4347577c0badf4c5568870d66944eb0507f7401aab81ace69d">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -149,9 +149,13 @@ operations need <code>gh</code>. Current Codex app tasks do not require
 background provider CLIs or tmux.</p>
 <ol type="1">
 <li>Inspect <code>git status</code>, the current branch and active
-worktrees. Record the installed source revision if known. An old install
-may have no <code>.bureau-install.json</code>; absence of hashes is
-expected and must not be treated as permission to overwrite.</li>
+worktrees. Record the installed source revision: doctor reports it as
+<code>template_source</code> for installs applied by a helper that
+records it (see below); older installs report
+<code>source not recorded</code>, so take it from your own notes if
+known. An old install may have no <code>.bureau-install.json</code>;
+absence of hashes is expected and must not be treated as permission to
+overwrite.</li>
 <li>Stop new dispatch and let running stages finish. With the new
 runtime, use <code>python3 scripts/bureau-runtime.py pause</code> and
 inspect <code>status</code>. On an older install, stop its
@@ -191,6 +195,43 @@ conflict prevents every file in that asset batch from being
 written</strong>, including new runtime helpers and the manifest.
 Configuration migration and Spec Kit initialization are separate
 operations, not part of this transaction.</p>
+<p>The preview also prints <code>source</code>: the revision of the
+Bureau source it would install from, with the exact tag if its commit is
+tagged (<code>tag</code>, otherwise <code>null</code>), the nearest
+<code>git describe --tags</code> (<code>describe</code>), the full
+<code>commit</code>, and <code>dirty</code>. Check it before
+<code>--apply</code>, for example that it names the release you pinned.
+A successful <code>--apply</code> records that value in
+<code>.bureau-install.json</code> under <code>sources</code>, keyed by
+what the batch wrote (<code>scripts</code>, <code>ci</code>,
+<code>workflows</code>, <code>interfaces/claude</code>,
+<code>interfaces/codex</code>), next to
+<code>sources_files_sha256</code>, a digest of the recorded file hashes.
+A later partial apply relabels only the keys it wrote, so a scripts
+scope installed from one release and a CI scope from another stay
+distinguishable. When the incoming digest no longer matches the file
+hashes, the record was carried along by a writer that changed files
+without recording its source; the apply then drops the whole carried
+record and keeps only the keys it wrote. <code>dirty</code> is true when
+the source checkout reports modified or untracked files, or when any
+file this batch reads (the templates it installs and the installer
+itself) is not byte-identical to its blob at the recorded commit, or
+when either cannot be read. The second check matters because the
+installer copies every file in <code>templates/scripts</code>, including
+files Git ignores such as <code>.env</code>, <code>.DS_Store</code> or
+<code>*.log</code>, which <code>git status</code> never shows. Keep such
+files out of <code>templates/</code>: they are installed into the target
+repository. A source that is not its own Git checkout, such as an
+unpacked archive or a copy inside another repository, is recorded as
+<code>{"git": false, "note": "not a git checkout"}</code>; the enclosing
+repository's commit is never used. A preview or an apply stopped by a
+conflict writes no source. The manifest stays at version <code>1</code>:
+installers without source recording still read it.</p>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.0.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.0.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
 <table>
 <thead>
 <tr>
@@ -253,10 +294,11 @@ do not describe an incomplete scripts upgrade as a working new
 runtime.</li>
 </ul>
 <p>Example for a single reviewed script replacement:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
 <p>Other conflicts still block that example. Repeat
 <code>--overwrite</code> only for each reviewed path in the selected
 scope. There is no blanket force, skip-conflicts or automatic merge
@@ -280,9 +322,9 @@ migration</h2>
 <code>.bureau.json</code> or <code>.env</code>. Configuration version
 <code>2</code> is a schema version, not a Bureau release number. To
 adopt it, preview and then apply:</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
 <p>Migration retains existing IDs, labels, models, switches and
 extension keys. It makes the existing Claude runner default explicit
 when absent and adds <code>agents.model_compatibility: "v1"</code> when
@@ -380,13 +422,21 @@ project's configured tests. Inspect installed interfaces,
 customizations and run ownership. Check Bash syntax for installed shell
 scripts. A successful doctor is not a live workflow test.</p>
 <p>Doctor is read-only: it reports configuration provenance, effective
-settings, real Bureau interfaces and managed drift. It resolves JSON and
-the process environment; it does not execute <code>.env</code>,
-authenticate providers, call Linear/models or run tests. Source trusted
-overrides before invoking it when needed. App mode does not require
-background CLIs; background GitHub stages require <code>gh</code>. The
-runtime uses the first configured Linear team's state map; doctor warns
-on multiple teams.</p>
+settings, real Bureau interfaces, managed drift and the recorded
+template source. <code>template_source.status</code> is
+<code>recorded</code> (with the per-scope <code>sources</code>),
+<code>source not recorded</code> when there is no manifest, the manifest
+predates source recording, or no scope is recorded yet (not an error;
+the next asset <code>--apply</code> that installs files records it), or
+<code>stale</code> with a warning when the file hashes changed after the
+record was written. That is what an installer without source recording
+leaves behind: it rewrites the hashes and carries the old record along.
+It resolves JSON and the process environment; it does not execute
+<code>.env</code>, authenticate providers, call Linear/models or run
+tests. Source trusted overrides before invoking it when needed. App mode
+does not require background CLIs; background GitHub stages require
+<code>gh</code>. The runtime uses the first configured Linear team's
+state map; doctor warns on multiple teams.</p>
 <p>Qualify a representative ticket through the intended app/background
 path with the review-only boundary before enabling unattended dispatch.
 Authenticate selected providers normally. Resume workers/automations
@@ -405,12 +455,19 @@ changes. Identify files newly installed by v2.0.0 and remove only
 confirmed upgrade additions that are absent from the old baseline and
 contain no later work.</p>
 <p>If the selected older source supports deterministic previews, use a
-scoped preview to verify its baseline and review every conflict. A
-legacy source may have no installer helper or manifest support: do not
-assume the v2.0.0 resync commands work there, or mix selected old
-scripts with the new runtime. Restore customized behavior from its
-matching backup. A configuration backup covers configuration only and
-can be restored after comparing subsequent edits and runtime
+scoped preview to verify its baseline and review every conflict. An
+older helper does not record its source and carries the existing record
+along. Doctor reports that record as <code>stale</code> only once the
+older helper has changed a file hash; an apply that changed nothing
+leaves it <code>recorded</code>, which is still true of the files. After
+a restore of the pre-upgrade manifest from the backup it reports
+<code>source not recorded</code>. The next asset <code>--apply</code> by
+a recording helper drops a stale record and records only the scopes that
+apply wrote. A legacy source may have no installer helper or manifest
+support: do not assume the v2.0.0 resync commands work there, or mix
+selected old scripts with the new runtime. Restore customized behavior
+from its matching backup. A configuration backup covers configuration
+only and can be restored after comparing subsequent edits and runtime
 compatibility. Keep <code>.env</code> private and intact. Run the
 restored project's tests and available diagnostics before considering a
 restart.</p>

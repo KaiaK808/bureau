@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -54,6 +55,60 @@ class DoctorTests(unittest.TestCase):
         self.assertNotIn('qa',result['effective_stages'])
         (self.repo/'scripts/bureau-runtime.py').write_text('local edit')
         self.assertIn('scripts/bureau-runtime.py',d.diagnose(self.repo,'app')['drift'])
+
+    def test_doctor_reports_recorded_missing_and_stale_template_source(self):
+        installer=[sys.executable,str(ROOT/'scripts/bureau_install.py')]
+        subprocess.run(installer+['assets','--repo',str(self.repo),'--target','both','--scope','interfaces','--scope','scripts','--apply'],
+                       check=True,stdout=subprocess.DEVNULL)
+        path=self.repo/'.bureau-install.json'; manifest=json.loads(path.read_text())
+        result=d.diagnose(self.repo,'app')
+        self.assertTrue(result['ok'],result); self.assertEqual(result['template_source']['status'],'recorded')
+        self.assertEqual(result['template_source']['scopes'],manifest['sources'])
+        self.assertEqual(set(manifest['sources']),{'interfaces/claude','interfaces/codex','scripts'})
+        proc=subprocess.run(installer+['doctor','--repo',str(self.repo)],capture_output=True,text=True)
+        self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)['template_source']['scopes'],manifest['sources'])
+        # A partial apply of a second scope keeps the record valid for every scope.
+        subprocess.run(installer+['assets','--repo',str(self.repo),'--scope','ci','--apply'],check=True,stdout=subprocess.DEVNULL)
+        manifest=json.loads(path.read_text()); result=d.diagnose(self.repo,'app')
+        self.assertEqual(result['template_source']['status'],'recorded',result['template_source'])
+        self.assertEqual(set(result['template_source']['scopes']),{'ci','interfaces/claude','interfaces/codex','scripts'})
+        # An installer that predates source recording rewrites hashes and carries the old record along.
+        stale=copy.deepcopy(manifest); stale['files']['scripts/queue-loop.sh']='0'*64; path.write_text(json.dumps(stale))
+        result=d.diagnose(self.repo,'app')
+        self.assertTrue(result['ok'],result); self.assertEqual(result['template_source']['status'],'stale')
+        self.assertTrue(any(w.startswith('Recorded template source is stale') for w in result['warnings']),result['warnings'])
+        legacy={k:v for k,v in manifest.items() if k not in ('sources','sources_files_sha256')}; path.write_text(json.dumps(legacy))
+        proc=subprocess.run(installer+['doctor','--repo',str(self.repo)],capture_output=True,text=True)
+        self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+        result=json.loads(proc.stdout); self.assertEqual(result['template_source']['status'],'source not recorded')
+        self.assertIn('predates source recording',result['template_source']['reason']); self.assertEqual(result['errors'],[])
+        self.assertFalse(any('source' in w for w in result['warnings']),result['warnings'])
+        path.unlink(); result=d.diagnose(self.repo,'app')
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(result['template_source'],{'status':'source not recorded','reason':'no installation manifest'})
+
+    def test_partial_apply_after_a_rollback_drops_the_stale_record(self):
+        installer=[sys.executable,str(ROOT/'scripts/bureau_install.py'),'assets','--repo',str(self.repo)]
+        subprocess.run(installer+['--target','both','--scope','interfaces','--scope','scripts','--apply'],check=True,stdout=subprocess.DEVNULL)
+        path=self.repo/'.bureau-install.json'; manifest=json.loads(path.read_text())
+        # What an installer without source recording writes when it rolls a script back: the older
+        # bytes, their hash in `files`, and the new installer's record carried along unchanged.
+        old=b'# rolled back\n'; (self.repo/'scripts/bureau-doctor.py').write_bytes(old)
+        manifest['files']['scripts/bureau-doctor.py']=hashlib.sha256(old).hexdigest(); path.write_text(json.dumps(manifest))
+        self.assertEqual(d.diagnose(self.repo,'app')['template_source']['status'],'stale')
+        subprocess.run(installer+['--scope','ci','--apply'],check=True,stdout=subprocess.DEVNULL)
+        after=json.loads(path.read_text())
+        self.assertEqual(set(after['sources']),{'ci'})
+        self.assertEqual(after['files']['scripts/bureau-doctor.py'],hashlib.sha256(old).hexdigest())
+        source=d.template_source(after)
+        self.assertEqual((source['status'],set(source['scopes'])),('recorded',{'ci'}))
+        # A batch that installs nothing after that leaves no scope recorded, and says so.
+        after['sources']={}; after['sources_files_sha256']='x'; path.write_text(json.dumps(after))
+        subprocess.run(installer+['--target','codex','--scope','workflows','--apply'],check=True,stdout=subprocess.DEVNULL)
+        source=d.template_source(json.loads(path.read_text()))
+        self.assertEqual(source['status'],'source not recorded'); self.assertIn('no asset scope has a recorded source',source['reason'])
+        self.assertNotIn('predates',source['reason'])
 
     def test_object_disabled_stays_disabled_in_shell_and_diagnostics(self):
         self.config['agents']['implement']={'enabled':False,'runner':'codex'};self.path.write_text(json.dumps(self.config))

@@ -93,6 +93,20 @@ def migration(path, apply=False, backup_root=None):
     return result
 
 
+def template_source(manifest):
+    """Which template revision the installed assets came from, as bureau_install.py recorded it."""
+    if not manifest: return dict(status='source not recorded', reason='no installation manifest')
+    sources = manifest.get('sources')
+    if not isinstance(sources, dict):
+        return dict(status='source not recorded', reason='the manifest predates source recording; the next asset --apply records it')
+    if not sources:
+        return dict(status='source not recorded', reason='no asset scope has a recorded source: the last asset --apply installed no files, or dropped a stale record; the next asset --apply that installs files records it')
+    files = json.dumps(manifest.get('files', {}), sort_keys=True).encode()
+    if hashlib.sha256(files).hexdigest() != manifest.get('sources_files_sha256'):
+        return dict(status='stale', scopes=sources, reason='installed file hashes changed after the source was recorded (an installer that does not record its source wrote the manifest)')
+    return dict(status='recorded', scopes=sources)
+
+
 def diagnose(repo, mode):
     runtime = module('runtime'); provider = module('provider')
     repo = runtime.root_for(repo); path = runtime.config_for(repo); config = json.loads(path.read_text())
@@ -128,6 +142,8 @@ def diagnose(repo, mode):
                 content = content[content.index(begin):content.index(end) + len(end)] + b'\n'
         if not target.is_file() or hashlib.sha256(content).hexdigest() != expected: drift.append(name)
     if drift: warnings.append('Installed files have drift; review before resync')
+    source = template_source(manifest)
+    if source['status'] == 'stale': warnings.append('Recorded template source is stale: ' + source['reason'])
     interfaces = {}
     for name in ('AGENTS.md', 'CLAUDE.md', '.agents/skills/bureau/SKILL.md', '.claude/commands/linear-to-spec.md'):
         target = repo / name
@@ -145,7 +161,7 @@ def diagnose(repo, mode):
     if len(config.get('linear', {}).get('teams', [])) > 1: warnings.append('Runtime routes through the first configured team; review other-team tickets manually')
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,
-                drift=drift, errors=errors, warnings=warnings,
+                template_source=source, drift=drift, errors=errors, warnings=warnings,
                 authentication='not checked', live_model_acceptance='not checked')
 
 

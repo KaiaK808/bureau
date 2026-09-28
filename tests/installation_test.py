@@ -15,6 +15,10 @@ INSTALLER = ROOT / "scripts/bureau_install.py"
 spec = importlib.util.spec_from_file_location("installer", INSTALLER)
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
+# Test repositories must not inherit the operator's signing, hooks or identity settings.
+GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_AUTHOR_NAME": "Bureau Test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
+           "GIT_COMMITTER_NAME": "Bureau Test", "GIT_COMMITTER_EMAIL": "test@example.invalid"}
 
 
 class InstallationTests(unittest.TestCase):
@@ -131,6 +135,152 @@ class InstallationTests(unittest.TestCase):
         self.run_install("assets", "--overwrite", "../elsewhere", status=1)
         self.write(".bureau-install.json", "[]")
         self.run_install("assets", status=1)
+
+    def git(self, cwd, *args):
+        return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True, env=GIT_ENV).stdout.strip()
+
+    def source_copy(self, parent):
+        """This source's templates and installer, placed where a skill checkout would be."""
+        source = parent / "skill source"
+        shutil.copytree(ROOT / "templates", source / "templates", ignore=shutil.ignore_patterns("__pycache__"))
+        (source / "scripts").mkdir()
+        shutil.copy(INSTALLER, source / "scripts/bureau_install.py")
+        return source
+
+    def tagged_source(self, tag="v9.9.9"):
+        source = self.source_copy(self.root)
+        shutil.copy(ROOT / ".gitignore", source / ".gitignore")
+        self.git(source, "init", "-q")
+        self.git(source, "add", "-A")
+        self.git(source, "commit", "-qm", "release")
+        self.git(source, "tag", "-a", tag, "-m", tag)
+        link = self.root / "skill link"
+        link.symlink_to(source, target_is_directory=True)
+        return source, link / "scripts/bureau_install.py"
+
+    def manifest(self):
+        return json.loads((self.repo / ".bureau-install.json").read_text())
+
+    def test_apply_records_tagged_untagged_and_dirty_source_per_scope(self):
+        source, program = self.tagged_source()
+        tagged = self.git(source, "rev-parse", "HEAD")
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program)
+        recorded = {"git": True, "tag": "v9.9.9", "describe": "v9.9.9", "commit": tagged, "dirty": False}
+        self.assertEqual(self.manifest()["sources"], {"scripts": recorded})
+        # A later partial apply from an untagged commit relabels only the scope it wrote.
+        ci = source / "templates/.github/workflows/ci.yml"
+        ci.write_text(ci.read_text() + "# after the release\n")
+        self.git(source, "commit", "-qam", "after the release")
+        untagged = self.git(source, "rev-parse", "HEAD")
+        self.run_install("assets", "--scope", "ci", "--apply", program=program)
+        sources = self.manifest()["sources"]
+        self.assertEqual(sources["scripts"], recorded)
+        self.assertEqual({k: sources["ci"][k] for k in ("git", "tag", "commit", "dirty")},
+                         {"git": True, "tag": None, "commit": untagged, "dirty": False})
+        self.assertTrue(sources["ci"]["describe"].startswith("v9.9.9-1-g"), sources["ci"])
+        self.assertTrue(untagged.startswith(sources["ci"]["describe"].rsplit("-g", 1)[1]), sources["ci"])
+        # Modified tracked and new untracked template files are both installed, so both make the source dirty.
+        script = source / "templates/scripts/queue-loop.sh"
+        script.write_text(script.read_text() + "# local\n")
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program)
+        self.assertEqual(self.manifest()["sources"]["scripts"], {**recorded, "tag": None, "describe": sources["ci"]["describe"],
+                                                               "commit": untagged, "dirty": True})
+        self.git(source, "checkout", "--", "templates/scripts/queue-loop.sh")
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program)
+        self.assertFalse(self.manifest()["sources"]["scripts"]["dirty"])
+        (source / "templates/scripts/local-extra.sh").write_text("echo local\n")
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program)
+        self.assertTrue(self.manifest()["sources"]["scripts"]["dirty"])
+        self.assertTrue((self.repo / "scripts/local-extra.sh").is_file())
+        # A source whose status cannot be read is not reported clean.
+        (source / "templates/scripts/local-extra.sh").unlink()
+        (source / ".git/index").write_bytes(b"not an index")
+        self.assertNotEqual(subprocess.run(["git", "-C", str(source), "status", "--porcelain"], capture_output=True, env=GIT_ENV).returncode, 0)
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program)
+        self.assertEqual(self.manifest()["sources"]["scripts"]["commit"], untagged)
+        self.assertTrue(self.manifest()["sources"]["scripts"]["dirty"])
+
+    def test_preview_and_conflicted_apply_leave_the_recorded_source_untouched(self):
+        source, program = self.tagged_source()
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program)
+        before = (self.repo / ".bureau-install.json").read_bytes()
+        script = source / "templates/scripts/queue-loop.sh"
+        script.write_text(script.read_text() + "# next release\n")
+        self.git(source, "commit", "-qam", "next release")
+        self.git(source, "tag", "v9.9.10")  # lightweight: still the exact tag
+        preview = self.run_install("assets", "--scope", "scripts", program=program)
+        self.assertEqual(json.loads(preview.stdout)["source"]["tag"], "v9.9.10")
+        self.assertEqual((self.repo / ".bureau-install.json").read_bytes(), before)
+        self.write("scripts/queue-loop.sh", "local edit\n")
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program, status=3)
+        self.assertEqual((self.repo / ".bureau-install.json").read_bytes(), before)
+        self.assertEqual(self.manifest()["sources"]["scripts"]["tag"], "v9.9.9")
+
+    def test_ignored_template_files_that_get_installed_make_the_source_dirty(self):
+        source, program = self.tagged_source()
+        for name in (".env", ".DS_Store"):
+            (source / "templates/scripts" / name).write_text("local\n")
+        self.assertEqual(self.git(source, "status", "--porcelain"), "")  # invisible to status
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program)
+        self.assertEqual({k: self.manifest()["sources"]["scripts"][k] for k in ("tag", "dirty")}, {"tag": "v9.9.9", "dirty": True})
+        # Current behaviour, named as a separate risk: an ignored file in templates/scripts is copied.
+        self.assertTrue((self.repo / "scripts/.env").is_file() and (self.repo / "scripts/.DS_Store").is_file())
+        for name in (".env", ".DS_Store"):
+            (source / "templates/scripts" / name).unlink()
+        # An ignored file the installer does not copy (a directory entry) leaves the source clean.
+        (source / "templates/scripts/__pycache__").mkdir(exist_ok=True)
+        (source / "templates/scripts/__pycache__/x.pyc").write_bytes(b"\0")
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program)
+        self.assertFalse(self.manifest()["sources"]["scripts"]["dirty"])
+
+    def test_source_git_calls_ignore_inherited_repository_redirects(self):
+        source, program = self.tagged_source()
+        host = self.root / "host repo"
+        self.git(self.root, "init", "-q", str(host))
+        (host / "f").write_text("x")
+        self.git(host, "add", "-A")
+        self.git(host, "commit", "-qm", "host")
+        env = {**os.environ, "GIT_DIR": str(host / ".git"), "GIT_WORK_TREE": str(host)}
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program, env=env)
+        self.assertEqual(self.manifest()["sources"]["scripts"]["commit"], self.git(source, "rev-parse", "HEAD"))
+        self.assertFalse(self.manifest()["sources"]["scripts"]["dirty"])
+
+    def test_preview_does_not_write_the_source_index(self):
+        source, program = self.tagged_source()
+        index = source / ".git/index"
+        script = source / "templates/scripts/queue-loop.sh"
+        os.utime(script, (script.stat().st_atime, script.stat().st_mtime + 5))  # stale stat data, same bytes
+        before = index.read_bytes()
+        preview = self.run_install("assets", "--scope", "scripts", program=program)
+        self.assertFalse(json.loads(preview.stdout)["source"]["dirty"])
+        self.assertEqual(index.read_bytes(), before)
+
+    def test_source_that_is_not_its_own_checkout_is_recorded_as_such(self):
+        loose = self.source_copy(self.root / "loose")
+        self.run_install("assets", "--apply", program=loose / "scripts/bureau_install.py")
+        not_git = {"git": False, "note": "not a git checkout"}
+        self.assertEqual(self.manifest()["sources"], {"interfaces/claude": not_git})
+        # Vendored inside another repository: that repository's commit says nothing about the template.
+        host = self.root / "host repo"
+        self.git(self.root, "init", "-q", str(host))
+        nested = self.source_copy(host / "vendor")
+        self.git(host, "add", "-A")
+        self.git(host, "commit", "-qm", "vendor bureau")
+        self.run_install("assets", "--scope", "scripts", "--apply", program=nested / "scripts/bureau_install.py")
+        self.assertEqual(self.manifest()["sources"], {"interfaces/claude": not_git, "scripts": not_git})
+        self.assertNotIn(self.git(host, "rev-parse", "HEAD"), (self.repo / ".bureau-install.json").read_text())
+
+    def test_manifest_without_sources_is_accepted_and_malformed_sources_are_not(self):
+        self.run_install("assets", "--apply")
+        legacy = {k: v for k, v in self.manifest().items() if k not in ("sources", "sources_files_sha256")}
+        (self.repo / ".bureau-install.json").write_text(json.dumps(legacy))
+        self.run_install("assets", "--scope", "scripts", "--apply")
+        self.assertEqual(set(self.manifest()["sources"]), {"scripts"})
+        self.assertEqual(self.manifest()["files"], {**legacy["files"], **self.manifest()["files"]})
+        for sources in ([], {"scripts": "v9.9.9"}):
+            with self.subTest(sources=sources):
+                self.write(".bureau-install.json", json.dumps({**legacy, "sources": sources}))
+                self.run_install("assets", status=1)
 
     def test_app_prerequisites_do_not_require_provider_cli_or_tmux(self):
         args = ["bureau-install", "check", "--target", "both", "--repo", str(self.repo)]
