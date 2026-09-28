@@ -230,5 +230,73 @@ class SupervisionPipelineTests(unittest.TestCase):
         self.assertNotIn(['pr','merge'],[json.loads(line)[:2] for line in self.gh_log.read_text().splitlines()])
         self.assertEqual(json.loads((self.repo/'.git/bureau/leases.json').read_text()),{})
 
+    # ── agents.merge_mode ────────────────────────────────────────────────
+    def set_merge_mode(self, mode, merge_state=True, **agents):
+        config=json.loads((self.repo/'.bureau.json').read_text())
+        if mode is not None: config['agents']['merge_mode']=mode
+        states=config['linear']['teams'][0]['states']
+        if merge_state: states['merge']='merge'
+        else: states.pop('merge',None)
+        config['agents'].update(agents)
+        (self.repo/'.bureau.json').write_text(json.dumps(config))
+
+    def queue_worker(self, issue, branch):
+        # What queue-loop.sh run_script does: the real worker, one fixed worktree per stage.
+        return subprocess.run(['bash','scripts/bureau-worker.sh',issue,'code-review-pipeline.sh',str(self.repo/'.worktrees/queue-code-review'),branch],
+                              cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=90)
+
+    def test_manual_without_merge_state_refuses_before_any_work(self):
+        # main has moved: the path on which a review that ran would merge origin/main
+        # locally and leave the shared queue worktree preserved (every later run: 21).
+        (self.repo/'main-change.txt').write_text('Concurrent main work\n')
+        self.git('add','main-change.txt'); self.git('commit','-qm','feat: main advances'); self.git('push','-q','origin','main')
+        for mode in ('manual', 'Manual'):
+            with self.subTest(mode=mode):
+                self.set_merge_mode(mode, merge_state=False)
+                linear_before=self.linear.read_bytes()
+                for issue, branch in (('T-1','001-task'),('T-2','002-task'),('T-1','001-task')):
+                    proc=self.queue_worker(issue, branch)
+                    self.assertEqual(proc.returncode,24,proc.stdout+proc.stderr)
+                    self.assertIn('linear.teams[0].states.merge is not set',proc.stderr)
+                self.assertEqual(self.models(),[]); self.assertFalse(self.gh_log.exists())
+                self.assertEqual(self.linear.read_bytes(),linear_before)
+                self.assertFalse((self.repo/'.git/bureau/review-stops.json').exists())
+                tick=subprocess.run(['bash','scripts/bureau-tick.sh','--allow-merge'],cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=90)
+                result=json.loads((self.repo/'logs/bureau-tick.json').read_text())
+                self.assertEqual((tick.returncode,result['stage'],result['outcome']),(24,'code_review','failed'),tick.stderr)
+                self.assertEqual(self.models(),[]); self.assertEqual(self.linear.read_bytes(),linear_before)
+        # Negative controls: with a Merge state the same review runs and parks T-1 in
+        # Merge; under auto without one the review runs too.
+        self.set_merge_mode('manual', merge_state=True)
+        proc=self.queue_worker('T-1','001-task')
+        self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+        self.assertEqual(json.loads(self.linear.read_text())['T-1']['state']['id'],'merge')
+        self.assertEqual(self.models(),['T-1']*4)
+        self.assertNotIn(['pr','merge'],[json.loads(line)[:2] for line in self.gh_log.read_text().splitlines()])
+        config=json.loads((self.repo/'.bureau.json').read_text()); config['agents'].pop('merge_mode')
+        config['linear']['teams'][0]['states'].pop('merge'); (self.repo/'.bureau.json').write_text(json.dumps(config))
+        proc=self.queue_worker('T-2','002-task')
+        self.assertNotEqual(proc.returncode,24,proc.stdout+proc.stderr); self.assertIn('T-2',self.models())
+
+    def test_manual_never_dispatches_merge_or_rebase(self):
+        items=json.loads(self.linear.read_text()); items['T-1']['state']={'id':'merge','name':'Merge'}; self.linear.write_text(json.dumps(items))
+        self.set_merge_mode('manual', merge=True, rebase=True)
+        stages=[]
+        for _ in range(3):
+            subprocess.run(['bash','scripts/bureau-tick.sh','--allow-merge'],cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=90)
+            stages.append(json.loads((self.repo/'logs/bureau-tick.json').read_text())['stage'])
+        for stage in ('merge','rebase'):
+            forced=subprocess.run(['bash','scripts/bureau-tick.sh','--allow-merge','--stage',stage],cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=90)
+            result=json.loads((self.repo/'logs/bureau-tick.json').read_text())
+            self.assertEqual((forced.returncode,result['stage'],result['outcome']),(0,'','waiting'),forced.stderr)
+        # T-2 is reviewed and parked, T-3 goes through QA; the parked tickets cost nothing.
+        self.assertEqual(stages[:2],['code_review','qa'],stages); self.assertNotIn('merge',stages); self.assertNotIn('rebase',stages)
+        self.assertEqual(json.loads(self.linear.read_text())['T-2']['state']['id'],'merge')
+        self.assertNotIn(['pr','merge'],[json.loads(line)[:2] for line in self.gh_log.read_text().splitlines()])
+        # Negative control: under auto the same tick goes to the merge stage first.
+        self.set_merge_mode('auto')
+        subprocess.run(['bash','scripts/bureau-tick.sh','--allow-merge'],cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=90)
+        self.assertEqual(json.loads((self.repo/'logs/bureau-tick.json').read_text())['stage'],'merge')
+
 
 if __name__=='__main__': unittest.main()

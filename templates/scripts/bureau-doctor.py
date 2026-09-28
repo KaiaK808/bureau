@@ -25,7 +25,8 @@ def module(name):
 
 def merge_mode(config):
     """The merge mode the shell pipelines use (bureau-config.sh): absent or null is auto;
-    anything but "auto" or "manual" falls closed to manual. Returns (mode, raw)."""
+    anything but exactly "auto" or "manual" (no whitespace) falls closed to manual.
+    Returns (mode, raw)."""
     raw = config.get('agents', {}).get('merge_mode') if isinstance(config.get('agents'), dict) else None
     if raw is None: return 'auto', raw
     return (raw if raw in ('auto', 'manual') else 'manual'), raw
@@ -171,7 +172,7 @@ def diagnose(repo, mode):
     if not (raw_merge is None or raw_merge in ('auto', 'manual')):
         warnings.append('agents.merge_mode ' + json.dumps(raw_merge) + ' is not "auto" or "manual"; the pipelines fall closed to manual (no automatic merge or rebase)')
     if merge == 'manual' and not config['linear']['teams'][0].get('states', {}).get('merge'):
-        warnings.append('agents.merge_mode is manual but the first team has no Merge state: an approved ticket stays in Build Review until a human merges')
+        errors.append('agents.merge_mode is manual but linear.teams[0].states.merge is not set: code review refuses with 24; configure the Merge state or set merge_mode to auto')
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),
                 merge_mode=merge,
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,

@@ -367,7 +367,7 @@ Squash and merge get a subject and body Bureau writes itself, with every CI supp
 
 ## Merge by hand
 
-Repos where a person merges every PR set the merge mode instead of editing the pipeline scripts:
+Repos where a person merges every PR set the merge mode instead of editing the pipeline scripts. **`manual` needs a Merge state** (`linear.teams[0].states.merge`): that is where an approved ticket waits for the person who merges.
 
 ```json
 {
@@ -379,13 +379,15 @@ Repos where a person merges every PR set the merge mode instead of editing the p
 
 What changes:
 
+- The merge and rebase agents are off: the queue loop, the bounded tick (`bureau-tick.sh`, also with `--allow-merge` or `--stage merge`) and the tmux windows never dispatch them, so a ticket parked in Merge never costs a tick. `queue-loop.sh merge|rebase` started by hand stops before the picker.
 - `merge-pipeline.sh` and `rebase-pipeline.sh` print one line and exit `2` (queue empty) before reading `.env`, calling Linear or gh, or touching git — for the queue, a named ticket and the review stage's inline call alike. Nothing is merged, rebased or force-pushed.
-- An APPROVE in code review posts that the PR awaits a manual merge. With a Merge state configured the ticket moves there, the visible "awaiting merge" position, and the stage ends with `0`. Without one the ticket stays in Build Review and the stage ends with `20` at the reviewed boundary, the same boundary `BUREAU_NO_MERGE` uses, so the unchanged head is not reviewed again. Configure a Merge state; doctor warns when there is none.
-- The shepherd ends its run at Merge with `20` and a comment. Neither the shepherd nor the queue loop alerts on a `20` that a stop before merge asked for (`merge_mode` manual or `--no-merge`); a `20` nobody asked for still alerts.
-- Moving the ticket to Done after the manual merge is not Bureau's job here: the merge stage's recovery of PRs merged outside the pipeline does not run, because the stage refuses first. Linear's GitHub integration or the person who merged moves it.
-- The mode holds regardless of `agents.merge`, `agents.rebase` and the shepherd's forced stages, and the environment cannot override it. Any value but `auto` or `manual` — a typo, or `false` meant as "don't merge" — falls closed to `manual` with a warning. `bureau-status.sh --config` and `bureau-doctor.py` show the mode in effect.
+- An APPROVE in code review posts that the PR awaits a manual merge and moves the ticket to Merge; the stage ends with `0`. It does so under `--no-merge` too: moving is not merging.
+- Without a Merge state, the review stage refuses at its start with `24` (environment-blocked) and one line naming the missing key — before `.env`, Linear, gh, git or a paid review. `bureau-doctor.py` reports the same as an error.
+- The shepherd ends its run at Merge with `20` and a comment, without an alert.
+- Moving the ticket to Done after the manual merge is not Bureau's job here: the merge stage's recovery of PRs merged outside the pipeline does not run, because the stage refuses first. Linear's GitHub integration or the person who merged moves it. There is no merge `--dry-run` audit under `manual` either; the stage refuses before it.
+- The mode holds regardless of `agents.merge`, `agents.rebase` and the shepherd's forced stages, and the environment cannot override it. Any value but exactly `auto` or `manual` — a typo, `"auto\n"`, or `false` meant as "don't merge" — falls closed to `manual` with a warning. `bureau-status.sh --config` and `bureau-doctor.py` show the mode in effect.
 
-Upgrading an installation that disabled merge and rebase by hand (an early `exit 2` at the top of both scripts): set `"merge_mode": "manual"` in `.bureau.json` **before** resyncing the scripts; the resync replaces the local block, and without the key automatic merging would be on again.
+Upgrading an installation that disabled merge and rebase by hand (an early `exit 2` at the top of both scripts): check that it has a Merge state, then set `"merge_mode": "manual"` in `.bureau.json` **before** resyncing the scripts; the resync replaces the local block, and without the key automatic merging would be on again.
 
 ---
 

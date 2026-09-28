@@ -852,7 +852,7 @@ PY_EOF
   return 0
 }
 
-# ── Scenario 12: agents.merge_mode manual ends the run at Merge, quietly ──
+# ── Scenario 14: agents.merge_mode manual ends the run at Merge, quietly ──
 _set_mode() {  # $1 = sandbox, $2 = JSON value
   jq --argjson v "$2" '.agents.merge_mode = $v' "$1/.bureau.json" > "$1/.bureau.json.tmp" && mv "$1/.bureau.json.tmp" "$1/.bureau.json"
 }
@@ -888,9 +888,9 @@ test_merge_mode_manual() {
   return 0
 }
 
-# ── Scenario 13: a review that stopped before merge as asked is quiet ──
-# The stub review stage ends the way the real one does when review_stops_at_approval
-# holds (manual without a Merge state, or --no-merge): exit 20, ticket unmoved.
+# ── Scenario 15: a review that stopped before merge as asked is quiet ──
+# The stub review stage ends the way the real one does under --no-merge after an
+# APPROVE: exit 20, ticket unmoved. Only that asked-for 20 is quiet.
 _run_review_stop() {  # $1 = sandbox, $2 = the stage's exit code, $3… = shepherd flags
   local sb="$1" code="$2"; shift 2
   cat > "$sb/scripts/code-review-pipeline.sh" <<STAGE_EOF
@@ -907,17 +907,27 @@ STAGE_EOF
 }
 
 test_review_stop_quiet() {
-  local sb; sb=$(make_sandbox review_stop_manual)
-  _set_mode "$sb" '"manual"'
-  _run_review_stop "$sb" 20
-  assert_eq "$REVIEW_STOP_RC" "20" "manual: review stop ends the run with 20" || return 1
-  assert_eq "$(grep -c . "$sb/invocations.log")" "1" "manual: the review runs once" || return 1
-  [ ! -s "$sb/labels.log.alerts" ] || { echo "FAIL: manual: a review stop alerted"; return 1; }
-
   local sb2; sb2=$(make_sandbox review_stop_nomerge)
   _run_review_stop "$sb2" 20 --no-merge
   assert_eq "$REVIEW_STOP_RC" "20" "--no-merge: review stop ends the run with 20" || return 1
+  assert_eq "$(grep -c . "$sb2/invocations.log")" "1" "--no-merge: the review runs once" || return 1
   [ ! -s "$sb2/labels.log.alerts" ] || { echo "FAIL: --no-merge: a review stop alerted"; return 1; }
+
+  # --no-merge silences only that 20: a BLOCK (25) under --no-merge still alerts.
+  local sb5; sb5=$(make_sandbox review_block_nomerge)
+  _run_review_stop "$sb5" 25 --no-merge
+  assert_eq "$REVIEW_STOP_RC" "25" "--no-merge: a BLOCK halts with 25" || return 1
+  grep -q "shepherd halt" "$sb5/labels.log.alerts" 2>/dev/null \
+    || { echo "FAIL: --no-merge: a BLOCK halted without an alert"; return 1; }
+
+  # manual does not make a 20 quiet: no template stage exits 20 under manual, so one
+  # that does is unexpected and alerts.
+  local sb; sb=$(make_sandbox review_stop_manual)
+  _set_mode "$sb" '"manual"'
+  _run_review_stop "$sb" 20
+  assert_eq "$REVIEW_STOP_RC" "20" "manual: an unasked 20 halts with its code" || return 1
+  grep -q "shepherd halt" "$sb/labels.log.alerts" 2>/dev/null \
+    || { echo "FAIL: manual: an unasked 20 halted without an alert"; return 1; }
 
   # Negative control: a 20 nobody asked for (auto, no --no-merge) still halts with an alert.
   local sb3; sb3=$(make_sandbox review_stop_unasked)

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="27a041bc3cf8835903870f7d234ee8b981472eee66791d1ac163f182c4231232">
+<meta name="bureau-source-sha256" content="7f656ae242fd2b005060f013a72e327e4ff21e2f6642fdb332b114c5453fc602">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -314,14 +314,17 @@ href="recipes.html#single-flight-pipeline">recipes</a></td>
 <td><code>"auto"</code></td>
 <td>Who merges an approved PR. <code>auto</code>: the pipeline (inline
 after review, or the gated merge stage when <code>agents.merge</code> is
-on). <code>manual</code>: a human — <code>merge-pipeline.sh</code> and
-<code>rebase-pipeline.sh</code> exit <code>2</code> before any Linear,
-gh or git call, the review stage parks an APPROVE in the Merge state
-(or, without one, stops with <code>20</code> at the reviewed boundary),
-and the shepherd ends its run at Merge with <code>20</code>, without an
-alert. Holds regardless of <code>agents.merge</code>,
-<code>agents.rebase</code> and the shepherd's forced stages. Any other
-value falls closed to <code>manual</code> with a warning. See <a
+on). <code>manual</code>: a human — the merge and rebase agents are off,
+<code>merge-pipeline.sh</code> and <code>rebase-pipeline.sh</code> exit
+<code>2</code> before any Linear, gh or git call, the review stage parks
+an APPROVE in the Merge state, and the shepherd ends its run at Merge
+with <code>20</code>, without an alert. <strong><code>manual</code>
+needs <code>linear.teams[0].states.merge</code></strong>: without it the
+review stage refuses at its start with <code>24</code> and doctor
+reports an error. Holds regardless of <code>agents.merge</code>,
+<code>agents.rebase</code> and the shepherd's forced stages. Any value
+but exactly <code>auto</code> or <code>manual</code> falls closed to
+<code>manual</code> with a warning. See <a
 href="recipes.html#merge-by-hand">recipes</a></td>
 </tr>
 <tr>

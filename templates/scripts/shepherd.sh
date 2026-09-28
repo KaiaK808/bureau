@@ -482,8 +482,8 @@ while true; do
   # shepherd_rc_action; a code added later cannot slip through unannounced.
   ACTION=$(shepherd_rc_action "$RC")
   [ "$ACTION" = halt ] && [ "$RC" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && ACTION=linear-halt
-  # A review that stopped before merge because the caller or the repo asked for
-  # it (review_stops_at_approval) ends the run as requested: no alert, no label.
+  # A review that stopped before merge because the caller asked for it
+  # (--no-merge) ends the run as requested: no alert, no label.
   if [ "$ACTION" = halt ] && stop_before_merge_was_asked "$RC"; then ACTION=stopped-before-merge; fi
   case "$ACTION" in
     ok)

@@ -10,12 +10,12 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 #### Added
 
-- `agents.merge_mode` (`"auto"` default, `"manual"`): with `manual` a human merges. `merge-pipeline.sh` and `rebase-pipeline.sh` exit `2` before any Linear, gh or git call; an APPROVE parks the ticket in the Merge state (or, without one, stops with `20` at the reviewed boundary); the shepherd ends at Merge with `20`. The mode holds regardless of `agents.merge`, `agents.rebase` and the shepherd's forced stages; any other value falls closed to `manual` with a warning. `bureau-status.sh --config` and `bureau-doctor.py` (`merge_mode`, plus warnings for an unknown value and for manual without a Merge state) show it. See the [recipe](docs/recipes.md#merge-by-hand).
-- **Upgrade action:** installations that disabled merge and rebase by hand (an early `exit 2` at the top of both scripts, as in atv-pruefwerkzeug and slidefactory-core) set `"agents": {"merge_mode": "manual"}` in `.bureau.json` **before resyncing** the scripts. The resync replaces the local block; without the key automatic merging is on again.
+- `agents.merge_mode` (`"auto"` default, `"manual"`): with `manual` a human merges. The merge and rebase agents are off for every dispatcher; `merge-pipeline.sh` and `rebase-pipeline.sh` exit `2` before any Linear, gh or git call; an APPROVE parks the ticket in the Merge state; the shepherd ends at Merge with `20`. **`manual` needs `linear.teams[0].states.merge`**: without it the review stage refuses at its start with `24`, and doctor reports an error. The mode holds regardless of `agents.merge`, `agents.rebase` and the shepherd's forced stages; any value but exactly `auto` or `manual` falls closed to `manual` with a warning. `bureau-status.sh --config` and `bureau-doctor.py` (`merge_mode`) show the mode in effect. See the [recipe](docs/recipes.md#merge-by-hand).
+- **Upgrade action:** installations that disabled merge and rebase by hand (an early `exit 2` at the top of both scripts, as in atv-pruefwerkzeug and slidefactory-core) check that `linear.teams[0].states.merge` is set, then set `"agents": {"merge_mode": "manual"}` in `.bureau.json` **before resyncing** the scripts. The resync replaces the local block; without the key automatic merging is on again, and without the Merge state code review refuses with `24`.
 
 #### Changed
 
-- The shepherd and the queue loop no longer alert on a stage's exit `20` (stopped before merge) when a stop before merge was asked for — `--no-merge` / `BUREAU_NO_MERGE`, or `merge_mode` manual. A `20` nobody asked for still halts with an alert.
+- The shepherd and the queue loop no longer alert on a stage's exit `20` (stopped before merge) when `--no-merge` / `BUREAU_NO_MERGE` asked for it. A `20` nobody asked for still halts with an alert.
 
 ### Hardening carried over from the installations
 
