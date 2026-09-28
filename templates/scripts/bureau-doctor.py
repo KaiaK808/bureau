@@ -173,8 +173,12 @@ def diagnose(repo, mode):
         warnings.append('agents.merge_mode ' + json.dumps(raw_merge) + ' is not "auto" or "manual"; the pipelines fall closed to manual (no automatic merge or rebase)')
     if merge == 'manual' and not config['linear']['teams'][0].get('states', {}).get('merge'):
         errors.append('agents.merge_mode is manual but linear.teams[0].states.merge is not set: code review refuses with 24; configure the Merge state or set merge_mode to auto')
+    repo_cfg = config.get('repo') if isinstance(config.get('repo'), dict) else {}
+    hook = repo_cfg.get('post_implement_command')
+    if hook is not None and hook is not False and not isinstance(hook, str):
+        errors.append('repo.post_implement_command must be a string; the implement stage would run ' + json.dumps(hook) + ' as a shell command')
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),
-                merge_mode=merge,
+                merge_mode=merge, post_implement_command=hook if isinstance(hook, str) and hook.strip() else None,
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,
                 template_source=source, drift=drift, errors=errors, warnings=warnings,
                 authentication='not checked', live_model_acceptance='not checked')

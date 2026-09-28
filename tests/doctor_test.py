@@ -166,6 +166,22 @@ class DoctorTests(unittest.TestCase):
                     self.assertEqual(len(merge_found),len(wanted),merge_found)
                     for text in wanted: self.assertTrue(any(text in w for w in merge_found),(text,merge_found))
 
+    def test_post_implement_command_is_reported_and_checked(self):
+        subprocess.run([sys.executable,str(ROOT/'scripts/bureau_install.py'),'assets','--repo',str(self.repo),
+                        '--target','codex','--scope','interfaces','--scope','scripts','--apply'],check=True,stdout=subprocess.DEVNULL)
+        # (value, reported, error expected)
+        for value, reported, err in ((None, None, False), ('', None, False), (False, None, False),
+                                     ('python3 scripts/regen.py "$BUREAU_ISSUE"', 'python3 scripts/regen.py "$BUREAU_ISSUE"', False),
+                                     (['make', 'docs'], None, True), (5, None, True)):
+            with self.subTest(value=value):
+                config=copy.deepcopy(self.config); config.setdefault('repo',{})
+                if value is not None: config['repo']['post_implement_command']=value
+                self.path.write_text(json.dumps(config))
+                result=d.diagnose(self.repo,'app')
+                self.assertEqual(result['post_implement_command'],reported,result)
+                found=[e for e in result['errors'] if 'post_implement_command' in e]
+                self.assertEqual(bool(found),err,result['errors']); self.assertEqual(result['ok'],not err,result)
+
     def test_migration_preserves_effective_models_across_runner_overrides(self):
         provider=d.module('provider')
         for version in (None, 1):

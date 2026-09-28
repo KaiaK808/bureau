@@ -1,9 +1,12 @@
 #!/bin/bash
-# A failed push in the implement stage is loud, names branch and exit code, and does not end
-# the run; a detached HEAD still pushes to the branch.
+# A failed push in the implement stage is loud and names branch and exit code; an iteration
+# push that fails does not end the run, the end-of-run push that fails stops it before any
+# hand-off; a detached HEAD still pushes to the branch.
 #
 # 1. The REAL implement stage (harness) against an origin whose pre-receive hook rejects every
-#    push: each push reports itself on stderr with git's own words, and the run still ends.
+#    push: each push reports itself on stderr with git's own words, the loop still reaches its
+#    end, and the failed end-of-run push ends the stage with 18 and hands nothing on
+#    (tests/test_post_implement_command.sh case 11 covers "only the iteration push failed").
 # 2. push_branch_loud cut from the real script, in a repo with a detached HEAD: it pushes to
 #    origin/<branch>. Negative control: the old `git push -u origin HEAD` fails there.
 set -euo pipefail
@@ -16,12 +19,13 @@ export BUREAU_DRY_RUN=0 BUREAU_IMPL_MAX_ITER=3
 printf '#!/bin/sh\necho "rejected by the test hook"\nexit 1\n' > "$SANDBOX/.fake-origin.git/hooks/pre-receive"
 chmod +x "$SANDBOX/.fake-origin.git/hooks/pre-receive"
 run_implement_pipeline
-assert_eq 0 "$LAST_RC" "a failed push does not end the run"
-assert_match 'terminal status=COMPLETE' "$LAST_STDOUT" "the run reached its end"
+assert_eq 18 "$LAST_RC" "a failed end-of-run push ends the stage with 18"
+assert_match 'terminal status=COMPLETE' "$LAST_STDOUT" "a failed iteration push did not end the loop"
 assert_match "PUSH FAILED \\(iter 1\\): branch 'test-branch' is NOT on origin — git exit [1-9]" "$LAST_STDERR" "iteration push reported"
 assert_match "PUSH FAILED \\(end of run\\)" "$LAST_STDERR" "end-of-run push retried and reported"
 assert_match 'git: .*rejected by the test hook' "$LAST_STDERR" "git's own output is shown"
-echo "PASS a rejected push is reported per attempt with branch, exit code and git's words, and the run goes on"
+grep -q '^move_issue' "$SANDBOX/calls.log" 2>/dev/null && fail "the ticket was handed on although origin has nothing"
+echo "PASS a rejected push is reported per attempt with branch, exit code and git's words; the loop goes on, the hand-off does not"
 teardown
 
 # --- detached HEAD --------------------------------------------------------------------------
