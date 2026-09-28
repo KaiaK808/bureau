@@ -166,6 +166,13 @@ case "${1:-}" in
         fi
         ;;
       view)
+        # The gate's own reads can be made to fail one at a time (v3.0.1).
+        if [ "$JSON_FIELDS" = "state,mergeStateStatus,labels" ] && [ -f "$STUB_DIR/fail_pr_gate_read" ]; then
+          echo "HTTP 502" >&2; exit 1
+        fi
+        if [ "$JSON_FIELDS" = "comments" ] && [ -f "$STUB_DIR/fail_comments_read" ]; then
+          echo "HTTP 502" >&2; exit 1
+        fi
         # The merge message read (--json title,body) can be made to fail on its own.
         if [ "$JSON_FIELDS" = "title,body" ] && [ -f "$STUB_DIR/fail_title_body" ]; then
           echo "HTTP 502" >&2
@@ -200,7 +207,8 @@ case "${1:-}" in
   api)
     path_arg="${2:-}"
     case "$path_arg" in
-      graphql) cat "$STUB_DIR/review_threads.json" | apply_jq ;;
+      graphql) if [ -f "$STUB_DIR/fail_threads_read" ]; then echo "HTTP 502" >&2; exit 1; fi
+               cat "$STUB_DIR/review_threads.json" | apply_jq ;;
       */commits/*/check-runs) cat "$STUB_DIR/check_runs.json" | apply_jq ;;
       */commits/*/status)     cat "$STUB_DIR/status.json"     | apply_jq ;;
       */branches/*)
@@ -668,6 +676,39 @@ test_gate_outcome() {
   run_gate "$sb"; gate_case "$sb" ci-read-failed 2 not-yet 'check-runs query failed' || return 1
   sb=$(make_sandbox gate_baseread); populate_happy_fixtures "$sb"; rm -f "$sb/stub_data/branch_main.json"
   run_gate "$sb"; gate_case "$sb" base-read-failed 2 not-yet 'base: cannot resolve main HEAD' || return 1
+  # The PR's own gate read and the verdict read failing (a 502) are not verdicts: not
+  # yet, even next to a pending check — they used to read as "PR state= (need OPEN)"
+  # and "verdict=none" and end blocked. So is an unreadable thread list, which used to
+  # count as zero unresolved threads.
+  local r
+  for r in pr_gate_read comments_read threads_read; do
+    sb=$(make_sandbox "gate_fail_$r"); populate_happy_fixtures "$sb"; touch "$sb/stub_data/fail_$r"
+    echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+    run_gate "$sb"
+    case "$r" in
+      pr_gate_read)  gate_case "$sb" "$r" 2 not-yet 'pr_read: ' || return 1 ;;
+      comments_read) gate_case "$sb" "$r" 2 not-yet 'verdict_read: ' || return 1 ;;
+      threads_read)  gate_case "$sb" "$r" 2 not-yet 'threads_read: ' || return 1 ;;
+    esac
+    printf '%s\n' "$GREP" | grep -qE '^(pr_state|verdict|unresolved_threads):' \
+      && { echo "FAIL gate $r: a failed read still reads as a verdict: $GREP" >&2; return 1; }
+  done
+  # A hold label a human put on the PR: not yet (the queue stays quiet until they remove it).
+  sb=$(make_sandbox gate_hold); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.labels=[{"name":"wip"}]'
+  run_gate "$sb"; gate_case "$sb" hold-label 2 not-yet "hold label 'wip'" || return 1
+  # Conflicts the rebase stage resolves (agents.rebase on, bureau-only divergence): not
+  # yet. With a human commit in the divergence, or the rebase agent off: blocked.
+  sb=$(make_sandbox gate_dirty_rebase); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="DIRTY"'
+  jq '.agents.rebase = true' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
+  echo 'branch_is_bureau_only() { return 0; }' >> "$sb/scripts/bureau-config.sh"
+  run_gate "$sb"; gate_case "$sb" dirty-rebasable 2 not-yet 'the rebase stage resolves it' || return 1
+  echo 'branch_is_bureau_only() { return 1; }' >> "$sb/scripts/bureau-config.sh"
+  run_gate "$sb"; gate_case "$sb" dirty-human-commits 25 blocked 'DIRTY (need CLEAN)' || return 1
+  # The shepherd forces every agent on; the rebase stage still counts only when the
+  # repo turned it on (the shepherd never runs it).
+  sb=$(make_sandbox gate_dirty_forced); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="DIRTY"'
+  echo 'branch_is_bureau_only() { return 0; }' >> "$sb/scripts/bureau-config.sh"
+  GATE_ENV="BUREAU_FORCE_ALL_AGENTS=1" run_gate "$sb"; gate_case "$sb" dirty-forced 25 blocked 'DIRTY (need CLEAN)' || return 1
   # A failing check (the EXP-1534 case): blocked, whatever GitHub's state says.
   sb=$(make_sandbox gate_red); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNSTABLE"'
   echo '{"check_runs":[{"name":"build + test","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
@@ -719,12 +760,43 @@ test_gate_outcome() {
   python3 - "$sb/scripts/merge-pipeline.sh" <<'NEG_EOF' || return 1
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); t = p.read_text()
-old = '  merge_gate_exit "$(printf \'%s\\n\' "$GATE_OUT" | merge_gate_outcome)" "$GATE_OUT"\n'
+old = '  merge_gate_exit "$GATE_OUTCOME" "$GATE_OUT"\n'
 if t.count(old) != 1: sys.exit("negative control: the gate exit line was not found")
 p.write_text(t.replace(old, '  exit 0\n'))
 NEG_EOF
   run_gate "$sb"
   [ "$GRC" = 0 ] && [ -z "$GREP" ] || { echo "FAIL negative control: the old ending should end 0 without a report (exit $GRC)" >&2; return 1; }
+  return 0
+}
+
+# The gate comment is posted again only when the outcome or a blocker changes: one
+# check more or less still running is no change, pending → failing is, and so is an
+# old-format comment (no "Outcome:" line).
+post_back() {  # <sb> — the text in stub_data/last_body becomes the PR's latest bot comment
+  jq --rawfile b "$1/stub_data/last_body" '.comments += [{"createdAt":"2026-09-29T09:00:00Z","body":$b}]' \
+    "$1/stub_data/pr_view.json" > "$1/stub_data/pr_view.json.tmp" && mv "$1/stub_data/pr_view.json.tmp" "$1/stub_data/pr_view.json"
+}
+test_gate_comment_key() {
+  local sb n
+  sb=$(make_sandbox gate_key); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"a","status":"in_progress","conclusion":null},{"name":"b","status":"queued","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"
+  n=$(grep -c 'Bureau merge gate' "$sb/stub_data/comments_posted.log" 2>/dev/null || echo 0)
+  [ "$n" = 1 ] || { echo "FAIL key: first pass posted $n comments" >&2; return 1; }
+  awk '/Bureau merge gate/{f=1} f' "$sb/stub_data/comments_posted.log" > "$sb/stub_data/last_body"; post_back "$sb"
+  grep -q '^Outcome: not yet' "$sb/stub_data/last_body" || { echo "FAIL key: the comment does not state the outcome" >&2; return 1; }
+  echo '{"check_runs":[{"name":"a","status":"completed","conclusion":"success"},{"name":"b","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"
+  grep -q 'Blockers unchanged' "$sb/pipeline.out" || { echo "FAIL key: 2 → 1 running check posted a new comment" >&2; return 1; }
+  echo '{"check_runs":[{"name":"a","status":"completed","conclusion":"success"},{"name":"b","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"
+  grep -q 'Posted blocker comment' "$sb/pipeline.out" || { echo "FAIL key: pending → failing did not post" >&2; return 1; }
+  # An old-format comment (v3.0.0, no "Outcome:" line) with the same blocker line posts once.
+  sb=$(make_sandbox gate_key_old); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"a","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  printf '🛑 **Bureau merge gate** — PR #42 is not eligible to merge.\n\n- ci: 1 check(s) still pending on HEAD_SHA\n' > "$sb/stub_data/last_body"; post_back "$sb"
+  run_gate "$sb"
+  grep -q 'Posted blocker comment' "$sb/pipeline.out" || { echo "FAIL key: an old-format comment did not get the outcome" >&2; return 1; }
   return 0
 }
 
@@ -802,7 +874,7 @@ test_gate_codes_in_queue_loop() {
 
 # ── Run all ───────────────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_outcome test_gate_after_reused_approval test_gate_codes_in_queue_loop; do
+for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_outcome test_gate_comment_key test_gate_after_reused_approval test_gate_codes_in_queue_loop; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

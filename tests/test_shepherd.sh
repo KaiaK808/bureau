@@ -241,8 +241,12 @@ STUCK_EOF
 
 run_shepherd() {
   local sb="$1"; shift
+  # The shepherd's temp files (fault file, gate report) go to the sandbox: a
+  # scenario that kills the shepherd leaves nothing in the user's $TMPDIR.
+  mkdir -p "$sb/tmp"
   ( cd "$sb" \
-    && STATE_FILE="$sb/state.txt" \
+    && TMPDIR="$sb/tmp" \
+       STATE_FILE="$sb/state.txt" \
        INVOCATIONS_LOG="$sb/invocations.log" \
        LABEL_LOG="$sb/labels.log" \
        bash "$sb/scripts/shepherd.sh" --no-tmux "$@" \
@@ -1517,6 +1521,7 @@ plan="$(dirname "$STATE_FILE")/gate.plan"
 step=$(sed -n "$(grep -c '^merge-pipeline.sh$' "$INVOCATIONS_LOG")p" "$plan")
 [ -n "$step" ] || step=$(tail -n 1 "$plan")
 report() { [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ] && printf '%s\n%s\n' "$1" "$2" > "$BUREAU_MERGE_GATE_REPORT"; return 0; }
+printf '%s\n' "${BUREAU_MERGE_GATE_REPORT:-}" >> "$(dirname "$STATE_FILE")/report.path"
 case "$step" in
   pending) report not-yet "ci_green: ci: 1 check(s) still pending on HEAD_SHA"; exit 2 ;;
   red)     report blocked "ci_green: ci: failing check(s) on HEAD_SHA: build + test"; exit 25 ;;
@@ -1524,6 +1529,7 @@ case "$step" in
   old)     exit 0 ;;
   bare2)   exit 2 ;;   # a 2 without a gate report of its own
   back)    move_issue "$ISSUE" s6; exit 0 ;;   # the ticket leaves Merge (the review stub brings it back)
+  odd)     report not-yet "ci_green: ci: 1 check(s) still pending on HEAD_SHA"; exit 1 ;;   # a report that does not match its code
 esac
 GATE_EOF
   chmod +x "$sb/scripts/merge-pipeline.sh"
@@ -1534,9 +1540,12 @@ _run_gate() {  # <sb> [env…] — sets GATE_RC; waits are recorded, never slept
   # The 30th wait kills the shepherd: a gate that is waited for without end (a
   # regression) fails the scenario instead of hanging the suite.
   _record_sleeps "$sb" 30; _record_writes "$sb"
+  # The shepherd's temp files (fault file, gate report) go to the sandbox, so a
+  # scenario that kills it leaves nothing in the user's $TMPDIR.
+  mkdir -p "$sb/tmp"
   set +e
   ( cd "$sb" && env STATE_FILE="$sb/state.txt" INVOCATIONS_LOG="$sb/invocations.log" LABEL_LOG="$sb/labels.log" \
-      PATH="$sb/bin:$PATH" BUREAU_SHEPHERD_CONFIRM_SECONDS=0 "$@" \
+      PATH="$sb/bin:$PATH" TMPDIR="$sb/tmp" BUREAU_SHEPHERD_CONFIRM_SECONDS=0 "$@" \
       bash "$sb/scripts/shepherd.sh" --no-tmux EXP-22 > "$sb/shepherd.out" 2> "$sb/shepherd.err" )
   GATE_RC=$?
   set -e
@@ -1590,6 +1599,28 @@ test_merge_gate() {
   grep -q "not yet eligible — waiting 5s (0/10s)" "$sb/shepherd.out" \
     && [ "$(grep -c 'not yet eligible — waiting 5s (0/10s)' "$sb/shepherd.out")" = 2 ] \
     || { echo "FAIL: back to Merge: the second visit did not start its wait at 0"; grep 'not yet' "$sb/shepherd.out"; return 1; }
+
+  # The gate report counts only with the stage's own code: not-yet with exit 1 is an
+  # error of the stage, not a wait.
+  sb=$(make_sandbox gate_odd); _make_gate_merge_stub "$sb" odd green
+  _run_gate "$sb"
+  assert_eq "$GATE_RC" 1 "not-yet with exit 1: the shepherd halts with the stage's 1" || { tail -5 "$sb/shepherd.out"; return 1; }
+  grep -q "not yet eligible" "$sb/shepherd.out" && { echo "FAIL: not-yet with exit 1 was waited for"; return 1; }
+  ls "$sb/tmp" | grep -q '^bureau-merge-gate\.' && { echo "FAIL: the gate report file was left behind"; return 1; }
+  case "$(head -n 1 "$sb/report.path")" in "$sb/tmp/bureau-merge-gate."*) ;;
+    *) echo "FAIL: the gate report lives outside the sandbox's TMPDIR: $(head -n 1 "$sb/report.path")"; return 1 ;; esac
+
+  # Leading zeros are base 10 ("08" used to be a syntax error, "010" eight seconds),
+  # and the settings are bounded (a huge wait is capped at 6 h, a huge poll at 1 h).
+  sb=$(make_sandbox gate_base10); _make_gate_merge_stub "$sb" pending pending green
+  _run_gate "$sb" BUREAU_SHEPHERD_MERGE_POLL_SECONDS=08 BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=010
+  assert_eq "$GATE_RC" 0 "08/010: merges" || { tail -5 "$sb/shepherd.out"; cat "$sb/shepherd.err"; return 1; }
+  grep -q "waiting 8s (8/10s)" "$sb/shepherd.out" || { echo "FAIL: 08/010 are not read as 8 and 10"; grep 'not yet' "$sb/shepherd.out"; return 1; }
+  sb=$(make_sandbox gate_huge); _make_gate_merge_stub "$sb" pending green
+  _run_gate "$sb" BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=99999999999999999999 BUREAU_SHEPHERD_MERGE_POLL_SECONDS=86400
+  assert_eq "$GATE_RC" 0 "huge settings: merges" || { tail -5 "$sb/shepherd.out"; return 1; }
+  grep -q "MERGE_WAIT_SECONDS='99999999999999999999' is above 21600" "$sb/shepherd.err" && grep -q "waiting 3600s (0/21600s)" "$sb/shepherd.out" \
+    || { echo "FAIL: huge settings were not capped"; cat "$sb/shepherd.err"; grep 'not yet' "$sb/shepherd.out"; return 1; }
 
   # Settings that are not whole numbers fall back with a warning (poll 0 too: a busy loop).
   sb=$(make_sandbox gate_badenv); _make_gate_merge_stub "$sb" pending green

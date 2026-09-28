@@ -529,18 +529,28 @@ _shepherd_unconfirmed() {
 # apart, up to BUREAU_SHEPHERD_MERGE_WAIT_SECONDS in total, without counting as
 # stuck; "blocked", or a gate still not eligible when the wait is used up, halts
 # with needs-human and the gate report. Nothing merges on a red or pending gate.
-MERGE_WAIT_SECONDS="${BUREAU_SHEPHERD_MERGE_WAIT_SECONDS:-1800}"
-MERGE_POLL_SECONDS="${BUREAU_SHEPHERD_MERGE_POLL_SECONDS:-60}"
-case "$MERGE_WAIT_SECONDS" in
-  '' | *[!0-9]*)
-    echo "[shepherd] WARN: BUREAU_SHEPHERD_MERGE_WAIT_SECONDS='$MERGE_WAIT_SECONDS' is not a whole number of seconds — using 1800" >&2
-    MERGE_WAIT_SECONDS=1800 ;;
-esac
-case "$MERGE_POLL_SECONDS" in
-  '' | *[!0-9]* | 0)
-    echo "[shepherd] WARN: BUREAU_SHEPHERD_MERGE_POLL_SECONDS='$MERGE_POLL_SECONDS' is not a positive whole number of seconds — using 60" >&2
-    MERGE_POLL_SECONDS=60 ;;
-esac
+# _shepherd_seconds <name> <default> <min> <max> — the value of <name> in whole
+# seconds, read in base 10 (a leading zero is no octal number: "08" is 8, not a
+# syntax error), within <min>..<max>. Anything else warns and uses the default;
+# a value above <max> uses <max>.
+_shepherd_seconds() {
+  local name="$1" default="$2" min="$3" max="$4" raw digits
+  raw="${!name:-}"
+  [ -n "$raw" ] || { echo "$default"; return; }
+  case "$raw" in
+    *[!0-9]*) echo "[shepherd] WARN: $name='$raw' is not a whole number of seconds — using $default" >&2; echo "$default"; return ;;
+  esac
+  digits="${raw#"${raw%%[!0]*}"}"; digits="${digits:-0}"
+  if [ "${#digits}" -gt 6 ] || [ "$((10#$digits))" -gt "$max" ]; then
+    echo "[shepherd] WARN: $name='$raw' is above $max seconds — using $max" >&2; echo "$max"; return
+  fi
+  if [ "$((10#$digits))" -lt "$min" ]; then
+    echo "[shepherd] WARN: $name='$raw' is below $min seconds — using $default" >&2; echo "$default"; return
+  fi
+  echo "$((10#$digits))"
+}
+MERGE_WAIT_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_WAIT_SECONDS 1800 0 21600)
+MERGE_POLL_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_POLL_SECONDS 60 1 3600)
 MERGE_WAITED=0
 
 # _shepherd_no_state_halt — Linear answered MAX_NO_STATE times in a row, without

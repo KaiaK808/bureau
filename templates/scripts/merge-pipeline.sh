@@ -39,12 +39,15 @@
 # this script can run every poll interval without spamming — and tells its
 # caller why it did not merge (merge_gate_outcome): `2` when the gates are not
 # yet decided (checks pending or not started, GitHub still computing, a gate
-# read that failed) and `25` when a gate is decided against the merge (a
-# failing check, conflicts, a stale base, no APPROVE, unresolved threads, a
-# blocking label, a PR that is not open). A shepherd that sets
+# read that failed, a hold label a human put on the PR, conflicts the rebase
+# stage resolves) and `25` when a gate is decided against the merge (a failing
+# check, conflicts nothing here resolves, a stale base, no APPROVE, unresolved
+# threads, a PR that is not open). A shepherd that sets
 # BUREAU_MERGE_GATE_REPORT gets the outcome and the gate lines in that file.
 # The inline merge from the review stage (BUREAU_INLINE_MERGE=1) and --dry-run
-# keep ending with 0 here; the review stage decides what follows its merge.
+# keep ending with 0 here. The review stage does not read this result today:
+# it reports Done after an inline merge that did not go through (known
+# limitation, older than the gate outcome).
 #
 # Opt-in via .bureau.json:
 #   - agents.merge: true
@@ -205,26 +208,37 @@ fi
 # Output rows are stable so the bot's idempotent-comment logic can diff them.
 evaluate_merge_gates() {
   local pr="$1"
-  local _pr_data _pr_state _merge_state _labels_csv
-  _pr_data=$(gh pr view "$pr" --json state,mergeStateStatus,labels 2>/dev/null || echo '{}')
-  _pr_state=$(echo "$_pr_data" | jq -r '.state // ""')
-  _merge_state=$(echo "$_pr_data" | jq -r '.mergeStateStatus // ""')
-  _labels_csv=$(echo "$_pr_data" | jq -r '[.labels[]?.name] | join(",")')
+  local _pr_data _pr_state _merge_state _labels_csv _pr_read=ok
+  # A read that fails is not a verdict about the PR: it becomes a *_read line,
+  # which merge_gate_outcome counts as "not yet", never as "PR not open" or
+  # "no APPROVE".
+  if ! _pr_data=$(gh pr view "$pr" --json state,mergeStateStatus,labels 2>/dev/null) \
+     || ! _pr_state=$(printf '%s' "$_pr_data" | jq -er '.state | strings') ; then
+    _pr_read=failed; _pr_data='{}'; _pr_state=""
+  fi
+  _merge_state=$(printf '%s' "$_pr_data" | jq -r '.mergeStateStatus // ""' 2>/dev/null || true)
+  _labels_csv=$(printf '%s' "$_pr_data" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null || true)
 
-  local owner_repo owner repo unresolved verdict
+  local owner_repo owner repo unresolved verdict _review_body _threads_read=ok _verdict_read=ok
   owner_repo=$(_bureau_gh_owner_repo)
   owner="${owner_repo%/*}"
   repo="${owner_repo#*/}"
-  unresolved=$(gh api graphql \
-    -f query='query($owner:String!,$repo:String!,$num:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$num){reviewThreads(first:100){nodes{isResolved}}}}}' \
-    -f owner="$owner" -f repo="$repo" -F num="$pr" 2>/dev/null \
-    | jq '[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)] | length' 2>/dev/null \
-    || echo "0")
-  verdict=$(gh pr view "$pr" --json comments \
-    --jq '[.comments[] | select(.body | test("Code Review v2"))] | sort_by(.createdAt) | last | .body // ""' \
-    | grep -oE '\*\*Verdict\*\*[[:space:]]*:[[:space:]]*[A-Z_]+' \
-    | grep -oE 'APPROVE|AUTO_APPROVE|REQUEST_CHANGES|BLOCK' \
-    | head -1 || true)
+  # An unreadable thread list used to count as zero unresolved threads.
+  if ! unresolved=$(gh api graphql \
+      -f query='query($owner:String!,$repo:String!,$num:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$num){reviewThreads(first:100){nodes{isResolved}}}}}' \
+      -f owner="$owner" -f repo="$repo" -F num="$pr" 2>/dev/null \
+      | jq -e '.data.repository.pullRequest.reviewThreads.nodes | [.[] | select(.isResolved == false)] | length' 2>/dev/null); then
+    _threads_read=failed; unresolved=0
+  fi
+  if _review_body=$(gh pr view "$pr" --json comments \
+      --jq '[.comments[] | select(.body | test("Code Review v2"))] | sort_by(.createdAt) | last | .body // ""' 2>/dev/null); then
+    verdict=$(printf '%s\n' "$_review_body" \
+      | grep -oE '\*\*Verdict\*\*[[:space:]]*:[[:space:]]*[A-Z_]+' \
+      | grep -oE 'APPROVE|AUTO_APPROVE|REQUEST_CHANGES|BLOCK' \
+      | head -1 || true)
+  else
+    _verdict_read=failed; verdict=""
+  fi
 
   local _block_label=""
   local _l
@@ -235,15 +249,27 @@ evaluate_merge_gates() {
   done
 
   local _blockers=()
-  [ "$_pr_state" = "OPEN" ]      || _blockers+=("pr_state: PR state=$_pr_state (need OPEN)")
-  [ "$_merge_state" = "CLEAN" ]  || _blockers+=("merge_state: mergeStateStatus=$_merge_state (need CLEAN)")
-  if [[ "$verdict" =~ ^(APPROVE|AUTO_APPROVE)$ ]]; then
-    :
+  if [ "$_pr_read" = failed ]; then
+    _blockers+=("pr_read: the PR's state, mergeStateStatus and labels could not be read")
   else
+    [ "$_pr_state" = "OPEN" ]      || _blockers+=("pr_state: PR state=$_pr_state (need OPEN)")
+    if [ "$_merge_state" = "DIRTY" ] && merge_dirty_is_rebasable; then
+      _blockers+=("merge_state: mergeStateStatus=DIRTY (need CLEAN; bureau-only divergence, the rebase stage resolves it)")
+    elif [ "$_merge_state" != "CLEAN" ]; then
+      _blockers+=("merge_state: mergeStateStatus=$_merge_state (need CLEAN)")
+    fi
+    [ -z "$_block_label" ]       || _blockers+=("labels: hold label '$_block_label' on PR")
+  fi
+  if [ "$_verdict_read" = failed ]; then
+    _blockers+=("verdict_read: the PR's review comments could not be read")
+  elif ! [[ "$verdict" =~ ^(APPROVE|AUTO_APPROVE)$ ]]; then
     _blockers+=("verdict: latest Code Review v2 verdict=${verdict:-none}")
   fi
-  [ "${unresolved:-0}" = "0" ] || _blockers+=("unresolved_threads: $unresolved unresolved review thread(s)")
-  [ -z "$_block_label" ]       || _blockers+=("labels: blocking label '$_block_label' on PR")
+  if [ "$_threads_read" = failed ]; then
+    _blockers+=("threads_read: the PR's review threads could not be read")
+  elif [ "${unresolved:-0}" != "0" ]; then
+    _blockers+=("unresolved_threads: $unresolved unresolved review thread(s)")
+  fi
 
   # Bureau-enforced NRSR gates. Toggleable via .bureau.json.
   local _require_ci _require_uptodate
@@ -267,12 +293,24 @@ evaluate_merge_gates() {
   return 0
 }
 
+# merge_dirty_is_rebasable: 0 when a DIRTY PR is one the rebase stage resolves on
+# its own — the rebase agent is on in .bureau.json (read without the shepherd's
+# BUREAU_FORCE_ALL_AGENTS: the shepherd never runs the rebase stage itself) and
+# the divergence is bureau-only (the rebase stage refuses human commits).
+merge_dirty_is_rebasable() {
+  BUREAU_FORCE_ALL_AGENTS=0 agent_enabled rebase || return 1
+  git fetch origin --quiet 2>/dev/null || true
+  branch_is_bureau_only "$BRANCH"
+}
+
 # merge_gate_outcome: reads gate lines ("gate: message") on stdin and prints
-# "not-yet" when every blocker can clear on its own by waiting — checks still
-# pending or not started, GitHub still computing mergeStateStatus, a gate read
-# that failed — and "blocked" as soon as one blocker needs someone to act.
-# mergeStateStatus BLOCKED/UNSTABLE count as "not yet": they also show pending
-# checks, and a failing check is decided by its own ci_green line.
+# "not-yet" when every blocker can clear without anyone deciding against the
+# merge — checks still pending or not started, GitHub still computing
+# mergeStateStatus, a gate read that failed, a hold label a human put on the PR
+# (it stays until they remove it; the queue does not alert on it), conflicts the
+# rebase stage resolves — and "blocked" as soon as one blocker needs someone to
+# act. mergeStateStatus BLOCKED/UNSTABLE count as "not yet": they also show
+# pending checks, and a failing check is decided by its own ci_green line.
 merge_gate_outcome() {
   local line outcome=not-yet
   while IFS= read -r line; do
@@ -283,11 +321,25 @@ merge_gate_outcome() {
       "ci_green: ci: cannot resolve "*|"ci_green: ci: gh check-runs query failed"*) ;;
       "merge_state: mergeStateStatus= "*|"merge_state: mergeStateStatus=UNKNOWN "*) ;;
       "merge_state: mergeStateStatus=BLOCKED "*|"merge_state: mergeStateStatus=UNSTABLE "*) ;;
+      "merge_state: mergeStateStatus=DIRTY (need CLEAN; bureau-only divergence, the rebase stage resolves it)") ;;
+      "labels: hold label "*) ;;
+      "pr_read: "*|"verdict_read: "*|"threads_read: "*) ;;
       "base_current: base: cannot resolve "*) ;;
       *) outcome=blocked ;;
     esac
   done
   printf '%s\n' "$outcome"
+}
+
+# merge_gate_key: the idempotent-comment key — the outcome and the blocker lines
+# with the counts of running or completed checks replaced, so a PR gets a new
+# gate comment when the outcome or a blocker changes, not when one more check
+# finished.
+merge_gate_key() {
+  printf 'Outcome: %s\n' "$1"
+  printf '%s\n' "$2" | sed -n '/^- /p' \
+    | sed -E -e 's/[0-9]+ check\(s\) still pending/N check(s) still pending/' \
+             -e 's/only [0-9]+ completed check\(s\)/only N completed check(s)/' | sort
 }
 
 # merge_gate_exit <outcome> <gate lines>: records the outcome for a caller that
@@ -353,7 +405,14 @@ if [ "$ELIGIBLE" = false ]; then
     fi
   fi
 
+  GATE_OUTCOME=$(printf '%s\n' "$GATE_OUT" | merge_gate_outcome)
+  case "$GATE_OUTCOME" in
+    not-yet) OUTCOME_TEXT="not yet — the merge stage checks again on its next run" ;;
+    *)       OUTCOME_TEXT="blocked — needs someone to act" ;;
+  esac
   NEW_BODY="🛑 **Bureau merge gate** — PR #$PR_NUMBER is not eligible to merge.
+
+Outcome: $OUTCOME_TEXT
 
 $BLOCKER_LINES"
 
@@ -361,27 +420,34 @@ $BLOCKER_LINES"
     echo ""
     echo "  [dry-run] would post on PR #$PR_NUMBER (if blockers changed):"
     echo "$NEW_BODY" | sed 's/^/    /'
-    echo "  [dry-run] gate outcome: $(printf '%s\n' "$GATE_OUT" | merge_gate_outcome) (a real run ends with 2 for not-yet, 25 for blocked)"
+    echo "  [dry-run] gate outcome: $GATE_OUTCOME (a real run ends with 2 for not-yet, 25 for blocked)"
     exit 0
   fi
 
-  # Idempotent commenting: only post if the blocker list differs from the most
-  # recent "Bureau merge gate" comment on this PR. The bot reposts only when
+  # Idempotent commenting: only post if the outcome or the blocker list differs
+  # from the most recent "Bureau merge gate" comment on this PR (merge_gate_key:
+  # the number of running checks alone is no change). The bot reposts only when
   # something actionable has changed, so the PR doesn't get a comment per tick.
   # Use sed (not grep) for the line filter — sed exits 0 when no lines match,
   # grep exits 1 which would crash the substitution under `set -o pipefail`.
+  # An unreadable comment list posts again rather than ending the stage.
   LAST_BOT_BODY=$(gh pr view "$PR_NUMBER" --json comments \
-    --jq '[.comments[] | select(.body | test("Bureau merge gate"))] | sort_by(.createdAt) | last | .body // ""')
-  CURRENT_KEY=$(printf '%s' "$BLOCKER_LINES" | sort)
-  LAST_KEY=$(printf '%s' "$LAST_BOT_BODY" | sed -n '/^- /p' | sort)
+    --jq '[.comments[] | select(.body | test("Bureau merge gate"))] | sort_by(.createdAt) | last | .body // ""') || LAST_BOT_BODY=""
+  case "$(printf '%s\n' "$LAST_BOT_BODY" | sed -n 's/^Outcome: \([a-z]*\).*/\1/p' | head -n 1)" in
+    not) LAST_OUTCOME=not-yet ;;
+    blocked) LAST_OUTCOME=blocked ;;
+    *) LAST_OUTCOME="" ;;
+  esac
+  CURRENT_KEY=$(merge_gate_key "$GATE_OUTCOME" "$BLOCKER_LINES")
+  LAST_KEY=$(merge_gate_key "$LAST_OUTCOME" "$LAST_BOT_BODY")
 
-  if [ -n "$LAST_KEY" ] && [ "$CURRENT_KEY" = "$LAST_KEY" ]; then
+  if [ -n "$LAST_BOT_BODY" ] && [ "$CURRENT_KEY" = "$LAST_KEY" ]; then
     echo "  Blockers unchanged since last bot comment — skipping post."
   else
     gh pr comment "$PR_NUMBER" --body "$NEW_BODY" || true
     echo "  Posted blocker comment."
   fi
-  merge_gate_exit "$(printf '%s\n' "$GATE_OUT" | merge_gate_outcome)" "$GATE_OUT"
+  merge_gate_exit "$GATE_OUTCOME" "$GATE_OUT"
 fi
 
 # All gates pass — merge.

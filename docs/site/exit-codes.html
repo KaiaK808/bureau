@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="eb0635316634b78365e40048aaf81138d1a4564ad283ec891e16e797ea2dac7f">
+<meta name="bureau-source-sha256" content="c4edf59ef1fdb9eb2eec3b18ba3a845e2d68c107a47e5f44480954f241c1ea59">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -46,7 +46,9 @@ doesn't spam you 30 times an hour.</p>
 <td>No pickable issue in the polled state; from
 <code>merge-pipeline.sh</code> also: the merge gate is not yet decided
 (checks pending or not started, GitHub still computing, a gate read that
-failed)</td>
+failed, a hold label
+<code>wip</code>/<code>blocked</code>/<code>needs-human</code> on the
+PR, conflicts the rebase stage resolves)</td>
 <td>Normal — happens every tick when there's no work. The queue loop
 stays quiet; the shepherd waits for the gate (see below)</td>
 </tr>
@@ -167,16 +169,17 @@ configure the Merge state or set the mode to <code>auto</code></td>
 <td>Halt requiring attention or paused dispatch</td>
 <td>Resolve the blocker or unpause explicitly.
 <code>merge-pipeline.sh</code> ends with 25 when its gate is decided
-against the merge (a failing check, conflicts, a stale base, no APPROVE,
-unresolved threads, a blocking label, a PR that is not open); it posts
-the blockers on the PR, the queue loop alerts (throttled) and picks the
-ticket again on the next tick, so a fixed or re-run check still merges
-without anyone removing a label. The review stage ends every BLOCK (and
-any unknown verdict) with 25, so a driver never reviews the same commit
-again. A stage that hands a ticket to a human but cannot write the
-<code>needs-human</code> label ends with 25 where it would have ended
-with 0 (a stage that already ends non-zero keeps its code) and holds the
-ticket locally; see the troubleshooting guide.</td>
+against the merge (a failing check, conflicts the rebase stage does not
+resolve, a stale base, no APPROVE, unresolved threads, a PR that is not
+open); it posts the blockers on the PR, the queue loop alerts
+(throttled) and picks the ticket again on the next tick, so a fixed or
+re-run check still merges without anyone removing a label. The review
+stage ends every BLOCK (and any unknown verdict) with 25, so a driver
+never reviews the same commit again. A stage that hands a ticket to a
+human but cannot write the <code>needs-human</code> label ends with 25
+where it would have ended with 0 (a stage that already ends non-zero
+keeps its code) and holds the ticket locally; see the troubleshooting
+guide.</td>
 </tr>
 <tr>
 <td><code>26</code></td>
@@ -272,7 +275,12 @@ merged or not, and the shepherd reported "still reads 'Merge' after the
 move" and then stuck (<code>13</code>). The review stage's inline merge
 (<code>BUREAU_INLINE_MERGE=1</code>) and
 <code>merge-pipeline.sh --dry-run</code> still end with <code>0</code>
-on a gate that did not pass.</p>
+on a gate that did not pass; the review stage does not read the inline
+result and reports Done (known limitation). A check that never starts,
+for example on an offline runner, keeps the gate at <code>2</code>: the
+queue loop stays quiet, the shepherd waits its budget and then halts.
+The wait settings are read in base 10 and capped at 6 h (wait) and 1 h
+(poll).</p>
 <p><strong>Token-efficiency flags don't change the table.</strong> Under
 <code>agents.use_goal_loop: true</code>, the implement-pipeline still
 produces the same terminal STATUS values (<code>COMPLETE</code> /
