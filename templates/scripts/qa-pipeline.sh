@@ -319,6 +319,7 @@ $SUMMARY"
   comment_on_branch_pr "$BRANCH" "$SQUASH_REPORT"
 fi
 
+NEEDS_HUMAN_UNMARKED=0
 case "$STATUS" in
   GREEN)
     echo "  QA: GREEN — moving to Build Review"
@@ -332,10 +333,10 @@ Full QA log: \`$QA_LOG_PATH\`"
     ;;
   NEEDS_HUMAN)
     echo "  QA: NEEDS_HUMAN — flagging and leaving in QA"
-    if add_issue_label "$ISSUE" "needs-human" || halt_if_linear_unusable $?; then
+    if mark_needs_human "$ISSUE" qa; then
       log_escalation "$ISSUE" "qa" 0 "$QA_ESCALATION_REASON" 0 "$BRANCH"
     else
-      echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
+      NEEDS_HUMAN_UNMARKED=1
     fi
     post_comment "$ISSUE" "🚫 QA flagged for human review.
 
@@ -363,3 +364,8 @@ echo "  Branch: $BRANCH"
 echo "  Status: $STATUS"
 echo "  Next: $NEXT_STATE"
 echo "═══════════════════════════════════════"
+
+# A needs-human escalation whose label could not be written must not read as
+# success to the driver (EXP-1516): the local hold keeps the queue away, the
+# non-zero exit stops a shepherd.
+if [ "$NEEDS_HUMAN_UNMARKED" = 1 ]; then exit 25; fi

@@ -532,12 +532,12 @@ $MERGED_REVIEW"
     ;;
   BLOCK|*)
     echo "  Blocked — needs human review"
-    if add_issue_label "$ISSUE" "needs-human" || halt_if_linear_unusable $?; then
+    # A label that cannot be written holds the ticket locally (mark_needs_human);
+    # the BLOCK still ends the stage with 25 below.
+    if mark_needs_human "$ISSUE" code-review; then
       log_escalation "$ISSUE" "code-review" "${REVIEW_CYCLE_COUNT:-0}" \
         "${ESCALATION_REASON:-Code reviewer returned BLOCK verdict}" \
         "$PR_NUMBER" "$BRANCH"
-    else
-      echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
     fi
     post_comment "$ISSUE" "🚫 Code review **BLOCKED** — needs human review.
 

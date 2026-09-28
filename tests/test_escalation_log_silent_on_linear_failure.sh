@@ -14,7 +14,8 @@ export BUREAU_STUB_ADD_LABEL_RC=1
 
 run_implement_pipeline
 
-assert_eq 0 "$LAST_RC" "exit code (failure to label is non-fatal, retries next tick)"
+# EXP-1516: a needs-human escalation whose label could not be written does not end as success.
+assert_eq 25 "$LAST_RC" "exit code (the label failed, so the stage must not read as success)"
 
 # add_issue_label was attempted ...
 assert_calls_include 'add_issue_label.*needs-human' "label attempt recorded"
@@ -28,7 +29,8 @@ if [ -s "$SANDBOX/logs/escalations.log" ]; then
   exit 1
 fi
 
-# Operator should still see the WARN on stderr so the failure isn't silent.
-assert_match "WARN: failed to add 'needs-human' label" "$LAST_STDERR" "WARN surfaced to stderr"
+# Operator should still see the failure on stderr so it isn't silent, and the ticket is held.
+assert_match "could not add 'needs-human' to EXP-104" "$LAST_STDERR" "failure surfaced to stderr"
+[ -f "$SANDBOX/.git/bureau/needs-human-held/EXP-104" ] || { echo "FAIL: no local hold for EXP-104" >&2; exit 1; }
 
 echo "OK test_escalation_log_silent_on_linear_failure"

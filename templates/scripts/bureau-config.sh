@@ -1288,6 +1288,91 @@ remove_issue_label() {
   [ "$ok" = "true" ]
 }
 
+# ── needs-human hold (EXP-1516) ─────────────────────────────────────────
+# A stage that hands a ticket to a human adds the needs-human label, and the
+# picker excludes that label: that is what keeps the paid stage from running the
+# same ticket again. When the label write fails, the escalation must not live
+# only in a comment. mark_needs_human then records the ticket in a local hold
+# under the shared git directory ($(git rev-parse --git-common-dir)/bureau/
+# needs-human-held/<ISSUE>, one file per ticket, visible from every worktree).
+# pipeline_pick_next skips held tickets and tries the label again on every
+# pick; once the label is on the ticket the hold ends, the label keeps the
+# ticket out from there, and a human releases it the usual way, by removing the
+# label. To release a held ticket without the label, delete its file.
+#
+# mark_needs_human <issue> <stage>
+#   0  the label is on the ticket (any hold for it is cleared)
+#   27 Linear stayed unusable: the ticket is held, the stage ends with 27 here
+#   1  any other failure: the ticket is held, an alert goes out, and the caller
+#      still posts its comment but must not end with 0 (it ends with 25 where it
+#      would have ended with 0), so a driver halts instead of reading success.
+_needs_human_hold_dir() {
+  local common
+  common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+  [ -n "$common" ] || return 1
+  case "$common" in /*) ;; *) common="$(pwd)/$common" ;; esac
+  printf '%s/bureau/needs-human-held' "$common"
+}
+
+mark_needs_human() {
+  local issue="$1" stage="$2" rc=0 dir="" held_at=""
+  add_issue_label "$issue" "needs-human" || rc=$?
+  if [ "$rc" = 0 ]; then
+    if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && dir=$(_needs_human_hold_dir); then
+      rm -f "$dir/$issue"
+    fi
+    return 0
+  fi
+  # Only a ticket identifier becomes a file name: nothing else can escape the directory.
+  if [[ "$issue" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]] && dir=$(_needs_human_hold_dir) \
+     && mkdir -p "$dir" \
+     && printf 'stage=%s\texit=%s\tat=%s\n' "$stage" "$rc" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$dir/.$issue.$$" \
+     && mv -f "$dir/.$issue.$$" "$dir/$issue"; then
+    held_at="$dir/$issue"
+  fi
+  if [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+    if [ -n "$held_at" ]; then
+      echo "  needs-human: Linear is unusable — $issue is held in $held_at; the queue skips it and sets the label once Linear answers" >&2
+    fi
+    halt_if_linear_unusable "$rc"
+  fi
+  if [ -n "$held_at" ]; then
+    echo "  ✗ could not add 'needs-human' to $issue (exit $rc) — held in $held_at: the queue skips the ticket and tries the label again on every pick; delete that file to release it without the label" >&2
+  else
+    echo "  ✗ could not add 'needs-human' to $issue (exit $rc), and it could not be held locally — the queue may pick it again" >&2
+  fi
+  alert_telegram "$issue" "$stage" 25 "needs-human could not be set (exit $rc)${held_at:+; the ticket is held in $held_at}" || true
+  return 1
+}
+
+# needs_human_holds_flush: try the label again for every held ticket. Prints the
+# tickets still held, comma-separated, on stdout; a ticket that now carries the
+# label is released. Returns 27 when Linear is unusable, like the picker's own
+# read. A dry run only reads the holds.
+needs_human_holds_flush() {
+  local dir f id rc held=""
+  dir=$(_needs_human_hold_dir) || return 0
+  [ -d "$dir" ] || return 0
+  for f in "$dir"/*; do
+    [ -f "$f" ] || continue
+    id=${f##*/}
+    [[ "$id" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]] || continue
+    if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
+      rc=0
+      add_issue_label "$id" "needs-human" >&2 || rc=$?
+      if [ "$rc" = 0 ]; then
+        rm -f "$f"
+        echo "needs-human: $id now carries the label — its local hold is released" >&2
+        continue
+      fi
+      if [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then return "$rc"; fi
+    fi
+    held="${held:+$held,}$id"
+  done
+  printf '%s' "$held"
+}
+# ── End of needs-human hold ─────────────────────────────────────────────
+
 # branch_is_bureau_only: returns 0 if every commit in
 # `origin/main..origin/<branch>` is bureau-generated, 1 if even one
 # human-authored commit is in the divergence. Used by rebase-pipeline
@@ -2550,8 +2635,16 @@ pipeline_pick_next() {
   local human_label
   human_label=$(bureau_get '.linear.labels.needs_human.name // "needs-human"')
   exclude="${exclude},needs-human,${human_label}"
-  if [ -n "${2:-}" ]; then
-    pick_issue "$state" "$required" "$exclude" "$2"
+  # A ticket whose needs-human label could not be written is held locally
+  # (mark_needs_human): skip it like a labelled one, and try the label again.
+  local held skip="${2:-}"
+  held=$(needs_human_holds_flush) || return $?
+  if [ -n "$held" ]; then
+    echo "pick: skipping ticket(s) held for a human whose needs-human label is not written yet: $held" >&2
+    skip="${skip:+$skip,}$held"
+  fi
+  if [ -n "$skip" ]; then
+    pick_issue "$state" "$required" "$exclude" "$skip"
   else
     pick_issue "$state" "$required" "$exclude"
   fi

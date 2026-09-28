@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="eb2cf00267f586c9690a5e2491fd58a587b34a31dab34173a9911c2926a4b51b">
+<meta name="bureau-source-sha256" content="39f9893a1a45131c391f5b639ac44af9e11ab84c83b5e5bed80b79cb5028b897">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -105,6 +105,24 @@ before reconciling state; stale results cannot safely advance it.</li>
 <p>If the issue was in Build and crashed, the worktree under
 <code>.worktrees/queue-implement/</code> may have uncommitted work.
 Inspect before resetting.</p>
+<h3
+id="could-not-add-needs-human--a-ticket-held-without-its-label"><code>could not add 'needs-human'</code>
+— a ticket held without its label</h3>
+<p>A stage that hands a ticket to a human adds <code>needs-human</code>,
+and the picker leaves labelled tickets alone. When that label write
+fails, the stage records the ticket in a local hold,
+<code>$(git rev-parse --git-common-dir)/bureau/needs-human-held/&lt;ISSUE&gt;</code>
+(one file per ticket, shared by every worktree of the repo), alerts,
+still posts its comment, and ends non-zero: 25 where it would have ended
+with 0, its own code otherwise, 27 when Linear stayed unusable. Every
+pick skips held tickets and tries the label again; once the label is on
+the ticket the file is removed and the label keeps the ticket out, so
+you release it the usual way, by removing the label. If the label can
+never be written (for example, no label named <code>needs-human</code>
+exists for the team or the workspace), fix that, or delete the file to
+release the ticket without the label. A run that names the ticket
+explicitly (a shepherd, <code>stage.sh EXP-123</code>) does not read the
+hold.</p>
 <h3
 id="pipeline-keeps-hitting-merge_origin_main_or_abort-conflicts">Pipeline
 keeps hitting <code>merge_origin_main_or_abort</code> conflicts</h3>

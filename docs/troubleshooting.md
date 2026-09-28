@@ -63,6 +63,9 @@ The spec pipeline installs an EXIT trap that routes back to Triage on crash. If 
 
 If the issue was in Build and crashed, the worktree under `.worktrees/queue-implement/` may have uncommitted work. Inspect before resetting.
 
+### `could not add 'needs-human'` — a ticket held without its label
+A stage that hands a ticket to a human adds `needs-human`, and the picker leaves labelled tickets alone. When that label write fails, the stage records the ticket in a local hold, `$(git rev-parse --git-common-dir)/bureau/needs-human-held/<ISSUE>` (one file per ticket, shared by every worktree of the repo), alerts, still posts its comment, and ends non-zero: 25 where it would have ended with 0, its own code otherwise, 27 when Linear stayed unusable. Every pick skips held tickets and tries the label again; once the label is on the ticket the file is removed and the label keeps the ticket out, so you release it the usual way, by removing the label. If the label can never be written (for example, no label named `needs-human` exists for the team or the workspace), fix that, or delete the file to release the ticket without the label. A run that names the ticket explicitly (a shepherd, `stage.sh EXP-123`) does not read the hold.
+
 ### Pipeline keeps hitting `merge_origin_main_or_abort` conflicts
 Symptom: every cron tick re-runs the merge, conflicts pile up, the same branch reappears tick after tick.
 

@@ -221,11 +221,11 @@ else
   git push origin HEAD
 fi
 
+NEEDS_HUMAN_UNMARKED=0
 case "$DESIGN_STATUS" in
   NEEDS_HUMAN)
     echo "  Design flagged NEEDS_HUMAN — labelling and leaving in Design."
-    add_issue_label "$ISSUE" "needs-human" \
-      || echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
+    mark_needs_human "$ISSUE" ux || NEEDS_HUMAN_UNMARKED=1
     post_comment "$ISSUE" "🚫 UX flagged for human review.
 
 $DESIGN_SUMMARY"
@@ -254,3 +254,8 @@ echo "  UX/UI Design complete: $ISSUE"
 echo "  Branch: $BRANCH"
 echo "  Status: $NEXT_STATE_LABEL"
 echo "═══════════════════════════════════════"
+
+# A needs-human escalation whose label could not be written must not read as
+# success to the driver (EXP-1516): the local hold keeps the queue away, the
+# non-zero exit stops a shepherd.
+if [ "$NEEDS_HUMAN_UNMARKED" = 1 ]; then exit 25; fi

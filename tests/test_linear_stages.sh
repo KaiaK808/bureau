@@ -6,7 +6,7 @@
 #   - implement: the per-iteration review-context read fails → the stage ends with 27 before
 #     any provider round runs without the reviewer's requested fixes
 #   - implement: the needs-human label fails with 27 → the stage ends with 27; any other
-#     failure keeps the old warning branch
+#     failure holds the ticket locally and ends with 25 (tests/test_needs_human_hold.sh)
 #   - spec: the issue read fails → the rollback names linear-unusable
 #   - qa and code-review: their needs-human arms, cut out of the real scripts, end with 27
 # The halt helper and its exit code come from the real config (tests/lib/harness.sh).
@@ -43,9 +43,9 @@ sandbox_init "EXP-112" "test-branch"
 export BUREAU_STUB_ADD_LABEL_RC=1
 run_implement_pipeline
 unset BUREAU_STUB_ADD_LABEL_RC FAKE_CLAUDE_LOG
-assert_eq 0 "$LAST_RC" "any other label failure keeps the old branch"
-assert_match "WARN: failed to add 'needs-human' label" "$LAST_STDERR" "old warning kept"
-echo "PASS a label write that fails with 27 halts the stage; any other failure keeps the warning branch"
+assert_eq 25 "$LAST_RC" "any other label failure ends with 25, not success"
+assert_match "could not add 'needs-human' to EXP-112 \(exit 1\) — held in " "$LAST_STDERR" "the hold is named"
+echo "PASS a label write that fails with 27 halts the stage; any other failure holds the ticket and ends with 25"
 teardown
 
 # --- spec: rollback names the class ---------------------------------------------------
@@ -64,8 +64,8 @@ sandbox_init "EXP-114" "test-branch"
 SCRIPTS="$REPO_ROOT/templates/scripts"
 QA_ARM=$(awk '/^case "\$STATUS" in$/ { f = 1 } f { print } f && /^esac$/ { exit }' "$SCRIPTS/qa-pipeline.sh")
 CR_ARM=$(awk '/^  BLOCK\|\*\)$/ { f = 1 } f { print } f && /^    ;;$/ { exit }' "$SCRIPTS/code-review-pipeline.sh")
-case "$QA_ARM" in *'halt_if_linear_unusable'*) ;; *) fail "the QA routing block is not where it was" ;; esac
-case "$CR_ARM" in *'halt_if_linear_unusable'*) ;; *) fail "the code-review BLOCK arm is not where it was" ;; esac
+case "$QA_ARM" in *'mark_needs_human'*) ;; *) fail "the QA routing block is not where it was" ;; esac
+case "$CR_ARM" in *'mark_needs_human'*) ;; *) fail "the code-review BLOCK arm is not where it was" ;; esac
 arm() {  # $1 = code block; runs it with the stub config and a label write that fails with 27
   set +e
   ARM_OUT=$(cd "$SANDBOX" && BUREAU_STUB_ADD_LABEL_RC=27 bash -c "

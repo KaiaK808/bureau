@@ -190,6 +190,7 @@ branch_is_bureau_only() {
 }
 
 post_comment() { _record "post_comment" "$1" "$2"; return 0; }
+alert_telegram() { _record "alert_telegram" "$@"; return 0; }
 # Real halt_if_linear_unusable (with its exit code), check_squash_range and
 # comment_on_branch_pr, cut from the real config by the harness; the squash guard finds
 # squash-marker-check.sh through _BUREAU_SCRIPTS_DIR like the real one.

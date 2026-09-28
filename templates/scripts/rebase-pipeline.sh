@@ -157,17 +157,17 @@ if git rebase origin/main; then
   else
     echo "  Force-push rejected (lease lost — branch moved underneath us)."
     post_comment "$ISSUE" "❌ Rebase succeeded locally but \`--force-with-lease\` was rejected: \`$BRANCH\` moved on origin between fetch and push. Needs human."
-    add_issue_label "$ISSUE" "needs-human" \
-      || echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
+    mark_needs_human "$ISSUE" rebase || true
     exit 19
   fi
 else
   echo "  Rebase produced conflicts — aborting."
   git rebase --abort 2>/dev/null || true
   post_comment "$ISSUE" "🛑 Rebase produced conflicts on \`$BRANCH\` against \`main\`. Needs human resolution."
-  add_issue_label "$ISSUE" "needs-human" \
-    || echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
-  exit 0
+  # Ends with 0 only when the label is on the ticket: without it a driver would
+  # read success and the queue would pick the ticket again (EXP-1516, EXP-1482).
+  if mark_needs_human "$ISSUE" rebase; then exit 0; fi
+  exit 25
 fi
 
 echo ""
