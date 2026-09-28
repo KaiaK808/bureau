@@ -36,7 +36,15 @@
 #
 # When NOT eligible, comments on the PR with the precise blocker — but only if
 # the blocker has changed since the bot's last "Bureau merge gate" comment, so
-# this script can run every poll interval without spamming.
+# this script can run every poll interval without spamming — and tells its
+# caller why it did not merge (merge_gate_outcome): `2` when the gates are not
+# yet decided (checks pending or not started, GitHub still computing, a gate
+# read that failed) and `25` when a gate is decided against the merge (a
+# failing check, conflicts, a stale base, no APPROVE, unresolved threads, a
+# blocking label, a PR that is not open). A shepherd that sets
+# BUREAU_MERGE_GATE_REPORT gets the outcome and the gate lines in that file.
+# The inline merge from the review stage (BUREAU_INLINE_MERGE=1) and --dry-run
+# keep ending with 0 here; the review stage decides what follows its merge.
 #
 # Opt-in via .bureau.json:
 #   - agents.merge: true
@@ -259,6 +267,47 @@ evaluate_merge_gates() {
   return 0
 }
 
+# merge_gate_outcome: reads gate lines ("gate: message") on stdin and prints
+# "not-yet" when every blocker can clear on its own by waiting — checks still
+# pending or not started, GitHub still computing mergeStateStatus, a gate read
+# that failed — and "blocked" as soon as one blocker needs someone to act.
+# mergeStateStatus BLOCKED/UNSTABLE count as "not yet": they also show pending
+# checks, and a failing check is decided by its own ci_green line.
+merge_gate_outcome() {
+  local line outcome=not-yet
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      "ci_green: ci: "*" still pending on "*) ;;
+      "ci_green: ci: only "*" completed check(s) on "*) ;;
+      "ci_green: ci: cannot resolve "*|"ci_green: ci: gh check-runs query failed"*) ;;
+      "merge_state: mergeStateStatus= "*|"merge_state: mergeStateStatus=UNKNOWN "*) ;;
+      "merge_state: mergeStateStatus=BLOCKED "*|"merge_state: mergeStateStatus=UNSTABLE "*) ;;
+      "base_current: base: cannot resolve "*) ;;
+      *) outcome=blocked ;;
+    esac
+  done
+  printf '%s\n' "$outcome"
+}
+
+# merge_gate_exit <outcome> <gate lines>: records the outcome for a caller that
+# asked for it (BUREAU_MERGE_GATE_REPORT) and ends the run — 2 not yet, 25
+# blocked. The inline merge keeps its 0 (see the header).
+merge_gate_exit() {
+  local outcome="$1" lines="$2" code=25
+  [ "$outcome" = not-yet ] && code=2
+  if [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ]; then
+    printf '%s\n%s\n' "$outcome" "$lines" > "$BUREAU_MERGE_GATE_REPORT" 2>/dev/null \
+      || echo "  WARN: could not write the gate report to $BUREAU_MERGE_GATE_REPORT" >&2
+  fi
+  if [ "${BUREAU_INLINE_MERGE:-0}" = 1 ]; then
+    echo "  Gate outcome: $outcome (inline merge — the review stage continues)"
+    exit 0
+  fi
+  echo "  Gate outcome: $outcome — exit $code"
+  exit "$code"
+}
+
 # Initial gate evaluation (renders report, may post blocker comment).
 GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" || true)
 echo ""
@@ -312,6 +361,7 @@ $BLOCKER_LINES"
     echo ""
     echo "  [dry-run] would post on PR #$PR_NUMBER (if blockers changed):"
     echo "$NEW_BODY" | sed 's/^/    /'
+    echo "  [dry-run] gate outcome: $(printf '%s\n' "$GATE_OUT" | merge_gate_outcome) (a real run ends with 2 for not-yet, 25 for blocked)"
     exit 0
   fi
 
@@ -331,7 +381,7 @@ $BLOCKER_LINES"
     gh pr comment "$PR_NUMBER" --body "$NEW_BODY" || true
     echo "  Posted blocker comment."
   fi
-  exit 0
+  merge_gate_exit "$(printf '%s\n' "$GATE_OUT" | merge_gate_outcome)" "$GATE_OUT"
 fi
 
 # All gates pass — merge.
@@ -372,13 +422,14 @@ echo "  Merging PR #$PR_NUMBER ($BUREAU_MERGE_STRATEGY)..."
 # (potentially seconds-to-minutes ago) and the merge call. Most importantly
 # this re-checks pr_base_is_current — the prior tick's merge of a different
 # PR may have advanced main, making this PR's base stale even though the
-# initial pass was clean. If any gate has flipped, abort cleanly with exit 0
-# so the next tick re-evaluates against fresh state.
+# initial pass was clean. If any gate has flipped, abort without merging and
+# report the outcome of the recheck like the initial gate does (2 or 25), so
+# the next tick re-evaluates against fresh state.
 JIT_GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" || true)
 if [ -n "$JIT_GATE_OUT" ]; then
   echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"
   printf '    %s\n' "$JIT_GATE_OUT"
-  exit 0
+  merge_gate_exit "$(printf '%s\n' "$JIT_GATE_OUT" | merge_gate_outcome)" "$JIT_GATE_OUT"
 fi
 
 # No --delete-branch: same reason code-review-pipeline.sh dropped it (commit

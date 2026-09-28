@@ -226,6 +226,8 @@ git fetch origin && git rev-parse origin/main
 
 GitHub's mergeability state is cached. Bureau independently checks actual head checks and current base state, and repeats the gates just before merging. Background review of a stacked PR uses its actual PR base; that does not weaken the separate merge gate.
 
+The stage tells its caller which kind of refusal it was: exit `2` when the gate is not yet decided (a check still running or not started, GitHub still computing `mergeStateStatus`, a gate read that failed) and exit `25` when it is decided against the merge (a failing check, conflicts, a stale base, no APPROVE verdict, unresolved threads, a blocking label, a PR that is not open). The queue loop stays quiet on `2` and alerts on `25`, at most once an hour per ticket, and re-evaluates on every tick, so re-running a flaky check is enough for the next tick to merge. The shepherd waits on `2` (every `BUREAU_SHEPHERD_MERGE_POLL_SECONDS`, 60 s by default, for at most `BUREAU_SHEPHERD_MERGE_WAIT_SECONDS`, 30 minutes by default) and halts on `25` or on a wait that ran out with `needs-human` and a ticket comment listing the blockers. After fixing the blocker or re-running the check, remove `needs-human` and re-shepherd; the merge stage checks every gate again.
+
 ### Code-review hit `BUREAU_MAX_REVIEW_CYCLES` — what now?
 
 `agents.max_review_cycles` (default 3) caps how many `REQUEST_CHANGES → Build → Build Review` round-trips before parking.

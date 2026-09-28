@@ -615,9 +615,154 @@ test_merge_mode_auto_merges() {
   return 0
 }
 
+# ── Gate outcome (v3.0.1): the merge stage tells its caller why it did not merge ──
+# It used to end with 0 whether it merged or not; a shepherd then took the
+# unchanged Merge state for an unseen move and ran into its stuck detector
+# (pilot run EXP-1534). Now: 2 = not yet (pending, not started, still computing),
+# 25 = blocked; with BUREAU_MERGE_GATE_REPORT the outcome and gate lines land in
+# that file. Inline merges and --dry-run keep their 0.
+run_gate() {  # <sb> [args…] — sets GRC (exit code) and GREP (report file content)
+  local sb="$1"; shift
+  rm -f "$sb/gate.report"
+  STUB_DIR="$sb/stub_data" INVOCATIONS_LOG="$sb/gh_invocations.log" PATH="$sb/bin:$PATH" \
+    BUREAU_MERGE_GATE_REPORT="$sb/gate.report" \
+    env ${GATE_ENV:-} bash "$sb/scripts/merge-pipeline.sh" "$@" > "$sb/pipeline.out" 2> "$sb/pipeline.err"
+  GRC=$?
+  GREP=$(cat "$sb/gate.report" 2>/dev/null || true)
+}
+gate_case() {  # <sb> <label> <want rc> <want outcome|-> [pattern in the report]
+  local sb="$1" label="$2" want_rc="$3" want_out="$4" pat="${5:-}"
+  if [ "$GRC" != "$want_rc" ]; then
+    echo "FAIL gate $label: exit $GRC, wanted $want_rc" >&2; sed 's/^/  | /' "$sb/pipeline.out" >&2; return 1
+  fi
+  if [ "$want_out" = - ]; then
+    [ -z "$GREP" ] || { echo "FAIL gate $label: wrote a report although it merged: $GREP" >&2; return 1; }
+  else
+    [ "$(printf '%s\n' "$GREP" | head -n 1)" = "$want_out" ] \
+      || { echo "FAIL gate $label: report outcome '$(printf '%s\n' "$GREP" | head -n 1)', wanted '$want_out'" >&2; return 1; }
+    [ -z "$pat" ] || printf '%s\n' "$GREP" | sed -n '2,$p' | grep -q -- "$pat" \
+      || { echo "FAIL gate $label: report lacks '$pat': $GREP" >&2; return 1; }
+    [ ! -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL gate $label: gh pr merge was called" >&2; return 1; }
+  fi
+  return 0
+}
+set_pr_field() {  # <sb> <jq assignment>
+  jq "$2" "$1/stub_data/pr_view.json" > "$1/stub_data/pr_view.json.tmp" && mv "$1/stub_data/pr_view.json.tmp" "$1/stub_data/pr_view.json"
+}
+
+test_gate_outcome() {
+  local sb
+  # Checks still running (GitHub shows UNSTABLE meanwhile): not yet.
+  sb=$(make_sandbox gate_pending); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNSTABLE"'
+  echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" pending 2 not-yet 'still pending' || return 1
+  # No check has started yet: not yet.
+  sb=$(make_sandbox gate_notstarted); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" not-started 2 not-yet 'only 0 completed' || return 1
+  # GitHub still computing mergeStateStatus, everything else green: not yet.
+  sb=$(make_sandbox gate_unknown); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNKNOWN"'
+  run_gate "$sb"; gate_case "$sb" unknown 2 not-yet 'UNKNOWN' || return 1
+  # A gate read that failed is not a verdict: not yet (the check-runs query, the base).
+  sb=$(make_sandbox gate_ciread); populate_happy_fixtures "$sb"; rm -f "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" ci-read-failed 2 not-yet 'check-runs query failed' || return 1
+  sb=$(make_sandbox gate_baseread); populate_happy_fixtures "$sb"; rm -f "$sb/stub_data/branch_main.json"
+  run_gate "$sb"; gate_case "$sb" base-read-failed 2 not-yet 'base: cannot resolve main HEAD' || return 1
+  # A failing check (the EXP-1534 case): blocked, whatever GitHub's state says.
+  sb=$(make_sandbox gate_red); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNSTABLE"'
+  echo '{"check_runs":[{"name":"build + test","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" red 25 blocked 'failing check(s) on HEAD_SHA: build + test' || return 1
+  # Conflicts, a stale base, no APPROVE: blocked.
+  sb=$(make_sandbox gate_dirty); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="DIRTY"'
+  run_gate "$sb"; gate_case "$sb" dirty 25 blocked 'DIRTY' || return 1
+  sb=$(make_sandbox gate_behind); populate_happy_fixtures "$sb"
+  echo '{"commit":{"sha":"MAIN_SHA_NEW"}}' > "$sb/stub_data/branch_main.json"; echo '{"ahead_by":3}' > "$sb/stub_data/compare.json"
+  run_gate "$sb"; gate_case "$sb" behind 25 blocked 'behind main' || return 1
+  sb=$(make_sandbox gate_noverdict); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.comments=[]'
+  run_gate "$sb"; gate_case "$sb" no-verdict 25 blocked 'verdict=none' || return 1
+  # Pending CI next to a missing APPROVE is blocked: waiting cannot bring the APPROVE.
+  sb=$(make_sandbox gate_mixed); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.comments=[]'
+  echo '{"check_runs":[{"name":"ci","status":"queued","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" pending+no-verdict 25 blocked 'still pending' || return 1
+  # The just-in-time recheck reports like the initial gate (main moved in between).
+  sb=$(make_sandbox gate_jit); populate_happy_fixtures "$sb"
+  echo '{"commit":{"sha":"MAIN_SHA"}}' > "$sb/stub_data/branch_main_1.json"
+  echo '{"commit":{"sha":"MAIN_SHA_AFTER_RACE"}}' > "$sb/stub_data/branch_main_2.json"; echo '{"ahead_by":1}' > "$sb/stub_data/compare.json"
+  run_gate "$sb"; gate_case "$sb" jit 25 blocked 'behind main' || return 1
+  grep -q 'Gate regressed' "$sb/pipeline.out" || { echo "FAIL gate jit: the recheck did not run" >&2; return 1; }
+  # A merge that goes through: 0, no report.
+  sb=$(make_sandbox gate_green); populate_happy_fixtures "$sb"
+  run_gate "$sb"; gate_case "$sb" green 0 - || return 1
+  [ -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL gate green: gh pr merge was not called" >&2; return 1; }
+  # The review stage's inline merge keeps its 0 (the review stage decides what follows).
+  sb=$(make_sandbox gate_inline); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
+  GATE_ENV="BUREAU_INLINE_MERGE=1" run_gate "$sb" EXP-1
+  [ "$GRC" = 0 ] || { echo "FAIL gate inline: exit $GRC, wanted 0" >&2; return 1; }
+  [ "$(printf '%s\n' "$GREP" | head -n 1)" = blocked ] || { echo "FAIL gate inline: no report" >&2; return 1; }
+  # --dry-run stays an audit: 0, and it names the outcome.
+  sb=$(make_sandbox gate_dry); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb" --dry-run
+  [ "$GRC" = 0 ] && [ -z "$GREP" ] || { echo "FAIL gate dry-run: exit $GRC, report '$GREP'" >&2; return 1; }
+  grep -q 'gate outcome: not-yet' "$sb/pipeline.out" || { echo "FAIL gate dry-run: outcome not named" >&2; return 1; }
+  # Without a report file (the queue loop) the codes are the same.
+  sb=$(make_sandbox gate_nofile); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
+  STUB_DIR="$sb/stub_data" INVOCATIONS_LOG="$sb/gh_invocations.log" PATH="$sb/bin:$PATH" \
+    bash "$sb/scripts/merge-pipeline.sh" > "$sb/pipeline.out" 2> "$sb/pipeline.err"
+  [ "$?" = 25 ] || { echo "FAIL gate without a report file: not 25" >&2; return 1; }
+
+  # Negative control: v3.0.0's ending (exit 0 after the blocker comment).
+  sb=$(make_sandbox gate_old); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  python3 - "$sb/scripts/merge-pipeline.sh" <<'NEG_EOF' || return 1
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text()
+old = '  merge_gate_exit "$(printf \'%s\\n\' "$GATE_OUT" | merge_gate_outcome)" "$GATE_OUT"\n'
+if t.count(old) != 1: sys.exit("negative control: the gate exit line was not found")
+p.write_text(t.replace(old, '  exit 0\n'))
+NEG_EOF
+  run_gate "$sb"
+  [ "$GRC" = 0 ] && [ -z "$GREP" ] || { echo "FAIL negative control: the old ending should end 0 without a report (exit $GRC)" >&2; return 1; }
+  return 0
+}
+
+# The queue loop's real run_script: a merge that is not yet eligible stays quiet
+# ("queue empty"), a blocked one alerts (throttled per ticket and class).
+test_gate_codes_in_queue_loop() {
+  local q; q="$SANDBOX_ROOT/queue"; mkdir -p "$q/scripts"
+  printf '#!/bin/bash\nexit "${STUB_RC:-0}"\n' > "$q/scripts/bureau-worker.sh"
+  {
+    sed -n '/^exit_class() {/,/^}/p' "$REAL_BUREAU_CONFIG"
+    sed -n '/^run_script() {/,/^}/p' "$REPO_ROOT/templates/scripts/queue-loop.sh"
+  } > "$q/queue.sh"
+  grep -q '^run_script() {' "$q/queue.sh" || { echo "FAIL queue: run_script not found in queue-loop.sh" >&2; return 1; }
+  local rc
+  for rc in 2 25; do
+    rm -f "$q/alerts" "$q/log"
+    Q="$q" STUB_RC="$rc" /bin/bash -c '
+      source "$Q/queue.sh"
+      REPO_DIR="$Q"; LOG_FILE="$Q/log"; MODE=merge
+      preselect_issue() { echo EXP-9; }
+      get_issue_branch() { echo feat/x; }
+      emit_event() { :; }
+      stop_before_merge_was_asked() { return 1; }
+      alert_telegram() { echo "$4" >> "$Q/alerts"; }
+      run_script merge-pipeline.sh "Merge" "$Q"' >/dev/null 2>&1
+    case "$rc" in
+      2)  [ ! -s "$q/alerts" ] && grep -q 'queue empty' "$q/log" \
+            || { echo "FAIL queue: a merge that is not yet eligible should be quiet" >&2; cat "$q/alerts" "$q/log" >&2; return 1; } ;;
+      25) grep -q 'needs-human-or-paused' "$q/alerts" \
+            || { echo "FAIL queue: a blocked merge should alert" >&2; cat "$q/log" >&2; return 1; } ;;
+    esac
+  done
+  return 0
+}
+
 # ── Run all ───────────────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges; do
+for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_outcome test_gate_codes_in_queue_loop; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

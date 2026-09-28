@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="71b35e4e07e4c4a13c3fc121dd649061521f406ee91fa571de1bed8ca7cfb041">
+<meta name="bureau-source-sha256" content="eb0635316634b78365e40048aaf81138d1a4564ad283ec891e16e797ea2dac7f">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -43,8 +43,12 @@ doesn't spam you 30 times an hour.</p>
 <tr>
 <td><code>2</code></td>
 <td>queue-empty</td>
-<td>No pickable issue in the polled state</td>
-<td>Normal — happens every tick when there's no work</td>
+<td>No pickable issue in the polled state; from
+<code>merge-pipeline.sh</code> also: the merge gate is not yet decided
+(checks pending or not started, GitHub still computing, a gate read that
+failed)</td>
+<td>Normal — happens every tick when there's no work. The queue loop
+stays quiet; the shepherd waits for the gate (see below)</td>
 </tr>
 <tr>
 <td><code>10</code></td>
@@ -161,12 +165,18 @@ configure the Merge state or set the mode to <code>auto</code></td>
 <td><code>25</code></td>
 <td>needs-human-or-paused</td>
 <td>Halt requiring attention or paused dispatch</td>
-<td>Resolve the blocker or unpause explicitly. The review stage ends
-every BLOCK (and any unknown verdict) with 25, so a driver never reviews
-the same commit again. A stage that hands a ticket to a human but cannot
-write the <code>needs-human</code> label ends with 25 where it would
-have ended with 0 (a stage that already ends non-zero keeps its code)
-and holds the ticket locally; see the troubleshooting guide.</td>
+<td>Resolve the blocker or unpause explicitly.
+<code>merge-pipeline.sh</code> ends with 25 when its gate is decided
+against the merge (a failing check, conflicts, a stale base, no APPROVE,
+unresolved threads, a blocking label, a PR that is not open); it posts
+the blockers on the PR, the queue loop alerts (throttled) and picks the
+ticket again on the next tick, so a fixed or re-run check still merges
+without anyone removing a label. The review stage ends every BLOCK (and
+any unknown verdict) with 25, so a driver never reviews the same commit
+again. A stage that hands a ticket to a human but cannot write the
+<code>needs-human</code> label ends with 25 where it would have ended
+with 0 (a stage that already ends non-zero keeps its code) and holds the
+ticket locally; see the troubleshooting guide.</td>
 </tr>
 <tr>
 <td><code>26</code></td>
@@ -248,7 +258,21 @@ that still shows the state the ticket left, is read again up to three
 times, 5 s apart (<code>BUREAU_SHEPHERD_CONFIRM_SECONDS</code>), before
 the next stage starts. A <code>--dry-run</code> whose state read fails
 prints no route and exits with <code>27</code> when Linear stayed
-unusable, <code>1</code> on any other failure.</p>
+unusable, <code>1</code> on any other failure. At Merge the shepherd
+follows the merge stage's gate (v3.0.1): a gate that is not yet decided
+(<code>2</code>) is waited for,
+<code>BUREAU_SHEPHERD_MERGE_POLL_SECONDS</code> apart (default 60), up
+to <code>BUREAU_SHEPHERD_MERGE_WAIT_SECONDS</code> in total (default
+1800), without the confirmation re-reads and without counting as stuck;
+a gate decided against the merge (<code>25</code>), or one still not
+eligible when the wait is used up, halts with <code>25</code>,
+<code>needs-human</code>, a comment carrying the gate report and an
+alert. Before, the merge stage ended with <code>0</code> whether it
+merged or not, and the shepherd reported "still reads 'Merge' after the
+move" and then stuck (<code>13</code>). The review stage's inline merge
+(<code>BUREAU_INLINE_MERGE=1</code>) and
+<code>merge-pipeline.sh --dry-run</code> still end with <code>0</code>
+on a gate that did not pass.</p>
 <p><strong>Token-efficiency flags don't change the table.</strong> Under
 <code>agents.use_goal_loop: true</code>, the implement-pipeline still
 produces the same terminal STATUS values (<code>COMPLETE</code> /
