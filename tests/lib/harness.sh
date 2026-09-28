@@ -72,11 +72,12 @@ EOF
   cp "$LIB_DIR/stub-bureau-config.sh" "$SCRIPTS_DIR/bureau-config.sh"
   sed -n '/^parse_claude_json() {/,${p;}' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/parse-result.sh"
   # Helpers that decide, not fetch, run for real: the Linear halt, the squash-range guard
-  # and the dependency restore (a no-op without package.json) come from the real config, and the script and marker list the guard reads were
+  # the dependency restore (a no-op without package.json) and the review's verdict floor and exit come from the real config, and the script and marker list the guard reads were
   # copied above with every other file.
   sed -n -e '/^BUREAU_EXIT_LINEAR_UNUSABLE=/p' -e '/^halt_if_linear_unusable() {/,/^}/p' \
     -e '/^check_squash_range() {/,/^}/p' -e '/^comment_on_branch_pr() {/,/^}/p' \
     -e '/^restore_worktree_deps() {/,/^}/p' \
+    -e '/^apply_build_failure() {/,/^}/p' -e '/^resolve_verdict_exit() {/,/^}/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/real-helpers.sh"
   sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/stop-boundary.sh"
 

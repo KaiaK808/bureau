@@ -348,11 +348,37 @@ echo "$MERGED_REVIEW"
 
 echo ""
 echo "Phase 2/3: build check"
+# Same order as the QA stage's detect_test_cmd: the configured repo.test_command,
+# then the scripts/bureau-test.sh shim, then the npm build. A repo with none of
+# them is "not checked": said on stderr and in the review comment, never "Passed",
+# and the verdict stays as the reviewers gave it. The verdict comes from the
+# command's own exit status, never from a pipe into `tail`: that one depends on
+# pipefail being on. The full log stays in REVIEW_TMP, which a failed run keeps.
 BUILD_OK=true
-if [ -f "package.json" ]; then
-  echo "  Running build..."
-  if npm run build 2>&1 | tail -20; then echo "  Build passed"
-  else echo "  Build failed"; BUILD_OK=false; fi
+BUILD_STATUS="Passed"
+BUILD_CMD=$(bureau_get '.repo.test_command // empty')
+if [ -z "$BUILD_CMD" ] && [ -f "scripts/bureau-test.sh" ]; then BUILD_CMD="bash scripts/bureau-test.sh"; fi
+if [ -z "$BUILD_CMD" ] && [ -f "package.json" ]; then BUILD_CMD="npm run build"; fi
+if [ -n "$BUILD_CMD" ]; then
+  echo "  Running build check: $BUILD_CMD"
+  BUILD_RC=0
+  BUILD_TREE_BEFORE=$(git status --porcelain --untracked-files=all 2>/dev/null | sort || true)
+  bash -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
+  tail -20 "$REVIEW_TMP/build.log"
+  # The check runs in this worktree. Output git does not ignore makes the worker
+  # keep a stopped or failed review's worktree as unfinished work (bureau-worker.sh).
+  # A warning only: it never changes the verdict and never stops the stage.
+  BUILD_TREE_NEW=$(comm -13 <(printf '%s\n' "$BUILD_TREE_BEFORE") \
+    <(git status --porcelain --untracked-files=all 2>/dev/null | sort) || true)
+  if [ -n "$BUILD_TREE_NEW" ]; then
+    { echo "  WARN: the build check left files git does not ignore; add them to .gitignore:"
+      printf '%s\n' "$BUILD_TREE_NEW" | sed -n '1,20s/^/    /p'; } >&2 || true
+  fi
+  if [ "$BUILD_RC" = 0 ]; then echo "  Build passed"
+  else echo "  Build failed (exit $BUILD_RC)"; BUILD_OK=false; BUILD_STATUS="FAILED"; fi
+else
+  BUILD_STATUS="not checked (no repo.test_command, no scripts/bureau-test.sh, no package.json)"
+  echo "  WARN: build $BUILD_STATUS" >&2
 fi
 
 echo ""
@@ -430,7 +456,7 @@ fi
 REVIEW_COMMENT="## Code Review v2 — $ISSUE
 
 **Verdict**: $VERDICT
-**Build**: $([ "$BUILD_OK" = true ] && echo "Passed" || echo "FAILED")
+**Build**: $BUILD_STATUS
 **Reviewed head**: \`$REVIEW_HEAD\`
 **Target**: \`$PR_BASE_REF\` at \`$REVIEW_BASE\`
 

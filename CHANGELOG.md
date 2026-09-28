@@ -26,6 +26,7 @@ The hardening list from slidefactory-core and msc-planner in `docs/2026-09-25-dr
 - Labels resolve to the issue's own team (then a workspace label), and a failed lookup is never reported as "no such label".
 - An npm project's `node_modules` is restored after the worktree reset (`npm ci --ignore-scripts`, clone on identical manifests); a failure stops with `24` instead of building red.
 - A failed implement push is reported with branch, exit code and git's output, and a detached HEAD pushes to `refs/heads/<branch>`.
+- The review build check runs `repo.test_command`, then `scripts/bureau-test.sh`, then `npm run build` (the QA stage's order). It used to run only `npm run build`, so a repo without `package.json` was never checked and the review comment still said "Passed"; now it says "not checked" and warns on stderr, and the verdict is left alone. A red check goes through the verdict floor like a red npm build, and its status is the command's own, not that of a pipe. Files the check leaves that git does not ignore are named on stderr. **Upgrade:** an installation that ran another local script in the review build check sets `repo.test_command` to it before resyncing (slidefactory-core's `scripts/bureau-test.sh` is found as it is). A repo with both `repo.test_command` and `package.json` now runs the test command in review instead of `npm run build`. The command runs in the review worktree, so its output must be ignored by git.
 
 ### Installer records its source
 

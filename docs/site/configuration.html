@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4a70a2b38f1aa78254e144751057c95614e5e7d42b517e887cca3f817285a4de">
+<meta name="bureau-source-sha256" content="f13e7cf668f5b0243cdcad4db8757ca97aa1c0568847a0dab5ac6dcf8955c4fa">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -546,8 +546,10 @@ pause</td>
 <td><code>repo.test_command</code></td>
 <td>string</td>
 <td>unset</td>
-<td>Actual project tests; required for Codex implementation completion
-and the app tests action</td>
+<td>Actual project tests. The review build check runs it first (then
+<code>scripts/bureau-test.sh</code>, then <code>npm run build</code>);
+required for Codex implementation completion and the app tests
+action</td>
 </tr>
 <tr>
 <td><code>repo.copy_voice_file</code></td>
