@@ -21,10 +21,10 @@ Codex support is implemented and covered by local fixtures. Before unattended ad
 
 ## Install
 
-Install the stable v2.0.0 source, keep one clone and expose it to the assistants you use:
+Install the stable v3.0.0 source, keep one clone and expose it to the assistants you use:
 
 ```sh
-git clone --branch v2.0.0 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
+git clone --branch v3.0.0 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
 mkdir -p "$HOME/.agents/skills"
 ln -s "$HOME/bureau-init" "$HOME/.agents/skills/bureau-init"
 # Optional Claude Code entry point:
@@ -90,7 +90,7 @@ The [background operations reference](references/operations.md) covers these mod
 
 ## Update and migrate
 
-Select `v2.0.0` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release), refresh skill discovery, then resync **each adopting repository**. In Claude Code, after loading the new source skill:
+Select `v3.0.0` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release), refresh skill discovery, then resync **each adopting repository**. In Claude Code, after loading the new source skill:
 
 ```text
 /bureau-init --resync-interfaces --resync-scripts --target both
@@ -108,9 +108,9 @@ Pause dispatch and preserve local work first. Resync previews conflicts; one unr
 
 Version 1 configs remain supported. Optional schema-v2 migration preserves existing values, adds the absent legacy runner default and records `model_compatibility: "v1"` to retain model ownership. Its private backup covers configuration only. Installing Codex interfaces does not switch the background runner.
 
-The [v2.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) and [changelog](CHANGELOG.md) list what changes and what adopters must do. This is the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
+The [v3.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0) and [changelog](CHANGELOG.md) list what changes and what adopters must do. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
 
-A release candidate, [v3.0.0-rc.2](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.2), is available for piloting. It changes the exit-code contract between stages and their drivers and needs configuration set before the resync; see its [release notes](docs/release-notes.md) and [Upgrade to v3](docs/migration.md#upgrade-to-v3). The stable release stays v2.0.0 until v3.0.0 is published.
+v3.0.0 changes the exit-code contract between stages and their drivers and needs configuration set before the resync; see its [release notes](docs/release-notes.md) and [Upgrade to v3](docs/migration.md#upgrade-to-v3). The previous stable release is [v2.0.0](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0).
 
 ## Documentation
 

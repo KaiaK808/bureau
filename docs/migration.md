@@ -2,7 +2,7 @@
 
 An upgrade has two steps: update the **Bureau source skill**, then resync its assets into **each adopting repository**. Updating the source clone alone leaves installed scripts and commands unchanged. `/bureau-init --update` edits configuration; it does not upgrade installed assets.
 
-This guide upgrades installations from the official [KaiaK808/bureau](https://github.com/KaiaK808/bureau) source: legacy untagged installations and v2.0.0 installations to the stable **Bureau v2.0.0** or to the release candidate **Bureau v3.0.0-rc.2**. The commands below require the selected release's source skill. See the [v3.0.0-rc.2 release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.2) and its [release notes](release-notes.md) (the first candidate: [v3.0.0-rc.1](release-notes-v3.0.0-rc.1.md)), the [v2.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) and its [release notes](release-notes-v2.0.0.md), the [changelog](../CHANGELOG.md) and the [release process](releases.md). A Bureau major version marks operational changes (v2.0.0: explicit worker ownership; v3: the exit-code contract, see [Upgrade to v3](#upgrade-to-v3)); it does not require configuration schema v2.
+This guide upgrades installations from the official [KaiaK808/bureau](https://github.com/KaiaK808/bureau) source: legacy untagged installations, v2.0.0 installations and the v3 release candidates to the stable **Bureau v3.0.0**. The commands below require the selected release's source skill. See the [v3.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0) and its [release notes](release-notes.md) (the candidates: [v3.0.0-rc.2](release-notes-v3.0.0-rc.2.md), [v3.0.0-rc.1](release-notes-v3.0.0-rc.1.md)), the previous stable [v2.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) and its [release notes](release-notes-v2.0.0.md), the [changelog](../CHANGELOG.md) and the [release process](releases.md). A Bureau major version marks operational changes (v2.0.0: explicit worker ownership; v3: the exit-code contract, see [Upgrade to v3](#upgrade-to-v3)); it does not require configuration schema v2.
 
 ## Select the source release
 
@@ -20,10 +20,10 @@ git -C "$BUREAU_SOURCE" rev-parse HEAD
 
 For a Codex-only install, the entry point may be `~/.agents/skills/bureau-init` or a configured skill directory. Follow its link to the actual source clone. Record the previous commit and branch/tag privately for rollback; `describe` alone may name a nearby tag instead of the installed commit.
 
-Confirm that `origin` identifies the official `KaiaK808/bureau` repository (HTTPS or SSH). Preserve local source changes before continuing; do not reset the skill clone. With a clean checkout, select the exact release (`v2.0.0` for the stable release, `v3.0.0-rc.2` for the candidate):
+Confirm that `origin` identifies the official `KaiaK808/bureau` repository (HTTPS or SSH). Preserve local source changes before continuing; do not reset the skill clone. With a clean checkout, select the exact release (`v3.0.0` for the stable release, `v2.0.0` for the previous stable release):
 
 ```sh
-BUREAU_RELEASE=v3.0.0-rc.2 # or v2.0.0
+BUREAU_RELEASE=v3.0.0 # or v2.0.0
 git -C "$BUREAU_SOURCE" fetch origin tag "$BUREAU_RELEASE" &&
 git -C "$BUREAU_SOURCE" switch --detach "refs/tags/$BUREAU_RELEASE" &&
 git -C "$BUREAU_SOURCE" rev-parse HEAD
@@ -35,7 +35,9 @@ An intentionally `main`-tracking installation can instead use `git pull --ff-onl
 
 ## Upgrade to v3
 
-**From v3.0.0-rc.1 to v3.0.0-rc.2:** select tag `v3.0.0-rc.2` and resync the scripts scope as one set; no configuration change is required. New optional settings are `repo.post_implement_command` (with `BUREAU_POST_IMPLEMENT_TIMEOUT`), `BUREAU_LINEAR_MAX_TIME` / `BUREAU_LINEAR_CONNECT_TIMEOUT` (or `.linear.request.max_time` / `.connect_timeout`) and `BUREAU_SHEPHERD_CONFIRM_SECONDS`; see [configuration](configuration.md). After the resync, a missing or invalid Linear key shows as `27` with an hourly queue alert, a stage whose `needs-human` label cannot be written ends with `25` and holds the ticket locally, and a failed final implement push ends with `18` when origin lacks commits. The rest of this section applies to an upgrade from v2.0.0 or a legacy copy.
+**From v3.0.0-rc.2:** select tag `v3.0.0`; no resync is needed, because the runtime is identical.
+
+**From v3.0.0-rc.1:** select tag `v3.0.0` and resync the scripts scope as one set; no configuration change is required. New optional settings are `repo.post_implement_command` (with `BUREAU_POST_IMPLEMENT_TIMEOUT`), `BUREAU_LINEAR_MAX_TIME` / `BUREAU_LINEAR_CONNECT_TIMEOUT` (or `.linear.request.max_time` / `.connect_timeout`) and `BUREAU_SHEPHERD_CONFIRM_SECONDS`; see [configuration](configuration.md). After the resync, a missing or invalid Linear key shows as `27` with an hourly queue alert, a stage whose `needs-human` label cannot be written ends with `25` and holds the ticket locally, and a failed final implement push ends with `18` when origin lacks commits. The rest of this section applies to an upgrade from v2.0.0 or a legacy copy.
 
 v3 changes the exit-code contract between the stages and whatever drives them (the shepherd, the queue loop, ticks, wrappers and repository tests). Check anything that reads these codes before resuming dispatch:
 

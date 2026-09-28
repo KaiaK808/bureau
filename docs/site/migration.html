@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="48be1a8e776f0c3d1ebeba2a02b1e1a9ec72c910199ecea8b2967d81b99ace2f">
+<meta name="bureau-source-sha256" content="4e502a336f166ff0dd1af615b2a5b2bfa150891eae968c46ceccca1c7bbe5d1f">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,14 +24,14 @@ scripts and commands unchanged. <code>/bureau-init --update</code> edits
 configuration; it does not upgrade installed assets.</p>
 <p>This guide upgrades installations from the official <a
 href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
-legacy untagged installations and v2.0.0 installations to the stable
-<strong>Bureau v2.0.0</strong> or to the release candidate
-<strong>Bureau v3.0.0-rc.2</strong>. The commands below require the
-selected release's source skill. See the <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.2">v3.0.0-rc.2
+legacy untagged installations, v2.0.0 installations and the v3 release
+candidates to the stable <strong>Bureau v3.0.0</strong>. The commands
+below require the selected release's source skill. See the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.0">v3.0.0
 release</a> and its <a href="release-notes.html">release notes</a> (the
-first candidate: <a
-href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>), the <a
+candidates: <a href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a>, <a
+href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>), the previous
+stable <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">v2.0.0
 release</a> and its <a href="release-notes-v2.0.0.html">release notes</a>,
 the <a href="../../CHANGELOG.md">changelog</a> and the <a
@@ -60,9 +60,10 @@ installed commit.</p>
 <p>Confirm that <code>origin</code> identifies the official
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
-clean checkout, select the exact release (<code>v2.0.0</code> for the
-stable release, <code>v3.0.0-rc.2</code> for the candidate):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.0.0-rc.2 <span class="co"># or v2.0.0</span></span>
+clean checkout, select the exact release (<code>v3.0.0</code> for the
+stable release, <code>v2.0.0</code> for the previous stable
+release):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.0.0 <span class="co"># or v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -83,9 +84,11 @@ loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
 <h2 id="upgrade-to-v3">Upgrade to v3</h2>
-<p><strong>From v3.0.0-rc.1 to v3.0.0-rc.2:</strong> select tag
-<code>v3.0.0-rc.2</code> and resync the scripts scope as one set; no
-configuration change is required. New optional settings are
+<p><strong>From v3.0.0-rc.2:</strong> select tag <code>v3.0.0</code>; no
+resync is needed, because the runtime is identical.</p>
+<p><strong>From v3.0.0-rc.1:</strong> select tag <code>v3.0.0</code> and
+resync the scripts scope as one set; no configuration change is
+required. New optional settings are
 <code>repo.post_implement_command</code> (with
 <code>BUREAU_POST_IMPLEMENT_TIMEOUT</code>),
 <code>BUREAU_LINEAR_MAX_TIME</code> /
