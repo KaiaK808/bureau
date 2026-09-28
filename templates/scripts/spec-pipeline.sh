@@ -9,12 +9,9 @@ SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
-set -a
-# shellcheck disable=SC1090
-if [ -f .env ]; then source .env
-elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+if [ -f .env ]; then bureau_load_env --export .env
+elif [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
 else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
-set +a
 
 CLAUDE=(run_stage_for spec)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
@@ -81,6 +78,9 @@ _spec_recovery() {
   case "$rc" in
     10) klass="linear-down" ;;
     11) klass="worktree-dirty" ;;
+    # Linear just failed every retry: the rollback's own writes get one
+    # attempt each, so the halt is not delayed by another full retry ladder.
+    27) klass="linear-unusable"; export _BUREAU_LINEAR_SINGLE_ATTEMPT=1 ;;
     16) klass="claude-unauth" ;;
     *)  klass="speckit-failed" ;;
   esac
@@ -252,17 +252,7 @@ echo ""
 echo "Phase 4/5: crosscheck"
 SPEC_TASKS=$(ls -td "$BUREAU_SPECS_DIR"/*/tasks.md 2>/dev/null | head -1 || true)
 if [ -n "$SPEC_TASKS" ]; then
-  CROSSCHECK_OUTPUT=$(./scripts/crosscheck-specs.sh "$SPEC_TASKS" 2>&1 || true)
-  echo "$CROSSCHECK_OUTPUT"
-  if echo "$CROSSCHECK_OUTPUT" | grep -q "conflicts detected"; then
-    post_comment "$ISSUE" "⚠️ Crosscheck warning — spec conflicts with open PRs:
-
-\`\`\`
-$CROSSCHECK_OUTPUT
-\`\`\`"
-  else
-    echo "  No file conflicts with open PRs"
-  fi
+  crosscheck_open_prs "$ISSUE" "$SPEC_TASKS"
 else
   echo "  No tasks.md found — skipping crosscheck"
 fi

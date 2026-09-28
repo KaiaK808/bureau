@@ -39,6 +39,7 @@ Version 1 remains compatible; version 2 makes the legacy `agents.runner: "claude
 | `linear.labels.ai_implementable.id` | UUID | yes | Required on issues for stages from Build onwards |
 | `linear.labels.needs_copy.name` | string | optional | Required if `agents.copy: true`; routes from Spec Review (or UX) → Copy |
 | `linear.projects` | array | optional | List of project UUIDs to scope `pick_issue`. Empty array = unscoped (entire team) |
+| `linear.retry.retries`, `linear.retry.wait_1` / `wait_2` / `wait_3` | integer | optional | Retry ladder for an unusable Linear answer (no response, not JSON, GraphQL `errors`, no `data`). Defaults 3 retries after 10, 30, 60 s. Env keys of the same name win; see [Linear / external services](#linear--external-services) |
 
 The runtime uses the first configured team. State IDs are authoritative; display names may be customized.
 
@@ -63,7 +64,7 @@ Which pipelines run, how often they poll, how aggressive they are.
 | `agents.workbench_panes` | number | `2` background / `0` app | Number of interactive provider panes in the tmux workbench; zero omits it |
 | `agents.max_review_cycles` | number | `3` | Code-review re-iterations before the agent gives up and applies `needs-human` |
 | `agents.code_review_sampling_threshold` | number | `500` | Diff line-count above which code-review switches to sampling mode. Tune up for repos with strong CI |
-| `agents.max_concurrent_issues` | number | `0` | Repo-wide cap on issues in flight. `0` = unlimited (default). `1` = single-flight (drain end-to-end before next Spec). See [recipes](recipes.md#single-flight-pipeline) |
+| `agents.max_concurrent_issues` | number | `0` | Repo-wide cap on issues in flight. `0` = unlimited (default). `1` = single-flight (drain end-to-end before next Spec). Counts work: issues from Spec to before Done in the configured `linear.projects`, without children (an epic is not work, its sub-issues are), without `needs-human`/`blocked`/`wip`. See [recipes](recipes.md#single-flight-pipeline) |
 | `agents.merge_strategy` | string | `"squash"` | One of `squash`, `merge`, `rebase`. Validated at config-load — invalid values fall back to `squash` with a warning |
 | `agents.merge_require_green_ci` | bool | `true` | Bureau-enforced "all check-runs on PR head SHA must be completed + green" gate, independent of GitHub's `mergeStateStatus`. Catches the "no required-checks rule configured" hole where CLEAN passes with red CI. Set false only for repos genuinely without CI (docs-only, prototypes) |
 | `agents.merge_require_up_to_date` | bool | `true` | Bureau-enforced "PR baseRefOid == origin/main HEAD" gate. Catches the async-cache race where `mergeStateStatus` still reads CLEAN after main has advanced. Set false only for repos using deliberate batch-merge workflows |
@@ -145,6 +146,8 @@ Cost logging is opt-in. Usage throttling uses an operator-provided signal for th
 | Var | Required when | Notes |
 |---|---|---|
 | `LINEAR_API_KEY` | Always (agents) | Set in `.env`. The interactive `/bureau-init` works without it via MCP; the headless agents need direct GraphQL access |
+| `BUREAU_LINEAR_RETRIES` | Optional | Retries after an unusable Linear answer, 0 to 10 (default 3). Beats `.linear.retry.retries` in `.bureau.json`. After the last retry the stage exits 27 (`linear-unusable`) |
+| `BUREAU_LINEAR_RETRY_WAIT_1` / `_2` / `_3` | Optional | Seconds before the first, second and every further retry, 0 to 600 (defaults 10, 30, 60). Beat `.linear.retry.wait_1` / `wait_2` / `wait_3`. A value that is not plain digits is dropped with a warning naming the key, never the value |
 | `TELEGRAM_BOT_TOKEN` | Optional | Telegram bot for failure alerts. No-op when unset |
 | `TELEGRAM_ALERT_CHAT_ID` | Optional | Chat/channel ID for alerts. Must be set alongside the token |
 
@@ -166,6 +169,9 @@ Terminal states map to PR state + Linear:
 |---|---|---|---|---|
 | `COMPLETE` | flipped to ready (`gh pr ready`) | no | → QA / Build Review | no |
 | `NEEDS_HUMAN` / `STUCK` / `CAP_TIME` / `PARTIAL` | draft | yes | stays in Build | yes |
+| `CI_MARKER` | draft, report posted on the PR | yes | stays in Build | yes |
+
+`CI_MARKER` overrides every other status, `COMPLETE` included: a commit message in `origin/main..HEAD` carries an entry of `scripts/ci-skip-markers.txt` (`[skip ci]` and the other forms GitHub honours), or the range could not be read. Reword the named messages, then remove `needs-human`. The QA stage runs the same check and flags `needs-human` instead of routing on.
 
 ### Token-efficiency flags (`.bureau.json` `agents.*`)
 

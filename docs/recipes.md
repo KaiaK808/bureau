@@ -361,6 +361,8 @@ Repos with linear-history-via-rebase policies should opt out of squash:
 
 Valid values: `squash` (default), `merge`, `rebase`. Anything else falls back to `squash` with a warning.
 
+Squash and merge get a subject and body Bureau writes itself, with every CI suppressor (`[skip ci]` and the forms GitHub honours alongside it) defanged, so the push to `main` always runs CI. A rebase merge puts the branch commits on `main` as they are; there the squash-range check in the implement and QA stages is what stops a commit message carrying a suppressor.
+
 ---
 
 ## Tighter supervisor

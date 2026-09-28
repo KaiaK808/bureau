@@ -15,12 +15,9 @@ SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
-set -a
-# shellcheck disable=SC1090
-if [ -f .env ]; then source .env
-elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+if [ -f .env ]; then bureau_load_env --export .env
+elif [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
 else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
-set +a
 
 CLAUDE=(run_stage_for implement)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
@@ -43,7 +40,9 @@ TOTAL_TIMEOUT="${BUREAU_IMPL_TOTAL_TIMEOUT:-5400}"
 refresh_review_context() {
   local issue="$1"
   local blob feedback
-  blob=$(get_issue_branch_and_comments "$issue" 2>/dev/null || echo '{}')
+  # No fallback to '{}': a failed read would drop the reviewer's requested
+  # fixes from the prompt without a word. The caller's `$(…)` ends the stage.
+  blob=$(get_issue_branch_and_comments "$issue") || return $?
   feedback=$(printf '%s' "$blob" \
     | jq -r '[.comments[] | select(.body | test("Code Review.*Changes Requested|FIXES_NEEDED|(?m)^VERDICT: REQUEST_CHANGES[[:space:]]*$"))][0].body // empty' 2>/dev/null || echo "")
   if [ -n "$feedback" ] && [ "${#feedback}" -gt 20 ]; then
@@ -54,6 +53,44 @@ refresh_review_context() {
 # open_or_update_pr_draft: ensure a draft PR exists for $BRANCH; emit its URL.
 # Used during intermediate iterations and on non-COMPLETE terminal states so
 # reviewers can see in-flight work without QA/code-review picking it up.
+# push_branch_loud <label>: push $BRANCH to origin; on failure say so loudly,
+# and carry on.
+#
+# Carried over from slidefactory-core (EXP-1462). Every push here used to end
+# in `|| true`, so a failed push left no trace: whether the branch was out
+# could only be learned by diffing origin against the worktree. Now a failure
+# names branch, exit code and git's own output on stderr, distinct from
+# progress noise. It stays non-fatal on purpose — a flaky network must not end
+# a ticket mid-flight; the end-of-run push retries.
+#
+# The trap: this script runs under `set -euo pipefail`, and
+#     push_out=$(git push …); rc=$?          # WRONG
+# aborts the run the moment the push fails. Only a command in an `if`
+# condition is exempt from `set -e`, and only in the else-branch of the
+# un-negated form is `$?` git's own code (`if ! …` has already turned it to 0).
+#
+# The target is HEAD:refs/heads/$BRANCH. Plain HEAD has no target when HEAD is
+# detached (slidefactory's EXP-1420 log shows two such pushes swallowed while
+# the run walked on to QA). slidefactory's HEAD:"$BRANCH" fixes that only while
+# the branch already exists on origin: for a new one git cannot tell that the
+# name is meant as a branch and refuses ("not a full refname").
+push_branch_loud() {
+  local label="$1" push_out rc
+  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+    echo "  [DRY_RUN] would: git push -u origin HEAD:refs/heads/$BRANCH ($label)"
+    return 0
+  fi
+  if push_out=$(git push -u origin HEAD:refs/heads/"$BRANCH" 2>&1); then
+    :
+  else
+    rc=$?
+    echo "  ✗✗ PUSH FAILED ($label): branch '$BRANCH' is NOT on origin — git exit $rc" >&2
+    printf '%s\n' "$push_out" | sed 's/^/       git: /' >&2
+    echo "  ✗✗ the work is only in this worktree until a later push succeeds" >&2
+  fi
+  return 0
+}
+
 open_or_update_pr_draft() {
   local issue="$1" title="$2"
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
@@ -119,10 +156,14 @@ build_summary_comment() {
     STUCK)       header="🚧 Implementation stuck — no progress in last iteration (no commits, no [X] marks, no review fixes)." ;;
     CAP_TIME)    header="🚧 Implementation hit total time cap (${TOTAL_TIMEOUT}s) before completing." ;;
     PARTIAL)     header="🚧 Implementation made partial progress but exhausted iteration cap (${MAX_ITER}) without COMPLETE." ;;
+    CI_MARKER)   header="🚧 Halted before hand-off: a commit in the squash range carries an entry of scripts/ci-skip-markers.txt, or the range could not be checked. Nothing went to QA or Build Review. Reword the message(s) named below, then remove needs-human." ;;
     *)           header="🚧 Implementation ended with status=$status." ;;
   esac
   printf '%s\n\n**Total tasks done across iterations:** %s\n**Branch:** `%s`\n**PR:** %s\n\nIteration log:\n```\n%s```\n' \
     "$header" "$total_tasks" "$BRANCH" "$pr_url" "$iter_log"
+  if [ "$status" = "CI_MARKER" ]; then
+    printf '\nSquash-range check:\n```\n%s\n```\n' "$SQUASH_REPORT"
+  fi
 }
 
 precondition_linear
@@ -218,6 +259,12 @@ if ! merge_origin_main_or_abort "$ISSUE" "Implement"; then
     || echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
   exit 17
 fi
+
+# After the checkout AND the merge of origin/main — both can change the
+# manifests. Idempotent: does nothing when node_modules already matches. A
+# failure here is infrastructure (registry, disk), not the PR: stop with 24
+# (environment-blocked) instead of building red and judging someone's code.
+restore_worktree_deps "$(pwd)" || exit 24
 
 echo ""
 echo "Phase 1/2: execute tasks (bounded retry loop, MAX_ITER=$MAX_ITER)"
@@ -396,11 +443,7 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   ITER_LOG+=$'\n'
   echo "$ITER_LOG"
 
-  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git push -u origin HEAD"
-  else
-    git push -u origin HEAD || true
-  fi
+  push_branch_loud "/goal run"
 
   # Lying-COMPLETE backstop (same belt-and-suspenders the iter-loop path
   # carries via the post-loop EXP-571/EXP-624 check). Haiku is good but not
@@ -498,30 +541,20 @@ At the end of your work, emit a single fenced json block so the shell can summar
   # tracking is enabled and the output carries a usage envelope).
   record_stage_cost "$RESULT" "$ISSUE" "implement"
 
-  # CI cost control: amend HEAD's commit message with `[skip ci]` before the
-  # iter push. When a PR already exists for $BRANCH (typical for review-cycle
-  # re-picks), each push fires `pull_request: synchronize` and re-runs CI on
-  # work that isn't even finished. The post-loop block adds one no-skip-ci
-  # empty commit so CI runs exactly once on the final state.
-  # Only amend when this iter actually produced new commits — empty iters
-  # (Claude returned PARTIAL/STUCK without committing) skip the amend.
+  # How much this iter produced; the stuck detector, the iter log and
+  # COMMITS_TOTAL all read it.
+  #
+  # No commit message is touched here. This block used to amend `[skip ci]`
+  # onto every iteration commit to save CI runs on an open PR — and a squash
+  # merge without an explicit body carried that marker into the merge commit
+  # on main, where GitHub then ran no CI at all. merge-body.sh and
+  # check_squash_range are the two guards against a marker from any source.
   HEAD_AFTER=$(git rev-parse HEAD)
   COMMITS_THIS_ITER=$(git rev-list --count "$HEAD_BEFORE..$HEAD_AFTER" 2>/dev/null || echo 0)
-  if [ "$COMMITS_THIS_ITER" -gt 0 ]; then
-    iter_msg=$(git log -1 --format=%B HEAD)
-    case "$iter_msg" in
-      *"[skip ci]"*) ;;
-      *) git commit --amend -m "[skip ci] $iter_msg" --no-verify >/dev/null ;;
-    esac
-  fi
 
   # Push every iteration. queue-loop's reset_worktree hard-resets to origin
   # between picks (CLAUDE.md invariant 5) — unpushed commits would be wiped.
-  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git push -u origin HEAD"
-  else
-    git push -u origin HEAD || true
-  fi
+  push_branch_loud "iter $i"
 
   STATUS=$(parse_claude_json "$RESULT" '.status // "PARTIAL"')
   [ -z "$STATUS" ] && STATUS="PARTIAL"
@@ -612,21 +645,34 @@ if [ "$STATUS" = "COMPLETE" ] && [ "$BRANCH_COMMITS_AHEAD" -eq 0 ]; then
 fi
 fi  # end of `if ! use_goal_loop_enabled` wrapper around iter-loop + post-loop overrides
 
+# The squash-range check over the finished state, for both paths, before
+# anything is handed on (check_squash_range in bureau-config.sh). Clean is one
+# extra line. Not clean — a commit message in origin/main..HEAD carries a CI
+# suppressor, or the range could not be read — overrides every status,
+# COMPLETE included: the stage ends in CI_MARKER, and the halt branch below
+# keeps the PR a draft, labels needs-human and puts the report on the PR.
+check_squash_range origin/main
+if [ "$SQUASH_CHECK" = "clean" ]; then
+  echo "  $SQUASH_REPORT"
+else
+  echo "$SQUASH_REPORT" >&2
+  STATUS="CI_MARKER"
+fi
+
 echo ""
 echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 
-# CI cost control: pair with the per-iter `[skip ci]` amend above. The iter
-# pushes don't trigger PR-sync CI; this empty commit at the end of the
-# implement run does, so CI runs exactly once per implement-pipeline tick
-# instead of once per iter. Skipped when nothing was committed — there's
-# nothing for CI to check.
-if [ "$COMMITS_TOTAL" -gt 0 ]; then
-  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git commit --allow-empty + push (CI checkpoint)"
-  else
-    git commit --allow-empty -m "$ISSUE: bureau implement checkpoint (CI re-trigger)" -m "Bureau-Generated: true" --no-verify >/dev/null
-    git push origin HEAD || true
-  fi
+# One push over the finished state, before the PR is opened or marked ready
+# below. The per-iter pushes above are non-fatal, so this is the retry for any
+# that failed. It used to be an empty "CI re-trigger" commit, paired with the
+# `[skip ci]` amend the iter loop no longer makes; with no suppressed pushes
+# there is nothing to re-trigger, so no commit is written here.
+# Pushes when the run committed or when this worktree holds anything origin
+# does not (a merge of origin/main before the loop is counted by neither
+# COMMITS_TOTAL nor the iter log). An unreadable comparison counts as ahead.
+AHEAD_OF_ORIGIN=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo 1)
+if [ "$COMMITS_TOTAL" -gt 0 ] || [ "$AHEAD_OF_ORIGIN" -gt 0 ]; then
+  push_branch_loud "end of run"
 fi
 
 if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then
@@ -655,19 +701,25 @@ case "$STATUS" in
     echo "  Moved $ISSUE to $NEXT_STATE_LABEL"
     ;;
 
-  NEEDS_HUMAN|STUCK|CAP_TIME|PARTIAL)
+  NEEDS_HUMAN|STUCK|CAP_TIME|PARTIAL|CI_MARKER)
     # PARTIAL with real commits proceeds to downstream gates as ready-for-review
     # so CI fires on the ready_for_review transition (EXP-622 / FR-001). Every
     # other halt status — and PARTIAL with zero commits — stays draft (FR-002,
     # FR-003). The summary comment, needs-human label, escalation log, and
     # operator status report below are unchanged (FR-005).
+    # CI_MARKER stays draft like every other halt status: a ready PR would be
+    # exactly the hand-off the squash-range check refuses. Its report also goes
+    # on the PR, once the PR is sure to exist.
     if [ "$STATUS" = "PARTIAL" ] && [ "$COMMITS_TOTAL" -gt 0 ]; then
       PR_URL=$(open_or_update_pr_ready "$ISSUE" "$ISSUE_TITLE")
     else
       PR_URL=$(open_or_update_pr_draft "$ISSUE" "$ISSUE_TITLE")
     fi
+    if [ "$STATUS" = "CI_MARKER" ]; then
+      comment_on_branch_pr "$BRANCH" "$SQUASH_REPORT"
+    fi
     PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
-    if add_issue_label "$ISSUE" "needs-human"; then
+    if add_issue_label "$ISSUE" "needs-human" || halt_if_linear_unusable $?; then
       log_escalation "$ISSUE" "implement" "$i" \
         "$STATUS: $TASKS_DONE_TOTAL tasks done across $i iter(s)" \
         "${PR_NUMBER:-0}" "$BRANCH"

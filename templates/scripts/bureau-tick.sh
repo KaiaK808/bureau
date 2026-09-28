@@ -4,10 +4,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_DIR"
 source scripts/bureau-config.sh
-set -a
-# shellcheck disable=SC1090
-[ ! -f "$BUREAU_ENV_FILE" ] || source "$BUREAU_ENV_FILE"
-set +a
+[ ! -f "$BUREAU_ENV_FILE" ] || bureau_load_env --export "$BUREAU_ENV_FILE"
 MODE=all
 RESULT_FILE="${BUREAU_TICK_RESULT:-$REPO_DIR/logs/bureau-tick.json}"
 export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1

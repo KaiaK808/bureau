@@ -19,7 +19,7 @@ if 'viewer' in query:
     result = {'viewer': {'id': 'viewer'}}
 elif 'issueLabels' in query:
     name = re.search(r'name: \{ eq: "([^"]+)"', query).group(1)
-    result = {'issueLabels': {'nodes': [{'id': name}]}}
+    result = {'issueLabels': {'nodes': [{'id': name, 'team': None}]}}  # workspace-level label
 elif 'mutation' in query:
     key = next(key for key,item in items.items() if item['id'] == variables['id'])
     if 'issueAddLabel' in query:

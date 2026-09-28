@@ -14,7 +14,7 @@ source "$(dirname "$0")/bureau-config.sh"
 
 # Load .env so LINEAR_API_KEY, TELEGRAM_* etc are available to pipelines
 if [ -f "$REPO_DIR/.env" ]; then
-  set -a; source "$REPO_DIR/.env"; set +a
+  bureau_load_env --export "$REPO_DIR/.env"
 fi
 API_KEY="${LINEAR_API_KEY:-}"
 

@@ -1,0 +1,7 @@
+[skip ci]
+[ci skip]
+[no ci]
+[skip actions]
+[actions skip]
+skip-checks: true
+skip-checks:true

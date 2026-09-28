@@ -41,8 +41,8 @@
 #                          to resolve. Off by default (exit 17 as before).
 #                          Prints a token estimate and prompts before calling
 #                          (TTY) or requires --yes to proceed (non-TTY).
-#                          PR title gets a "(LLM-assisted)" marker. Uses
-#                          claude_cmd_for_stage "upstream_port" — pin a model
+#                          PR title gets a "(LLM-assisted)" marker. Runs
+#                          through run_stage_for "upstream_port" — pin a model
 #                          via .agents.upstream_port.model in .bureau.json
 #                          (haiku is a good default — translation is
 #                          mechanical, not creative).
@@ -133,8 +133,10 @@ on_failure() {
 # failed LLM run is indistinguishable from "didn't pass --with-llm" from the
 # caller's perspective — same exit code, same Telegram alert class).
 #
-# Security note: this path uses `claude_cmd_for_stage upstream_port`, which
-# resolves to `claude -p --print --dangerously-skip-permissions ...`. The
+# Security note: this path uses `run_stage_for upstream_port`, which starts
+# `claude -p --dangerously-skip-permissions ...` through bureau-provider.py as an
+# argument list — a model value from .env is one argument and cannot add runner
+# options (tests/test_model_argv.sh). The
 # operator's explicit --with-llm opt-in covers the implication that an
 # upstream-controlled commit could direct Claude to use its Edit/Write tools.
 # Don't pass --with-llm on upstream commits you wouldn't trust to merge.

@@ -1,6 +1,11 @@
 #!/bin/bash
 # Test-only replacement for templates/scripts/bureau-config.sh.
 #
+# It sources the REAL templates/scripts/bureau-env.sh, exactly as the real config does,
+# because every pipeline reads its .env through `bureau_load_env` instead of sourcing it.
+# Stubbing that reader would hide the one thing it exists for — a value that runs as a
+# command — so the tests exercise the production reader against the sandbox .env.
+#
 # The real bureau-config.sh reads .bureau.json, talks to Linear over GraphQL,
 # and provides the helpers every pipeline calls (post_comment, move_issue,
 # add_issue_label, …). The pipeline does `source "$(dirname "$0")/bureau-config.sh"`
@@ -26,6 +31,9 @@
 #       BUREAU_STUB_AGENT_ENABLED=<csv> → colon-separated list of stage names
 #                                        for which agent_enabled returns 0
 #                                        (true). Default: empty → always 1 (false).
+# shellcheck source=templates/scripts/bureau-env.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-env.sh"
+
 set -uo pipefail
 
 # Exercise the production stop capture and predicate, including .env overrides.
@@ -120,8 +128,13 @@ get_issue_state() {
   echo "${BUREAU_STUB_ISSUE_STATE:-Build}"
 }
 
+# BUREAU_STUB_DETAIL_RC / BUREAU_STUB_COMMENTS_RC make the read fail with that code
+# and no output, the way the real helper does when Linear stays unusable.
+# BUREAU_STUB_COMMENTS_RC_FROM=<n> lets the first n-1 comment reads succeed (the count
+# lives in a file: the helper runs inside $(…) subshells).
 get_issue_detail() {
   _record "get_issue_detail" "$1"
+  [ "${BUREAU_STUB_DETAIL_RC:-0}" = 0 ] || return "$BUREAU_STUB_DETAIL_RC"
   local labels_json="${BUREAU_STUB_LABELS:-[]}"
   jq -n --arg id "$1" --argjson labels "$labels_json" \
     '{identifier:$id, title:"Test issue", description:"A test issue.",
@@ -130,6 +143,12 @@ get_issue_detail() {
 
 get_issue_branch_and_comments() {
   _record "get_issue_branch_and_comments" "$1"
+  if [ "${BUREAU_STUB_COMMENTS_RC:-0}" != 0 ]; then
+    local calls
+    calls=$(( $(cat "$SANDBOX/.comment_reads" 2>/dev/null || echo 0) + 1 ))
+    echo "$calls" > "$SANDBOX/.comment_reads"
+    [ "$calls" -lt "${BUREAU_STUB_COMMENTS_RC_FROM:-1}" ] || return "$BUREAU_STUB_COMMENTS_RC"
+  fi
   local branch="${BUREAU_STUB_BRANCH:-test-branch}"
   jq -n --arg b "$branch" \
     '{branch:$b, comments:[]}'
@@ -167,6 +186,14 @@ branch_is_bureau_only() {
 }
 
 post_comment() { _record "post_comment" "$1" "$2"; return 0; }
+# Real halt_if_linear_unusable (with its exit code), check_squash_range and
+# comment_on_branch_pr, cut from the real config by the harness; the squash guard finds
+# squash-marker-check.sh through _BUREAU_SCRIPTS_DIR like the real one.
+_BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$_BUREAU_SCRIPTS_DIR/real-helpers.sh"
+# The real evaluation is exercised by tests/test_crosscheck.sh; here it only records the call.
+crosscheck_open_prs() { _record "crosscheck_open_prs" "$1" "$2"; CROSSCHECK_RESULT=clean; return 0; }
 
 move_issue() { _record "move_issue" "$1" "$2"; return 0; }
 

@@ -9,12 +9,9 @@ SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
-set -a
-# shellcheck disable=SC1090
-if [ -f .env ]; then source .env
-elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+if [ -f .env ]; then bureau_load_env --export .env
+elif [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
 else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
-set +a
 
 # Honor BUREAU_MODEL_CODE_REVIEW / .agents.code_review.model like every other
 # pipeline (EXP-490). Without this, code review silently ignored the per-stage
@@ -146,6 +143,12 @@ if ! merge_origin_main_or_abort "$ISSUE" "Code Review" "$REVIEW_BASE"; then
   move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
   exit 17
 fi
+
+# After the checkout AND the merge of origin/main — both can change the
+# manifests. Idempotent: does nothing when node_modules already matches. A
+# failure here is infrastructure (registry, disk), not the PR: stop with 24
+# (environment-blocked) instead of building red and judging someone's code.
+restore_worktree_deps "$(pwd)" || exit 24
 
 FILES_CHANGED=$(git diff --name-only "$REVIEW_DIFF" --) || exit 18
 FILES_COUNT=$(echo "$FILES_CHANGED" | grep -c . || true)
@@ -397,9 +400,16 @@ if [ "$VERDICT" = "REQUEST_CHANGES" ] && [ "${REVIEW_CYCLE_COUNT:-0}" -ge "$MAX_
 **ESCALATED:** $REVIEW_CYCLE_COUNT review cycles (max $MAX_REVIEW_CYCLES). Needs human intervention."
 fi
 
-[ "$BUILD_OK" = false ] && VERDICT="REQUEST_CHANGES" && MERGED_REVIEW="$MERGED_REVIEW
+if [ "$BUILD_OK" = false ]; then
+  # A red build routes to rework but never softens a BLOCK — the table lives in
+  # scripts/bureau-config.sh, `apply_build_failure`. This used to be an unconditional
+  # assignment, which sent a security finding into autonomous rework whenever the build
+  # was red for an environmental reason.
+  VERDICT=$(apply_build_failure "$VERDICT")
+  MERGED_REVIEW="$MERGED_REVIEW
 
 BUILD FAILURE: Must be fixed."
+fi
 
 # A provider can take long enough for the PR to be retargeted or either remote
 # branch to advance. Preserve its evidence without publishing a stale verdict.
@@ -469,7 +479,7 @@ $MERGED_REVIEW"
     ;;
   BLOCK|*)
     echo "  Blocked — needs human review"
-    if add_issue_label "$ISSUE" "needs-human"; then
+    if add_issue_label "$ISSUE" "needs-human" || halt_if_linear_unusable $?; then
       log_escalation "$ISSUE" "code-review" "${REVIEW_CYCLE_COUNT:-0}" \
         "${ESCALATION_REASON:-Code reviewer returned BLOCK verdict}" \
         "$PR_NUMBER" "$BRANCH"
@@ -490,3 +500,6 @@ echo "  PR: #${PR_NUMBER:-none}"
 echo "  Verdict: ${VERDICT:-UNKNOWN}"
 echo "  Next: $NEXT_STATE"
 echo "═══════════════════════════════════════"
+# The verdict alone decides the exit code: a BLOCK must not look like a clean
+# review to the driver (resolve_verdict_exit in bureau-config.sh).
+exit "$(resolve_verdict_exit "${VERDICT:-}")"

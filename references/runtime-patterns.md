@@ -188,9 +188,10 @@ Every pipeline script:
 | 21 | ownership-conflict | checkout/issue ownership refused |
 | 22 | provider-or-result-error | provider execution or result validation failed |
 | 23 | quota-wait | provider quota requires waiting |
-| 24 | environment-blocked | required execution environment unavailable |
+| 24 | environment-blocked | required execution environment unavailable (includes npm dependencies that could not be restored) |
 | 25 | needs-human-or-paused | human attention or dispatch pause |
 | 26 | cancelled-ticket | ticket is cancelled |
+| 27 | linear-unusable | a Linear answer stayed unusable after every retry |
 | 124 | timeout | bounded execution timed out |
 | 130 | cancelled-run | invocation cancelled |
 
@@ -255,7 +256,7 @@ Reviewed PRs accumulate when nothing closes the loop: mergeable-and-approved PRs
 
   The entire gate set is **re-evaluated just-in-time** (a second `evaluate_merge_gates` call) immediately before `gh pr merge`. If anything regressed between the initial pass and the merge call (most importantly: gate 4 because a prior tick may have merged a different PR that advanced main), the pipeline aborts with `exit 0` and the next tick re-evaluates. This closes the window where mergeStateStatus's async cache could let a stale-base PR slip through.
 
-  Eligible: `gh pr merge N --squash` (no `--delete-branch`, no `--auto` — see `code-review-pipeline.sh:314-322` for the worktree/detached-HEAD rationale; `--auto` would queue the merge for later and silence loud failures). On success: post Linear comment, move issue to Done.
+  Eligible: `gh pr merge N --squash` with a sanitised `--subject`/`--body` from `merge-body.sh`, so no CI suppressor from the commit list reaches `main` (rebase merges plain, gh takes no body for it; no `--delete-branch`, no `--auto` — see `code-review-pipeline.sh:314-322` for the worktree/detached-HEAD rationale; `--auto` would queue the merge for later and silence loud failures). On success: post Linear comment, move issue to Done.
 
   Not eligible: comment on the PR with the precise blocker, but **only if blockers changed** since the bot's last `Bureau merge gate` comment (sorted-line diff). This makes the script safe to run every poll interval without comment spam.
 
@@ -300,6 +301,7 @@ Terminal status routing:
 |---|---|---|---|---|
 | `COMPLETE` | flipped to ready | no | → QA or Build Review | no |
 | `NEEDS_HUMAN` / `STUCK` / `CAP_TIME` / `PARTIAL` | draft (visible to reviewers) | yes | none (stays in Build) | yes |
+| `CI_MARKER` (squash-range check not clean; overrides every other status) | draft, report posted on the PR | yes | none (stays in Build) | yes |
 
 PRs open as `--draft` during intermediate iterations so QA and code-review don't trigger on half-done work; flipped to ready via `gh pr ready` only on COMPLETE.
 
@@ -327,7 +329,7 @@ Hooked at every site where a pipeline labels `needs-human`:
 | gh-merge-fail-after-approve | code-review | `gh pr merge` non-zero or PR state != MERGED |
 | BLOCK verdict | code-review | reviewer returned BLOCK (not cycle-limit) |
 | NEEDS_HUMAN verdict | qa | qa flagged out-of-scope failure |
-| Retry-loop terminal | implement | NEEDS_HUMAN / STUCK / CAP_TIME / PARTIAL |
+| Retry-loop terminal | implement | NEEDS_HUMAN / STUCK / CAP_TIME / PARTIAL / CI_MARKER |
 
 Logs **only** on `add_issue_label` success — the call site uses `if add_issue_label … then log_escalation … fi`, so a Linear API hiccup doesn't produce a phantom escalation. Embedded double quotes in the reason text are scrubbed to single quotes to keep the line regex-matchable.
 

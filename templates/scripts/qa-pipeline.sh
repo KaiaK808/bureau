@@ -14,12 +14,9 @@ SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
-set -a
-# shellcheck disable=SC1090
-if [ -f .env ]; then source .env
-elif [ -f "$BUREAU_ENV_FILE" ]; then source "$BUREAU_ENV_FILE"
+if [ -f .env ]; then bureau_load_env --export .env
+elif [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
 else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
-set +a
 
 CLAUDE=(run_stage_for qa)
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
@@ -93,6 +90,12 @@ if ! merge_origin_main_or_abort "$ISSUE" "QA"; then
   move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
   exit 17
 fi
+
+# After the checkout AND the merge of origin/main — both can change the
+# manifests. Idempotent: does nothing when node_modules already matches. A
+# failure here is infrastructure (registry, disk), not the PR: stop with 24
+# (environment-blocked) instead of building red and judging someone's code.
+restore_worktree_deps "$(pwd)" || exit 24
 
 # Locate the spec dir so build_spec_context has something to load.
 SPEC_DIR=""
@@ -294,6 +297,28 @@ if [ "$FINAL_GREEN" = false ] && [ "$STATUS" = "GREEN" ]; then STATUS="RED"; fi
 
 SUMMARY=$(parse_claude_json "$QA_RESULT" '.coverage_notes // "no notes"')
 
+# The squash-range check, the same one the implement stage runs before its
+# hand-off: after the push above, so this stage's work is already on origin,
+# and before anything is routed on. Clean is one extra line. Not clean — a
+# commit in origin/main..HEAD carries a CI suppressor, or the range could not
+# be checked — means NEEDS_HUMAN whatever the suite said: GREEN would hand the
+# branch to Build Review, and RED would send it back to Build for a whole agent
+# round before the implement stage reports the same finding. The report goes
+# first in the summary, the escalation entry names it, the PR gets it too.
+QA_ESCALATION_REASON="QA flagged NEEDS_HUMAN"
+check_squash_range origin/main
+if [ "$SQUASH_CHECK" = "clean" ]; then
+  echo "  $SQUASH_REPORT"
+else
+  echo "$SQUASH_REPORT" >&2
+  STATUS="NEEDS_HUMAN"
+  SUMMARY="$SQUASH_REPORT
+
+$SUMMARY"
+  QA_ESCALATION_REASON="squash-range check $SQUASH_CHECK: a commit message carries a CI suppressor or the range could not be checked"
+  comment_on_branch_pr "$BRANCH" "$SQUASH_REPORT"
+fi
+
 case "$STATUS" in
   GREEN)
     echo "  QA: GREEN — moving to Build Review"
@@ -307,8 +332,8 @@ Full QA log: \`$QA_LOG_PATH\`"
     ;;
   NEEDS_HUMAN)
     echo "  QA: NEEDS_HUMAN — flagging and leaving in QA"
-    if add_issue_label "$ISSUE" "needs-human"; then
-      log_escalation "$ISSUE" "qa" 0 "QA flagged NEEDS_HUMAN" 0 "$BRANCH"
+    if add_issue_label "$ISSUE" "needs-human" || halt_if_linear_unusable $?; then
+      log_escalation "$ISSUE" "qa" 0 "$QA_ESCALATION_REASON" 0 "$BRANCH"
     else
       echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
     fi

@@ -3,14 +3,13 @@
 set -euo pipefail
 
 source "$(dirname "$0")/bureau-config.sh"
-source .env 2>/dev/null || true
+bureau_load_env .env 2>/dev/null || true
 
 API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 
-RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
-  -H "Content-Type: application/json" \
-  -H "Authorization: $API_KEY" \
-  -d "{\"query\": \"{ issues(first: 10, filter: { labels: { id: { eq: \\\"$BUREAU_LABEL_LANE2\\\" } }, state: { id: { eq: \\\"$BUREAU_STATE_TRIAGE\\\" } } }, orderBy: createdAt) { nodes { id identifier title description priority } } }\"}")
+# Through linear_query: an unusable answer is retried and then ends this script
+# with $BUREAU_EXIT_LINEAR_UNUSABLE, instead of reading as "nothing in Triage".
+RESPONSE=$(linear_query "{ issues(first: 10, filter: { labels: { id: { eq: \\\"$BUREAU_LABEL_LANE2\\\" } }, state: { id: { eq: \\\"$BUREAU_STATE_TRIAGE\\\" } } }, orderBy: createdAt) { nodes { id identifier title description priority } } }")
 
 BEST=$(echo "$RESPONSE" | jq -r '[.data.issues.nodes[] | select(.id) | .priority = (if .priority == 0 then 99 else .priority end)] | sort_by(.priority) | first')
 
@@ -29,10 +28,11 @@ echo ""
 echo "$DESC"
 
 # Move to Build state
-curl -s -X POST https://api.linear.app/graphql \
-  -H "Content-Type: application/json" \
-  -H "Authorization: $API_KEY" \
-  -d "{\"query\": \"mutation { issueUpdate(id: \\\"$ISSUE_ID\\\", input: { stateId: \\\"$BUREAU_STATE_BUILD\\\" }) { success } }\"}" > /dev/null
+MOVED=$(linear_query "mutation { issueUpdate(id: \\\"$ISSUE_ID\\\", input: { stateId: \\\"$BUREAU_STATE_BUILD\\\" }) { success } }")
+if [ "$(printf '%s' "$MOVED" | jq -r '.data.issueUpdate.success // false')" != "true" ]; then
+  echo "Failed to move $IDENTIFIER to Build" >&2
+  exit 1
+fi
 
 echo ""
 echo "→ Moved $IDENTIFIER to Build"

@@ -26,9 +26,10 @@ This page is the complete table + how the alerter behaves.
 | `21` | ownership-conflict | Ticket, checkout or branch held; stale result | Inspect owner/run, preserve work and reconcile |
 | `22` | provider-or-result-error | Provider failed or final result invalid | Inspect provider evidence |
 | `23` | quota-wait | Selected provider quota reached | Wait for reset; do not switch providers silently |
-| `24` | environment-blocked | Permissions or required execution capability missing | Inspect denied operation separately from code/test failures |
-| `25` | needs-human-or-paused | Halt requiring attention or paused dispatch | Resolve the blocker or unpause explicitly |
+| `24` | environment-blocked | Permissions or required execution capability missing | Inspect denied operation separately from code/test failures. Also: an npm project's `node_modules` could not be restored after the worktree reset (`npm ci --ignore-scripts` failed twice, or no npm); the last lines of the npm log are in the stage output, the full log sits next to the stamp in `.git/bureau-deps/`. The shepherd halts and alerts |
+| `25` | needs-human-or-paused | Halt requiring attention or paused dispatch | Resolve the blocker or unpause explicitly. The review stage ends every BLOCK (and any unknown verdict) with 25, so a driver never reviews the same commit again |
 | `26` | cancelled-ticket | Ticket cancelled/duplicate | Not successful completion |
+| `27` | linear-unusable | A Linear answer stayed unusable after every retry; the stage stopped instead of deciding on an empty result | Linear outage, an error page, or a query Linear rejects. The shepherd halts: Telegram alert with the fault class (`no-response`, `not-json`, `graphql-errors`, `no-data`), then one attempt each at `needs-human` and a halt comment. Re-shepherd once Linear answers |
 | `124` | timeout | Provider exceeded time bound | Inspect preserved progress |
 | `130` | cancelled-run | Process interrupted | Inspect ownership and resume evidence |
 
@@ -37,7 +38,9 @@ This page is the complete table + how the alerter behaves.
 
 Exit codes outside this table (e.g. `1`) classify as `error-1` — usually a bug in the pipeline script or an unhandled bash error.
 
-**Token-efficiency flags don't change the table.** Under `agents.use_goal_loop: true`, the implement-pipeline still produces the same terminal STATUS values (`COMPLETE` / `PARTIAL` / `NEEDS_HUMAN` / `STUCK` / `CAP_TIME`) and exits with the same codes the iter-loop path emits — `/goal` swaps the inner control flow but the downstream PR / Linear / exit-code shape is identical. Same for `agents.headroom_wrap` (wraps the claude binary, not the script's exit logic) and `agents.caveman_level` (only affects per-stage prose, not exit codes). See `docs/token-efficiency.md` for the rationale.
+`shepherd.sh` halts with a Telegram alert on every code except `0` and `2` (carry on) and `10` and `16` (sleep 60 s, retry); a code added later cannot slip through unannounced. `27` additionally tries `needs-human` and a halt comment once each.
+
+**Token-efficiency flags don't change the table.** Under `agents.use_goal_loop: true`, the implement-pipeline still produces the same terminal STATUS values (`COMPLETE` / `PARTIAL` / `NEEDS_HUMAN` / `STUCK` / `CAP_TIME` / `CI_MARKER`) and exits with the same codes the iter-loop path emits — `/goal` swaps the inner control flow but the downstream PR / Linear / exit-code shape is identical. Same for `agents.headroom_wrap` (wraps the claude binary, not the script's exit logic) and `agents.caveman_level` (only affects per-stage prose, not exit codes). See `docs/token-efficiency.md` for the rationale.
 
 ---
 

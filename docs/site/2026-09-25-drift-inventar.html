@@ -1,0 +1,1125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="f575bd933701b110700f112762c47dca413bd91f4ff1739d9c951ed6b0cfb95f">
+<title>2026-09-25-drift-inventar · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="bureau-drift-inventory--2026-09-25">Bureau drift inventory —
+2026-09-25</h1>
+<h2 id="summary">Summary</h2>
+<p>The two installations are siblings forked from the same pre-v2
+template generation and have never been resynced: all three trees share
+exactly the incident set EXP-123…EXP-671, and the two local sets
+(slidefactory EXP-799…1478, msc EXP-1281…1379) do not overlap in a
+single tag — no hardening was ever invented twice. Only one of 23 shared
+scripts is byte-identical across all three
+(<code>setup-merge-drivers.sh</code>); <code>bureau-config.sh</code>
+alone differs by 815 non-comment lines template↔︎slidefactory. The
+template has since moved a whole generation ahead structurally — 14
+files implementing a <code>leases.json</code> ownership runtime that
+neither installation contains — while both installations moved ahead
+operationally on hardenings the template never received. The single most
+consequential difference is one line:
+<code>[ "$BUILD_OK" = false ] &amp;&amp; VERDICT="REQUEST_CHANGES"</code>
+is still live and byte-identical at
+<code>template/code-review-pipeline.sh:400</code> and
+<code>slidefactory/code-review-pipeline.sh:380</code>, and it is
+unconditional — so a merely broken build environment silently downgrades
+a BLOCK carrying <code>security_issues: 1</code> into routine rework,
+skipping <code>needs-human</code> entirely. msc fixed it
+(<code>apply_build_failure</code>) after logging it as a CRITICAL with
+"stiller Datenverlust"; two of three trees still ship it. A close
+second: the template amends <code>[skip ci]</code> into every iteration
+commit (<code>implement-pipeline.sh:513-514</code>) and squash-merges
+with no <code>--body</code> (<code>merge-pipeline.sh:366</code>), so CI
+never runs on the push to main — both installations guard against this,
+by two different mechanisms, and the template has neither. Direction is
+therefore not a single arrow: template ahead on runtime and on four
+quietly-lost capabilities, slidefactory ahead on Linear reliability and
+input safety, msc ahead on review-verdict integrity — and the merge is
+harder than it looks, because the two installations have assigned
+incompatible meanings to exit code 20.</p>
+<h2 id="per-script">Per script</h2>
+<p>Counts are non-comment, whitespace-insensitive changed lines from
+<code>diff -w -B &lt;(grep -vE '^\s*#' A) &lt;(grep -vE '^\s*#' B) | grep -cE '^[&lt;&gt;]'</code>.</p>
+<p>One caveat on provenance, because it changes how two rows read: an
+<code>EXP-####</code> / ISO-date grep <strong>misses the German
+<code>DD.MM.YYYY</code> dates</strong> these repos also use.
+<code>rebase-pipeline.sh</code> looked untagged under that method and is
+in fact dated and argued; so is the <code>codex-stage-runner.sh</code>
+fix. Absence of an ISO marker is not absence of provenance here.</p>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>Template</th>
+<th>slidefactory</th>
+<th>msc-planner</th>
+<th>What actually differs</th>
+<th>Origin</th>
+<th>Direction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>setup-merge-drivers.sh</code></td>
+<td>10</td>
+<td>10</td>
+<td>10</td>
+<td>Byte-identical everywhere. The only file with zero drift.</td>
+<td>—</td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>complete-issue.sh</code></td>
+<td>39</td>
+<td>39</td>
+<td>39</td>
+<td>T↔︎M byte-identical; slidefactory only swaps <code>source .env</code>
+→ <code>bureau_load_env .env</code> (line 4).</td>
+<td>EXP-1469</td>
+<td>slidefactory</td>
+</tr>
+<tr>
+<td><code>grab-issue.sh</code></td>
+<td>38</td>
+<td>38</td>
+<td>38</td>
+<td>Same as above, line 4. T↔︎M byte-identical.</td>
+<td>EXP-1469</td>
+<td>slidefactory</td>
+</tr>
+<tr>
+<td><code>queue-loop-supervised.sh</code></td>
+<td>115</td>
+<td>115</td>
+<td>115</td>
+<td>T↔︎M byte-identical; slidefactory line 9
+<code>bureau_load_env --export</code> instead of
+<code>set -a; source; set +a</code>.</td>
+<td>EXP-1469</td>
+<td>slidefactory</td>
+</tr>
+<tr>
+<td><code>orchestrate.sh</code></td>
+<td>231</td>
+<td>221</td>
+<td>221</td>
+<td>Installations are byte-identical to each other. Template adds a
+10-line <code>jq -e</code> schedule validator
+(<code>orchestrate.sh:38-47</code>): rejects a schedule whose
+<code>parallelSafe</code>/<code>serialChains</code> are not arrays,
+whose <code>blocked</code> is non-empty, or whose issue ids are
+malformed/duplicated → <code>exit 25</code>. Installations run
+unvalidated schedules.</td>
+<td>template side untagged; installs carry EXP-473/474/515/640/644/645
+identically</td>
+<td>template</td>
+</tr>
+<tr>
+<td><code>start-agents.sh</code></td>
+<td>61</td>
+<td>62</td>
+<td>62</td>
+<td>Installations byte-identical. Template replaces the
+<code>command -v claude</code> presence check with a per-stage
+<code>precondition_runner "$stage"</code> loop over the provider adapter
+(spec…research).</td>
+<td>untagged (v2 provider work)</td>
+<td>template</td>
+</tr>
+<tr>
+<td><code>start-bureau-v2.sh</code></td>
+<td>167</td>
+<td>165</td>
+<td>165</td>
+<td>Installations byte-identical. Template: configurable workbench
+runner
+(<code>bureau_get '.agents.workbench_runner // .agents.runner'</code>,
+validated to claude|codex, <code>exit 22</code>/<code>exit 16</code>),
+<code>BENCH_PANES &gt; 0</code> guard, <code>BUREAU_TEMPLATE_DIR</code>
+instead of a hardcoded <code>$HOME/.claude/skills/...</code> path.
+Installations hardcode <code>claude</code>.</td>
+<td>untagged (v2 provider work)</td>
+<td>template</td>
+</tr>
+<tr>
+<td><code>bureau-status.sh</code></td>
+<td>356</td>
+<td>366</td>
+<td>366</td>
+<td>Installations differ only in the two env-load lines (7, 9). Template
+replaces the <code>MODELS</code> block with a
+<code>PROVIDERS AND MODELS</code> block that calls
+<code>bureau-provider.py --describe</code> per stage and prints
+runner/model/sandbox; installations read
+<code>.agents.&lt;stage&gt;.model</code> from JSON plus
+<code>BUREAU_MODEL_&lt;STAGE&gt;</code> env. Template also uses
+<code>agent_enabled</code> where installations inline the
+<code>bureau_get</code> comparison.</td>
+<td>EXP-671 shared; template side untagged</td>
+<td>template (provider), slidefactory (env)</td>
+</tr>
+<tr>
+<td><code>queue-loop.sh</code></td>
+<td>210</td>
+<td>206</td>
+<td>206</td>
+<td>Installations differ only at line 8 (env load). Template:
+<code>--no-merge</code> flag, <code>BUREAU_DRY_RUN</code> candidate
+preview, per-stage <code>session_throttle_guard</code> exempting
+merge/rebase, <code>bureau_is_paused</code> check in the loop, and
+dispatch through <code>bureau-worker.sh</code> (ownership claim) instead
+of <code>cd "$wt"</code> + direct
+<code>scripts/&lt;pipeline&gt;.sh</code>.</td>
+<td>EXP-415/491 shared; template side untagged</td>
+<td>template</td>
+</tr>
+<tr>
+<td><code>rebase-pipeline.sh</code></td>
+<td>166</td>
+<td>170</td>
+<td>162</td>
+<td>slidefactory hard-disables it (<code>exit 2</code> before
+bureau-config is even sourced); the 170 lines below are intact but
+unreachable. Template adds <code>bureau_stage_enter</code> and
+<code>BUREAU_ENV_FILE</code> indirection. msc is the plain inherited
+version and runs the force-push logic live when
+<code>agents.rebase: true</code>.</td>
+<td><strong>dated 04.09.2026 in the kill-switch comment, German
+DD.MM.YYYY</strong> — a deliberate, reversible policy decision ("Zum
+Reaktivieren diesen Block entfernen"), not an untagged edit</td>
+<td>template (runtime); slidefactory deliberately opted out</td>
+</tr>
+<tr>
+<td><code>merge-pipeline.sh</code></td>
+<td>381</td>
+<td>380</td>
+<td>428</td>
+<td>Three-way. slidefactory: disabled at line 3-6. Template:
+<code>bureau_stop_requested</code> gates (lines 31-34, 261),
+<code>bureau_stage_enter</code>, <code>BUREAU_INLINE_MERGE</code>. msc:
+sources <code>merge-body.sh</code> (line 8) and merges with
+<code>--subject "$(sanitize_ci_markers …)" --body "$(build_merge_body …)"</code>
+(line 404) for squash/merge, plain for rebase (line 408); dry-run prints
+the computed subject.</td>
+<td>msc = EXP-1318/B38; template = untagged</td>
+<td>three-way — msc ahead on safety, template ahead on runtime</td>
+</tr>
+<tr>
+<td><code>shepherd.sh</code></td>
+<td>377</td>
+<td>416</td>
+<td>371</td>
+<td>Three-way, the widest behavioural spread outside bureau-config.
+Template: dispatches via <code>bureau-worker.sh</code> (line 276),
+<code>bureau_is_paused</code> (203),
+<code>Cancelled/Canceled/Duplicate</code> → <code>exit 26</code> as a
+distinct class (221-222), rc 21 in the halt set, per-stage throttle
+exempting merge/rebase,
+<code>--no-merge</code>/<code>BUREAU_NO_MERGE</code>,
+<code>--from-stage</code> moved after the runtime re-exec. slidefactory:
+a Linear-fault side channel — <code>SHEPHERD_FAULT_FILE</code> mktemp,
+<code>_shepherd_fault_class()</code> (179-189),
+<code>_BUREAU_LINEAR_FAULT_FILE</code> passed into the stage (277-279),
+and a dedicated rc-20 arm that labels <code>needs-human</code>, posts a
+halt comment and alerts Telegram with the fault class. msc: replaces the
+literal rc case list with <code>shepherd_rc_action "$RC"</code>
+returning ok/retry/halt.</td>
+<td>slidefactory = EXP-1478; msc = untagged indirection; template
+untagged</td>
+<td>three-way</td>
+</tr>
+<tr>
+<td><code>upstream-port.sh</code></td>
+<td>776</td>
+<td>802</td>
+<td>802</td>
+<td>Template routes the LLM call through
+<code>run_stage_for upstream_port</code> /
+<code>BUREAU_STAGE_TIMEOUT</code> and gates the PR-body summary on
+<code>.agents.upstream_summary</code>. slidefactory builds an
+<strong>argv array</strong> (<code>claude_argv_for_stage</code> →
+<code>BUREAU_STAGE_ARGV</code>,
+<code>llm_argv=(timeout 300s "${claude_cmd[@]}")</code>). Template and
+msc build a <strong>string</strong> (<code>claude_cmd_for_stage</code>)
+and word-split it unquoted
+(<code>$timeout_bin $claude_cmd "$prompt"</code>) — a model value from
+<code>.env</code> can inject extra runner options.</td>
+<td>EXP-629 shared; slidefactory argv fix = <strong>EXP-1476</strong>
+(commit <code>b1b39f8</code>, 2026-09-17: "Ein Modellargument aus .env
+kann über Wortaufspaltung zusätzliche Runner-Optionen
+einschleusen")</td>
+<td>slidefactory — a live option-injection path remains in template and
+msc</td>
+</tr>
+<tr>
+<td><code>bureau-config.sh</code></td>
+<td>1742</td>
+<td>2127</td>
+<td>2097</td>
+<td>The centre of the drift: 815 changed lines T↔︎S, 561 T↔︎M, 650 S↔︎M. 40
+of 53 shared functions differ. Detail below.</td>
+<td>mixed</td>
+<td>three-way</td>
+</tr>
+<tr>
+<td><code>implement-pipeline.sh</code></td>
+<td>688</td>
+<td>831</td>
+<td>696</td>
+<td>Three-way, widest spread. T: <code>run_stage_for</code> array +
+<code>--schema bureau-implement.schema.json</code> (validated structured
+output), <code>precondition_runner</code>,
+<code>bureau_stage_enter</code>, <code>commit_codex_changes</code>, a
+codex completion gate requiring <code>repo.test_command</code> for
+independent verification (<code>exit 24</code>),
+<code>Bureau-Generated: true</code> on the CI-retrigger commit
+(<code>:469</code>), and a broader rework-detect regex including
+<code>(?m)^VERDICT: REQUEST_CHANGES$</code>. S:
+<code>push_branch_loud()</code> (<code>:40-56</code>) which reports a
+failed push loudly — "the work is only in this worktree; reset_worktree
+will wipe it" — plus <code>OPEN_PR_AT_START</code> detection
+(<code>:195-200</code>), <code>check_squash_range origin/main</code> →
+<code>SQUASH_HALT</code>/<code>CI_MARKER</code> (<code>:344-348</code>),
+and `</td>
+<td></td>
+<td>return <span class="math inline">$?` on
+`get_issue_branch_and_comments`. M: `restore_worktree_deps
+"$</span>(pwd)" || exit
+21<code> (</code>:232<code>). Both installs detect </code>timeout<code>/</code>gtimeout<code>themselves where T uses</code>BUREAU_STAGE_TIMEOUT<code>, and both lost the </code>Bureau-Generated`
+trailer and the wider regex.</td>
+</tr>
+<tr>
+<td><code>code-review-pipeline.sh</code></td>
+<td>492</td>
+<td>457</td>
+<td>571</td>
+<td><strong>Template-only PR-integrity hardening the installs never
+got:</strong> <code>git check-ref-format</code> branch validation
+(<code>T:79</code>) where both installs only check for spaces; a hard
+<code>PR_STATE=OPEN</code> check (<code>T:104-116</code>, exit 15); and
+SHA-pinned <code>REVIEW_HEAD</code>/<code>REVIEW_BASE</code>
+(<code>T:109-153</code>) re-checked before acting on the verdict
+(<code>T:406-421</code>, exit 18 if the PR moved mid-review) — a real
+TOCTOU gate, absent from both installations and tied to no incident.
+Beyond that, msc's extra ~114 lines are an <strong>auto-merge path
+slidefactory deleted</strong>: <code>_compose_and_squash_merge()</code>
+(<code>:466-480</code>) reading PR title/body, sanitising both, merging
+with <code>--subject</code>/<code>--body</code>, then verifying
+<code>ACTUAL_PR_STATE</code> after a propagation sleep and commenting on
+failure. slidefactory replaced the whole block with "wartet auf den
+Merge durch Kai" and dropped the <code>agent_enabled "merge"</code>
+branch. msc also adds <code>restore_worktree_deps</code>
+(<code>:126</code>), <code>apply_build_failure</code> and
+<code>resolve_verdict_exit</code>. slidefactory adds the
+<code>scripts/bureau-test.sh</code> branch to the build check and
+captures <code>REVIEW_COMMENTS</code> once with propagation, where msc
+pipes with <code>|| echo "0"</code> — swallowing a failed comment fetch
+into a cycle count of 0, so the loop-breaker never fires.</td>
+<td>M = EXP-1318/1322/1339/1375; S = policy + EXP-1469</td>
+<td>three-way</td>
+</tr>
+<tr>
+<td><code>qa-pipeline.sh</code></td>
+<td>340</td>
+<td>369</td>
+<td>339</td>
+<td>T: <code>--schema bureau-qa.schema.json</code>,
+<code>commit_stage_changes</code>, <code>precondition_runner</code>, and
+it consults <code>.repo.test_command</code> before auto-detection
+(<code>:102-104</code>); its push is a hard
+<code>git push origin HEAD || exit 18</code>. S: a
+<strong>second</strong> <code>check_squash_range origin/main</code> gate
+here (<code>:263-275</code>) forcing <code>STATUS=NEEDS_HUMAN</code>
+when the range is not clean, plus a push guarded both by "local is
+ahead" and by dry-run. M: <code>restore_worktree_deps</code>
+(<code>:96</code>), no squash gate, no dry-run guard on the push.</td>
+<td>S = EXP-1465; M = EXP-1375</td>
+<td>three-way</td>
+</tr>
+<tr>
+<td><code>spec-pipeline.sh</code></td>
+<td>363</td>
+<td>351</td>
+<td>369</td>
+<td>T uses <code>run_stage_for</code> +
+<code>precondition_runner</code>; both installs use
+<code>precondition_claude_auth</code> and their own stage-argv builder.
+S alone maps exit 20 to <code>linear-unusable</code> and sets
+<code>_BUREAU_LINEAR_SINGLE_ATTEMPT=1</code> on that path
+(<code>:65</code>), so a halt's total retry wait stays bounded. M
+invokes the unquoted string
+<code>$CLAUDE</code>/<code>$CLAUDE_RESEARCH</code>.</td>
+<td>S = EXP-1478</td>
+<td>slidefactory</td>
+</tr>
+<tr>
+<td><code>spec-review-pipeline.sh</code></td>
+<td>204</td>
+<td>215</td>
+<td>200</td>
+<td>T uses <code>commit_stage_changes</code> (secret-excluding) plus a
+hard <code>git push origin HEAD || exit 18</code>. slidefactory adds a
+<strong>second, unconditional push block</strong> (<code>S:170</code>) —
+see EXP-1419 below. msc has neither, and its dirty test
+(<code>git diff --quiet || git diff --cached --quiet</code>) cannot see
+untracked files where T and S use
+<code>git status --porcelain</code>.</td>
+<td>EXP-1419 (S, 07.09.)</td>
+<td>slidefactory; msc still carries the EXP-1419 bug class</td>
+</tr>
+<tr>
+<td><code>ux-pipeline.sh</code></td>
+<td>259</td>
+<td>252</td>
+<td>252</td>
+<td>Installations byte-identical apart from the env load and the
+argv-vs-string call. Template adds <code>bureau_stage_enter</code> and
+<code>commit_stage_changes</code>.</td>
+<td>EXP-484 shared</td>
+<td>template</td>
+</tr>
+<tr>
+<td><code>copy-pipeline.sh</code></td>
+<td>183</td>
+<td>194</td>
+<td>179</td>
+<td>Same shape as spec-review: T's <code>commit_stage_changes</code> vs
+an inlined <code>git add -A</code>; S adds the dry-run push guard, M
+repeats the <code>git diff --quiet</code> untracked-file blind
+spot.</td>
+<td>EXP-1419 (S)</td>
+<td>three-way</td>
+</tr>
+<tr>
+<td><code>crosscheck-specs.sh</code></td>
+<td>114</td>
+<td>271</td>
+<td>146</td>
+<td>All three differ, and the template is the broken one:
+<code>T:13-14</code> uses <code>declare -A</code> (bash 4), so on
+macOS's stock bash 3.2 the script dies immediately and the spec stage
+reports "No file conflicts with open PRs" every time regardless of
+truth. <strong>Both installations fixed that crash
+independently.</strong> slidefactory rewrote it around a three-state
+contract — exit 0/3/4 plus a machine-readable last line
+(<code>CROSSCHECK RESULT: &lt;clean|conflicts|incomplete&gt; open= compared= paths= unchecked=</code>)
+that <code>crosscheck_open_prs</code> cross-validates against the exit
+code. msc converted to indexed arrays (<code>M:11-13</code>) but kept a
+flat contract: <code>M:146</code> prints "File conflicts detected" and
+then <strong><code>exit 0</code></strong> — every exit in the file is 0,
+so a caller cannot distinguish clean from conflicted. Ranking: T
+(silently wrong on macOS) &lt; M (crash-safe, but conflicts are
+unreportable) &lt; S.</td>
+<td>EXP-1469 (S); msc fix untagged</td>
+<td>slidefactory</td>
+</tr>
+<tr>
+<td><code>codex-stage-runner.sh</code></td>
+<td>26</td>
+<td>92</td>
+<td>80</td>
+<td>Template's is a compatibility shim forwarding to
+<code>bureau-provider.py</code>. Both installs invoke <code>codex</code>
+directly; the whole S↔︎M delta is one dated fix at <code>S:74-85</code> —
+<code>&lt; /dev/null</code> plus temp-log buffering, because
+<code>codex exec</code> blocked on inherited terminal stdin or left
+<code>O_NONBLOCK</code> on an inherited pipe and killed the
+<em>calling</em> stage's next <code>echo</code>. <code>M:75</code> is
+the unfixed form.</td>
+<td>EXP-1419 / 04.09.2026 (S)</td>
+<td>template (architecture); slidefactory (robustness)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="files-that-exist-in-only-one-tree">Files that exist in only one
+tree</h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Tree</th>
+<th>What it is</th>
+<th>Origin</th>
+<th>Direction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bureau-runtime.py</code> (488), <code>bureau-worker.sh</code>
+(51), <code>bureau-supervision.py</code> (207),
+<code>bureau-provider.py</code> (249), <code>bureau-doctor.py</code>
+(167), <code>bureau-monitor.py</code> (30), <code>bureau-tick.sh</code>
+(104), <code>bureau-app.sh</code> (22), <code>bureau-stage.md</code>,
+<code>bureau-schedule.mjs</code>, <code>bureau-schedule-cli.mjs</code>,
+<code>bureau-{implement,qa,review}.schema.json</code></td>
+<td>template only (14 files)</td>
+<td>The v2 runtime: lease-based ownership, provider adapter, supervision
+checkpoints, doctor, tick driver, stage schemas.</td>
+<td>untagged — these carry <strong>no</strong> EXP tags; they came from
+the public <code>bureau</code> v2.0.0 release (tag v2.0.0, 2026-09-07),
+not from an incident</td>
+<td>template</td>
+</tr>
+<tr>
+<td><code>bureau-env.sh</code> (174)</td>
+<td>slidefactory only</td>
+<td>Safe <code>.env</code> reader, no <code>source</code>.</td>
+<td>EXP-1469 + EXP-1478</td>
+<td>slidefactory</td>
+</tr>
+<tr>
+<td><code>squash-marker-check.sh</code> (125) +
+<code>ci-skip-markers.txt</code> (7)</td>
+<td>slidefactory only</td>
+<td>Reads every commit in the squash range, reports any CI
+suppressor.</td>
+<td>EXP-1462 / EXP-1465</td>
+<td>slidefactory</td>
+</tr>
+<tr>
+<td><code>in-flight-count.jq</code> (33)</td>
+<td>slidefactory only</td>
+<td>The in-flight capping rule extracted from
+<code>bureau-config.sh</code> so CI can test it without
+<code>.bureau.json</code> or network.</td>
+<td>EXP-1462</td>
+<td>slidefactory</td>
+</tr>
+<tr>
+<td><code>bureau-test.sh</code> (43)</td>
+<td>slidefactory only</td>
+<td>Project test-command shim. <strong>Not drift</strong> —
+<code>qa-pipeline.sh:119</code> in all three trees looks for exactly
+this path; it is the documented extension point.</td>
+<td>n/a</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><code>make_motif_reference_logos.py</code>,
+<code>regenerate_motif_matrix.py</code></td>
+<td>slidefactory only</td>
+<td>Project-domain, unrelated to Bureau.</td>
+<td>n/a</td>
+<td>ignore</td>
+</tr>
+<tr>
+<td><code>merge-body.sh</code> (83) + <code>merge-body.test.sh</code>
+(148)</td>
+<td>msc only</td>
+<td><code>sanitize_ci_markers</code> + <code>build_merge_body</code>;
+shared by merge and code-review pipelines.</td>
+<td>EXP-1318 / B38</td>
+<td>msc</td>
+</tr>
+<tr>
+<td><code>label-lookup.test.sh</code> (543)</td>
+<td>msc only</td>
+<td>17-case network-free gate on <code>_resolve_label_id</code> and both
+consumers.</td>
+<td>EXP-1340</td>
+<td>msc</td>
+</tr>
+<tr>
+<td><code>worktree-deps.test.sh</code> (315)</td>
+<td>msc only</td>
+<td>Gate on <code>restore_worktree_deps</code>.</td>
+<td>EXP-1375</td>
+<td>msc</td>
+</tr>
+<tr>
+<td><code>code-review-pipeline.test.sh</code> (202)</td>
+<td>msc only</td>
+<td>Gate on the BLOCK-exit contract.</td>
+<td>EXP-1322 / B41</td>
+<td>msc</td>
+</tr>
+<tr>
+<td><code>audit-evidence.test.sh</code> (172)</td>
+<td>msc only</td>
+<td>Gate on the <code>main-run-audit</code> tree-equality evidence
+fallback.</td>
+<td>EXP-1373</td>
+<td>msc</td>
+</tr>
+<tr>
+<td><code>check-test-count.mjs</code> (90)</td>
+<td>msc only</td>
+<td>Committed test-count floor.</td>
+<td>EXP-1312 / EXP-1305</td>
+<td>msc</td>
+</tr>
+<tr>
+<td>18 further <code>plan-*</code>, <code>import-*</code>,
+<code>daten-*</code>, <code>standorte-*</code>, <code>umlaute-*</code>
+files</td>
+<td>msc only</td>
+<td>Project-domain (MSC planner), unrelated to Bureau.</td>
+<td>n/a</td>
+<td>ignore</td>
+</tr>
+</tbody>
+</table>
+<p>Both installations gate their local hardenings in CI as
+merge-blocking steps: msc at
+<code>.github/workflows/ci.yml:86,93,101,122,129,140</code>;
+slidefactory via <code>pytest tests/</code> (<code>test.yml:62</code>)
+over
+<code>tests/unit/test_pipeline_{ci_markers,env_read,env_callers,squash_markers,squash_gate_wiring}.py</code>
+and <code>test_bureau_in_flight_count.py</code>. None of these
+differences is a half-finished edit.</p>
+<h3
+id="bureau-configsh-function-inventory"><code>bureau-config.sh</code>
+function inventory</h3>
+<p>Template-only (8): <code>bureau_is_paused</code>,
+<code>bureau_issue_snapshot</code>, <code>bureau_stage_enter</code>,
+<code>bureau_stop_requested</code>, <code>commit_codex_changes</code>,
+<code>commit_stage_changes</code>, <code>precondition_runner</code>,
+<code>run_stage_for</code>.</p>
+<p>slidefactory-only (13): <code>_bureau_linear_classify</code>,
+<code>_bureau_linear_fetch</code>, <code>_bureau_linear_number</code>,
+<code>_bureau_linear_record</code>, <code>_bureau_linear_setting</code>,
+<code>bureau_model_from_source</code>,
+<code>bureau_model_value_ok</code>, <code>check_squash_range</code>,
+<code>claude_argv_for_stage</code>, <code>comment_on_branch_pr</code>,
+<code>crosscheck_open_prs</code>, <code>halt_if_linear_unusable</code>,
+<code>resolve_codex_model_for_stage</code>.</p>
+<p>msc-only (6): <code>_resolve_label_id</code>,
+<code>apply_build_failure</code>, <code>resolve_block_action</code>,
+<code>resolve_verdict_exit</code>, <code>restore_worktree_deps</code>,
+<code>shepherd_rc_action</code>.</p>
+<p><strong>No function exists in both installations but not the
+template</strong> — confirming zero convergent evolution.</p>
+<p><strong>40 of the 53 shared functions have differing bodies.</strong>
+The consequential ones:</p>
+<ul>
+<li><strong><code>linear_query</code> / <code>linear_raw</code></strong>
+— T:152/160 and M:118/126 are byte-identical raw single-shot
+<code>curl</code>. S:304/309 routes both through
+<code>_bureau_linear_fetch</code>: classify the fault
+(<code>no-response</code>/<code>not-json</code>/<code>graphql-errors</code>/<code>no-data</code>),
+retry 3× with 10/30/60s backoff, return exit 20 with empty stdout if
+still unusable. Origin EXP-1478, with the production abort dated inline
+(17.09.2026: a Linear error page reached <code>jq</code>, which died
+with exit 5; an empty answer read as success and drove a ticket from
+Build Review back to Build reporting a phantom missing branch).
+<strong>S ahead — T and M are both exposed to the entire fault
+class.</strong></li>
+<li><strong>The whole Linear-caller family</strong>
+(<code>move_issue</code>, <code>post_comment</code>,
+<code>get_issue_branch</code>,
+<code>get_issue_branch_and_comments</code>,
+<code>get_issue_comments</code>, <code>get_issue_detail</code>,
+<code>get_issue_state</code>) — S is the only tree that appends
+<code>|| return $?</code> after every
+<code>_resolve_issue_uuid</code>/<code>linear_query</code>/<code>linear_raw</code>,
+and rewrites the piped <code>linear_query … | jq …</code> into a
+captured-then-checked form. T and M behave identically: they never
+propagate, so a failing query silently continues on empty data.
+<strong>S ahead.</strong></li>
+<li><strong><code>count_in_flight_issues</code></strong> T:1320 / S:1656
+/ M:1298 — T and M identical. S adds a project filter
+(<code>BUREAU_PROJECTS</code> → GraphQL
+<code>project:{id:{in:[…]}}</code>) and counts
+<code>children(first:1)</code> to exclude epics rather than
+<code>parent:{null:true}</code>. Without the project filter the cap
+counted 16 foreign tickets from unrelated repos and stalled every spec
+stage. Origin EXP-1462 / EXP-1057. <strong>S ahead.</strong></li>
+<li><strong><code>reset_worktree</code></strong> T:1374 / S:1748 /
+M:1379 — T asserts ownership through
+<code>bureau-runtime.py assert-owner</code> and refuses to reset an
+unregistered worktree. S and M share the pre-v2 body but each fixed a
+different real bug in it: S restores the gitignored <code>.venv</code>
+symlink and copies <code>.env</code>/<code>.bureau.json</code> back
+after <code>clean -fdx</code> (EXP-799 — their loss parked tickets
+carrying correct code as <code>needs-human</code>, observed 29.07.2026);
+M removed a trailing <code>&amp;&amp; restore_worktree_deps</code> whose
+<code>1</code> return on an empty <code>target_branch</code> became the
+function's return value and killed the run under
+<code>set -euo pipefail</code> on every idle queue-loop tick.
+<strong>Neither ported the other's fix.</strong></li>
+<li><strong><code>free_branch_from_other_worktrees</code></strong>
+T:1357 vs S:1721 = M:1352 — T refuses and returns 21 ("never detach
+another checkout"); both installations actively detach the other
+worktree to the same commit, because back-to-back stages on one spec
+branch otherwise hit git's exit 128. A deliberate policy split, not
+drift.</li>
+<li><strong><code>session_throttle_guard</code> /
+<code>_session_usage_signal</code></strong> T:1037/987 vs S = M — T is
+provider-aware (separate usage files per claude/codex, filters on each
+file's <code>.provider</code> field, supports
+<code>BUREAU_THROTTLE_ONCE=1</code> → exit 23). Both installations are
+provider-blind and would throttle a codex stage on claude-shaped
+signals. <strong>T ahead.</strong></li>
+<li><strong>Regressions in both installations</strong> (template ahead,
+no hardening involved): <code>_bureau_human_commits</code> — T also
+checks a <code>Bureau-Generated:</code> trailer, so a bureau commit
+without a Claude co-author trailer is miscounted as human work in both
+installs, skewing <code>branch_is_bureau_only</code>.
+<code>pipeline_pick_next</code> — T auto-excludes the configured
+<code>needs-human</code> label from every pick; both installs dropped
+it, so a human-gated ticket can be re-picked unless each caller
+remembers the exclude.
+<code>record_stage_cost</code>/<code>report_costs</code> — T
+distinguishes <code>cost_usd: null</code> from zero; both installs
+collapse unknown to <code>0</code>, conflating a failed cost report with
+a free call. <code>pick_issue</code> — T and S accept a 4th
+<code>skip_csv</code> argument; <strong>msc dropped it
+entirely</strong>, a silent capability loss.</li>
+<li><strong><code>exit_class</code></strong> T:1414 / S:1801 / M:1645 —
+a genuine collision. T maps 20-26 plus 124/130 to a generic vocabulary.
+S maps <strong>only</strong> 20 → <code>linear-unusable</code>. M maps
+20 → <code>review-blocked</code> and 21 → <code>deps-unavailable</code>.
+The same exit code means different things in the two installations, so
+no exit-code-carrying change can be copied between them verbatim.</li>
+<li><strong><code>precondition_claude_auth</code></strong> T:1456 vs
+S:1840 = M:1812 — T delegates to the generic
+<code>precondition_runner</code>. Both installations instead probe with
+<code>claude -p --print --dangerously-skip-permissions "reply with ok"</code>
+and grep the output. Worth flagging on its own: the installations' auth
+check runs the CLI with permission checks disabled, and it is
+claude-only, so a codex-routed stage is never auth-checked at all.</li>
+<li><strong><code>commit_stage_changes</code></strong> T:271
+(template-only) — refuses to commit when <code>.env</code>,
+<code>.bureau.json</code>, <code>.bureau-install.json</code> or
+<code>logs/*</code> are already staged, and builds a pathspec excluding
+them. Neither installation has any centrally guarded secret-excluding
+auto-commit.</li>
+</ul>
+<p><strong>msc's review-gate family is a fifth undocumented hardening,
+and it is incident-backed.</strong> <code>resolve_verdict_exit</code>
+(M:1679), <code>apply_build_failure</code> (M:1711),
+<code>shepherd_rc_action</code> (M:1734) and
+<code>resolve_block_action</code> (M:1783) are pure decision tables, not
+refactors. <code>resolve_block_action</code> exists because the BLOCK
+branch used to set a label, comment and exit 0 — indistinguishable from
+"approved and merged" — so the next run re-reviewed the identical commit
+and flipped BLOCK to APPROVE with no code change, then merged it
+(EXP-1322 / B41, 30.07.2026). <code>resolve_verdict_exit</code> makes
+the verdict the sole source of the exit code, closing a path where an
+environment-inherited <code>FINAL_EXIT=20</code> marked a clean review
+as blocked. <code>apply_build_failure</code> establishes a floor: a red
+build collapses APPROVE and REQUEST_CHANGES to REQUEST_CHANGES but can
+never soften a BLOCK — previously a red build silently downgraded a
+BLOCK carrying <code>security_issues: 1</code> into routine rework,
+skipping <code>needs-human</code> and routing a security-flagged ticket
+into autonomous fixing (EXP-1339, 11.08.2026).
+<code>shepherd_rc_action</code> makes <strong>halt the default</strong>
+for unknown codes, replacing an enumerated list that let a newly added
+code fall through to "unexpected exit". Template and slidefactory have
+no equivalent floor anywhere.</p>
+<h2 id="the-four-known-fixes">The four known fixes</h2>
+<h3
+id="1-ci-skip-marker-guard--corrected-two-different-fixes-in-two-different-trees-neither-complete">1.
+CI-skip-marker guard — CORRECTED: two different fixes, in two different
+trees, neither complete</h3>
+<p>The brief treats <code>sanitize_ci_markers</code> and
+<code>squash-marker-check.sh</code> as one fix. They are two independent
+answers to the same incident class, and they live in
+<strong>different</strong> installations.</p>
+<ul>
+<li><strong>slidefactory — detect and halt.</strong>
+<code>scripts/squash-marker-check.sh</code> (125 lines) reads every
+commit message in <code>&lt;base&gt;..HEAD</code> and reports any line
+matching <code>scripts/ci-skip-markers.txt</code> (7 markers).
+<code>check_squash_range()</code> in <code>bureau-config.sh</code> wraps
+it and distinguishes three outcomes — <code>clean</code>,
+<code>found</code> (exit 3), and <code>unchecked</code> (any other exit,
+which also halts: "halting rather than passing it on unchecked").
+<code>implement-pipeline.sh:186</code> raises a <code>CI_MARKER</code>
+halt state before hand-off; <code>comment_on_branch_pr()</code> posts
+the finding on the PR. slidefactory also <strong>removed the marker
+injection entirely</strong> — <code>implement-pipeline.sh</code> there
+contains no <code>[skip ci]</code> amend at all. Origin: EXP-1462 /
+EXP-1465, explicitly dated and narrated.</li>
+<li><strong>msc-planner — neutralise at the merge.</strong>
+<code>scripts/merge-body.sh</code> defines
+<code>sanitize_ci_markers()</code> (defangs all 7 GitHub-honoured forms
+case-insensitively, idempotently, byte-identical when no marker is
+present) and <code>build_merge_body()</code> (never returns empty → the
+caller never falls back to GitHub's commit-list default). Sourced by
+<code>merge-pipeline.sh:8</code> and
+<code>code-review-pipeline.sh</code>; used at
+<code>merge-pipeline.sh:404</code> and
+<code>code-review-pipeline.sh:479</code>. Origin: EXP-1318 / B38, with
+the evidence cited inline ("Beleg 6/6, 29.07.").</li>
+<li><strong>Template — neither, and it manufactures the hazard.</strong>
+<code>implement-pipeline.sh:513-514</code> amends <code>[skip ci]</code>
+onto every iteration commit; <code>merge-pipeline.sh:366</code> runs
+<code>gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY"</code> with no
+<code>--subject</code>/<code>--body</code>. GitHub then composes the
+squash message from the branch commit list, finds the marker, and
+creates <strong>no CI run for the push to main</strong>.</li>
+</ul>
+<p><strong>Cost of the gap:</strong> the template as shipped can land
+unverified code on <code>main</code> silently. slidefactory is safe
+because it neither injects nor tolerates the marker; msc is safe at the
+merge but still injects at <code>implement-pipeline.sh:527-528</code>,
+so its protection depends entirely on <code>merge-body.sh</code> being
+sourced — and its rebase branch (<code>merge-pipeline.sh:408</code>) is
+explicitly outside the guarantee.</p>
+<h3 id="2-worktree-dependency-restore--confirmed-msc-only">2. Worktree
+dependency restore — confirmed, msc only</h3>
+<p><code>restore_worktree_deps()</code> at
+<code>msc-planner/scripts/bureau-config.sh:1473</code>. Called at
+<code>implement-pipeline.sh:232</code>,
+<code>code-review-pipeline.sh:126</code>,
+<code>qa-pipeline.sh:96</code>, each as
+<code>restore_worktree_deps "$(pwd)" || exit 21</code>. Absent from
+template and slidefactory (slidefactory is Python/<code>pytest</code>,
+so <code>node_modules</code> does not apply — its absence there is
+correct, not drift).</p>
+<p>Cause: <code>reset_worktree</code>'s <code>git clean -fdx</code>
+removes gitignored <code>node_modules</code>, and nothing reinstalled
+it, so every build check ran without dependencies and every APPROVE was
+downgraded by <code>apply_build_failure</code> — four consecutive runs
+on EXP-1374, review could never complete. The implementation carries
+four non-obvious hardenings, each annotated as a review finding:
+<code>--ignore-scripts</code> (a PR's lifecycle scripts would otherwise
+execute pre-review on a machine with <code>.env</code> access — marked
+CRITICAL), atomic install via temp dir + <code>mv</code> (a
+half-populated directory made Turbopack fail with an internal error),
+<code>cp -Rc</code> clone rather than a symlink (Turbopack panics on
+symlinked <code>node_modules</code>), and a SHA-256 stamp of both
+manifests in <code>node_modules/.bureau-lock</code> under
+<code>--git-common-dir</code> (not <code>$REPO_DIR</code>, which points
+at the PR-controlled worktree). Origin: EXP-1375, gated by
+<code>worktree-deps.test.sh</code>.</p>
+<p><strong>Cost of the gap:</strong> template-derived Node installations
+silently review against a broken build.</p>
+<h3
+id="3-team-scoped-label-lookup--corrected-present-in-both-installations-by-different-methods">3.
+Team-scoped label lookup — CORRECTED: present in BOTH installations, by
+different methods</h3>
+<ul>
+<li><strong>Template — name-blind, the bug.</strong>
+<code>bureau-config.sh:709</code> and <code>:743</code>:
+<code>issueLabels(filter: { name: { eq: "$name" } }, first: 1)</code>
+then <code>.nodes[0].id</code>. With the same label name in two teams,
+it returns whichever the server lists first — an id that will not attach
+to the issue.</li>
+<li><strong>slidefactory — server-side filter.</strong>
+<code>bureau-config.sh:846</code> and <code>:883</code> add
+<code>or: [ { team: { key: { eq: "$BUREAU_TEAM_KEY" } } }, { team: { null: true } } ]</code>,
+still <code>first: 1</code>. Correct team, but with both a team label
+and a workspace label present it takes whichever the server returns
+first — priority is not expressed. Origin: commit "chore(bureau): scope
+label lookup to the team, filter in-flight count by project (#98)",
+2026-09-04 — deliberate, though not tied to a numbered incident.</li>
+<li><strong>msc — client-side strict priority.</strong>
+<code>_resolve_label_id()</code> at <code>bureau-config.sh:594</code>
+fetches <code>first: 20</code> with <code>team { key }</code> and
+selects in order: the issue team's own label, else a workspace-level
+(<code>team == null</code>) label, else nothing. It further separates
+<strong>failure from absence</strong> — non-zero transport exit, empty
+body, a GraphQL <code>.errors</code> envelope, a malformed node, or an
+empty <code>id</code> all return rc 2 with empty stdout, so
+<code>remove_issue_label</code> can never acknowledge an idempotent
+release while the label is still attached. The <code>.errors</code> type
+check is explicitly narrower than a length check because jq answers
+<code>length == 0</code> for <code>{}</code>, <code>""</code>,
+<code>0</code> and <code>false</code>. Origin: EXP-1340, gated by
+<code>label-lookup.test.sh</code> (17 cases, incl. a counter-test T15b
+that proves the mutation check itself can fail).</li>
+</ul>
+<p><strong>Cost of the gap:</strong> the template cannot reliably attach
+<code>needs-human</code> in a multi-team workspace, and worse, reports
+success when it did nothing. msc's version is the one to carry upstream;
+slidefactory's is a partial fix.</p>
+<h3
+id="4-safe-env-parsing--confirmed-slidefactory-only-the-count-of-16-is-exact">4.
+Safe <code>.env</code> parsing — confirmed, slidefactory only; the count
+of 16 is exact</h3>
+<p><code>scripts/bureau-env.sh</code> exists only in slidefactory. Count
+verified with
+<code>grep -rlE '(^|[^a-z])(source|\.)[[:space:]]+[^[:space:]]*\.env' &lt;scripts-dir&gt; | wc -l</code>
+→ <strong>template 16, slidefactory 0, msc-planner 16</strong>. The 16
+are identical in both trees: <code>bureau-status.sh</code>,
+<code>code-review-pipeline.sh</code>, <code>complete-issue.sh</code>,
+<code>copy-pipeline.sh</code>, <code>crosscheck-specs.sh</code>,
+<code>grab-issue.sh</code>, <code>implement-pipeline.sh</code>,
+<code>merge-pipeline.sh</code>, <code>qa-pipeline.sh</code>,
+<code>queue-loop-supervised.sh</code>, <code>queue-loop.sh</code>,
+<code>rebase-pipeline.sh</code>, <code>shepherd.sh</code>,
+<code>spec-pipeline.sh</code>, <code>spec-review-pipeline.sh</code>,
+<code>ux-pipeline.sh</code>. slidefactory converted exactly those 16 to
+<code>bureau_load_env</code>.</p>
+<p><code>bureau_load_env</code> parses rather than executes, and carries
+three hardenings beyond the obvious one, each traceable: it disables a
+running <code>set -x</code> before the first expansion and restores it
+on every return (no secret reaches a trace); it restricts assignment to
+an allowlist (<code>bureau_env_key_allowed</code>); and it accepts
+values for the six arithmetic-bound keys only as <code>0</code> or
+leading-zero-free digits (<code>bureau_env_key_numeric</code>), because
+bash re-evaluates variable <em>content</em> inside <code>$(( ))</code>,
+so <code>KEY=x[$(cmd)]</code> would execute <code>cmd</code> in the
+reading script — the last remaining path from a <code>.env</code> value
+to a command. Leading zeros are rejected specifically because bash reads
+<code>08</code> as octal and aborts. Written for bash 3.2 (no
+<code>local -</code>, no <code>declare -g</code>). Origin: EXP-1469,
+extended by EXP-1478.</p>
+<p><strong>Cost of the gap:</strong> in template and msc, a single
+<code>KEY= value</code> line in <code>.env</code> executes
+<code>value</code> as a command, and bash echoes it in the "command not
+found" message — into a log that reaches Linear or GitHub.</p>
+<h3 id="two-further-local-fixes-the-brief-did-not-name">Two further
+local fixes the brief did not name</h3>
+<p><strong>EXP-1419 (slidefactory, 07.09.2026) — lost commits, and a
+codex crash.</strong> Two unrelated symptoms under one tag. (a) The
+stage scripts pushed only when their own dirty-check fired, but the
+model's session had often already committed — so the diff gate saw a
+clean tree, never pushed, and the next stage's
+<code>reset_worktree</code> hard-reset the worktree and destroyed the
+work. The comment is identical in three files
+(<code>qa-pipeline.sh:270</code>,
+<code>spec-review-pipeline.sh:170</code>,
+<code>copy-pipeline.sh:171</code>): "die Commits sind weg (EXP-1419: 14
+QA-Tests, 07.09.)". The fix is a second, unconditional push block.
+Template is immune by construction (it pushes hard with
+<code>|| exit 18</code>); <strong>msc has neither guard and still runs
+the narrow <code>git diff --quiet</code> test</strong>, so it remains
+exposed to exactly this. (b) <code>codex-stage-runner.sh:74-85</code>:
+<code>codex exec</code> either blocked reading inherited terminal stdin,
+or Node set <code>O_NONBLOCK</code> on an inherited pipe and the
+<em>calling</em> stage's next <code>echo</code> then died with "write
+error: Resource temporarily unavailable" (observed at
+<code>spec-review-pipeline.sh</code> line 134, exit 1). Fixed by
+<code>&lt; /dev/null</code> plus buffering through a temp log. msc's
+line 75 is byte-for-byte the old unfixed form.</p>
+<p><strong>EXP-1339 (msc, 11.08.2026) — the sharpest single
+finding.</strong> The unpatched line is still live in both other trees,
+verified byte-identical:
+<code>[ "$BUILD_OK" = false ] &amp;&amp; VERDICT="REQUEST_CHANGES" &amp;&amp; MERGED_REVIEW=…</code>
+at <strong><code>template/code-review-pipeline.sh:400</code></strong>
+and
+<strong><code>slidefactory/code-review-pipeline.sh:380</code></strong>.
+msc replaced it at <code>:380-387</code> with
+<code>VERDICT=$(apply_build_failure "$VERDICT")</code>. Because the old
+line is unconditional, a merely broken build environment silently
+downgraded a BLOCK carrying <code>security_issues: 1</code> into routine
+REQUEST_CHANGES, skipping <code>needs-human</code> and routing a
+security-flagged ticket into autonomous rework — logged in-repo as a
+CRITICAL with "stiller Datenverlust". A red build and a missing
+<code>node_modules</code> are the same input here, which is why EXP-1375
+and EXP-1339 compound: on msc, four consecutive runs approved
+unanimously and were downgraded four times.</p>
+<h2 id="structural-gap-the-newer-runtime">Structural gap: the newer
+runtime</h2>
+<p>The template is Bureau <strong>v2.0.0</strong> (tag
+<code>v2.0.0</code>, commit <code>d7fd2d6</code>, 2026-09-07). It
+contains 14 files that exist in <strong>neither</strong>
+installation:</p>
+<p><code>bureau-runtime.py</code> (488) · <code>bureau-worker.sh</code>
+(51) · <code>bureau-supervision.py</code> (207) ·
+<code>bureau-provider.py</code> (249) · <code>bureau-doctor.py</code>
+(167) · <code>bureau-monitor.py</code> (30) ·
+<code>bureau-tick.sh</code> (104) · <code>bureau-app.sh</code> (22) ·
+<code>bureau-stage.md</code> · <code>bureau-schedule.mjs</code> ·
+<code>bureau-schedule-cli.mjs</code> ·
+<code>bureau-implement.schema.json</code> ·
+<code>bureau-qa.schema.json</code> ·
+<code>bureau-review.schema.json</code></p>
+<p>The ownership model is real and implemented, not merely documented.
+<code>bureau-runtime.py</code> holds a <code>Store</code> class whose
+state is <code>&lt;git-common-dir&gt;/bureau/leases.json</code>, guarded
+by <code>fcntl.flock(LOCK_EX)</code> (line 79), with <code>claim</code>
+/ <code>release</code> / <code>assert_owner</code> /
+<code>finish_execution</code> and a <code>workers/</code> registration
+directory keyed by a SHA-256 of the resolved workspace path. App leases
+deliberately carry no TTL. <code>bureau-worker.sh</code> re-execs itself
+through <code>bureau-runtime.py … exec</code> before touching the
+worktree, so ownership is claimed <em>before</em> any
+<code>reset</code>, and its EXIT trap preserves unfinished work rather
+than resetting over it.</p>
+<p><strong>Neither installation runs this, and neither runs a
+substitute.</strong> There is no <code>bureau/</code> directory in
+either repo, no <code>leases.json</code>, no <code>flock</code>, no
+<code>O_EXCL</code>, no lock directory. The only occurrences of the word
+"lease" in either installation are the English words
+"release"/"released" in unrelated comments. Both run the pre-v2 shape:
+<code>shepherd.sh</code> and <code>queue-loop.sh</code> call
+<code>reset_worktree</code> directly and then <code>cd "$wt"</code> +
+<code>bash scripts/&lt;pipeline&gt;.sh</code> — no claim, no
+registration, no assertion. Concurrency safety rests entirely on
+<code>free_branch_from_other_worktrees</code> and the
+<code>max_concurrent_issues</code> cap.</p>
+<p><strong>What adoption would mean.</strong> Both installations are on
+config <strong>schema v1</strong> (<code>.bureau.json</code>
+<code>version: 1</code>); the v2 runtime reads v2 keys with v1 fallback
+(<code>start-bureau-v2.sh</code> uses
+<code>.agents.workbench_runner // .agents.runner // "claude"</code>),
+and the skill README states v1 configs remain supported with an optional
+migration. So adoption is a <code>/bureau-init --resync-scripts</code>
+plus an optional schema migration — not a rewrite. The real cost is that
+a resync would overwrite the 23 shared scripts and destroy every local
+hardening listed above unless those are carried upstream first. That
+ordering is the whole decision.</p>
+<p><strong>Neither installation ever attempted a resync.</strong> Each
+was scaffolded exactly once and never refreshed: msc at
+<code>fd5c7da</code> "Foundation: Trichter-Basis + Bureau-Pipeline
+(EXP-1270)", 2026-07-20; slidefactory at
+<code>a56bf7d</code>/<code>5dd6dbb</code> "chore(bureau): pipeline
+scaffold for the core fork (bureau-init, speckit 0.7.5)", 2026-09-04.
+<code>git log --all --grep='resync|bureau-init|v2.0.0|upstream' -i</code>
+returns no other commit in either repo. So the old shape is inheritance,
+not rejection — slidefactory was scaffolded three days <em>before</em>
+the v2.0.0 tag existed and has stayed on the pre-v2 template while
+actively developing against it (last <code>scripts/</code> commit
+2026-09-21, EXP-1478). msc's last <code>scripts/</code> commit is
+2026-08-21; it is effectively frozen.</p>
+<h2 id="recommendation">Recommendation</h2>
+<h3 id="a-carry-upstream-into-templatesscripts">(a) Carry upstream into
+<code>templates/scripts</code></h3>
+<ol type="1">
+<li><code>bureau-env.sh</code> verbatim, plus the 16 call-site
+conversions — closes a code-execution path from <code>.env</code>
+(<code>templates/scripts/bureau-env.sh</code>, 16 pipeline
+scripts).</li>
+<li><code>merge-body.sh</code> (<code>sanitize_ci_markers</code>,
+<code>build_merge_body</code>) and wire
+<code>merge-pipeline.sh:366</code> to pass
+<code>--subject</code>/<code>--body</code>
+(<code>templates/scripts/merge-body.sh</code>,
+<code>merge-pipeline.sh</code>).</li>
+<li>Delete the <code>[skip ci]</code> amend at
+<code>templates/scripts/implement-pipeline.sh:513-514</code> —
+slidefactory proves the pipeline works without it, and it is the source
+of the hazard.</li>
+<li><code>squash-marker-check.sh</code> +
+<code>ci-skip-markers.txt</code> + <code>check_squash_range()</code> as
+defence in depth behind 2 and 3
+(<code>templates/scripts/squash-marker-check.sh</code>,
+<code>bureau-config.sh</code>).</li>
+<li>msc's <code>_resolve_label_id()</code> replacing the name-blind
+lookup in both label functions
+(<code>templates/scripts/bureau-config.sh:709,743</code>).</li>
+<li><code>restore_worktree_deps()</code> guarded by a
+<code>package.json</code> presence check, which it already has
+(<code>templates/scripts/bureau-config.sh</code>).</li>
+<li>slidefactory's <code>claude_argv_for_stage</code> argv-array form
+over any string-splitting variant
+(<code>templates/scripts/upstream-port.sh</code>,
+<code>bureau-config.sh</code>).</li>
+<li>slidefactory's <code>halt_if_linear_unusable</code> +
+<code>_bureau_linear_*</code> retry family and the shepherd fault
+channel (<code>templates/scripts/bureau-config.sh</code>,
+<code>shepherd.sh</code>).</li>
+<li>slidefactory's <code>_bureau_linear_*</code> retry/classify family
+plus the <code>|| return $?</code> propagation across the whole
+Linear-caller family — the single largest reliability gap
+(<code>templates/scripts/bureau-config.sh</code>).</li>
+<li><strong>Highest priority of all:</strong> msc's
+<code>apply_build_failure</code> replacing the unconditional line at
+<code>templates/scripts/code-review-pipeline.sh:400</code>, plus
+<code>resolve_verdict_exit</code>, <code>resolve_block_action</code>,
+<code>shepherd_rc_action</code> — a BLOCK must never be softened by a
+red build or a failed label write. This is a documented CRITICAL, fixed
+in one tree of three, and the template is one of the two still carrying
+it.</li>
+<li>slidefactory's <code>reset_worktree</code> restoration of
+<code>.venv</code>/<code>.env</code>/<code>.bureau.json</code> after
+<code>clean -fdx</code>, and msc's removal of the trailing
+<code>&amp;&amp;</code> that swallowed the return value — two
+independent fixes to the same function, both needed
+(<code>templates/scripts/bureau-config.sh</code>).</li>
+<li>slidefactory's <code>count_in_flight_issues</code> project filter
+and epic exclusion
+(<code>templates/scripts/bureau-config.sh</code>).</li>
+<li>slidefactory's rewritten <code>crosscheck-specs.sh</code> — the old
+one died silently on macOS bash 3.2 and reported "no conflicts" every
+time (<code>templates/scripts/crosscheck-specs.sh</code>,
+<code>bureau-config.sh:crosscheck_open_prs</code>).</li>
+<li>slidefactory's <code>push_branch_loud()</code> — a silent push
+failure currently loses the whole stage's work at the next
+<code>reset_worktree</code>
+(<code>templates/scripts/implement-pipeline.sh</code>).</li>
+<li>slidefactory's EXP-1419 unconditional push block, or the template's
+hard <code>|| exit 18</code> equivalent, into msc — msc is the only tree
+that can still lose a stage's commits to the next
+<code>reset_worktree</code> (<code>qa</code>, <code>spec-review</code>,
+<code>copy</code> pipelines).</li>
+<li>A bash-3.2-safe <code>crosscheck-specs.sh</code> with slidefactory's
+graded exit contract — the template's <code>declare -A</code> makes the
+check silently vacuous on every macOS operator
+(<code>templates/scripts/crosscheck-specs.sh</code>).</li>
+<li>The CI gates as template test assets, since an unguarded hardening
+regresses on the next resync
+(<code>templates/scripts/*.test.sh</code>).</li>
+</ol>
+<h3 id="b-keep-local">(b) Keep local</h3>
+<ol type="1">
+<li>slidefactory's <code>exit 2</code> disable in
+<code>merge-pipeline.sh</code> / <code>rebase-pipeline.sh</code> — a
+deliberate policy (Kai merges by hand), not drift.</li>
+<li><code>bureau-test.sh</code> — the documented per-project shim
+<code>qa-pipeline.sh:119</code> already looks for.</li>
+<li><code>in-flight-count.jq</code> — an extraction for slidefactory's
+CI constraints; useful pattern, low upstream value.</li>
+<li><code>exit_class</code> in either installation — the two trees
+assign incompatible meanings to code 20 (<code>linear-unusable</code> vs
+<code>review-blocked</code>) and msc additionally claims 21. The
+template's generic vocabulary is the only one that can hold both; the
+local tables must not travel.</li>
+</ol>
+<h3 id="c-delete-or-ignore">(c) Delete or ignore</h3>
+<ol type="1">
+<li>slidefactory <code>make_motif_reference_logos.py</code>,
+<code>regenerate_motif_matrix.py</code> — project domain, not
+Bureau.</li>
+<li>msc <code>plan-*</code>, <code>import-*</code>,
+<code>daten-export.mjs</code>, <code>standorte-umbenennen.mjs</code>,
+<code>umlaute-anwenden.py</code>, <code>korrekturliste.mjs</code>,
+<code>projektplan-geruest.py</code>, <code>seed-from-fixtures.mjs</code>
+(18 files) — project domain, not Bureau.</li>
+<li>The <code>EXP-9999</code> tag in
+<code>msc-planner/scripts/merge-body.test.sh</code> — a placeholder, not
+a real incident.</li>
+</ol>
+<p><strong>Not a list, but the counterpart to (a):</strong> four
+differences run the other way — the installations are <em>behind</em>
+the template and a resync would simply restore them. The
+<code>Bureau-Generated:</code> trailer check in
+<code>_bureau_human_commits</code>; the automatic
+<code>needs-human</code> exclusion in <code>pipeline_pick_next</code>;
+the <code>cost_usd: null</code> vs <code>0</code> distinction in
+<code>record_stage_cost</code>; and the <code>skip_csv</code> argument
+of <code>pick_issue</code>, which msc dropped entirely while
+slidefactory kept it. None of these is drift anyone chose; they are what
+an un-resynced fork loses quietly.</p>
+<h2 id="what-i-could-not-determine">What I could not determine</h2>
+<ul>
+<li>Whether msc's unpatched EXP-1419 commit/push block predates
+slidefactory's 07.09.2026 fix or simply never received it — msc carries
+no marker either way, so the file alone cannot distinguish "older" from
+"missed".</li>
+<li>Whether template and slidefactory need
+<code>restore_worktree_deps</code> at all. msc-planner is the only
+Node/npm project of the three, so its absence elsewhere may be correct
+rather than missing; I did not establish what the other two build.</li>
+<li>Why the template's schedule validator
+(<code>orchestrate.sh:38-47</code>) and the v2 runtime carry no EXP tags
+at all. They come from the public <code>bureau</code> repository's
+v2.0.0 release rather than this workspace's incident stream, so their
+provenance is a release, not an incident — I could not trace them to a
+specific failure.</li>
+<li>Whether the <code>[skip ci]</code> amend can simply be deleted
+upstream or whether it was load-bearing for CI cost. slidefactory
+removed it, but slidefactory also stopped auto-merging, so its evidence
+does not transfer cleanly to a tree that still merges.</li>
+</ul></main>
+</div>
+</body>
+</html>

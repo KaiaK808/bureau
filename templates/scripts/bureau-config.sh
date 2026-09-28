@@ -2,6 +2,21 @@
 # bureau-config.sh — reads .bureau.json for pipeline scripts
 # Source this file: source "$(dirname "$0")/bureau-config.sh"
 
+# bureau_load_env: every script under scripts/ reads its .env through this instead of
+# sourcing it, so no value in that file can run as a command. `KEY= value` under `source`
+# executes `value` and bash echoes it in the "command not found" message — into a log that
+# reaches Linear or GitHub. The reader parses instead of executing, restricts assignment to
+# an allow-list, disables a running `set -x` before the first expansion, and accepts the
+# arithmetic-bound keys only as plain digits (bash re-evaluates variable *content* inside
+# `$(( ))`). Written for bash 3.2.
+#
+# _BUREAU_SCRIPTS_DIR is this file's own directory, resolved once at source time: helpers
+# that run a sibling script must take it from the checkout this config came from, never
+# from ./scripts/ relative to wherever the stage has cd'd to.
+_BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=templates/scripts/bureau-env.sh
+source "$_BUREAU_SCRIPTS_DIR/bureau-env.sh"
+
 _find_config() {
   local common primary candidate
   if [ -n "${BUREAU_CONFIG:-}" ]; then
@@ -148,20 +163,196 @@ BUREAU_SPECS_DIR=$(bureau_get '.repo.specs_dir // "specs"')
 # Projects filter (comma-separated UUIDs; empty = all projects in the team)
 BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 
-# Helper: query Linear GraphQL
+# ── Linear fetches: check the answer, retry, else stop with our own code ──
+# Carried over from slidefactory-core (EXP-1478), where every fetch used to be
+# passed on unchecked: an error page ended at `jq` with exit 5, while an answer
+# carrying `errors`, an empty answer and a failed connection all came back as
+# SUCCESS with an empty result — and the stage then decided on that empty
+# result (it moved a ticket from Build Review back to Build and reported a
+# missing branch marker).
+#
+# A fetch now counts as successful only when curl exited 0, the text is ONE JSON
+# object, that object carries an object `data`, and it has no non-empty
+# `errors`. Any other answer is unusable, gets exactly one fault class from the
+# fixed list (no-response, not-json, graphql-errors, no-data) and is retried
+# after a wait. If it stays unusable the fetch prints NOTHING and returns
+# $BUREAU_EXIT_LINEAR_UNUSABLE; no answer text and no key travels in a message.
+#
+# The code is 27 (`linear-unusable` in exit_class), not slidefactory's 20: in
+# this template 20 is `stopped-before-merge`. 10 (`linear-down`) stays the
+# precondition code for a missing or invalid key.
+#
+# Settings (first usable wins): environment (and therefore .env) →
+# .bureau.json `.linear.retry.*` → default. Defaults: three retries, waiting
+# 10, 30 and 60 seconds. Zero retries and a wait of 0 are valid.
+BUREAU_EXIT_LINEAR_UNUSABLE=27
+
+# _bureau_linear_classify <curl-exit> <answer> — prints the fault class, or
+# nothing when the answer is usable. Reads no value out of the answer.
+_bureau_linear_classify() {
+  local code="$1" answer="$2"
+  [ "$code" = 0 ] || { printf 'no-response'; return 0; }
+  case "$answer" in
+    *[![:space:]]*) ;;
+    *) printf 'no-response'; return 0 ;;
+  esac
+  local finding
+  # -s so that two JSON values in one body ("{} {}") are not read as one.
+  finding=$(printf '%s' "$answer" | jq -s -r '
+    if length != 1 then "not-json"
+    elif (.[0] | type) != "object" then "no-data"
+    elif (.[0].errors != null) and (.[0].errors != []) then "graphql-errors"
+    elif (.[0].data | type) != "object" then "no-data"
+    else "" end' 2>/dev/null) || finding="not-json"
+  case "$finding" in
+    '' | not-json | no-data | graphql-errors) ;;
+    *) finding="not-json" ;;
+  esac
+  printf '%s' "$finding"
+}
+
+# _bureau_linear_number <value> <max> — prints <value> as a number without
+# leading zeros, or nothing (exit 1) when it is not a whole number from 0 to
+# <max>. Digits only: no whitespace, no sign, no dot, no second word. The value
+# never reaches an arithmetic context before it has passed this check.
+_bureau_linear_number() {
+  local value="$1" max="$2"
+  case "$value" in
+    '' | *[!0123456789]*) return 1 ;;
+  esac
+  [ "${#value}" -gt 4 ] && return 1
+  value="${value#"${value%%[!0]*}"}"
+  [ -z "$value" ] && value=0
+  [ "$value" -le "$max" ] || return 1
+  printf '%s' "$value"
+}
+
+# _bureau_linear_setting <key> <value-from-env> <json-path> <default> <max>
+# An empty value counts as "not set", silently. Any other invalid value is
+# dropped: the next source applies, and one warning on stderr names the key or
+# the JSON path and NEVER the value.
+_bureau_linear_setting() {
+  local name="$1" from_env="$2" path="$3" default="$4" max="$5"
+  local number
+  if [ -n "$from_env" ]; then
+    if number=$(_bureau_linear_number "$from_env" "$max"); then
+      printf '%s' "$number"
+      return 0
+    fi
+    echo "warning: $name ignored: not a whole number of 0 to $max written in digits only; the next source applies" >&2
+  fi
+  local from_json
+  # Two guards, because a command substitution does not hand on what jq wrote.
+  # First: the value has to be digits only ALREADY INSIDE jq. A shell drops every
+  # embedded NUL byte while capturing (bash 3.2 and 5), so a `"0\u0000"` in the
+  # JSON would otherwise reach the check as a clean `0` and pass it — the retry
+  # would be off without a word. What is not digits only leaves jq as the word
+  # `invalid`, which _bureau_linear_number rejects like any other non-number, so
+  # the one place that decides what a number is stays the one place.
+  # Second: the trailing '#' is a marker, not part of the value, because the
+  # capture also strips every trailing newline — with the marker a `"0\n"`
+  # survives as far as the check. Only the last '#' is removed, so a value
+  # ending in '#' stays invalid as well.
+  from_json=$(jq -r "
+    try ($path) catch null
+    | if . == null then \"\" else (if type == \"string\" then . else tojson end) end
+    | (if (explode | all(. >= 48 and . <= 57)) then . else \"invalid\" end) + \"#\"" \
+    "$BUREAU_CONFIG" 2>/dev/null) || from_json="#"
+  from_json=${from_json%\#}
+  if [ -n "$from_json" ]; then
+    if number=$(_bureau_linear_number "$from_json" "$max"); then
+      printf '%s' "$number"
+      return 0
+    fi
+    echo "warning: $path ignored: not a whole number of 0 to $max written in digits only; the default applies" >&2
+  fi
+  printf '%s' "$default"
+}
+
+# _bureau_linear_record <fault-class> — remember the fault class of the LAST
+# attempt; shepherd.sh reads the file after a stage exited with
+# $BUREAU_EXIT_LINEAR_UNUSABLE. Writes only a name from the fixed list, never a
+# byte of the answer. Silent on every failure: a halt must not depend on a
+# writable file.
+_bureau_linear_record() {
+  local file="${_BUREAU_LINEAR_FAULT_FILE:-}"
+  [ -n "$file" ] || return 0
+  printf '%s\n' "$1" > "$file" 2>/dev/null || true
+  return 0
+}
+
+# _bureau_linear_fetch <payload> — one fetch, retried while the answer is
+# unusable. stdout: the usable answer, otherwise nothing. Exit: 0 or
+# $BUREAU_EXIT_LINEAR_UNUSABLE.
+#
+# The settings are read only once an answer is unusable: a healthy fetch waits
+# not at all, retries not at all and prints no extra line. On a halt path
+# (_BUREAU_LINEAR_SINGLE_ATTEMPT=1, set by shepherd.sh and by the spec stage's
+# rollback trap) a single attempt is made without any wait, so the total wait
+# of a halt stays bounded no matter how many writes the halt needs.
+_bureau_linear_fetch() {
+  local payload="$1"
+  local attempt=1 code answer fault wait
+  local planned=0 retries=0 w1=10 w2=30 w3=60
+  while : ; do
+    code=0
+    answer=$(curl -s -X POST https://api.linear.app/graphql \
+      -H "Content-Type: application/json" \
+      -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
+      -d "$payload") || code=$?
+    fault=$(_bureau_linear_classify "$code" "$answer")
+    if [ -z "$fault" ]; then
+      printf '%s' "$answer"
+      return 0
+    fi
+    if [ "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" = 1 ]; then
+      echo "linear: unusable answer ($fault) on a halt path — one attempt only, giving up" >&2
+      return "$BUREAU_EXIT_LINEAR_UNUSABLE"
+    fi
+    if [ "$planned" = 0 ]; then
+      retries=$(_bureau_linear_setting BUREAU_LINEAR_RETRIES "${BUREAU_LINEAR_RETRIES:-}" '.linear.retry.retries' 3 10)
+      w1=$(_bureau_linear_setting BUREAU_LINEAR_RETRY_WAIT_1 "${BUREAU_LINEAR_RETRY_WAIT_1:-}" '.linear.retry.wait_1' 10 600)
+      w2=$(_bureau_linear_setting BUREAU_LINEAR_RETRY_WAIT_2 "${BUREAU_LINEAR_RETRY_WAIT_2:-}" '.linear.retry.wait_2' 30 600)
+      w3=$(_bureau_linear_setting BUREAU_LINEAR_RETRY_WAIT_3 "${BUREAU_LINEAR_RETRY_WAIT_3:-}" '.linear.retry.wait_3' 60 600)
+      planned=1
+    fi
+    if [ "$attempt" -gt "$retries" ]; then
+      echo "linear: unusable answer ($fault) after $attempt attempt(s) — giving up with exit $BUREAU_EXIT_LINEAR_UNUSABLE" >&2
+      _bureau_linear_record "$fault"
+      return "$BUREAU_EXIT_LINEAR_UNUSABLE"
+    fi
+    case "$attempt" in
+      1) wait="$w1" ;;
+      2) wait="$w2" ;;
+      *) wait="$w3" ;;
+    esac
+    echo "linear: unusable answer ($fault), attempt $attempt of $((retries + 1)) — retrying in ${wait}s" >&2
+    sleep "$wait"
+    attempt=$((attempt + 1))
+  done
+}
+
+# halt_if_linear_unusable <exit-code> — for the few call sites that CATCH a
+# helper's exit code (`if add_issue_label …; then`). Ends the stage when the
+# code says "Linear stayed unusable"; returns 1 for every other non-zero code,
+# so the caller's own error branch runs exactly as before.
+halt_if_linear_unusable() {
+  if [ "${1:-0}" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+    echo "linear: the stage cannot decide without this answer — giving up with exit $BUREAU_EXIT_LINEAR_UNUSABLE" >&2
+    exit "$BUREAU_EXIT_LINEAR_UNUSABLE"
+  fi
+  return 1
+}
+
+# Helper: query Linear GraphQL. Every caller captures the answer first and
+# carries `|| return $?`: piped straight into jq, the fetch's exit code is lost.
 linear_query() {
-  curl -s -X POST https://api.linear.app/graphql \
-    -H "Content-Type: application/json" \
-    -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
-    -d "{\"query\": \"$1\"}"
+  _bureau_linear_fetch "{\"query\": \"$1\"}"
 }
 
 # Helper: run a raw GraphQL payload (for mutations that need variables).
 linear_raw() {
-  curl -s -X POST https://api.linear.app/graphql \
-    -H "Content-Type: application/json" \
-    -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
-    -d "$1"
+  _bureau_linear_fetch "$1"
 }
 
 # EXP-490: per-stage model resolution. Resolution order (first non-empty
@@ -303,8 +494,12 @@ PY_PATHS
 # (see that script's header). Emits `--model <m>` only when
 # resolve_model_for_stage finds one; otherwise the CLI's own default applies.
 #
-# Pipelines call this once into a local CLAUDE variable:
-#   CLAUDE=$(claude_cmd_for_stage "implement")
+# Legacy: no template script calls this any more — every stage and
+# upstream-port.sh go through run_stage_for, which starts the runner through
+# bureau-provider.py as an argument list. Kept for installations' own scripts
+# and tests/test_model_resolution.sh. Do NOT word-split its output
+# (`$(claude_cmd_for_stage …)` unquoted): a model value from .env then adds
+# runner options of its own (slidefactory EXP-1476, tests/test_model_argv.sh).
 claude_cmd_for_stage() {
   local stage="$1"
   local model runner
@@ -503,8 +698,9 @@ _resolve_issue_uuid() {
   fi
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id } } }" \
-    | jq -r '.data.issues.nodes[0].id // empty'
+  local answer
+  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id } } }") || return $?
+  printf '%s' "$answer" | jq -r '.data.issues.nodes[0].id // empty'
 }
 
 # Move an issue to a new state.
@@ -521,15 +717,16 @@ move_issue() {
     return 0
   fi
   if [ -n "${BUREAU_EXPECTED_STATE_ID:-}" ] && [ "$ref" = "${BUREAU_CURRENT_ISSUE:-}" ]; then
-    local current_state
-    current_state=$(bureau_issue_snapshot "$ref" | jq -r '.state.id // empty')
+    local current_snapshot current_state
+    current_snapshot=$(bureau_issue_snapshot "$ref") || return $?
+    current_state=$(printf '%s' "$current_snapshot" | jq -r '.state.id // empty')
     if [ "$current_state" != "$BUREAU_EXPECTED_STATE_ID" ]; then
       echo "ERROR: $ref state changed during this stage; refusing stale transition" >&2
       return 21
     fi
   fi
   local uuid
-  uuid=$(_resolve_issue_uuid "$ref")
+  uuid=$(_resolve_issue_uuid "$ref") || return $?
   if [ -z "$uuid" ]; then
     echo "move_issue: could not resolve $ref to UUID" >&2
     return 1
@@ -539,7 +736,7 @@ move_issue() {
     '{query: "mutation($id: String!, $sid: String!) { issueUpdate(id: $id, input: { stateId: $sid }) { success } }",
       variables: {id: $id, sid: $sid}}')
   local result
-  result=$(linear_raw "$payload")
+  result=$(linear_raw "$payload") || return $?
   local ok
   ok=$(printf '%s' "$result" | jq -r '.data.issueUpdate.success // false')
   if [ "$ok" != "true" ]; then
@@ -561,7 +758,7 @@ post_comment() {
     return 0
   fi
   local uuid
-  uuid=$(_resolve_issue_uuid "$ref")
+  uuid=$(_resolve_issue_uuid "$ref") || return $?
   if [ -z "$uuid" ]; then
     echo "post_comment: could not resolve $ref to UUID" >&2
     return 1
@@ -571,13 +768,214 @@ post_comment() {
     '{query: "mutation($id: String!, $body: String!) { commentCreate(input: { issueId: $id, body: $body }) { success } }",
       variables: {id: $id, body: $body}}')
   local result
-  result=$(linear_raw "$payload")
+  result=$(linear_raw "$payload") || return $?
   local ok
   ok=$(printf '%s' "$result" | jq -r '.data.commentCreate.success // false')
   if [ "$ok" != "true" ]; then
     echo "post_comment: $ref failed: $result" >&2
     return 1
   fi
+}
+
+# crosscheck_open_prs: cross-check <tasks-file> against the open PRs and report
+# the outcome on <issue>. Always returns 0.
+#
+# Carried over from slidefactory-core (EXP-1469). "No file conflicts" is only
+# said after an explicit success: exit code 0 AND a last non-empty output line
+# "CROSSCHECK RESULT: clean …". Exit 3 with "conflicts" posts the conflict
+# warning as before. Every other pairing — an abort (bash itself exits 1 or 2),
+# 4 from the script, 127 for a missing script, empty output, a code that
+# disagrees with the word — is "incomplete" and posts exactly one warning. The
+# spec stage used to run the script with `|| true` and grep for "conflicts
+# detected", so an abort read as "No file conflicts with open PRs" on every run.
+#
+# The last non-empty line counts, never the first match: a PR title in the
+# report can itself read like a result line.
+#
+# Sets CROSSCHECK_RESULT to clean, conflicts or incomplete.
+#
+# The trap: the spec stage runs under `set -euo pipefail`, and
+#     out=$(bash …/crosscheck-specs.sh …); rc=$?          # WRONG
+# ends the stage at exit 3 or 4 before `rc=$?` is ever reached — and the
+# stage's `trap _spec_recovery EXIT` then routes the issue back to Triage. Only
+# a command in an `if` condition is exempt from `set -e`.
+#
+# The script is found via $_BUREAU_SCRIPTS_DIR, never ./scripts/: the result
+# line is a contract between script and evaluation, and both have to come from
+# the same checkout.
+#
+# Dry-run: post_comment logs the intent and writes nothing; no branch here.
+#
+# Usage: crosscheck_open_prs <issue> <tasks-file>
+crosscheck_open_prs() {
+  local issue="$1" tasks="$2" out rc line last="" pattern
+  local word="" compared="" paths="" unchecked="" reason heading body comment posted
+  if out=$(bash "$_BUREAU_SCRIPTS_DIR/crosscheck-specs.sh" "$tasks" 2>&1); then rc=0; else rc=$?; fi
+  printf '%s\n' "$out"
+
+  while IFS= read -r line; do
+    if [ -n "$line" ]; then
+      last="$line"
+    fi
+  done <<< "$out"
+  pattern='^CROSSCHECK RESULT: (clean|conflicts|incomplete) open=([0-9]+) compared=([0-9]+) paths=([0-9]+) unchecked=(-|#[0-9]+(,#[0-9]+)*)$'
+  if [[ $last =~ $pattern ]]; then
+    word="${BASH_REMATCH[1]}"
+    compared="${BASH_REMATCH[3]}"
+    paths="${BASH_REMATCH[4]}"
+    unchecked="${BASH_REMATCH[5]}"
+  fi
+
+  if [ "$rc" -eq 0 ] && [ "$word" = "clean" ]; then
+    CROSSCHECK_RESULT="clean"
+  elif [ "$rc" -eq 3 ] && [ "$word" = "conflicts" ]; then
+    CROSSCHECK_RESULT="conflicts"
+  else
+    CROSSCHECK_RESULT="incomplete"
+  fi
+
+  if [ "$CROSSCHECK_RESULT" = "clean" ]; then
+    echo "  No file conflicts with open PRs ($compared PRs compared, $paths planned paths)"
+    return 0
+  fi
+
+  if [ "$CROSSCHECK_RESULT" = "conflicts" ]; then
+    comment="⚠️ Crosscheck warning — spec conflicts with open PRs:
+
+\`\`\`
+$out
+\`\`\`"
+    if post_comment "$issue" "$comment"; then
+      posted="warning posted to $issue"
+    else
+      posted="warning could NOT be posted to $issue"
+    fi
+    echo "  File conflicts with open PRs — $posted"
+    return 0
+  fi
+
+  if [ -n "$unchecked" ] && [ "$unchecked" != "-" ]; then
+    reason="Not checked: ${unchecked//,/, } — their changed files could not be read."
+  elif [ -z "$word" ]; then
+    reason="The cross-check ended without a result line, so it did not run to completion."
+  else
+    reason="The cross-check could not read all of its inputs — see its output below."
+  fi
+  if [ -n "$word" ]; then
+    heading="Cross-check output:"
+    body="$out"
+  else
+    heading="Last 20 lines of the cross-check output:"
+    body=$(printf '%s\n' "$out" | tail -n 20)
+  fi
+  if [ -z "$body" ]; then
+    body="(no output)"
+  fi
+  comment="⚠️ Crosscheck incomplete — this spec was NOT fully checked against open PRs (exit code $rc).
+
+$reason
+
+$heading
+\`\`\`
+$body
+\`\`\`"
+  if post_comment "$issue" "$comment"; then
+    posted="warning posted to $issue"
+  else
+    posted="warning could NOT be posted to $issue"
+  fi
+  echo "  WARNING: crosscheck incomplete (exit $rc) — open PRs were NOT fully checked against this spec; $posted"
+  return 0
+}
+
+# check_squash_range: does any commit in the squash range carry a CI
+# suppressor? Runs squash-marker-check.sh against <base>..HEAD and leaves the
+# answer in two globals; the caller decides what a halt means.
+#
+# Carried over from slidefactory-core (EXP-1465). The second layer behind
+# merge-body.sh: that one defangs the message merge-pipeline.sh writes, this one
+# reads the commits themselves, which is what reaches main on a rebase merge or
+# a merge done by hand. The implement stage calls it before the hand-off, the
+# QA stage before it routes.
+#
+# Sets:
+#   SQUASH_CHECK   clean | found | unchecked
+#   SQUASH_REPORT  the script's one line (clean), its report (found), or a line
+#                  saying the range could not be checked followed by whatever
+#                  the script printed (unchecked)
+#
+# Exit 3 is a finding. Every other non-zero code — 2 from the script itself,
+# 1 from a bash that tripped, 127 for a missing script — is "unchecked", and
+# unchecked halts like a finding: a guard that waves through what it could not
+# read is the silent failure it exists to prevent.
+#
+# Always returns 0. The trap: the stages run under `set -euo pipefail`, and
+#     out=$(bash …/squash-marker-check.sh …); rc=$?          # WRONG
+# ends the stage at the first finding, before `rc=$?` is ever reached. Only a
+# command in an `if` condition is exempt from `set -e`, and in the else-branch
+# of the un-negated form `$?` is the script's own code.
+#
+# The script is found via $_BUREAU_SCRIPTS_DIR, never relative to the working
+# directory: stages run from worktrees.
+#
+# Usage: check_squash_range [<base>]   (base defaults to origin/main)
+check_squash_range() {
+  local basis="${1:-origin/main}" out rc
+  if out=$(bash "$_BUREAU_SCRIPTS_DIR/squash-marker-check.sh" "$basis" 2>&1); then
+    SQUASH_CHECK="clean"
+    SQUASH_REPORT="$out"
+  else
+    rc=$?
+    if [ "$rc" -eq 3 ]; then
+      SQUASH_CHECK="found"
+      SQUASH_REPORT="$out"
+    else
+      SQUASH_CHECK="unchecked"
+      SQUASH_REPORT="Squash range $basis..HEAD could not be checked (exit code $rc) — halting rather than passing it on unchecked.
+$out"
+    fi
+  fi
+  return 0
+}
+
+# comment_on_branch_pr: post <text> as a comment on the open PR of <branch>,
+# if there is one. Loud on failure, never fatal; always returns 0.
+#
+# Carried over from slidefactory-core (EXP-1465). A halt for a CI suppressor has
+# to show where the merge happens, not only in Linear. It is a comment and not
+# a flip back to draft on purpose: no stage makes that transition today.
+#
+# "No PR" covers three answers of `gh pr list --jq '.[0].number'`: empty, the
+# literal string "null" it prints when nothing matches, and gh failing —
+# whatever it printed then is not an answer. The text goes in on stdin
+# (--body-file -), so a multi-line report arrives unmangled.
+#
+# Dry-run: BUREAU_DRY_RUN=1 logs the intent and returns 0 without calling gh.
+#
+# Usage: comment_on_branch_pr <branch> <text>
+comment_on_branch_pr() {
+  local branch="$1" text="$2" pr out rc
+  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+    echo "[DRY_RUN] comment_on_branch_pr $branch ($(printf '%s' "$text" | head -c 80 | tr '\n' ' ')...)" >&2
+    return 0
+  fi
+  if pr=$(gh pr list --head "$branch" --json number --jq '.[0].number' 2>/dev/null); then
+    :
+  else
+    pr=""
+  fi
+  if [ -z "$pr" ] || [ "$pr" = "null" ]; then
+    echo "  no open PR for $branch — the finding stands in Linear and in logs/escalations.log"
+    return 0
+  fi
+  if out=$(printf '%s\n' "$text" | gh pr comment "$pr" --body-file - 2>&1); then
+    :
+  else
+    rc=$?
+    echo "  ✗ could not comment on PR #$pr (gh exit code $rc) — the finding stands in Linear and in logs/escalations.log" >&2
+    echo "$out" | sed 's/^/       gh: /' >&2
+  fi
+  return 0
 }
 
 # Resolve the working branch for an issue.
@@ -604,7 +1002,7 @@ get_issue_branch() {
   # spec pipeline near the top of the comment list; if it falls off the page,
   # downstream pipelines silently fall back to Linear's branchName which never
   # matches the sequential spec branch numbers.
-  data=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }")
+  data=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }") || return $?
   local marker
   marker=$(printf '%s' "$data" \
     | jq -r '
@@ -635,7 +1033,9 @@ get_issue_branch_and_comments() {
   local ref="$1"
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }" \
+  local answer
+  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }") || return $?
+  printf '%s' "$answer" \
     | jq '
       (.data.issues.nodes[0] // {}) as $issue
       | (($issue.comments.nodes // []) | sort_by(.createdAt) | reverse) as $comments
@@ -657,7 +1057,9 @@ get_issue_comments() {
   local ref="$1"
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { comments(first: 200) { nodes { body createdAt } } } } }" \
+  local answer
+  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { comments(first: 200) { nodes { body createdAt } } } } }") || return $?
+  printf '%s' "$answer" \
     | jq '(.data.issues.nodes[0].comments.nodes // []) | sort_by(.createdAt) | reverse'
 }
 
@@ -666,21 +1068,25 @@ get_issue_detail() {
   local ref="$1"
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { identifier title description project { name description } labels { nodes { name } } } } }" \
+  local answer
+  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { identifier title description project { name description } labels { nodes { name } } } } }") || return $?
+  printf '%s' "$answer" \
     | jq '(.data.issues.nodes[0] // {}) | {identifier, title, description, project: (.project // {name: null, description: null}), labels: ((.labels.nodes // []) | map(.name))}'
 }
 
 # Raw identity/state snapshot for optimistic stage completion checks.
 bureau_issue_snapshot() {
   local ref="$1" team_key="${1%%-*}" number="${1##*-}"
-  linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id identifier title description state { id name } labels { nodes { name } } } } }" \
+  local answer
+  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id identifier title description state { id name } labels { nodes { name } } } } }") || return $?
+  printf '%s' "$answer" \
     | jq '.data.issues.nodes[0] // {}'
 }
 
 # Canonical names for existing stage guards, resolved from configured UUIDs.
 get_issue_state() {
   local snapshot id key
-  snapshot=$(bureau_issue_snapshot "$1")
+  snapshot=$(bureau_issue_snapshot "$1") || return $?
   id=$(printf '%s' "$snapshot" | jq -r '.state.id // empty')
   key=$(jq -r --arg id "$id" '.linear.teams[0].states | to_entries[] | select(.value == $id and $id != "") | .key' "$BUREAU_CONFIG" | head -1)
   case "$key" in
@@ -688,6 +1094,67 @@ get_issue_state() {
     design) echo Design ;; copy) echo Copy ;; build) echo Build ;; qa) echo QA ;;
     build_review) echo 'Build Review' ;; merge) echo Merge ;; done) echo Done ;;
     *) printf '%s' "$snapshot" | jq -r '.state.name // empty' ;;
+  esac
+}
+
+# _resolve_label_id <label-name> <issue-ref> — the UUID of the label <name> that
+# applies to the issue's team. stdout: the UUID, or empty for a well-formed
+# "no such label". Exit: 0; $BUREAU_EXIT_LINEAR_UNUSABLE when Linear stayed
+# unusable; 2 when the answer was usable but a matching label could not be
+# classified.
+#
+# Carried over from msc-planner (EXP-1340). The name-only lookup with
+# `first: 1` returned whichever label of that name the server listed first. In
+# a workspace where two teams both have `needs-human` (or `shepherd-focused`),
+# that was deterministically the other team's label, which cannot attach to
+# this team's issue — every attach failed, and remove_issue_label reported an
+# idempotent success while the label stayed on. So the name is queried across
+# the workspace, each candidate carrying its team, and chosen in strict order:
+#   1. the label owned by the issue's own team
+#   2. else a workspace-level label (team == null, valid for every team)
+#   3. else nothing
+# No server-side team filter on purpose: it would drop the workspace-level
+# labels of tier 2 before they reach the choice.
+#
+# A matching node without classifiable team metadata or without a usable id is
+# never skipped into "not found": that is exit 2, unless a usable winner exists
+# anyway. Empty output with exit 0 is reserved for a clean no-match.
+#
+# The team comes from an identifier like EXP-123; for a UUID reference the
+# configured team key applies.
+_resolve_label_id() {
+  local name="$1" ref="$2" team_key answer selection
+  case "$ref" in
+    [A-Z]*-[0-9]*) team_key="${ref%%-*}" ;;
+    *) team_key="$BUREAU_TEAM_KEY" ;;
+  esac
+  answer=$(linear_query "{ issueLabels(filter: { name: { eq: \\\"$name\\\" } }, first: 20) { nodes { id team { key } } } }") || return $?
+  selection=$(printf '%s' "$answer" | jq -r --arg tk "$team_key" '
+    def usable_node:
+      ( has("team")
+        and ( (.team == null)
+              or ( ((.team | type) == "object")
+                   and (.team | has("key"))
+                   and ((.team.key | type) == "string")
+                   and ((.team.key | length) > 0) ) ) )
+      and ((.id | type) == "string") and ((.id | length) > 0);
+    if (.data.issueLabels.nodes | type) != "array" then "malformed"
+    else
+      .data.issueLabels.nodes as $nodes
+      | ($nodes | map(select(usable_node)))    as $good
+      | (($good | length) < ($nodes | length)) as $malformed
+      | ( ([ $good[] | select(.team.key == $tk) ] | .[0])
+          // ([ $good[] | select(.team == null) ] | .[0]) ) as $win
+      | if $win != null then "id " + $win.id
+        elif $malformed then "malformed"
+        else "none" end
+    end') || selection="malformed"
+  case "$selection" in
+    "id "*) printf '%s' "${selection#id }" ;;
+    none) : ;;
+    *)
+      echo "_resolve_label_id: a label named '$name' could not be classified for team '$team_key'" >&2
+      return 2 ;;
   esac
 }
 
@@ -700,16 +1167,21 @@ add_issue_label() {
     return 0
   fi
   local uuid
-  uuid=$(_resolve_issue_uuid "$ref")
+  uuid=$(_resolve_issue_uuid "$ref") || return $?
   if [ -z "$uuid" ]; then
     echo "add_issue_label: could not resolve $ref" >&2
     return 1
   fi
-  local label_id
-  label_id=$(linear_query "{ issueLabels(filter: { name: { eq: \\\"$name\\\" } }, first: 1) { nodes { id } } }" \
-    | jq -r '.data.issueLabels.nodes[0].id // empty')
+  local label_id status=0
+  label_id=$(_resolve_label_id "$name" "$ref") || status=$?
+  if [ "$status" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+    return "$status"
+  elif [ "$status" != 0 ]; then
+    echo "add_issue_label: label lookup failed for '$name'" >&2
+    return 1
+  fi
   if [ -z "$label_id" ]; then
-    echo "add_issue_label: no label named '$name'" >&2
+    echo "add_issue_label: no label named '$name' for this team or the workspace" >&2
     return 1
   fi
   local payload
@@ -717,15 +1189,17 @@ add_issue_label() {
     '{query: "mutation($id: String!, $lid: String!) { issueAddLabel(id: $id, labelId: $lid) { success } }",
       variables: {id: $id, lid: $lid}}')
   local ok
-  ok=$(linear_raw "$payload" | jq -r '.data.issueAddLabel.success // false')
+  local label_result
+  label_result=$(linear_raw "$payload") || return $?
+  ok=$(printf '%s' "$label_result" | jq -r '.data.issueAddLabel.success // false')
   [ "$ok" = "true" ]
 }
 
 # Remove a label (by name) from an issue. Mirrors add_issue_label.
 # Idempotent on both ends — Linear's issueRemoveLabel no-ops if the label
 # isn't currently applied; we also return success (without calling Linear) if
-# the label name doesn't exist in the workspace at all, because the caller
-# wants the label absent and it definitionally is.
+# no label of that name exists for the issue's team or the workspace, because
+# the caller wants the label absent and it definitionally is.
 # Usage: remove_issue_label <issue-id-or-key> <label-name>
 remove_issue_label() {
   local ref="$1" name="$2"
@@ -734,21 +1208,31 @@ remove_issue_label() {
     return 0
   fi
   local uuid
-  uuid=$(_resolve_issue_uuid "$ref")
+  uuid=$(_resolve_issue_uuid "$ref") || return $?
   if [ -z "$uuid" ]; then
     echo "remove_issue_label: could not resolve $ref" >&2
     return 1
   fi
-  local label_id
-  label_id=$(linear_query "{ issueLabels(filter: { name: { eq: \\\"$name\\\" } }, first: 1) { nodes { id } } }" \
-    | jq -r '.data.issueLabels.nodes[0].id // empty')
+  local label_id status=0
+  label_id=$(_resolve_label_id "$name" "$ref") || status=$?
+  # A lookup failure is never an idempotent success: that would acknowledge a
+  # release while the label may still be attached. Only a clean "no such label
+  # for this team or the workspace" stays idempotent.
+  if [ "$status" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+    return "$status"
+  elif [ "$status" != 0 ]; then
+    echo "remove_issue_label: label lookup failed for '$name'" >&2
+    return 1
+  fi
   [ -z "$label_id" ] && return 0
   local payload
   payload=$(jq -n --arg id "$uuid" --arg lid "$label_id" \
     '{query: "mutation($id: String!, $lid: String!) { issueRemoveLabel(id: $id, labelId: $lid) { success } }",
       variables: {id: $id, lid: $lid}}')
   local ok
-  ok=$(linear_raw "$payload" | jq -r '.data.issueRemoveLabel.success // false')
+  local label_result
+  label_result=$(linear_raw "$payload") || return $?
+  ok=$(printf '%s' "$label_result" | jq -r '.data.issueRemoveLabel.success // false')
   [ "$ok" = "true" ]
 }
 
@@ -1315,8 +1799,18 @@ merge_origin_main_or_abort() {
 # (needs-human, blocked, wip) are excluded from the count — they're already
 # stalled, holding up the cap on them too would deadlock the loop.
 #
-# Output: integer count on stdout, "0" on any query failure (fail-open so a
-# Linear hiccup doesn't block work).
+# What counts is work, not tickets (carried over from slidefactory-core,
+# EXP-1462): only issues of the configured projects (.linear.projects, as in
+# pick_issue), and only issues without children — an epic is a bracket, not
+# work, and one on Spec used to hold every new run. Sub-issues count: the old
+# `parent: { null: true }` filter counted epics and skipped the work under
+# them, and without the project filter the cap counted other projects'
+# tickets (16 foreign ones held every spec stage in slidefactory).
+#
+# Output: integer count on stdout. A Linear answer that stays unusable returns
+# $BUREAU_EXIT_LINEAR_UNUSABLE instead of "0": the count used to fail open, so
+# the cap let new work in exactly while Linear was failing. (slidefactory keeps
+# it fail-open; the retry ladder bridges short outages here.)
 count_in_flight_issues() {
   # Build a comma-separated list of in-flight state UUIDs. Optional states
   # (qa, copy, merge) are only included when configured.
@@ -1331,26 +1825,42 @@ count_in_flight_issues() {
   state_ids="${state_ids%,}"  # strip trailing comma
   [ -z "$state_ids" ] && { echo "0"; return 0; }
 
+  local project_clause="" projects_gql
+  if [ -n "${BUREAU_PROJECTS:-}" ]; then
+    projects_gql=$(printf '%s' "$BUREAU_PROJECTS" | awk -F',' '
+      BEGIN{printf "["}
+      {for(i=1;i<=NF;i++) if($i!="") printf "%s\"%s\"", (i>1?",":""), $i}
+      END{printf "]"}
+    ')
+    [ "$projects_gql" != "[]" ] && project_clause=$(printf ', project: { id: { in: %s } }' "$projects_gql")
+  fi
+
+  # `children(first: 1)`: the rule only asks WHETHER an issue has children.
   local query
-  query=$(printf '{ issues(filter: { team: { key: { eq: "%s" } }, state: { id: { in: [%s] } }, parent: { null: true } }, first: 250) { nodes { labels { nodes { name } } } } }' \
-    "$BUREAU_TEAM_KEY" "$state_ids")
+  query=$(printf '{ issues(filter: { team: { key: { eq: "%s" } }, state: { id: { in: [%s] } }%s }, first: 250) { nodes { labels { nodes { name } } children(first: 1) { nodes { id } } } } }' \
+    "$BUREAU_TEAM_KEY" "$state_ids" "$project_clause")
 
   local payload
   payload=$(jq -n --arg q "$query" '{query: $q}')
 
-  curl -s -X POST https://api.linear.app/graphql \
-    -H "Content-Type: application/json" \
-    -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
-    -d "$payload" 2>/dev/null \
+  # Through linear_raw, and no fallback to 0: a count read from an unusable
+  # answer used to come out as "0 in flight", which let the spec stage take a
+  # new ticket past the cap exactly while Linear was failing.
+  local answer
+  answer=$(linear_raw "$payload") || return $?
+  printf '%s' "$answer" \
   | jq '
     [(.data.issues.nodes // [])[]
      | select(
          ([(.labels.nodes // [])[].name]
           | map(select(. == "needs-human" or . == "blocked" or . == "wip"))
           | length) == 0
-       )]
+       )
+     # A node without a `children` field counts: if the field is ever missing,
+     # the cap keeps counting instead of silently stopping.
+     | select(((.children.nodes // []) | length) == 0)]
     | length
-  ' 2>/dev/null || echo "0"
+  '
 }
 
 # A held branch is an ownership conflict. Never detach another checkout.
@@ -1408,9 +1918,204 @@ reset_worktree() {
   fi
 }
 
+# restore_worktree_deps <worktree> — put node_modules back after reset_worktree's
+# `clean -fdx`, for an npm project. Returns 0 when there is nothing to do or the
+# dependencies are in place, 24 (environment-blocked) when they could not be
+# restored. The stages call it after their own checkout and merge of
+# origin/main (both can change the manifests) as `|| exit 24`.
+#
+# Carried over from msc-planner (EXP-1375). `clean -fdx` removes ignored files,
+# node_modules included, and nothing installed them again: the review stage's
+# build check ran without dependencies every time, the build was red, and the
+# red build turned four unanimous APPROVEs into REQUEST_CHANGES. Only for npm
+# (package.json AND package-lock.json); every other project returns 0 at once.
+#
+# Security, each point a review finding in msc:
+#   - `npm ci --ignore-scripts`, never without: otherwise the lifecycle scripts
+#     of the packages a PR lists run before anyone has reviewed the PR, on a
+#     machine with .env access.
+#   - A node_modules the branch tracks, or one that is a symlink, is discarded:
+#     `clean -fdx` does not remove tracked files, and a symlink could point the
+#     build at PR-supplied binaries. The `! -L` in the stamp check is the guard
+#     that carries; the removals are depth.
+#   - The stamp (SHA-256 of package.json + package-lock.json) lives in the
+#     shared .git, where no PR content can write, and so does the npm log.
+#
+# Correctness:
+#   - Fresh, not just present: the stamp is compared on every call, so a call
+#     after the final checkout picks up a lock file the branch changed.
+#   - Clone only on identical manifests (from the main checkout, copy-on-write
+#     where APFS allows); otherwise npm ci. Never a symlink to the main
+#     checkout's node_modules (Turbopack rejects it).
+#   - Mounted atomically: built next to the target, then renamed. A half-filled
+#     node_modules made builds fail with internal errors instead of a clear one.
+#   - Never in the main checkout itself: there node_modules is the clone source.
+#   - Paths come from `git rev-parse --git-common-dir`, not $REPO_DIR: a stage
+#     sets REPO_DIR to its own worktree.
+#   - Why 24 and not 0: with 0 the stage ran on, built red, and a registry
+#     outage became a REQUEST_CHANGES on code that was never the problem.
+restore_worktree_deps() {
+  local wt="$1"
+  local common main_repo stampdir stamp tmp want have src_want tracked log attempt reason
+
+  [ -f "$wt/package.json" ] || return 0
+  [ -f "$wt/package-lock.json" ] || return 0
+  command -v shasum >/dev/null 2>&1 || return 0
+
+  common=$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null) || return 0
+  case "$common" in
+    /*) : ;;
+    *)  common=$(cd "$wt" && cd "$common" 2>/dev/null && pwd) || return 0 ;;
+  esac
+  [ -d "$common" ] || return 0
+  main_repo=$(dirname "$common")
+  [ "$main_repo" = "$wt" ] && return 0
+  stampdir="$common/bureau-deps"
+  stamp="$stampdir/$(printf "%s" "$wt" | shasum -a 256 | cut -d" " -f1)"
+  tmp="$wt/.nm.tmp"
+
+  # Both manifests: package.json carries overrides and resolutions the lock
+  # file does not show.
+  want=$(cat "$wt/package.json" "$wt/package-lock.json" 2>/dev/null | shasum -a 256 | cut -d" " -f1)
+  [ -n "$want" ] || return 0
+
+  # `grep -c`, not `grep -q`: -q closes the pipe early, `git ls-files` gets
+  # SIGPIPE, and under pipefail the condition is always false. `$` is needed
+  # for a tracked symlink, which ls-files lists without a slash. Case-insensitive
+  # because macOS folds NODE_MODULES onto the same path.
+  tracked=$(git -C "$wt" ls-files 2>/dev/null | grep -ciE '^node_modules(/|$)' || true)
+  if [ "${tracked:-0}" -gt 0 ]; then
+    echo "  WARNING: node_modules is tracked in the branch — discarded (not trusted)."
+    rm -rf "$wt/node_modules"
+  fi
+  mkdir -p "$stampdir" 2>/dev/null
+  if [ -L "$wt/node_modules" ]; then
+    echo "  WARNING: node_modules is a symlink — discarded (not trusted)."
+    rm -f "$wt/node_modules"
+  fi
+
+  if [ -d "$wt/node_modules" ] && [ ! -L "$wt/node_modules" ] && [ -f "$stamp" ]; then
+    have=$(cat "$stamp" 2>/dev/null)
+    if [ "$have" = "$want" ]; then
+      echo "  Dependencies: unchanged, skipped"
+      return 0
+    fi
+  fi
+
+  rm -rf "$tmp"
+
+  if [ -d "$main_repo/node_modules" ] && [ -f "$main_repo/package.json" ] && [ -f "$main_repo/package-lock.json" ]; then
+    src_want=$(cat "$main_repo/package.json" "$main_repo/package-lock.json" 2>/dev/null | shasum -a 256 | cut -d" " -f1)
+    if [ "$src_want" = "$want" ]; then
+      if cp -Rc "$main_repo/node_modules" "$tmp" 2>/dev/null || cp -R "$main_repo/node_modules" "$tmp" 2>/dev/null; then
+        rm -rf "$wt/node_modules"
+        if mv "$tmp" "$wt/node_modules" 2>/dev/null; then
+          printf "%s" "$want" > "$stamp" 2>/dev/null
+          echo "  Dependencies: cloned from the main checkout"
+          return 0
+        fi
+      fi
+      rm -rf "$tmp"
+    fi
+  fi
+
+  if command -v npm >/dev/null 2>&1; then
+    # `npm ci` reads package.json from its working directory; a --prefix alone
+    # does not do that.
+    mkdir -p "$tmp"
+    cp "$wt/package.json" "$wt/package-lock.json" "$tmp/" 2>/dev/null
+    log="$stamp.npm-ci.log"
+    attempt=1
+    while [ "$attempt" -le 2 ]; do
+      # Reset per attempt, so message and log describe the same, last attempt.
+      reason="npm ci"
+      if ( cd "$tmp" && npm ci --ignore-scripts --no-audit --no-fund ) >"$log" 2>&1 \
+         && [ -d "$tmp/node_modules" ]; then
+        rm -rf "$wt/node_modules"
+        if mv "$tmp/node_modules" "$wt/node_modules" 2>>"$log"; then
+          printf "%s" "$want" > "$stamp" 2>/dev/null
+          rm -rf "$tmp"
+          echo "  Dependencies: installed with npm ci --ignore-scripts"
+          return 0
+        fi
+        reason="mounting node_modules"
+      fi
+      # One retry: the usual cause is a registry hiccup, gone the second time.
+      attempt=$((attempt + 1))
+    done
+    echo "  $reason failed ($((attempt - 1)) attempts) — last lines:"
+    tail -n 20 "$log" 2>/dev/null | sed "s/^/    | /"
+    rm -rf "$tmp"
+  fi
+
+  # A node_modules left here is stale by the stamp: remove it rather than build
+  # green on the wrong dependencies.
+  rm -rf "$wt/node_modules"
+  echo "  Dependencies: COULD NOT be restored — stopping (environment-blocked)"
+  return 24
+}
+
+# A red build pulls the verdict down — but it NEVER softens a BLOCK.
+#
+# The review stage used to fold the build result in with one unconditional line:
+# `[ "$BUILD_OK" = false ] && VERDICT="REQUEST_CHANGES"`. A build is also red for
+# reasons that have nothing to do with the code — missing dependencies in the
+# worktree, no network, a broken stub — and in that case a BLOCK lost its
+# escalation: the finding stayed in the review text while the ticket went into
+# ordinary rework without `needs-human`. That happened in a live installation on
+# 2026-08-11 and was logged there as CRITICAL.
+#
+# The table is fail-closed: what it does not know becomes BLOCK. An unknown verdict
+# is a fault in the caller, and a fault in the caller must not reach a merge.
+apply_build_failure() {
+  case "${1:-}" in
+    BLOCK)                   echo "BLOCK" ;;
+    APPROVE|REQUEST_CHANGES) echo "REQUEST_CHANGES" ;;
+    *)                       echo "BLOCK" ;;
+  esac
+}
+
 # Map pipeline exit code → human-readable error class (for alerts, logs,
 # and shepherd's halt-classifier). Originally in queue-loop.sh; relocated
 # so single-shot drivers can reuse the same exit-code protocol.
+# resolve_verdict_exit <verdict> → 0 | 25 — the review stage's exit code,
+# taken from the verdict alone. APPROVE and REQUEST_CHANGES end the stage
+# cleanly (their routing is done); BLOCK and anything unknown end with 25
+# (needs-human-or-paused), the same fail-closed direction as the stage's
+# `VERDICT="${VERDICT:-BLOCK}"`.
+#
+# Carried over from msc-planner (EXP-1322), with this template's code: msc
+# ends a BLOCK with 20, which here means stopped-before-merge. A BLOCK used to
+# label, comment and exit 0, indistinguishable from an approved review. The
+# queue picker skips the needs-human ticket, but a shepherd saw 0, found the
+# ticket still in Build Review and ran the review again on the same commit —
+# in msc such a second run flipped BLOCK to APPROVE with no code change and
+# merged. With 25 the shepherd halts (shepherd_rc_action below).
+resolve_verdict_exit() {
+  case "${1:-}" in
+    APPROVE|REQUEST_CHANGES) echo 0 ;;
+    *)                       echo 25 ;;
+  esac
+}
+
+# shepherd_rc_action <exit-code> → ok | retry | halt — how shepherd.sh answers a
+# stage's exit code, as a pure table.
+#
+# Carried over from msc-planner. The shepherd used to list its halt codes one
+# by one and send everything else to an "unexpected exit" that stopped without
+# an alert — so every code added later (22 to 26 here) halted silently. Now
+# halt is the default and only the exceptions are listed:
+#   ok    0 success · 2 queue-empty
+#   retry 10 linear-down · 16 provider-unauth (transient, throttled retry)
+# Everything else halts with an alert, unknown codes included.
+shepherd_rc_action() {
+  case "${1:-}" in
+    0|2)   echo "ok" ;;
+    10|16) echo "retry" ;;
+    *)     echo "halt" ;;
+  esac
+}
+
 exit_class() {
   case "$1" in
     0)   echo "ok" ;;
@@ -1432,6 +2137,7 @@ exit_class() {
     24)  echo "environment-blocked" ;;
     25)  echo "needs-human-or-paused" ;;
     26)  echo "cancelled-ticket" ;;
+    27)  echo "linear-unusable" ;;
     124) echo "timeout" ;;
     130) echo "cancelled-run" ;;
     *)   echo "error-$1" ;;
@@ -1441,7 +2147,9 @@ exit_class() {
 # Precondition: verify LINEAR_API_KEY works. Exit 10 on failure.
 precondition_linear() {
   local out
-  out=$(linear_query "{ viewer { id } }" 2>/dev/null || true)
+  # No `2>/dev/null`: the retry lines of the fetch belong in the stage log.
+  # Exit 10 stays — it is the contract with shepherd and queue-loop.
+  out=$(linear_query "{ viewer { id } }" || true)
   local id
   id=$(printf '%s' "$out" | jq -r '.data.viewer.id // empty' 2>/dev/null || true)
   if [ -z "$id" ]; then
@@ -1542,11 +2250,13 @@ pick_issue() {
 
   # Sorted candidate list, one per line: <identifier>\t<open-blockers-csv>
   # The blockers column is empty when nothing blocks the candidate.
+  # Through linear_raw, so an unusable answer is retried and then ends the
+  # stage with $BUREAU_EXIT_LINEAR_UNUSABLE instead of reading as "queue
+  # empty" (exit 2).
+  local answer
+  answer=$(linear_raw "$payload") || return $?
   local candidates
-  candidates=$(curl -s -X POST https://api.linear.app/graphql \
-    -H "Content-Type: application/json" \
-    -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
-    -d "$payload" \
+  candidates=$(printf '%s' "$answer" \
   | jq -r --argjson excl "$exclude_json" --arg skip "$skip_csv" '
     (.data.issues.nodes // [])
     | map(select(.identifier as $id | ($skip | split(",") | index($id)) == null))

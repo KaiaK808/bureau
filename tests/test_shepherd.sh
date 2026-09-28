@@ -62,6 +62,7 @@ EOF
   # helper shepherd uses as a no-op or simulated mutation. The state machine
   # is a single file ($SANDBOX/state.txt) holding the current UUID.
   cat > "$sb/scripts/bureau-config.sh" <<'STUB_EOF'
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-env.sh"
 #!/bin/bash
 # STUB bureau-config.sh for shepherd test. Defines every helper shepherd
 # touches. The "Linear state machine" is a single file at $STATE_FILE.
@@ -154,6 +155,10 @@ exit_class() {
   esac
 }
 STUB_EOF
+  # The shepherd's exit-code decisions run for real: the table and the Linear exit code
+  # come from the real config.
+  sed -n -e '/^BUREAU_EXIT_LINEAR_UNUSABLE=/p' -e '/^shepherd_rc_action() {/,/^}/p' \
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
 
   # Stub pipelines: log invocation, advance to the next happy-path state.
   _make_stub_pipeline() {
@@ -181,6 +186,9 @@ PIPELINE_EOF
 
   # Real ownership wrapper around the simulated stage state machine.
   git -C "$sb" init -q
+  # bureau_load_env lives next to the config the pipelines source (see
+  # tests/test_env_read_safety.sh for why .env is parsed, not sourced).
+  cp "$REPO_ROOT/templates/scripts/bureau-env.sh" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-worker.sh" "$sb/scripts/"
   cat >> "$sb/scripts/bureau-config.sh" <<'RUNTIME'
@@ -330,9 +338,124 @@ test_stuck() {
   return 0
 }
 
+# ── Scenario 5: a stage gives up on Linear (exit 27) → halt, made visible ──
+# The stub implement stage leaves a fault class in $_BUREAU_LINEAR_FAULT_FILE — the
+# file shepherd hands it through the real bureau-worker.sh and runtime — and exits 27.
+# $1 = what the stage writes into the fault file; $2 = "old" runs a shepherd without
+# the 27 arm (the negative control).
+_run_linear_halt() {
+  local sb="$1" fault="$2"
+  cat > "$sb/scripts/implement-pipeline.sh" <<STAGE_EOF
+#!/bin/bash
+set -euo pipefail
+source "\$(dirname "\$0")/bureau-config.sh"
+echo "implement-pipeline.sh" >> "\$INVOCATIONS_LOG"
+printf '%s\n' '$fault' > "\${_BUREAU_LINEAR_FAULT_FILE:?shepherd did not hand the fault file on}"
+exit 27
+STAGE_EOF
+  cat >> "$sb/scripts/bureau-config.sh" <<'REC_EOF'
+add_issue_label() { printf '%s\t%s\tsingle=%s\n' "+$1" "$2" "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" >> "$LABEL_LOG"; }
+post_comment()    { printf '%s\tsingle=%s\n' "$2" "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" >> "$LABEL_LOG.comments"; }
+alert_telegram()  { printf '%s\n' "$4" >> "$LABEL_LOG.alerts"; }
+REC_EOF
+  echo "s5" > "$sb/state.txt"   # Build → implement-pipeline.sh
+  set +e
+  run_shepherd "$sb" EXP-5
+  LINEAR_HALT_RC=$?
+  set -e
+}
+
+test_linear_unusable_halts() {
+  local sb; sb=$(make_sandbox linear_halt)
+  _run_linear_halt "$sb" graphql-errors
+  assert_eq "$LINEAR_HALT_RC" "27" "shepherd exit after a stage gave up on Linear" || return 1
+  grep -q "^+EXP-5"$'\t'"needs-human"$'\t'"single=1$" "$sb/labels.log" \
+    || { echo "FAIL: needs-human was not attempted once, on the single-attempt path"; cat "$sb/labels.log"; return 1; }
+  grep -q "gave up because Linear stayed unusable.*graphql-errors.*single=1$" "$sb/labels.log.comments" \
+    || { echo "FAIL: the halt comment does not name the fault class"; return 1; }
+  grep -q "graphql-errors" "$sb/labels.log.alerts" \
+    || { echo "FAIL: the alert does not name the fault class"; return 1; }
+  local runs; runs=$(wc -l < "$sb/invocations.log" | tr -d ' ')
+  assert_eq "$runs" "1" "the stage runs once; a halt is not retried" || return 1
+
+  # Anything but a name from the fixed list is reported as unknown, never repeated.
+  local sb2; sb2=$(make_sandbox linear_halt_text)
+  _run_linear_halt "$sb2" 'CANARY-ANSWER <html>'
+  grep -q "unknown" "$sb2/labels.log.alerts" || { echo "FAIL: a free-text fault was not reported as unknown"; return 1; }
+  if grep -rq "CANARY-ANSWER" "$sb2/labels.log.alerts" "$sb2/labels.log.comments" "$sb2/shepherd.out" "$sb2/shepherd.err"; then
+    echo "FAIL: text from the fault file reached an alert, a comment or the log"; return 1
+  fi
+
+  # Negative control: without the line that routes 27 to its own arm, the shepherd takes
+  # the generic halt — it alerts, but neither labels nor comments, the silence on the
+  # ticket this arm exists to end.
+  local sb3; sb3=$(make_sandbox linear_halt_old)
+  grep -v 'ACTION=linear-halt$' "$sb3/scripts/shepherd.sh" > "$sb3/scripts/shepherd.old" \
+    && mv "$sb3/scripts/shepherd.old" "$sb3/scripts/shepherd.sh"
+  if grep -q 'ACTION=linear-halt$' "$sb3/scripts/shepherd.sh" || ! grep -q 'shepherd_rc_action' "$sb3/scripts/shepherd.sh"; then
+    echo "FAIL: could not build the negative control"; return 1
+  fi
+  _run_linear_halt "$sb3" graphql-errors
+  if grep -q "needs-human" "$sb3/labels.log" 2>/dev/null || [ -s "$sb3/labels.log.comments" ]; then
+    echo "FAIL: negative control: the shepherd without the 27 arm still labels or comments, so this proves nothing"; return 1
+  fi
+  return 0
+}
+
+# ── Scenario 6: a BLOCK review halts the shepherd instead of being reviewed again ──
+# The stub review stage ends the way the real one does after a BLOCK — with the code
+# resolve_verdict_exit gives BLOCK — and leaves the ticket in Build Review. $2 = the exit
+# code to use instead (the negative control passes 0, the old BLOCK exit).
+_run_block() {
+  local sb="$1" code="${2:-}"
+  if [ -z "$code" ]; then
+    sed -n '/^resolve_verdict_exit() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$sb/verdict.sh"
+    code=$(bash -c 'source "$1"; resolve_verdict_exit BLOCK' _ "$sb/verdict.sh")
+    [ -n "$code" ] || { echo "FAIL: resolve_verdict_exit not found in bureau-config.sh"; return 1; }
+  fi
+  cat > "$sb/scripts/code-review-pipeline.sh" <<STAGE_EOF
+#!/bin/bash
+echo "code-review-pipeline.sh" >> "\$INVOCATIONS_LOG"
+exit $code
+STAGE_EOF
+  cat >> "$sb/scripts/bureau-config.sh" <<'REC_EOF'
+alert_telegram() { printf '%s\n' "$4" >> "$LABEL_LOG.alerts"; }
+REC_EOF
+  echo "s6" > "$sb/state.txt"   # Build Review
+  set +e
+  run_shepherd "$sb" EXP-6
+  BLOCK_RC=$?
+  set -e
+}
+
+test_block_halts() {
+  local sb; sb=$(make_sandbox block)
+  _run_block "$sb"
+  assert_eq "$BLOCK_RC" "25" "shepherd exit after a BLOCK review" || return 1
+  assert_eq "$(grep -c . "$sb/invocations.log")" "1" "a BLOCK review runs once, never again on the same commit" || return 1
+  grep -q "shepherd halt" "$sb/labels.log.alerts" 2>/dev/null \
+    || { echo "FAIL: the BLOCK halt raised no alert"; return 1; }
+
+  # Any code the table does not know halts with an alert too.
+  local sb2; sb2=$(make_sandbox unknown_code)
+  _run_block "$sb2" 99
+  assert_eq "$BLOCK_RC" "99" "an unknown code halts with that code" || return 1
+  grep -q "shepherd halt" "$sb2/labels.log.alerts" 2>/dev/null \
+    || { echo "FAIL: an unknown exit code halted without an alert"; return 1; }
+
+  # Negative control: the old BLOCK exit (0) sends the same ticket into a second review.
+  local sb3; sb3=$(make_sandbox block_old)
+  _run_block "$sb3" 0
+  local runs; runs=$(grep -c . "$sb3/invocations.log")
+  if [ "$runs" -lt 2 ]; then
+    echo "FAIL: negative control: exit 0 no longer re-runs the review, so this proves nothing"; return 1
+  fi
+  return 0
+}
+
 # ── Run all scenarios ──────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_no_merge test_dry_run test_stuck; do
+for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linear_unusable_halts test_block_halts; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else
