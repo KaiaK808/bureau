@@ -45,6 +45,16 @@ Upgrade action: none. A repo whose Linear requests legitimately take longer than
 - A typo in `--from-stage` is refused before anything is claimed.
 - A relative `shepherd.sh --worktree DIR` (the form its help recommends) is taken from the repo root and made absolute before it is handed on. Before, it reached `bureau-worker.sh` as it was; the worker changes into the worktree, so its cleanup ran `git -C <relative>` from there and the shepherd halted with `128` after a stage that had finished (found by the rc.1 pilot, EXP-1533). `bureau-worker.sh` now makes a relative worktree absolute itself too, for every caller. Workaround on rc.1: pass an absolute `--worktree`.
 
+### From the brainhuggers-cli pilot
+
+#### Added
+
+- `repo.post_implement_command`: an optional hook the implement stage runs once after its loop, before the squash-range check and the final push, when the run made commits (never in a dry run). It is for a repository that derives files from an implementation run, such as regenerated docs or command contracts, and replaces a local patch to `implement-pipeline.sh`. It runs in the implement worktree via `bash -o pipefail -c` with no stdin, `BUREAU_ISSUE` and `BUREAU_BRANCH` set, and a limit of `BUREAU_POST_IMPLEMENT_TIMEOUT` seconds (default 900, capped at the stage's total time); a timeout ends its whole process group. It commits its own output. A non-zero exit, a timeout, uncommitted changes it leaves (kept in the worktree, not deleted) or a HEAD that no longer contains the run's commits (then nothing is pushed) halt the ticket like any other halt status and end the stage with `14`. Doctor reports the command and rejects a value that is not a string.
+
+#### Fixed
+
+- A failed final push in the implement stage no longer hands the ticket on. The push after the loop was non-fatal, so the PR was marked ready and the ticket moved to QA or Build Review with work that was not on origin. Now the stage ends with `18` before any hand-off and says so on the ticket; the worker keeps the worktree because it is ahead of origin. The per-iteration pushes stay non-fatal. **Upgrade:** a driver that treated the implement stage's `0` as "pushed" sees `18` when origin refuses the branch.
+
 ## [3.0.0-rc.1] - 2026-09-28
 
 Release candidate for Bureau v3.0.0, published as a GitHub prerelease. It collects the hardening carried over from the installations ([#11](https://github.com/KaiaK808/bureau/pull/11)), source recording in the installer ([#12](https://github.com/KaiaK808/bureau/pull/12)), the review build check via `repo.test_command` ([#13](https://github.com/KaiaK808/bureau/pull/13)), fail-closed shepherd reads ([#14](https://github.com/KaiaK808/bureau/pull/14)) and the merge policy as configuration ([#15](https://github.com/KaiaK808/bureau/pull/15)). The major version marks the changed exit-code contract: a review BLOCK ends with `25` instead of `0`, a Linear that stays unusable ends a stage with the new code `27`, and the shepherd halts with an alert on every code except `0`, `2`, `10` and `16`. v3.0.0 follows once a pilot installation has qualified one ticket with this candidate. See the [v3.0.0-rc.1 release notes](docs/release-notes.md).

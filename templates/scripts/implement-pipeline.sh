@@ -53,8 +53,10 @@ refresh_review_context() {
 # open_or_update_pr_draft: ensure a draft PR exists for $BRANCH; emit its URL.
 # Used during intermediate iterations and on non-COMPLETE terminal states so
 # reviewers can see in-flight work without QA/code-review picking it up.
-# push_branch_loud <label>: push $BRANCH to origin; on failure say so loudly,
-# and carry on.
+# push_branch_loud <label> [fatal]: push $BRANCH to origin; on failure say so
+# loudly, and carry on — or, with `fatal`, return git's exit code so the caller
+# can stop. Only the end-of-run push is fatal: after it the ticket is handed on,
+# and a hand-off of work that is not on origin is exactly what must not happen.
 #
 # Carried over from slidefactory-core (EXP-1462). Every push here used to end
 # in `|| true`, so a failed push left no trace: whether the branch was out
@@ -75,7 +77,7 @@ refresh_review_context() {
 # the branch already exists on origin: for a new one git cannot tell that the
 # name is meant as a branch and refuses ("not a full refname").
 push_branch_loud() {
-  local label="$1" push_out rc
+  local label="$1" mode="${2:-}" push_out rc
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
     echo "  [DRY_RUN] would: git push -u origin HEAD:refs/heads/$BRANCH ($label)"
     return 0
@@ -86,8 +88,124 @@ push_branch_loud() {
     rc=$?
     echo "  ✗✗ PUSH FAILED ($label): branch '$BRANCH' is NOT on origin — git exit $rc" >&2
     printf '%s\n' "$push_out" | sed 's/^/       git: /' >&2
+    if [ "$mode" = fatal ]; then
+      echo "  ✗✗ the work is only in this worktree; nothing is handed on" >&2
+      return "$rc"
+    fi
     echo "  ✗✗ the work is only in this worktree until a later push succeeds" >&2
   fi
+  return 0
+}
+
+# run_post_implement_command: the optional repo.post_implement_command hook
+# (.bureau.json), for a repo that has to derive files from an implementation
+# run — regenerate generated docs or contracts — before anyone sees the branch.
+#
+# Runs once per stage, after the implement loop and before the squash-range
+# check and the final push, and only when this run made commits (nothing new
+# to derive from otherwise); never in a dry run. It runs in the implement
+# worktree via `bash -o pipefail -c` (the review build check's convention),
+# with no stdin, with BUREAU_ISSUE and BUREAU_BRANCH set, and bounded by
+# BUREAU_POST_IMPLEMENT_TIMEOUT (default 900 s, never above the stage's
+# TOTAL_TIMEOUT); a timeout ends the whole process group. The hook commits its
+# own output: its commits count with the run's, go through the squash-range
+# check (a CI suppressor in its message halts like any other) and are pushed
+# with the rest.
+#
+# It fails — POST_IMPLEMENT_FAILED=1, and the stage halts with 14 after the
+# usual halt bookkeeping — when it exits non-zero or times out, when it leaves
+# changes it did not commit (new entries in `git status`; nothing is deleted,
+# so the worker keeps the worktree for a human to look at), or when HEAD is no
+# longer a descendant of the run's last commit (then the final push is skipped:
+# pushing would publish rewritten history).
+POST_IMPLEMENT_FAILED=0
+POST_IMPLEMENT_HEAD_REWRITTEN=0
+POST_IMPLEMENT_REPORT=""
+POST_IMPLEMENT_PREV_STATUS=""
+_POST_IMPLEMENT_RUNNER='
+import os, signal, subprocess, sys
+limit, cmd = int(sys.argv[1]), sys.argv[2]
+child = subprocess.Popen(["bash", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
+def stop(code):
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+    except ProcessLookupError:
+        pass
+    sys.exit(code)
+for sig, code in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)):
+    signal.signal(sig, lambda *_, c=code: stop(c))
+try:
+    rc = child.wait(timeout=limit)
+except subprocess.TimeoutExpired:
+    stop(124)
+sys.exit(128 - rc if rc < 0 else rc)
+'
+run_post_implement_command() {
+  local cmd limit before before_status after_status new_dirty rc log reason hook_commits
+  cmd=$(bureau_get '.repo.post_implement_command // empty')
+  [ -n "$cmd" ] || return 0
+  if [ "$COMMITS_TOTAL" -le 0 ]; then
+    echo "  repo.post_implement_command: skipped (this run made no commits)"
+    return 0
+  fi
+  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+    echo "  [DRY_RUN] would run repo.post_implement_command: $cmd"
+    return 0
+  fi
+  limit="${BUREAU_POST_IMPLEMENT_TIMEOUT:-900}"
+  [[ "$limit" =~ ^[1-9][0-9]*$ ]] || limit=900
+  [ "$limit" -le "$TOTAL_TIMEOUT" ] || limit="$TOTAL_TIMEOUT"
+  before=$(git rev-parse HEAD)
+  before_status=$(git status --porcelain --untracked-files=all | LC_ALL=C sort)
+  log=$(mktemp "${TMPDIR:-/tmp}/bureau-post-implement.XXXXXX")
+  echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
+  if BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" >"$log" 2>&1; then
+    rc=0
+  else
+    rc=$?
+  fi
+  tail -20 "$log" | sed 's/^/    /'
+  reason=""
+  if [ "$rc" = 124 ]; then
+    reason="timed out after ${limit}s"
+  elif [ "$rc" != 0 ]; then
+    reason="exited $rc"
+  fi
+  if git merge-base --is-ancestor "$before" HEAD 2>/dev/null; then
+    hook_commits=$(git rev-list --count "$before..HEAD")
+    COMMITS_TOTAL=$(( COMMITS_TOTAL + hook_commits ))
+  else
+    hook_commits=0
+    POST_IMPLEMENT_HEAD_REWRITTEN=1
+    reason="${reason:+$reason; }moved HEAD off the run's last commit ${before:0:12}"
+  fi
+  after_status=$(git status --porcelain --untracked-files=all | LC_ALL=C sort)
+  new_dirty=$(LC_ALL=C comm -13 <(printf '%s\n' "$before_status") <(printf '%s\n' "$after_status") | sed '/^$/d')
+  if [ -n "$new_dirty" ]; then
+    reason="${reason:+$reason; }left changes it did not commit"
+  fi
+  if [ -z "$reason" ]; then
+    echo "  repo.post_implement_command: ok, ${hook_commits} commit(s)"
+    rm -f "$log"
+    return 0
+  fi
+  POST_IMPLEMENT_FAILED=1
+  POST_IMPLEMENT_REPORT="repo.post_implement_command ${reason}.
+command: ${cmd}
+last lines of its output:
+$(tail -20 "$log")"
+  if [ -n "$new_dirty" ]; then
+    POST_IMPLEMENT_REPORT="${POST_IMPLEMENT_REPORT}
+uncommitted changes it left (kept in the worktree):
+${new_dirty}"
+  fi
+  rm -f "$log"
+  echo "  ✗✗ repo.post_implement_command ${reason}" >&2
   return 0
 }
 
@@ -157,12 +275,16 @@ build_summary_comment() {
     CAP_TIME)    header="🚧 Implementation hit total time cap (${TOTAL_TIMEOUT}s) before completing." ;;
     PARTIAL)     header="🚧 Implementation made partial progress but exhausted iteration cap (${MAX_ITER}) without COMPLETE." ;;
     CI_MARKER)   header="🚧 Halted before hand-off: a commit in the squash range carries an entry of scripts/ci-skip-markers.txt, or the range could not be checked. Nothing went to QA or Build Review. Reword the message(s) named below, then remove needs-human." ;;
+    POST_IMPLEMENT_FAILED) header="🚧 Halted before hand-off: repo.post_implement_command failed (status before it ran: ${POST_IMPLEMENT_PREV_STATUS:-unknown}). Nothing went to QA or Build Review. Fix the command or the files it derives from, then remove needs-human." ;;
     *)           header="🚧 Implementation ended with status=$status." ;;
   esac
   printf '%s\n\n**Total tasks done across iterations:** %s\n**Branch:** `%s`\n**PR:** %s\n\nIteration log:\n```\n%s```\n' \
     "$header" "$total_tasks" "$BRANCH" "$pr_url" "$iter_log"
   if [ "$status" = "CI_MARKER" ]; then
     printf '\nSquash-range check:\n```\n%s\n```\n' "$SQUASH_REPORT"
+  fi
+  if [ "$POST_IMPLEMENT_FAILED" = 1 ]; then
+    printf '\nPost-implement command:\n```\n%s\n```\n' "$POST_IMPLEMENT_REPORT"
   fi
 }
 
@@ -649,6 +771,14 @@ fi  # end of `if ! use_goal_loop_enabled` wrapper around iter-loop + post-loop o
 # suppressor, or the range could not be read — overrides every status,
 # COMPLETE included: the stage ends in CI_MARKER, and the halt branch below
 # keeps the PR a draft, labels needs-human and puts the report on the PR.
+# The optional post-implement hook runs first, so its commits are inside the
+# range the check reads and inside the final push (run_post_implement_command).
+run_post_implement_command
+if [ "$POST_IMPLEMENT_FAILED" = 1 ]; then
+  POST_IMPLEMENT_PREV_STATUS="$STATUS"
+  STATUS="POST_IMPLEMENT_FAILED"
+fi
+
 check_squash_range origin/main
 if [ "$SQUASH_CHECK" = "clean" ]; then
   echo "  $SQUASH_REPORT"
@@ -669,8 +799,17 @@ echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 # does not (a merge of origin/main before the loop is counted by neither
 # COMMITS_TOTAL nor the iter log). An unreadable comparison counts as ahead.
 AHEAD_OF_ORIGIN=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo 1)
+# This push is fatal: if it fails, the stage ends with 18 here, before any PR
+# is marked ready or the ticket moves, so nothing is handed on that origin does
+# not have. The worker then keeps the worktree (it is ahead of origin) instead
+# of resetting the work away on the next pick.
 if [ "$COMMITS_TOTAL" -gt 0 ] || [ "$AHEAD_OF_ORIGIN" -gt 0 ]; then
-  push_branch_loud "end of run"
+  if [ "$POST_IMPLEMENT_HEAD_REWRITTEN" = 1 ]; then
+    echo "  ✗✗ not pushing: repo.post_implement_command moved HEAD off the run's commits" >&2
+  elif ! push_branch_loud "end of run" fatal; then
+    post_comment "$ISSUE" "❌ Implement stopped before hand-off: the final push of \`$BRANCH\` to origin failed. Nothing went to QA or Build Review and the ticket stays in Build. The commits are only in the implement worktree, which the worker keeps because it is ahead of origin. Push the branch once origin accepts it, or re-run the stage." || true
+    exit 18
+  fi
 fi
 
 if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then
@@ -700,7 +839,7 @@ case "$STATUS" in
     echo "  Moved $ISSUE to $NEXT_STATE_LABEL"
     ;;
 
-  NEEDS_HUMAN|STUCK|CAP_TIME|PARTIAL|CI_MARKER)
+  NEEDS_HUMAN|STUCK|CAP_TIME|PARTIAL|CI_MARKER|POST_IMPLEMENT_FAILED)
     # PARTIAL with real commits proceeds to downstream gates as ready-for-review
     # so CI fires on the ready_for_review transition (EXP-622 / FR-001). Every
     # other halt status — and PARTIAL with zero commits — stays draft (FR-002,
@@ -742,3 +881,13 @@ echo "════════════════════════�
 # success to the driver (EXP-1516): the local hold keeps the queue away, the
 # non-zero exit stops a shepherd.
 if [ "$NEEDS_HUMAN_UNMARKED" = 1 ]; then exit 25; fi
+
+# A failed post-implement hook has been handled like every halt above (draft
+# PR, needs-human, escalation log, summary comment with its report); the stage
+# still ends non-zero so the shepherd halts and the queue alerts it as
+# build-failed (14) — the hook is the repo's own build step for derived files.
+# When its needs-human label could not be written either, the 25 above wins:
+# the hold is what keeps the queue away.
+if [ "$POST_IMPLEMENT_FAILED" = 1 ]; then
+  exit 14
+fi
