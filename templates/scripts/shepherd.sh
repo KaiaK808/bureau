@@ -76,6 +76,8 @@ Flags:
                        per-ticket dir (e.g. .worktrees/shepherd-EXP-123) so
                        multiple shepherds can run concurrently without clobbering
                        one another's checkout — the basis of the d&a executor.
+                       A relative DIR is taken from the repo root (the directory
+                       the shepherd is started from) and made absolute at once.
   -h, --help           This help.
 EOF
 }
@@ -101,6 +103,28 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+# A relative --worktree is relative to the repo root, the directory the shepherd
+# is started from. It is made absolute here, before it is handed to the runtime
+# (--workspace), to bureau-worker.sh and, through ORIG_ARGS, to the tmux window
+# and the re-exec under the runtime. Handed on relative, it broke the worker: the
+# worker changes into the worktree and its EXIT cleanup ran `git -C <relative>`
+# from there — "fatal: cannot change to …", exit 128 after a stage that had
+# finished (pilot EXP-1533, rc.1).
+if [ -n "$WORKTREE_OVERRIDE" ]; then
+  case "$WORKTREE_OVERRIDE" in /*) ;; *) WORKTREE_OVERRIDE="$REPO_DIR/$WORKTREE_OVERRIDE" ;; esac
+  _args=(); _next_is_worktree=0
+  for _a in "${ORIG_ARGS[@]}"; do
+    if [ "$_next_is_worktree" = 1 ]; then _args+=("$WORKTREE_OVERRIDE"); _next_is_worktree=0; continue; fi
+    case "$_a" in
+      --worktree)   _args+=("$_a"); _next_is_worktree=1 ;;
+      --worktree=*) _args+=("--worktree=$WORKTREE_OVERRIDE") ;;
+      *)            _args+=("$_a") ;;
+    esac
+  done
+  ORIG_ARGS=("${_args[@]}")
+  unset _args _a _next_is_worktree
+fi
 
 if [ -z "$ISSUE" ]; then
   print_usage >&2
@@ -276,6 +300,25 @@ if [ "$DRY_RUN" = 1 ]; then
   exit 0
 fi
 
+# --from-stage is checked before anything is claimed (the runtime's lease, the
+# shepherd-focused label): a typo used to be rejected only after claim and release.
+TARGET_STATE=""; TARGET_NAME=""
+if [ -n "$FROM_STAGE" ]; then
+  STAGE_KEY=$(printf '%s' "$FROM_STAGE" | tr '[:upper:]-' '[:lower:]_')
+  TARGET_STATE_VAR="BUREAU_STATE_$(printf '%s' "$STAGE_KEY" | tr '[:lower:]' '[:upper:]')"
+  TARGET_STATE="${!TARGET_STATE_VAR:-}"
+  case "$STAGE_KEY" in
+    triage) TARGET_NAME=Triage ;; spec) TARGET_NAME=Spec ;; spec_review) TARGET_NAME='Spec Review' ;;
+    design) TARGET_NAME=Design ;; copy) TARGET_NAME=Copy ;; build) TARGET_NAME=Build ;; qa) TARGET_NAME=QA ;;
+    build_review) TARGET_NAME='Build Review' ;; merge) TARGET_NAME=Merge ;; done) TARGET_NAME=Done ;;
+  esac
+  if [ -z "$TARGET_STATE" ] || [ -z "$TARGET_NAME" ]; then
+    echo "ERROR: --from-stage '$FROM_STAGE' has no matching state (looked up \$$TARGET_STATE_VAR)" >&2
+    echo "       Valid: triage, spec_review, design, copy, build, qa, build_review, merge" >&2
+    exit 1
+  fi
+fi
+
 [ "$NO_MERGE" = 1 ] && export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
 WORKTREE="${WORKTREE_OVERRIDE:-$REPO_DIR/.worktrees/shepherd}"
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
@@ -302,11 +345,16 @@ trap 'rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT
 # ran on a ticket nobody held any more.
 _shepherd_cancelled() {
   trap - INT TERM
-  [ -n "${SHEPHERD_SLEEP_PID:-}" ] && kill "$SHEPHERD_SLEEP_PID" 2>/dev/null
-  echo "[shepherd] interrupted by $1 — cancelled; nothing written but the release of $ISSUE" >&2
+  [ -n "${SHEPHERD_SLEEP_PID:-}" ] && kill "$SHEPHERD_SLEEP_PID" 2>/dev/null || true
+  if [ "$SHEPHERD_CLAIMED" = 1 ]; then
+    echo "[shepherd] interrupted by $1 — cancelled; nothing written but the release of $ISSUE" >&2
+  else
+    echo "[shepherd] interrupted by $1 — cancelled before $ISSUE was claimed; nothing written" >&2
+  fi
   export _BUREAU_LINEAR_SINGLE_ATTEMPT=1
   exit 130
 }
+SHEPHERD_CLAIMED=0
 trap '_shepherd_cancelled SIGINT' INT
 trap '_shepherd_cancelled SIGTERM' TERM
 
@@ -314,11 +362,14 @@ trap '_shepherd_cancelled SIGTERM' TERM
 # trap only when the foreground command returns, so a SIGTERM sent to the
 # shepherd alone during a plain `sleep 60` waited out the minute — and the old
 # trap then went on with the loop.
+# A signal to the whole process group also kills the sleep: `wait` then returns
+# above 128, and under `set -e` that could end the shepherd before the pending
+# trap ran (seen on Linux CI). `|| true` leaves the ending to the trap.
 SHEPHERD_SLEEP_PID=""
 _shepherd_sleep() {
   sleep "$1" &
   SHEPHERD_SLEEP_PID=$!
-  wait "$SHEPHERD_SLEEP_PID"
+  wait "$SHEPHERD_SLEEP_PID" || true
   SHEPHERD_SLEEP_PID=""
 }
 
@@ -415,7 +466,10 @@ _shepherd_start_failed() {
 
 # ── Claim the ticket; the trap releases it on any exit path ───────────
 # The trap is set before the claim: a signal during the claim still releases.
-trap 'echo "[shepherd] releasing $ISSUE"; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT
+# Any exit above 128 (a signal, whichever way it ended the shell) releases with
+# one attempt, like a cancelled run.
+trap '[ $? -gt 128 ] && export _BUREAU_LINEAR_SINGLE_ATTEMPT=1; echo "[shepherd] releasing $ISSUE"; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT
+SHEPHERD_CLAIMED=1
 echo "[shepherd] claiming $ISSUE (label: shepherd-focused)"
 add_issue_label "$ISSUE" "shepherd-focused" \
   || echo "  WARN: failed to add shepherd-focused label" >&2
@@ -423,19 +477,13 @@ add_issue_label "$ISSUE" "shepherd-focused" \
 # --from-stage: move the ticket before the loop. After the claim (it used to
 # run before it), so the queue keeps away from a ticket that just moved into a
 # stage's waiting room.
+MOVED_TO=""
 if [ -n "$FROM_STAGE" ]; then
-  STAGE_UPPER=$(printf '%s' "$FROM_STAGE" | tr '[:lower:]-' '[:upper:]_')
-  TARGET_STATE_VAR="BUREAU_STATE_${STAGE_UPPER}"
-  TARGET_STATE="${!TARGET_STATE_VAR:-}"
-  if [ -z "$TARGET_STATE" ]; then
-    echo "ERROR: --from-stage '$FROM_STAGE' has no matching state (looked up \$$TARGET_STATE_VAR)" >&2
-    echo "       Valid: triage, spec_review, design, copy, build, qa, build_review, merge" >&2
-    exit 1
-  fi
   echo "[shepherd] --from-stage $FROM_STAGE → moving $ISSUE first"
   : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
   _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" move_issue "$ISSUE" "$TARGET_STATE" \
     || _shepherd_move_failed "$FROM_STAGE" $?
+  MOVED_TO="$TARGET_NAME"
 fi
 
 # Per-ticket worktree override (d&a executor) — default preserves single-worktree
@@ -449,16 +497,26 @@ MAX_STUCK=2
 # such answer in a row halts (EXP-1482 handover).
 NO_STATE_COUNT=0
 MAX_NO_STATE=5
-# The state a move was meant to leave: the shepherd's own Spec → Triage bump,
-# or the state a stage ran at and returned 0 from (EXP-1482 path 3). A read
-# that still shows it may be a moment old — a second start of the same stage
-# came from exactly that (EXP-1476, 17.09.2026). It is read again, up to
-# CONFIRM_TRIES times, CONFIRM_SECONDS apart, before the shepherd acts on it.
-# A read that shows any other state costs nothing extra; a ticket that really
-# stayed where it was reaches the stuck detector as before, 15 s later.
+# Confirming a move (EXP-1482 path 3). A read right after a move may be a
+# moment old — a second start of the same stage came from exactly that
+# (EXP-1476, 17.09.2026). --from-stage knows only where it went (MOVED_TO: the
+# state before it is never read); the bump to Triage and a stage that returned
+# 0 know where the ticket was (MOVED_FROM). A read that does not show MOVED_TO,
+# or still shows MOVED_FROM, is read again, up to CONFIRM_TRIES times,
+# CONFIRM_SECONDS apart, before the shepherd acts on it. A read that already
+# shows the move costs nothing extra; a ticket that really stayed where it was
+# reaches the stuck detector as before, 15 s later.
 MOVED_FROM=""
 CONFIRM_TRIES=3
 CONFIRM_SECONDS="${BUREAU_SHEPHERD_CONFIRM_SECONDS:-5}"
+case "$CONFIRM_SECONDS" in
+  '' | *[!0-9]*)
+    echo "[shepherd] WARN: BUREAU_SHEPHERD_CONFIRM_SECONDS='$CONFIRM_SECONDS' is not a whole number of seconds — using 5" >&2
+    CONFIRM_SECONDS=5 ;;
+esac
+_shepherd_unconfirmed() {
+  { [ -n "$MOVED_TO" ] && [ "$STATE" != "$MOVED_TO" ]; } || { [ -n "$MOVED_FROM" ] && [ "$STATE" = "$MOVED_FROM" ]; }
+}
 
 # _shepherd_no_state_halt — Linear answered MAX_NO_STATE times in a row, without
 # an error and without a state. Nothing tells which stage runs next; the same
@@ -494,15 +552,15 @@ while true; do
   fi
   NO_STATE_COUNT=0
 
-  # Confirm a move before acting on it (EXP-1482 path 3, see MOVED_FROM).
+  # Confirm a move before acting on it (see MOVED_TO / MOVED_FROM above).
   CONFIRM_COUNT=0
-  while [ -n "$MOVED_FROM" ] && [ "$STATE" = "$MOVED_FROM" ] && [ "$CONFIRM_COUNT" -lt "$CONFIRM_TRIES" ]; do
+  while _shepherd_unconfirmed && [ "$CONFIRM_COUNT" -lt "$CONFIRM_TRIES" ]; do
     CONFIRM_COUNT=$((CONFIRM_COUNT + 1))
     echo "[shepherd] $ISSUE still reads '$STATE' after the move — reading again in ${CONFIRM_SECONDS}s ($CONFIRM_COUNT/$CONFIRM_TRIES)"
     _shepherd_sleep "$CONFIRM_SECONDS"
     STATE=$(_shepherd_state) || _shepherd_read_failed state $?
   done
-  MOVED_FROM=""
+  MOVED_FROM=""; MOVED_TO=""
   # An answer without a state while confirming goes through the check above.
   [ -z "$STATE" ] && continue
 

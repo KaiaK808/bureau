@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="fa07806a915259e6a04774b85b214a1a896318f24200b63e6a013239a691e468">
+<meta name="bureau-source-sha256" content="037a9d0722670b99e9e962d5d2d60d47193bf340b5f2b9045366b3b2497a67b4">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -229,14 +229,21 @@ there ends with <code>10</code> and an alert naming the fault class, and
 writes nothing to the ticket. Ctrl-C or SIGTERM during a read, a move, a
 wait or a stage ends the run as a cancelled run (<code>130</code>) that
 writes nothing to Linear but the release of
-<code>shepherd-focused</code>; a wait is cut short at once. Linear
-answering five times in a row without a state halts with <code>1</code>
-and <code>needs-human</code>. A read that still shows the state a move
-left (the shepherd's own, or a stage's that returned <code>0</code>) is
-read again up to three times, 5 s apart, before the next stage starts. A
-<code>--dry-run</code> whose state read fails prints no route and exits
-with <code>27</code> when Linear stayed unusable, <code>1</code> on any
-other failure.</p>
+<code>shepherd-focused</code> (one attempt); the shepherd's own waits
+are cut short at once. A SIGTERM sent to the shepherd alone takes effect
+when the command in flight returns: the usage-throttle wait before a
+stage and the retry ladder's waits inside a Linear call run to their end
+first. <code>--dry-run</code> runs without the runtime and without these
+traps: Ctrl-C there ends with <code>130</code>, a SIGTERM with
+<code>143</code>. Linear answering five times in a row without a state
+halts with <code>1</code> and <code>needs-human</code>. After
+<code>--from-stage</code> a read that does not yet show its target, and
+after the bump to Triage or a stage that returned <code>0</code> a read
+that still shows the state the ticket left, is read again up to three
+times, 5 s apart (<code>BUREAU_SHEPHERD_CONFIRM_SECONDS</code>), before
+the next stage starts. A <code>--dry-run</code> whose state read fails
+prints no route and exits with <code>27</code> when Linear stayed
+unusable, <code>1</code> on any other failure.</p>
 <p><strong>Token-efficiency flags don't change the table.</strong> Under
 <code>agents.use_goal_loop: true</code>, the implement-pipeline still
 produces the same terminal STATUS values (<code>COMPLETE</code> /

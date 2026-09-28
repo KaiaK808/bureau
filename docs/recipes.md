@@ -80,7 +80,7 @@ Drive one selected ticket through its configured stages without starting continu
 bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123
 ```
 
-The default disposable checkout is `.worktrees/shepherd/`; `--worktree DIR` selects another worker path. Existing unregistered or unfinished checkouts are preserved and can refuse reuse. Inspect ownership before resuming; never point a disposable worker at an app checkout.
+The default disposable checkout is `.worktrees/shepherd/`; `--worktree DIR` selects another worker path; a relative DIR is taken from the repo root. Existing unregistered or unfinished checkouts are preserved and can refuse reuse. Inspect ownership before resuming; never point a disposable worker at an app checkout.
 
 ```sh
 BUREAU_DRY_RUN=1 bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123
