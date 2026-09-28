@@ -370,6 +370,9 @@ Most common cause: the Linear issue description was too thin for `/speckit-tasks
 
 ## Supervisor
 
+### A review says it reused the approval
+The ticket comment "reusing the approval recorded …" means the review stage found the approval a `--no-merge` run recorded for the same PR, base branch, head and base commits, ticket text and state, and moved on without a new model review; only the build check ran again. The record is gone after that. To get a fresh model review at the same head instead, run `python3 scripts/bureau-supervision.py resume TEAM-123` before the next run. A changed head, base, ticket or PR, a record from before v3.0.1, or an unreadable `review-stops.json` always gives the full review; the last one also prints "the recorded review boundary could not be read".
+
 ### Telegram alert: "supervisor giving up"
 The supervisor crashed `BUREAU_SUPERVISOR_MAX_CRASHES` times in a row. The alert includes the tail of `logs/queue-<mode>.log`. Common causes:
 

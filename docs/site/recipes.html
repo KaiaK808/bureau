@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9d1631969d64e54e2ba3b7b9e56a19dd8830f30c859eb224244467d44dbc4855">
+<meta name="bureau-source-sha256" content="8c51ef6cacc5d069728af6028a0ff54bc1e695cd2f78290ef4865f174e84b627">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -102,7 +102,10 @@ stages. In a live pass, exit 20 means the review boundary was reached,
 25 means pause/human attention, and 26 means cancellation. None means
 the ticket was merged. Omitting <code>--no-merge</code> permits the
 existing merge path, so do so only for an authorized end-to-end merge
-run.</p>
+run. Run again without <code>--no-merge</code> after such a stop, on a
+PR whose head, base and ticket have not changed, the review reuses the
+recorded approval (no new model review; the build check runs again) and
+goes on to the merge gate.</p>
 <p><strong>When to use:</strong> a representative acceptance ticket or
 deliberate recovery after resolving its blocker. For batches use
 orchestrate; for explicitly requested continuous work use

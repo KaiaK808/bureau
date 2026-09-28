@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1c0eb33e47cebb156e7fec8a98d44f28aa43e356da9b539ad9314fd632543e20">
+<meta name="bureau-source-sha256" content="4dea23e75f4a66403da142a1500612b0911a0a6e49dcde6216471a85eed42b66">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -664,6 +664,19 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#
 to the description and re-trigger.</p>
 <hr />
 <h2 id="supervisor">Supervisor</h2>
+<h3 id="a-review-says-it-reused-the-approval">A review says it reused
+the approval</h3>
+<p>The ticket comment "reusing the approval recorded …" means the review
+stage found the approval a <code>--no-merge</code> run recorded for the
+same PR, base branch, head and base commits, ticket text and state, and
+moved on without a new model review; only the build check ran again. The
+record is gone after that. To get a fresh model review at the same head
+instead, run
+<code>python3 scripts/bureau-supervision.py resume TEAM-123</code>
+before the next run. A changed head, base, ticket or PR, a record from
+before v3.0.1, or an unreadable <code>review-stops.json</code> always
+gives the full review; the last one also prints "the recorded review
+boundary could not be read".</p>
 <h3 id="telegram-alert-supervisor-giving-up">Telegram alert: "supervisor
 giving up"</h3>
 <p>The supervisor crashed <code>BUREAU_SUPERVISOR_MAX_CRASHES</code>
