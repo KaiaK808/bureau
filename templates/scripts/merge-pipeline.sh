@@ -42,6 +42,8 @@
 #   - agents.merge: true
 #   - linear.teams[0].states.merge: "<uuid of the Merge workflow state>"
 # Both must be set; missing either makes this pipeline a queue-empty no-op.
+# agents.merge_mode: "manual" switches it off regardless of both (exit 2
+# before anything else); a human merges.
 #
 # --dry-run: print the gate verdicts and the action that would be taken, but
 # never call `gh pr merge` and never post comments. Use to audit before
@@ -55,6 +57,14 @@ SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 # shellcheck source=templates/scripts/merge-body.sh
 source "$(dirname "$0")/merge-body.sh"
+
+# agents.merge_mode = manual: a human merges. Refuse before .env, Linear, gh or
+# git, for the queue, a named ticket and the review stage's inline call alike.
+# Exit 2 (queue-empty): the queue loop and the shepherd pass it quietly.
+if bureau_merge_is_manual; then
+  echo "merge-pipeline: agents.merge_mode is manual — a human merges this repo's PRs. Nothing to do."
+  exit 2
+fi
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 # shellcheck disable=SC1090

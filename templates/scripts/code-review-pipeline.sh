@@ -83,7 +83,9 @@ echo "  Branch: $BRANCH"
 
 # Recheck under the worker's issue lease: another tick may have selected this
 # ticket just before the previous reviewer saved its stop and released ownership.
-if bureau_stop_requested; then
+# The same boundary holds a ticket a human merges when there is no Merge state
+# to park it in: an unchanged head is not reviewed (and paid for) again.
+if review_stops_at_approval; then
   REVIEW_STOP=$(printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" check "$ISSUE" \
     --branch "$BRANCH" --state "$ACTUAL_STATE") || exit 18
   if [ "$(printf '%s' "$REVIEW_STOP" | jq -r .stopped)" = true ]; then
@@ -484,14 +486,27 @@ echo "  Posted review to PR #$PR_NUMBER"
 case "$VERDICT" in
   APPROVE)
     echo "  Code review PASSED"
-    if bureau_stop_requested; then
-      # Save before the owning worker releases its lease, closing the gap where
-      # another tick could start the same paid review. Record the reviewed inputs.
+    if bureau_merge_is_manual && [ -n "${BUREAU_STATE_MERGE:-}" ]; then
+      # agents.merge_mode = manual: a human merges. Park the ticket in Merge as
+      # the visible "awaiting merge" position; merge-pipeline.sh refuses there.
+      echo "  APPROVED — routing to Merge for a manual merge (agents.merge_mode manual)."
+      post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual)."
+      move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
+      NEXT_STATE="Merge (manual)"
+    elif review_stops_at_approval; then
+      # A requested stop, or a manual merge without a Merge state: the ticket
+      # stays where it is. Save before the owning worker releases its lease,
+      # closing the gap where another tick could start the same paid review.
+      # Record the reviewed inputs.
       if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
         printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
           --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" >/dev/null
       fi
-      post_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested."
+      if bureau_stop_requested; then
+        post_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested."
+      else
+        post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual; no Merge state is configured, so the ticket stays in Build Review)."
+      fi
       echo "Review complete; stopped before merge."
       exit 20
     elif agent_enabled "merge" && [ -n "${BUREAU_STATE_MERGE:-}" ]; then

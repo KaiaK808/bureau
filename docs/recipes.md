@@ -365,6 +365,30 @@ Squash and merge get a subject and body Bureau writes itself, with every CI supp
 
 ---
 
+## Merge by hand
+
+Repos where a person merges every PR set the merge mode instead of editing the pipeline scripts:
+
+```json
+{
+  "agents": {
+    "merge_mode": "manual"
+  }
+}
+```
+
+What changes:
+
+- `merge-pipeline.sh` and `rebase-pipeline.sh` print one line and exit `2` (queue empty) before reading `.env`, calling Linear or gh, or touching git — for the queue, a named ticket and the review stage's inline call alike. Nothing is merged, rebased or force-pushed.
+- An APPROVE in code review posts that the PR awaits a manual merge. With a Merge state configured the ticket moves there, the visible "awaiting merge" position, and the stage ends with `0`. Without one the ticket stays in Build Review and the stage ends with `20` at the reviewed boundary, the same boundary `BUREAU_NO_MERGE` uses, so the unchanged head is not reviewed again. Configure a Merge state; doctor warns when there is none.
+- The shepherd ends its run at Merge with `20` and a comment. Neither the shepherd nor the queue loop alerts on a `20` that a stop before merge asked for (`merge_mode` manual or `--no-merge`); a `20` nobody asked for still alerts.
+- Moving the ticket to Done after the manual merge is not Bureau's job here: the merge stage's recovery of PRs merged outside the pipeline does not run, because the stage refuses first. Linear's GitHub integration or the person who merged moves it.
+- The mode holds regardless of `agents.merge`, `agents.rebase` and the shepherd's forced stages, and the environment cannot override it. Any value but `auto` or `manual` — a typo, or `false` meant as "don't merge" — falls closed to `manual` with a warning. `bureau-status.sh --config` and `bureau-doctor.py` show the mode in effect.
+
+Upgrading an installation that disabled merge and rebase by hand (an early `exit 2` at the top of both scripts): set `"merge_mode": "manual"` in `.bureau.json` **before** resyncing the scripts; the resync replaces the local block, and without the key automatic merging would be on again.
+
+---
+
 ## Tighter supervisor
 
 For long-running headless deployments, raise the give-up threshold so a transient flaky tick doesn't kill the pipeline:

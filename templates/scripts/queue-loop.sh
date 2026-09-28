@@ -124,11 +124,17 @@ run_script() {
     0)  echo "[$TIMESTAMP] $label done." | tee -a "$LOG_FILE" ;;
     2)  echo "[$TIMESTAMP] $label — queue empty." | tee -a "$LOG_FILE" ;;
     *)
-        echo "[$TIMESTAMP] $label — error (exit $exit_code / $klass)." | tee -a "$LOG_FILE"
-        local tail_log
-        tail_log=$(tail -n 20 "$LOG_FILE" 2>/dev/null || true)
-        alert_telegram "${picked:-none}" "$script" "$exit_code" \
-          "$label failed ($klass)" "$tail_log" || true
+        if stop_before_merge_was_asked "$exit_code"; then
+          # --no-merge or agents.merge_mode manual: an approved ticket stopped
+          # at the reviewed boundary, as asked. Not an error; a human merges.
+          echo "[$TIMESTAMP] $label — approved, stopped before merge as asked." | tee -a "$LOG_FILE"
+        else
+          echo "[$TIMESTAMP] $label — error (exit $exit_code / $klass)." | tee -a "$LOG_FILE"
+          local tail_log
+          tail_log=$(tail -n 20 "$LOG_FILE" 2>/dev/null || true)
+          alert_telegram "${picked:-none}" "$script" "$exit_code" \
+            "$label failed ($klass)" "$tail_log" || true
+        fi
         ;;
   esac
   echo "---" | tee -a "$LOG_FILE"

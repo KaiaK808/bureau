@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6a2a0dd16d26a63a84390d4092316df14a53a2f2764fec4017e84446c9c39b26">
+<meta name="bureau-source-sha256" content="27a041bc3cf8835903870f7d234ee8b981472eee66791d1ac163f182c4231232">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -307,6 +307,22 @@ Spec). Counts work: issues from Spec to before Done in the configured
 sub-issues are), without
 <code>needs-human</code>/<code>blocked</code>/<code>wip</code>. See <a
 href="recipes.html#single-flight-pipeline">recipes</a></td>
+</tr>
+<tr>
+<td><code>agents.merge_mode</code></td>
+<td>string</td>
+<td><code>"auto"</code></td>
+<td>Who merges an approved PR. <code>auto</code>: the pipeline (inline
+after review, or the gated merge stage when <code>agents.merge</code> is
+on). <code>manual</code>: a human — <code>merge-pipeline.sh</code> and
+<code>rebase-pipeline.sh</code> exit <code>2</code> before any Linear,
+gh or git call, the review stage parks an APPROVE in the Merge state
+(or, without one, stops with <code>20</code> at the reviewed boundary),
+and the shepherd ends its run at Merge with <code>20</code>, without an
+alert. Holds regardless of <code>agents.merge</code>,
+<code>agents.rebase</code> and the shepherd's forced stages. Any other
+value falls closed to <code>manual</code> with a warning. See <a
+href="recipes.html#merge-by-hand">recipes</a></td>
 </tr>
 <tr>
 <td><code>agents.merge_strategy</code></td>

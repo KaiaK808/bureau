@@ -78,15 +78,15 @@ EOF
   cat >> "$sb/scripts/bureau-config.sh" <<'OVERRIDES'
 
 # ── TEST OVERRIDES ─────────────────────────────────────────────────
-precondition_linear()      { return 0; }
+precondition_linear()      { echo precondition_linear >> "$STUB_DIR/linear.log"; return 0; }
 bureau_stage_enter()       { :; } # ownership covered by runtime tests
 precondition_claude_auth() { return 0; }
 post_comment()             { echo "post_comment $1 :: $2" >> "$STUB_DIR/comments_posted.log"; }
 move_issue()               { echo "move_issue $1 -> $2"   >> "$STUB_DIR/state_changes.log"; }
 add_issue_label()          { echo "+$1 $2" >> "$STUB_DIR/labels.log"; }
 remove_issue_label()       { echo "-$1 $2" >> "$STUB_DIR/labels.log"; }
-get_issue_branch()         { echo "feat/test"; }
-pipeline_pick_next()       { echo "EXP-1"; }
+get_issue_branch()         { echo get_issue_branch >> "$STUB_DIR/linear.log"; echo "feat/test"; }
+pipeline_pick_next()       { echo pipeline_pick_next >> "$STUB_DIR/linear.log"; echo "EXP-1"; }
 alert_telegram()           { :; }
 _bureau_gh_owner_repo()    { echo "test-owner/test-repo"; }
 OVERRIDES
@@ -545,9 +545,79 @@ test_merge_rebase_stays_plain() {
   return 0
 }
 
+# ── agents.merge_mode ─────────────────────────────────────────────
+set_merge_mode() {  # $1 = sandbox, $2 = a JSON value for .agents.merge_mode
+  jq --argjson v "$2" '.agents.merge_mode = $v' "$1/.bureau.json" > "$1/.bureau.json.tmp" && mv "$1/.bureau.json.tmp" "$1/.bureau.json"
+}
+
+# Nothing ran: no gh call at all, no Linear helper, no state, label or comment.
+assert_untouched() {  # $1 = sandbox, $2 = label
+  local sb="$1" f
+  if [ -s "$sb/gh_invocations.log" ]; then
+    echo "FAIL $2: gh was called:" >&2; sed 's/^/  | /' "$sb/gh_invocations.log" >&2; return 1
+  fi
+  for f in linear.log state_changes.log labels.log comments_posted.log merge_calls.log; do
+    if [ -s "$sb/stub_data/$f" ]; then
+      echo "FAIL $2: $f is not empty:" >&2; sed 's/^/  | /' "$sb/stub_data/$f" >&2; return 1
+    fi
+  done
+}
+
+# manual: the queue, a named ticket and the review stage's inline call all refuse with
+# exit 2 before .env, Linear, gh or git — on a PR every gate would let through.
+test_merge_mode_manual() {
+  local how sb rc
+  for how in queue named inline; do
+    sb=$(make_sandbox "manual_$how")
+    populate_happy_fixtures "$sb"
+    set_merge_mode "$sb" '"manual"'
+    case "$how" in
+      queue)  run_pipeline "$sb" ;;
+      named)  run_pipeline "$sb" EXP-1 ;;
+      inline) BUREAU_INLINE_MERGE=1 run_pipeline "$sb" EXP-1 ;;
+    esac
+    rc=$?
+    [ "$rc" -eq 2 ] || { echo "FAIL manual_$how: exit $rc, wanted 2" >&2; sed 's/^/  | /' "$sb/pipeline.out" "$sb/pipeline.err" >&2; return 1; }
+    assert_untouched "$sb" "manual_$how" || return 1
+    grep -q 'merge_mode is manual' "$sb/pipeline.out" || { echo "FAIL manual_$how: no reason printed" >&2; return 1; }
+  done
+  return 0
+}
+
+# An unknown value falls closed: no merge, and a warning names the value.
+test_merge_mode_invalid() {
+  local value sb rc
+  for value in '"Manual"' '"yes"' 'false' 'true' '0' '{}'; do
+    sb=$(make_sandbox "invalid_mode")
+    rm -rf "$sb/stub_data"/* "$sb/gh_invocations.log"
+    populate_happy_fixtures "$sb"
+    set_merge_mode "$sb" "$value"
+    run_pipeline "$sb"; rc=$?
+    [ "$rc" -eq 2 ] || { echo "FAIL invalid $value: exit $rc, wanted 2" >&2; return 1; }
+    assert_untouched "$sb" "invalid $value" || return 1
+    grep -q 'merge_mode.*falling closed to manual' "$sb/pipeline.err" || { echo "FAIL invalid $value: no warning" >&2; sed 's/^/  | /' "$sb/pipeline.err" >&2; return 1; }
+  done
+  return 0
+}
+
+# Negative control: "auto" and null (as absent, test_happy_path) still merge the same PR.
+test_merge_mode_auto_merges() {
+  local value sb
+  for value in '"auto"' 'null'; do
+    sb=$(make_sandbox "auto_mode")
+    rm -rf "$sb/stub_data"/* "$sb/gh_invocations.log"
+    populate_happy_fixtures "$sb"
+    set_merge_mode "$sb" "$value"
+    run_pipeline "$sb"
+    [ -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL auto $value: gh pr merge was NOT called" >&2; sed 's/^/  | /' "$sb/pipeline.out" >&2; return 1; }
+    if grep -q 'falling closed' "$sb/pipeline.err"; then echo "FAIL auto $value: warned about a valid value" >&2; return 1; fi
+  done
+  return 0
+}
+
 # ── Run all ───────────────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain; do
+for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

@@ -23,6 +23,14 @@ def module(name):
     return value
 
 
+def merge_mode(config):
+    """The merge mode the shell pipelines use (bureau-config.sh): absent or null is auto;
+    anything but "auto" or "manual" falls closed to manual. Returns (mode, raw)."""
+    raw = config.get('agents', {}).get('merge_mode') if isinstance(config.get('agents'), dict) else None
+    if raw is None: return 'auto', raw
+    return (raw if raw in ('auto', 'manual') else 'manual'), raw
+
+
 def validate(config):
     errors = []
     if not isinstance(config, dict): return ['Configuration must be an object']
@@ -159,7 +167,13 @@ def diagnose(repo, mode):
     for name in ('bureau-runtime.py', 'bureau-provider.py', 'bureau-stage.md'):
         if not (repo / 'scripts' / name).is_file(): errors.append('Missing runtime asset: scripts/' + name)
     if len(config.get('linear', {}).get('teams', [])) > 1: warnings.append('Runtime routes through the first configured team; review other-team tickets manually')
+    merge, raw_merge = merge_mode(config)
+    if not (raw_merge is None or raw_merge in ('auto', 'manual')):
+        warnings.append('agents.merge_mode ' + json.dumps(raw_merge) + ' is not "auto" or "manual"; the pipelines fall closed to manual (no automatic merge or rebase)')
+    if merge == 'manual' and not config['linear']['teams'][0].get('states', {}).get('merge'):
+        warnings.append('agents.merge_mode is manual but the first team has no Merge state: an approved ticket stays in Build Review until a human merges')
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),
+                merge_mode=merge,
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,
                 template_source=source, drift=drift, errors=errors, warnings=warnings,
                 authentication='not checked', live_model_acceptance='not checked')

@@ -120,6 +120,7 @@ show_effective_config() {
   _row tuning agents.max_concurrent_issues        "json" "$BUREAU_MAX_CONCURRENT_ISSUES"
   _row tuning agents.code_review_sampling_threshold "json" "$BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD"
   _row tuning agents.merge_strategy               "json" "$BUREAU_MERGE_STRATEGY"
+  _row tuning agents.merge_mode                   "json" "$BUREAU_MERGE_MODE"
   _row tuning agents.workbench_panes              "json" "$BUREAU_WORKBENCH_PANES"
   echo ""
 

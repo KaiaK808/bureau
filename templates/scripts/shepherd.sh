@@ -250,6 +250,7 @@ if [ "$DRY_RUN" = 1 ]; then
   echo "  Current state: ${CUR:-unknown}"
   [ "$RESPECT_CONFIG" = 1 ] && echo "  Mode: --respect-config (.agents.<stage> toggles honored)"
   [ "$NO_MERGE" = 1 ]       && echo "  --no-merge: will halt before Merge stage"
+  bureau_merge_is_manual    && echo "  agents.merge_mode manual: will halt before Merge stage (a human merges)"
   echo ""
   echo "  Forward route from current state (linear walk — actual routing"
   echo "  depends on labels and pipeline verdicts at runtime):"
@@ -261,6 +262,10 @@ if [ "$DRY_RUN" = 1 ]; then
       P=$(state_to_pipeline "$s")
       if [ "$NO_MERGE" = 1 ] && [ "$s" = "Merge" ]; then
         echo "    $s → (halt — --no-merge)"
+        break
+      fi
+      if bureau_merge_is_manual && [ "$s" = "Merge" ]; then
+        echo "    $s → (halt — agents.merge_mode manual)"
         break
       fi
       echo "    $s → $P"
@@ -418,6 +423,13 @@ while true; do
     post_comment "$ISSUE" "🐑 Shepherd halted at Merge per \`--no-merge\`. Merge manually when ready." || true
     exit 20
   fi
+  # agents.merge_mode = manual: the same boundary, set by the repo instead of
+  # the caller. The expected end of the automated run — no alert, no label.
+  if bureau_merge_is_manual && [ "$STATE" = "Merge" ]; then
+    echo "[shepherd] reached Merge — halting, agents.merge_mode is manual (a human merges)"
+    post_comment "$ISSUE" "🐑 Shepherd halted at Merge: \`agents.merge_mode\` is manual, so a human merges the PR." || true
+    exit 20
+  fi
 
   # Stuck detector
   if [ "$STATE" = "$LAST_STATE" ]; then
@@ -470,6 +482,9 @@ while true; do
   # shepherd_rc_action; a code added later cannot slip through unannounced.
   ACTION=$(shepherd_rc_action "$RC")
   [ "$ACTION" = halt ] && [ "$RC" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && ACTION=linear-halt
+  # A review that stopped before merge because the caller or the repo asked for
+  # it (review_stops_at_approval) ends the run as requested: no alert, no label.
+  if [ "$ACTION" = halt ] && stop_before_merge_was_asked "$RC"; then ACTION=stopped-before-merge; fi
   case "$ACTION" in
     ok)
       # Success / queue-empty — re-read state on next iteration.
@@ -478,6 +493,10 @@ while true; do
       # Transient: linear-down / provider-unauth. Throttled re-attempt.
       echo "[shepherd] $CLASS — sleeping 60s and retrying"
       sleep 60
+      ;;
+    stopped-before-merge)
+      echo "[shepherd] $PIPELINE stopped before merge, as asked — a human merges"
+      exit "$RC"
       ;;
     linear-halt)
       # The stage gave up because Linear stayed unusable after every retry.

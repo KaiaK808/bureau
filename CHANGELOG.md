@@ -6,6 +6,17 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+### Merge policy as configuration
+
+#### Added
+
+- `agents.merge_mode` (`"auto"` default, `"manual"`): with `manual` a human merges. `merge-pipeline.sh` and `rebase-pipeline.sh` exit `2` before any Linear, gh or git call; an APPROVE parks the ticket in the Merge state (or, without one, stops with `20` at the reviewed boundary); the shepherd ends at Merge with `20`. The mode holds regardless of `agents.merge`, `agents.rebase` and the shepherd's forced stages; any other value falls closed to `manual` with a warning. `bureau-status.sh --config` and `bureau-doctor.py` (`merge_mode`, plus warnings for an unknown value and for manual without a Merge state) show it. See the [recipe](docs/recipes.md#merge-by-hand).
+- **Upgrade action:** installations that disabled merge and rebase by hand (an early `exit 2` at the top of both scripts, as in atv-pruefwerkzeug and slidefactory-core) set `"agents": {"merge_mode": "manual"}` in `.bureau.json` **before resyncing** the scripts. The resync replaces the local block; without the key automatic merging is on again.
+
+#### Changed
+
+- The shepherd and the queue loop no longer alert on a stage's exit `20` (stopped before merge) when a stop before merge was asked for — `--no-merge` / `BUREAU_NO_MERGE`, or `merge_mode` manual. A `20` nobody asked for still halts with an alert.
+
 ### Hardening carried over from the installations
 
 The hardening list from slidefactory-core and msc-planner in `docs/2026-09-25-drift-inventar.md`, each item with a test that runs the real code and a negative control against the broken form. Two items were already closed by the v2 runtime (model values reach the provider as one argument; `reset_worktree` returns its status and finds `.env` and `.bureau.json` via the main checkout) and now have a test or a note instead of a change. **Resync each adopting repository** to receive them.

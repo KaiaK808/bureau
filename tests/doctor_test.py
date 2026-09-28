@@ -145,6 +145,24 @@ class DoctorTests(unittest.TestCase):
             self.assertTrue(d.diagnose(self.repo,'background')['ok'])
 
 
+    def test_merge_mode_is_reported_with_its_warnings(self):
+        subprocess.run([sys.executable,str(ROOT/'scripts/bureau_install.py'),'assets','--repo',str(self.repo),
+                        '--target','codex','--scope','interfaces','--scope','scripts','--apply'],check=True,stdout=subprocess.DEVNULL)
+        unknown='the pipelines fall closed to manual'; no_state='no Merge state'
+        for value, state, mode, warns in ((None, None, 'auto', ()), ('auto', None, 'auto', ()),
+                                          ('manual', 'merge-id', 'manual', ()), ('manual', None, 'manual', (no_state,)),
+                                          ('Manual', 'merge-id', 'manual', (unknown,)), (False, None, 'manual', (unknown, no_state))):
+            with self.subTest(value=value, state=state):
+                config=copy.deepcopy(self.config)
+                if value is not None: config['agents']['merge_mode']=value
+                if state: config['linear']['teams'][0]['states']['merge']=state
+                self.path.write_text(json.dumps(config))
+                result=d.diagnose(self.repo,'app')
+                self.assertTrue(result['ok'],result); self.assertEqual(result['merge_mode'],mode)
+                merge_warnings=[w for w in result['warnings'] if 'merge_mode' in w]
+                self.assertEqual(len(merge_warnings),len(warns),merge_warnings)
+                for text in warns: self.assertTrue(any(text in w for w in merge_warnings),(text,merge_warnings))
+
     def test_migration_preserves_effective_models_across_runner_overrides(self):
         provider=d.module('provider')
         for version in (None, 1):

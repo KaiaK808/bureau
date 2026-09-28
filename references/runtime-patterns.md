@@ -38,6 +38,8 @@ Stage → registry mapping (defined once in `bureau-config.sh:pipeline_picker_ar
 
 **Opt-in pipelines** (`copy`, `qa`) exit 2 (queue-empty) when their state UUID or required label name is empty in `.bureau.json`. This means a repo that doesn't configure them never sees them run — the pipeline script itself gates on the config, not just `agent_enabled` in `queue-loop.sh`. Both gates are defensive: the config gate catches the case where an operator enables the agent in `agents.qa: true` but forgot to configure the state.
 
+**Merge policy gate.** `merge-pipeline.sh` and `rebase-pipeline.sh` check `bureau_merge_is_manual` right after sourcing the config and exit 2 under `agents.merge_mode: "manual"` — before `.env`, `precondition_linear`, the picker, gh or git, and regardless of `agent_enabled` or `BUREAU_FORCE_ALL_AGENTS`. Keep that check first in both scripts; a policy that says "a human merges" must not depend on which caller started the stage.
+
 `pick_issue` uses label **names** (not UUIDs) in its GraphQL filter, so custom labels like `ai-implementable`, `needs-human`, `needs-ux` work even when `.bureau.json` doesn't have their UUIDs captured. It reads the team/project/state config from the `$BUREAU_*` variables and does one direct GraphQL POST using `LINEAR_API_KEY` — no MCP, no OAuth, no Claude subprocess, no token expiry.
 
 ### All Linear glue uses direct GraphQL, never `$CLAUDE` (EXP-412)

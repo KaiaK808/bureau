@@ -155,6 +155,50 @@ case "$BUREAU_MERGE_STRATEGY" in
     ;;
 esac
 
+# ── Merge policy (agents.merge_mode) ──────────────────────────────────
+# Who merges an approved PR. "auto" (default): the pipeline, through
+# merge-pipeline.sh. "manual": a human. Then merge-pipeline.sh and
+# rebase-pipeline.sh refuse before any Linear, gh or git call, and the review
+# stage parks an approved ticket instead of merging it. The policy holds
+# regardless of agents.merge / agents.rebase and BUREAU_FORCE_ALL_AGENTS (the
+# shepherd forces every stage on), which is why it is its own key. It replaces
+# the local kill-switches installs carried at the top of both scripts.
+#
+# Absent (or null) is auto. Every other value but "auto" and "manual" — a typo,
+# or `false` meant as "don't merge" — falls closed to manual: it must never
+# switch automatic merging on. Read from .bureau.json only, no env override.
+BUREAU_MERGE_MODE=$(bureau_get '.agents.merge_mode | if . == null then "auto" elif type == "string" then . else tojson end')
+case "$BUREAU_MERGE_MODE" in
+  auto|manual) ;;
+  *)
+    echo "WARN: .agents.merge_mode = '$BUREAU_MERGE_MODE' is not one of {auto, manual} — falling closed to manual (no automatic merge or rebase)." >&2
+    BUREAU_MERGE_MODE="manual"
+    ;;
+esac
+
+# bureau_merge_is_manual — true unless the merge mode is exactly "auto", so an
+# unset value also counts as manual.
+bureau_merge_is_manual() {
+  [ "${BUREAU_MERGE_MODE:-}" != auto ]
+}
+
+# review_stops_at_approval — true when an APPROVE ends the review stage with
+# exit 20 at the reviewed boundary instead of moving on: a stop before merge
+# was requested, or a human merges and there is no Merge state to park in.
+review_stops_at_approval() {
+  bureau_stop_requested || { bureau_merge_is_manual && [ -z "${BUREAU_STATE_MERGE:-}" ]; }
+}
+
+# stop_before_merge_was_asked <exit-code> — true when the code is 20
+# (stopped-before-merge) and a stop before merge was asked for: --no-merge /
+# BUREAU_NO_MERGE, or merge_mode manual. That 20 is the requested end of the
+# automated run, so the shepherd and the queue loop stop quietly instead of
+# alerting. Any other 20 still alerts.
+stop_before_merge_was_asked() {
+  [ "${1:-}" = 20 ] && { bureau_stop_requested || bureau_merge_is_manual; }
+}
+# ── End of merge policy ───────────────────────────────────────────────
+
 # Repo config
 BUREAU_BRANCH_PREFIX=$(bureau_get '.repo.branch_prefix // "feat"')
 BUREAU_COMMIT_PREFIX=$(bureau_get '.repo.commit_prefix // ""')
