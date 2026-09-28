@@ -367,6 +367,11 @@ class H(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 class S(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
+    def server_bind(self):
+        # HTTPServer.server_bind resolves the host name (socket.getfqdn), which can hang
+        # for a long time on macOS CI runners; the name is never used here.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 s = S(("127.0.0.1", 0), H)
 open(sys.argv[1], "w").write(str(s.server_address[1]))
 s.serve_forever()
