@@ -31,6 +31,7 @@
 #  11d the pushes fail and origin/<branch>..HEAD cannot be read → 18
 #  11e origin rewritten, final pushes rejected (fetch first) → fetched, 18
 #  11f the pushes and the fetch fail at transport level → unreadable, 18
+#  11g as 11e with a fetch refspec that covers only main → still 18
 #  12  goal-loop path runs the hook too
 #  14  the hook gets no stdin
 #  15  hook fails and the label write fails → 25 (the hold) wins over 14
@@ -326,7 +327,7 @@ if [ "\${1:-}" = push ]; then
   n=\$(cat "$SANDBOX/.pushes" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"
   if [ "\$n" = 2 ]; then
     o="$SANDBOX/.fake-origin.git"
-    x=\$("$REAL_GIT" -C "\$o" commit-tree "\$("$REAL_GIT" -C "\$o" rev-parse 'main^{tree}')" -p main -m "someone else's rewrite")
+    x=\$(GIT_AUTHOR_NAME=other GIT_AUTHOR_EMAIL=other@test GIT_COMMITTER_NAME=other GIT_COMMITTER_EMAIL=other@test "$REAL_GIT" -C "\$o" commit-tree "\$("$REAL_GIT" -C "\$o" rev-parse 'main^{tree}')" -p main -m "someone else's rewrite")
     "$REAL_GIT" -C "\$o" update-ref refs/heads/test-branch "\$x"
   fi
 fi
@@ -334,10 +335,43 @@ exec "$REAL_GIT" "\$@"
 SHIM
 chmod +x "$SANDBOX/.shim/git"
 PATH="$SANDBOX/.shim:$PATH" run_implement_pipeline
+# precondition: the shim really rewrote origin (it needs a git identity, which CI has only from the env above)
+check_eq "someone else's rewrite" "$(git -C "$SANDBOX/.fake-origin.git" log -1 --format=%s test-branch)" "11e origin was rewritten"
 check_eq 18 "$LAST_RC" "11e rejected pushes against a rewritten origin"
 hasnt 'already has every commit' "$LAST_STDERR" "11e does not claim origin is complete"
 hasnt 'move_issue' "$(calls)" "11e no hand-off"
 has 'post_comment.*commit\(s\) missing on origin' "$(calls)" "11e comment names the missing commits"
+teardown
+
+# 11g — as 11e, in a clone whose fetch refspec covers only main (a --single-branch clone), with the
+# local origin/<branch> still at HEAD: a plain `git fetch origin <branch>` writes only FETCH_HEAD, so
+# the stale ref would claim origin has everything. The explicit refspec updates it → 18.
+setup c11g
+git -C "$SANDBOX" config remote.origin.fetch "+refs/heads/main:refs/remotes/origin/main"
+REAL_GIT=$(command -v git)
+mkdir -p "$SANDBOX/.shim"
+cat > "$SANDBOX/.shim/git" <<SHIM
+#!/bin/bash
+if [ "\${1:-}" = push ]; then
+  n=\$(cat "$SANDBOX/.pushes" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"
+  if [ "\$n" = 2 ]; then
+    o="$SANDBOX/.fake-origin.git"
+    x=\$(GIT_AUTHOR_NAME=other GIT_AUTHOR_EMAIL=other@test GIT_COMMITTER_NAME=other GIT_COMMITTER_EMAIL=other@test "$REAL_GIT" -C "\$o" commit-tree "\$("$REAL_GIT" -C "\$o" rev-parse 'main^{tree}')" -p main -m "someone else's rewrite")
+    "$REAL_GIT" -C "\$o" update-ref refs/heads/test-branch "\$x"
+    # the local tracking ref still says origin has HEAD (as a push with a full refspec left it)
+    "$REAL_GIT" -C "$SANDBOX" update-ref refs/remotes/origin/test-branch HEAD
+  fi
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$SANDBOX/.shim/git"
+PATH="$SANDBOX/.shim:$PATH" run_implement_pipeline
+# precondition: the shim really rewrote origin (it needs a git identity, which CI has only from the env above)
+check_eq "someone else's rewrite" "$(git -C "$SANDBOX/.fake-origin.git" log -1 --format=%s test-branch)" "11g origin was rewritten"
+check_eq 18 "$LAST_RC" "11g rejected pushes against a rewritten origin"
+hasnt 'already has every commit' "$LAST_STDERR" "11g does not claim origin is complete"
+hasnt 'move_issue' "$(calls)" "11g no hand-off"
+has 'post_comment.*commit\(s\) missing on origin' "$(calls)" "11g comment names the missing commits"
 teardown
 
 # 11f — pushes and the fetch fail at transport level: origin cannot be read → 18

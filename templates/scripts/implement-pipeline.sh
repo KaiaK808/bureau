@@ -841,7 +841,11 @@ if [ "$COMMITS_TOTAL" -gt 0 ] || [ "$AHEAD_OF_ORIGIN" -gt 0 ]; then
   elif ! push_branch_loud "end of run" status; then
     sleep 3
     if ! push_branch_loud "end of run, retry" status; then
-      if git fetch -q origin "$BRANCH" >/dev/null 2>&1; then
+      # Explicit refspec: a plain `git fetch origin "$BRANCH"` writes only
+      # FETCH_HEAD when remote.origin.fetch does not cover the branch (a
+      # --single-branch clone, a narrowed refspec), and the comparison below
+      # would read a stale ref.
+      if git fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" >/dev/null 2>&1; then
         UNPUSHED=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo unreadable)
       else
         UNPUSHED=unreadable
