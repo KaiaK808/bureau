@@ -6,15 +6,25 @@
 #   1  hook unset → today's behaviour (COMPLETE, Build Review, exit 0)
 #   2  hook set, run made commits → runs once, in the worktree, with
 #      BUREAU_ISSUE/BUREAU_BRANCH; its commit counts, is pushed, hand-off as usual
-#   3  hook set, run made no commits → not run
+#   3  hook set, status is not COMPLETE → not run
+#  3c  after a halt on the hook: the next run commits nothing, the hook runs
+#      anyway before the hand-off, and its file reaches origin
 #   4  hook exits non-zero → halt (needs-human, draft, report), exit 14, no hand-off
 #   5  hook leaves uncommitted changes → halt, exit 14, files kept and named
 #   6  hook exceeds BUREAU_POST_IMPLEMENT_TIMEOUT → killed, halt, exit 14
+#  6b  a child that ignores SIGTERM does not survive the timeout
+#  6c  a hook that exits 124 by itself is reported as "exited 124", not a timeout
+#  6d  the limit never exceeds BUREAU_IMPL_TOTAL_TIMEOUT
+#  6e  BUREAU_POST_IMPLEMENT_TIMEOUT is read from .env
 #   7  hook moves HEAD off the run's commits → halt, exit 14, final push skipped
 #   8  dry run → hook not run
 #   9  hook commit carries a CI suppressor → squash-range check halts (CI_MARKER)
-#  10  every push rejected → stage ends 18 before any hand-off
+#  10  every push rejected → retried once, then 18 before any hand-off
 #  11  only the first push rejected → per-iter push stays non-fatal, exit 0
+#  11b the end-of-run push fails twice but origin already has every commit → 0,
+#      hand-off
+#  11c hook fails and the push fails → 18, and the comment carries the hook's report
+#  11d the pushes fail and origin/<branch>..HEAD cannot be read → 18
 #  12  goal-loop path runs the hook too
 #  14  the hook gets no stdin
 #  15  hook fails and the label write fails → 25 (the hold) wins over 14
@@ -37,7 +47,7 @@ setup() {  # setup <case-name> [hook-command]
   sandbox_init "EXP-100" "test-branch"
   export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_complete.txt"
   export FAKE_CLAUDE_COMMIT_ON_ITERS="1" BUREAU_DRY_RUN=0 BUREAU_IMPL_MAX_ITER=3
-  unset BUREAU_USE_GOAL_LOOP BUREAU_POST_IMPLEMENT_TIMEOUT FAKE_CLAUDE_COMMIT_MSG
+  unset BUREAU_USE_GOAL_LOOP BUREAU_POST_IMPLEMENT_TIMEOUT BUREAU_IMPL_TOTAL_TIMEOUT FAKE_CLAUDE_COMMIT_MSG
   export MARK="$MARK_DIR/$1"
   rm -f "$MARK"
   if [ -n "${2:-}" ]; then
@@ -58,9 +68,9 @@ origin_subjects() { git -C "$SANDBOX/.fake-origin.git" log --format=%s test-bran
 use_old_stage() {
   local f="$SCRIPTS_DIR/implement-pipeline.sh"
   grep -q '^run_post_implement_command$' "$f" || { fail "negative control: hook call line not found"; return; }
-  grep -q 'elif ! push_branch_loud "end of run" fatal; then' "$f" || { fail "negative control: fatal push line not found"; return; }
+  grep -q 'elif ! push_branch_loud "end of run" status; then' "$f" || { fail "negative control: end-of-run push line not found"; return; }
   sed -i.bak -e '/^run_post_implement_command$/d' \
-    -e 's/elif ! push_branch_loud "end of run" fatal; then/elif ! push_branch_loud "end of run"; then/' "$f"
+    -e 's/elif ! push_branch_loud "end of run" status; then/elif ! push_branch_loud "end of run"; then/' "$f"
 }
 
 HOOK_OK='printf "%s %s %s\n" "$BUREAU_ISSUE" "$BUREAU_BRANCH" "$(pwd -P)" >> "$MARK"; date > generated.txt; git add generated.txt; git commit -qm "chore: regenerate derived files"'
@@ -86,12 +96,26 @@ has 'move_issue.*state-build-review' "$(calls)" "2 hand-off"
 hasnt 'needs-human' "$(calls)" "2 no needs-human"
 teardown
 
-# 3 — no commits in this run → not run
+# 3 — not a hand-off → not run
 setup c3 "$HOOK_OK"
+export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_needs_human.txt"
+run_implement_pipeline
+[ ! -e "$MARK" ] || fail "3 hook ran although the status was not COMPLETE"
+has 'post_implement_command: skipped \(status NEEDS_HUMAN is not a hand-off\)' "$LAST_STDOUT" "3 skip line"
+teardown
+
+# 3c — after a halt on the hook, the next run commits nothing but still runs the hook
+setup c3c 'echo "regen broke"; exit 3'
+run_implement_pipeline
+check_eq 14 "$LAST_RC" "3c first run halts on the hook"
+: > "$SANDBOX/calls.log"
+jq -n --arg c "$HOOK_OK" '{repo: {post_implement_command: $c}}' > "$SANDBOX/.bureau.json"
 export FAKE_CLAUDE_COMMIT_ON_ITERS=""
 run_implement_pipeline
-[ ! -e "$MARK" ] || fail "3 hook ran although the run made no commits"
-has 'post_implement_command: skipped \(this run made no commits\)' "$LAST_STDOUT" "3 skip line"
+check_eq 0 "$LAST_RC" "3c second run exit"
+check_eq 1 "$(wc -l < "$MARK" 2>/dev/null | tr -d ' ' || echo 0)" "3c hook ran in the second run"
+check_eq 1 "$(git -C "$SANDBOX/.fake-origin.git" ls-tree --name-only test-branch | grep -c '^generated.txt$' || true)" "3c generated.txt on origin"
+has 'move_issue.*state-build-review' "$(calls)" "3c hand-off after the hook"
 teardown
 
 # 4 — non-zero exit
@@ -136,11 +160,53 @@ fi
 rm -f "$MARK.pid"
 teardown
 
+# 6b — a child that ignores SIGTERM is killed with the group after the grace period
+setup c6b '(trap "" TERM; exec sleep 60) & echo $! >> "$MARK.pid"; wait'
+export BUREAU_POST_IMPLEMENT_TIMEOUT=2
+run_implement_pipeline
+check_eq 14 "$LAST_RC" "6b exit"
+has 'timed out after 2s' "$(calls)" "6b reason"
+if [ -s "$MARK.pid" ]; then
+  while read -r pid; do
+    if kill -0 "$pid" 2>/dev/null; then fail "6b a child ignoring SIGTERM ($pid) survived the timeout"; kill -9 "$pid" 2>/dev/null || true; fi
+  done < "$MARK.pid"
+else
+  fail "6b hook never started its child"
+fi
+rm -f "$MARK.pid"
+teardown
+
+# 6c — the hook's own exit 124 is not a timeout
+setup c6c 'exit 124'
+run_implement_pipeline
+check_eq 14 "$LAST_RC" "6c exit"
+has 'repo.post_implement_command exited 124' "$(calls)" "6c reason names the exit"
+hasnt 'timed out' "$(calls)" "6c not reported as a timeout"
+teardown
+
+# 6d — the limit is capped at the stage's total time
+setup c6d 'sleep 30'
+# goal path: the iteration loop needs more than 60 s of budget to start a pass
+export BUREAU_USE_GOAL_LOOP=1 BUREAU_IMPL_TOTAL_TIMEOUT=4 BUREAU_POST_IMPLEMENT_TIMEOUT=60
+run_implement_pipeline
+unset BUREAU_IMPL_TOTAL_TIMEOUT
+check_eq 14 "$LAST_RC" "6d exit"
+has 'timed out after 4s' "$(calls)" "6d limit capped at BUREAU_IMPL_TOTAL_TIMEOUT"
+teardown
+
+# 6e — the limit can come from .env (allow-list in bureau-env.sh)
+setup c6e 'sleep 30'
+printf 'BUREAU_POST_IMPLEMENT_TIMEOUT=2\n' >> "$SANDBOX/.env"
+run_implement_pipeline
+check_eq 14 "$LAST_RC" "6e exit"
+has 'timed out after 2s' "$(calls)" "6e limit read from .env"
+teardown
+
 # 7 — HEAD moved off the run's commits: no push of rewritten history
 setup c7 'git reset -q --hard HEAD~1'
 run_implement_pipeline
 check_eq 14 "$LAST_RC" "7 exit"
-has "moved HEAD off the run's last commit" "$(calls)" "7 reason"
+has "moved HEAD off the commit it started from" "$(calls)" "7 reason"
 has 'not pushing: repo.post_implement_command moved HEAD' "$LAST_STDERR" "7 final push skipped"
 has 'fake-claude iter 1 progress' "$(origin_subjects)" "7 origin keeps the run's commit"
 teardown
@@ -167,7 +233,8 @@ run_implement_pipeline
 check_eq 18 "$LAST_RC" "10 exit"
 hasnt 'move_issue' "$(calls)" "10 no state move"
 hasnt 'Implementation complete' "$(calls)" "10 no completion comment"
-has 'post_comment.*final push of `test-branch` to origin failed' "$(calls)" "10 comment"
+has 'post_comment.*final push of `test-branch` to origin failed twice' "$(calls)" "10 comment"
+has 'PUSH FAILED \(end of run, retry\)' "$LAST_STDERR" "10 push retried once"
 has 'PUSH FAILED \(end of run\)' "$LAST_STDERR" "10 loud push line"
 teardown
 
@@ -179,6 +246,48 @@ check_eq 0 "$LAST_RC" "11 exit"
 has 'PUSH FAILED \(iter 1\)' "$LAST_STDERR" "11 first push failed"
 has 'move_issue.*state-build-review' "$(calls)" "11 hand-off"
 has 'fake-claude iter 1 progress' "$(origin_subjects)" "11 commit on origin"
+teardown
+
+# 11b — the end-of-run push fails at transport level, but origin already has every commit
+setup c11b
+REAL_GIT=$(command -v git)
+mkdir -p "$SANDBOX/.shim"
+printf '#!/bin/bash\nif [ "${1:-}" = push ]; then n=$(cat "%s/.pushes" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "%s/.pushes"; if [ "$n" -ge 2 ]; then echo "fatal: unable to access origin: Could not resolve host" >&2; exit 128; fi; fi\nexec "%s" "$@"\n' "$SANDBOX" "$SANDBOX" "$REAL_GIT" > "$SANDBOX/.shim/git"
+chmod +x "$SANDBOX/.shim/git"
+PATH="$SANDBOX/.shim:$PATH" run_implement_pipeline
+check_eq 0 "$LAST_RC" "11b exit"
+check_eq 3 "$(cat "$SANDBOX/.pushes")" "11b iteration push, end-of-run push and one retry"
+has 'origin/test-branch already has every commit of HEAD; going on' "$LAST_STDERR" "11b says why it goes on"
+has 'move_issue.*state-build-review' "$(calls)" "11b hand-off"
+hasnt 'final push' "$(calls)" "11b no push-failure comment"
+teardown
+
+# 11d — the pushes fail and origin/<branch>..HEAD cannot be read: counts as missing commits → 18
+setup c11d
+REAL_GIT=$(command -v git)
+mkdir -p "$SANDBOX/.shim"
+cat > "$SANDBOX/.shim/git" <<SHIM
+#!/bin/bash
+n=\$(cat "$SANDBOX/.pushes" 2>/dev/null || echo 0)
+if [ "\${1:-}" = push ]; then n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"; if [ "\$n" -ge 2 ]; then echo "fatal: unable to access origin" >&2; exit 128; fi; fi
+if [ "\$n" -ge 2 ] && [ "\${1:-}" = rev-list ] && [ "\${3:-}" = "origin/test-branch..HEAD" ]; then echo "fatal: bad revision" >&2; exit 128; fi
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$SANDBOX/.shim/git"
+PATH="$SANDBOX/.shim:$PATH" run_implement_pipeline
+check_eq 18 "$LAST_RC" "11d an unreadable comparison counts as commits origin lacks"
+has 'post_comment.*final push of `test-branch` to origin failed twice' "$(calls)" "11d comment"
+hasnt 'move_issue' "$(calls)" "11d no hand-off"
+teardown
+
+# 11c — hook failed and the push failed: 18, and the hook's report is not lost
+setup c11c 'echo "regen broke on purpose"; exit 3'
+reject_pushes all
+run_implement_pipeline
+check_eq 18 "$LAST_RC" "11c exit"
+has 'post_comment.*final push of `test-branch` to origin failed twice' "$(calls)" "11c push comment"
+has 'repo.post_implement_command exited 3' "$(calls)" "11c hook report in the comment"
+has 'regen broke on purpose' "$(calls)" "11c hook output in the comment"
 teardown
 
 # 12 — the goal-loop path runs the hook too

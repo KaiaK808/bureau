@@ -53,10 +53,10 @@ refresh_review_context() {
 # open_or_update_pr_draft: ensure a draft PR exists for $BRANCH; emit its URL.
 # Used during intermediate iterations and on non-COMPLETE terminal states so
 # reviewers can see in-flight work without QA/code-review picking it up.
-# push_branch_loud <label> [fatal]: push $BRANCH to origin; on failure say so
-# loudly, and carry on — or, with `fatal`, return git's exit code so the caller
-# can stop. Only the end-of-run push is fatal: after it the ticket is handed on,
-# and a hand-off of work that is not on origin is exactly what must not happen.
+# push_branch_loud <label> [status]: push $BRANCH to origin; on failure say so
+# loudly, and carry on — or, with `status`, return git's exit code so the
+# caller can decide. Only the end-of-run push uses it: after it the ticket is
+# handed on, and a hand-off of work that is not on origin must not happen.
 #
 # Carried over from slidefactory-core (EXP-1462). Every push here used to end
 # in `|| true`, so a failed push left no trace: whether the branch was out
@@ -86,12 +86,14 @@ push_branch_loud() {
     :
   else
     rc=$?
-    echo "  ✗✗ PUSH FAILED ($label): branch '$BRANCH' is NOT on origin — git exit $rc" >&2
-    printf '%s\n' "$push_out" | sed 's/^/       git: /' >&2
-    if [ "$mode" = fatal ]; then
-      echo "  ✗✗ the work is only in this worktree; nothing is handed on" >&2
+    if [ "$mode" = status ]; then
+      # The caller compares HEAD with origin/$BRANCH and says what is missing.
+      echo "  ✗✗ PUSH FAILED ($label): branch '$BRANCH' — git exit $rc" >&2
+      printf '%s\n' "$push_out" | sed 's/^/       git: /' >&2
       return "$rc"
     fi
+    echo "  ✗✗ PUSH FAILED ($label): branch '$BRANCH' is NOT on origin — git exit $rc" >&2
+    printf '%s\n' "$push_out" | sed 's/^/       git: /' >&2
     echo "  ✗✗ the work is only in this worktree until a later push succeeds" >&2
   fi
   return 0
@@ -101,56 +103,74 @@ push_branch_loud() {
 # (.bureau.json), for a repo that has to derive files from an implementation
 # run — regenerate generated docs or contracts — before anyone sees the branch.
 #
-# Runs once per stage, after the implement loop and before the squash-range
-# check and the final push, and only when this run made commits (nothing new
-# to derive from otherwise); never in a dry run. It runs in the implement
-# worktree via `bash -o pipefail -c` (the review build check's convention),
-# with no stdin, with BUREAU_ISSUE and BUREAU_BRANCH set, and bounded by
-# BUREAU_POST_IMPLEMENT_TIMEOUT (default 900 s, never above the stage's
-# TOTAL_TIMEOUT); a timeout ends the whole process group. The hook commits its
-# own output: its commits count with the run's, go through the squash-range
-# check (a CI suppressor in its message halts like any other) and are pushed
-# with the rest.
+# Runs before every hand-off to QA or Build Review: when the terminal status is
+# COMPLETE. COMPLETE already implies commits beyond origin/main — both paths
+# turn a COMPLETE on an empty branch into STUCK (EXP-573) before this point.
+# It does not depend on whether THIS run committed: after a
+# halt on the hook, a human fixes it and removes needs-human, and the next run
+# typically finds the tasks done and commits nothing — the hook must still run
+# before that run hands the ticket on. So the command must be idempotent and
+# exit 0 when there is nothing to commit (a bare `git commit` exits 1 then).
+# Never runs in a dry run. It runs after the loop and before the squash-range
+# check and the final push, in the implement worktree via `bash -o pipefail -c`
+# (the review build check's convention), with no stdin, with BUREAU_ISSUE and
+# BUREAU_BRANCH set, and bounded by BUREAU_POST_IMPLEMENT_TIMEOUT (default
+# 900 s, never above the stage's TOTAL_TIMEOUT). On a timeout the runner sends
+# SIGTERM to the hook's whole process group and, after a 5 s grace, SIGKILL to
+# whatever is left of it. The hook commits its own output: its commits go
+# through the squash-range check (a CI suppressor in its message halts like any
+# other) and are pushed with the rest (AHEAD_OF_ORIGIN is read after the hook).
 #
 # It fails — POST_IMPLEMENT_FAILED=1, and the stage halts with 14 after the
 # usual halt bookkeeping — when it exits non-zero or times out, when it leaves
-# changes it did not commit (new entries in `git status`; nothing is deleted,
-# so the worker keeps the worktree for a human to look at), or when HEAD is no
-# longer a descendant of the run's last commit (then the final push is skipped:
-# pushing would publish rewritten history).
+# changes it did not commit (new entries in `git status` compared with before
+# it ran; nothing is deleted, so the worker keeps the worktree for a human to
+# look at), or when HEAD is no longer a descendant of the commit it started
+# from (then the final push is skipped: pushing would publish rewritten
+# history).
 POST_IMPLEMENT_FAILED=0
 POST_IMPLEMENT_HEAD_REWRITTEN=0
 POST_IMPLEMENT_REPORT=""
-POST_IMPLEMENT_PREV_STATUS=""
 _POST_IMPLEMENT_RUNNER='
-import os, signal, subprocess, sys
-limit, cmd = int(sys.argv[1]), sys.argv[2]
+import os, signal, subprocess, sys, time
+limit, cmd, status_file = int(sys.argv[1]), sys.argv[2], sys.argv[3]
 child = subprocess.Popen(["bash", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
-def stop(code):
+def stop(code, why):
+    with open(status_file, "w") as f:
+        f.write(why)
+    pgid = child.pid
     try:
-        os.killpg(child.pid, signal.SIGTERM)
-        try:
-            child.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.wait()
+        os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        child.poll()
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    child.wait()
     sys.exit(code)
 for sig, code in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)):
-    signal.signal(sig, lambda *_, c=code: stop(c))
+    signal.signal(sig, lambda *_, c=code: stop(c, "signal"))
 try:
     rc = child.wait(timeout=limit)
 except subprocess.TimeoutExpired:
-    stop(124)
+    stop(124, "timeout")
 sys.exit(128 - rc if rc < 0 else rc)
 '
 run_post_implement_command() {
-  local cmd limit before before_status after_status new_dirty rc log reason hook_commits
+  local cmd limit before before_status after_status new_dirty rc log status_file why reason hook_commits
   cmd=$(bureau_get '.repo.post_implement_command // empty')
   [ -n "$cmd" ] || return 0
-  if [ "$COMMITS_TOTAL" -le 0 ]; then
-    echo "  repo.post_implement_command: skipped (this run made no commits)"
+  if [ "$STATUS" != COMPLETE ]; then
+    echo "  repo.post_implement_command: skipped (status $STATUS is not a hand-off)"
     return 0
   fi
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
@@ -163,26 +183,30 @@ run_post_implement_command() {
   before=$(git rev-parse HEAD)
   before_status=$(git status --porcelain --untracked-files=all | LC_ALL=C sort)
   log=$(mktemp "${TMPDIR:-/tmp}/bureau-post-implement.XXXXXX")
+  status_file="$log.why"
   echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
-  if BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" >"$log" 2>&1; then
+  if BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" >"$log" 2>&1; then
     rc=0
   else
     rc=$?
   fi
+  why=$(cat "$status_file" 2>/dev/null || true)
+  rm -f "$status_file"
   tail -20 "$log" | sed 's/^/    /'
   reason=""
-  if [ "$rc" = 124 ]; then
+  if [ "$why" = timeout ]; then
     reason="timed out after ${limit}s"
+  elif [ "$why" = signal ]; then
+    reason="was interrupted by a signal (exit $rc)"
   elif [ "$rc" != 0 ]; then
     reason="exited $rc"
   fi
   if git merge-base --is-ancestor "$before" HEAD 2>/dev/null; then
     hook_commits=$(git rev-list --count "$before..HEAD")
-    COMMITS_TOTAL=$(( COMMITS_TOTAL + hook_commits ))
   else
     hook_commits=0
     POST_IMPLEMENT_HEAD_REWRITTEN=1
-    reason="${reason:+$reason; }moved HEAD off the run's last commit ${before:0:12}"
+    reason="${reason:+$reason; }moved HEAD off the commit it started from (${before:0:12})"
   fi
   after_status=$(git status --porcelain --untracked-files=all | LC_ALL=C sort)
   new_dirty=$(LC_ALL=C comm -13 <(printf '%s\n' "$before_status") <(printf '%s\n' "$after_status") | sed '/^$/d')
@@ -275,7 +299,7 @@ build_summary_comment() {
     CAP_TIME)    header="🚧 Implementation hit total time cap (${TOTAL_TIMEOUT}s) before completing." ;;
     PARTIAL)     header="🚧 Implementation made partial progress but exhausted iteration cap (${MAX_ITER}) without COMPLETE." ;;
     CI_MARKER)   header="🚧 Halted before hand-off: a commit in the squash range carries an entry of scripts/ci-skip-markers.txt, or the range could not be checked. Nothing went to QA or Build Review. Reword the message(s) named below, then remove needs-human." ;;
-    POST_IMPLEMENT_FAILED) header="🚧 Halted before hand-off: repo.post_implement_command failed (status before it ran: ${POST_IMPLEMENT_PREV_STATUS:-unknown}). Nothing went to QA or Build Review. Fix the command or the files it derives from, then remove needs-human." ;;
+    POST_IMPLEMENT_FAILED) header="🚧 Halted before hand-off: the implementation was complete, but repo.post_implement_command failed. Nothing went to QA or Build Review. Fix the command or the files it derives from, then remove needs-human: the next run executes the command again before it hands the ticket on, even when it has nothing else to commit, so the command must be idempotent and exit 0 when there is nothing to commit." ;;
     *)           header="🚧 Implementation ended with status=$status." ;;
   esac
   printf '%s\n\n**Total tasks done across iterations:** %s\n**Branch:** `%s`\n**PR:** %s\n\nIteration log:\n```\n%s```\n' \
@@ -775,7 +799,6 @@ fi  # end of `if ! use_goal_loop_enabled` wrapper around iter-loop + post-loop o
 # range the check reads and inside the final push (run_post_implement_command).
 run_post_implement_command
 if [ "$POST_IMPLEMENT_FAILED" = 1 ]; then
-  POST_IMPLEMENT_PREV_STATUS="$STATUS"
   STATUS="POST_IMPLEMENT_FAILED"
 fi
 
@@ -799,16 +822,38 @@ echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 # does not (a merge of origin/main before the loop is counted by neither
 # COMMITS_TOTAL nor the iter log). An unreadable comparison counts as ahead.
 AHEAD_OF_ORIGIN=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo 1)
-# This push is fatal: if it fails, the stage ends with 18 here, before any PR
-# is marked ready or the ticket moves, so nothing is handed on that origin does
-# not have. The worker then keeps the worktree (it is ahead of origin) instead
-# of resetting the work away on the next pick.
+# A failed push here is retried once after a short wait. If it still fails
+# and HEAD holds commits that origin/$BRANCH (the last state this worktree
+# pushed or fetched) does not, the stage ends with 18 here, before any PR is
+# marked ready or the ticket moves: nothing is handed on that origin does not
+# have, and the worker keeps the worktree because it is ahead of origin. If
+# origin already has every commit — the usual case, the per-iter pushes went
+# through and this one had nothing to send — a failed push changes nothing and
+# the stage goes on. An unreadable comparison counts as ahead.
 if [ "$COMMITS_TOTAL" -gt 0 ] || [ "$AHEAD_OF_ORIGIN" -gt 0 ]; then
   if [ "$POST_IMPLEMENT_HEAD_REWRITTEN" = 1 ]; then
-    echo "  ✗✗ not pushing: repo.post_implement_command moved HEAD off the run's commits" >&2
-  elif ! push_branch_loud "end of run" fatal; then
-    post_comment "$ISSUE" "❌ Implement stopped before hand-off: the final push of \`$BRANCH\` to origin failed. Nothing went to QA or Build Review and the ticket stays in Build. The commits are only in the implement worktree, which the worker keeps because it is ahead of origin. Push the branch once origin accepts it, or re-run the stage." || true
-    exit 18
+    echo "  ✗✗ not pushing: repo.post_implement_command moved HEAD off the commit it started from" >&2
+  elif ! push_branch_loud "end of run" status; then
+    sleep 3
+    if ! push_branch_loud "end of run, retry" status; then
+      UNPUSHED=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo unreadable)
+      if [ "$UNPUSHED" = 0 ]; then
+        echo "  the final push failed twice, but origin/$BRANCH already has every commit of HEAD; going on" >&2
+      else
+        echo "  ✗✗ ${UNPUSHED} commit(s) are only in this worktree; nothing is handed on" >&2
+        PUSH_FAIL_COMMENT="❌ Implement stopped before hand-off: the final push of \`$BRANCH\` to origin failed twice, and origin does not have every commit (${UNPUSHED} missing). Nothing went to QA or Build Review and the ticket stays in Build. The missing commits are only in the implement worktree, which the worker keeps because it is ahead of origin. Push the branch once origin accepts it, or re-run the stage."
+        if [ "$POST_IMPLEMENT_FAILED" = 1 ]; then
+          PUSH_FAIL_COMMENT="${PUSH_FAIL_COMMENT}
+
+repo.post_implement_command had failed before the push, too:
+\`\`\`
+${POST_IMPLEMENT_REPORT}
+\`\`\`"
+        fi
+        post_comment "$ISSUE" "$PUSH_FAIL_COMMENT" || true
+        exit 18
+      fi
+    fi
   fi
 fi
 
