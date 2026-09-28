@@ -58,6 +58,9 @@
 # bureau-config.sh checks each one before it can reach an arithmetic context.
 # EXP-1482 added BUREAU_LINEAR_MAX_TIME and BUREAU_LINEAR_CONNECT_TIMEOUT (the
 # time limit of one Linear request) on the same terms.
+# BUREAU_POST_IMPLEMENT_TIMEOUT (the limit of repo.post_implement_command) sits
+# with the implement timeouts, on the numeric list too; implement-pipeline.sh
+# also checks it against ^[1-9][0-9]*$ before use.
 bureau_env_key_allowed() {
   case "$1" in
     LINEAR_API_KEY | TELEGRAM_BOT_TOKEN | TELEGRAM_ALERT_CHAT_ID | \
@@ -67,6 +70,7 @@ bureau_env_key_allowed() {
     BUREAU_USAGE_FILE | BRAINHUGGERS_USAGE_FILE | BUREAU_DISABLE_THROTTLE | \
     BUREAU_PATH_PREFIX_STRIP | BUREAU_REVIEW_MERGE_CAP_KB | \
     BUREAU_IMPL_MAX_ITER | BUREAU_IMPL_ITER_TIMEOUT | BUREAU_IMPL_TOTAL_TIMEOUT | \
+    BUREAU_POST_IMPLEMENT_TIMEOUT | \
     BUREAU_SUPERVISOR_MAX_CRASHES | BUREAU_SUPERVISOR_STABILITY_WINDOW | \
     BUREAU_SESSION | BUREAU_SESSION_NAME | \
     BUREAU_NO_MERGE | BUREAU_STOP_REQUESTED | \
@@ -98,7 +102,7 @@ bureau_env_key_allowed() {
 bureau_env_key_numeric() {
   case "$1" in
     BUREAU_IMPL_MAX_ITER | BUREAU_IMPL_ITER_TIMEOUT | BUREAU_IMPL_TOTAL_TIMEOUT | \
-    BUREAU_REVIEW_MERGE_CAP_KB | \
+    BUREAU_POST_IMPLEMENT_TIMEOUT | BUREAU_REVIEW_MERGE_CAP_KB | \
     BUREAU_SUPERVISOR_MAX_CRASHES | BUREAU_SUPERVISOR_STABILITY_WINDOW)
       return 0
       ;;

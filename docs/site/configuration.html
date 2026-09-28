@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="bdac06e8f9555cd671a4397d7cce51d1b1f6f4d5ff10e470fe630cfd46ae4c4e">
+<meta name="bureau-source-sha256" content="3b5b4da8a60ec399a93b3e428605928bea308f19153cdc691ca0137ccafb687a">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -819,6 +819,13 @@ providers</td>
 <td>Budget in seconds for the implementation provider loop. Independent
 executor tests and publication can add time after it; this is not a
 monetary cap</td>
+</tr>
+<tr>
+<td><code>BUREAU_POST_IMPLEMENT_TIMEOUT</code></td>
+<td><code>900</code></td>
+<td>Limit in seconds for <code>repo.post_implement_command</code>, never
+above <code>BUREAU_IMPL_TOTAL_TIMEOUT</code>. On timeout the hook's
+process group is ended and the stage halts with <code>14</code></td>
 </tr>
 </tbody>
 </table>

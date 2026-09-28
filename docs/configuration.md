@@ -164,6 +164,7 @@ Env-only knobs (no `.bureau.json` equivalent). `implement-pipeline.sh` invokes t
 | `BUREAU_IMPL_MAX_ITER` | `3` | Max provider passes per tick. Each iter parses the JSON status block, pushes commits, and decides continue/stop |
 | `BUREAU_IMPL_ITER_TIMEOUT` | `1800` | Per-iteration provider wall-time cap in seconds, limited by the remaining total budget and enforced by the Python adapter for both providers |
 | `BUREAU_IMPL_TOTAL_TIMEOUT` | `5400` | Budget in seconds for the implementation provider loop. Independent executor tests and publication can add time after it; this is not a monetary cap |
+| `BUREAU_POST_IMPLEMENT_TIMEOUT` | `900` | Limit in seconds for `repo.post_implement_command`, never above `BUREAU_IMPL_TOTAL_TIMEOUT`. On timeout the hook's process group is ended and the stage halts with `14` |
 
 The default provider-loop budget is 90 minutes. An unproductive first `PARTIAL` iteration can become `STUCK`; prior productive iterations and legitimate `COMPLETE` results have separate handling. The executor checks Git evidence and, for Codex completion, the configured project tests. A provider's success text alone cannot complete the stage.
 
