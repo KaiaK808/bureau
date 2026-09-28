@@ -97,8 +97,10 @@ def template_source(manifest):
     """Which template revision the installed assets came from, as bureau_install.py recorded it."""
     if not manifest: return dict(status='source not recorded', reason='no installation manifest')
     sources = manifest.get('sources')
-    if not isinstance(sources, dict) or not sources:
+    if not isinstance(sources, dict):
         return dict(status='source not recorded', reason='the manifest predates source recording; the next asset --apply records it')
+    if not sources:
+        return dict(status='source not recorded', reason='no asset scope has a recorded source: the last asset --apply installed no files, or dropped a stale record; the next asset --apply that installs files records it')
     files = json.dumps(manifest.get('files', {}), sort_keys=True).encode()
     if hashlib.sha256(files).hexdigest() != manifest.get('sources_files_sha256'):
         return dict(status='stale', scopes=sources, reason='installed file hashes changed after the source was recorded (an installer that does not record its source wrote the manifest)')

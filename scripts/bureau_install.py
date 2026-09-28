@@ -14,6 +14,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 SPECKIT_VERSION = "0.7.5"
 MANIFEST = ".bureau-install.json"
+# Inherited from a hook or wrapper, these would point every git call at some other repository.
+GIT_REDIRECTS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY")
 BEGIN = "<!-- bureau-init:begin -->"
 END = "<!-- bureau-init:end -->"
 
@@ -49,23 +51,45 @@ def read_manifest(repo):
     return data
 
 
-def source_revision():
-    """Describe the template revision this installer runs from (ROOT, symlinks resolved)."""
+def git_env():
+    return {k: v for k, v in os.environ.items() if k not in GIT_REDIRECTS}
+
+
+def source_revision(inputs):
+    """Describe the template revision this installer runs from (ROOT, symlinks resolved).
+
+    `inputs` are the source files this batch reads. The source is dirty when the checkout reports
+    changes or when any input is not byte-identical to its blob at HEAD, which also catches
+    gitignored files that the installer copies; anything unreadable counts as dirty."""
     def git(*args):
-        proc = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True)
-        return proc.stdout.strip() if proc.returncode == 0 else None
-    top = git("rev-parse", "--show-toplevel")
+        # --no-optional-locks: a preview must not refresh the source checkout's index.
+        proc = subprocess.run(["git", "--no-optional-locks", "-C", str(ROOT), *args], capture_output=True, env=git_env())
+        return proc.stdout if proc.returncode == 0 else None
+    def text(*args):
+        out = git(*args)
+        return out.decode().strip() if out is not None else None
+    top = text("rev-parse", "--show-toplevel")
     # A copy that sits inside some other repository must not borrow that repository's commit.
     if top is None or Path(top).resolve() != ROOT:
         return {"git": False, "note": "not a git checkout"}
-    commit = git("rev-parse", "--verify", "HEAD")
+    commit = text("rev-parse", "--verify", "HEAD")
     if commit is None:
         return {"git": False, "note": "git checkout without a commit"}
     status = git("status", "--porcelain", "--untracked-files=normal")
-    # Untracked template files are installed too, so they make the source dirty; unreadable counts as dirty.
-    return {"git": True, "tag": git("describe", "--tags", "--exact-match", "HEAD"),
-            "describe": git("describe", "--tags", "--always", "HEAD"), "commit": commit,
-            "dirty": status != ""}
+    tree = git("ls-tree", "-r", "-z", "HEAD")
+    blobs = {}
+    for entry in (tree or b"").split(b"\0"):
+        meta, _, path = entry.partition(b"\t")
+        if path:
+            blobs[path] = meta.split()[2].decode()
+    algorithm = hashlib.sha256 if len(commit) == 64 else hashlib.sha1
+    def at_head(path):
+        data = path.read_bytes()
+        return blobs.get(os.fsencode(path.relative_to(ROOT))) == algorithm(b"blob %d\0" % len(data) + data).hexdigest()
+    return {"git": True, "tag": text("describe", "--tags", "--exact-match", "HEAD"),
+            "describe": text("describe", "--tags", "--always", "HEAD"), "commit": commit,
+            # An unreadable tree leaves `blobs` empty, so every input then counts as changed.
+            "dirty": status != b"" or not all(at_head(path) for path in sorted(inputs))}
 
 
 def files_digest(files):
@@ -130,30 +154,36 @@ def merge_instructions(old, block):
 
 def assets(repo, args, manifest, targets):
     candidates = []
+    inputs = {Path(__file__).resolve(), ROOT / "templates/instructions/workflow.md"}
     scopes = set(args.scope or ["interfaces"])
     if "interfaces" in scopes:
         for target in targets:
             for source in sorted((ROOT / "templates/commands").glob("*.md")):
+                inputs.add(source)
                 relative = f".agents/skills/{source.stem}/SKILL.md" if target == "codex" else f".claude/commands/{source.name}"
                 candidates.append((relative, render_command(source, target), False, False, "interfaces/" + target))
             candidates.append(("AGENTS.md" if target == "codex" else "CLAUDE.md", instruction_block(target), False, True, "interfaces/" + target))
             if target == "codex":
                 for source in sorted((ROOT / "templates/skills").rglob("*")):
                     if source.is_file():
+                        inputs.add(source)
                         relative = ".agents/skills/" + str(source.relative_to(ROOT / "templates/skills"))
                         candidates.append((relative, source.read_bytes(), False, False, "interfaces/" + target))
     if "scripts" in scopes:
         for source in sorted((ROOT / "templates/scripts").iterdir()):
             if source.is_file():
+                inputs.add(source)
                 candidates.append((f"scripts/{source.name}", source.read_bytes(), source.suffix in (".sh", ".py"), False, "scripts"))
     if "workflows" in scopes and "claude" in targets:
         for source in sorted((ROOT / "templates/workflows").glob("*.js")):
+            inputs.update((source, ROOT / "templates/scripts/bureau-schedule.mjs"))
             workflow = source.read_text()
             if "/* BUREAU_SCHEDULER_CORE */" in workflow:
                 core = (ROOT / "templates/scripts/bureau-schedule.mjs").read_text().replace("export function", "function")
                 workflow = workflow.replace("/* BUREAU_SCHEDULER_CORE */", core)
             candidates.append((f".claude/workflows/{source.name}", workflow.encode(), False, False, "workflows"))
     if "ci" in scopes:
+        inputs.add(ROOT / "templates/.github/workflows/ci.yml")
         candidates.append((".github/workflows/ci.yml", (ROOT / "templates/.github/workflows/ci.yml").read_bytes(), False, False, "ci"))
 
     unknown = set(args.overwrite) - {item[0] for item in candidates}
@@ -185,7 +215,7 @@ def assets(repo, args, manifest, targets):
             records[relative] = installed_hash
             writes.append((path, new, executable))
 
-    source = source_revision()
+    source = source_revision(inputs)
     print(json.dumps({"targets": targets, "source": source, "files": plan}, indent=2))
     # An apply containing conflicts writes nothing, including the manifest.
     if any(item["action"] == "conflict" for item in plan):
@@ -205,7 +235,12 @@ def assets(repo, args, manifest, targets):
     if "interfaces" in scopes:
         updated["targets"] = sorted(set(manifest.get("targets", [])) | set(targets))
     # Keyed by scope (and host for interfaces): a later partial apply must not relabel files it did not write.
-    sources = dict(manifest.get("sources", {}))
+    # A record whose digest no longer matches was carried along by a writer that changed hashes without
+    # recording its source (an older installer after a rollback); none of it is trustworthy any more.
+    carried = manifest.get("sources", {})
+    if manifest.get("sources_files_sha256") != files_digest(manifest.get("files", {})):
+        carried = {}
+    sources = dict(carried)
     for key in {item[4] for item in candidates}:
         sources[key] = source
     updated.update(sources=dict(sorted(sources.items())), sources_files_sha256=files_digest(records))
@@ -394,7 +429,7 @@ def main():
     args = parser.parse_args()
     try:
         repo = Path(args.repo).resolve(strict=True)
-        top = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
+        top = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True, env=git_env()).stdout.strip()
         if Path(top).resolve() != repo:
             raise ValueError("--repo must be the repository or worktree root")
         if args.action in ("doctor", "migrate"):

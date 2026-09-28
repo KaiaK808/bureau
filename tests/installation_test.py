@@ -149,6 +149,7 @@ class InstallationTests(unittest.TestCase):
 
     def tagged_source(self, tag="v9.9.9"):
         source = self.source_copy(self.root)
+        shutil.copy(ROOT / ".gitignore", source / ".gitignore")
         self.git(source, "init", "-q")
         self.git(source, "add", "-A")
         self.git(source, "commit", "-qm", "release")
@@ -206,7 +207,7 @@ class InstallationTests(unittest.TestCase):
         script = source / "templates/scripts/queue-loop.sh"
         script.write_text(script.read_text() + "# next release\n")
         self.git(source, "commit", "-qam", "next release")
-        self.git(source, "tag", "-a", "v9.9.10", "-m", "v9.9.10")
+        self.git(source, "tag", "v9.9.10")  # lightweight: still the exact tag
         preview = self.run_install("assets", "--scope", "scripts", program=program)
         self.assertEqual(json.loads(preview.stdout)["source"]["tag"], "v9.9.10")
         self.assertEqual((self.repo / ".bureau-install.json").read_bytes(), before)
@@ -214,6 +215,45 @@ class InstallationTests(unittest.TestCase):
         self.run_install("assets", "--scope", "scripts", "--apply", program=program, status=3)
         self.assertEqual((self.repo / ".bureau-install.json").read_bytes(), before)
         self.assertEqual(self.manifest()["sources"]["scripts"]["tag"], "v9.9.9")
+
+    def test_ignored_template_files_that_get_installed_make_the_source_dirty(self):
+        source, program = self.tagged_source()
+        for name in (".env", ".DS_Store"):
+            (source / "templates/scripts" / name).write_text("local\n")
+        self.assertEqual(self.git(source, "status", "--porcelain"), "")  # invisible to status
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program)
+        self.assertEqual({k: self.manifest()["sources"]["scripts"][k] for k in ("tag", "dirty")}, {"tag": "v9.9.9", "dirty": True})
+        # Current behaviour, named as a separate risk: an ignored file in templates/scripts is copied.
+        self.assertTrue((self.repo / "scripts/.env").is_file() and (self.repo / "scripts/.DS_Store").is_file())
+        for name in (".env", ".DS_Store"):
+            (source / "templates/scripts" / name).unlink()
+        # An ignored file the installer does not copy (a directory entry) leaves the source clean.
+        (source / "templates/scripts/__pycache__").mkdir()
+        (source / "templates/scripts/__pycache__/x.pyc").write_bytes(b"\0")
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program)
+        self.assertFalse(self.manifest()["sources"]["scripts"]["dirty"])
+
+    def test_source_git_calls_ignore_inherited_repository_redirects(self):
+        source, program = self.tagged_source()
+        host = self.root / "host repo"
+        self.git(self.root, "init", "-q", str(host))
+        (host / "f").write_text("x")
+        self.git(host, "add", "-A")
+        self.git(host, "commit", "-qm", "host")
+        env = {**os.environ, "GIT_DIR": str(host / ".git"), "GIT_WORK_TREE": str(host)}
+        self.run_install("assets", "--scope", "scripts", "--apply", program=program, env=env)
+        self.assertEqual(self.manifest()["sources"]["scripts"]["commit"], self.git(source, "rev-parse", "HEAD"))
+        self.assertFalse(self.manifest()["sources"]["scripts"]["dirty"])
+
+    def test_preview_does_not_write_the_source_index(self):
+        source, program = self.tagged_source()
+        index = source / ".git/index"
+        script = source / "templates/scripts/queue-loop.sh"
+        os.utime(script, (script.stat().st_atime, script.stat().st_mtime + 5))  # stale stat data, same bytes
+        before = index.read_bytes()
+        preview = self.run_install("assets", "--scope", "scripts", program=program)
+        self.assertFalse(json.loads(preview.stdout)["source"]["dirty"])
+        self.assertEqual(index.read_bytes(), before)
 
     def test_source_that_is_not_its_own_checkout_is_recorded_as_such(self):
         loose = self.source_copy(self.root / "loose")
