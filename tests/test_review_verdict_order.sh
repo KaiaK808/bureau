@@ -3,7 +3,7 @@
 # security specialist's CRITICAL count, security floor, build fold, cycle cap last.
 #
 # Two defects came from the old order and the old defaults (EXP-1514, EXP-1518 in
-# slidefactory-core, same lines in the template):
+# installation A, same lines in the template):
 #   - the cycle cap ran before the build fold, so "reviewers approve, build red" reached
 #     the cap as APPROVE, was folded to REQUEST_CHANGES afterwards and went round forever;
 #   - the security floor read a missing or unreadable security_issues as 0, and raised
@@ -90,7 +90,7 @@ reason=$(/bin/bash -c 'source "$1"; decide_review_verdict APPROVE "" 0 true 0 3'
 [ "$reason" = "security_issues unreadable" ] || fail "an unreadable count that caused the BLOCK did not name itself: '$reason'"
 echo "PASS model text is sanitised and the logged reason is the rule that caused the BLOCK"
 
-# The legacy text verdict: only an exact verdict word counts (EXP-1513 in slidefactory-core).
+# The legacy text verdict: only an exact verdict word counts (EXP-1513 in installation A).
 fallback() { /bin/bash -c 'source "$1"; review_verdict_from_text "$2"' _ "$FNS" "$1"; }
 for pair in 'REVIEW_VERDICT: NOT_APPROVED — BLOCK|' 'REVIEW_VERDICT: APPROVE|APPROVE' \
             'REVIEW_VERDICT: **REQUEST_CHANGES**|REQUEST_CHANGES' 'REVIEW_VERDICT: `BLOCK`.|BLOCK' \

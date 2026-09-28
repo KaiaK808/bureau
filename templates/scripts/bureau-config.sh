@@ -212,7 +212,7 @@ BUREAU_SPECS_DIR=$(bureau_get '.repo.specs_dir // "specs"')
 BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 
 # ── Linear fetches: check the answer, retry, else stop with our own code ──
-# Carried over from slidefactory-core (EXP-1478), where every fetch used to be
+# Carried over from installation A (EXP-1478), where every fetch used to be
 # passed on unchecked: an error page ended at `jq` with exit 5, while an answer
 # carrying `errors`, an empty answer and a failed connection all came back as
 # SUCCESS with an empty result — and the stage then decided on that empty
@@ -229,7 +229,7 @@ BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 # If it stays unusable the fetch prints NOTHING and returns
 # $BUREAU_EXIT_LINEAR_UNUSABLE; no answer text and no key travels in a message.
 #
-# EXP-1482 (carried over from slidefactory-core's follow-up): curl used to run
+# EXP-1482 (carried over from installation A's follow-up): curl used to run
 # with neither a status check nor a time limit. An error page whose body was
 # `{"data":{}}` counted as a success, every reader then answered "nothing"
 # (no state, no labels) with exit 0 and the shepherd slept forever or walked
@@ -246,7 +246,7 @@ BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 # these helpers unchanged. An issue query that matches no issue (`nodes: []`)
 # is a usable answer: "no such ticket" is not "Linear unusable".
 #
-# The code is 27 (`linear-unusable` in exit_class), not slidefactory's 20: in
+# The code is 27 (`linear-unusable` in exit_class), not installation A's 20: in
 # this template 20 is `stopped-before-merge`. 10 (`linear-down`) stays the
 # precondition code for a missing or invalid key.
 #
@@ -649,7 +649,7 @@ PY_PATHS
 # bureau-provider.py as an argument list. Kept for installations' own scripts
 # and tests/test_model_resolution.sh. Do NOT word-split its output
 # (`$(claude_cmd_for_stage …)` unquoted): a model value from .env then adds
-# runner options of its own (slidefactory EXP-1476, tests/test_model_argv.sh).
+# runner options of its own (installation A EXP-1476, tests/test_model_argv.sh).
 claude_cmd_for_stage() {
   local stage="$1"
   local model runner
@@ -934,7 +934,7 @@ post_comment() {
 # crosscheck_open_prs: cross-check <tasks-file> against the open PRs and report
 # the outcome on <issue>. Always returns 0.
 #
-# Carried over from slidefactory-core (EXP-1469). "No file conflicts" is only
+# Carried over from installation A (EXP-1469). "No file conflicts" is only
 # said after an explicit success: exit code 0 AND a last non-empty output line
 # "CROSSCHECK RESULT: clean …". Exit 3 with "conflicts" posts the conflict
 # warning as before. Every other pairing — an abort (bash itself exits 1 or 2),
@@ -1046,7 +1046,7 @@ $body
 # suppressor? Runs squash-marker-check.sh against <base>..HEAD and leaves the
 # answer in two globals; the caller decides what a halt means.
 #
-# Carried over from slidefactory-core (EXP-1465). The second layer behind
+# Carried over from installation A (EXP-1465). The second layer behind
 # merge-body.sh: that one defangs the message merge-pipeline.sh writes, this one
 # reads the commits themselves, which is what reaches main on a rebase merge or
 # a merge done by hand. The implement stage calls it before the hand-off, the
@@ -1095,7 +1095,7 @@ $out"
 # comment_on_branch_pr: post <text> as a comment on the open PR of <branch>,
 # if there is one. Loud on failure, never fatal; always returns 0.
 #
-# Carried over from slidefactory-core (EXP-1465). A halt for a CI suppressor has
+# Carried over from installation A (EXP-1465). A halt for a CI suppressor has
 # to show where the merge happens, not only in Linear. It is a comment and not
 # a flip back to draft on purpose: no stage makes that transition today.
 #
@@ -1257,7 +1257,7 @@ get_issue_state() {
 # unusable; 2 when the answer was usable but a matching label could not be
 # classified.
 #
-# Carried over from msc-planner (EXP-1340). The name-only lookup with
+# Carried over from installation B (EXP-1340). The name-only lookup with
 # `first: 1` returned whichever label of that name the server listed first. In
 # a workspace where two teams both have `needs-human` (or `shepherd-focused`),
 # that was deterministically the other team's label, which cannot attach to
@@ -2064,17 +2064,17 @@ merge_origin_main_or_abort() {
 # (needs-human, blocked, wip) are excluded from the count — they're already
 # stalled, holding up the cap on them too would deadlock the loop.
 #
-# What counts is work, not tickets (carried over from slidefactory-core,
+# What counts is work, not tickets (carried over from installation A,
 # EXP-1462): only issues of the configured projects (.linear.projects, as in
 # pick_issue), and only issues without children — an epic is a bracket, not
 # work, and one on Spec used to hold every new run. Sub-issues count: the old
 # `parent: { null: true }` filter counted epics and skipped the work under
 # them, and without the project filter the cap counted other projects'
-# tickets (16 foreign ones held every spec stage in slidefactory).
+# tickets (16 foreign ones held every spec stage in installation A).
 #
 # Output: integer count on stdout. A Linear answer that stays unusable returns
 # $BUREAU_EXIT_LINEAR_UNUSABLE instead of "0": the count used to fail open, so
-# the cap let new work in exactly while Linear was failing. (slidefactory keeps
+# the cap let new work in exactly while Linear was failing. (installation A keeps
 # it fail-open; the retry ladder bridges short outages here.)
 count_in_flight_issues() {
   # Build a comma-separated list of in-flight state UUIDs. Optional states
@@ -2189,13 +2189,13 @@ reset_worktree() {
 # restored. The stages call it after their own checkout and merge of
 # origin/main (both can change the manifests) as `|| exit 24`.
 #
-# Carried over from msc-planner (EXP-1375). `clean -fdx` removes ignored files,
+# Carried over from installation B (EXP-1375). `clean -fdx` removes ignored files,
 # node_modules included, and nothing installed them again: the review stage's
 # build check ran without dependencies every time, the build was red, and the
 # red build turned four unanimous APPROVEs into REQUEST_CHANGES. Only for npm
 # (package.json AND package-lock.json); every other project returns 0 at once.
 #
-# Security, each point a review finding in msc:
+# Security, each point a review finding in installation B:
 #   - `npm ci --ignore-scripts`, never without: otherwise the lifecycle scripts
 #     of the packages a PR lists run before anyone has reviewed the PR, on a
 #     machine with .env access.
@@ -2352,7 +2352,7 @@ apply_build_failure() {
 #   1. verdict   anything but APPROVE, REQUEST_CHANGES or BLOCK is BLOCK.
 #   2. security  the merged review's security_issues must be a count (a non-negative
 #                integer). Missing, negative or anything else is BLOCK: an unreadable
-#                count is not "none" (EXP-1518 in slidefactory-core: it used to read as 0,
+#                count is not "none" (EXP-1518 in installation A: it used to read as 0,
 #                so the floor did nothing exactly when the review was unreliable).
 #   3. critical  the security specialist's own count of CRITICAL findings above 0 is BLOCK,
 #                whatever verdict the merger chose. The merger's rules already say "any
@@ -2368,7 +2368,7 @@ apply_build_failure() {
 #   6. cap       last, so it also sees a REQUEST_CHANGES the build fold produced: at or past
 #                max_review_cycles it escalates to BLOCK. It used to run before the fold, so
 #                "reviewers approve, build red" never met the cap and went round forever
-#                (EXP-1514 in slidefactory-core). A cycle count or cap that is not a count
+#                (EXP-1514 in installation A). A cycle count or cap that is not a count
 #                escalates too.
 decide_review_verdict() {
   local verdict="${1:-}" sec="${2:-}" crit="${3:-}" build_ok="${4:-}" cycles="${5:-}" max="${6:-}"
@@ -2461,7 +2461,7 @@ _review_shown() {
 # line. X must be exactly one verdict word (bold, backticks and a trailing period
 # stripped); anything else gives nothing, which the stage reads as BLOCK. The old form
 # took the first verdict word anywhere on those lines, so "NOT_APPROVED — BLOCK" read
-# as APPROVE (EXP-1513 in slidefactory-core).
+# as APPROVE (EXP-1513 in installation A).
 review_verdict_from_text() {
   local line
   line=$(printf '%s\n' "${1:-}" | sed 's/\*\*//g' | awk '
@@ -2484,12 +2484,12 @@ review_verdict_from_text() {
 # (needs-human-or-paused), the same fail-closed direction as the stage's
 # `VERDICT="${VERDICT:-BLOCK}"`.
 #
-# Carried over from msc-planner (EXP-1322), with this template's code: msc
+# Carried over from installation B (EXP-1322), with this template's code: installation B
 # ends a BLOCK with 20, which here means stopped-before-merge. A BLOCK used to
 # label, comment and exit 0, indistinguishable from an approved review. The
 # queue picker skips the needs-human ticket, but a shepherd saw 0, found the
 # ticket still in Build Review and ran the review again on the same commit —
-# in msc such a second run flipped BLOCK to APPROVE with no code change and
+# in installation B such a second run flipped BLOCK to APPROVE with no code change and
 # merged. With 25 the shepherd halts (shepherd_rc_action below).
 resolve_verdict_exit() {
   case "${1:-}" in
@@ -2501,7 +2501,7 @@ resolve_verdict_exit() {
 # shepherd_rc_action <exit-code> → ok | retry | halt — how shepherd.sh answers a
 # stage's exit code, as a pure table.
 #
-# Carried over from msc-planner. The shepherd used to list its halt codes one
+# Carried over from installation B. The shepherd used to list its halt codes one
 # by one and send everything else to an "unexpected exit" that stopped without
 # an alert — so every code added later (22 to 26 here) halted silently. Now
 # halt is the default and only the exceptions are listed:
