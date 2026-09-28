@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d21adf22a97c0b7a18e8cf066ba816023e5faa950b3ea5870b85465e10e88436">
+<meta name="bureau-source-sha256" content="1c0eb33e47cebb156e7fec8a98d44f28aa43e356da9b539ad9314fd632543e20">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -183,6 +183,29 @@ expired?</li>
 <li><code>curl -sS -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" -d '{"query":"query { viewer { id } }"}' https://api.linear.app/graphql</code>
 — should return your user id</li>
 </ul>
+<h3
+id="exit-27-linear-unusable--linear-answered-but-nothing-usable">Exit 27
+(linear-unusable) — Linear answered, but nothing usable</h3>
+<p>Every Linear fetch checks the answer before a stage decides on it and
+retries an unusable one (10, 30, 60 s by default). Exit 27 means it
+stayed unusable. The log names one fault class per attempt, never the
+answer text:</p>
+<ul>
+<li><code>no-response</code> — curl failed, the request hit its time
+limit (logged as "no answer within Ns";
+<code>BUREAU_LINEAR_MAX_TIME</code>, default 30 s), the body was empty,
+or the HTTP status was outside 2xx.</li>
+<li><code>not-json</code> — the body is not one JSON object, or it
+contains a NUL byte.</li>
+<li><code>graphql-errors</code> — the answer carries <code>errors</code>
+(an invalid key usually shows up as exit 10 earlier).</li>
+<li><code>no-data</code> — no <code>data</code> object, an empty one, a
+root field that is <code>null</code>, or an issue answer without the
+list the reader needs (labels, state, comments).</li>
+</ul>
+<p>Check Linear's status page and the key as for exit 10, then re-run
+the stage. A ticket that does not exist is not exit 27: its readers
+answer with an empty result.</p>
 <h3
 id="exit-11-worktree-dirty--uncommitted-changes-block-progression">Exit
 11 (worktree-dirty) — uncommitted changes block progression</h3>

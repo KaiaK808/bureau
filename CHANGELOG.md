@@ -21,6 +21,18 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 **Upgrade:** none beyond the scripts resync. A ticket can only stay held when its label can never be written (for example no `needs-human` label for the team or the workspace); fix the label or delete the hold file. Runs that name the ticket explicitly (a shepherd) do not read the hold. An implement halt whose label could not be written now ends with 25; unpushed work in that worktree is preserved and later implement runs there end with 21 until a human resolves it (before, the 0 let the next reset discard it).
 
+### Linear answers checked in transport (EXP-1482)
+
+#### Fixed
+
+- A Linear request now has a time limit (`--max-time` 30 s, `--connect-timeout` 10 s by default; `BUREAU_LINEAR_MAX_TIME` / `BUREAU_LINEAR_CONNECT_TIMEOUT` or `.linear.request.*`). Before, a hanging request never reached the retry ladder. A request cut off at the limit is `no-response` and is retried; with the defaults a Linear that stays unusable ends the stage with 27 after at most 220 s.
+- An answer with an HTTP status outside 2xx is unusable even when its body is well-formed JSON. Before, an error page with the body `{"data":{}}` counted as a success, every reader answered "nothing" with exit 0, and the shepherd slept forever or walked past `needs-human`.
+- `{"data":{}}` and a root field that is `null` without `errors` are unusable (`no-data`): every root field the template asks for is non-null in Linear's schema.
+- A NUL byte in the answer makes it unusable (`not-json`). The shell used to drop NUL bytes while capturing, so a broken answer could reach the check already cleaned.
+- The issue readers (`get_issue_detail`, `bureau_issue_snapshot` / `get_issue_state`, `get_issue_branch`, `get_issue_branch_and_comments`, `get_issue_comments`) require the list they read (labels, state, comments) and go through the retry ladder when it is missing, instead of reading a missing list as an empty one. A ticket without labels, without a branch marker, and an issue query that matches no ticket stay usable answers with exit 0.
+
+Upgrade action: none. A repo whose Linear requests legitimately take longer than 30 s sets `BUREAU_LINEAR_MAX_TIME`. A limit of 0 is invalid (it would mean "no limit" to curl): the warning names the key and the next source applies, `.bureau.json` before the default. A halt path makes one attempt per write without retry waits, so a halt with N writes takes at most N × the time limit. Limits: the fault classes stay the four names the shepherd knows; a timeout is logged as "no answer within Ns" and classed `no-response`. A curl double in a test that prints no `-w` status line is judged by its body alone.
+
 ## [3.0.0-rc.1] - 2026-09-28
 
 Release candidate for Bureau v3.0.0, published as a GitHub prerelease. It collects the hardening carried over from the installations ([#11](https://github.com/KaiaK808/bureau/pull/11)), source recording in the installer ([#12](https://github.com/KaiaK808/bureau/pull/12)), the review build check via `repo.test_command` ([#13](https://github.com/KaiaK808/bureau/pull/13)), fail-closed shepherd reads ([#14](https://github.com/KaiaK808/bureau/pull/14)) and the merge policy as configuration ([#15](https://github.com/KaiaK808/bureau/pull/15)). The major version marks the changed exit-code contract: a review BLOCK ends with `25` instead of `0`, a Linear that stays unusable ends a stage with the new code `27`, and the shepherd halts with an alert on every code except `0`, `2`, `10` and `16`. v3.0.0 follows once a pilot installation has qualified one ticket with this candidate. See the [v3.0.0-rc.1 release notes](docs/release-notes.md).

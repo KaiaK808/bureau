@@ -481,6 +481,8 @@ _use_real_linear_reads() {
     -e '/^_bureau_linear_fetch() {/,/^}/p'    -e '/^linear_query() {/,/^}/p' \
     -e '/^bureau_issue_snapshot() {/,/^}/p'   -e '/^get_issue_state() {/,/^}/p' \
     -e '/^get_issue_detail() {/,/^}/p'        -e '/^get_issue_branch() {/,/^}/p' \
+    -e '/^_bureau_linear_request_limits() {/,/^}/p' -e '/^linear_issue_query() {/,/^}/p' \
+    -e '/^_BUREAU_LINEAR_STATUS_MARK=/p'      -e '/^_BUREAU_SHAPE_/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
   # The stub defines get_issue_state and get_issue_detail itself; the real ones
   # come after it and win.
@@ -495,7 +497,9 @@ post_comment()    { printf '%s\tsingle=%s\n' "$2" "${_BUREAU_LINEAR_SINGLE_ATTEM
 alert_telegram()  { printf '%s\n' "$4" >> "$LABEL_LOG.alerts"; }
 REC_EOF
   mkdir -p "$sb/bin" "$sb/forms" "$sb/tmp"
-  local node='"id":"U1","identifier":"EXP-7","title":"T","description":"D","project":null'
+  # One body serves the state, label and branch reads, so it carries every list they ask
+  # for (the branch read asks for the comments; real Linear always returns what was asked).
+  local node='"id":"U1","identifier":"EXP-7","title":"T","description":"D","project":null,"branchName":"","comments":{"nodes":[]}'
   # A free ticket still carries a harmless label, so "some label" never passes for "a held label".
   printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[{"name":"lane-2"}]}}]}}}' "$node" > "$sb/forms/build"
   printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[{"name":"lane-2"},{"name":"needs-human"}]}}]}}}' "$node" > "$sb/forms/held"

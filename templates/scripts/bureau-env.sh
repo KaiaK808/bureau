@@ -56,6 +56,8 @@
 # waits of a Linear fetch). They are NOT on the numeric list: their values stay
 # digits with a possible leading zero, and _bureau_linear_number in
 # bureau-config.sh checks each one before it can reach an arithmetic context.
+# EXP-1482 added BUREAU_LINEAR_MAX_TIME and BUREAU_LINEAR_CONNECT_TIMEOUT (the
+# time limit of one Linear request) on the same terms.
 bureau_env_key_allowed() {
   case "$1" in
     LINEAR_API_KEY | TELEGRAM_BOT_TOKEN | TELEGRAM_ALERT_CHAT_ID | \
@@ -70,6 +72,7 @@ bureau_env_key_allowed() {
     BUREAU_NO_MERGE | BUREAU_STOP_REQUESTED | \
     BUREAU_LINEAR_RETRIES | BUREAU_LINEAR_RETRY_WAIT_1 | \
     BUREAU_LINEAR_RETRY_WAIT_2 | BUREAU_LINEAR_RETRY_WAIT_3 | \
+    BUREAU_LINEAR_MAX_TIME | BUREAU_LINEAR_CONNECT_TIMEOUT | \
     BUREAU_MODEL_[A-Z]* | BUREAU_RUNNER_[A-Z]* | BUREAU_CODEX_MODEL_[A-Z]*)
       return 0
       ;;
