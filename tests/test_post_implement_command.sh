@@ -17,6 +17,7 @@
 #  11  only the first push rejected → per-iter push stays non-fatal, exit 0
 #  12  goal-loop path runs the hook too
 #  14  the hook gets no stdin
+#  15  hook fails and the label write fails → 25 (the hold) wins over 14
 #  13  negative control: the pre-change stage (hook call removed, final push
 #      non-fatal) shows the old behaviour for 2 and 10
 set -euo pipefail
@@ -192,6 +193,15 @@ teardown
 setup c14 'if read -r line; then echo "stdin:$line" >> "$MARK"; fi; echo done >> "$MARK"; date > generated.txt; git add generated.txt; git commit -qm "chore: regenerate derived files"'
 ( cd "$SANDBOX" && printf 'from-the-stage-stdin\n' | bash "$SCRIPTS_DIR/implement-pipeline.sh" >/dev/null 2>&1 ) || true
 check_eq done "$(cat "$MARK" 2>/dev/null)" "14 hook read nothing from stdin"
+teardown
+
+# 15 — hook fails and the needs-human label cannot be written: the hold's 25 wins over 14
+setup c15 'exit 3'
+export BUREAU_STUB_ADD_LABEL_RC=1
+run_implement_pipeline
+unset BUREAU_STUB_ADD_LABEL_RC
+check_eq 25 "$LAST_RC" "15 exit when the escalation could not be labelled"
+has 'repo.post_implement_command exited 3' "$(calls)" "15 report still posted"
 teardown
 
 # 13 — negative control: the pre-change stage
