@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="386d988c4acfa98de9d1fa51dd3af78bb41fec3ba4f6499419a6bd82da02587e">
+<meta name="bureau-source-sha256" content="d16cb7cb093e4e3cd36e1f4487f0540c055990152bce86acc720c712cfad5df2">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -163,7 +163,8 @@ the same commit again</td>
 <tr>
 <td><code>27</code></td>
 <td>linear-unusable</td>
-<td>A Linear answer stayed unusable after every retry; the stage stopped
+<td>A Linear answer stayed unusable after every retry; the stage (or the
+shepherd's own read of the ticket's state, labels or branch) stopped
 instead of deciding on an empty result</td>
 <td>Linear outage, an error page, or a query Linear rejects. The
 shepherd halts: Telegram alert with the fault class
@@ -200,7 +201,17 @@ unhandled bash error.</p>
 except <code>0</code> and <code>2</code> (carry on) and <code>10</code>
 and <code>16</code> (sleep 60 s, retry); a code added later cannot slip
 through unannounced. <code>27</code> additionally tries
-<code>needs-human</code> and a halt comment once each.</p>
+<code>needs-human</code> and a halt comment once each. The shepherd's
+own reads follow the same rule: when reading the ticket's state, labels
+or branch gives up with <code>27</code>, it halts the same way and names
+the read; any other failed read halts with <code>1</code> and
+<code>needs-human</code>. A failed read never counts as "no state", "no
+label" or "no branch". A read cut short by Ctrl-C or SIGTERM writes
+nothing to Linear; under the runtime it ends as a cancelled run
+(<code>130</code>), and a shepherd hit by SIGTERM directly may end with
+<code>143</code> instead. A <code>--dry-run</code> whose state read
+fails prints no route and exits with <code>27</code> when Linear stayed
+unusable, <code>1</code> on any other failure.</p>
 <p><strong>Token-efficiency flags don't change the table.</strong> Under
 <code>agents.use_goal_loop: true</code>, the implement-pipeline still
 produces the same terminal STATUS values (<code>COMPLETE</code> /
