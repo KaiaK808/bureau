@@ -472,11 +472,11 @@ _use_real_linear_reads() {
     -e '/^_bureau_linear_setting() {/,/^}/p'  -e '/^_bureau_linear_record() {/,/^}/p' \
     -e '/^_bureau_linear_fetch() {/,/^}/p'    -e '/^linear_query() {/,/^}/p' \
     -e '/^bureau_issue_snapshot() {/,/^}/p'   -e '/^get_issue_state() {/,/^}/p' \
-    -e '/^get_issue_detail() {/,/^}/p' \
+    -e '/^get_issue_detail() {/,/^}/p'        -e '/^get_issue_branch() {/,/^}/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
   # The stub defines get_issue_state and get_issue_detail itself; the real ones
   # come after it and win.
-  for fn in _bureau_linear_fetch:1 get_issue_state:2 get_issue_detail:2; do
+  for fn in _bureau_linear_fetch:1 get_issue_state:2 get_issue_detail:2 get_issue_branch:2; do
     [ "$(grep -c "^${fn%:*}() {" "$sb/scripts/bureau-config.sh")" = "${fn#*:}" ] \
       || { echo "FAIL: the real ${fn%:*} was not appended to the stub config"; return 1; }
   done
@@ -499,6 +499,7 @@ q="$sb/queue"
 form=\$(head -1 "\$q")
 if [ "\$(wc -l < "\$q")" -gt 1 ]; then tail -n +2 "\$q" > "\$q.tmp" && mv "\$q.tmp" "\$q"; fi
 echo "\$form" >> "$sb/curl.log"
+if [ "\$form" = slow ]; then : > "$sb/in-read"; /bin/sleep 20; form=build; fi
 cat "$sb/forms/\$form"
 CURL_EOF
   cat > "$sb/bin/sleep" <<SLEEP_EOF
@@ -516,6 +517,7 @@ _put_old_reads() {
   local sb="$1"
   cat > "$sb/old-reads.sh" <<'OLD_EOF'
 _shepherd_state() { get_issue_state "$ISSUE" 2>/dev/null || echo ""; }
+_shepherd_branch() { get_issue_branch "$ISSUE" 2>/dev/null || echo ""; }
 _shepherd_human_label() {
   local forbidden
   for forbidden in needs-human blocked wip; do
@@ -543,6 +545,13 @@ _run_reads() {
   PATH="$sb/bin:$PATH" BUREAU_LINEAR_RETRIES=0 TMPDIR="$sb/tmp" run_shepherd "$sb" "$@"
   READS_RC=$?
   set -e
+}
+
+# _no_fault_files <sb> — the shepherd left no fault file behind in its TMPDIR.
+_no_fault_files() {
+  if ls "$1/tmp" 2>/dev/null | grep -q '^bureau-linear-fault\.'; then
+    echo "FAIL: a fault file was left behind in TMPDIR"; ls "$1/tmp"; return 1
+  fi
 }
 
 _no_answer_text() {
@@ -611,10 +620,10 @@ test_human_label_when_linear_answers() {
 
   local sb2; sb2=$(make_sandbox label_free)
   _use_real_linear_reads "$sb2" || return 1
-  _run_reads "$sb2" build build done -- EXP-7
+  _run_reads "$sb2" build build build done -- EXP-7
   assert_eq "$READS_RC" 0 "shepherd exit on a free ticket that reaches Done" || return 1
   assert_eq "$(tr '\n' ' ' < "$sb2/invocations.log")" "implement-pipeline.sh " "a free ticket runs its stage once" || return 1
-  assert_eq "$(tr '\n' ' ' < "$sb2/curl.log")" "build build done " "one label read per iteration" || return 1
+  assert_eq "$(tr '\n' ' ' < "$sb2/curl.log")" "build build build done " "one state, label and branch read per iteration" || return 1
   return 0
 }
 
@@ -630,6 +639,16 @@ test_dry_run_read_unusable() {
   [ ! -e "$sb/labels.log" ] && [ ! -e "$sb/labels.log.comments" ] \
     || { echo "FAIL: the dry run wrote to Linear"; return 1; }
   _no_answer_text "$sb" || return 1
+  _no_fault_files "$sb" || return 1
+
+  # When Linear answers, the dry run prints the route and cleans up as well.
+  local sb3; sb3=$(make_sandbox dry_read_ok)
+  _use_real_linear_reads "$sb3" || return 1
+  _run_reads "$sb3" build -- --dry-run EXP-7
+  assert_eq "$READS_RC" 0 "dry-run exit when Linear answers" || return 1
+  grep -q "Build → implement-pipeline.sh" "$sb3/shepherd.out" \
+    || { echo "FAIL: the dry run printed no route"; cat "$sb3/shepherd.out"; return 1; }
+  _no_fault_files "$sb3" || return 1
 
   # Negative control: today's dry run prints "unknown" and reports success.
   local sb2; sb2=$(make_sandbox dry_read_old)
@@ -671,7 +690,8 @@ test_read_failure_other_code() {
   local name helper what
   for case_ in 'state_exit5|get_issue_state() { return 5; }|state' \
                'detail_empty|get_issue_detail() { return 0; }|labels' \
-               'detail_nolist|get_issue_detail() { printf "%s" "{}"; }|labels'; do
+               'detail_nolist|get_issue_detail() { printf "%s" "{}"; }|labels' \
+               'branch_exit5|get_issue_branch() { return 5; }|branch'; do
     name=${case_%%|*}; what=${case_##*|}; helper=${case_#*|}; helper=${helper%|*}
     local sb; sb=$(make_sandbox "bad_$name")
     _run_bad_read "$sb" "$helper"
@@ -692,6 +712,135 @@ test_read_failure_other_code() {
     || { echo "FAIL: the dry run does not name the failed read"; cat "$sb2/shepherd.err"; return 1; }
   if grep -q "Current state" "$sb2/shepherd.out"; then echo "FAIL: the dry run printed a route"; return 1; fi
   [ ! -e "$sb2/labels.log" ] || { echo "FAIL: the dry run wrote to Linear"; return 1; }
+  _no_fault_files "$sb2" || return 1
+  return 0
+}
+
+# Scenario 12: state and labels read fine, the branch read gets an unusable Linear
+# → exit 27, not the stage's 12 (no-branch) under the wrong name.
+test_branch_read_unusable_halts() {
+  local sb; sb=$(make_sandbox branch_read)
+  _use_real_linear_reads "$sb" || return 1
+  _run_reads "$sb" build build html -- EXP-7
+  assert_eq "$READS_RC" 27 "shepherd exit when its branch read gives up on Linear" || return 1
+  [ ! -s "$sb/invocations.log" ] || { echo "FAIL: a stage ran without its branch"; return 1; }
+  grep -q 'reading the branch gave up because Linear stayed unusable.*not-json.*single=1$' "$sb/labels.log.comments" \
+    || { echo "FAIL: the halt comment does not name the read and the fault class"; cat "$sb/labels.log.comments"; return 1; }
+  _no_answer_text "$sb" || return 1
+
+  # Negative control: today's `|| echo ""` hands the stage an empty branch (in a real
+  # repo reset_worktree then ends it with 12; the sandbox's reset lets it run).
+  local sb2; sb2=$(make_sandbox branch_read_old)
+  _use_real_linear_reads "$sb2" && _put_old_reads "$sb2" || return 1
+  _run_reads "$sb2" build build html -- EXP-7
+  grep -q implement-pipeline.sh "$sb2/invocations.log" 2>/dev/null \
+    || { echo "FAIL: negative control: the old branch read no longer hands on an empty branch, so this proves nothing"; return 1; }
+  return 0
+}
+
+# Scenario 13: a read killed by a real signal is a cancelled run. Ctrl-C reaches the
+# whole process group; a SIGTERM to the runtime is forwarded to the shepherd's group
+# (bureau-runtime.py execute). The "slow" answer marks that a read is in flight.
+# $2 = INT (to the group) or TERM (to the runtime); the rest are shepherd arguments.
+_run_signal() {
+  local sb="$1" sig="$2"; shift 2
+  set +e
+  python3 - "$sb" "$sig" "$@" <<'PY_EOF'
+import os, signal, subprocess, sys, time
+sb, sig, *args = sys.argv[1:]
+env = dict(os.environ, PATH=f"{sb}/bin:" + os.environ["PATH"], TMPDIR=f"{sb}/tmp", BUREAU_LINEAR_RETRIES="0",
+           STATE_FILE=f"{sb}/state.txt", INVOCATIONS_LOG=f"{sb}/invocations.log", LABEL_LOG=f"{sb}/labels.log")
+def default_int():  # a background test runner starts children with SIGINT ignored
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+with open(f"{sb}/shepherd.out", "w") as out, open(f"{sb}/shepherd.err", "w") as err:
+    p = subprocess.Popen(["bash", "scripts/shepherd.sh", "--no-tmux", *args], cwd=sb, env=env,
+                         stdout=out, stderr=err, start_new_session=True, preexec_fn=default_int)
+    deadline = time.time() + 60
+    while not os.path.exists(f"{sb}/in-read"):
+        if p.poll() is not None or time.time() > deadline:
+            p.kill(); print("the shepherd never reached the slow read", file=sys.stderr); sys.exit(97)
+        time.sleep(0.05)
+    if sig == "INT": os.killpg(p.pid, signal.SIGINT)
+    else: os.kill(p.pid, signal.SIGTERM)
+    rc = p.wait(timeout=60)
+sys.exit(rc if rc >= 0 else 128 - rc)
+PY_EOF
+  READS_RC=$?
+  set -e
+}
+
+# _nothing_written <sb> <label> — no needs-human, no comment, no alert, no stage.
+_nothing_written() {
+  if grep -q needs-human "$1/labels.log" 2>/dev/null || [ -e "$1/labels.log.comments" ] \
+     || [ -e "$1/labels.log.alerts" ] || [ -s "$1/invocations.log" ]; then
+    echo "FAIL: $2: an interrupted read wrote needs-human, a comment or an alert, or ran a stage"
+    cat "$1/labels.log" "$1/labels.log.comments" "$1/labels.log.alerts" 2>/dev/null; return 1
+  fi
+}
+
+test_interrupted_read_is_cancelled() {
+  local case_ sig queue what sb
+  for case_ in 'INT|slow|state' 'INT|build slow|labels' 'INT|build build slow|branch' 'TERM|slow|state'; do
+    sig=${case_%%|*}; what=${case_##*|}; queue=${case_#*|}; queue=${queue%|*}
+    sb=$(make_sandbox "sig_${sig}_$what")
+    _use_real_linear_reads "$sb" || return 1
+    rm -f "$sb/bin/sleep"
+    printf '%s\n' $queue > "$sb/queue"
+    _run_signal "$sb" "$sig" EXP-7
+    assert_eq "$READS_RC" 130 "$sig during the $what read: exit" || { cat "$sb/shepherd.err"; return 1; }
+    grep -q "interrupted while reading the $what of EXP-7" "$sb/shepherd.err" \
+      || { echo "FAIL: $sig during the $what read: the shepherd did not end as cancelled"; cat "$sb/shepherd.err"; return 1; }
+    _nothing_written "$sb" "$sig during the $what read" || return 1
+    _no_fault_files "$sb" || return 1
+  done
+
+  # The dry run: Ctrl-C ends it, and its fault file goes with it.
+  sb=$(make_sandbox sig_dry)
+  _use_real_linear_reads "$sb" || return 1
+  rm -f "$sb/bin/sleep"; echo slow > "$sb/queue"
+  _run_signal "$sb" INT --dry-run EXP-7
+  assert_eq "$READS_RC" 130 "Ctrl-C during the dry run's read: exit" || return 1
+  _nothing_written "$sb" "Ctrl-C during the dry run" || return 1
+  _no_fault_files "$sb" || return 1
+
+  # The same decision without a runtime in between (the runtime reports 130 for any
+  # interrupted child): a read that ends above 128 ends the shepherd with 130.
+  sb=$(make_sandbox sig_code_loop)
+  _run_bad_read "$sb" 'get_issue_detail() { return 143; }'
+  assert_eq "$READS_RC" 130 "a label read killed by a signal: exit" || return 1
+  _nothing_written "$sb" "a label read killed by a signal" || return 1
+  sb=$(make_sandbox sig_code_dry)
+  _run_bad_read "$sb" 'get_issue_state() { return 143; }' --dry-run EXP-8
+  assert_eq "$READS_RC" 130 "a dry-run state read killed by a signal: exit" || return 1
+  grep -q "dry-run: interrupted while reading the state of EXP-8" "$sb/shepherd.err" \
+    || { echo "FAIL: the dry run did not end as cancelled"; cat "$sb/shepherd.err"; return 1; }
+  _no_fault_files "$sb" || return 1
+
+  # Negative controls. Without the signal branch the interrupted read reads as a
+  # failed one and labels the ticket; without the dry run's trap the file stays.
+  local sb2; sb2=$(make_sandbox sig_old)
+  _use_real_linear_reads "$sb2" || return 1
+  python3 - "$sb2/scripts/shepherd.sh" <<'PY_EOF' || { echo "FAIL: could not build the negative control"; return 1; }
+import pathlib, re, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text()
+t, n = re.subn(r'\n  if \[ "\$rc" -gt 128 \]; then\n.*?\n  fi\n', '\n', t, flags=re.S)
+if n != 1: sys.exit(1)
+p.write_text(t)
+PY_EOF
+  rm -f "$sb2/bin/sleep"; echo slow > "$sb2/queue"
+  _run_signal "$sb2" INT EXP-7
+  grep -q needs-human "$sb2/labels.log" 2>/dev/null \
+    || { echo "FAIL: negative control: an interrupted read no longer labels without the signal branch, so this proves nothing"; return 1; }
+  local sb3; sb3=$(make_sandbox sig_dry_old)
+  _use_real_linear_reads "$sb3" || return 1
+  grep -v "^  trap 'rm -f \"\$SHEPHERD_FAULT_FILE\" 2>/dev/null || true' EXIT$" "$sb3/scripts/shepherd.sh" > "$sb3/scripts/shepherd.old"
+  if cmp -s "$sb3/scripts/shepherd.sh" "$sb3/scripts/shepherd.old"; then echo "FAIL: could not build the negative control"; return 1; fi
+  mv "$sb3/scripts/shepherd.old" "$sb3/scripts/shepherd.sh"
+  rm -f "$sb3/bin/sleep"; echo slow > "$sb3/queue"
+  _run_signal "$sb3" INT --dry-run EXP-7
+  if ! ls "$sb3/tmp" | grep -q '^bureau-linear-fault\.'; then
+    echo "FAIL: negative control: the dry run's fault file goes away without the trap, so this proves nothing"; return 1
+  fi
   return 0
 }
 
@@ -699,7 +848,8 @@ test_read_failure_other_code() {
 FAILS=0
 for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linear_unusable_halts test_block_halts \
                 test_state_read_unusable_halts test_label_read_unusable_halts test_human_label_when_linear_answers \
-                test_dry_run_read_unusable test_read_failure_other_code; do
+                test_dry_run_read_unusable test_read_failure_other_code test_branch_read_unusable_halts \
+                test_interrupted_read_is_cancelled; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

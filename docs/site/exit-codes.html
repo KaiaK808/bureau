@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="5734491d088f3ca075a8f7737dc94e7e1491c93ee1a4a9c320531647bbcb0b8a">
+<meta name="bureau-source-sha256" content="160059769d37245984ee8b4ed8ccf8d51e6bea849723880dc261f49e7cc47950">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -164,8 +164,8 @@ the same commit again</td>
 <td><code>27</code></td>
 <td>linear-unusable</td>
 <td>A Linear answer stayed unusable after every retry; the stage (or the
-shepherd's own read of the ticket's state or labels) stopped instead of
-deciding on an empty result</td>
+shepherd's own read of the ticket's state, labels or branch) stopped
+instead of deciding on an empty result</td>
 <td>Linear outage, an error page, or a query Linear rejects. The
 shepherd halts: Telegram alert with the fault class
 (<code>no-response</code>, <code>not-json</code>,
@@ -202,12 +202,15 @@ except <code>0</code> and <code>2</code> (carry on) and <code>10</code>
 and <code>16</code> (sleep 60 s, retry); a code added later cannot slip
 through unannounced. <code>27</code> additionally tries
 <code>needs-human</code> and a halt comment once each. The shepherd's
-own reads follow the same rule: when reading the ticket's state or its
-labels gives up with <code>27</code>, it halts the same way and names
+own reads follow the same rule: when reading the ticket's state, labels
+or branch gives up with <code>27</code>, it halts the same way and names
 the read; any other failed read halts with <code>1</code> and
-<code>needs-human</code>. A failed read never counts as "no state" or
-"no label", and a <code>--dry-run</code> whose state read fails exits
-with that code and prints no route.</p>
+<code>needs-human</code>. A failed read never counts as "no state", "no
+label" or "no branch". A read cut short by Ctrl-C or SIGTERM ends as a
+cancelled run (<code>130</code>) and writes nothing to Linear. A
+<code>--dry-run</code> whose state read fails prints no route and exits
+with <code>27</code> when Linear stayed unusable, <code>1</code> on any
+other failure.</p>
 <p><strong>Token-efficiency flags don't change the table.</strong> Under
 <code>agents.use_goal_loop: true</code>, the implement-pipeline still
 produces the same terminal STATUS values (<code>COMPLETE</code> /

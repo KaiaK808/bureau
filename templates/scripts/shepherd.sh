@@ -217,16 +217,27 @@ _shepherd_human_label() {
     | sed -n 1p
 }
 
+# _shepherd_branch — the ticket's branch (bureau-branch marker, else Linear's
+# branchName); empty only when the ticket has none yet (before the spec stage).
+# Exit: the read's own code.
+_shepherd_branch() {
+  _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" get_issue_branch "$ISSUE"
+}
+
 # ── Dry run: print the route from current state and exit ──────────────
 if [ "$DRY_RUN" = 1 ]; then
   [ -n "$FROM_STAGE" ] && echo "  [dry-run] requested initial stage: $FROM_STAGE (no state move)"
-  # Read-only: a failed read ends the dry run with its code and writes nothing.
+  # Read-only: a failed read ends the dry run and writes nothing. The trap
+  # removes the fault file on every way out, an interrupt included.
   SHEPHERD_FAULT_FILE=$(mktemp "${TMPDIR:-/tmp}/bureau-linear-fault.XXXXXX")
+  trap 'rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT
   CUR_RC=0
   CUR=$(_shepherd_state) || CUR_RC=$?
   CUR_FAULT=$(_shepherd_fault_class "$SHEPHERD_FAULT_FILE")
-  rm -f "$SHEPHERD_FAULT_FILE"
-  if [ "$CUR_RC" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+  if [ "$CUR_RC" -gt 128 ]; then
+    echo "[shepherd] dry-run: interrupted while reading the state of $ISSUE (exit $CUR_RC) — cancelled." >&2
+    exit 130
+  elif [ "$CUR_RC" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
     echo "[shepherd] dry-run: could not read the state of $ISSUE — Linear stayed unusable after every retry (fault: $CUR_FAULT). No route printed." >&2
     exit "$CUR_RC"
   elif [ "$CUR_RC" != 0 ]; then
@@ -317,12 +328,20 @@ _shepherd_linear_halt() {
 
 # _shepherd_read_failed <what> <exit-code> — the shepherd's own read of <what>
 # failed, so it cannot tell which stage runs next or whether a human holds the
-# ticket. 27 takes the Linear halt above. Any other code (a usable answer the
-# helper could not parse, a helper missing from an older config) says nothing
-# about the ticket either: halt with 1, label needs-human and say which read
-# failed — walking on or waiting would decide on an answer nobody read.
+# ticket. A read killed by a signal (Ctrl-C, or the runtime forwarding a
+# SIGTERM to the process group) is a cancelled run: exit 130, the code the
+# runtime reports for an interrupted stage, and nothing is written — the
+# operator stopped it, the ticket is not at fault. 27 takes the Linear halt
+# above. Any other code (a usable answer the helper could not parse, a helper
+# missing from an older config) says nothing about the ticket either: halt with
+# 1, label needs-human and say which read failed — walking on or waiting would
+# decide on an answer nobody read.
 _shepherd_read_failed() {
   local what="$1" rc="$2"
+  if [ "$rc" -gt 128 ]; then
+    echo "[shepherd] interrupted while reading the $what of $ISSUE (exit $rc) — cancelled, nothing written" >&2
+    exit 130
+  fi
   [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && _shepherd_linear_halt shepherd.sh "$rc" "$what"
   echo "[shepherd] could not read the $what of $ISSUE (exit $rc) — labeling needs-human and aborting shepherd" >&2
   alert_telegram "$ISSUE" shepherd.sh "$rc" "shepherd halt (could not read the $what, exit $rc)" 2>/dev/null || true
@@ -430,7 +449,7 @@ while true; do
     exit 1
   fi
 
-  BRANCH=$(get_issue_branch "$ISSUE" 2>/dev/null || echo "")
+  BRANCH=$(_shepherd_branch) || _shepherd_read_failed branch $?
   echo "[shepherd] → $PIPELINE  (branch: ${BRANCH:-<none yet>})"
   # EXP-670 — pause before this (claude-heavy) stage if session usage is near
   # the limit. No-op when no usage signal is available.
