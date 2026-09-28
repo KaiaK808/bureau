@@ -373,8 +373,12 @@ s.serve_forever()
 PY
 SERVER=$!
 trap 'kill $SERVER 2>/dev/null; rm -rf "$SB"' EXIT
-for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$PORTFILE" ] && break; /bin/sleep 0.3; done
-[ -s "$PORTFILE" ] || fail "the local test server did not start: $(cat "$SB/server.log")"
+# A cold CI runner can take several seconds to start Python; wait up to 30 s.
+waited=0
+while [ ! -s "$PORTFILE" ] && [ "$waited" -lt 100 ] && kill -0 "$SERVER" 2>/dev/null; do
+  /bin/sleep 0.3; waited=$((waited + 1))
+done
+[ -s "$PORTFILE" ] || fail "the local test server did not start (alive: $(kill -0 "$SERVER" 2>/dev/null && echo yes || echo no)): $(cat "$SB/server.log")"
 mkdir -p "$SB/realbin"
 cat > "$SB/realbin/curl" <<EOF
 #!/bin/bash
