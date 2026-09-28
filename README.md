@@ -110,6 +110,8 @@ Version 1 configs remain supported. Optional schema-v2 migration preserves exist
 
 The [v2.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) and [changelog](CHANGELOG.md) list what changes and what adopters must do. This is the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
 
+A release candidate, [v3.0.0-rc.1](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.1), is available for piloting. It changes the exit-code contract between stages and their drivers and needs configuration set before the resync; see its [release notes](docs/release-notes.md) and [Upgrade to v3](docs/migration.md#upgrade-to-v3). The stable release stays v2.0.0 until v3.0.0 is published.
+
 ## Documentation
 
 | Reference | Contents |

@@ -2,7 +2,7 @@
 
 An upgrade has two steps: update the **Bureau source skill**, then resync its assets into **each adopting repository**. Updating the source clone alone leaves installed scripts and commands unchanged. `/bureau-init --update` edits configuration; it does not upgrade installed assets.
 
-This guide upgrades legacy untagged installations to **Bureau v2.0.0** from the official [KaiaK808/bureau](https://github.com/KaiaK808/bureau) source. The commands below require the v2.0.0 source skill. See the [release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0), [changelog](../CHANGELOG.md), [release notes](release-notes.md) and [release process](releases.md). The Bureau major version marks operational changes, including explicit worker ownership; it does not require configuration schema v2.
+This guide upgrades installations from the official [KaiaK808/bureau](https://github.com/KaiaK808/bureau) source: legacy untagged installations and v2.0.0 installations to the stable **Bureau v2.0.0** or to the release candidate **Bureau v3.0.0-rc.1**. The commands below require the selected release's source skill. See the [v3.0.0-rc.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.1) and its [release notes](release-notes.md), the [v2.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) and its [release notes](release-notes-v2.0.0.md), the [changelog](../CHANGELOG.md) and the [release process](releases.md). A Bureau major version marks operational changes (v2.0.0: explicit worker ownership; v3: the exit-code contract, see [Upgrade to v3](#upgrade-to-v3)); it does not require configuration schema v2.
 
 ## Select the source release
 
@@ -20,17 +20,49 @@ git -C "$BUREAU_SOURCE" rev-parse HEAD
 
 For a Codex-only install, the entry point may be `~/.agents/skills/bureau-init` or a configured skill directory. Follow its link to the actual source clone. Record the previous commit and branch/tag privately for rollback; `describe` alone may name a nearby tag instead of the installed commit.
 
-Confirm that `origin` identifies the official `KaiaK808/bureau` repository (HTTPS or SSH). Preserve local source changes before continuing; do not reset the skill clone. With a clean checkout, select the exact release:
+Confirm that `origin` identifies the official `KaiaK808/bureau` repository (HTTPS or SSH). Preserve local source changes before continuing; do not reset the skill clone. With a clean checkout, select the exact release (`v2.0.0` for the stable release, `v3.0.0-rc.1` for the candidate):
 
 ```sh
-git -C "$BUREAU_SOURCE" fetch origin tag v2.0.0 &&
-git -C "$BUREAU_SOURCE" switch --detach refs/tags/v2.0.0 &&
+BUREAU_RELEASE=v3.0.0-rc.1 # or v2.0.0
+git -C "$BUREAU_SOURCE" fetch origin tag "$BUREAU_RELEASE" &&
+git -C "$BUREAU_SOURCE" switch --detach "refs/tags/$BUREAU_RELEASE" &&
 git -C "$BUREAU_SOURCE" rev-parse HEAD
 ```
 
 Stop if fetching fails, especially if an existing local tag conflicts with the remote; do not force-replace it. Compare the resulting commit with the commit recorded in the GitHub Release and record it for rollback. This leaves the source on a detached release checkout. A later release upgrade repeats these steps with that release's tag; it does not use `git pull`.
 
-An intentionally `main`-tracking installation can instead use `git pull --ff-only` when its checkout is clean and its upstream is the official `origin/main`. This follows ongoing development rather than pinning v2.0.0. If the source is an archive-origin checkout, an unrelated history or a plain copied directory, keep it intact and install a separate official clone from the [installation guide](../README.md#install); review how the loaded skill entry point should move before replacing any link. Do not merge unrelated histories or change the old checkout's remote as an upgrade shortcut.
+An intentionally `main`-tracking installation can instead use `git pull --ff-only` when its checkout is clean and its upstream is the official `origin/main`. This follows ongoing development rather than pinning a release. If the source is an archive-origin checkout, an unrelated history or a plain copied directory, keep it intact and install a separate official clone from the [installation guide](../README.md#install); review how the loaded skill entry point should move before replacing any link. Do not merge unrelated histories or change the old checkout's remote as an upgrade shortcut.
+
+## Upgrade to v3
+
+v3 changes the exit-code contract between the stages and whatever drives them (the shepherd, the queue loop, ticks, wrappers and repository tests). Check anything that reads these codes before resuming dispatch:
+
+| Situation | v2.0.0 | v3 |
+|---|---|---|
+| Review ends with BLOCK or an unknown verdict | `0` | `25` (`needs-human-or-paused`) |
+| Linear stays unusable after the retries (no answer, not JSON, GraphQL errors, no data) | no dedicated code; some reads failed open | `27` (`linear-unusable`), new |
+| An npm project's dependencies cannot be restored after the worktree reset | no restore; the build ran red | `24` (`environment-blocked`, an existing code) |
+| `agents.merge_mode` is `manual` without a Merge state | not applicable | code review refuses at its start with `24` |
+| Shepherd receives `22` to `26` from a stage | stopped without an alert | halts with an alert; only `0` and `2` carry on, `10` and `16` retry |
+| Shepherd receives a `20` that `--no-merge` or `BUREAU_NO_MERGE` asked for | halted with an alert | stops quietly; any other `20` still alerts |
+| The shepherd's own read of state, labels or branch fails | read as "no state", "no label" or "no branch" | `27` halts with the fault class, another failure halts with `1` and `needs-human`, Ctrl-C or SIGTERM is a cancelled run (`130`) that writes nothing |
+
+Some installations gave `20`, `21` or `25` local meanings. Rewrite local changes onto the codes in [exit codes](exit-codes.md) instead of copying a code across.
+
+Upgrade one adopting repository at a time, each in its own pull request:
+
+1. **Pause dispatch** and let nothing be in flight. Push any unpushed commit to a branch first.
+2. **Branch from the repository's `main` in a fresh worktree**, so dirty files and other branches stay out of the change. Keep a private backup of `scripts/`, `.bureau.json`, `.bureau-install.json` and the instruction files (see [before changing an adopting repository](#before-changing-an-adopting-repository)).
+3. **Pin the source** to the release tag as in [select the source release](#select-the-source-release).
+4. **Set the configuration the new scripts expect, before the resync:**
+   - Where a human merges, set `"agents": {"merge_mode": "manual"}` and make sure `linear.teams[0].states.merge` is set. The resync replaces a hand-edited early `exit` in `merge-pipeline.sh` or `rebase-pipeline.sh`; without the key, automatic merging is on again. See the [recipe](recipes.md#merge-by-hand).
+   - Where the review build check ran a local script, set `repo.test_command` to it. `scripts/bureau-test.sh` is found without configuration.
+   - Make `.gitignore` cover everything `repo.test_command` writes, such as `__pycache__/` or build output. Otherwise the review leaves untracked files, the worker keeps the worktree as unfinished work, and the next reset refuses with `21`.
+5. **Preview the scripts scope and apply it as one set.** `bureau-config.sh` loads `bureau-env.sh`, `merge-pipeline.sh` loads `merge-body.sh`, and `squash-marker-check.sh` reads `ci-skip-markers.txt`; a partial scripts scope is not a working runtime. An installation without `.bureau-install.json` sees every differing file as a conflict. For each one, diff the local file against `templates/scripts/FILE` and decide: take the template (the usual answer where the local hardening is now upstream), express a local policy as configuration, or keep a genuine local need in a separate local file. Then apply with the reviewed `--overwrite` list ([preview and resolve](#preview-and-resolve-asset-conflicts)). Add the interfaces scope only where the repository uses the commands.
+6. **Optionally migrate the configuration** ([configuration migration](#optional-configuration-migration)).
+7. **Update or retire repository tests** that assert the old pipeline behaviour (exit codes, file layout) in the same pull request.
+8. **Verify:** doctor (`python3 scripts/bureau-doctor.py --mode background`), the repository's CI, then qualify one ticket end to end with the shepherd before dispatch resumes. Name the release tag, every carried local change, the preview before and after, and a reason for each `--overwrite` in the pull request.
+9. **Rollback** restores the backup and points the source back at the previous commit ([rollback](#rollback)). The manifest stays at version `1`, so an older installer still reads it.
 
 ## Resync in Claude Code or Codex
 
@@ -156,6 +188,8 @@ Installing Codex interfaces does not enable Codex background execution. To opt i
 
 ## What changes for existing users
 
+This table describes the change to v2.0.0; v3 is described in [Upgrade to v3](#upgrade-to-v3).
+
 | Area | Previous installations | This update |
 |---|---|---|
 | Interactive use | Primarily Claude commands | Claude commands remain; Codex gains native skills, AGENTS.md and the current-task `$bureau` operator |
@@ -180,8 +214,8 @@ Qualify a representative ticket through the intended app/background path with th
 
 ## Rollback
 
-Stop new dispatch and inspect active owners before restoring anything. Preserve work created since the upgrade. Restore the recorded previous source commit/tag in a clean source checkout; for example, `git -C "$BUREAU_SOURCE" switch --detach PREVIOUS_COMMIT`, replacing the placeholder with the recorded commit. Restore the coherent pre-upgrade project asset set, instruction files and installer bookkeeping from the private backup, then reconcile subsequent local changes. Identify files newly installed by v2.0.0 and remove only confirmed upgrade additions that are absent from the old baseline and contain no later work.
+Stop new dispatch and inspect active owners before restoring anything. Preserve work created since the upgrade. Restore the recorded previous source commit/tag in a clean source checkout; for example, `git -C "$BUREAU_SOURCE" switch --detach PREVIOUS_COMMIT`, replacing the placeholder with the recorded commit. Restore the coherent pre-upgrade project asset set, instruction files and installer bookkeeping from the private backup, then reconcile subsequent local changes. Identify files newly installed by the upgrade and remove only confirmed upgrade additions that are absent from the old baseline and contain no later work.
 
-If the selected older source supports deterministic previews, use a scoped preview to verify its baseline and review every conflict. An older helper does not record its source and carries the existing record along. Doctor reports that record as `stale` only once the older helper has changed a file hash; an apply that changed nothing leaves it `recorded`, which is still true of the files. After a restore of the pre-upgrade manifest from the backup it reports `source not recorded`. The next asset `--apply` by a recording helper drops a stale record and records only the scopes that apply wrote. A legacy source may have no installer helper or manifest support: do not assume the v2.0.0 resync commands work there, or mix selected old scripts with the new runtime. Restore customized behavior from its matching backup. A configuration backup covers configuration only and can be restored after comparing subsequent edits and runtime compatibility. Keep `.env` private and intact. Run the restored project's tests and available diagnostics before considering a restart.
+If the selected older source supports deterministic previews, use a scoped preview to verify its baseline and review every conflict. An older helper does not record its source and carries the existing record along. Doctor reports that record as `stale` only once the older helper has changed a file hash; an apply that changed nothing leaves it `recorded`, which is still true of the files. After a restore of the pre-upgrade manifest from the backup it reports `source not recorded`. The next asset `--apply` by a recording helper drops a stale record and records only the scopes that apply wrote. A legacy source may have no installer helper or manifest support: do not assume the current resync commands work there, or mix selected old scripts with the new runtime. Restore customized behavior from its matching backup. A configuration backup covers configuration only and can be restored after comparing subsequent edits and runtime compatibility. Keep `.env` private and intact. Run the restored project's tests and available diagnostics before considering a restart.
 
 Restoring source/configuration does not undo commits, Linear transitions or already-completed work. Preserve run records, provider logs, issue branches and checkpoints. Older runtimes may not honor new ownership records, so never restart one against unfinished work managed by the newer runtime. Do not delete leases or reset worktrees as a rollback shortcut.
