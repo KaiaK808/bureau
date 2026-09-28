@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f13e7cf668f5b0243cdcad4db8757ca97aa1c0568847a0dab5ac6dcf8955c4fa">
+<meta name="bureau-source-sha256" content="6a2a0dd16d26a63a84390d4092316df14a53a2f2764fec4017e84446c9c39b26">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -546,9 +546,11 @@ pause</td>
 <td><code>repo.test_command</code></td>
 <td>string</td>
 <td>unset</td>
-<td>Actual project tests. The review build check runs it first (then
-<code>scripts/bureau-test.sh</code>, then <code>npm run build</code>);
-required for Codex implementation completion and the app tests
+<td>Actual project tests. The review build check runs it first, then
+<code>scripts/bureau-test.sh</code>, then <code>npm run build</code>,
+and stops there (QA also tries <code>npm test</code>,
+<code>cargo test</code>, <code>pytest</code>, <code>go test</code>).
+Required for Codex implementation completion and the app tests
 action</td>
 </tr>
 <tr>

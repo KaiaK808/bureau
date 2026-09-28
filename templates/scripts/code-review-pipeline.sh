@@ -348,12 +348,16 @@ echo "$MERGED_REVIEW"
 
 echo ""
 echo "Phase 2/3: build check"
-# Same order as the QA stage's detect_test_cmd: the configured repo.test_command,
-# then the scripts/bureau-test.sh shim, then the npm build. A repo with none of
-# them is "not checked": said on stderr and in the review comment, never "Passed",
-# and the verdict stays as the reviewers gave it. The verdict comes from the
-# command's own exit status, never from a pipe into `tail`: that one depends on
-# pipefail being on. The full log stays in REVIEW_TMP, which a failed run keeps.
+# Order: the configured repo.test_command, then the scripts/bureau-test.sh shim,
+# then `npm run build`. The first two are the QA stage's first two steps
+# (detect_test_cmd); QA then goes on to npm test, cargo test, pytest and go test,
+# review does not — a repo without either gets the npm build or nothing. A repo
+# with none of the three is "not checked": said on stderr and in the review
+# comment, never "Passed", and the verdict stays as the reviewers gave it. The
+# command runs in this worktree under pipefail (as QA's eval does), and the
+# verdict comes from its own exit status, never from a pipe into `tail`. Its full
+# output is REVIEW_TMP/build.log, which survives only when the stage exits
+# non-zero; the last 20 lines are always in the stage output.
 BUILD_OK=true
 BUILD_STATUS="Passed"
 BUILD_CMD=$(bureau_get '.repo.test_command // empty')
@@ -363,16 +367,22 @@ if [ -n "$BUILD_CMD" ]; then
   echo "  Running build check: $BUILD_CMD"
   BUILD_RC=0
   BUILD_TREE_BEFORE=$(git status --porcelain --untracked-files=all 2>/dev/null | sort || true)
-  bash -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
+  bash -o pipefail -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
   tail -20 "$REVIEW_TMP/build.log"
-  # The check runs in this worktree. Output git does not ignore makes the worker
-  # keep a stopped or failed review's worktree as unfinished work (bureau-worker.sh).
-  # A warning only: it never changes the verdict and never stops the stage.
+  # A dirty worktree makes the worker keep a stopped or failed review's worktree
+  # as unfinished work (bureau-worker.sh). A warning only: it never changes the
+  # verdict and never stops the stage.
   BUILD_TREE_NEW=$(comm -13 <(printf '%s\n' "$BUILD_TREE_BEFORE") \
     <(git status --porcelain --untracked-files=all 2>/dev/null | sort) || true)
-  if [ -n "$BUILD_TREE_NEW" ]; then
-    { echo "  WARN: the build check left files git does not ignore; add them to .gitignore:"
-      printf '%s\n' "$BUILD_TREE_NEW" | sed -n '1,20s/^/    /p'; } >&2 || true
+  BUILD_TREE_UNTRACKED=$(printf '%s\n' "$BUILD_TREE_NEW" | grep '^??' || true)
+  BUILD_TREE_TRACKED=$(printf '%s\n' "$BUILD_TREE_NEW" | grep -v '^??' | grep . || true)
+  if [ -n "$BUILD_TREE_UNTRACKED" ]; then
+    { echo "  WARN: the build check left new files git does not ignore; add them to .gitignore:"
+      printf '%s\n' "$BUILD_TREE_UNTRACKED" | sed -n '1,20s/^/    /p'; } >&2 || true
+  fi
+  if [ -n "$BUILD_TREE_TRACKED" ]; then
+    { echo "  WARN: the build check changed tracked files; it must not write to them:"
+      printf '%s\n' "$BUILD_TREE_TRACKED" | sed -n '1,20s/^/    /p'; } >&2 || true
   fi
   if [ "$BUILD_RC" = 0 ]; then echo "  Build passed"
   else echo "  Build failed (exit $BUILD_RC)"; BUILD_OK=false; BUILD_STATUS="FAILED"; fi
