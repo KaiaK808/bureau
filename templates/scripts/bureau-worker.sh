@@ -8,6 +8,10 @@ source "$SCRIPT_DIR/bureau-config.sh"
 ISSUE="${1:?issue required}"
 PIPELINE="${2:?pipeline required}"
 WORKTREE="${3:?worktree required}"
+# A relative worktree is relative to the directory the worker starts in; made
+# absolute here, since the worker changes into the worktree and its EXIT
+# cleanup and registry key must still name it from there.
+case "$WORKTREE" in /*) ;; *) WORKTREE="$REPO_DIR/$WORKTREE" ;; esac
 BRANCH="${4:-}"
 case "$PIPELINE" in spec-pipeline.sh|spec-review-pipeline.sh|ux-pipeline.sh|copy-pipeline.sh|implement-pipeline.sh|qa-pipeline.sh|code-review-pipeline.sh|merge-pipeline.sh|rebase-pipeline.sh) ;; *) exit 1 ;; esac
 if [ "${BUREAU_DRY_RUN:-0}" = 1 ]; then

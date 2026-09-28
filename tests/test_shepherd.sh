@@ -332,7 +332,9 @@ test_stuck() {
   echo "s1" > "$sb/state.txt"   # Triage; stub never advances
 
   set +e
-  run_shepherd "$sb" EXP-4
+  # The shepherd confirms each unchanged state before re-running (EXP-1482); a
+  # zero-second wait keeps this scenario fast. The default is held in scenario 19.
+  BUREAU_SHEPHERD_CONFIRM_SECONDS=0 run_shepherd "$sb" EXP-4
   local rc=$?
   set -e
 
@@ -773,8 +775,12 @@ with open(f"{sb}/shepherd.out", "w") as out, open(f"{sb}/shepherd.err", "w") as 
             p.kill(); print("the shepherd never reached the slow read", file=sys.stderr); sys.exit(97)
         time.sleep(0.05)
     if sig == "INT": os.killpg(p.pid, signal.SIGINT)
+    elif sig == "TERM-SHEPHERD":  # the shepherd alone, its pid left by a stub (EXP-1482)
+        os.kill(int(open(f"{sb}/shepherd.pid").read()), signal.SIGTERM)
     else: os.kill(p.pid, signal.SIGTERM)
+    sent = time.time()
     rc = p.wait(timeout=60)
+open(f"{sb}/signal-to-exit", "w").write("%d" % (time.time() - sent))
 sys.exit(rc if rc >= 0 else 128 - rc)
 PY_EOF
   READS_RC=$?
@@ -800,7 +806,9 @@ test_interrupted_read_is_cancelled() {
     printf '%s\n' $queue > "$sb/queue"
     _run_signal "$sb" "$sig" EXP-7
     assert_eq "$READS_RC" 130 "$sig during the $what read: exit" || { cat "$sb/shepherd.err"; return 1; }
-    grep -q "interrupted while reading the $what of EXP-7" "$sb/shepherd.err" \
+    # The INT/TERM trap ends the run as soon as the read returns (EXP-1482); the
+    # read's own cancelled branch is held by the code-only cases below.
+    grep -q "interrupted by SIG$sig — cancelled" "$sb/shepherd.err" \
       || { echo "FAIL: $sig during the $what read: the shepherd did not end as cancelled"; cat "$sb/shepherd.err"; return 1; }
     _nothing_written "$sb" "$sig during the $what read" || return 1
     _no_fault_files "$sb" || return 1
@@ -828,14 +836,16 @@ test_interrupted_read_is_cancelled() {
     || { echo "FAIL: the dry run did not end as cancelled"; cat "$sb/shepherd.err"; return 1; }
   _no_fault_files "$sb" || return 1
 
-  # Negative controls. Without the signal branch the interrupted read reads as a
+  # Negative controls. Without the cancelling trap (the release-only trap of
+  # before) and without the read's signal branch, the interrupted read reads as a
   # failed one and labels the ticket; without the dry run's trap the file stays.
   local sb2; sb2=$(make_sandbox sig_old)
   _use_real_linear_reads "$sb2" || return 1
+  _old_signal_trap "$sb2" || return 1
   python3 - "$sb2/scripts/shepherd.sh" <<'PY_EOF' || { echo "FAIL: could not build the negative control"; return 1; }
 import pathlib, re, sys
 p = pathlib.Path(sys.argv[1]); t = p.read_text()
-t, n = re.subn(r'\n  if \[ "\$rc" -gt 128 \]; then\n.*?\n  fi\n', '\n', t, flags=re.S)
+t, n = re.subn(r'\n  if \[ "\$rc" -gt 128 \]; then\n    echo "\[shepherd\] interrupted while reading.*?\n  fi\n', '\n', t, flags=re.S)
 if n != 1: sys.exit(1)
 p.write_text(t)
 PY_EOF
@@ -951,12 +961,547 @@ test_review_stop_quiet() {
   return 0
 }
 
+# ── EXP-1482: the shepherd's own calls outside the stages ─────────────
+# _mutate <file> <old> <new> — replaces exactly one occurrence; builds a negative
+# control out of the current script (CI's shallow checkout has no older copy).
+_mutate() {
+  python3 - "$1" "$2" "$3" <<'PY_EOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text(); old, new = sys.argv[2], sys.argv[3]
+if t.count(old) != 1: sys.exit("could not build the negative control: %d matches for %r" % (t.count(old), old))
+p.write_text(t.replace(old, new))
+PY_EOF
+}
+
+# _old_signal_trap <sb> — INT/TERM as before EXP-1482: release the claim and go on.
+_old_signal_trap() {
+  _mutate "$1/scripts/shepherd.sh" "trap '_shepherd_cancelled SIGINT' INT
+trap '_shepherd_cancelled SIGTERM' TERM" "trap 'remove_issue_label \"\$ISSUE\" shepherd-focused 2>/dev/null || true' INT TERM"
+}
+
+# _record_writes <sb> — label, comment and alert writes land in files.
+_record_writes() {
+  cat >> "$1/scripts/bureau-config.sh" <<'REC_EOF'
+add_issue_label() { printf '%s\t%s\tsingle=%s\n' "+$1" "$2" "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" >> "$LABEL_LOG"; }
+post_comment()    { printf '%s\tsingle=%s\n' "$2" "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" >> "$LABEL_LOG.comments"; }
+alert_telegram()  { printf '%s\n' "$4" >> "$LABEL_LOG.alerts"; }
+REC_EOF
+}
+
+# _record_release <sb> — the release records whether it was a single attempt.
+_record_release() {
+  echo 'remove_issue_label() { printf '"'"'%s\t%s\tsingle=%s\n'"'"' "-$1" "$2" "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" >> "$LABEL_LOG"; }' >> "$1/scripts/bureau-config.sh"
+}
+
+# _record_sleeps <sb> [<kill-at>] — a `sleep` on PATH that records its argument and
+# returns at once; with <kill-at>, it kills the shepherd at that many waits.
+_record_sleeps() {
+  mkdir -p "$1/bin"
+  cat > "$1/bin/sleep" <<SLEEP_EOF
+#!/bin/bash
+printf '%s\n' "\$1" >> "$1/sleeps.log"
+[ -n "${2:-}" ] && [ "\$(wc -l < "$1/sleeps.log")" -ge "${2:-0}" ] && kill -KILL "\$PPID"
+exit 0
+SLEEP_EOF
+  chmod +x "$1/bin/sleep"
+}
+
+# Scenario 16: the start check fails before the claim → exit 10 named and alerted;
+# nothing claimed, nothing labeled or commented, no fault file left.
+test_start_check_failure() {
+  local sb rc
+  sb=$(make_sandbox start_check)
+  _record_writes "$sb"
+  cat >> "$sb/scripts/bureau-config.sh" <<'PRE_EOF'
+precondition_linear() { printf 'no-response\n' > "${_BUREAU_LINEAR_FAULT_FILE:-/dev/null}"; echo "ERROR: viewer query returned no id" >&2; exit 10; }
+PRE_EOF
+  echo s5 > "$sb/state.txt"; mkdir -p "$sb/tmp"
+  set +e; TMPDIR="$sb/tmp" run_shepherd "$sb" EXP-16; rc=$?; set -e
+  assert_eq "$rc" 10 "start check fails: exit" || { cat "$sb/shepherd.err"; return 1; }
+  grep -qx "shepherd did not start (linear-down: no-response)" "$sb/labels.log.alerts" 2>/dev/null \
+    || { echo "FAIL: start check: no alert naming the class and fault"; cat "$sb/labels.log.alerts" 2>/dev/null; return 1; }
+  if grep -q 'shepherd-focused\|needs-human' "$sb/labels.log" 2>/dev/null || [ -e "$sb/labels.log.comments" ] || [ -s "$sb/invocations.log" ]; then
+    echo "FAIL: start check: the ticket was claimed, labeled or commented, or a stage ran"; cat "$sb/labels.log" 2>/dev/null; return 1
+  fi
+  _no_fault_files "$sb" || return 1
+
+  # A start check ended by a signal is a cancelled run: 130, no alert.
+  sb=$(make_sandbox start_check_signal)
+  _record_writes "$sb"
+  echo 'precondition_linear() { exit 143; }' >> "$sb/scripts/bureau-config.sh"
+  echo s5 > "$sb/state.txt"
+  set +e; run_shepherd "$sb" EXP-16; rc=$?; set -e
+  assert_eq "$rc" 130 "a start check killed by a signal: exit" || return 1
+  grep -q "cancelled before EXP-16 was claimed; nothing written" "$sb/shepherd.err" \
+    || { echo "FAIL: a start check killed by a signal: the message names a release"; cat "$sb/shepherd.err"; return 1; }
+  [ ! -e "$sb/labels.log.alerts" ] || { echo "FAIL: a start check killed by a signal alerted"; return 1; }
+
+  # Negative control: the bare check of before ends with 10 and tells nobody.
+  sb=$(make_sandbox start_check_old)
+  _record_writes "$sb"
+  cat >> "$sb/scripts/bureau-config.sh" <<'PRE_EOF'
+precondition_linear() { echo "ERROR: viewer query returned no id" >&2; exit 10; }
+PRE_EOF
+  _mutate "$sb/scripts/shepherd.sh" '( _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" precondition_linear ) || _shepherd_start_failed $?' 'precondition_linear' || return 1
+  echo s5 > "$sb/state.txt"
+  set +e; run_shepherd "$sb" EXP-16; rc=$?; set -e
+  assert_eq "$rc" 10 "negative control: the old start check exits 10" || return 1
+  [ ! -e "$sb/labels.log.alerts" ] \
+    || { echo "FAIL: negative control: the old start check alerted too, so this proves nothing"; return 1; }
+  return 0
+}
+
+# Scenario 17: the shepherd's own move fails (--from-stage, and the Spec → Triage
+# bump) → the halt of a failed read, not a bare exit under set -e.
+test_move_failure_halts() {
+  local site code sb rc target
+  for site in from-stage bump; do
+    for code in 27 1; do
+      sb=$(make_sandbox "move_${site}_$code")
+      _record_writes "$sb"
+      cat >> "$sb/scripts/bureau-config.sh" <<MOVE_EOF
+move_issue() { printf 'move\n' >> "\$LABEL_LOG"; printf 'graphql-errors\n' > "\${_BUREAU_LINEAR_FAULT_FILE:-/dev/null}"; return $code; }
+MOVE_EOF
+      if [ "$site" = from-stage ]; then
+        echo s5 > "$sb/state.txt"; target=triage
+        set +e; run_shepherd "$sb" --from-stage triage EXP-17; rc=$?; set -e
+      else
+        echo s2 > "$sb/state.txt"; target=Triage   # Spec → bumped to Triage
+        set +e; run_shepherd "$sb" EXP-17; rc=$?; set -e
+      fi
+      assert_eq "$rc" "$code" "$site move fails with $code: exit" || { cat "$sb/shepherd.err"; return 1; }
+      grep -q "^+EXP-17"$'\t'"needs-human" "$sb/labels.log" \
+        || { echo "FAIL: $site move fails with $code: no needs-human"; return 1; }
+      [ -s "$sb/labels.log.comments" ] || { echo "FAIL: $site move fails with $code: no halt comment"; return 1; }
+      if [ "$code" = 27 ]; then
+        grep -q "graphql-errors) moving the ticket to $target\$" "$sb/labels.log.alerts" \
+          || { echo "FAIL: $site move fails with 27: the alert does not name the fault and the move"; cat "$sb/labels.log.alerts"; return 1; }
+        grep -q "needs-human"$'\t'"single=1" "$sb/labels.log" \
+          || { echo "FAIL: $site move fails with 27: needs-human was not a single attempt"; return 1; }
+      else
+        grep -qx "shepherd halt (could not move the ticket to $target, exit 1)" "$sb/labels.log.alerts" \
+          || { echo "FAIL: $site move fails with 1: no alert naming the move"; cat "$sb/labels.log.alerts"; return 1; }
+      fi
+      [ ! -s "$sb/invocations.log" ] || { echo "FAIL: $site move fails with $code: a stage ran"; return 1; }
+      grep -q "^-EXP-17"$'\t'"shepherd-focused" "$sb/labels.log" \
+        || { echo "FAIL: $site move fails with $code: the claim was not released"; return 1; }
+      # The ticket is claimed before it moves, so the queue keeps away from it.
+      assert_eq "$(grep -n -e 'shepherd-focused' -e '^move$' "$sb/labels.log" | head -2 | cut -d: -f2 | cut -c1-2 | tr '\n' ' ')" "+E mo " \
+        "$site move fails with $code: claim before move" || { cat "$sb/labels.log"; return 1; }
+    done
+  done
+
+  # A typo in --from-stage is refused before anything is claimed or moved.
+  sb=$(make_sandbox move_typo)
+  _record_writes "$sb"
+  echo s5 > "$sb/state.txt"
+  set +e; run_shepherd "$sb" --from-stage bulid EXP-17; rc=$?; set -e
+  assert_eq "$rc" 1 "--from-stage typo: exit" || return 1
+  grep -q "has no matching state" "$sb/shepherd.err" || { echo "FAIL: --from-stage typo: no error"; return 1; }
+  [ ! -s "$sb/labels.log" ] || { echo "FAIL: --from-stage typo: the ticket was claimed"; cat "$sb/labels.log"; return 1; }
+  if grep -q 'claiming\|Running\|releasing' "$sb/shepherd.out" 2>/dev/null; then
+    echo "FAIL: --from-stage typo: the shepherd got as far as the claim"; cat "$sb/shepherd.out"; return 1
+  fi
+
+  # A move that ended by a signal only it saw (a code above 128) is a cancelled run.
+  sb=$(make_sandbox move_signal)
+  _record_writes "$sb"
+  echo 'move_issue() { return 143; }' >> "$sb/scripts/bureau-config.sh"
+  echo s2 > "$sb/state.txt"
+  set +e; run_shepherd "$sb" EXP-17; rc=$?; set -e
+  assert_eq "$rc" 130 "a move killed by a signal: exit" || return 1
+  grep -q "interrupted while moving EXP-17 to Triage" "$sb/shepherd.err" \
+    || { echo "FAIL: a move killed by a signal did not end as cancelled"; cat "$sb/shepherd.err"; return 1; }
+  if grep -q needs-human "$sb/labels.log" 2>/dev/null || [ -e "$sb/labels.log.comments" ] || [ -e "$sb/labels.log.alerts" ]; then
+    echo "FAIL: a move killed by a signal wrote a label, comment or alert"; return 1
+  fi
+
+  # Negative control: the bare moves of before end the shepherd with the move's
+  # code and write nothing — no label, no comment, no alert.
+  for site in from-stage bump; do
+    sb=$(make_sandbox "move_${site}_old")
+    _record_writes "$sb"
+    echo 'move_issue() { return 27; }' >> "$sb/scripts/bureau-config.sh"
+    _mutate "$sb/scripts/shepherd.sh" ' \
+    || _shepherd_move_failed "$FROM_STAGE" $?' '' || return 1
+    _mutate "$sb/scripts/shepherd.sh" ' \
+      || _shepherd_move_failed Triage $?' '' || return 1
+    if [ "$site" = from-stage ]; then
+      echo s5 > "$sb/state.txt"; set +e; run_shepherd "$sb" --from-stage triage EXP-17; rc=$?; set -e
+    else
+      echo s2 > "$sb/state.txt"; set +e; run_shepherd "$sb" EXP-17; rc=$?; set -e
+    fi
+    assert_eq "$rc" 27 "negative control: the old $site move exits with its code" || return 1
+    if grep -q needs-human "$sb/labels.log" 2>/dev/null || [ -e "$sb/labels.log.comments" ] || [ -e "$sb/labels.log.alerts" ]; then
+      echo "FAIL: negative control: the old $site move made the halt visible too, so this proves nothing"; return 1
+    fi
+  done
+  return 0
+}
+
+# Scenario 18: SIGTERM during a wait and Ctrl-C during a stage end the run as
+# cancelled — released, and nothing after the signal: no read, no stage, no alert.
+test_signal_during_wait_and_stage() {
+  local sb
+  # (a) SIGTERM to the runtime while the shepherd waits out an answer without a state.
+  sb=$(make_sandbox sig_wait)
+  _use_real_linear_reads "$sb" || return 1
+  _record_release "$sb"
+  printf '%s' '{"data":{"issues":{"nodes":[]}}}' > "$sb/forms/nostate"
+  printf '#!/bin/bash\n: > "%s/in-read"\nexec /bin/sleep "$@"\n' "$sb" > "$sb/bin/sleep"
+  printf '%s\n' nostate build > "$sb/queue"
+  _run_signal "$sb" TERM EXP-18
+  # Through the runtime, 130 alone proves nothing: the runtime reports 130 for any
+  # interrupted child. The proof is the cancelled message, one read, nothing written.
+  assert_eq "$READS_RC" 130 "SIGTERM during the wait: exit" || { cat "$sb/shepherd.err"; return 1; }
+  grep -q "interrupted by SIGTERM — cancelled" "$sb/shepherd.err" \
+    || { echo "FAIL: SIGTERM during the wait: not ended as cancelled"; cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(wc -l < "$sb/curl.log" | tr -d ' ')" 1 "SIGTERM during the wait: reads after the signal" || return 1
+  _nothing_written "$sb" "SIGTERM during the wait" || return 1
+  grep -q "^-EXP-18"$'\t'"shepherd-focused"$'\t'"single=1" "$sb/labels.log" \
+    || { echo "FAIL: SIGTERM during the wait: not released, or not with a single attempt"; cat "$sb/labels.log"; return 1; }
+  _no_fault_files "$sb" || return 1
+
+  # (b) Ctrl-C to the group while a stage runs.
+  sb=$(make_sandbox sig_stage)
+  _use_real_linear_reads "$sb" || return 1
+  rm -f "$sb/bin/sleep"; echo build > "$sb/queue"
+  cat > "$sb/scripts/implement-pipeline.sh" <<STAGE_EOF
+#!/bin/bash
+echo implement-pipeline.sh >> "\$INVOCATIONS_LOG"
+: > "$sb/in-read"
+/bin/sleep 20
+STAGE_EOF
+  _run_signal "$sb" INT EXP-18
+  # As in (a): 130 comes from the runtime either way; the message and the empty
+  # alert log are the proof.
+  assert_eq "$READS_RC" 130 "Ctrl-C during a stage: exit" || { cat "$sb/shepherd.err"; return 1; }
+  grep -q "interrupted by SIGINT — cancelled" "$sb/shepherd.err" \
+    || { echo "FAIL: Ctrl-C during a stage: not ended as cancelled"; cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(wc -l < "$sb/invocations.log" | tr -d ' ')" 1 "Ctrl-C during a stage: stage runs" || return 1
+  if grep -q needs-human "$sb/labels.log" 2>/dev/null || [ -e "$sb/labels.log.comments" ] || [ -e "$sb/labels.log.alerts" ]; then
+    echo "FAIL: Ctrl-C during a stage: a label, comment or alert was written"; cat "$sb/labels.log.alerts" 2>/dev/null; return 1
+  fi
+  grep -q "^-EXP-18"$'\t'"shepherd-focused" "$sb/labels.log" || { echo "FAIL: Ctrl-C during a stage: not released"; return 1; }
+
+  # (c) SIGTERM to the shepherd alone during the wait: the wait is cut short, the
+  # run ends as cancelled at once instead of after the minute.
+  sb=$(make_sandbox sig_wait_direct)
+  _use_real_linear_reads "$sb" || return 1
+  _record_release "$sb"
+  printf '%s' '{"data":{"issues":{"nodes":[]}}}' > "$sb/forms/nostate"
+  printf '#!/bin/bash\necho "$PPID" > "%s/shepherd.pid"\necho "$$" > "%s/sleep.pid"\n: > "%s/in-read"\nexec /bin/sleep "$@"\n' "$sb" "$sb" "$sb" > "$sb/bin/sleep"
+  printf '%s\n' nostate build > "$sb/queue"
+  _run_signal "$sb" TERM-SHEPHERD EXP-18
+  assert_eq "$READS_RC" 130 "SIGTERM to the shepherd during the wait: exit" || { cat "$sb/shepherd.err"; return 1; }
+  if kill -0 "$(cat "$sb/sleep.pid")" 2>/dev/null; then
+    kill "$(cat "$sb/sleep.pid")" 2>/dev/null
+    echo "FAIL: SIGTERM to the shepherd during the wait: its sleep was left running"; return 1
+  fi
+  [ "$(cat "$sb/signal-to-exit")" -lt 10 ] \
+    || { echo "FAIL: SIGTERM to the shepherd during the wait: it waited out the minute"; return 1; }
+  assert_eq "$(wc -l < "$sb/curl.log" | tr -d ' ')" 1 "SIGTERM to the shepherd during the wait: reads after the signal" || return 1
+  _nothing_written "$sb" "SIGTERM to the shepherd during the wait" || return 1
+  grep -q "^-EXP-18"$'\t'"shepherd-focused"$'\t'"single=1" "$sb/labels.log" \
+    || { echo "FAIL: SIGTERM to the shepherd during the wait: not released with a single attempt"; cat "$sb/labels.log"; return 1; }
+
+  # Negative controls with the code of before — the release-only trap and a plain
+  # foreground sleep (half a second here): a SIGTERM to the shepherd is handled
+  # once the sleep returns, and the loop reads on; an interrupted stage takes the
+  # halt arm and alerts.
+  sb=$(make_sandbox sig_wait_old)
+  _use_real_linear_reads "$sb" || return 1
+  _old_signal_trap "$sb" || return 1
+  _mutate "$sb/scripts/shepherd.sh" '  sleep "$1" &
+  SHEPHERD_SLEEP_PID=$!
+  wait "$SHEPHERD_SLEEP_PID"' '  sleep "$1"' || return 1
+  printf '%s' '{"data":{"issues":{"nodes":[]}}}' > "$sb/forms/nostate"
+  printf '#!/bin/bash\necho "$PPID" > "%s/shepherd.pid"\n: > "%s/in-read"\nexec /bin/sleep 0.5\n' "$sb" "$sb" > "$sb/bin/sleep"
+  printf '%s\n' nostate build > "$sb/queue"
+  _run_signal "$sb" TERM-SHEPHERD EXP-18
+  [ "$(wc -l < "$sb/curl.log" | tr -d ' ')" -gt 1 ] \
+    || { echo "FAIL: negative control: the old trap no longer reads on after SIGTERM, so this proves nothing"; return 1; }
+  sb=$(make_sandbox sig_stage_old)
+  _use_real_linear_reads "$sb" || return 1
+  _old_signal_trap "$sb" || return 1
+  rm -f "$sb/bin/sleep"; echo build > "$sb/queue"
+  cat > "$sb/scripts/implement-pipeline.sh" <<STAGE_EOF
+#!/bin/bash
+echo implement-pipeline.sh >> "\$INVOCATIONS_LOG"
+: > "$sb/in-read"
+/bin/sleep 20
+STAGE_EOF
+  _run_signal "$sb" INT EXP-18
+  [ -s "$sb/labels.log.alerts" ] \
+    || { echo "FAIL: negative control: the old trap no longer alerts after an interrupted stage, so this proves nothing"; return 1; }
+  return 0
+}
+
+# Scenario 19: a move is confirmed before the next stage — a read that still shows
+# the state the stage left is read again, so the stage does not start twice
+# (EXP-1476). A read that shows the new state costs no extra read and no wait.
+test_move_confirmed_before_next_stage() {
+  local sb
+  _stale_reads() {
+    cat >> "$1/scripts/bureau-config.sh" <<'STALE_EOF'
+# The move lands, but the next read(s) still show the state it left: $STATE_FILE.times
+# (default 1) stale reads per move, only for the first move when $STATE_FILE.once
+# exists; with $STATE_FILE.empty, one answer without a state follows the stale one.
+move_issue() {
+  local old; old=$(cat "$STATE_FILE" 2>/dev/null || echo "")
+  printf '%s' "$2" > "$STATE_FILE"
+  [ "$old" != "$2" ] || return 0
+  if [ ! -e "$STATE_FILE.once" ] || [ ! -e "$STATE_FILE.once-done" ]; then
+    printf '%s' "$old" > "$STATE_FILE.stale"; cat "$STATE_FILE.times" 2>/dev/null > "$STATE_FILE.left" || true
+    [ -s "$STATE_FILE.left" ] || echo 1 > "$STATE_FILE.left"
+    : > "$STATE_FILE.once-done"
+  fi
+  return 0
+}
+get_issue_state() {
+  echo read >> "$LABEL_LOG.reads"
+  local left
+  if [ -s "$STATE_FILE.stale" ]; then
+    left=$(cat "$STATE_FILE.left"); _uuid_to_name "$(cat "$STATE_FILE.stale")"
+    if [ "$left" -le 1 ]; then rm -f "$STATE_FILE.stale"; [ -e "$STATE_FILE.empty" ] && : > "$STATE_FILE.empty-next"; else echo $((left - 1)) > "$STATE_FILE.left"; fi
+    return 0
+  fi
+  if [ -e "$STATE_FILE.empty-next" ]; then rm -f "$STATE_FILE.empty-next" "$STATE_FILE.empty"; return 0; fi
+  _uuid_to_name "$(cat "$STATE_FILE" 2>/dev/null || echo "")"
+}
+STALE_EOF
+  }
+  local happy="spec-pipeline.sh spec-review-pipeline.sh implement-pipeline.sh code-review-pipeline.sh merge-pipeline.sh"
+  sb=$(make_sandbox stale)
+  _stale_reads "$sb"; _record_sleeps "$sb" 40
+  echo s1 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; local rc=$?; set -e
+  assert_eq "$rc" 0 "stale reads: exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(tr '\n' ' ' < "$sb/invocations.log" | sed 's/ $//')" "$happy" "stale reads: each stage runs once" || return 1
+  # One stale read per stage, each read again after the default 5 s.
+  assert_eq "$(tr '\n' ' ' < "$sb/sleeps.log" | sed 's/ $//')" "5 5 5 5 5" "stale reads: the waits" || return 1
+
+  # A read that stays moment-old twice is read again twice: each stage still once.
+  sb=$(make_sandbox stale_twice)
+  _stale_reads "$sb"; _record_sleeps "$sb" 40
+  echo 2 > "$sb/state.txt.times"; : > "$sb/state.txt.once"
+  echo s1 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; rc=$?; set -e
+  assert_eq "$rc" 0 "twice stale: exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(tr '\n' ' ' < "$sb/invocations.log" | sed 's/ $//')" "$happy" "twice stale: each stage runs once" || return 1
+  assert_eq "$(tr '\n' ' ' < "$sb/sleeps.log" | sed 's/ $//')" "5 5" "twice stale: the waits" || return 1
+
+  # An answer without a state while confirming is the no-state case, not a state
+  # no pipeline knows: one 60 s wait, then on — no needs-human.
+  sb=$(make_sandbox stale_empty)
+  _stale_reads "$sb"; _record_sleeps "$sb" 40
+  : > "$sb/state.txt.once"; : > "$sb/state.txt.empty"
+  echo s1 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; rc=$?; set -e
+  assert_eq "$rc" 0 "stale, then no state: exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(tr '\n' ' ' < "$sb/invocations.log" | sed 's/ $//')" "$happy" "stale, then no state: stages" || return 1
+  # The empty answer comes while confirming; the loop goes straight back to its top
+  # read, which shows the state — no 60 s wait, no halt.
+  assert_eq "$(tr '\n' ' ' < "$sb/sleeps.log" | sed 's/ $//')" "5" "stale, then no state: the waits" || return 1
+  if grep -q needs-human "$sb/labels.log" 2>/dev/null; then echo "FAIL: stale, then no state: labeled needs-human"; return 1; fi
+
+  # --from-stage is confirmed against its target: the operator's Build runs even
+  # when the first read after the move is moment-old (it showed Build Review).
+  sb=$(make_sandbox stale_from_stage)
+  _stale_reads "$sb"; _record_sleeps "$sb" 40
+  : > "$sb/state.txt.once"
+  echo s6 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" --from-stage build EXP-19; rc=$?; set -e
+  assert_eq "$rc" 0 "stale read after --from-stage: exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(tr '\n' ' ' < "$sb/invocations.log" | sed 's/ $//')" \
+    "implement-pipeline.sh code-review-pipeline.sh merge-pipeline.sh" "stale read after --from-stage: stages" || return 1
+  assert_eq "$(head -1 "$sb/sleeps.log")" 5 "stale read after --from-stage: waited to confirm" || return 1
+  # Negative control: without the target the moment-old Build Review is acted on.
+  sb=$(make_sandbox stale_from_stage_old)
+  _stale_reads "$sb"; _record_sleeps "$sb" 40
+  _mutate "$sb/scripts/shepherd.sh" '  MOVED_TO="$TARGET_NAME"
+' '' || return 1
+  : > "$sb/state.txt.once"
+  echo s6 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" --from-stage build EXP-19; set -e
+  if grep -q '^implement-pipeline.sh$' "$sb/invocations.log"; then
+    echo "FAIL: negative control: --from-stage without its target still ran Build, so this proves nothing"; return 1
+  fi
+
+  # A wait that is not a whole number falls back to 5 s, with a warning.
+  sb=$(make_sandbox stale_bad_wait)
+  _stale_reads "$sb"; _record_sleeps "$sb" 40
+  : > "$sb/state.txt.once"
+  echo s1 > "$sb/state.txt"
+  set +e; BUREAU_SHEPHERD_CONFIRM_SECONDS=abc PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; rc=$?; set -e
+  assert_eq "$rc" 0 "confirm wait 'abc': exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(cat "$sb/sleeps.log")" 5 "confirm wait 'abc': falls back to 5" || return 1
+  grep -q "BUREAU_SHEPHERD_CONFIRM_SECONDS='abc' is not a whole number" "$sb/shepherd.err" \
+    || { echo "FAIL: confirm wait 'abc': no warning"; return 1; }
+
+  # The shepherd's own bump from Spec to Triage is confirmed the same way: one
+  # move, not a second one on the moment-old "Spec".
+  sb=$(make_sandbox stale_bump)
+  _stale_reads "$sb"; _record_sleeps "$sb" 40
+  echo 'move_issue() { echo "$2" >> "$LABEL_LOG.moves"; local old; old=$(cat "$STATE_FILE"); printf "%s" "$2" > "$STATE_FILE"; [ "$old" = "$2" ] || { printf "%s" "$old" > "$STATE_FILE.stale"; echo 1 > "$STATE_FILE.left"; }; }' >> "$sb/scripts/bureau-config.sh"
+  echo s2 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; rc=$?; set -e
+  assert_eq "$rc" 0 "stale read after the bump: exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(grep -c '^s1$' "$sb/labels.log.moves")" 1 "stale read after the bump: moves to Triage" || return 1
+
+  # Fresh reads: the loop reads once per state, waits never.
+  sb=$(make_sandbox fresh)
+  echo 'get_issue_state() { echo read >> "$LABEL_LOG.reads"; _uuid_to_name "$(cat "$STATE_FILE" 2>/dev/null || echo "")"; }' >> "$sb/scripts/bureau-config.sh"
+  _record_sleeps "$sb" 40
+  echo s1 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; rc=$?; set -e
+  assert_eq "$rc" 0 "fresh reads: exit" || return 1
+  assert_eq "$(wc -l < "$sb/labels.log.reads" | tr -d ' ')" 6 "fresh reads: one read per state (Triage … Done)" || return 1
+  [ ! -e "$sb/sleeps.log" ] || { echo "FAIL: fresh reads: the shepherd waited"; cat "$sb/sleeps.log"; return 1; }
+
+  # Negative control: without the confirmation the stale read starts the stage again.
+  sb=$(make_sandbox stale_old)
+  _stale_reads "$sb"; _record_sleeps "$sb" 40
+  _mutate "$sb/scripts/shepherd.sh" 'CONFIRM_TRIES=3' 'CONFIRM_TRIES=0' || return 1
+  echo s1 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; set -e
+  [ "$(grep -c '^spec-pipeline.sh$' "$sb/invocations.log")" -ge 2 ] \
+    || { echo "FAIL: negative control: a stale read no longer starts the stage twice, so this proves nothing"; return 1; }
+  return 0
+}
+
+# Scenario 20: Linear answering without a state is not waited out forever: the
+# fifth such answer in a row halts with 1, needs-human, a comment and an alert.
+test_no_state_is_bounded() {
+  local sb
+  sb=$(make_sandbox no_state)
+  _use_real_linear_reads "$sb" || return 1
+  printf '%s' '{"data":{"issues":{"nodes":[]}}}' > "$sb/forms/nostate"
+  _record_sleeps "$sb" 12
+  _run_reads "$sb" nostate -- EXP-20
+  assert_eq "$READS_RC" 1 "no state: exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(tr '\n' ' ' < "$sb/sleeps.log" | sed 's/ $//')" "60 60 60 60" "no state: four waits of the default 60 s" || return 1
+  assert_eq "$(wc -l < "$sb/curl.log" | tr -d ' ')" 5 "no state: reads" || return 1
+  grep -q "^+EXP-20"$'\t'"needs-human" "$sb/labels.log" || { echo "FAIL: no state: no needs-human"; return 1; }
+  grep -q "without a state" "$sb/labels.log.comments" 2>/dev/null || { echo "FAIL: no state: no halt comment"; return 1; }
+  grep -qx "shepherd halt (no state in 5 answers)" "$sb/labels.log.alerts" 2>/dev/null \
+    || { echo "FAIL: no state: no alert"; cat "$sb/labels.log.alerts" 2>/dev/null; return 1; }
+  _no_fault_files "$sb" || return 1
+
+  # The count restarts after an answer with a state: four, a state and a stage,
+  # then one more — no halt, the run ends at Done.
+  sb=$(make_sandbox no_state_reset)
+  _use_real_linear_reads "$sb" || return 1
+  printf '%s' '{"data":{"issues":{"nodes":[]}}}' > "$sb/forms/nostate"
+  _record_sleeps "$sb" 12
+  _run_reads "$sb" nostate nostate nostate nostate build build build nostate done -- EXP-20
+  assert_eq "$READS_RC" 0 "no state, then a state: exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(wc -l < "$sb/sleeps.log" | tr -d ' ')" 5 "no state, then a state: waits" || return 1
+
+  # Negative control: without the bound the shepherd waits on until the stub kills it.
+  sb=$(make_sandbox no_state_old)
+  _use_real_linear_reads "$sb" || return 1
+  printf '%s' '{"data":{"issues":{"nodes":[]}}}' > "$sb/forms/nostate"
+  _record_sleeps "$sb" 12
+  _mutate "$sb/scripts/shepherd.sh" '[ "$NO_STATE_COUNT" -ge "$MAX_NO_STATE" ] && _shepherd_no_state_halt' ':' || return 1
+  _run_reads "$sb" nostate -- EXP-20
+  [ "$(wc -l < "$sb/sleeps.log" | tr -d ' ')" -ge 12 ] \
+    || { echo "FAIL: negative control: the unbounded wait ended by itself, so this proves nothing"; return 1; }
+  if grep -q needs-human "$sb/labels.log" 2>/dev/null; then
+    echo "FAIL: negative control: the unbounded wait labeled the ticket, so this proves nothing"; return 1
+  fi
+  return 0
+}
+
+# Scenario 21: a relative --worktree (the form the help recommends), started from the
+# repo root. Every stage runs in that worktree, and nothing fails after a stage.
+# Before, the relative path went to bureau-worker.sh as it was; the worker changes
+# into the worktree and its EXIT cleanup ran `git -C <relative>` from there — exit
+# 128 after a finished stage (pilot EXP-1533, rc.1). Either fix alone closes it:
+# the shepherd makes the path absolute, and the worker does the same for any caller.
+_run_relative_worktree() {  # $1 = sandbox, $2 = form (split|equals); sets RELWT_RC
+  local sb="$1" s
+  for s in "$sb"/scripts/*-pipeline.sh; do
+    _mutate "$s" 'echo "' 'pwd -P >> "$INVOCATIONS_LOG.cwd"
+echo "' || return 1
+  done
+  echo s1 > "$sb/state.txt"
+  set +e
+  if [ "$2" = equals ]; then run_shepherd "$sb" --worktree=.worktrees/shepherd-EXP-21 EXP-21
+  else run_shepherd "$sb" --worktree .worktrees/shepherd-EXP-21 EXP-21; fi
+  RELWT_RC=$?
+  set -e
+}
+_old_worktree_shepherd() {
+  python3 - "$1/scripts/shepherd.sh" <<'PY_EOF' || { echo "FAIL: could not build the negative control"; return 1; }
+import pathlib, re, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text()
+t, n = re.subn(r'\nif \[ -n "\$WORKTREE_OVERRIDE" \]; then\n.*?\nfi\n', '\n', t, flags=re.S)
+if n != 1: sys.exit(1)
+p.write_text(t)
+PY_EOF
+}
+_old_worktree_worker() {
+  _mutate "$1/scripts/bureau-worker.sh" 'case "$WORKTREE" in /*) ;; *) WORKTREE="$REPO_DIR/$WORKTREE" ;; esac' ':'
+}
+test_relative_worktree() {
+  local sb form want combo
+  local happy="spec-pipeline.sh spec-review-pipeline.sh implement-pipeline.sh code-review-pipeline.sh merge-pipeline.sh"
+  # Both fixes, each form; then each fix alone (the other put back to the old line).
+  for combo in 'both|split' 'both|equals' 'shepherd|split' 'worker|split'; do
+    form=${combo#*|}
+    sb=$(make_sandbox "relwt_${combo%|*}_$form")
+    case "${combo%|*}" in
+      shepherd) _old_worktree_worker "$sb" || return 1 ;;
+      worker)   _old_worktree_shepherd "$sb" || return 1 ;;
+    esac
+    _run_relative_worktree "$sb" "$form" || return 1
+    assert_eq "$RELWT_RC" 0 "relative --worktree ($combo): exit" || { tail -5 "$sb/shepherd.out" "$sb/shepherd.err"; return 1; }
+    assert_eq "$(tr '\n' ' ' < "$sb/invocations.log" | sed 's/ $//')" "$happy" "relative --worktree ($combo): stages" || return 1
+    want=$(cd "$sb/.worktrees/shepherd-EXP-21" && pwd -P)
+    if grep -vqxF "$want" "$sb/invocations.log.cwd"; then
+      echo "FAIL: relative --worktree ($combo): a stage ran outside $want"; sort -u "$sb/invocations.log.cwd"; return 1
+    fi
+    if grep -q 'cannot change to' "$sb/shepherd.err"; then
+      echo "FAIL: relative --worktree ($combo): git could not change into the worktree"; return 1
+    fi
+  done
+
+  # The command handed on (to the tmux window, and to the re-exec under the runtime)
+  # carries the absolute path too, in both flag forms. A stub tmux records it.
+  for form in '--worktree .worktrees/shepherd-EXP-21' '--worktree=.worktrees/shepherd-EXP-21'; do
+    sb=$(make_sandbox relwt_tmux)
+    mkdir -p "$sb/bin"
+    printf '#!/bin/bash\ncase "$1" in has-session) exit 1 ;; esac\nprintf "%%s\\n" "${@: -1}" > "%s/tmux.cmd"\n' "$sb" > "$sb/bin/tmux"
+    chmod +x "$sb/bin/tmux"
+    ( cd "$sb" && env -u TMUX PATH="$sb/bin:$PATH" bash scripts/shepherd.sh $form EXP-21 >/dev/null 2>&1 )
+    grep -qF -- "$sb/.worktrees/shepherd-EXP-21" "$sb/tmux.cmd" 2>/dev/null \
+      || { echo "FAIL: '$form': the command handed to tmux does not carry the absolute worktree"; cat "$sb/tmux.cmd" 2>/dev/null; return 1; }
+    if grep -qE -- "--worktree[= ]\.worktrees" "$sb/tmux.cmd"; then
+      echo "FAIL: '$form': the command handed to tmux still carries the relative worktree"; cat "$sb/tmux.cmd"; return 1
+    fi
+  done
+
+  # Negative control: both old lines — the worker's cleanup fails after the first
+  # stage, the shepherd halts with 128.
+  sb=$(make_sandbox relwt_old)
+  _old_worktree_shepherd "$sb" || return 1
+  _old_worktree_worker "$sb" || return 1
+  _run_relative_worktree "$sb" split || return 1
+  assert_eq "$RELWT_RC" 128 "negative control: the old relative --worktree ends with 128" || { tail -5 "$sb/shepherd.err"; return 1; }
+  grep -q 'cannot change to' "$sb/shepherd.err" \
+    || { echo "FAIL: negative control: the old relative --worktree no longer fails in git, so this proves nothing"; return 1; }
+  return 0
+}
+
 # ── Run all scenarios ──────────────────────────────────────────────
 FAILS=0
 for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linear_unusable_halts test_block_halts \
                 test_state_read_unusable_halts test_label_read_unusable_halts test_human_label_when_linear_answers \
                 test_dry_run_read_unusable test_read_failure_other_code test_branch_read_unusable_halts \
-                test_interrupted_read_is_cancelled test_merge_mode_manual test_review_stop_quiet; do
+                test_interrupted_read_is_cancelled test_merge_mode_manual test_review_stop_quiet \
+                test_start_check_failure test_move_failure_halts test_signal_during_wait_and_stage \
+                test_move_confirmed_before_next_stage test_no_state_is_bounded test_relative_worktree; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

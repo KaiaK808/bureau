@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="fb41a00be811ed45e2b7760fa32e955e8b32ed07504371bf645b9f8fd56d9415">
+<meta name="bureau-source-sha256" content="9d1631969d64e54e2ba3b7b9e56a19dd8830f30c859eb224244467d44dbc4855">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -92,10 +92,10 @@ end-to-end (shepherd)</h2>
 starting continuous queues:</p>
 <div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
 <p>The default disposable checkout is <code>.worktrees/shepherd/</code>;
-<code>--worktree DIR</code> selects another worker path. Existing
-unregistered or unfinished checkouts are preserved and can refuse reuse.
-Inspect ownership before resuming; never point a disposable worker at an
-app checkout.</p>
+<code>--worktree DIR</code> selects another worker path; a relative DIR
+is taken from the repo root. Existing unregistered or unfinished
+checkouts are preserved and can refuse reuse. Inspect ownership before
+resuming; never point a disposable worker at an app checkout.</p>
 <div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
 <p>The preview reads state and reports the route without running the
 stages. In a live pass, exit 20 means the review boundary was reached,
