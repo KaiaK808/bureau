@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b21bf2ef1649c809079cc15075aa9b01f90062bb9e96e0d80a2d4a78f4296944">
+<meta name="bureau-source-sha256" content="df1654cbfe682427cde0e93b5ced1ddf17ddadc0cea470105cf86954f01f0747">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -353,7 +353,40 @@ preserve the required CI/base gates</li>
 flow and confirm the effective provider/model</li>
 </ul>
 <p>The background pipeline counts matching Changes Requested comments in
-Linear. Restarting it does not remove that history.</p>
+Linear. Restarting it does not remove that history. The cap is the last
+verdict rule, so it also stops rework that only a red build produced:
+when the reviewers approve and the build check stays red, the review
+says so ("only the build check stayed red") and escalates at the cap
+instead of sending the ticket round again. If the comments cannot be
+read, the stage stops before the paid review (10 or 27) instead of
+counting cycle 0.</p>
+<h3 id="why-a-review-ended-blocked">Why a review ended BLOCKED</h3>
+<p>The review stage decides its verdict in one order
+(<code>decide_review_verdict</code> in
+<code>scripts/bureau-config.sh</code>), and each rule that fired is
+appended to the review text:</p>
+<ol type="1">
+<li>A verdict other than APPROVE, REQUEST_CHANGES or BLOCK is BLOCK
+("VERDICT UNREADABLE").</li>
+<li>The merged review's <code>security_issues</code> must be a count.
+Missing, negative or anything else is BLOCK ("SECURITY COUNT
+UNREADABLE"); it is never read as 0.</li>
+<li>A CRITICAL count above 0 in the security specialist's own json block
+is BLOCK, whatever verdict the merger chose ("SECURITY: … CRITICAL"). If
+that count cannot be read, the review says so and the verdict is left
+alone.</li>
+<li>Any security finding means never APPROVE: APPROVE becomes
+REQUEST_CHANGES ("SECURITY FLOOR"). A non-critical security bug goes
+into rework like any other bug.</li>
+<li>A build that is not green folds the verdict: APPROVE and
+REQUEST_CHANGES become REQUEST_CHANGES, BLOCK stays BLOCK ("BUILD
+FAILURE"). After an approval the text adds that the pipeline cannot tell
+a failure caused by the code from one caused by the environment.</li>
+<li>The cycle cap last: a REQUEST_CHANGES at or past
+<code>agents.max_review_cycles</code> is BLOCK ("ESCALATED").</li>
+</ol>
+<p>A BLOCK labels <code>needs-human</code> and ends the stage with 25.
+Remove the label once the cause is dealt with.</p>
 <h3 id="review-comment-says-build-not-checked">Review comment says
 <code>**Build**: not checked</code></h3>
 <p>The review build check found nothing to run: no

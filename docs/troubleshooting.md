@@ -216,7 +216,20 @@ GitHub's mergeability state is cached. Bureau independently checks actual head c
 - Resolve substantive findings or explicitly adjudicate disagreements; preserve the required CI/base gates
 - If changing the reviewer, use the compatibility-aware Models update flow and confirm the effective provider/model
 
-The background pipeline counts matching Changes Requested comments in Linear. Restarting it does not remove that history.
+The background pipeline counts matching Changes Requested comments in Linear. Restarting it does not remove that history. The cap is the last verdict rule, so it also stops rework that only a red build produced: when the reviewers approve and the build check stays red, the review says so ("only the build check stayed red") and escalates at the cap instead of sending the ticket round again. If the comments cannot be read, the stage stops before the paid review (10 or 27) instead of counting cycle 0.
+
+### Why a review ended BLOCKED
+
+The review stage decides its verdict in one order (`decide_review_verdict` in `scripts/bureau-config.sh`), and each rule that fired is appended to the review text:
+
+1. A verdict other than APPROVE, REQUEST_CHANGES or BLOCK is BLOCK ("VERDICT UNREADABLE").
+2. The merged review's `security_issues` must be a count. Missing, negative or anything else is BLOCK ("SECURITY COUNT UNREADABLE"); it is never read as 0.
+3. A CRITICAL count above 0 in the security specialist's own json block is BLOCK, whatever verdict the merger chose ("SECURITY: … CRITICAL"). If that count cannot be read, the review says so and the verdict is left alone.
+4. Any security finding means never APPROVE: APPROVE becomes REQUEST_CHANGES ("SECURITY FLOOR"). A non-critical security bug goes into rework like any other bug.
+5. A build that is not green folds the verdict: APPROVE and REQUEST_CHANGES become REQUEST_CHANGES, BLOCK stays BLOCK ("BUILD FAILURE"). After an approval the text adds that the pipeline cannot tell a failure caused by the code from one caused by the environment.
+6. The cycle cap last: a REQUEST_CHANGES at or past `agents.max_review_cycles` is BLOCK ("ESCALATED").
+
+A BLOCK labels `needs-human` and ends the stage with 25. Remove the label once the cause is dealt with.
 
 ### Review comment says `**Build**: not checked`
 

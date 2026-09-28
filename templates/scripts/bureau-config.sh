@@ -2127,6 +2127,96 @@ apply_build_failure() {
   esac
 }
 
+# decide_review_verdict <verdict> <security_issues> <security_critical> <build_ok> <cycles> <max_cycles>
+#   → the final verdict on the first line, then one line per rule that changed or
+#     qualified it: "<rule><US><reason for the escalation log><US><text for the review>", fields
+#     split by the ASCII unit separator (\037): a tab is whitespace to `read`, and two
+#     tabs around an empty reason would collapse into one.
+#
+# The review stage's verdict rules as one ordered decision. The order is the behaviour:
+#   1. verdict   anything but APPROVE, REQUEST_CHANGES or BLOCK is BLOCK.
+#   2. security  the merged review's security_issues must be a count (a non-negative
+#                integer). Missing, negative or anything else is BLOCK: an unreadable
+#                count is not "none" (EXP-1518 in slidefactory-core: it used to read as 0,
+#                so the floor did nothing exactly when the review was unreliable).
+#   3. critical  the security specialist's own count of CRITICAL findings above 0 is BLOCK,
+#                whatever verdict the merger chose. The merger's rules already say "any
+#                CRITICAL security finding → BLOCK", and a merger once gave a CRITICAL
+#                option injection a REQUEST_CHANGES header; this holds the rule without
+#                trusting the merger. The specialist's JSON is unvalidated free text, so an
+#                unreadable count is noted in the review, not escalated.
+#   4. floor     any security finding means never APPROVE: APPROVE → REQUEST_CHANGES. A
+#                non-critical security bug goes into rework like any other bug.
+#   5. build     a build that is not green folds through apply_build_failure (BLOCK stays
+#                BLOCK). The review text says the pipeline cannot tell a red build caused by
+#                the code from one caused by the environment.
+#   6. cap       last, so it also sees a REQUEST_CHANGES the build fold produced: at or past
+#                max_review_cycles it escalates to BLOCK. It used to run before the fold, so
+#                "reviewers approve, build red" never met the cap and went round forever
+#                (EXP-1514 in slidefactory-core). A cycle count or cap that is not a count
+#                escalates too.
+decide_review_verdict() {
+  local verdict="${1:-}" sec="${2:-}" crit="${3:-}" build_ok="${4:-}" cycles="${5:-}" max="${6:-}"
+  local notes="" sep=$'\037' before sec_count="" shown_verdict shown_sec
+
+  # Values from model output are echoed into the review only as short, printable text.
+  shown_verdict=$(printf '%s' "$verdict" | tr -cd '[:alnum:]_ .-' | cut -c1-40)
+  shown_sec=$(printf '%s' "$sec" | tr -cd '[:alnum:]_ .-' | cut -c1-40)
+  case "$verdict" in
+    APPROVE|REQUEST_CHANGES|BLOCK) ;;
+    *) notes+="verdict${sep}review verdict unreadable${sep}VERDICT UNREADABLE: the review gave '${shown_verdict}', not APPROVE, REQUEST_CHANGES or BLOCK. Treated as BLOCK."$'\n'
+       verdict="BLOCK" ;;
+  esac
+
+  if [[ "$sec" =~ ^[0-9]+$ ]]; then
+    sec_count="$sec"
+  else
+    notes+="security-unreadable${sep}security_issues unreadable${sep}SECURITY COUNT UNREADABLE: the merged review reported security_issues as '${shown_sec:-missing}', not a count. Treated as BLOCK: an unreadable count is not \"none\"."$'\n'
+    verdict="BLOCK"
+  fi
+
+  if [[ "$crit" =~ ^[0-9]+$ ]]; then
+    if [ "$crit" -gt 0 ] && [ "$verdict" != "BLOCK" ]; then
+      notes+="security-critical${sep}security specialist reported ${crit} CRITICAL finding(s)${sep}SECURITY: the security specialist reported ${crit} CRITICAL finding(s); a CRITICAL security finding always needs a human, whatever the merged verdict said. Raised from ${verdict} to BLOCK."$'\n'
+      verdict="BLOCK"
+    fi
+  else
+    notes+="security-critical-unknown${sep}${sep}Note: the security specialist's own count of CRITICAL findings could not be read; only the merged security_issues count was checked."$'\n'
+  fi
+
+  if [ -n "$sec_count" ] && [ "$sec_count" -gt 0 ] && [ "$verdict" = "APPROVE" ]; then
+    notes+="security-floor${sep}${sep}SECURITY FLOOR: ${sec_count} security finding(s) reported, so this cannot be approved. Downgraded APPROVE to REQUEST_CHANGES."$'\n'
+    verdict="REQUEST_CHANGES"
+  fi
+
+  before="$verdict"
+  if [ "$build_ok" != "true" ]; then
+    verdict=$(apply_build_failure "$verdict")
+    if [ "$before" = "APPROVE" ]; then
+      notes+="build${sep}${sep}BUILD FAILURE: Must be fixed. The reviewers approved the code and only the build check failed; the pipeline cannot tell a failure caused by the code from one caused by the environment (dependencies, network, services)."$'\n'
+    else
+      notes+="build${sep}${sep}BUILD FAILURE: Must be fixed."$'\n'
+    fi
+  fi
+
+  if [ "$verdict" = "REQUEST_CHANGES" ]; then
+    if ! [[ "$cycles" =~ ^[0-9]+$ ]] || ! [[ "$max" =~ ^[0-9]+$ ]]; then
+      notes+="cycle-cap${sep}review cycle count unreadable${sep}**ESCALATED:** the review cycle count ('$(printf '%s' "$cycles" | tr -cd '[:alnum:]_ .-' | cut -c1-40)') or max_review_cycles ('$(printf '%s' "$max" | tr -cd '[:alnum:]_ .-' | cut -c1-40)') is not a count, so the loop cannot be bounded. Needs human intervention."$'\n'
+      verdict="BLOCK"
+    elif [ "$cycles" -ge "$max" ]; then
+      if [ "$before" = "APPROVE" ]; then
+        notes+="cycle-cap${sep}REQUEST_CHANGES exceeded max_review_cycles=${max} (reviewers approved, build red)${sep}**ESCALATED:** ${cycles} review cycles (max ${max}). The reviewers approved and only the build check stayed red, so rework alone does not end this loop. Needs human intervention."$'\n'
+      else
+        notes+="cycle-cap${sep}REQUEST_CHANGES exceeded max_review_cycles=${max}${sep}**ESCALATED:** ${cycles} review cycles (max ${max}). Needs human intervention."$'\n'
+      fi
+      verdict="BLOCK"
+    fi
+  fi
+
+  printf '%s\n' "$verdict"
+  printf '%s' "$notes"
+}
+
 # Map pipeline exit code → human-readable error class (for alerts, logs,
 # and shepherd's halt-classifier). Originally in queue-loop.sh; relocated
 # so single-shot drivers can reuse the same exit-code protocol.

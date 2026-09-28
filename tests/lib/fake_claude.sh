@@ -35,6 +35,13 @@ IFS=':' read -ra fixtures <<< "${FAKE_CLAUDE_FIXTURES:?must list at least one fi
 idx=$((n - 1))
 [ "$idx" -ge "${#fixtures[@]}" ] && idx=$((${#fixtures[@]} - 1))
 fixture="${fixtures[$idx]}"
+# Role fixtures for the review stage, chosen by the prompt instead of the call order (the
+# three specialists run in parallel): FAKE_CLAUDE_SECURITY_FIXTURE answers the security
+# specialist, FAKE_CLAUDE_MERGE_FIXTURE the merger.
+case "$*" in
+  *"You are a SECURITY specialist"*)             [ -z "${FAKE_CLAUDE_SECURITY_FIXTURE:-}" ] || fixture="$FAKE_CLAUDE_SECURITY_FIXTURE" ;;
+  *"Merge these three specialist reviews"*)      [ -z "${FAKE_CLAUDE_MERGE_FIXTURE:-}" ] || fixture="$FAKE_CLAUDE_MERGE_FIXTURE" ;;
+esac
 
 # Optionally make a git commit before emitting output. The pipeline's stuck
 # detector uses commit count between HEAD_BEFORE and HEAD_AFTER as a signal;
