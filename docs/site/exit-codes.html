@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6fcadf5b20539d202f02483752158f0b07bbc0f1a4a9b765f276962e6de999cd">
+<meta name="bureau-source-sha256" content="9d29a9a0deec59a1a7381e4065e0b8873a7d65d06caf01452ecc9106dabedf79">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -161,7 +161,9 @@ every BLOCK (and any unknown verdict) with 25, so a driver never reviews
 the same commit again. A stage that hands a ticket to a human but cannot
 write the <code>needs-human</code> label ends with 25 where it would
 have ended with 0 (a stage that already ends non-zero keeps its code)
-and holds the ticket locally; see the troubleshooting guide</td>
+and holds the ticket locally; see the troubleshooting guide. A queue
+pick that fails with 27 is reported and alerted, not read as an empty
+queue</td>
 </tr>
 <tr>
 <td><code>26</code></td>

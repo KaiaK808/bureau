@@ -1300,22 +1300,35 @@ remove_issue_label() {
 # ticket out from there, and a human releases it the usual way, by removing the
 # label. To release a held ticket without the label, delete its file.
 #
-# mark_needs_human <issue> <stage>
+# mark_needs_human <issue> <stage> [<stage exit>]
 #   0  the label is on the ticket (any hold for it is cleared)
 #   27 Linear stayed unusable: the ticket is held, the stage ends with 27 here
 #   1  any other failure: the ticket is held, an alert goes out, and the caller
 #      still posts its comment but must not end with 0 (it ends with 25 where it
 #      would have ended with 0), so a driver halts instead of reading success.
+#      <stage exit> is the code the caller will end with (default 25); the
+#      alert names it.
+#
+# The directory comes from the repository that holds .bureau.json, not from the
+# current directory, so every stage and picker of one repo sees the same holds
+# wherever it runs from (bureau_common_dir).
+bureau_common_dir() {
+  local base="." common
+  [ -n "${BUREAU_CONFIG:-}" ] && base=$(dirname "$BUREAU_CONFIG")
+  common=$(git -C "$base" rev-parse --git-common-dir 2>/dev/null) || return 1
+  [ -n "$common" ] || return 1
+  case "$common" in /*) ;; *) common="$(cd "$base" && pwd)/$common" ;; esac
+  printf '%s' "$common"
+}
+
 _needs_human_hold_dir() {
   local common
-  common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
-  [ -n "$common" ] || return 1
-  case "$common" in /*) ;; *) common="$(pwd)/$common" ;; esac
+  common=$(bureau_common_dir) || return 1
   printf '%s/bureau/needs-human-held' "$common"
 }
 
 mark_needs_human() {
-  local issue="$1" stage="$2" rc=0 dir="" held_at=""
+  local issue="$1" stage="$2" stage_exit="${3:-25}" rc=0 dir="" held_at=""
   add_issue_label "$issue" "needs-human" || rc=$?
   if [ "$rc" = 0 ]; then
     if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && dir=$(_needs_human_hold_dir); then
@@ -1341,23 +1354,26 @@ mark_needs_human() {
   else
     echo "  ✗ could not add 'needs-human' to $issue (exit $rc), and it could not be held locally — the queue may pick it again" >&2
   fi
-  alert_telegram "$issue" "$stage" 25 "needs-human could not be set (exit $rc)${held_at:+; the ticket is held in $held_at}" || true
+  alert_telegram "$issue" "$stage" "$stage_exit" "needs-human could not be set (exit $rc)${held_at:+; the ticket is held in $held_at}" || true
   return 1
 }
 
 # needs_human_holds_flush: try the label again for every held ticket. Prints the
 # tickets still held, comma-separated, on stdout; a ticket that now carries the
-# label is released. Returns 27 when Linear is unusable, like the picker's own
-# read. A dry run only reads the holds.
+# label is released. A label that still cannot be written keeps its ticket held
+# and never fails the pick: one ticket must not stop a queue. After a 27 the
+# remaining holds are not tried in this pick (each try would run the whole retry
+# ladder); if Linear is unusable for the pick as well, the pick's own read ends
+# with 27. A dry run only reads the holds.
 needs_human_holds_flush() {
-  local dir f id rc held=""
+  local dir f id rc held="" tried=1
   dir=$(_needs_human_hold_dir) || return 0
   [ -d "$dir" ] || return 0
   for f in "$dir"/*; do
     [ -f "$f" ] || continue
     id=${f##*/}
     [[ "$id" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]] || continue
-    if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
+    if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && [ "$tried" = 1 ]; then
       rc=0
       add_issue_label "$id" "needs-human" >&2 || rc=$?
       if [ "$rc" = 0 ]; then
@@ -1365,7 +1381,10 @@ needs_human_holds_flush() {
         echo "needs-human: $id now carries the label — its local hold is released" >&2
         continue
       fi
-      if [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then return "$rc"; fi
+      if [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+        echo "needs-human: Linear gave up on the label for $id — every held ticket stays held and skipped in this pick" >&2
+        tried=0
+      fi
     fi
     held="${held:+$held,}$id"
   done
@@ -1601,7 +1620,7 @@ _epoch_hm() {
 # nothing. Lenient field aliases cover our file + ClaudeWatch-ish shapes.
 bureau_is_paused() {
   local common
-  common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+  common=$(bureau_common_dir) || return 1
   [ -f "$common/bureau/paused" ]
 }
 
@@ -2638,7 +2657,7 @@ pipeline_pick_next() {
   # A ticket whose needs-human label could not be written is held locally
   # (mark_needs_human): skip it like a labelled one, and try the label again.
   local held skip="${2:-}"
-  held=$(needs_human_holds_flush) || return $?
+  held=$(needs_human_holds_flush)
   if [ -n "$held" ]; then
     echo "pick: skipping ticket(s) held for a human whose needs-human label is not written yet: $held" >&2
     skip="${skip:+$skip,}$held"

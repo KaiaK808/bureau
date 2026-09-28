@@ -157,7 +157,7 @@ if git rebase origin/main; then
   else
     echo "  Force-push rejected (lease lost — branch moved underneath us)."
     post_comment "$ISSUE" "❌ Rebase succeeded locally but \`--force-with-lease\` was rejected: \`$BRANCH\` moved on origin between fetch and push. Needs human."
-    mark_needs_human "$ISSUE" rebase || true
+    mark_needs_human "$ISSUE" rebase 19 || true
     exit 19
   fi
 else

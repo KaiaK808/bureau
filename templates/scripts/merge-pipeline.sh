@@ -429,7 +429,7 @@ if _merge_pr; then
 else
   echo "  Merge call failed."
   post_comment "$ISSUE" "❌ Merge attempted but \`gh pr merge\` (or its title/body read) failed despite gates passing. PR #$PR_NUMBER. Needs human."
-  mark_needs_human "$ISSUE" merge || true
+  mark_needs_human "$ISSUE" merge 18 || true
   exit 18
 fi
 

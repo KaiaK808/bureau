@@ -159,7 +159,9 @@ QA_LOG_PATH="logs/qa-$ISSUE-$QA_LOG_TS.log"
 QA_TMP=$(mktemp -d)
 _qa_cleanup() {
   local rc=$?
-  if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then rm -rf "$QA_TMP"; fi
+  # The full log is already in $QA_LOG_PATH when a needs-human arm ends with 25
+  # because its label could not be written; nothing to keep there either.
+  if [ "$rc" = 0 ] || [ "$rc" = 2 ] || [ "${NEEDS_HUMAN_UNMARKED:-0}" = 1 ]; then rm -rf "$QA_TMP"; fi
 }
 trap _qa_cleanup EXIT
 

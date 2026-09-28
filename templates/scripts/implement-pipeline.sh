@@ -254,7 +254,7 @@ if ! merge_origin_main_or_abort "$ISSUE" "Implement"; then
   # If labelling fails, mark_needs_human holds the ticket locally so the
   # picker skips it and retries the label; Linear unusable ends with 27.
   # Otherwise exit 17 either way so the alert classifies as rebase-needed.
-  mark_needs_human "$ISSUE" implement || true
+  mark_needs_human "$ISSUE" implement 17 || true
   exit 17
 fi
 

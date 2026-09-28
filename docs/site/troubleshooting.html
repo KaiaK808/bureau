@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="39f9893a1a45131c391f5b639ac44af9e11ab84c83b5e5bed80b79cb5028b897">
+<meta name="bureau-source-sha256" content="de4c4e2ef3675c53333523d223d5352c747bb33f50dd001d5e73849e9fe4a9d5">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -111,18 +111,37 @@ id="could-not-add-needs-human--a-ticket-held-without-its-label"><code>could not 
 <p>A stage that hands a ticket to a human adds <code>needs-human</code>,
 and the picker leaves labelled tickets alone. When that label write
 fails, the stage records the ticket in a local hold,
-<code>$(git rev-parse --git-common-dir)/bureau/needs-human-held/&lt;ISSUE&gt;</code>
-(one file per ticket, shared by every worktree of the repo), alerts,
-still posts its comment, and ends non-zero: 25 where it would have ended
-with 0, its own code otherwise, 27 when Linear stayed unusable. Every
-pick skips held tickets and tries the label again; once the label is on
-the ticket the file is removed and the label keeps the ticket out, so
-you release it the usual way, by removing the label. If the label can
-never be written (for example, no label named <code>needs-human</code>
-exists for the team or the workspace), fix that, or delete the file to
-release the ticket without the label. A run that names the ticket
-explicitly (a shepherd, <code>stage.sh EXP-123</code>) does not read the
-hold.</p>
+<code>&lt;git common dir&gt;/bureau/needs-human-held/&lt;ISSUE&gt;</code>
+(one file per ticket; the common dir is that of the repository holding
+<code>.bureau.json</code>, so every worktree and every caller sees the
+same holds wherever it runs from; the pause marker
+<code>bureau/paused</code> is found the same way), alerts with the code
+the stage ends with, still posts its comment, and ends non-zero: 25
+where it would have ended with 0, its own code otherwise (17, 18, 19),
+27 when Linear stayed unusable. Every pick skips held tickets and tries
+the label again; once the label is on the ticket the file is removed and
+the label keeps the ticket out, so you release it the usual way, by
+removing the label. A label that still cannot be written never fails the
+pick: the ticket stays held and skipped and the pick goes on; after one
+such 27 the other holds wait for the next pick. If the label can never
+be written (for example, no label named <code>needs-human</code> exists
+for the team or the workspace), fix that, or delete the file to release
+the ticket without the label. A run that names the ticket explicitly (a
+shepherd, <code>stage.sh EXP-123</code>) does not read the hold.</p>
+<p>An implement halt (<code>PARTIAL</code>, <code>STUCK</code>,
+<code>CAP_TIME</code>, <code>NEEDS_HUMAN</code>, <code>CI_MARKER</code>)
+whose label could not be written now ends with 25 instead of 0. If the
+worktree holds work that is not on origin, <code>bureau-worker.sh</code>
+preserves it as unfinished work, and later implement runs in that
+worktree end with 21 (ownership conflict) until a human resolves it.
+Before, the 0 let the next reset discard that work. Preserving it and
+stopping loudly is intended, as after a review BLOCK: push or drop the
+preserved work, write the label (or delete the hold), then resume.</p>
+<p>A pick in <code>queue-loop.sh</code> that fails because Linear stayed
+unusable is logged as
+<code>pick failed: Linear stayed unusable (exit 27)</code> and alerts
+(throttled per stage per hour) instead of reading as an empty queue; any
+other pick failure is logged and still treated as an empty queue.</p>
 <h3
 id="pipeline-keeps-hitting-merge_origin_main_or_abort-conflicts">Pipeline
 keeps hitting <code>merge_origin_main_or_abort</code> conflicts</h3>
