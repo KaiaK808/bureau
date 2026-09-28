@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="3125ac84a2db9086edcd9f58eefd80f2dc35493cdd3da33b5664afa6632df8ab">
+<title>release-notes-v3.0.0-rc.2 · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="bureau-v300-rc2--findings-from-the-first-live-acceptance">Bureau
+v3.0.0-rc.2 — findings from the first live acceptance</h1>
+<p><strong>Release candidate · 2026-09-28 · source tag
+<code>v3.0.0-rc.2</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.2">GitHub
+Release</a> is marked as a prerelease and records the exact tagged
+commit. This candidate is superseded by the stable <a
+href="release-notes.html">v3.0.0</a>, which has the same runtime. The
+previous candidate is <a
+href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>.</p>
+<p>rc.2 carries the findings of the first live acceptance and of a check
+of seven tickets an installation had filed against its own pipeline
+scripts. It keeps rc.1's exit-code contract (a review BLOCK ends with
+<code>25</code>, <code>27</code> means Linear stayed unusable, the
+shepherd halts with an alert on every code except <code>0</code>,
+<code>2</code>, <code>10</code> and <code>16</code>) and adds to it: a
+failed <code>needs-human</code> write now ends a stage with
+<code>25</code>, a failed final implement push with <code>18</code>, a
+failed <code>repo.post_implement_command</code> with <code>14</code>,
+and an interrupted shepherd with <code>130</code>.</p>
+<h2 id="what-changed">What changed</h2>
+<ul>
+<li><strong>Review verdict rules in one order</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/18">#18</a>):
+<code>decide_review_verdict</code> checks the verdict, the security
+count, the security specialist's CRITICAL count, the security floor, the
+build fold, and the cycle cap last. An APPROVE with a permanently red
+build now reaches the cap and escalates instead of looping; an
+unreadable or negative security count and a specialist CRITICAL end
+BLOCK; the text fallback accepts only an exact verdict word.</li>
+<li><strong>A needs-human escalation survives a failed label
+write</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/17">#17</a>): every stage
+goes through <code>mark_needs_human</code>. When the label cannot be
+written, the ticket is held locally under the configuration repository's
+git directory, the stage ends with <code>25</code> and the picker skips
+the ticket, retrying the label once per pick. <code>queue-loop.sh</code>
+reports a pick that fails with <code>27</code> with an hourly alert
+instead of reading it as an empty queue.</li>
+<li><strong>Linear answers checked in transport</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/19">#19</a>): every
+request has a time limit (30 s, connect 10 s); an HTTP status outside
+2xx, <code>{"data":{}}</code>, a null root field and a NUL byte are
+unusable and go through the retry ladder to <code>27</code>; the issue
+readers require the lists they read.</li>
+<li><strong>Shepherd outside the stages</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/20">#20</a>): its own
+moves are guarded; a read after a move is confirmed (up to three reads,
+5 s apart) so a moment-old answer no longer re-runs a stage; Ctrl-C or
+SIGTERM during a read, move, wait or stage ends the run as cancelled
+(<code>130</code>) after releasing the claim; five answers without a
+state in a row halt; a relative <code>--worktree</code> is resolved
+against the repository root.</li>
+<li><strong><code>repo.post_implement_command</code> and a final push
+that cannot be lost</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/21">#21</a>): an optional,
+time-limited hook runs wherever the implement stage releases work for
+review, for repositories that derive files from an implementation; a
+failed final push is retried once and stops the hand-off with
+<code>18</code> when a fetch shows origin still lacks commits.</li>
+<li><strong>Installation names anonymised</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/22">#22</a>):
+documentation, template comments and tests refer to installations as A,
+B and C.</li>
+<li><strong>CI job limit</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/23">#23</a>): the test job
+may run 20 minutes (the macOS suite reached 10).</li>
+</ul>
+<p>See the <a href="../../CHANGELOG.md">changelog</a> for the full entries
+and the <a href="exit-codes.html">exit codes</a> for the vocabulary.</p>
+<h2 id="upgrade-an-existing-installation">Upgrade an existing
+installation</h2>
+<p>From <strong>v3.0.0-rc.1</strong>: select tag
+<code>v3.0.0-rc.2</code> in the source skill checkout and resync the
+scripts scope as one set. No configuration change is required. New
+optional settings: <code>repo.post_implement_command</code> (and
+<code>BUREAU_POST_IMPLEMENT_TIMEOUT</code>, default 900 s),
+<code>BUREAU_LINEAR_MAX_TIME</code> /
+<code>BUREAU_LINEAR_CONNECT_TIMEOUT</code> or
+<code>.linear.request.max_time</code> / <code>.connect_timeout</code>,
+and <code>BUREAU_SHEPHERD_CONFIRM_SECONDS</code> (environment only). A
+post-implement command must be idempotent and exit <code>0</code> when
+there is nothing to commit.</p>
+<p>From <strong>v2.0.0 or a legacy copy</strong>: follow the <a
+href="migration.html#upgrade-to-v3">v3 upgrade section</a> (set
+<code>agents.merge_mode: "manual"</code> with a Merge state where a
+human merges, <code>repo.test_command</code> where the review ran a
+local script, a <code>.gitignore</code> covering what that command
+writes, the scripts scope as one set with a reviewed
+<code>--overwrite</code> per differing file, and repository tests that
+assert old exit codes updated in the same pull request).</p>
+<p>Behaviour to check after the resync: a missing or invalid Linear key
+now shows as <code>27</code> (hourly queue alert) rather than as an idle
+queue; an implement halt whose label could not be written ends with
+<code>25</code> and keeps unpushed work in its worktree for a human; a
+review whose security count cannot be read ends BLOCK.</p>
+<h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
+<p>Dependencies and platforms are unchanged (Python 3.9+, Bash 3.2+, Git
+2.26+, jq, curl; Node.js 18+ for the shared scheduler; Linux and macOS).
+Configuration schema versions 1 and 2 stay supported, and the manifest
+stays at version <code>1</code>, so an older installer still reads it.
+Rollback restores the private backup and points the source back at the
+previous tag (<a href="migration.html#rollback">rollback</a>); it cannot
+undo commits, pull requests or Linear transitions made in between. A
+local needs-human hold is a file in
+<code>&lt;git common dir&gt;/bureau/needs-human-held/</code>; an older
+runtime ignores it, so roll back only after the held tickets carry their
+label or the hold files are removed.</p>
+<h2 id="validation-and-known-limitations">Validation and known
+limitations</h2>
+<p><strong>Live acceptance on rc.1:</strong> the maintainer's pilot
+installation was resynced to rc.1 and drove one new ticket end to end
+with the shepherd — Triage → Spec → Spec Review → Build → QA → Build
+Review (one REQUEST_CHANGES round on a real gap) → Build → QA → Build
+Review (APPROVE, review build check ran the repository's test command) →
+merge gate (all gates passed, sanitised merge message, CI ran on
+<code>main</code>) → Done. It found two defects, both fixed in rc.2
+(#20): a relative <code>--worktree</code> halted the shepherd with
+<code>128</code>, and a moment-old read after a stage re-ran a paid
+stage.</p>
+<p>rc.2's own changes are validated by the full Linux/macOS suite on the
+release commit, the installer fixtures, and at least one independent
+verification pass per pull request #17–#21 in which each finding was
+reproduced before it was fixed; every new guard has a test that runs the
+real code with a negative control and was mutation-checked. The pilot is
+resynced to rc.2 next; <strong>v3.0.0</strong> follows after that.</p>
+<p>Known limitations:</p>
+<ul>
+<li>With <code>merge_mode: "manual"</code>, nothing moves a ticket from
+Merge to Done after the merge by hand.</li>
+<li>A <code>manual</code> repository without a Merge state refuses code
+review with <code>24</code> and re-picks the same ticket every tick,
+alerting at most once an hour.</li>
+<li>The review build check uses three steps; the QA stage's further
+fallbacks are not used in review.</li>
+<li>The installer copies every file under
+<code>templates/scripts</code>, including files Git ignores; a
+<code>.env</code> placed there would be copied into the target
+repository (the source is then recorded as dirty).</li>
+<li>Resuming after a <code>--no-merge</code> stop runs the paid review
+again even when head and base are unchanged.</li>
+<li>The shepherd does not read local needs-human holds; a run that names
+a held ticket ignores the hold (the stage's non-zero exit still stops
+it).</li>
+<li>The alert throttle key has no repository in it, so two installations
+on one machine throttle each other's alerts.</li>
+<li><code>pick_issue</code> and <code>count_in_flight_issues</code>
+still read a missing list as empty; Linear's schema does not allow that
+answer.</li>
+<li>A file that is already modified before
+<code>repo.post_implement_command</code> runs and that the command
+modifies further is not detected as left uncommitted.</li>
+</ul></main>
+</div>
+</body>
+</html>

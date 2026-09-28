@@ -6,6 +6,12 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-09-28
+
+Stable release of the 3.0.0 candidates. Runtime, installer, templates and tests are identical to v3.0.0-rc.2; this release changes only the documentation of the release status. The changes since v2.0.0 are recorded in the 3.0.0-rc.2 and 3.0.0-rc.1 sections below, and the [v3.0.0 release notes](docs/release-notes.md) consolidate them. Validation added since rc.2: a second live acceptance in the maintainer's pilot installation on rc.2, which drove one ticket from Triage to Done with the shepherd and exercised `repo.post_implement_command`, the review build check, the merge gate and a relative `--worktree`.
+
+**Upgrade:** from v3.0.0-rc.2 select tag `v3.0.0`; no resync is needed because the runtime is unchanged. From rc.1, v2.0.0 or a legacy copy, follow the [v3 upgrade section](docs/migration.md#upgrade-to-v3).
+
 ## [3.0.0-rc.2] - 2026-09-28
 
 Second release candidate for Bureau v3.0.0, published as a GitHub prerelease. It carries the findings of the first live acceptance (a pilot installation resynced to rc.1 drove one ticket from Triage to Done with the shepherd) and of a check of seven tickets an installation had filed against its own pipeline scripts: the review verdict in one order ([#18](https://github.com/KaiaK808/bureau/pull/18)), needs-human escalations that survive a failed label write ([#17](https://github.com/KaiaK808/bureau/pull/17)), Linear answers checked in transport ([#19](https://github.com/KaiaK808/bureau/pull/19)), the shepherd outside the stages ([#20](https://github.com/KaiaK808/bureau/pull/20)), `repo.post_implement_command` and a final implement push that cannot be lost ([#21](https://github.com/KaiaK808/bureau/pull/21)), installation names anonymised ([#22](https://github.com/KaiaK808/bureau/pull/22)) and a 20-minute CI job limit ([#23](https://github.com/KaiaK808/bureau/pull/23)). From rc.1 the upgrade is a scripts resync; no configuration change is required. See [release notes](docs/release-notes.md) for the upgrade, compatibility and known limitations.
@@ -199,7 +205,8 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.0.0-rc.2...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.0.0...main
+[3.0.0]: https://github.com/KaiaK808/bureau/compare/v2.0.0...v3.0.0
 [3.0.0-rc.2]: https://github.com/KaiaK808/bureau/compare/v3.0.0-rc.1...v3.0.0-rc.2
 [3.0.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v2.0.0...v3.0.0-rc.1
 [2.0.0]: https://github.com/KaiaK808/bureau/compare/6763c26c26aa96a41a92fbe95416fddbf4d48f69...v2.0.0
