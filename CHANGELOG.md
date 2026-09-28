@@ -6,6 +6,12 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+### A resumed review reuses an unchanged approval
+
+#### Changed
+
+- A review that stopped before merge (`--no-merge`, `BUREAU_STOP_REQUESTED`) now records its verdict with its inputs, and when the review stage runs again without a stop on exactly those inputs — the same PR and base branch, the same head and base commits, the same ticket text and state — it reuses that APPROVE instead of paying the three specialists and the merger again (`bureau-supervision.py reuse`, called from `code-review-pipeline.sh`). The build check still runs, and a red build folds the reused APPROVE into REQUEST_CHANGES like a fresh one. The record is removed whether it matched or not, so an approval is used at most once. Any difference, a record written before verdicts were recorded, a ticket detail that cannot be read, an unreadable record file or a dry run means the full review. A changed model, runner, prompt, configuration or Bureau version is not compared; resume the boundary first to have the change judge the PR. A stop that is still requested behaves as before. Found in the pilot's live acceptance, where resuming a `--no-merge` run on an unchanged head paid for a second full review. **Upgrade:** none; to force a fresh review at the same head, run `python3 scripts/bureau-supervision.py resume TEAM-123` first.
+
 ## [3.0.0] - 2026-09-28
 
 Stable release of the 3.0.0 candidates. Runtime, installer, templates and tests are identical to v3.0.0-rc.2; this release changes only the documentation of the release status. The changes since v2.0.0 are recorded in the 3.0.0-rc.2 and 3.0.0-rc.1 sections below, and the [v3.0.0 release notes](docs/release-notes.md) consolidate them. Validation added since rc.2: a second live acceptance in the maintainer's pilot installation on rc.2, which drove one ticket from Triage to Done with the shepherd and exercised `repo.post_implement_command`, the review build check, the merge gate and a relative `--worktree`.

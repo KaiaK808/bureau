@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1c0eb33e47cebb156e7fec8a98d44f28aa43e356da9b539ad9314fd632543e20">
+<meta name="bureau-source-sha256" content="0658f6e56290d2d77feaeeb68f7a9c2fbfe6841078b63120ff013ce94ba3c3c7">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -664,6 +664,27 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#
 to the description and re-trigger.</p>
 <hr />
 <h2 id="supervisor">Supervisor</h2>
+<h3 id="a-review-says-it-reused-the-approval">A review says it reused
+the approval</h3>
+<p>The ticket comment "reusing the approval recorded …" means the review
+stage found the approval a <code>--no-merge</code> run recorded for the
+same PR, base branch, head and base commits, ticket text and state, and
+moved on without a new model review; only the build check ran again. The
+record is gone after that. To get a fresh model review at the same head
+instead, run
+<code>python3 scripts/bureau-supervision.py resume TEAM-123</code>
+before the next run. A changed head, base, ticket or PR, a record
+written without a verdict (by a runtime from before this change), a
+ticket detail that cannot be read, or an unreadable
+<code>review-stops.json</code> always gives the full review; the last
+one also prints "the review boundary file could not be checked".</p>
+<p>The comparison covers the PR and the ticket, not the reviewer: a
+different model, runner, review prompt, <code>.bureau.json</code> or
+Bureau version between the stop and the resumed run does not by itself
+cause a new review. If you changed one of those and want the change to
+judge the PR, run
+<code>python3 scripts/bureau-supervision.py resume TEAM-123</code> (or
+push a commit) before resuming.</p>
 <h3 id="telegram-alert-supervisor-giving-up">Telegram alert: "supervisor
 giving up"</h3>
 <p>The supervisor crashed <code>BUREAU_SUPERVISOR_MAX_CRASHES</code>

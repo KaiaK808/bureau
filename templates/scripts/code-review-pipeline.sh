@@ -221,6 +221,52 @@ if [ "${REVIEW_CYCLE_COUNT:-0}" -gt 0 ]; then
   CYCLE_NOTE+=$'\nDeclined findings from earlier cycles are pinned — do NOT resurface them unless the underlying code has materially changed. Cite the prior cycle if you do re-raise.'
 fi
 
+# A review that stopped before merge (`--no-merge`, BUREAU_STOP_REQUESTED) recorded its
+# APPROVE with the inputs it judged. Run again without a stop on exactly those inputs —
+# the same PR and base branch, the same head and base commits, the same ticket text and
+# state — that approval is reused instead of paying the three specialists and the merger
+# again. `bureau-supervision.py reuse` removes the record whether it matches or not, so an
+# approval is used at most once and never for inputs it did not see; any doubt (no record,
+# a record without a recorded verdict, an unreadable file) means the full review. The
+# build check in Phase 2 still runs: it is cheap next to the model review and the
+# environment may have changed since, and a red build folds the reused APPROVE exactly
+# as it folds a fresh one (decide_review_verdict).
+REUSED_APPROVAL=0
+if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
+  if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
+      --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" \
+      --base-ref "$PR_BASE_REF" --pr "$PR_NUMBER"); then
+    if [ "$(printf '%s' "$REUSE" | jq -r '.reuse' 2>/dev/null)" = true ]; then
+      REUSED_APPROVAL=1
+      REUSED_AT=$(printf '%s' "$REUSE" | jq -r '.stopped_at | floor | todate' 2>/dev/null) || REUSED_AT=""
+      echo "  Reusing the approval recorded ${REUSED_AT:-earlier} for head $REVIEW_HEAD — no new specialist review."
+      post_comment "$ISSUE" "♻️ Code review: reusing the approval recorded ${REUSED_AT:-earlier} for head \`$REVIEW_HEAD\` on \`$PR_BASE_REF\` at \`$REVIEW_BASE\` — PR #$PR_NUMBER, both commits and the ticket are unchanged, so no new model review runs. The build check runs again." || true
+    else
+      echo "  No reusable approval: $(printf '%s' "$REUSE" | jq -r '.reason // "unknown"' 2>/dev/null)"
+    fi
+  else
+    # Only a failure to read or lock review-stops.json itself ends up here (the error
+    # is printed above); a mismatch or an unreadable ticket detail is a normal "no".
+    echo "  WARN: the review boundary file could not be checked; running a full review." >&2
+  fi
+fi
+
+if [ "$REUSED_APPROVAL" = 1 ]; then
+  # The merger's answer the recorded approval stands for. The recorded APPROVE came out
+  # of decide_review_verdict, so the merger's security count was a readable 0 (a missing,
+  # unreadable or positive count ends REQUEST_CHANGES or BLOCK) and the specialist's
+  # CRITICAL count was not above 0 (it may have been unreadable, which is only noted in
+  # the review). 0 for both reproduces that approval without repeating such a note.
+  MERGED_REVIEW="Reused the approval recorded ${REUSED_AT:-earlier} for head \`$REVIEW_HEAD\` on \`$PR_BASE_REF\` at \`$REVIEW_BASE\`: PR #$PR_NUMBER, both commits and the ticket are unchanged since that review, so no new specialist review ran.
+
+\`\`\`json
+{\"verdict\":\"APPROVE\",\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"Reused the recorded approval of an unchanged head and base.\"}
+\`\`\`"
+  _sec_critical=0
+else
+# The paid review below keeps its original indentation: the prompts are multi-line
+# strings, and indenting them would change what the models read.
+
 # Large-diff guard — specialists sample critical paths instead of exhaustive
 # enumeration when the diff exceeds the configured threshold. Repos with
 # mature CI / type-safety tune this higher; legacy repos cap lower. Set via
@@ -371,6 +417,7 @@ Write a human-readable PR comment (Specialist Summaries, All Findings grouped by
 \`\`\`json
 {\"verdict\":\"APPROVE|REQUEST_CHANGES|BLOCK\",\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"\"}
 \`\`\`" 2>"$REVIEW_TMP/merge.stderr")
+fi
 
 echo "$MERGED_REVIEW"
 
@@ -506,7 +553,8 @@ case "$VERDICT" in
       # another tick could start the same paid review. Record the reviewed inputs.
       if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
         printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
-          --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" >/dev/null
+          --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
+          --verdict APPROVE >/dev/null
       fi
       post_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested."
       echo "Review complete; stopped before merge."
