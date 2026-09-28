@@ -77,7 +77,9 @@ EOF
   sed -n -e '/^BUREAU_EXIT_LINEAR_UNUSABLE=/p' -e '/^halt_if_linear_unusable() {/,/^}/p' \
     -e '/^check_squash_range() {/,/^}/p' -e '/^comment_on_branch_pr() {/,/^}/p' \
     -e '/^restore_worktree_deps() {/,/^}/p' \
-    -e '/^apply_build_failure() {/,/^}/p' -e '/^resolve_verdict_exit() {/,/^}/p' \
+    -e '/^apply_build_failure() {/,/^}/p' -e '/^decide_review_verdict() {/,/^}/p' \
+    -e '/^_review_count() {/,/^}/p' -e '/^_review_shown() {/,/^}/p' -e '/^review_verdict_from_text() {/,/^}/p' \
+    -e '/^resolve_verdict_exit() {/,/^}/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/real-helpers.sh"
   sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/stop-boundary.sh"
   # The merge policy (agents.merge_mode and the predicates built on it) runs for real

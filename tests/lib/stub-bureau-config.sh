@@ -159,9 +159,13 @@ get_issue_branch() {
   echo "${BUREAU_STUB_BRANCH:-test-branch}"
 }
 
+# BUREAU_STUB_REVIEW_COMMENTS (a JSON array of {body}) feeds the review stage's cycle
+# count; BUREAU_STUB_REVIEW_COMMENTS_RAW replaces the answer verbatim (an answer that
+# cannot be counted); BUREAU_STUB_REVIEW_COMMENTS_RC makes the read fail with that code.
 get_issue_comments() {
   _record "get_issue_comments" "$1"
-  echo "[]"
+  [ "${BUREAU_STUB_REVIEW_COMMENTS_RC:-0}" = 0 ] || return "$BUREAU_STUB_REVIEW_COMMENTS_RC"
+  echo "${BUREAU_STUB_REVIEW_COMMENTS_RAW:-${BUREAU_STUB_REVIEW_COMMENTS:-[]}}"
 }
 
 free_branch_from_other_worktrees() { _record "free_branch_from_other_worktrees" "$1" "$2"; return 0; }

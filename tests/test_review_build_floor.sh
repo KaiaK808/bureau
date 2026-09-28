@@ -6,10 +6,9 @@
 # that was red for an environmental reason (missing dependencies, no network, a broken stub)
 # rewrote a BLOCK carrying a security finding into ordinary rework and skipped `needs-human`.
 #
-# This test runs the REAL helper from templates/scripts/bureau-config.sh and the REAL fold
-# block cut out of templates/scripts/code-review-pipeline.sh. It does not re-implement either:
-# a rewrite that moves the block makes the cut fail loudly instead of leaving an assertion
-# that quietly tests nothing.
+# This test runs the REAL helpers from templates/scripts/bureau-config.sh (apply_build_failure
+# and decide_review_verdict, which folds the build for the stage) and checks that the stage
+# calls the decision instead of folding on its own. It does not re-implement either.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && cd .. && pwd)"
@@ -56,34 +55,33 @@ for pair in "BLOCK:BLOCK" "APPROVE:REQUEST_CHANGES" "REQUEST_CHANGES:REQUEST_CHA
 done
 echo "PASS apply_build_failure keeps a BLOCK and falls closed on anything unknown"
 
-# --- the fold block in the stage -------------------------------------------
-# Cut from `if [ "$BUILD_OK" = false ]; then` to the next `fi` at column 1.
-BLOCK=$(awk '/^if \[ "\$BUILD_OK" = false \]; then$/{f=1} f{print} f&&/^fi$/{exit}' \
-  "$SCRIPTS/code-review-pipeline.sh")
-[ -n "$BLOCK" ] || fail "the build-fold block is no longer in code-review-pipeline.sh"
-case "$BLOCK" in
-  *'apply_build_failure'*) ;;
-  *) fail "the fold block no longer runs the verdict through apply_build_failure" ;;
-esac
+# --- the fold inside the stage's verdict decision ----------------------------
+# The fold now runs inside decide_review_verdict (security floor before it, cycle cap
+# after it; the order is held by tests/test_review_verdict_order.sh). The stage must call
+# that decision and no longer fold on its own.
+grep -q 'decide_review_verdict "$VERDICT"' "$SCRIPTS/code-review-pipeline.sh" \
+  || fail "the review stage no longer runs its verdict through decide_review_verdict"
+if grep -q 'VERDICT=$(apply_build_failure' "$SCRIPTS/code-review-pipeline.sh"; then
+  fail "the review stage folds the build on its own again, outside the ordered decision"
+fi
 
-run_fold() {  # $1 = BUILD_OK, $2 = incoming verdict; echoes "<verdict>|<appended text>"
-  BUILD_OK="$1" VERDICT="$2" bash -c "
-    set -euo pipefail
-    $(declare -f apply_build_failure)
-    MERGED_REVIEW='BEFORE'
-    $BLOCK
-    printf '%s|%s' \"\$VERDICT\" \"\${MERGED_REVIEW#BEFORE}\"
-  "
+run_fold() {  # $1 = build_ok, $2 = incoming verdict; echoes "<verdict>|<review text>"
+  local out
+  out=$(decide_review_verdict "$2" 0 0 "$1" 0 3)
+  printf '%s|%s' "$(printf '%s\n' "$out" | head -n 1)" \
+    "$(printf '%s\n' "$out" | tail -n +2 | awk -F'\037' '$1 == "build" {print $3}')"
 }
 
-NOTE=$'\n\nBUILD FAILURE: Must be fixed.'
 for pair in "BLOCK:BLOCK" "APPROVE:REQUEST_CHANGES" "REQUEST_CHANGES:REQUEST_CHANGES" "NONSENSE:BLOCK"; do
   input="${pair%%:*}"; want="${pair##*:}"
   out=$(run_fold false "$input")
   [ "${out%%|*}" = "$want" ] || fail "red build turned '$input' into '${out%%|*}', wanted '$want'"
-  [ "${out#*|}" = "$NOTE" ] || fail "the build-failure note changed or is missing for '$input'"
+  case "${out#*|}" in
+    'BUILD FAILURE: Must be fixed.'*) ;;
+    *) fail "the build-failure note changed or is missing for '$input': '${out#*|}'" ;;
+  esac
 done
-echo "PASS the real fold block holds the floor on a red build"
+echo "PASS the stage's decision holds the floor on a red build"
 
 for input in BLOCK APPROVE REQUEST_CHANGES; do
   out=$(run_fold true "$input")

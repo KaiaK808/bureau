@@ -200,8 +200,22 @@ echo "Phase 1/3: multi-specialist review (3 passes in parallel)"
 # Pre-compute the cycle number so specialists know whether they're seeing this
 # code for the first time or the Nth. They can reference cycle 1's findings
 # explicitly in their prose; the merger uses it for escalation.
-REVIEW_CYCLE_COUNT=$(get_issue_comments "$ISSUE" \
-  | jq '[.[] | select(.body | test("Code Review.*Changes Requested"))] | length' 2>/dev/null || echo "0")
+# The comments are read first and the count must be a number: a failed read used to
+# become cycle 0 (`|| echo "0"`), which switched the loop breaker off exactly when Linear
+# was unreliable. The stage ends before any paid review: 10 (Linear down) and 27 (Linear
+# unusable) pass through; any other failure is an answer that could not be parsed, 27.
+_comments_rc=0
+_review_comments=$(get_issue_comments "$ISSUE") || _comments_rc=$?
+if [ "$_comments_rc" != 0 ]; then
+  echo "  ERROR: could not read the comments of $ISSUE to count review cycles (exit $_comments_rc)." >&2
+  case "$_comments_rc" in 10|"$BUREAU_EXIT_LINEAR_UNUSABLE") exit "$_comments_rc" ;; *) exit "$BUREAU_EXIT_LINEAR_UNUSABLE" ;; esac
+fi
+REVIEW_CYCLE_COUNT=$(printf '%s' "$_review_comments" \
+  | jq '[.[] | select(.body | test("Code Review.*Changes Requested"))] | length' 2>/dev/null) || REVIEW_CYCLE_COUNT=""
+if ! [[ "$REVIEW_CYCLE_COUNT" =~ ^[0-9]+$ ]]; then
+  echo "  ERROR: the comments of $ISSUE did not give a review cycle count." >&2
+  exit "$BUREAU_EXIT_LINEAR_UNUSABLE"
+fi
 CYCLE_NOTE="This is review cycle $((REVIEW_CYCLE_COUNT + 1)) for this issue."
 if [ "${REVIEW_CYCLE_COUNT:-0}" -gt 0 ]; then
   CYCLE_NOTE+=$'\nDeclined findings from earlier cycles are pinned — do NOT resurface them unless the underlying code has materially changed. Cite the prior cycle if you do re-raise.'
@@ -310,6 +324,11 @@ PERFORMANCE_REVIEW="Failed"
 [ -s "$REVIEW_TMP/correctness.txt" ] && CORRECTNESS_REVIEW=$(<"$REVIEW_TMP/correctness.txt")
 [ -s "$REVIEW_TMP/security.txt" ]    && SECURITY_REVIEW=$(<"$REVIEW_TMP/security.txt")
 [ -s "$REVIEW_TMP/performance.txt" ] && PERFORMANCE_REVIEW=$(<"$REVIEW_TMP/performance.txt")
+# The security specialist's own CRITICAL count, read from the whole review before the
+# ARG_MAX guard below trims it for the merge prompt: a provider envelope (cost tracking
+# wraps the output as JSON) cut to its last KB is no longer JSON, and the count would be
+# lost without a sound.
+_sec_critical=$(parse_claude_json "$SECURITY_REVIEW" '.counts.critical')
 
 # ARG_MAX guard: a codex specialist review can run 300-400KB; three of them
 # inlined into the merge prompt below as a single shell argument overflow
@@ -403,58 +422,38 @@ fi
 echo ""
 echo "Phase 3/3: post review + route"
 
-# Parse the fenced json block at the end of the merger output.
-# Legacy fallbacks (regex over `REVIEW_VERDICT: X` / `## REVIEW_VERDICT`) kept
-# as defense-in-depth when the model drops the json block. Any miss falls back
-# to BLOCK so a bad parse can never silently auto-merge a PR.
+# Parse the fenced json block at the end of the merger output. The legacy text
+# form (`REVIEW_VERDICT: X` / `## REVIEW_VERDICT`) is kept as defense-in-depth when
+# the model drops the json verdict; it accepts only an exact verdict word
+# (review_verdict_from_text), so "NOT_APPROVED — BLOCK" can no longer read as
+# APPROVE. Any miss falls back to BLOCK so a bad parse can never auto-merge a PR.
 VERDICT=$(parse_claude_json "$MERGED_REVIEW" '.verdict // empty')
 if [ -z "$VERDICT" ]; then
-  VERDICT=$(echo "$MERGED_REVIEW" \
-    | sed 's/\*\*//g' \
-    | grep -A1 -E '^#+[[:space:]]*REVIEW_VERDICT[[:space:]]*$|^REVIEW_VERDICT:' \
-    | grep -oE '(APPROVE|REQUEST_CHANGES|BLOCK)' \
-    | head -1 || true)
+  VERDICT=$(review_verdict_from_text "$MERGED_REVIEW")
 fi
 VERDICT="${VERDICT:-BLOCK}"
 
-# Severity floor (codex-review hardening): a security finding must never
-# auto-APPROVE. The merge step can mis-rank severity — we observed a CRITICAL
-# git option-injection get a REQUEST_CHANGES header — so if the merged verdict
-# json reports any security_issues, refuse APPROVE and bump to REQUEST_CHANGES
-# (back to the fix loop), so a PR can't squash-merge over an open security
-# finding even when the parsed verdict is wrong.
-_sec_issues=$(parse_claude_json "$MERGED_REVIEW" '.security_issues // 0')
-[[ "$_sec_issues" =~ ^[0-9]+$ ]] || _sec_issues=0
-if [ "$_sec_issues" -gt 0 ] && [ "$VERDICT" = "APPROVE" ]; then
-  echo "  Severity floor: $_sec_issues security finding(s) reported → downgrading APPROVE → REQUEST_CHANGES."
-  VERDICT="REQUEST_CHANGES"
-fi
-
+# The verdict rules run as one ordered decision in bureau-config.sh
+# (`decide_review_verdict`): verdict check, security count, the security
+# specialist's CRITICAL count, the security floor, the build fold, and the cycle
+# cap last, so the cap also sees a REQUEST_CHANGES the build fold produced. The
+# security count is read without a default: a missing field is unreadable, not 0.
 MAX_REVIEW_CYCLES="$BUREAU_MAX_REVIEW_CYCLES"
 # REVIEW_CYCLE_COUNT was computed at Phase 1 so specialists could reference
 # it; reuse here for the loop-breaker check.
 echo "  Review cycles: ${REVIEW_CYCLE_COUNT:-0}"
-
-if [ "$VERDICT" = "REQUEST_CHANGES" ] && [ "${REVIEW_CYCLE_COUNT:-0}" -ge "$MAX_REVIEW_CYCLES" ]; then
-  echo "  Loop breaker: escalating to needs-human."
-  VERDICT="BLOCK"
-  ESCALATION_REASON="REQUEST_CHANGES exceeded max_review_cycles=$MAX_REVIEW_CYCLES"
+_sec_issues=$(parse_claude_json "$MERGED_REVIEW" '.security_issues')
+_decision=$(decide_review_verdict "$VERDICT" "$_sec_issues" "$_sec_critical" "$BUILD_OK" "$REVIEW_CYCLE_COUNT" "$MAX_REVIEW_CYCLES")
+VERDICT=$(printf '%s\n' "$_decision" | head -n 1)
+ESCALATION_REASON=""
+while IFS=$'\037' read -r _rule _reason _text; do
+  [ -n "$_rule" ] || continue
+  echo "  Verdict rule $_rule: $_text"
+  [ -z "$_reason" ] || ESCALATION_REASON="$_reason"   # at most one rule carries a reason
   MERGED_REVIEW="$MERGED_REVIEW
 
----
-**ESCALATED:** $REVIEW_CYCLE_COUNT review cycles (max $MAX_REVIEW_CYCLES). Needs human intervention."
-fi
-
-if [ "$BUILD_OK" = false ]; then
-  # A red build routes to rework but never softens a BLOCK — the table lives in
-  # scripts/bureau-config.sh, `apply_build_failure`. This used to be an unconditional
-  # assignment, which sent a security finding into autonomous rework whenever the build
-  # was red for an environmental reason.
-  VERDICT=$(apply_build_failure "$VERDICT")
-  MERGED_REVIEW="$MERGED_REVIEW
-
-BUILD FAILURE: Must be fixed."
-fi
+$_text"
+done <<< "$(printf '%s\n' "$_decision" | tail -n +2)"
 
 # A provider can take long enough for the PR to be retargeted or either remote
 # branch to advance. Preserve its evidence without publishing a stale verdict.
