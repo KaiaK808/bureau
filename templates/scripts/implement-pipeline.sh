@@ -103,9 +103,12 @@ push_branch_loud() {
 # (.bureau.json), for a repo that has to derive files from an implementation
 # run — regenerate generated docs or contracts — before anyone sees the branch.
 #
-# Runs before every hand-off to QA or Build Review: when the terminal status is
-# COMPLETE. COMPLETE already implies commits beyond origin/main — both paths
-# turn a COMPLETE on an empty branch into STUCK (EXP-573) before this point.
+# Runs wherever the stage releases the work for review: when the terminal
+# status is COMPLETE (hand-off to QA or Build Review), and when it is PARTIAL
+# with commits (the PR is marked ready so CI runs, EXP-622). COMPLETE already
+# implies commits beyond origin/main — both paths turn a COMPLETE on an empty
+# branch into STUCK (EXP-573) before this point. A failing hook turns either
+# into the POST_IMPLEMENT_FAILED halt, whose PR stays a draft.
 # It does not depend on whether THIS run committed: after a
 # halt on the hook, a human fixes it and removes needs-human, and the next run
 # typically finds the tasks done and commits nothing — the hook must still run
@@ -169,8 +172,8 @@ run_post_implement_command() {
   local cmd limit before before_status after_status new_dirty rc log status_file why reason hook_commits
   cmd=$(bureau_get '.repo.post_implement_command // empty')
   [ -n "$cmd" ] || return 0
-  if [ "$STATUS" != COMPLETE ]; then
-    echo "  repo.post_implement_command: skipped (status $STATUS is not a hand-off)"
+  if [ "$STATUS" != COMPLETE ] && ! { [ "$STATUS" = PARTIAL ] && [ "$COMMITS_TOTAL" -gt 0 ]; }; then
+    echo "  repo.post_implement_command: skipped (status $STATUS does not release the work for review)"
     return 0
   fi
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
@@ -299,7 +302,7 @@ build_summary_comment() {
     CAP_TIME)    header="🚧 Implementation hit total time cap (${TOTAL_TIMEOUT}s) before completing." ;;
     PARTIAL)     header="🚧 Implementation made partial progress but exhausted iteration cap (${MAX_ITER}) without COMPLETE." ;;
     CI_MARKER)   header="🚧 Halted before hand-off: a commit in the squash range carries an entry of scripts/ci-skip-markers.txt, or the range could not be checked. Nothing went to QA or Build Review. Reword the message(s) named below, then remove needs-human." ;;
-    POST_IMPLEMENT_FAILED) header="🚧 Halted before hand-off: the implementation was complete, but repo.post_implement_command failed. Nothing went to QA or Build Review. Fix the command or the files it derives from, then remove needs-human: the next run executes the command again before it hands the ticket on, even when it has nothing else to commit, so the command must be idempotent and exit 0 when there is nothing to commit." ;;
+    POST_IMPLEMENT_FAILED) header="🚧 Halted before the work was released for review: repo.post_implement_command failed. Nothing went to QA or Build Review, and the PR stays a draft. Fix the command or the files it derives from, then remove needs-human: the next run executes the command again before it releases the work, even when it has nothing else to commit, so the command must be idempotent and exit 0 when there is nothing to commit." ;;
     *)           header="🚧 Implementation ended with status=$status." ;;
   esac
   printf '%s\n\n**Total tasks done across iterations:** %s\n**Branch:** `%s`\n**PR:** %s\n\nIteration log:\n```\n%s```\n' \
@@ -822,26 +825,37 @@ echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 # does not (a merge of origin/main before the loop is counted by neither
 # COMMITS_TOTAL nor the iter log). An unreadable comparison counts as ahead.
 AHEAD_OF_ORIGIN=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo 1)
-# A failed push here is retried once after a short wait. If it still fails
-# and HEAD holds commits that origin/$BRANCH (the last state this worktree
-# pushed or fetched) does not, the stage ends with 18 here, before any PR is
-# marked ready or the ticket moves: nothing is handed on that origin does not
-# have, and the worker keeps the worktree because it is ahead of origin. If
-# origin already has every commit — the usual case, the per-iter pushes went
-# through and this one had nothing to send — a failed push changes nothing and
-# the stage goes on. An unreadable comparison counts as ahead.
+# A failed push here is retried once after a short wait. If it still fails,
+# the branch is fetched from origin (a rejected push does not update
+# origin/$BRANCH, and someone may have rewritten it) and HEAD is compared with
+# it. If HEAD holds commits origin does not, the stage ends with 18 here,
+# before any PR is marked ready or the ticket moves: nothing is handed on that
+# origin does not have, and the worker keeps the worktree because it is ahead
+# of origin. If origin already has every commit — the usual case, the per-iter
+# pushes went through and this one had nothing to send — a failed push changes
+# nothing and the stage goes on. A failed fetch or an unreadable comparison
+# counts as missing commits.
 if [ "$COMMITS_TOTAL" -gt 0 ] || [ "$AHEAD_OF_ORIGIN" -gt 0 ]; then
   if [ "$POST_IMPLEMENT_HEAD_REWRITTEN" = 1 ]; then
     echo "  ✗✗ not pushing: repo.post_implement_command moved HEAD off the commit it started from" >&2
   elif ! push_branch_loud "end of run" status; then
     sleep 3
     if ! push_branch_loud "end of run, retry" status; then
-      UNPUSHED=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo unreadable)
+      if git fetch -q origin "$BRANCH" >/dev/null 2>&1; then
+        UNPUSHED=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo unreadable)
+      else
+        UNPUSHED=unreadable
+      fi
+      if [ "$UNPUSHED" = unreadable ]; then
+        UNPUSHED_TEXT="origin could not be read to compare"
+      else
+        UNPUSHED_TEXT="${UNPUSHED} commit(s) missing on origin"
+      fi
       if [ "$UNPUSHED" = 0 ]; then
         echo "  the final push failed twice, but origin/$BRANCH already has every commit of HEAD; going on" >&2
       else
-        echo "  ✗✗ ${UNPUSHED} commit(s) are only in this worktree; nothing is handed on" >&2
-        PUSH_FAIL_COMMENT="❌ Implement stopped before hand-off: the final push of \`$BRANCH\` to origin failed twice, and origin does not have every commit (${UNPUSHED} missing). Nothing went to QA or Build Review and the ticket stays in Build. The missing commits are only in the implement worktree, which the worker keeps because it is ahead of origin. Push the branch once origin accepts it, or re-run the stage."
+        echo "  ✗✗ ${UNPUSHED_TEXT}; nothing is handed on" >&2
+        PUSH_FAIL_COMMENT="❌ Implement stopped before hand-off: the final push of \`$BRANCH\` to origin failed twice (${UNPUSHED_TEXT}). Nothing went to QA or Build Review and the ticket stays in Build. The commits origin lacks are only in the implement worktree, which the worker keeps. Push the branch once origin accepts it, or re-run the stage."
         if [ "$POST_IMPLEMENT_FAILED" = 1 ]; then
           PUSH_FAIL_COMMENT="${PUSH_FAIL_COMMENT}
 

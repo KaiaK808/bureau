@@ -20,7 +20,7 @@ This page is the complete table + how the alerter behaves.
 | `15` | no-pr | PR expected but not found | Implement didn't create one, or it was closed manually |
 | `16` | provider-unauth | Selected CLI missing or not authenticated | Authenticate the selected Claude/Codex CLI |
 | `17` | rebase-needed | `merge_origin_main_or_abort` hit a non-trivial conflict | Routed back to a recovery state for human intervention |
-| `18` | gh-failed | `gh` CLI command failed (e.g. `gh pr merge` rejected), or the implement stage's final `git push` failed twice while origin still lacks commits of the branch | API rate limit, missing permissions, branch protection, origin rejecting or unreachable |
+| `18` | gh-failed | `gh` CLI command failed (e.g. `gh pr merge` rejected), or the implement stage's final `git push` failed twice while origin (fetched again) lacks commits of the branch or cannot be read | API rate limit, missing permissions, branch protection, origin rejecting or unreachable |
 | `19` | rebase-rejected | `git push --force-with-lease` rejected | Someone else pushed to the same branch concurrently |
 | `20` | stopped-before-merge | Review boundary reached | Expected with `--no-merge`, and from the shepherd at Merge under `agents.merge_mode: "manual"`. The shepherd and the queue loop pass a `20` that `--no-merge` asked for without an alert; any other `20` alerts |
 | `21` | ownership-conflict | Ticket, checkout or branch held; stale result | Inspect owner/run, preserve work and reconcile |

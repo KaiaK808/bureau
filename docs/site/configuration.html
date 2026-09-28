@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ee53a0ed47ff2e5efe1690fc42dd03d6c9f67690049df5873d7ad46b717fcc5f">
+<meta name="bureau-source-sha256" content="48555ad9f716e74a32aa1939b3ff17be5f96c553edb2eb8dd7d61120b84a3071">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -590,18 +590,20 @@ action</td>
 <td>unset</td>
 <td>Optional hook for a repository that derives files from an
 implementation, for example regenerating generated docs or command
-contracts. The implement stage runs it before every hand-off to QA or
-Build Review, that is when the run ends COMPLETE, whether or not this
-run made commits of its own, and never in a dry run. It runs after the
-loop and before the squash-range check and the final push, in the
-implement worktree via <code>bash -o pipefail -c</code>, with no stdin,
-with <code>BUREAU_ISSUE</code> and <code>BUREAU_BRANCH</code> set, and
-within <code>BUREAU_POST_IMPLEMENT_TIMEOUT</code> seconds (default 900,
-never above <code>BUREAU_IMPL_TOTAL_TIMEOUT</code>; on timeout its
-process group gets SIGTERM, then SIGKILL after 5 s). It commits its own
-output; those commits are checked and pushed with the run's. <strong>It
-must be idempotent and exit 0 when there is nothing to commit</strong>,
-because it also runs when a later run has nothing new: a bare
+contracts. The implement stage runs it wherever it releases the work for
+review: when the run ends COMPLETE (hand-off to QA or Build Review),
+whether or not this run made commits of its own, and when it ends
+PARTIAL with commits (the PR is marked ready so CI runs); never in a dry
+run. It runs after the loop and before the squash-range check and the
+final push, in the implement worktree via
+<code>bash -o pipefail -c</code>, with no stdin, with
+<code>BUREAU_ISSUE</code> and <code>BUREAU_BRANCH</code> set, and within
+<code>BUREAU_POST_IMPLEMENT_TIMEOUT</code> seconds (default 900, never
+above <code>BUREAU_IMPL_TOTAL_TIMEOUT</code>; on timeout its process
+group gets SIGTERM, then SIGKILL after 5 s). It commits its own output;
+those commits are checked and pushed with the run's. <strong>It must be
+idempotent and exit 0 when there is nothing to commit</strong>, because
+it also runs when a later run has nothing new: a bare
 <code>git commit</code> exits 1 then, so write `git add generated/
 &amp;&amp; { git diff --cached --quiet</td>
 </tr>

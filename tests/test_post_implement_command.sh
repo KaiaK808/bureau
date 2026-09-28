@@ -6,7 +6,11 @@
 #   1  hook unset → today's behaviour (COMPLETE, Build Review, exit 0)
 #   2  hook set, run made commits → runs once, in the worktree, with
 #      BUREAU_ISSUE/BUREAU_BRANCH; its commit counts, is pushed, hand-off as usual
-#   3  hook set, status is not COMPLETE → not run
+#   3  hook set, status does not release the work (NEEDS_HUMAN) → not run
+#  3d  PARTIAL with commits (PR marked ready, EXP-622) → the hook runs first,
+#      its file reaches origin, the PR is ready
+#  3e  PARTIAL with commits and a failing hook → exit 14, the PR stays a draft
+#  3f  PARTIAL without commits (goal path; the PR stays a draft) → not run
 #  3c  after a halt on the hook: the next run commits nothing, the hook runs
 #      anyway before the hand-off, and its file reaches origin
 #   4  hook exits non-zero → halt (needs-human, draft, report), exit 14, no hand-off
@@ -25,6 +29,8 @@
 #      hand-off
 #  11c hook fails and the push fails → 18, and the comment carries the hook's report
 #  11d the pushes fail and origin/<branch>..HEAD cannot be read → 18
+#  11e origin rewritten, final pushes rejected (fetch first) → fetched, 18
+#  11f the pushes and the fetch fail at transport level → unreadable, 18
 #  12  goal-loop path runs the hook too
 #  14  the hook gets no stdin
 #  15  hook fails and the label write fails → 25 (the hold) wins over 14
@@ -101,7 +107,34 @@ setup c3 "$HOOK_OK"
 export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_needs_human.txt"
 run_implement_pipeline
 [ ! -e "$MARK" ] || fail "3 hook ran although the status was not COMPLETE"
-has 'post_implement_command: skipped \(status NEEDS_HUMAN is not a hand-off\)' "$LAST_STDOUT" "3 skip line"
+has 'post_implement_command: skipped \(status NEEDS_HUMAN does not release the work for review\)' "$LAST_STDOUT" "3 skip line"
+teardown
+
+# 3d — PARTIAL with commits marks the PR ready (EXP-622): the hook runs before that
+setup c3d "$HOOK_OK"
+export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_partial_progress.txt" FAKE_CLAUDE_COMMIT_ON_ITERS="1:2:3"
+run_implement_pipeline
+has 'terminal status=PARTIAL' "$LAST_STDOUT" "3d PARTIAL"
+check_eq 1 "$(wc -l < "$MARK" 2>/dev/null | tr -d ' ' || echo 0)" "3d hook ran once"
+check_eq 1 "$(git -C "$SANDBOX/.fake-origin.git" ls-tree --name-only test-branch | grep -c '^generated.txt$' || true)" "3d generated.txt on origin"
+has $'^gh\tpr\tcreate\t--title' "$(cat "$SANDBOX/gh_calls.log" 2>/dev/null)" "3d PR opened ready"
+teardown
+
+# 3e — PARTIAL with commits and a failing hook: halt, the PR stays a draft
+setup c3e 'echo "regen broke"; exit 3'
+export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_partial_progress.txt" FAKE_CLAUDE_COMMIT_ON_ITERS="1:2:3"
+run_implement_pipeline
+check_eq 14 "$LAST_RC" "3e exit"
+has $'^gh\tpr\tcreate\t--draft' "$(cat "$SANDBOX/gh_calls.log" 2>/dev/null)" "3e PR opened as a draft"
+hasnt $'^gh\tpr\t(ready|create\t--title)' "$(cat "$SANDBOX/gh_calls.log" 2>/dev/null)" "3e PR never marked ready"
+teardown
+
+# 3f — PARTIAL without commits keeps a draft PR, so the hook does not run
+setup c3f "$HOOK_OK"
+export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_partial_progress.txt" FAKE_CLAUDE_COMMIT_ON_ITERS="" BUREAU_USE_GOAL_LOOP=1
+run_implement_pipeline
+has 'terminal status=PARTIAL' "$LAST_STDOUT" "3f PARTIAL"
+[ ! -e "$MARK" ] || fail "3f hook ran for a PARTIAL without commits"
 teardown
 
 # 3c — after a halt on the hook, the next run commits nothing but still runs the hook
@@ -276,8 +309,53 @@ SHIM
 chmod +x "$SANDBOX/.shim/git"
 PATH="$SANDBOX/.shim:$PATH" run_implement_pipeline
 check_eq 18 "$LAST_RC" "11d an unreadable comparison counts as commits origin lacks"
+has 'post_comment.*origin could not be read to compare' "$(calls)" "11d comment wording"
 has 'post_comment.*final push of `test-branch` to origin failed twice' "$(calls)" "11d comment"
 hasnt 'move_issue' "$(calls)" "11d no hand-off"
+teardown
+
+# 11e — origin's branch was rewritten after the iteration push; the final pushes are rejected
+# (fetch first). A rejected push does not update origin/<branch>, so the stage must fetch
+# before comparing: HEAD's commit is missing on origin → 18, no hand-off.
+setup c11e
+REAL_GIT=$(command -v git)
+mkdir -p "$SANDBOX/.shim"
+cat > "$SANDBOX/.shim/git" <<SHIM
+#!/bin/bash
+if [ "\${1:-}" = push ]; then
+  n=\$(cat "$SANDBOX/.pushes" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"
+  if [ "\$n" = 2 ]; then
+    o="$SANDBOX/.fake-origin.git"
+    x=\$("$REAL_GIT" -C "\$o" commit-tree "\$("$REAL_GIT" -C "\$o" rev-parse 'main^{tree}')" -p main -m "someone else's rewrite")
+    "$REAL_GIT" -C "\$o" update-ref refs/heads/test-branch "\$x"
+  fi
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$SANDBOX/.shim/git"
+PATH="$SANDBOX/.shim:$PATH" run_implement_pipeline
+check_eq 18 "$LAST_RC" "11e rejected pushes against a rewritten origin"
+hasnt 'already has every commit' "$LAST_STDERR" "11e does not claim origin is complete"
+hasnt 'move_issue' "$(calls)" "11e no hand-off"
+has 'post_comment.*commit\(s\) missing on origin' "$(calls)" "11e comment names the missing commits"
+teardown
+
+# 11f — pushes and the fetch fail at transport level: origin cannot be read → 18
+setup c11f
+REAL_GIT=$(command -v git)
+mkdir -p "$SANDBOX/.shim"
+cat > "$SANDBOX/.shim/git" <<SHIM
+#!/bin/bash
+n=\$(cat "$SANDBOX/.pushes" 2>/dev/null || echo 0)
+if [ "\${1:-}" = push ]; then n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"; fi
+if [ "\$n" -ge 2 ] && { [ "\${1:-}" = push ] || [ "\${1:-}" = fetch ]; }; then echo "fatal: unable to access origin: Could not resolve host" >&2; exit 128; fi
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$SANDBOX/.shim/git"
+PATH="$SANDBOX/.shim:$PATH" run_implement_pipeline
+check_eq 18 "$LAST_RC" "11f a failed fetch counts as unreadable"
+has 'post_comment.*origin could not be read to compare' "$(calls)" "11f comment wording"
+hasnt 'move_issue' "$(calls)" "11f no hand-off"
 teardown
 
 # 11c — hook failed and the push failed: 18, and the hook's report is not lost

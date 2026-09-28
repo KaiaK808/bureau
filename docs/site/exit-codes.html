@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="98d32e42268f063b2b591f585a7ec6058d934d30c94b5e1b20007a97428be21a">
+<meta name="bureau-source-sha256" content="71b35e4e07e4c4a13c3fc121dd649061521f406ee91fa571de1bed8ca7cfb041">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -105,7 +105,8 @@ conflict</td>
 <td>gh-failed</td>
 <td><code>gh</code> CLI command failed (e.g. <code>gh pr merge</code>
 rejected), or the implement stage's final <code>git push</code> failed
-twice while origin still lacks commits of the branch</td>
+twice while origin (fetched again) lacks commits of the branch or cannot
+be read</td>
 <td>API rate limit, missing permissions, branch protection, origin
 rejecting or unreachable</td>
 </tr>
