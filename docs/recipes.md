@@ -86,7 +86,7 @@ The default disposable checkout is `.worktrees/shepherd/`; `--worktree DIR` sele
 BUREAU_DRY_RUN=1 bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123
 ```
 
-The preview reads state and reports the route without running the stages. In a live pass, exit 20 means the review boundary was reached, 25 means pause/human attention, and 26 means cancellation. None means the ticket was merged. Omitting `--no-merge` permits the existing merge path, so do so only for an authorized end-to-end merge run. Run again without `--no-merge` after such a stop, on a PR whose head, base and ticket have not changed, the review reuses the recorded approval (no new model review; the build check runs again) and goes on to the merge gate.
+The preview reads state and reports the route without running the stages. In a live pass, exit 20 means the review boundary was reached, 25 means pause/human attention, and 26 means cancellation. None means the ticket was merged. Omitting `--no-merge` permits the existing merge path, so do so only for an authorized end-to-end merge run. Run again without `--no-merge` after such a stop, on a PR whose head, base and ticket have not changed, the review reuses the recorded approval (no new model review; the build check runs again) and goes on to the merge gate. A changed model, runner, prompt, configuration or Bureau version is not part of that comparison; to have it judge the PR, run `python3 scripts/bureau-supervision.py resume TEAM-123` first.
 
 **When to use:** a representative acceptance ticket or deliberate recovery after resolving its blocker. For batches use orchestrate; for explicitly requested continuous work use `start-bureau-v2.sh`.
 

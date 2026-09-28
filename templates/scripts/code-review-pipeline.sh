@@ -245,14 +245,18 @@ if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
       echo "  No reusable approval: $(printf '%s' "$REUSE" | jq -r '.reason // "unknown"' 2>/dev/null)"
     fi
   else
-    echo "  WARN: the recorded review boundary could not be read; running a full review." >&2
+    # Only a failure to read or lock review-stops.json itself ends up here (the error
+    # is printed above); a mismatch or an unreadable ticket detail is a normal "no".
+    echo "  WARN: the review boundary file could not be checked; running a full review." >&2
   fi
 fi
 
 if [ "$REUSED_APPROVAL" = 1 ]; then
-  # The merger's answer the recorded approval stands for. Its security count and the
-  # specialist's CRITICAL count were 0: decide_review_verdict turns either into a
-  # REQUEST_CHANGES or a BLOCK, so a recorded APPROVE implies both.
+  # The merger's answer the recorded approval stands for. The recorded APPROVE came out
+  # of decide_review_verdict, so the merger's security count was a readable 0 (a missing,
+  # unreadable or positive count ends REQUEST_CHANGES or BLOCK) and the specialist's
+  # CRITICAL count was not above 0 (it may have been unreadable, which is only noted in
+  # the review). 0 for both reproduces that approval without repeating such a note.
   MERGED_REVIEW="Reused the approval recorded ${REUSED_AT:-earlier} for head \`$REVIEW_HEAD\` on \`$PR_BASE_REF\` at \`$REVIEW_BASE\`: PR #$PR_NUMBER, both commits and the ticket are unchanged since that review, so no new specialist review ran.
 
 \`\`\`json

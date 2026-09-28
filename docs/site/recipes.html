@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="8c51ef6cacc5d069728af6028a0ff54bc1e695cd2f78290ef4865f174e84b627">
+<meta name="bureau-source-sha256" content="c18a9b5f6838cbd915ef329f8e22aebfca4cb2be23fe356d0d97df2b42c42817">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -105,7 +105,11 @@ existing merge path, so do so only for an authorized end-to-end merge
 run. Run again without <code>--no-merge</code> after such a stop, on a
 PR whose head, base and ticket have not changed, the review reuses the
 recorded approval (no new model review; the build check runs again) and
-goes on to the merge gate.</p>
+goes on to the merge gate. A changed model, runner, prompt,
+configuration or Bureau version is not part of that comparison; to have
+it judge the PR, run
+<code>python3 scripts/bureau-supervision.py resume TEAM-123</code>
+first.</p>
 <p><strong>When to use:</strong> a representative acceptance ticket or
 deliberate recovery after resolving its blocker. For batches use
 orchestrate; for explicitly requested continuous work use

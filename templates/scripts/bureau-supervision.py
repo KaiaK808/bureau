@@ -115,7 +115,7 @@ def check(repo, root, issue, branch, state, detail):
     return {'stopped': same, 'issue': issue, 'head': record['head'], 'pr': record['pr']}
 
 
-def reuse(root, issue, branch, state, head, base, base_ref, pr, detail):
+def reuse(root, issue, branch, state, head, base, base_ref, pr, raw_detail):
     """Consume a recorded approval for exactly these review inputs.
 
     A review that stopped before merge recorded its inputs. When the stage runs
@@ -124,22 +124,29 @@ def reuse(root, issue, branch, state, head, base, base_ref, pr, detail):
     paid review would start from. Any difference, a record without a recorded
     APPROVE (written before verdicts were recorded), or a malformed record means
     a normal review; the record is removed either way, so it is used at most once
-    and never outlives the inputs it describes.
+    and never outlives the inputs it describes. That includes a ticket detail that
+    cannot be read or fingerprinted: it is judged under the lock like any other
+    input, so it removes the record too instead of leaving it for a later run.
     """
-    ticket_hash = fingerprint(detail, issue)
     with locked(root) as path:
         stops = read(path)
         record = stops.get(issue)
         if record is None:
             return {'reuse': False, 'reason': 'no recorded approval'}
-        wanted = (('verdict', 'APPROVE'), ('branch', branch), ('state', state), ('head', head),
-                  ('base', base), ('base_ref', base_ref), ('pr', pr), ('ticket_hash', ticket_hash))
-        mismatch = 'record is not an object' if not isinstance(record, dict) else next(
-            (key for key, value in wanted if record.get(key) != value), None)
+        try:
+            ticket_hash = fingerprint(json.loads(raw_detail), issue)
+        except ValueError as exc:
+            ticket_hash, mismatch = None, 'ticket detail unreadable (' + str(exc) + ')'
+        else:
+            wanted = (('verdict', 'APPROVE'), ('branch', branch), ('state', state), ('head', head),
+                      ('base', base), ('base_ref', base_ref), ('pr', pr), ('ticket_hash', ticket_hash))
+            mismatch = 'record is not an object' if not isinstance(record, dict) else next(
+                (key for key, value in wanted if record.get(key) != value), None)
         del stops[issue]
         save(path, stops)
     if mismatch:
-        return {'reuse': False, 'reason': 'recorded approval does not match: ' + mismatch}
+        prefix = '' if ticket_hash is None else 'recorded approval does not match: '
+        return {'reuse': False, 'reason': prefix + mismatch}
     return {'reuse': True, 'head': head, 'base': base, 'pr': pr, 'stopped_at': record.get('stopped_at')}
 
 
@@ -212,14 +219,16 @@ def main():
             result = {'workspace': str(workspace(repo, root, args.issue, args.stage))}
         elif args.action == 'resume':
             result = {'issue': args.issue, 'resumed': resume(root, args.issue)}
+        elif args.action == 'reuse':
+            # reuse() reads the ticket detail itself, under the lock, so an unreadable
+            # detail still removes the recorded approval.
+            result = reuse(root, args.issue, args.branch, args.state, args.head, args.base,
+                           args.base_ref, args.pr, sys.stdin.read())
         else:
             detail = json.load(sys.stdin)
             ticket_hash = fingerprint(detail, args.issue)
             if args.action == 'check':
                 result = check(repo, root, args.issue, args.branch, args.state, detail)
-            elif args.action == 'reuse':
-                result = reuse(root, args.issue, args.branch, args.state, args.head, args.base,
-                               args.base_ref, args.pr, detail)
             else:
                 if any(not re.fullmatch(r'[0-9a-f]{40,64}', value) for value in (args.head, args.base, args.reviewed_head)) or args.pr <= 0:
                     raise ValueError('A review stop requires a commit SHA and PR number')
