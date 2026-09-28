@@ -1315,7 +1315,14 @@ remove_issue_label() {
 bureau_common_dir() {
   local base="." common
   [ -n "${BUREAU_CONFIG:-}" ] && base=$(dirname "$BUREAU_CONFIG")
-  common=$(git -C "$base" rev-parse --git-common-dir 2>/dev/null) || return 1
+  if ! common=$(git -C "$base" rev-parse --git-common-dir 2>/dev/null); then
+    [ "$base" != . ] || return 1
+    # An explicit BUREAU_CONFIG outside any git repository: fall back to the
+    # current directory's repository, as before, and say so.
+    echo "bureau: $BUREAU_CONFIG is not inside a git repository — holds and the pause marker use the current directory's repository" >&2
+    base=.
+    common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+  fi
   [ -n "$common" ] || return 1
   case "$common" in /*) ;; *) common="$(cd "$base" && pwd)/$common" ;; esac
   printf '%s' "$common"
@@ -1361,10 +1368,10 @@ mark_needs_human() {
 # needs_human_holds_flush: try the label again for every held ticket. Prints the
 # tickets still held, comma-separated, on stdout; a ticket that now carries the
 # label is released. A label that still cannot be written keeps its ticket held
-# and never fails the pick: one ticket must not stop a queue. After a 27 the
-# remaining holds are not tried in this pick (each try would run the whole retry
-# ladder); if Linear is unusable for the pick as well, the pick's own read ends
-# with 27. A dry run only reads the holds.
+# and never fails the pick: one ticket must not stop a queue. Each retry is a
+# single attempt without waits (the next pick tries again), and after a 27 the
+# remaining holds are not tried in this pick; if Linear is unusable for the pick
+# as well, the pick's own read ends with 27. A dry run only reads the holds.
 needs_human_holds_flush() {
   local dir f id rc held="" tried=1
   dir=$(_needs_human_hold_dir) || return 0
@@ -1375,7 +1382,7 @@ needs_human_holds_flush() {
     [[ "$id" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]] || continue
     if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && [ "$tried" = 1 ]; then
       rc=0
-      add_issue_label "$id" "needs-human" >&2 || rc=$?
+      _BUREAU_LINEAR_SINGLE_ATTEMPT=1 add_issue_label "$id" "needs-human" >&2 || rc=$?
       if [ "$rc" = 0 ]; then
         rm -f "$f"
         echo "needs-human: $id now carries the label — its local hold is released" >&2

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="de4c4e2ef3675c53333523d223d5352c747bb33f50dd001d5e73849e9fe4a9d5">
+<meta name="bureau-source-sha256" content="d21adf22a97c0b7a18e8cf066ba816023e5faa950b3ea5870b85465e10e88436">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -122,12 +122,17 @@ where it would have ended with 0, its own code otherwise (17, 18, 19),
 the label again; once the label is on the ticket the file is removed and
 the label keeps the ticket out, so you release it the usual way, by
 removing the label. A label that still cannot be written never fails the
-pick: the ticket stays held and skipped and the pick goes on; after one
-such 27 the other holds wait for the next pick. If the label can never
-be written (for example, no label named <code>needs-human</code> exists
-for the team or the workspace), fix that, or delete the file to release
-the ticket without the label. A run that names the ticket explicitly (a
-shepherd, <code>stage.sh EXP-123</code>) does not read the hold.</p>
+pick: the ticket stays held and skipped and the pick goes on. Each retry
+is one attempt without waits, and after one such 27 the other holds wait
+for the next pick. The picker's notes (held and blocked tickets,
+retries) are in the queue log. If <code>BUREAU_CONFIG</code> points
+outside any git repository, holds and the pause marker fall back to the
+current directory's repository and a warning says so. If the label can
+never be written (for example, no label named <code>needs-human</code>
+exists for the team or the workspace), fix that, or delete the file to
+release the ticket without the label. A run that names the ticket
+explicitly (a shepherd, <code>stage.sh EXP-123</code>) does not read the
+hold.</p>
 <p>An implement halt (<code>PARTIAL</code>, <code>STUCK</code>,
 <code>CAP_TIME</code>, <code>NEEDS_HUMAN</code>, <code>CI_MARKER</code>)
 whose label could not be written now ends with 25 instead of 0. If the

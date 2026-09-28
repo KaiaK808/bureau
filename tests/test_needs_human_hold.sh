@@ -174,6 +174,15 @@ real adderr 'pipeline_pick_next code-review-pipeline.sh'
 [ "$(grep -c '^add$' "$SB/linear.log")" = 1 ] || fail "after a 27 the next hold was tried in the same pick: $CALLS"
 [ -f "$HOLD/EXP-1" ] && [ -f "$HOLD/EXP-3" ] || fail "an untried hold was released"
 rm -f "$HOLD/EXP-3"
+# With the retry ladder switched on, a refused label is still tried once per pick, without
+# waits: the next pick tries again (the ladder would cost 10 + 30 + 60 s per pick and stage).
+real adderr 'export BUREAU_LINEAR_RETRIES=3; pipeline_pick_next code-review-pipeline.sh'
+[ "$RC" = 0 ] && [ "$OUT" = EXP-2 ] || fail "retries on: expected EXP-2"
+[ "$(grep -c '^add$' "$SB/linear.log")" = 1 ] || fail "retries on: the held label was tried more than once in one pick: $CALLS"
+case "$ERR" in *"retrying in"*) fail "retries on: the flush ran the retry ladder" ;; esac
+[ -f "$HOLD/EXP-1" ] || fail "retries on: a refused label released the hold"
+real adderr 'export BUREAU_LINEAR_RETRIES=3; pipeline_pick_next code-review-pipeline.sh'
+[ "$(grep -c '^add$' "$SB/linear.log")" = 1 ] || fail "retries on: the next pick did not try again once"
 # A plain failure (no such label) keeps trying the other holds.
 hold EXP-3
 real none 'pipeline_pick_next code-review-pipeline.sh'
@@ -203,6 +212,17 @@ real ok 'cd / && bureau_is_paused && echo PAUSED'
 rm -f "$SB/.git/bureau/paused"
 real ok 'bureau_is_paused && echo PAUSED'
 [ -z "$OUT" ] || fail "no pause marker, but paused"
+# An explicit BUREAU_CONFIG outside any git repository falls back to the current directory's
+# repository, with a warning, instead of switching holds and the pause marker off.
+NOGIT=$(mktemp -d -t bureau-test.nogit.XXXXXXXX); cp "$SB/.bureau.json" "$NOGIT/"
+touch "$SB/.git/bureau/paused"
+real ok "export BUREAU_CONFIG='$NOGIT/.bureau.json'; bureau_is_paused && echo PAUSED"
+[ "$OUT" = PAUSED ] || fail "config outside git: the pause marker of the current repo was not seen"
+case "$ERR" in *"is not inside a git repository"*) ;; *) fail "config outside git: no warning" ;; esac
+rm -f "$SB/.git/bureau/paused"
+real none "export BUREAU_CONFIG='$NOGIT/.bureau.json'; mark_needs_human EXP-5 qa"
+[ -f "$HOLD/EXP-5" ] || fail "config outside git: the hold was not written into the current repo"
+rm -f "$HOLD/EXP-5"; rm -rf "$NOGIT"
 
 real none 'pipeline_pick_next code-review-pipeline.sh' "$SB/old/bureau-config.sh"
 [ "$RC" = 0 ] && [ "$OUT" = EXP-1 ] || fail "negative control: the old picker should take the held ticket again"
@@ -329,7 +349,7 @@ queue_pick() {  # $1 = picker exit code, $2 = file holding run_script; sets QRC,
   Q="$Q" PICK_RC="$1" BUREAU_EXIT_LINEAR_UNUSABLE=27 /bin/bash -c '
     source "$0"
     REPO_DIR="$Q"; LOG_FILE="$Q/log"; MODE=all
-    preselect_issue() { return "$PICK_RC"; }
+    preselect_issue() { echo "pick: skipping ticket(s) held for a human whose needs-human label is not written yet: EXP-1" >&2; return "$PICK_RC"; }
     bureau_merge_is_manual() { return 1; }
     stop_before_merge_was_asked() { return 1; }
     alert_telegram() { echo "$*" >> "$Q/alerts"; }
@@ -345,9 +365,11 @@ case "$QLOG" in *"pick failed: Linear stayed unusable (exit 27)"*) ;; *) fail "q
 queue_pick 1 "$Q/queue.sh"
 [ "$QRC" = 2 ] && [ -z "$QALERTS" ] || fail "queue: any other pick failure stays an empty queue without an alert (rc=$QRC)"
 case "$QLOG" in *"pick failed (exit 1); treated as an empty queue"*) ;; *) fail "queue: the other failure is not logged" ;; esac
+[ "$(grep -c 'skipping ticket(s) held' "$Q/log")" = 1 ] || fail "queue: the picker's note did not reach the queue log exactly once"
 # Negative control: the old line reads the 27 as an empty queue, silently.
-sed 's/^  picked=\$(preselect_issue "\$script" 2>\/dev\/null) || pick_rc=\$?$/  picked=$(preselect_issue "$script" 2>\/dev\/null || true)/' "$Q/queue.sh" > "$Q/old.sh"
+sed 's/^  picked=\$(preselect_issue "\$script" 2>>"\$LOG_FILE") || pick_rc=\$?$/  picked=$(preselect_issue "$script" 2>\/dev\/null || true)/' "$Q/queue.sh" > "$Q/old.sh"
 cmp -s "$Q/queue.sh" "$Q/old.sh" && fail "negative control: the pick line was not found to revert"
 queue_pick 27 "$Q/old.sh"
 [ "$QRC" = 2 ] && [ -z "$QALERTS" ] || fail "negative control: the old line should read 27 as an empty queue (rc=$QRC)"
+grep -q 'skipping ticket(s) held' "$Q/log" && fail "negative control: the old line should drop the picker's notes"
 echo "PASS the queue reports a pick that failed with 27 and alerts; other failures stay an empty queue; negative control reads 27 as empty"
