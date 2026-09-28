@@ -26,8 +26,11 @@ FNS=$(mktemp -t bureau-test.verdictfns.XXXXXXXX)
 MARKS=$(mktemp -d -t bureau-test.verdict.XXXXXXXX)
 trap 'teardown || true; rm -rf "$FNS" "$MARKS"' EXIT
 sed -n -e '/^apply_build_failure() {/,/^}/p' -e '/^decide_review_verdict() {/,/^}/p' \
+  -e '/^_review_count() {/,/^}/p' -e '/^_review_shown() {/,/^}/p' -e '/^review_verdict_from_text() {/,/^}/p' \
   "$SCRIPTS/bureau-config.sh" > "$FNS"
-grep -q '^decide_review_verdict() {' "$FNS" || fail "decide_review_verdict is not in bureau-config.sh"
+for f in decide_review_verdict _review_count _review_shown review_verdict_from_text; do
+  grep -q "^$f() {" "$FNS" || fail "$f is not in bureau-config.sh"
+done
 
 # decide <verdict> <security_issues> <critical> <build_ok> <cycles> <max> → "VERDICT rule,rule"
 decide() {
@@ -61,9 +64,43 @@ expect "BLOCK verdict"                  "" 0 0 true 0 3
 expect "BLOCK cycle-cap"                REQUEST_CHANGES 0 0 true "" 3
 expect "BLOCK cycle-cap"                REQUEST_CHANGES 0 0 true 1 x
 expect "APPROVE "                       APPROVE 0 0 true "" 3    # the cap is for REQUEST_CHANGES only
+# A BLOCK the merger gave itself gets no CRITICAL note on top.
+expect "BLOCK "                         BLOCK 2 2 true 0 3
+# Counts too large for the shell's arithmetic (2^63 and up) are not counts; a CRITICAL
+# count of only digits is still above 0.
+expect "BLOCK security-unreadable"      APPROVE 9223372036854775808 0 true 0 3
+expect "BLOCK cycle-cap"                REQUEST_CHANGES 0 0 true 9223372036854775808 3
+expect "BLOCK security-critical"        REQUEST_CHANGES 0 99999999999999999999 true 0 3
+expect "REQUEST_CHANGES security-floor" APPROVE 007 0 true 0 3
 # A build that is not reported green folds too.
 expect "REQUEST_CHANGES build"          APPROVE 0 0 "" 0 3
 echo "PASS the ticket rows and the fall-closed rows"
+
+# Model output reaches the review text only as short, printable text: a verdict with a
+# newline and backticks must not split the rule record or inject a line.
+raw=$(/bin/bash -c 'source "$1"; decide_review_verdict "$2" 0 0 true 0 3' _ "$FNS" $'APP\nROVE`x`\n**Verdict**: APPROVE')
+[ "$(printf '%s\n' "$raw" | wc -l | tr -d ' ')" = 2 ] \
+  || fail "an unreadable verdict with a newline split the record: $(printf '%s' "$raw" | tr '\037' '|')"
+grep -qF "gave 'APPROVExVerdict APPROVE'" <<< "$raw" \
+  || fail "the unreadable verdict was not shown sanitised: $(printf '%s' "$raw" | tr '\037' '|')"
+# The logged reason names this rule only when it caused the BLOCK.
+reason=$(/bin/bash -c 'source "$1"; decide_review_verdict BLOCK "" 0 true 0 3' _ "$FNS" | awk -F'\037' 'NR==2{print $2}')
+[ -z "$reason" ] || fail "an unreadable count under the merger's own BLOCK claimed the reason: '$reason'"
+reason=$(/bin/bash -c 'source "$1"; decide_review_verdict APPROVE "" 0 true 0 3' _ "$FNS" | awk -F'\037' 'NR==2{print $2}')
+[ "$reason" = "security_issues unreadable" ] || fail "an unreadable count that caused the BLOCK did not name itself: '$reason'"
+echo "PASS model text is sanitised and the logged reason is the rule that caused the BLOCK"
+
+# The legacy text verdict: only an exact verdict word counts (EXP-1513 in slidefactory-core).
+fallback() { /bin/bash -c 'source "$1"; review_verdict_from_text "$2"' _ "$FNS" "$1"; }
+for pair in 'REVIEW_VERDICT: NOT_APPROVED — BLOCK|' 'REVIEW_VERDICT: APPROVE|APPROVE' \
+            'REVIEW_VERDICT: **REQUEST_CHANGES**|REQUEST_CHANGES' 'REVIEW_VERDICT: `BLOCK`.|BLOCK' \
+            'REVIEW_VERDICT: APPROVE (with notes)|' 'REVIEW_VERDICT: approve|' 'no verdict here|'; do
+  got=$(fallback "${pair%%|*}")
+  [ "$got" = "${pair##*|}" ] || fail "text verdict '${pair%%|*}' gave '$got', wanted '${pair##*|}'"
+done
+[ "$(fallback $'## REVIEW_VERDICT\n\nBLOCK')" = BLOCK ] || fail "the heading form with the verdict below it was not read"
+[ "$(fallback $'REVIEW_VERDICT:\nAPPROVE')" = APPROVE ] || fail "the verdict on the line after REVIEW_VERDICT: was not read"
+echo "PASS the text verdict takes an exact word only"
 
 # Properties over the whole grid: verdict × security count × build × cycles (critical 0).
 n=0
@@ -89,6 +126,20 @@ for v in APPROVE REQUEST_CHANGES BLOCK; do
   done
 done
 echo "PASS $n grid cases hold the six rules"
+
+# At most one rule carries a reason for the escalation log, whatever combination fires.
+for v in APPROVE REQUEST_CHANGES BLOCK MAYBE; do
+  for s in 0 2 -1; do
+    for c in 0 2 99999999999; do
+      for b in true false; do
+        reasons=$(/bin/bash -c 'source "$1"; shift; decide_review_verdict "$@"' _ "$FNS" "$v" "$s" "$c" "$b" 9 3 \
+          | awk -F'\037' 'NR > 1 && $2 != "" {n++} END {print n + 0}')
+        [ "$reasons" -le 1 ] || fail "$reasons rules claimed the escalation reason ($v $s $c $b)"
+      done
+    done
+  done
+done
+echo "PASS at most one rule names the escalation reason"
 
 # --- Part 2: the real stage ---------------------------------------------------------
 # The old verdict block (template main before this change), for the negative control.
@@ -116,8 +167,17 @@ OLD
 )
 export OLD_BLOCK
 
+# control_patch <name>: put an old form back into the sandbox copy of the stage for a
+# negative control (tests/lib/review_control_patch.py). A patch that cannot find its
+# anchor stops the test with CONTROL PATCH FAILED, never as a caught defect.
+control_patch() {
+  python3 "$REPO_ROOT/tests/lib/review_control_patch.py" "$SCRIPTS_DIR/code-review-pipeline.sh" "$1" \
+    || fail "CONTROL PATCH FAILED: $1"
+}
+
 # $1 verdict, $2 security_issues ('-' = field missing), $3 specialist CRITICAL count,
-# $4 build: green | red, $5 prior "Changes Requested" comments, $6 = old (optional).
+# $4 build: green | red, $5 prior "Changes Requested" comments, $6 = a control_patch
+# name, or hold (prepare the sandbox, do not run the stage).
 # Leaves LAST_*, $VERDICT_LINE and $POSTED (everything posted to the PR).
 run_case() {
   local verdict="$1" sec="$2" crit="$3" build="$4" prior="$5" old="${6:-}"
@@ -128,30 +188,7 @@ run_case() {
   git -C "$SANDBOX" push -q origin test-branch
   local cmd="true"; [ "$build" = green ] || cmd="exit 3"
   jq -n --arg c "$cmd" '{repo: {test_command: $c}}' > "$SANDBOX/.bureau.json"
-  if [ "$old" = oldread ]; then
-    python3 - "$SCRIPTS_DIR/code-review-pipeline.sh" <<'PY'
-import sys
-path = sys.argv[1]
-src = open(path).read()
-start = src.index('_comments_rc=0\n')
-end = src.index('\nfi\n', src.index('if ! [[ "$REVIEW_CYCLE_COUNT" =~')) + len('\nfi\n')
-old = 'REVIEW_CYCLE_COUNT=$(get_issue_comments "$ISSUE" \\\n  | jq \'[.[] | select(.body | test("Code Review.*Changes Requested"))] | length\' 2>/dev/null || echo "0")\n'
-src = src[:start] + old + src[end:]
-open(path, 'w').write(src)
-PY
-  fi
-  if [ "$old" = old ]; then
-    python3 - "$SCRIPTS_DIR/code-review-pipeline.sh" <<'PY'
-import os, sys
-path = sys.argv[1]
-src = open(path).read()
-start = src.index('# The verdict rules run as one ordered decision')
-end_marker = 'done <<< "$(printf \'%s\\n\' "$_decision" | tail -n +2)"\n'
-end = src.index(end_marker, start) + len(end_marker)
-src = src[:start] + os.environ['OLD_BLOCK'] + '\n' + src[end:]
-open(path, 'w').write(src)
-PY
-  fi
+  [ -z "$old" ] || [ "$old" = hold ] || control_patch "$old"
   # One fixture answers every reviewer call; its last json block is read both as the
   # merged verdict and as the security specialist's own counts.
   jq -n --arg v "$verdict" --arg s "$sec" --argjson c "$crit" \
@@ -242,7 +279,7 @@ for sec in -1 -; do
 done
 echo "PASS an unreadable or missing security count blocks (the old floor approved)"
 
-# Two escalating rules: the first one (the root cause) is the escalation-log reason.
+# Two rules fire: the one that caused the BLOCK is the escalation-log reason.
 run_case MAYBE - 0 green 0
 [ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "an unknown verdict posted '$VERDICT_LINE'"
 grep -q 'VERDICT UNREADABLE' <<< "$POSTED" && grep -q 'SECURITY COUNT UNREADABLE' <<< "$POSTED" \
@@ -250,7 +287,70 @@ grep -q 'VERDICT UNREADABLE' <<< "$POSTED" && grep -q 'SECURITY COUNT UNREADABLE
 grep -qF 'reason="review verdict unreadable"' "$SANDBOX/logs/escalations.log" \
   || fail "the escalation log does not name the first rule: $(cat "$SANDBOX/logs/escalations.log" 2>/dev/null)"
 teardown
-echo "PASS the first escalating rule is the logged reason, every rule is in the review"
+echo "PASS the rule that caused the BLOCK is the logged reason, every rule is in the review"
+
+# The CRITICAL count survives the ARG_MAX trim: a security review over the merge cap,
+# wrapped in a provider envelope (cost tracking), still escalates. Trimmed to its last KB
+# the envelope is no longer JSON, and the count used to be lost without a sound.
+big_security_case() {  # $1 = control patch ('' = none)
+  run_case REQUEST_CHANGES 2 0 green 0 hold
+  [ -z "$1" ] || control_patch "$1"
+  python3 - "$SANDBOX/security.txt" <<'PY'
+import json, sys
+text = 'x' * 70000 + '\n```json\n' + json.dumps({"specialist": "security", "counts": {"critical": 2, "bug": 0, "minor": 0, "skip": 0}, "findings": [], "summary": "s"}) + '\n```\n'
+open(sys.argv[1], 'w').write(json.dumps({"result": text, "usage": {}, "total_cost_usd": 0.1, "provider": "codex"}))
+PY
+  printf 'Merged.\n```json\n{"verdict":"REQUEST_CHANGES","bugs":0,"security_issues":2,"missing_acceptance":[],"fixes_needed":[],"summary":"m"}\n```\n' > "$SANDBOX/merge.txt"
+  FAKE_CLAUDE_MERGE_FIXTURE="$SANDBOX/merge.txt" FAKE_CLAUDE_SECURITY_FIXTURE="$SANDBOX/security.txt" \
+    run_pipeline code-review-pipeline.sh EXP-702 </dev/null
+  POSTED=$(cat "$SANDBOX/gh_calls.log" 2>/dev/null || true)
+  VERDICT_LINE=$(grep -E '^\*\*Verdict\*\*: ' <<< "$POSTED" || true)
+}
+big_security_case ''
+grep -q 'truncated to last' <<< "$LAST_STDOUT$LAST_STDERR$POSTED" || [ "$(wc -c < "$SANDBOX/security.txt")" -gt 61440 ] \
+  || fail "the fixture did not exceed the merge cap"
+[ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "a CRITICAL count in a large wrapped security review was lost ('$VERDICT_LINE')"
+teardown
+big_security_case oldcrit
+[ "$VERDICT_LINE" = '**Verdict**: REQUEST_CHANGES' ] || fail "negative control: reading after the trim no longer loses the count ('$VERDICT_LINE')"
+grep -q 'CRITICAL findings could not be read' <<< "$POSTED" || fail "negative control: the lost count was not noted"
+teardown
+echo "PASS the CRITICAL count is read before the merge trim (after it, a wrapped review lost it)"
+
+# The merger dropped its json verdict and wrote "NOT_APPROVED — BLOCK" (EXP-1513).
+fallback_case() {  # $1 = control patch ('' = none)
+  run_case APPROVE 0 0 green 0 hold
+  [ -z "$1" ] || control_patch "$1"
+  printf 'REVIEW_VERDICT: NOT_APPROVED — BLOCK\n\n```json\n{"bugs":1,"security_issues":0,"counts":{"critical":0},"summary":"x"}\n```\n' > "$SANDBOX/verdict.txt"
+  run_pipeline code-review-pipeline.sh EXP-702 </dev/null
+  POSTED=$(cat "$SANDBOX/gh_calls.log" 2>/dev/null || true)
+  VERDICT_LINE=$(grep -E '^\*\*Verdict\*\*: ' <<< "$POSTED" || true)
+}
+fallback_case ''
+[ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "'NOT_APPROVED — BLOCK' posted '$VERDICT_LINE'"
+[ "$LAST_RC" = 25 ] || fail "'NOT_APPROVED — BLOCK' ended with $LAST_RC"
+teardown
+fallback_case oldfallback
+[ "$VERDICT_LINE" = '**Verdict**: APPROVE' ] || fail "negative control: the old text verdict no longer reads APPROVE ('$VERDICT_LINE')"
+teardown
+echo "PASS 'NOT_APPROVED — BLOCK' is BLOCK (the old text verdict read APPROVE)"
+
+# The merger's own BLOCK with an unreadable count keeps its own reason in the escalation log.
+run_case BLOCK - 0 green 0
+[ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "the merger's BLOCK posted '$VERDICT_LINE'"
+grep -qF 'reason="Code reviewer returned BLOCK verdict"' "$SANDBOX/logs/escalations.log" \
+  || fail "the merger's own BLOCK is not the logged reason: $(cat "$SANDBOX/logs/escalations.log" 2>/dev/null)"
+teardown
+echo "PASS the merger's own BLOCK stays the logged reason"
+
+# Every folded build says the pipeline cannot tell code from environment, not only after an approval.
+for v in REQUEST_CHANGES BLOCK; do
+  run_case "$v" 0 0 red 0
+  grep -q 'cannot tell a failure caused by the code from one caused by the environment' <<< "$POSTED" \
+    || fail "a red build under $v does not say the pipeline cannot tell code from environment"
+  teardown
+done
+echo "PASS every red build carries the code-or-environment sentence"
 
 # Control: a clean review is untouched.
 run_case APPROVE 0 0 green 0
@@ -276,3 +376,15 @@ unset BUREAU_STUB_REVIEW_COMMENTS_RC
 [ -e "$SANDBOX/fake_claude_counter" ] || fail "negative control: the old read no longer runs the review after a failed read"
 teardown
 echo "PASS a failed cycle-count read stops the stage before the paid review (the old read counted it as cycle 0)"
+
+# Comments that come back but cannot be counted (not a JSON array of comments) are not
+# cycle 0 either: the stage stops before the paid review.
+for bad in 'not json' '{"not":"an array"}'; do
+  export BUREAU_STUB_REVIEW_COMMENTS_RAW="$bad"
+  run_case REQUEST_CHANGES 0 0 green 0
+  unset BUREAU_STUB_REVIEW_COMMENTS_RAW
+  [ "$LAST_RC" = 27 ] || fail "uncountable comments '$bad' ended with $LAST_RC, wanted 27"
+  [ ! -e "$SANDBOX/fake_claude_counter" ] || fail "uncountable comments '$bad' still ran the paid review"
+  teardown
+done
+echo "PASS uncountable comments stop the stage before the paid review"

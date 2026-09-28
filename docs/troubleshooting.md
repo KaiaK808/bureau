@@ -222,14 +222,14 @@ The background pipeline counts matching Changes Requested comments in Linear. Re
 
 The review stage decides its verdict in one order (`decide_review_verdict` in `scripts/bureau-config.sh`), and each rule that fired is appended to the review text:
 
-1. A verdict other than APPROVE, REQUEST_CHANGES or BLOCK is BLOCK ("VERDICT UNREADABLE").
-2. The merged review's `security_issues` must be a count. Missing, negative or anything else is BLOCK ("SECURITY COUNT UNREADABLE"); it is never read as 0.
-3. A CRITICAL count above 0 in the security specialist's own json block is BLOCK, whatever verdict the merger chose ("SECURITY: … CRITICAL"). If that count cannot be read, the review says so and the verdict is left alone.
+1. A verdict other than APPROVE, REQUEST_CHANGES or BLOCK is BLOCK ("VERDICT UNREADABLE"). When the merger dropped its json verdict, the text form `REVIEW_VERDICT: X` counts only if X is exactly one verdict word; "NOT_APPROVED — BLOCK" or "APPROVE (with notes)" is BLOCK.
+2. The merged review's `security_issues` must be a count (at most nine digits). Missing, negative, implausibly large or anything else is BLOCK ("SECURITY COUNT UNREADABLE"); it is never read as 0.
+3. A CRITICAL count above 0 in the security specialist's own json block is BLOCK, whatever verdict the merger chose ("SECURITY: … CRITICAL"). It is read from the whole review, before the merge prompt trims long reviews. If that count cannot be read, the review says so and the verdict is left alone.
 4. Any security finding means never APPROVE: APPROVE becomes REQUEST_CHANGES ("SECURITY FLOOR"). A non-critical security bug goes into rework like any other bug.
-5. A build that is not green folds the verdict: APPROVE and REQUEST_CHANGES become REQUEST_CHANGES, BLOCK stays BLOCK ("BUILD FAILURE"). After an approval the text adds that the pipeline cannot tell a failure caused by the code from one caused by the environment.
+5. A build that is not green folds the verdict: APPROVE and REQUEST_CHANGES become REQUEST_CHANGES, BLOCK stays BLOCK ("BUILD FAILURE"). The text says the pipeline cannot tell a failure caused by the code from one caused by the environment, and after an approval that only the build check failed.
 6. The cycle cap last: a REQUEST_CHANGES at or past `agents.max_review_cycles` is BLOCK ("ESCALATED").
 
-A BLOCK labels `needs-human` and ends the stage with 25. Remove the label once the cause is dealt with.
+A BLOCK labels `needs-human` and ends the stage with 25; the escalation log names the rule that caused it, or the merger's own BLOCK. Remove the label once the cause is dealt with.
 
 ### Review comment says `**Build**: not checked`
 

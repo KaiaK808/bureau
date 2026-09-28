@@ -324,6 +324,11 @@ PERFORMANCE_REVIEW="Failed"
 [ -s "$REVIEW_TMP/correctness.txt" ] && CORRECTNESS_REVIEW=$(<"$REVIEW_TMP/correctness.txt")
 [ -s "$REVIEW_TMP/security.txt" ]    && SECURITY_REVIEW=$(<"$REVIEW_TMP/security.txt")
 [ -s "$REVIEW_TMP/performance.txt" ] && PERFORMANCE_REVIEW=$(<"$REVIEW_TMP/performance.txt")
+# The security specialist's own CRITICAL count, read from the whole review before the
+# ARG_MAX guard below trims it for the merge prompt: a provider envelope (cost tracking
+# wraps the output as JSON) cut to its last KB is no longer JSON, and the count would be
+# lost without a sound.
+_sec_critical=$(parse_claude_json "$SECURITY_REVIEW" '.counts.critical')
 
 # ARG_MAX guard: a codex specialist review can run 300-400KB; three of them
 # inlined into the merge prompt below as a single shell argument overflow
@@ -417,17 +422,14 @@ fi
 echo ""
 echo "Phase 3/3: post review + route"
 
-# Parse the fenced json block at the end of the merger output.
-# Legacy fallbacks (regex over `REVIEW_VERDICT: X` / `## REVIEW_VERDICT`) kept
-# as defense-in-depth when the model drops the json block. Any miss falls back
-# to BLOCK so a bad parse can never silently auto-merge a PR.
+# Parse the fenced json block at the end of the merger output. The legacy text
+# form (`REVIEW_VERDICT: X` / `## REVIEW_VERDICT`) is kept as defense-in-depth when
+# the model drops the json verdict; it accepts only an exact verdict word
+# (review_verdict_from_text), so "NOT_APPROVED — BLOCK" can no longer read as
+# APPROVE. Any miss falls back to BLOCK so a bad parse can never auto-merge a PR.
 VERDICT=$(parse_claude_json "$MERGED_REVIEW" '.verdict // empty')
 if [ -z "$VERDICT" ]; then
-  VERDICT=$(echo "$MERGED_REVIEW" \
-    | sed 's/\*\*//g' \
-    | grep -A1 -E '^#+[[:space:]]*REVIEW_VERDICT[[:space:]]*$|^REVIEW_VERDICT:' \
-    | grep -oE '(APPROVE|REQUEST_CHANGES|BLOCK)' \
-    | head -1 || true)
+  VERDICT=$(review_verdict_from_text "$MERGED_REVIEW")
 fi
 VERDICT="${VERDICT:-BLOCK}"
 
@@ -441,14 +443,13 @@ MAX_REVIEW_CYCLES="$BUREAU_MAX_REVIEW_CYCLES"
 # it; reuse here for the loop-breaker check.
 echo "  Review cycles: ${REVIEW_CYCLE_COUNT:-0}"
 _sec_issues=$(parse_claude_json "$MERGED_REVIEW" '.security_issues')
-_sec_critical=$(parse_claude_json "$SECURITY_REVIEW" '.counts.critical')
 _decision=$(decide_review_verdict "$VERDICT" "$_sec_issues" "$_sec_critical" "$BUILD_OK" "$REVIEW_CYCLE_COUNT" "$MAX_REVIEW_CYCLES")
 VERDICT=$(printf '%s\n' "$_decision" | head -n 1)
 ESCALATION_REASON=""
 while IFS=$'\037' read -r _rule _reason _text; do
   [ -n "$_rule" ] || continue
   echo "  Verdict rule $_rule: $_text"
-  [ -z "$_reason" ] || [ -n "$ESCALATION_REASON" ] || ESCALATION_REASON="$_reason"
+  [ -z "$_reason" ] || ESCALATION_REASON="$_reason"   # at most one rule carries a reason
   MERGED_REVIEW="$MERGED_REVIEW
 
 $_text"

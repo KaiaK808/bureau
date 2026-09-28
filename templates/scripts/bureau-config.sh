@@ -2129,7 +2129,9 @@ apply_build_failure() {
 
 # decide_review_verdict <verdict> <security_issues> <security_critical> <build_ok> <cycles> <max_cycles>
 #   → the final verdict on the first line, then one line per rule that changed or
-#     qualified it: "<rule><US><reason for the escalation log><US><text for the review>", fields
+#     qualified it. At most one line carries a reason: the rule that turned the verdict
+#     into BLOCK (every escalating rule runs only while the verdict is not BLOCK yet), so a
+#     BLOCK the merger gave itself keeps its own reason. Line format: "<rule><US><reason for the escalation log><US><text for the review>", fields
 #     split by the ASCII unit separator (\037): a tab is whitespace to `read`, and two
 #     tabs around an empty reason would collapse into one.
 #
@@ -2157,27 +2159,32 @@ apply_build_failure() {
 #                escalates too.
 decide_review_verdict() {
   local verdict="${1:-}" sec="${2:-}" crit="${3:-}" build_ok="${4:-}" cycles="${5:-}" max="${6:-}"
-  local notes="" sep=$'\037' before sec_count="" shown_verdict shown_sec
+  local notes="" sep=$'\037' before sec_count="" crit_count cycles_count max_count reason
 
-  # Values from model output are echoed into the review only as short, printable text.
-  shown_verdict=$(printf '%s' "$verdict" | tr -cd '[:alnum:]_ .-' | cut -c1-40)
-  shown_sec=$(printf '%s' "$sec" | tr -cd '[:alnum:]_ .-' | cut -c1-40)
   case "$verdict" in
     APPROVE|REQUEST_CHANGES|BLOCK) ;;
-    *) notes+="verdict${sep}review verdict unreadable${sep}VERDICT UNREADABLE: the review gave '${shown_verdict}', not APPROVE, REQUEST_CHANGES or BLOCK. Treated as BLOCK."$'\n'
+    *) notes+="verdict${sep}review verdict unreadable${sep}VERDICT UNREADABLE: the review gave '$(_review_shown "$verdict")', not APPROVE, REQUEST_CHANGES or BLOCK. Treated as BLOCK."$'\n'
        verdict="BLOCK" ;;
   esac
 
-  if [[ "$sec" =~ ^[0-9]+$ ]]; then
-    sec_count="$sec"
-  else
-    notes+="security-unreadable${sep}security_issues unreadable${sep}SECURITY COUNT UNREADABLE: the merged review reported security_issues as '${shown_sec:-missing}', not a count. Treated as BLOCK: an unreadable count is not \"none\"."$'\n'
+  if sec_count=$(_review_count "$sec"); then :; else
+    sec_count=""
+    # The reason names the escalation only when this rule caused it: a BLOCK the merger
+    # gave itself stays the logged reason.
+    reason="security_issues unreadable"; [ "$verdict" != "BLOCK" ] || reason=""
+    notes+="security-unreadable${sep}${reason}${sep}SECURITY COUNT UNREADABLE: the merged review reported security_issues as '$(_review_shown "${sec:-missing}")', not a count. Treated as BLOCK: an unreadable count is not \"none\"."$'\n'
     verdict="BLOCK"
   fi
 
-  if [[ "$crit" =~ ^[0-9]+$ ]]; then
-    if [ "$crit" -gt 0 ] && [ "$verdict" != "BLOCK" ]; then
-      notes+="security-critical${sep}security specialist reported ${crit} CRITICAL finding(s)${sep}SECURITY: the security specialist reported ${crit} CRITICAL finding(s); a CRITICAL security finding always needs a human, whatever the merged verdict said. Raised from ${verdict} to BLOCK."$'\n'
+  if crit_count=$(_review_count "$crit"); then
+    if [ "$crit_count" -gt 0 ] && [ "$verdict" != "BLOCK" ]; then
+      notes+="security-critical${sep}security specialist reported ${crit_count} CRITICAL finding(s)${sep}SECURITY: the security specialist reported ${crit_count} CRITICAL finding(s); a CRITICAL security finding always needs a human, whatever the merged verdict said. Raised from ${verdict} to BLOCK."$'\n'
+      verdict="BLOCK"
+    fi
+  elif [[ "$crit" =~ ^[0-9]+$ ]]; then
+    # Digits only but too long to be a real count: it is still a positive CRITICAL count.
+    if [ "$verdict" != "BLOCK" ]; then
+      notes+="security-critical${sep}security specialist reported an implausible CRITICAL count${sep}SECURITY: the security specialist reported '$(_review_shown "$crit")' CRITICAL findings, not a plausible count but above 0. Raised from ${verdict} to BLOCK."$'\n'
       verdict="BLOCK"
     fi
   else
@@ -2195,19 +2202,19 @@ decide_review_verdict() {
     if [ "$before" = "APPROVE" ]; then
       notes+="build${sep}${sep}BUILD FAILURE: Must be fixed. The reviewers approved the code and only the build check failed; the pipeline cannot tell a failure caused by the code from one caused by the environment (dependencies, network, services)."$'\n'
     else
-      notes+="build${sep}${sep}BUILD FAILURE: Must be fixed."$'\n'
+      notes+="build${sep}${sep}BUILD FAILURE: Must be fixed. The pipeline cannot tell a failure caused by the code from one caused by the environment (dependencies, network, services)."$'\n'
     fi
   fi
 
   if [ "$verdict" = "REQUEST_CHANGES" ]; then
-    if ! [[ "$cycles" =~ ^[0-9]+$ ]] || ! [[ "$max" =~ ^[0-9]+$ ]]; then
-      notes+="cycle-cap${sep}review cycle count unreadable${sep}**ESCALATED:** the review cycle count ('$(printf '%s' "$cycles" | tr -cd '[:alnum:]_ .-' | cut -c1-40)') or max_review_cycles ('$(printf '%s' "$max" | tr -cd '[:alnum:]_ .-' | cut -c1-40)') is not a count, so the loop cannot be bounded. Needs human intervention."$'\n'
+    if ! cycles_count=$(_review_count "$cycles") || ! max_count=$(_review_count "$max"); then
+      notes+="cycle-cap${sep}review cycle count unreadable${sep}**ESCALATED:** the review cycle count ('$(_review_shown "$cycles")') or max_review_cycles ('$(_review_shown "$max")') is not a count, so the loop cannot be bounded. Needs human intervention."$'\n'
       verdict="BLOCK"
-    elif [ "$cycles" -ge "$max" ]; then
+    elif [ "$cycles_count" -ge "$max_count" ]; then
       if [ "$before" = "APPROVE" ]; then
-        notes+="cycle-cap${sep}REQUEST_CHANGES exceeded max_review_cycles=${max} (reviewers approved, build red)${sep}**ESCALATED:** ${cycles} review cycles (max ${max}). The reviewers approved and only the build check stayed red, so rework alone does not end this loop. Needs human intervention."$'\n'
+        notes+="cycle-cap${sep}REQUEST_CHANGES exceeded max_review_cycles=${max_count} (reviewers approved, build red)${sep}**ESCALATED:** ${cycles_count} review cycles (max ${max_count}). The reviewers approved and only the build check stayed red, so rework alone does not end this loop. Needs human intervention."$'\n'
       else
-        notes+="cycle-cap${sep}REQUEST_CHANGES exceeded max_review_cycles=${max}${sep}**ESCALATED:** ${cycles} review cycles (max ${max}). Needs human intervention."$'\n'
+        notes+="cycle-cap${sep}REQUEST_CHANGES exceeded max_review_cycles=${max_count}${sep}**ESCALATED:** ${cycles_count} review cycles (max ${max_count}). Needs human intervention."$'\n'
       fi
       verdict="BLOCK"
     fi
@@ -2215,6 +2222,44 @@ decide_review_verdict() {
 
   printf '%s\n' "$verdict"
   printf '%s' "$notes"
+}
+
+# _review_count <value> → the value as a plain decimal count, or exit 1. Only digits,
+# leading zeros dropped, at most nine digits: a longer number (2^63 and up) would make
+# `[ … -gt … ]` fail with an error, and an error in an `if` reads as false.
+_review_count() {
+  local v="${1:-}"
+  [[ "$v" =~ ^[0-9]+$ ]] || return 1
+  v="${v#"${v%%[!0]*}"}"
+  [ -n "$v" ] || v=0
+  [ "${#v}" -le 9 ] || return 1
+  printf '%s\n' "$v"
+}
+
+# _review_shown <value> → model output echoed into the review only as short, printable text.
+_review_shown() {
+  printf '%s' "${1:-}" | tr -cd '[:alnum:]_ .-' | cut -c1-40
+}
+
+# review_verdict_from_text <review> → APPROVE | REQUEST_CHANGES | BLOCK, or nothing.
+#
+# The legacy text form of the verdict, for a merger that dropped its json verdict:
+# `REVIEW_VERDICT: X` or a `## REVIEW_VERDICT` heading with X on the next non-empty
+# line. X must be exactly one verdict word (bold, backticks and a trailing period
+# stripped); anything else gives nothing, which the stage reads as BLOCK. The old form
+# took the first verdict word anywhere on those lines, so "NOT_APPROVED — BLOCK" read
+# as APPROVE (EXP-1513 in slidefactory-core).
+review_verdict_from_text() {
+  local line
+  line=$(printf '%s\n' "${1:-}" | sed 's/\*\*//g' | awk '
+    grab && NF { print; exit }
+    /^#+[[:space:]]*REVIEW_VERDICT[[:space:]]*$/ { grab = 1; next }
+    /^REVIEW_VERDICT:/ { sub(/^REVIEW_VERDICT:[[:space:]]*/, ""); if (NF) { print; exit } grab = 1 }
+  ')
+  line=$(printf '%s' "$line" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/\.$//; s/^`(.*)`$/\1/')
+  case "$line" in
+    APPROVE|REQUEST_CHANGES|BLOCK) printf '%s\n' "$line" ;;
+  esac
 }
 
 # Map pipeline exit code → human-readable error class (for alerts, logs,
