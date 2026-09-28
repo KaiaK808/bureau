@@ -282,61 +282,72 @@ if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
   exec python3 "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" --no-tmux "${ORIG_ARGS[@]}"
 fi
 
-precondition_linear
-
-: "${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
-
-# --from-stage: pre-move the ticket before starting the loop.
-if [ -n "$FROM_STAGE" ]; then
-  STAGE_UPPER=$(printf '%s' "$FROM_STAGE" | tr '[:lower:]-' '[:upper:]_')
-  TARGET_STATE_VAR="BUREAU_STATE_${STAGE_UPPER}"
-  TARGET_STATE="${!TARGET_STATE_VAR:-}"
-  if [ -z "$TARGET_STATE" ]; then
-    echo "ERROR: --from-stage '$FROM_STAGE' has no matching state (looked up \$$TARGET_STATE_VAR)" >&2
-    echo "       Valid: triage, spec_review, design, copy, build, qa, build_review, merge" >&2
-    exit 1
-  fi
-  echo "[shepherd] --from-stage $FROM_STAGE → moving $ISSUE first"
-  move_issue "$ISSUE" "$TARGET_STATE"
-fi
-
-# ── Claim the ticket; trap to release on any exit path ────────────────
-echo "[shepherd] claiming $ISSUE (label: shepherd-focused)"
-add_issue_label "$ISSUE" "shepherd-focused" \
-  || echo "  WARN: failed to add shepherd-focused label" >&2
 # The fault class a stage leaves behind when it gives up on Linear (exit
 # $BUREAU_EXIT_LINEAR_UNUSABLE). The stage writes only a name from a fixed
 # list into this file (_bureau_linear_record in bureau-config.sh); only such a
 # name gets through _shepherd_fault_class above, so no answer text reaches an
-# alert or a comment. The shepherd's own reads record into the same file.
+# alert or a comment. The shepherd's own reads, moves and its start check record
+# into the same file. Until the ticket is claimed, leaving only removes the file.
 SHEPHERD_FAULT_FILE=$(mktemp "${TMPDIR:-/tmp}/bureau-linear-fault.XXXXXX")
+trap 'rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT
 
-# _shepherd_linear_halt <script> <exit-code> [<what>] — <script> gave up because
-# Linear stayed unusable after every retry (reading <what>, when the shepherd
-# itself was reading). Nothing was decided on the empty answer, so the halt is
+# _shepherd_cancelled <signal> — Ctrl-C, or the runtime forwarding a SIGTERM to
+# the process group, ends the run as cancelled: exit 130, the code the runtime
+# reports for an interrupted child. The EXIT trap then releases the claim (one
+# attempt: the runtime kills the group five seconds after forwarding the
+# signal) and nothing else is written — no label, no comment, no alert. The trap
+# runs as soon as the command in flight returns, before its caller can take a
+# failed read or a failed stage for a finding. Before, INT and TERM only
+# released the claim and the loop went on: the next read, or the next stage,
+# ran on a ticket nobody held any more.
+_shepherd_cancelled() {
+  trap - INT TERM
+  [ -n "${SHEPHERD_SLEEP_PID:-}" ] && kill "$SHEPHERD_SLEEP_PID" 2>/dev/null
+  echo "[shepherd] interrupted by $1 — cancelled; nothing written but the release of $ISSUE" >&2
+  export _BUREAU_LINEAR_SINGLE_ATTEMPT=1
+  exit 130
+}
+trap '_shepherd_cancelled SIGINT' INT
+trap '_shepherd_cancelled SIGTERM' TERM
+
+# _shepherd_sleep <seconds> — a wait the traps above can cut short. Bash runs a
+# trap only when the foreground command returns, so a SIGTERM sent to the
+# shepherd alone during a plain `sleep 60` waited out the minute — and the old
+# trap then went on with the loop.
+SHEPHERD_SLEEP_PID=""
+_shepherd_sleep() {
+  sleep "$1" &
+  SHEPHERD_SLEEP_PID=$!
+  wait "$SHEPHERD_SLEEP_PID"
+  SHEPHERD_SLEEP_PID=""
+}
+
+# _shepherd_linear_halt <script> <exit-code> [<doing>] — <script> gave up because
+# Linear stayed unusable after every retry (while <doing> — "reading the state",
+# "moving the ticket to Triage" — when the shepherd itself made the call).
+# Nothing was decided on the empty answer, so the halt is
 # ours to make visible: alert first (Telegram does not need Linear), then label
 # and comment with a SINGLE attempt each — Linear just failed every retry, and
 # another full ladder per write would only delay the halt.
 _shepherd_linear_halt() {
-  local script="$1" rc="$2" reading="${3:+ reading the $3}" class fault
+  local script="$1" rc="$2" doing="${3:+ $3}" class fault
   class=$(exit_class "$rc")
   fault=$(_shepherd_fault_class "$SHEPHERD_FAULT_FILE")
-  echo "[shepherd] $script$reading halted ($class, fault: $fault) — labeling needs-human and aborting shepherd"
-  alert_telegram "$ISSUE" "$script" "$rc" "shepherd halt ($class: $fault)$reading" 2>/dev/null || true
+  echo "[shepherd] $script$doing halted ($class, fault: $fault) — labeling needs-human and aborting shepherd"
+  alert_telegram "$ISSUE" "$script" "$rc" "shepherd halt ($class: $fault)$doing" 2>/dev/null || true
   export _BUREAU_LINEAR_SINGLE_ATTEMPT=1
   add_issue_label "$ISSUE" "needs-human" \
     || echo "[shepherd] WARN: could not add the 'needs-human' label to $ISSUE — Linear is still unusable" >&2
-  post_comment "$ISSUE" "🛑 Shepherd halt: \`$script\`$reading gave up because Linear stayed unusable after every retry (\`$fault\`). Nothing was decided on the empty answer. Needs human — re-shepherd once Linear answers again." \
+  post_comment "$ISSUE" "🛑 Shepherd halt: \`$script\`$doing gave up because Linear stayed unusable after every retry (\`$fault\`). Nothing was decided on the empty answer. Needs human — re-shepherd once Linear answers again." \
     || echo "[shepherd] WARN: could not post the halt comment on $ISSUE — Linear is still unusable" >&2
   exit "$rc"
 }
 
 # _shepherd_read_failed <what> <exit-code> — the shepherd's own read of <what>
 # failed, so it cannot tell which stage runs next or whether a human holds the
-# ticket. A read killed by a signal (Ctrl-C, or the runtime forwarding a
-# SIGTERM to the process group) is a cancelled run: exit 130, the code the
-# runtime reports for an interrupted stage, and nothing is written — the
-# operator stopped it, the ticket is not at fault. 27 takes the Linear halt
+# ticket. A read that ended by a signal only its own process saw (a code above
+# 128) is a cancelled run like _shepherd_cancelled: exit 130, nothing written —
+# the operator stopped it, the ticket is not at fault. 27 takes the Linear halt
 # above. Any other code (a usable answer the helper could not parse, a helper
 # missing from an older config) says nothing about the ticket either: halt with
 # 1, label needs-human and say which read failed — walking on or waiting would
@@ -347,7 +358,7 @@ _shepherd_read_failed() {
     echo "[shepherd] interrupted while reading the $what of $ISSUE (exit $rc) — cancelled, nothing written" >&2
     exit 130
   fi
-  [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && _shepherd_linear_halt shepherd.sh "$rc" "$what"
+  [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && _shepherd_linear_halt shepherd.sh "$rc" "reading the $what"
   echo "[shepherd] could not read the $what of $ISSUE (exit $rc) — labeling needs-human and aborting shepherd" >&2
   alert_telegram "$ISSUE" shepherd.sh "$rc" "shepherd halt (could not read the $what, exit $rc)" 2>/dev/null || true
   add_issue_label "$ISSUE" "needs-human" \
@@ -357,7 +368,75 @@ _shepherd_read_failed() {
   exit 1
 }
 
-trap 'echo "[shepherd] releasing $ISSUE"; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT INT TERM
+# _shepherd_move_failed <state> <exit-code> — the shepherd's own move of the
+# ticket to <state> (--from-stage, or the Spec → Triage bump) failed (EXP-1482).
+# Called bare under `set -e`, a failed move used to end the shepherd with the
+# move's code before any halt handling: no alert, no label, no comment. The
+# same three ways out as a failed read: a signal only the move saw → cancelled
+# (130, nothing written); 27 → the Linear halt; any other code → halt with 1,
+# needs-human and a comment — the ticket may or may not have moved, and the
+# next stage must not start on a guess.
+_shepherd_move_failed() {
+  local target="$1" rc="$2"
+  if [ "$rc" -gt 128 ]; then
+    echo "[shepherd] interrupted while moving $ISSUE to $target (exit $rc) — cancelled, nothing written" >&2
+    exit 130
+  fi
+  [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && _shepherd_linear_halt shepherd.sh "$rc" "moving the ticket to $target"
+  echo "[shepherd] could not move $ISSUE to $target (exit $rc) — labeling needs-human and aborting shepherd" >&2
+  alert_telegram "$ISSUE" shepherd.sh "$rc" "shepherd halt (could not move the ticket to $target, exit $rc)" 2>/dev/null || true
+  add_issue_label "$ISSUE" "needs-human" \
+    || echo "[shepherd] WARN: could not add the 'needs-human' label to $ISSUE" >&2
+  post_comment "$ISSUE" "🛑 Shepherd halt: could not move this ticket to \`$target\` (exit $rc). It may or may not have moved; no stage was started on a guess. Needs human — check the state and re-shepherd." \
+    || echo "[shepherd] WARN: could not post the halt comment on $ISSUE" >&2
+  exit 1
+}
+
+# Start check (EXP-1482). It runs before the claim, so a failure has touched
+# nothing on the ticket: no needs-human (it would keep the queue away from a
+# ticket that is fine, and it needs the Linear that just failed) and no comment.
+# It used to end inside precondition_linear with a bare exit 10 and a message
+# about the key, whatever the cause, and nobody was told. Now it keeps the
+# documented code (10, linear-down — the contract with the callers), names the
+# fault class the fetch recorded when it gave up, and alerts: an orchestrated
+# chain stops its lane on this code without telling anyone.
+_shepherd_start_failed() {
+  local rc="$1" fault
+  [ "$rc" -gt 128 ] && _shepherd_cancelled "a signal (exit $rc)"
+  fault=$(_shepherd_fault_class "$SHEPHERD_FAULT_FILE")
+  echo "[shepherd] Linear start check failed ($(exit_class "$rc"), fault: $fault) — $ISSUE not claimed, nothing written" >&2
+  alert_telegram "$ISSUE" shepherd.sh "$rc" "shepherd did not start ($(exit_class "$rc"): $fault)" 2>/dev/null || true
+  exit "$rc"
+}
+
+( _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" precondition_linear ) || _shepherd_start_failed $?
+
+: "${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
+
+# ── Claim the ticket; the trap releases it on any exit path ───────────
+# The trap is set before the claim: a signal during the claim still releases.
+trap 'echo "[shepherd] releasing $ISSUE"; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT
+echo "[shepherd] claiming $ISSUE (label: shepherd-focused)"
+add_issue_label "$ISSUE" "shepherd-focused" \
+  || echo "  WARN: failed to add shepherd-focused label" >&2
+
+# --from-stage: move the ticket before the loop. After the claim (it used to
+# run before it), so the queue keeps away from a ticket that just moved into a
+# stage's waiting room.
+if [ -n "$FROM_STAGE" ]; then
+  STAGE_UPPER=$(printf '%s' "$FROM_STAGE" | tr '[:lower:]-' '[:upper:]_')
+  TARGET_STATE_VAR="BUREAU_STATE_${STAGE_UPPER}"
+  TARGET_STATE="${!TARGET_STATE_VAR:-}"
+  if [ -z "$TARGET_STATE" ]; then
+    echo "ERROR: --from-stage '$FROM_STAGE' has no matching state (looked up \$$TARGET_STATE_VAR)" >&2
+    echo "       Valid: triage, spec_review, design, copy, build, qa, build_review, merge" >&2
+    exit 1
+  fi
+  echo "[shepherd] --from-stage $FROM_STAGE → moving $ISSUE first"
+  : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
+  _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" move_issue "$ISSUE" "$TARGET_STATE" \
+    || _shepherd_move_failed "$FROM_STAGE" $?
+fi
 
 # Per-ticket worktree override (d&a executor) — default preserves single-worktree
 # serial behavior exactly. `reset_worktree` auto-creates the dir if absent.
@@ -365,6 +444,34 @@ WORKTREE="${WORKTREE_OVERRIDE:-$REPO_DIR/.worktrees/shepherd}"
 LAST_STATE=""
 STUCK_COUNT=0
 MAX_STUCK=2
+# Linear answering without a state (an unknown or hidden ticket, not a failed
+# read — those end above) used to be retried every 60 s without end. The fifth
+# such answer in a row halts (EXP-1482 handover).
+NO_STATE_COUNT=0
+MAX_NO_STATE=5
+# The state a move was meant to leave: the shepherd's own Spec → Triage bump,
+# or the state a stage ran at and returned 0 from (EXP-1482 path 3). A read
+# that still shows it may be a moment old — a second start of the same stage
+# came from exactly that (EXP-1476, 17.09.2026). It is read again, up to
+# CONFIRM_TRIES times, CONFIRM_SECONDS apart, before the shepherd acts on it.
+# A read that shows any other state costs nothing extra; a ticket that really
+# stayed where it was reaches the stuck detector as before, 15 s later.
+MOVED_FROM=""
+CONFIRM_TRIES=3
+CONFIRM_SECONDS="${BUREAU_SHEPHERD_CONFIRM_SECONDS:-5}"
+
+# _shepherd_no_state_halt — Linear answered MAX_NO_STATE times in a row, without
+# an error and without a state. Nothing tells which stage runs next; the same
+# halt as a state no pipeline knows: needs-human, a comment, an alert, exit 1.
+_shepherd_no_state_halt() {
+  echo "[shepherd] Linear answered $MAX_NO_STATE times without a state for $ISSUE — labeling needs-human and aborting shepherd" >&2
+  alert_telegram "$ISSUE" shepherd.sh 1 "shepherd halt (no state in $MAX_NO_STATE answers)" 2>/dev/null || true
+  add_issue_label "$ISSUE" "needs-human" \
+    || echo "[shepherd] WARN: could not add the 'needs-human' label to $ISSUE" >&2
+  post_comment "$ISSUE" "🛑 Shepherd halt: Linear answered $MAX_NO_STATE times in a row without a state for this ticket. Nothing was started. Needs human — check that the ticket exists and this key can see it, then re-shepherd." \
+    || echo "[shepherd] WARN: could not post the halt comment on $ISSUE" >&2
+  exit 1
+}
 
 echo ""
 echo "═══════════════════════════════════════"
@@ -379,10 +486,25 @@ while true; do
   if [ -z "$STATE" ]; then
     # Linear answered, but without a state (transient faults are retried inside
     # the read and end in 27 above).
-    echo "[shepherd] WARN: Linear answered without a state for $ISSUE — sleeping 60s"
-    sleep 60
+    NO_STATE_COUNT=$((NO_STATE_COUNT + 1))
+    [ "$NO_STATE_COUNT" -ge "$MAX_NO_STATE" ] && _shepherd_no_state_halt
+    echo "[shepherd] WARN: Linear answered without a state for $ISSUE — sleeping 60s ($NO_STATE_COUNT/$MAX_NO_STATE)"
+    _shepherd_sleep 60
     continue
   fi
+  NO_STATE_COUNT=0
+
+  # Confirm a move before acting on it (EXP-1482 path 3, see MOVED_FROM).
+  CONFIRM_COUNT=0
+  while [ -n "$MOVED_FROM" ] && [ "$STATE" = "$MOVED_FROM" ] && [ "$CONFIRM_COUNT" -lt "$CONFIRM_TRIES" ]; do
+    CONFIRM_COUNT=$((CONFIRM_COUNT + 1))
+    echo "[shepherd] $ISSUE still reads '$STATE' after the move — reading again in ${CONFIRM_SECONDS}s ($CONFIRM_COUNT/$CONFIRM_TRIES)"
+    _shepherd_sleep "$CONFIRM_SECONDS"
+    STATE=$(_shepherd_state) || _shepherd_read_failed state $?
+  done
+  MOVED_FROM=""
+  # An answer without a state while confirming goes through the check above.
+  [ -z "$STATE" ] && continue
 
   echo ""
   echo "[shepherd] $ISSUE @ '$STATE'"
@@ -450,7 +572,10 @@ while true; do
   # Auto-bump Spec → Triage (spec-pipeline guards on Triage entry).
   if [ "$STATE" = "Spec" ]; then
     echo "[shepherd] auto-bump Spec → Triage (spec-pipeline only accepts Triage entry)"
-    move_issue "$ISSUE" "$BUREAU_STATE_TRIAGE"
+    : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
+    _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" move_issue "$ISSUE" "$BUREAU_STATE_TRIAGE" \
+      || _shepherd_move_failed Triage $?
+    MOVED_FROM="$STATE"
     continue
   fi
 
@@ -487,12 +612,14 @@ while true; do
   if [ "$ACTION" = halt ] && stop_before_merge_was_asked "$RC"; then ACTION=stopped-before-merge; fi
   case "$ACTION" in
     ok)
-      # Success / queue-empty — re-read state on next iteration.
+      # Success / queue-empty — re-read state on next iteration, and confirm
+      # the stage's move there before starting the next stage.
+      MOVED_FROM="$STATE"
       ;;
     retry)
       # Transient: linear-down / provider-unauth. Throttled re-attempt.
       echo "[shepherd] $CLASS — sleeping 60s and retrying"
-      sleep 60
+      _shepherd_sleep 60
       ;;
     stopped-before-merge)
       echo "[shepherd] $PIPELINE stopped before merge, as asked — a human merges"

@@ -33,6 +33,16 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 Upgrade action: none. A repo whose Linear requests legitimately take longer than 30 s sets `BUREAU_LINEAR_MAX_TIME`. A limit of 0 is invalid (it would mean "no limit" to curl): the warning names the key and the next source applies, `.bureau.json` before the default. A halt path makes one attempt per write without retry waits, so a halt with N writes takes at most N × the time limit. Limits: the fault classes stay the four names the shepherd knows; a timeout is logged as "no answer within Ns" and classed `no-response`. A curl double in a test that prints no `-w` status line is judged by its body alone.
 
+### Shepherd outside the stages (EXP-1482)
+
+#### Fixed
+
+- The shepherd's own moves (`--from-stage`, and the bump from Spec to Triage) no longer end it bare under `set -e` when they fail: `27` takes the Linear halt (alert with the fault class, one attempt each at `needs-human` and a halt comment), any other code halts with `1`, `needs-human` and a comment. `--from-stage` now moves the ticket after the shepherd claims it, so the queue keeps away from a ticket that just moved into a stage's waiting room.
+- Ctrl-C or SIGTERM ends a shepherd run as cancelled (`130`): the claim is released and nothing else is written. Before, the INT/TERM trap only released the claim and the loop went on, so the next read or stage ran on a ticket nobody held; a SIGTERM sent to the shepherd alone waited out a 60 s sleep first. The shepherd's waits can now be cut short.
+- The start check names its cause: a failed Linear check before the claim still ends with `10`, now with an alert naming the fault class, and writes nothing to the ticket.
+- Linear answering without a state is no longer waited out forever: the fifth such answer in a row halts with `1`, `needs-human`, a comment and an alert.
+- A read that still shows the state a move left — the shepherd's own, or a stage's that returned `0` — is read again up to three times, 5 s apart, before the next stage starts, so a moment-old answer no longer starts the same stage twice (EXP-1476). A read that shows the new state costs no extra read and no wait; a ticket that really stayed where it was reaches the stuck detector 15 s later than before.
+
 ## [3.0.0-rc.1] - 2026-09-28
 
 Release candidate for Bureau v3.0.0, published as a GitHub prerelease. It collects the hardening carried over from the installations ([#11](https://github.com/KaiaK808/bureau/pull/11)), source recording in the installer ([#12](https://github.com/KaiaK808/bureau/pull/12)), the review build check via `repo.test_command` ([#13](https://github.com/KaiaK808/bureau/pull/13)), fail-closed shepherd reads ([#14](https://github.com/KaiaK808/bureau/pull/14)) and the merge policy as configuration ([#15](https://github.com/KaiaK808/bureau/pull/15)). The major version marks the changed exit-code contract: a review BLOCK ends with `25` instead of `0`, a Linear that stays unusable ends a stage with the new code `27`, and the shepherd halts with an alert on every code except `0`, `2`, `10` and `16`. v3.0.0 follows once a pilot installation has qualified one ticket with this candidate. See the [v3.0.0-rc.1 release notes](docs/release-notes.md).
