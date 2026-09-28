@@ -150,7 +150,7 @@ Cost logging is opt-in. Usage throttling uses an operator-provided signal for th
 | `LINEAR_API_KEY` | Always (agents) | Set in `.env`. The interactive `/bureau-init` works without it via MCP; the headless agents need direct GraphQL access |
 | `BUREAU_LINEAR_RETRIES` | Optional | Retries after an unusable Linear answer, 0 to 10 (default 3). Beats `.linear.retry.retries` in `.bureau.json`. After the last retry the stage exits 27 (`linear-unusable`) |
 | `BUREAU_LINEAR_RETRY_WAIT_1` / `_2` / `_3` | Optional | Seconds before the first, second and every further retry, 0 to 600 (defaults 10, 30, 60). Beat `.linear.retry.wait_1` / `wait_2` / `wait_3`. A value that is not plain digits is dropped with a warning naming the key, never the value |
-| `BUREAU_LINEAR_MAX_TIME` / `BUREAU_LINEAR_CONNECT_TIMEOUT` | Optional | Seconds one Linear request (1 to 300, default 30) and its connection (1 to 60, default 10) may take. Beat `.linear.request.max_time` / `connect_timeout`. 0 would mean "no limit" to curl and is refused with a warning, like a value that is not plain digits |
+| `BUREAU_LINEAR_MAX_TIME` / `BUREAU_LINEAR_CONNECT_TIMEOUT` | Optional | Seconds one Linear request (1 to 300, default 30) and its connection (1 to 60, default 10) may take. Beat `.linear.request.max_time` / `connect_timeout`. 0 would mean "no limit" to curl and is refused like a value that is not plain digits: a warning names the key, and `.bureau.json`, then the default applies |
 | `TELEGRAM_BOT_TOKEN` | Optional | Telegram bot for failure alerts. No-op when unset |
 | `TELEGRAM_ALERT_CHAT_ID` | Optional | Chat/channel ID for alerts. Must be set alongside the token |
 

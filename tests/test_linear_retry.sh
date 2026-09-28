@@ -252,17 +252,26 @@ helper "$FETCH";                                                         [ "$(ca
 write_config
 BUREAU_LINEAR_MAX_TIME=0 BUREAU_LINEAR_CONNECT_TIMEOUT=0 helper "$FETCH"
 [ "$RC" = 0 ] && [ "$(cat "$SB/limits.log")" = "30 10" ] || fail "a limit of 0 was passed on: $(cat "$SB/limits.log")"
-case "$ERR" in *"time limit of 0 would mean none"*"connect timeout of 0"*) ;; *) fail "a limit of 0 did not warn" ;; esac
+case "$ERR" in *"warning: BUREAU_LINEAR_MAX_TIME ignored: not a whole number of 1 to 300"*"warning: BUREAU_LINEAR_CONNECT_TIMEOUT ignored: not a whole number of 1 to 60"*) ;; *) fail "a limit of 0 did not warn by key with its range" ;; esac
+# An invalid env value falls back to .bureau.json first, then to the default.
+write_config '.linear.request = {max_time: 60, connect_timeout: 5}'
+BUREAU_LINEAR_MAX_TIME=0 BUREAU_LINEAR_CONNECT_TIMEOUT=junk helper "$FETCH"
+[ "$(cat "$SB/limits.log")" = "60 5" ] || fail "an invalid env limit skipped .bureau.json: $(cat "$SB/limits.log")"
+write_config '.linear.request = {max_time: 0}'
+helper "$FETCH"
+[ "$(cat "$SB/limits.log")" = "30 10" ] || fail "a limit of 0 in .bureau.json was passed on: $(cat "$SB/limits.log")"
+case "$ERR" in *"warning: .linear.request.max_time ignored: not a whole number of 1 to 300"*) ;; *) fail "a limit of 0 in .bureau.json did not warn by path" ;; esac
+write_config
 BUREAU_LINEAR_MAX_TIME=301 BUREAU_LINEAR_CONNECT_TIMEOUT="x[\$(touch $SB/pwned)]" helper "$FETCH"
 [ "$(cat "$SB/limits.log")" = "30 10" ] || fail "an invalid limit was passed on"
 [ ! -e "$SB/pwned" ] || fail "a limit setting was executed"
-case "$ERR" in *"warning: BUREAU_LINEAR_MAX_TIME ignored"*"warning: BUREAU_LINEAR_CONNECT_TIMEOUT ignored"*) ;; *) fail "invalid limits did not warn by key" ;; esac
+case "$ERR" in *"warning: BUREAU_LINEAR_MAX_TIME ignored: not a whole number of 1 to 300"*"warning: BUREAU_LINEAR_CONNECT_TIMEOUT ignored: not a whole number of 1 to 60"*) ;; *) fail "invalid limits did not warn by key with their range" ;; esac
 case "$ERR" in *touch*|*pwned*) fail "the warning repeats the value" ;; esac
 queue hang
 helper "$FETCH"
 expect 27 4 "10 30 60" "persistent timeout"
 [ "$(sort -u "$SB/limits.log")" = "30 10" ] || fail "a retry ran without the time limit"
-echo "PASS every request carries --max-time/--connect-timeout (default 30/10, env, .bureau.json); 0 and junk fall back with a warning; a hanging Linear gives up after 4 x 30 s + 100 s"
+echo "PASS every request carries --max-time/--connect-timeout (default 30/10, env, .bureau.json); 0 and junk warn by key and fall back to .bureau.json, then the default; a hanging Linear gives up after 4 x 30 s + 100 s"
 
 queue bare
 helper 'get_issue_detail EXP-1 | jq -c "[.identifier, .labels]"'
@@ -314,6 +323,49 @@ helper "bureau_load_env '$SB/.env'; $FETCH"
 rm -f "$SB/.env"
 echo "PASS a failed transfer is unusable without pipefail, a NUL byte is unusable even with a lenient jq, and the limits load from .env"
 
+# --- positive control: every caller works on answers with only the fields it asked for --------
+# The fixtures above carry every field on every node, so a shape stricter than its query (the
+# state read demanding comments, say) would pass them and fail against real Linear. Here each
+# query gets exactly the fields it asks for, on a ticket without labels and without comments,
+# as Linear would send them. An unknown query gets '{}' (no-data), so a new query shows up here.
+mkdir -p "$SB/exactbin"
+cat > "$SB/exactbin/curl" <<EOF
+#!/bin/bash
+prev=""; p=""
+for a in "\$@"; do [ "\$prev" = -d ] && p="\$a"; prev="\$a"; done
+case "\$p" in
+  *'nodes { branchName comments'*) b='{"data":{"issues":{"nodes":[{"branchName":"exp-1-x","comments":{"nodes":[]}}]}}}' ;;
+  *'nodes { comments'*)            b='{"data":{"issues":{"nodes":[{"comments":{"nodes":[]}}]}}}' ;;
+  *'nodes { identifier title description project'*)
+                                   b='{"data":{"issues":{"nodes":[{"identifier":"EXP-1","title":"T","description":null,"project":null,"labels":{"nodes":[]}}]}}}' ;;
+  *'nodes { id identifier title description state'*)
+                                   b='{"data":{"issues":{"nodes":[{"id":"U","identifier":"EXP-1","title":"T","description":null,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[]}}]}}}' ;;
+  *'nodes { id } }'*)              b='{"data":{"issues":{"nodes":[{"id":"U"}]}}}' ;;
+  *issueLabels*)                   b='{"data":{"issueLabels":{"nodes":[{"id":"L","team":null}]}}}' ;;
+  *issueUpdate*)                   b='{"data":{"issueUpdate":{"success":true}}}' ;;
+  *commentCreate*)                 b='{"data":{"commentCreate":{"success":true}}}' ;;
+  *issueAddLabel*)                 b='{"data":{"issueAddLabel":{"success":true}}}' ;;
+  *issueRemoveLabel*)              b='{"data":{"issueRemoveLabel":{"success":true}}}' ;;
+  *viewer*)                        b='{"data":{"viewer":{"id":"V"}}}' ;;
+  *'children(first: 1)'*)          b='{"data":{"issues":{"nodes":[{"labels":{"nodes":[]},"children":{"nodes":[]}}]}}}' ;;
+  *inverseRelations*)              b='{"data":{"issues":{"nodes":[{"identifier":"EXP-1","priority":0,"createdAt":"2026-01-01","labels":{"nodes":[]},"inverseRelations":{"nodes":[]}}]}}}' ;;
+  *)                               echo "UNMATCHED QUERY" >&2; b='{}' ;;
+esac
+printf '%s' "\$b"
+"$REPO_ROOT/tests/lib/curl-writeout.sh" 200 "\$@"
+EOF
+chmod +x "$SB/exactbin/curl"
+for call in '_resolve_issue_uuid EXP-1' 'get_issue_state EXP-1' 'get_issue_detail EXP-1' \
+            'get_issue_comments EXP-1' 'get_issue_branch_and_comments EXP-1' 'get_issue_branch EXP-1' \
+            'bureau_issue_snapshot EXP-1' 'count_in_flight_issues' 'pick_issue s5 ""' \
+            'post_comment EXP-1 hello' 'move_issue EXP-1 s6' \
+            'add_issue_label EXP-1 needs-human' 'remove_issue_label EXP-1 needs-human'; do
+  BUREAU_LINEAR_RETRIES=0 helper "PATH='$SB/exactbin':\$PATH; $call >/dev/null"
+  [ "$RC" = 0 ] || fail "'$call' failed ($RC) on an answer with exactly the fields it asked for: $ERR"
+  case "$ERR" in *UNMATCHED*|*unusable*) fail "'$call' saw an unmatched or unusable answer: $ERR" ;; esac
+done
+echo "PASS every Linear caller returns 0 on answers carrying only the fields its query asks for"
+
 # --- negative control for EXP-1482: the transport this replaces ----------------------------
 OLD_TRANSPORT='
 _bureau_linear_fetch() {
@@ -349,7 +401,9 @@ echo "PASS negative control: the old transport takes {\"data\":{}}, an HTTP 500,
 # --- real curl against a local server: the write-out, the status and the time limit --------
 REAL_CURL=$(command -v curl)
 PORTFILE="$SB/port"
-python3 - "$PORTFILE" > "$SB/server.log" 2>&1 <<'PY' &
+# Started from a subshell that exits at once, so the test shell never reports the server as
+# a terminated job (bash would print "Terminated: 15" and the whole heredoc).
+( python3 - "$PORTFILE" > "$SB/server.log" 2>&1 <<'PY' &
 import http.server, socketserver, sys, time
 BODY = b'{"data":{"viewer":{"id":"V1"}}}'
 class H(http.server.BaseHTTPRequestHandler):
@@ -376,8 +430,9 @@ s = S(("127.0.0.1", 0), H)
 open(sys.argv[1], "w").write(str(s.server_address[1]))
 s.serve_forever()
 PY
-SERVER=$!
-trap 'kill $SERVER 2>/dev/null; rm -rf "$SB"' EXIT
+echo $! > "$SB/server.pid" )
+SERVER=$(cat "$SB/server.pid")
+trap 'kill "$SERVER" 2>/dev/null; rm -rf "$SB"' EXIT
 # A cold CI runner can take several seconds to start Python; wait up to 30 s.
 waited=0
 while [ ! -s "$PORTFILE" ] && [ "$waited" -lt 100 ] && kill -0 "$SERVER" 2>/dev/null; do

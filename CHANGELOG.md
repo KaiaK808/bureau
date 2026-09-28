@@ -31,7 +31,7 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 - A NUL byte in the answer makes it unusable (`not-json`). The shell used to drop NUL bytes while capturing, so a broken answer could reach the check already cleaned.
 - The issue readers (`get_issue_detail`, `bureau_issue_snapshot` / `get_issue_state`, `get_issue_branch`, `get_issue_branch_and_comments`, `get_issue_comments`) require the list they read (labels, state, comments) and go through the retry ladder when it is missing, instead of reading a missing list as an empty one. A ticket without labels, without a branch marker, and an issue query that matches no ticket stay usable answers with exit 0.
 
-Upgrade action: none. A repo whose Linear requests legitimately take longer than 30 s sets `BUREAU_LINEAR_MAX_TIME`. Limits: the fault classes stay the four names the shepherd knows; a timeout is logged as "no answer within Ns" and classed `no-response`. A curl double in a test that prints no `-w` status line is judged by its body alone.
+Upgrade action: none. A repo whose Linear requests legitimately take longer than 30 s sets `BUREAU_LINEAR_MAX_TIME`. A limit of 0 is invalid (it would mean "no limit" to curl): the warning names the key and the next source applies, `.bureau.json` before the default. A halt path makes one attempt per write without retry waits, so a halt with N writes takes at most N × the time limit. Limits: the fault classes stay the four names the shepherd knows; a timeout is logged as "no answer within Ns" and classed `no-response`. A curl double in a test that prints no `-w` status line is judged by its body alone.
 
 ## [3.0.0-rc.1] - 2026-09-28
 

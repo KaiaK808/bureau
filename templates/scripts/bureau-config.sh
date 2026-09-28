@@ -310,35 +310,35 @@ _bureau_linear_classify() {
   printf '%s' "$finding"
 }
 
-# _bureau_linear_number <value> <max> — prints <value> as a number without
-# leading zeros, or nothing (exit 1) when it is not a whole number from 0 to
-# <max>. Digits only: no whitespace, no sign, no dot, no second word. The value
+# _bureau_linear_number <value> <max> [<min>] — prints <value> as a number
+# without leading zeros, or nothing (exit 1) when it is not a whole number from
+# <min> (default 0) to <max>. Digits only: no whitespace, no sign, no dot, no second word. The value
 # never reaches an arithmetic context before it has passed this check.
 _bureau_linear_number() {
-  local value="$1" max="$2"
+  local value="$1" max="$2" min="${3:-0}"
   case "$value" in
     '' | *[!0123456789]*) return 1 ;;
   esac
   [ "${#value}" -gt 4 ] && return 1
   value="${value#"${value%%[!0]*}"}"
   [ -z "$value" ] && value=0
-  [ "$value" -le "$max" ] || return 1
+  [ "$value" -le "$max" ] && [ "$value" -ge "$min" ] || return 1
   printf '%s' "$value"
 }
 
-# _bureau_linear_setting <key> <value-from-env> <json-path> <default> <max>
+# _bureau_linear_setting <key> <value-from-env> <json-path> <default> <max> [<min>]
 # An empty value counts as "not set", silently. Any other invalid value is
 # dropped: the next source applies, and one warning on stderr names the key or
 # the JSON path and NEVER the value.
 _bureau_linear_setting() {
-  local name="$1" from_env="$2" path="$3" default="$4" max="$5"
+  local name="$1" from_env="$2" path="$3" default="$4" max="$5" min="${6:-0}"
   local number
   if [ -n "$from_env" ]; then
-    if number=$(_bureau_linear_number "$from_env" "$max"); then
+    if number=$(_bureau_linear_number "$from_env" "$max" "$min"); then
       printf '%s' "$number"
       return 0
     fi
-    echo "warning: $name ignored: not a whole number of 0 to $max written in digits only; the next source applies" >&2
+    echo "warning: $name ignored: not a whole number of $min to $max written in digits only; the next source applies" >&2
   fi
   local from_json
   # Two guards, because a command substitution does not hand on what jq wrote.
@@ -359,11 +359,11 @@ _bureau_linear_setting() {
     "$BUREAU_CONFIG" 2>/dev/null) || from_json="#"
   from_json=${from_json%\#}
   if [ -n "$from_json" ]; then
-    if number=$(_bureau_linear_number "$from_json" "$max"); then
+    if number=$(_bureau_linear_number "$from_json" "$max" "$min"); then
       printf '%s' "$number"
       return 0
     fi
-    echo "warning: $path ignored: not a whole number of 0 to $max written in digits only; the default applies" >&2
+    echo "warning: $path ignored: not a whole number of $min to $max written in digits only; the default applies" >&2
   fi
   printf '%s' "$default"
 }
@@ -382,20 +382,14 @@ _bureau_linear_record() {
 
 # _bureau_linear_request_limits — prints "<max-time> <connect-timeout>" for one
 # request. Read on every fetch (lazily, like the retry settings) because a stage
-# loads .env only after it has sourced this file. 0 would mean "no limit" to
-# curl, so it is refused like any other invalid value.
+# loads .env only after it has sourced this file. The minimum is 1: 0 would
+# mean "no limit" to curl, so it is invalid like any other bad value — the
+# warning names the key and the next source (.bureau.json, then the default)
+# applies.
 _bureau_linear_request_limits() {
   local max_time connect
-  max_time=$(_bureau_linear_setting BUREAU_LINEAR_MAX_TIME "${BUREAU_LINEAR_MAX_TIME:-}" '.linear.request.max_time' 30 300)
-  if [ "$max_time" = 0 ]; then
-    echo "warning: a Linear time limit of 0 would mean none; the default of 30 s applies" >&2
-    max_time=30
-  fi
-  connect=$(_bureau_linear_setting BUREAU_LINEAR_CONNECT_TIMEOUT "${BUREAU_LINEAR_CONNECT_TIMEOUT:-}" '.linear.request.connect_timeout' 10 60)
-  if [ "$connect" = 0 ]; then
-    echo "warning: a Linear connect timeout of 0 would mean curl's own; the default of 10 s applies" >&2
-    connect=10
-  fi
+  max_time=$(_bureau_linear_setting BUREAU_LINEAR_MAX_TIME "${BUREAU_LINEAR_MAX_TIME:-}" '.linear.request.max_time' 30 300 1)
+  connect=$(_bureau_linear_setting BUREAU_LINEAR_CONNECT_TIMEOUT "${BUREAU_LINEAR_CONNECT_TIMEOUT:-}" '.linear.request.connect_timeout' 10 60 1)
   printf '%s %s' "$max_time" "$connect"
 }
 
@@ -407,8 +401,9 @@ _bureau_linear_request_limits() {
 # The retry settings are read only once an answer is unusable: a healthy fetch
 # waits not at all, retries not at all and prints no extra line. On a halt path
 # (_BUREAU_LINEAR_SINGLE_ATTEMPT=1, set by shepherd.sh and by the spec stage's
-# rollback trap) a single attempt is made without any wait, so the total wait
-# of a halt stays bounded no matter how many writes the halt needs.
+# rollback trap) a single attempt is made without any retry wait. Each attempt
+# can still take up to the request time limit, so a halt with N writes takes at
+# most N × max-time (30 s by default) — bounded, but it grows with the writes.
 _bureau_linear_fetch() {
   local payload="$1" shape="${2:-true}"
   local attempt=1 code raw answer status fault wait limits max_time connect

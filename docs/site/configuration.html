@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0294ea45c2023eadd71f852fc4d507f662434e7cf8e9e10de14faa4fb10b23d2">
+<meta name="bureau-source-sha256" content="38d6ad41bccbecc657c15dc99496529ca41f672b154ecc81802bff478432ad3d">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -750,8 +750,9 @@ digits is dropped with a warning naming the key, never the value</td>
 <td>Seconds one Linear request (1 to 300, default 30) and its connection
 (1 to 60, default 10) may take. Beat
 <code>.linear.request.max_time</code> / <code>connect_timeout</code>. 0
-would mean "no limit" to curl and is refused with a warning, like a
-value that is not plain digits</td>
+would mean "no limit" to curl and is refused like a value that is not
+plain digits: a warning names the key, and <code>.bureau.json</code>,
+then the default applies</td>
 </tr>
 <tr>
 <td><code>TELEGRAM_BOT_TOKEN</code></td>
