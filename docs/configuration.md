@@ -111,7 +111,7 @@ Cost logging is opt-in. Usage throttling uses an operator-provided signal for th
 | `repo.branch_prefix` | string | `"feat"` | Prefix for spec branches (`feat/001-add-login`) |
 | `repo.commit_prefix` | string | `""` | Optional prefix for commit messages (`[EXP] feat(login): ...`) |
 | `repo.specs_dir` | string | `"specs"` | Directory where speckit writes specs — must match `.specify/`'s configured path |
-| `repo.test_command` | string | unset | Actual project tests; required for Codex implementation completion and the app tests action |
+| `repo.test_command` | string | unset | Actual project tests. The review build check runs it first, then `scripts/bureau-test.sh`, then `npm run build`, and stops there (QA also tries `npm test`, `cargo test`, `pytest`, `go test`). Required for Codex implementation completion and the app tests action |
 | `repo.copy_voice_file` | path | unset | Required if `agents.copy: true`. Path to a markdown file describing voice/tone (e.g. `docs/voice.md`) |
 | `repo.upstream` | string | `"ultraworkers/claw-code"` | GitHub `owner/name` for `upstream-port.sh` cherry-picks. Env override: `BUREAU_UPSTREAM_REPO` |
 | `repo.upstream_port.build_cmd` | string | `"cargo build --release -p brainhuggers-cli"` | Shell command run inside `work_dir` after `git apply` succeeds. Non-zero exit → exit code 14. Env override: `BUREAU_UPSTREAM_PORT_BUILD` |

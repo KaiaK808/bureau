@@ -102,7 +102,9 @@ class SupervisionPipelineTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve(); self.repo = self.root/'repo'; self.repo.mkdir()
         self.git('init','-q','-b','main'); self.git('config','user.email','test@bureau'); self.git('config','user.name','Bureau Test')
-        (self.repo/'.gitignore').write_text('.bureau.json\n.env\nlogs/\n.worktrees/\n')
+        # The review build check runs repo.test_command in the worker; like a real Python
+        # project, the fixture ignores the bytecode it writes.
+        (self.repo/'.gitignore').write_text('.bureau.json\n.env\nlogs/\n.worktrees/\n__pycache__/\n')
         (self.repo/'tests').mkdir(); (self.repo/'tests/test_smoke.py').write_text('import unittest\nclass Smoke(unittest.TestCase):\n    def test_ok(self): self.assertEqual(2 + 3, 5)\n')
         shutil.copytree(ROOT/'templates/scripts',self.repo/'scripts',ignore=shutil.ignore_patterns('__pycache__'))
         self.git('add','.'); self.git('commit','-qm','test: fixture main')

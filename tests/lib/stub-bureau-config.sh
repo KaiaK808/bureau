@@ -231,4 +231,9 @@ precondition_runner() { _record precondition_runner "$1"; }
 resolve_runner_for_stage() { echo "${BUREAU_STUB_RUNNER:-claude}"; }
 commit_codex_changes() { :; }
 
-bureau_get() { jq -r "$1" "${BUREAU_CONFIG:-.bureau.json}"; }
+# The real config refuses to load without .bureau.json (bureau-config.sh:31), so a stage
+# never reads a missing file. Most sandboxes write none: read that as an empty config.
+bureau_get() {
+  local config="${BUREAU_CONFIG:-.bureau.json}"
+  if [ -f "$config" ]; then jq -r "$1" "$config"; else jq -rn "{} | $1"; fi
+}

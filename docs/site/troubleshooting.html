@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6b595bf4c24c13daf0b0bf91d0fa3933dd90c316a932cf979456567720e82acf">
+<meta name="bureau-source-sha256" content="b21bf2ef1649c809079cc15075aa9b01f90062bb9e96e0d80a2d4a78f4296944">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -354,6 +354,30 @@ flow and confirm the effective provider/model</li>
 </ul>
 <p>The background pipeline counts matching Changes Requested comments in
 Linear. Restarting it does not remove that history.</p>
+<h3 id="review-comment-says-build-not-checked">Review comment says
+<code>**Build**: not checked</code></h3>
+<p>The review build check found nothing to run: no
+<code>repo.test_command</code>, no <code>scripts/bureau-test.sh</code>
+and no <code>package.json</code>. Unlike the QA stage, review does not
+fall back to <code>npm test</code>, <code>cargo test</code>,
+<code>pytest</code> or <code>go test</code>. The verdict is left as the
+reviewers gave it, and stderr carries a warning. Set
+<code>repo.test_command</code> in <code>.bureau.json</code> to the
+project's real check so a red build can reach the verdict. When it is
+set, it wins over the shim and over <code>npm run build</code>; a red
+command (a failure anywhere in a pipe counts, as in QA) turns an APPROVE
+into REQUEST_CHANGES and never softens a BLOCK. The last 20 lines of the
+check are in the stage output. The full output, <code>build.log</code>
+in the review's temporary directory, is kept only when the stage exits
+non-zero; a red check under APPROVE ends in REQUEST_CHANGES with exit 0,
+and the directory is removed.</p>
+<p>The check runs in the review worktree. Files it leaves or changes are
+named on stderr, split in two. New files git does not ignore (test
+reports, coverage, bytecode) belong in <code>.gitignore</code>. Tracked
+files the check changed cannot be ignored; the check must stop writing
+to them. Either way, a stopped or failed review with a dirty worktree
+keeps it as unfinished work, and the next reset of that worker refuses
+with exit 21.</p>
 <h3 id="qa-returned-needs_human-verdict">QA returned
 <code>NEEDS_HUMAN</code> verdict</h3>
 <p>QA parks a ticket with <code>needs-human</code> when it can't decide

@@ -218,6 +218,12 @@ GitHub's mergeability state is cached. Bureau independently checks actual head c
 
 The background pipeline counts matching Changes Requested comments in Linear. Restarting it does not remove that history.
 
+### Review comment says `**Build**: not checked`
+
+The review build check found nothing to run: no `repo.test_command`, no `scripts/bureau-test.sh` and no `package.json`. Unlike the QA stage, review does not fall back to `npm test`, `cargo test`, `pytest` or `go test`. The verdict is left as the reviewers gave it, and stderr carries a warning. Set `repo.test_command` in `.bureau.json` to the project's real check so a red build can reach the verdict. When it is set, it wins over the shim and over `npm run build`; a red command (a failure anywhere in a pipe counts, as in QA) turns an APPROVE into REQUEST_CHANGES and never softens a BLOCK. The last 20 lines of the check are in the stage output. The full output, `build.log` in the review's temporary directory, is kept only when the stage exits non-zero; a red check under APPROVE ends in REQUEST_CHANGES with exit 0, and the directory is removed.
+
+The check runs in the review worktree. Files it leaves or changes are named on stderr, split in two. New files git does not ignore (test reports, coverage, bytecode) belong in `.gitignore`. Tracked files the check changed cannot be ignored; the check must stop writing to them. Either way, a stopped or failed review with a dirty worktree keeps it as unfinished work, and the next reset of that worker refuses with exit 21.
+
 ### QA returned `NEEDS_HUMAN` verdict
 
 QA parks a ticket with `needs-human` when it can't decide whether a failure is legitimate (test genuinely fails) or spurious (env issue, flaky test, missing service).
