@@ -142,7 +142,7 @@ class InstallationTests(unittest.TestCase):
     def source_copy(self, parent):
         """This source's templates and installer, placed where a skill checkout would be."""
         source = parent / "skill source"
-        shutil.copytree(ROOT / "templates", source / "templates")
+        shutil.copytree(ROOT / "templates", source / "templates", ignore=shutil.ignore_patterns("__pycache__"))
         (source / "scripts").mkdir()
         shutil.copy(INSTALLER, source / "scripts/bureau_install.py")
         return source
@@ -228,7 +228,7 @@ class InstallationTests(unittest.TestCase):
         for name in (".env", ".DS_Store"):
             (source / "templates/scripts" / name).unlink()
         # An ignored file the installer does not copy (a directory entry) leaves the source clean.
-        (source / "templates/scripts/__pycache__").mkdir()
+        (source / "templates/scripts/__pycache__").mkdir(exist_ok=True)
         (source / "templates/scripts/__pycache__/x.pyc").write_bytes(b"\0")
         self.run_install("assets", "--scope", "scripts", "--apply", program=program)
         self.assertFalse(self.manifest()["sources"]["scripts"]["dirty"])
