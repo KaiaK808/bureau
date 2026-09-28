@@ -6,6 +6,10 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+## [3.0.0-rc.2] - 2026-09-28
+
+Second release candidate for Bureau v3.0.0, published as a GitHub prerelease. It carries the findings of the first live acceptance (a pilot installation resynced to rc.1 drove one ticket from Triage to Done with the shepherd) and of a check of seven tickets an installation had filed against its own pipeline scripts: the review verdict in one order ([#18](https://github.com/KaiaK808/bureau/pull/18)), needs-human escalations that survive a failed label write ([#17](https://github.com/KaiaK808/bureau/pull/17)), Linear answers checked in transport ([#19](https://github.com/KaiaK808/bureau/pull/19)), the shepherd outside the stages ([#20](https://github.com/KaiaK808/bureau/pull/20)), `repo.post_implement_command` and a final implement push that cannot be lost ([#21](https://github.com/KaiaK808/bureau/pull/21)), installation names anonymised ([#22](https://github.com/KaiaK808/bureau/pull/22)) and a 20-minute CI job limit ([#23](https://github.com/KaiaK808/bureau/pull/23)). From rc.1 the upgrade is a scripts resync; no configuration change is required. See [release notes](docs/release-notes.md) for the upgrade, compatibility and known limitations.
+
 ### Review verdict rules in one order
 
 #### Fixed
@@ -195,6 +199,7 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.0.0-rc.1...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.0.0-rc.2...main
+[3.0.0-rc.2]: https://github.com/KaiaK808/bureau/compare/v3.0.0-rc.1...v3.0.0-rc.2
 [3.0.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v2.0.0...v3.0.0-rc.1
 [2.0.0]: https://github.com/KaiaK808/bureau/compare/6763c26c26aa96a41a92fbe95416fddbf4d48f69...v2.0.0
