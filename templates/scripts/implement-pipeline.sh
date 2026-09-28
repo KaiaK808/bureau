@@ -58,7 +58,7 @@ refresh_review_context() {
 # caller can decide. Only the end-of-run push uses it: after it the ticket is
 # handed on, and a hand-off of work that is not on origin must not happen.
 #
-# Carried over from slidefactory-core (EXP-1462). Every push here used to end
+# Carried over from installation A (EXP-1462). Every push here used to end
 # in `|| true`, so a failed push left no trace: whether the branch was out
 # could only be learned by diffing origin against the worktree. Now a failure
 # names branch, exit code and git's own output on stderr, distinct from
@@ -72,8 +72,8 @@ refresh_review_context() {
 # un-negated form is `$?` git's own code (`if ! …` has already turned it to 0).
 #
 # The target is HEAD:refs/heads/$BRANCH. Plain HEAD has no target when HEAD is
-# detached (slidefactory's EXP-1420 log shows two such pushes swallowed while
-# the run walked on to QA). slidefactory's HEAD:"$BRANCH" fixes that only while
+# detached (installation A's EXP-1420 log shows two such pushes swallowed while
+# the run walked on to QA). Installation A's HEAD:"$BRANCH" fixes that only while
 # the branch already exists on origin: for a new one git cannot tell that the
 # name is meant as a branch and refuses ("not a full refname").
 push_branch_loud() {

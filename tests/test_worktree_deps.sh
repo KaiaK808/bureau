@@ -2,7 +2,7 @@
 # After reset_worktree's `clean -fdx`, an npm project gets its node_modules back — safely,
 # freshly, and a failure stops the stage with 24 (environment-blocked) instead of building red.
 #
-# Carried over from msc-planner's scripts/worktree-deps.test.sh (EXP-1375). Runs the REAL
+# Carried over from installation B's scripts/worktree-deps.test.sh (EXP-1375). Runs the REAL
 # restore_worktree_deps, cut from templates/scripts/bureau-config.sh, against a real main
 # checkout with a linked worktree; npm and mv are shell functions where a case needs them to
 # fail. The function reports its path ("Dependencies: …"), and the cases check the path, not
@@ -59,7 +59,7 @@ echo "PASS clone on identical manifests, stamp in .git, idempotent, and a change
 
 # 5 · a tracked node_modules survives clean -fdx and is never trusted. It also carries the
 #     SIGPIPE trap: a `grep -q` closes the pipe at the first match, and `git ls-files` only dies
-#     of SIGPIPE when its output does not fit the pipe buffer (64 KB). 3000 files (~54 KB, msc's
+#     of SIGPIPE when its output does not fit the pipe buffer (64 KB). 3000 files (~54 KB, installation B's
 #     number) fit, so the trap never fired there; 6000 (~110 KB) do not.
 #     And the stamp must match first: without it the function restores anyway and overwrites
 #     the tracked directory, so the guard would never be what decides (the same reason as in 7).

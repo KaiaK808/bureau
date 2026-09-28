@@ -44,7 +44,7 @@ push_branch_loud 'detached'") >/dev/null 2>&1
 git -C "$D/origin.git" rev-parse --verify --quiet refs/heads/feat/x >/dev/null \
   || fail "push_branch_loud did not push a detached HEAD to its branch"
 git -C "$D/repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "more work"
-for old in 'HEAD' 'HEAD:feat/new'; do   # the template's old form, and slidefactory's
+for old in 'HEAD' 'HEAD:feat/new'; do   # the template's old form, and installation A's
   if (cd "$D/repo" && git push -u origin "$old" >/dev/null 2>&1); then
     fail "negative control: 'git push -u origin $old' now succeeds from a detached HEAD, so this proves nothing"
   fi
