@@ -728,6 +728,46 @@ NEG_EOF
   return 0
 }
 
+# After a reused approval (PR #26) the ticket reaches Merge like after any APPROVE, and
+# the gate reads the verdict from the review comment. The comment and the reuse text are
+# cut from the real review stage, so a reuse that stopped posting "**Verdict**: APPROVE"
+# would turn the gate into "blocked (verdict)" here.
+test_gate_after_reused_approval() {
+  local review="$REPO_ROOT/templates/scripts/code-review-pipeline.sh" body sb
+  # The two assignments, each from its first line to the line that closes its string.
+  local cut; cut=$(python3 - "$review" <<'CUT_EOF'
+import sys
+lines = open(sys.argv[1]).read().split("\n")
+def block(start, end):
+    i = [k for k, l in enumerate(lines) if l.startswith(start)]
+    if len(i) != 1: sys.exit("cannot find %r" % start)
+    j = next(k for k in range(i[0], len(lines)) if lines[k].endswith(end))
+    return "\n".join(lines[i[0]:j + 1])
+print(block('  MERGED_REVIEW="Reused the approval', '\\`\\`\\`"'))
+print(block('REVIEW_COMMENT="## Code Review v2', 'Automated review by Bureau pipeline*"'))
+CUT_EOF
+  ) || { echo "FAIL reuse: $cut" >&2; return 1; }
+  body=$(ISSUE=EXP-1 VERDICT=APPROVE BUILD_STATUS=Passed REVIEW_HEAD=HEAD_SHA PR_BASE_REF=main REVIEW_BASE=MAIN_SHA \
+    PR_NUMBER=42 REUSED_AT=2026-09-29T08:00:00Z /bin/bash -euc 'eval "$1"; printf "%s" "$REVIEW_COMMENT"' _ "$cut") \
+    || { echo "FAIL reuse: the cut assignments do not run" >&2; return 1; }
+  case "$body" in *"**Verdict**: APPROVE"*"Reused the approval recorded 2026-09-29T08:00:00Z"*) ;;
+    *) echo "FAIL reuse: could not cut the review comment and the reuse text from code-review-pipeline.sh: $body" >&2; return 1 ;; esac
+  for ci in pending green; do
+    sb=$(make_sandbox "gate_reuse_$ci"); populate_happy_fixtures "$sb"
+    jq --arg b "$body" '.comments = [{"createdAt":"2026-09-29T08:01:00Z","body":$b}]' "$sb/stub_data/pr_view.json" > "$sb/stub_data/pr_view.json.tmp" \
+      && mv "$sb/stub_data/pr_view.json.tmp" "$sb/stub_data/pr_view.json"
+    [ "$ci" = green ] || echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+    run_gate "$sb"
+    case "$ci" in
+      pending) gate_case "$sb" reuse-pending 2 not-yet 'still pending' || return 1
+               printf '%s\n' "$GREP" | grep -q '^verdict:' && { echo "FAIL reuse: the gate did not read the reused APPROVE" >&2; return 1; } ;;
+      green)   gate_case "$sb" reuse-green 0 - || return 1
+               [ -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL reuse: no merge after a reused approval" >&2; return 1; } ;;
+    esac
+  done
+  return 0
+}
+
 # The queue loop's real run_script: a merge that is not yet eligible stays quiet
 # ("queue empty"), a blocked one alerts (throttled per ticket and class).
 test_gate_codes_in_queue_loop() {
@@ -762,7 +802,7 @@ test_gate_codes_in_queue_loop() {
 
 # ── Run all ───────────────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_outcome test_gate_codes_in_queue_loop; do
+for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_outcome test_gate_after_reused_approval test_gate_codes_in_queue_loop; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else
