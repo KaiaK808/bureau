@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d16cb7cb093e4e3cd36e1f4487f0540c055990152bce86acc720c712cfad5df2">
+<meta name="bureau-source-sha256" content="1982a6cf92021e954bb15b43d96c04acd19fba1b1b943ba929858cee7e8d6974">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -115,7 +115,10 @@ rejected)</td>
 <td><code>20</code></td>
 <td>stopped-before-merge</td>
 <td>Review boundary reached</td>
-<td>Expected with <code>--no-merge</code></td>
+<td>Expected with <code>--no-merge</code>, and from the shepherd at
+Merge under <code>agents.merge_mode: "manual"</code>. The shepherd and
+the queue loop pass a <code>20</code> that <code>--no-merge</code> asked
+for without an alert; any other <code>20</code> alerts</td>
 </tr>
 <tr>
 <td><code>21</code></td>
@@ -144,7 +147,10 @@ an npm project's <code>node_modules</code> could not be restored after
 the worktree reset (<code>npm ci --ignore-scripts</code> failed twice,
 or no npm); the last lines of the npm log are in the stage output, the
 full log sits next to the stamp in <code>.git/bureau-deps/</code>. The
-shepherd halts and alerts</td>
+shepherd halts and alerts. Also: <code>agents.merge_mode</code> is
+<code>manual</code> but <code>linear.teams[0].states.merge</code> is not
+set — the review stage refuses at its start, before any paid review;
+configure the Merge state or set the mode to <code>auto</code></td>
 </tr>
 <tr>
 <td><code>25</code></td>
@@ -201,12 +207,18 @@ unhandled bash error.</p>
 except <code>0</code> and <code>2</code> (carry on) and <code>10</code>
 and <code>16</code> (sleep 60 s, retry); a code added later cannot slip
 through unannounced. <code>27</code> additionally tries
-<code>needs-human</code> and a halt comment once each. The shepherd's
-own reads follow the same rule: when reading the ticket's state, labels
-or branch gives up with <code>27</code>, it halts the same way and names
-the read; any other failed read halts with <code>1</code> and
-<code>needs-human</code>. A failed read never counts as "no state", "no
-label" or "no branch". A read cut short by Ctrl-C or SIGTERM writes
+<code>needs-human</code> and a halt comment once each. The one exception
+is a <code>20</code> that <code>--no-merge</code> asked for: the
+shepherd ends with <code>20</code> without an alert, and
+<code>queue-loop.sh</code> logs it without one. Under
+<code>agents.merge_mode: "manual"</code>, <code>merge-pipeline.sh</code>
+and <code>rebase-pipeline.sh</code> refuse with <code>2</code>, and the
+shepherd's own stop at Merge is a <code>20</code> without an alert. The
+shepherd's own reads follow the same rule: when reading the ticket's
+state, labels or branch gives up with <code>27</code>, it halts the same
+way and names the read; any other failed read halts with <code>1</code>
+and <code>needs-human</code>. A failed read never counts as "no state",
+"no label" or "no branch". A read cut short by Ctrl-C or SIGTERM writes
 nothing to Linear; under the runtime it ends as a cancelled run
 (<code>130</code>), and a shepherd hit by SIGTERM directly may end with
 <code>143</code> instead. A <code>--dry-run</code> whose state read

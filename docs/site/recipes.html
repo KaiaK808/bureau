@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4ded75609926ef1ae6f4c60dc047e43adcbd5faf42058aa3ca021d66c79f5e0d">
+<meta name="bureau-source-sha256" content="fb41a00be811ed45e2b7760fa32e955e8b32ed07504371bf645b9f8fd56d9415">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -395,19 +395,74 @@ A rebase merge puts the branch commits on <code>main</code> as they are;
 there the squash-range check in the implement and QA stages is what
 stops a commit message carrying a suppressor.</p>
 <hr />
+<h2 id="merge-by-hand">Merge by hand</h2>
+<p>Repos where a person merges every PR set the merge mode instead of
+editing the pipeline scripts. <strong><code>manual</code> needs a Merge
+state</strong> (<code>linear.teams[0].states.merge</code>): that is
+where an approved ticket waits for the person who merges.</p>
+<div class="sourceCode" id="cb28"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_mode&quot;</span><span class="fu">:</span> <span class="st">&quot;manual&quot;</span></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>What changes:</p>
+<ul>
+<li>The merge and rebase agents are off: the queue loop, the bounded
+tick (<code>bureau-tick.sh</code>, also with <code>--allow-merge</code>
+or <code>--stage merge</code>) and the tmux windows never dispatch them,
+so a ticket parked in Merge never costs a tick.
+<code>queue-loop.sh merge|rebase</code> started by hand stops before the
+picker.</li>
+<li><code>merge-pipeline.sh</code> and <code>rebase-pipeline.sh</code>
+print one line and exit <code>2</code> (queue empty) before reading
+<code>.env</code>, calling Linear or gh, or touching git — for the
+queue, a named ticket and the review stage's inline call alike. Nothing
+is merged, rebased or force-pushed.</li>
+<li>An APPROVE in code review posts that the PR awaits a manual merge
+and moves the ticket to Merge; the stage ends with <code>0</code>. It
+does so under <code>--no-merge</code> too: moving is not merging.</li>
+<li>Without a Merge state, the review stage refuses at its start with
+<code>24</code> (environment-blocked) and one line naming the missing
+key — before <code>.env</code>, Linear, gh, git or a paid review.
+<code>bureau-doctor.py</code> reports the same as an error.</li>
+<li>The shepherd ends its run at Merge with <code>20</code> and a
+comment, without an alert.</li>
+<li>Moving the ticket to Done after the manual merge is not Bureau's job
+here: the merge stage's recovery of PRs merged outside the pipeline does
+not run, because the stage refuses first. Linear's GitHub integration or
+the person who merged moves it. There is no merge <code>--dry-run</code>
+audit under <code>manual</code> either; the stage refuses before
+it.</li>
+<li>The mode holds regardless of <code>agents.merge</code>,
+<code>agents.rebase</code> and the shepherd's forced stages, and the
+environment cannot override it. Any value but exactly <code>auto</code>
+or <code>manual</code> — a typo, <code>"auto\n"</code>, or
+<code>false</code> meant as "don't merge" — falls closed to
+<code>manual</code> with a warning.
+<code>bureau-status.sh --config</code> and <code>bureau-doctor.py</code>
+show the mode in effect.</li>
+</ul>
+<p>Upgrading an installation that disabled merge and rebase by hand (an
+early <code>exit 2</code> at the top of both scripts): check that it has
+a Merge state, then set <code>"merge_mode": "manual"</code> in
+<code>.bureau.json</code> <strong>before</strong> resyncing the scripts;
+the resync replaces the local block, and without the key automatic
+merging would be on again.</p>
+<hr />
 <h2 id="tighter-supervisor">Tighter supervisor</h2>
 <p>For long-running headless deployments, raise the give-up threshold so
 a transient flaky tick doesn't kill the pipeline:</p>
-<div class="sourceCode" id="cb28"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;supervisor&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_crashes&quot;</span><span class="fu">:</span> <span class="dv">10</span><span class="fu">,</span></span>
-<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;stability_window&quot;</span><span class="fu">:</span> <span class="dv">7200</span></span>
-<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
-<p>Or override at launch:</p>
 <div class="sourceCode" id="cb29"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SUPERVISOR_MAX_CRASHES</span><span class="op">=</span>10 <span class="ex">./scripts/start-bureau-v2.sh</span></span></code></pre></div>
+class="sourceCode json"><code class="sourceCode json"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;supervisor&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_crashes&quot;</span><span class="fu">:</span> <span class="dv">10</span><span class="fu">,</span></span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;stability_window&quot;</span><span class="fu">:</span> <span class="dv">7200</span></span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Or override at launch:</p>
+<div class="sourceCode" id="cb30"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SUPERVISOR_MAX_CRASHES</span><span class="op">=</span>10 <span class="ex">./scripts/start-bureau-v2.sh</span></span></code></pre></div>
 <hr />
 <h2 id="memory-loop-logs--lessonsmd">Memory loop (logs →
 <code>LESSONS.md</code>)</h2>
@@ -423,8 +478,8 @@ two JSONL lines to <code>logs/events.jsonl</code> — one
 <code>issue</code>, <code>branch</code>, <code>exit_code</code>,
 <code>class</code>, <code>duration_s</code>. Queue-empty ticks emit
 nothing.</p>
-<div class="sourceCode" id="cb30"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;ts&quot;</span><span class="fu">:</span><span class="st">&quot;2026-05-11T14:23:01Z&quot;</span><span class="fu">,</span><span class="dt">&quot;event&quot;</span><span class="fu">:</span><span class="st">&quot;stage_end&quot;</span><span class="fu">,</span><span class="dt">&quot;mode&quot;</span><span class="fu">:</span><span class="st">&quot;all&quot;</span><span class="fu">,</span><span class="dt">&quot;stage&quot;</span><span class="fu">:</span><span class="st">&quot;code-review-pipeline.sh&quot;</span><span class="fu">,</span><span class="dt">&quot;issue&quot;</span><span class="fu">:</span><span class="st">&quot;EXP-512&quot;</span><span class="fu">,</span><span class="dt">&quot;branch&quot;</span><span class="fu">:</span><span class="st">&quot;037-foo&quot;</span><span class="fu">,</span><span class="dt">&quot;exit_code&quot;</span><span class="fu">:</span><span class="dv">14</span><span class="fu">,</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span><span class="st">&quot;build-failed&quot;</span><span class="fu">,</span><span class="dt">&quot;duration_s&quot;</span><span class="fu">:</span><span class="dv">287</span><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;ts&quot;</span><span class="fu">:</span><span class="st">&quot;2026-05-11T14:23:01Z&quot;</span><span class="fu">,</span><span class="dt">&quot;event&quot;</span><span class="fu">:</span><span class="st">&quot;stage_end&quot;</span><span class="fu">,</span><span class="dt">&quot;mode&quot;</span><span class="fu">:</span><span class="st">&quot;all&quot;</span><span class="fu">,</span><span class="dt">&quot;stage&quot;</span><span class="fu">:</span><span class="st">&quot;code-review-pipeline.sh&quot;</span><span class="fu">,</span><span class="dt">&quot;issue&quot;</span><span class="fu">:</span><span class="st">&quot;EXP-512&quot;</span><span class="fu">,</span><span class="dt">&quot;branch&quot;</span><span class="fu">:</span><span class="st">&quot;037-foo&quot;</span><span class="fu">,</span><span class="dt">&quot;exit_code&quot;</span><span class="fu">:</span><span class="dv">14</span><span class="fu">,</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span><span class="st">&quot;build-failed&quot;</span><span class="fu">,</span><span class="dt">&quot;duration_s&quot;</span><span class="fu">:</span><span class="dv">287</span><span class="fu">}</span></span></code></pre></div>
 <p><code>logs/</code> is gitignored. <code>events.jsonl</code> is
 append-only — truncate it manually if it grows large; there's no
 auto-rotation in v1.</p></li>

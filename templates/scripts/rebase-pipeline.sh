@@ -3,6 +3,8 @@
 #
 # OFF BY DEFAULT — this script force-pushes, which mutates shared remote state.
 # Enable with `agents.rebase: true` in .bureau.json.
+# `agents.merge_mode: "manual"` switches it off regardless (exit 2 before
+# anything else).
 #
 # Picks issues from BUREAU_STATE_MERGE (same waiting room as merge-pipeline.sh)
 # and rebases the underlying PR onto origin/main only if EVERY gate passes:
@@ -30,6 +32,14 @@ unset CLAUDECODE 2>/dev/null || true
 REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
+
+# agents.merge_mode = manual: a human merges and rebases, so this script never
+# force-pushes. Refuse before .env, Linear, gh or git; exit 2 (queue-empty)
+# passes quietly through the queue loop and the shepherd.
+if bureau_merge_is_manual; then
+  echo "rebase-pipeline: agents.merge_mode is manual — a human rebases and merges this repo's PRs. Nothing to do."
+  exit 2
+fi
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 # shellcheck disable=SC1090

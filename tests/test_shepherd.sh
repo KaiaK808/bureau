@@ -164,6 +164,14 @@ STUB_EOF
   # come from the real config.
   sed -n -e '/^BUREAU_EXIT_LINEAR_UNUSABLE=/p' -e '/^shepherd_rc_action() {/,/^}/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
+  # So do the stop boundary (--no-merge) and the merge policy (agents.merge_mode),
+  # read from the sandbox .bureau.json by the real lines.
+  {
+    echo 'BUREAU_CONFIG="${BUREAU_CONFIG:-$PWD/.bureau.json}"'
+    echo 'bureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }'
+    sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REPO_ROOT/templates/scripts/bureau-config.sh"
+    sed -n '/^# ── Merge policy (agents.merge_mode)/,/^# ── End of merge policy/p' "$REPO_ROOT/templates/scripts/bureau-config.sh"
+  } >> "$sb/scripts/bureau-config.sh"
 
   # Stub pipelines: log invocation, advance to the next happy-path state.
   _make_stub_pipeline() {
@@ -844,12 +852,107 @@ PY_EOF
   return 0
 }
 
+# ── Scenario 14: agents.merge_mode manual ends the run at Merge, quietly ──
+_set_mode() {  # $1 = sandbox, $2 = JSON value
+  jq --argjson v "$2" '.agents.merge_mode = $v' "$1/.bureau.json" > "$1/.bureau.json.tmp" && mv "$1/.bureau.json.tmp" "$1/.bureau.json"
+}
+_record_alerts() {
+  cat >> "$1/scripts/bureau-config.sh" <<'REC_EOF'
+alert_telegram() { printf '%s\n' "$4" >> "$LABEL_LOG.alerts"; }
+REC_EOF
+}
+
+test_merge_mode_manual() {
+  local sb; sb=$(make_sandbox manual)
+  _set_mode "$sb" '"manual"'; _record_alerts "$sb"
+  echo "s1" > "$sb/state.txt"
+  local rc=0
+  run_shepherd "$sb" EXP-7 || rc=$?
+  assert_eq "$rc" "20" "manual: the run ends before merge" || return 1
+  if grep -q merge-pipeline.sh "$sb/invocations.log"; then
+    echo "FAIL: manual: merge-pipeline.sh was invoked" >&2; return 1
+  fi
+  assert_eq "$(tr '\n' ' ' < "$sb/invocations.log" | sed 's/ $//')" \
+    "spec-pipeline.sh spec-review-pipeline.sh implement-pipeline.sh code-review-pipeline.sh" "manual: stages up to review" || return 1
+  if [ -s "$sb/labels.log.alerts" ] || grep -q needs-human "$sb/labels.log"; then
+    echo "FAIL: manual: the expected end alerted or labelled needs-human" >&2; return 1
+  fi
+
+  # The dry run shows the same boundary.
+  local sb2; sb2=$(make_sandbox manual_dry)
+  _set_mode "$sb2" '"manual"'
+  echo "s6" > "$sb2/state.txt"
+  run_shepherd "$sb2" --dry-run EXP-7
+  grep -q "Merge → (halt — agents.merge_mode manual)" "$sb2/shepherd.out" \
+    || { echo "FAIL: manual: dry run does not show the halt at Merge"; cat "$sb2/shepherd.out"; return 1; }
+  return 0
+}
+
+# ── Scenario 15: a review that stopped before merge as asked is quiet ──
+# The stub review stage ends the way the real one does under --no-merge after an
+# APPROVE: exit 20, ticket unmoved. Only that asked-for 20 is quiet.
+_run_review_stop() {  # $1 = sandbox, $2 = the stage's exit code, $3… = shepherd flags
+  local sb="$1" code="$2"; shift 2
+  cat > "$sb/scripts/code-review-pipeline.sh" <<STAGE_EOF
+#!/bin/bash
+echo "code-review-pipeline.sh" >> "\$INVOCATIONS_LOG"
+exit $code
+STAGE_EOF
+  _record_alerts "$sb"
+  echo "s6" > "$sb/state.txt"
+  set +e
+  run_shepherd "$sb" "$@" EXP-8
+  REVIEW_STOP_RC=$?
+  set -e
+}
+
+test_review_stop_quiet() {
+  local sb2; sb2=$(make_sandbox review_stop_nomerge)
+  _run_review_stop "$sb2" 20 --no-merge
+  assert_eq "$REVIEW_STOP_RC" "20" "--no-merge: review stop ends the run with 20" || return 1
+  assert_eq "$(grep -c . "$sb2/invocations.log")" "1" "--no-merge: the review runs once" || return 1
+  [ ! -s "$sb2/labels.log.alerts" ] || { echo "FAIL: --no-merge: a review stop alerted"; return 1; }
+
+  # --no-merge silences only that 20: a BLOCK (25) under --no-merge still alerts.
+  local sb5; sb5=$(make_sandbox review_block_nomerge)
+  _run_review_stop "$sb5" 25 --no-merge
+  assert_eq "$REVIEW_STOP_RC" "25" "--no-merge: a BLOCK halts with 25" || return 1
+  grep -q "shepherd halt" "$sb5/labels.log.alerts" 2>/dev/null \
+    || { echo "FAIL: --no-merge: a BLOCK halted without an alert"; return 1; }
+
+  # manual does not make a 20 quiet: no template stage exits 20 under manual, so one
+  # that does is unexpected and alerts.
+  local sb; sb=$(make_sandbox review_stop_manual)
+  _set_mode "$sb" '"manual"'
+  _run_review_stop "$sb" 20
+  assert_eq "$REVIEW_STOP_RC" "20" "manual: an unasked 20 halts with its code" || return 1
+  grep -q "shepherd halt" "$sb/labels.log.alerts" 2>/dev/null \
+    || { echo "FAIL: manual: an unasked 20 halted without an alert"; return 1; }
+
+  # Negative control: a 20 nobody asked for (auto, no --no-merge) still halts with an alert.
+  local sb3; sb3=$(make_sandbox review_stop_unasked)
+  _set_mode "$sb3" '"auto"'
+  _run_review_stop "$sb3" 20
+  assert_eq "$REVIEW_STOP_RC" "20" "unasked 20 halts with its code" || return 1
+  grep -q "shepherd halt" "$sb3/labels.log.alerts" 2>/dev/null \
+    || { echo "FAIL: negative control: an unasked 20 no longer alerts, so this proves nothing"; return 1; }
+
+  # manual silences only that 20: a BLOCK (25) under manual still halts with an alert.
+  local sb4; sb4=$(make_sandbox review_block_manual)
+  _set_mode "$sb4" '"manual"'
+  _run_review_stop "$sb4" 25
+  assert_eq "$REVIEW_STOP_RC" "25" "manual: a BLOCK still halts with 25" || return 1
+  grep -q "shepherd halt" "$sb4/labels.log.alerts" 2>/dev/null \
+    || { echo "FAIL: manual: a BLOCK halted without an alert"; return 1; }
+  return 0
+}
+
 # ── Run all scenarios ──────────────────────────────────────────────
 FAILS=0
 for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linear_unusable_halts test_block_halts \
                 test_state_read_unusable_halts test_label_read_unusable_halts test_human_label_when_linear_answers \
                 test_dry_run_read_unusable test_read_failure_other_code test_branch_read_unusable_halts \
-                test_interrupted_read_is_cancelled; do
+                test_interrupted_read_is_cancelled test_merge_mode_manual test_review_stop_quiet; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

@@ -106,6 +106,12 @@ show_effective_config() {
   echo -e "  ${BOLD}AGENTS${RESET}  (on/off toggles)"
   local a
   for a in spec spec_review ux copy implement qa code_review merge rebase; do
+    case "$a" in merge|rebase)
+      # agent_enabled is already false for these under manual; say why.
+      if bureau_merge_is_manual; then
+        _row agents "$a" "json" "refused: merge_mode manual"; continue
+      fi ;;
+    esac
     if ! agent_enabled "$a"; then
       _row agents "$a" "json" "off"
     else
@@ -120,6 +126,16 @@ show_effective_config() {
   _row tuning agents.max_concurrent_issues        "json" "$BUREAU_MAX_CONCURRENT_ISSUES"
   _row tuning agents.code_review_sampling_threshold "json" "$BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD"
   _row tuning agents.merge_strategy               "json" "$BUREAU_MERGE_STRATEGY"
+  # The mode in effect; the source is json only when the key is set, and a
+  # value that fell closed says so.
+  local mode_raw mode_source="def" mode_value="$BUREAU_MERGE_MODE"
+  mode_raw=$(bureau_get '.agents | if type == "object" and has("merge_mode") then .merge_mode | tojson else empty end')
+  if [ -n "$mode_raw" ] && [ "$mode_raw" != null ]; then
+    mode_source="json"
+    case "$mode_raw" in '"auto"'|'"manual"') ;; *) mode_value="$BUREAU_MERGE_MODE (fell closed from $mode_raw)" ;; esac
+  fi
+  if merge_mode_lacks_merge_state; then mode_value="$mode_value — no Merge state: code review refuses (24)"; fi
+  _row tuning agents.merge_mode                   "$mode_source" "$mode_value"
   _row tuning agents.workbench_panes              "json" "$BUREAU_WORKBENCH_PANES"
   echo ""
 

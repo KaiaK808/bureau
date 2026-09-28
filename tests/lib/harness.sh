@@ -80,6 +80,10 @@ EOF
     -e '/^apply_build_failure() {/,/^}/p' -e '/^resolve_verdict_exit() {/,/^}/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/real-helpers.sh"
   sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/stop-boundary.sh"
+  # The merge policy (agents.merge_mode and the predicates built on it) runs for real
+  # against the sandbox .bureau.json (none = {} = auto); tests set the mode there with jq.
+  sed -n '/^# ── Merge policy (agents.merge_mode)/,/^# ── End of merge policy/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/merge-policy.sh"
+  grep -q '^bureau_merge_is_manual() {' "$SCRIPTS_DIR/merge-policy.sh" || { echo "harness: merge policy block not found in bureau-config.sh" >&2; return 1; }
 
   # Minimal .env in the sandbox cwd so the pipeline's `source .env` succeeds.
   cat > "$SANDBOX/.env" <<'EOF'

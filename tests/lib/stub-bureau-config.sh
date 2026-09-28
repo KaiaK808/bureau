@@ -237,3 +237,8 @@ bureau_get() {
   local config="${BUREAU_CONFIG:-.bureau.json}"
   if [ -f "$config" ]; then jq -r "$1" "$config"; else jq -rn "{} | $1"; fi
 }
+
+# The real merge policy, cut from the real config by the harness; it reads
+# .agents.merge_mode through bureau_get above, so it comes last.
+# shellcheck source=/dev/null
+source "$_BUREAU_SCRIPTS_DIR/merge-policy.sh"

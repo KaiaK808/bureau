@@ -79,6 +79,16 @@ run_script() {
   TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
   echo "[$TIMESTAMP] $label..." | tee -a "$LOG_FILE"
 
+  # agents.merge_mode = manual: merge and rebase are off. The "all" mode skips
+  # them through agent_enabled; an explicit `queue-loop.sh merge|rebase` stops
+  # here, before the picker, so a ticket parked in Merge never costs a tick.
+  case "$script" in merge-pipeline.sh|rebase-pipeline.sh)
+    if bureau_merge_is_manual; then
+      echo "[$TIMESTAMP] $label — off: agents.merge_mode is manual." | tee -a "$LOG_FILE"
+      return 2
+    fi ;;
+  esac
+
   # EXP-415 Part A: preselect and reset worktree to a known state.
   local picked=""
   local target_branch=""
@@ -124,11 +134,17 @@ run_script() {
     0)  echo "[$TIMESTAMP] $label done." | tee -a "$LOG_FILE" ;;
     2)  echo "[$TIMESTAMP] $label — queue empty." | tee -a "$LOG_FILE" ;;
     *)
-        echo "[$TIMESTAMP] $label — error (exit $exit_code / $klass)." | tee -a "$LOG_FILE"
-        local tail_log
-        tail_log=$(tail -n 20 "$LOG_FILE" 2>/dev/null || true)
-        alert_telegram "${picked:-none}" "$script" "$exit_code" \
-          "$label failed ($klass)" "$tail_log" || true
+        if stop_before_merge_was_asked "$exit_code"; then
+          # --no-merge: an approved ticket stopped at the reviewed boundary, as
+          # asked. Not an error; a human merges.
+          echo "[$TIMESTAMP] $label — approved, stopped before merge as asked." | tee -a "$LOG_FILE"
+        else
+          echo "[$TIMESTAMP] $label — error (exit $exit_code / $klass)." | tee -a "$LOG_FILE"
+          local tail_log
+          tail_log=$(tail -n 20 "$LOG_FILE" 2>/dev/null || true)
+          alert_telegram "${picked:-none}" "$script" "$exit_code" \
+            "$label failed ($klass)" "$tail_log" || true
+        fi
         ;;
   esac
   echo "---" | tee -a "$LOG_FILE"

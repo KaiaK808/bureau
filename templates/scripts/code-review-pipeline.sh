@@ -8,6 +8,15 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
+# agents.merge_mode = manual needs a Merge state: an approved ticket is parked
+# there for the human who merges. Without one there is nowhere to put it, so
+# refuse now — before .env, Linear, gh, git or a paid review. 24: the repo is
+# not set up for the mode it asks for (bureau-doctor.py reports it too).
+if merge_mode_lacks_merge_state; then
+  echo "code-review-pipeline: agents.merge_mode is manual but linear.teams[0].states.merge is not set — configure the Merge state or set merge_mode to auto." >&2
+  exit 24
+fi
+
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 if [ -f .env ]; then bureau_load_env --export .env
 elif [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
@@ -484,7 +493,16 @@ echo "  Posted review to PR #$PR_NUMBER"
 case "$VERDICT" in
   APPROVE)
     echo "  Code review PASSED"
-    if bureau_stop_requested; then
+    if bureau_merge_is_manual; then
+      # agents.merge_mode = manual: a human merges. Park the ticket in Merge as
+      # the visible "awaiting merge" position (the stage refused at its start
+      # when there is no Merge state); merge-pipeline.sh refuses there. Moving
+      # is not merging, so this holds under a requested stop too.
+      echo "  APPROVED — routing to Merge for a manual merge (agents.merge_mode manual)."
+      post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual)."
+      move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
+      NEXT_STATE="Merge (manual)"
+    elif bureau_stop_requested; then
       # Save before the owning worker releases its lease, closing the gap where
       # another tick could start the same paid review. Record the reviewed inputs.
       if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
