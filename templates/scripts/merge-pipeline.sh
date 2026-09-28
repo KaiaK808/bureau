@@ -429,8 +429,7 @@ if _merge_pr; then
 else
   echo "  Merge call failed."
   post_comment "$ISSUE" "❌ Merge attempted but \`gh pr merge\` (or its title/body read) failed despite gates passing. PR #$PR_NUMBER. Needs human."
-  add_issue_label "$ISSUE" "needs-human" \
-    || echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
+  mark_needs_human "$ISSUE" merge 18 || true
   exit 18
 fi
 

@@ -251,12 +251,10 @@ fi
 # Build, so label needs-human and exit; the picker excludes needs-human, so the
 # issue stays out of the queue until a human rebases.
 if ! merge_origin_main_or_abort "$ISSUE" "Implement"; then
-  # If labelling fails (Linear API hiccup), the issue isn't parked and the
-  # picker will re-select it next tick — the merge will re-conflict and the
-  # label will be retried then. Surface the warning so it's visible in logs;
-  # exit 17 either way so the alert classifies as rebase-needed, not error-1.
-  add_issue_label "$ISSUE" "needs-human" \
-    || echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
+  # If labelling fails, mark_needs_human holds the ticket locally so the
+  # picker skips it and retries the label; Linear unusable ends with 27.
+  # Otherwise exit 17 either way so the alert classifies as rebase-needed.
+  mark_needs_human "$ISSUE" implement 17 || true
   exit 17
 fi
 
@@ -682,6 +680,7 @@ if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = cod
 fi
 
 PR_URL=""
+NEEDS_HUMAN_UNMARKED=0
 case "$STATUS" in
   COMPLETE)
     # When QA is configured (opt-in), the implement pipeline routes through QA
@@ -719,12 +718,12 @@ case "$STATUS" in
       comment_on_branch_pr "$BRANCH" "$SQUASH_REPORT"
     fi
     PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
-    if add_issue_label "$ISSUE" "needs-human" || halt_if_linear_unusable $?; then
+    if mark_needs_human "$ISSUE" implement; then
       log_escalation "$ISSUE" "implement" "$i" \
         "$STATUS: $TASKS_DONE_TOTAL tasks done across $i iter(s)" \
         "${PR_NUMBER:-0}" "$BRANCH"
     else
-      echo "  WARN: failed to add 'needs-human' label to $ISSUE; will retry on next tick" >&2
+      NEEDS_HUMAN_UNMARKED=1
     fi
     post_comment "$ISSUE" "$(build_summary_comment "$STATUS" "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")"
     NEXT_STATE_LABEL="Build (needs-human)"
@@ -738,3 +737,8 @@ echo "  Branch: $BRANCH"
 echo "  PR: ${PR_URL:-existing}"
 echo "  Status: $NEXT_STATE_LABEL ($STATUS)"
 echo "═══════════════════════════════════════"
+
+# A needs-human escalation whose label could not be written must not read as
+# success to the driver (EXP-1516): the local hold keeps the queue away, the
+# non-zero exit stops a shepherd.
+if [ "$NEEDS_HUMAN_UNMARKED" = 1 ]; then exit 25; fi

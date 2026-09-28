@@ -92,7 +92,21 @@ run_script() {
   # EXP-415 Part A: preselect and reset worktree to a known state.
   local picked=""
   local target_branch=""
-  picked=$(preselect_issue "$script" 2>/dev/null || true)
+  # A pick that fails because Linear stayed unusable is reported, once an hour
+  # per stage (alert_telegram throttles), instead of reading as "queue empty":
+  # otherwise a Linear outage looks like an idle queue. Any other pick failure
+  # keeps its old reading (queue empty, logged). The picker's own notes (blocked
+  # candidates, held tickets, retries) go to the queue log, one line each.
+  local pick_rc=0
+  picked=$(preselect_issue "$script" 2>>"$LOG_FILE") || pick_rc=$?
+  if [ "$pick_rc" = "${BUREAU_EXIT_LINEAR_UNUSABLE:-27}" ]; then
+    echo "[$TIMESTAMP] $label — pick failed: Linear stayed unusable (exit $pick_rc)." | tee -a "$LOG_FILE"
+    alert_telegram none "$script" "$pick_rc" "$label: pick failed (linear-unusable)" || true
+    return "$pick_rc"
+  elif [ "$pick_rc" != 0 ]; then
+    echo "[$TIMESTAMP] $label — pick failed (exit $pick_rc); treated as an empty queue." | tee -a "$LOG_FILE"
+    picked=""
+  fi
   if [ -n "$picked" ]; then
     echo "[$TIMESTAMP] $label — candidate: $picked" | tee -a "$LOG_FILE"
     target_branch=$(get_issue_branch "$picked" 2>/dev/null || true)
