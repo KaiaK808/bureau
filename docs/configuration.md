@@ -40,6 +40,7 @@ Version 1 remains compatible; version 2 makes the legacy `agents.runner: "claude
 | `linear.labels.needs_copy.name` | string | optional | Required if `agents.copy: true`; routes from Spec Review (or UX) → Copy |
 | `linear.projects` | array | optional | List of project UUIDs to scope `pick_issue`. Empty array = unscoped (entire team) |
 | `linear.retry.retries`, `linear.retry.wait_1` / `wait_2` / `wait_3` | integer | optional | Retry ladder for an unusable Linear answer (no response, not JSON, GraphQL `errors`, no `data`). Defaults 3 retries after 10, 30, 60 s. Env keys of the same name win; see [Linear / external services](#linear--external-services) |
+| `linear.request.max_time`, `linear.request.connect_timeout` | integer | optional | Time limit of one Linear request in seconds: the whole request 1 to 300 (default 30), the connection 1 to 60 (default 10). A request cut off at the limit is an unusable answer and goes through the retry ladder; with the defaults a Linear that stays unusable ends the stage after at most 220 s. Env keys `BUREAU_LINEAR_MAX_TIME` / `BUREAU_LINEAR_CONNECT_TIMEOUT` win |
 
 The runtime uses the first configured team. State IDs are authoritative; display names may be customized.
 
@@ -149,6 +150,7 @@ Cost logging is opt-in. Usage throttling uses an operator-provided signal for th
 | `LINEAR_API_KEY` | Always (agents) | Set in `.env`. The interactive `/bureau-init` works without it via MCP; the headless agents need direct GraphQL access |
 | `BUREAU_LINEAR_RETRIES` | Optional | Retries after an unusable Linear answer, 0 to 10 (default 3). Beats `.linear.retry.retries` in `.bureau.json`. After the last retry the stage exits 27 (`linear-unusable`) |
 | `BUREAU_LINEAR_RETRY_WAIT_1` / `_2` / `_3` | Optional | Seconds before the first, second and every further retry, 0 to 600 (defaults 10, 30, 60). Beat `.linear.retry.wait_1` / `wait_2` / `wait_3`. A value that is not plain digits is dropped with a warning naming the key, never the value |
+| `BUREAU_LINEAR_MAX_TIME` / `BUREAU_LINEAR_CONNECT_TIMEOUT` | Optional | Seconds one Linear request (1 to 300, default 30) and its connection (1 to 60, default 10) may take. Beat `.linear.request.max_time` / `connect_timeout`. 0 would mean "no limit" to curl and is refused with a warning, like a value that is not plain digits |
 | `TELEGRAM_BOT_TOKEN` | Optional | Telegram bot for failure alerts. No-op when unset |
 | `TELEGRAM_ALERT_CHAT_ID` | Optional | Chat/channel ID for alerts. Must be set alongside the token |
 

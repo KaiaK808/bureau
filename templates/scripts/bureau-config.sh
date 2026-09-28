@@ -219,12 +219,32 @@ BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 # result (it moved a ticket from Build Review back to Build and reported a
 # missing branch marker).
 #
-# A fetch now counts as successful only when curl exited 0, the text is ONE JSON
-# object, that object carries an object `data`, and it has no non-empty
-# `errors`. Any other answer is unusable, gets exactly one fault class from the
-# fixed list (no-response, not-json, graphql-errors, no-data) and is retried
-# after a wait. If it stays unusable the fetch prints NOTHING and returns
+# A fetch now counts as successful only when curl exited 0 within its time
+# limit, the server answered with an HTTP 2xx status, the body as received (NUL
+# bytes included) is ONE JSON object, that object carries a non-empty object
+# `data` in which no requested root field is null, it has no non-empty `errors`,
+# and — where the caller names one — the answer has the shape the caller reads.
+# Any other answer is unusable, gets exactly one fault class from the fixed list
+# (no-response, not-json, graphql-errors, no-data) and is retried after a wait.
+# If it stays unusable the fetch prints NOTHING and returns
 # $BUREAU_EXIT_LINEAR_UNUSABLE; no answer text and no key travels in a message.
+#
+# EXP-1482 (carried over from slidefactory-core's follow-up): curl used to run
+# with neither a status check nor a time limit. An error page whose body was
+# `{"data":{}}` counted as a success, every reader then answered "nothing"
+# (no state, no labels) with exit 0 and the shepherd slept forever or walked
+# past needs-human; a hanging request never reached the retry at all. And the
+# shell drops NUL bytes while it captures, so a body that jq would reject
+# reached the check already cleaned. Now every NUL byte is turned into a
+# control byte that no JSON text may contain before the shell sees the body,
+# and the status and the time limit are read from curl itself.
+#
+# A root field that is null without `errors` is a broken answer here because
+# every root field this template asks for (`issues`, `issueLabels`, `viewer`
+# and the mutation payloads) is non-null in Linear's schema. A future query of
+# a nullable root field (e.g. `issueVcsBranchSearch`) must not go through
+# these helpers unchanged. An issue query that matches no issue (`nodes: []`)
+# is a usable answer: "no such ticket" is not "Linear unusable".
 #
 # The code is 27 (`linear-unusable` in exit_class), not slidefactory's 20: in
 # this template 20 is `stopped-before-merge`. 10 (`linear-down`) stays the
@@ -233,13 +253,35 @@ BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 # Settings (first usable wins): environment (and therefore .env) →
 # .bureau.json `.linear.retry.*` → default. Defaults: three retries, waiting
 # 10, 30 and 60 seconds. Zero retries and a wait of 0 are valid.
+# The time limit of one request comes the same way from
+# BUREAU_LINEAR_MAX_TIME / `.linear.request.max_time` (1 to 300 s, default 30)
+# and BUREAU_LINEAR_CONNECT_TIMEOUT / `.linear.request.connect_timeout` (1 to
+# 60 s, default 10). With the defaults a fetch that stays unusable gives up
+# after at most 4 attempts × 30 s + 10 + 30 + 60 s of waiting = 220 s; with
+# every setting at its maximum after 11 × 300 s + 10 × 600 s = 9,300 s.
 BUREAU_EXIT_LINEAR_UNUSABLE=27
 
-# _bureau_linear_classify <curl-exit> <answer> — prints the fault class, or
-# nothing when the answer is usable. Reads no value out of the answer.
+# The write-out curl appends after the body: a marker line and the HTTP status.
+# Real curl prints it on every run, 000 when no answer came. An output without
+# it can only come from a curl double in a test, whose answer is then judged by
+# its body alone — the status check itself is held by tests that print one.
+_BUREAU_LINEAR_STATUS_MARK='__BUREAU_HTTP_STATUS__:'
+
+# _bureau_linear_classify <curl-exit> <answer> [<http-status>] [<shape>] —
+# prints the fault class, or nothing when the answer is usable. Reads no value
+# out of the answer.
+#   <http-status>: the status curl reported; any status outside 2xx is
+#     unusable. Empty or left out, the status is not judged.
+#   <shape>: a jq condition on the whole answer that must hold (a constant
+#     from this file, never text from outside); a broken shape is no-data.
 _bureau_linear_classify() {
-  local code="$1" answer="$2"
+  local code="$1" answer="$2" status="${3:-}" shape="${4:-true}"
   [ "$code" = 0 ] || { printf 'no-response'; return 0; }
+  # A NUL byte from the wire arrives here as \001 (see _bureau_linear_fetch);
+  # no JSON text may contain either byte unescaped.
+  case "$answer" in
+    *$'\001'*) printf 'not-json'; return 0 ;;
+  esac
   case "$answer" in
     *[![:space:]]*) ;;
     *) printf 'no-response'; return 0 ;;
@@ -251,11 +293,20 @@ _bureau_linear_classify() {
     elif (.[0] | type) != "object" then "no-data"
     elif (.[0].errors != null) and (.[0].errors != []) then "graphql-errors"
     elif (.[0].data | type) != "object" then "no-data"
+    elif (.[0].data | length) == 0 then "no-data"
+    elif ([.[0].data[] | select(. == null)] | length) > 0 then "no-data"
+    elif (.[0] | '"$shape"') != true then "no-data"
     else "" end' 2>/dev/null) || finding="not-json"
   case "$finding" in
     '' | not-json | no-data | graphql-errors) ;;
     *) finding="not-json" ;;
   esac
+  if [ -z "$finding" ] && [ -n "$status" ]; then
+    case "$status" in
+      2[0-9][0-9]) ;;
+      *) finding="no-response" ;;
+    esac
+  fi
   printf '%s' "$finding"
 }
 
@@ -329,26 +380,65 @@ _bureau_linear_record() {
   return 0
 }
 
-# _bureau_linear_fetch <payload> — one fetch, retried while the answer is
-# unusable. stdout: the usable answer, otherwise nothing. Exit: 0 or
+# _bureau_linear_request_limits — prints "<max-time> <connect-timeout>" for one
+# request. Read on every fetch (lazily, like the retry settings) because a stage
+# loads .env only after it has sourced this file. 0 would mean "no limit" to
+# curl, so it is refused like any other invalid value.
+_bureau_linear_request_limits() {
+  local max_time connect
+  max_time=$(_bureau_linear_setting BUREAU_LINEAR_MAX_TIME "${BUREAU_LINEAR_MAX_TIME:-}" '.linear.request.max_time' 30 300)
+  if [ "$max_time" = 0 ]; then
+    echo "warning: a Linear time limit of 0 would mean none; the default of 30 s applies" >&2
+    max_time=30
+  fi
+  connect=$(_bureau_linear_setting BUREAU_LINEAR_CONNECT_TIMEOUT "${BUREAU_LINEAR_CONNECT_TIMEOUT:-}" '.linear.request.connect_timeout' 10 60)
+  if [ "$connect" = 0 ]; then
+    echo "warning: a Linear connect timeout of 0 would mean curl's own; the default of 10 s applies" >&2
+    connect=10
+  fi
+  printf '%s %s' "$max_time" "$connect"
+}
+
+# _bureau_linear_fetch <payload> [<shape>] — one fetch, retried while the
+# answer is unusable. <shape> is passed on to _bureau_linear_classify.
+# stdout: the usable answer, otherwise nothing. Exit: 0 or
 # $BUREAU_EXIT_LINEAR_UNUSABLE.
 #
-# The settings are read only once an answer is unusable: a healthy fetch waits
-# not at all, retries not at all and prints no extra line. On a halt path
+# The retry settings are read only once an answer is unusable: a healthy fetch
+# waits not at all, retries not at all and prints no extra line. On a halt path
 # (_BUREAU_LINEAR_SINGLE_ATTEMPT=1, set by shepherd.sh and by the spec stage's
 # rollback trap) a single attempt is made without any wait, so the total wait
 # of a halt stays bounded no matter how many writes the halt needs.
 _bureau_linear_fetch() {
-  local payload="$1"
-  local attempt=1 code answer fault wait
+  local payload="$1" shape="${2:-true}"
+  local attempt=1 code raw answer status fault wait limits max_time connect
   local planned=0 retries=0 w1=10 w2=30 w3=60
+  limits=$(_bureau_linear_request_limits)
+  max_time="${limits% *}"
+  connect="${limits#* }"
   while : ; do
     code=0
-    answer=$(curl -s -X POST https://api.linear.app/graphql \
+    # tr runs before the shell captures anything: a NUL byte would otherwise be
+    # dropped silently and the rest could pass as clean JSON. The exit code is
+    # curl's own, not tr's, with or without the caller's pipefail.
+    raw=$(curl -s -X POST https://api.linear.app/graphql \
+      --connect-timeout "$connect" --max-time "$max_time" \
+      -w "\\n${_BUREAU_LINEAR_STATUS_MARK}%{http_code}" \
       -H "Content-Type: application/json" \
       -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
-      -d "$payload") || code=$?
-    fault=$(_bureau_linear_classify "$code" "$answer")
+      -d "$payload" | LC_ALL=C tr '\000' '\001'; exit "${PIPESTATUS[0]}") || code=$?
+    case "$raw" in
+      *"$_BUREAU_LINEAR_STATUS_MARK"*)
+        status="${raw##*"$_BUREAU_LINEAR_STATUS_MARK"}"
+        answer="${raw%$'\n'"$_BUREAU_LINEAR_STATUS_MARK"*}"
+        ;;
+      *)
+        status=""
+        answer="$raw"
+        ;;
+    esac
+    [ "$code" = 28 ] && echo "linear: no answer within ${max_time}s (curl timed out)" >&2
+    fault=$(_bureau_linear_classify "$code" "$answer" "$status" "$shape")
     if [ -z "$fault" ]; then
       printf '%s' "$answer"
       return 0
@@ -401,6 +491,23 @@ linear_query() {
 # Helper: run a raw GraphQL payload (for mutations that need variables).
 linear_raw() {
   _bureau_linear_fetch "$1"
+}
+
+# The shapes the issue readers below depend on. A reader that fills a missing
+# list with `// []` cannot tell "this ticket has no labels" from "the answer
+# carried no label list", so the list has to be there before the answer counts
+# as usable — and a broken one goes through the retry ladder like any other
+# unusable answer. An issue query that matches nothing (`nodes: []`) passes:
+# every condition over no nodes holds.
+_BUREAU_SHAPE_ISSUES='((.data.issues.nodes | type) == "array")'
+_BUREAU_SHAPE_ISSUE_LABELS="$_BUREAU_SHAPE_ISSUES"' and all(.data.issues.nodes[]; (.labels.nodes | type) == "array")'
+_BUREAU_SHAPE_ISSUE_STATE="$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.state.id | type) == "string")'
+_BUREAU_SHAPE_ISSUE_COMMENTS="$_BUREAU_SHAPE_ISSUES"' and all(.data.issues.nodes[]; (.comments.nodes | type) == "array")'
+
+# linear_issue_query <query> <shape> — linear_query for a reader that depends
+# on <shape> (one of the _BUREAU_SHAPE_* constants).
+linear_issue_query() {
+  _bureau_linear_fetch "{\"query\": \"$1\"}" "$2"
 }
 
 # EXP-490: per-stage model resolution. Resolution order (first non-empty
@@ -1054,7 +1161,7 @@ get_issue_branch() {
   # spec pipeline near the top of the comment list; if it falls off the page,
   # downstream pipelines silently fall back to Linear's branchName which never
   # matches the sequential spec branch numbers.
-  data=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }") || return $?
+  data=$(linear_issue_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }" "$_BUREAU_SHAPE_ISSUE_COMMENTS") || return $?
   local marker
   marker=$(printf '%s' "$data" \
     | jq -r '
@@ -1086,7 +1193,7 @@ get_issue_branch_and_comments() {
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
   local answer
-  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }") || return $?
+  answer=$(linear_issue_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }" "$_BUREAU_SHAPE_ISSUE_COMMENTS") || return $?
   printf '%s' "$answer" \
     | jq '
       (.data.issues.nodes[0] // {}) as $issue
@@ -1110,7 +1217,7 @@ get_issue_comments() {
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
   local answer
-  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { comments(first: 200) { nodes { body createdAt } } } } }") || return $?
+  answer=$(linear_issue_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { comments(first: 200) { nodes { body createdAt } } } } }" "$_BUREAU_SHAPE_ISSUE_COMMENTS") || return $?
   printf '%s' "$answer" \
     | jq '(.data.issues.nodes[0].comments.nodes // []) | sort_by(.createdAt) | reverse'
 }
@@ -1121,7 +1228,7 @@ get_issue_detail() {
   local team_key="${ref%%-*}"
   local number="${ref##*-}"
   local answer
-  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { identifier title description project { name description } labels { nodes { name } } } } }") || return $?
+  answer=$(linear_issue_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { identifier title description project { name description } labels { nodes { name } } } } }" "$_BUREAU_SHAPE_ISSUE_LABELS") || return $?
   printf '%s' "$answer" \
     | jq '(.data.issues.nodes[0] // {}) | {identifier, title, description, project: (.project // {name: null, description: null}), labels: ((.labels.nodes // []) | map(.name))}'
 }
@@ -1130,7 +1237,7 @@ get_issue_detail() {
 bureau_issue_snapshot() {
   local ref="$1" team_key="${1%%-*}" number="${1##*-}"
   local answer
-  answer=$(linear_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id identifier title description state { id name } labels { nodes { name } } } } }") || return $?
+  answer=$(linear_issue_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id identifier title description state { id name } labels { nodes { name } } } } }" "$_BUREAU_SHAPE_ISSUE_STATE") || return $?
   printf '%s' "$answer" \
     | jq '.data.issues.nodes[0] // {}'
 }

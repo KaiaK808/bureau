@@ -94,6 +94,17 @@ The Linear precondition reports exit 10 when the API check fails. Inspect its re
 - Check Linear's status page. Rare, but happens.
 - `curl -sS -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" -d '{"query":"query { viewer { id } }"}' https://api.linear.app/graphql` — should return your user id
 
+### Exit 27 (linear-unusable) — Linear answered, but nothing usable
+
+Every Linear fetch checks the answer before a stage decides on it and retries an unusable one (10, 30, 60 s by default). Exit 27 means it stayed unusable. The log names one fault class per attempt, never the answer text:
+
+- `no-response` — curl failed, the request hit its time limit (logged as "no answer within Ns"; `BUREAU_LINEAR_MAX_TIME`, default 30 s), the body was empty, or the HTTP status was outside 2xx.
+- `not-json` — the body is not one JSON object, or it contains a NUL byte.
+- `graphql-errors` — the answer carries `errors` (an invalid key usually shows up as exit 10 earlier).
+- `no-data` — no `data` object, an empty one, a root field that is `null`, or an issue answer without the list the reader needs (labels, state, comments).
+
+Check Linear's status page and the key as for exit 10, then re-run the stage. A ticket that does not exist is not exit 27: its readers answer with an empty result.
+
 ### Exit 11 (worktree-dirty) — uncommitted changes block progression
 
 The stage requires a clean checkout but finds local changes, possibly preserved from an interruption.

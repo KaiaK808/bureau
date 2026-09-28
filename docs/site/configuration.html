@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="7f656ae242fd2b005060f013a72e327e4ff21e2f6642fdb332b114c5453fc602">
+<meta name="bureau-source-sha256" content="0294ea45c2023eadd71f852fc4d507f662434e7cf8e9e10de14faa4fb10b23d2">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -190,6 +190,18 @@ of the queue</td>
 GraphQL <code>errors</code>, no <code>data</code>). Defaults 3 retries
 after 10, 30, 60 s. Env keys of the same name win; see <a
 href="#linear--external-services">Linear / external services</a></td>
+</tr>
+<tr>
+<td><code>linear.request.max_time</code>,
+<code>linear.request.connect_timeout</code></td>
+<td>integer</td>
+<td>optional</td>
+<td>Time limit of one Linear request in seconds: the whole request 1 to
+300 (default 30), the connection 1 to 60 (default 10). A request cut off
+at the limit is an unusable answer and goes through the retry ladder;
+with the defaults a Linear that stays unusable ends the stage after at
+most 220 s. Env keys <code>BUREAU_LINEAR_MAX_TIME</code> /
+<code>BUREAU_LINEAR_CONNECT_TIMEOUT</code> win</td>
 </tr>
 </tbody>
 </table>
@@ -730,6 +742,16 @@ the last retry the stage exits 27 (<code>linear-unusable</code>)</td>
 (defaults 10, 30, 60). Beat <code>.linear.retry.wait_1</code> /
 <code>wait_2</code> / <code>wait_3</code>. A value that is not plain
 digits is dropped with a warning naming the key, never the value</td>
+</tr>
+<tr>
+<td><code>BUREAU_LINEAR_MAX_TIME</code> /
+<code>BUREAU_LINEAR_CONNECT_TIMEOUT</code></td>
+<td>Optional</td>
+<td>Seconds one Linear request (1 to 300, default 30) and its connection
+(1 to 60, default 10) may take. Beat
+<code>.linear.request.max_time</code> / <code>connect_timeout</code>. 0
+would mean "no limit" to curl and is refused with a warning, like a
+value that is not plain digits</td>
 </tr>
 <tr>
 <td><code>TELEGRAM_BOT_TOKEN</code></td>
