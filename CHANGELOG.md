@@ -6,6 +6,10 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+## [3.0.0-rc.1] - 2026-09-28
+
+Release candidate for Bureau v3.0.0, published as a GitHub prerelease. It collects the hardening carried over from the installations ([#11](https://github.com/KaiaK808/bureau/pull/11)), source recording in the installer ([#12](https://github.com/KaiaK808/bureau/pull/12)), the review build check via `repo.test_command` ([#13](https://github.com/KaiaK808/bureau/pull/13)), fail-closed shepherd reads ([#14](https://github.com/KaiaK808/bureau/pull/14)) and the merge policy as configuration ([#15](https://github.com/KaiaK808/bureau/pull/15)). The major version marks the changed exit-code contract: a review BLOCK ends with `25` instead of `0`, a Linear that stays unusable ends a stage with the new code `27`, and the shepherd halts with an alert on every code except `0`, `2`, `10` and `16`. v3.0.0 follows once a pilot installation has qualified one ticket with this candidate. See the [v3.0.0-rc.1 release notes](docs/release-notes.md).
+
 ### Merge policy as configuration
 
 #### Added
@@ -49,11 +53,18 @@ The hardening list from slidefactory-core and msc-planner in `docs/2026-09-25-dr
 
 Upgrade action: none. The manifest stays at version `1` and installers without source recording still read it; the next asset `--apply` records the source.
 
+### Upgrade actions and known limitations
+
+- Select source tag `v3.0.0-rc.1`, then resync the scripts scope in each adopting repository as one set, one pull request per repository. Set `agents.merge_mode: "manual"` (with a Merge state) and `repo.test_command` **before** the resync where they apply, make `.gitignore` cover what `repo.test_command` writes, and update repository tests that assert the old exit codes in the same pull request. See [Upgrade to v3](docs/migration.md#upgrade-to-v3).
+- Exit code `24` (`environment-blocked`) already existed; it is now also used when an npm project's dependencies cannot be restored after the worktree reset and when `merge_mode` is `manual` without a Merge state. `27` (`linear-unusable`) is new. A read of the shepherd's own cut short by Ctrl-C or SIGTERM ends as a cancelled run (`130`).
+- Validation: the full Linux/macOS suite, the installer fixtures and one independent verification pass per pull request #12–#15. No adopting repository has run this candidate on a live ticket yet.
+- Known limitations: under `manual` nothing moves a ticket from Merge to Done after the merge by hand; a `manual` repository without a Merge state refuses review with `24` on every tick until it is configured; the review build check does not use the QA stage's further fallbacks; a genuinely empty ticket state still makes the shepherd retry every 60 seconds; a file Git ignores inside `templates/scripts` (such as `.env`) is copied into the target, and the source is then recorded as dirty.
+
 ## [2.0.0] - 2026-09-07
 
 ### Claude Code and Codex support
 
-Bureau v2.0.0 includes the Claude/Codex integration and its review fixes ([#9](https://github.com/KaiaK808/bureau/pull/9)). It is the first versioned release; the public initial snapshot was labeled v1.0.0 but had no corresponding tag or GitHub Release. The major version marks the operational changes for existing workers and upgrades. Installing a source update still requires a target-repository resync. See the [v2.0.0 release notes](docs/release-notes.md).
+Bureau v2.0.0 includes the Claude/Codex integration and its review fixes ([#9](https://github.com/KaiaK808/bureau/pull/9)). It is the first versioned release; the public initial snapshot was labeled v1.0.0 but had no corresponding tag or GitHub Release. The major version marks the operational changes for existing workers and upgrades. Installing a source update still requires a target-repository resync. See the [v2.0.0 release notes](docs/release-notes-v2.0.0.md).
 
 #### Added
 
@@ -135,5 +146,6 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v2.0.0...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.0.0-rc.1...main
+[3.0.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v2.0.0...v3.0.0-rc.1
 [2.0.0]: https://github.com/KaiaK808/bureau/compare/6763c26c26aa96a41a92fbe95416fddbf4d48f69...v2.0.0

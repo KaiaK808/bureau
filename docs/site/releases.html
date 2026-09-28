@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="706a17574ee1a8efce27935c850ac85a12e5141887180f204587ade1da897110">
+<meta name="bureau-source-sha256" content="f79161c2435d64cc040a1efb28fcd037d9277b8516d71c3cb64ae916a122e3f4">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,15 +24,37 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v2.0.0</strong>, dated
-<strong>2026-09-07</strong>, for stable publication. The <a
+<p>This source tree contains <strong>Bureau v3.0.0-rc.1</strong>, dated
+<strong>2026-09-28</strong>, a release candidate published as a GitHub
+prerelease. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.1">GitHub
+Release</a> identifies the exact tagged commit; the <a
+href="../../CHANGELOG.md">changelog</a> and <a
+href="release-notes.html">release notes</a> describe the changes and the
+upgrade. It is a major release because the exit-code contract between
+stages and their drivers changed (a review BLOCK ends with
+<code>25</code>, the new code <code>27</code> means Linear stayed
+unusable, and the shepherd halts with an alert on every code except
+<code>0</code>, <code>2</code>, <code>10</code> and
+<code>16</code>).</p>
+<p>The candidate is validated by the full Linux/macOS suite on the
+release commit, the installer fixtures, and one independent verification
+pass per pull request #12–#15 in which each finding was reproduced
+before it was fixed. No adopting repository has run it on a live ticket
+yet. <strong>v3.0.0</strong> follows after a pilot installation has been
+resynced with this candidate and has qualified one ticket end to end
+with the shepherd; findings from the pilot ship as a further candidate
+first. Release preparation changes documentation only: runtime,
+installer, templates and tests are identical to the merge of <a
+href="https://github.com/KaiaK808/bureau/pull/15">#15</a>,
+<code>feca0f6</code>. The final commit is recorded in the GitHub Release
+body.</p>
+<p>The stable release is <strong>Bureau v2.0.0</strong>, dated
+<strong>2026-09-07</strong> (<a
 href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">GitHub
-Release</a> is the publication record and identifies the exact tagged
-commit. The <a href="../../CHANGELOG.md">changelog</a>, <a
-href="release-notes.html">release notes</a> and <a
-href="codex-acceptance.html">acceptance record</a> describe the changes
-and available evidence. Source updates still require resyncing each
-adopting repository.</p>
+Release</a>, <a href="release-notes-v2.0.0.html">release notes</a>, <a
+href="codex-acceptance.html">acceptance record</a>). Source updates still
+require resyncing each adopting repository.</p>
 <p>The official repository is <a
 href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a>. Its
 initial commit used a <code>v1.0.0</code> label, but had no
@@ -41,13 +63,13 @@ release, marking operational changes for worker ownership and legacy
 upgrades; no v1 release is assigned retroactively. Configuration schema
 <code>version: 2</code> is independent of the Bureau release version,
 and v1 configurations remain supported.</p>
-<p>The qualified integration baseline is <a
-href="https://github.com/KaiaK808/bureau/commit/926015031cd95fa058dc159c8f927152fcf6b8f1">926015031cd95fa058dc159c8f927152fcf6b8f1</a>.
-Release preparation changes documentation and the bug-report template
-only. Verify that runtime, installer, templates and tests remain
-identical to that baseline, then require full CI on the final release
-commit. Record that final commit in the GitHub Release body; a committed
-document cannot contain its own final commit hash.</p>
+<p>For v2.0.0, the qualified integration baseline was <a
+href="https://github.com/KaiaK808/bureau/commit/926015031cd95fa058dc159c8f927152fcf6b8f1">926015031cd95fa058dc159c8f927152fcf6b8f1</a>;
+its release preparation changed documentation and the bug-report
+template only, verified identical runtime, installer, templates and
+tests against that baseline, and required full CI on the final release
+commit. A committed document cannot contain its own final commit
+hash.</p>
 <h2 id="release-contract">Release contract</h2>
 <ul>
 <li>Use <code>vMAJOR.MINOR.PATCH</code> tags, with an <code>-rc.N</code>

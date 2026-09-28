@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="92acbc39a7623e4347577c0badf4c5568870d66944eb0507f7401aab81ace69d">
+<meta name="bureau-source-sha256" content="3e345ac08db51e453349c914a85fd0bfbd6476d54bb044aff4999eb0fa68685a">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -22,16 +22,21 @@ skill</strong>, then resync its assets into <strong>each adopting
 repository</strong>. Updating the source clone alone leaves installed
 scripts and commands unchanged. <code>/bureau-init --update</code> edits
 configuration; it does not upgrade installed assets.</p>
-<p>This guide upgrades legacy untagged installations to <strong>Bureau
-v2.0.0</strong> from the official <a
-href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source.
-The commands below require the v2.0.0 source skill. See the <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">release</a>,
-<a href="../../CHANGELOG.md">changelog</a>, <a
-href="release-notes.html">release notes</a> and <a
-href="releases.html">release process</a>. The Bureau major version marks
-operational changes, including explicit worker ownership; it does not
-require configuration schema v2.</p>
+<p>This guide upgrades installations from the official <a
+href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
+legacy untagged installations and v2.0.0 installations to the stable
+<strong>Bureau v2.0.0</strong> or to the release candidate
+<strong>Bureau v3.0.0-rc.1</strong>. The commands below require the
+selected release's source skill. See the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.1">v3.0.0-rc.1
+release</a> and its <a href="release-notes.html">release notes</a>, the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">v2.0.0
+release</a> and its <a href="release-notes-v2.0.0.html">release notes</a>,
+the <a href="../../CHANGELOG.md">changelog</a> and the <a
+href="releases.html">release process</a>. A Bureau major version marks
+operational changes (v2.0.0: explicit worker ownership; v3: the
+exit-code contract, see <a href="#upgrade-to-v3">Upgrade to v3</a>); it
+does not require configuration schema v2.</p>
 <h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is
@@ -53,10 +58,12 @@ installed commit.</p>
 <p>Confirm that <code>origin</code> identifies the official
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
-clean checkout, select the exact release:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag v2.0.0 <span class="kw">&amp;&amp;</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> refs/tags/v2.0.0 <span class="kw">&amp;&amp;</span></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
+clean checkout, select the exact release (<code>v2.0.0</code> for the
+stable release, <code>v3.0.0-rc.1</code> for the candidate):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.0.0-rc.1 <span class="co"># or v2.0.0</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
 <p>Stop if fetching fails, especially if an existing local tag conflicts
 with the remote; do not force-replace it. Compare the resulting commit
 with the commit recorded in the GitHub Release and record it for
@@ -66,13 +73,141 @@ use <code>git pull</code>.</p>
 <p>An intentionally <code>main</code>-tracking installation can instead
 use <code>git pull --ff-only</code> when its checkout is clean and its
 upstream is the official <code>origin/main</code>. This follows ongoing
-development rather than pinning v2.0.0. If the source is an
+development rather than pinning a release. If the source is an
 archive-origin checkout, an unrelated history or a plain copied
 directory, keep it intact and install a separate official clone from the
 <a href="index.html#install">installation guide</a>; review how the
 loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
+<h2 id="upgrade-to-v3">Upgrade to v3</h2>
+<p>v3 changes the exit-code contract between the stages and whatever
+drives them (the shepherd, the queue loop, ticks, wrappers and
+repository tests). Check anything that reads these codes before resuming
+dispatch:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>v2.0.0</th>
+<th>v3</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Review ends with BLOCK or an unknown verdict</td>
+<td><code>0</code></td>
+<td><code>25</code> (<code>needs-human-or-paused</code>)</td>
+</tr>
+<tr>
+<td>Linear stays unusable after the retries (no answer, not JSON,
+GraphQL errors, no data)</td>
+<td>no dedicated code; some reads failed open</td>
+<td><code>27</code> (<code>linear-unusable</code>), new</td>
+</tr>
+<tr>
+<td>An npm project's dependencies cannot be restored after the worktree
+reset</td>
+<td>no restore; the build ran red</td>
+<td><code>24</code> (<code>environment-blocked</code>, an existing
+code)</td>
+</tr>
+<tr>
+<td><code>agents.merge_mode</code> is <code>manual</code> without a
+Merge state</td>
+<td>not applicable</td>
+<td>code review refuses at its start with <code>24</code></td>
+</tr>
+<tr>
+<td>Shepherd receives <code>22</code> to <code>26</code> from a
+stage</td>
+<td>stopped without an alert</td>
+<td>halts with an alert; only <code>0</code> and <code>2</code> carry
+on, <code>10</code> and <code>16</code> retry</td>
+</tr>
+<tr>
+<td>Shepherd receives a <code>20</code> that <code>--no-merge</code> or
+<code>BUREAU_NO_MERGE</code> asked for</td>
+<td>halted with an alert</td>
+<td>stops quietly; any other <code>20</code> still alerts</td>
+</tr>
+<tr>
+<td>The shepherd's own read of state, labels or branch fails</td>
+<td>read as "no state", "no label" or "no branch"</td>
+<td><code>27</code> halts with the fault class, another failure halts
+with <code>1</code> and <code>needs-human</code>, Ctrl-C or SIGTERM is a
+cancelled run (<code>130</code>) that writes nothing</td>
+</tr>
+</tbody>
+</table>
+<p>Some installations gave <code>20</code>, <code>21</code> or
+<code>25</code> local meanings. Rewrite local changes onto the codes in
+<a href="exit-codes.html">exit codes</a> instead of copying a code
+across.</p>
+<p>Upgrade one adopting repository at a time, each in its own pull
+request:</p>
+<ol type="1">
+<li><strong>Pause dispatch</strong> and let nothing be in flight. Push
+any unpushed commit to a branch first.</li>
+<li><strong>Branch from the repository's <code>main</code> in a fresh
+worktree</strong>, so dirty files and other branches stay out of the
+change. Keep a private backup of <code>scripts/</code>,
+<code>.bureau.json</code>, <code>.bureau-install.json</code> and the
+instruction files (see <a
+href="#before-changing-an-adopting-repository">before changing an
+adopting repository</a>).</li>
+<li><strong>Pin the source</strong> to the release tag as in <a
+href="#select-the-source-release">select the source release</a>.</li>
+<li><strong>Set the configuration the new scripts expect, before the
+resync:</strong>
+<ul>
+<li>Where a human merges, set
+<code>"agents": {"merge_mode": "manual"}</code> and make sure
+<code>linear.teams[0].states.merge</code> is set. The resync replaces a
+hand-edited early <code>exit</code> in <code>merge-pipeline.sh</code> or
+<code>rebase-pipeline.sh</code>; without the key, automatic merging is
+on again. See the <a href="recipes.html#merge-by-hand">recipe</a>.</li>
+<li>Where the review build check ran a local script, set
+<code>repo.test_command</code> to it.
+<code>scripts/bureau-test.sh</code> is found without configuration.</li>
+<li>Make <code>.gitignore</code> cover everything
+<code>repo.test_command</code> writes, such as <code>__pycache__/</code>
+or build output. Otherwise the review leaves untracked files, the worker
+keeps the worktree as unfinished work, and the next reset refuses with
+<code>21</code>.</li>
+</ul></li>
+<li><strong>Preview the scripts scope and apply it as one set.</strong>
+<code>bureau-config.sh</code> loads <code>bureau-env.sh</code>,
+<code>merge-pipeline.sh</code> loads <code>merge-body.sh</code>, and
+<code>squash-marker-check.sh</code> reads
+<code>ci-skip-markers.txt</code>; a partial scripts scope is not a
+working runtime. An installation without
+<code>.bureau-install.json</code> sees every differing file as a
+conflict. For each one, diff the local file against
+<code>templates/scripts/FILE</code> and decide: take the template (the
+usual answer where the local hardening is now upstream), express a local
+policy as configuration, or keep a genuine local need in a separate
+local file. Then apply with the reviewed <code>--overwrite</code> list
+(<a href="#preview-and-resolve-asset-conflicts">preview and
+resolve</a>). Add the interfaces scope only where the repository uses
+the commands.</li>
+<li><strong>Optionally migrate the configuration</strong> (<a
+href="#optional-configuration-migration">configuration
+migration</a>).</li>
+<li><strong>Update or retire repository tests</strong> that assert the
+old pipeline behaviour (exit codes, file layout) in the same pull
+request.</li>
+<li><strong>Verify:</strong> doctor
+(<code>python3 scripts/bureau-doctor.py --mode background</code>), the
+repository's CI, then qualify one ticket end to end with the shepherd
+before dispatch resumes. Name the release tag, every carried local
+change, the preview before and after, and a reason for each
+<code>--overwrite</code> in the pull request.</li>
+<li><strong>Rollback</strong> restores the backup and points the source
+back at the previous commit (<a href="#rollback">rollback</a>). The
+manifest stays at version <code>1</code>, so an older installer still
+reads it.</li>
+</ol>
 <h2 id="resync-in-claude-code-or-codex">Resync in Claude Code or
 Codex</h2>
 <p>Refresh the assistant's skill discovery or start a new session after
@@ -345,6 +480,8 @@ model fields, then explicitly set
 <code>agents.model_compatibility</code> to <code>v2</code>.</p>
 <h2 id="what-changes-for-existing-users">What changes for existing
 users</h2>
+<p>This table describes the change to v2.0.0; v3 is described in <a
+href="#upgrade-to-v3">Upgrade to v3</a>.</p>
 <table>
 <thead>
 <tr>
@@ -451,7 +588,7 @@ previous source commit/tag in a clean source checkout; for example,
 replacing the placeholder with the recorded commit. Restore the coherent
 pre-upgrade project asset set, instruction files and installer
 bookkeeping from the private backup, then reconcile subsequent local
-changes. Identify files newly installed by v2.0.0 and remove only
+changes. Identify files newly installed by the upgrade and remove only
 confirmed upgrade additions that are absent from the old baseline and
 contain no later work.</p>
 <p>If the selected older source supports deterministic previews, use a
@@ -464,7 +601,7 @@ a restore of the pre-upgrade manifest from the backup it reports
 <code>source not recorded</code>. The next asset <code>--apply</code> by
 a recording helper drops a stale record and records only the scopes that
 apply wrote. A legacy source may have no installer helper or manifest
-support: do not assume the v2.0.0 resync commands work there, or mix
+support: do not assume the current resync commands work there, or mix
 selected old scripts with the new runtime. Restore customized behavior
 from its matching backup. A configuration backup covers configuration
 only and can be restored after comparing subsequent edits and runtime

@@ -1,51 +1,42 @@
-# Bureau v2.0.0 — Claude Code and Codex
+# Bureau v3.0.0-rc.1 — hardening from the installations
 
-**Stable release · 2026-09-07 · source tag `v2.0.0`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) records publication and the exact tagged commit. This is the first versioned release; the initial public snapshot's v1.0.0 label did not have a corresponding tag or release. The major version identifies operational changes for existing workers and upgrades, independently of configuration schema numbers.
+**Release candidate · 2026-09-28 · source tag `v3.0.0-rc.1`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.1) is marked as a prerelease and records the exact tagged commit. The stable release remains [v2.0.0](release-notes-v2.0.0.md) until v3.0.0 is published. v3.0.0 follows once a pilot installation has been resynced with this candidate and has qualified one ticket end to end.
 
-Bureau can install interfaces for Claude Code, Codex, or both. Codex app tasks can prepare, perform, validate and resume individual Linear stages in their current checkout. Background stages can select Claude or Codex independently of the app model.
+This is a major release because the exit-code contract between the stages and their drivers changed: a review BLOCK now ends the stage with `25` instead of `0`, Linear that stays unusable ends a stage with the new code `27`, and the shepherd halts with an alert on every code it does not treat as carry-on or retry. Drivers, wrappers and repository tests that read these codes need to be checked when upgrading.
 
-## Changes
+## What changed
 
-- Native Codex skills and managed AGENTS.md guidance, preserving Claude interfaces and project instructions.
-- Deterministic installation previews and manifests, per-file conflict resolution, legacy Spec Kit integration and Git-hook preservation.
-- Shared issue/workspace ownership, protected user checkouts and interrupted-work recovery.
-- Provider adapters with bounded execution and structured results, provider-specific models/usage, diagnostics and bounded supervision.
-- Review stops that persist across repeated ticks and environment loading, including configurations without a separate merge stage.
-- Provider timeout/cancellation cleanup that stops descendants even after the immediate CLI process exits.
-- Reviews of dependent PRs use their actual target branch and pinned commits; retargeting or changing those commits prevents stale approval.
-- Configuration migration, Linux/macOS checks, and upgrade/rollback documentation.
-- Updated field manual retaining the official repository's configuration, recipe and troubleshooting coverage.
+- **Hardening carried over from the installations** ([#11](https://github.com/KaiaK808/bureau/pull/11)): `.env` is parsed, never sourced; a red build can no longer soften a BLOCK; no CI suppressor reaches `main` through a squash message, and the implement and QA stages halt when one is in the squash range; Linear answers are retried and then classified as `linear-unusable` (`27`); labels resolve to the issue's own team; an npm project's `node_modules` is restored after the worktree reset (`24` on failure); a failed push is loud; the in-flight cap counts leaf issues of the configured projects; the spec cross-check runs under macOS `/bin/bash` 3.2 and distinguishes clean, conflicts and incomplete.
+- **The installer records its source** ([#12](https://github.com/KaiaK808/bureau/pull/12)): an asset `--apply` writes the source tag, commit and dirty state per scope into `.bureau-install.json`, and doctor reports it as `template_source`. The manifest stays at version `1`.
+- **The review build check uses `repo.test_command`** ([#13](https://github.com/KaiaK808/bureau/pull/13)): order `repo.test_command`, `scripts/bureau-test.sh`, `npm run build`; when none applies the review comment says "not checked" instead of "Passed".
+- **Shepherd reads fail closed** ([#14](https://github.com/KaiaK808/bureau/pull/14)): a failed read of the ticket's state, labels or branch halts instead of reading as "no state", "no label" or "no branch"; `27` halts with the fault class, any other failure halts with `1` and `needs-human`, and a read cut short by Ctrl-C or SIGTERM is a cancelled run that writes nothing.
+- **Merge policy as configuration** ([#15](https://github.com/KaiaK808/bureau/pull/15)): `agents.merge_mode: "manual"` switches the merge and rebase stages off for every dispatcher, parks an approved ticket in the Merge state and ends the shepherd there without an alert. `manual` requires a configured Merge state.
 
-The integration is [PR #9](https://github.com/KaiaK808/bureau/pull/9). See the [changelog](../CHANGELOG.md), [migration guide](migration.md) and [configuration reference](configuration.md). The source repository is [KaiaK808/bureau](https://github.com/KaiaK808/bureau).
+See the [changelog](../CHANGELOG.md) for the full entries and the [exit codes](exit-codes.md) for the vocabulary.
 
 ## Upgrade an existing installation
 
-Select tag `v2.0.0` in the actual source skill checkout using the [source-update procedure](migration.md#select-the-source-release), refresh skill discovery, and then resync each adopting repository. Updating the source alone, or running `/bureau-init --update`, does not replace installed scripts. Check the source remote, preserve changes and record the old commit before updating; tag-pinned installations do not use `git pull`.
+Select tag `v3.0.0-rc.1` in the actual source skill checkout using the [source-update procedure](migration.md#select-the-source-release), refresh skill discovery, and then resync each adopting repository with one pull request per repository. The [v3 upgrade section](migration.md#upgrade-to-v3) lists what to set **before** the resync:
 
-In Claude Code, after updating the source:
+- `agents.merge_mode: "manual"` where a human merges (and a Merge state in `linear.teams[0].states.merge`), because the resync replaces a hand-edited early `exit 2` in the merge and rebase scripts.
+- `repo.test_command` where the review build check ran a local script, and a `.gitignore` that covers everything that command writes.
+- The scripts scope lands as one set; an installation without a manifest sees every differing file as a conflict and needs a reviewed `--overwrite PATH` for each one.
+- Repository tests that assert the old exit codes are updated in the same pull request.
 
-```text
-/bureau-init --resync-interfaces --resync-scripts --target both
-```
+Pause dispatch first, keep a private backup of the scripts, configuration, manifest and instruction files, run doctor after the resync and qualify one ticket before dispatch resumes.
 
-In a Codex app task, use:
+## Compatibility and rollback
 
-```text
-$bureau-init --resync-interfaces --resync-scripts --target both
-```
+The runtime keeps its dependencies (Python 3.9+, Bash 3.2+, Git 2.26+, jq, curl; Node.js 18+ for the shared scheduler) and supports Linux and macOS. Configuration schema versions 1 and 2 stay supported; `agents.merge_mode` is optional and defaults to `auto`, which merges as before. The manifest stays at version `1`, so an older installer still reads it for a rollback. Rollback restores the private backup and points the source back at the recorded previous commit ([rollback](migration.md#rollback)); it cannot undo commits, pull requests or Linear transitions made in between.
 
-Use `--target claude` to retain Claude-only interfaces. Refresh Spec Kit separately with `--resync-speckit` and existing planning workflows with `--resync-workflows` where used. Review the preview and each custom-file conflict before applying. CI scaffolding remains opt-in.
+## Validation and known limitations
 
-Pause new dispatch first. Preserve local and ignored files, credentials, configuration, custom scripts and unfinished worktrees. A legacy install without a manifest must not be treated as permission to overwrite differing files. Old unregistered workers require an explicit inspected handoff before reuse.
+Validated on the release commit by the full Linux/macOS suite (Bash syntax, ShellCheck, rendered documentation and every `tests/test_*.sh`), the installer fixtures (local edits stopping a batch and an explicit overwrite, managed instruction boundaries, a scoped resync preserving configuration, Spec Kit constitution preservation, source recording and manifests written by older installers), and one independent verification pass per pull request #12–#15 that reproduced each finding before it was fixed; the verification of #12 also ran the v2.0.0 installer against a manifest written by this one (it keeps working and carries the record along). Every guard added in #11–#15 has a test that runs the real code with a negative control, and was mutation-checked. **No adopting repository has run this candidate on a live ticket yet**; that is what the pilot adds before v3.0.0.
 
-V1 configuration remains supported. Normal schema migration preserves generic model fields as Claude settings with `model_compatibility: v1`; select Codex models through provider-specific settings. Adding Codex interfaces does not switch the background provider. One configuration operates one active Linear team.
+Known limitations:
 
-## Qualification and limits
-
-The [acceptance record](codex-acceptance.md) distinguishes reproducible source fixtures, isolated live provider smoke and a maintainer-reported private adoption. The source suite contains 35 suites covering installation, runtime, providers, recovery, review stops and rendered documentation. Release qualification requires all 35 suites, Bash syntax, ShellCheck and documentation checks on Linux/macOS before tagging. The runtime and installer are unchanged from the live-qualified [integration baseline](https://github.com/KaiaK808/bureau/commit/926015031cd95fa058dc159c8f927152fcf6b8f1); release preparation updates documentation and reporting metadata.
-
-Representative live adoption exercised app stages, bounded Codex and mixed-provider routes, interruption/resume, project tests and durable review stops. It did not enable recurring dispatch or qualify a live automatic merge. Actual project dependencies, network/OS permissions, model access and workload-specific results need qualification in each adopting repository.
-
-App review and bounded ticks stop before merge by default. Continuous background pipelines require explicit stop settings where merging is undesired. Enabling recurring dispatch remains a separate choice.
-
-Rollback restores a coherent installed asset/configuration set after inspecting ownership. It cannot undo already published commits, PRs, Linear transitions or completed work. Published release tags must remain immutable.
+- With `merge_mode: "manual"`, nothing moves a ticket from Merge to Done after the merge by hand; the merge stage refuses before it would notice the merged pull request.
+- A `manual` repository without a Merge state refuses code review with `24` and re-picks the same ticket every tick, alerting at most once an hour, until the Merge state is configured or the mode is changed.
+- The review build check uses three steps; the QA stage's further fallbacks (`npm test`, `cargo test`, `pytest`, `go test`) are not used in review.
+- A ticket state that Linear reports as genuinely empty still makes the shepherd retry every 60 seconds without a limit.
+- The installer copies every file under `templates/scripts`, including files Git ignores; a `.env` placed there would be copied into the target repository. The source is then recorded as dirty.
