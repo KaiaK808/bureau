@@ -178,10 +178,61 @@ state_to_pipeline() {
   esac
 }
 
+# ── The shepherd's own Linear reads (EXP-1528) ────────────────────────
+# Each read is captured first and its exit code decides before anything looks
+# at the value. Defaulted with `|| echo ""` or piped straight into jq, a Linear
+# that stayed unusable read as "no state" (the loop slept and re-read forever)
+# or as "label absent" (the shepherd walked on past needs-human). A read that
+# fails is never an empty answer: the caller halts on its code.
+
+# _shepherd_fault_class <file> — the fault class a Linear read left in <file>,
+# or "unknown" when there is none or it is not one of the four names. Only such
+# a name gets through, so no answer text reaches an alert or a comment.
+_shepherd_fault_class() {
+  local file="${1:-}" value=""
+  [ -n "$file" ] && [ -f "$file" ] && value=$(head -1 "$file" 2>/dev/null | tr -d '\r\n' || true)
+  case "$value" in
+    no-response | not-json | graphql-errors | no-data) printf '%s' "$value" ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+# _shepherd_state — the ticket's state name; empty only when Linear answered
+# without one. Exit: the read's own code (27 = Linear stayed unusable, and the
+# fault class is in $SHEPHERD_FAULT_FILE).
+_shepherd_state() {
+  _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" get_issue_state "$ISSUE"
+}
+
+# _shepherd_human_label — the first of needs-human, blocked, wip on the ticket,
+# or nothing when none of them is. One read per call. Exit: non-zero when the
+# labels could not be read; an answer without a readable label list (nothing at
+# all, or no list) fails in jq instead of counting as "no label".
+_shepherd_human_label() {
+  local detail
+  detail=$(_BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" get_issue_detail "$ISSUE") || return $?
+  printf '%s' "$detail" | jq -rn '
+    input | .labels as $on
+    | [ "needs-human", "blocked", "wip" ][] | select(. as $l | $on | any(.[]; . == $l))' \
+    | sed -n 1p
+}
+
 # ── Dry run: print the route from current state and exit ──────────────
 if [ "$DRY_RUN" = 1 ]; then
   [ -n "$FROM_STAGE" ] && echo "  [dry-run] requested initial stage: $FROM_STAGE (no state move)"
-  CUR=$(get_issue_state "$ISSUE" 2>/dev/null || echo "")
+  # Read-only: a failed read ends the dry run with its code and writes nothing.
+  SHEPHERD_FAULT_FILE=$(mktemp "${TMPDIR:-/tmp}/bureau-linear-fault.XXXXXX")
+  CUR_RC=0
+  CUR=$(_shepherd_state) || CUR_RC=$?
+  CUR_FAULT=$(_shepherd_fault_class "$SHEPHERD_FAULT_FILE")
+  rm -f "$SHEPHERD_FAULT_FILE"
+  if [ "$CUR_RC" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+    echo "[shepherd] dry-run: could not read the state of $ISSUE — Linear stayed unusable after every retry (fault: $CUR_FAULT). No route printed." >&2
+    exit "$CUR_RC"
+  elif [ "$CUR_RC" != 0 ]; then
+    echo "[shepherd] dry-run: could not read the state of $ISSUE (exit $CUR_RC). No route printed." >&2
+    exit 1
+  fi
   echo "═══════════════════════════════════════"
   echo "  Shepherd dry-run: $ISSUE"
   echo "═══════════════════════════════════════"
@@ -240,19 +291,46 @@ add_issue_label "$ISSUE" "shepherd-focused" \
 # The fault class a stage leaves behind when it gives up on Linear (exit
 # $BUREAU_EXIT_LINEAR_UNUSABLE). The stage writes only a name from a fixed
 # list into this file (_bureau_linear_record in bureau-config.sh); only such a
-# name gets through _shepherd_fault_class below, so no answer text reaches an
-# alert or a comment.
+# name gets through _shepherd_fault_class above, so no answer text reaches an
+# alert or a comment. The shepherd's own reads record into the same file.
 SHEPHERD_FAULT_FILE=$(mktemp "${TMPDIR:-/tmp}/bureau-linear-fault.XXXXXX")
 
-# _shepherd_fault_class — the fault class the last stage left behind, or
-# "unknown" when there is none or it is not one of the four names.
-_shepherd_fault_class() {
-  local value=""
-  [ -f "$SHEPHERD_FAULT_FILE" ] && value=$(head -1 "$SHEPHERD_FAULT_FILE" 2>/dev/null | tr -d '\r\n' || true)
-  case "$value" in
-    no-response | not-json | graphql-errors | no-data) printf '%s' "$value" ;;
-    *) printf 'unknown' ;;
-  esac
+# _shepherd_linear_halt <script> <exit-code> [<what>] — <script> gave up because
+# Linear stayed unusable after every retry (reading <what>, when the shepherd
+# itself was reading). Nothing was decided on the empty answer, so the halt is
+# ours to make visible: alert first (Telegram does not need Linear), then label
+# and comment with a SINGLE attempt each — Linear just failed every retry, and
+# another full ladder per write would only delay the halt.
+_shepherd_linear_halt() {
+  local script="$1" rc="$2" reading="${3:+ reading the $3}" class fault
+  class=$(exit_class "$rc")
+  fault=$(_shepherd_fault_class "$SHEPHERD_FAULT_FILE")
+  echo "[shepherd] $script$reading halted ($class, fault: $fault) — labeling needs-human and aborting shepherd"
+  alert_telegram "$ISSUE" "$script" "$rc" "shepherd halt ($class: $fault)$reading" 2>/dev/null || true
+  export _BUREAU_LINEAR_SINGLE_ATTEMPT=1
+  add_issue_label "$ISSUE" "needs-human" \
+    || echo "[shepherd] WARN: could not add the 'needs-human' label to $ISSUE — Linear is still unusable" >&2
+  post_comment "$ISSUE" "🛑 Shepherd halt: \`$script\`$reading gave up because Linear stayed unusable after every retry (\`$fault\`). Nothing was decided on the empty answer. Needs human — re-shepherd once Linear answers again." \
+    || echo "[shepherd] WARN: could not post the halt comment on $ISSUE — Linear is still unusable" >&2
+  exit "$rc"
+}
+
+# _shepherd_read_failed <what> <exit-code> — the shepherd's own read of <what>
+# failed, so it cannot tell which stage runs next or whether a human holds the
+# ticket. 27 takes the Linear halt above. Any other code (a usable answer the
+# helper could not parse, a helper missing from an older config) says nothing
+# about the ticket either: halt with 1, label needs-human and say which read
+# failed — walking on or waiting would decide on an answer nobody read.
+_shepherd_read_failed() {
+  local what="$1" rc="$2"
+  [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && _shepherd_linear_halt shepherd.sh "$rc" "$what"
+  echo "[shepherd] could not read the $what of $ISSUE (exit $rc) — labeling needs-human and aborting shepherd" >&2
+  alert_telegram "$ISSUE" shepherd.sh "$rc" "shepherd halt (could not read the $what, exit $rc)" 2>/dev/null || true
+  add_issue_label "$ISSUE" "needs-human" \
+    || echo "[shepherd] WARN: could not add the 'needs-human' label to $ISSUE" >&2
+  post_comment "$ISSUE" "🛑 Shepherd halt: could not read the $what of this ticket (exit $rc). Nothing was decided without it. Needs human — re-shepherd once the read works again." \
+    || echo "[shepherd] WARN: could not post the halt comment on $ISSUE" >&2
+  exit 1
 }
 
 trap 'echo "[shepherd] releasing $ISSUE"; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT INT TERM
@@ -273,9 +351,11 @@ echo "════════════════════════�
 
 while true; do
   if bureau_is_paused; then echo "[shepherd] paused"; exit 25; fi
-  STATE=$(get_issue_state "$ISSUE" 2>/dev/null || echo "")
+  STATE=$(_shepherd_state) || _shepherd_read_failed state $?
   if [ -z "$STATE" ]; then
-    echo "[shepherd] WARN: could not read state for $ISSUE (linear transient?) — sleeping 60s"
+    # Linear answered, but without a state (transient faults are retried inside
+    # the read and end in 27 above).
+    echo "[shepherd] WARN: Linear answered without a state for $ISSUE — sleeping 60s"
     sleep 60
     continue
   fi
@@ -304,15 +384,9 @@ while true; do
   #
   # The existing stuck-detector (STUCK_COUNT >= MAX_STUCK) eventually
   # catches the loop, but only after one wasted pipeline pass at $
-  # per Opus call. Fail loud and early instead.
-  HUMAN_LABEL_HIT=""
-  for forbidden in needs-human blocked wip; do
-    if get_issue_detail "$ISSUE" 2>/dev/null \
-         | jq -e --arg L "$forbidden" '.labels | index($L)' >/dev/null 2>&1; then
-      HUMAN_LABEL_HIT="$forbidden"
-      break
-    fi
-  done
+  # per Opus call. Fail loud and early instead — and a label list that could
+  # not be read halts too, it never counts as "no label" (EXP-1528).
+  HUMAN_LABEL_HIT=$(_shepherd_human_label) || _shepherd_read_failed labels $?
   if [ -n "$HUMAN_LABEL_HIT" ]; then
     echo "[shepherd] '$HUMAN_LABEL_HIT' label present on $ISSUE @ '$STATE' — halting"
     post_comment "$ISSUE" "🐑 Shepherd halt: \`$HUMAN_LABEL_HIT\` label present at \`$STATE\`. The stage that just ran flagged this ticket for human review; shepherd will not re-run it. Remove the label and re-shepherd when ready." || true
@@ -388,19 +462,7 @@ while true; do
       ;;
     linear-halt)
       # The stage gave up because Linear stayed unusable after every retry.
-      # Nothing was decided on an empty answer, so the halt is ours to make
-      # visible: alert first (Telegram does not need Linear), then label and
-      # comment with a SINGLE attempt each — Linear just failed every retry,
-      # and another full ladder per write would only delay the halt.
-      FAULT=$(_shepherd_fault_class)
-      echo "[shepherd] $PIPELINE halted ($CLASS, fault: $FAULT) — labeling needs-human and aborting shepherd"
-      alert_telegram "$ISSUE" "$PIPELINE" "$RC" "shepherd halt ($CLASS: $FAULT)" 2>/dev/null || true
-      export _BUREAU_LINEAR_SINGLE_ATTEMPT=1
-      add_issue_label "$ISSUE" "needs-human" \
-        || echo "[shepherd] WARN: could not add the 'needs-human' label to $ISSUE — Linear is still unusable" >&2
-      post_comment "$ISSUE" "🛑 Shepherd halt: \`$PIPELINE\` gave up because Linear stayed unusable after every retry (\`$FAULT\`). Nothing was decided on the empty answer. Needs human — re-shepherd once Linear answers again." \
-        || echo "[shepherd] WARN: could not post the halt comment on $ISSUE — Linear is still unusable" >&2
-      exit "$RC"
+      _shepherd_linear_halt "$PIPELINE" "$RC"
       ;;
     *)
       echo "[shepherd] $PIPELINE halted ($CLASS) — aborting shepherd"

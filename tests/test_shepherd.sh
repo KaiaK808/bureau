@@ -126,6 +126,11 @@ remove_issue_label() { printf '%s\t%s\n' "-$1" "$2" >> "$LABEL_LOG"; }
 post_comment()       { :; }
 alert_telegram()     { :; }
 
+# Label read — the ticket carries none of needs-human / blocked / wip. (Without
+# this stub the shepherd's label check used to hit "command not found" and read
+# it as "no label"; it now halts on a read that fails, see scenario 7 on.)
+get_issue_detail() { printf '%s' '{"identifier":"stub","labels":[]}'; }
+
 # Branch resolution — return a fixed dummy branch.
 # (No ${var,,} lowercase expansion — bash 3.2 on macOS doesn't support it.)
 get_issue_branch() { echo "feat/$1-stub"; }
@@ -453,9 +458,248 @@ test_block_halts() {
   return 0
 }
 
+# ── Scenarios 7–11: the shepherd's own Linear reads (EXP-1528) ─────
+# These run the REAL read family out of bureau-config.sh — get_issue_state,
+# get_issue_detail and the fetch with its fault record — against a stubbed curl
+# that plays $sb/queue, one answer form per call, the last line repeating (the
+# pattern of tests/test_linear_retry.sh). BUREAU_LINEAR_RETRIES=0 keeps the
+# ladder at one attempt. The stub sleep records each wait and kills the shepherd
+# at the third, so a shepherd that would wait forever ends, and shows it.
+_use_real_linear_reads() {
+  local sb="$1" fn
+  sed -n \
+    -e '/^_bureau_linear_classify() {/,/^}/p' -e '/^_bureau_linear_number() {/,/^}/p' \
+    -e '/^_bureau_linear_setting() {/,/^}/p'  -e '/^_bureau_linear_record() {/,/^}/p' \
+    -e '/^_bureau_linear_fetch() {/,/^}/p'    -e '/^linear_query() {/,/^}/p' \
+    -e '/^bureau_issue_snapshot() {/,/^}/p'   -e '/^get_issue_state() {/,/^}/p' \
+    -e '/^get_issue_detail() {/,/^}/p' \
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
+  # The stub defines get_issue_state and get_issue_detail itself; the real ones
+  # come after it and win.
+  for fn in _bureau_linear_fetch:1 get_issue_state:2 get_issue_detail:2; do
+    [ "$(grep -c "^${fn%:*}() {" "$sb/scripts/bureau-config.sh")" = "${fn#*:}" ] \
+      || { echo "FAIL: the real ${fn%:*} was not appended to the stub config"; return 1; }
+  done
+  cat >> "$sb/scripts/bureau-config.sh" <<'REC_EOF'
+BUREAU_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.bureau.json"
+add_issue_label() { printf '%s\t%s\tsingle=%s\n' "+$1" "$2" "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" >> "$LABEL_LOG"; }
+post_comment()    { printf '%s\tsingle=%s\n' "$2" "${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" >> "$LABEL_LOG.comments"; }
+alert_telegram()  { printf '%s\n' "$4" >> "$LABEL_LOG.alerts"; }
+REC_EOF
+  mkdir -p "$sb/bin" "$sb/forms" "$sb/tmp"
+  local node='"id":"U1","identifier":"EXP-7","title":"T","description":"D","project":null'
+  # A free ticket still carries a harmless label, so "some label" never passes for "a held label".
+  printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[{"name":"lane-2"}]}}]}}}' "$node" > "$sb/forms/build"
+  printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[{"name":"lane-2"},{"name":"needs-human"}]}}]}}}' "$node" > "$sb/forms/held"
+  printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s8","name":"Done"},"labels":{"nodes":[]}}]}}}' "$node" > "$sb/forms/done"
+  printf '%s' '<html>CANARY-ANSWER 502 Bad Gateway</html>' > "$sb/forms/html"
+  cat > "$sb/bin/curl" <<CURL_EOF
+#!/bin/bash
+q="$sb/queue"
+form=\$(head -1 "\$q")
+if [ "\$(wc -l < "\$q")" -gt 1 ]; then tail -n +2 "\$q" > "\$q.tmp" && mv "\$q.tmp" "\$q"; fi
+echo "\$form" >> "$sb/curl.log"
+cat "$sb/forms/\$form"
+CURL_EOF
+  cat > "$sb/bin/sleep" <<SLEEP_EOF
+#!/bin/bash
+printf '%s\n' "\$1" >> "$sb/sleeps.log"
+[ "\$(wc -l < "$sb/sleeps.log")" -ge 3 ] && kill -KILL "\$PPID"
+exit 0
+SLEEP_EOF
+  chmod +x "$sb/bin/curl" "$sb/bin/sleep"
+}
+
+# _put_old_reads <sb> — the negative control: today's reads (before EXP-1528),
+# verbatim, defined after the new ones so they win. Checks that they landed.
+_put_old_reads() {
+  local sb="$1"
+  cat > "$sb/old-reads.sh" <<'OLD_EOF'
+_shepherd_state() { get_issue_state "$ISSUE" 2>/dev/null || echo ""; }
+_shepherd_human_label() {
+  local forbidden
+  for forbidden in needs-human blocked wip; do
+    if get_issue_detail "$ISSUE" 2>/dev/null \
+         | jq -e --arg L "$forbidden" '.labels | index($L)' >/dev/null 2>&1; then
+      printf '%s' "$forbidden"; return 0
+    fi
+  done
+}
+OLD_EOF
+  awk -v f="$sb/old-reads.sh" '/^# ── Dry run: print the route/ { while ((getline l < f) > 0) print l } { print }' \
+    "$sb/scripts/shepherd.sh" > "$sb/scripts/shepherd.old" && mv "$sb/scripts/shepherd.old" "$sb/scripts/shepherd.sh"
+  [ "$(grep -c '^_shepherd_state() {' "$sb/scripts/shepherd.sh")" = 2 ] \
+    || { echo "FAIL: could not build the negative control"; return 1; }
+}
+
+# _run_reads <sb> <queue…> [-- shepherd args] — plays the queue; sets READS_RC.
+_run_reads() {
+  local sb="$1"; shift
+  local forms=()
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do forms+=("$1"); shift; done
+  [ "${1:-}" = -- ] && shift
+  printf '%s\n' "${forms[@]}" > "$sb/queue"
+  set +e
+  PATH="$sb/bin:$PATH" BUREAU_LINEAR_RETRIES=0 TMPDIR="$sb/tmp" run_shepherd "$sb" "$@"
+  READS_RC=$?
+  set -e
+}
+
+_no_answer_text() {
+  if grep -rq CANARY-ANSWER "$1/shepherd.out" "$1/shepherd.err" "$1/labels.log"* 2>/dev/null; then
+    echo "FAIL: answer text reached a message"; return 1
+  fi
+}
+
+# Scenario 7: the state read gets an unusable Linear → exit 27, fault class named.
+test_state_read_unusable_halts() {
+  local sb; sb=$(make_sandbox state_read)
+  _use_real_linear_reads "$sb" || return 1
+  _run_reads "$sb" html -- EXP-7
+  assert_eq "$READS_RC" 27 "shepherd exit when its state read gives up on Linear" || return 1
+  [ ! -s "$sb/invocations.log" ] || { echo "FAIL: a stage ran without a state"; return 1; }
+  [ ! -s "$sb/sleeps.log" ] || { echo "FAIL: the shepherd waited instead of halting"; return 1; }
+  grep -q "^+EXP-7"$'\t'"needs-human"$'\t'"single=1$" "$sb/labels.log" \
+    || { echo "FAIL: needs-human was not attempted once, on the single-attempt path"; cat "$sb/labels.log"; return 1; }
+  grep -q 'reading the state gave up because Linear stayed unusable.*not-json.*single=1$' "$sb/labels.log.comments" \
+    || { echo "FAIL: the halt comment does not name the read and the fault class"; cat "$sb/labels.log.comments"; return 1; }
+  grep -q "not-json" "$sb/labels.log.alerts" || { echo "FAIL: the alert does not name the fault class"; return 1; }
+  _no_answer_text "$sb" || return 1
+
+  # Negative control: today's `|| echo ""` reads the failure as "no state" and waits forever.
+  local sb2; sb2=$(make_sandbox state_read_old)
+  _use_real_linear_reads "$sb2" && _put_old_reads "$sb2" || return 1
+  _run_reads "$sb2" html -- EXP-7
+  if [ "$READS_RC" = 27 ] || [ "$(grep -c '^60$' "$sb2/sleeps.log" 2>/dev/null)" -lt 3 ] \
+     || grep -q needs-human "$sb2/labels.log" 2>/dev/null; then
+    echo "FAIL: negative control: the old state read no longer waits forever, so this proves nothing"; return 1
+  fi
+  return 0
+}
+
+# Scenario 8: the state read works, the label read gets an unusable Linear → exit 27.
+test_label_read_unusable_halts() {
+  local sb; sb=$(make_sandbox label_read)
+  _use_real_linear_reads "$sb" || return 1
+  _run_reads "$sb" build html -- EXP-7
+  assert_eq "$READS_RC" 27 "shepherd exit when its label read gives up on Linear" || return 1
+  assert_eq "$(tr '\n' ' ' < "$sb/curl.log")" "build html " "one state read, then one label read" || return 1
+  [ ! -s "$sb/invocations.log" ] || { echo "FAIL: the shepherd walked on past an unread label list"; return 1; }
+  grep -q 'reading the labels gave up because Linear stayed unusable.*not-json.*single=1$' "$sb/labels.log.comments" \
+    || { echo "FAIL: the halt comment does not name the read and the fault class"; cat "$sb/labels.log.comments"; return 1; }
+  grep -q "not-json" "$sb/labels.log.alerts" || { echo "FAIL: the alert does not name the fault class"; return 1; }
+  _no_answer_text "$sb" || return 1
+
+  # Negative control: today's label check reads the failure as "no label" and walks on.
+  local sb2; sb2=$(make_sandbox label_read_old)
+  _use_real_linear_reads "$sb2" && _put_old_reads "$sb2" || return 1
+  _run_reads "$sb2" build html -- EXP-7
+  grep -q implement-pipeline.sh "$sb2/invocations.log" 2>/dev/null \
+    || { echo "FAIL: negative control: the old label check no longer walks on, so this proves nothing"; return 1; }
+  return 0
+}
+
+# Scenario 9: when Linear answers, a held ticket halts and a free one walks on.
+test_human_label_when_linear_answers() {
+  local sb; sb=$(make_sandbox label_held)
+  _use_real_linear_reads "$sb" || return 1
+  _run_reads "$sb" build held -- EXP-7
+  assert_eq "$READS_RC" 25 "shepherd exit on a ticket labelled needs-human" || return 1
+  grep -q "'needs-human' label present on EXP-7" "$sb/shepherd.out" \
+    || { echo "FAIL: the halt does not name needs-human"; cat "$sb/shepherd.out"; return 1; }
+  [ ! -s "$sb/invocations.log" ] || { echo "FAIL: a stage ran on a held ticket"; return 1; }
+
+  local sb2; sb2=$(make_sandbox label_free)
+  _use_real_linear_reads "$sb2" || return 1
+  _run_reads "$sb2" build build done -- EXP-7
+  assert_eq "$READS_RC" 0 "shepherd exit on a free ticket that reaches Done" || return 1
+  assert_eq "$(tr '\n' ' ' < "$sb2/invocations.log")" "implement-pipeline.sh " "a free ticket runs its stage once" || return 1
+  assert_eq "$(tr '\n' ' ' < "$sb2/curl.log")" "build build done " "one label read per iteration" || return 1
+  return 0
+}
+
+# Scenario 10: --dry-run with an unusable Linear exits 27, prints no route, writes nothing.
+test_dry_run_read_unusable() {
+  local sb; sb=$(make_sandbox dry_read)
+  _use_real_linear_reads "$sb" || return 1
+  _run_reads "$sb" html -- --dry-run EXP-7
+  assert_eq "$READS_RC" 27 "dry-run exit when the state read gives up on Linear" || return 1
+  grep -q "could not read the state of EXP-7.*fault: not-json" "$sb/shepherd.err" \
+    || { echo "FAIL: the dry run does not name the fault class"; cat "$sb/shepherd.err"; return 1; }
+  if grep -q "Current state" "$sb/shepherd.out"; then echo "FAIL: the dry run printed a route"; return 1; fi
+  [ ! -e "$sb/labels.log" ] && [ ! -e "$sb/labels.log.comments" ] \
+    || { echo "FAIL: the dry run wrote to Linear"; return 1; }
+  _no_answer_text "$sb" || return 1
+
+  # Negative control: today's dry run prints "unknown" and reports success.
+  local sb2; sb2=$(make_sandbox dry_read_old)
+  _use_real_linear_reads "$sb2" && _put_old_reads "$sb2" || return 1
+  _run_reads "$sb2" html -- --dry-run EXP-7
+  if [ "$READS_RC" != 0 ] || ! grep -q "Current state: unknown" "$sb2/shepherd.out"; then
+    echo "FAIL: negative control: the old dry run no longer reports success, so this proves nothing"; return 1
+  fi
+  return 0
+}
+
+# Scenario 11: a read that fails with any other code is neither "no state" nor
+# "no label": the shepherd halts with 1, labels needs-human and names the read.
+# $2 = a replacement read helper appended to the stub config.
+_run_bad_read() {
+  local sb="$1" helper="$2"; shift 2
+  [ $# -gt 0 ] || set -- EXP-8
+  printf '%s\n' "$helper" >> "$sb/scripts/bureau-config.sh"
+  cat >> "$sb/scripts/bureau-config.sh" <<'REC_EOF'
+post_comment()   { printf '%s\n' "$2" >> "$LABEL_LOG.comments"; }
+alert_telegram() { printf '%s\n' "$4" >> "$LABEL_LOG.alerts"; }
+REC_EOF
+  mkdir -p "$sb/bin" "$sb/tmp"
+  cat > "$sb/bin/sleep" <<SLEEP_EOF
+#!/bin/bash
+printf '%s\n' "\$1" >> "$sb/sleeps.log"
+[ "\$(wc -l < "$sb/sleeps.log")" -ge 3 ] && kill -KILL "\$PPID"
+exit 0
+SLEEP_EOF
+  chmod +x "$sb/bin/sleep"
+  echo "s5" > "$sb/state.txt"   # Build
+  set +e
+  PATH="$sb/bin:$PATH" TMPDIR="$sb/tmp" run_shepherd "$sb" "$@"
+  READS_RC=$?
+  set -e
+}
+
+test_read_failure_other_code() {
+  local name helper what
+  for case_ in 'state_exit5|get_issue_state() { return 5; }|state' \
+               'detail_empty|get_issue_detail() { return 0; }|labels' \
+               'detail_nolist|get_issue_detail() { printf "%s" "{}"; }|labels'; do
+    name=${case_%%|*}; what=${case_##*|}; helper=${case_#*|}; helper=${helper%|*}
+    local sb; sb=$(make_sandbox "bad_$name")
+    _run_bad_read "$sb" "$helper"
+    assert_eq "$READS_RC" 1 "$name: shepherd exit when the $what read fails" || return 1
+    [ ! -s "$sb/invocations.log" ] || { echo "FAIL: $name: a stage ran on an unread $what"; return 1; }
+    [ ! -s "$sb/sleeps.log" ] || { echo "FAIL: $name: the shepherd waited instead of halting"; return 1; }
+    grep -q "^+EXP-8"$'\t'"needs-human$" "$sb/labels.log" \
+      || { echo "FAIL: $name: needs-human was not added"; return 1; }
+    grep -q "could not read the $what of this ticket" "$sb/labels.log.comments" \
+      || { echo "FAIL: $name: the comment does not name the $what read"; return 1; }
+  done
+
+  # The dry run fails the same way, prints no route and writes nothing.
+  local sb2; sb2=$(make_sandbox bad_dry_state)
+  _run_bad_read "$sb2" 'get_issue_state() { return 5; }' --dry-run EXP-8
+  assert_eq "$READS_RC" 1 "dry-run exit when the state read fails with another code" || return 1
+  grep -q "could not read the state of EXP-8 (exit 5)" "$sb2/shepherd.err" \
+    || { echo "FAIL: the dry run does not name the failed read"; cat "$sb2/shepherd.err"; return 1; }
+  if grep -q "Current state" "$sb2/shepherd.out"; then echo "FAIL: the dry run printed a route"; return 1; fi
+  [ ! -e "$sb2/labels.log" ] || { echo "FAIL: the dry run wrote to Linear"; return 1; }
+  return 0
+}
+
 # ── Run all scenarios ──────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linear_unusable_halts test_block_halts; do
+for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linear_unusable_halts test_block_halts \
+                test_state_read_unusable_halts test_label_read_unusable_halts test_human_label_when_linear_answers \
+                test_dry_run_read_unusable test_read_failure_other_code; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else
