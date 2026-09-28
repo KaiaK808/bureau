@@ -43,7 +43,34 @@ def read_manifest(repo):
         t not in ("claude", "codex") for t in data.get("targets", [])
     ):
         raise ValueError("invalid installation targets")
+    sources = data.get("sources", {})
+    if not isinstance(sources, dict) or any(not isinstance(v, dict) for v in sources.values()):
+        raise ValueError("malformed installation sources")
     return data
+
+
+def source_revision():
+    """Describe the template revision this installer runs from (ROOT, symlinks resolved)."""
+    def git(*args):
+        proc = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True)
+        return proc.stdout.strip() if proc.returncode == 0 else None
+    top = git("rev-parse", "--show-toplevel")
+    # A copy that sits inside some other repository must not borrow that repository's commit.
+    if top is None or Path(top).resolve() != ROOT:
+        return {"git": False, "note": "not a git checkout"}
+    commit = git("rev-parse", "--verify", "HEAD")
+    if commit is None:
+        return {"git": False, "note": "git checkout without a commit"}
+    status = git("status", "--porcelain", "--untracked-files=normal")
+    # Untracked template files are installed too, so they make the source dirty; unreadable counts as dirty.
+    return {"git": True, "tag": git("describe", "--tags", "--exact-match", "HEAD"),
+            "describe": git("describe", "--tags", "--always", "HEAD"), "commit": commit,
+            "dirty": status != ""}
+
+
+def files_digest(files):
+    """Binds the source record to the file hashes it describes; the doctor recomputes it."""
+    return digest(json.dumps(files, sort_keys=True).encode())
 
 
 def targets_for(args, manifest):
@@ -108,33 +135,33 @@ def assets(repo, args, manifest, targets):
         for target in targets:
             for source in sorted((ROOT / "templates/commands").glob("*.md")):
                 relative = f".agents/skills/{source.stem}/SKILL.md" if target == "codex" else f".claude/commands/{source.name}"
-                candidates.append((relative, render_command(source, target), False, False))
-            candidates.append(("AGENTS.md" if target == "codex" else "CLAUDE.md", instruction_block(target), False, True))
+                candidates.append((relative, render_command(source, target), False, False, "interfaces/" + target))
+            candidates.append(("AGENTS.md" if target == "codex" else "CLAUDE.md", instruction_block(target), False, True, "interfaces/" + target))
             if target == "codex":
                 for source in sorted((ROOT / "templates/skills").rglob("*")):
                     if source.is_file():
                         relative = ".agents/skills/" + str(source.relative_to(ROOT / "templates/skills"))
-                        candidates.append((relative, source.read_bytes(), False, False))
+                        candidates.append((relative, source.read_bytes(), False, False, "interfaces/" + target))
     if "scripts" in scopes:
         for source in sorted((ROOT / "templates/scripts").iterdir()):
             if source.is_file():
-                candidates.append((f"scripts/{source.name}", source.read_bytes(), source.suffix in (".sh", ".py"), False))
+                candidates.append((f"scripts/{source.name}", source.read_bytes(), source.suffix in (".sh", ".py"), False, "scripts"))
     if "workflows" in scopes and "claude" in targets:
         for source in sorted((ROOT / "templates/workflows").glob("*.js")):
             workflow = source.read_text()
             if "/* BUREAU_SCHEDULER_CORE */" in workflow:
                 core = (ROOT / "templates/scripts/bureau-schedule.mjs").read_text().replace("export function", "function")
                 workflow = workflow.replace("/* BUREAU_SCHEDULER_CORE */", core)
-            candidates.append((f".claude/workflows/{source.name}", workflow.encode(), False, False))
+            candidates.append((f".claude/workflows/{source.name}", workflow.encode(), False, False, "workflows"))
     if "ci" in scopes:
-        candidates.append((".github/workflows/ci.yml", (ROOT / "templates/.github/workflows/ci.yml").read_bytes(), False, False))
+        candidates.append((".github/workflows/ci.yml", (ROOT / "templates/.github/workflows/ci.yml").read_bytes(), False, False, "ci"))
 
     unknown = set(args.overwrite) - {item[0] for item in candidates}
     if unknown:
         raise ValueError("--overwrite is outside the selected scope: " + ", ".join(sorted(unknown)))
     records = dict(manifest.get("files", {}))
     plan, writes = [], []
-    for relative, incoming, executable, managed in candidates:
+    for relative, incoming, executable, managed, _ in candidates:
         path = destination(repo, relative)
         old = path.read_bytes() if path.exists() else b""
         previous = records.get(relative)
@@ -158,7 +185,8 @@ def assets(repo, args, manifest, targets):
             records[relative] = installed_hash
             writes.append((path, new, executable))
 
-    print(json.dumps({"targets": targets, "files": plan}, indent=2))
+    source = source_revision()
+    print(json.dumps({"targets": targets, "source": source, "files": plan}, indent=2))
     # An apply containing conflicts writes nothing, including the manifest.
     if any(item["action"] == "conflict" for item in plan):
         return 3
@@ -176,6 +204,11 @@ def assets(repo, args, manifest, targets):
     updated.update(version=1, files=records)
     if "interfaces" in scopes:
         updated["targets"] = sorted(set(manifest.get("targets", [])) | set(targets))
+    # Keyed by scope (and host for interfaces): a later partial apply must not relabel files it did not write.
+    sources = dict(manifest.get("sources", {}))
+    for key in {item[4] for item in candidates}:
+        sources[key] = source
+    updated.update(sources=dict(sorted(sources.items())), sources_files_sha256=files_digest(records))
     atomic_write(ignore_path, ignore)
     atomic_write(manifest_path, (json.dumps(updated, indent=2) + "\n").encode())
     return 0

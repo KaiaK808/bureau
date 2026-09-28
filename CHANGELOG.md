@@ -27,6 +27,15 @@ The hardening list from slidefactory-core and msc-planner in `docs/2026-09-25-dr
 - An npm project's `node_modules` is restored after the worktree reset (`npm ci --ignore-scripts`, clone on identical manifests); a failure stops with `24` instead of building red.
 - A failed implement push is reported with branch, exit code and git's output, and a detached HEAD pushes to `refs/heads/<branch>`.
 
+### Installer records its source
+
+#### Added
+
+- An asset `--apply` records in `.bureau-install.json` which Bureau source revision it installed from: under `sources`, per scope it wrote (`scripts`, `ci`, `workflows`, `interfaces/claude`, `interfaces/codex`), the exact tag or `null`, the nearest `git describe --tags`, the full commit and whether the source checkout was dirty; a source that is not its own Git checkout is recorded as `not a git checkout`. The preview prints the same `source` before anything is written. A preview or an apply stopped by a conflict records nothing.
+- Doctor reports `template_source`: `recorded`, `source not recorded` (no manifest, or one written before this change; not an error), or `stale` with a warning when file hashes changed after the record was written, as an installer without source recording leaves it.
+
+Upgrade action: none. The manifest stays at version `1` and installers without source recording still read it; the next asset `--apply` records the source.
+
 ## [2.0.0] - 2026-09-07
 
 ### Claude Code and Codex support
