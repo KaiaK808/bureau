@@ -5,10 +5,11 @@
 #     no needs-human (a re-run may succeed). Before, jq's own status escaped (2 for a
 #     missing file, 5 for invalid JSON), and 2 reads as "queue empty" to both drivers.
 #   - stale: exit 11, back to Triage AND needs-human (a re-run reads the same file).
-#     Stale means all three: the file is byte for byte what it was before the call, the
-#     directory it names existed before the call, and that directory is not the ticket's
-#     own (bureau_spec_dir_for_branch of the branch checked out before the call, never
-#     main, or of the ticket's newest bureau-branch marker; Linear's generated branch name
+#     Stale means all three: specify did not write the file (same bytes and same
+#     modification time as before the call), the directory it names existed before the
+#     call, and that directory is not the ticket's own: not the spec directory named
+#     exactly like the last segment of the branch checked out before the call or of the
+#     ticket's newest bureau-branch marker (no fuzzy match; Linear's generated branch name
 #     does not count). Before, such a file was accepted and plan and tasks ran on another
 #     ticket's spec directory.
 #   - anything else proceeds as before.
@@ -32,7 +33,7 @@ finish_row() {  # <label>
     printf '%s\n' "${LAST_STDERR:-}" | tail -4 | sed 's/^/      err: /' >&2
   fi
   row_errors=""
-  unset PR4_SPECIFY_ACTION PR4_SPECIFY_DIR PR4_SPECIFY_RAW BUREAU_STUB_REVIEW_COMMENTS BUREAU_STUB_REVIEW_COMMENTS_RC
+  unset PR4_SPECIFY_ACTION PR4_SPECIFY_DIR PR4_SPECIFY_RAW PR4_SPECIFY_KEEP_MTIME BUREAU_STUB_REVIEW_COMMENTS BUREAU_STUB_REVIEW_COMMENTS_RC
   teardown
 }
 
@@ -40,13 +41,17 @@ finish_row() {  # <label>
 #   mode detached — HEAD detached at the branch tip, as a disposable spec worker starts
 #        on-branch — the ticket's branch 001-test-branch checked out
 #        on-main  — main checked out
-# Spec directories: 001-test-branch (from the harness) and 003-older-feature, committed.
-# The file before the call is committed too (installations track it).
+# Spec directories: 001-test-branch (from the harness) and 003-older-feature, committed,
+# plus the directories named after the file content. The file before the call is committed
+# too (installations track it) and dated 2020-01-01, so a write during the call always shows
+# in its modification time, whatever the file system's time resolution.
 setup() {
+  local d
   sandbox_init EXP-910 001-test-branch
   mkdir -p "$SANDBOX/specs/003-older-feature"
   printf '# older spec\n' > "$SANDBOX/specs/003-older-feature/spec.md"
   printf '# older tasks\n- [ ] T001 older task\n' > "$SANDBOX/specs/003-older-feature/tasks.md"
+  for d in "${@:3}"; do mkdir -p "$SANDBOX/specs/$d"; printf '# %s\n' "$d" > "$SANDBOX/specs/$d/spec.md"; done
   if [ -n "${2:-}" ]; then
     mkdir -p "$SANDBOX/.specify"
     printf '%s\n' "$2" > "$SANDBOX/.specify/feature.json"
@@ -60,6 +65,7 @@ setup() {
     on-branch) : ;;
     on-main) git -C "$SANDBOX" checkout -q main && git -C "$SANDBOX" merge -q --ff-only 001-test-branch ;;
   esac
+  [ ! -f "$SANDBOX/.specify/feature.json" ] || touch -t 202001010000 "$SANDBOX/.specify/feature.json"
   export FAKE_CLAUDE_BIN="$LIB_DIR/pr4-fake-specify.sh"
   chmod +x "$FAKE_CLAUDE_BIN"
   export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_filler.txt"
@@ -158,15 +164,13 @@ expect_abort yes 'still names `specs/003-older-feature`'
 export BUREAU_STUB_BRANCH=001-test-branch
 finish_row "S3 Linear's generated branch name does not make the file the ticket's"
 
-# S4 — main checked out: main is never the ticket's branch, even when a directory's
-# slug starts with "main".
-setup on-main '{"feature_directory":"specs/003-main-menu"}'
-mkdir -p "$SANDBOX/specs/003-main-menu"; printf '# menu\n' > "$SANDBOX/specs/003-main-menu/spec.md"
-git -C "$SANDBOX" add -A specs; git -C "$SANDBOX" commit -q -m 'main menu spec'
+# S4 — main checked out: a directory whose slug starts with "main" is not named like the
+# branch main.
+setup on-main '{"feature_directory":"specs/003-main-menu"}' 003-main-menu
 export PR4_SPECIFY_ACTION=leave
 run_pipeline spec-pipeline.sh EXP-910; set +e
 expect_abort yes 'still names `specs/003-main-menu`'
-finish_row "S4 on main, a directory fitting the name main is not the ticket's"
+finish_row "S4 on main, a directory whose slug starts with main is not the ticket's"
 
 # S5 — a Linear read that fails during the marker lookup ends the stage with its code
 # (27 through the recovery trap); it never counts as "no marker".
@@ -178,6 +182,33 @@ run_pipeline spec-pipeline.sh EXP-910; set +e
 ! grep -q '^add_issue_label' "$SANDBOX/calls.log" || err "a label was written"
 finish_row "S5 a failed marker read ends with its own code"
 
+# S6 — a re-spec: the worker starts on origin/main, where the ticket's own directory
+# (003-auth-sso, on its unmerged spec branch) is missing. The marker would fit the sibling
+# 002-auth by slug, but only a directory named exactly like the marker is the ticket's.
+setup detached '{"feature_directory":"specs/002-auth"}' 002-auth
+export PR4_SPECIFY_ACTION=leave BUREAU_STUB_REVIEW_COMMENTS='[{"body":"<!-- bureau-branch: 003-auth-sso -->\n**Spec Artifacts — EXP-910**","createdAt":"2026-01-02T00:00:00Z"}]'
+run_pipeline spec-pipeline.sh EXP-910; set +e
+expect_abort yes 'still names `specs/002-auth`'
+finish_row "S6 a marker that only fits a sibling by slug does not make it the ticket's"
+
+# S7 — the checked-out branch fits the named directory by slug but is not its name.
+setup on-branch '{"feature_directory":"specs/003-older-feature"}'
+git -C "$SANDBOX" checkout -q -b 009-older-feature-v2
+export PR4_SPECIFY_ACTION=leave
+run_pipeline spec-pipeline.sh EXP-910; set +e
+expect_abort yes 'still names `specs/003-older-feature`'
+finish_row "S7 a checked-out branch that only fits by slug does not make the file the ticket's"
+
+# S8 — a directory named like the marker, but outside the specs directory.
+setup detached '{"feature_directory":"docs/004-own-feature"}'
+mkdir -p "$SANDBOX/docs/004-own-feature" "$SANDBOX/specs/004-own-feature"
+printf '# elsewhere\n' > "$SANDBOX/docs/004-own-feature/spec.md"; printf '# own\n' > "$SANDBOX/specs/004-own-feature/spec.md"
+git -C "$SANDBOX" add -A docs specs; git -C "$SANDBOX" commit -q -m 'same name outside specs'
+export PR4_SPECIFY_ACTION=leave BUREAU_STUB_REVIEW_COMMENTS="$MARKER_OWN_004"
+run_pipeline spec-pipeline.sh EXP-910; set +e
+expect_abort yes 'still names `docs/004-own-feature`'
+finish_row "S8 only the specs directory's entry of that name is the ticket's"
+
 # P1 — a proper run: specify records its new directory.
 setup detached "$OLDER"
 export PR4_SPECIFY_ACTION=write PR4_SPECIFY_DIR=specs/004-new-feature
@@ -188,9 +219,7 @@ finish_row "P1 a file specify rewrote proceeds on its directory"
 
 # P2 — unchanged file, but the directory is the ticket's own by its marker (a re-spec of
 # a ticket whose directory is already on main).
-setup detached '{"feature_directory":"specs/004-own-feature"}'
-mkdir -p "$SANDBOX/specs/004-own-feature"; printf '# own\n' > "$SANDBOX/specs/004-own-feature/spec.md"
-git -C "$SANDBOX" add -A specs; git -C "$SANDBOX" commit -q -m 'own spec'
+setup detached '{"feature_directory":"specs/004-own-feature"}' 004-own-feature
 export PR4_SPECIFY_ACTION=leave BUREAU_STUB_REVIEW_COMMENTS="$MARKER_OWN_004"
 run_pipeline spec-pipeline.sh EXP-910; set +e
 expect_proceed specs/004-own-feature/
@@ -218,6 +247,31 @@ export PR4_SPECIFY_ACTION=mkdir PR4_SPECIFY_DIR=specs/006-planned-feature
 run_pipeline spec-pipeline.sh EXP-910; set +e
 expect_proceed specs/006-planned-feature/
 finish_row "P5 a directory specify created counts, even through an unchanged file"
+
+# P6 — specify rewrites the file to another existing directory of the same length, and
+# the modification time does not show it (set back): the bytes alone count as written.
+setup detached "$OLDER" 004-older-feature
+export PR4_SPECIFY_ACTION=raw PR4_SPECIFY_KEEP_MTIME=1 PR4_SPECIFY_RAW='{"feature_directory":"specs/004-older-feature"}
+'
+run_pipeline spec-pipeline.sh EXP-910; set +e
+expect_proceed specs/004-older-feature/
+finish_row "P6 a same-length rewrite is a write"
+
+# P7 — specify writes the same bytes again (the ticket's own directory on main, named by
+# main's file, no marker): the modification time shows the write, so it is trusted.
+setup detached '{"feature_directory":"specs/005-own-feature"}' 005-own-feature
+export PR4_SPECIFY_ACTION=raw PR4_SPECIFY_RAW='{"feature_directory":"specs/005-own-feature"}
+'
+run_pipeline spec-pipeline.sh EXP-910; set +e
+expect_proceed specs/005-own-feature/
+finish_row "P7 a rewrite with the same bytes is a write"
+
+# P8 — comments with an empty and a null body, newer than the marker, are skipped.
+setup detached '{"feature_directory":"specs/004-own-feature"}' 004-own-feature
+export PR4_SPECIFY_ACTION=leave BUREAU_STUB_REVIEW_COMMENTS='[{"body":"","createdAt":"2026-01-04T00:00:00Z"},{"body":null,"createdAt":"2026-01-03T00:00:00Z"},{"body":"<!-- bureau-branch: 004-own-feature -->\n**Spec Artifacts — EXP-910**","createdAt":"2026-01-02T00:00:00Z"}]'
+run_pipeline spec-pipeline.sh EXP-910; set +e
+expect_proceed specs/004-own-feature/
+finish_row "P8 empty and null comment bodies do not break the marker read"
 
 if [ "$failed" -gt 0 ]; then
   echo "FAILED rows: $failed" >&2

@@ -188,7 +188,8 @@ SPECKIT_DIR=.claude/skills
 if [ "$(resolve_runner_for_stage spec)" = codex ]; then SPECKIT_DIR=.agents/skills; fi
 
 # .specify/feature.json before specify, so that Phase 1.5 can tell a file this
-# run wrote from one it left behind: the file's checksum, whether the directory
+# run wrote from one it left behind: the file's checksum and modification time
+# (a rewrite with the same bytes still counts as written), whether the directory
 # it names exists already, and the branch checked out now (a disposable spec
 # worker starts detached on origin/main, so usually none).
 # _fj_read prints feature_directory, or nothing when the file is missing or is
@@ -201,10 +202,17 @@ _fj_read() {
   fi
   return 0
 }
+# _fj_mtime prints the file's modification time in nanoseconds (nothing when it
+# cannot be read; then the checksum alone decides).
+_fj_mtime() {
+  python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)' .specify/feature.json 2>/dev/null || true
+}
 FJ_SUM_BEFORE=""
+FJ_TIME_BEFORE=""
 FJ_DIR_EXISTED=""
 if [ -f .specify/feature.json ]; then
   FJ_SUM_BEFORE=$(cksum < .specify/feature.json)
+  FJ_TIME_BEFORE=$(_fj_mtime)
   FJ_DIR_BEFORE=$(_fj_read)
   if [ -n "$FJ_DIR_BEFORE" ] && [ -d "$FJ_DIR_BEFORE" ]; then FJ_DIR_EXISTED=1; fi
 fi
@@ -245,36 +253,40 @@ if [ -z "$FEATURE_DIR" ] || [ ! -d "$FEATURE_DIR" ]; then
   alert_telegram "$ISSUE" "spec-pipeline" "11" "feature.json missing after specify" || true
   exit 11
 fi
-# A stale feature.json: specify left the file byte for byte as it was, the
-# directory it names existed before the call, and that directory is not this
-# ticket's own — neither the one bureau_spec_dir_for_branch finds for the branch
-# checked out before the call (a checkout already on the ticket's branch; never
-# main) nor the one it finds for the ticket's newest bureau-branch marker.
-# Linear's generated branch name does not count: it can name a parent ticket's
-# spec. Such a file is usually the last value merged to main (the file is tracked
-# and kept per branch), and plan and tasks would overwrite another ticket's spec.
-# A re-run reads the same file, so a human decides (needs-human). A changed file
-# is trusted: specify wrote it in this run.
-if [ -n "$FJ_DIR_EXISTED" ] && [ "$(cksum < .specify/feature.json)" = "$FJ_SUM_BEFORE" ]; then
+# A stale feature.json: specify did not write the file (same bytes, same
+# modification time), the directory it names existed before the call, and that
+# directory is not this ticket's own. Own means the spec directory named exactly
+# like the last segment of the branch checked out before the call (a checkout
+# already on the ticket's branch) or of the ticket's newest bureau-branch marker:
+# this stage names the branch, and so the marker, after its directory. No fuzzy match: on a re-spec the worker starts on origin/main, where
+# the ticket's own directory (on its unmerged branch) is missing and the marker
+# would fit a sibling. Linear's generated branch name does not count either. Such
+# a file is usually the last value merged to main (the file is tracked and kept
+# per branch), and plan and tasks would overwrite another ticket's spec. A re-run
+# reads the same file, so a human decides (needs-human). A file specify wrote is
+# trusted.
+# _fj_named_by <branch>: 0 when FEATURE_DIR is $BUREAU_SPECS_DIR/<last segment>.
+_fj_named_by() {
+  local want="${BUREAU_SPECS_DIR%/}/${1##*/}"
+  [ -d "$want" ] && [ "$(cd "$want" && pwd -P)" = "$FJ_WANT" ]
+}
+if [ -n "$FJ_DIR_EXISTED" ] && [ "$(cksum < .specify/feature.json)" = "$FJ_SUM_BEFORE" ] \
+   && [ "$(_fj_mtime)" = "$FJ_TIME_BEFORE" ]; then
   FJ_OWN=""
   FJ_WANT=$(cd "$FEATURE_DIR" && pwd -P)
-  if [ -n "$FJ_BRANCH_BEFORE" ] && [ "$FJ_BRANCH_BEFORE" != main ]; then
-    FJ_CAND=$(bureau_spec_dir_for_branch "$FJ_BRANCH_BEFORE")
-    if [ -n "$FJ_CAND" ] && [ "$(cd "$FJ_CAND" && pwd -P)" = "$FJ_WANT" ]; then FJ_OWN=1; fi
+  if [ -n "$FJ_BRANCH_BEFORE" ] && _fj_named_by "$FJ_BRANCH_BEFORE"; then
+    FJ_OWN=1
   fi
   if [ -z "$FJ_OWN" ]; then
     # A failed read ends the stage with its code through the recovery trap; it
-    # never counts as "no marker".
-    FJ_MARKER=$(get_issue_comments "$ISSUE" | jq -r '[.[] | (.body // "") | split("\n")[0] | select(test("^<!-- bureau-branch: [^ ]+ -->[[:space:]]*$"))][0] // "" | sub("^<!-- bureau-branch: "; "") | sub(" -->[[:space:]]*$"; "")')
-    if [ -n "$FJ_MARKER" ]; then
-      FJ_CAND=$(bureau_spec_dir_for_branch "$FJ_MARKER")
-      if [ -n "$FJ_CAND" ] && [ "$(cd "$FJ_CAND" && pwd -P)" = "$FJ_WANT" ]; then FJ_OWN=1; fi
-    fi
+    # never counts as "no marker". A comment with an empty body has no first line.
+    FJ_MARKER=$(get_issue_comments "$ISSUE" | jq -r '[.[] | (.body // "") | split("\n")[0] // "" | select(test("^<!-- bureau-branch: [^ ]+ -->[[:space:]]*$"))][0] // "" | sub("^<!-- bureau-branch: "; "") | sub(" -->[[:space:]]*$"; "")')
+    if [ -n "$FJ_MARKER" ] && _fj_named_by "$FJ_MARKER"; then FJ_OWN=1; fi
   fi
   if [ -z "$FJ_OWN" ]; then
     trap - EXIT
-    echo "ERROR: .specify/feature.json is stale — unchanged by speckit-specify, it still names $FEATURE_DIR, which existed before this run and is not $ISSUE's spec directory."
-    post_comment "$ISSUE" "❌ Spec pipeline aborted — \`.specify/feature.json\` is unchanged after speckit-specify and still names \`$FEATURE_DIR\`, a spec directory that existed before this run and is not this ticket's. Plan and tasks would have written into another ticket's spec, and a re-run reads the same file. Find out why speckit-specify did not record the new feature (a \`feature.json\` tracked on \`main\` keeps the last merged value), then remove \`needs-human\` (troubleshooting: exit 11). Routing back to Triage." || true
+    echo "ERROR: .specify/feature.json is stale — speckit-specify did not write it, it still names $FEATURE_DIR, which existed before this run and is not $ISSUE's spec directory."
+    post_comment "$ISSUE" "❌ Spec pipeline aborted — speckit-specify did not write \`.specify/feature.json\`, which still names \`$FEATURE_DIR\`, a spec directory that existed before this run and is not this ticket's by name. Plan and tasks would have written into another ticket's spec, and a re-run reads the same file. Find out why speckit-specify did not record the new feature (a \`feature.json\` tracked on \`main\` keeps the last merged value); if that directory is this ticket's after all, post its marker (troubleshooting: exit 11). Then remove \`needs-human\`. Routing back to Triage." || true
     move_issue "$ISSUE" "$BUREAU_STATE_TRIAGE" || true
     mark_needs_human "$ISSUE" spec 11 || true
     alert_telegram "$ISSUE" "spec-pipeline" "11" "stale feature.json after specify" || true
