@@ -340,6 +340,8 @@ case "\$p" in
                                    b='{"data":{"issues":{"nodes":[{"identifier":"EXP-1","title":"T","description":null,"project":null,"labels":{"nodes":[]}}]}}}' ;;
   *'nodes { id identifier title description state'*)
                                    b='{"data":{"issues":{"nodes":[{"id":"U","identifier":"EXP-1","title":"T","description":null,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[]}}]}}}' ;;
+  # Before the id lookup below: the count's query ends in children(first: 1) { nodes { id } }.
+  *'children(first: 1)'*)          b='{"data":{"issues":{"nodes":[{"labels":{"nodes":[]},"children":{"nodes":[]}}]}}}' ;;
   *'nodes { id } }'*)              b='{"data":{"issues":{"nodes":[{"id":"U"}]}}}' ;;
   *issueLabels*)                   b='{"data":{"issueLabels":{"nodes":[{"id":"L","team":null}]}}}' ;;
   *issueUpdate*)                   b='{"data":{"issueUpdate":{"success":true}}}' ;;
@@ -347,7 +349,6 @@ case "\$p" in
   *issueAddLabel*)                 b='{"data":{"issueAddLabel":{"success":true}}}' ;;
   *issueRemoveLabel*)              b='{"data":{"issueRemoveLabel":{"success":true}}}' ;;
   *viewer*)                        b='{"data":{"viewer":{"id":"V"}}}' ;;
-  *'children(first: 1)'*)          b='{"data":{"issues":{"nodes":[{"labels":{"nodes":[]},"children":{"nodes":[]}}]}}}' ;;
   *inverseRelations*)              b='{"data":{"issues":{"nodes":[{"identifier":"EXP-1","priority":0,"createdAt":"2026-01-01","labels":{"nodes":[]},"inverseRelations":{"nodes":[]}}]}}}' ;;
   *)                               echo "UNMATCHED QUERY" >&2; b='{}' ;;
 esac

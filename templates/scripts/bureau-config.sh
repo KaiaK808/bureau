@@ -484,8 +484,10 @@ linear_query() {
 }
 
 # Helper: run a raw GraphQL payload (for mutations that need variables).
+# linear_raw <payload> [<shape>] — a reader passes the shape its jq depends on
+# (see the _BUREAU_SHAPE_* constants below), as linear_issue_query does.
 linear_raw() {
-  _bureau_linear_fetch "$1"
+  _bureau_linear_fetch "$1" "${2:-}"
 }
 
 # The shapes the issue readers below depend on. A reader that fills a missing
@@ -2111,19 +2113,21 @@ count_in_flight_issues() {
   # Through linear_raw, and no fallback to 0: a count read from an unusable
   # answer used to come out as "0 in flight", which let the spec stage take a
   # new ticket past the cap exactly while Linear was failing.
+  # The answer has to carry every list the count reads (the issues, and each
+  # node's labels and children): read as `[]`, a missing list counted a parked
+  # ticket as work, a missing issue list as "0 in flight". Such an answer is
+  # unusable like any other: retried, then 27.
   local answer
-  answer=$(linear_raw "$payload") || return $?
+  answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.children.nodes | type) == "array")') || return $?
   printf '%s' "$answer" \
   | jq '
-    [(.data.issues.nodes // [])[]
+    [.data.issues.nodes[]
      | select(
-         ([(.labels.nodes // [])[].name]
+         ([.labels.nodes[].name]
           | map(select(. == "needs-human" or . == "blocked" or . == "wip"))
           | length) == 0
        )
-     # A node without a `children` field counts: if the field is ever missing,
-     # the cap keeps counting instead of silently stopping.
-     | select(((.children.nodes // []) | length) == 0)]
+     | select((.children.nodes | length) == 0)]
     | length
   '
 }
@@ -2776,22 +2780,25 @@ pick_issue() {
   # The blockers column is empty when nothing blocks the candidate.
   # Through linear_raw, so an unusable answer is retried and then ends the
   # stage with $BUREAU_EXIT_LINEAR_UNUSABLE instead of reading as "queue
-  # empty" (exit 2).
+  # empty" (exit 2). The answer has to carry every list the pick reads (the
+  # issues, and each node's labels and blockers): read as `[]`, a node without
+  # its labels passed the needs-human exclusion and one without its relations
+  # passed as unblocked.
   local answer
-  answer=$(linear_raw "$payload") || return $?
+  answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.inverseRelations.nodes | type) == "array")') || return $?
   local candidates
   candidates=$(printf '%s' "$answer" \
   | jq -r --argjson excl "$exclude_json" --arg skip "$skip_csv" '
-    (.data.issues.nodes // [])
+    .data.issues.nodes
     | map(select(.identifier as $id | ($skip | split(",") | index($id)) == null))
     | map(select(
-        ([(.labels.nodes // [])[].name] | map(select(. as $n | $excl | index($n))) | length) == 0
+        ([.labels.nodes[].name] | map(select(. as $n | $excl | index($n))) | length) == 0
       ))
     | map(. + {_pri: (if .priority == 0 then 5 else .priority end)})
     | sort_by(._pri, .createdAt)
     | .[]
     | [ .identifier,
-        ([(.inverseRelations.nodes // [])[]
+        ([.inverseRelations.nodes[]
           | select(.type == "blocks")
           | .issue
           | select(.state.type != "completed" and .state.type != "canceled")
