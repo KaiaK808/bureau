@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a304e3560a9a1e8ba6a4b42db9d1149234e0383eb53e7d67ccc3ff22d68ae278">
+<meta name="bureau-source-sha256" content="106b230e13cb525a9e424c21e134864261fffcff1a3d662e143b5ec61a6bf852">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -16,174 +16,122 @@
 <a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
 </nav></aside>
 <main class="bhb-main"><h1
-id="bureau-v300--the-exit-code-contract-merge-policy-and-a-pipeline-that-fails-closed">Bureau
-v3.0.0 — the exit-code contract, merge policy and a pipeline that fails
-closed</h1>
-<p><strong>Stable release · 2026-09-28 · source tag
-<code>v3.0.0</code>.</strong> The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.0">GitHub
-Release</a> records the exact tagged commit. v3.0.0 has the same
-runtime, installer, templates and tests as its second candidate, <a
-href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a>; the first candidate
-was <a href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>. The previous
-stable release is <a href="release-notes-v2.0.0.html">v2.0.0</a>.</p>
-<p>This is a major release because the exit-code contract between the
-stages and whatever drives them (the shepherd, the queue loop, ticks,
-wrappers and repository tests) changed. Anything that reads these codes
-needs to be checked when upgrading.</p>
-<h2 id="what-changed-since-v200">What changed since v2.0.0</h2>
-<p><strong>The exit-code contract.</strong> A review BLOCK ends the
-review stage with <code>25</code> instead of <code>0</code>. Linear that
-stays unusable after the retry ladder ends a stage with the new code
-<code>27</code> (<code>linear-unusable</code>). <code>24</code>
-(<code>environment-blocked</code>) gains two uses: a failed dependency
-restore after the worktree reset, and
-<code>agents.merge_mode: "manual"</code> without a Merge state. The
-shepherd halts with an alert on every code except <code>0</code> and
-<code>2</code> (carry on) and <code>10</code> and <code>16</code>
-(retry), and an asked-for stop before the merge (<code>20</code> under
-<code>--no-merge</code> or <code>merge_mode: "manual"</code>) stays
-quiet; a run interrupted by Ctrl-C or SIGTERM during a read, move, wait
-or stage ends as a cancelled run (<code>130</code>) and writes nothing
-to Linear. A stage whose <code>needs-human</code> label cannot be
-written ends with <code>25</code>, a failed final implement push with
-<code>18</code> when origin still lacks commits, and a failed
-<code>repo.post_implement_command</code> with <code>14</code>. The
-vocabulary is in <a href="exit-codes.html">exit codes</a>.</p>
+id="bureau-v301--a-merge-stage-that-says-why-it-waits-and-no-second-paid-review">Bureau
+v3.0.1 — a merge stage that says why it waits, and no second paid
+review</h1>
+<p><strong>Stable release · 2026-09-29 · source tag
+<code>v3.0.1</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.1">GitHub
+Release</a> records the exact tagged commit. v3.0.1 is a patch release
+on <a href="release-notes-v3.0.0.html">v3.0.0</a>; it changes the runtime
+in two places that the second live acceptance of v3.0.0 showed in the
+maintainer's pilot installation. The candidates were <a
+href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a> and <a
+href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>; the previous major
+release is <a href="release-notes-v2.0.0.html">v2.0.0</a>.</p>
+<p>It keeps v3's exit-code contract and adds two codes for the merge
+stage: it now ends with <code>2</code> when its gate is not yet decided
+and with <code>25</code> when the gate is decided against the merge,
+where it used to end with <code>0</code> whenever it did not merge.
+Anything that reads the merge stage's exit code must accept both.</p>
+<h2 id="what-changed">What changed</h2>
 <ul>
-<li><strong>Hardening carried over from the installations</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/11">#11</a>):
-<code>.env</code> is parsed, never sourced; a red build can no longer
-soften a BLOCK; no CI suppressor reaches <code>main</code> through a
-squash message, and the implement and QA stages halt when one is in the
-squash range; Linear answers are retried and then classified; labels
-resolve to the issue's own team; an npm project's
-<code>node_modules</code> is restored after the worktree reset; a failed
-push is loud; the in-flight cap counts leaf issues of the configured
-projects; the spec cross-check runs under macOS <code>/bin/bash</code>
-3.2.</li>
-<li><strong>The installer records its source</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/12">#12</a>): an asset
-<code>--apply</code> writes the source tag, commit and dirty state per
-scope into <code>.bureau-install.json</code>, and doctor reports it as
-<code>template_source</code> (<code>recorded</code>,
-<code>source not recorded</code> or <code>stale</code>). The manifest
-stays at version <code>1</code>.</li>
-<li><strong>The review build check uses
-<code>repo.test_command</code></strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/13">#13</a>): order
-<code>repo.test_command</code>, <code>scripts/bureau-test.sh</code>,
-<code>npm run build</code>; when none applies the review comment says
-"not checked" instead of "Passed".</li>
-<li><strong>Shepherd reads fail closed</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/14">#14</a>): a failed
-read of the ticket's state, labels or branch halts instead of reading as
-"no state", "no label" or "no branch".</li>
-<li><strong>Merge policy as configuration</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/15">#15</a>):
-<code>agents.merge_mode: "manual"</code> switches the merge and rebase
-stages off for every dispatcher, parks an approved ticket in the Merge
-state and ends the shepherd there without an alert; it requires a
-configured Merge state, and any value other than absent,
-<code>null</code> or <code>"auto"</code> falls closed to manual.</li>
-<li><strong>A needs-human escalation survives a failed label
-write</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/17">#17</a>): every stage
-goes through <code>mark_needs_human</code>; when the label cannot be
-written, the ticket is held locally under the configuration repository's
-git directory and the picker skips it, retrying the label once per pick.
-<code>queue-loop.sh</code> reports a pick that fails with
-<code>27</code> with an hourly alert instead of reading it as an empty
-queue.</li>
-<li><strong>Review verdict rules in one order</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/18">#18</a>):
-<code>decide_review_verdict</code> checks the verdict, the security
-count, the security specialist's CRITICAL count, the security floor, the
-build fold, and the cycle cap last; an unreadable security count and a
-specialist CRITICAL end BLOCK, and the text fallback accepts only an
-exact verdict word.</li>
-<li><strong>Linear answers checked in transport</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/19">#19</a>): every
-request has a time limit (30 s, connect 10 s); an HTTP status outside
-2xx, <code>{"data":{}}</code>, a null root field and a NUL byte are
-unusable; the issue readers require the lists they read.</li>
-<li><strong>Shepherd outside the stages</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/20">#20</a>): guarded
-moves, a confirmed read after each move (up to three reads, 5 s apart),
-cancellation on signals, a bound on answers without a state, and a
-relative <code>--worktree</code> resolved against the repository
-root.</li>
-<li><strong><code>repo.post_implement_command</code> and a final push
-that cannot be lost</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/21">#21</a>): an optional,
-time-limited, idempotent hook runs wherever the implement stage releases
-work for review, for repositories that derive files from an
-implementation; a failed final push is retried once and stops the
-hand-off with <code>18</code> when a fetch shows origin still lacks
-commits.</li>
-<li><strong>Installation names anonymised</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/22">#22</a>) and
-<strong>CI job limit raised to 20 minutes</strong> (<a
-href="https://github.com/KaiaK808/bureau/pull/23">#23</a>).</li>
+<li><strong>The merge stage says why it did not merge</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/27">#27</a>).
+<ul>
+<li><code>2</code> (not yet): checks pending or not started, GitHub
+still computing the merge state, a gate read that failed (the pull
+request's state, its review comments or its review threads), a hold
+label <code>wip</code>, <code>blocked</code> or <code>needs-human</code>
+on the pull request, and conflicts the rebase stage resolves in the
+queue (<code>agents.rebase</code> on and a bureau-only divergence).</li>
+<li><code>25</code> (blocked): a failing check, other conflicts, a stale
+base, no APPROVE, unresolved review threads, or a pull request that is
+not open. An unreadable thread list used to count as zero unresolved
+threads.</li>
+<li>The queue loop logs <code>2</code> quietly and alerts on
+<code>25</code>, at most once an hour per ticket;
+<code>bureau-tick.sh --allow-merge</code> reports them as
+<code>waiting</code> and <code>blocked</code>. The review stage's inline
+merge and <code>merge-pipeline.sh --dry-run</code> keep ending with
+<code>0</code>. With <code>BUREAU_MERGE_GATE_REPORT</code> set, the
+stage writes the outcome and the gate lines to that file.</li>
+<li>The shepherd waits on a gate that is not yet decided
+(<code>BUREAU_SHEPHERD_MERGE_POLL_SECONDS</code>, default 60; at most
+<code>BUREAU_SHEPHERD_MERGE_WAIT_SECONDS</code>, default 1800; read in
+base 10 and capped at 1 h and 6 h) without the confirmation re-reads and
+without counting as stuck, and halts on a blocked gate, or on a wait
+that ran out, with <code>25</code>, <code>needs-human</code>, a comment
+carrying the gate report and an alert. While the shepherd holds a
+ticket, conflicts are blocked at once, because the queue's rebase stage
+skips tickets the shepherd holds.</li>
+<li>The gate comment on the pull request states the outcome and is
+posted again only when the outcome or a blocker changes. Nothing merges
+on a red or pending gate; the just-in-time recheck before
+<code>gh pr merge</code> applies the same outcomes.</li>
+</ul></li>
+<li><strong>A resumed review reuses an unchanged approval</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/26">#26</a>). A review
+that stopped before merge (<code>--no-merge</code>,
+<code>BUREAU_STOP_REQUESTED</code>) records its verdict with its inputs.
+When the review stage runs again without a stop and the verdict, branch,
+ticket state, head commit, base commit, base branch, pull request and
+ticket fingerprint (title, description, labels) all match, it reuses
+that APPROVE without a model call; the build check still runs, and a red
+build folds the reused APPROVE into REQUEST_CHANGES like a fresh one.
+The record is removed whether it matched or not, so an approval is used
+at most once. A changed model, runner, prompt, configuration or Bureau
+version is not compared; run
+<code>python3 scripts/bureau-supervision.py resume TEAM-123</code> first
+to have the change judge the pull request.</li>
 </ul>
-<p>The <a href="../../CHANGELOG.md">changelog</a> has the full entries of
-both candidates.</p>
+<p>See the <a
+href="https://github.com/KaiaK808/bureau/blob/v3.0.1/CHANGELOG.md">changelog</a>
+for the full entries and the <a
+href="https://github.com/KaiaK808/bureau/blob/v3.0.1/docs/exit-codes.md">exit
+codes</a> for the vocabulary.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p>From <strong>v3.0.0-rc.2</strong>: select tag <code>v3.0.0</code> in
-the source skill checkout; no resync is needed, because the runtime is
-identical.</p>
-<p>From <strong>v3.0.0-rc.1</strong>: select tag <code>v3.0.0</code> and
-resync the scripts scope as one set. No configuration change is
-required; the new optional settings are listed in the <a
-href="migration.html#upgrade-to-v3">v3 upgrade section</a>.</p>
-<p>From <strong>v2.0.0 or a legacy copy</strong>: follow the <a
-href="migration.html#upgrade-to-v3">v3 upgrade section</a>. Set
-<code>agents.merge_mode: "manual"</code> with a Merge state where a
-human merges, <code>repo.test_command</code> where the review ran a
-local script, and a <code>.gitignore</code> covering what that command
-writes; resync the scripts scope as one set with a reviewed
-<code>--overwrite</code> per differing file; update repository tests
-that assert old exit codes in the same pull request. Pause dispatch
-first, keep a private backup of the scripts, configuration, manifest and
-instruction files, run doctor after the resync and qualify one ticket
-before dispatch resumes.</p>
+<p>From <strong>v3.0.0 or v3.0.0-rc.2</strong>: select tag
+<code>v3.0.1</code> in the source skill checkout and resync the scripts
+scope as one set. No configuration change is required. Two behaviours to
+expect afterwards: in an installation that merges automatically, the
+queue loop now alerts once an hour for a pull request whose merge gate
+stays blocked in Merge, where it used to stay silent; and wrappers or
+repository tests that read the merge stage's exit code must accept
+<code>2</code> and <code>25</code>.</p>
+<p>From <strong>v3.0.0-rc.1, v2.0.0 or a legacy copy</strong>: follow
+the <a href="migration.html#upgrade-to-v3">v3 upgrade section</a> with tag
+<code>v3.0.1</code>.</p>
 <h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
 <p>Dependencies and platforms are unchanged (Python 3.9+, Bash 3.2+, Git
 2.26+, jq, curl; Node.js 18+ for the shared scheduler; Linux and macOS).
 Configuration schema versions 1 and 2 stay supported, and the manifest
 stays at version <code>1</code>, so an older installer still reads it.
-Rollback restores the private backup and points the source back at the
-previous tag (<a href="migration.html#rollback">rollback</a>); it cannot
-undo commits, pull requests or Linear transitions made in between. A
-local needs-human hold is a file in
-<code>&lt;git common dir&gt;/bureau/needs-human-held/</code>; an older
-runtime ignores it, so roll back only after the held tickets carry their
-label or the hold files are removed.</p>
+To roll back to v3.0.0, point the source at tag <code>v3.0.0</code> and
+resync the scripts scope, or restore the private backup (<a
+href="migration.html#rollback">rollback</a>); a stop record written by
+v3.0.1 carries an extra <code>verdict</code> field that v3.0.0 ignores.
+Rollback cannot undo commits, pull requests or Linear transitions made
+in between; the needs-human hold caveat of <a
+href="release-notes-v3.0.0.html#compatibility-and-rollback">v3.0.0</a>
+still applies.</p>
 <h2 id="validation-and-known-limitations">Validation and known
 limitations</h2>
-<p><strong>Live acceptance, twice, in the maintainer's pilot
-installation.</strong> On rc.1 the shepherd drove one ticket from Triage
-through Spec, Spec Review, Build, QA and Build Review (one round of
-requested changes on a real gap) to the merge gate and Done; it found
-two defects, both fixed in rc.2. On rc.2 a second ticket went Triage →
-Spec → Spec Review → Build, where
-<code>repo.post_implement_command</code> regenerated the derived files
-in its own <code>Bureau-Generated</code> commit before the hand-off → QA
-→ Build Review (APPROVE; the review build check ran the repository's
-test command) → merge gate, which correctly refused the pull request
-while its CI was red for an unrelated flaky test in the pilot and merged
-it after a green rerun → Done. That run used a relative
-<code>--worktree</code>.</p>
-<p>The changes are also validated by the full Linux/macOS suite on the
-release commit, the installer fixtures (local edits stopping a batch,
-explicit overwrites, managed instruction boundaries, scoped resyncs
-preserving configuration, Spec Kit constitution preservation, source
-recording and manifests written by older installers), and at least one
-independent verification pass per pull request #12–#21 in which each
-finding was reproduced before it was fixed. Every guard added in #11–#21
-has a test that runs the real code with a negative control and was
-mutation-checked.</p>
+<p>v3.0.1 is validated by the full Linux/macOS suite on the release
+commit, the installer fixtures and an independent verification pass per
+pull request in which each finding was reproduced before it was fixed:
+#26 passed with small follow-ups (documentation and a record left behind
+when the ticket detail could not be fingerprinted), #27 took two rounds,
+and both rounds checked that no path merges on a red or pending gate, in
+the first check and in the just-in-time recheck. Every new guard has a
+test that runs the real code with a negative control against v3.0.0 and
+was mutation-checked; the one surviving mutant in #26 is equivalent (a
+stop that is still requested is decided before the reuse call).
+<strong>No live ticket has run on v3.0.1 yet;</strong> the two live
+acceptances of v3.0.0 in the maintainer's pilot installation predate
+these changes, and the second of them is where both problems were
+seen.</p>
 <p>Known limitations:</p>
 <ul>
 <li>With <code>merge_mode: "manual"</code>, nothing moves a ticket from
@@ -191,14 +139,15 @@ Merge to Done after the merge by hand.</li>
 <li>A <code>manual</code> repository without a Merge state refuses code
 review with <code>24</code> and re-picks the same ticket every tick,
 alerting at most once an hour.</li>
-<li>When the merge gate reports a pull request as not eligible (for
-example red CI), the merge stage ends with <code>0</code>; the
-shepherd's confirmation then re-reads and prints "still reads 'Merge'
-after the move" before the stuck detector halts with
-<code>needs-human</code>. The outcome is correct, the message is
-misleading.</li>
-<li>Resuming after a <code>--no-merge</code> stop runs the paid review
-again even when head and base are unchanged.</li>
+<li>A check that never starts (for example an offline self-hosted
+runner) keeps the queue at a quiet <code>2</code>; the shepherd waits
+its budget and then halts.</li>
+<li>The review stage's inline merge ignores the merge result and reports
+Done even when the merge did not go through (older than v3.0.1).</li>
+<li>Commits co-authored by Claude count as bureau commits when deciding
+whether the rebase stage can resolve a conflict; this changes
+<code>25</code> into <code>2</code> for such a pull request, never
+whether it merges.</li>
 <li>The shepherd does not read local needs-human holds; a run that names
 a held ticket ignores the hold (the stage's non-zero exit still stops
 it).</li>

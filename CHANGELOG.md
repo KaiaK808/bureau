@@ -6,6 +6,10 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-09-29
+
+Patch release on v3.0.0 with two runtime changes found in the second live acceptance of v3.0.0 in the maintainer's pilot installation: the merge stage now ends with `2` (not yet) or `25` (blocked) when it does not merge, and the shepherd waits or halts on that instead of ending stuck ([#27](https://github.com/KaiaK808/bureau/pull/27)); a review resumed after a `--no-merge` stop reuses an unchanged APPROVE instead of paying for a second full review ([#26](https://github.com/KaiaK808/bureau/pull/26)). **Upgrade:** from v3.0.0 or v3.0.0-rc.2 select tag `v3.0.1` and resync the scripts scope as one set; no configuration change. See the [v3.0.1 release notes](docs/release-notes.md).
+
 ### A resumed review reuses an unchanged approval
 
 #### Changed
@@ -20,13 +24,13 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [3.0.0] - 2026-09-28
 
-Stable release of the 3.0.0 candidates. Runtime, installer, templates and tests are identical to v3.0.0-rc.2; this release changes only the documentation of the release status. The changes since v2.0.0 are recorded in the 3.0.0-rc.2 and 3.0.0-rc.1 sections below, and the [v3.0.0 release notes](docs/release-notes.md) consolidate them. Validation added since rc.2: a second live acceptance in the maintainer's pilot installation on rc.2, which drove one ticket from Triage to Done with the shepherd and exercised `repo.post_implement_command`, the review build check, the merge gate and a relative `--worktree`.
+Stable release of the 3.0.0 candidates. Runtime, installer, templates and tests are identical to v3.0.0-rc.2; this release changes only the documentation of the release status. The changes since v2.0.0 are recorded in the 3.0.0-rc.2 and 3.0.0-rc.1 sections below, and the [v3.0.0 release notes](docs/release-notes-v3.0.0.md) consolidate them. Validation added since rc.2: a second live acceptance in the maintainer's pilot installation on rc.2, which drove one ticket from Triage to Done with the shepherd and exercised `repo.post_implement_command`, the review build check, the merge gate and a relative `--worktree`.
 
 **Upgrade:** from v3.0.0-rc.2 select tag `v3.0.0`; no resync is needed because the runtime is unchanged. From rc.1, v2.0.0 or a legacy copy, follow the [v3 upgrade section](docs/migration.md#upgrade-to-v3).
 
 ## [3.0.0-rc.2] - 2026-09-28
 
-Second release candidate for Bureau v3.0.0, published as a GitHub prerelease. It carries the findings of the first live acceptance (a pilot installation resynced to rc.1 drove one ticket from Triage to Done with the shepherd) and of a check of seven tickets an installation had filed against its own pipeline scripts: the review verdict in one order ([#18](https://github.com/KaiaK808/bureau/pull/18)), needs-human escalations that survive a failed label write ([#17](https://github.com/KaiaK808/bureau/pull/17)), Linear answers checked in transport ([#19](https://github.com/KaiaK808/bureau/pull/19)), the shepherd outside the stages ([#20](https://github.com/KaiaK808/bureau/pull/20)), `repo.post_implement_command` and a final implement push that cannot be lost ([#21](https://github.com/KaiaK808/bureau/pull/21)), installation names anonymised ([#22](https://github.com/KaiaK808/bureau/pull/22)) and a 20-minute CI job limit ([#23](https://github.com/KaiaK808/bureau/pull/23)). From rc.1 the upgrade is a scripts resync; no configuration change is required. See [release notes](docs/release-notes.md) for the upgrade, compatibility and known limitations.
+Second release candidate for Bureau v3.0.0, published as a GitHub prerelease. It carries the findings of the first live acceptance (a pilot installation resynced to rc.1 drove one ticket from Triage to Done with the shepherd) and of a check of seven tickets an installation had filed against its own pipeline scripts: the review verdict in one order ([#18](https://github.com/KaiaK808/bureau/pull/18)), needs-human escalations that survive a failed label write ([#17](https://github.com/KaiaK808/bureau/pull/17)), Linear answers checked in transport ([#19](https://github.com/KaiaK808/bureau/pull/19)), the shepherd outside the stages ([#20](https://github.com/KaiaK808/bureau/pull/20)), `repo.post_implement_command` and a final implement push that cannot be lost ([#21](https://github.com/KaiaK808/bureau/pull/21)), installation names anonymised ([#22](https://github.com/KaiaK808/bureau/pull/22)) and a 20-minute CI job limit ([#23](https://github.com/KaiaK808/bureau/pull/23)). From rc.1 the upgrade is a scripts resync; no configuration change is required. See [release notes](docs/release-notes-v3.0.0-rc.2.md) for the upgrade, compatibility and known limitations.
 
 ### Review verdict rules in one order
 
@@ -79,7 +83,7 @@ Upgrade action: none. A repo whose Linear requests legitimately take longer than
 
 ## [3.0.0-rc.1] - 2026-09-28
 
-Release candidate for Bureau v3.0.0, published as a GitHub prerelease. It collects the hardening carried over from the installations ([#11](https://github.com/KaiaK808/bureau/pull/11)), source recording in the installer ([#12](https://github.com/KaiaK808/bureau/pull/12)), the review build check via `repo.test_command` ([#13](https://github.com/KaiaK808/bureau/pull/13)), fail-closed shepherd reads ([#14](https://github.com/KaiaK808/bureau/pull/14)) and the merge policy as configuration ([#15](https://github.com/KaiaK808/bureau/pull/15)). The major version marks the changed exit-code contract: a review BLOCK ends with `25` instead of `0`, a Linear that stays unusable ends a stage with the new code `27`, and the shepherd halts with an alert on every code except `0`, `2`, `10` and `16`. v3.0.0 follows once a pilot installation has qualified one ticket with this candidate. See the [v3.0.0-rc.1 release notes](docs/release-notes.md).
+Release candidate for Bureau v3.0.0, published as a GitHub prerelease. It collects the hardening carried over from the installations ([#11](https://github.com/KaiaK808/bureau/pull/11)), source recording in the installer ([#12](https://github.com/KaiaK808/bureau/pull/12)), the review build check via `repo.test_command` ([#13](https://github.com/KaiaK808/bureau/pull/13)), fail-closed shepherd reads ([#14](https://github.com/KaiaK808/bureau/pull/14)) and the merge policy as configuration ([#15](https://github.com/KaiaK808/bureau/pull/15)). The major version marks the changed exit-code contract: a review BLOCK ends with `25` instead of `0`, a Linear that stays unusable ends a stage with the new code `27`, and the shepherd halts with an alert on every code except `0`, `2`, `10` and `16`. v3.0.0 follows once a pilot installation has qualified one ticket with this candidate. See the [v3.0.0-rc.1 release notes](docs/release-notes-v3.0.0-rc.1.md).
 
 ### Merge policy as configuration
 
@@ -217,7 +221,8 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.0.0...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.0.1...main
+[3.0.1]: https://github.com/KaiaK808/bureau/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/KaiaK808/bureau/compare/v2.0.0...v3.0.0
 [3.0.0-rc.2]: https://github.com/KaiaK808/bureau/compare/v3.0.0-rc.1...v3.0.0-rc.2
 [3.0.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v2.0.0...v3.0.0-rc.1

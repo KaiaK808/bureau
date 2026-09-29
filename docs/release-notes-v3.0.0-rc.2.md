@@ -1,6 +1,6 @@
 # Bureau v3.0.0-rc.2 — findings from the first live acceptance
 
-**Release candidate · 2026-09-28 · source tag `v3.0.0-rc.2`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.2) is marked as a prerelease and records the exact tagged commit. This candidate is superseded by the stable [v3.0.0](release-notes.md), which has the same runtime. The previous candidate is [v3.0.0-rc.1](release-notes-v3.0.0-rc.1.md).
+**Release candidate · 2026-09-28 · source tag `v3.0.0-rc.2`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0-rc.2) is marked as a prerelease and records the exact tagged commit. This candidate is superseded by the stable [v3.0.0](release-notes-v3.0.0.md), which has the same runtime, and by the patch release [v3.0.1](release-notes.md). The previous candidate is [v3.0.0-rc.1](release-notes-v3.0.0-rc.1.md).
 
 rc.2 carries the findings of the first live acceptance and of a check of seven tickets an installation had filed against its own pipeline scripts. It keeps rc.1's exit-code contract (a review BLOCK ends with `25`, `27` means Linear stayed unusable, the shepherd halts with an alert on every code except `0`, `2`, `10` and `16`) and adds to it: a failed `needs-human` write now ends a stage with `25`, a failed final implement push with `18`, a failed `repo.post_implement_command` with `14`, and an interrupted shepherd with `130`.
 
