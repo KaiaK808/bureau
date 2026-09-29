@@ -173,7 +173,9 @@ class CiGateTests(Repo):
                 path.unlink()
         for text in ('on:\n  push:\n    branches: [main]\n', 'on:\n  push:\n    branches:\n      - main\n  workflow_dispatch:\n',
                      'on:\n  push:\n    tags:\n      - v*\n', 'on: {push: {branches: [main]}}\n',
-                     'on:\n  workflow_run:\n    workflows: [push]\n'):
+                     'on:\n  workflow_run:\n    workflows: [push]\n',
+                     # a job named push after the on: block is no trigger
+                     'on:\n  schedule:\n    - cron: x\njobs:\n  push:\n    runs-on: ubuntu-latest\n'):
             with self.subTest(text=text):
                 path = self.workflow('ci.yml', text)
                 self.assertGateWarning(self.config(), True)
