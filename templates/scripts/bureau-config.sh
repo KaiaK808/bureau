@@ -590,7 +590,7 @@ run_stage_for() {
   [ "$#" = 1 ] || { echo 'run_stage_for requires one prompt' >&2; return 22; }
   temp=$(mktemp -d)
   printf '%s' "$1" > "$temp/prompt"
-  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted." "$system" > "$temp/system"
+  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual." "$system" > "$temp/system"
   local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
   [ -n "$schema" ] && args+=(--schema "$schema")
   if python3 "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" "${args[@]}"; then rc=0; else rc=$?; fi
@@ -2374,6 +2374,11 @@ bureau_link_worktree_paths() {
     return 0
   fi
   main=$(cd "$common/.." 2>/dev/null && pwd -P) || return 0
+  # A git directory kept elsewhere (--separate-git-dir): its parent is not the main checkout.
+  if [ "$(cd "$common" 2>/dev/null && pwd -P)" != "$main/.git" ]; then
+    echo "  WARNING: repo.worktree_links: the git directory is not inside the main checkout (--separate-git-dir), so there is no main checkout to link from — no links made."
+    return 0
+  fi
   [ "$main" = "$wt_phys" ] && return 0
   while IFS= read -r line; do
     case "$line" in

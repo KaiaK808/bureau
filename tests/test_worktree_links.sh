@@ -218,4 +218,19 @@ warned "the repository is bare" "bare"
 check "bare: no link" "$(kind "$TMP/bare proj/wt/.venv")" none
 echo "PASS a worktree of a bare repository gets no links"
 
+# 16 · a git directory kept outside the main checkout (--separate-git-dir): its parent is not
+# the main checkout, so nothing is linked from there, and the message says why.
+rm -rf "$TMP/sep"; mkdir -p "$TMP/sep"
+git init -q -b main --separate-git-dir "$TMP/sep/store.git" "$TMP/sep/main checkout"
+git -C "$TMP/sep/main checkout" config user.email t@t; git -C "$TMP/sep/main checkout" config user.name t
+printf '.venv\n' > "$TMP/sep/main checkout/.gitignore"
+git -C "$TMP/sep/main checkout" add .gitignore; git -C "$TMP/sep/main checkout" commit -q -m init
+mkdir -p "$TMP/sep/main checkout/.venv" "$TMP/sep/.venv"
+git -C "$TMP/sep/main checkout" worktree add -q --detach "$TMP/sep/wt" main
+links '[".venv"]'
+OUT=$(bureau_link_worktree_paths "$TMP/sep/wt")
+warned "the git directory is not inside the main checkout" "separate git dir"
+check "separate git dir: no link" "$(kind "$TMP/sep/wt/.venv")" none
+echo "PASS a separate git directory gets no links and the right reason"
+
 echo "OK test_worktree_links"

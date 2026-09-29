@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="38262f10a0f93bf3e8d88ea9f5456fcf8ff0e1c5ca13b9102568504cb26898fc">
+<meta name="bureau-source-sha256" content="48ba997efb204207fdb7991f7cb6dfa4905da0c202de2b7004368dba45a2cb0b">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -698,7 +698,10 @@ override: <code>BUREAU_PATH_PREFIX_STRIP</code></td>
 </table>
 <h4 id="python-repositories">Python repositories</h4>
 <p>The stage worktrees are reset with <code>git clean -fdx</code>, which
-removes an ignored <code>.venv</code>. Set
+removes an ignored <code>.venv</code>. First commit the resynced scripts
+to <code>main</code>, so that the stage protocol the agents read in
+their worktree (<code>scripts/bureau-stage.md</code>) carries the rule
+for linked paths; then set
 <code>"repo": {"worktree_links": [".venv"]}</code> so every stage
 worktree gets a link to the main checkout's virtualenv, and make sure
 <code>.gitignore</code> lists <code>.venv</code> (not only
