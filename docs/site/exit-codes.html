@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="68dc7e4edc3417d57019b3aa19093c0428db6d66f92eef3a4b85b438e2e76105">
+<meta name="bureau-source-sha256" content="83f037814e1a91b0c91fefa4d673ebaa3df64fbdc8c2d1b420ad26ff583c76c2">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -288,6 +288,27 @@ for example on an offline runner, keeps the gate at <code>2</code>: the
 queue loop stays quiet, the shepherd waits its budget and then halts.
 The wait settings are read in base 10 and capped at 6 h (wait) and 1 h
 (poll).</p>
+<p>Before it claims a ticket, <code>shepherd.sh</code> checks whether a
+human holds it: <code>needs-human</code> or the configured
+<code>linear.labels.needs_human.name</code>, <code>blocked</code> or
+<code>wip</code> on the ticket, or a local hold that a stage left when
+it could not write <code>needs-human</code>
+(<code>&lt;git common dir&gt;/bureau/needs-human-held/&lt;ISSUE&gt;</code>,
+checked first, without a Linear read). A held ticket ends the run with
+<code>25</code> and nothing written — no <code>shepherd-focused</code>,
+no <code>--from-stage</code> move, no comment, no alert — and a line on
+stderr names the hold and how to release it; <code>--dry-run</code>
+answers the same way (the hold instead of a route, <code>25</code>). A
+hold left on a finished ticket changes nothing: without
+<code>--from-stage</code> a Done ticket still ends with <code>0</code>
+and a cancelled one with <code>26</code>, as in the loop and without any
+write (the state is read only then), so an orchestrated chain goes on
+past it. A label read that fails there writes nothing either:
+<code>27</code> with the fault class and an alert when Linear stayed
+unusable, <code>1</code> and an alert for any other failure,
+<code>130</code> for a signal. The loop keeps the same check before
+every stage and halts with <code>25</code> and a comment, as before, now
+also on the configured name and on a local hold.</p>
 <p><strong>Token-efficiency flags don't change the table.</strong> Under
 <code>agents.use_goal_loop: true</code>, the implement-pipeline still
 produces the same terminal STATUS values (<code>COMPLETE</code> /
@@ -309,17 +330,30 @@ a message when:</p>
 <code>TELEGRAM_ALERT_CHAT_ID</code> are both set in
 <code>.env</code></li>
 <li>The exit code maps to a non-OK class</li>
-<li>The <code>(issue, class)</code> pair hasn't already alerted in the
-past hour</li>
+<li>The same issue, pipeline and exit code has not alerted from this
+repository in the past hour</li>
 </ol>
-<p>Throttling lives at <code>/tmp/bureau-alerts.log</code> — one line
-per <code>(issue, class, timestamp)</code>. Bypass it by deleting the
-file.</p>
+<p>Throttling lives in
+<code>&lt;git common dir&gt;/bureau/alert-throttle.log</code> of the
+repository that holds <code>.bureau.json</code>: one log per repository,
+shared by its worktrees, one line per key and time. Delete a line, or
+the file, to let an alert through again.
+<code>BUREAU_ALERT_THROTTLE_FILE</code> names another file (tests). Only
+when no git directory resolves does the log stay
+<code>/tmp/bureau-alerts.log</code>, and the key then starts with the
+repository's path. Before v3.1 every installation on the host shared
+that one <code>/tmp</code> file, so the same key in one repository (a
+ticket number both teams use, or <code>none</code> for a failed pick)
+silenced another repository's alert for an hour; right after the upgrade
+the new log is empty, and an alert sent in the hour before may come once
+more.</p>
 <p>When credentials are unset, <code>alert_telegram</code> is a silent
 no-op. Dev environments never break because of it.</p>
 <h3 id="alert-content">Alert content</h3>
 <p>A typical alert includes:</p>
 <ul>
+<li>The repository (<code>Repo:</code>, the directory name of its main
+checkout)</li>
 <li>The pipeline that failed (<code>spec</code>, <code>qa</code>,
 etc.)</li>
 <li>The Linear issue identifier (<code>EXP-491</code>)</li>

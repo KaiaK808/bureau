@@ -39,15 +39,16 @@ write_config() {  # $1 = projects JSON array
 EOF
 }
 
-# Five issues: two plain leaves (one of them a sub-issue), one parked, one epic, and one whose
-# answer lacks the children field (counts: the cap must not silently stop counting).
+# Five issues: three plain leaves (one of them a sub-issue), one parked and one epic. An answer
+# that lacks the children list (or any other list the count reads) is unusable and ends with
+# 27 since v3.1: tests/test_linear_lists.sh.
 cat > "$SB/answer.json" <<'EOF'
 {"data":{"issues":{"nodes":[
   {"labels":{"nodes":[{"name":"lane-2"}]},"children":{"nodes":[]}},
   {"labels":{"nodes":[]},"children":{"nodes":[]},"parent":{"id":"EPIC"}},
   {"labels":{"nodes":[{"name":"needs-human"}]},"children":{"nodes":[]}},
   {"labels":{"nodes":[]},"children":{"nodes":[{"id":"CHILD"}]}},
-  {"labels":{"nodes":[]}}
+  {"labels":{"nodes":[]},"children":{"nodes":[]}}
 ]}}}
 EOF
 mkdir -p "$SB/bin"
@@ -66,7 +67,7 @@ count() {
 }
 
 write_config '[]'
-[ "$(count)" = 3 ] || fail "counted $(count), wanted 3 (two leaves and the node without children; not the parked one, not the epic)"
+[ "$(count)" = 3 ] || fail "counted $(count), wanted 3 (the three leaves; not the parked one, not the epic)"
 q=$(cat "$SB/query")
 case "$q" in *"parent: { null: true }"*) fail "the query still drops sub-issues" ;; esac
 case "$q" in *"project:"*) fail "a project clause without configured projects" ;; esac

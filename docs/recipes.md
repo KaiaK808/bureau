@@ -300,7 +300,7 @@ TELEGRAM_BOT_TOKEN=123456:ABC-XYZ
 TELEGRAM_ALERT_CHAT_ID=-100123456789
 ```
 
-Throttling: max 1 alert per `(issue, class)` per hour, tracked at `/tmp/bureau-alerts.log`. Bypass by deleting the file.
+Throttling: max 1 alert per issue, pipeline and exit code per hour from each repository, tracked in `<git common dir>/bureau/alert-throttle.log` of the repository that holds `.bureau.json`. Bypass by deleting the line or the file. Each alert names its repository.
 
 See [exit codes](exit-codes.md) for the full alert classification.
 

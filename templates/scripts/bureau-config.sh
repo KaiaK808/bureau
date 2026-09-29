@@ -484,8 +484,10 @@ linear_query() {
 }
 
 # Helper: run a raw GraphQL payload (for mutations that need variables).
+# linear_raw <payload> [<shape>] — a reader passes the shape its jq depends on
+# (see the _BUREAU_SHAPE_* constants below), as linear_issue_query does.
 linear_raw() {
-  _bureau_linear_fetch "$1"
+  _bureau_linear_fetch "$1" "${2:-}"
 }
 
 # The shapes the issue readers below depend on. A reader that fills a missing
@@ -1401,6 +1403,8 @@ remove_issue_label() {
 # pick; once the label is on the ticket the hold ends, the label keeps the
 # ticket out from there, and a human releases it the usual way, by removing the
 # label. To release a held ticket without the label, delete its file.
+# shepherd.sh, which runs a named ticket past the picker, reads the same holds
+# through bureau_human_hold and refuses a held ticket before its claim.
 #
 # mark_needs_human <issue> <stage> [<stage exit>]
 #   0  the label is on the ticket (any hold for it is cleared)
@@ -1434,6 +1438,28 @@ _needs_human_hold_dir() {
   local common
   common=$(bureau_common_dir) || return 1
   printf '%s/bureau/needs-human-held' "$common"
+}
+
+# bureau_human_hold <issue> — whether a human holds <issue>, for a driver that
+# runs a named ticket past the picker (shepherd.sh). Prints nothing when nobody
+# does, else one line: "hold <file>" when the ticket is held locally (checked
+# first; it needs no Linear), or "label <name>" for the first of needs-human,
+# the configured linear.labels.needs_human.name, blocked and wip on the ticket.
+# Exit: 0, or the label read's own code (27 = Linear stayed unusable); an answer
+# without a readable label list fails instead of counting as "no label".
+bureau_human_hold() {
+  local issue="$1" dir detail human
+  if [[ "$issue" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]] && dir=$(_needs_human_hold_dir 2>/dev/null) \
+     && [ -f "$dir/$issue" ]; then
+    printf 'hold %s\n' "$dir/$issue"
+    return 0
+  fi
+  detail=$(get_issue_detail "$issue") || return $?
+  human=$(bureau_get '.linear.labels.needs_human.name // "needs-human"') || return $?
+  printf '%s' "$detail" | jq -rn --arg human "$human" '
+    input | .labels as $on
+    | [ "needs-human", $human, "blocked", "wip" | select(. as $l | $on | any(.[]; . == $l)) ]
+    | if length > 0 then "label " + .[0] else empty end'
 }
 
 mark_needs_human() {
@@ -1675,12 +1701,41 @@ pr_base_is_current() {
 #
 # Used by alert_telegram and merge_origin_main_or_abort to keep retry loops
 # from spamming Telegram or Linear.
+#
+# The log belongs to one repository: <git common dir>/bureau/alert-throttle.log
+# of the repository that holds .bureau.json (bureau_common_dir, as for the
+# needs-human holds), shared by its worktrees. One /tmp/bureau-alerts.log for
+# every installation on the host let the same key (an issue, a pipeline and a
+# code, or `none` for a failed pick) in one repository silence the alert of
+# another for an hour. BUREAU_ALERT_THROTTLE_FILE names another file (tests).
+# Only when no git directory resolves does the log stay in /tmp, and the key
+# then starts with the repository's path.
+#
+# _throttle_where — sets _throttle_file and _throttle_prefix, which the caller
+# declares local.
+_throttle_where() {
+  local common base
+  _throttle_prefix=""
+  if [ -n "${BUREAU_ALERT_THROTTLE_FILE:-}" ]; then
+    _throttle_file="$BUREAU_ALERT_THROTTLE_FILE"
+  elif common=$(bureau_common_dir 2>/dev/null); then
+    _throttle_file="$common/bureau/alert-throttle.log"
+  else
+    _throttle_file="/tmp/bureau-alerts.log"
+    base="$PWD"
+    [ -n "${BUREAU_CONFIG:-}" ] && base=$(dirname "$BUREAU_CONFIG")
+    _throttle_prefix="$(cd "$base" 2>/dev/null && pwd || printf '%s' "$base")|"
+  fi
+}
+
 _throttle_should_suppress() {
-  local key="$1" window_sec="${2:-3600}"
-  local throttle_log="/tmp/bureau-alerts.log"
-  [ ! -f "$throttle_log" ] && return 1
+  local key="$1" window_sec="${2:-3600}" _throttle_file _throttle_prefix
+  _throttle_where
+  key="$_throttle_prefix$key"
+  [ ! -f "$_throttle_file" ] && return 1
   local last now delta
-  last=$(awk -F'\t' -v k="$key" '$1==k{print $2}' "$throttle_log" | tail -1)
+  # The key goes in through the environment: awk -v would expand backslashes.
+  last=$(_THROTTLE_KEY="$key" awk -F'\t' '$1==ENVIRON["_THROTTLE_KEY"]{print $2}' "$_throttle_file" | tail -1)
   [ -z "$last" ] && return 1
   now=$(date +%s)
   delta=$((now - last))
@@ -1688,18 +1743,36 @@ _throttle_should_suppress() {
 }
 
 _throttle_record() {
-  local key="$1"
-  local throttle_log="/tmp/bureau-alerts.log"
+  local key="$1" _throttle_file _throttle_prefix
+  _throttle_where
+  key="$_throttle_prefix$key"
   local now
   now=$(date +%s)
-  printf '%s\t%s\n' "$key" "$now" >> "$throttle_log"
+  # Best effort: when the log cannot be written the next event fires again and
+  # the caller carries on (under set -e a failed append would end the stage).
+  mkdir -p "$(dirname "$_throttle_file")" 2>/dev/null || true
+  printf '%s\t%s\n' "$key" "$now" 2>/dev/null >> "$_throttle_file" || return 0
   # Cap log at 1000 lines so a long-running session doesn't leave an unbounded
-  # file in /tmp. Trim is cheap and runs at most once per fired event.
+  # file behind. Trim is cheap and runs at most once per fired event.
   local lines
-  lines=$(wc -l < "$throttle_log" 2>/dev/null | tr -d ' ' || echo 0)
+  lines=$(wc -l < "$_throttle_file" 2>/dev/null | tr -d ' ' || echo 0)
   if [ "${lines:-0}" -gt 1000 ]; then
-    tail -n 500 "$throttle_log" > "${throttle_log}.tmp" 2>/dev/null \
-      && mv "${throttle_log}.tmp" "$throttle_log"
+    tail -n 500 "$_throttle_file" > "${_throttle_file}.tmp" 2>/dev/null \
+      && mv "${_throttle_file}.tmp" "$_throttle_file"
+  fi
+}
+
+# _bureau_repo_name — the directory name of the main checkout of the repository
+# that holds .bureau.json, so an alert says which installation sent it.
+_bureau_repo_name() {
+  local common
+  if common=$(bureau_common_dir 2>/dev/null) && [ "${common##*/}" = .git ]; then
+    common="${common%/.git}"
+    printf '%s' "${common##*/}"
+  elif [ -n "${BUREAU_CONFIG:-}" ]; then
+    basename "$(dirname "$BUREAU_CONFIG")"
+  else
+    basename "$PWD"
   fi
 }
 
@@ -1826,7 +1899,10 @@ session_throttle_guard() {
 }
 
 # alert_telegram: best-effort push to a Telegram chat for failure signals.
-# Throttled per (issue, pipeline, exit_code) via _throttle_should_suppress.
+# Throttled per (issue, pipeline, exit_code) and repository via
+# _throttle_should_suppress; the message names the repository (its main
+# checkout's directory name, as code so an underscore cannot break Telegram's
+# Markdown and drop the alert).
 # Requires TELEGRAM_BOT_TOKEN and TELEGRAM_ALERT_CHAT_ID in .env. Silently
 # no-ops if either is missing (so dev environments don't break).
 #
@@ -1847,8 +1923,8 @@ alert_telegram() {
   _throttle_record "$throttle_key"
 
   local body
-  body=$(printf '🚨 Bureau pipeline alert\n\nIssue: %s\nPipeline: %s\nExit: %s\n\n%s' \
-    "$issue" "$pipeline" "$exit_code" "$message")
+  body=$(printf '🚨 Bureau pipeline alert\n\nRepo: `%s`\nIssue: %s\nPipeline: %s\nExit: %s\n\n%s' \
+    "$(_bureau_repo_name)" "$issue" "$pipeline" "$exit_code" "$message")
   if [ -n "$log_tail" ]; then
     body=$(printf '%s\n\nLog tail:\n```\n%s\n```' "$body" "$log_tail")
   fi
@@ -1938,8 +2014,17 @@ emit_event() {
 #           so the line stays regex-matchable
 #   pr:     PR number (0 if no PR)
 #   branch: branch name (or "-" if N/A)
+#
+# A dry run (BUREAU_DRY_RUN=1) writes neither record: add_issue_label only
+# logs there and returns 0, so a caller that logs after a "successful" label
+# would otherwise record an escalation that never happened. It prints the
+# intent on stderr instead, as alert_telegram does.
 log_escalation() {
   local issue="$1" pipeline="$2" cycle="$3" reason="$4" pr="$5" branch="$6"
+  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+    echo "[DRY_RUN] log_escalation $issue $pipeline cycle=$cycle pr=${pr:-0} branch=${branch:--}: $reason" >&2
+    return 0
+  fi
   local repo_dir
   if [ -n "${BUREAU_CONFIG:-}" ] && [ "${BUREAU_CONFIG:0:1}" = "/" ]; then
     repo_dir=$(dirname "$BUREAU_CONFIG")
@@ -2061,8 +2146,9 @@ merge_origin_main_or_abort() {
 # EXP-491: count issues currently in-flight between Spec (inclusive) and Done
 # (exclusive). Used by spec-pipeline as a gate before picking new Triage work
 # when BUREAU_MAX_CONCURRENT_ISSUES is non-zero. Issues with parking labels
-# (needs-human, blocked, wip) are excluded from the count — they're already
-# stalled, holding up the cap on them too would deadlock the loop.
+# (needs-human, the configured linear.labels.needs_human.name as in
+# pipeline_pick_next, blocked, wip) are excluded from the count — they're
+# already stalled, holding up the cap on them too would deadlock the loop.
 #
 # What counts is work, not tickets (carried over from installation A,
 # EXP-1462): only issues of the configured projects (.linear.projects, as in
@@ -2111,19 +2197,22 @@ count_in_flight_issues() {
   # Through linear_raw, and no fallback to 0: a count read from an unusable
   # answer used to come out as "0 in flight", which let the spec stage take a
   # new ticket past the cap exactly while Linear was failing.
-  local answer
-  answer=$(linear_raw "$payload") || return $?
+  # The answer has to carry every list the count reads (the issues, and each
+  # node's labels and children): read as `[]`, a missing list counted a parked
+  # ticket as work, a missing issue list as "0 in flight". Such an answer is
+  # unusable like any other: retried, then 27.
+  local answer human
+  answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.children.nodes | type) == "array")') || return $?
+  human=$(bureau_get '.linear.labels.needs_human.name // "needs-human"') || return $?
   printf '%s' "$answer" \
-  | jq '
-    [(.data.issues.nodes // [])[]
+  | jq --arg human "$human" '
+    [.data.issues.nodes[]
      | select(
-         ([(.labels.nodes // [])[].name]
-          | map(select(. == "needs-human" or . == "blocked" or . == "wip"))
+         ([.labels.nodes[].name]
+          | map(select(. == "needs-human" or . == $human or . == "blocked" or . == "wip"))
           | length) == 0
        )
-     # A node without a `children` field counts: if the field is ever missing,
-     # the cap keeps counting instead of silently stopping.
-     | select(((.children.nodes // []) | length) == 0)]
+     | select((.children.nodes | length) == 0)]
     | length
   '
 }
@@ -2776,22 +2865,25 @@ pick_issue() {
   # The blockers column is empty when nothing blocks the candidate.
   # Through linear_raw, so an unusable answer is retried and then ends the
   # stage with $BUREAU_EXIT_LINEAR_UNUSABLE instead of reading as "queue
-  # empty" (exit 2).
+  # empty" (exit 2). The answer has to carry every list the pick reads (the
+  # issues, and each node's labels and blockers): read as `[]`, a node without
+  # its labels passed the needs-human exclusion and one without its relations
+  # passed as unblocked.
   local answer
-  answer=$(linear_raw "$payload") || return $?
+  answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.inverseRelations.nodes | type) == "array")') || return $?
   local candidates
   candidates=$(printf '%s' "$answer" \
   | jq -r --argjson excl "$exclude_json" --arg skip "$skip_csv" '
-    (.data.issues.nodes // [])
+    .data.issues.nodes
     | map(select(.identifier as $id | ($skip | split(",") | index($id)) == null))
     | map(select(
-        ([(.labels.nodes // [])[].name] | map(select(. as $n | $excl | index($n))) | length) == 0
+        ([.labels.nodes[].name] | map(select(. as $n | $excl | index($n))) | length) == 0
       ))
     | map(. + {_pri: (if .priority == 0 then 5 else .priority end)})
     | sort_by(._pri, .createdAt)
     | .[]
     | [ .identifier,
-        ([(.inverseRelations.nodes // [])[]
+        ([.inverseRelations.nodes[]
           | select(.type == "blocks")
           | .issue
           | select(.state.type != "completed" and .state.type != "canceled")
