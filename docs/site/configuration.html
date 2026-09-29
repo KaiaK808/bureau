@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="48ba997efb204207fdb7991f7cb6dfa4905da0c202de2b7004368dba45a2cb0b">
+<meta name="bureau-source-sha256" content="76dc0529350cc18aadef9b86519a6ad3b4670f983b2d618420703a4156abc41f">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -154,6 +154,15 @@ keep these in sync</td>
 <td>yes</td>
 <td>Park label — applied on unrecoverable failure to take an issue out
 of the queue</td>
+</tr>
+<tr>
+<td><code>linear.labels.needs_human.name</code></td>
+<td>string</td>
+<td>optional</td>
+<td>Display name of the park label (default <code>needs-human</code>).
+The queue picker skips, and <code>shepherd.sh</code> refuses before its
+claim and halts on at every turn, a ticket carrying this name or
+<code>needs-human</code></td>
 </tr>
 <tr>
 <td><code>linear.labels.needs_ux.id</code></td>
@@ -1223,6 +1232,16 @@ primary worktree. Keep the trusted private config out of commits</td>
 <td>caller-dependent</td>
 <td>Explicit trusted environment file used by runtime helpers when
 needed; doctor/provider <code>--describe</code> do not source it</td>
+</tr>
+<tr>
+<td><code>BUREAU_ALERT_THROTTLE_FILE</code></td>
+<td><code>&lt;git common dir&gt;/bureau/alert-throttle.log</code></td>
+<td>The log that throttles Telegram alerts (and the merge-conflict
+comment) to once an hour per key. By default one per repository, shared
+by its worktrees; only without a git directory
+<code>/tmp/bureau-alerts.log</code>, with the repository path in the
+key. Set it for tests; see <a href="exit-codes.html#telegram-alerts">exit
+codes</a></td>
 </tr>
 <tr>
 <td><code>BUREAU_SCRIPT_DIR</code></td>

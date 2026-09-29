@@ -199,7 +199,7 @@ Every pipeline script:
 
 Other codes map to `error-N`; inspect the diagnostic rather than inferring completion. [Exit codes](../docs/exit-codes.md) and `bureau-config.sh:exit_class` define the current protocol.
 
-`queue-loop.sh` captures the exit code, maps it to a class, and calls `alert_telegram` (throttled to max 1 alert per issue/class/hour via `/tmp/bureau-alerts.log`). The alerter is a best-effort no-op when `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ALERT_CHAT_ID` are unset, so dev environments don't break.
+`queue-loop.sh` captures the exit code, maps it to a class, and calls `alert_telegram` (throttled to max 1 alert per issue/pipeline/exit code per hour and repository via `<git common dir>/bureau/alert-throttle.log`; the alert names the repository). The alerter is a best-effort no-op when `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ALERT_CHAT_ID` are unset, so dev environments don't break.
 
 ### Spec pipeline failure recovery (EXP-416)
 

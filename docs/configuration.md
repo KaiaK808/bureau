@@ -35,6 +35,7 @@ Version 1 remains compatible; version 2 makes the legacy `agents.runner: "claude
 | `linear.labels.lane2.id` | UUID | yes | Eligibility label (commonly `lane-2`) — only issues with this label enter the pipeline |
 | `linear.labels.lane2.name` | string | yes | Label display name — `pick_issue` filters by name, so keep these in sync |
 | `linear.labels.needs_human.id` | UUID | yes | Park label — applied on unrecoverable failure to take an issue out of the queue |
+| `linear.labels.needs_human.name` | string | optional | Display name of the park label (default `needs-human`). The queue picker skips, and `shepherd.sh` refuses before its claim and halts on at every turn, a ticket carrying this name or `needs-human` |
 | `linear.labels.needs_ux.id` | UUID | yes | Routes from Spec Review → Design |
 | `linear.labels.ai_implementable.id` | UUID | yes | Required on issues for stages from Build onwards |
 | `linear.labels.needs_copy.name` | string | optional | Required if `agents.copy: true`; routes from Spec Review (or UX) → Copy |
@@ -260,6 +261,7 @@ Env overrides for the `repo.upstream_port.*` config family. Set inline when runn
 |---|---|---|
 | `BUREAU_CONFIG` | discovered | Explicit config path; otherwise resolve the current checkout and primary worktree. Keep the trusted private config out of commits |
 | `BUREAU_ENV_FILE` | caller-dependent | Explicit trusted environment file used by runtime helpers when needed; doctor/provider `--describe` do not source it |
+| `BUREAU_ALERT_THROTTLE_FILE` | `<git common dir>/bureau/alert-throttle.log` | The log that throttles Telegram alerts (and the merge-conflict comment) to once an hour per key. By default one per repository, shared by its worktrees; only without a git directory `/tmp/bureau-alerts.log`, with the repository path in the key. Set it for tests; see [exit codes](exit-codes.md#telegram-alerts) |
 | `BUREAU_SCRIPT_DIR` | derived from `$0` | Path to the target repo's `scripts/`. Auto-detected in normal use — set only when sourcing helpers from an unusual location |
 
 `BUREAU_HOME` and `BUREAU_SPECKIT_VERSION` are not supported runtime overrides. Use the documented individual paths; the Spec Kit 0.7.5 pin lives in `scripts/bureau_install.py`.

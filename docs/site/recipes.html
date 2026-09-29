@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c18a9b5f6838cbd915ef329f8e22aebfca4cb2be23fe356d0d97df2b42c42817">
+<meta name="bureau-source-sha256" content="7f2d03ef694d8ea5d6584efeb8fe8aa8d046af1c0d628efce33e07e3d4286342">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -343,9 +343,11 @@ aren't set, so dev environments stay quiet.</p>
 <div class="sourceCode" id="cb23"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="va">TELEGRAM_BOT_TOKEN</span><span class="op">=</span>123456:ABC-XYZ</span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="va">TELEGRAM_ALERT_CHAT_ID</span><span class="op">=</span>-100123456789</span></code></pre></div>
-<p>Throttling: max 1 alert per <code>(issue, class)</code> per hour,
-tracked at <code>/tmp/bureau-alerts.log</code>. Bypass by deleting the
-file.</p>
+<p>Throttling: max 1 alert per issue, pipeline and exit code per hour
+from each repository, tracked in
+<code>&lt;git common dir&gt;/bureau/alert-throttle.log</code> of the
+repository that holds <code>.bureau.json</code>. Bypass by deleting the
+line or the file. Each alert names its repository.</p>
 <p>See <a href="exit-codes.html">exit codes</a> for the full alert
 classification.</p>
 <hr />

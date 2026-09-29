@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="aad0798b020c8935b3925eb2f7dc599be153a85946d10f17c96156d8ae90bc72">
+<meta name="bureau-source-sha256" content="aa43f4dfef1e29d2e634bd64b7899c1591a94962a395d1f672e58e566d7a6769">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -130,9 +130,11 @@ outside any git repository, holds and the pause marker fall back to the
 current directory's repository and a warning says so. If the label can
 never be written (for example, no label named <code>needs-human</code>
 exists for the team or the workspace), fix that, or delete the file to
-release the ticket without the label. A run that names the ticket
-explicitly (a shepherd, <code>stage.sh EXP-123</code>) does not read the
-hold.</p>
+release the ticket without the label. <code>shepherd.sh</code> reads the
+hold before it claims the ticket and refuses a held one with 25 (see <a
+href="#shepherdsh-refuses-a-held-ticket--exit-25-before-the-claim"><code>shepherd.sh</code>
+refuses a held ticket</a>); a stage started with a ticket key
+(<code>stage.sh EXP-123</code>) does not read it.</p>
 <p>An implement halt (<code>PARTIAL</code>, <code>STUCK</code>,
 <code>CAP_TIME</code>, <code>NEEDS_HUMAN</code>, <code>CI_MARKER</code>)
 whose label could not be written now ends with 25 instead of 0. If the
@@ -145,8 +147,9 @@ preserved work, write the label (or delete the hold), then resume.</p>
 <p>A pick in <code>queue-loop.sh</code> that fails because Linear stayed
 unusable is logged as
 <code>pick failed: Linear stayed unusable (exit 27)</code> and alerts
-(throttled per stage per hour) instead of reading as an empty queue; any
-other pick failure is logged and still treated as an empty queue.</p>
+(throttled per stage per hour in each repository) instead of reading as
+an empty queue; any other pick failure is logged and still treated as an
+empty queue.</p>
 <h3
 id="pipeline-keeps-hitting-merge_origin_main_or_abort-conflicts">Pipeline
 keeps hitting <code>merge_origin_main_or_abort</code> conflicts</h3>
@@ -201,7 +204,11 @@ contains a NUL byte.</li>
 (an invalid key usually shows up as exit 10 earlier).</li>
 <li><code>no-data</code> — no <code>data</code> object, an empty one, a
 root field that is <code>null</code>, or an issue answer without the
-list the reader needs (labels, state, comments).</li>
+list the reader needs (labels, state, comments; for the queue picker
+also each ticket's blockers, for the in-flight count each ticket's
+children). Before v3.1 the picker and the count read such a missing list
+as empty: the picker could take a <code>needs-human</code> or blocked
+ticket, and the count reported 0 in flight.</li>
 </ul>
 <p>Check Linear's status page and the key as for exit 10, then re-run
 the stage. A ticket that does not exist is not exit 27: its readers
@@ -368,6 +375,30 @@ checkout can still refuse reuse; preserve its work and reconcile
 ownership first. Use a dry-run to inspect routing only. Exit 20 is the
 requested review stop, 25 is pause/human attention, and 26 is a
 cancelled ticket; none is Done.</p>
+<h3
+id="shepherdsh-refuses-a-held-ticket--exit-25-before-the-claim"><code>shepherd.sh</code>
+refuses a held ticket — exit 25 before the claim</h3>
+<p>Before it claims a ticket (the <code>shepherd-focused</code> label)
+or moves it (<code>--from-stage</code>), the shepherd checks whether a
+human holds it, and a held ticket ends the run with 25 and nothing
+written: no claim, no move, no comment, no alert. A ticket is held when
+it carries <code>needs-human</code>, the configured
+<code>linear.labels.needs_human.name</code>, <code>blocked</code> or
+<code>wip</code>, or when a stage could not write
+<code>needs-human</code> and left a local hold,
+<code>&lt;git common dir&gt;/bureau/needs-human-held/&lt;ISSUE&gt;</code>
+(checked first; it needs no Linear read). The line on stderr names the
+hold. To release it, remove the label in Linear; for a local hold, the
+next queue pick writes the label and removes the file, or delete the
+file to release the ticket without the label. Then re-shepherd.
+<code>--dry-run</code> prints the hold instead of a route and ends with
+25 as well. A label read that fails before the claim writes nothing
+either: 27 when Linear stayed unusable (the alert names the fault
+class), 1 for any other failure, 130 for Ctrl-C. The loop checks the
+same holds before every stage; there a hold halts with 25 and a ticket
+comment, as <code>needs-human</code> always did. Until v3.1 the shepherd
+claimed and moved a held ticket first, and a configured label name or a
+local hold did not stop it at all.</p>
 <h3
 id="orchestratesh---execute--one-lane-failed-do-the-others-continue"><code>orchestrate.sh --execute</code>
 — one lane failed, do the others continue?</h3>
@@ -573,6 +604,22 @@ sleeping. <code>BUREAU_DISABLE_THROTTLE=1</code> deliberately bypasses
 only this guard. Also inspect the separate
 <code>bureau-runtime.py pause</code> marker before assuming quota is the
 cause.</p>
+<h3 id="telegram-alerts-once-an-hour-per-repository">Telegram alerts:
+once an hour per repository</h3>
+<p><code>alert_telegram</code> sends a given issue, pipeline and exit
+code at most once an hour from each repository; the message names the
+repository (<code>Repo:</code>, the directory name of its main
+checkout). The throttle log is
+<code>&lt;git common dir&gt;/bureau/alert-throttle.log</code> of the
+repository that holds <code>.bureau.json</code>, shared by its
+worktrees; delete a line or the file to let an alert through again.
+Before v3.1 every installation on the host shared
+<code>/tmp/bureau-alerts.log</code>, so one repository's alert could
+silence another's for an hour (a ticket number both teams use, or
+<code>none</code> for a failed pick). Right after the upgrade the new
+log is empty: an alert sent in the hour before may come once more. The
+old <code>/tmp/bureau-alerts.log</code> is no longer read once every
+installation on the host runs v3.1; it can then be deleted.</p>
 <h3
 id="worktree-collision--branch-already-checked-out-at-another-worktree">Worktree
 collision — "branch already checked out at another worktree"</h3>
