@@ -127,10 +127,11 @@ push_branch_loud() {
 # It fails — POST_IMPLEMENT_FAILED=1, and the stage halts with 14 after the
 # usual halt bookkeeping — when it exits non-zero or times out, when it leaves
 # changes it did not commit (new entries in `git status` compared with before
-# it ran; nothing is deleted, so the worker keeps the worktree for a human to
-# look at), or when HEAD is no longer a descendant of the commit it started
-# from (then the final push is skipped: pushing would publish rewritten
-# history).
+# it ran, or new content in a path that was already uncommitted before it ran
+# and still is; nothing is deleted, so the worker keeps the worktree for a
+# human to look at), or when HEAD is no longer a descendant of the commit it
+# started from (then the final push is skipped: pushing would publish
+# rewritten history).
 POST_IMPLEMENT_FAILED=0
 POST_IMPLEMENT_HEAD_REWRITTEN=0
 POST_IMPLEMENT_REPORT=""
@@ -168,8 +169,82 @@ except subprocess.TimeoutExpired:
     stop(124, "timeout")
 sys.exit(128 - rc if rc < 0 else rc)
 '
+# A path that is already uncommitted when the hook starts (` M a.txt`, an
+# untracked file) keeps the same `git status` line however much the hook adds
+# to it, so the line comparison alone cannot see the hook change it. The
+# helpers below record the content of every such path before the hook and
+# name the ones that are still uncommitted afterwards with other content.
+# Paths come from `git status -z` (any byte in a name is safe), with renames
+# split into a deletion and an addition.
+#
+# _post_implement_hash_paths <path>...: one line per path, in order: the
+# content hash of a regular file, "absent" for anything else (deleted, a
+# directory). All files go through one `git hash-object` call (xargs splits
+# a long list); one call per path only when that fails (a file vanished).
+_post_implement_hash_paths() {
+  local p out h i=0 n=0
+  local -a hashes
+  for p in "$@"; do
+    if [ -f "$p" ]; then n=$((n + 1)); fi
+  done
+  out=""
+  if [ "$n" -gt 0 ]; then
+    out=$(for p in "$@"; do if [ -f "$p" ]; then printf '%s\0' "$p"; fi; done \
+      | xargs -0 git hash-object --no-filters -- 2>/dev/null) || out=""
+  fi
+  hashes=()
+  if [ -n "$out" ]; then
+    while IFS= read -r h; do hashes+=("$h"); done <<< "$out"
+  fi
+  for p in "$@"; do
+    if [ ! -f "$p" ]; then
+      echo absent
+    elif [ "${#hashes[@]}" -eq "$n" ]; then
+      echo "${hashes[$i]}"
+      i=$((i + 1))
+    else
+      git hash-object --no-filters -- "$p" 2>/dev/null || echo absent
+    fi
+  done
+}
+# _post_implement_dirty_snapshot <file>: write "<hash><TAB><path>\0" for
+# every path `git status` lists now.
+_post_implement_dirty_snapshot() {
+  local entry h i=0
+  local -a paths
+  paths=()
+  while IFS= read -r -d '' entry; do
+    paths+=("${entry:3}")
+  done < <(git status --porcelain -z --no-renames --untracked-files=all)
+  : > "$1"
+  [ "${#paths[@]}" -gt 0 ] || return 0
+  while IFS= read -r h; do
+    printf '%s\t%s\0' "$h" "${paths[$i]}" >> "$1"
+    i=$((i + 1))
+  done < <(_post_implement_hash_paths "${paths[@]}")
+}
+# _post_implement_changed_dirty <file>: print, one per line, each path of the
+# snapshot whose content changed and that `git status` still lists.
+_post_implement_changed_dirty() {
+  local record now i=0
+  local -a paths hashes
+  paths=()
+  hashes=()
+  while IFS= read -r -d '' record; do
+    hashes+=("${record%%$'\t'*}")
+    paths+=("${record#*$'\t'}")
+  done < "$1"
+  [ "${#paths[@]}" -gt 0 ] || return 0
+  while IFS= read -r now; do
+    if [ "$now" != "${hashes[$i]}" ] \
+      && [ -n "$(git --literal-pathspecs status --porcelain --untracked-files=all -- "${paths[$i]}")" ]; then
+      printf '%s\n' "${paths[$i]}"
+    fi
+    i=$((i + 1))
+  done < <(_post_implement_hash_paths "${paths[@]}")
+}
 run_post_implement_command() {
-  local cmd limit before before_status after_status new_dirty rc log status_file why reason hook_commits
+  local cmd limit before before_status after_status new_dirty changed_dirty dirty_snapshot rc log status_file why reason hook_commits
   cmd=$(bureau_get '.repo.post_implement_command // empty')
   [ -n "$cmd" ] || return 0
   if [ "$STATUS" != COMPLETE ] && ! { [ "$STATUS" = PARTIAL ] && [ "$COMMITS_TOTAL" -gt 0 ]; }; then
@@ -185,6 +260,8 @@ run_post_implement_command() {
   [ "$limit" -le "$TOTAL_TIMEOUT" ] || limit="$TOTAL_TIMEOUT"
   before=$(git rev-parse HEAD)
   before_status=$(git status --porcelain --untracked-files=all | LC_ALL=C sort)
+  dirty_snapshot=$(mktemp "${TMPDIR:-/tmp}/bureau-post-implement-dirty.XXXXXX")
+  _post_implement_dirty_snapshot "$dirty_snapshot"
   log=$(mktemp "${TMPDIR:-/tmp}/bureau-post-implement.XXXXXX")
   status_file="$log.why"
   echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
@@ -213,7 +290,9 @@ run_post_implement_command() {
   fi
   after_status=$(git status --porcelain --untracked-files=all | LC_ALL=C sort)
   new_dirty=$(LC_ALL=C comm -13 <(printf '%s\n' "$before_status") <(printf '%s\n' "$after_status") | sed '/^$/d')
-  if [ -n "$new_dirty" ]; then
+  changed_dirty=$(_post_implement_changed_dirty "$dirty_snapshot")
+  rm -f "$dirty_snapshot"
+  if [ -n "$new_dirty" ] || [ -n "$changed_dirty" ]; then
     reason="${reason:+$reason; }left changes it did not commit"
   fi
   if [ -z "$reason" ]; then
@@ -230,6 +309,11 @@ $(tail -20 "$log")"
     POST_IMPLEMENT_REPORT="${POST_IMPLEMENT_REPORT}
 uncommitted changes it left (kept in the worktree):
 ${new_dirty}"
+  fi
+  if [ -n "$changed_dirty" ]; then
+    POST_IMPLEMENT_REPORT="${POST_IMPLEMENT_REPORT}
+files that were uncommitted before it ran and that it changed further (kept in the worktree):
+${changed_dirty}"
   fi
   rm -f "$log"
   echo "  ✗✗ repo.post_implement_command ${reason}" >&2
@@ -497,6 +581,50 @@ ITER_LOG=""
 i=0
 CLAUDE_EXIT=0
 
+# agents.implement.push_each_iteration. true (the default): the branch is
+# pushed after every iteration and after the /goal run, as it always was.
+# false: while a PR is open for the branch when this run starts, those pushes
+# wait, and the end-of-run push below carries all of them at once. Each push
+# to a branch with an open PR is a `pull_request: synchronize`, so CI then runs
+# once over the finished state instead of once per iteration. Without an open
+# PR the pushes stay, because they cost no PR run and they keep the work on
+# origin should the stage die before its end.
+#
+# Read from .agents.implement only when that is an object
+# ({"enabled": true, "push_each_iteration": false}); `agents.implement: true`
+# and an absent or null key mean the default. Any other value, and a
+# configuration jq cannot read, push each iteration with a warning: a push too
+# many costs one CI run, a push too few can cost the work of a whole run.
+PUSH_EACH_ITERATION=$(bureau_get '.agents.implement | if type == "object" then .push_each_iteration else null end | if . == null then true elif type == "boolean" then . else tojson end' 2>/dev/null) || PUSH_EACH_ITERATION="(unreadable)"
+case "$PUSH_EACH_ITERATION" in
+  true|false) ;;
+  *)
+    echo "WARN: .agents.implement.push_each_iteration = $PUSH_EACH_ITERATION is not a JSON boolean — pushing after every iteration (the default)." >&2
+    PUSH_EACH_ITERATION=true
+    ;;
+esac
+# Asked once, here, before both paths, so the /goal run and every iteration
+# see the same answer. Only `false` asks. Anything but a PR number means no
+# open PR: the empty answer, the literal "null" `--jq '.[0].number'` prints
+# when nothing matches, and a gh that fails.
+OPEN_PR_AT_START=""
+if [ "$PUSH_EACH_ITERATION" = false ]; then
+  OPEN_PR_AT_START=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+  case "$OPEN_PR_AT_START" in "null"|*[!0-9]*) OPEN_PR_AT_START="" ;; esac
+  if [ -n "$OPEN_PR_AT_START" ]; then
+    echo "  PR #$OPEN_PR_AT_START is open for $BRANCH and push_each_iteration is false: pushing once, at the end of the run"
+  fi
+fi
+
+# push_iteration <label>: the push after an iteration or after the /goal run.
+push_iteration() {
+  if [ -n "$OPEN_PR_AT_START" ]; then
+    echo "  push deferred ($1): PR #$OPEN_PR_AT_START is open, the end-of-run push carries the work"
+  else
+    push_branch_loud "$1"
+  fi
+}
+
 # EXP-token-efficiency — /goal-driven path. Closes the EXP-573 / EXP-571 /
 # EXP-624 / EXP-627 stuck-detector lineage: instead of bash counting commits
 # and parsing self-reported status per iter, delegate completion-evaluation
@@ -585,7 +713,7 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   ITER_LOG+=$'\n'
   echo "$ITER_LOG"
 
-  push_branch_loud "/goal run"
+  push_iteration "/goal run"
 
   # Lying-COMPLETE backstop (same belt-and-suspenders the iter-loop path
   # carries via the post-loop EXP-571/EXP-624 check). Haiku is good but not
@@ -694,10 +822,6 @@ At the end of your work, emit a single fenced json block so the shell can summar
   HEAD_AFTER=$(git rev-parse HEAD)
   COMMITS_THIS_ITER=$(git rev-list --count "$HEAD_BEFORE..$HEAD_AFTER" 2>/dev/null || echo 0)
 
-  # Push every iteration. queue-loop's reset_worktree hard-resets to origin
-  # between picks (CLAUDE.md invariant 5) — unpushed commits would be wiped.
-  push_branch_loud "iter $i"
-
   STATUS=$(parse_claude_json "$RESULT" '.status // "PARTIAL"')
   [ -z "$STATUS" ] && STATUS="PARTIAL"
   TASKS_DONE=$(parse_claude_json "$RESULT" '.tasks_done // 0')
@@ -712,6 +836,25 @@ At the end of your work, emit a single fenced json block so the shell can summar
   ITER_LOG+="  $LINE"$'\n'
 
   COMMITS_TOTAL=$(( COMMITS_TOTAL + COMMITS_THIS_ITER ))
+
+  # The squash-range check after every iteration, before its push: a commit
+  # message in origin/main..HEAD that carries a CI suppressor, or a range that
+  # cannot be read, ends the loop after the iteration that wrote it instead of
+  # paying for the remaining ones. The check before the hand-off below still
+  # runs and writes the report, and the end-of-run push still carries the work.
+  check_squash_range origin/main
+  if [ "$SQUASH_CHECK" != "clean" ]; then
+    echo "  ✗✗ squash-range check after iter $i is not clean: stopping the loop" >&2
+    ITER_LOG+="  iter $i: squash-range check not clean, loop stopped"$'\n'
+    STATUS="CI_MARKER"
+    break
+  fi
+
+  # Push every iteration, unless push_iteration defers it to the end of the
+  # run (agents.implement.push_each_iteration false, PR open). queue-loop's
+  # reset_worktree hard-resets to origin between picks (CLAUDE.md invariant 5),
+  # so commits that never reach origin are wiped.
+  push_iteration "iter $i"
 
   # Single-strike stuck detector (EXP-573). Runs BEFORE the status-based
   # break so a model that self-reports PARTIAL with zero commits and zero
@@ -813,9 +956,11 @@ echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 
 # One push over the finished state, before the PR is opened or marked ready
 # below. The per-iter pushes above are non-fatal, so this is the retry for any
-# that failed. It used to be an empty "CI re-trigger" commit, paired with the
-# `[skip ci]` amend the iter loop no longer makes; with no suppressed pushes
-# there is nothing to re-trigger, so no commit is written here.
+# that failed; with agents.implement.push_each_iteration false and a PR open
+# at the start (push_iteration), it is the run's only push. It used to be an
+# empty "CI re-trigger" commit, paired with the `[skip ci]` amend the iter loop
+# no longer makes; with no suppressed pushes there is nothing to re-trigger,
+# so no commit is written here.
 # Pushes when the run committed or when this worktree holds anything origin
 # does not (a merge of origin/main before the loop is counted by neither
 # COMMITS_TOTAL nor the iter log). An unreadable comparison counts as ahead.
