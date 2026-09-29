@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="83f037814e1a91b0c91fefa4d673ebaa3df64fbdc8c2d1b420ad26ff583c76c2">
+<meta name="bureau-source-sha256" content="3d9d06e21a6c7e59d0ad527602142a1365015cfbd1babd8eecdad10495bacd40">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -62,9 +62,19 @@ stays quiet; the shepherd waits for the gate (see below)</td>
 <tr>
 <td><code>11</code></td>
 <td>worktree-dirty</td>
-<td>Uncommitted changes in the worktree</td>
+<td>Uncommitted changes in the worktree; from
+<code>spec-pipeline.sh</code> also: <code>.specify/feature.json</code>
+unusable after speckit-specify</td>
 <td>Manual edits in <code>.worktrees/queue-&lt;mode&gt;/</code> — clean
-up before next tick</td>
+up before next tick. Spec stage (v3.1): a missing or malformed
+<code>feature.json</code> ends with <code>11</code> and routes back to
+Triage without a label (a re-run may succeed; before, jq's own
+<code>2</code> or <code>5</code> escaped, and <code>2</code> read as
+"queue empty"); a stale one — unchanged by the call, naming a directory
+that existed before it and is not the ticket's own — ends with
+<code>11</code>, routes back to Triage and sets
+<code>needs-human</code>, because a re-run reads the same file. See the
+troubleshooting guide</td>
 </tr>
 <tr>
 <td><code>12</code></td>
@@ -84,7 +94,10 @@ back to Spec, UX back to Spec Review. On a tie (v3.0.2) implement, spec
 review and UX name every fitting directory, set <code>needs-human</code>
 and route back, because the stages never guess and re-running Spec
 cannot resolve a tie: rename or remove the stray directory, then remove
-the label</td>
+the label. When no directory matches the branch at all (v3.1) the three
+stages also set <code>needs-human</code>, and their comment names the
+branch and the specs directory; a matched directory without
+<code>tasks.md</code> still routes back to Spec without the label</td>
 </tr>
 <tr>
 <td><code>14</code></td>

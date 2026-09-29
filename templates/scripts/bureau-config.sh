@@ -3017,8 +3017,8 @@ pipeline_pick_next() {
 #      extra words: `t1-automated-tests-unit` for `001-automated-tests`). When
 #      several fit, the branch's number decides first: the fits that carry it,
 #      if any, are the only ones left. Among those left, the one whose slug
-#      equals the branch slug (`teach-by-naming-wireup` over `teach-by-naming`
-#      for a branch `…-teach-by-naming-wireup`). Two or more left is a tie.
+#      equals the branch slug (`128-report-builder-wireup` over `117-report-builder`
+#      for a branch `…-report-builder-wireup`). Two or more left is a tie.
 # Nothing else: a number alone never selects a directory, and a single slug
 # fit wins even when another directory carries the branch's number. Anything
 # ambiguous prints nothing, and the stage works without a spec directory or

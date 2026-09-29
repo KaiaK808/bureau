@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="414386ca55cf2d5c1a507a703029444cd4d1267392292e14f3883f2a902ae7ea">
+<meta name="bureau-source-sha256" content="19e53ee1181efabcb0b89b31fd7b1db544af50d11a6674ff859b2ca3d023217f">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -227,6 +227,37 @@ Existing unregistered workers and app checkouts cannot be made
 disposable by clearing files. Do not reset, clean, forcibly remove or
 detach another task's checkout. See <a
 href="stage-protocol.html">ownership and resume</a>.</p>
+<p><strong>From the spec stage: <code>.specify/feature.json</code> after
+speckit-specify.</strong> The spec stage reads the feature directory
+from <code>.specify/feature.json</code> once speckit-specify has run,
+and ends with <code>11</code> when it cannot use it:</p>
+<ul>
+<li><em>Missing or malformed</em> (no file, not valid JSON, no
+<code>feature_directory</code>, or a directory that does not exist): the
+comment says "absent or invalid", the ticket goes back to Triage without
+a label, and the next pick tries again. v3.0.2 ended here with jq's own
+status instead (<code>2</code> for a missing file, <code>5</code> for
+invalid JSON), and <code>2</code> reads as "queue empty": the queue took
+the ticket again on the next tick and paid another specify run.</li>
+<li><em>Stale</em> (v3.1): the file is byte for byte what it was before
+the call, the directory it names existed before the call, and that
+directory is not the ticket's own — neither the one
+<code>bureau_spec_dir_for_branch</code> finds for the branch checked out
+before the call (never <code>main</code>; a disposable spec worker
+starts detached) nor the one it finds for the ticket's newest
+<code>bureau-branch</code> marker (Linear's generated branch name does
+not count). Plan and tasks would have written into another ticket's
+spec, so the stage stops before them, routes back to Triage, sets
+<code>needs-human</code> and alerts. A re-run reads the same file. The
+usual cause: the file is tracked and <code>main</code> holds the last
+merged feature's value, and speckit-specify did not record the new
+feature (its branch hook was skipped, or the run failed early). Check
+the spec run's output and
+<code>git log -1 -- .specify/feature.json</code> on <code>main</code>,
+make speckit-specify write the file (or run the spec by hand), then
+remove <code>needs-human</code>. A file that speckit-specify changed is
+trusted, even when it names an older directory.</li>
+</ul>
 <h3 id="exit-12-no-branch--bureau-branch-marker-missing">Exit 12
 (no-branch) — <code>bureau-branch:</code> marker missing</h3>
 <p>Downstream stages resolve the branch via a
@@ -261,12 +292,22 @@ directory named exactly like the branch or its last segment; else the
 one directory whose slug (the name without <code>NNN-</code>) fits the
 branch slug — equal, the branch slug as its start up to a <code>-</code>
 (a truncated branch name), or a run of whole <code>-</code>-separated
-words inside the branch slug; when several fit, the one of them that
-carries the branch's number. A number alone never selects a directory.
-Anything else yields no directory: implement stops here rather than
-build from another ticket's <code>tasks.md</code>, and when two
-directories fit equally, implement, spec review and UX name them in
-their comment and set <code>needs-human</code>. To see what a stage will
+words inside the branch slug; when several fit, the branch's number
+narrows them first (the fits that carry it, if any, are the only ones
+left), and among the fits left the one whose slug equals the branch slug
+wins (v3.1: <code>codex/exp-9-report-builder-wireup</code> takes
+<code>128-report-builder-wireup</code> over
+<code>117-report-builder</code>, where v3.0.2 stopped on a tie; a branch
+cut down to exactly a shorter directory's slug therefore takes that
+directory). A number alone never selects a directory. Anything else
+yields no directory: implement stops here rather than build from another
+ticket's <code>tasks.md</code>, and when two directories fit equally,
+implement, spec review and UX name them in their comment and set
+<code>needs-human</code>. When no directory matches the branch at all,
+the three stages set <code>needs-human</code> as well (v3.1) and name
+the branch and the specs directory; a directory that matches but lacks
+<code>tasks.md</code> goes back to Spec without the label, because
+<code>/speckit-tasks</code> can repair that. To see what a stage will
 pick, run
 <code>bash -c 'source scripts/bureau-config.sh; bureau_spec_dir_for_branch 001-my-branch; bureau_spec_dir_candidates 001-my-branch'</code>
 from the repository root. Typical causes: the spec directory was renamed
@@ -275,6 +316,20 @@ directory, or two directories fit equally (<code>001-export-csv</code>
 and <code>001-export-csv-v2</code> for the branch
 <code>001-export-csv-v2-fix</code>) — rename or remove the stray
 directory, then remove <code>needs-human</code>.</p>
+<p><strong>A ticket got its parent ticket's spec (known
+limitation).</strong> The stages read the branch from the ticket's
+<code>bureau-branch</code> marker comment; without one they fall back to
+Linear's generated branch name,
+<code>user/&lt;key&gt;-&lt;title-slug&gt;</code>. When a child ticket's
+title starts with the parent ticket's slug (title "Split config loader
+phase 2: CLI flags", parent directory
+<code>020-split-config-loader</code>), the matcher takes the parent's
+directory, because the parent's slug is a whole-word run of the title
+and the child's own directory slug is not. v3.0.1 gave the same answer.
+The marker is canonical: if a stage names the wrong directory, check
+that the newest spec comment on the ticket starts with
+<code>&lt;!-- bureau-branch: &lt;branch&gt; --&gt;</code> and restore it
+from the ticket's real branch before re-running.</p>
 <h3
 id="exit-14-build-failed--implement--upstream-port-build-gate-failed">Exit
 14 (build-failed) — implement / upstream-port build gate failed</h3>
