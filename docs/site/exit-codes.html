@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3d9d06e21a6c7e59d0ad527602142a1365015cfbd1babd8eecdad10495bacd40">
+<meta name="bureau-source-sha256" content="4d23ef25dcc3a524d6bed2f73c1d1cdb8dc477ddfb626e5991c8e4084ea7537e">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -70,9 +70,9 @@ up before next tick. Spec stage (v3.1): a missing or malformed
 <code>feature.json</code> ends with <code>11</code> and routes back to
 Triage without a label (a re-run may succeed; before, jq's own
 <code>2</code> or <code>5</code> escaped, and <code>2</code> read as
-"queue empty"); a stale one — unchanged by the call, naming a directory
-that existed before it and is not the ticket's own — ends with
-<code>11</code>, routes back to Triage and sets
+"queue empty"); a stale one — not written by the call, naming a
+directory that existed before it and is not the ticket's own by name —
+ends with <code>11</code>, routes back to Triage and sets
 <code>needs-human</code>, because a re-run reads the same file. See the
 troubleshooting guide</td>
 </tr>
