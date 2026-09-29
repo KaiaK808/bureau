@@ -241,8 +241,12 @@ STUCK_EOF
 
 run_shepherd() {
   local sb="$1"; shift
+  # The shepherd's temp files (fault file, gate report) go to the sandbox: a
+  # scenario that kills the shepherd leaves nothing in the user's $TMPDIR.
+  mkdir -p "$sb/tmp"
   ( cd "$sb" \
-    && STATE_FILE="$sb/state.txt" \
+    && TMPDIR="$sb/tmp" \
+       STATE_FILE="$sb/state.txt" \
        INVOCATIONS_LOG="$sb/invocations.log" \
        LABEL_LOG="$sb/labels.log" \
        bash "$sb/scripts/shepherd.sh" --no-tmux "$@" \
@@ -1494,6 +1498,162 @@ test_relative_worktree() {
   return 0
 }
 
+# ── Scenario 22 (v3.0.1): the shepherd at the merge gate ─────────────────
+# The pilot run EXP-1534 met a merge stage that did not merge (red CI) and ended
+# with 0: the shepherd printed "still reads 'Merge' after the move", ran the stage
+# again and its stuck detector labeled the ticket (13). The merge stage now
+# reports its gate (tests/test_merge_pipeline_correctness.sh, test_gate_outcome):
+# 2 + "not-yet" is waited for, 25 + "blocked" halts with the gate report.
+# _make_gate_merge_stub <sb> <outcome…> — a merge stage that plays one outcome
+# per call: pending (2, not-yet), red (25, blocked), green (moves to Done, 0),
+# old (v3.0.0: 0 without a report, nothing moves).
+_make_gate_merge_stub() {
+  local sb="$1"; shift
+  printf '%s\n' "$@" > "$sb/gate.plan"
+  cat > "$sb/scripts/merge-pipeline.sh" <<'GATE_EOF'
+#!/bin/bash
+set -euo pipefail
+source "$(dirname "$0")/bureau-config.sh"
+ISSUE="${1:-}"
+echo "merge-pipeline.sh" >> "$INVOCATIONS_LOG"
+n=$(grep -c . "$INVOCATIONS_LOG")
+plan="$(dirname "$STATE_FILE")/gate.plan"
+step=$(sed -n "$(grep -c '^merge-pipeline.sh$' "$INVOCATIONS_LOG")p" "$plan")
+[ -n "$step" ] || step=$(tail -n 1 "$plan")
+report() { [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ] && printf '%s\n%s\n' "$1" "$2" > "$BUREAU_MERGE_GATE_REPORT"; return 0; }
+printf '%s\n' "${BUREAU_MERGE_GATE_REPORT:-}" >> "$(dirname "$STATE_FILE")/report.path"
+case "$step" in
+  pending) report not-yet "ci_green: ci: 1 check(s) still pending on HEAD_SHA"; exit 2 ;;
+  red)     report blocked "ci_green: ci: failing check(s) on HEAD_SHA: build + test"; exit 25 ;;
+  green)   move_issue "$ISSUE" s8; exit 0 ;;
+  old)     exit 0 ;;
+  bare2)   exit 2 ;;   # a 2 without a gate report of its own
+  back)    move_issue "$ISSUE" s6; exit 0 ;;   # the ticket leaves Merge (the review stub brings it back)
+  odd)     report not-yet "ci_green: ci: 1 check(s) still pending on HEAD_SHA"; exit 1 ;;   # a report that does not match its code
+esac
+GATE_EOF
+  chmod +x "$sb/scripts/merge-pipeline.sh"
+  echo "s7" > "$sb/state.txt"   # the ticket waits in Merge
+}
+_run_gate() {  # <sb> [env…] — sets GATE_RC; waits are recorded, never slept
+  local sb="$1"; shift
+  # The 30th wait kills the shepherd: a gate that is waited for without end (a
+  # regression) fails the scenario instead of hanging the suite.
+  _record_sleeps "$sb" 30; _record_writes "$sb"
+  # The shepherd's temp files (fault file, gate report) go to the sandbox, so a
+  # scenario that kills it leaves nothing in the user's $TMPDIR.
+  mkdir -p "$sb/tmp"
+  set +e
+  ( cd "$sb" && env STATE_FILE="$sb/state.txt" INVOCATIONS_LOG="$sb/invocations.log" LABEL_LOG="$sb/labels.log" \
+      PATH="$sb/bin:$PATH" TMPDIR="$sb/tmp" BUREAU_SHEPHERD_CONFIRM_SECONDS=0 "$@" \
+      bash "$sb/scripts/shepherd.sh" --no-tmux EXP-22 > "$sb/shepherd.out" 2> "$sb/shepherd.err" )
+  GATE_RC=$?
+  set -e
+}
+_merge_calls() { grep -c '^merge-pipeline.sh$' "$1/invocations.log" 2>/dev/null || echo 0; }
+_no_confirm_line() {
+  ! grep -q "after the move" "$1/shepherd.out" \
+    || { echo "FAIL: $2: the confirmation loop ran on a merge stage that did not move the ticket"; return 1; }
+}
+
+test_merge_gate() {
+  local sb
+  # Pending, pending, green: waits twice (the poll interval), merges, no label, no stuck.
+  sb=$(make_sandbox gate_wait); _make_gate_merge_stub "$sb" pending pending green
+  _run_gate "$sb" BUREAU_SHEPHERD_MERGE_POLL_SECONDS=7
+  assert_eq "$GATE_RC" 0 "pending → green: the shepherd ends with 0" || { tail -5 "$sb/shepherd.out"; return 1; }
+  assert_eq "$(_merge_calls "$sb")" 3 "pending → green: three merge passes" || return 1
+  assert_eq "$(grep -c '^7$' "$sb/sleeps.log" 2>/dev/null || echo 0)" 2 "pending → green: two waits of the poll interval" || return 1
+  grep -q "needs-human" "$sb/labels.log" 2>/dev/null && { echo "FAIL: pending → green labeled needs-human"; return 1; }
+  grep -q "STUCK" "$sb/shepherd.out" && { echo "FAIL: pending → green hit the stuck detector"; return 1; }
+  grep -q "merge gate not yet eligible — waiting 7s (0/1800s): ci_green: ci: 1 check(s) still pending" "$sb/shepherd.out" \
+    || { echo "FAIL: pending: the wait does not name the gate"; cat "$sb/shepherd.out"; return 1; }
+  _no_confirm_line "$sb" "pending → green" || return 1
+
+  # Red: halts at once with 25, needs-human, the gate report in the comment, an alert.
+  sb=$(make_sandbox gate_red); _make_gate_merge_stub "$sb" red
+  _run_gate "$sb"
+  assert_eq "$GATE_RC" 25 "red: the shepherd ends with 25" || { tail -5 "$sb/shepherd.out"; return 1; }
+  assert_eq "$(_merge_calls "$sb")" 1 "red: one merge pass" || return 1
+  grep -q "^+EXP-22"$'\t'"needs-human" "$sb/labels.log" || { echo "FAIL: red: no needs-human"; return 1; }
+  grep -q "the merge gate is blocked" "$sb/labels.log.comments" && grep -q "failing check(s) on HEAD_SHA: build + test" "$sb/labels.log.comments" \
+    || { echo "FAIL: red: the comment does not carry the gate report"; cat "$sb/labels.log.comments"; return 1; }
+  grep -q "merge gate is blocked" "$sb/labels.log.alerts" || { echo "FAIL: red: no alert"; return 1; }
+  grep -q "STUCK" "$sb/shepherd.out" && { echo "FAIL: red: reported as stuck"; return 1; }
+  _no_confirm_line "$sb" red || return 1
+
+  # The wait is bounded: pending forever, a 10 s budget at 5 s polls halts on the third pass.
+  sb=$(make_sandbox gate_budget); _make_gate_merge_stub "$sb" pending
+  _run_gate "$sb" BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=10 BUREAU_SHEPHERD_MERGE_POLL_SECONDS=5
+  assert_eq "$GATE_RC" 25 "budget: the shepherd ends with 25" || { tail -5 "$sb/shepherd.out"; return 1; }
+  assert_eq "$(_merge_calls "$sb")" 3 "budget: three merge passes (0 s, 5 s, 10 s)" || return 1
+  grep -q "was still not eligible after 10s" "$sb/labels.log.comments" && grep -q "still pending" "$sb/labels.log.comments" \
+    || { echo "FAIL: budget: the comment does not say the wait ran out, with the gate"; cat "$sb/labels.log.comments"; return 1; }
+  grep -q "^+EXP-22"$'\t'"needs-human" "$sb/labels.log" || { echo "FAIL: budget: no needs-human"; return 1; }
+
+  # The wait starts again when the ticket comes back to Merge: 10 s used up, back
+  # to Build Review and on to Merge again, the gate is waited for once more.
+  sb=$(make_sandbox gate_again); _make_gate_merge_stub "$sb" pending pending back pending green
+  _run_gate "$sb" BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=10 BUREAU_SHEPHERD_MERGE_POLL_SECONDS=5
+  assert_eq "$GATE_RC" 0 "back to Merge: the wait starts again and it merges" || { tail -5 "$sb/shepherd.out"; return 1; }
+  grep -q "not yet eligible — waiting 5s (0/10s)" "$sb/shepherd.out" \
+    && [ "$(grep -c 'not yet eligible — waiting 5s (0/10s)' "$sb/shepherd.out")" = 2 ] \
+    || { echo "FAIL: back to Merge: the second visit did not start its wait at 0"; grep 'not yet' "$sb/shepherd.out"; return 1; }
+
+  # The gate report counts only with the stage's own code: not-yet with exit 1 is an
+  # error of the stage, not a wait.
+  sb=$(make_sandbox gate_odd); _make_gate_merge_stub "$sb" odd green
+  _run_gate "$sb"
+  assert_eq "$GATE_RC" 1 "not-yet with exit 1: the shepherd halts with the stage's 1" || { tail -5 "$sb/shepherd.out"; return 1; }
+  grep -q "not yet eligible" "$sb/shepherd.out" && { echo "FAIL: not-yet with exit 1 was waited for"; return 1; }
+  ls "$sb/tmp" | grep -q '^bureau-merge-gate\.' && { echo "FAIL: the gate report file was left behind"; return 1; }
+  case "$(head -n 1 "$sb/report.path")" in "$sb/tmp/bureau-merge-gate."*) ;;
+    *) echo "FAIL: the gate report lives outside the sandbox's TMPDIR: $(head -n 1 "$sb/report.path")"; return 1 ;; esac
+
+  # Leading zeros are base 10 ("08" used to be a syntax error, "010" eight seconds),
+  # and the settings are bounded (a huge wait is capped at 6 h, a huge poll at 1 h).
+  sb=$(make_sandbox gate_base10); _make_gate_merge_stub "$sb" pending pending green
+  _run_gate "$sb" BUREAU_SHEPHERD_MERGE_POLL_SECONDS=08 BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=010
+  assert_eq "$GATE_RC" 0 "08/010: merges" || { tail -5 "$sb/shepherd.out"; cat "$sb/shepherd.err"; return 1; }
+  grep -q "waiting 8s (8/10s)" "$sb/shepherd.out" || { echo "FAIL: 08/010 are not read as 8 and 10"; grep 'not yet' "$sb/shepherd.out"; return 1; }
+  sb=$(make_sandbox gate_huge); _make_gate_merge_stub "$sb" pending green
+  _run_gate "$sb" BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=99999999999999999999 BUREAU_SHEPHERD_MERGE_POLL_SECONDS=86400
+  assert_eq "$GATE_RC" 0 "huge settings: merges" || { tail -5 "$sb/shepherd.out"; return 1; }
+  grep -q "MERGE_WAIT_SECONDS='99999999999999999999' is above 21600" "$sb/shepherd.err" && grep -q "waiting 3600s (0/21600s)" "$sb/shepherd.out" \
+    || { echo "FAIL: huge settings were not capped"; cat "$sb/shepherd.err"; grep 'not yet' "$sb/shepherd.out"; return 1; }
+
+  # Settings that are not whole numbers fall back with a warning (poll 0 too: a busy loop).
+  sb=$(make_sandbox gate_badenv); _make_gate_merge_stub "$sb" pending green
+  _run_gate "$sb" BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=soon BUREAU_SHEPHERD_MERGE_POLL_SECONDS=0
+  assert_eq "$GATE_RC" 0 "bad settings: still merges" || return 1
+  grep -q "MERGE_WAIT_SECONDS='soon'" "$sb/shepherd.err" && grep -q "MERGE_POLL_SECONDS='0'" "$sb/shepherd.err" \
+    || { echo "FAIL: bad settings: no warnings"; cat "$sb/shepherd.err"; return 1; }
+  grep -q '^60$' "$sb/sleeps.log" || { echo "FAIL: bad settings: the poll did not fall back to 60 s"; return 1; }
+
+  # Only the stage's own report counts: a 2 without one, after a waited pending,
+  # takes the general path (the report file is emptied before every pass).
+  sb=$(make_sandbox gate_bare2); _make_gate_merge_stub "$sb" pending bare2 green
+  _run_gate "$sb"
+  assert_eq "$GATE_RC" 0 "bare 2: still merges" || { tail -5 "$sb/shepherd.out"; return 1; }
+  assert_eq "$(grep -c 'merge gate not yet eligible' "$sb/shepherd.out")" 1 "bare 2: only the pass with a report waits for the gate" || return 1
+  grep -q "after the move" "$sb/shepherd.out" || { echo "FAIL: bare 2: a 2 without a report should take the general path"; return 1; }
+
+  # Negative control 1: a v3.0.0 merge stage (0 without a report) — the confirmation
+  # loop and the stuck detector, exactly as in the pilot run.
+  sb=$(make_sandbox gate_old_stage); _make_gate_merge_stub "$sb" old
+  _run_gate "$sb"
+  assert_eq "$GATE_RC" 13 "negative control (v3.0.0 stage): stuck with 13" || { tail -5 "$sb/shepherd.out"; return 1; }
+  grep -q "after the move" "$sb/shepherd.out" || { echo "FAIL: negative control (v3.0.0 stage): no confirmation loop, so this proves nothing"; return 1; }
+
+  # Negative control 2: the v3.0.1 stage with the v3.0.0 shepherd (the gate branch
+  # never matches) — a pending CI ends stuck within two passes.
+  sb=$(make_sandbox gate_old_shepherd); _make_gate_merge_stub "$sb" pending pending pending green
+  _mutate "$sb/scripts/shepherd.sh" 'case "$RC:$GATE_OUTCOME" in' 'case "off" in' || return 1
+  _run_gate "$sb"
+  assert_eq "$GATE_RC" 13 "negative control (v3.0.0 shepherd): a pending CI ends stuck" || { tail -5 "$sb/shepherd.out"; return 1; }
+  return 0
+}
+
 # ── Run all scenarios ──────────────────────────────────────────────
 FAILS=0
 for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linear_unusable_halts test_block_halts \
@@ -1501,7 +1661,7 @@ for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linea
                 test_dry_run_read_unusable test_read_failure_other_code test_branch_read_unusable_halts \
                 test_interrupted_read_is_cancelled test_merge_mode_manual test_review_stop_quiet \
                 test_start_check_failure test_move_failure_halts test_signal_during_wait_and_stage \
-                test_move_confirmed_before_next_stage test_no_state_is_bounded test_relative_worktree; do
+                test_move_confirmed_before_next_stage test_no_state_is_bounded test_relative_worktree test_merge_gate; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

@@ -332,7 +332,10 @@ fi
 # alert or a comment. The shepherd's own reads, moves and its start check record
 # into the same file. Until the ticket is claimed, leaving only removes the file.
 SHEPHERD_FAULT_FILE=$(mktemp "${TMPDIR:-/tmp}/bureau-linear-fault.XXXXXX")
-trap 'rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT
+# The merge stage writes the outcome of its gate here (BUREAU_MERGE_GATE_REPORT):
+# "not-yet" or "blocked" on the first line, the gate lines after it.
+MERGE_GATE_FILE=$(mktemp "${TMPDIR:-/tmp}/bureau-merge-gate.XXXXXX")
+trap 'rm -f "$SHEPHERD_FAULT_FILE" "$MERGE_GATE_FILE" 2>/dev/null || true' EXIT
 
 # _shepherd_cancelled <signal> — Ctrl-C, or the runtime forwarding a SIGTERM to
 # the process group, ends the run as cancelled: exit 130, the code the runtime
@@ -468,7 +471,7 @@ _shepherd_start_failed() {
 # The trap is set before the claim: a signal during the claim still releases.
 # Any exit above 128 (a signal, whichever way it ended the shell) releases with
 # one attempt, like a cancelled run.
-trap '[ $? -gt 128 ] && export _BUREAU_LINEAR_SINGLE_ATTEMPT=1; echo "[shepherd] releasing $ISSUE"; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" 2>/dev/null || true' EXIT
+trap '[ $? -gt 128 ] && export _BUREAU_LINEAR_SINGLE_ATTEMPT=1; echo "[shepherd] releasing $ISSUE"; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" "$MERGE_GATE_FILE" 2>/dev/null || true' EXIT
 SHEPHERD_CLAIMED=1
 echo "[shepherd] claiming $ISSUE (label: shepherd-focused)"
 add_issue_label "$ISSUE" "shepherd-focused" \
@@ -517,10 +520,61 @@ esac
 _shepherd_unconfirmed() {
   { [ -n "$MOVED_TO" ] && [ "$STATE" != "$MOVED_TO" ]; } || { [ -n "$MOVED_FROM" ] && [ "$STATE" = "$MOVED_FROM" ]; }
 }
+# Waiting on the merge gate (v3.0.1). A merge stage that did not merge used to
+# end with 0: the shepherd then took the unchanged Merge state for a move it had
+# not seen yet ("still reads 'Merge' after the move"), ran the stage again and
+# the stuck detector labeled the ticket after two passes — also while the checks
+# were merely running. Now the stage reports its gate: "not yet" (checks pending,
+# GitHub still computing) is waited for, BUREAU_SHEPHERD_MERGE_POLL_SECONDS
+# apart, up to BUREAU_SHEPHERD_MERGE_WAIT_SECONDS in total, without counting as
+# stuck; "blocked", or a gate still not eligible when the wait is used up, halts
+# with needs-human and the gate report. Nothing merges on a red or pending gate.
+# _shepherd_seconds <name> <default> <min> <max> — the value of <name> in whole
+# seconds, read in base 10 (a leading zero is no octal number: "08" is 8, not a
+# syntax error), within <min>..<max>. Anything else warns and uses the default;
+# a value above <max> uses <max>.
+_shepherd_seconds() {
+  local name="$1" default="$2" min="$3" max="$4" raw digits
+  raw="${!name:-}"
+  [ -n "$raw" ] || { echo "$default"; return; }
+  case "$raw" in
+    *[!0-9]*) echo "[shepherd] WARN: $name='$raw' is not a whole number of seconds — using $default" >&2; echo "$default"; return ;;
+  esac
+  digits="${raw#"${raw%%[!0]*}"}"; digits="${digits:-0}"
+  if [ "${#digits}" -gt 6 ] || [ "$((10#$digits))" -gt "$max" ]; then
+    echo "[shepherd] WARN: $name='$raw' is above $max seconds — using $max" >&2; echo "$max"; return
+  fi
+  if [ "$((10#$digits))" -lt "$min" ]; then
+    echo "[shepherd] WARN: $name='$raw' is below $min seconds — using $default" >&2; echo "$default"; return
+  fi
+  echo "$((10#$digits))"
+}
+MERGE_WAIT_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_WAIT_SECONDS 1800 0 21600)
+MERGE_POLL_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_POLL_SECONDS 60 1 3600)
+MERGE_WAITED=0
 
 # _shepherd_no_state_halt — Linear answered MAX_NO_STATE times in a row, without
 # an error and without a state. Nothing tells which stage runs next; the same
 # halt as a state no pipeline knows: needs-human, a comment, an alert, exit 1.
+# _shepherd_merge_blocked <what> — the merge gate decided against the merge, or
+# never became eligible within the wait: label, comment with the gate report,
+# alert, exit 25. Nothing was merged.
+_shepherd_merge_blocked() {
+  local what="$1" report
+  report=$(sed -n '2,$p' "$MERGE_GATE_FILE" 2>/dev/null | sed -e '/^$/d' -e 's/^/- /')
+  echo "[shepherd] merge gate $what for $ISSUE — labeling needs-human and aborting shepherd" >&2
+  alert_telegram "$ISSUE" merge-pipeline.sh 25 "shepherd halt (merge gate $what)" 2>/dev/null || true
+  add_issue_label "$ISSUE" "needs-human" \
+    || echo "[shepherd] WARN: could not add the 'needs-human' label to $ISSUE" >&2
+  post_comment "$ISSUE" "🛑 Shepherd halt at Merge: the merge gate $what. Nothing was merged.
+
+${report:-- (the merge stage left no gate report)}
+
+Clear the blocker (or re-run the checks), remove needs-human and re-shepherd." \
+    || echo "[shepherd] WARN: could not post the halt comment on $ISSUE" >&2
+  exit 25
+}
+
 _shepherd_no_state_halt() {
   echo "[shepherd] Linear answered $MAX_NO_STATE times without a state for $ISSUE — labeling needs-human and aborting shepherd" >&2
   alert_telegram "$ISSUE" shepherd.sh 1 "shepherd halt (no state in $MAX_NO_STATE answers)" 2>/dev/null || true
@@ -652,14 +706,38 @@ while true; do
     session_throttle_guard "$(printf '%s' "${PIPELINE%-pipeline.sh}" | tr '-' '_')" ;;
   esac
 
+  [ "$PIPELINE" = merge-pipeline.sh ] || MERGE_WAITED=0
   set +e
   : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
-  ( cd "$REPO_DIR" && _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" \
+  : > "$MERGE_GATE_FILE" 2>/dev/null || true
+  # BUREAU_HELD_BY_SHEPHERD tells the stage that this ticket is held here: the
+  # queue skips it (shepherd-focused), so nothing but this loop runs a stage on it.
+  ( cd "$REPO_DIR" && _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" BUREAU_MERGE_GATE_REPORT="$MERGE_GATE_FILE" BUREAU_HELD_BY_SHEPHERD=1 \
       bash "$SCRIPT_REPO/scripts/bureau-worker.sh" "$ISSUE" "$PIPELINE" "$WORKTREE" "${BRANCH:-}" )
   RC=$?
   set -e
   CLASS=$(exit_class "$RC")
   echo "[shepherd] $PIPELINE exit=$RC ($CLASS)"
+
+  # The merge stage's gate (see MERGE_WAIT_SECONDS above). Only its own report
+  # counts: a 2 or 25 without one takes the general handling below.
+  if [ "$PIPELINE" = merge-pipeline.sh ]; then
+    GATE_OUTCOME=$(head -n 1 "$MERGE_GATE_FILE" 2>/dev/null || true)
+    case "$RC:$GATE_OUTCOME" in
+      2:not-yet)
+        [ "$MERGE_WAITED" -ge "$MERGE_WAIT_SECONDS" ] \
+          && _shepherd_merge_blocked "was still not eligible after ${MERGE_WAITED}s"
+        echo "[shepherd] merge gate not yet eligible — waiting ${MERGE_POLL_SECONDS}s (${MERGE_WAITED}/${MERGE_WAIT_SECONDS}s): $(sed -n 2p "$MERGE_GATE_FILE")"
+        _shepherd_sleep "$MERGE_POLL_SECONDS"
+        MERGE_WAITED=$((MERGE_WAITED + MERGE_POLL_SECONDS))
+        LAST_STATE=""   # waiting for the gate is not a stage that failed to move
+        continue
+        ;;
+      25:blocked)
+        _shepherd_merge_blocked "is blocked"
+        ;;
+    esac
+  fi
 
   # Halt is the default for every code but the four listed in
   # shepherd_rc_action; a code added later cannot slip through unannounced.

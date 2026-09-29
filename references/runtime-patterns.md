@@ -260,7 +260,7 @@ Reviewed PRs accumulate when nothing closes the loop: mergeable-and-approved PRs
 
   Eligible: `gh pr merge N --squash` with a sanitised `--subject`/`--body` from `merge-body.sh`, so no CI suppressor from the commit list reaches `main` (rebase merges plain, gh takes no body for it; no `--delete-branch`, no `--auto` — see `code-review-pipeline.sh:314-322` for the worktree/detached-HEAD rationale; `--auto` would queue the merge for later and silence loud failures). On success: post Linear comment, move issue to Done.
 
-  Not eligible: comment on the PR with the precise blocker, but **only if blockers changed** since the bot's last `Bureau merge gate` comment (sorted-line diff). This makes the script safe to run every poll interval without comment spam.
+  Not eligible: comment on the PR with the precise blocker, but **only if blockers changed** since the bot's last `Bureau merge gate` comment (sorted-line diff). This makes the script safe to run every poll interval without comment spam. Then exit `2` when the gate is not yet decided (pending or not started checks, GitHub still computing, a failed gate read, a hold label on the PR, conflicts the rebase stage resolves) and `25` when it is decided against the merge; `BUREAU_MERGE_GATE_REPORT` receives the outcome and the gate lines. The inline merge and `--dry-run` keep `0`.
 
   `--dry-run` prints gate verdicts and the action without mutating anything — use to audit before trusting it.
 

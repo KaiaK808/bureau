@@ -166,6 +166,13 @@ case "${1:-}" in
         fi
         ;;
       view)
+        # The gate's own reads can be made to fail one at a time (v3.0.1).
+        if [ "$JSON_FIELDS" = "state,mergeStateStatus,labels" ] && [ -f "$STUB_DIR/fail_pr_gate_read" ]; then
+          echo "HTTP 502" >&2; exit 1
+        fi
+        if [ "$JSON_FIELDS" = "comments" ] && [ -f "$STUB_DIR/fail_comments_read" ]; then
+          echo "HTTP 502" >&2; exit 1
+        fi
         # The merge message read (--json title,body) can be made to fail on its own.
         if [ "$JSON_FIELDS" = "title,body" ] && [ -f "$STUB_DIR/fail_title_body" ]; then
           echo "HTTP 502" >&2
@@ -200,7 +207,8 @@ case "${1:-}" in
   api)
     path_arg="${2:-}"
     case "$path_arg" in
-      graphql) cat "$STUB_DIR/review_threads.json" | apply_jq ;;
+      graphql) if [ -f "$STUB_DIR/fail_threads_read" ]; then echo "HTTP 502" >&2; exit 1; fi
+               cat "$STUB_DIR/review_threads.json" | apply_jq ;;
       */commits/*/check-runs) cat "$STUB_DIR/check_runs.json" | apply_jq ;;
       */commits/*/status)     cat "$STUB_DIR/status.json"     | apply_jq ;;
       */branches/*)
@@ -615,9 +623,328 @@ test_merge_mode_auto_merges() {
   return 0
 }
 
+# ── Gate outcome (v3.0.1): the merge stage tells its caller why it did not merge ──
+# It used to end with 0 whether it merged or not; a shepherd then took the
+# unchanged Merge state for an unseen move and ran into its stuck detector
+# (pilot run EXP-1534). Now: 2 = not yet (pending, not started, still computing),
+# 25 = blocked; with BUREAU_MERGE_GATE_REPORT the outcome and gate lines land in
+# that file. Inline merges and --dry-run keep their 0.
+run_gate() {  # <sb> [args…] — sets GRC (exit code) and GREP (report file content)
+  local sb="$1"; shift
+  rm -f "$sb/gate.report"
+  STUB_DIR="$sb/stub_data" INVOCATIONS_LOG="$sb/gh_invocations.log" PATH="$sb/bin:$PATH" \
+    BUREAU_MERGE_GATE_REPORT="$sb/gate.report" \
+    env ${GATE_ENV:-} bash "$sb/scripts/merge-pipeline.sh" "$@" > "$sb/pipeline.out" 2> "$sb/pipeline.err"
+  GRC=$?
+  GREP=$(cat "$sb/gate.report" 2>/dev/null || true)
+}
+gate_case() {  # <sb> <label> <want rc> <want outcome|-> [pattern in the report]
+  local sb="$1" label="$2" want_rc="$3" want_out="$4" pat="${5:-}"
+  if [ "$GRC" != "$want_rc" ]; then
+    echo "FAIL gate $label: exit $GRC, wanted $want_rc" >&2; sed 's/^/  | /' "$sb/pipeline.out" >&2; return 1
+  fi
+  if [ "$want_out" = - ]; then
+    [ -z "$GREP" ] || { echo "FAIL gate $label: wrote a report although it merged: $GREP" >&2; return 1; }
+  else
+    [ "$(printf '%s\n' "$GREP" | head -n 1)" = "$want_out" ] \
+      || { echo "FAIL gate $label: report outcome '$(printf '%s\n' "$GREP" | head -n 1)', wanted '$want_out'" >&2; return 1; }
+    [ -z "$pat" ] || printf '%s\n' "$GREP" | sed -n '2,$p' | grep -q -- "$pat" \
+      || { echo "FAIL gate $label: report lacks '$pat': $GREP" >&2; return 1; }
+    [ ! -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL gate $label: gh pr merge was called" >&2; return 1; }
+  fi
+  return 0
+}
+set_pr_field() {  # <sb> <jq assignment>
+  jq "$2" "$1/stub_data/pr_view.json" > "$1/stub_data/pr_view.json.tmp" && mv "$1/stub_data/pr_view.json.tmp" "$1/stub_data/pr_view.json"
+}
+
+test_gate_outcome() {
+  local sb
+  # Checks still running (GitHub shows UNSTABLE meanwhile): not yet.
+  sb=$(make_sandbox gate_pending); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNSTABLE"'
+  echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" pending 2 not-yet 'still pending' || return 1
+  # No check has started yet: not yet.
+  sb=$(make_sandbox gate_notstarted); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" not-started 2 not-yet 'only 0 completed' || return 1
+  # GitHub still computing mergeStateStatus, everything else green: not yet.
+  sb=$(make_sandbox gate_unknown); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNKNOWN"'
+  run_gate "$sb"; gate_case "$sb" unknown 2 not-yet 'UNKNOWN' || return 1
+  # A gate read that failed is not a verdict: not yet (the check-runs query, the base).
+  sb=$(make_sandbox gate_ciread); populate_happy_fixtures "$sb"; rm -f "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" ci-read-failed 2 not-yet 'check-runs query failed' || return 1
+  sb=$(make_sandbox gate_baseread); populate_happy_fixtures "$sb"; rm -f "$sb/stub_data/branch_main.json"
+  run_gate "$sb"; gate_case "$sb" base-read-failed 2 not-yet 'base: cannot resolve main HEAD' || return 1
+  # The PR's own gate read and the verdict read failing (a 502) are not verdicts: not
+  # yet, even next to a pending check — they used to read as "PR state= (need OPEN)"
+  # and "verdict=none" and end blocked. So is an unreadable thread list, which used to
+  # count as zero unresolved threads.
+  local r
+  for r in pr_gate_read comments_read threads_read; do
+    sb=$(make_sandbox "gate_fail_$r"); populate_happy_fixtures "$sb"; touch "$sb/stub_data/fail_$r"
+    echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+    run_gate "$sb"
+    case "$r" in
+      pr_gate_read)  gate_case "$sb" "$r" 2 not-yet 'pr_read: ' || return 1 ;;
+      comments_read) gate_case "$sb" "$r" 2 not-yet 'verdict_read: ' || return 1 ;;
+      threads_read)  gate_case "$sb" "$r" 2 not-yet 'threads_read: ' || return 1 ;;
+    esac
+    printf '%s\n' "$GREP" | grep -qE '^(pr_state|verdict|unresolved_threads):' \
+      && { echo "FAIL gate $r: a failed read still reads as a verdict: $GREP" >&2; return 1; }
+  done
+  # A hold label a human put on the PR: not yet (the queue stays quiet until they remove it).
+  sb=$(make_sandbox gate_hold); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.labels=[{"name":"wip"}]'
+  run_gate "$sb"; gate_case "$sb" hold-label 2 not-yet "hold label 'wip'" || return 1
+  # Conflicts the rebase stage resolves (agents.rebase on, bureau-only divergence): not
+  # yet. With a human commit in the divergence, or the rebase agent off: blocked.
+  sb=$(make_sandbox gate_dirty_rebase); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="DIRTY"'
+  jq '.agents.rebase = true' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
+  echo 'branch_is_bureau_only() { return 0; }' >> "$sb/scripts/bureau-config.sh"
+  run_gate "$sb"; gate_case "$sb" dirty-rebasable 2 not-yet 'the rebase stage resolves it' || return 1
+  echo 'branch_is_bureau_only() { return 1; }' >> "$sb/scripts/bureau-config.sh"
+  run_gate "$sb"; gate_case "$sb" dirty-human-commits 25 blocked 'DIRTY (need CLEAN)' || return 1
+  # The shepherd forces every agent on; the rebase stage still counts only when the
+  # repo turned it on (the shepherd never runs it).
+  sb=$(make_sandbox gate_dirty_forced); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="DIRTY"'
+  echo 'branch_is_bureau_only() { return 0; }' >> "$sb/scripts/bureau-config.sh"
+  GATE_ENV="BUREAU_FORCE_ALL_AGENTS=1" run_gate "$sb"; gate_case "$sb" dirty-forced 25 blocked 'DIRTY (need CLEAN)' || return 1
+  # Under a shepherd (BUREAU_HELD_BY_SHEPHERD=1) nothing rebases the ticket: blocked.
+  sb=$(make_sandbox gate_dirty_held); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="DIRTY"'
+  jq '.agents.rebase = true' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
+  echo 'branch_is_bureau_only() { return 0; }' >> "$sb/scripts/bureau-config.sh"
+  GATE_ENV="BUREAU_HELD_BY_SHEPHERD=1" run_gate "$sb"; gate_case "$sb" dirty-held 25 blocked 'DIRTY (need CLEAN)' || return 1
+  # A failing check (the EXP-1534 case): blocked, whatever GitHub's state says.
+  sb=$(make_sandbox gate_red); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNSTABLE"'
+  echo '{"check_runs":[{"name":"build + test","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" red 25 blocked 'failing check(s) on HEAD_SHA: build + test' || return 1
+  # Conflicts, a stale base, no APPROVE: blocked.
+  sb=$(make_sandbox gate_dirty); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="DIRTY"'
+  run_gate "$sb"; gate_case "$sb" dirty 25 blocked 'DIRTY' || return 1
+  sb=$(make_sandbox gate_behind); populate_happy_fixtures "$sb"
+  echo '{"commit":{"sha":"MAIN_SHA_NEW"}}' > "$sb/stub_data/branch_main.json"; echo '{"ahead_by":3}' > "$sb/stub_data/compare.json"
+  run_gate "$sb"; gate_case "$sb" behind 25 blocked 'behind main' || return 1
+  sb=$(make_sandbox gate_noverdict); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.comments=[]'
+  run_gate "$sb"; gate_case "$sb" no-verdict 25 blocked 'verdict=none' || return 1
+  # Pending CI next to a missing APPROVE is blocked: waiting cannot bring the APPROVE.
+  sb=$(make_sandbox gate_mixed); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.comments=[]'
+  echo '{"check_runs":[{"name":"ci","status":"queued","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" pending+no-verdict 25 blocked 'still pending' || return 1
+  # The just-in-time recheck reports like the initial gate (main moved in between).
+  sb=$(make_sandbox gate_jit); populate_happy_fixtures "$sb"
+  echo '{"commit":{"sha":"MAIN_SHA"}}' > "$sb/stub_data/branch_main_1.json"
+  echo '{"commit":{"sha":"MAIN_SHA_AFTER_RACE"}}' > "$sb/stub_data/branch_main_2.json"; echo '{"ahead_by":1}' > "$sb/stub_data/compare.json"
+  run_gate "$sb"; gate_case "$sb" jit 25 blocked 'behind main' || return 1
+  grep -q 'Gate regressed' "$sb/pipeline.out" || { echo "FAIL gate jit: the recheck did not run" >&2; return 1; }
+  # A merge that goes through: 0, no report.
+  sb=$(make_sandbox gate_green); populate_happy_fixtures "$sb"
+  run_gate "$sb"; gate_case "$sb" green 0 - || return 1
+  [ -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL gate green: gh pr merge was not called" >&2; return 1; }
+  # The review stage's inline merge keeps its 0 (the review stage decides what follows).
+  sb=$(make_sandbox gate_inline); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
+  GATE_ENV="BUREAU_INLINE_MERGE=1" run_gate "$sb" EXP-1
+  [ "$GRC" = 0 ] || { echo "FAIL gate inline: exit $GRC, wanted 0" >&2; return 1; }
+  [ "$(printf '%s\n' "$GREP" | head -n 1)" = blocked ] || { echo "FAIL gate inline: no report" >&2; return 1; }
+  # --dry-run stays an audit: 0, and it names the outcome.
+  sb=$(make_sandbox gate_dry); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb" --dry-run
+  [ "$GRC" = 0 ] && [ -z "$GREP" ] || { echo "FAIL gate dry-run: exit $GRC, report '$GREP'" >&2; return 1; }
+  grep -q 'gate outcome: not-yet' "$sb/pipeline.out" || { echo "FAIL gate dry-run: outcome not named" >&2; return 1; }
+  # Without a report file (the queue loop) the codes are the same.
+  sb=$(make_sandbox gate_nofile); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
+  STUB_DIR="$sb/stub_data" INVOCATIONS_LOG="$sb/gh_invocations.log" PATH="$sb/bin:$PATH" \
+    bash "$sb/scripts/merge-pipeline.sh" > "$sb/pipeline.out" 2> "$sb/pipeline.err"
+  [ "$?" = 25 ] || { echo "FAIL gate without a report file: not 25" >&2; return 1; }
+
+  # Negative control: v3.0.0's ending (exit 0 after the blocker comment).
+  sb=$(make_sandbox gate_old); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  python3 - "$sb/scripts/merge-pipeline.sh" <<'NEG_EOF' || return 1
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text()
+old = '  merge_gate_exit "$GATE_OUTCOME" "$GATE_OUT"\n'
+if t.count(old) != 1: sys.exit("negative control: the gate exit line was not found")
+p.write_text(t.replace(old, '  exit 0\n'))
+NEG_EOF
+  run_gate "$sb"
+  [ "$GRC" = 0 ] && [ -z "$GREP" ] || { echo "FAIL negative control: the old ending should end 0 without a report (exit $GRC)" >&2; return 1; }
+  return 0
+}
+
+# The gate comment is posted again only when the outcome or a blocker changes: one
+# check more or less still running is no change, pending → failing is, and so is an
+# old-format comment (no "Outcome:" line).
+post_back() {  # <sb> — the text in stub_data/last_body becomes the PR's latest bot comment
+  jq --rawfile b "$1/stub_data/last_body" '.comments += [{"createdAt":"2026-09-29T09:00:00Z","body":$b}]' \
+    "$1/stub_data/pr_view.json" > "$1/stub_data/pr_view.json.tmp" && mv "$1/stub_data/pr_view.json.tmp" "$1/stub_data/pr_view.json"
+}
+test_gate_comment_key() {
+  local sb n
+  sb=$(make_sandbox gate_key); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"a","status":"in_progress","conclusion":null},{"name":"b","status":"queued","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"
+  n=$(grep -c 'Bureau merge gate' "$sb/stub_data/comments_posted.log" 2>/dev/null || echo 0)
+  [ "$n" = 1 ] || { echo "FAIL key: first pass posted $n comments" >&2; return 1; }
+  awk '/Bureau merge gate/{f=1} f' "$sb/stub_data/comments_posted.log" > "$sb/stub_data/last_body"; post_back "$sb"
+  grep -q '^Outcome: not yet' "$sb/stub_data/last_body" || { echo "FAIL key: the comment does not state the outcome" >&2; return 1; }
+  echo '{"check_runs":[{"name":"a","status":"completed","conclusion":"success"},{"name":"b","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"
+  grep -q 'Blockers unchanged' "$sb/pipeline.out" || { echo "FAIL key: 2 → 1 running check posted a new comment" >&2; return 1; }
+  echo '{"check_runs":[{"name":"a","status":"completed","conclusion":"success"},{"name":"b","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"
+  grep -q 'Posted blocker comment' "$sb/pipeline.out" || { echo "FAIL key: pending → failing did not post" >&2; return 1; }
+  # An old-format comment (v3.0.0, no "Outcome:" line) with the same blocker line posts once.
+  sb=$(make_sandbox gate_key_old); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"a","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  printf '🛑 **Bureau merge gate** — PR #42 is not eligible to merge.\n\n- ci: 1 check(s) still pending on HEAD_SHA\n' > "$sb/stub_data/last_body"; post_back "$sb"
+  run_gate "$sb"
+  grep -q 'Posted blocker comment' "$sb/pipeline.out" || { echo "FAIL key: an old-format comment did not get the outcome" >&2; return 1; }
+  return 0
+}
+
+# End to end: the real shepherd, worker, runtime and merge stage against the stubbed
+# gh and Linear. A DIRTY PR with only bureau commits and agents.rebase on halts at
+# once with 25 and the gate report — the queue's rebase picker skips a ticket the
+# shepherd holds, so waiting could only run out. Negative control: e243165's stage,
+# which classified that DIRTY as "not yet" also under the shepherd, waits.
+run_shepherd_on_merge() {  # <sb> [env…] — sets SRC (exit code) and SWAITS (recorded waits)
+  local sb="$1"; shift
+  mkdir -p "$sb/tmp"
+  set +e
+  ( cd "$sb" && env STUB_DIR="$sb/stub_data" INVOCATIONS_LOG="$sb/gh_invocations.log" \
+      PATH="$sb/bin:$PATH" TMPDIR="$sb/tmp" BUREAU_SHEPHERD_CONFIRM_SECONDS=0 "$@" \
+      bash "$sb/scripts/shepherd.sh" --no-tmux --worktree "$sb/.worktrees/shepherd" EXP-1 \
+      > "$sb/shepherd.out" 2> "$sb/shepherd.err" )
+  SRC=$?
+  set -e
+  SWAITS=$(grep -c . "$sb/sleeps.log" 2>/dev/null || true); SWAITS=${SWAITS:-0}
+}
+make_shepherd_merge_sandbox() {  # <name> — the merge sandbox plus the shepherd's own scripts
+  local sb; sb=$(make_sandbox "$1"); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="DIRTY"'
+  jq '.agents.rebase = true' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
+  cp "$REPO_ROOT/templates/scripts/shepherd.sh" "$REPO_ROOT/templates/scripts/bureau-worker.sh" \
+     "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-supervision.py" "$sb/scripts/"
+  git -C "$sb" init -q && git -C "$sb" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+  echo Merge > "$sb/stub_data/ticket_state"
+  cat >> "$sb/scripts/bureau-config.sh" <<'SHEP_EOF'
+get_issue_state()   { cat "$STUB_DIR/ticket_state"; }
+move_issue()        { echo "move_issue $1 -> $2" >> "$STUB_DIR/state_changes.log"; [ "$2" = s8 ] && echo Done > "$STUB_DIR/ticket_state"; return 0; }
+get_issue_detail()  { printf '%s' '{"identifier":"EXP-1","labels":[]}'; }
+reset_worktree()    { mkdir -p "$1"; }
+free_branch_from_other_worktrees() { :; }
+session_throttle_guard() { return 0; }
+branch_is_bureau_only() { return 0; }
+alert_telegram()    { echo "$4" >> "$STUB_DIR/alerts.log"; }
+SHEP_EOF
+  printf '#!/bin/bash\nprintf "%%s\\n" "$1" >> "%s/sleeps.log"\n[ "$(wc -l < "%s/sleeps.log")" -ge 20 ] && kill -KILL "$PPID"\nexit 0\n' "$sb" "$sb" > "$sb/bin/sleep"
+  chmod +x "$sb/bin/sleep"
+  echo "$sb"
+}
+test_gate_dirty_under_shepherd() {
+  local sb
+  sb=$(make_shepherd_merge_sandbox shep_dirty)
+  run_shepherd_on_merge "$sb"
+  [ "$SRC" = 25 ] || { echo "FAIL shepherd dirty: exit $SRC, wanted 25" >&2; tail -8 "$sb/shepherd.out" "$sb/shepherd.err" >&2; return 1; }
+  [ "$SWAITS" = 0 ] || { echo "FAIL shepherd dirty: waited $SWAITS time(s) for a rebase nothing runs" >&2; return 1; }
+  grep -q 'the merge gate is blocked' "$sb/stub_data/comments_posted.log" && grep -q 'DIRTY (need CLEAN)' "$sb/stub_data/comments_posted.log" \
+    || { echo "FAIL shepherd dirty: the halt comment lacks the gate report" >&2; cat "$sb/stub_data/comments_posted.log" >&2; return 1; }
+  grep -q '+EXP-1 needs-human' "$sb/stub_data/labels.log" || { echo "FAIL shepherd dirty: no needs-human" >&2; return 1; }
+  [ ! -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL shepherd dirty: merged a DIRTY PR" >&2; return 1; }
+  # The queue (no shepherd) keeps "not yet" for the same PR: the rebase stage takes it.
+  run_gate "$sb"; gate_case "$sb" dirty-queue 2 not-yet 'the rebase stage resolves it' || return 1
+
+  # Negative control: e243165's stage (no BUREAU_HELD_BY_SHEPHERD check) — the shepherd waits.
+  sb=$(make_shepherd_merge_sandbox shep_dirty_old)
+  python3 - "$sb/scripts/merge-pipeline.sh" <<'NEG_EOF' || return 1
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text()
+old = '  [ "${BUREAU_HELD_BY_SHEPHERD:-0}" = 1 ] && return 1\n'
+if t.count(old) != 1: sys.exit("negative control: the shepherd check was not found")
+p.write_text(t.replace(old, ''))
+NEG_EOF
+  run_shepherd_on_merge "$sb" BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=120 BUREAU_SHEPHERD_MERGE_POLL_SECONDS=60
+  [ "$SWAITS" -ge 1 ] || { echo "FAIL negative control: the old stage should make the shepherd wait (exit $SRC, $SWAITS waits)" >&2; tail -5 "$sb/shepherd.out" >&2; return 1; }
+  return 0
+}
+
+# After a reused approval (PR #26) the ticket reaches Merge like after any APPROVE, and
+# the gate reads the verdict from the review comment. The comment and the reuse text are
+# cut from the real review stage, so a reuse that stopped posting "**Verdict**: APPROVE"
+# would turn the gate into "blocked (verdict)" here.
+test_gate_after_reused_approval() {
+  local review="$REPO_ROOT/templates/scripts/code-review-pipeline.sh" body sb
+  # The two assignments, each from its first line to the line that closes its string.
+  local cut; cut=$(python3 - "$review" <<'CUT_EOF'
+import sys
+lines = open(sys.argv[1]).read().split("\n")
+def block(start, end):
+    i = [k for k, l in enumerate(lines) if l.startswith(start)]
+    if len(i) != 1: sys.exit("cannot find %r" % start)
+    j = next(k for k in range(i[0], len(lines)) if lines[k].endswith(end))
+    return "\n".join(lines[i[0]:j + 1])
+print(block('  MERGED_REVIEW="Reused the approval', '\\`\\`\\`"'))
+print(block('REVIEW_COMMENT="## Code Review v2', 'Automated review by Bureau pipeline*"'))
+CUT_EOF
+  ) || { echo "FAIL reuse: $cut" >&2; return 1; }
+  body=$(ISSUE=EXP-1 VERDICT=APPROVE BUILD_STATUS=Passed REVIEW_HEAD=HEAD_SHA PR_BASE_REF=main REVIEW_BASE=MAIN_SHA \
+    PR_NUMBER=42 REUSED_AT=2026-09-29T08:00:00Z /bin/bash -euc 'eval "$1"; printf "%s" "$REVIEW_COMMENT"' _ "$cut") \
+    || { echo "FAIL reuse: the cut assignments do not run" >&2; return 1; }
+  case "$body" in *"**Verdict**: APPROVE"*"Reused the approval recorded 2026-09-29T08:00:00Z"*) ;;
+    *) echo "FAIL reuse: could not cut the review comment and the reuse text from code-review-pipeline.sh: $body" >&2; return 1 ;; esac
+  for ci in pending green; do
+    sb=$(make_sandbox "gate_reuse_$ci"); populate_happy_fixtures "$sb"
+    jq --arg b "$body" '.comments = [{"createdAt":"2026-09-29T08:01:00Z","body":$b}]' "$sb/stub_data/pr_view.json" > "$sb/stub_data/pr_view.json.tmp" \
+      && mv "$sb/stub_data/pr_view.json.tmp" "$sb/stub_data/pr_view.json"
+    [ "$ci" = green ] || echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+    run_gate "$sb"
+    case "$ci" in
+      pending) gate_case "$sb" reuse-pending 2 not-yet 'still pending' || return 1
+               printf '%s\n' "$GREP" | grep -q '^verdict:' && { echo "FAIL reuse: the gate did not read the reused APPROVE" >&2; return 1; } ;;
+      green)   gate_case "$sb" reuse-green 0 - || return 1
+               [ -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL reuse: no merge after a reused approval" >&2; return 1; } ;;
+    esac
+  done
+  return 0
+}
+
+# The queue loop's real run_script: a merge that is not yet eligible stays quiet
+# ("queue empty"), a blocked one alerts (throttled per ticket and class).
+test_gate_codes_in_queue_loop() {
+  local q; q="$SANDBOX_ROOT/queue"; mkdir -p "$q/scripts"
+  printf '#!/bin/bash\nexit "${STUB_RC:-0}"\n' > "$q/scripts/bureau-worker.sh"
+  {
+    sed -n '/^exit_class() {/,/^}/p' "$REAL_BUREAU_CONFIG"
+    sed -n '/^run_script() {/,/^}/p' "$REPO_ROOT/templates/scripts/queue-loop.sh"
+  } > "$q/queue.sh"
+  grep -q '^run_script() {' "$q/queue.sh" || { echo "FAIL queue: run_script not found in queue-loop.sh" >&2; return 1; }
+  local rc
+  for rc in 2 25; do
+    rm -f "$q/alerts" "$q/log"
+    Q="$q" STUB_RC="$rc" /bin/bash -c '
+      source "$Q/queue.sh"
+      REPO_DIR="$Q"; LOG_FILE="$Q/log"; MODE=merge
+      preselect_issue() { echo EXP-9; }
+      get_issue_branch() { echo feat/x; }
+      emit_event() { :; }
+      stop_before_merge_was_asked() { return 1; }
+      alert_telegram() { echo "$4" >> "$Q/alerts"; }
+      run_script merge-pipeline.sh "Merge" "$Q"' >/dev/null 2>&1
+    case "$rc" in
+      2)  [ ! -s "$q/alerts" ] && grep -q 'queue empty' "$q/log" \
+            || { echo "FAIL queue: a merge that is not yet eligible should be quiet" >&2; cat "$q/alerts" "$q/log" >&2; return 1; } ;;
+      25) grep -q 'needs-human-or-paused' "$q/alerts" \
+            || { echo "FAIL queue: a blocked merge should alert" >&2; cat "$q/log" >&2; return 1; } ;;
+    esac
+  done
+  return 0
+}
+
 # ── Run all ───────────────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges; do
+for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_outcome test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else
