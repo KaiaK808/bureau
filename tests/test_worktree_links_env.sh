@@ -121,5 +121,24 @@ PATH="$TMP/nopy:$PATH" run_with "$TMP/fn.sh"
 case "$OUT" in *"worktree link '.venv' skipped: its target in the main checkout could not be resolved"*) ;; *) fail "3: no warning for the unresolved target: $OUT" ;; esac
 [ "$FAILS" = "$before" ] && echo "PASS an entry whose target cannot be resolved is skipped, not linked"
 
+# 4 · the stages and bureau-doctor.py agree: every entry the doctor reports as `env file` is
+#     skipped by the stages, and the stages skip nothing else except the directories that hold a
+#     .env* entry (their own, deeper check).
+before=$FAILS
+setup
+printf '{"repo":{"worktree_links":%s}}\n' "$LIST" > "$BUREAU_CONFIG"
+doctor_env=$(python3 - "$SCRIPTS/bureau-doctor.py" "$MAIN" "$BUREAU_CONFIG" <<'PY'
+import importlib.util, json, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('doctor', sys.argv[1]); d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
+report, errors, warnings = d.worktree_links(Path(sys.argv[2]), json.loads(open(sys.argv[3]).read()))
+print(' '.join(sorted(entry['path'] for entry in report if entry.get('status') == 'env file')))
+PY
+)
+stage_skipped=$(for e in $ENV_ENTRIES; do case "$e" in (settings|deep) ;; (*) printf '%s\n' "$e" ;; esac; done | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+doctor_sorted=$(printf '%s\n' $doctor_env | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+[ "$doctor_sorted" = "$stage_skipped" ] || fail "4: the doctor reports [$doctor_sorted] as env file, the stages skip [$stage_skipped] by the same rule"
+[ "$FAILS" = "$before" ] && echo "PASS the stages skip exactly what bureau-doctor.py reports as a .env file, plus directories holding one"
+
 if [ "$FAILS" != 0 ]; then echo "$FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_worktree_links_env"

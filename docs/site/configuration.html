@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4c283b206170eb86f0130759333525b039f498f15413827236944fa71835d248">
+<meta name="bureau-source-sha256" content="fd364842bcb10ad52880318bd011ec99a38a42d7e1cbfc7da91f903d02db8062">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -785,9 +785,12 @@ repository (there is no main checkout). <strong>Never list a
 name, or a link to one): the link would put the main checkout's secrets
 into every stage worktree, where pull-request code runs, while the reset
 keeps them out otherwise; the stages find <code>.env</code> through the
-main checkout without it. <code>bureau-doctor.py</code> lists each entry
-with its status (<code>ok</code>,
-<code>missing in the main checkout</code>,
+main checkout without it. The stages skip such an entry with one warning
+line, and beyond the doctor's rule also a directory with a
+<code>.env*</code> name among the entries of its top two levels (a
+<code>.env</code> further down is not searched).
+<code>bureau-doctor.py</code> lists each entry with its status
+(<code>ok</code>, <code>missing in the main checkout</code>,
 <code>tracked in the main checkout</code>,
 <code>not ignored as a symlink</code>, <code>invalid</code>,
 <code>env file</code>, <code>no main checkout</code>), warns or errors
