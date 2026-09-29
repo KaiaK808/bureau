@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="77559bd0daedb440ad9961ec82c2a9893bb3afe6c34e18a295f89211c865a2ce">
+<meta name="bureau-source-sha256" content="4c283b206170eb86f0130759333525b039f498f15413827236944fa71835d248">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -677,12 +677,14 @@ everything the stage has minus the Bureau-owned secrets and the GitHub
 token variables — <code>LINEAR_API_KEY</code>,
 <code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_ALERT_CHAT_ID</code>,
 <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>,
-<code>GH_ENTERPRISE_TOKEN</code>, <code>GITHUB_ENTERPRISE_TOKEN</code> —
-and minus any other variable whose value contains one of their values (8
-characters or more; the stages copy the Linear key into
-<code>API_KEY</code>, and a token also hides in a remote URL or an
-<code>Authorization</code> header). <code>"clean"</code>: only
-<code>PATH</code>, <code>HOME</code>, <code>USER</code>,
+<code>GH_ENTERPRISE_TOKEN</code>, <code>GITHUB_ENTERPRISE_TOKEN</code>
+—, minus any other variable that carries one of their values (a value of
+8 characters or more anywhere inside, a shorter one as the whole value;
+the stages copy the Linear key into <code>API_KEY</code>, and a token
+also hides in a remote URL or an <code>Authorization</code> header), and
+minus <code>BASH_ENV</code> and <code>ENV</code>, which would make the
+bash child source a file before the command runs. <code>"clean"</code>:
+only <code>PATH</code>, <code>HOME</code>, <code>USER</code>,
 <code>LOGNAME</code>, <code>SHELL</code>, <code>TMPDIR</code>,
 <code>TEMP</code>, <code>TMP</code>, <code>LANG</code>,
 <code>LC_ALL</code>, <code>LC_CTYPE</code>, <code>TERM</code>,
@@ -692,22 +694,32 @@ login and network variables (<code>ANTHROPIC_*</code>,
 <code>CLAUDE_*</code>, <code>HEADROOM_*</code> for Claude,
 <code>OPENAI_*</code>, <code>CODEX_*</code> for Codex, the proxy
 variables, <code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>,
-<code>NODE_EXTRA_CA_CERTS</code>, <code>XDG_CONFIG_HOME</code>). Under
-<code>clean</code> a test command that needs <code>CARGO_HOME</code>,
-<code>NVM_DIR</code>, <code>VIRTUAL_ENV</code>, an SSH agent or a
-registry token fails, and an agent that logs in through cloud
-credentials (Bedrock, Vertex) cannot start; stay on the default for
-those. Any other value refuses before the code runs: the stages end with
-<code>24</code> (the provider check at the start of every model stage
-already does), a hook is not run and halts implement with
-<code>14</code> after the run's commits are pushed,
+<code>NODE_EXTRA_CA_CERTS</code>, <code>XDG_CONFIG_HOME</code>), a test
+command does not. Under <code>clean</code> a test command that needs
+<code>CARGO_HOME</code>, <code>NVM_DIR</code>, <code>VIRTUAL_ENV</code>,
+an SSH agent, a registry token, a proxy (<code>HTTPS_PROXY</code>) or a
+private CA (<code>SSL_CERT_FILE</code>,
+<code>NODE_EXTRA_CA_CERTS</code>) fails, and an agent that logs in
+through cloud credentials (Bedrock, Vertex) cannot start; stay on the
+default for those. The test commands run in a child
+<code>bash --noprofile --norc</code>; QA's runs used <code>eval</code>
+in the stage shell before, so a test command no longer sees the stage's
+unexported variables and functions and no longer runs under its
+<code>set -u</code>. Any other value refuses before the code runs: the
+stages end with <code>24</code> (the provider check at the start of
+every model stage already does), a hook is not run and halts implement
+with <code>14</code> after the run's commits are pushed,
 <code>upstream-port.sh</code> stops with <code>18</code> before
 building. The stage itself keeps the keys for its own Linear, GitHub and
-Telegram calls. Independent of this key, the stages never link a
-<code>.env*</code> file into a stage worktree: a
+Telegram calls. Independent of this key: Bureau's own git commands run
+without the seven (those that talk to a remote keep the GitHub token
+variables), the provider starts without them, the runtime wrapper
+without the <code>.env</code> keys the stage reads back, and the stages
+never link a <code>.env*</code> file into a stage worktree — a
 <code>repo.worktree_links</code> entry with a path component starting
-with <code>.env</code> (any case, <code>.envrc</code> too) or whose
-target in the main checkout is such a file is skipped with one warning
+with <code>.env</code> (any case, <code>.envrc</code> too), whose target
+in the main checkout is such a file, or which is a directory with such a
+name among the entries of its top two levels is skipped with one warning
 line. Code running as the same user can still read files and other
 processes' environments; see <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>

@@ -488,7 +488,7 @@ if [ -n "$BUILD_CMD" ]; then
   BUILD_TREE_BEFORE=$(git status --porcelain --untracked-files=all 2>/dev/null | sort || true)
   # PR code: runs without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).
   bureau_untrusted_env --check || exit 24
-  bureau_untrusted_env bash -o pipefail -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
+  bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
   tail -20 "$REVIEW_TMP/build.log"
   # A dirty worktree makes the worker keep a stopped or failed review's worktree
   # as unfinished work (bureau-worker.sh). A warning only: it never changes the

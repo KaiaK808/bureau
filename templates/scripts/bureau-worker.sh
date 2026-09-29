@@ -19,7 +19,7 @@ if [ "${BUREAU_DRY_RUN:-0}" = 1 ]; then
   exit 0
 fi
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
-  exec python3 "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" "$@"
+  bureau_exec_runtime python3 -I "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" "$@"
 fi
 export BUREAU_WORKSPACE_MODE=disposable
 reset_worktree "$WORKTREE" "$PIPELINE" "$BRANCH"
@@ -34,7 +34,7 @@ _worker_cleanup() {
   if [ "$rc" != 0 ] && { [ -n "$(git -C "$WORKTREE" status --porcelain)" ] || [ "$ahead" != 0 ]; }; then
     common=$(git -C "$REPO_DIR" rev-parse --git-common-dir)
     case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
-    key=$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(str(pathlib.Path(sys.argv[1]).resolve()).encode()).hexdigest())' "$WORKTREE")
+    key=$(python3 -I -c 'import hashlib, pathlib, sys; print(hashlib.sha256(str(pathlib.Path(sys.argv[1]).resolve()).encode()).hexdigest())' "$WORKTREE")
     rm -f "$common/bureau/workers/$key"
     # A successful stopped review can leave only its local validation merge.
     # Keep that clean checkpoint (HEAD and files), but release this worker's own

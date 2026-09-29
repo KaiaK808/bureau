@@ -63,7 +63,8 @@ bureau_stage_enter() {
   fi
   [ "${BUREAU_DRY_RUN:-0}" = 1 ] && { echo "[DRY_RUN] stage $(basename "$0") issue=$issue"; exit 0; }
   if [ "$#" = 0 ]; then set -- "$issue"; fi
-  exec python3 "$BUREAU_RUNTIME" --repo "$PWD" exec --issue "$issue" --entry "$0" -- bash "$0" "$@"
+  # Without the .env keys the relaunched stage reads back itself (bureau-env.sh).
+  bureau_exec_runtime python3 -I "$BUREAU_RUNTIME" --repo "$PWD" exec --issue "$issue" --entry "$0" -- bash "$0" "$@"
 }
 
 bureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }
@@ -404,6 +405,16 @@ _bureau_linear_request_limits() {
 # rollback trap) a single attempt is made without any retry wait. Each attempt
 # can still take up to the request time limit, so a halt with N writes takes at
 # most N × max-time (30 s by default) — bounded, but it grows with the writes.
+# _bureau_curl_config <option> <value> — one line of a curl config file
+# (curl -K -) with <value> quoted: a secret goes to curl on stdin this way
+# instead of on its argument list.
+_bureau_curl_config() {
+  local value="$2"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s = "%s"\n' "$1" "$value"
+}
+
 _bureau_linear_fetch() {
   local payload="$1" shape="${2:-true}"
   local attempt=1 code raw answer status fault wait limits max_time connect
@@ -416,12 +427,20 @@ _bureau_linear_fetch() {
     # tr runs before the shell captures anything: a NUL byte would otherwise be
     # dropped silently and the rest could pass as clean JSON. The exit code is
     # curl's own, not tr's, with or without the caller's pipefail.
-    raw=$(curl -s -X POST https://api.linear.app/graphql \
+    # The key reaches curl on stdin as a config line (-K -), never in its
+    # argument list, which `ps` shows to every process (on Linux to every
+    # user), and curl itself starts without the secrets in its environment
+    # (dropped in this subshell after the config line is built). A running
+    # `set -x` is off inside the subshell, so the key is not traced.
+    raw=$({ set +x; } 2>/dev/null
+      auth_config=$(_bureau_curl_config header "Authorization: ${API_KEY:-$LINEAR_API_KEY}")
+      _bureau_drop_secrets
+      curl -s -X POST https://api.linear.app/graphql \
       --connect-timeout "$connect" --max-time "$max_time" \
       -w "\\n${_BUREAU_LINEAR_STATUS_MARK}%{http_code}" \
       -H "Content-Type: application/json" \
-      -H "Authorization: ${API_KEY:-$LINEAR_API_KEY}" \
-      -d "$payload" | LC_ALL=C tr '\000' '\001'; exit "${PIPESTATUS[0]}") || code=$?
+      -K - -d "$payload" <<< "$auth_config" \
+      | LC_ALL=C tr '\000' '\001'; exit "${PIPESTATUS[0]}") || code=$?
     case "$raw" in
       *"$_BUREAU_LINEAR_STATUS_MARK"*)
         status="${raw##*"$_BUREAU_LINEAR_STATUS_MARK"}"
@@ -595,13 +614,15 @@ run_stage_for() {
   printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual." "$system" > "$temp/system"
   local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
   [ -n "$schema" ] && args+=(--schema "$schema")
-  if python3 "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" "${args[@]}"; then rc=0; else rc=$?; fi
+  # The provider needs none of the Bureau secrets: it starts without them, so
+  # the agent's parent process does not hold them either (bureau-env.sh).
+  if bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" "${args[@]}"; then rc=0; else rc=$?; fi
   rm -rf "$temp"
   return "$rc"
 }
 
 precondition_runner() {
-  python3 "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" --stage "$1" --config "$BUREAU_CONFIG" --check >/dev/null || exit $?
+  bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" --stage "$1" --config "$BUREAU_CONFIG" --check >/dev/null || exit $?
 }
 
 commit_codex_changes() {
@@ -616,7 +637,7 @@ commit_stage_changes() {
   # An earlier tool may have staged private files already. Excluding them from
   # our `git add` list alone would still include them in the final commit.
   # Refuse without changing the index, leaving the operator's staged work intact.
-  python3 - <<'PY_STAGED' || return $?
+  bureau_without_secrets python3 -I - <<'PY_STAGED' || return $?
 import subprocess, sys
 names = subprocess.check_output(['git', 'diff', '--cached', '--name-only', '--no-renames', '-z']).split(b'\0')
 private = [p for p in names if p in (b'.env', b'.bureau.json', b'.bureau-install.json') or p.startswith(b'logs/')]
@@ -626,7 +647,7 @@ if private:
 PY_STAGED
   local paths
   paths=$(mktemp)
-  python3 - "$paths" <<'PY_PATHS'
+  bureau_without_secrets python3 -I - "$paths" <<'PY_PATHS'
 import subprocess, sys
 from pathlib import Path
 names = subprocess.check_output(['git', 'ls-files', '-z', '--modified', '--deleted', '--others', '--exclude-standard']).split(b'\0')
@@ -2064,10 +2085,17 @@ alert_telegram() {
   if [ -n "$log_tail" ]; then
     body=$(printf '%s\n\nLog tail:\n```\n%s\n```' "$body" "$log_tail")
   fi
-  curl -s -X POST "https://api.telegram.org/bot${token}/sendMessage" \
-    --data-urlencode "chat_id=${chat}" \
-    --data-urlencode "parse_mode=Markdown" \
-    --data-urlencode "text=${body}" >/dev/null 2>&1 || true
+  # The token (it is in the URL) and the chat id reach curl on stdin (-K -),
+  # never in its argument list, which `ps` shows; curl starts without the
+  # secrets in its environment, and a running `set -x` is off in the subshell.
+  ( { set +x; } 2>/dev/null
+    config=$(_bureau_curl_config url "https://api.telegram.org/bot${token}/sendMessage"; _bureau_curl_config data-urlencode "chat_id=${chat}")
+    token=""; chat=""
+    _bureau_drop_secrets
+    curl -s -X POST -K - \
+      --data-urlencode "parse_mode=Markdown" \
+      --data-urlencode "text=${body}" <<< "$config"
+  ) >/dev/null 2>&1 || true
 }
 
 # emit_event: append one structured JSONL line to logs/events.jsonl. Auto-
@@ -2359,7 +2387,7 @@ free_branch_from_other_worktrees() {
   [ -z "$branch" ] && return 0
   # Git lists physical paths; callers can use a symlinked checkout (including
   # macOS /tmp). Resolve even a not-yet-created worker before comparing owners.
-  keep_wt=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$keep_wt") || return 21
+  keep_wt=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$keep_wt") || return 21
   other=$(git worktree list --porcelain | awk -v b="refs/heads/$branch" -v keep="$keep_wt" '
     /^worktree / { wt=substr($0, 10); next }
     /^branch / { if (substr($0, 8) == b && wt != keep) print wt }')
@@ -2375,7 +2403,7 @@ reset_worktree() {
   local wt="$1" target_script="$2" target_branch="${3:-}" common registry key ref
   [ "${BUREAU_WORKSPACE_MODE:-current}" = disposable ] || { echo "ERROR: reset requires disposable worker mode" >&2; return 21; }
   [ -n "${BUREAU_RUN_ID:-}" ] || { echo "ERROR: reset requires an ownership claim" >&2; return 21; }
-  wt=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt")
+  wt=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt")
   python3 "$BUREAU_RUNTIME" --repo "$REPO_DIR" assert-owner --issue "${BUREAU_CURRENT_ISSUE:?missing issue claim}" --workspace "$wt" --run "$BUREAU_RUN_ID" || return 21
   common=$(git -C "$REPO_DIR" rev-parse --git-common-dir)
   case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
@@ -2562,7 +2590,8 @@ restore_worktree_deps() {
 #   - the entry is a plain relative path: not absolute, no `.`, `..` or empty
 #     component, not inside `.git`;
 #   - it is not a .env file: no component starts with `.env` (any case) and its
-#     real target in the main checkout does not either (the doctor's env_file);
+#     real target in the main checkout does not either (the doctor's env_file),
+#     and, for a directory, none of the entries in its top two levels does;
 #   - the branch tracks nothing at that path (a tracked path is the PR's own);
 #   - its parent directory exists in the worktree and resolves inside it (a
 #     tracked symlink as parent would put the link outside the worktree);
@@ -2620,7 +2649,7 @@ EOF
 }
 
 _bureau_link_worktree_path() {
-  local wt="$1" main="$2" p="$3" parent parent_phys tracked target
+  local wt="$1" main="$2" p="$3" parent parent_phys tracked target envfile
   while :; do case "$p" in */) p="${p%/}" ;; *) break ;; esac; done
   case "$p" in
     ''|/*) echo "  WARNING: worktree link '$3' skipped: not a relative path."; return 0 ;;
@@ -2638,12 +2667,21 @@ _bureau_link_worktree_path() {
   case "/$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')" in
     */.env*) echo "  WARNING: worktree link '$p' skipped: a .env file holds the main checkout's secrets and must not reach a stage worktree."; return 0 ;;
   esac
-  target=$(python3 -c 'import os, sys; print(os.path.basename(os.path.realpath(sys.argv[1])))' "$main/$p" 2>/dev/null) || {
+  target=$(python3 -I -c 'import os, sys; print(os.path.basename(os.path.realpath(sys.argv[1])))' "$main/$p" 2>/dev/null) || {
     echo "  WARNING: worktree link '$p' skipped: its target in the main checkout could not be resolved."; return 0
   }
   case "$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')" in
     .env*) echo "  WARNING: worktree link '$p' skipped: it leads to a .env file ($target) in the main checkout, whose secrets must not reach a stage worktree."; return 0 ;;
   esac
+  # Nor a directory that holds one: a .env* name (any case) among its entries
+  # or its subdirectories' entries (two levels, links followed). Deeper levels
+  # are not searched, so a virtualenv is checked in a moment.
+  if [ -d "$main/$p" ]; then
+    envfile=$(find -L "$main/$p" -mindepth 1 -maxdepth 2 -iname '.env*' 2>/dev/null | head -n 1) || true
+    if [ -n "$envfile" ]; then
+      echo "  WARNING: worktree link '$p' skipped: the directory holds a .env file (${envfile#"$main/"}) whose secrets must not reach a stage worktree."; return 0
+    fi
+  fi
   # `grep -c`, not `grep -q`: -q closes the pipe early and pipefail turns the
   # SIGPIPE of ls-files into a false "not tracked".
   tracked=$(git -C "$wt" --literal-pathspecs ls-files -- "$p" 2>/dev/null | grep -c . || true)

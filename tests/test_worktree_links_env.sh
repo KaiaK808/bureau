@@ -5,9 +5,11 @@
 # that the review build check, QA or an agent runs there finds no secrets on disk next to it;
 # the stages read .env from the main checkout. A `.env*` entry in repo.worktree_links would
 # link the main checkout's secrets right back in. The stages skip such an entry with one
-# warning line, by the rule bureau-doctor.py uses to report it (env_file): any path component
-# that starts with `.env` in any case, or an entry whose real target in the main checkout is
-# such a file. Names that only contain "env" are linked as before.
+# warning line: any path component that starts with `.env` in any case, or an entry whose real
+# target in the main checkout is such a file (the rule env_file in bureau-doctor.py reports as
+# an error), and, beyond the doctor, a directory with such a name among the entries of its top
+# two levels (a .env three levels down is not searched: `deeper` below is linked, by design, so
+# a virtualenv is checked quickly). Names that only contain "env" are linked as before.
 #
 # Runs the REAL bureau_link_worktree_paths, cut from templates/scripts/bureau-config.sh, as
 # tests/test_worktree_links.sh does, against a real main checkout (with a space in its path)
@@ -41,9 +43,11 @@ setup() {
   mkdir -p "$MAIN"
   git -C "$MAIN" init -q -b main
   git -C "$MAIN" config user.email t@t; git -C "$MAIN" config user.name t
-  printf '%s\n' .env '.env.*' .envrc .ENV.Local 'config/.env.production' secrets conf upper '.Envs/prod' .venv my.env env > "$MAIN/.gitignore"
-  mkdir -p "$MAIN/config" "$MAIN/.Envs"; printf 'config\n' > "$MAIN/config/readme.txt"
+  printf '%s\n' .env '.env.*' .envrc .ENV.Local 'config/.env.production' secrets conf upper '.Envs/prod' \
+    'tools/.Envs/key' settings deep deeper .venv my.env env > "$MAIN/.gitignore"
+  mkdir -p "$MAIN/config" "$MAIN/.Envs" "$MAIN/tools/.Envs"; printf 'config\n' > "$MAIN/config/readme.txt"
   printf 'tracked\n' > "$MAIN/.Envs/README"          # a tracked directory with a .env* name
+  printf 'tracked\n' > "$MAIN/tools/.Envs/README"    # the same, below the first path component
   git -C "$MAIN" add -A >/dev/null; git -C "$MAIN" commit -q -m init
   printf 'LINEAR_API_KEY=lin_api_PROBE_linear_0001\n' > "$MAIN/.env"
   printf 'X=1\n' > "$MAIN/.env.local"; printf 'X=1\n' > "$MAIN/.envrc"; printf 'X=1\n' > "$MAIN/.ENV.Local"
@@ -52,15 +56,20 @@ setup() {
   mkdir -p "$MAIN/.envdir"; ln -s .envdir "$MAIN/conf"   # a directory link to a .env* directory
   ln -s .ENV.Local "$MAIN/upper"                   # a link to an upper-case .env* file
   printf 'X=1\n' > "$MAIN/.Envs/prod"               # a file inside a .env* directory
+  printf 'X=1\n' > "$MAIN/tools/.Envs/key"          # ... not the first component
+  mkdir -p "$MAIN/settings" "$MAIN/deep/sub" "$MAIN/deeper/a/b"
+  printf 'LINEAR_API_KEY=lin_api_PROBE_linear_0001\n' > "$MAIN/settings/.env"   # a directory holding .env
+  printf 'X=1\n' > "$MAIN/deep/sub/.Env.Local"      # ... one level further down
+  printf 'X=1\n' > "$MAIN/deeper/a/b/.env"         # ... below the two levels searched (linked)
   mkdir -p "$MAIN/.venv/bin" "$MAIN/env"; printf 'x\n' > "$MAIN/my.env"
   git -C "$MAIN" branch feat
   git -C "$MAIN" worktree add -q "$WT" feat
   git -C "$WT" clean -fdx --quiet
 }
 
-ENV_ENTRIES='.env .env.local .envrc .ENV.Local config/.env.production secrets conf upper .Envs/prod'
-OTHER_ENTRIES='.venv my.env env'
-LIST='[".env", ".env.local", ".envrc", ".ENV.Local", "config/.env.production", "secrets", "conf", "upper", ".Envs/prod", ".venv", "my.env", "env"]'
+ENV_ENTRIES='.env .env.local .envrc .ENV.Local config/.env.production secrets conf upper .Envs/prod tools/.Envs/key settings deep'
+OTHER_ENTRIES='.venv my.env env deeper'
+LIST='[".env", ".env.local", ".envrc", ".ENV.Local", "config/.env.production", "secrets", "conf", "upper", ".Envs/prod", "tools/.Envs/key", "settings", "deep", ".venv", "my.env", "env", "deeper"]'
 
 # run_with <fn file> — the configured list through the given copy of the function.
 run_with() {

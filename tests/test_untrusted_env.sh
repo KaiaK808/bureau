@@ -60,7 +60,49 @@ pr1_check_env "$H" "1 clean" clean 1 HOOK_VAR=from-caller
 stray=$(sed -n 's/=.*//p' "$H" | grep -vxE -- '--- run|PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_ALL|LC_CTYPE|TERM|TZ|CI|HOOK_VAR|PWD|SHLVL|_|OLDPWD|__CF_USER_TEXT_ENCODING' | tr '\n' ' ')
 [ -z "$stray" ] || fail "1 clean: variables outside the clean list: $stray"
 if grep -q '^TZ=' "$H"; then fail "1 clean: a kept name carrying a secret's value was passed on"; fi
+# The clean list, pinned: every allowed name is set (to a harmless value) next to what an
+# operator's shell also carries (an SSH agent, cloud and registry tokens). The command must
+# see exactly the allowed names, so adding a name to the list, or dropping one, fails here
+# on any runner.
+rm -f "$H"
+run_helper "$CLEAN_CFG" "export PATH HOME USER=u LOGNAME=u SHELL=/bin/sh TMPDIR=/tmp TEMP=/tmp TMP=/tmp LANG=C LC_ALL=C LC_CTYPE=C TERM=dumb TZ=UTC CI=true \
+  SSH_AUTH_SOCK=/tmp/agent.sock AWS_SECRET_ACCESS_KEY=aws-probe NPM_TOKEN=npm-probe HTTPS_PROXY=http://proxy.invalid SSL_CERT_FILE=/tmp/ca.pem; \
+  bureau_untrusted_env HOOK_VAR=from-caller /usr/bin/env > \"$H\"" >/dev/null
+got=$(sed -n 's/=.*//p' "$H" | grep -vxE 'PWD|SHLVL|_|OLDPWD|__CF_USER_TEXT_ENCODING' | LC_ALL=C sort | tr '\n' ' ')
+want="CI HOME HOOK_VAR LANG LC_ALL LC_CTYPE LOGNAME PATH SHELL TEMP TERM TMP TMPDIR TZ USER "
+[ "$got" = "$want" ] || fail "1 clean list: got [$got], wanted [$want]"
 pr1_pass "1 default drops the secrets and their copies, clean keeps only its list, the caller keeps its keys"
+
+# A copy of a short secret (under 8 characters) goes when it is the whole value; inside a
+# longer value it stays (a 4-digit chat id would otherwise take out half the environment).
+rm -f "$H"
+run_helper "$DEFAULT_CFG" "export TELEGRAM_ALERT_CHAT_ID=1234567 CHAT_COPY=1234567 CHAT_INSIDE=x1234567y; \
+  bureau_untrusted_env /usr/bin/env > \"$H\"" >/dev/null
+if grep -q '^CHAT_COPY=' "$H"; then fail "1 short: a whole-value copy of a short secret reached the command"; fi
+grep -qx 'CHAT_INSIDE=x1234567y' "$H" || fail "1 short: a value that only contains a short secret was removed"
+if grep -q '^TELEGRAM_ALERT_CHAT_ID=' "$H"; then fail "1 short: the short secret itself reached the command"; fi
+
+# BASH_ENV: a bash child sources the file it names before running its -c string, so a
+# BASH_ENV pointing at a file that exports a key would hand the key back to branch code.
+# Through the start the call sites use (bash --noprofile --norc -c, which does not stop it).
+printf 'export LINEAR_API_KEY=%s BASHENV_RAN=yes\n' "$PR1_LINEAR" > "$TMPD/bashenv"
+rm -f "$H"
+run_helper "$DEFAULT_CFG" "export BASH_ENV='$TMPD/bashenv' ENV='$TMPD/bashenv'; bureau_untrusted_env bash --noprofile --norc -c 'env > \"$H\"'" >/dev/null
+if grep -q '^BASHENV_RAN=' "$H"; then fail "1 BASH_ENV: the child bash sourced BASH_ENV"; fi
+if grep -qE '^(BASH_ENV|ENV)=' "$H"; then fail "1 BASH_ENV: BASH_ENV or ENV reached the command"; fi
+if grep -qF "$PR1_LINEAR" "$H"; then fail "1 BASH_ENV: the key came back through BASH_ENV"; fi
+rm -f "$H"
+run_helper "$DEFAULT_CFG" "export BASH_ENV='$TMPD/bashenv'; /usr/bin/env -u LINEAR_API_KEY bash --noprofile --norc -c 'env > \"$H\"'" >/dev/null
+grep -q '^BASHENV_RAN=yes' "$H" || fail "1 BASH_ENV control: a child bash with BASH_ENV set should have sourced it"
+
+# env by its absolute path: a fake env first on PATH (a branch's node_modules/.bin) is never run.
+mkdir -p "$TMPD/fakebin"
+printf '#!/bin/sh\necho fake-env-ran > "%s/fake-env"\nexec /usr/bin/env "$@"\n' "$TMPD" > "$TMPD/fakebin/env"
+chmod +x "$TMPD/fakebin/env"; rm -f "$TMPD/fake-env" "$H"
+run_helper "$DEFAULT_CFG" "PATH='$TMPD/fakebin':\$PATH; bureau_untrusted_env sh -c 'echo ran > \"$H\"'; bureau_without_secrets true" >/dev/null
+[ ! -e "$TMPD/fake-env" ] || fail "1 env: the helper ran an env found on PATH"
+[ -f "$H" ] || fail "1 env: the command did not run"
+pr1_pass "1 short copies go as whole values, BASH_ENV and ENV go, env is /usr/bin/env"
 
 for bad in '"cleen"' '""' 'true' '1' '["clean"]' '"clean\n"'; do
   BAD_CFG=$(config bad "{\"repo\":{\"untrusted_env\":$bad}}")
@@ -92,14 +134,15 @@ pr1_pass "1 an invalid or unreadable repo.untrusted_env or a missing command: no
 
 trace=$(run_helper "$DEFAULT_CFG" 'set -x; bureau_untrusted_env true' 2>&1)
 case "$trace" in *"$PR1_LINEAR"*|*"$PR1_GH"*) fail "1 xtrace: a secret value reached the trace" ;; esac
-case "$trace" in *'+ env -u LINEAR_API_KEY'*) ;; *) fail "1 xtrace: the command line was not traced: $(printf '%s' "$trace" | tail -2)" ;; esac
+case "$trace" in *'/usr/bin/env -u LINEAR_API_KEY'*) ;; *) fail "1 xtrace: the command line was not traced: $(printf '%s' "$trace" | tail -2)" ;; esac
 pr1_pass "1 under set -x the trace names the removed variables, never a value"
 
 # Parity: the shell helper and bureau-provider.py reduce the same environment alike.
 for mode in default clean; do
   cfg="$DEFAULT_CFG"; [ "$mode" = clean ] && cfg="$CLEAN_CFG"
   env -i PATH="$PATH" HOME="$HOME" LANG=C CI=1234567 TZ="UTC$PR1_GH" USER=u \
-    LINEAR_API_KEY="$PR1_LINEAR" GH_TOKEN="$PR1_GH" TELEGRAM_ALERT_CHAT_ID=1234567 SHORT_COPY=1234567 \
+    LINEAR_API_KEY="$PR1_LINEAR" GH_TOKEN="$PR1_GH" TELEGRAM_ALERT_CHAT_ID=1234567 SHORT_COPY=1234567 SHORT_INSIDE=x1234567 \
+    BASH_ENV=/dev/null ENV=/dev/null SSH_AUTH_SOCK=/tmp/agent.sock \
     API_KEY="$PR1_LINEAR" CARGO_ALIAS="$PR1_GH" OPERATOR_TOOL_VAR="$PR1_OPERATOR" BUREAU_CONFIG="$cfg" \
     REMOTE_URL="https://x-access-token:$PR1_GH@github.com/owner/repo.git" LANGUAGE="x${PR1_LINEAR}y" \
     /bin/bash -c 'source "$1"; bureau_untrusted_env env -0 > "$2"; env -0 > "$3"' _ "$ENV_SH" "$TMPD/shell.$mode" "$TMPD/input.$mode"
@@ -122,19 +165,28 @@ done
 pr1_pass "1 the shell helper and bureau-provider.py give the same environment (default and clean)"
 
 # ── 2  review build check ────────────────────────────────────────────────────
-# review_run <untrusted_env JSON or ''> [control]
+# review_run <untrusted_env JSON or ''> [control|-] [bashenv]
+#   bashenv: the stage runs with BASH_ENV naming a file that leaves a mark when a bash
+#   sources it for the build check's command string (the stage's own bash does not match).
 review_run() {
   sandbox_init EXP-801 test-branch
   pr1_setup
   printf 'change\n' > "$SANDBOX/change.txt"
   git -C "$SANDBOX" add change.txt && git -C "$SANDBOX" commit -q -m 'fixture change' && git -C "$SANDBOX" push -q origin test-branch
-  jq -n --arg c "$(pr1_dump review)" --argjson u "${1:-null}" \
+  local canary=""
+  if [ "${3:-}" = bashenv ]; then
+    canary="; : PR1_BASHENV_CANARY"
+    printf 'case "${BASH_EXECUTION_STRING:-}" in *PR1_BASHENV_CANARY*) echo sourced >> "%s/bashenv.mark" ;; esac\n' "$PR1_MARKS" > "$PR1_MARKS/bashenv.sh"
+    export BASH_ENV="$PR1_MARKS/bashenv.sh"
+  fi
+  jq -n --arg c "$(pr1_dump review)$canary" --argjson u "${1:-null}" \
     '{repo: ({test_command: $c} + (if $u == null then {} else {untrusted_env: $u} end))}' > "$SANDBOX/.bureau.json"
   [ "${2:-}" != control ] || pr1_passthrough "$SCRIPTS_DIR"
   printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt" BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
   export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=0 BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED=''
   run_pipeline code-review-pipeline.sh EXP-801 </dev/null; set +e  # run_pipeline leaves errexit on
+  unset BASH_ENV
   rm -rf "$(printf '%s\n' "$LAST_STDERR" | sed -n 's/^code-review failed .*preserved at //p')"
 }
 review_run ''
@@ -157,6 +209,13 @@ teardown
 review_run '' control
 grep -qF "LINEAR_API_KEY=$PR1_LINEAR" "$PR1_MARKS/review.env" 2>/dev/null && grep -qF "GH_TOKEN=$PR1_GH" "$PR1_MARKS/review.env" \
   || fail "2 control: with the v3.0.2 behaviour the build check should have seen the secrets"
+teardown
+review_run '' - bashenv
+pr1_check_env "$PR1_MARKS/review.env" "2 review BASH_ENV" default
+[ ! -e "$PR1_MARKS/bashenv.mark" ] || fail "2 review BASH_ENV: the build check's bash sourced BASH_ENV"
+teardown
+review_run '' control bashenv
+[ -e "$PR1_MARKS/bashenv.mark" ] || fail "2 BASH_ENV control: with the v3.0.2 behaviour the build check's bash should have sourced BASH_ENV"
 teardown
 unset BUREAU_NO_MERGE BUREAU_STOP_REQUESTED GH_STUB_EXISTING_PR BUREAU_STUB_ISSUE_STATE
 pr1_pass "2 the review build check runs without the secrets, the review's gh calls keep the token"
@@ -236,6 +295,8 @@ codex_run() {
   # The real run_stage_for and bureau-provider.py, as tests/test_codex_implement_pipeline.sh wires them.
   sed -n '/^run_stage_for() {/,/^# Build the model invocation/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/bureau-config.sh"
   printf 'BUREAU_RUNTIME="$(dirname "$0")/bureau-runtime.py"\n' >> "$SCRIPTS_DIR/bureau-config.sh"
+  # Control: the v3.0.2 launch of the provider too (before the fix round it inherited everything).
+  [ "${2:-}" != control ] || sed -i.bak 's/bureau_without_secrets python3 -I "\$(dirname/python3 "$(dirname/' "$SCRIPTS_DIR/bureau-config.sh"
   # Control: the v3.0.2 behaviour at every site, the adapter's env= included.
   [ "${2:-}" != control ] || { pr1_passthrough "$SCRIPTS_DIR"
     sed -i.bak "s/env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)/env=None/" "$SCRIPTS_DIR/bureau-provider.py"

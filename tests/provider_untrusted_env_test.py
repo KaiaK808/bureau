@@ -70,7 +70,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         base = {k: v for k, v in os.environ.items() if not k.startswith(('BUREAU_RUNNER_', 'BUREAU_MODEL_', 'BUREAU_CODEX_MODEL_', 'BUREAU_STAGE_TIMEOUT'))}
         for name in list(base):
             if name in SECRETS or name in AGENT or name.endswith('_PROXY') or name.endswith('_proxy'): base.pop(name)
-        self.env = {**base, **SECRETS, **ALIASES, **OPERATOR, **AGENT,
+        self.env = {**base, **SECRETS, **ALIASES, **OPERATOR, **AGENT, 'BASH_ENV': '/dev/null', 'ENV': '/dev/null',
                     'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
                     'BUREAU_PROVIDER_LOG_DIR': str(self.root / 'evidence')}
 
@@ -105,6 +105,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                     for phase in ('auth', 'run'):
                         seen = self.seen(runner, phase)
                         self.assert_no_secret(seen, runner + ' ' + phase)
+                        self.assertFalse('BASH_ENV' in seen or 'ENV' in seen, runner + ' ' + phase + ' got BASH_ENV or ENV')
                         # Everything else stays: the operator's tool variables and the agent login.
                         for name, value in {**OPERATOR, **AGENT}.items():
                             self.assertEqual(seen.get(name), value, runner + ' ' + phase + ' lost ' + name)
@@ -157,11 +158,36 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         self.assertEqual(p.untrusted_env_mode({'repo': None}), 'default')
         self.assertEqual(p.untrusted_env_mode({'repo': {'untrusted_env': None}}), 'default')
         self.assertEqual(p.untrusted_env_mode({'repo': {'untrusted_env': 'clean'}}), 'clean')
-        # A copy counts from 8 characters, anywhere in a value: a short chat id must not take
-        # CI=1234567 along, a token inside a longer value goes.
-        short = p.untrusted_env({'TELEGRAM_ALERT_CHAT_ID': '1234567', 'CI': '1234567', 'GH_TOKEN': '12345678',
-                                 'X': '12345678', 'Y': 'Bearer 12345678 end', 'PATH': '/bin'}, 'default')
-        self.assertEqual(short, {'CI': '1234567', 'PATH': '/bin'})
+        # A secret of 8 characters or more goes wherever it appears inside a value; a shorter one
+        # only as the whole value (CI=1234567 goes with a chat id 1234567, x1234567 stays).
+        short = p.untrusted_env({'TELEGRAM_ALERT_CHAT_ID': '1234567', 'CI': '1234567', 'Z': 'x1234567',
+                                 'GH_TOKEN': '12345678', 'X': '12345678', 'Y': 'Bearer 12345678 end',
+                                 'BASH_ENV': '/tmp/env.sh', 'ENV': '/tmp/env.sh', 'PATH': '/bin'}, 'default')
+        self.assertEqual(short, {'Z': 'x1234567', 'PATH': '/bin'})
+
+    def test_lists_are_pinned(self):
+        # Literal sets: widening the clean list (an SSH agent, a cloud key) or shortening the
+        # removal list fails here on any runner, whatever its own environment holds.
+        self.assertEqual(p.UNTRUSTED_REMOVE, ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID',
+                                              'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'))
+        self.assertEqual(p.UNTRUSTED_STARTUP, ('BASH_ENV', 'ENV'))
+        self.assertEqual(p.UNTRUSTED_KEEP, ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
+                                            'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI'))
+        self.assertEqual(p.AGENT_KEEP_PREFIXES, {'claude': ('ANTHROPIC_', 'CLAUDE_', 'HEADROOM_'), 'codex': ('OPENAI_', 'CODEX_')})
+        self.assertEqual(p.AGENT_KEEP, ('HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy',
+                                        'no_proxy', 'all_proxy', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+                                        'XDG_CONFIG_HOME'))
+
+    def test_each_name_goes_by_name_even_where_value_matching_cannot_see_it(self):
+        # Each secret with its own short value that no other variable carries: only the name
+        # list can remove it, so value matching cannot hide a name missing from the list.
+        environ = {name: 'v%d' % i for i, name in enumerate(p.UNTRUSTED_REMOVE)}
+        environ.update(PATH='/bin', OTHER='v0-and-more')
+        for mode, runner in (('default', None), ('default', 'claude'), ('clean', 'claude'), ('clean', 'codex')):
+            with self.subTest(mode=mode, runner=runner):
+                reduced = p.untrusted_env(environ, mode, runner)
+                for name in p.UNTRUSTED_REMOVE: self.assertFalse(name in reduced, name + ' was kept')
+        self.assertEqual(p.untrusted_env(environ, 'default'), {'PATH': '/bin', 'OTHER': 'v0-and-more'})
 
     def test_control_an_inherited_environment_shows_every_secret(self):
         # The v3.0.2 adapter started the agent with the inherited environment. Same fakes,

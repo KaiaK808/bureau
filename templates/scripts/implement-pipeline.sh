@@ -141,7 +141,7 @@ POST_IMPLEMENT_REPORT=""
 _POST_IMPLEMENT_RUNNER='
 import os, signal, subprocess, sys, time
 limit, cmd, status_file = int(sys.argv[1]), sys.argv[2], sys.argv[3]
-child = subprocess.Popen(["bash", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
+child = subprocess.Popen(["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
 def stop(code, why):
     with open(status_file, "w") as f:
         f.write(why)
@@ -305,7 +305,7 @@ command: ${cmd}"
   log=$(mktemp "${TMPDIR:-/tmp}/bureau-post-implement.XXXXXX")
   status_file="$log.why"
   echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
-  if bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" >"$log" 2>&1; then
+  if bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" >"$log" 2>&1; then
     rc=0
   else
     rc=$?
@@ -1103,7 +1103,7 @@ if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = cod
   TEST_COMMAND=$(bureau_get '.repo.test_command // empty')
   [ -n "$TEST_COMMAND" ] || { echo 'Codex completion needs repo.test_command for independent verification.' >&2; exit 24; }
   # Branch code: without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).
-  bureau_untrusted_env bash -c "$TEST_COMMAND" || exit 14
+  bureau_untrusted_env bash --noprofile --norc -c "$TEST_COMMAND" || exit 14
 fi
 
 PR_URL=""

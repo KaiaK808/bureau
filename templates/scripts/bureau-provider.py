@@ -70,10 +70,14 @@ class AuthError(Exception):
 # tests (Claude with --dangerously-skip-permissions) and loads the branch's own
 # agent settings, so it starts in the environment bureau_untrusted_env in
 # bureau-env.sh gives every other command the branch controls. Keep
-# UNTRUSTED_REMOVE and UNTRUSTED_KEEP equal to the lists there;
-# tests/test_untrusted_env.sh compares the two implementations.
+# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP and UNTRUSTED_KEEP equal to the lists
+# there; tests/test_untrusted_env.sh compares the two implementations and
+# tests/provider_untrusted_env_test.py pins these tuples.
 UNTRUSTED_REMOVE = ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID',
                     'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')
+# A bash started by the agent sources the file BASH_ENV (or, as sh, ENV) names;
+# pointed at .env it would read the keys back in.
+UNTRUSTED_STARTUP = ('BASH_ENV', 'ENV')
 UNTRUSTED_KEEP = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
                   'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI')
 # Under "clean" the agent CLI also keeps its own login and network settings;
@@ -103,22 +107,26 @@ def untrusted_env_mode(config):
 
 def untrusted_env(environ, mode, runner=None):
     # The environment for code the branch controls. "default": everything but
-    # the listed secrets and any variable whose value contains one of their
-    # values (8 characters or more). "clean": only UNTRUSTED_KEEP, plus, for
+    # the listed secrets, BASH_ENV and ENV, and any variable that carries one
+    # of their values: a value of 8 characters or more anywhere inside, a
+    # shorter one as the whole value. "clean": only UNTRUSTED_KEEP, plus, for
     # an agent, its own login and network variables, again without any value
-    # that contains a secret. The caller's environment is never changed.
-    secrets = {environ[name] for name in UNTRUSTED_REMOVE if len(environ.get(name, '')) >= 8}
+    # that carries a secret. The caller's environment is never changed.
+    values = [environ.get(name, '') for name in UNTRUSTED_REMOVE]
+    long_secrets = [value for value in values if len(value) >= 8]
+    short_secrets = {value for value in values if 0 < len(value) < 8}
+    def carries(value):
+        return value in short_secrets or any(secret in value for secret in long_secrets)
     if mode == 'clean':
         prefixes = AGENT_KEEP_PREFIXES.get(runner, ())
         def keep(name):
             return name in UNTRUSTED_KEEP or (runner is not None and (name in AGENT_KEEP or name.startswith(prefixes)))
     elif mode == 'default':
         def keep(name):
-            return name not in UNTRUSTED_REMOVE
+            return name not in UNTRUSTED_REMOVE and name not in UNTRUSTED_STARTUP
     else:
         raise UntrustedEnvError('unknown untrusted environment mode')
-    return {name: value for name, value in environ.items()
-            if keep(name) and not any(secret in value for secret in secrets)}
+    return {name: value for name, value in environ.items() if keep(name) and not carries(value)}
 
 
 def auth(options):

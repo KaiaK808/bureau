@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ae13e0aec4f9cbd548c93906478b8a68b31d64fb3929e3ce1972b9f9d5838d50">
+<meta name="bureau-source-sha256" content="0dd0bc8ff3023489cff12d1ac0e7f873f96075f713f1e850a257bc836334d73d">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -75,12 +75,13 @@ to the deterministic executor; successful implementation also runs
 <code>repo.test_command</code> outside the nested model sandbox. QA runs
 the configured command independently too. Permission/environment
 failures are reported separately from failed project tests.</p>
-<p>The agent process and its login check start without the Bureau
-secrets: by default without <code>LINEAR_API_KEY</code>,
-<code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_ALERT_CHAT_ID</code>,
-<code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>,
-<code>GH_ENTERPRISE_TOKEN</code>, <code>GITHUB_ENTERPRISE_TOKEN</code>
-and any variable whose value contains one of theirs; with
+<p>The adapter itself starts without the Bureau secrets, and the agent
+process and its login check start without them too: by default without
+<code>LINEAR_API_KEY</code>, <code>TELEGRAM_BOT_TOKEN</code>,
+<code>TELEGRAM_ALERT_CHAT_ID</code>, <code>GH_TOKEN</code>,
+<code>GITHUB_TOKEN</code>, <code>GH_ENTERPRISE_TOKEN</code>,
+<code>GITHUB_ENTERPRISE_TOKEN</code>, any variable that carries one of
+their values, <code>BASH_ENV</code> and <code>ENV</code>; with
 <code>repo.untrusted_env: "clean"</code> with only the base variables
 plus the provider's own login and network variables (see the <a
 href="configuration.html">configuration reference</a> and <a

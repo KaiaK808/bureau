@@ -161,7 +161,7 @@ trap _qa_cleanup EXIT
 
 echo ""
 echo "Phase 1/3: initial test run (no Claude call)"
-if bureau_untrusted_env bash -o pipefail -c "$TEST_CMD" > "$QA_TMP/test1.log" 2>&1; then
+if bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$TEST_CMD" > "$QA_TMP/test1.log" 2>&1; then
   echo "  Initial test run: PASSED"
   GREEN_ON_FIRST_TRY=true
   { echo "=== Phase 1/3: initial test run (PASSED) ==="; cat "$QA_TMP/test1.log"; } > "$QA_LOG_PATH"
@@ -176,7 +176,7 @@ else
   # real bugs that should land in needs-human. See EXP-487: parked on a
   # `running 0 tests` / `target failed` flake that passed cleanly on rerun.
   sleep 5
-  if bureau_untrusted_env bash -o pipefail -c "$TEST_CMD" > "$QA_TMP/test1.retry.log" 2>&1; then
+  if bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$TEST_CMD" > "$QA_TMP/test1.retry.log" 2>&1; then
     echo "  Retry passed. First run was a flake."
     {
       echo "=== Phase 1/3: initial test run (FLAKE — exit $RC) ==="
@@ -272,7 +272,7 @@ fi
 
 echo ""
 echo "Phase 3/3: final test run + route"
-if bureau_untrusted_env bash -o pipefail -c "$TEST_CMD" > "$QA_TMP/test2.log" 2>&1; then
+if bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$TEST_CMD" > "$QA_TMP/test2.log" 2>&1; then
   FINAL_GREEN=true
 else
   FINAL_GREEN=false
