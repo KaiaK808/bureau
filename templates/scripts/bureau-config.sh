@@ -2368,6 +2368,11 @@ bureau_link_worktree_paths() {
   wt_phys=$(cd "$wt" 2>/dev/null && pwd -P) || return 0
   common=$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null) || return 0
   case "$common" in /*) ;; *) common="$wt/$common" ;; esac
+  # A bare repository has no main checkout; its parent directory is not one.
+  if [ "$(git --git-dir="$common" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
+    echo "  WARNING: repo.worktree_links: the repository is bare, so there is no main checkout to link from — no links made."
+    return 0
+  fi
   main=$(cd "$common/.." 2>/dev/null && pwd -P) || return 0
   [ "$main" = "$wt_phys" ] && return 0
   while IFS= read -r line; do
@@ -2388,7 +2393,7 @@ _bureau_link_worktree_path() {
   case "$p" in
     ''|/*) echo "  WARNING: worktree link '$3' skipped: not a relative path."; return 0 ;;
   esac
-  case "/$p/" in
+  case "/$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')/" in
     */../*|*/./*|*//*|*/.git/*)
       echo "  WARNING: worktree link '$3' skipped: '.', '..', '.git' and empty components are not allowed."; return 0 ;;
   esac
@@ -2398,7 +2403,9 @@ _bureau_link_worktree_path() {
   if [ "${tracked:-0}" -gt 0 ]; then
     echo "  WARNING: worktree link '$p' skipped: the branch tracks that path."; return 0
   fi
-  parent=$(dirname "$p")
+  # The parent by string slicing, not `dirname`: an entry may start with `-`,
+  # which `dirname` reads as an option (and then fails the worker under set -e).
+  case "$p" in */*) parent="${p%/*}" ;; *) parent=. ;; esac
   parent_phys=$(cd "$wt/$parent" 2>/dev/null && pwd -P) || {
     echo "  WARNING: worktree link '$p' skipped: '$parent' does not exist in the worktree."; return 0
   }
@@ -2406,6 +2413,10 @@ _bureau_link_worktree_path() {
     "$wt"/*) ;;
     *) echo "  WARNING: worktree link '$p' skipped: '$parent' leads outside the worktree."; return 0 ;;
   esac
+  # Inside the worktree but through a symlink: git refuses to look beyond it.
+  if [ "$parent" != . ] && [ "$parent_phys" != "$wt/$parent" ]; then
+    echo "  WARNING: worktree link '$p' skipped: '$parent' runs through a symlink in the worktree."; return 0
+  fi
   if [ ! -e "$main/$p" ]; then
     echo "  WARNING: worktree link '$p' skipped: it does not exist in the main checkout."; return 0
   fi
@@ -2419,7 +2430,7 @@ _bureau_link_worktree_path() {
   if [ -e "$wt/$p" ] && [ ! -L "$wt/$p" ]; then
     echo "  WARNING: worktree link '$p' skipped: a real file or directory is in the way; it is left alone."; return 0
   fi
-  if ln -sfn "$main/$p" "$wt/$p" 2>/dev/null && [ "$(readlink "$wt/$p")" = "$main/$p" ]; then
+  if ln -sfn -- "$main/$p" "$wt/$p" 2>/dev/null && [ "$(readlink "$wt/$p")" = "$main/$p" ]; then
     echo "  Linked $p from the main checkout"
   else
     echo "  WARNING: worktree link '$p' could not be made."

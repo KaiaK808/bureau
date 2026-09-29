@@ -137,7 +137,8 @@ ABS="$MAIN/.venv"
 for pair in "$ABS|not a relative path" "/etc|not a relative path" "|not a relative path" \
             "../outside|components are not allowed" "tools/../.venv|components are not allowed" \
             "./.venv|components are not allowed" "tools//.venv|components are not allowed" \
-            ".git|components are not allowed" ".git/hooks|components are not allowed"; do
+            ".git|components are not allowed" ".git/hooks|components are not allowed" \
+            ".GIT|components are not allowed" "tools/.Git|components are not allowed"; do
   entry="${pair%%|*}"; reason="${pair#*|}"
   links "[$(printf '%s' "$entry" | jq -Rs .)]"; run
   warned "$reason" "entry [$entry]"
@@ -184,5 +185,37 @@ check "main checkout: silent" "$OUT" ""
 check "main checkout: venv is still the real directory" "$(kind "$MAIN/.venv")" dir
 check "main checkout: no link inside the venv" "$(find "$MAIN/.venv" -type l | wc -l | tr -d ' ')" 0
 echo "PASS the main checkout itself is never linked"
+
+# 13 · an entry starting with '-' is a name, not an option — also under the worker's set -euo pipefail.
+setup .venv -venv
+mkdir -p "$MAIN/-venv/bin"; printf 'x\n' > "$MAIN/-venv/bin/python"
+links '["-venv", ".venv"]'
+OUT=$(bash -c 'set -euo pipefail; source "$1"; bureau_link_worktree_paths "$2"; echo "rc-ok"' _ "$TMP/fn.sh" "$WT" 2>&1) || true
+case "$OUT" in *rc-ok*) : ;; *) fail "dash entry under set -euo pipefail: [$OUT]" ;; esac
+check "dash entry linked" "$(kind "$WT/-venv")" "link:$MAIN/-venv"
+check "entry after the dash entry linked" "$(kind "$WT/.venv")" "link:$MAIN/.venv"
+check "dash entry: worktree clean" "$(dirty)" ""
+echo "PASS an entry starting with '-' is linked, and the worker survives it under set -e"
+
+# 14 · a parent that runs through a symlink inside the worktree gets its own message.
+setup .venv
+mkdir -p "$WT/real"; printf 'r\n' > "$WT/real/keep"; ln -s real "$WT/alias"
+git -C "$WT" add real alias; commit_in_branch "alias -> real"
+mkdir -p "$MAIN/alias/.venv"
+links '["alias/.venv"]'; run
+warned "'alias' runs through a symlink in the worktree" "symlink parent inside"
+check "nothing linked through the symlink" "$(ls -A "$WT/real")" keep
+echo "PASS a parent that runs through a symlink inside the worktree is refused with its own reason"
+
+# 15 · a bare repository has no main checkout: nothing is linked from its parent directory.
+rm -rf "$TMP/bare proj"; mkdir -p "$TMP/bare proj"
+git -C "$MAIN" clone -q --bare "$MAIN" "$TMP/bare proj/repo.git"
+git -C "$TMP/bare proj/repo.git" worktree add -q "$TMP/bare proj/wt" main 2>/dev/null
+mkdir -p "$TMP/bare proj/.venv"
+links '[".venv"]'
+OUT=$(bureau_link_worktree_paths "$TMP/bare proj/wt")
+warned "the repository is bare" "bare"
+check "bare: no link" "$(kind "$TMP/bare proj/wt/.venv")" none
+echo "PASS a worktree of a bare repository gets no links"
 
 echo "OK test_worktree_links"

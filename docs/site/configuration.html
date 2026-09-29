@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="221ed32b24d3add8bb6731a9fd6532cb3f3d8d87064d28787ce662910c4d688c">
+<meta name="bureau-source-sha256" content="38262f10a0f93bf3e8d88ea9f5456fcf8ff0e1c5ca13b9102568504cb26898fc">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -616,22 +616,37 @@ after each reset, for what the reset's <code>git clean -fdx</code>
 removes and nothing reinstalls, typically a Python virtualenv:
 <code>[".venv"]</code>. Each entry must be a plain relative path (no
 leading <code>/</code>, no <code>.</code>, <code>..</code>,
-<code>.git</code> or empty component). A path is skipped with one
-warning line, and the stage runs on without it, when the branch tracks
-it, when its parent is missing in the worktree or leads outside it, when
-it does not exist in the main checkout, when the worktree's gitignore
-does not ignore it <strong>as a symlink</strong>, or when a real file or
-directory sits at that path; an older link is replaced. A directory-only
-pattern such as <code>.venv/</code> does not match a symlink, and an
-untracked link would leave the worktree dirty (the worker then preserves
-it and the next reset stops with <code>21</code>), so list
-<code>.venv</code> in <code>.gitignore</code> without the slash. The
-next reset removes the link, never its target. The link shares the main
-checkout's copy: what an agent installs into it changes the main
-checkout's too. Never applied in the main checkout itself.
-<code>bureau-doctor.py</code> lists each entry with its status and warns
-about missing or not-ignored ones. See <a
-href="#python-repositories">Python repositories</a></td>
+<code>.git</code> in any case, or empty component); a name may start
+with <code>-</code>. A path is skipped with one warning line, and the
+stage runs on without it, when the branch tracks it, when its parent is
+missing in the worktree, leads outside it or runs through a symlink in
+it, when it does not exist in the main checkout, when the worktree's
+gitignore does not ignore it <strong>as a symlink</strong>, or when a
+real file or directory sits at that path; an older link is replaced. A
+directory-only pattern such as <code>.venv/</code> does not match a
+symlink, and an untracked link would leave the worktree dirty (the
+worker then preserves it and the next reset stops with <code>21</code>),
+so list <code>.venv</code> in <code>.gitignore</code> without the slash.
+The next reset removes the link, never its target. <strong>The link is
+the main checkout's own copy, not a copy of it</strong>: every stage and
+every parallel worker shares it, and commands in a stage worktree act on
+it — <code>python3 -m venv --clear .venv</code> empties the main
+checkout's virtualenv, <code>rm -rf .venv/</code> (with the slash)
+deletes it, <code>pip install</code> changes it, and code from a pull
+request that QA or the review build check runs before anyone has
+approved it can change the environment every later stage and you use.
+The stage protocol (<code>scripts/bureau-stage.md</code>) tells the
+agents never to delete, recreate or clear a linked path and not to
+install into it unless the ticket asks for that; it cannot enforce it.
+Never applied in the main checkout itself, nor in a worktree of a bare
+repository (there is no main checkout). <code>bureau-doctor.py</code>
+lists each entry with its status (<code>ok</code>,
+<code>missing in the main checkout</code>,
+<code>tracked in the main checkout</code>,
+<code>not ignored as a symlink</code>, <code>invalid</code>) and warns
+or errors the way the stages would skip; <code>false</code> counts as no
+links, like an absent key. See <a href="#python-repositories">Python
+repositories</a></td>
 </tr>
 <tr>
 <td><code>repo.copy_voice_file</code></td>
@@ -695,9 +710,13 @@ in a worktree imports the main checkout's code unless the worktree comes
 first on the path: run tests as
 <code>PYTHONPATH=src .venv/bin/python -m pytest</code> (or set it in
 <code>repo.test_command</code> or <code>scripts/bureau-test.sh</code>),
-and say so in the project instructions the agents read. Packages an
-agent installs into the linked virtualenv land in the main checkout's
-virtualenv.</p>
+and say so in the project instructions the agents read. The linked
+virtualenv is the main checkout's own: what an agent installs, recreates
+or deletes there happens to yours, and pull-request code that QA or the
+review build check runs uses it too. If that is not acceptable for a
+repository, leave the virtualenv out of <code>worktree_links</code> and
+let <code>repo.test_command</code> or
+<code>scripts/bureau-test.sh</code> create what the tests need.</p>
 <h3 id="supervisor"><code>supervisor</code></h3>
 <table>
 <thead>

@@ -189,8 +189,14 @@ class DoctorTests(unittest.TestCase):
         # .venv and "my env" are ignored as a symlink would be; dirvenv/ only as a directory: in
         # the main checkout it is a directory and git calls it ignored, in a stage worktree the
         # link would not be.
-        (self.repo/'.gitignore').write_text('.venv\nmy env\ndirvenv/\n')
-        missing='does not exist in the main checkout'; symlink='is not ignored as a symlink'
+        (self.repo/'-venv').mkdir(); (self.repo/'[ab]').mkdir(); (self.repo/'tracked').mkdir()
+        # `[ab]` is a literal name ignored by `\[ab\]` while the main checkout tracks a file `a`:
+        # asked without --no-index, git would read `[ab]` as a pathspec matching the tracked `a`.
+        (self.repo/'a').write_text('a\n'); (self.repo/'tracked'/'pyvenv.cfg').write_text('home = x\n')
+        (self.repo/'.gitignore').write_text('.venv\nmy env\ndirvenv/\n-venv\n\\[ab\\]\ntracked\n')
+        subprocess.run(['git','-C',str(self.repo),'add','a'],check=True)
+        subprocess.run(['git','-C',str(self.repo),'add','-f','tracked/pyvenv.cfg'],check=True)
+        missing='does not exist in the main checkout'; symlink='is not ignored as a symlink'; tracked='is tracked in the main checkout'
         not_list='must be a list'; plain='must be a plain relative path'; one_line='is not a one-line string'
         # (value, reported, warnings, errors)
         for value, reported, warns, errs in (
@@ -203,7 +209,13 @@ class DoctorTests(unittest.TestCase):
                 (['/abs'], [dict(path='/abs', status='invalid')], (), (plain,)),
                 (['../up'], [dict(path='../up', status='invalid')], (), (plain,)),
                 (['.git'], [dict(path='.git', status='invalid')], (), (plain,)),
-                ([7], [], (), (one_line,))):
+                ([7], [], (), (one_line,)),
+                (False, [], (), ()),
+                (['-venv'], [dict(path='-venv', status='ok')], (), ()),
+                (['[ab]'], [dict(path='[ab]', status='ok')], (), ()),
+                (['tracked'], [dict(path='tracked', status='tracked in the main checkout')], (tracked,), ()),
+                (['.GIT'], [dict(path='.GIT', status='invalid')], (), (plain,)),
+                (['tools/.Git'], [dict(path='tools/.Git', status='invalid')], (), (plain,))):
             with self.subTest(value=value):
                 config=copy.deepcopy(self.config); config.setdefault('repo',{})
                 if value is not None: config['repo']['worktree_links']=value

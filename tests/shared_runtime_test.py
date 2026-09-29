@@ -262,6 +262,30 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual((venv/'python').read_text(),'main venv')
         self.assertFalse((self.repo/'.venv').is_symlink())
 
+    def test_reset_survives_a_dash_entry_under_errexit(self):
+        # The worker runs under set -euo pipefail. An entry starting with '-' used to reach
+        # `dirname`, which read it as an option and failed; the failed assignment ended the
+        # worker before the stage, for every ticket.
+        origin=Path(self.temp.name)/'origin.git'
+        subprocess.run(['git','init','-q','--bare',str(origin)],check=True)
+        (self.repo/'.gitignore').write_text('.venv\n-venv\n.bureau.json\n')
+        r.git(self.repo,'add','.gitignore'); r.git(self.repo,'commit','-q','-m','ignore venvs')
+        r.git(self.repo,'remote','add','origin',str(origin)); r.git(self.repo,'push','-q','origin','HEAD:main')
+        for name in ('-venv','.venv'): (self.repo/name/'bin').mkdir(parents=True)
+        r.save(self.repo/'.bureau.json',dict(self.config, repo={'worktree_links':['-venv','.venv']}))
+        wt=Path(self.temp.name).resolve()/'disposable worker'
+        run='d'*32
+        self.store.claim('TEAM-1',wt,run,'background',os.getpid())
+        helper=ROOT/'templates/scripts/bureau-config.sh'
+        env={**os.environ,'BUREAU_RUN_ID':run,'BUREAU_CURRENT_ISSUE':'TEAM-1','BUREAU_WORKSPACE_MODE':'disposable'}
+        command=['bash','-c','set -euo pipefail; source "$1"; REPO_DIR="$PWD"; reset_worktree "$2" spec-pipeline.sh; echo reset-done','test',str(helper),str(wt)]
+        proc=subprocess.run(command,cwd=self.repo,env=env,capture_output=True,text=True)
+        self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+        self.assertIn('reset-done',proc.stdout)
+        for name in ('-venv','.venv'):
+            self.assertEqual(os.readlink(wt/name),str(self.repo/name))
+        self.assertEqual(r.git(wt,'status','--porcelain','--untracked-files=all'),'')
+
     def test_app_ticket_flows_through_review_without_provider_processes(self):
         self.state='s1'
         specdir=self.repo/'specs/001-issue'; specdir.mkdir(parents=True)

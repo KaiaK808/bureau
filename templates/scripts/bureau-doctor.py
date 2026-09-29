@@ -124,7 +124,8 @@ def worktree_links(repo, config):
     but not the link there, so the question runs in a temporary work tree that holds only
     the .gitignore files on the path and no file at the path itself."""
     raw = config.get('repo', {}).get('worktree_links') if isinstance(config.get('repo'), dict) else None
-    if raw is None: return [], [], []
+    # Like the stages' `// []`: absent, null and false mean "no links".
+    if raw is None or raw is False: return [], [], []
     if not isinstance(raw, list):
         return [], ['repo.worktree_links must be a list of relative paths; stages make no links'], []
     report, errors, warnings = [], [], []
@@ -134,10 +135,13 @@ def worktree_links(repo, config):
             errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is not a one-line string'); continue
         path = entry.rstrip('/')
         parts = path.split('/')
-        if not path or path.startswith('/') or any(part in ('', '.', '..', '.git') for part in parts):
+        if not path or path.startswith('/') or any(part.lower() in ('', '.', '..', '.git') for part in parts):
             errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' must be a plain relative path (no /, ., .., .git or empty component); stages skip it'); report.append(dict(path=entry, status='invalid')); continue
         status = 'ok'
-        if not (repo / path).exists():
+        tracked = subprocess.run(['git', '-C', str(repo), '--literal-pathspecs', 'ls-files', '--', path], capture_output=True, text=True).stdout.strip() if git_dir else ''
+        if tracked:
+            status = 'tracked in the main checkout'
+        elif not (repo / path).exists():
             status = 'missing in the main checkout'
         elif git_dir:
             with tempfile.TemporaryDirectory(prefix='bureau-doctor-') as shadow:
@@ -149,7 +153,9 @@ def worktree_links(repo, config):
                 probe = subprocess.run(['git', '--git-dir=' + git_dir, '--work-tree=' + shadow, '-C', shadow, 'check-ignore', '-q', '--no-index', '--', path], capture_output=True, text=True)
             if probe.returncode != 0:
                 status = 'not ignored as a symlink'
-        if status == 'missing in the main checkout':
+        if status == 'tracked in the main checkout':
+            warnings.append('repo.worktree_links: ' + path + ' is tracked in the main checkout, so stages skip it as a path the branch tracks')
+        elif status == 'missing in the main checkout':
             warnings.append('repo.worktree_links: ' + path + ' does not exist in the main checkout; stages skip it')
         elif status == 'not ignored as a symlink':
             warnings.append('repo.worktree_links: ' + path + ' is not ignored as a symlink, so stages skip it (a link there would leave the worktree dirty); a pattern with a trailing slash matches directories only, add ' + path + ' without it to .gitignore')
