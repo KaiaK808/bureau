@@ -240,8 +240,11 @@ mkdir -p "$REPO/scripts"
 cp "$SB/fake/crosscheck-specs.sh" "$REPO/scripts/crosscheck-specs.sh"
 chmod +x "$REPO/scripts/crosscheck-specs.sh"
 
+# The stage sets SPEC_DIR in Phase 1.5 from .specify/feature.json; the cut block gets it the same way.
+PHASE15='SPEC_DIR=specs/001-probe/'
 stage '_BUREAU_SCRIPTS_DIR='"$SB"'/fake
-'"$NEW_BLOCK"
+'"$PHASE15
+$NEW_BLOCK"
 [ "$RC" = 0 ] || fail "the real Phase 4 block ended the stage on an abort (exit $RC)"
 case "$OUT" in *"WARNING: crosscheck incomplete (exit 2)"*"STAGE CONTINUES"*) ;; *) fail "the real Phase 4 block did not warn on an abort" ;; esac
 case "$OUT" in *"No file conflicts"*) fail "the real Phase 4 block said 'No file conflicts' after an abort" ;; esac
@@ -255,6 +258,7 @@ echo "PASS negative control: the old Phase 4 block reports 'No file conflicts' a
 
 # The new block against a real conflict, end to end: script, evaluation and stage.
 prs $'11\tfeat/eins\tEins'
-stage "$NEW_BLOCK"
+stage "$PHASE15
+$NEW_BLOCK"
 case "$OUT" in *"CROSSCHECK RESULT: conflicts"*"File conflicts with open PRs — warning posted to EXP-1"*) ;; *) fail "the real Phase 4 block missed a real conflict" ;; esac
 echo "PASS the real Phase 4 block reports a real conflict end to end"

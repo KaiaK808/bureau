@@ -93,18 +93,18 @@ if ! merge_origin_main_or_abort "$ISSUE" "UX/Design"; then
 fi
 
 echo "→ Locating spec artifacts..."
-SPEC_DIR=""
-for d in "$BUREAU_SPECS_DIR"/*/; do
-  [ -d "$d" ] || continue
-  dir_name=$(basename "$d")
-  slug=$(echo "$dir_name" | sed 's/^[0-9]*-//')
-  if echo "$BRANCH" | grep -qi "$slug"; then
-    SPEC_DIR="$d"
-    break
-  fi
-done
-[ -z "$SPEC_DIR" ] && SPEC_DIR=$(ls -td "$BUREAU_SPECS_DIR"/*/ 2>/dev/null | head -1 || true)
+# No "newest directory" fallback: in a fresh worktree every directory has the
+# same age, so it picked another ticket's spec. No match aborts below.
+SPEC_DIR=$(bureau_spec_dir_for_branch "$BRANCH")
 
+SPEC_CANDIDATES=$(bureau_spec_dir_candidates "$BRANCH")
+if [ -z "$SPEC_DIR" ] && [ -n "$SPEC_CANDIDATES" ]; then
+  echo "  ERROR: branch '$BRANCH' fits more than one spec directory: $SPEC_CANDIDATES"
+  post_comment "$ISSUE" "❌ UX pipeline aborted — branch \`$BRANCH\` fits more than one spec directory ($SPEC_CANDIDATES), and the stages do not guess. Rename or remove the stray directory so that exactly one matches the branch (troubleshooting: exit 13), then remove \`needs-human\`. Routing back to Spec Review."
+  move_issue "$ISSUE" "$BUREAU_STATE_SPEC_REVIEW"
+  mark_needs_human "$ISSUE" ux 13 || true
+  exit 13
+fi
 if [ -z "$SPEC_DIR" ]; then
   echo "  ERROR: No spec directory found for $ISSUE on branch $BRANCH."
   post_comment "$ISSUE" "❌ UX pipeline aborted — no spec directory matched branch \`$BRANCH\`. Routing back to Spec Review for spec rework."
