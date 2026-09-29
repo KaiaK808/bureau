@@ -1677,12 +1677,41 @@ pr_base_is_current() {
 #
 # Used by alert_telegram and merge_origin_main_or_abort to keep retry loops
 # from spamming Telegram or Linear.
+#
+# The log belongs to one repository: <git common dir>/bureau/alert-throttle.log
+# of the repository that holds .bureau.json (bureau_common_dir, as for the
+# needs-human holds), shared by its worktrees. One /tmp/bureau-alerts.log for
+# every installation on the host let the same key (an issue, a pipeline and a
+# code, or `none` for a failed pick) in one repository silence the alert of
+# another for an hour. BUREAU_ALERT_THROTTLE_FILE names another file (tests).
+# Only when no git directory resolves does the log stay in /tmp, and the key
+# then starts with the repository's path.
+#
+# _throttle_where — sets _throttle_file and _throttle_prefix, which the caller
+# declares local.
+_throttle_where() {
+  local common base
+  _throttle_prefix=""
+  if [ -n "${BUREAU_ALERT_THROTTLE_FILE:-}" ]; then
+    _throttle_file="$BUREAU_ALERT_THROTTLE_FILE"
+  elif common=$(bureau_common_dir 2>/dev/null); then
+    _throttle_file="$common/bureau/alert-throttle.log"
+  else
+    _throttle_file="/tmp/bureau-alerts.log"
+    base="$PWD"
+    [ -n "${BUREAU_CONFIG:-}" ] && base=$(dirname "$BUREAU_CONFIG")
+    _throttle_prefix="$(cd "$base" 2>/dev/null && pwd || printf '%s' "$base")|"
+  fi
+}
+
 _throttle_should_suppress() {
-  local key="$1" window_sec="${2:-3600}"
-  local throttle_log="/tmp/bureau-alerts.log"
-  [ ! -f "$throttle_log" ] && return 1
+  local key="$1" window_sec="${2:-3600}" _throttle_file _throttle_prefix
+  _throttle_where
+  key="$_throttle_prefix$key"
+  [ ! -f "$_throttle_file" ] && return 1
   local last now delta
-  last=$(awk -F'\t' -v k="$key" '$1==k{print $2}' "$throttle_log" | tail -1)
+  # The key goes in through the environment: awk -v would expand backslashes.
+  last=$(_THROTTLE_KEY="$key" awk -F'\t' '$1==ENVIRON["_THROTTLE_KEY"]{print $2}' "$_throttle_file" | tail -1)
   [ -z "$last" ] && return 1
   now=$(date +%s)
   delta=$((now - last))
@@ -1690,18 +1719,36 @@ _throttle_should_suppress() {
 }
 
 _throttle_record() {
-  local key="$1"
-  local throttle_log="/tmp/bureau-alerts.log"
+  local key="$1" _throttle_file _throttle_prefix
+  _throttle_where
+  key="$_throttle_prefix$key"
   local now
   now=$(date +%s)
-  printf '%s\t%s\n' "$key" "$now" >> "$throttle_log"
+  # Best effort: when the log cannot be written the next event fires again and
+  # the caller carries on (under set -e a failed append would end the stage).
+  mkdir -p "$(dirname "$_throttle_file")" 2>/dev/null || true
+  printf '%s\t%s\n' "$key" "$now" 2>/dev/null >> "$_throttle_file" || return 0
   # Cap log at 1000 lines so a long-running session doesn't leave an unbounded
-  # file in /tmp. Trim is cheap and runs at most once per fired event.
+  # file behind. Trim is cheap and runs at most once per fired event.
   local lines
-  lines=$(wc -l < "$throttle_log" 2>/dev/null | tr -d ' ' || echo 0)
+  lines=$(wc -l < "$_throttle_file" 2>/dev/null | tr -d ' ' || echo 0)
   if [ "${lines:-0}" -gt 1000 ]; then
-    tail -n 500 "$throttle_log" > "${throttle_log}.tmp" 2>/dev/null \
-      && mv "${throttle_log}.tmp" "$throttle_log"
+    tail -n 500 "$_throttle_file" > "${_throttle_file}.tmp" 2>/dev/null \
+      && mv "${_throttle_file}.tmp" "$_throttle_file"
+  fi
+}
+
+# _bureau_repo_name — the directory name of the main checkout of the repository
+# that holds .bureau.json, so an alert says which installation sent it.
+_bureau_repo_name() {
+  local common
+  if common=$(bureau_common_dir 2>/dev/null) && [ "${common##*/}" = .git ]; then
+    common="${common%/.git}"
+    printf '%s' "${common##*/}"
+  elif [ -n "${BUREAU_CONFIG:-}" ]; then
+    basename "$(dirname "$BUREAU_CONFIG")"
+  else
+    basename "$PWD"
   fi
 }
 
@@ -1828,7 +1875,10 @@ session_throttle_guard() {
 }
 
 # alert_telegram: best-effort push to a Telegram chat for failure signals.
-# Throttled per (issue, pipeline, exit_code) via _throttle_should_suppress.
+# Throttled per (issue, pipeline, exit_code) and repository via
+# _throttle_should_suppress; the message names the repository (its main
+# checkout's directory name, as code so an underscore cannot break Telegram's
+# Markdown and drop the alert).
 # Requires TELEGRAM_BOT_TOKEN and TELEGRAM_ALERT_CHAT_ID in .env. Silently
 # no-ops if either is missing (so dev environments don't break).
 #
@@ -1849,8 +1899,8 @@ alert_telegram() {
   _throttle_record "$throttle_key"
 
   local body
-  body=$(printf '🚨 Bureau pipeline alert\n\nIssue: %s\nPipeline: %s\nExit: %s\n\n%s' \
-    "$issue" "$pipeline" "$exit_code" "$message")
+  body=$(printf '🚨 Bureau pipeline alert\n\nRepo: `%s`\nIssue: %s\nPipeline: %s\nExit: %s\n\n%s' \
+    "$(_bureau_repo_name)" "$issue" "$pipeline" "$exit_code" "$message")
   if [ -n "$log_tail" ]; then
     body=$(printf '%s\n\nLog tail:\n```\n%s\n```' "$body" "$log_tail")
   fi
