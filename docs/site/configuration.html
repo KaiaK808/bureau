@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d23e5d97ed7c0eeb72c78b950dbdd2f11de5f2a07b5c2a33737404f85c7f1c9e">
+<meta name="bureau-source-sha256" content="38bec5480ef6e5793c221f400a11a2fd1b744ae911be1bfac645dc705ee1a4d3">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -265,6 +265,29 @@ stages. Preserve existing choices during updates.</p>
 <td>bool</td>
 <td><code>true</code></td>
 <td>Build → Build Review (+ QA if enabled)</td>
+</tr>
+<tr>
+<td><code>agents.implement.push_each_iteration</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td><code>true</code>: implement pushes the branch after every iteration
+and after the <code>/goal</code> run. <code>false</code>: when a PR is
+already open for the branch as the run starts, those pushes wait and the
+end-of-run push carries all of them, so CI runs once over the finished
+state instead of once per iteration (every push to a branch with an open
+PR is a <code>pull_request: synchronize</code>); without an open PR the
+stage still pushes after every iteration. The open-PR state is read once
+per run, before either path; an empty answer, <code>null</code> and a
+failing <code>gh</code> count as no open PR. Read only when
+<code>agents.implement</code> is an object
+(<code>{"enabled": true, "push_each_iteration": false}</code>);
+<code>agents.implement: true</code>, an absent key and <code>null</code>
+mean <code>true</code>, any other value means <code>true</code> with a
+warning. The end-of-run push keeps its rules: retried once, and the
+stage ends with <code>18</code> before any hand-off when origin still
+lacks commits. A stage that fails before its end leaves deferred commits
+only in its worktree, which <code>bureau-worker.sh</code> then keeps
+instead of resetting</td>
 </tr>
 <tr>
 <td><code>agents.qa</code></td>
@@ -902,7 +925,9 @@ if it doesn't reach <code>status: COMPLETE</code> within the budget.</p>
 <td><code>BUREAU_IMPL_MAX_ITER</code></td>
 <td><code>3</code></td>
 <td>Max provider passes per tick. Each iter parses the JSON status
-block, pushes commits, and decides continue/stop</td>
+block, runs the squash-range check, pushes commits (see
+<code>agents.implement.push_each_iteration</code>), and decides
+continue/stop</td>
 </tr>
 <tr>
 <td><code>BUREAU_IMPL_ITER_TIMEOUT</code></td>
@@ -974,7 +999,11 @@ alone cannot complete the stage.</p>
 <code>origin/main..HEAD</code> carries an entry of
 <code>scripts/ci-skip-markers.txt</code> (<code>[skip ci]</code> and the
 other forms GitHub honours), or the range could not be read. Reword the
-named messages, then remove <code>needs-human</code>. The QA stage runs
+named messages, then remove <code>needs-human</code>. The check also
+runs after every iteration of the loop, so a marker stops the run after
+the iteration that wrote it instead of after all of them; the
+<code>/goal</code> path, which has no iterations, checks once after its
+run, and the check before the hand-off always runs. The QA stage runs
 the same check and flags <code>needs-human</code> instead of routing
 on.</p>
 <h3 id="token-efficiency-flags-bureaujson-agents">Token-efficiency flags
