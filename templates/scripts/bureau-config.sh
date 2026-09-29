@@ -1403,6 +1403,8 @@ remove_issue_label() {
 # pick; once the label is on the ticket the hold ends, the label keeps the
 # ticket out from there, and a human releases it the usual way, by removing the
 # label. To release a held ticket without the label, delete its file.
+# shepherd.sh, which runs a named ticket past the picker, reads the same holds
+# through bureau_human_hold and refuses a held ticket before its claim.
 #
 # mark_needs_human <issue> <stage> [<stage exit>]
 #   0  the label is on the ticket (any hold for it is cleared)
@@ -1436,6 +1438,28 @@ _needs_human_hold_dir() {
   local common
   common=$(bureau_common_dir) || return 1
   printf '%s/bureau/needs-human-held' "$common"
+}
+
+# bureau_human_hold <issue> — whether a human holds <issue>, for a driver that
+# runs a named ticket past the picker (shepherd.sh). Prints nothing when nobody
+# does, else one line: "hold <file>" when the ticket is held locally (checked
+# first; it needs no Linear), or "label <name>" for the first of needs-human,
+# the configured linear.labels.needs_human.name, blocked and wip on the ticket.
+# Exit: 0, or the label read's own code (27 = Linear stayed unusable); an answer
+# without a readable label list fails instead of counting as "no label".
+bureau_human_hold() {
+  local issue="$1" dir detail human
+  if [[ "$issue" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]] && dir=$(_needs_human_hold_dir 2>/dev/null) \
+     && [ -f "$dir/$issue" ]; then
+    printf 'hold %s\n' "$dir/$issue"
+    return 0
+  fi
+  detail=$(get_issue_detail "$issue") || return $?
+  human=$(bureau_get '.linear.labels.needs_human.name // "needs-human"') || return $?
+  printf '%s' "$detail" | jq -rn --arg human "$human" '
+    input | .labels as $on
+    | [ "needs-human", $human, "blocked", "wip" | select(. as $l | $on | any(.[]; . == $l)) ]
+    | if length > 0 then "label " + .[0] else empty end'
 }
 
 mark_needs_human() {

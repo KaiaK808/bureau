@@ -19,6 +19,10 @@
 #     to run inline (CI/headless).
 #   - Forces every stage on regardless of `.agents.<stage>` toggles via
 #     BUREAU_FORCE_ALL_AGENTS=1. Use --respect-config to honor toggles.
+#   - Refuses a ticket a human holds before claiming it: exit 25, nothing
+#     written (needs-human or the configured linear.labels.needs_human.name,
+#     blocked, wip, or a local hold that mark_needs_human left when it could
+#     not write the label). The same check runs on every turn of the loop.
 #   - Adds `shepherd-focused` label on entry, removes on EXIT/INT/TERM.
 #     pipeline_pick_next excludes that label so queue-loop stays out of
 #     shepherd's way while a ticket is being driven.
@@ -67,6 +71,7 @@ Drives one Linear ticket end-to-end through every pipeline phase.
 
 Flags:
   --dry-run            Print the planned route; do not execute or move state.
+                       A ticket a human holds prints the hold, no route, exit 25.
   --no-tmux            Run inline in current shell (default: spawn tmux window).
   --no-merge           Halt before the Merge stage even if review approves.
   --from-stage NAME    Move ticket to NAME state first, then start shepherding.
@@ -228,17 +233,24 @@ _shepherd_state() {
   _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" get_issue_state "$ISSUE"
 }
 
-# _shepherd_human_label — the first of needs-human, blocked, wip on the ticket,
-# or nothing when none of them is. One read per call. Exit: non-zero when the
+# _shepherd_human_label — whether a human holds the ticket (bureau_human_hold in
+# bureau-config.sh): "hold <file>" for a local hold (a stage could not write
+# needs-human), "label <name>" for the first of needs-human, the configured
+# linear.labels.needs_human.name, blocked and wip on the ticket, or nothing. At
+# most one read per call, none when a hold file answers. Exit: non-zero when the
 # labels could not be read; an answer without a readable label list (nothing at
 # all, or no list) fails in jq instead of counting as "no label".
 _shepherd_human_label() {
-  local detail
-  detail=$(_BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" get_issue_detail "$ISSUE") || return $?
-  printf '%s' "$detail" | jq -rn '
-    input | .labels as $on
-    | [ "needs-human", "blocked", "wip" ][] | select(. as $l | $on | any(.[]; . == $l))' \
-    | sed -n 1p
+  _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" bureau_human_hold "$ISSUE"
+}
+
+# _shepherd_hold_text <hold> — the operator's line for a hold that line 1 of
+# _shepherd_human_label printed: what holds the ticket and how to release it.
+_shepherd_hold_text() {
+  case "$1" in
+    "hold "*) printf '%s is held for a human in %s (a stage could not write the needs-human label); the next queue pick writes the label and ends the hold — to release it without the label, delete that file' "$ISSUE" "${1#hold }" ;;
+    *)        printf "%s carries '%s' — a human holds it; remove the label in Linear to release it" "$ISSUE" "${1#label }" ;;
+  esac
 }
 
 # _shepherd_branch — the ticket's branch (bureau-branch marker, else Linear's
@@ -268,10 +280,33 @@ if [ "$DRY_RUN" = 1 ]; then
     echo "[shepherd] dry-run: could not read the state of $ISSUE (exit $CUR_RC). No route printed." >&2
     exit 1
   fi
+  # The hold check a run makes before its claim (see below), with the same
+  # answers: a held ticket prints no route and ends with 25, a failed read ends
+  # the dry run like a failed state read.
+  : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
+  HOLD_RC=0
+  HOLD=$(_shepherd_human_label) || HOLD_RC=$?
+  HOLD_FAULT=$(_shepherd_fault_class "$SHEPHERD_FAULT_FILE")
+  if [ "$HOLD_RC" -gt 128 ]; then
+    echo "[shepherd] dry-run: interrupted while reading the labels of $ISSUE (exit $HOLD_RC) — cancelled." >&2
+    exit 130
+  elif [ "$HOLD_RC" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+    echo "[shepherd] dry-run: could not read the labels of $ISSUE — Linear stayed unusable after every retry (fault: $HOLD_FAULT). No route printed." >&2
+    exit "$HOLD_RC"
+  elif [ "$HOLD_RC" != 0 ]; then
+    echo "[shepherd] dry-run: could not read the labels of $ISSUE (exit $HOLD_RC). No route printed." >&2
+    exit 1
+  fi
   echo "═══════════════════════════════════════"
   echo "  Shepherd dry-run: $ISSUE"
   echo "═══════════════════════════════════════"
   echo "  Current state: ${CUR:-unknown}"
+  if [ -n "$HOLD" ]; then
+    echo "  Held: $(_shepherd_hold_text "$HOLD")"
+    echo "  A run refuses this ticket before claiming it: exit 25, nothing written. No route printed."
+    echo "═══════════════════════════════════════"
+    exit 25
+  fi
   [ "$RESPECT_CONFIG" = 1 ] && echo "  Mode: --respect-config (.agents.<stage> toggles honored)"
   [ "$NO_MERGE" = 1 ]       && echo "  --no-merge: will halt before Merge stage"
   bureau_merge_is_manual    && echo "  agents.merge_mode manual: will halt before Merge stage (a human merges)"
@@ -467,6 +502,38 @@ _shepherd_start_failed() {
 
 : "${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 
+# ── Refuse a held ticket before claiming it (v3.1) ────────────────────
+# The loop below reads the labels on every turn, but only after the claim and
+# the --from-stage move: a held ticket got shepherd-focused and was moved before
+# the shepherd saw the hold, a configured needs-human name was not looked at,
+# and a local hold (the label could not be written, mark_needs_human) was not
+# read at all. Now a held ticket ends here with 25 and nothing written: no
+# claim, no move, no label, no comment, no alert. The line on stderr names the
+# hold and how to release it. A read that fails ends like the start check:
+# nothing written, an alert, and 27 when Linear stayed unusable, 130 for a
+# signal, 1 for anything else — never "no hold".
+_shepherd_hold_check_failed() {
+  local rc="$1" fault
+  [ "$rc" -gt 128 ] && _shepherd_cancelled "a signal (exit $rc)"
+  fault=$(_shepherd_fault_class "$SHEPHERD_FAULT_FILE")
+  if [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
+    echo "[shepherd] could not read the labels of $ISSUE — Linear stayed unusable after every retry (fault: $fault); $ISSUE not claimed, nothing written" >&2
+    alert_telegram "$ISSUE" shepherd.sh "$rc" "shepherd did not start (could not read the labels, $(exit_class "$rc"): $fault)" 2>/dev/null || true
+    exit "$rc"
+  fi
+  echo "[shepherd] could not read the labels of $ISSUE (exit $rc); $ISSUE not claimed, nothing written" >&2
+  alert_telegram "$ISSUE" shepherd.sh 1 "shepherd did not start (could not read the labels, exit $rc)" 2>/dev/null || true
+  exit 1
+}
+: > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
+HOLD_RC=0
+HOLD=$(_shepherd_human_label) || HOLD_RC=$?
+[ "$HOLD_RC" = 0 ] || _shepherd_hold_check_failed "$HOLD_RC"
+if [ -n "$HOLD" ]; then
+  echo "[shepherd] $(_shepherd_hold_text "$HOLD") — not claimed, nothing written (exit 25)" >&2
+  exit 25
+fi
+
 # ── Claim the ticket; the trap releases it on any exit path ───────────
 # The trap is set before the claim: a signal during the claim still releases.
 # Any exit above 128 (a signal, whichever way it ended the shell) releases with
@@ -644,7 +711,13 @@ while true; do
   # catches the loop, but only after one wasted pipeline pass at $
   # per Opus call. Fail loud and early instead — and a label list that could
   # not be read halts too, it never counts as "no label" (EXP-1528).
-  HUMAN_LABEL_HIT=$(_shepherd_human_label) || _shepherd_read_failed labels $?
+  HUMAN_HOLD=$(_shepherd_human_label) || _shepherd_read_failed labels $?
+  if [ "${HUMAN_HOLD%% *}" = hold ]; then
+    echo "[shepherd] $(_shepherd_hold_text "$HUMAN_HOLD") @ '$STATE' — halting"
+    post_comment "$ISSUE" "🐑 Shepherd halt at \`$STATE\`: this ticket is held for a human, but its needs-human label could not be written, so the hold is kept locally. Shepherd will not re-run it. The next queue pick writes the label; remove it and re-shepherd when ready." || true
+    exit 25
+  fi
+  HUMAN_LABEL_HIT="${HUMAN_HOLD#label }"
   if [ -n "$HUMAN_LABEL_HIT" ]; then
     echo "[shepherd] '$HUMAN_LABEL_HIT' label present on $ISSUE @ '$STATE' — halting"
     post_comment "$ISSUE" "🐑 Shepherd halt: \`$HUMAN_LABEL_HIT\` label present at \`$STATE\`. The stage that just ran flagged this ticket for human review; shepherd will not re-run it. Remove the label and re-shepherd when ready." || true
