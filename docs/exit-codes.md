@@ -15,7 +15,7 @@ This page is the complete table + how the alerter behaves.
 | `10` | linear-down | `LINEAR_API_KEY` missing or invalid | Forgot to set it in `.env`, or the key was revoked |
 | `11` | worktree-dirty | Uncommitted changes in the worktree | Manual edits in `.worktrees/queue-<mode>/` — clean up before next tick |
 | `12` | no-branch | `bureau-branch` marker missing or points at a non-existent branch | Spec pipeline didn't post a digest, or the branch was deleted |
-| `13` | no-tasks | `tasks.md` expected but missing | `/speckit-tasks` produced an empty file; routed back to Spec |
+| `13` | no-tasks | No usable spec for the branch: `tasks.md` missing, no spec directory matches, or the branch fits more than one | `/speckit-tasks` produced an empty file, or the spec directory was renamed or never created: implement and spec review route back to Spec, UX back to Spec Review. On a tie (v3.0.2) implement, spec review and UX name every fitting directory, set `needs-human` and route back, because the stages never guess and re-running Spec cannot resolve a tie: rename or remove the stray directory, then remove the label |
 | `14` | build-failed | Build precondition failed | Test suite red, type-check failed, lint errors, `repo.post_implement_command` failed after an implementation run |
 | `15` | no-pr | PR expected but not found | Implement didn't create one, or it was closed manually |
 | `16` | provider-unauth | Selected CLI missing or not authenticated | Authenticate the selected Claude/Codex CLI |

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3b53afc5938c7a44bb3c2366aa603aa442dc38cd4e7f8f7baa043ef2d7e225b1">
+<meta name="bureau-source-sha256" content="68dc7e4edc3417d57019b3aa19093c0428db6d66f92eef3a4b85b438e2e76105">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -76,9 +76,15 @@ non-existent branch</td>
 <tr>
 <td><code>13</code></td>
 <td>no-tasks</td>
-<td><code>tasks.md</code> expected but missing</td>
-<td><code>/speckit-tasks</code> produced an empty file; routed back to
-Spec</td>
+<td>No usable spec for the branch: <code>tasks.md</code> missing, no
+spec directory matches, or the branch fits more than one</td>
+<td><code>/speckit-tasks</code> produced an empty file, or the spec
+directory was renamed or never created: implement and spec review route
+back to Spec, UX back to Spec Review. On a tie (v3.0.2) implement, spec
+review and UX name every fitting directory, set <code>needs-human</code>
+and route back, because the stages never guess and re-running Spec
+cannot resolve a tie: rename or remove the stray directory, then remove
+the label</td>
 </tr>
 <tr>
 <td><code>14</code></td>
