@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d44bfaf0b2bc435f1174ee56b8911c5e186c4e8d510a02b8292ef6554c0a7e78">
+<meta name="bureau-source-sha256" content="458f6bb0cd18a4123dabbc41d73d3c4d52d7ade927252962608f306b9864f4fb">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -363,7 +363,11 @@ href="recipes.html#single-flight-pipeline">recipes</a></td>
 <td><code>"auto"</code></td>
 <td>Who merges an approved PR. <code>auto</code>: the pipeline (inline
 after review, or the gated merge stage when <code>agents.merge</code> is
-on). <code>manual</code>: a human — the merge and rebase agents are off,
+on). The inline merge runs the merge stage's full gate, and the review
+stage ends with its outcome: Done after a merge, <code>2</code> with the
+approval kept for the next run when the gate is not yet decided,
+<code>25</code> and <code>needs-human</code> when it is blocked.
+<code>manual</code>: a human — the merge and rebase agents are off,
 <code>merge-pipeline.sh</code> and <code>rebase-pipeline.sh</code> exit
 <code>2</code> before any Linear, gh or git call, the review stage parks
 an APPROVE in the Merge state, and the shepherd ends its run at Merge
@@ -392,7 +396,9 @@ Validated at config-load — invalid values fall back to
 green" gate, independent of GitHub's <code>mergeStateStatus</code>.
 Catches the "no required-checks rule configured" hole where CLEAN passes
 with red CI. Set false only for repos genuinely without CI (docs-only,
-prototypes)</td>
+prototypes). Only the JSON value <code>false</code> switches it off
+(before v3.1 the gate ignored <code>false</code>); any other value, the
+string <code>"false"</code> included, keeps it on with a warning</td>
 </tr>
 <tr>
 <td><code>agents.merge_require_up_to_date</code></td>
@@ -401,7 +407,9 @@ prototypes)</td>
 <td>Bureau-enforced "PR baseRefOid == origin/main HEAD" gate. Catches
 the async-cache race where <code>mergeStateStatus</code> still reads
 CLEAN after main has advanced. Set false only for repos using deliberate
-batch-merge workflows</td>
+batch-merge workflows. Only the JSON value <code>false</code> switches
+it off (before v3.1 the gate ignored <code>false</code>); any other
+value keeps it on with a warning</td>
 </tr>
 <tr>
 <td><code>agents.merge_min_required_checks</code></td>
@@ -412,6 +420,20 @@ batch-merge workflows</td>
 registered workflows from passing vacuously. Set to <code>0</code> for
 repos with no CI at all (rare — prefer flipping
 <code>merge_require_green_ci</code> to <code>false</code> instead)</td>
+</tr>
+<tr>
+<td><code>agents.merge_ci_start_grace_seconds</code></td>
+<td>number</td>
+<td><code>1800</code></td>
+<td>How long after the PR head's commit (its committer time on GitHub)
+the merge gate waits for CI to appear. A head with no check run (not
+even a queued one) and no commit status is "not yet" within this time
+and blocked after it (<code>25</code>, alert; the shepherd halts), so a
+repository whose workflow never runs for the PR stops waiting silently.
+<code>0</code> blocks at once. Anything but a whole number of seconds
+counts as <code>1800</code>. A time that cannot be read keeps the gate
+at "not yet"; does not apply when <code>merge_min_required_checks</code>
+is <code>0</code></td>
 </tr>
 <tr>
 <td><code>agents.model</code></td>

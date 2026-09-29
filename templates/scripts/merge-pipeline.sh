@@ -24,8 +24,10 @@
 # Gates 3 and 4 are toggleable via .bureau.json:
 #   - agents.merge_require_green_ci   (default true)
 #   - agents.merge_require_up_to_date (default true)
-# Leaving the defaults is strongly recommended; the toggles exist for repos
-# without CI (docs-only) or with deliberate batch-merge workflows.
+# Only the JSON value false switches a gate off (merge_gate_required); any other
+# value keeps it on with a warning. Leaving the defaults is strongly recommended;
+# the toggles exist for repos without CI (docs-only) or with deliberate
+# batch-merge workflows.
 #
 # When eligible, runs `gh pr merge N --$BUREAU_MERGE_STRATEGY` (squash by
 # default; configurable via .agents.merge_strategy in .bureau.json), with a
@@ -44,10 +46,10 @@
 # check, conflicts nothing here resolves, a stale base, no APPROVE, unresolved
 # threads, a PR that is not open). A shepherd that sets
 # BUREAU_MERGE_GATE_REPORT gets the outcome and the gate lines in that file.
-# The inline merge from the review stage (BUREAU_INLINE_MERGE=1) and --dry-run
-# keep ending with 0 here. The review stage does not read this result today:
-# it reports Done after an inline merge that did not go through (known
-# limitation, older than the gate outcome).
+# The inline merge from the review stage (BUREAU_INLINE_MERGE=1) ends with the
+# same codes, and the review stage acts on them (code-review-pipeline.sh: Done
+# only after a merge, needs-human on 25, a recorded approval and 2 on not yet).
+# --dry-run keeps ending with 0.
 #
 # Opt-in via .bureau.json:
 #   - agents.merge: true
@@ -271,10 +273,10 @@ evaluate_merge_gates() {
     _blockers+=("unresolved_threads: $unresolved unresolved review thread(s)")
   fi
 
-  # Bureau-enforced NRSR gates. Toggleable via .bureau.json.
+  # Bureau-enforced NRSR gates. Toggleable via .bureau.json (merge_gate_required).
   local _require_ci _require_uptodate
-  _require_ci=$(bureau_get '.agents.merge_require_green_ci // true')
-  _require_uptodate=$(bureau_get '.agents.merge_require_up_to_date // true')
+  _require_ci=$(merge_gate_required merge_require_green_ci)
+  _require_uptodate=$(merge_gate_required merge_require_up_to_date)
 
   local _err
   if [ "$_require_ci" != "false" ]; then
@@ -291,6 +293,22 @@ evaluate_merge_gates() {
     return 1
   fi
   return 0
+}
+
+# merge_gate_required <agents key>: prints false when .agents.<key> is the JSON
+# value false, true otherwise. `jq '.x // true'` used to turn a configured false
+# into true, so the documented opt-out never switched a gate off. Absent or null
+# keeps the gate; any other value (the string "false", 0, "no") keeps it too and
+# warns on stderr: a typo must not open a merge gate.
+merge_gate_required() {
+  local key="$1" value
+  value=$(bureau_get ".agents.$key | if . == null then \"true\" elif type == \"boolean\" then tostring else \"invalid\" end" 2>/dev/null) \
+    || value=invalid
+  case "$value" in
+    true|false) printf '%s\n' "$value" ;;
+    *) echo "  WARN: agents.$key must be true or false; keeping the gate on" >&2
+       printf 'true\n' ;;
+  esac
 }
 
 # merge_dirty_is_rebasable: 0 when a DIRTY PR is one the rebase stage resolves on
@@ -349,17 +367,14 @@ merge_gate_key() {
 
 # merge_gate_exit <outcome> <gate lines>: records the outcome for a caller that
 # asked for it (BUREAU_MERGE_GATE_REPORT) and ends the run — 2 not yet, 25
-# blocked. The inline merge keeps its 0 (see the header).
+# blocked. The review stage's inline merge ends the same way; it used to end
+# with 0 here, and the review then reported Done for a PR it had not merged.
 merge_gate_exit() {
   local outcome="$1" lines="$2" code=25
   [ "$outcome" = not-yet ] && code=2
   if [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ]; then
     printf '%s\n%s\n' "$outcome" "$lines" > "$BUREAU_MERGE_GATE_REPORT" 2>/dev/null \
       || echo "  WARN: could not write the gate report to $BUREAU_MERGE_GATE_REPORT" >&2
-  fi
-  if [ "${BUREAU_INLINE_MERGE:-0}" = 1 ]; then
-    echo "  Gate outcome: $outcome (inline merge — the review stage continues)"
-    exit 0
   fi
   echo "  Gate outcome: $outcome — exit $code"
   exit "$code"
