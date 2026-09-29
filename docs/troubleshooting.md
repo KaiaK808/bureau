@@ -234,6 +234,10 @@ GitHub's mergeability state is cached. Bureau independently checks actual head c
 
 The stage tells its caller which kind of refusal it was: exit `2` when the gate is not yet decided (a check still running or not started, GitHub still computing `mergeStateStatus`, a gate read that failed, a hold label `wip`, `blocked` or `needs-human` on the PR, conflicts that the rebase stage resolves because `agents.rebase` is on and the divergence is bureau-only; under the shepherd such conflicts are blocked at once, because the queue's rebase stage skips a ticket the shepherd holds and the shepherd runs only the merge stage at Merge) and exit `25` when it is decided against the merge (a failing check, other conflicts, a stale base, no APPROVE verdict, unresolved threads, a PR that is not open). The gate comment on the PR names the outcome and is posted again only when the outcome or a blocker changes. A hold label counts as "not yet" on purpose: a human put it there and removes it when ready, so the queue does not alert on it every hour; the shepherd waits its budget and then halts with the gate report. A check that never starts (an offline runner) keeps the gate at "not yet" as well. The queue loop stays quiet on `2` and alerts on `25`, at most once an hour per ticket, and re-evaluates on every tick, so re-running a flaky check is enough for the next tick to merge. The shepherd waits on `2` (every `BUREAU_SHEPHERD_MERGE_POLL_SECONDS`, 60 s by default, for at most `BUREAU_SHEPHERD_MERGE_WAIT_SECONDS`, 30 minutes by default) and halts on `25` or on a wait that ran out with `needs-human` and a ticket comment listing the blockers. After fixing the blocker or re-running the check, remove `needs-human` and re-shepherd; the merge stage checks every gate again.
 
+### Doctor warns: the merge gate needs checks, but no workflow runs on pull requests
+
+`agents.merge_require_green_ci` (default `true`) lets a PR merge only when at least `agents.merge_min_required_checks` (default 1) check runs or statuses on its head have completed green. In a repository where no GitHub Actions workflow runs on pull requests and no other CI reports to GitHub, that never happens: every automatic merge, inline after review or in the merge stage, waits on "only 0 completed check(s)". Doctor warns about this when merging is automatic (`agents.merge_mode` `auto` with the review or merge stage on) and no file under `.github/workflows` names a `pull_request` or `pull_request_target` trigger in its `on:` block. Fix one of three ways: add a workflow that runs on pull requests (`python3 "$BUREAU_SOURCE/scripts/bureau_install.py" assets --repo "$PWD" --scope ci --apply` scaffolds one, or `/bureau-init --resync-ci`), set `agents.merge_require_green_ci` to `false` for a repository that really has no CI, or set `agents.merge_mode` to `manual`. If another CI (an app or an external status) does report checks to GitHub, the warning is harmless. Only a JSON boolean switches the gate: doctor also warns when `agents.merge_require_green_ci` or `agents.merge_require_up_to_date` holds another value, such as the string `"false"`, which counts as `true`.
+
 ### Code-review hit `BUREAU_MAX_REVIEW_CYCLES` — what now?
 
 `agents.max_review_cycles` (default 3) caps how many `REQUEST_CHANGES → Build → Build Review` round-trips before parking.
@@ -366,7 +370,7 @@ Exit 16 now covers the selected provider. Inspect `claude auth status --json` or
 
 ### Headless Claude calls hang or timeout
 
-Inspect the adapter's preserved stdout/stderr and result metadata before retrying. Confirm provider login, network availability and the configured timeout. Exit 124 indicates the bound was reached, 130 cancellation, and 24 an environment/permission failure. A retry requires inspection of interrupted ownership; avoid an unbounded probe or a permissions bypass as a diagnostic shortcut.
+Inspect the adapter's preserved stdout/stderr and result metadata before retrying. Confirm provider login, network availability and the configured timeout. Exit 124 indicates the bound was reached, 130 cancellation, and 24 an environment/permission failure. The bound is `timeout_seconds` per provider call: 3600 s by default since v3.1 (900 s before), set per stage or per provider in `.bureau.json`; doctor warns when an enabled spec, spec review, UX, QA or review stage gets less than 1800 s. A retry requires inspection of interrupted ownership; avoid an unbounded probe or a permissions bypass as a diagnostic shortcut.
 
 ### Speckit phases produce empty `tasks.md`
 The spec pipeline routes back to Triage automatically. To debug:
@@ -406,6 +410,14 @@ Restart the supervisor — counters are in-process, so a fresh launch resets the
 ### Old commands at `.claude/commands/speckit.*.md`
 
 Older Spec Kit integrations used command files. Refresh Spec Kit separately with the pinned installer and intended targets, preserving the active integration unless a switch is requested. Verify the new `.claude/skills` and/or `.agents/skills` entry points before reviewing obsolete files for removal. Preserve customized command content; do not delete the old glob blindly.
+
+### Resync refuses `CLAUDE.md` or `AGENTS.md`: `legacy Bureau section at line N`
+
+The file still carries a section an older installer generated, opened by `<!-- bureau-init managed -->` or a variant such as `<!-- bureau-init managed: regenerate via … -->`, or closed by `<!-- end bureau-init managed -->`. The installer does not guess where that section ends and does not append a second Bureau block next to it; the whole asset batch writes nothing, and `--overwrite` does not bypass it. Open the named line, decide which lines are the old generated guidance, and put `<!-- bureau-init:begin -->` and `<!-- bureau-init:end -->` in place of the old markers around exactly those lines (or delete the old section). The reason says `outside the bureau-init:begin/end block` when the file already has a new block and the old section sits next to it: remove the old section, or move what is still needed into the block. Then preview again; adopting a hand-delimited block needs `--overwrite CLAUDE.md` once, because its content does not match any recorded install.
+
+### Preview lists `skipped` template files
+
+The installer never installs a template file the source skill checkout ignores (`.DS_Store`, `.env*`, `*.log`, `__pycache__` and whatever else its `.gitignore` names); the preview lists them under `skipped` and on stderr. A tracked file is never skipped. A source that is not its own git checkout skips its dotfiles and whatever its `.gitignore` files match. If a file you expect is skipped, it is ignored in the source: commit it there, or remove the ignore rule.
 
 ### Constitution missing after speckit resync
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9b572840334f8f482d667cf10ba6967175cfa148639398263c4bb7a968a28aba">
+<meta name="bureau-source-sha256" content="71e9c4cfc6a869dbf937a02b396756c78b74301c78fc1e9ee26961fc31f7d44e">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -35,7 +35,7 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="
 <span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;qa&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
 <span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;claude&quot;</span><span class="fu">},</span></span>
 <span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;providers&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;codex&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;reasoning_effort&quot;</span><span class="fu">:</span> <span class="st">&quot;high&quot;</span><span class="fu">,</span> <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">900</span><span class="fu">}</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;codex&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;reasoning_effort&quot;</span><span class="fu">:</span> <span class="st">&quot;high&quot;</span><span class="fu">,</span> <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">2400</span><span class="fu">}</span></span>
 <span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    <span class="fu">},</span></span>
 <span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;workbench_panes&quot;</span><span class="fu">:</span> <span class="dv">0</span></span>
 <span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
@@ -83,9 +83,10 @@ problems 24; timeout 124; cancellation 130. Timeout and cancellation
 finish by killing the provider process group even if its immediate CLI
 process has already exited; a surviving descendant cannot keep writing
 after the bounded invocation returns. Per-stage/provider
-<code>timeout_seconds</code> defaults to 900; implementation uses its
-existing iteration/total bounds through
-<code>BUREAU_STAGE_TIMEOUT</code>.</p>
+<code>timeout_seconds</code> defaults to 3600 per call (900 before
+v3.1); doctor warns when an enabled spec, spec review, UX, QA or review
+stage gets less than 1800 s. Implementation uses its existing
+iteration/total bounds through <code>BUREAU_STAGE_TIMEOUT</code>.</p>
 <p>JSON schema contracts cover implementation iterations, QA, and the
 merged review verdict. Both plain JSON and legacy fenced JSON are
 parsed; Claude envelopes are unwrapped. A provider's diagnostic stream

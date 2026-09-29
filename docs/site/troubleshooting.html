@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="df82a68f67e4401a83e7f83d7e5a82b2a1a99353514ab85a7e2b11e95de2b0c9">
+<meta name="bureau-source-sha256" content="df01c8223311f0536f1b84fe8653639c477b0efc0284c685224f4f18e89f482d">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -490,6 +490,34 @@ default) and halts on <code>25</code> or on a wait that ran out with
 After fixing the blocker or re-running the check, remove
 <code>needs-human</code> and re-shepherd; the merge stage checks every
 gate again.</p>
+<h3
+id="doctor-warns-the-merge-gate-needs-checks-but-no-workflow-runs-on-pull-requests">Doctor
+warns: the merge gate needs checks, but no workflow runs on pull
+requests</h3>
+<p><code>agents.merge_require_green_ci</code> (default
+<code>true</code>) lets a PR merge only when at least
+<code>agents.merge_min_required_checks</code> (default 1) check runs or
+statuses on its head have completed green. In a repository where no
+GitHub Actions workflow runs on pull requests and no other CI reports to
+GitHub, that never happens: every automatic merge, inline after review
+or in the merge stage, waits on "only 0 completed check(s)". Doctor
+warns about this when merging is automatic
+(<code>agents.merge_mode</code> <code>auto</code> with the review or
+merge stage on) and no file under <code>.github/workflows</code> names a
+<code>pull_request</code> or <code>pull_request_target</code> trigger in
+its <code>on:</code> block. Fix one of three ways: add a workflow that
+runs on pull requests
+(<code>python3 "$BUREAU_SOURCE/scripts/bureau_install.py" assets --repo "$PWD" --scope ci --apply</code>
+scaffolds one, or <code>/bureau-init --resync-ci</code>), set
+<code>agents.merge_require_green_ci</code> to <code>false</code> for a
+repository that really has no CI, or set <code>agents.merge_mode</code>
+to <code>manual</code>. If another CI (an app or an external status)
+does report checks to GitHub, the warning is harmless. Only a JSON
+boolean switches the gate: doctor also warns when
+<code>agents.merge_require_green_ci</code> or
+<code>agents.merge_require_up_to_date</code> holds another value, such
+as the string <code>"false"</code>, which counts as
+<code>true</code>.</p>
 <h3 id="code-review-hit-bureau_max_review_cycles--what-now">Code-review
 hit <code>BUREAU_MAX_REVIEW_CYCLES</code> — what now?</h3>
 <p><code>agents.max_review_cycles</code> (default 3) caps how many
@@ -752,7 +780,11 @@ hang or timeout</h3>
 <p>Inspect the adapter's preserved stdout/stderr and result metadata
 before retrying. Confirm provider login, network availability and the
 configured timeout. Exit 124 indicates the bound was reached, 130
-cancellation, and 24 an environment/permission failure. A retry requires
+cancellation, and 24 an environment/permission failure. The bound is
+<code>timeout_seconds</code> per provider call: 3600 s by default since
+v3.1 (900 s before), set per stage or per provider in
+<code>.bureau.json</code>; doctor warns when an enabled spec, spec
+review, UX, QA or review stage gets less than 1800 s. A retry requires
 inspection of interrupted ownership; avoid an unbounded probe or a
 permissions bypass as a diagnostic shortcut.</p>
 <h3 id="speckit-phases-produce-empty-tasksmd">Speckit phases produce
@@ -815,6 +847,38 @@ the active integration unless a switch is requested. Verify the new
 <code>.claude/skills</code> and/or <code>.agents/skills</code> entry
 points before reviewing obsolete files for removal. Preserve customized
 command content; do not delete the old glob blindly.</p>
+<h3
+id="resync-refuses-claudemd-or-agentsmd-legacy-bureau-section-at-line-n">Resync
+refuses <code>CLAUDE.md</code> or <code>AGENTS.md</code>:
+<code>legacy Bureau section at line N</code></h3>
+<p>The file still carries a section an older installer generated, opened
+by <code>&lt;!-- bureau-init managed --&gt;</code> or a variant such as
+<code>&lt;!-- bureau-init managed: regenerate via … --&gt;</code>, or
+closed by <code>&lt;!-- end bureau-init managed --&gt;</code>. The
+installer does not guess where that section ends and does not append a
+second Bureau block next to it; the whole asset batch writes nothing,
+and <code>--overwrite</code> does not bypass it. Open the named line,
+decide which lines are the old generated guidance, and put
+<code>&lt;!-- bureau-init:begin --&gt;</code> and
+<code>&lt;!-- bureau-init:end --&gt;</code> in place of the old markers
+around exactly those lines (or delete the old section). The reason says
+<code>outside the bureau-init:begin/end block</code> when the file
+already has a new block and the old section sits next to it: remove the
+old section, or move what is still needed into the block. Then preview
+again; adopting a hand-delimited block needs
+<code>--overwrite CLAUDE.md</code> once, because its content does not
+match any recorded install.</p>
+<h3 id="preview-lists-skipped-template-files">Preview lists
+<code>skipped</code> template files</h3>
+<p>The installer never installs a template file the source skill
+checkout ignores (<code>.DS_Store</code>, <code>.env*</code>,
+<code>*.log</code>, <code>__pycache__</code> and whatever else its
+<code>.gitignore</code> names); the preview lists them under
+<code>skipped</code> and on stderr. A tracked file is never skipped. A
+source that is not its own git checkout skips its dotfiles and whatever
+its <code>.gitignore</code> files match. If a file you expect is
+skipped, it is ignored in the source: commit it there, or remove the
+ignore rule.</p>
 <h3 id="constitution-missing-after-speckit-resync">Constitution missing
 after speckit resync</h3>
 <p>The current installer snapshots and restores an existing
