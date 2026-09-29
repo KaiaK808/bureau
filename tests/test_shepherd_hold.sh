@@ -12,12 +12,16 @@
 #
 # Held → exit 25 before the claim: no shepherd-focused, no --from-stage move, no comment, no
 # alert, and a line naming the hold and how to release it. A hold file answers without any
-# label read. --dry-run gives the same answer (25, no route). A label read that fails before
+# label read; labels match exactly (needs-human-later, Needs-Human and WIP hold nothing). A
+# hold left on a finished ticket changes nothing: Done ends with 0 and a cancelled ticket with
+# 26, as in the loop, and an orchestrated chain goes on past it. --dry-run gives the same
+# answer (25, no route). A label read that fails before
 # the claim writes nothing either (27 with the fault class, 1 for any other code, 130 for a
 # signal). The loop keeps the same check on every turn (a configured label or a hold file
 # that appears after a move halts with 25 and a comment). Negative controls rebuild the
 # v3.0.2 checks out of the current shepherd (CI checks out without history): the held
-# ticket is claimed, moved and its stage runs.
+# ticket is claimed, moved and its stage runs; and a check that refuses a finished ticket
+# stops the orchestrated chain.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && cd .. && pwd)"
@@ -37,8 +41,9 @@ fail() {
 }
 
 # --- the fake Linear and Telegram --------------------------------------------------------
-# State: $SB/state (a state id), $SB/labels.json (the ticket's label names), $SB/labels-broken
-# (the label read answers with an error page). $SB/on-move runs after every move.
+# State: $SB/state (a state id), $SB/state-name (the name Linear gives a state the config does
+# not know, default "?"), $SB/labels.json (the ticket's label names), $SB/labels-broken and
+# $SB/state-broken (that read answers with an error page). $SB/on-move runs after every move.
 mkdir -p "$SB/bin" "$SB/tmp"
 cat > "$SB/bin/curl" <<EOF
 #!/bin/bash
@@ -71,7 +76,8 @@ case "\$payload" in
     else b=\$(jq -nc --argjson l "\$labels" '{data:{issues:{nodes:[{identifier:"EXP-7",title:"T",description:"D",project:null,labels:\$l}]}}}'); fi ;;
   *'nodes { id identifier title description state'*)
     echo state >> "\$sb/linear.log"
-    b=\$(jq -nc --argjson l "\$labels" --arg s "\$(cat "\$sb/state")" '{data:{issues:{nodes:[{id:"U7",identifier:"EXP-7",title:"T",description:"D",state:{id:\$s,name:"?"},labels:\$l}]}}}') ;;
+    if [ -f "\$sb/state-broken" ]; then b='<html>502 Bad Gateway</html>'
+    else b=\$(jq -nc --argjson l "\$labels" --arg s "\$(cat "\$sb/state")" --arg n "\$(cat "\$sb/state-name" 2>/dev/null || echo '?')" '{data:{issues:{nodes:[{id:"U7",identifier:"EXP-7",title:"T",description:"D",state:{id:\$s,name:\$n},labels:\$l}]}}}'); fi ;;
   *'nodes { branchName'*) echo branch >> "\$sb/linear.log"; b='{"data":{"issues":{"nodes":[{"branchName":"exp-7-x","comments":{"nodes":[]}}]}}}' ;;
   *'nodes { id } }'*) echo uuid >> "\$sb/linear.log"; b='{"data":{"issues":{"nodes":[{"id":"U7"}]}}}' ;;
   *)                  echo unmatched >> "\$sb/linear.log"; b='{}' ;;
@@ -109,7 +115,7 @@ WORKER
 # ticket <state-id> <labels-json> — what the fake Linear answers for EXP-7.
 ticket() {
   printf '%s' "$1" > "$SB/state"; printf '%s' "$2" > "$SB/labels.json"
-  rm -f "$SB/labels-broken" "$SB/on-move" "$SB/stages.log"
+  rm -f "$SB/labels-broken" "$SB/state-broken" "$SB/state-name" "$SB/on-move" "$SB/stages.log"
 }
 
 # run [shepherd args…] — sets RC, LIN (Linear calls), STAGES, ALERTS.
@@ -171,7 +177,13 @@ ticket s5 '["lane-2"]'
 run --from-stage build EXP-7
 [ "$RC" = 0 ] || fail "free ticket, --from-stage: exit $RC"
 case "$LIN" in "viewer labels uuid label-id add-label uuid move-s5 "*) ;; *) fail "free ticket, --from-stage: not check, claim, move in that order" ;; esac
-echo "PASS a free ticket: the labels are read after the start check and before the claim; claim, move and stage follow"
+# Labels match exactly, as in the picker: a longer name or another case holds nothing.
+for free in needs-human-later Needs-Human WIP; do
+  ticket s5 "[\"lane-2\",\"$free\"]"
+  run EXP-7
+  [ "$RC" = 0 ] && [ "$STAGES" = "implement-pipeline.sh " ] || fail "label '$free' held the ticket"
+done
+echo "PASS a free ticket: the labels are read after the start check and before the claim; claim, move and stage follow; labels match exactly"
 
 # --- held by a label: refused before the claim, nothing written ----------------------------
 for held in needs-human blocked wip; do
@@ -190,6 +202,11 @@ run --from-stage build EXP-7
 [ "$RC" = 25 ] && [ "$LIN" = "viewer labels " ] || fail "configured needs-human name: not refused before the claim"
 nothing_written "configured name"
 grep -q "carries 'Human Review'" "$SB/err" || fail "configured name: the refusal does not name it"
+# Without --from-stage a held ticket's state is read (only then) to tell a leftover hold on a
+# finished ticket from a real one; an open ticket is refused all the same.
+run EXP-7
+[ "$RC" = 25 ] && [ "$LIN" = "viewer labels state " ] || fail "configured name, no --from-stage: wanted 25 after the label and state reads"
+nothing_written "configured name, no --from-stage"
 echo "PASS a ticket held by needs-human, blocked, wip or the configured name: 25 before the claim, nothing written"
 
 # --- held locally: the hold file answers without a label read ------------------------------
@@ -261,6 +278,83 @@ done
 grep -q "cancelled before EXP-7 was claimed; nothing written" "$SB/err" || fail "label read ending 143: not a cancelled run"
 [ -z "$ALERTS" ] || fail "label read ending 143: alerted"
 echo "PASS a label read that fails before the claim writes nothing: 27 with the fault and an alert, 1 for another code, 130 for a signal"
+
+# --- a hold left on a finished ticket changes nothing -----------------------------------------
+# A human finishes a ticket the shepherd halted on and leaves the label, or the hold file. The
+# loop ends such a ticket before its labels matter (Done 0, cancelled 26); so does the check
+# before the claim, and an orchestrated chain goes on past it.
+new_repo "needs-human"
+for held in needs-human blocked wip; do
+  ticket s8 "[\"lane-2\",\"$held\"]"
+  run EXP-7
+  [ "$RC" = 0 ] || fail "Done + $held: exit $RC, wanted 0"
+  [ "$LIN" = "viewer labels state " ] || fail "Done + $held: not the label read, then the state read alone"
+  nothing_written "Done + $held"
+  grep -q "terminal state 'Done' — done (the hold left on it stays: label $held; nothing claimed, nothing written)" "$SB/out" \
+    || fail "Done + $held: no terminal line"
+done
+ticket s8 '["lane-2"]'; mkdir -p "$HOLD"; : > "$HOLD/EXP-7"
+run EXP-7
+[ "$RC" = 0 ] && [ "$LIN" = "viewer state " ] || fail "Done + hold file: wanted 0 after the state read alone"
+nothing_written "Done + hold file"
+[ -f "$HOLD/EXP-7" ] || fail "Done + hold file: the hold was removed"
+rm -rf "$HOLD"
+for name in Canceled Cancelled Duplicate; do
+  ticket s9 '["needs-human"]'; printf '%s' "$name" > "$SB/state-name"
+  run EXP-7
+  [ "$RC" = 26 ] || fail "$name + needs-human: exit $RC, wanted 26"
+  nothing_written "$name + needs-human"
+done
+# --from-stage would move the ticket back into the pipeline: its hold refuses it, no state read.
+ticket s8 '["needs-human"]'
+run --from-stage build EXP-7
+[ "$RC" = 25 ] && [ "$LIN" = "viewer labels " ] || fail "Done + needs-human, --from-stage: wanted 25 without a state read"
+nothing_written "Done + needs-human, --from-stage"
+# The state read on the hold path fails like the label read: nothing written, 27 and an alert.
+ticket s5 '["needs-human"]'; : > "$SB/state-broken"
+run EXP-7
+[ "$RC" = 27 ] && [ "$LIN" = "viewer labels state " ] || fail "held, state read unusable: wanted 27"
+case " $LIN" in *" add-label"*|*" move-"*|*" comment"*) fail "held, state read unusable: a Linear write went out" ;; esac
+grep -q "could not read the state of EXP-7 — Linear stayed unusable after every retry (fault: not-json); EXP-7 not claimed, nothing written" "$SB/err" \
+  || fail "held, state read unusable: the line does not name the state read"
+case "$ALERTS" in *"shepherd did not start (could not read the state, linear-unusable: not-json)"*) ;; *) fail "held, state read unusable: no alert" ;; esac
+# The dry run: a finished ticket's labels are not read, its route is printed as before.
+ticket s8 '["needs-human"]'
+run --dry-run EXP-7
+[ "$RC" = 0 ] && [ "$LIN" = "state " ] || fail "dry run, Done + needs-human: wanted 0 after the state read alone"
+grep -q "Current state: Done" "$SB/out" && ! grep -q "Held:" "$SB/out" || fail "dry run, Done + needs-human: printed a hold"
+run --dry-run --from-stage build EXP-7
+[ "$RC" = 25 ] && grep -q "Held: EXP-7 carries 'needs-human'" "$SB/out" || fail "dry run, Done + needs-human, --from-stage: wanted the hold and 25"
+# A real orchestrated chain goes on past a finished ticket with a leftover label.
+ticket s8 '["lane-2","needs-human"]'
+orch() {  # orch <chain> — the real orchestrate.sh over the real shepherd; sets RC
+  rm -f "$SB/linear.log" "$SB/alerts.log"
+  set +e
+  (cd "$REPO" && PATH="$SB/bin:$PATH" TMPDIR="$SB/tmp" BUREAU_LINEAR_RETRIES=0 BUREAU_SHEPHERD_CONFIRM_SECONDS=0 BUREAU_DISABLE_THROTTLE=1 \
+     bash scripts/orchestrate.sh --chain "$1" > "$SB/out" 2> "$SB/err")
+  RC=$?
+  set -e
+}
+orch EXP-7,EXP-8
+[ "$RC" = 0 ] || fail "chain over Done + needs-human: exit $RC, wanted 0"
+grep -q "✓ EXP-7 reached terminal state" "$SB/out" && grep -q "✓ EXP-8 reached terminal state" "$SB/out" \
+  || fail "chain over Done + needs-human: the lane did not go on"
+case " $(tr '\n' ' ' < "$SB/linear.log")" in *" add-label"*|*" move-"*|*" comment"*) fail "chain over Done + needs-human: a Linear write went out" ;; esac
+# Negative control: the check without the finished-ticket branch stops the lane at once.
+NCREPO="$REPO"; new_repo "needs-human"
+python3 - "$REPO/scripts/shepherd.sh" <<'PY_EOF' || fail "could not build the negative control"
+import pathlib, re, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text()
+t, n = re.subn(r'\n  case "\$HELD_STATE" in\n.*?\n  esac\n', '\n', t, flags=re.S)
+if n != 1: sys.exit(1)
+p.write_text(t)
+PY_EOF
+ticket s8 '["lane-2","needs-human"]'
+orch EXP-7,EXP-8
+[ "$RC" = 25 ] && grep -q "✗ EXP-7 exited 25 — STOPPING this lane" "$SB/err" && ! grep -q "→ shepherd EXP-8" "$SB/out" \
+  || fail "negative control: without the finished-ticket branch the chain no longer stops at the leftover label, so this proves nothing"
+REPO="$NCREPO"
+echo "PASS a hold left on a finished ticket: Done ends with 0 and a cancelled one with 26, nothing written, the chain goes on; --from-stage still refuses it"
 
 # --- the loop keeps the check on every turn -------------------------------------------------
 new_repo "Human Review"

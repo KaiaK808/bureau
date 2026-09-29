@@ -23,6 +23,8 @@
 #     written (needs-human or the configured linear.labels.needs_human.name,
 #     blocked, wip, or a local hold that mark_needs_human left when it could
 #     not write the label). The same check runs on every turn of the loop.
+#     A hold left on a finished ticket changes nothing: without --from-stage
+#     Done still ends with 0 and a cancelled ticket with 26.
 #   - Adds `shepherd-focused` label on entry, removes on EXIT/INT/TERM.
 #     pipeline_pick_next excludes that label so queue-loop stays out of
 #     shepherd's way while a ticket is being driven.
@@ -282,10 +284,17 @@ if [ "$DRY_RUN" = 1 ]; then
   fi
   # The hold check a run makes before its claim (see below), with the same
   # answers: a held ticket prints no route and ends with 25, a failed read ends
-  # the dry run like a failed state read.
-  : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
-  HOLD_RC=0
-  HOLD=$(_shepherd_human_label) || HOLD_RC=$?
+  # the dry run like a failed state read. A finished ticket (Done, cancelled)
+  # ends a run as it always did, whatever label is left on it, so its labels
+  # are not read — unless --from-stage would move it back into the pipeline.
+  HOLD=""; HOLD_RC=0
+  case "${FROM_STAGE:+moved}$CUR" in
+    Done|Cancelled|Canceled|Duplicate) ;;
+    *)
+      : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
+      HOLD=$(_shepherd_human_label) || HOLD_RC=$?
+      ;;
+  esac
   HOLD_FAULT=$(_shepherd_fault_class "$SHEPHERD_FAULT_FILE")
   if [ "$HOLD_RC" -gt 128 ]; then
     echo "[shepherd] dry-run: interrupted while reading the labels of $ISSUE (exit $HOLD_RC) — cancelled." >&2
@@ -509,20 +518,27 @@ _shepherd_start_failed() {
 # and a local hold (the label could not be written, mark_needs_human) was not
 # read at all. Now a held ticket ends here with 25 and nothing written: no
 # claim, no move, no label, no comment, no alert. The line on stderr names the
-# hold and how to release it. A read that fails ends like the start check:
-# nothing written, an alert, and 27 when Linear stayed unusable, 130 for a
-# signal, 1 for anything else — never "no hold".
+# hold and how to release it. A hold left on a ticket that is already finished
+# (a human closed a ticket the shepherd had halted on) changes nothing: without
+# --from-stage such a ticket ends the run as the loop ends it, Done with 0 and a
+# cancelled one with 26, still without a claim or a write. The state is read only
+# on that path, so a free ticket costs no extra read. With --from-stage the
+# ticket would be moved back into the pipeline, so its hold refuses it. A read that fails ends like the start
+# check: nothing written, an alert, and 27 when Linear stayed unusable, 130 for
+# a signal, 1 for anything else — never "no hold".
+# _shepherd_hold_check_failed <exit-code> [<what>] — <what> is the read that
+# failed (default: labels).
 _shepherd_hold_check_failed() {
-  local rc="$1" fault
+  local rc="$1" what="${2:-labels}" fault
   [ "$rc" -gt 128 ] && _shepherd_cancelled "a signal (exit $rc)"
   fault=$(_shepherd_fault_class "$SHEPHERD_FAULT_FILE")
   if [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
-    echo "[shepherd] could not read the labels of $ISSUE — Linear stayed unusable after every retry (fault: $fault); $ISSUE not claimed, nothing written" >&2
-    alert_telegram "$ISSUE" shepherd.sh "$rc" "shepherd did not start (could not read the labels, $(exit_class "$rc"): $fault)" 2>/dev/null || true
+    echo "[shepherd] could not read the $what of $ISSUE — Linear stayed unusable after every retry (fault: $fault); $ISSUE not claimed, nothing written" >&2
+    alert_telegram "$ISSUE" shepherd.sh "$rc" "shepherd did not start (could not read the $what, $(exit_class "$rc"): $fault)" 2>/dev/null || true
     exit "$rc"
   fi
-  echo "[shepherd] could not read the labels of $ISSUE (exit $rc); $ISSUE not claimed, nothing written" >&2
-  alert_telegram "$ISSUE" shepherd.sh 1 "shepherd did not start (could not read the labels, exit $rc)" 2>/dev/null || true
+  echo "[shepherd] could not read the $what of $ISSUE (exit $rc); $ISSUE not claimed, nothing written" >&2
+  alert_telegram "$ISSUE" shepherd.sh 1 "shepherd did not start (could not read the $what, exit $rc)" 2>/dev/null || true
   exit 1
 }
 : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
@@ -530,6 +546,21 @@ HOLD_RC=0
 HOLD=$(_shepherd_human_label) || HOLD_RC=$?
 [ "$HOLD_RC" = 0 ] || _shepherd_hold_check_failed "$HOLD_RC"
 if [ -n "$HOLD" ]; then
+  HELD_STATE=""
+  if [ -z "$FROM_STAGE" ]; then
+    : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
+    HELD_STATE_RC=0
+    HELD_STATE=$(_shepherd_state) || HELD_STATE_RC=$?
+    [ "$HELD_STATE_RC" = 0 ] || _shepherd_hold_check_failed "$HELD_STATE_RC" state
+  fi
+  case "$HELD_STATE" in
+    Done)
+      echo "[shepherd] terminal state 'Done' — done (the hold left on it stays: $HOLD; nothing claimed, nothing written)"
+      exit 0 ;;
+    Cancelled|Canceled|Duplicate)
+      echo "[shepherd] cancelled: $HELD_STATE (the hold left on it stays: $HOLD; nothing claimed, nothing written)"
+      exit 26 ;;
+  esac
   echo "[shepherd] $(_shepherd_hold_text "$HOLD") — not claimed, nothing written (exit 25)" >&2
   exit 25
 fi
