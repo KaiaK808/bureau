@@ -155,8 +155,9 @@ def ci_trigger(text):
     for every branch: the gate counts check runs per commit, whatever event started them),
     'push-filtered' (a push trigger limited by branches or to tags), or None. A line reading,
     not a YAML parser: only the `on:` block counts, so a push-only workflow whose steps read
-    github.event.pull_request is no pull_request workflow; a sequence may sit at column 0.
-    The caller reads the file as utf-8-sig, so a byte order mark does not hide `on:`."""
+    github.event.pull_request is no pull_request workflow; a sequence may sit at column 0, a
+    flow list or map may run over several lines, and event names may be quoted. The caller
+    reads the file as utf-8-sig, so a byte order mark does not hide `on:`."""
     lines = [re.sub(r'(^|\s)#.*$', '', line.rstrip('\r')) for line in text.splitlines()]
     for index, line in enumerate(lines):
         match = re.match(r'''(?:on|"on"|'on')\s*:(.*)$''', line)
@@ -165,6 +166,12 @@ def ci_trigger(text):
         for following in lines[index + 1:]:
             if following.strip() and not following[:1].isspace() and not re.match(r'-(\s|$)', following): break
             block.append(following)
+        # A flow list or map that stays open continues until its brackets close.
+        depth = sum(inline.count(c) for c in '[{') - sum(inline.count(c) for c in ']}')
+        for following in lines[index + 1:]:
+            if depth <= 0: break
+            inline += '\n' + following
+            depth += sum(following.count(c) for c in '[{') - sum(following.count(c) for c in ']}')
         if inline:
             events = {name: inline for name in re.findall(r'[\w-]+', inline)}
         else:
@@ -174,8 +181,8 @@ def ci_trigger(text):
             for following in block:
                 if not following.strip(): continue
                 depth = len(following) - len(following.lstrip())
-                item = re.match(r'\s*-\s*([\w-]+)', following)
-                key = re.match(r'\s*([\w-]+)\s*:(.*)$', following)
+                item = re.match(r'\s*-\s*["\']?([\w-]+)', following)
+                key = re.match(r'\s*["\']?([\w-]+)["\']?\s*:(.*)$', following)
                 if indent is None: indent = depth
                 if depth <= indent and item:
                     current = item.group(1); events[current] = ''

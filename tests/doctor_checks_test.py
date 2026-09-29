@@ -150,7 +150,11 @@ class CiGateTests(Repo):
                      '"on":\n  - push\n  - pull_request\n', "'on': [pull_request]\n", 'on:\n  pull_request_target:\n', 'on: {pull_request: {}}\n',
                      'name: ci\non:  # triggers\n  push:\n  pull_request:\njobs: {}\n',
                      'on:\n- push\n- pull_request\njobs:\n  test:\n    runs-on: ubuntu-latest\n',
-                     b'\xef\xbb\xbfon: pull_request\n', b'\xef\xbb\xbfname: ci\non:\n  pull_request:\n'):
+                     b'\xef\xbb\xbfon: pull_request\n', b'\xef\xbb\xbfname: ci\non:\n  pull_request:\n',
+                     # flow collections over several lines, quoted keys and quoted list items
+                     'on: [\n  push,\n  pull_request\n]\njobs: {}\n', 'on: [\npush,\npull_request\n]\n',
+                     'on: {\n  pull_request: {}\n}\njobs: {}\n', 'on:\n  "pull_request":\n',
+                     "on:\n  'pull_request':\n    types: [opened]\n", "on:\n  - 'pull_request'\n", 'on:\n- "pull_request"\n'):
             with self.subTest(text=text):
                 path = self.workflow('ci.yaml', text)
                 self.assertGateWarning(self.config(), False)
@@ -166,7 +170,8 @@ class CiGateTests(Repo):
         for text in ('on: push\n', 'on: [push]\n', 'on:\n  push:\n', 'on:\n  push:\n    branches-ignore: [main]\n',
                      'on:\n  push:\n    paths: [src/**]\n', 'on:\n  push:\n    tags: [v*]\n    branches-ignore: [gh-pages]\n',
                      'on:\n- push\njobs: {}\n', b'\xef\xbb\xbfon: push\n',
-                     'on:\n  workflow_dispatch:\n  push:\n  schedule:\n    - cron: x\n'):
+                     'on:\n  workflow_dispatch:\n  push:\n  schedule:\n    - cron: x\n',
+                     'on: [\n  push\n]\n', 'on: {\n  push: {}\n}\n', 'on:\n  "push":\n', "on:\n  'push':\n", "on:\n  - 'push'\n", 'on:\n- "push"\n'):
             with self.subTest(text=text):
                 path = self.workflow('ci.yml', text)
                 self.assertGateWarning(self.config(), False)
@@ -174,6 +179,7 @@ class CiGateTests(Repo):
         for text in ('on:\n  push:\n    branches: [main]\n', 'on:\n  push:\n    branches:\n      - main\n  workflow_dispatch:\n',
                      'on:\n  push:\n    tags:\n      - v*\n', 'on: {push: {branches: [main]}}\n',
                      'on:\n  workflow_run:\n    workflows: [push]\n',
+                     'on: {\n  push: {branches: [main]}\n}\n', "on:\n  'push':\n    branches: [main]\n",
                      # a job named push after the on: block is no trigger
                      'on:\n  schedule:\n    - cron: x\njobs:\n  push:\n    runs-on: ubuntu-latest\n'):
             with self.subTest(text=text):
