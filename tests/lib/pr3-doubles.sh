@@ -23,6 +23,12 @@
 #   pr3_pushes / pr3_receives   the counts so far (0 when nothing was recorded).
 #   pr3_run_implement     run the stage with these doubles (the gh and git ones only work
 #                         through it).
+#   pr3_ignore_harness_files   list the harness's own files in the sandbox's
+#                         .git/info/exclude (the bare origin, the call logs, the fake
+#                         model's counter, stderr.log, these doubles), so that `git status`
+#                         in the stage shows only what the agent and the hook left: a
+#                         write into the bare origin or a log while the hook runs is not
+#                         the hook's doing.
 
 pr3_bin() { mkdir -p "$SANDBOX/.pr3-bin"; }
 
@@ -30,6 +36,11 @@ pr3_bin() { mkdir -p "$SANDBOX/.pr3-bin"; }
 # for that run only (a PATH left pointing into a removed sandbox would break the next
 # case's git calls through bash's command hash).
 pr3_run_implement() { PATH="$SANDBOX/.pr3-bin:$PATH" run_implement_pipeline "$@"; }
+
+pr3_ignore_harness_files() {
+  printf '%s\n' '/.fake-origin.git/' '/calls.log' '/gh_calls.log' '/stderr.log' \
+    '/fake_claude_counter' '/.pr3-*' >> "$SANDBOX/.git/info/exclude"
+}
 
 pr3_count_pushes() {
   local real_git
