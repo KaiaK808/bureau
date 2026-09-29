@@ -3015,7 +3015,10 @@ pipeline_pick_next() {
 #      branch: `091-wire-mcp-tool` for `091-wire-mcp-tool-metadata`); or it is
 #      a run of whole `-`-separated words inside the branch slug (a branch with
 #      extra words: `t1-automated-tests-unit` for `001-automated-tests`). When
-#      several fit, the one of them that carries the branch's number.
+#      several fit, the branch's number decides first: the fits that carry it,
+#      if any, are the only ones left. Among those left, the one whose slug
+#      equals the branch slug (`teach-by-naming-wireup` over `teach-by-naming`
+#      for a branch `…-teach-by-naming-wireup`). Two or more left is a tie.
 # Nothing else: a number alone never selects a directory, and a single slug
 # fit wins even when another directory carries the branch's number. Anything
 # ambiguous prints nothing, and the stage works without a spec directory or
@@ -3036,6 +3039,7 @@ _bureau_spec_scan() {
   local branch="${1:-}" specs="${BUREAU_SPECS_DIR:-specs}"
   local last b_num b_slug d name num slug hit
   local slug_n=0 slug_hit="" slug_all="" slugnum_n=0 slugnum_hit=""
+  local eq_n=0 eq_hit="" numeq_n=0 numeq_hit=""
   _bsd_result=""; _bsd_candidates=""
   [ -n "$branch" ] || return 0
   last="${branch##*/}"
@@ -3059,12 +3063,23 @@ _bureau_spec_scan() {
       if [ -n "$num" ] && [ "$num" = "$b_num" ]; then
         slugnum_n=$((slugnum_n + 1)); slugnum_hit="$d"
       fi
+      if [ "$slug" = "$b_slug" ]; then
+        eq_n=$((eq_n + 1)); eq_hit="$d"
+        if [ -n "$num" ] && [ "$num" = "$b_num" ]; then
+          numeq_n=$((numeq_n + 1)); numeq_hit="$d"
+        fi
+      fi
     fi
   done
+  # Several fits: the branch's number narrows them first; among what is left, a
+  # slug equal to the branch slug decides; anything else is a tie.
   if [ "$slug_n" -eq 1 ]; then
     _bsd_result="$slug_hit"
   elif [ "$slug_n" -gt 1 ]; then
-    if [ "$slugnum_n" -eq 1 ]; then _bsd_result="$slugnum_hit"; else _bsd_candidates="$slug_all"; fi
+    if [ "$slugnum_n" -eq 1 ]; then _bsd_result="$slugnum_hit"
+    elif [ "$slugnum_n" -gt 1 ] && [ "$numeq_n" -eq 1 ]; then _bsd_result="$numeq_hit"
+    elif [ "$slugnum_n" -eq 0 ] && [ "$eq_n" -eq 1 ]; then _bsd_result="$eq_hit"
+    else _bsd_candidates="$slug_all"; fi
   fi
   return 0
 }
