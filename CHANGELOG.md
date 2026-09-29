@@ -6,6 +6,32 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+Work in progress towards v3.1. Each theme below belongs to one pull request, which replaces its own `(pending)` line with its entries; the release preparation writes the version section.
+
+### Untrusted code runs without Bureau secrets
+
+- (pending)
+
+### Review and merge outcomes
+
+- (pending)
+
+### Implement loop
+
+- (pending)
+
+### Spec directory handling
+
+- (pending)
+
+### Operator guards
+
+- (pending)
+
+### Doctor, defaults and installer
+
+- (pending)
+
 ## [3.0.2] - 2026-09-29
 
 Patch release on v3.0.1 with a runtime fix and an opt-in addition. Every stage now finds the ticket's own spec directory ([#29](https://github.com/KaiaK808/bureau/pull/29)): implement matched spec directories by their number first and handed every ticket in an installation that reuses one `NNN-` prefix the first alphabetical directory's `tasks.md`, and the other stages matched the slug as a loose substring or took the newest directory. New `repo.worktree_links` links paths such as a Python `.venv` from the main checkout into every stage worktree after its reset ([#30](https://github.com/KaiaK808/bureau/pull/30)); empty by default. **Upgrade:** from v3.0.1, v3.0.0 or v3.0.0-rc.2 select tag `v3.0.2` and resync the scripts scope as one set; no configuration change is required. Installations whose spec directories repeat a number should resync before the next implement run; Python installations can add `"worktree_links": [".venv"]`. See the [v3.0.2 release notes](docs/release-notes.md).
