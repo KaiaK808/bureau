@@ -1669,11 +1669,13 @@ _bureau_gh_owner_repo() {
 # line, "ci: no check run and no status on …", which the merge stage reads as
 # blocked. Without the grace the gate stayed "not yet" forever, without an alert.
 pr_ci_is_green() {
+  # <head-sha>, when given, is the commit to judge (the merge stage pins its merge to it);
+  # without it the PR's current head is read here.
   local pr="$1"
-  local owner_repo head_sha
+  local owner_repo head_sha="${2:-}"
   owner_repo=$(_bureau_gh_owner_repo)
   [ -z "$owner_repo" ] && { echo "ci: cannot resolve owner/repo" >&2; return 1; }
-  head_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || echo "")
+  [ -n "$head_sha" ] || head_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || echo "")
   [ -z "$head_sha" ] && { echo "ci: cannot resolve head SHA for #$pr" >&2; return 1; }
 
   # check-runs: paginate-and-slurp; `--paginate --jq` returns per-page
@@ -1753,7 +1755,10 @@ pr_ci_is_green() {
 # caller can warn. One rule, which bureau-doctor.py (gate_number) applies the same way:
 #   absent or null                  → <default>
 #   a whole number from 0           → itself
-#   a string of digits only ("2")   → that number (warn)
+#   a string that reads as a number → that number (warn): ASCII blanks around it and one
+#                                     leading "+" are dropped, then it must be digits
+#                                     with an optional fraction and exponent (" 2",
+#                                     "+2", "2.0", "1e3")
 #   a fraction (1.5)                → rounded up, never below what was written (warn)
 #   above 9999999                   → 9999999, still never below a count (warn)
 #   negative, any other string, a boolean, an array or an object → <default> (warn)
@@ -1765,7 +1770,9 @@ _merge_gate_number() {
   local filter out value flag
   filter='.agents.KEY as $v
     | ($v | if type == "number" then .
-            elif type == "string" and test("\\A[0-9]+\\z") then tonumber
+            elif type == "string" then
+              (sub("\\A[ \\t\\n\\r\\f\\x0b]+"; "") | sub("[ \\t\\n\\r\\f\\x0b]+\\z"; "") | ltrimstr("+")
+               | if test("\\A[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?\\z") then tonumber else null end)
             else null end) as $n
     | if $v == null then "default ok"
       elif $n == null or $n < 0 then "default warn"

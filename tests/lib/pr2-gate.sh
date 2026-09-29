@@ -13,6 +13,12 @@
 #                   the review comment the stage just posted
 #   check_runs.json, status.json, branch.json, compare.json, threads.json, commit.json
 #   fail_status     present: the legacy status read fails
+#   move_head_on_merge  a SHA: a push lands just before the merge call (the head moves)
+#   move_head_after_reads  "<n> <sha>": a push lands right after the n-th read of the head
+#   fail_head_read  present: reading the PR's head commit (--json headRefOid) fails
+#   allow_unpinned  present: a merge without --match-head-commit goes through (v3.0.2's call)
+# `gh pr merge` must carry --match-head-commit and refuses it, as GitHub does, when the
+# PR's head is not that commit.
 # Every call is logged to $SANDBOX/gh_calls.log (tab-separated argv, like the harness gh);
 # `gh pr merge` also writes merge_calls.log and flips the PR to MERGED.
 # `date +%s` answers $PR2_NOW (set here), so the CI start grace can be tested to the second;
@@ -27,9 +33,9 @@ pr2_gate_setup() {
 set -uo pipefail
 D="${PR2_GH:?}"
 { printf 'gh'; for a in "$@"; do printf '\t%s' "$a"; done; printf '\n'; } >> "${SANDBOX:?}/gh_calls.log"
-JQ="" JSON="" BODY="" prev=""
+JQ="" JSON="" BODY="" PIN="" prev=""
 for a in "$@"; do
-  case "$prev" in --jq) JQ="$a" ;; --json) JSON="$a" ;; --body) BODY="$a" ;; esac
+  case "$prev" in --jq) JQ="$a" ;; --json) JSON="$a" ;; --body) BODY="$a" ;; --match-head-commit) PIN="$a" ;; esac
   prev="$a"
 done
 out() { if [ -n "$JQ" ]; then jq -r "$JQ"; else cat; fi; }
@@ -42,15 +48,30 @@ case "${1:-}:${2:-}" in
       *) jq 'if .state == "OPEN" then [{number: .number}] else [] end' "$D/pr.json" | out ;;
     esac ;;
   pr:view)
+    if [ "$JSON" = headRefOid ] && [ -e "$D/fail_head_read" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ -n "$JSON" ]; then
       pr_doc | jq --arg f "$JSON" '. as $pr | reduce ($f | split(",")[]) as $k ({}; .[$k] = $pr[$k])' | out
     else
       jq -r .url "$D/pr.json"
+    fi
+    if [ "$JSON" = headRefOid ] && [ -s "$D/move_head_after_reads" ]; then
+      reads=$(( $(cat "$D/head_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/head_reads"
+      read -r after sha < "$D/move_head_after_reads"
+      if [ "$reads" = "$after" ]; then
+        jq --arg h "$sha" '.headRefOid = $h' "$D/pr.json" > "$D/pr.json.tmp" && mv "$D/pr.json.tmp" "$D/pr.json"
+      fi
     fi ;;
   pr:comment)
     jq --arg b "$BODY" --arg t "2026-09-29T10:$(printf '%02d' "$(jq length "$D/comments.json")"):00Z" \
       '. + [{createdAt: $t, body: $b}]' "$D/comments.json" > "$D/comments.json.tmp" && mv "$D/comments.json.tmp" "$D/comments.json" ;;
   pr:merge)
+    if [ -s "$D/move_head_on_merge" ]; then
+      jq --arg h "$(cat "$D/move_head_on_merge")" '.headRefOid = $h' "$D/pr.json" > "$D/pr.json.tmp" && mv "$D/pr.json.tmp" "$D/pr.json"
+    fi
+    [ -n "$PIN" ] || [ -e "$D/allow_unpinned" ] || { echo "pr2 gh double: gh pr merge without --match-head-commit" >&2; exit 1; }
+    if [ -n "$PIN" ] && [ "$PIN" != "$(jq -r .headRefOid "$D/pr.json")" ]; then
+      echo "GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)" >&2; exit 1
+    fi
     echo "gh pr merge ${3:-?}" >> "$D/merge_calls.log"
     jq '.state = "MERGED"' "$D/pr.json" > "$D/pr.json.tmp" && mv "$D/pr.json.tmp" "$D/pr.json" ;;
   api:*)

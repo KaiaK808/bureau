@@ -18,7 +18,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 sed -n '/^_merge_gate_number() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$T/gate.sh"
 grep -q '^_merge_gate_number() {' "$T/gate.sh" || fail '_merge_gate_number not found in bureau-config.sh'
 
-# JSON value (or "absent") : number used : warn|ok
+# JSON value (or "absent") : number used : warn|ok. A string counts when, without ASCII
+# blanks around it and one leading "+", it is digits with an optional fraction and exponent.
 TABLE='absent:1:ok
 null:1:ok
 0:0:ok
@@ -29,8 +30,28 @@ null:1:ok
 "2":2:warn
 "007":7:warn
 "99999999999999999999":9999999:warn
-" 2":1:warn
-"2.5":1:warn
+" 2":2:warn
+"2 ":2:warn
+"+2":2:warn
+"\t2\n":2:warn
+"\u000b2":2:warn
+"b2":1:warn
+"20b":1:warn
+"2.0":2:warn
+"1e3":1000:warn
+"1E3":1000:warn
+"1e-3":1:warn
+"0.0":0:warn
+"2.5":3:warn
+"1e400":9999999:warn
+"+ 2":1:warn
+"++2":1:warn
+"-2":1:warn
+".5":1:warn
+"5.":1:warn
+"0x10":1:warn
+"Infinity":1:warn
+"two":1:warn
 "-1":1:warn
 "abc":1:warn
 "":1:warn

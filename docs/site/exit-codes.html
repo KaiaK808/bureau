@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2783e76fa1b7951b034db5183ce47dc5345f9979259c91d5e2da75f97bd5fd9e">
+<meta name="bureau-source-sha256" content="63adeb4199ac68820db903f65d202bd6660b6e2a11d485a06813d10358934d0c">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -46,9 +46,10 @@ doesn't spam you 30 times an hour.</p>
 <td>No pickable issue in the polled state; from
 <code>merge-pipeline.sh</code> also: the merge gate is not yet decided
 (checks pending or not started, GitHub still computing, a gate read that
-failed, a hold label
-<code>wip</code>/<code>blocked</code>/<code>needs-human</code> on the
-PR, conflicts the rebase stage resolves — never under the shepherd,
+failed, a head that moved after the gate checked it — the merge is
+pinned to that head with <code>--match-head-commit</code> —, a hold
+label <code>wip</code>/<code>blocked</code>/<code>needs-human</code> on
+the PR, conflicts the rebase stage resolves — never under the shepherd,
 whose ticket the queue's rebase stage skips); from
 <code>code-review-pipeline.sh</code> also: an APPROVE whose inline merge
 found its gate not yet decided — the approval is recorded, and the next

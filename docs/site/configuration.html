@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c101866a88ba86e596d382f93182f245c5d123929efa1e6efcd26a808fd050b1">
+<meta name="bureau-source-sha256" content="b0862bbba7ef17bdfee6cf71cf2455e6d5687190e82d8f3c76c1463c7835a13c">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -421,13 +421,16 @@ registered workflows from passing vacuously. Set to <code>0</code> for
 repos with no CI at all (rare — prefer flipping
 <code>merge_require_green_ci</code> to <code>false</code> instead). A
 value that is not a plain whole number is read by the gate's number
-rule: a string of digits only (<code>"2"</code>) is that number, a
-fraction is rounded up (never fewer than written), a number above
-9999999 is 9999999, and a negative number or any other value is the
-default, each with a warning from the merge stage and the doctor (one
-rule: <code>_merge_gate_number</code> in <code>bureau-config.sh</code>,
-<code>gate_number</code> in <code>bureau-doctor.py</code>). Before v3.1
-a negative number or a word let the check pass with no check at all</td>
+rule: a string that reads as a number is that number (ASCII blanks
+around it and one leading <code>+</code> are dropped, then digits with
+an optional fraction and exponent: <code>" 2"</code>, <code>"+2"</code>,
+<code>"2.0"</code>, <code>"1e3"</code>), a fraction is rounded up (never
+fewer than written), a number above 9999999 is 9999999, and a negative
+number or any other value is the default, each with a warning from the
+merge stage and the doctor (one rule: <code>_merge_gate_number</code> in
+<code>bureau-config.sh</code>, <code>gate_number</code> in
+<code>bureau-doctor.py</code>). Before v3.1 a negative number or a word
+let the check pass with no check at all</td>
 </tr>
 <tr>
 <td><code>agents.merge_ci_start_grace_seconds</code></td>

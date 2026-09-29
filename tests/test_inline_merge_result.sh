@@ -16,6 +16,8 @@
 #   4. blocked (a failing check): exit 25, needs-human, the gate line on the ticket, the
 #      APPROVE recorded: once the check is fixed and the label removed, the next run
 #      merges without a model call; a push after the block means a new review
+#   4b. a push that lands between the inline gate and the merge call: the pinned merge
+#      refuses, the review ends 2, and the next run reviews the new head (a model call)
 #   5. the disposable worktree is back on the reviewed head and clean after 2 and after
 #      25, so the worker does not keep it as unfinished work
 #   6. the shepherd waits on the review stage's "not yet" as it does at Merge
@@ -151,6 +153,24 @@ pr2_checks green
 review
 [ "$(pr2_model_calls)" -gt 0 ] || fail '4: a new head after the block reused the old approval'
 echo 'PASS 4 blocked: exit 25, needs-human, gate line on the ticket, approval kept; reused after the fix, not after a push'
+
+# ── 4b. the head moves between the inline gate and the merge ───────────────
+new_sandbox
+pr2_checks green
+bump=$(git -C "$SANDBOX" commit-tree "origin/test-branch^{tree}" -p origin/test-branch -m 'pushed during the merge')
+echo "$bump" > "$PR2_GH/move_head_on_merge"
+review
+[ "$LAST_RC" = 2 ] || fail "4b: a head that moved during the inline merge ended $LAST_RC, wanted 2"
+pr2_merged && fail '4b: merged a head no gate had checked'
+labeled_human && fail '4b: set needs-human for a moved head'
+grep -q 'the PR head moved from' "$SANDBOX/calls.log" || fail '4b: the ticket comment does not name the moved head'
+# The push reaches origin; the next run judges the new head with a new review.
+git -C "$SANDBOX" push -q origin "$bump:refs/heads/test-branch"
+rm -f "$PR2_GH/move_head_on_merge"
+review
+[ "$(pr2_model_calls)" -gt 0 ] || fail '4b: the new head was not reviewed again'
+[ "$LAST_RC" = 0 ] && pr2_merged || fail "4b: the reviewed new head did not merge (rc $LAST_RC)"
+echo 'PASS 4b a head that moves during the inline merge is not merged; the next run reviews it'
 
 # ── 5. the worktree the worker finds after a gate outcome ──────────────────
 # The build check leaves a file git does not ignore and a local commit (as the local

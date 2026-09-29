@@ -10,6 +10,10 @@
 #      whenever a read fails, it stays "not yet". It used to stay "not yet" forever, so a
 #      repository without a workflow waited silently.
 #      The gate line carries no age, so polling a blocked head posts one PR comment.
+#   4. the merge is pinned to the head the gate checked (--match-head-commit): a push that
+#      lands between the check and the merge call makes the merge refuse, and the stage
+#      ends "not yet" (2) — never merged, never blocked; a head that cannot be read is not
+#      yet too
 #   3. agents.merge_min_required_checks and the grace follow one rule (_merge_gate_number,
 #      the same as the doctor's): a string of digits is that number, a fraction is rounded
 #      up, a negative number or anything else is the default, each with a warning. Before,
@@ -141,7 +145,7 @@ echo 'PASS 2 no check and no status past the grace is blocked (one PR comment ho
 # One green check on the head. value : checks required : merges?
 new_sandbox
 pr2_head_age 60
-for row in '"2":2:no' '"3":3:no' '1.5:2:no' '"abc":1:yes' '-1:1:yes' '"-1":1:yes' 'true:1:yes' '[]:1:yes' \
+for row in '"2":2:no' '"3":3:no' '" 2":2:no' '"+2":2:no' '"2.0":2:no' '1.5:2:no' '"abc":1:yes' '-1:1:yes' '"-1":1:yes' 'true:1:yes' '[]:1:yes' \
            '12345678901234567890:9999999:no'; do
   value=${row%%:*}; rest=${row#*:}; need=${rest%%:*}; merges=${rest#*:}
   pr2_checks green; pr2_config ".agents.merge_min_required_checks = $value"
@@ -167,6 +171,42 @@ for row in '3:3' '2.0:2' 'absent:1'; do
   grep -q 'should be a whole number' <<< "$LAST_STDERR" && fail "3: warned about the valid value $value"
 done
 echo 'PASS 3 merge_min_required_checks: "2" requires 2, a fraction is rounded up, a negative or unreadable value is 1, each with a warning'
+
+# ── 4. the merge is pinned to the head the gate checked ────────────────────
+new_sandbox
+OLD_HEAD=$(jq -r .headRefOid "$PR2_GH/pr.json")
+echo 1111111111111111111111111111111111111111 > "$PR2_GH/move_head_on_merge"
+gate
+[ "$LAST_RC" = 2 ] && [ "$OUTCOME" = not-yet ] || fail "4: a head that moved during the merge ended rc $LAST_RC outcome '$OUTCOME', wanted 2 not-yet"
+grep -q "^merge_head: the PR head moved from $OLD_HEAD to 1111111111111111111111111111111111111111" <<< "$LINES" || fail "4: no merge_head line: $LINES"
+pr2_merged && fail '4: merged a head the gate had not checked'
+grep -q $'add_issue_label\t'"$ISSUE"$'\tneeds-human' "$SANDBOX/calls.log" && fail '4: set needs-human for a moved head'
+grep -q 'Merge attempted but' "$SANDBOX/calls.log" && fail '4: reported a failed merge for a moved head'
+grep -q $'move_issue\t'"$ISSUE"$'\tstate-done' "$SANDBOX/calls.log" && fail '4: moved to Done without a merge'
+grep -q -- '--match-head-commit'$'\t'"$OLD_HEAD" "$SANDBOX/gh_calls.log" || fail '4: the merge call was not pinned to the checked head'
+# A push right after the just-in-time gate read the head (before the merge call): the
+# merge stays pinned to the head the gate checked, so GitHub refuses it.
+new_sandbox
+echo "2 2222222222222222222222222222222222222222" > "$PR2_GH/move_head_after_reads"
+gate
+[ "$LAST_RC" = 2 ] && ! pr2_merged && grep -q '^merge_head: .* to 2222222222222222222222222222222222222222' <<< "$LINES" \
+  || fail "4: a push after the gate's head read was merged or not reported (rc $LAST_RC: $LINES)"
+# The rebase strategy is pinned the same way.
+new_sandbox
+sed -i.bak 's/^BUREAU_MERGE_STRATEGY="squash"/BUREAU_MERGE_STRATEGY="rebase"/' "$SCRIPTS_DIR/bureau-config.sh"
+grep -q '^BUREAU_MERGE_STRATEGY="rebase"' "$SCRIPTS_DIR/bureau-config.sh" || fail '4: could not switch the stub to rebase'
+gate
+[ "$LAST_RC" = 0 ] && pr2_merged || fail "4: a pinned rebase merge did not go through (rc $LAST_RC)"
+grep -q $'pr\tmerge\t99\t--rebase\t--match-head-commit\t'"$(jq -r .headRefOid "$PR2_GH/pr.json")" "$SANDBOX/gh_calls.log" || fail '4: the rebase merge was not pinned'
+# A head that cannot be read cannot be pinned: not yet, no merge call — also with the CI
+# gate off, where nothing else reads the head.
+new_sandbox
+touch "$PR2_GH/fail_head_read"
+pr2_config '.agents.merge_require_green_ci = false'
+gate
+[ "$LAST_RC" = 2 ] && grep -q '^head_read: ' <<< "$LINES" || fail "4: an unreadable head ended rc $LAST_RC: $LINES"
+grep -q $'pr\tmerge' "$SANDBOX/gh_calls.log" && fail '4: called gh pr merge without a readable head'
+echo 'PASS 4 the merge is pinned: a head that moved or cannot be read is not yet, never merged'
 
 # ── Negative controls: the v3.0.2 reads ────────────────────────────────────
 new_sandbox
@@ -206,6 +246,19 @@ pr2_checks none; pr2_head_age 60
 pr2_config '.agents.merge_min_required_checks = "abc"'
 gate
 [ "$LAST_RC" = 0 ] && pr2_merged || fail "negative control: the v3.0.2 read should merge a head without checks under \"abc\" (rc $LAST_RC)"
-echo 'PASS negative controls: v3.0.2 keeps the CI gate under false, waits forever without checks, and merges without checks under "abc"'
+# The v3.0.2 merge call (no --match-head-commit) merges a head that moved after the gate.
+new_sandbox
+python3 - "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'
+import sys
+p = sys.argv[1]; src = open(p).read()
+old = ' --match-head-commit "$MERGE_HEAD"'
+assert src.count(old) == 2, 'pinned merge calls not found'
+open(p, 'w').write(src.replace(old, ''))
+PY
+touch "$PR2_GH/allow_unpinned"
+echo 1111111111111111111111111111111111111111 > "$PR2_GH/move_head_on_merge"
+gate
+[ "$LAST_RC" = 0 ] && pr2_merged || fail "negative control: the unpinned merge should merge the moved head (rc $LAST_RC)"
+echo 'PASS negative controls: v3.0.2 keeps the CI gate under false, waits forever without checks, merges without checks under "abc", and merges a head that moved after the gate'
 
 echo 'OK test_merge_gate_switches'
