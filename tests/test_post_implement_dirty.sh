@@ -12,6 +12,10 @@
 #   6  a path with spaces in a directory with spaces → 14, named in full
 #   7  a staged rename with further edits (`RM` in git status), edited again by the hook → 14
 #   8  a hook that also leaves a new file → both lists in the report
+#  10  a process the agent left running keeps appending to its untracked log while the hook
+#      runs: not counted (it still changes after the hook ended), named on stderr, ok
+#  11  the agent's untracked symlink to a.txt; the hook changes and commits a.txt → ok
+#  12  the same symlink pointed elsewhere by the hook → 14, named
 #   9  negative control: the stage without the content comparison passes case 1 (exit 0,
 #      hand-off), which is what v3.0.2 did
 set -euo pipefail
@@ -30,7 +34,7 @@ setup() {  # setup <hook-command> — tracked a.txt, old.txt and "dir with space
   sandbox_init "EXP-100" "test-branch"
   export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_complete.txt"
   export FAKE_CLAUDE_COMMIT_ON_ITERS="1" BUREAU_DRY_RUN=0 BUREAU_IMPL_MAX_ITER=3
-  unset BUREAU_USE_GOAL_LOOP BUREAU_POST_IMPLEMENT_TIMEOUT BUREAU_IMPL_TOTAL_TIMEOUT PR3_DIRTY PR3_RENAME PR3_MARKER_ON
+  unset BUREAU_USE_GOAL_LOOP BUREAU_POST_IMPLEMENT_TIMEOUT BUREAU_IMPL_TOTAL_TIMEOUT PR3_DIRTY PR3_RENAME PR3_MARKER_ON PR3_ON_CALL_1
   mkdir -p "$SANDBOX/dir with space"
   printf 'a\n' > "$SANDBOX/a.txt"
   printf 'old\n' > "$SANDBOX/old.txt"
@@ -115,6 +119,33 @@ pr3_run_implement
 check_eq 14 "$LAST_RC" "8 exit"
 has 'uncommitted changes it left \(kept in the worktree\):.\?\? derived\.txt' "$(calls | tr '\n' ' ')" "8 new file listed"
 has 'changed further \(kept in the worktree\):.a\.txt' "$(calls | tr '\n' ' ')" "8 changed file listed"
+teardown
+
+# 10 — a background writer the agent left behind is not the hook's doing
+setup 'sleep 1'
+export PR3_ON_CALL_1='echo start > agent-bg.log; nohup sh -c "i=0; while [ ! -e .pr3-stop ] && [ \$i -lt 150 ]; do echo x >> agent-bg.log; sleep 0.2; i=\$((i+1)); done" >/dev/null 2>&1 &'
+pr3_run_implement
+: > "$SANDBOX/.pr3-stop"
+check_eq 0 "$LAST_RC" "10 exit"
+has 'not counted, still changing after the command ended: agent-bg\.log' "$LAST_STDERR" "10 named on stderr"
+has 'move_issue.*state-build-review' "$(calls)" "10 hand-off"
+sleep 1
+teardown
+
+# 11 — an untracked symlink whose target the hook changes and commits
+setup 'echo "added by the hook" >> a.txt; git add a.txt; git commit -qm "chore: fold in a.txt"'
+export PR3_ON_CALL_1='ln -s a.txt link.txt'
+pr3_run_implement
+check_eq 0 "$LAST_RC" "11 exit"
+has 'move_issue.*state-build-review' "$(calls)" "11 hand-off"
+teardown
+
+# 12 — the hook points that symlink elsewhere
+setup 'rm -f link.txt; ln -s old.txt link.txt'
+export PR3_ON_CALL_1='ln -s a.txt link.txt'
+pr3_run_implement
+check_eq 14 "$LAST_RC" "12 exit"
+has 'changed further \(kept in the worktree\):.link\.txt' "$(calls | tr '\n' ' ')" "12 link named"
 teardown
 
 # 9 — negative control: without the content comparison the stage passes case 1, as v3.0.2 did

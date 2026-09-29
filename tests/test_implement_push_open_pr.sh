@@ -19,6 +19,18 @@
 #  11  false, PR open, origin rejects every push: the end-of-run push is retried once, then
 #      18 before any hand-off (the final-push rules are unchanged)
 #  12  false, PR open, COMPLETE: one push, then the PR is marked ready and the ticket moves
+#  4b  false, gh answers text that is not a number (exit 0): no PR, pushes as by default
+#  14  false, PR open, the provider times out (124) on call 3: the held-back iterations are
+#      pushed before the stage ends, and it still ends with 124
+#  15  the same with an exhausted quota (23) on a call that made no commit
+#  16  the same with an interrupted provider (130)
+#  17  the same when the stage itself gets SIGTERM during call 2 (the EXIT trap): 143
+#  18  default, provider timeout on call 3: the iterations before it are on origin from their
+#      own pushes, and nothing extra is pushed
+#  19  false, PR open, a hook that resets HEAD to origin's tip: 14, HEAD is not pushed, the
+#      commit the hook started from is
+#  20  false, PR open, SIGTERM while a hook that reset HEAD runs: the EXIT trap pushes the
+#      commit the hook started from
 #  13  negative control: the stage with the per-iteration and /goal pushes of v3.0.2 pushes
 #      after every iteration under false with a PR open
 set -euo pipefail
@@ -91,6 +103,14 @@ pr3_gh_pr_list null
 pr3_run_implement
 check_eq 4 "$(pr3_pushes)" "4 null is no PR"
 check_eq 3 "$(pr3_receives)" "4 origin received each iteration"
+teardown
+
+# 4b — false, gh answers something that is not a PR number
+setup "$OFF"
+export GH_STUB_EXISTING_PR=7
+pr3_gh_pr_list junk
+pr3_run_implement
+check_eq 4 "$(pr3_pushes)" "4b a non-numeric answer is no PR"
 teardown
 
 # 5 — false, gh fails
@@ -170,6 +190,68 @@ check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "12 the work on o
 order=$(gh_log | grep -nE $'^(git\tpush|gh\tpr\tready)' | cut -d: -f2 | cut -f1-2 | tr '\t\n' ' |')
 check_eq 'git push|gh pr|' "$order" "12 the push comes before the PR is marked ready"
 has 'move_issue.*state-build-review' "$(calls)" "12 hand-off"
+teardown
+
+# 14–16 — false, PR open, the provider fails: the held-back commits go out before the exit
+for c in "14 3 124" "15 2 23" "16 2 130"; do
+  set -- $c
+  setup "$OFF"
+  pr3_fake_claude
+  export GH_STUB_EXISTING_PR=7 PR3_EXIT_ON="$2" PR3_EXIT_CODE="$3"
+  [ "$1" != 15 ] || export FAKE_CLAUDE_COMMIT_ON_ITERS="1"
+  pr3_run_implement
+  unset PR3_EXIT_ON PR3_EXIT_CODE
+  check_eq "$3" "$LAST_RC" "$1 the provider's exit code is kept"
+  check_eq 1 "$(pr3_pushes)" "$1 one push, before the exit"
+  check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "$1 every commit of the run on origin"
+  has "pushing the deferred commits of test-branch \(provider exit $3\)" "$LAST_STDERR" "$1 says why"
+  hasnt 'move_issue' "$(calls)" "$1 no hand-off"
+  teardown
+done
+
+# 17 — false, PR open, the stage gets SIGTERM during call 2
+setup "$OFF"
+pr3_fake_claude
+export GH_STUB_EXISTING_PR=7 PR3_TERM_STAGE_ON=2
+pr3_run_implement
+unset PR3_TERM_STAGE_ON
+check_eq 143 "$LAST_RC" "17 ended by SIGTERM"
+check_eq 1 "$(pr3_pushes)" "17 one push, from the EXIT trap"
+check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "17 every commit of the run on origin"
+has 'pushing the deferred commits of test-branch \(the stage ends before its end-of-run push\)' "$LAST_STDERR" "17 says why"
+teardown
+
+# 18 — default, provider timeout on call 3: nothing extra
+setup
+pr3_fake_claude
+export GH_STUB_EXISTING_PR=7 PR3_EXIT_ON=3 PR3_EXIT_CODE=124
+pr3_run_implement
+unset PR3_EXIT_ON PR3_EXIT_CODE
+check_eq 124 "$LAST_RC" "18 exit"
+check_eq 2 "$(pr3_pushes)" "18 the two iteration pushes only"
+hasnt 'deferred' "$LAST_STDERR$LAST_STDOUT" "18 nothing deferred"
+teardown
+
+# 19 — false, PR open, the hook resets HEAD to origin's tip
+setup
+jq -n --argjson impl "$OFF" '{agents: {implement: $impl}, repo: {post_implement_command: "git reset -q --hard origin/test-branch"}}' > "$SANDBOX/.bureau.json"
+export GH_STUB_EXISTING_PR=7 FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_complete.txt" FAKE_CLAUDE_COMMIT_ON_ITERS="1"
+pr3_run_implement
+check_eq 14 "$LAST_RC" "19 exit"
+has 'not pushing: repo.post_implement_command moved HEAD' "$LAST_STDERR" "19 HEAD not pushed"
+check_eq 1 "$(pr3_pushes)" "19 one push"
+check_eq 'fake-claude iter 1 progress' "$(git -C "$SANDBOX/.fake-origin.git" log -1 --format=%s test-branch)" "19 the run's commit is on origin"
+teardown
+
+# 20 — false, PR open, the stage gets SIGTERM while a hook that reset HEAD is still running:
+# the EXIT trap pushes the commit the hook started from, never the reset HEAD
+setup
+jq -n --argjson impl "$OFF" '{agents: {implement: $impl}, repo: {post_implement_command: "git reset -q --hard origin/test-branch; ./.pr3-term-stage; sleep 3"}}' > "$SANDBOX/.bureau.json"
+pr3_term_stage_script
+export GH_STUB_EXISTING_PR=7 FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_complete.txt" FAKE_CLAUDE_COMMIT_ON_ITERS="1"
+pr3_run_implement
+check_eq 143 "$LAST_RC" "20 ended by SIGTERM"
+check_eq 'fake-claude iter 1 progress' "$(git -C "$SANDBOX/.fake-origin.git" log -1 --format=%s test-branch)" "20 the run's commit is on origin"
 teardown
 
 # 13 — negative control: the per-iteration and /goal pushes as in v3.0.2

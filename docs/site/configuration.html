@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="38bec5480ef6e5793c221f400a11a2fd1b744ae911be1bfac645dc705ee1a4d3">
+<meta name="bureau-source-sha256" content="d44bfaf0b2bc435f1174ee56b8911c5e186c4e8d510a02b8292ef6554c0a7e78">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -285,9 +285,13 @@ failing <code>gh</code> count as no open PR. Read only when
 mean <code>true</code>, any other value means <code>true</code> with a
 warning. The end-of-run push keeps its rules: retried once, and the
 stage ends with <code>18</code> before any hand-off when origin still
-lacks commits. A stage that fails before its end leaves deferred commits
-only in its worktree, which <code>bureau-worker.sh</code> then keeps
-instead of resetting</td>
+lacks commits. A stage that ends before its end-of-run push (a provider
+that fails or times out, an unusable Linear, a crash, SIGTERM or SIGHUP)
+pushes the deferred commits first, once and best effort, and keeps its
+exit code; after a <code>repo.post_implement_command</code> that moved
+HEAD it pushes the commit the command started from, never the rewritten
+HEAD. A process killed outright (SIGKILL, a host crash) pushes nothing,
+and its commits stay in the worktree</td>
 </tr>
 <tr>
 <td><code>agents.qa</code></td>
@@ -1001,7 +1005,8 @@ alone cannot complete the stage.</p>
 other forms GitHub honours), or the range could not be read. Reword the
 named messages, then remove <code>needs-human</code>. The check also
 runs after every iteration of the loop, so a marker stops the run after
-the iteration that wrote it instead of after all of them; the
+the iteration that wrote it instead of after all of them, and that
+check's report goes into the iteration log of the summary; the
 <code>/goal</code> path, which has no iterations, checks once after its
 run, and the check before the hand-off always runs. The QA stage runs
 the same check and flags <code>needs-human</code> instead of routing

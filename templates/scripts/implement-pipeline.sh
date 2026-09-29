@@ -53,10 +53,12 @@ refresh_review_context() {
 # open_or_update_pr_draft: ensure a draft PR exists for $BRANCH; emit its URL.
 # Used during intermediate iterations and on non-COMPLETE terminal states so
 # reviewers can see in-flight work without QA/code-review picking it up.
-# push_branch_loud <label> [status]: push $BRANCH to origin; on failure say so
-# loudly, and carry on — or, with `status`, return git's exit code so the
-# caller can decide. Only the end-of-run push uses it: after it the ticket is
-# handed on, and a hand-off of work that is not on origin must not happen.
+# push_branch_loud <label> [status] [rev]: push $BRANCH to origin; on failure
+# say so loudly, and carry on — or, with `status`, return git's exit code so
+# the caller can decide. Only the end-of-run push uses it: after it the ticket
+# is handed on, and a hand-off of work that is not on origin must not happen.
+# rev (default HEAD) is what gets pushed; push_deferred passes the commit a
+# hook started from when the hook moved HEAD.
 #
 # Carried over from installation A (EXP-1462). Every push here used to end
 # in `|| true`, so a failed push left no trace: whether the branch was out
@@ -77,12 +79,12 @@ refresh_review_context() {
 # the branch already exists on origin: for a new one git cannot tell that the
 # name is meant as a branch and refuses ("not a full refname").
 push_branch_loud() {
-  local label="$1" mode="${2:-}" push_out rc
+  local label="$1" mode="${2:-}" rev="${3:-HEAD}" push_out rc
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "  [DRY_RUN] would: git push -u origin HEAD:refs/heads/$BRANCH ($label)"
+    echo "  [DRY_RUN] would: git push -u origin $rev:refs/heads/$BRANCH ($label)"
     return 0
   fi
-  if push_out=$(git push -u origin HEAD:refs/heads/"$BRANCH" 2>&1); then
+  if push_out=$(git push -u origin "$rev":refs/heads/"$BRANCH" 2>&1); then
     :
   else
     rc=$?
@@ -178,18 +180,21 @@ sys.exit(128 - rc if rc < 0 else rc)
 # split into a deletion and an addition.
 #
 # _post_implement_hash_paths <path>...: one line per path, in order: the
-# content hash of a regular file, "absent" for anything else (deleted, a
-# directory). All files go through one `git hash-object` call (xargs splits
-# a long list); one call per path only when that fails (a file vanished).
+# content hash of a regular file, "link:" and the hash of the target text for
+# a symlink (what git stores for it; the file it points to may change and be
+# committed while the link stays as it was), "absent" for anything else
+# (deleted, a directory). All regular files go through one `git hash-object`
+# call (xargs splits a long list); one call per path only when that fails (a
+# file vanished).
 _post_implement_hash_paths() {
   local p out h i=0 n=0
   local -a hashes
   for p in "$@"; do
-    if [ -f "$p" ]; then n=$((n + 1)); fi
+    if [ -f "$p" ] && [ ! -L "$p" ]; then n=$((n + 1)); fi
   done
   out=""
   if [ "$n" -gt 0 ]; then
-    out=$(for p in "$@"; do if [ -f "$p" ]; then printf '%s\0' "$p"; fi; done \
+    out=$(for p in "$@"; do if [ -f "$p" ] && [ ! -L "$p" ]; then printf '%s\0' "$p"; fi; done \
       | xargs -0 git hash-object --no-filters -- 2>/dev/null) || out=""
   fi
   hashes=()
@@ -197,7 +202,9 @@ _post_implement_hash_paths() {
     while IFS= read -r h; do hashes+=("$h"); done <<< "$out"
   fi
   for p in "$@"; do
-    if [ ! -f "$p" ]; then
+    if [ -L "$p" ]; then
+      echo "link:$(readlink "./$p" | git hash-object --stdin 2>/dev/null)"
+    elif [ ! -f "$p" ]; then
       echo absent
     elif [ "${#hashes[@]}" -eq "$n" ]; then
       echo "${hashes[$i]}"
@@ -224,12 +231,22 @@ _post_implement_dirty_snapshot() {
   done < <(_post_implement_hash_paths "${paths[@]}")
 }
 # _post_implement_changed_dirty <file>: print, one per line, each path of the
-# snapshot whose content changed and that `git status` still lists.
+# snapshot whose content changed and that `git status` still lists, unless it
+# changes again within _POST_IMPLEMENT_SETTLE seconds after the command has
+# ended. Such a path is being written by something that is still running,
+# typically a process the agent left behind (the provider stops its process
+# group only on a timeout or an interrupt, not after a normal turn); it is
+# named on stderr and not counted. A writer slower than that can still be
+# counted against the command. The wait happens only when there is a path to
+# blame.
+_POST_IMPLEMENT_SETTLE=2
 _post_implement_changed_dirty() {
-  local record now i=0
-  local -a paths hashes
+  local record now again i=0 j=0
+  local -a paths hashes blamed blamed_now
   paths=()
   hashes=()
+  blamed=()
+  blamed_now=()
   while IFS= read -r -d '' record; do
     hashes+=("${record%%$'\t'*}")
     paths+=("${record#*$'\t'}")
@@ -238,10 +255,21 @@ _post_implement_changed_dirty() {
   while IFS= read -r now; do
     if [ "$now" != "${hashes[$i]}" ] \
       && [ -n "$(git --literal-pathspecs status --porcelain --untracked-files=all -- "${paths[$i]}")" ]; then
-      printf '%s\n' "${paths[$i]}"
+      blamed+=("${paths[$i]}")
+      blamed_now+=("$now")
     fi
     i=$((i + 1))
   done < <(_post_implement_hash_paths "${paths[@]}")
+  [ "${#blamed[@]}" -gt 0 ] || return 0
+  sleep "$_POST_IMPLEMENT_SETTLE"
+  while IFS= read -r again; do
+    if [ "$again" = "${blamed_now[$j]}" ]; then
+      printf '%s\n' "${blamed[$j]}"
+    else
+      echo "  repo.post_implement_command: not counted, still changing after the command ended: ${blamed[$j]}" >&2
+    fi
+    j=$((j + 1))
+  done < <(_post_implement_hash_paths "${blamed[@]}")
 }
 run_post_implement_command() {
   local cmd limit before before_status after_status new_dirty changed_dirty dirty_snapshot rc log status_file why reason hook_commits
@@ -617,13 +645,42 @@ if [ "$PUSH_EACH_ITERATION" = false ]; then
 fi
 
 # push_iteration <label>: the push after an iteration or after the /goal run.
+DEFERRED_PUSH_PENDING=0
+HEAD_BEFORE_HOOK=""
 push_iteration() {
   if [ -n "$OPEN_PR_AT_START" ]; then
+    DEFERRED_PUSH_PENDING=1
     echo "  push deferred ($1): PR #$OPEN_PR_AT_START is open, the end-of-run push carries the work"
   else
     push_branch_loud "$1"
   fi
 }
+
+# push_deferred <label> [rev]: push what push_iteration held back (rev, HEAD by
+# default), once, loud and best effort, on a way out that does not reach the
+# end-of-run push. Nothing held back, nothing to do; it never fails.
+push_deferred() {
+  [ "$DEFERRED_PUSH_PENDING" = 1 ] || return 0
+  DEFERRED_PUSH_PENDING=0
+  echo "  pushing the deferred commits of $BRANCH ($1)" >&2
+  push_branch_loud "$1" "" "${2:-HEAD}"
+}
+# Every way out before the end-of-run push goes through this EXIT trap while
+# pushes are deferred: a provider that fails or times out, an unusable Linear,
+# a crash under set -e, SIGTERM or SIGHUP (bash runs the EXIT trap for those;
+# `$?` in it is then not the signal's code, so the pending flag decides). The
+# exit code stays what it was. Without it the held-back iterations would be
+# only in the worktree: the worker keeps that worktree, but the next run on
+# the branch stops at it, and a run outside the worker checks the branch out
+# again from origin. Once repo.post_implement_command is about to run, the
+# trap pushes the commit the hook starts from, never HEAD: a stage ended
+# during or after the hook must not publish what the hook did to HEAD.
+_push_deferred_on_exit() {
+  push_deferred "the stage ends before its end-of-run push" "${HEAD_BEFORE_HOOK:-HEAD}"
+}
+if [ -n "$OPEN_PR_AT_START" ]; then
+  trap _push_deferred_on_exit EXIT
+fi
 
 # EXP-token-efficiency — /goal-driven path. Closes the EXP-573 / EXP-571 /
 # EXP-624 / EXP-627 stuck-detector lineage: instead of bash counting commits
@@ -747,10 +804,12 @@ for (( i=1; i<=MAX_ITER; i++ )); do
   HEAD_BEFORE=$(git rev-parse HEAD)
 
   # `set +e` around the Claude invocation: timeout-on-iter is normal flow, not
-  # an error to bail on. We capture the exit code and decide. There is
-  # deliberately no `trap ... EXIT` in this script — a hard crash bails via
-  # `set -e` at the outer scope, queue-loop sees non-zero, alert fires, issue
-  # stays in Build, next tick re-picks. The retry loop preserves that.
+  # an error to bail on. We capture the exit code and decide. No EXIT trap
+  # routes the ticket anywhere — a hard crash bails via `set -e` at the outer
+  # scope, queue-loop sees non-zero, alert fires, issue stays in Build, next
+  # tick re-picks. The retry loop preserves that. The only EXIT trap
+  # (_push_deferred_on_exit, set only while pushes are deferred) pushes and
+  # changes nothing else.
   PROMPT="Implement tasks from $TASKS_FILE for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
 
 $SPEC_CONTEXT
@@ -804,6 +863,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
   commit_codex_changes implement "$ISSUE"
   if [ "$CLAUDE_EXIT" != 0 ]; then
     echo "Provider pass failed with exit $CLAUDE_EXIT; preserved any changes. See provider evidence." >&2
+    push_deferred "provider exit $CLAUDE_EXIT"
     exit "$CLAUDE_EXIT"
   fi
 
@@ -845,7 +905,9 @@ At the end of your work, emit a single fenced json block so the shell can summar
   check_squash_range origin/main
   if [ "$SQUASH_CHECK" != "clean" ]; then
     echo "  ✗✗ squash-range check after iter $i is not clean: stopping the loop" >&2
-    ITER_LOG+="  iter $i: squash-range check not clean, loop stopped"$'\n'
+    echo "$SQUASH_REPORT" >&2
+    ITER_LOG+="  iter $i: squash-range check not clean, loop stopped:"$'\n'
+    ITER_LOG+="$(printf '%s\n' "$SQUASH_REPORT" | sed 's/^/    /')"$'\n'
     STATUS="CI_MARKER"
     break
   fi
@@ -938,6 +1000,7 @@ fi  # end of `if ! use_goal_loop_enabled` wrapper around iter-loop + post-loop o
 # keeps the PR a draft, labels needs-human and puts the report on the PR.
 # The optional post-implement hook runs first, so its commits are inside the
 # range the check reads and inside the final push (run_post_implement_command).
+HEAD_BEFORE_HOOK=$(git rev-parse HEAD)
 run_post_implement_command
 if [ "$POST_IMPLEMENT_FAILED" = 1 ]; then
   STATUS="POST_IMPLEMENT_FAILED"
@@ -965,6 +1028,15 @@ echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 # does not (a merge of origin/main before the loop is counted by neither
 # COMMITS_TOTAL nor the iter log). An unreadable comparison counts as ahead.
 AHEAD_OF_ORIGIN=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo 1)
+# A hook that moved HEAD off the commit it started from gets no push below.
+# With deferred pushes origin then lacks the run's own commits: push the commit
+# the hook started from, which is what the per-iteration pushes would have put
+# there. From here on the end-of-run push owns the push, and the EXIT trap has
+# nothing left to do.
+if [ "$POST_IMPLEMENT_HEAD_REWRITTEN" = 1 ]; then
+  push_deferred "the run's commits, without the hook's rewrite" "$HEAD_BEFORE_HOOK"
+fi
+DEFERRED_PUSH_PENDING=0
 # A failed push here is retried once after a short wait. If it still fails,
 # the branch is fetched from origin (a rejected push does not update
 # origin/$BRANCH, and someone may have rewritten it) and HEAD is compared with

@@ -8,6 +8,8 @@
 #      CI_MARKER, draft PR, needs-human, no hand-off, the hook does not run, no push after
 #      the iteration, and the end-of-run push still puts the work on origin
 #  1b  the range cannot be read (the marker list is missing) → one call, CI_MARKER
+#  1c  a read failure only in the in-loop check (the final check reads a clean range) →
+#      the in-loop report is on stderr and in the summary's iteration log
 #   2  marker in iteration 2 → two calls; iteration 1 was pushed, iteration 2 was not
 #      pushed after the iteration, both are on origin at the end; the summary names iter 2
 #   3  a marker already on the branch before the run, clean iterations → stops after one
@@ -73,6 +75,26 @@ check_eq 1 "$(provider_calls)" "1b one provider call"
 has 'terminal status=CI_MARKER \(after 1 iter' "$LAST_STDOUT" "1b CI_MARKER after one iteration"
 has 'could not be checked \(exit code 2\)' "$(calls)" "1b summary says the range was not checked"
 hasnt 'move_issue' "$(calls)" "1b no hand-off"
+teardown
+
+# 1c — the in-loop check cannot read the range once; the final check reads it as clean
+setup c1c
+export FAKE_CLAUDE_COMMIT_ON_ITERS="1:2:3"
+mv "$SCRIPTS_DIR/squash-marker-check.sh" "$SCRIPTS_DIR/squash-marker-check.real.sh"
+cat > "$SCRIPTS_DIR/squash-marker-check.sh" <<EOF
+#!/bin/bash
+if [ ! -e "$SANDBOX/.pr3-transient-done" ]; then
+  : > "$SANDBOX/.pr3-transient-done"
+  echo "squash-marker-check: NOT CHECKED — listing origin/main..HEAD failed (exit code 128)"
+  exit 2
+fi
+exec bash "$SCRIPTS_DIR/squash-marker-check.real.sh" "\$@"
+EOF
+pr3_run_implement
+check_eq 1 "$(provider_calls)" "1c one provider call"
+has 'terminal status=CI_MARKER' "$LAST_STDOUT" "1c CI_MARKER"
+has 'NOT CHECKED — listing origin/main\.\.HEAD failed' "$LAST_STDERR" "1c the in-loop report is on stderr"
+has 'iter 1: squash-range check not clean, loop stopped:.*NOT CHECKED — listing origin/main\.\.HEAD failed' "$(calls | tr '\n' ' ')" "1c and in the summary's iteration log"
 teardown
 
 # 2 — marker in iteration 2: iteration 1 ran and was pushed as usual

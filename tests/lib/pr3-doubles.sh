@@ -9,9 +9,10 @@
 #                         order against gh, to $SANDBOX/gh_calls.log.
 #   pr3_count_receives    a post-receive hook in the bare origin appends one line per push
 #                         that reached it ("<old> <new> <ref>") to $SANDBOX/.pr3-receives.
-#   pr3_gh_pr_list <mode> gh answers `gh pr list` with the literal `null` (mode null) or
-#                         fails with nothing on stdout (mode fail); every other call, and
-#                         every call in mode stub, goes to the shared tests/lib/bin/gh.
+#   pr3_gh_pr_list <mode> gh answers `gh pr list` with the literal `null` (mode null), with
+#                         text that is not a number and exit 0 (mode junk), or fails with
+#                         nothing on stdout (mode fail); every other call, and every call in
+#                         mode stub, goes to the shared tests/lib/bin/gh.
 #   pr3_fake_claude       the stage's model becomes a wrapper around tests/lib/fake_claude.sh
 #                         that, after the shared fake has answered, also
 #                           commits PR3_MARKER_FILE with message PR3_MARKER_MSG on call
@@ -19,7 +20,14 @@
 #                           renames PR3_RENAME ("<from>:<to>") with `git mv`, staged and
 #                           not committed;
 #                           appends a line to each path in PR3_DIRTY (colon-separated,
-#                           relative to the worktree) without committing it.
+#                           relative to the worktree) without committing it;
+#                           runs PR3_ON_CALL_<n> (a shell command, in the worktree) on
+#                           call n;
+#                           ends call PR3_EXIT_ON with exit code PR3_EXIT_CODE (a provider
+#                           that fails, times out, runs out of quota or is interrupted);
+#                           on call PR3_TERM_STAGE_ON sends SIGTERM to the implement stage
+#                           itself (pr3_term_stage_script) and exits a moment later.
+#   pr3_term_stage_script $SANDBOX/.pr3-term-stage, for a hook that ends its own stage.
 #   pr3_pushes / pr3_receives   the counts so far (0 when nothing was recorded).
 #   pr3_run_implement     run the stage with these doubles (the gh and git ones only work
 #                         through it).
@@ -78,12 +86,34 @@ if [ "\${1:-}" = pr ] && [ "\${2:-}" = list ] && [ "$mode" != stub ]; then
   { printf 'gh'; for a in "\$@"; do printf '\t%s' "\$a"; done; printf '\n'; } >> "$SANDBOX/gh_calls.log"
   case "$mode" in
     null) echo null; exit 0 ;;
+    junk) echo "#7 (open)"; exit 0 ;;
     fail) echo "HTTP 502: Bad Gateway" >&2; exit 1 ;;
   esac
 fi
 exec "$LIB_DIR/bin/gh" "\$@"
 GH
   chmod +x "$SANDBOX/.pr3-bin/gh"
+}
+
+# pr3_term_stage_script: $SANDBOX/.pr3-term-stage sends SIGTERM to the implement stage that
+# runs it somewhere below. Walking up its ancestors, the first process whose command line
+# is this sandbox's `bash …/scripts/implement-pipeline.sh` starts a run of such processes
+# (the stage's command substitutions are forks with the same command line); the last one
+# of that run is the stage. The walk stops there, so nothing above the test is touched.
+pr3_term_stage_script() {
+  cat > "$SANDBOX/.pr3-term-stage" <<TERM
+#!/bin/bash
+stage="" p=\$PPID
+while [ -n "\$p" ] && [ "\$p" -gt 1 ]; do
+  case "\$(ps -ww -o command= -p "\$p" 2>/dev/null)" in
+    "bash $SANDBOX/scripts/implement-pipeline.sh"*) stage=\$p ;;
+    *) [ -z "\$stage" ] || break ;;
+  esac
+  p=\$(ps -o ppid= -p "\$p" 2>/dev/null | tr -d ' ')
+done
+[ -z "\$stage" ] || kill -TERM "\$stage"
+TERM
+  chmod +x "$SANDBOX/.pr3-term-stage"
 }
 
 pr3_fake_claude() {
@@ -106,9 +136,17 @@ if [ -n "${PR3_DIRTY:-}" ]; then
   IFS=':' read -ra dirty <<< "$PR3_DIRTY"
   for p in "${dirty[@]}"; do echo "left by the agent in call $n" >> "$SANDBOX/$p"; done
 fi
+on_call="PR3_ON_CALL_$n"
+if [ -n "${!on_call:-}" ]; then (cd "$SANDBOX" && eval "${!on_call}") >/dev/null 2>&1; fi
+if [ -n "${PR3_TERM_STAGE_ON:-}" ] && [ "$PR3_TERM_STAGE_ON" = "$n" ]; then
+  "$SANDBOX/.pr3-term-stage"
+  sleep 2
+fi
+if [ -n "${PR3_EXIT_ON:-}" ] && [ "$PR3_EXIT_ON" = "$n" ]; then exit "${PR3_EXIT_CODE:?PR3_EXIT_CODE must be set}"; fi
 exit "$rc"
 CLAUDE
   chmod +x "$SANDBOX/.pr3-bin-claude"
+  pr3_term_stage_script
   export PR3_SHARED_FAKE_CLAUDE="$LIB_DIR/fake_claude.sh"
   export FAKE_CLAUDE_BIN="$SANDBOX/.pr3-bin-claude"
 }
