@@ -119,7 +119,8 @@ push_branch_loud() {
 # Never runs in a dry run. It runs after the loop and before the squash-range
 # check and the final push, in the implement worktree via `bash -o pipefail -c`
 # (the review build check's convention), with no stdin, with BUREAU_ISSUE and
-# BUREAU_BRANCH set, and bounded by BUREAU_POST_IMPLEMENT_TIMEOUT (default
+# BUREAU_BRANCH set, without the Bureau secrets (bureau_untrusted_env,
+# repo.untrusted_env), and bounded by BUREAU_POST_IMPLEMENT_TIMEOUT (default
 # 900 s, never above the stage's TOTAL_TIMEOUT). On a timeout the runner sends
 # SIGTERM to the hook's whole process group and, after a 5 s grace, SIGKILL to
 # whatever is left of it. The hook commits its own output: its commits go
@@ -283,6 +284,17 @@ run_post_implement_command() {
     echo "  [DRY_RUN] would run repo.post_implement_command: $cmd"
     return 0
   fi
+  # Branch code: it runs without the Bureau secrets (bureau_untrusted_env,
+  # bureau-env.sh). When that environment cannot be built the hook is not run
+  # and counts as failed — the halt below still pushes this run's commits,
+  # where an exit 24 here would leave them unpushed.
+  if ! bureau_untrusted_env --check; then
+    POST_IMPLEMENT_FAILED=1
+    POST_IMPLEMENT_REPORT="repo.post_implement_command was not run: repo.untrusted_env is not absent, \"default\" or \"clean\", so the environment without the Bureau secrets could not be built.
+command: ${cmd}"
+    echo "  ✗✗ repo.post_implement_command not run: repo.untrusted_env is invalid" >&2
+    return 0
+  fi
   limit="${BUREAU_POST_IMPLEMENT_TIMEOUT:-900}"
   [[ "$limit" =~ ^[1-9][0-9]*$ ]] || limit=900
   [ "$limit" -le "$TOTAL_TIMEOUT" ] || limit="$TOTAL_TIMEOUT"
@@ -293,7 +305,7 @@ run_post_implement_command() {
   log=$(mktemp "${TMPDIR:-/tmp}/bureau-post-implement.XXXXXX")
   status_file="$log.why"
   echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
-  if BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" >"$log" 2>&1; then
+  if bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" >"$log" 2>&1; then
     rc=0
   else
     rc=$?
@@ -1090,7 +1102,8 @@ fi
 if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then
   TEST_COMMAND=$(bureau_get '.repo.test_command // empty')
   [ -n "$TEST_COMMAND" ] || { echo 'Codex completion needs repo.test_command for independent verification.' >&2; exit 24; }
-  bash -c "$TEST_COMMAND" || exit 14
+  # Branch code: without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).
+  bureau_untrusted_env bash -c "$TEST_COMMAND" || exit 14
 fi
 
 PR_URL=""

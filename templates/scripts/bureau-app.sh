@@ -16,7 +16,8 @@ case "${1:-status}" in
     source "$SCRIPT_DIR/bureau-config.sh"
     TEST_COMMAND=$(jq -r '.repo.test_command // empty' "$BUREAU_CONFIG")
     [ -n "$TEST_COMMAND" ] || { echo 'Configure repo.test_command before using the tests action.' >&2; exit 1; }
-    exec bash -c "$TEST_COMMAND"
+    # The tests run the checkout's code: without the Bureau secrets (bureau-env.sh).
+    bureau_untrusted_env bash -c "$TEST_COMMAND"
     ;;
   *) echo 'Usage: bureau-app.sh setup|status|doctor|check|test' >&2; exit 1 ;;
 esac

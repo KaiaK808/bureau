@@ -138,6 +138,9 @@ if [ -z "$TEST_CMD" ]; then
   exit 0
 fi
 echo "  Test command: $TEST_CMD"
+# PR code: every test run below goes through bureau_untrusted_env (bureau-env.sh), in a
+# child bash under pipefail like the review build check, never through `eval` in this shell.
+bureau_untrusted_env --check || exit 24
 
 # Persisted per-QA-run log. The Linear comment surfaces a path pointer
 # (rather than truncated stdout) so the operator can `tail -200` the full
@@ -158,7 +161,7 @@ trap _qa_cleanup EXIT
 
 echo ""
 echo "Phase 1/3: initial test run (no Claude call)"
-if eval "$TEST_CMD" > "$QA_TMP/test1.log" 2>&1; then
+if bureau_untrusted_env bash -o pipefail -c "$TEST_CMD" > "$QA_TMP/test1.log" 2>&1; then
   echo "  Initial test run: PASSED"
   GREEN_ON_FIRST_TRY=true
   { echo "=== Phase 1/3: initial test run (PASSED) ==="; cat "$QA_TMP/test1.log"; } > "$QA_LOG_PATH"
@@ -173,7 +176,7 @@ else
   # real bugs that should land in needs-human. See EXP-487: parked on a
   # `running 0 tests` / `target failed` flake that passed cleanly on rerun.
   sleep 5
-  if eval "$TEST_CMD" > "$QA_TMP/test1.retry.log" 2>&1; then
+  if bureau_untrusted_env bash -o pipefail -c "$TEST_CMD" > "$QA_TMP/test1.retry.log" 2>&1; then
     echo "  Retry passed. First run was a flake."
     {
       echo "=== Phase 1/3: initial test run (FLAKE — exit $RC) ==="
@@ -269,7 +272,7 @@ fi
 
 echo ""
 echo "Phase 3/3: final test run + route"
-if eval "$TEST_CMD" > "$QA_TMP/test2.log" 2>&1; then
+if bureau_untrusted_env bash -o pipefail -c "$TEST_CMD" > "$QA_TMP/test2.log" 2>&1; then
   FINAL_GREEN=true
 else
   FINAL_GREEN=false

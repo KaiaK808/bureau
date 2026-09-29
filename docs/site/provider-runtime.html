@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="71e9c4cfc6a869dbf937a02b396756c78b74301c78fc1e9ee26961fc31f7d44e">
+<meta name="bureau-source-sha256" content="ae13e0aec4f9cbd548c93906478b8a68b31d64fb3929e3ce1972b9f9d5838d50">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -75,7 +75,18 @@ to the deterministic executor; successful implementation also runs
 <code>repo.test_command</code> outside the nested model sandbox. QA runs
 the configured command independently too. Permission/environment
 failures are reported separately from failed project tests.</p>
-<p>Authentication uses <code>codex login status</code> or
+<p>The agent process and its login check start without the Bureau
+secrets: by default without <code>LINEAR_API_KEY</code>,
+<code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_ALERT_CHAT_ID</code>,
+<code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>,
+<code>GH_ENTERPRISE_TOKEN</code>, <code>GITHUB_ENTERPRISE_TOKEN</code>
+and any variable whose value contains one of theirs; with
+<code>repo.untrusted_env: "clean"</code> with only the base variables
+plus the provider's own login and network variables (see the <a
+href="configuration.html">configuration reference</a> and <a
+href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).
+An invalid <code>repo.untrusted_env</code> returns 24 before the login
+check. Authentication uses <code>codex login status</code> or
 <code>claude auth status --json</code> before creative work, without a
 probe generation. Missing executables/login return 16. Provider errors
 or malformed final results return 22; quota 23; environment/permission

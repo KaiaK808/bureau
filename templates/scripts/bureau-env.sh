@@ -1,8 +1,10 @@
 #!/bin/bash
 # bureau-env.sh — read the pipeline's keys from a .env file without ever
-# executing it. A pure library: sourcing it defines three functions and does
-# nothing else. It reads no file on its own and needs no .bureau.json, no jq
-# and no other external program.
+# executing it, and run code the pull request controls without them. A pure
+# library: sourcing it defines functions and does nothing else. The three .env
+# readers read no file on their own and need no .bureau.json, no jq and no other
+# external program; bureau_untrusted_env (at the end) reads repo.untrusted_env
+# through bureau_get or jq when it is called.
 #
 # EXP-1469. Sixteen scripts under scripts/ used to `source` their .env, so the
 # file ran as shell code. A single space after `=` in a future entry
@@ -179,4 +181,122 @@ bureau_load_env() {
 
   if [ "$_be_trace" = 1 ]; then set -x; fi
   return 0
+}
+
+# ── Untrusted code runs without Bureau secrets ────────────────────────────────
+# bureau_untrusted_env [--check] [NAME=VALUE ...] <command> [argument ...]
+#   Runs <command> in a reduced environment. Every place a stage runs code the
+#   branch controls goes through it: the review build check
+#   (code-review-pipeline.sh), the three QA test runs (qa-pipeline.sh),
+#   repo.post_implement_command and the Codex completion test
+#   (implement-pipeline.sh), the app's `test` action (bureau-app.sh) and the
+#   build and test commands of upstream-port.sh. The agent processes get the
+#   same reduction from bureau-provider.py (untrusted_env), which must stay in
+#   step with this function; tests/test_untrusted_env.sh compares the two.
+#
+#   repo.untrusted_env in .bureau.json selects it:
+#     absent, null or "default" — the calling environment minus the
+#       Bureau-owned secrets and the GitHub token variables (the list in the
+#       function below), and minus every other exported variable whose value
+#       contains the value of one of them (8 characters or more): the stages
+#       copy the Linear key into API_KEY, which is exported when the caller's
+#       shell exported that name, and a token also hides in a remote URL or an
+#       Authorization header. Everything else stays, so test commands keep
+#       their toolchain variables (cargo, nvm, pyenv, a virtualenv).
+#     "clean" — `env -i` with only PATH HOME USER LOGNAME SHELL TMPDIR TEMP
+#       TMP LANG LC_ALL LC_CTYPE TERM TZ CI (those that are exported and do not
+#       contain a secret's value), plus the NAME=VALUE pairs given before the
+#       command (the hook's BUREAU_ISSUE and BUREAU_BRANCH).
+#   Any other value, a .bureau.json jq cannot read, or no command: the command
+#   is not run, a message goes to stderr, and the function EXITS the calling
+#   shell with 24 (environment-blocked), so a stage never judges code it did
+#   not run. Call it in the stage's own shell: inside $(…), ( … ) or a
+#   pipeline the exit ends only that subshell. With --check it only validates
+#   and RETURNS 0 or 24: for a call site whose stderr goes into a log (check
+#   first, so the message reaches the stage output) and for callers that map
+#   the failure to a code of their own.
+#   The calling shell is left alone — the stage keeps its keys for its own
+#   Linear, GitHub and Telegram calls. Returns the command's exit status. A
+#   running `set -x` is switched off while values are compared (L1 above) and
+#   back on for the command, whose trace line shows names, never a secret.
+#   What it does not stop — code that reads files or its ancestors'
+#   environments as the same user — is in SECURITY.md.
+_bureau_untrusted_env_mode() {
+  local _bue_filter='.repo.untrusted_env | if . == null then "default" elif . == "default" or . == "clean" then . else "invalid: " + tojson end'
+  if declare -F bureau_get >/dev/null 2>&1; then
+    bureau_get "$_bue_filter"
+  elif [ -n "${BUREAU_CONFIG:-}" ]; then
+    jq -r "$_bue_filter" "$BUREAU_CONFIG"
+  else
+    printf 'default\n'
+  fi
+}
+
+bureau_untrusted_env() {
+  case $- in
+    (*x*) set +x; local _bue_trace=1 ;;
+    (*) local _bue_trace=0 ;;
+  esac
+  local IFS=$' \t\n'
+  local _bue_check=0 _bue_mode _bue_name _bue_value _bue_secret _bue_hit _bue_exported
+  local _bue_assign_re='^[A-Za-z_][A-Za-z0-9_]*='
+  local -a _bue_args _bue_assign _bue_secrets
+  _bue_args=(); _bue_assign=(); _bue_secrets=()
+  if [ "${1:-}" = --check ]; then _bue_check=1; shift; fi
+
+  if ! _bue_mode=$(_bureau_untrusted_env_mode 2>&1) \
+     || { [ "$_bue_mode" != default ] && [ "$_bue_mode" != clean ]; }; then
+    echo "bureau_untrusted_env: repo.untrusted_env must be absent, \"default\" or \"clean\" (read: ${_bue_mode:-nothing}); the command was not run (24, environment-blocked)" >&2
+    if [ "$_bue_trace" = 1 ]; then set -x; fi
+    if [ "$_bue_check" = 1 ]; then return 24; fi
+    exit 24
+  fi
+  if [ "$_bue_check" = 1 ]; then
+    if [ "$_bue_trace" = 1 ]; then set -x; fi
+    return 0
+  fi
+
+  while [ "$#" -gt 0 ] && [[ $1 =~ $_bue_assign_re ]]; do
+    _bue_assign+=("$1"); shift
+  done
+  if [ "$#" = 0 ]; then
+    echo "bureau_untrusted_env: no command given; nothing was run (24, environment-blocked)" >&2
+    if [ "$_bue_trace" = 1 ]; then set -x; fi
+    exit 24
+  fi
+
+  # The Bureau-owned secrets and the GitHub token variables. Keep this list,
+  # the one below and the clean list equal to UNTRUSTED_REMOVE and
+  # UNTRUSTED_KEEP in bureau-provider.py.
+  for _bue_name in LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID \
+                   GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; do
+    _bue_value="${!_bue_name:-}"
+    [ "${#_bue_value}" -lt 8 ] || _bue_secrets+=("$_bue_value")
+    _bue_args+=(-u "$_bue_name")
+  done
+  _bue_exported=" $(compgen -e 2>/dev/null | tr '\n' ' ' || true) "
+
+  if [ "$_bue_mode" = clean ]; then
+    _bue_args=(-i)
+    for _bue_name in PATH HOME USER LOGNAME SHELL TMPDIR TEMP TMP LANG LC_ALL LC_CTYPE TERM TZ CI; do
+      case "$_bue_exported" in (*" $_bue_name "*) ;; (*) continue ;; esac
+      [ -n "${!_bue_name+x}" ] || continue
+      _bue_value="${!_bue_name}"
+      _bue_hit=0
+      for _bue_secret in ${_bue_secrets[@]+"${_bue_secrets[@]}"}; do
+        case "$_bue_value" in (*"$_bue_secret"*) _bue_hit=1; break ;; esac
+      done
+      [ "$_bue_hit" = 1 ] || _bue_args+=("$_bue_name=$_bue_value")
+    done
+  else
+    for _bue_name in $_bue_exported; do
+      _bue_value="${!_bue_name:-}"
+      for _bue_secret in ${_bue_secrets[@]+"${_bue_secrets[@]}"}; do
+        case "$_bue_value" in (*"$_bue_secret"*) _bue_args+=(-u "$_bue_name"); break ;; esac
+      done
+    done
+  fi
+
+  if [ "$_bue_trace" = 1 ]; then set -x; fi
+  env "${_bue_args[@]}" ${_bue_assign[@]+"${_bue_assign[@]}"} "$@"
 }

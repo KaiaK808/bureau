@@ -473,7 +473,7 @@ echo "Phase 2/3: build check"
 # review does not — a repo without either gets the npm build or nothing. A repo
 # with none of the three is "not checked": said on stderr and in the review
 # comment, never "Passed", and the verdict stays as the reviewers gave it. The
-# command runs in this worktree under pipefail (as QA's eval does), and the
+# command runs in this worktree under pipefail (as QA's runs do), and the
 # verdict comes from its own exit status, never from a pipe into `tail`. Its full
 # output is REVIEW_TMP/build.log, which survives only when the stage exits
 # non-zero; the last 20 lines are always in the stage output.
@@ -486,7 +486,9 @@ if [ -n "$BUILD_CMD" ]; then
   echo "  Running build check: $BUILD_CMD"
   BUILD_RC=0
   BUILD_TREE_BEFORE=$(git status --porcelain --untracked-files=all 2>/dev/null | sort || true)
-  bash -o pipefail -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
+  # PR code: runs without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).
+  bureau_untrusted_env --check || exit 24
+  bureau_untrusted_env bash -o pipefail -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
   tail -20 "$REVIEW_TMP/build.log"
   # A dirty worktree makes the worker keep a stopped or failed review's worktree
   # as unfinished work (bureau-worker.sh). A warning only: it never changes the

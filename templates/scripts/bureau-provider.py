@@ -66,11 +66,69 @@ class AuthError(Exception):
     pass
 
 
+# Untrusted code runs without Bureau secrets. The agent runs the branch's
+# tests (Claude with --dangerously-skip-permissions) and loads the branch's own
+# agent settings, so it starts in the environment bureau_untrusted_env in
+# bureau-env.sh gives every other command the branch controls. Keep
+# UNTRUSTED_REMOVE and UNTRUSTED_KEEP equal to the lists there;
+# tests/test_untrusted_env.sh compares the two implementations.
+UNTRUSTED_REMOVE = ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID',
+                    'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')
+UNTRUSTED_KEEP = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
+                  'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI')
+# Under "clean" the agent CLI also keeps its own login and network settings;
+# without them it cannot authenticate or reach its API. Cloud-provider logins
+# (Bedrock, Vertex) are not kept: stay on the default for those.
+AGENT_KEEP_PREFIXES = {'claude': ('ANTHROPIC_', 'CLAUDE_', 'HEADROOM_'), 'codex': ('OPENAI_', 'CODEX_')}
+AGENT_KEEP = ('HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+              'all_proxy', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'XDG_CONFIG_HOME')
+
+
+class UntrustedEnvError(Exception):
+    pass
+
+
+def untrusted_env_mode(config):
+    # Same reading as _bureau_untrusted_env_mode in bureau-env.sh: absent or
+    # null is "default"; anything but "default" or "clean" refuses (24).
+    repo = config.get('repo')
+    if repo is None: return 'default'
+    if not isinstance(repo, dict): raise UntrustedEnvError('repo must be an object')
+    mode = repo.get('untrusted_env')
+    if mode is None: return 'default'
+    if isinstance(mode, str) and mode in ('default', 'clean'): return mode
+    raise UntrustedEnvError('repo.untrusted_env must be absent, "default" or "clean" (read: ' + json.dumps(mode)
+                            + '); the agent was not started (24, environment-blocked)')
+
+
+def untrusted_env(environ, mode, runner=None):
+    # The environment for code the branch controls. "default": everything but
+    # the listed secrets and any variable whose value contains one of their
+    # values (8 characters or more). "clean": only UNTRUSTED_KEEP, plus, for
+    # an agent, its own login and network variables, again without any value
+    # that contains a secret. The caller's environment is never changed.
+    secrets = {environ[name] for name in UNTRUSTED_REMOVE if len(environ.get(name, '')) >= 8}
+    if mode == 'clean':
+        prefixes = AGENT_KEEP_PREFIXES.get(runner, ())
+        def keep(name):
+            return name in UNTRUSTED_KEEP or (runner is not None and (name in AGENT_KEEP or name.startswith(prefixes)))
+    elif mode == 'default':
+        def keep(name):
+            return name not in UNTRUSTED_REMOVE
+    else:
+        raise UntrustedEnvError('unknown untrusted environment mode')
+    return {name: value for name, value in environ.items()
+            if keep(name) and not any(secret in value for secret in secrets)}
+
+
 def auth(options):
     runner = options['runner']
     if not shutil.which(runner): raise AuthError(runner + ' executable is missing')
     cmd = ['claude', 'auth', 'status', '--json'] if runner == 'claude' else ['codex', 'login', 'status']
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    # The login check runs in the environment the agent will get, so a
+    # "clean" mode that drops the agent's login fails here, with 16.
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20,
+                          env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner))
     if proc.returncode != 0: raise AuthError(runner + ' is not authenticated')
     if runner == 'claude':
         try: logged = json.loads(proc.stdout).get('loggedIn') is True
@@ -147,7 +205,8 @@ def run(options, prompt, system, repo, evidence, schema=None):
     started = time.monotonic()
     with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
     with (evidence/'stdout.log').open('wb') as stdout, (evidence/'stderr.log').open('wb') as stderr:
-        child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, start_new_session=True)
+        child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, start_new_session=True,
+                                 env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner))
         if interrupted: kill(interrupted)
         timed_out = False
         try:
@@ -221,6 +280,7 @@ def main():
         config_path=Path(args.config).resolve(); config=json.loads(config_path.read_text())
         options=configuration(args.stage, config, os.environ)
         if args.describe: print(json.dumps(options)); return 0
+        options['untrusted_env']=untrusted_env_mode(config)
         auth(options)
         if args.check: print(json.dumps(dict(runner=options['runner'], authenticated=True))); return 0
         if not args.prompt_file: raise ValueError('--prompt-file is required')
@@ -240,7 +300,7 @@ def main():
         else: print('Bureau provider outcome: '+metadata['outcome'],file=sys.stderr)
         return code
     except AuthError as exc: print(str(exc),file=sys.stderr); return 16
-    except PermissionError as exc: print(str(exc),file=sys.stderr); return 24
+    except (PermissionError, UntrustedEnvError) as exc: print(str(exc),file=sys.stderr); return 24
     except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
         if evidence: (evidence/'result.json').write_text(json.dumps({'outcome':'invalid-result','error':str(exc)}))
         print('Bureau provider: '+str(exc),file=sys.stderr); return 22

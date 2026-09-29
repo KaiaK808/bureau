@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b0862bbba7ef17bdfee6cf71cf2455e6d5687190e82d8f3c76c1463c7835a13c">
+<meta name="bureau-source-sha256" content="77559bd0daedb440ad9961ec82c2a9893bb3afe6c34e18a295f89211c865a2ce">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -662,6 +662,55 @@ and stops there (QA also tries <code>npm test</code>,
 <code>cargo test</code>, <code>pytest</code>, <code>go test</code>).
 Required for Codex implementation completion and the app tests
 action</td>
+</tr>
+<tr>
+<td><code>repo.untrusted_env</code></td>
+<td>string</td>
+<td><code>"default"</code></td>
+<td>The environment of code the branch controls: the review build check,
+the three QA test runs, <code>repo.post_implement_command</code>, the
+Codex completion test, the app <code>test</code> action,
+<code>upstream-port.sh</code>'s build and test commands, and the agent
+processes (whose login check runs in the same environment).
+<code>"default"</code> (also when absent or <code>null</code>):
+everything the stage has minus the Bureau-owned secrets and the GitHub
+token variables — <code>LINEAR_API_KEY</code>,
+<code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_ALERT_CHAT_ID</code>,
+<code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>,
+<code>GH_ENTERPRISE_TOKEN</code>, <code>GITHUB_ENTERPRISE_TOKEN</code> —
+and minus any other variable whose value contains one of their values (8
+characters or more; the stages copy the Linear key into
+<code>API_KEY</code>, and a token also hides in a remote URL or an
+<code>Authorization</code> header). <code>"clean"</code>: only
+<code>PATH</code>, <code>HOME</code>, <code>USER</code>,
+<code>LOGNAME</code>, <code>SHELL</code>, <code>TMPDIR</code>,
+<code>TEMP</code>, <code>TMP</code>, <code>LANG</code>,
+<code>LC_ALL</code>, <code>LC_CTYPE</code>, <code>TERM</code>,
+<code>TZ</code>, <code>CI</code> (plus <code>BUREAU_ISSUE</code> and
+<code>BUREAU_BRANCH</code> for the hook); an agent also keeps its own
+login and network variables (<code>ANTHROPIC_*</code>,
+<code>CLAUDE_*</code>, <code>HEADROOM_*</code> for Claude,
+<code>OPENAI_*</code>, <code>CODEX_*</code> for Codex, the proxy
+variables, <code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>,
+<code>NODE_EXTRA_CA_CERTS</code>, <code>XDG_CONFIG_HOME</code>). Under
+<code>clean</code> a test command that needs <code>CARGO_HOME</code>,
+<code>NVM_DIR</code>, <code>VIRTUAL_ENV</code>, an SSH agent or a
+registry token fails, and an agent that logs in through cloud
+credentials (Bedrock, Vertex) cannot start; stay on the default for
+those. Any other value refuses before the code runs: the stages end with
+<code>24</code> (the provider check at the start of every model stage
+already does), a hook is not run and halts implement with
+<code>14</code> after the run's commits are pushed,
+<code>upstream-port.sh</code> stops with <code>18</code> before
+building. The stage itself keeps the keys for its own Linear, GitHub and
+Telegram calls. Independent of this key, the stages never link a
+<code>.env*</code> file into a stage worktree: a
+<code>repo.worktree_links</code> entry with a path component starting
+with <code>.env</code> (any case, <code>.envrc</code> too) or whose
+target in the main checkout is such a file is skipped with one warning
+line. Code running as the same user can still read files and other
+processes' environments; see <a
+href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
 </tr>
 <tr>
 <td><code>repo.post_implement_command</code></td>

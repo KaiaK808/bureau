@@ -2561,6 +2561,8 @@ restore_worktree_deps() {
 # one warning line, and the stage runs on as it would without the link:
 #   - the entry is a plain relative path: not absolute, no `.`, `..` or empty
 #     component, not inside `.git`;
+#   - it is not a .env file: no component starts with `.env` (any case) and its
+#     real target in the main checkout does not either (the doctor's env_file);
 #   - the branch tracks nothing at that path (a tracked path is the PR's own);
 #   - its parent directory exists in the worktree and resolves inside it (a
 #     tracked symlink as parent would put the link outside the worktree);
@@ -2618,7 +2620,7 @@ EOF
 }
 
 _bureau_link_worktree_path() {
-  local wt="$1" main="$2" p="$3" parent parent_phys tracked
+  local wt="$1" main="$2" p="$3" parent parent_phys tracked target
   while :; do case "$p" in */) p="${p%/}" ;; *) break ;; esac; done
   case "$p" in
     ''|/*) echo "  WARNING: worktree link '$3' skipped: not a relative path."; return 0 ;;
@@ -2626,6 +2628,21 @@ _bureau_link_worktree_path() {
   case "/$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')/" in
     */../*|*/./*|*//*|*/.git/*)
       echo "  WARNING: worktree link '$3' skipped: '.', '..', '.git' and empty components are not allowed."; return 0 ;;
+  esac
+  # Never a .env file: any component starting with `.env` in any case (.env,
+  # .env.local, .envrc), or a path whose real target in the main checkout is one.
+  # The link would put the main checkout's secrets into every stage worktree,
+  # where code from the branch runs; the reset keeps them out otherwise, and the
+  # stages read .env from the main checkout. Same rule as env_file in
+  # bureau-doctor.py, which reports such an entry as an error.
+  case "/$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')" in
+    */.env*) echo "  WARNING: worktree link '$p' skipped: a .env file holds the main checkout's secrets and must not reach a stage worktree."; return 0 ;;
+  esac
+  target=$(python3 -c 'import os, sys; print(os.path.basename(os.path.realpath(sys.argv[1])))' "$main/$p" 2>/dev/null) || {
+    echo "  WARNING: worktree link '$p' skipped: its target in the main checkout could not be resolved."; return 0
+  }
+  case "$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')" in
+    .env*) echo "  WARNING: worktree link '$p' skipped: it leads to a .env file ($target) in the main checkout, whose secrets must not reach a stage worktree."; return 0 ;;
   esac
   # `grep -c`, not `grep -q`: -q closes the pipe early and pipefail turns the
   # SIGPIPE of ls-files into a false "not tracked".

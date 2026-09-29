@@ -664,11 +664,17 @@ PORT_WORK_DIR="${BUREAU_UPSTREAM_PORT_WORK_DIR:-$(jq -r '.repo.upstream_port.wor
 [ -z "$PORT_TEST_CMD" ]  && PORT_TEST_CMD='cargo test --workspace --no-fail-fast'
 [ -z "$PORT_WORK_DIR" ]  && PORT_WORK_DIR="${SCRIPT_DIR}/../rust"
 
+# The build and the tests run the ported upstream code: without the Bureau
+# secrets (bureau_untrusted_env, bureau-env.sh), in a child bash under pipefail
+# like the review build check. An unreadable repo.untrusted_env is a pre-flight
+# failure: nothing is built.
+bureau_untrusted_env --check || on_failure "$EXIT_GH_FAILED" "untrusted_env"
+
 # --------------------------------------------------------------------------
 # Step 10 — release build.
 # --------------------------------------------------------------------------
 log_step "$PORT_BUILD_CMD"
-if ! (cd "$PORT_WORK_DIR" && eval "$PORT_BUILD_CMD") \
+if ! (cd "$PORT_WORK_DIR" && bureau_untrusted_env bash -o pipefail -c "$PORT_BUILD_CMD") \
     >"$TMP_BUILD_LOG" 2>&1; then
   echo "==> build failed ($PORT_BUILD_CMD)" >&2
   echo "--- last 40 lines of build output ---" >&2
@@ -680,7 +686,7 @@ fi
 # Step 11 — full workspace test suite.
 # --------------------------------------------------------------------------
 log_step "$PORT_TEST_CMD"
-if ! (cd "$PORT_WORK_DIR" && eval "$PORT_TEST_CMD") \
+if ! (cd "$PORT_WORK_DIR" && bureau_untrusted_env bash -o pipefail -c "$PORT_TEST_CMD") \
     >"$TMP_TEST_LOG" 2>&1; then
   echo "==> tests failed ($PORT_TEST_CMD)" >&2
   echo "failing tests:" >&2

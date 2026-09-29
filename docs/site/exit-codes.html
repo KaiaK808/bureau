@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="63adeb4199ac68820db903f65d202bd6660b6e2a11d485a06813d10358934d0c">
+<meta name="bureau-source-sha256" content="19e52a17286373967db55ae50fb8480df3e96bc5887734e93b39ad8b7ca52099">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -185,7 +185,12 @@ full log sits next to the stamp in <code>.git/bureau-deps/</code>. The
 shepherd halts and alerts. Also: <code>agents.merge_mode</code> is
 <code>manual</code> but <code>linear.teams[0].states.merge</code> is not
 set — the review stage refuses at its start, before any paid review;
-configure the Merge state or set the mode to <code>auto</code></td>
+configure the Merge state or set the mode to <code>auto</code> Also:
+<code>repo.untrusted_env</code> is not absent, <code>"default"</code> or
+<code>"clean"</code> — the provider check at the start of each model
+stage and every command from the branch (build check, QA runs, Codex
+completion test, app tests) refuse before anything runs; fix the
+value</td>
 </tr>
 <tr>
 <td><code>25</code></td>
