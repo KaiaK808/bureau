@@ -278,8 +278,14 @@ evaluate_merge_gates() {
   _require_ci=$(merge_gate_required merge_require_green_ci)
   _require_uptodate=$(merge_gate_required merge_require_up_to_date)
 
-  local _err
+  local _err _key
   if [ "$_require_ci" != "false" ]; then
+    # Its numbers fall back to their defaults when they are not whole numbers; say so
+    # here, since pr_ci_is_green's own stderr is its gate line.
+    for _key in merge_min_required_checks:1 merge_ci_start_grace_seconds:1800; do
+      _merge_gate_number "${_key%%:*}" "${_key#*:}" >/dev/null \
+        || echo "  WARN: agents.${_key%%:*} must be a whole number of at least 0; using ${_key#*:}" >&2
+    done
     _err=$(pr_ci_is_green "$pr" 2>&1 >/dev/null) \
       || _blockers+=("ci_green: $_err")
   fi

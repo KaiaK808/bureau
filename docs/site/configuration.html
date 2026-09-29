@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="458f6bb0cd18a4123dabbc41d73d3c4d52d7ade927252962608f306b9864f4fb">
+<meta name="bureau-source-sha256" content="5521872e78aa85e049e0327b5809990cd03c9b576945ab2a8503689b6a13d8f2">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -419,7 +419,10 @@ value keeps it on with a warning</td>
 <code>merge_require_green_ci</code> will pass. Prevents a PR with zero
 registered workflows from passing vacuously. Set to <code>0</code> for
 repos with no CI at all (rare — prefer flipping
-<code>merge_require_green_ci</code> to <code>false</code> instead)</td>
+<code>merge_require_green_ci</code> to <code>false</code> instead). A
+value that is not a whole number (<code>"2"</code>, <code>1.5</code>,
+<code>"abc"</code>) counts as <code>1</code>, with a warning; before
+v3.1 it let the check pass with no check at all</td>
 </tr>
 <tr>
 <td><code>agents.merge_ci_start_grace_seconds</code></td>
@@ -431,9 +434,9 @@ even a queued one) and no commit status is "not yet" within this time
 and blocked after it (<code>25</code>, alert; the shepherd halts), so a
 repository whose workflow never runs for the PR stops waiting silently.
 <code>0</code> blocks at once. Anything but a whole number of seconds
-counts as <code>1800</code>. A time that cannot be read keeps the gate
-at "not yet"; does not apply when <code>merge_min_required_checks</code>
-is <code>0</code></td>
+counts as <code>1800</code>, with a warning. A time that cannot be read
+keeps the gate at "not yet"; does not apply when
+<code>merge_min_required_checks</code> is <code>0</code></td>
 </tr>
 <tr>
 <td><code>agents.model</code></td>

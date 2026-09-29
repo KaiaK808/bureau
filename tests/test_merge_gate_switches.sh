@@ -9,6 +9,9 @@
 #      is older than agents.merge_ci_start_grace_seconds (default 1800); before that, and
 #      whenever a read fails, it stays "not yet". It used to stay "not yet" forever, so a
 #      repository without a workflow waited silently.
+#   3. agents.merge_min_required_checks that is not a whole number ("abc", 1.5, "2") counts
+#      as the default 1, with a warning. It used to make the count test fail and the check
+#      pass with no check at all.
 #
 # Runs the REAL merge-pipeline.sh (on its own, with a gate report) and the real gate
 # helpers from bureau-config.sh against the pr2 gh double. Negative controls put the
@@ -90,12 +93,16 @@ pr2_head_age 60;         grace_case 'fresh head'                   2 not-yet '^c
 pr2_head_age 1799;       grace_case 'one second inside the grace'  2 not-yet 'only 0 completed'
 pr2_head_age 1800;       grace_case 'at the grace'                25 blocked 'no check run and no status'
 pr2_head_age unreadable; grace_case 'head time unreadable'         2 not-yet 'only 0 completed'
+pr2_head_age empty;      grace_case 'head time empty'              2 not-yet 'only 0 completed'
 pr2_head_age -600;       grace_case 'head time in the future'      2 not-yet 'only 0 completed'
 pr2_head_age 3600
 pr2_config '.agents.merge_ci_start_grace_seconds = 7200'; grace_case 'configured 7200'   2 not-yet 'only 0 completed'
 pr2_config '.agents.merge_ci_start_grace_seconds = 0';    grace_case 'configured 0'     25 blocked 'grace_seconds: 0)'
-for bad in '"600"' '-5' '1.5' '1e20' 'true'; do
+grep -q 'must be a whole number' <<< "$LAST_STDERR" && fail '2: warned about a valid grace'
+for bad in '"600"' '-5' '1.5' '1e20' '12345678901234567890' 'true'; do
   pr2_config ".agents.merge_ci_start_grace_seconds = $bad"; grace_case "invalid $bad → 1800" 25 blocked 'grace_seconds: 1800)'
+  grep -q 'agents.merge_ci_start_grace_seconds must be a whole number of at least 0; using 1800' <<< "$LAST_STDERR" \
+    || fail "2: no warning for the grace $bad"
 done
 pr2_config 'del(.agents.merge_ci_start_grace_seconds)'
 touch "$PR2_GH/fail_status"; grace_case 'status read failed' 2 not-yet 'only 0 completed'; rm -f "$PR2_GH/fail_status"
@@ -113,6 +120,28 @@ pr2_config '.agents.merge_min_required_checks = 0'
 gate
 [ "$LAST_RC" = 0 ] && pr2_merged || fail "2: merge_min_required_checks 0 no longer merges a head without checks (rc $LAST_RC: $LINES)"
 echo 'PASS 2 no check and no status past the grace is blocked; before it, and on every failed read, not yet'
+
+# ── 3. merge_min_required_checks fails closed ──────────────────────────────
+new_sandbox
+pr2_checks none; pr2_head_age 60
+for bad in '"abc"' '1.5' '"2"' '-1' 'true' '[]'; do
+  pr2_config ".agents.merge_min_required_checks = $bad"
+  gate
+  [ "$LAST_RC" = 2 ] && ! pr2_merged && grep -q '^ci_green: ci: only 0 completed check(s) on .* (require >= 1)$' <<< "$LINES" \
+    || fail "3: merge_min_required_checks $bad did not count as 1 (rc $LAST_RC, report: $LINES)"
+  grep -q 'agents.merge_min_required_checks must be a whole number of at least 0; using 1' <<< "$LAST_STDERR" \
+    || fail "3: no warning for merge_min_required_checks $bad"
+done
+# One green check satisfies the default the invalid value stands for.
+pr2_checks green; gate
+[ "$LAST_RC" = 0 ] && pr2_merged || fail "3: an invalid value with one green check did not merge (rc $LAST_RC: $LINES)"
+# Valid values: 3 is 3, absent is 1, both without a warning.
+pr2_config '.agents.merge_min_required_checks = 3'; gate
+grep -q '(require >= 3)$' <<< "$LINES" || fail "3: 3 was not honoured: $LINES"
+pr2_config 'del(.agents.merge_min_required_checks)'; pr2_checks none; gate
+grep -q '(require >= 1)$' <<< "$LINES" || fail "3: absent is not 1: $LINES"
+grep -q 'must be a whole number' <<< "$LAST_STDERR" && fail '3: warned about a valid value'
+echo 'PASS 3 merge_min_required_checks that is not a whole number counts as 1, with a warning'
 
 # ── Negative controls: the v3.0.2 reads ────────────────────────────────────
 new_sandbox
@@ -140,6 +169,18 @@ PY
 pr2_checks none; pr2_head_age 86400
 gate
 [ "$LAST_RC" = 2 ] && [ "$OUTCOME" = not-yet ] || fail "negative control: without the grace a day-old head without checks should stay not yet (rc $LAST_RC)"
-echo 'PASS negative controls: v3.0.2 keeps the CI gate under false, and waits forever without checks'
+new_sandbox
+python3 - "$SCRIPTS_DIR/real-helpers.sh" <<'PY'
+import sys
+p = sys.argv[1]; src = open(p).read()
+old = '  min_required=$(_merge_gate_number merge_min_required_checks 1) || true\n'
+assert src.count(old) == 1, 'min_required read not found'
+open(p, 'w').write(src.replace(old, "  min_required=$(bureau_get '.agents.merge_min_required_checks // 1')\n"))
+PY
+pr2_checks none; pr2_head_age 60
+pr2_config '.agents.merge_min_required_checks = "abc"'
+gate
+[ "$LAST_RC" = 0 ] && pr2_merged || fail "negative control: the v3.0.2 read should merge a head without checks under \"abc\" (rc $LAST_RC)"
+echo 'PASS negative controls: v3.0.2 keeps the CI gate under false, waits forever without checks, and merges without checks under "abc"'
 
 echo 'OK test_merge_gate_switches'

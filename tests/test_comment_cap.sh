@@ -82,6 +82,9 @@ python3 -c 'import sys; sys.stdout.write("é" * 50000)' > "$T/oneline"
 bureau_cap_comment "$(cat "$T/oneline")" > "$T/oneline.out"
 [ "$(bytes < "$T/oneline.out")" -le 60000 ] && utf8_ok < "$T/oneline.out" || fail '1: a single long line was not fitted cleanly'
 [ "$(bureau_cap_comment "$(cat "$T/long")" 1000 | bytes)" -le 1000 ] || fail '1: a smaller limit was not honoured'
+# A limit too small for the note: the beginning alone, still whole characters.
+bureau_cap_comment "$(cat "$T/long")" 50 > "$T/tiny.out"
+[ "$(bytes < "$T/tiny.out")" -le 50 ] && utf8_ok < "$T/tiny.out" || fail '1: a limit below the note was not honoured'
 echo 'PASS 1 bureau_cap_comment: unchanged when it fits; otherwise at most the limit, valid UTF-8, head and verdict kept, cut named'
 
 # ── 2. the real post_comment ───────────────────────────────────────────────

@@ -929,16 +929,15 @@ if len(data) <= limit:
     sys.exit(0)
 def note(cut):
     return ("\n\n[… %d bytes cut from the middle of this comment: it was longer than the %d bytes"
-            " Bureau posts to Linear and GitHub. The stage log has the full text. …]\n\n" % (cut, limit)).encode("utf-8")
+            " Bureau posts to Linear and GitHub. The stage output has the full text. …]\n\n" % (cut, limit)).encode("utf-8")
 # The number of cut bytes has at most as many digits as the whole length.
 room = limit - len(note(len(data)))
 if room < 2:
     sys.stdout.buffer.write(data[:limit].decode("utf-8", "ignore").encode("utf-8"))
     sys.exit(0)
 head, tail = data[:room // 2], data[len(data) - (room - room // 2):]
-first_line_end = data.find(b"\n")
 cut_at = head.rfind(b"\n")
-if first_line_end >= 0 and cut_at >= first_line_end:
+if cut_at >= 0:
     head = head[:cut_at]
 start_at = tail.find(b"\n")
 if start_at >= 0:
@@ -1713,8 +1712,10 @@ pr_ci_is_green() {
     echo "ci: failing check(s) on $head_sha: $all" >&2
     return 1
   fi
+  # A value the test below cannot compare ("abc", 1.5) used to make the test fail and
+  # the function fall through to "green" with no check at all; it counts as 1 now.
   local min_required
-  min_required=$(bureau_get '.agents.merge_min_required_checks // 1')
+  min_required=$(_merge_gate_number merge_min_required_checks 1) || true
   local total_completed=$((completed))
   # Count completed legacy statuses too (any non-pending state counts).
   total_completed=$((total_completed + $(echo "$statuses" | jq '[.[] | select(.state != "pending")] | length')))
@@ -1724,7 +1725,7 @@ pr_ci_is_green() {
     # the "only 0 completed" line (not yet).
     local grace age
     if [ "$total_completed" = 0 ] && [ "$statuses_read" = ok ]; then
-      grace=$(_pr_ci_start_grace)
+      grace=$(_merge_gate_number merge_ci_start_grace_seconds 1800) || true
       if age=$(_pr_head_commit_age "$owner_repo" "$head_sha") && [ "$age" -ge "$grace" ]; then
         echo "ci: no check run and no status on $head_sha ${age}s after its commit (agents.merge_ci_start_grace_seconds: $grace) — no CI started for this head" >&2
         return 1
@@ -1736,16 +1737,22 @@ pr_ci_is_green() {
   return 0
 }
 
-# _pr_ci_start_grace: .agents.merge_ci_start_grace_seconds as a whole number of
-# seconds (0 is valid); absent or anything else is the default 1800. Prints no
-# warning: pr_ci_is_green's stderr is its gate line.
-_pr_ci_start_grace() {
+# _merge_gate_number <agents key> <default>: prints .agents.<key> as a whole number
+# (0 is valid). Absent or null prints <default>; any other value (a string, a
+# fraction, a negative number) prints <default> too and returns 1, so a caller can
+# warn. pr_ci_is_green cannot warn itself: its stderr is its gate line
+# (merge-pipeline.sh warns before it runs the gate). The bound keeps the value inside
+# shell arithmetic: jq prints 12345678901234567890 with all its digits.
+_merge_gate_number() {
   local value
-  value=$(bureau_get '.agents.merge_ci_start_grace_seconds
-    | if type == "number" and . < 10000000 then tostring else empty end' 2>/dev/null) || value=""
-  # A negative or fractional number prints a sign or a dot and fails the digit check.
-  case "$value" in ''|*[!0-9]*) value=1800 ;; esac
-  printf '%s' "$((10#$value))"
+  value=$(bureau_get ".agents.$1 | if . == null then \"default\"
+    elif type == \"number\" and . == floor and . < 10000000 then (floor | tostring) else \"invalid\" end" 2>/dev/null) \
+    || value=invalid
+  case "$value" in
+    default) printf '%s' "$2" ;;
+    ''|*[!0-9]*) printf '%s' "$2"; return 1 ;;
+    *) printf '%s' "$((10#$value))" ;;
+  esac
 }
 
 # _pr_head_commit_age <owner/repo> <sha>: seconds since the commit's committer

@@ -79,13 +79,13 @@ DATE
   # The gate helpers from the real config; the owner/repo lookup is the only gh read
   # replaced here, because the real one caches a `gh repo view` per process.
   {
-    sed -n -e '/^pr_ci_is_green() {/,/^}/p' -e '/^_pr_ci_start_grace() {/,/^}/p' \
+    sed -n -e '/^pr_ci_is_green() {/,/^}/p' -e '/^_merge_gate_number() {/,/^}/p' \
       -e '/^_pr_head_commit_age() {/,/^}/p' -e '/^pr_base_is_current() {/,/^}/p' \
       "$REPO_ROOT/templates/scripts/bureau-config.sh"
     echo '_bureau_gh_owner_repo() { printf "test-owner/test-repo"; }'
   } >> "$SCRIPTS_DIR/real-helpers.sh"
   local fn
-  for fn in pr_ci_is_green _pr_ci_start_grace _pr_head_commit_age pr_base_is_current; do
+  for fn in pr_ci_is_green _merge_gate_number _pr_head_commit_age pr_base_is_current; do
     grep -q "^$fn() {" "$SCRIPTS_DIR/real-helpers.sh" || { echo "pr2-gate: $fn not found in bureau-config.sh" >&2; return 1; }
   done
 
@@ -116,9 +116,11 @@ pr2_checks() {
   esac > "$PR2_GH/check_runs.json"
 }
 
-# pr2_head_age <seconds>|unreadable — the head commit's committer time, that long ago.
+# pr2_head_age <seconds>|unreadable|empty — the head commit's committer time, that long ago;
+# unreadable: the read fails; empty: GitHub answers without a time.
 pr2_head_age() {
   if [ "$1" = unreadable ]; then : > "$PR2_GH/commit.json"; return; fi
+  if [ "$1" = empty ]; then echo '{"committer":{"date":""}}' > "$PR2_GH/commit.json"; return; fi
   jq -n --argjson t "$(( PR2_NOW - $1 ))" '{committer: {date: ($t | todate)}}' > "$PR2_GH/commit.json"
 }
 
