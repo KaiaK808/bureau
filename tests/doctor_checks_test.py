@@ -240,10 +240,12 @@ class WorktreeLinkTests(Repo):
         for name in ('.env', '.env.local', '.envrc', '.ENV.production'):
             (self.repo / name).write_text('LINEAR_API_KEY=probe\n')
         (self.repo / 'config').mkdir(); (self.repo / 'config/.env.test').write_text('x\n')
+        (self.repo / '.env.d').mkdir(); (self.repo / '.env.d/app').write_text('x\n')  # a path through a .env* directory
         (self.repo / 'secrets').symlink_to('.env.local')  # a link whose target is a .env file
         (self.repo / '.venv').mkdir()
         for entry, status in (('.env', 'env file'), ('.env.local', 'env file'), ('.envrc', 'env file'),
-                              ('.ENV.production', 'env file'), ('config/.env.test', 'env file'), ('.env.missing', 'env file'),
+                              ('.ENV.production', 'env file'), ('config/.env.test', 'env file'), ('.env.d/app', 'env file'),
+                              ('.env.missing', 'env file'),
                               ('secrets', 'env file'), ('.venv', 'ok')):
             with self.subTest(entry=entry):
                 result = self.links(entry)
