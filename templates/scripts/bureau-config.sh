@@ -590,7 +590,7 @@ run_stage_for() {
   [ "$#" = 1 ] || { echo 'run_stage_for requires one prompt' >&2; return 22; }
   temp=$(mktemp -d)
   printf '%s' "$1" > "$temp/prompt"
-  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted." "$system" > "$temp/system"
+  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual." "$system" > "$temp/system"
   local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
   [ -n "$schema" ] && args+=(--schema "$schema")
   if python3 "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" "${args[@]}"; then rc=0; else rc=$?; fi
@@ -2181,6 +2181,8 @@ reset_worktree() {
   if [ "$target_script" != spec-pipeline.sh ]; then
     git -C "$wt" checkout -B "$target_branch" "$ref" --quiet || return 21
   fi
+  # `clean -fdx` above removed every ignored path; put the configured links back.
+  bureau_link_worktree_paths "$wt"
 }
 
 # restore_worktree_deps <worktree> — put node_modules back after reset_worktree's
@@ -2319,6 +2321,128 @@ restore_worktree_deps() {
   echo "  Dependencies: COULD NOT be restored — stopping (environment-blocked)"
   return 24
 }
+
+# ── Worktree links (repo.worktree_links) ──────────────────────────────
+# bureau_link_worktree_paths <worktree> — after reset_worktree's `clean -fdx`,
+# symlink each path listed in `repo.worktree_links` (for example `[".venv"]`)
+# from the main checkout into the stage worktree. `clean -fdx` removes every
+# ignored path, a Python virtualenv included, and the agents' own commands
+# (`.venv/bin/python -m pytest` from a spec) then fail in every stage. This is
+# the Python counterpart of restore_worktree_deps, carried over from
+# installation A, which linked `.venv` by hand after the reset (EXP-799).
+# Nothing is configured by default, and then nothing happens.
+#
+# A link is only made when it cannot hurt; otherwise the path is skipped with
+# one warning line, and the stage runs on as it would without the link:
+#   - the entry is a plain relative path: not absolute, no `.`, `..` or empty
+#     component, not inside `.git`;
+#   - the branch tracks nothing at that path (a tracked path is the PR's own);
+#   - its parent directory exists in the worktree and resolves inside it (a
+#     tracked symlink as parent would put the link outside the worktree);
+#   - the path exists in the main checkout;
+#   - the worktree's gitignore ignores it AS A SYMLINK: an untracked link makes
+#     the worktree dirty, the worker then preserves it and the next reset stops
+#     with 21. A directory-only pattern (`.venv/`) does not match a symlink;
+#     list `.venv` without the slash. Asked before the link exists, git answers
+#     for a non-directory, which is what the link will be;
+#   - nothing but an older link sits at that path: a link is replaced, a real
+#     file or directory is never touched.
+# The next `clean -fdx` removes the link, never its target. The link points at
+# the main checkout's own copy, so what an agent installs into it changes the
+# main checkout too. Never in the main checkout itself. Always returns 0.
+bureau_link_worktree_paths() {
+  local wt="$1" cfg="${BUREAU_CONFIG:-}" list line common main wt_phys
+  [ -n "$cfg" ] && [ -f "$cfg" ] || return 0
+  # One line per entry: "=path" for a usable string, "!…" for anything else.
+  list=$(jq -r '
+    (.repo.worktree_links // []) as $l
+    | if ($l | type) != "array" then "!type"
+      else $l[] | if type != "string" then "!entry"
+                  elif test("\n") then "!entry"
+                  else "=" + . end
+      end' "$cfg" 2>/dev/null) || {
+    echo "  WARNING: repo.worktree_links could not be read — no links made."
+    return 0
+  }
+  [ -n "$list" ] || return 0
+  wt_phys=$(cd "$wt" 2>/dev/null && pwd -P) || return 0
+  common=$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null) || return 0
+  case "$common" in /*) ;; *) common="$wt/$common" ;; esac
+  # A bare repository has no main checkout; its parent directory is not one.
+  if [ "$(git --git-dir="$common" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
+    echo "  WARNING: repo.worktree_links: the repository is bare, so there is no main checkout to link from — no links made."
+    return 0
+  fi
+  main=$(cd "$common/.." 2>/dev/null && pwd -P) || return 0
+  # A git directory kept elsewhere (--separate-git-dir): its parent is not the main checkout.
+  if [ "$(cd "$common" 2>/dev/null && pwd -P)" != "$main/.git" ]; then
+    echo "  WARNING: repo.worktree_links: the git directory is not inside the main checkout (--separate-git-dir), so there is no main checkout to link from — no links made."
+    return 0
+  fi
+  [ "$main" = "$wt_phys" ] && return 0
+  while IFS= read -r line; do
+    case "$line" in
+      '!type')  echo "  WARNING: repo.worktree_links must be a list of paths — no links made."; return 0 ;;
+      '!entry') echo "  WARNING: repo.worktree_links: an entry is not a one-line string — skipped." ;;
+      =*)       _bureau_link_worktree_path "$wt_phys" "$main" "${line#=}" ;;
+    esac
+  done <<EOF
+$list
+EOF
+  return 0
+}
+
+_bureau_link_worktree_path() {
+  local wt="$1" main="$2" p="$3" parent parent_phys tracked
+  while :; do case "$p" in */) p="${p%/}" ;; *) break ;; esac; done
+  case "$p" in
+    ''|/*) echo "  WARNING: worktree link '$3' skipped: not a relative path."; return 0 ;;
+  esac
+  case "/$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')/" in
+    */../*|*/./*|*//*|*/.git/*)
+      echo "  WARNING: worktree link '$3' skipped: '.', '..', '.git' and empty components are not allowed."; return 0 ;;
+  esac
+  # `grep -c`, not `grep -q`: -q closes the pipe early and pipefail turns the
+  # SIGPIPE of ls-files into a false "not tracked".
+  tracked=$(git -C "$wt" --literal-pathspecs ls-files -- "$p" 2>/dev/null | grep -c . || true)
+  if [ "${tracked:-0}" -gt 0 ]; then
+    echo "  WARNING: worktree link '$p' skipped: the branch tracks that path."; return 0
+  fi
+  # The parent by string slicing, not `dirname`: an entry may start with `-`,
+  # which `dirname` reads as an option (and then fails the worker under set -e).
+  case "$p" in */*) parent="${p%/*}" ;; *) parent=. ;; esac
+  parent_phys=$(cd "$wt/$parent" 2>/dev/null && pwd -P) || {
+    echo "  WARNING: worktree link '$p' skipped: '$parent' does not exist in the worktree."; return 0
+  }
+  case "$parent_phys/" in
+    "$wt"/*) ;;
+    *) echo "  WARNING: worktree link '$p' skipped: '$parent' leads outside the worktree."; return 0 ;;
+  esac
+  # Inside the worktree but through a symlink: git refuses to look beyond it.
+  if [ "$parent" != . ] && [ "$parent_phys" != "$wt/$parent" ]; then
+    echo "  WARNING: worktree link '$p' skipped: '$parent' runs through a symlink in the worktree."; return 0
+  fi
+  if [ ! -e "$main/$p" ]; then
+    echo "  WARNING: worktree link '$p' skipped: it does not exist in the main checkout."; return 0
+  fi
+  # --no-index: tracking is checked above with a literal path; without it,
+  # check-ignore reads the argument as a pathspec against the index, and `[ab]`
+  # would count as tracked because the branch tracks `a`.
+  if ! git -C "$wt" check-ignore -q --no-index -- "$p" 2>/dev/null; then
+    echo "  WARNING: worktree link '$p' skipped: not ignored as a symlink (it would leave the worktree dirty). A pattern with a trailing slash matches directories only; add '$p' without it to .gitignore."
+    return 0
+  fi
+  if [ -e "$wt/$p" ] && [ ! -L "$wt/$p" ]; then
+    echo "  WARNING: worktree link '$p' skipped: a real file or directory is in the way; it is left alone."; return 0
+  fi
+  if ln -sfn -- "$main/$p" "$wt/$p" 2>/dev/null && [ "$(readlink "$wt/$p")" = "$main/$p" ]; then
+    echo "  Linked $p from the main checkout"
+  else
+    echo "  WARNING: worktree link '$p' could not be made."
+  fi
+  return 0
+}
+# ── End of worktree links ─────────────────────────────────────────────
 
 # A red build pulls the verdict down — but it NEVER softens a BLOCK.
 #
