@@ -18,6 +18,9 @@ MANIFEST = ".bureau-install.json"
 GIT_REDIRECTS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY")
 BEGIN = "<!-- bureau-init:begin -->"
 END = "<!-- bureau-init:end -->"
+# Older installers wrote `<!-- bureau-init managed -->`, variants such as
+# `<!-- bureau-init managed: regenerate via ... -->`, and the closer `<!-- end bureau-init managed -->`.
+LEGACY_MARKER = re.compile(r"<!--\s*(?:end\s+)?bureau-init\s+managed\b[^\n]*", re.IGNORECASE)
 
 
 def digest(data):
@@ -138,44 +141,93 @@ def instruction_block(target):
     return (BEGIN + "\n" + body.rstrip() + "\n" + END + "\n").encode()
 
 
+def legacy_section(text, block=None):
+    """The first legacy Bureau marker outside the delimited block (`block` is its (start, end)
+    span, or None): a file that still carries an older generated section must not get a
+    second Bureau block next to it. Returns a description for the refusal, or None."""
+    for match in LEGACY_MARKER.finditer(text):
+        if block and block[0] <= match.start() < block[1]:
+            continue
+        marker = match.group(0).strip()
+        return "line %d (%s)" % (text.count("\n", 0, match.start()) + 1, marker if len(marker) <= 80 else marker[:77] + "...")
+    return None
+
+
 def merge_instructions(old, block):
     text = old.decode()
     if BEGIN not in text and END not in text:
-        if "<!-- bureau-init managed -->" in text:
-            raise ValueError("legacy Bureau section: review and delimit it with bureau-init:begin/end before resync")
+        legacy = legacy_section(text)
+        if legacy:
+            raise ValueError("legacy Bureau section at " + legacy + ": review it and delimit it with "
+                             + BEGIN + " and " + END + " in place of its old markers before resync")
         return old + (b"\n\n" if old and not old.endswith(b"\n\n") else b"") + block, None
     if text.count(BEGIN) != 1 or text.count(END) != 1 or text.index(END) < text.index(BEGIN):
         raise ValueError("malformed Bureau instruction markers")
     start, end = text.index(BEGIN), text.index(END) + len(END)
+    legacy = legacy_section(text, (start, end))
+    if legacy:
+        raise ValueError("legacy Bureau section at " + legacy + " outside the bureau-init:begin/end block: "
+                         "remove the old section, or move what is still needed into the block, before resync")
     if text[end:end + 1] == "\n":
         end += 1
     return (text[:start] + block.decode() + text[end:]).encode(), text[start:end].encode()
+
+
+def source_ignores(paths):
+    """The subset of `paths` (template files under ROOT) the source ignores; those are never
+    installed. A source that is its own git checkout answers with git's ignore rules, where a
+    tracked file never counts as ignored. Otherwise, or when that checkout cannot answer (an
+    unreadable index), ROOT's .gitignore files are read through a scratch repository, and every
+    dotfile counts as ignored as well, since nothing records which files the release carries."""
+    if not paths:
+        return set()
+    names = b"".join(os.fsencode(p.relative_to(ROOT)) + b"\0" for p in paths)
+    def answer(proc):
+        return {ROOT / os.fsdecode(name) for name in proc.stdout.split(b"\0") if name}
+    top = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"], capture_output=True, env=git_env())
+    if top.returncode == 0 and Path(os.fsdecode(top.stdout.strip())).resolve() == ROOT:
+        proc = subprocess.run(["git", "--no-optional-locks", "-C", str(ROOT), "check-ignore", "-z", "--stdin"],
+                              input=names, capture_output=True, env=git_env())
+        if proc.returncode in (0, 1):
+            return answer(proc)
+    with tempfile.TemporaryDirectory(prefix="bureau-install-ignore-") as scratch:
+        subprocess.run(["git", "init", "-q", scratch], capture_output=True, check=True, env=git_env())
+        proc = subprocess.run(["git", "--git-dir=" + os.path.join(scratch, ".git"), "--work-tree=" + str(ROOT), "-C", str(ROOT),
+                               "check-ignore", "--no-index", "-z", "--stdin"], input=names, capture_output=True, env=git_env())
+    if proc.returncode not in (0, 1):
+        raise ValueError("cannot read the template source's ignore rules: " + proc.stderr.decode(errors="replace").strip())
+    return answer(proc) | {p for p in paths if any(part.startswith(".") for part in p.relative_to(ROOT).parts)}
 
 
 def assets(repo, args, manifest, targets):
     candidates = []
     inputs = {Path(__file__).resolve(), ROOT / "templates/instructions/workflow.md"}
     scopes = set(args.scope or ["interfaces"])
+    skipped = set()
+    def template_files(directory, pattern):
+        """Files of a template directory that the source does not ignore; the rest are skipped."""
+        found = sorted(p for p in (ROOT / directory).glob(pattern) if p.is_file())
+        ignored = source_ignores(found)
+        skipped.update(str(p.relative_to(ROOT)) for p in ignored)
+        return [p for p in found if p not in ignored]
     if "interfaces" in scopes:
         for target in targets:
-            for source in sorted((ROOT / "templates/commands").glob("*.md")):
+            for source in template_files("templates/commands", "*.md"):
                 inputs.add(source)
                 relative = f".agents/skills/{source.stem}/SKILL.md" if target == "codex" else f".claude/commands/{source.name}"
                 candidates.append((relative, render_command(source, target), False, False, "interfaces/" + target))
             candidates.append(("AGENTS.md" if target == "codex" else "CLAUDE.md", instruction_block(target), False, True, "interfaces/" + target))
             if target == "codex":
-                for source in sorted((ROOT / "templates/skills").rglob("*")):
-                    if source.is_file():
-                        inputs.add(source)
-                        relative = ".agents/skills/" + str(source.relative_to(ROOT / "templates/skills"))
-                        candidates.append((relative, source.read_bytes(), False, False, "interfaces/" + target))
+                for source in template_files("templates/skills", "**/*"):
+                    inputs.add(source)
+                    relative = ".agents/skills/" + str(source.relative_to(ROOT / "templates/skills"))
+                    candidates.append((relative, source.read_bytes(), False, False, "interfaces/" + target))
     if "scripts" in scopes:
-        for source in sorted((ROOT / "templates/scripts").iterdir()):
-            if source.is_file():
-                inputs.add(source)
-                candidates.append((f"scripts/{source.name}", source.read_bytes(), source.suffix in (".sh", ".py"), False, "scripts"))
+        for source in template_files("templates/scripts", "*"):
+            inputs.add(source)
+            candidates.append((f"scripts/{source.name}", source.read_bytes(), source.suffix in (".sh", ".py"), False, "scripts"))
     if "workflows" in scopes and "claude" in targets:
-        for source in sorted((ROOT / "templates/workflows").glob("*.js")):
+        for source in template_files("templates/workflows", "*.js"):
             inputs.update((source, ROOT / "templates/scripts/bureau-schedule.mjs"))
             workflow = source.read_text()
             if "/* BUREAU_SCHEDULER_CORE */" in workflow:
@@ -216,7 +268,9 @@ def assets(repo, args, manifest, targets):
             writes.append((path, new, executable))
 
     source = source_revision(inputs)
-    print(json.dumps({"targets": targets, "source": source, "files": plan}, indent=2))
+    print(json.dumps({"targets": targets, "source": source, "files": plan, "skipped": sorted(skipped)}, indent=2))
+    if skipped:
+        print("bureau-install: skipped template files the source ignores (never installed): " + ", ".join(sorted(skipped)), file=sys.stderr)
     # An apply containing conflicts writes nothing, including the manifest.
     if any(item["action"] == "conflict" for item in plan):
         return 3

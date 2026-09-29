@@ -272,7 +272,7 @@ Reviewed PRs accumulate when nothing closes the loop: mergeable-and-approved PRs
 
   `--dry-run` prints the gates and the intended action without rebasing or pushing.
 
-**Routing change in `code-review-pipeline.sh`** (the only edit to the existing review pipeline): the APPROVE branch is split. When `agents.merge: true` AND `BUREAU_STATE_MERGE` is set, code-review moves the issue to Merge state and posts "awaiting merge gate" — the new merge agent takes over. Otherwise (default), code-review keeps the original behavior: squash-merge inline, move to Done. Backward-compatible — repos that don't opt into merge see no behavior change.
+**Routing in `code-review-pipeline.sh`**: the APPROVE branch follows `agents.merge_mode`. With `manual` a human merges: code-review moves the issue to the Merge state and posts that the PR awaits a manual merge; the merge and rebase stages refuse there. With `auto` (the default) and `agents.merge: true` AND `BUREAU_STATE_MERGE` set, code-review moves the issue to Merge and posts "awaiting merge gate" — the merge agent takes over. With `auto` and the merge agent off, code-review runs `merge-pipeline.sh` inline (`BUREAU_INLINE_MERGE=1`): the same gate set and just-in-time checks as the merge agent, then the merge and Done. A requested stop (`--no-merge`) ends before either automatic route.
 
 **Important:** opting in to merge does NOT auto-approve anything. Code review still has to pass the 3-cycle loop-breaker first. The 3-cycle escalation to needs-human is a deliberate protection, not something to optimize around. Two human eyes on a first APPROVE remains cheap and is not a goal of this pipeline.
 

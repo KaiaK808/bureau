@@ -10,7 +10,7 @@ On `codex/*` or detached checkouts, resolve the issue's exact approved feature d
 
 Resolve issue branches from the `<!-- bureau-branch: ... -->` comment marker. Work on the issue's feature branch, reference the issue in commits, and preserve existing user changes. Background queue scripts operate on disposable worker worktrees; do not run their reset/clean operations on the current app task's checkout.
 
-Follow the requested stage boundary. A request for a spec or review does not authorize implementation or merging. Existing background review can merge inline when the separate merge agent is disabled; do not use that path for a review-only request.
+Follow the requested stage boundary. A request for a spec or review does not authorize implementation or merging. Who merges after an approving background review is set by `agents.merge_mode` in `.bureau.json`: with `auto` and the merge agent on (`agents.merge` and a Merge state), the review moves the ticket to Merge and the merge stage merges through its gate; with `auto` and the merge agent off, the review itself merges inline through the same gate; with `manual`, the review parks the ticket in Merge and a human merges. Never take a merge route for a review-only request; the drivers' `--no-merge` (`BUREAU_NO_MERGE=1`) stops a background review before either automatic route.
 
 `logs/events.jsonl` contains pipeline events. `{{INVOKE}}bureau-learnings` drafts `LESSONS.proposed.md` for review; existing curated lessons remain advisory and must be preserved.
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="5c8fe85e8e325136aad022cb1b0834f0ac6de110dbf1a331646faf495c29d4cd">
+<meta name="bureau-source-sha256" content="d23e5d97ed7c0eeb72c78b950dbdd2f11de5f2a07b5c2a33737404f85c7f1c9e">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -473,8 +473,16 @@ provider defaults also supported</td>
 </tr>
 <tr>
 <td><code>agents.&lt;stage&gt;.timeout_seconds</code></td>
-<td>900</td>
-<td>Adapter timeout, also configurable by provider</td>
+<td>3600</td>
+<td>Adapter timeout per provider call (900 before v3.1), also
+configurable by provider
+(<code>agents.providers.&lt;provider&gt;.timeout_seconds</code>);
+<code>BUREAU_STAGE_TIMEOUT</code> in the process environment wins over
+both. Implement brings its own limits. Doctor warns when an enabled
+<code>spec</code>, <code>spec_review</code>, <code>ux</code>,
+<code>qa</code> or <code>code_review</code> stage gets less than 1800 s
+per call: their calls often run 15 to 30 minutes and end with
+<code>124</code> when cut off</td>
 </tr>
 <tr>
 <td><code>agents.workbench_runner</code></td>
@@ -649,14 +657,25 @@ The stage protocol (<code>scripts/bureau-stage.md</code>) tells the
 agents never to delete, recreate or clear a linked path and not to
 install into it unless the ticket asks for that; it cannot enforce it.
 Never applied in the main checkout itself, nor in a worktree of a bare
-repository (there is no main checkout). <code>bureau-doctor.py</code>
-lists each entry with its status (<code>ok</code>,
+repository (there is no main checkout). <strong>Never list a
+<code>.env*</code> file</strong> (<code>.env</code>,
+<code>.env.local</code>, <code>.envrc</code>, a path through such a
+name, or a link to one): the link would put the main checkout's secrets
+into every stage worktree, where pull-request code runs, while the reset
+keeps them out otherwise; the stages find <code>.env</code> through the
+main checkout without it. <code>bureau-doctor.py</code> lists each entry
+with its status (<code>ok</code>,
 <code>missing in the main checkout</code>,
 <code>tracked in the main checkout</code>,
-<code>not ignored as a symlink</code>, <code>invalid</code>) and warns
-or errors the way the stages would skip; <code>false</code> counts as no
-links, like an absent key. See <a href="#python-repositories">Python
-repositories</a></td>
+<code>not ignored as a symlink</code>, <code>invalid</code>,
+<code>env file</code>, <code>no main checkout</code>), warns or errors
+the way the stages would skip, and reports a <code>.env*</code> entry as
+an error; <code>false</code> counts as no links, like an absent key. It
+judges existence and tracking in the main checkout the stages link from,
+which it reports as <code>main_checkout</code>, also when it runs in a
+linked worktree; for a bare repository or a git directory outside the
+main checkout it reports none and warns that the stages make no links.
+See <a href="#python-repositories">Python repositories</a></td>
 </tr>
 <tr>
 <td><code>repo.copy_voice_file</code></td>

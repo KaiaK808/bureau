@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="7a20080a287d33f2a423712a05cee7138f1b4ec34e5c08123b1e9e6e4b5ee6a0">
+<meta name="bureau-source-sha256" content="fda779c5c20da5ba36f15b3e95dbc944bc2e32ac4fb10a9e043aca5f479b7b14">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -500,10 +500,18 @@ option.</p>
 <p>For instruction files, Bureau manages only the region from
 <code>&lt;!-- bureau-init:begin --&gt;</code> to
 <code>&lt;!-- bureau-init:end --&gt;</code>. Text outside it is
-preserved. An older <code>&lt;!-- bureau-init managed --&gt;</code>
-section must be identified and delimited manually without enclosing
-unrelated user guidance. Malformed/legacy boundaries must be repaired
-first; <code>--overwrite CLAUDE.md</code> is not a bypass for invalid
+preserved. An older generated section — opened by
+<code>&lt;!-- bureau-init managed --&gt;</code> or a variant such as
+<code>&lt;!-- bureau-init managed: regenerate via … --&gt;</code>,
+closed by <code>&lt;!-- end bureau-init managed --&gt;</code> — must be
+identified and delimited manually without enclosing unrelated user
+guidance: put <code>&lt;!-- bureau-init:begin --&gt;</code> and
+<code>&lt;!-- bureau-init:end --&gt;</code> in place of its old markers.
+The installer refuses a file that still carries any of these legacy
+markers outside a <code>bureau-init:begin/end</code> block (the plan
+names the line), so it never appends a second Bureau block next to an
+old one. Malformed/legacy boundaries must be repaired first;
+<code>--overwrite CLAUDE.md</code> is not a bypass for invalid
 markers.</p>
 <p>After reapplying customizations, preview may correctly report those
 paths as conflicts again. Record this as intentional drift and verify
@@ -632,7 +640,20 @@ It resolves JSON and the process environment; it does not execute
 tests. Source trusted overrides before invoking it when needed. App mode
 does not require background CLIs; background GitHub stages require
 <code>gh</code>. The runtime uses the first configured Linear team's
-state map; doctor warns on multiple teams.</p>
+state map; doctor warns on multiple teams. It also warns when an enabled
+spec, spec review, UX, QA or review stage gets less than 1800 s per
+provider call, when automatic merging needs CI checks
+(<code>agents.merge_mode</code> auto,
+<code>agents.merge_require_green_ci</code> not <code>false</code>,
+<code>agents.merge_min_required_checks</code> at least 1) but no
+workflow under <code>.github/workflows</code> runs on pull requests or
+on pushes to every branch, and when
+<code>agents.merge_require_green_ci</code>,
+<code>agents.merge_require_up_to_date</code> or
+<code>agents.implement.push_each_iteration</code> is not a JSON boolean;
+it rejects <code>.env*</code> entries in
+<code>repo.worktree_links</code> and judges that list in the main
+checkout, also from a linked worktree.</p>
 <p>Qualify a representative ticket through the intended app/background
 path with the review-only boundary before enabling unattended dispatch.
 Authenticate selected providers normally. Resume workers/automations
