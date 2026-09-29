@@ -97,7 +97,17 @@ if [ -z "$SPEC_DIR" ] && [ -n "$SPEC_CANDIDATES" ]; then
   mark_needs_human "$ISSUE" spec_review 13 || true
   exit 13
 fi
-if [ -z "$SPEC_DIR" ] || [ ! -f "${SPEC_DIR}tasks.md" ]; then
+# No directory matches the branch at all: a name mismatch that re-running Spec
+# does not repair by itself, so a human decides (needs-human). A matched
+# directory without tasks.md goes back to Spec for /speckit-tasks, unlabelled.
+if [ -z "$SPEC_DIR" ]; then
+  echo "  ERROR: no spec directory under ${BUREAU_SPECS_DIR%/}/ matches branch '$BRANCH'."
+  post_comment "$ISSUE" "❌ Spec review aborted — no spec directory under \`${BUREAU_SPECS_DIR%/}/\` matches branch \`$BRANCH\`, and the stages do not guess. Rename the spec directory or the branch so that they match, or send the ticket back to Triage for a fresh spec (troubleshooting: exit 13), then remove \`needs-human\`. Moving back to Spec."
+  move_issue "$ISSUE" "$BUREAU_STATE_SPEC"
+  mark_needs_human "$ISSUE" spec_review 13 || true
+  exit 13
+fi
+if [ ! -f "${SPEC_DIR}tasks.md" ]; then
   echo "  ERROR: No spec artifacts found"
   post_comment "$ISSUE" "❌ Spec review aborted — no tasks.md found on branch \`$BRANCH\`. Moving back to Spec for re-work."
   move_issue "$ISSUE" "$BUREAU_STATE_SPEC"

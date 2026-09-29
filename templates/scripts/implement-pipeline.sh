@@ -466,6 +466,16 @@ if [ -z "$TASKS_FILE" ] && [ -n "$SPEC_CANDIDATES" ]; then
   mark_needs_human "$ISSUE" implement 13 || true
   exit 13
 fi
+# No directory matches the branch at all (as opposed to a matched directory
+# without tasks.md, below): a name mismatch that re-running Spec does not repair
+# by itself, so a human decides.
+if [ -z "$TASKS_FILE" ] && [ -z "$(bureau_spec_dir_for_branch "$BRANCH")" ]; then
+  echo "  ERROR: no spec directory under ${BUREAU_SPECS_DIR%/}/ matches branch '$BRANCH'."
+  post_comment "$ISSUE" "❌ Implement cannot run: no spec directory under \`${BUREAU_SPECS_DIR%/}/\` matches branch \`$BRANCH\`, and the stages do not guess. Rename the spec directory or the branch so that they match, or send the ticket back to Triage for a fresh spec (troubleshooting: exit 13), then remove \`needs-human\`. Routing back to Spec."
+  move_issue "$ISSUE" "$BUREAU_STATE_SPEC"
+  mark_needs_human "$ISSUE" implement 13 || true
+  exit 13
+fi
 if [ -z "$TASKS_FILE" ]; then
   echo "  ERROR: no tasks.md found on branch '$BRANCH' despite valid bureau-branch marker."
   post_comment "$ISSUE" "❌ Implement cannot run: \`tasks.md\` is missing on \`$BRANCH\` despite a valid bureau-branch marker. Routing back to Spec so /speckit-tasks can run again."
