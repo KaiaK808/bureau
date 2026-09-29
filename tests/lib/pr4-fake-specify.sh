@@ -8,9 +8,8 @@
 #   write      — create $PR4_SPECIFY_DIR and write {"feature_directory": "$PR4_SPECIFY_DIR"}
 #   mkdir      — create $PR4_SPECIFY_DIR, leave the file as it was
 #   raw        — write $PR4_SPECIFY_RAW verbatim into the file
-# PR4_SPECIFY_KEEP_MTIME=1 sets the file's modification time back to 2020-01-01 00:00
-# after writing it (the time the test's setup gives the file), so that only its bytes
-# show the write.
+#   rewrite    — write the file's own content back into it (same bytes, new write)
+#   restore    — write $PR4_SPECIFY_DIR as the value, then `git checkout` the file back
 set -uo pipefail
 case "$*" in
   *speckit-specify/SKILL.md*)
@@ -22,10 +21,12 @@ case "$*" in
         printf '{"feature_directory":"%s"}\n' "$PR4_SPECIFY_DIR" > .specify/feature.json ;;
       mkdir) mkdir -p "${PR4_SPECIFY_DIR:?}" ;;
       raw) mkdir -p .specify; printf '%s' "${PR4_SPECIFY_RAW?}" > .specify/feature.json ;;
+      rewrite) c=$(cat .specify/feature.json); printf '%s\n' "$c" > .specify/feature.json ;;
+      restore)
+        mkdir -p "${PR4_SPECIFY_DIR:?}"
+        printf '{"feature_directory":"%s"}\n' "$PR4_SPECIFY_DIR" > .specify/feature.json
+        git checkout -q -- .specify/feature.json ;;
       *) echo "pr4-fake-specify: unknown PR4_SPECIFY_ACTION '$PR4_SPECIFY_ACTION'" >&2; exit 97 ;;
-    esac
-    if [ "${PR4_SPECIFY_KEEP_MTIME:-}" = 1 ] && [ -f .specify/feature.json ]; then
-      touch -t 202001010000 .specify/feature.json
-    fi ;;
+    esac ;;
 esac
 exec "$(dirname "$0")/fake_claude.sh" "$@"

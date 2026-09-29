@@ -5,9 +5,10 @@
 #     no needs-human (a re-run may succeed). Before, jq's own status escaped (2 for a
 #     missing file, 5 for invalid JSON), and 2 reads as "queue empty" to both drivers.
 #   - stale: exit 11, back to Triage AND needs-human (a re-run reads the same file).
-#     Stale means all three: specify did not write the file (same bytes and same
-#     modification time as before the call), the directory it names existed before the
-#     call, and that directory is not the ticket's own: not the spec directory named
+#     Stale means all three: the file holds byte for byte what it held before the call
+#     (a stale value written back during the call counts too), the directory it names
+#     existed before the call, and that directory is not the ticket's own: not the spec
+#     directory named
 #     exactly like the last segment of the branch checked out before the call or of the
 #     ticket's newest bureau-branch marker (no fuzzy match; Linear's generated branch name
 #     does not count). Before, such a file was accepted and plan and tasks ran on another
@@ -33,7 +34,7 @@ finish_row() {  # <label>
     printf '%s\n' "${LAST_STDERR:-}" | tail -4 | sed 's/^/      err: /' >&2
   fi
   row_errors=""
-  unset PR4_SPECIFY_ACTION PR4_SPECIFY_DIR PR4_SPECIFY_RAW PR4_SPECIFY_KEEP_MTIME BUREAU_STUB_REVIEW_COMMENTS BUREAU_STUB_REVIEW_COMMENTS_RC
+  unset PR4_SPECIFY_ACTION PR4_SPECIFY_DIR PR4_SPECIFY_RAW BUREAU_STUB_REVIEW_COMMENTS BUREAU_STUB_REVIEW_COMMENTS_RC
   teardown
 }
 
@@ -43,8 +44,7 @@ finish_row() {  # <label>
 #        on-main  — main checked out
 # Spec directories: 001-test-branch (from the harness) and 003-older-feature, committed,
 # plus the directories named after the file content. The file before the call is committed
-# too (installations track it) and dated 2020-01-01, so a write during the call always shows
-# in its modification time, whatever the file system's time resolution.
+# too (installations track it).
 setup() {
   local d
   sandbox_init EXP-910 001-test-branch
@@ -65,7 +65,6 @@ setup() {
     on-branch) : ;;
     on-main) git -C "$SANDBOX" checkout -q main && git -C "$SANDBOX" merge -q --ff-only 001-test-branch ;;
   esac
-  [ ! -f "$SANDBOX/.specify/feature.json" ] || touch -t 202001010000 "$SANDBOX/.specify/feature.json"
   export FAKE_CLAUDE_BIN="$LIB_DIR/pr4-fake-specify.sh"
   chmod +x "$FAKE_CLAUDE_BIN"
   export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_filler.txt"
@@ -248,23 +247,50 @@ run_pipeline spec-pipeline.sh EXP-910; set +e
 expect_proceed specs/006-planned-feature/
 finish_row "P5 a directory specify created counts, even through an unchanged file"
 
-# P6 — specify rewrites the file to another existing directory of the same length, and
-# the modification time does not show it (set back): the bytes alone count as written.
+# P6 — specify rewrites the file to another existing directory of the same length: the
+# bytes differ, so the file is new (a size comparison would miss it).
 setup detached "$OLDER" 004-older-feature
-export PR4_SPECIFY_ACTION=raw PR4_SPECIFY_KEEP_MTIME=1 PR4_SPECIFY_RAW='{"feature_directory":"specs/004-older-feature"}
+export PR4_SPECIFY_ACTION=raw PR4_SPECIFY_RAW='{"feature_directory":"specs/004-older-feature"}
 '
 run_pipeline spec-pipeline.sh EXP-910; set +e
 expect_proceed specs/004-older-feature/
-finish_row "P6 a same-length rewrite is a write"
+finish_row "P6 a same-length rewrite to another directory is new content"
 
-# P7 — specify writes the same bytes again (the ticket's own directory on main, named by
-# main's file, no marker): the modification time shows the write, so it is trusted.
-setup detached '{"feature_directory":"specs/005-own-feature"}' 005-own-feature
-export PR4_SPECIFY_ACTION=raw PR4_SPECIFY_RAW='{"feature_directory":"specs/005-own-feature"}
-'
+# S9 — specify writes the stale content back (an agent's unconditional rewrite): only the
+# content counts, so this is still stale.
+setup detached "$OLDER"
+export PR4_SPECIFY_ACTION=rewrite
 run_pipeline spec-pipeline.sh EXP-910; set +e
-expect_proceed specs/005-own-feature/
-finish_row "P7 a rewrite with the same bytes is a write"
+expect_abort yes 'still names `specs/003-older-feature`'
+finish_row "S9 the stale value written back is still stale"
+
+# S10 — specify writes a new value, then `git checkout` restores main's stale file.
+setup detached "$OLDER"
+export PR4_SPECIFY_ACTION=restore PR4_SPECIFY_DIR=specs/004-new-feature
+run_pipeline spec-pipeline.sh EXP-910; set +e
+expect_abort yes 'still names `specs/003-older-feature`'
+finish_row "S10 a new value restored to the old file is still stale"
+
+# S11 and P7 — the ticket's own directory is on main and named by main's file, but the
+# ticket has no marker (a spec made by hand, or a lost marker), and specify re-records the
+# same value. The name cannot tell it from a stale file, so the stage holds it (S11). The
+# documented release: post the marker comment naming that directory, remove needs-human,
+# and the next run proceeds on it (P7, same checkout).
+setup detached '{"feature_directory":"specs/005-own-feature"}' 005-own-feature
+export PR4_SPECIFY_ACTION=rewrite
+run_pipeline spec-pipeline.sh EXP-910; set +e
+expect_abort yes 'still names `specs/005-own-feature`'
+case "$(last_comment)" in *'post its marker'*) : ;; *) err "the comment does not name the release path" ;; esac
+grep -qF 'bureau-branch: <directory name>' "$REPO_ROOT/docs/troubleshooting.md" || err "troubleshooting does not describe the marker comment"
+if [ -z "$row_errors" ]; then
+  echo "PASS S11 the ticket's own directory without a marker is held, and says how to release it"
+  export BUREAU_STUB_REVIEW_COMMENTS='[{"body":"<!-- bureau-branch: 005-own-feature -->","createdAt":"2026-01-05T00:00:00Z"}]'
+  run_pipeline spec-pipeline.sh EXP-910; set +e
+  expect_proceed specs/005-own-feature/
+  finish_row "P7 after the marker comment is posted, the next run proceeds on that directory"
+else
+  finish_row "S11 the ticket's own directory without a marker is held, and says how to release it"
+fi
 
 # P8 — comments with an empty and a null body, newer than the marker, are skipped.
 setup detached '{"feature_directory":"specs/004-own-feature"}' 004-own-feature

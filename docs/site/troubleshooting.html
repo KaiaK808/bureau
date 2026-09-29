@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="33d47a932de0f2e54a95034fbfdd7bfe91c48209a97658306c14d9b6aa9bf7f2">
+<meta name="bureau-source-sha256" content="18c5741945138a83995884fbd8b537fa28ef0183e4a56534df1da217670ac868">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -239,35 +239,38 @@ a label, and the next pick tries again. v3.0.2 ended here with jq's own
 status instead (<code>2</code> for a missing file, <code>5</code> for
 invalid JSON), and <code>2</code> reads as "queue empty": the queue took
 the ticket again on the next tick and paid another specify run.</li>
-<li><em>Stale</em> (v3.1): speckit-specify did not write the file (its
-bytes and its modification time are what they were before the call), the
-directory it names existed before the call, and that directory is not
-the ticket's own. The ticket's own directory is the one in the specs
-directory named exactly like the last segment of the ticket's newest
-<code>bureau-branch</code> marker (the spec stage names the branch, and
-so the marker, after its directory), or of the branch checked out before
-the call (a disposable spec worker starts detached, so in the queue only
-the marker counts). Nothing is matched loosely here: on a re-spec the
-worker starts on <code>origin/main</code>, where the ticket's own
-directory, still on its unmerged spec branch, is missing, and a loose
-match on the marker would take a sibling (<code>003-auth-sso</code> fits
-<code>002-auth</code>). Linear's generated branch name does not count.
-Plan and tasks would have written into another ticket's spec, so the
-stage stops before them, routes back to Triage, sets
-<code>needs-human</code> and alerts. A re-run reads the same file, so
-removing the label alone repeats the hold. The usual cause: the file is
-tracked and <code>main</code> holds the last merged feature's value, and
-speckit-specify did not record the new feature (its branch hook was
-skipped, or the run failed early). Check the spec run's output and
+<li><em>Stale</em> (v3.1): the file holds byte for byte what it held
+before the call (compared by checksum; a stale value written back during
+the call, by an agent rewriting the file or by <code>git checkout</code>
+of it, counts as unchanged), the directory it names existed before the
+call, and that directory is not the ticket's own. The ticket's own
+directory is the one in the specs directory named exactly like the last
+segment of the ticket's newest <code>bureau-branch</code> marker (the
+spec stage names the branch, and so the marker, after its directory), or
+of the branch checked out before the call (a disposable spec worker
+starts detached, so in the queue only the marker counts). Nothing is
+matched loosely here: on a re-spec the worker starts on
+<code>origin/main</code>, where the ticket's own directory, still on its
+unmerged spec branch, is missing, and a loose match on the marker would
+take a sibling (<code>003-auth-sso</code> fits <code>002-auth</code>).
+Linear's generated branch name does not count. Plan and tasks would have
+written into another ticket's spec, so the stage stops before them,
+routes back to Triage, sets <code>needs-human</code> and alerts. A
+re-run reads the same file, so removing the label alone repeats the
+hold. The usual cause: the file is tracked and <code>main</code> holds
+the last merged feature's value, and speckit-specify did not record the
+new feature (its branch hook was skipped, or the run failed early).
+Check the spec run's output and
 <code>git log -1 -- .specify/feature.json</code> on <code>main</code>,
 and make speckit-specify write the file (or run the spec by hand). If
 the named directory is this ticket's after all (a spec made by hand, or
-a marker that got lost), post a comment on the ticket whose first line
-is <code>&lt;!-- bureau-branch: &lt;directory name&gt; --&gt;</code> for
-that directory, so the next run counts it as the ticket's. Then remove
-<code>needs-human</code>. A file that speckit-specify wrote during the
-call is trusted, even with the same bytes as before or when it names an
-older directory.</li>
+a marker that got lost, and speckit-specify recorded the same value
+again), the stage cannot tell it from a stale file by name and holds it
+the same way: post a comment on the ticket whose first line is
+<code>&lt;!-- bureau-branch: &lt;directory name&gt; --&gt;</code> for
+that directory, so the next run counts it as the ticket's, then remove
+<code>needs-human</code>. A file whose content speckit-specify changed
+is trusted, even when it names an older directory.</li>
 </ul>
 <h3 id="exit-12-no-branch--bureau-branch-marker-missing">Exit 12
 (no-branch) — <code>bureau-branch:</code> marker missing</h3>
