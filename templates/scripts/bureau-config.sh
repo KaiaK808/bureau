@@ -1940,8 +1940,17 @@ emit_event() {
 #           so the line stays regex-matchable
 #   pr:     PR number (0 if no PR)
 #   branch: branch name (or "-" if N/A)
+#
+# A dry run (BUREAU_DRY_RUN=1) writes neither record: add_issue_label only
+# logs there and returns 0, so a caller that logs after a "successful" label
+# would otherwise record an escalation that never happened. It prints the
+# intent on stderr instead, as alert_telegram does.
 log_escalation() {
   local issue="$1" pipeline="$2" cycle="$3" reason="$4" pr="$5" branch="$6"
+  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+    echo "[DRY_RUN] log_escalation $issue $pipeline cycle=$cycle pr=${pr:-0} branch=${branch:--}: $reason" >&2
+    return 0
+  fi
   local repo_dir
   if [ -n "${BUREAU_CONFIG:-}" ] && [ "${BUREAU_CONFIG:0:1}" = "/" ]; then
     repo_dir=$(dirname "$BUREAU_CONFIG")
