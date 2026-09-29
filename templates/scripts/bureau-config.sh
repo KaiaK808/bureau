@@ -1144,6 +1144,7 @@ comment_on_branch_pr() {
 #      Newest wins if multiple marker comments exist. Anchoring to the first
 #      line avoids false positives from documentation/review comments that
 #      quote the marker pattern in prose or code blocks.
+#      A comment with an empty or null body has no first line and is skipped.
 #   2. Fallback to Linear's auto-generated branchName (rarely matches the
 #      sequential spec-number branches the pipeline uses, but better than
 #      empty).
@@ -1164,7 +1165,7 @@ get_issue_branch() {
     | jq -r '
       (.data.issues.nodes[0].comments.nodes // [])
       | sort_by(.createdAt) | reverse
-      | map(.body | split("\n")[0])
+      | map((.body // "") | split("\n")[0] // "")
       | map(select(test("^<!-- bureau-branch: [^ ]+ -->[[:space:]]*$")))
       | .[0] // ""
     ' \
@@ -1197,7 +1198,7 @@ get_issue_branch_and_comments() {
       | (($issue.comments.nodes // []) | sort_by(.createdAt) | reverse) as $comments
       | (
           $comments
-          | map(.body | split("\n")[0])
+          | map((.body // "") | split("\n")[0] // "")
           | map(select(test("^<!-- bureau-branch: [^ ]+ -->[[:space:]]*$")))
           | .[0] // ""
           | sub("^<!-- bureau-branch: "; "")
