@@ -45,8 +45,7 @@ If no spec branch exists, report the error and tell the user to run
 
 ### 3. Parse tasks.md
 
-Find the speckit tasks.md for the current feature. Look in `specs/*/tasks.md`
-for the spec that matches the Linear issue.
+Find the feature's spec directory with the matcher every Bureau stage uses. From the repository root, with the branch from step 2 in place of `BRANCH`, run `bash -c 'source scripts/bureau-config.sh; bureau_spec_dir_for_branch "$1"' _ BRANCH`. It prints the directory as `<specs_dir>/<name>/` (the configured `.repo.specs_dir`) or nothing; the tasks file is `tasks.md` in that directory. On nothing, run the same line with `bureau_spec_dir_candidates` in place of `bureau_spec_dir_for_branch`: directory names in its output mean the branch fits several directories equally, so report them and **stop** (a human renames or removes the stray directory); no output means no directory matches the branch, so report the branch and the specs directory and **stop**. Never choose a directory yourself: not by listing or globbing the specs directory, not by its number, not by the newest one.
 
 Read the tasks.md and extract each task with its:
 - Task number and name
