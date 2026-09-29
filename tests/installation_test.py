@@ -216,15 +216,15 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual((self.repo / ".bureau-install.json").read_bytes(), before)
         self.assertEqual(self.manifest()["sources"]["scripts"]["tag"], "v9.9.9")
 
-    def test_ignored_template_files_that_get_installed_make_the_source_dirty(self):
+    def test_ignored_template_files_are_skipped_and_leave_the_source_clean(self):
         source, program = self.tagged_source()
         for name in (".env", ".DS_Store"):
             (source / "templates/scripts" / name).write_text("local\n")
         self.assertEqual(self.git(source, "status", "--porcelain"), "")  # invisible to status
         self.run_install("assets", "--scope", "scripts", "--apply", program=program)
-        self.assertEqual({k: self.manifest()["sources"]["scripts"][k] for k in ("tag", "dirty")}, {"tag": "v9.9.9", "dirty": True})
-        # Current behaviour, named as a separate risk: an ignored file in templates/scripts is copied.
-        self.assertTrue((self.repo / "scripts/.env").is_file() and (self.repo / "scripts/.DS_Store").is_file())
+        # Ignored files are not installed, so they are not inputs and the recorded source stays clean.
+        self.assertEqual({k: self.manifest()["sources"]["scripts"][k] for k in ("tag", "dirty")}, {"tag": "v9.9.9", "dirty": False})
+        self.assertFalse((self.repo / "scripts/.env").exists() or (self.repo / "scripts/.DS_Store").exists())
         for name in (".env", ".DS_Store"):
             (source / "templates/scripts" / name).unlink()
         # An ignored file the installer does not copy (a directory entry) leaves the source clean.

@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import subprocess
@@ -117,18 +118,102 @@ def template_source(manifest):
     return dict(status='recorded', scopes=sources)
 
 
-def worktree_links(repo, config):
+# Stages whose single provider calls run long: measured 15 to 30 minutes per spec review, QA or
+# review call, and spec stages up to an hour over a few calls. Doctor warns below this.
+LONG_CALL_STAGES = ('spec', 'spec_review', 'ux', 'qa', 'code_review')
+LONG_CALL_MIN_SECONDS = 1800
+
+
+def gate_switch(agents, key, warnings):
+    """A merge gate switch read the way the merge stage reads it: absent or null is true
+    (required), a JSON boolean is itself, and any other value counts as required, with a
+    warning. Only an explicit false switches the gate off."""
+    value = agents.get(key)
+    if value is None: return True
+    if type(value) is bool: return value
+    warnings.append('agents.' + key + ' ' + json.dumps(value) + ' is not a JSON boolean; the merge gate counts it as true (required): only false switches the gate off')
+    return True
+
+
+PULL_REQUEST_TRIGGER = re.compile(r'\bpull_request(?:_target)?\b')
+
+
+def runs_on_pull_requests(text):
+    """Whether a workflow's top-level `on:` names a pull_request or pull_request_target
+    trigger. A line reading, not a YAML parser: only the `on:` block counts, so a push-only
+    workflow whose steps read github.event.pull_request does not."""
+    lines = [re.sub(r'(^|\s)#.*$', '', line.rstrip('\r')) for line in text.splitlines()]
+    for index, line in enumerate(lines):
+        match = re.match(r'''(?:on|"on"|'on')\s*:(.*)$''', line)
+        if not match: continue
+        block = [match.group(1)]
+        for following in lines[index + 1:]:
+            if following.strip() and not following[:1].isspace(): break
+            block.append(following)
+        return bool(PULL_REQUEST_TRIGGER.search('\n'.join(block)))
+    return False
+
+
+def ci_gate_without_workflows(repo, minimum):
+    """The warning for a merge gate that needs checks no workflow provides, or None.
+    `minimum` is agents.merge_min_required_checks, read like the gate's `// 1`: absent, null
+    and false mean 1, and a configured 0 lets a head without any check pass."""
+    if type(minimum) in (int, float) and minimum <= 0: return None
+    directory = repo / '.github' / 'workflows'
+    files = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix in ('.yml', '.yaml')) if directory.is_dir() else []
+    for workflow in files:
+        try: text = workflow.read_text(errors='replace')
+        except OSError: continue
+        if runs_on_pull_requests(text): return None
+    found = ('no workflow in .github/workflows runs on pull requests (checked: ' + ', '.join(p.name for p in files) + ')') if files else 'the repository has no workflow in .github/workflows'
+    needed = 1 if minimum is None or minimum is False else minimum
+    return ('agents.merge_require_green_ci: automatic merges need at least ' + json.dumps(needed) + ' completed check(s) on the pull request\'s head, but ' + found
+            + '. Unless another CI reports checks or statuses to GitHub for pull requests, no automatic merge passes the gate. Add a workflow that runs on pull_request'
+            + ' (bureau_install.py assets --scope ci scaffolds one), or set agents.merge_require_green_ci to false for a repository without CI, or agents.merge_mode to manual')
+
+
+def main_checkout(repo):
+    """The checkout reset_worktree links from, resolved as bureau_link_worktree_paths does: the
+    parent of the git common directory, so doctor run in a linked worktree judges the main
+    checkout and not itself. Returns (path, None), or (None, reason) for a bare repository and
+    for a git directory kept outside the main checkout (--separate-git-dir), where the stages
+    make no links. Outside git the checkout is its own main checkout."""
+    raw = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--git-common-dir'], capture_output=True, text=True).stdout.strip()
+    if not raw: return repo, None
+    common = raw if os.path.isabs(raw) else os.path.join(str(repo), raw)
+    bare = subprocess.run(['git', '--git-dir=' + common, 'rev-parse', '--is-bare-repository'], capture_output=True, text=True).stdout.strip()
+    if bare == 'true':
+        return None, 'the repository is bare, so there is no main checkout to link from'
+    # `cd "$common/.." && pwd -P`: the logical parent, then the physical path.
+    main = Path(os.path.normpath(os.path.join(common, '..'))).resolve()
+    if Path(common).resolve() != main / '.git':
+        return None, 'the git directory is not inside the main checkout (--separate-git-dir), so there is no main checkout to link from'
+    return main, None
+
+
+def env_file(name):
+    """The .env* family (.env, .env.local, .envrc, ...): files that hold a checkout's secrets."""
+    return name.lower().startswith('.env')
+
+
+def worktree_links(repo, config, checkout=None):
     """repo.worktree_links as reset_worktree applies it: (report, errors, warnings).
-    Ignore status is asked the way a stage worktree sees it: for a symlink, not for the main
-    checkout's directory. A directory-only pattern like `.venv/` matches the directory here
-    but not the link there, so the question runs in a temporary work tree that holds only
-    the .gitignore files on the path and no file at the path itself."""
+    Existence and tracking are judged in the main checkout the stages link from (`checkout`,
+    as main_checkout returns it), also when doctor runs in a linked worktree. Ignore status is
+    asked the way a stage worktree sees it: for a symlink, not for the main checkout's
+    directory. A directory-only pattern like `.venv/` matches the directory here but not the
+    link there, so the question runs in a temporary work tree that holds only this checkout's
+    .gitignore files on the path and no file at the path itself. A .env* entry is an error:
+    it would put the main checkout's secrets into every stage worktree, where pull-request
+    code runs, and stage worktrees otherwise hold no .env (their reset runs git clean -fdx)."""
     raw = config.get('repo', {}).get('worktree_links') if isinstance(config.get('repo'), dict) else None
     # Like the stages' `// []`: absent, null and false mean "no links".
     if raw is None or raw is False: return [], [], []
     if not isinstance(raw, list):
         return [], ['repo.worktree_links must be a list of relative paths; stages make no links'], []
+    main, no_main = checkout if checkout is not None else main_checkout(repo)
     report, errors, warnings = [], [], []
+    if no_main and raw: warnings.append('repo.worktree_links: ' + no_main + '; stages make no links')
     git_dir = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--absolute-git-dir'], capture_output=True, text=True).stdout.strip()
     for entry in raw:
         if not isinstance(entry, str) or '\n' in entry:
@@ -137,11 +222,16 @@ def worktree_links(repo, config):
         parts = path.split('/')
         if not path or path.startswith('/') or any(part.lower() in ('', '.', '..', '.git') for part in parts):
             errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' must be a plain relative path (no /, ., .., .git or empty component); stages skip it'); report.append(dict(path=entry, status='invalid')); continue
+        if any(env_file(part) for part in parts) or (main is not None and env_file(Path(os.path.realpath(main / path)).name)):
+            errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is a .env file: stages would link the main checkout\'s secrets into every stage worktree, where pull-request code runs; remove it (the stages read .env from the main checkout)')
+            report.append(dict(path=path, status='env file')); continue
+        if main is None:
+            report.append(dict(path=path, status='no main checkout')); continue
         status = 'ok'
-        tracked = subprocess.run(['git', '-C', str(repo), '--literal-pathspecs', 'ls-files', '--', path], capture_output=True, text=True).stdout.strip() if git_dir else ''
+        tracked = subprocess.run(['git', '-C', str(main), '--literal-pathspecs', 'ls-files', '--', path], capture_output=True, text=True).stdout.strip() if git_dir else ''
         if tracked:
             status = 'tracked in the main checkout'
-        elif not (repo / path).exists():
+        elif not (main / path).exists():
             status = 'missing in the main checkout'
         elif git_dir:
             with tempfile.TemporaryDirectory(prefix='bureau-doctor-') as shadow:
@@ -182,6 +272,12 @@ def diagnose(repo, mode):
     if not isinstance(config, dict): return dict(ok=False, errors=errors)
     if errors: return dict(ok=False, workspace=str(repo), config=str(path), errors=errors)
     if not config.get('repo', {}).get('test_command'): warnings.append('repo.test_command is missing; required for Codex background implementation')
+    short = [stage + ' ' + format(effective[stage]['timeout'], 'g') + ' s' for stage in LONG_CALL_STAGES
+             if stage in effective and effective[stage]['timeout'] < LONG_CALL_MIN_SECONDS]
+    if short:
+        warnings.append('Provider timeout below ' + str(LONG_CALL_MIN_SECONDS) + ' s per call: ' + ', '.join(short) + '. Spec, spec review, UX, QA and review calls'
+                        ' often run 15 to 30 minutes and end with 124 when cut off; raise agents.<stage>.timeout_seconds or agents.providers.<runner>.timeout_seconds (default 3600)'
+                        + ('; BUREAU_STAGE_TIMEOUT in the environment wins over both' if os.environ.get('BUREAU_STAGE_TIMEOUT') else ''))
     if (path.parent / '.env').is_file(): warnings.append('Doctor resolves JSON and process environment only; it does not execute .env. Source trusted overrides before running doctor for matching effective settings.')
     active = runtime.read(repo / '.specify/integration.json', {})
     manifest = runtime.read(repo / '.bureau-install.json', {})
@@ -220,15 +316,25 @@ def diagnose(repo, mode):
         warnings.append('agents.merge_mode ' + json.dumps(raw_merge) + ' is not "auto" or "manual"; the pipelines fall closed to manual (no automatic merge or rebase)')
     if merge == 'manual' and not config['linear']['teams'][0].get('states', {}).get('merge'):
         errors.append('agents.merge_mode is manual but linear.teams[0].states.merge is not set: code review refuses with 24; configure the Merge state or set merge_mode to auto')
+    require_ci = gate_switch(config['agents'], 'merge_require_green_ci', warnings)
+    gate_switch(config['agents'], 'merge_require_up_to_date', warnings)
+    if merge == 'auto' and require_ci and any(runtime.enabled(config, stage) for stage in ('code_review', 'merge')):
+        ci = ci_gate_without_workflows(repo, config['agents'].get('merge_min_required_checks'))
+        if ci: warnings.append(ci)
+    implement = config['agents'].get('implement')
+    push = implement.get('push_each_iteration') if isinstance(implement, dict) else None
+    if push is not None and type(push) is not bool:
+        warnings.append('agents.implement.push_each_iteration ' + json.dumps(push) + ' is not a JSON boolean; the implement stage counts it as true and pushes after every iteration')
     repo_cfg = config.get('repo') if isinstance(config.get('repo'), dict) else {}
     hook = repo_cfg.get('post_implement_command')
     if hook is not None and hook is not False and not isinstance(hook, str):
         errors.append('repo.post_implement_command must be a string; the implement stage would run ' + json.dumps(hook) + ' as a shell command')
-    links, link_errors, link_warnings = worktree_links(repo, config)
+    checkout = main_checkout(repo); main = checkout[0]
+    links, link_errors, link_warnings = worktree_links(repo, config, checkout)
     errors.extend(link_errors); warnings.extend(link_warnings)
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),
                 merge_mode=merge, post_implement_command=hook if isinstance(hook, str) and hook.strip() else None,
-                worktree_links=links,
+                main_checkout=str(main) if main is not None else None, worktree_links=links,
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,
                 template_source=source, drift=drift, errors=errors, warnings=warnings,
                 authentication='not checked', live_model_acceptance='not checked')

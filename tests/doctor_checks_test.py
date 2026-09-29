@@ -1,0 +1,288 @@
+"""Doctor checks added in v3.1 and the provider's default stage timeout, run against real
+temporary Git repositories: the CI gate without pull-request workflows, merge gate switches
+and agents.implement.push_each_iteration that are not booleans, short provider timeouts,
+repo.worktree_links judged in the main checkout from a linked worktree, and .env* links."""
+import copy
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('doctor', ROOT / 'templates/scripts/bureau-doctor.py')
+d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
+PROVIDER = ROOT / 'templates/scripts/bureau-provider.py'
+INSTALLER = ROOT / 'scripts/bureau_install.py'
+GIT_ENV = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
+           'GIT_AUTHOR_NAME': 'Bureau Test', 'GIT_AUTHOR_EMAIL': 'test@example.invalid',
+           'GIT_COMMITTER_NAME': 'Bureau Test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
+BASE = {'version': 2,
+        'linear': {'teams': [{'id': 'team-id', 'key': 'TEAM', 'states': {'build': 'state-id', 'merge': 'merge-id'}}]},
+        'agents': {'runner': 'claude', 'spec': True, 'implement': True, 'code_review': True},
+        'repo': {'test_command': 'python3 test.py'}}
+LONG = ('spec', 'spec_review', 'ux', 'qa', 'code_review')
+
+
+def git(cwd, *args, check=True):
+    return subprocess.run(['git', '-C', str(cwd), *args], check=check, capture_output=True, text=True, env=GIT_ENV)
+
+
+class Repo(unittest.TestCase):
+    """A repository with Bureau's interfaces and scripts installed and committed."""
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix='bureau doctor checks '); self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name).resolve()
+        self.repo = self.base / 'main checkout'
+        git(self.base, 'init', '-q', str(self.repo))
+        self.write_config(BASE)
+        subprocess.run([sys.executable, str(INSTALLER), 'assets', '--repo', str(self.repo), '--target', 'codex',
+                        '--scope', 'interfaces', '--scope', 'scripts', '--apply'], check=True, stdout=subprocess.DEVNULL)
+        # .bureau.json stays untracked, so a linked worktree has none and doctor there finds the main checkout's.
+        with (self.repo / '.git/info/exclude').open('a') as out: out.write('.bureau.json\n')
+        git(self.repo, 'add', '-A'); git(self.repo, 'commit', '-qm', 'install')
+        # Doctor finds .bureau.json itself; an operator's BUREAU_CONFIG or timeout must not leak in.
+        env = patch.dict(os.environ, {}); env.start(); self.addCleanup(env.stop)
+        for name in ('BUREAU_CONFIG', 'BUREAU_STAGE_TIMEOUT'): os.environ.pop(name, None)
+
+    def write_config(self, config):
+        (self.repo / '.bureau.json').write_text(json.dumps(config))
+
+    def config(self, **agents):
+        config = copy.deepcopy(BASE); config['agents'].update(agents); return config
+
+    def diagnose(self, config=None, repo=None):
+        if config is not None: self.write_config(config)
+        return d.diagnose(repo or self.repo, 'app')
+
+    def workflow(self, name, text):
+        path = self.repo / '.github/workflows' / name
+        path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
+        return path
+
+
+class StageTimeoutTests(Repo):
+    def describe(self, stage, config, **env):
+        path = self.base / 'describe.json'; path.write_text(json.dumps(config))
+        proc = subprocess.run([sys.executable, str(PROVIDER), '--stage', stage, '--config', str(path), '--describe'],
+                              capture_output=True, text=True, env={**os.environ, **env})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)['timeout']
+
+    def test_default_is_one_hour_per_call_and_every_override_still_wins(self):
+        for stage in LONG + ('implement', 'copy', 'research'):
+            with self.subTest(stage=stage):
+                self.assertEqual(self.describe(stage, BASE), 3600.0)
+                for runner in ('claude', 'codex'):
+                    config = self.config(runner=runner, providers={runner: {'timeout_seconds': 1200}})
+                    self.assertEqual(self.describe(stage, config), 1200.0)
+                    config['agents'][stage] = {'enabled': True, 'timeout_seconds': 5400}
+                    self.assertEqual(self.describe(stage, config), 5400.0)
+                    self.assertEqual(self.describe(stage, config, BUREAU_STAGE_TIMEOUT='600'), 600.0)
+
+    def warning(self, result):
+        found = [w for w in result['warnings'] if w.startswith('Provider timeout below')]
+        self.assertLessEqual(len(found), 1, found)
+        return found[0] if found else None
+
+    def test_doctor_warns_for_enabled_long_stages_below_1800_seconds(self):
+        stages = {stage: True for stage in LONG}
+        result = self.diagnose(self.config(**stages))
+        self.assertTrue(result['ok'], result); self.assertIsNone(self.warning(result))
+        self.assertEqual({s: result['effective_stages'][s]['timeout'] for s in LONG}, dict.fromkeys(LONG, 3600.0))
+        # A provider default of 900 s, as installations set it before v3.1, names every long stage.
+        config = self.config(**stages, providers={'claude': {'timeout_seconds': 900}})
+        text = self.warning(self.diagnose(config))
+        self.assertIsNotNone(text)
+        for stage in LONG: self.assertIn(stage + ' 900 s', text)
+        self.assertNotIn('implement', text); self.assertNotIn('BUREAU_STAGE_TIMEOUT', text)
+        # The boundary: 1800 s is enough, 1799 s is not; implement brings its own limits.
+        config['agents'].update(spec={'enabled': True, 'timeout_seconds': 1800}, qa={'enabled': True, 'timeout_seconds': 1799},
+                                implement={'enabled': True, 'timeout_seconds': 60})
+        text = self.warning(self.diagnose(config))
+        self.assertNotIn('spec 1800', text); self.assertIn('qa 1799 s', text); self.assertIn('code_review 900 s', text)
+        self.assertNotIn('implement', text)
+        # A disabled stage is not judged.
+        config = self.config(ux={'enabled': False, 'timeout_seconds': 60}, code_review={'enabled': True, 'timeout_seconds': 3600})
+        self.assertIsNone(self.warning(self.diagnose(config)))
+        # The process environment wins over the configuration, and the warning says so.
+        os.environ['BUREAU_STAGE_TIMEOUT'] = '600'
+        text = self.warning(self.diagnose(self.config()))
+        self.assertIn('spec 600 s', text); self.assertIn('code_review 600 s', text); self.assertIn('BUREAU_STAGE_TIMEOUT', text)
+
+
+class CiGateTests(Repo):
+    GATE = 'agents.merge_require_green_ci: automatic merges need'
+
+    def gate(self, result):
+        return [w for w in result['warnings'] if w.startswith(self.GATE)]
+
+    def assertGateWarning(self, config, expected, contains=None):
+        result = self.diagnose(config)
+        self.assertTrue(result['ok'], result)
+        found = self.gate(result)
+        self.assertEqual(len(found), 1 if expected else 0, found)
+        if contains: self.assertIn(contains, found[0])
+        return result
+
+    def test_warns_when_no_workflow_runs_on_pull_requests(self):
+        self.assertGateWarning(self.config(), True, 'the repository has no workflow in .github/workflows')
+        self.workflow('deploy.yml', 'name: deploy\non:\n  push:\n    branches: [main]\njobs:\n  x:\n    if: github.event.pull_request.number\n    runs-on: ubuntu-latest\n')
+        self.workflow('notes.txt', 'on: pull_request\n')  # not a workflow file
+        self.assertGateWarning(self.config(), True, 'no workflow in .github/workflows runs on pull requests (checked: deploy.yml)')
+        self.workflow('nightly.yaml', "# on: pull_request (disabled)\n'on':\n  schedule:\n    - cron: '0 3 * * *'\n  # pull_request:\n")
+        self.assertGateWarning(self.config(), True, '(checked: deploy.yml, nightly.yaml)')
+
+    def test_any_pull_request_trigger_satisfies_the_check(self):
+        for text in ('on: pull_request\n', 'on: [push, pull_request]\n', 'on:\n  pull_request:\n    types: [opened]\n',
+                     '"on":\n  - push\n  - pull_request\n', "'on': [pull_request]\n", 'on:\n  pull_request_target:\n', 'on: {pull_request: {}}\n',
+                     'name: ci\non:  # triggers\n  push:\n  pull_request:\njobs: {}\n'):
+            with self.subTest(text=text):
+                path = self.workflow('ci.yaml', text)
+                self.assertGateWarning(self.config(), False)
+                path.unlink()
+        # The workflow the installer scaffolds.
+        subprocess.run([sys.executable, str(INSTALLER), 'assets', '--repo', str(self.repo), '--scope', 'ci', '--apply'],
+                       check=True, stdout=subprocess.DEVNULL)
+        self.assertGateWarning(self.config(), False)
+
+    def test_only_a_gate_that_needs_checks_and_merges_automatically_is_judged(self):
+        # (agents settings, warning expected)
+        for agents, expected in (({}, True),
+                                 ({'merge_require_green_ci': False}, False),
+                                 ({'merge_require_green_ci': True}, True),
+                                 ({'merge_require_green_ci': None}, True),
+                                 ({'merge_min_required_checks': 0}, False),
+                                 ({'merge_min_required_checks': 2}, True),
+                                 ({'merge_min_required_checks': False}, True),
+                                 ({'merge_mode': 'manual'}, False),
+                                 ({'merge_mode': 'Auto'}, False),
+                                 ({'code_review': False}, False),
+                                 ({'code_review': False, 'merge': True}, True),
+                                 ({'code_review': 'false', 'merge': {'enabled': False}}, False),
+                                 ({'merge_require_up_to_date': False}, True)):
+            with self.subTest(agents=agents):
+                result = self.assertGateWarning(self.config(**agents), expected)
+                if agents.get('merge_min_required_checks') == 2: self.assertIn('at least 2 completed', self.gate(result)[0])
+
+    def test_gate_switches_that_are_not_booleans_count_as_required(self):
+        for key in ('merge_require_green_ci', 'merge_require_up_to_date'):
+            for value in ('false', 0, 'no', [], {}):
+                with self.subTest(key=key, value=value):
+                    result = self.diagnose(self.config(**{key: value}))
+                    found = [w for w in result['warnings'] if w.startswith('agents.' + key + ' ')]
+                    self.assertEqual(len(found), 1, result['warnings'])
+                    self.assertIn('is not a JSON boolean', found[0]); self.assertIn(json.dumps(value), found[0])
+                    # A green-CI switch that is not false still needs checks.
+                    self.assertEqual(len(self.gate(result)), 1, result['warnings'])
+            for value in (True, False, None):
+                result = self.diagnose(self.config(**{key: value}))
+                self.assertFalse([w for w in result['warnings'] if 'is not a JSON boolean' in w], result['warnings'])
+
+
+class PushEachIterationTests(Repo):
+    def test_only_a_boolean_or_null_is_accepted(self):
+        key = 'agents.implement.push_each_iteration'
+        for implement, warned in ((True, False), ('true', False), ({'enabled': True}, False),
+                                  ({'push_each_iteration': False}, False), ({'push_each_iteration': True}, False),
+                                  ({'push_each_iteration': None}, False), ({'push_each_iteration': 'false'}, True),
+                                  ({'push_each_iteration': 0}, True), ({'enabled': True, 'push_each_iteration': []}, True)):
+            with self.subTest(implement=implement):
+                result = self.diagnose(self.config(implement=implement))
+                found = [w for w in result['warnings'] if w.startswith(key)]
+                self.assertEqual(len(found), int(warned), result['warnings'])
+                if warned: self.assertIn('pushes after every iteration', found[0])
+                self.assertTrue(result['ok'], result)
+
+
+class WorktreeLinkTests(Repo):
+    def setUp(self):
+        super().setUp()
+        (self.repo / '.gitignore').write_text('.venv\n.env*\nsecrets\n')
+        git(self.repo, 'add', '.gitignore'); git(self.repo, 'commit', '-qm', 'ignore')
+
+    def links(self, *entries, repo=None):
+        config = copy.deepcopy(BASE); config['repo']['worktree_links'] = list(entries)
+        return self.diagnose(config, repo)
+
+    def statuses(self, result):
+        return {entry['path']: entry['status'] for entry in result['worktree_links']}
+
+    def test_a_linked_worktree_is_judged_against_the_main_checkout(self):
+        (self.repo / '.venv/bin').mkdir(parents=True)
+        worktree = self.base / 'stage worktree'
+        git(self.repo, 'worktree', 'add', '-q', '--detach', str(worktree))
+        self.assertFalse((worktree / '.bureau.json').exists())
+        self.assertFalse((worktree / '.venv').exists())
+        from_main = self.links('.venv')
+        from_worktree = self.links('.venv', repo=worktree)
+        for result in (from_main, from_worktree):
+            self.assertEqual(self.statuses(result), {'.venv': 'ok'}, result)
+        for result in (from_main, from_worktree):
+            self.assertEqual(result['main_checkout'], str(self.repo)); self.assertTrue(result['ok'], result)
+            self.assertFalse([w for w in result['warnings'] if 'worktree_links' in w], result['warnings'])
+        self.assertEqual(from_worktree['workspace'], str(worktree))
+        # Without it in the main checkout it is missing, even when the worktree has one.
+        (self.repo / '.venv/bin').rmdir(); (self.repo / '.venv').rmdir(); (worktree / '.venv').mkdir()
+        result = self.links('.venv', repo=worktree)
+        self.assertEqual(self.statuses(result), {'.venv': 'missing in the main checkout'})
+        # Tracking is the main checkout's too.
+        (self.repo / 'tools').mkdir(); (self.repo / 'tools/cfg').write_text('x\n')
+        git(self.repo, 'add', 'tools/cfg'); git(self.repo, 'commit', '-qm', 'tools')
+        self.assertFalse((worktree / 'tools').exists())
+        self.assertEqual(self.statuses(self.links('tools', repo=worktree)), {'tools': 'tracked in the main checkout'})
+
+    def test_env_files_are_rejected(self):
+        for name in ('.env', '.env.local', '.envrc', '.ENV.production'):
+            (self.repo / name).write_text('LINEAR_API_KEY=probe\n')
+        (self.repo / 'config').mkdir(); (self.repo / 'config/.env.test').write_text('x\n')
+        (self.repo / 'secrets').symlink_to('.env.local')  # a link whose target is a .env file
+        (self.repo / '.venv').mkdir()
+        for entry, status in (('.env', 'env file'), ('.env.local', 'env file'), ('.envrc', 'env file'),
+                              ('.ENV.production', 'env file'), ('config/.env.test', 'env file'), ('.env.missing', 'env file'),
+                              ('secrets', 'env file'), ('.venv', 'ok')):
+            with self.subTest(entry=entry):
+                result = self.links(entry)
+                self.assertEqual(self.statuses(result), {entry: status}, result)
+                found = [e for e in result['errors'] if 'worktree_links' in e]
+                self.assertEqual(len(found), int(status == 'env file'), result['errors'])
+                self.assertEqual(result['ok'], status != 'env file', result)
+                if found: self.assertIn('is a .env file', found[0]); self.assertIn(json.dumps(entry), found[0])
+        # One bad entry does not hide the others.
+        result = self.links('.venv', '.env')
+        self.assertEqual(self.statuses(result), {'.venv': 'ok', '.env': 'env file'}); self.assertFalse(result['ok'])
+
+    def test_no_main_checkout_means_no_links(self):
+        # A git directory kept outside the checkout: the stages make no links.
+        separate = self.base / 'separate checkout'
+        git(self.base, 'init', '-q', '--separate-git-dir', str(self.base / 'elsewhere.git'), str(separate))
+        (separate / '.venv').mkdir()
+        repo, self.repo = self.repo, separate
+        self.write_config(BASE)
+        subprocess.run([sys.executable, str(INSTALLER), 'assets', '--repo', str(separate), '--target', 'codex',
+                        '--scope', 'interfaces', '--scope', 'scripts', '--apply'], check=True, stdout=subprocess.DEVNULL)
+        result = self.links('.venv', '.env')
+        self.assertIsNone(result['main_checkout'])
+        self.assertEqual(self.statuses(result), {'.venv': 'no main checkout', '.env': 'env file'})
+        found = [w for w in result['warnings'] if 'worktree_links' in w]
+        self.assertEqual(len(found), 1, found); self.assertIn('--separate-git-dir', found[0]); self.assertIn('stages make no links', found[0])
+        self.assertIsNone(self.links()['main_checkout'])
+        self.assertFalse([w for w in self.links()['warnings'] if 'worktree_links' in w])
+        # A worktree of a bare repository has no main checkout either.
+        self.repo = repo
+        bare = self.base / 'bare.git'
+        git(self.base, 'clone', '-q', '--bare', str(repo), str(bare))
+        worktree = self.base / 'bare worktree'
+        git(bare, 'worktree', 'add', '-q', '--detach', str(worktree))
+        self.repo = worktree; self.write_config(BASE); (worktree / '.venv').mkdir()
+        result = self.links('.venv')
+        self.assertIsNone(result['main_checkout'])
+        self.assertEqual(self.statuses(result), {'.venv': 'no main checkout'})
+        self.assertTrue(any('is bare' in w for w in result['warnings']), result['warnings'])
+
+
+if __name__ == '__main__': unittest.main()

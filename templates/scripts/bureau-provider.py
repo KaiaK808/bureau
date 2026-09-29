@@ -55,7 +55,7 @@ def configuration(stage, config, env):
     reasoning = env.get('BUREAU_REASONING_' + upper) or item.get('reasoning_effort') or provider.get('reasoning_effort')
     if reasoning and reasoning not in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'):
         raise ValueError('invalid reasoning_effort')
-    timeout = float(env.get('BUREAU_STAGE_TIMEOUT') or item.get('timeout_seconds') or provider.get('timeout_seconds', 900))
+    timeout = float(env.get('BUREAU_STAGE_TIMEOUT') or item.get('timeout_seconds') or provider.get('timeout_seconds', 3600))
     if not math.isfinite(timeout) or timeout <= 0 or timeout > 86400: raise ValueError('timeout_seconds must be within (0, 86400]')
     return dict(stage=stage, runner=runner, model=model, sandbox=sandbox, reasoning=reasoning, timeout=timeout,
                 headroom=runner == 'claude' and env.get('BUREAU_HEADROOM_WRAP', str(agents.get('headroom_wrap', False))).lower() in ('1', 'true'),
