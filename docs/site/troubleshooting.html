@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="df01c8223311f0536f1b84fe8653639c477b0efc0284c685224f4f18e89f482d">
+<meta name="bureau-source-sha256" content="414386ca55cf2d5c1a507a703029444cd4d1267392292e14f3883f2a902ae7ea">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -491,22 +491,28 @@ After fixing the blocker or re-running the check, remove
 <code>needs-human</code> and re-shepherd; the merge stage checks every
 gate again.</p>
 <h3
-id="doctor-warns-the-merge-gate-needs-checks-but-no-workflow-runs-on-pull-requests">Doctor
+id="doctor-warns-the-merge-gate-needs-checks-but-no-workflow-runs-on-pull-requests-or-on-pushes-to-every-branch">Doctor
 warns: the merge gate needs checks, but no workflow runs on pull
-requests</h3>
+requests or on pushes to every branch</h3>
 <p><code>agents.merge_require_green_ci</code> (default
 <code>true</code>) lets a PR merge only when at least
 <code>agents.merge_min_required_checks</code> (default 1) check runs or
 statuses on its head have completed green. In a repository where no
-GitHub Actions workflow runs on pull requests and no other CI reports to
-GitHub, that never happens: every automatic merge, inline after review
-or in the merge stage, waits on "only 0 completed check(s)". Doctor
-warns about this when merging is automatic
+GitHub Actions workflow runs for a pull request's head commit and no
+other CI reports to GitHub, that never happens: every automatic merge,
+inline after review or in the merge stage, waits on "only 0 completed
+check(s)". Doctor warns about this when merging is automatic
 (<code>agents.merge_mode</code> <code>auto</code> with the review or
 merge stage on) and no file under <code>.github/workflows</code> names a
 <code>pull_request</code> or <code>pull_request_target</code> trigger in
-its <code>on:</code> block. Fix one of three ways: add a workflow that
-runs on pull requests
+its <code>on:</code> block, or a <code>push</code> trigger that runs for
+every branch: the gate counts check runs on the head commit whatever
+event started them, so a push workflow on the pull request's branch
+counts too. A push trigger limited by <code>branches</code> (doctor
+cannot know the pull request's branch name) or to tags still gets the
+warning, which then names those files; it is harmless when the filter
+takes in your pull request branches. Fix one of three ways: add a
+workflow that runs on pull requests
 (<code>python3 "$BUREAU_SOURCE/scripts/bureau_install.py" assets --repo "$PWD" --scope ci --apply</code>
 scaffolds one, or <code>/bureau-init --resync-ci</code>), set
 <code>agents.merge_require_green_ci</code> to <code>false</code> for a

@@ -185,6 +185,25 @@ class IgnoredTemplateFileTests(Target):
         self.assertIn("templates/scripts/.env", result["skipped"]); self.assertIn("templates/scripts/debug.log", result["skipped"])
         self.assertFalse((self.repo / "scripts/.env").exists() or (self.repo / "scripts/debug.log").exists())
 
+    def test_ignore_rules_that_cannot_be_read_stop_the_install_before_any_write(self):
+        # A git whose check-ignore fails: neither the checkout nor the scratch repository can say
+        # what the source ignores, so nothing may be installed on a guess.
+        source, program = self.source()
+        real = shutil.which("git")
+        fake = self.root / "fake bin"
+        fake.mkdir()
+        (fake / "git").write_text('#!/bin/sh\nfor a in "$@"; do [ "$a" = check-ignore ] && { echo "fatal: simulated" >&2; exit 128; }; done\n'
+                                  'exec "' + real + '" "$@"\n')
+        (fake / "git").chmod(0o755)
+        before = self.snapshot()
+        proc = subprocess.run([sys.executable, str(program), "assets", "--scope", "scripts", "--apply", "--repo", str(self.repo)],
+                              capture_output=True, text=True, env={**GIT_ENV, "PATH": str(fake) + os.pathsep + GIT_ENV["PATH"]})
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("cannot read the template source's ignore rules", proc.stderr)
+        self.assertIn("simulated", proc.stderr)
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.repo / ".bureau-install.json").exists())
+
     def test_a_source_outside_git_skips_dotfiles_and_its_ignore_patterns(self):
         source, program = self.source(git=False)
         result = json.loads(self.install(*self.ALL, "--apply", program=program).stdout)

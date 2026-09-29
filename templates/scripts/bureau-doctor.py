@@ -125,9 +125,10 @@ LONG_CALL_MIN_SECONDS = 1800
 
 
 def gate_switch(agents, key, warnings):
-    """A merge gate switch read the way the merge stage reads it: absent or null is true
-    (required), a JSON boolean is itself, and any other value counts as required, with a
-    warning. Only an explicit false switches the gate off."""
+    """A merge gate switch read by the v3.1 rule for agents.merge_require_*: absent or null is
+    true (required), a JSON boolean is itself, and any other value counts as required, with a
+    warning. Only an explicit false switches the gate off. The merge stage's own read
+    (`// true` in merge-pipeline.sh, which takes false for true) moves to this rule in v3.1."""
     value = agents.get(key)
     if value is None: return True
     if type(value) is bool: return value
@@ -135,23 +136,58 @@ def gate_switch(agents, key, warnings):
     return True
 
 
-PULL_REQUEST_TRIGGER = re.compile(r'\bpull_request(?:_target)?\b')
+PULL_REQUEST_EVENTS = ('pull_request', 'pull_request_target')
+REF_FILTER = re.compile(r'(?:^|[\s{,])(branches-ignore|branches|tags-ignore|tags)\s*:')
 
 
-def runs_on_pull_requests(text):
-    """Whether a workflow's top-level `on:` names a pull_request or pull_request_target
-    trigger. A line reading, not a YAML parser: only the `on:` block counts, so a push-only
-    workflow whose steps read github.event.pull_request does not."""
+def push_reaches_every_branch(spec):
+    """Whether a push trigger with these settings runs for a push to any branch. GitHub runs
+    it for no branch when `branches` limits it (doctor cannot know the pull request's branch
+    name) or when it names only tags; `branches-ignore` alone leaves the other branches in."""
+    keys = set(REF_FILTER.findall(spec))
+    if 'branches' in keys: return False
+    return not (keys & {'tags', 'tags-ignore'}) or 'branches-ignore' in keys
+
+
+def ci_trigger(text):
+    """How a workflow's top-level `on:` can put a check on a pull request's head commit:
+    'pull_request' (pull_request or pull_request_target), 'push' (a push trigger that runs
+    for every branch: the gate counts check runs per commit, whatever event started them),
+    'push-filtered' (a push trigger limited by branches or to tags), or None. A line reading,
+    not a YAML parser: only the `on:` block counts, so a push-only workflow whose steps read
+    github.event.pull_request is no pull_request workflow; a sequence may sit at column 0.
+    The caller reads the file as utf-8-sig, so a byte order mark does not hide `on:`."""
     lines = [re.sub(r'(^|\s)#.*$', '', line.rstrip('\r')) for line in text.splitlines()]
     for index, line in enumerate(lines):
         match = re.match(r'''(?:on|"on"|'on')\s*:(.*)$''', line)
         if not match: continue
-        block = [match.group(1)]
+        inline, block = match.group(1).strip(), []
         for following in lines[index + 1:]:
-            if following.strip() and not following[:1].isspace(): break
+            if following.strip() and not following[:1].isspace() and not re.match(r'-(\s|$)', following): break
             block.append(following)
-        return bool(PULL_REQUEST_TRIGGER.search('\n'.join(block)))
-    return False
+        if inline:
+            events = {name: inline for name in re.findall(r'[\w-]+', inline)}
+        else:
+            # Events are the list items, or the keys at the block's first indentation, each
+            # with the lines indented below it as its settings.
+            events, current, indent = {}, None, None
+            for following in block:
+                if not following.strip(): continue
+                depth = len(following) - len(following.lstrip())
+                item = re.match(r'\s*-\s*([\w-]+)', following)
+                key = re.match(r'\s*([\w-]+)\s*:(.*)$', following)
+                if indent is None: indent = depth
+                if depth <= indent and item:
+                    current = item.group(1); events[current] = ''
+                elif depth <= indent and key:
+                    current = key.group(1); events[current] = key.group(2)
+                elif current is not None:
+                    events[current] += '\n' + following
+        if any(name in PULL_REQUEST_EVENTS for name in events): return 'pull_request'
+        pushes = [spec for name, spec in events.items() if name == 'push']
+        if not pushes: return None
+        return 'push' if any(push_reaches_every_branch(spec) for spec in pushes) else 'push-filtered'
+    return None
 
 
 def ci_gate_without_workflows(repo, minimum):
@@ -161,14 +197,23 @@ def ci_gate_without_workflows(repo, minimum):
     if type(minimum) in (int, float) and minimum <= 0: return None
     directory = repo / '.github' / 'workflows'
     files = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix in ('.yml', '.yaml')) if directory.is_dir() else []
+    filtered = []
     for workflow in files:
-        try: text = workflow.read_text(errors='replace')
+        try: text = workflow.read_text(encoding='utf-8-sig', errors='replace')
         except OSError: continue
-        if runs_on_pull_requests(text): return None
-    found = ('no workflow in .github/workflows runs on pull requests (checked: ' + ', '.join(p.name for p in files) + ')') if files else 'the repository has no workflow in .github/workflows'
+        trigger = ci_trigger(text)
+        if trigger in ('pull_request', 'push'): return None
+        if trigger == 'push-filtered': filtered.append(workflow.name)
+    if not files:
+        found = 'the repository has no workflow in .github/workflows'
+    else:
+        found = 'no workflow in .github/workflows runs on pull requests or on pushes to every branch'
+        if filtered: found += '; push is limited by branches or to tags in ' + ', '.join(filtered)
+        found += ' (checked: ' + ', '.join(p.name for p in files) + ')'
+    unless = ('Unless those filters take in the pull request\'s branch, or another CI reports' if filtered else 'Unless another CI reports')
     needed = 1 if minimum is None or minimum is False else minimum
     return ('agents.merge_require_green_ci: automatic merges need at least ' + json.dumps(needed) + ' completed check(s) on the pull request\'s head, but ' + found
-            + '. Unless another CI reports checks or statuses to GitHub for pull requests, no automatic merge passes the gate. Add a workflow that runs on pull_request'
+            + '. ' + unless + ' checks or statuses to GitHub for the pull request\'s head commit, no automatic merge passes the gate. Add a workflow that runs on pull_request'
             + ' (bureau_install.py assets --scope ci scaffolds one), or set agents.merge_require_green_ci to false for a repository without CI, or agents.merge_mode to manual')
 
 

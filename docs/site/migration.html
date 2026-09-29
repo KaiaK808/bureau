@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6e31bc8d33cda0316db2e4e8d4a5d9525243a1bc3e3a0ef3ca79b544c20fa209">
+<meta name="bureau-source-sha256" content="fda779c5c20da5ba36f15b3e95dbc944bc2e32ac4fb10a9e043aca5f479b7b14">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -646,8 +646,9 @@ provider call, when automatic merging needs CI checks
 (<code>agents.merge_mode</code> auto,
 <code>agents.merge_require_green_ci</code> not <code>false</code>,
 <code>agents.merge_min_required_checks</code> at least 1) but no
-workflow under <code>.github/workflows</code> runs on pull requests, and
-when <code>agents.merge_require_green_ci</code>,
+workflow under <code>.github/workflows</code> runs on pull requests or
+on pushes to every branch, and when
+<code>agents.merge_require_green_ci</code>,
 <code>agents.merge_require_up_to_date</code> or
 <code>agents.implement.push_each_iteration</code> is not a JSON boolean;
 it rejects <code>.env*</code> entries in

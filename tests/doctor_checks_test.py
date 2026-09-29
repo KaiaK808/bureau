@@ -61,7 +61,8 @@ class Repo(unittest.TestCase):
 
     def workflow(self, name, text):
         path = self.repo / '.github/workflows' / name
-        path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(text if isinstance(text, bytes) else text.encode())
         return path
 
 
@@ -133,14 +134,23 @@ class CiGateTests(Repo):
         self.assertGateWarning(self.config(), True, 'the repository has no workflow in .github/workflows')
         self.workflow('deploy.yml', 'name: deploy\non:\n  push:\n    branches: [main]\njobs:\n  x:\n    if: github.event.pull_request.number\n    runs-on: ubuntu-latest\n')
         self.workflow('notes.txt', 'on: pull_request\n')  # not a workflow file
-        self.assertGateWarning(self.config(), True, 'no workflow in .github/workflows runs on pull requests (checked: deploy.yml)')
+        found = 'no workflow in .github/workflows runs on pull requests or on pushes to every branch'
+        result = self.assertGateWarning(self.config(), True, found + '; push is limited by branches or to tags in deploy.yml (checked: deploy.yml)')
+        self.assertIn('Unless those filters take in the pull request\'s branch', self.gate(result)[0])
+        (self.repo / '.github/workflows/deploy.yml').unlink()
         self.workflow('nightly.yaml', "# on: pull_request (disabled)\n'on':\n  schedule:\n    - cron: '0 3 * * *'\n  # pull_request:\n")
-        self.assertGateWarning(self.config(), True, '(checked: deploy.yml, nightly.yaml)')
+        self.workflow('release.yml', 'on:\n  push:\n    tags: [v*]\n')
+        result = self.assertGateWarning(self.config(), True, found + '; push is limited by branches or to tags in release.yml (checked: nightly.yaml, release.yml)')
+        (self.repo / '.github/workflows/release.yml').unlink()
+        result = self.assertGateWarning(self.config(), True, found + ' (checked: nightly.yaml)')
+        self.assertIn('Unless another CI reports checks or statuses to GitHub for the pull request\'s head commit', self.gate(result)[0])
 
     def test_any_pull_request_trigger_satisfies_the_check(self):
         for text in ('on: pull_request\n', 'on: [push, pull_request]\n', 'on:\n  pull_request:\n    types: [opened]\n',
                      '"on":\n  - push\n  - pull_request\n', "'on': [pull_request]\n", 'on:\n  pull_request_target:\n', 'on: {pull_request: {}}\n',
-                     'name: ci\non:  # triggers\n  push:\n  pull_request:\njobs: {}\n'):
+                     'name: ci\non:  # triggers\n  push:\n  pull_request:\njobs: {}\n',
+                     'on:\n- push\n- pull_request\njobs:\n  test:\n    runs-on: ubuntu-latest\n',
+                     b'\xef\xbb\xbfon: pull_request\n', b'\xef\xbb\xbfname: ci\non:\n  pull_request:\n'):
             with self.subTest(text=text):
                 path = self.workflow('ci.yaml', text)
                 self.assertGateWarning(self.config(), False)
@@ -149,6 +159,25 @@ class CiGateTests(Repo):
         subprocess.run([sys.executable, str(INSTALLER), 'assets', '--repo', str(self.repo), '--scope', 'ci', '--apply'],
                        check=True, stdout=subprocess.DEVNULL)
         self.assertGateWarning(self.config(), False)
+
+    def test_a_push_trigger_for_every_branch_satisfies_the_check(self):
+        # The gate counts check runs on the head commit, whatever event started them, and a push
+        # to the pull request's branch starts a push workflow unless branches or tags limit it.
+        for text in ('on: push\n', 'on: [push]\n', 'on:\n  push:\n', 'on:\n  push:\n    branches-ignore: [main]\n',
+                     'on:\n  push:\n    paths: [src/**]\n', 'on:\n  push:\n    tags: [v*]\n    branches-ignore: [gh-pages]\n',
+                     'on:\n- push\njobs: {}\n', b'\xef\xbb\xbfon: push\n',
+                     'on:\n  workflow_dispatch:\n  push:\n  schedule:\n    - cron: x\n'):
+            with self.subTest(text=text):
+                path = self.workflow('ci.yml', text)
+                self.assertGateWarning(self.config(), False)
+                path.unlink()
+        for text in ('on:\n  push:\n    branches: [main]\n', 'on:\n  push:\n    branches:\n      - main\n  workflow_dispatch:\n',
+                     'on:\n  push:\n    tags:\n      - v*\n', 'on: {push: {branches: [main]}}\n',
+                     'on:\n  workflow_run:\n    workflows: [push]\n'):
+            with self.subTest(text=text):
+                path = self.workflow('ci.yml', text)
+                self.assertGateWarning(self.config(), True)
+                path.unlink()
 
     def test_only_a_gate_that_needs_checks_and_merges_automatically_is_judged(self):
         # (agents settings, warning expected)
