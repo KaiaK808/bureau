@@ -6,6 +6,10 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-09-29
+
+Patch release on v3.0.1 with a runtime fix and an opt-in addition. Every stage now finds the ticket's own spec directory ([#29](https://github.com/KaiaK808/bureau/pull/29)): implement matched spec directories by their number first and handed every ticket in an installation that reuses one `NNN-` prefix the first alphabetical directory's `tasks.md`, and the other stages matched the slug as a loose substring or took the newest directory. New `repo.worktree_links` links paths such as a Python `.venv` from the main checkout into every stage worktree after its reset ([#30](https://github.com/KaiaK808/bureau/pull/30)); empty by default. **Upgrade:** from v3.0.1, v3.0.0 or v3.0.0-rc.2 select tag `v3.0.2` and resync the scripts scope as one set; no configuration change is required. Installations whose spec directories repeat a number should resync before the next implement run; Python installations can add `"worktree_links": [".venv"]`. See the [v3.0.2 release notes](docs/release-notes.md).
+
 ### Every stage finds the ticket's own spec directory
 
 #### Fixed
@@ -20,7 +24,7 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [3.0.1] - 2026-09-29
 
-Patch release on v3.0.0 with two runtime changes found in the second live acceptance of v3.0.0 in the maintainer's pilot installation: the merge stage now ends with `2` (not yet) or `25` (blocked) when it does not merge, and the shepherd waits or halts on that instead of ending stuck ([#27](https://github.com/KaiaK808/bureau/pull/27)); a review resumed after a `--no-merge` stop reuses an unchanged APPROVE instead of paying for a second full review ([#26](https://github.com/KaiaK808/bureau/pull/26)). **Upgrade:** from v3.0.0 or v3.0.0-rc.2 select tag `v3.0.1` and resync the scripts scope as one set; no configuration change. See the [v3.0.1 release notes](docs/release-notes.md).
+Patch release on v3.0.0 with two runtime changes found in the second live acceptance of v3.0.0 in the maintainer's pilot installation: the merge stage now ends with `2` (not yet) or `25` (blocked) when it does not merge, and the shepherd waits or halts on that instead of ending stuck ([#27](https://github.com/KaiaK808/bureau/pull/27)); a review resumed after a `--no-merge` stop reuses an unchanged APPROVE instead of paying for a second full review ([#26](https://github.com/KaiaK808/bureau/pull/26)). **Upgrade:** from v3.0.0 or v3.0.0-rc.2 select tag `v3.0.1` and resync the scripts scope as one set; no configuration change. See the [v3.0.1 release notes](docs/release-notes-v3.0.1.md).
 
 ### A resumed review reuses an unchanged approval
 
@@ -233,7 +237,8 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.0.1...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.0.2...main
+[3.0.2]: https://github.com/KaiaK808/bureau/compare/v3.0.1...v3.0.2
 [3.0.1]: https://github.com/KaiaK808/bureau/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/KaiaK808/bureau/compare/v2.0.0...v3.0.0
 [3.0.0-rc.2]: https://github.com/KaiaK808/bureau/compare/v3.0.0-rc.1...v3.0.0-rc.2

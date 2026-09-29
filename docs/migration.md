@@ -2,7 +2,7 @@
 
 An upgrade has two steps: update the **Bureau source skill**, then resync its assets into **each adopting repository**. Updating the source clone alone leaves installed scripts and commands unchanged. `/bureau-init --update` edits configuration; it does not upgrade installed assets.
 
-This guide upgrades installations from the official [KaiaK808/bureau](https://github.com/KaiaK808/bureau) source: legacy untagged installations, v2.0.0 installations, the v3 release candidates and v3.0.0 to the stable **Bureau v3.0.1**. The commands below require the selected release's source skill. See the [v3.0.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.1) and its [release notes](release-notes.md), the [v3.0.0 release notes](release-notes-v3.0.0.md) (the candidates: [v3.0.0-rc.2](release-notes-v3.0.0-rc.2.md), [v3.0.0-rc.1](release-notes-v3.0.0-rc.1.md)), the previous stable [v2.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) and its [release notes](release-notes-v2.0.0.md), the [changelog](../CHANGELOG.md) and the [release process](releases.md). A Bureau major version marks operational changes (v2.0.0: explicit worker ownership; v3: the exit-code contract, see [Upgrade to v3](#upgrade-to-v3)); it does not require configuration schema v2.
+This guide upgrades installations from the official [KaiaK808/bureau](https://github.com/KaiaK808/bureau) source: legacy untagged installations, v2.0.0 installations, the v3 release candidates, v3.0.0 and v3.0.1 to the stable **Bureau v3.0.2**. The commands below require the selected release's source skill. See the [v3.0.2 release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.2) and its [release notes](release-notes.md), the [v3.0.1 release notes](release-notes-v3.0.1.md), the [v3.0.0 release notes](release-notes-v3.0.0.md) (the candidates: [v3.0.0-rc.2](release-notes-v3.0.0-rc.2.md), [v3.0.0-rc.1](release-notes-v3.0.0-rc.1.md)), the previous stable [v2.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) and its [release notes](release-notes-v2.0.0.md), the [changelog](../CHANGELOG.md) and the [release process](releases.md). A Bureau major version marks operational changes (v2.0.0: explicit worker ownership; v3: the exit-code contract, see [Upgrade to v3](#upgrade-to-v3)); it does not require configuration schema v2.
 
 ## Select the source release
 
@@ -20,10 +20,10 @@ git -C "$BUREAU_SOURCE" rev-parse HEAD
 
 For a Codex-only install, the entry point may be `~/.agents/skills/bureau-init` or a configured skill directory. Follow its link to the actual source clone. Record the previous commit and branch/tag privately for rollback; `describe` alone may name a nearby tag instead of the installed commit.
 
-Confirm that `origin` identifies the official `KaiaK808/bureau` repository (HTTPS or SSH). Preserve local source changes before continuing; do not reset the skill clone. With a clean checkout, select the exact release (`v3.0.1` for the stable release, `v3.0.0` or `v2.0.0` for an earlier one):
+Confirm that `origin` identifies the official `KaiaK808/bureau` repository (HTTPS or SSH). Preserve local source changes before continuing; do not reset the skill clone. With a clean checkout, select the exact release (`v3.0.2` for the stable release, `v3.0.1`, `v3.0.0` or `v2.0.0` for an earlier one):
 
 ```sh
-BUREAU_RELEASE=v3.0.1 # or v3.0.0, v2.0.0
+BUREAU_RELEASE=v3.0.2 # or v3.0.1, v3.0.0, v2.0.0
 git -C "$BUREAU_SOURCE" fetch origin tag "$BUREAU_RELEASE" &&
 git -C "$BUREAU_SOURCE" switch --detach "refs/tags/$BUREAU_RELEASE" &&
 git -C "$BUREAU_SOURCE" rev-parse HEAD
@@ -35,9 +35,11 @@ An intentionally `main`-tracking installation can instead use `git pull --ff-onl
 
 ## Upgrade to v3
 
-**From v3.0.0 or v3.0.0-rc.2:** select tag `v3.0.1` and resync the scripts scope as one set; no configuration change is required. Afterwards the merge stage ends with `2` when its gate is not yet decided and with `25` when it is blocked, where it used to end with `0`: wrappers and repository tests that read its exit code must accept both, and an installation that merges automatically now gets an hourly queue alert for a pull request whose gate stays blocked in Merge. A review resumed after a `--no-merge` stop reuses an unchanged APPROVE (see [troubleshooting](troubleshooting.md)).
+**From v3.0.1:** select tag `v3.0.2` and resync the scripts scope as one set; no configuration change is required. Every stage then finds the ticket's spec directory the same way: the branch loses a `prefix/` and an issue key, then an exact directory name wins, else the one directory whose slug fits the branch slug (equal, a truncated start, or whole words inside it), else among several fits the one with the branch's number; a number alone never selects. A branch that fits two spec directories equally stops at implement, spec review or UX with `13` and `needs-human` instead of taking one of them. An installation whose spec directories repeat an `NNN-` prefix (`ls specs | cut -d- -f1 | sort | uniq -d` prints something) should resync before its next implement run; a hand-patched matcher in `implement-pipeline.sh` shows up as a conflict and is replaced by the shared function. See [troubleshooting](troubleshooting.md) for how the match works. Optional: a Python installation whose agents need the virtualenv in the stage worktrees commits the resynced scripts to `main` first, then adds `"worktree_links": [".venv"]` under `repo` and lists `.venv` (without a trailing slash) in `.gitignore`; the link is the main checkout's own virtualenv, shared by every stage — see [configuration](configuration.md#python-repositories) before enabling it.
 
-**From v3.0.0-rc.1:** select tag `v3.0.1` and resync the scripts scope as one set; no configuration change is required. New optional settings are `repo.post_implement_command` (with `BUREAU_POST_IMPLEMENT_TIMEOUT`), `BUREAU_LINEAR_MAX_TIME` / `BUREAU_LINEAR_CONNECT_TIMEOUT` (or `.linear.request.max_time` / `.connect_timeout`) and `BUREAU_SHEPHERD_CONFIRM_SECONDS`; see [configuration](configuration.md). After the resync, a missing or invalid Linear key shows as `27` with an hourly queue alert, a stage whose `needs-human` label cannot be written ends with `25` and holds the ticket locally, a failed final implement push ends with `18` when origin lacks commits, and the merge stage ends with `2` or `25` when it does not merge, as described above. The rest of this section applies to an upgrade from v2.0.0 or a legacy copy.
+**From v3.0.0 or v3.0.0-rc.2:** select tag `v3.0.2` and resync the scripts scope as one set; no configuration change is required. Afterwards the merge stage ends with `2` when its gate is not yet decided and with `25` when it is blocked, where it used to end with `0`: wrappers and repository tests that read its exit code must accept both, and an installation that merges automatically now gets an hourly queue alert for a pull request whose gate stays blocked in Merge. A review resumed after a `--no-merge` stop reuses an unchanged APPROVE (see [troubleshooting](troubleshooting.md)). The spec-directory change of v3.0.2 applies as well (see above).
+
+**From v3.0.0-rc.1:** select tag `v3.0.2` and resync the scripts scope as one set; no configuration change is required. New optional settings are `repo.post_implement_command` (with `BUREAU_POST_IMPLEMENT_TIMEOUT`), `BUREAU_LINEAR_MAX_TIME` / `BUREAU_LINEAR_CONNECT_TIMEOUT` (or `.linear.request.max_time` / `.connect_timeout`) and `BUREAU_SHEPHERD_CONFIRM_SECONDS`; see [configuration](configuration.md). After the resync, a missing or invalid Linear key shows as `27` with an hourly queue alert, a stage whose `needs-human` label cannot be written ends with `25` and holds the ticket locally, a failed final implement push ends with `18` when origin lacks commits, the merge stage ends with `2` or `25` when it does not merge, and every stage finds the spec directory as described above. The rest of this section applies to an upgrade from v2.0.0 or a legacy copy.
 
 v3 changes the exit-code contract between the stages and whatever drives them (the shepherd, the queue loop, ticks, wrappers and repository tests). Check anything that reads these codes before resuming dispatch:
 
@@ -140,7 +142,7 @@ The preview also prints `source`: the revision of the Bureau source it would ins
 
 ```json
 "sources": {
-  "scripts": {"git": true, "tag": "v3.0.1", "describe": "v3.0.1", "commit": "<40-character SHA>", "dirty": false}
+  "scripts": {"git": true, "tag": "v3.0.2", "describe": "v3.0.2", "commit": "<40-character SHA>", "dirty": false}
 },
 "sources_files_sha256": "<sha256 of the files map>"
 ```

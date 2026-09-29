@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f2370ea69e4fefb919e8e7fbdd1999dfb4a23491647ccb8b6096410d79f0c3db">
+<meta name="bureau-source-sha256" content="1495edea491b1b64f1b9a3d98d3501d5570020624babef475f2414f69d876b6a">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,30 +24,45 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.0.1</strong>, dated
+<p>This source tree contains <strong>Bureau v3.0.2</strong>, dated
 <strong>2026-09-29</strong>, the current stable release: a patch on
-v3.0.0. Its <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.1">GitHub
+v3.0.1. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">GitHub
 Release</a> identifies the exact tagged commit; the <a
 href="../../CHANGELOG.md">changelog</a> and <a
-href="release-notes.html">release notes</a> describe the changes and the
-upgrade. v3.0.1 changes the runtime in two places: the merge stage ends
-with <code>2</code> when its gate is not yet decided and with
-<code>25</code> when it is blocked, instead of <code>0</code>, and the
-shepherd waits or halts on that (<a
+href="release-notes.html">release notes</a> describe the change and the
+upgrade. v3.0.2 changes the runtime in two places: every stage finds the
+ticket's spec directory through one function,
+<code>bureau_spec_dir_for_branch</code> (exact name, else the one
+directory whose slug fits the branch, else among several fits the one
+with the branch's number; a number alone never selects, and a tie stops
+the stage with <code>needs-human</code>), instead of implement taking
+the first directory with the branch's number and the other stages a
+loose substring or the newest directory (<a
+href="https://github.com/KaiaK808/bureau/pull/29">#29</a>); and the new,
+empty-by-default <code>repo.worktree_links</code> symlinks listed paths
+such as a Python <code>.venv</code> from the main checkout into every
+stage worktree after its reset (<a
+href="https://github.com/KaiaK808/bureau/pull/30">#30</a>). Both are
+validated by the full Linux/macOS suite on the release commit, the
+installer fixtures, tests with negative controls and mutation checks,
+and an independent verification pass per pull request; no live ticket
+has run on v3.0.2 yet. Release preparation changes documentation only:
+runtime, installer, templates, tests and CI are identical to the merge
+of #30. The final commit is recorded in the GitHub Release body.</p>
+<p><strong>Bureau v3.0.1</strong>, dated <strong>2026-09-29</strong> (<a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.1">GitHub
+Release</a>, <a href="release-notes-v3.0.1.html">release notes</a>), is
+the patch it supersedes: the merge stage ends with <code>2</code> when
+its gate is not yet decided and with <code>25</code> when it is blocked,
+instead of <code>0</code>, and the shepherd waits or halts on that (<a
 href="https://github.com/KaiaK808/bureau/pull/27">#27</a>); a review
 resumed after a <code>--no-merge</code> stop reuses an unchanged APPROVE
-(<a href="https://github.com/KaiaK808/bureau/pull/26">#26</a>). Both are
-validated by the full Linux/macOS suite on the release commit, the
-installer fixtures and an independent verification pass per pull
-request; no live ticket has run on v3.0.1 yet. Release preparation
-changes documentation only: runtime, installer, templates, tests and CI
-are identical to the merge of #27, <code>0afbc25</code>. The final
-commit is recorded in the GitHub Release body.</p>
+(<a href="https://github.com/KaiaK808/bureau/pull/26">#26</a>).</p>
 <p><strong>Bureau v3.0.0</strong>, dated <strong>2026-09-28</strong> (<a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.0">GitHub
 Release</a>, <a href="release-notes-v3.0.0.html">release notes</a>), is
-the major release it patches. v3 is a major release because the
+the major release both patch. v3 is a major release because the
 exit-code contract between stages and their drivers changed (a review
 BLOCK ends with <code>25</code>, the new code <code>27</code> means
 Linear stayed unusable, and the shepherd halts with an alert on every

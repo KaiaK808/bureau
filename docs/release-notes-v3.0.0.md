@@ -1,6 +1,6 @@
 # Bureau v3.0.0 — the exit-code contract, merge policy and a pipeline that fails closed
 
-**Stable release · 2026-09-28 · source tag `v3.0.0`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0) records the exact tagged commit. It is superseded by the patch release [v3.0.1](release-notes.md). v3.0.0 has the same runtime, installer, templates and tests as its second candidate, [v3.0.0-rc.2](release-notes-v3.0.0-rc.2.md); the first candidate was [v3.0.0-rc.1](release-notes-v3.0.0-rc.1.md). The previous stable release is [v2.0.0](release-notes-v2.0.0.md).
+**Stable release · 2026-09-28 · source tag `v3.0.0`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.0) records the exact tagged commit. It is superseded by the patch releases [v3.0.1](release-notes-v3.0.1.md) and [v3.0.2](release-notes.md). v3.0.0 has the same runtime, installer, templates and tests as its second candidate, [v3.0.0-rc.2](release-notes-v3.0.0-rc.2.md); the first candidate was [v3.0.0-rc.1](release-notes-v3.0.0-rc.1.md). The previous stable release is [v2.0.0](release-notes-v2.0.0.md).
 
 This is a major release because the exit-code contract between the stages and whatever drives them (the shepherd, the queue loop, ticks, wrappers and repository tests) changed. Anything that reads these codes needs to be checked when upgrading.
 
