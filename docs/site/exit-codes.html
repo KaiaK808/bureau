@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0b08305f6c3823446ccefd1031c2c0d97ade428020595b0267296bf5a3be39c4">
+<meta name="bureau-source-sha256" content="83f037814e1a91b0c91fefa4d673ebaa3df64fbdc8c2d1b420ad26ff583c76c2">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -299,12 +299,16 @@ checked first, without a Linear read). A held ticket ends the run with
 no <code>--from-stage</code> move, no comment, no alert — and a line on
 stderr names the hold and how to release it; <code>--dry-run</code>
 answers the same way (the hold instead of a route, <code>25</code>). A
-label read that fails there writes nothing either: <code>27</code> with
-the fault class and an alert when Linear stayed unusable, <code>1</code>
-and an alert for any other failure, <code>130</code> for a signal. The
-loop keeps the same check before every stage and halts with
-<code>25</code> and a comment, as before, now also on the configured
-name and on a local hold.</p>
+hold left on a finished ticket changes nothing: without
+<code>--from-stage</code> a Done ticket still ends with <code>0</code>
+and a cancelled one with <code>26</code>, as in the loop and without any
+write (the state is read only then), so an orchestrated chain goes on
+past it. A label read that fails there writes nothing either:
+<code>27</code> with the fault class and an alert when Linear stayed
+unusable, <code>1</code> and an alert for any other failure,
+<code>130</code> for a signal. The loop keeps the same check before
+every stage and halts with <code>25</code> and a comment, as before, now
+also on the configured name and on a local hold.</p>
 <p><strong>Token-efficiency flags don't change the table.</strong> Under
 <code>agents.use_goal_loop: true</code>, the implement-pipeline still
 produces the same terminal STATUS values (<code>COMPLETE</code> /

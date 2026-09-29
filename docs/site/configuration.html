@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="76dc0529350cc18aadef9b86519a6ad3b4670f983b2d618420703a4156abc41f">
+<meta name="bureau-source-sha256" content="5c8fe85e8e325136aad022cb1b0834f0ac6de110dbf1a331646faf495c29d4cd">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -160,9 +160,10 @@ of the queue</td>
 <td>string</td>
 <td>optional</td>
 <td>Display name of the park label (default <code>needs-human</code>).
-The queue picker skips, and <code>shepherd.sh</code> refuses before its
-claim and halts on at every turn, a ticket carrying this name or
-<code>needs-human</code></td>
+The queue picker skips, the in-flight count
+(<code>BUREAU_MAX_CONCURRENT_ISSUES</code>) leaves out, and
+<code>shepherd.sh</code> refuses before its claim and halts on at every
+turn, a ticket carrying this name or <code>needs-human</code></td>
 </tr>
 <tr>
 <td><code>linear.labels.needs_ux.id</code></td>

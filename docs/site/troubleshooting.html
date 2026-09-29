@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="aa43f4dfef1e29d2e634bd64b7899c1591a94962a395d1f672e58e566d7a6769">
+<meta name="bureau-source-sha256" content="df82a68f67e4401a83e7f83d7e5a82b2a1a99353514ab85a7e2b11e95de2b0c9">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -392,13 +392,18 @@ hold. To release it, remove the label in Linear; for a local hold, the
 next queue pick writes the label and removes the file, or delete the
 file to release the ticket without the label. Then re-shepherd.
 <code>--dry-run</code> prints the hold instead of a route and ends with
-25 as well. A label read that fails before the claim writes nothing
-either: 27 when Linear stayed unusable (the alert names the fault
-class), 1 for any other failure, 130 for Ctrl-C. The loop checks the
-same holds before every stage; there a hold halts with 25 and a ticket
-comment, as <code>needs-human</code> always did. Until v3.1 the shepherd
-claimed and moved a held ticket first, and a configured label name or a
-local hold did not stop it at all.</p>
+25 as well. A label left on a finished ticket (a human closed a ticket
+the shepherd had halted on) does not count: without
+<code>--from-stage</code> a Done ticket ends with 0 and a cancelled one
+with 26, as always, so an orchestrated chain goes on past it; with
+<code>--from-stage</code> the ticket would move back into the pipeline,
+and its hold refuses it. A label read that fails before the claim writes
+nothing either: 27 when Linear stayed unusable (the alert names the
+fault class), 1 for any other failure, 130 for Ctrl-C. The loop checks
+the same holds before every stage; there a hold halts with 25 and a
+ticket comment, as <code>needs-human</code> always did. Until v3.1 the
+shepherd claimed and moved a held ticket first, and a configured label
+name or a local hold did not stop it at all.</p>
 <h3
 id="orchestratesh---execute--one-lane-failed-do-the-others-continue"><code>orchestrate.sh --execute</code>
 — one lane failed, do the others continue?</h3>

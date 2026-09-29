@@ -35,7 +35,7 @@ Version 1 remains compatible; version 2 makes the legacy `agents.runner: "claude
 | `linear.labels.lane2.id` | UUID | yes | Eligibility label (commonly `lane-2`) — only issues with this label enter the pipeline |
 | `linear.labels.lane2.name` | string | yes | Label display name — `pick_issue` filters by name, so keep these in sync |
 | `linear.labels.needs_human.id` | UUID | yes | Park label — applied on unrecoverable failure to take an issue out of the queue |
-| `linear.labels.needs_human.name` | string | optional | Display name of the park label (default `needs-human`). The queue picker skips, and `shepherd.sh` refuses before its claim and halts on at every turn, a ticket carrying this name or `needs-human` |
+| `linear.labels.needs_human.name` | string | optional | Display name of the park label (default `needs-human`). The queue picker skips, the in-flight count (`BUREAU_MAX_CONCURRENT_ISSUES`) leaves out, and `shepherd.sh` refuses before its claim and halts on at every turn, a ticket carrying this name or `needs-human` |
 | `linear.labels.needs_ux.id` | UUID | yes | Routes from Spec Review → Design |
 | `linear.labels.ai_implementable.id` | UUID | yes | Required on issues for stages from Build onwards |
 | `linear.labels.needs_copy.name` | string | optional | Required if `agents.copy: true`; routes from Spec Review (or UX) → Copy |
