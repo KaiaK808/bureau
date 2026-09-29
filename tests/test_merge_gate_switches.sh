@@ -9,9 +9,12 @@
 #      is older than agents.merge_ci_start_grace_seconds (default 1800); before that, and
 #      whenever a read fails, it stays "not yet". It used to stay "not yet" forever, so a
 #      repository without a workflow waited silently.
-#   3. agents.merge_min_required_checks that is not a whole number ("abc", 1.5, "2") counts
-#      as the default 1, with a warning. It used to make the count test fail and the check
-#      pass with no check at all.
+#      The gate line carries no age, so polling a blocked head posts one PR comment.
+#   3. agents.merge_min_required_checks and the grace follow one rule (_merge_gate_number,
+#      the same as the doctor's): a string of digits is that number, a fraction is rounded
+#      up, a negative number or anything else is the default, each with a warning. Before,
+#      a string made the count test fail and the check pass with no check at all, and -1
+#      meant no check needed; "2" must never count as less than 2.
 #
 # Runs the REAL merge-pipeline.sh (on its own, with a gate report) and the real gate
 # helpers from bureau-config.sh against the pr2 gh double. Negative controls put the
@@ -88,7 +91,7 @@ grace_case() {  # <label> <want rc> <want outcome> <pattern>
   pr2_merged && fail "2 $1: merged"
   return 0
 }
-pr2_head_age 3600;       grace_case 'old head, default grace'     25 blocked "^ci_green: ci: no check run and no status on .* after its commit (agents.merge_ci_start_grace_seconds: 1800)"
+pr2_head_age 3600;       grace_case 'old head, default grace'     25 blocked "^ci_green: ci: no check run and no status on [0-9a-f]*, and its commit is older than the CI start grace (agents.merge_ci_start_grace_seconds: 1800) — no CI started for this head\$"
 pr2_head_age 60;         grace_case 'fresh head'                   2 not-yet '^ci_green: ci: only 0 completed check(s)'
 pr2_head_age 1799;       grace_case 'one second inside the grace'  2 not-yet 'only 0 completed'
 pr2_head_age 1800;       grace_case 'at the grace'                25 blocked 'no check run and no status'
@@ -98,11 +101,16 @@ pr2_head_age -600;       grace_case 'head time in the future'      2 not-yet 'on
 pr2_head_age 3600
 pr2_config '.agents.merge_ci_start_grace_seconds = 7200'; grace_case 'configured 7200'   2 not-yet 'only 0 completed'
 pr2_config '.agents.merge_ci_start_grace_seconds = 0';    grace_case 'configured 0'     25 blocked 'grace_seconds: 0)'
-grep -q 'must be a whole number' <<< "$LAST_STDERR" && fail '2: warned about a valid grace'
-for bad in '"600"' '-5' '1.5' '1e20' '12345678901234567890' 'true'; do
-  pr2_config ".agents.merge_ci_start_grace_seconds = $bad"; grace_case "invalid $bad → 1800" 25 blocked 'grace_seconds: 1800)'
-  grep -q 'agents.merge_ci_start_grace_seconds must be a whole number of at least 0; using 1800' <<< "$LAST_STDERR" \
-    || fail "2: no warning for the grace $bad"
+grep -q 'should be a whole number' <<< "$LAST_STDERR" && fail '2: warned about a valid grace'
+# value : grace used : outcome for a head 3600 s old
+for row in '"600":600:blocked' '1.5:2:blocked' '-5:1800:blocked' 'true:1800:blocked' '"abc":1800:blocked' \
+           '1e20:9999999:not-yet' '12345678901234567890:9999999:not-yet'; do
+  value=${row%%:*}; rest=${row#*:}; used=${rest%%:*}; want=${rest#*:}
+  pr2_config ".agents.merge_ci_start_grace_seconds = $value"
+  if [ "$want" = blocked ]; then grace_case "grace $value → $used" 25 blocked "grace_seconds: $used)"
+  else grace_case "grace $value → $used" 2 not-yet 'only 0 completed'; fi
+  grep -q "agents.merge_ci_start_grace_seconds should be a whole number of at least 0; using $used\$" <<< "$LAST_STDERR" \
+    || fail "2: no warning naming $used for the grace $value: $LAST_STDERR"
 done
 pr2_config 'del(.agents.merge_ci_start_grace_seconds)'
 touch "$PR2_GH/fail_status"; grace_case 'status read failed' 2 not-yet 'only 0 completed'; rm -f "$PR2_GH/fail_status"
@@ -119,29 +127,46 @@ pr2_checks none
 pr2_config '.agents.merge_min_required_checks = 0'
 gate
 [ "$LAST_RC" = 0 ] && pr2_merged || fail "2: merge_min_required_checks 0 no longer merges a head without checks (rc $LAST_RC: $LINES)"
-echo 'PASS 2 no check and no status past the grace is blocked; before it, and on every failed read, not yet'
-
-# ── 3. merge_min_required_checks fails closed ──────────────────────────────
+# Polled while it stays blocked (the merge stage sets no needs-human on 25, so the queue
+# takes the ticket again every poll): one gate comment on the PR, not one per poll.
 new_sandbox
-pr2_checks none; pr2_head_age 60
-for bad in '"abc"' '1.5' '"2"' '-1' 'true' '[]'; do
-  pr2_config ".agents.merge_min_required_checks = $bad"
+pr2_checks none
+for age in 3600 3660 3720 3780; do pr2_head_age "$age"; gate; done
+[ "$LAST_RC" = 25 ] || fail "2: the polled head ended $LAST_RC, wanted 25"
+comments=$(jq '[.[] | select(.body | test("Bureau merge gate"))] | length' "$PR2_GH/comments.json")
+[ "$comments" = 1 ] || fail "2: four polls of the same blocked head posted $comments gate comments, wanted 1"
+echo 'PASS 2 no check and no status past the grace is blocked (one PR comment however often polled); before it, and on every failed read, not yet'
+
+# ── 3. merge_min_required_checks by the shared rule ────────────────────────
+# One green check on the head. value : checks required : merges?
+new_sandbox
+pr2_head_age 60
+for row in '"2":2:no' '"3":3:no' '1.5:2:no' '"abc":1:yes' '-1:1:yes' '"-1":1:yes' 'true:1:yes' '[]:1:yes' \
+           '12345678901234567890:9999999:no'; do
+  value=${row%%:*}; rest=${row#*:}; need=${rest%%:*}; merges=${rest#*:}
+  pr2_checks green; pr2_config ".agents.merge_min_required_checks = $value"
   gate
-  [ "$LAST_RC" = 2 ] && ! pr2_merged && grep -q '^ci_green: ci: only 0 completed check(s) on .* (require >= 1)$' <<< "$LINES" \
-    || fail "3: merge_min_required_checks $bad did not count as 1 (rc $LAST_RC, report: $LINES)"
-  grep -q 'agents.merge_min_required_checks must be a whole number of at least 0; using 1' <<< "$LAST_STDERR" \
-    || fail "3: no warning for merge_min_required_checks $bad"
+  if [ "$merges" = yes ]; then
+    [ "$LAST_RC" = 0 ] && pr2_merged || fail "3: $value (= $need) with one green check did not merge (rc $LAST_RC: $LINES)"
+  else
+    [ "$LAST_RC" = 2 ] && ! pr2_merged && grep -q "^ci_green: ci: only 1 completed check(s) on .* (require >= $need)\$" <<< "$LINES" \
+      || fail "3: $value did not require $need checks (rc $LAST_RC, report: $LINES)"
+  fi
+  grep -q "agents.merge_min_required_checks should be a whole number of at least 0; using $need\$" <<< "$LAST_STDERR" \
+    || fail "3: no warning naming $need for merge_min_required_checks $value: $LAST_STDERR"
 done
-# One green check satisfies the default the invalid value stands for.
-pr2_checks green; gate
-[ "$LAST_RC" = 0 ] && pr2_merged || fail "3: an invalid value with one green check did not merge (rc $LAST_RC: $LINES)"
-# Valid values: 3 is 3, absent is 1, both without a warning.
-pr2_config '.agents.merge_min_required_checks = 3'; gate
-grep -q '(require >= 3)$' <<< "$LINES" || fail "3: 3 was not honoured: $LINES"
-pr2_config 'del(.agents.merge_min_required_checks)'; pr2_checks none; gate
-grep -q '(require >= 1)$' <<< "$LINES" || fail "3: absent is not 1: $LINES"
-grep -q 'must be a whole number' <<< "$LAST_STDERR" && fail '3: warned about a valid value'
-echo 'PASS 3 merge_min_required_checks that is not a whole number counts as 1, with a warning'
+# With no check at all, a value that falls back to 1 still waits.
+pr2_checks none; pr2_config '.agents.merge_min_required_checks = "abc"'; gate
+[ "$LAST_RC" = 2 ] && grep -q '(require >= 1)$' <<< "$LINES" || fail "3: \"abc\" with no check did not wait for 1 (rc $LAST_RC: $LINES)"
+# Valid values: 3 is 3, 2.0 is 2, absent is 1, all without a warning.
+for row in '3:3' '2.0:2' 'absent:1'; do
+  value=${row%%:*}; need=${row#*:}
+  if [ "$value" = absent ]; then pr2_config 'del(.agents.merge_min_required_checks)'; else pr2_config ".agents.merge_min_required_checks = $value"; fi
+  gate
+  grep -q "(require >= $need)\$" <<< "$LINES" || fail "3: $value was not read as $need: $LINES"
+  grep -q 'should be a whole number' <<< "$LAST_STDERR" && fail "3: warned about the valid value $value"
+done
+echo 'PASS 3 merge_min_required_checks: "2" requires 2, a fraction is rounded up, a negative or unreadable value is 1, each with a warning'
 
 # ── Negative controls: the v3.0.2 reads ────────────────────────────────────
 new_sandbox

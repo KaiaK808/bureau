@@ -206,6 +206,25 @@ class CiGateTests(Repo):
                 result = self.assertGateWarning(self.config(**agents), expected)
                 if agents.get('merge_min_required_checks') == 2: self.assertIn('at least 2 completed', self.gate(result)[0])
 
+    def test_the_grace_is_read_by_the_gate_rule(self):
+        for value, used, warned in (('600', 600, True), (-5, 1800, True), (900, 900, False), (None, 1800, False)):
+            with self.subTest(value=value):
+                result = self.diagnose(self.config(merge_ci_start_grace_seconds=value))
+                found = [w for w in result['warnings'] if w.startswith('agents.merge_ci_start_grace_seconds ')]
+                self.assertEqual(found, ['agents.merge_ci_start_grace_seconds ' + json.dumps(value)
+                                         + ' should be a whole number of at least 0; the merge gate uses %d' % used] if warned else [])
+
+    def test_the_minimum_is_read_by_the_gate_rule(self):
+        # The merge gate's own reading (gate_number, _merge_gate_number in bureau-config.sh):
+        # "2" needs 2, -1 and "abc" need the default 1, 1.5 needs 2; each warns once.
+        for value, needed in (('2', 2), (-1, 1), ('abc', 1), (1.5, 2)):
+            with self.subTest(value=value):
+                result = self.assertGateWarning(self.config(merge_min_required_checks=value), True)
+                self.assertIn('at least %d completed' % needed, self.gate(result)[0])
+                found = [w for w in result['warnings'] if w.startswith('agents.merge_min_required_checks ')]
+                self.assertEqual(found, ['agents.merge_min_required_checks ' + json.dumps(value)
+                                         + ' should be a whole number of at least 0; the merge gate uses %d' % needed])
+
     def test_gate_switches_that_are_not_booleans_count_as_required(self):
         for key in ('merge_require_green_ci', 'merge_require_up_to_date'):
             for value in ('false', 0, 'no', [], {}):

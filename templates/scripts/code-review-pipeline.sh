@@ -44,16 +44,23 @@ trap _review_cleanup EXIT
 # review_text_from_merger <merger output>: the text the PR comment and the ticket get.
 # The merger answers with the object of bureau-review.schema.json, whose "comment" is
 # its markdown for humans (summaries, findings with file:line, fixes needed): that
-# comment, then the rest of the object as a fenced JSON verdict. An answer without a
-# comment string (an older schema, a fixture) is printed unchanged. A cost-tracking
-# envelope is unwrapped as parse_claude_json does. Decides nothing: the verdict is
-# read from the merger's answer itself.
+# comment, then the rest of the object as a fenced JSON verdict. A verdict block over
+# 16 KB drops its findings list and says how many it held (the comment names them),
+# so the block always survives the comment size cap. An answer without a verdict or
+# without a comment string (an older schema, a fixture) is printed unchanged: the
+# comment's lines never reach the text-verdict fallback, which reads line starts and
+# finds none inside a JSON string. A cost-tracking envelope is unwrapped as
+# parse_claude_json does. Decides nothing: the verdict is read from the merger's
+# answer itself.
 review_text_from_merger() {
   local text
   if text=$(printf '%s' "$1" | jq -r '
       (if type == "object" and (.result | type) == "string" then (.result | fromjson?) else . end)
-      | select(type == "object" and (.comment | type) == "string")
-      | .comment + "\n\n```json\n" + (del(.comment) | tojson) + "\n```"' 2>/dev/null) && [ -n "$text" ]; then
+      | select(type == "object" and (.comment | type) == "string" and (.verdict | type) == "string")
+      | (del(.comment)) as $v
+      | (if ($v | tojson | length) > 16000
+         then ($v | del(.findings)) + {findings_omitted: ($v.findings | length? // 0)} else $v end) as $v
+      | .comment + "\n\n```json\n" + ($v | tojson) + "\n```"' 2>/dev/null) && [ -n "$text" ]; then
     printf '%s' "$text"
   else
     printf '%s' "$1"
@@ -658,6 +665,16 @@ The approval is recorded for head \`$REVIEW_HEAD\`; the next run checks the buil
           ;;
         25:*)
           echo "  APPROVED, but the merge gate is blocked — needs human review"
+          # The APPROVE is recorded as well: once a human clears the blocker (re-runs
+          # a flaky check) and removes needs-human, the next run reuses it instead of
+          # paying a new review. The record holds the labels from the start of this
+          # run, so it matches again once the label is gone; a push, a moved base or
+          # an edited ticket means a new review.
+          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+              --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
+              --verdict APPROVE >/dev/null; then
+            echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
+          fi
           if mark_needs_human "$ISSUE" code-review; then
             log_escalation "$ISSUE" "code-review" "${REVIEW_CYCLE_COUNT:-0}" \
               "Merge gate blocked after APPROVE" "$PR_NUMBER" "$BRANCH"
@@ -666,7 +683,7 @@ The approval is recorded for head \`$REVIEW_HEAD\`; the next run checks the buil
 
 ${GATE_LINES:-- (the merge stage left no gate lines)}
 
-Clear the blocker and remove needs-human; the next run reviews the PR again."
+Clear the blocker and remove needs-human. The approval is recorded for head \`$REVIEW_HEAD\`: the next run checks the build and the gate again without a new model review, unless the PR, its base or the ticket changed."
           _review_release_worktree
           NEXT_STATE="Build Review (needs-human: merge gate blocked)"
           STAGE_EXIT=25

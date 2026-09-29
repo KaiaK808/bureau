@@ -5,6 +5,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -136,6 +137,32 @@ def gate_switch(agents, key, warnings):
     return True
 
 
+GATE_NUMBER_CAP = 9999999
+
+
+def gate_number(agents, key, default, warnings):
+    """A number of the merge gate's CI check (agents.merge_min_required_checks,
+    agents.merge_ci_start_grace_seconds), read by the one rule the gate itself uses
+    (_merge_gate_number in bureau-config.sh): absent or null is <default>; a whole number
+    from 0 is itself; a string of digits only is that number; a fraction is rounded up; a
+    number above 9999999 is 9999999; a negative number, any other string, a boolean, an
+    array or an object is <default>. Every case but absent, null and a plain whole number
+    also warns, naming the number the gate uses."""
+    value = agents.get(key)
+    if value is None: return default
+    number = None
+    if type(value) in (int, float): number = value
+    elif isinstance(value, str) and re.fullmatch(r'[0-9]+', value): number = int(value)
+    if number is None or number < 0:
+        used, plain = default, False
+    else:
+        used = GATE_NUMBER_CAP if number > GATE_NUMBER_CAP else min(math.ceil(number), GATE_NUMBER_CAP)
+        plain = not isinstance(value, str) and number == math.floor(number) and number <= GATE_NUMBER_CAP
+    if not plain:
+        warnings.append('agents.' + key + ' ' + json.dumps(value) + ' should be a whole number of at least 0; the merge gate uses ' + str(used))
+    return used
+
+
 PULL_REQUEST_EVENTS = ('pull_request', 'pull_request_target')
 REF_FILTER = re.compile(r'(?:^|[\s{,])(branches-ignore|branches|tags-ignore|tags)\s*:')
 
@@ -199,9 +226,9 @@ def ci_trigger(text):
 
 def ci_gate_without_workflows(repo, minimum):
     """The warning for a merge gate that needs checks no workflow provides, or None.
-    `minimum` is agents.merge_min_required_checks, read like the gate's `// 1`: absent, null
-    and false mean 1, and a configured 0 lets a head without any check pass."""
-    if type(minimum) in (int, float) and minimum <= 0: return None
+    `minimum` is agents.merge_min_required_checks as the gate reads it (gate_number); a
+    configured 0 lets a head without any check pass."""
+    if minimum <= 0: return None
     directory = repo / '.github' / 'workflows'
     files = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix in ('.yml', '.yaml')) if directory.is_dir() else []
     filtered = []
@@ -218,8 +245,7 @@ def ci_gate_without_workflows(repo, minimum):
         if filtered: found += '; push is limited by branches or to tags in ' + ', '.join(filtered)
         found += ' (checked: ' + ', '.join(p.name for p in files) + ')'
     unless = ('Unless those filters take in the pull request\'s branch, or another CI reports' if filtered else 'Unless another CI reports')
-    needed = 1 if minimum is None or minimum is False else minimum
-    return ('agents.merge_require_green_ci: automatic merges need at least ' + json.dumps(needed) + ' completed check(s) on the pull request\'s head, but ' + found
+    return ('agents.merge_require_green_ci: automatic merges need at least ' + str(minimum) + ' completed check(s) on the pull request\'s head, but ' + found
             + '. ' + unless + ' checks or statuses to GitHub for the pull request\'s head commit, no automatic merge passes the gate. Add a workflow that runs on pull_request'
             + ' (bureau_install.py assets --scope ci scaffolds one), or set agents.merge_require_green_ci to false for a repository without CI, or agents.merge_mode to manual')
 
@@ -370,8 +396,10 @@ def diagnose(repo, mode):
         errors.append('agents.merge_mode is manual but linear.teams[0].states.merge is not set: code review refuses with 24; configure the Merge state or set merge_mode to auto')
     require_ci = gate_switch(config['agents'], 'merge_require_green_ci', warnings)
     gate_switch(config['agents'], 'merge_require_up_to_date', warnings)
+    minimum = gate_number(config['agents'], 'merge_min_required_checks', 1, warnings)
+    gate_number(config['agents'], 'merge_ci_start_grace_seconds', 1800, warnings)
     if merge == 'auto' and require_ci and any(runtime.enabled(config, stage) for stage in ('code_review', 'merge')):
-        ci = ci_gate_without_workflows(repo, config['agents'].get('merge_min_required_checks'))
+        ci = ci_gate_without_workflows(repo, minimum)
         if ci: warnings.append(ci)
     implement = config['agents'].get('implement')
     push = implement.get('push_each_iteration') if isinstance(implement, dict) else None

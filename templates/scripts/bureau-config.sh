@@ -913,11 +913,14 @@ move_issue() {
 # one long model answer halted a stage as if Linear were down; GitHub refuses a PR
 # comment over 65,536 characters, and the review stage swallowed that failure. A
 # text that fits is printed unchanged (bytes that are not UTF-8 become U+FFFD). A
-# longer one keeps its beginning and its end, each cut at a line break where one
-# is near, and a note in the middle says how many bytes were left out: the first
-# line (a branch marker, the "Code Review … Changes Requested" header implement
-# looks for) and the closing fenced JSON verdict survive. Never cuts inside a
-# UTF-8 character; the result is at most <max-bytes> bytes.
+# longer one keeps its beginning and its end, and a note in the middle says how
+# many bytes were left out: the first line (a branch marker, the "Code Review …
+# Changes Requested" header implement looks for) survives. The last fenced JSON
+# block (the review's verdict) is kept whole, with everything after it, whenever it
+# fits in the limit with 4 KB of beginning to spare. Each cut moves to a line break
+# only when one is within 4 KB, else it falls between two characters: never inside
+# a UTF-8 character, never a collapse to a few bytes. The result is at most
+# <max-bytes> bytes.
 BUREAU_COMMENT_MAX_BYTES=60000
 bureau_cap_comment() {
   printf '%s' "$1" | python3 -c '
@@ -935,14 +938,21 @@ room = limit - len(note(len(data)))
 if room < 2:
     sys.stdout.buffer.write(data[:limit].decode("utf-8", "ignore").encode("utf-8"))
     sys.exit(0)
-head, tail = data[:room // 2], data[len(data) - (room - room // 2):]
-cut_at = head.rfind(b"\n")
+NEAR = 4096
+tail_start = len(data) - (room - room // 2)
+block = data.rfind(b"\n```json\n") + 1
+if 0 < block < tail_start and len(data) - block <= room - NEAR:
+    tail = data[block:]
+else:
+    tail = data[tail_start:]
+    start_at = tail.find(b"\n", 0, NEAR)
+    if start_at >= 0:
+        tail = tail[start_at + 1:]
+head = data[:room - len(tail)]
+cut_at = head.rfind(b"\n", max(0, len(head) - NEAR))
 if cut_at >= 0:
     head = head[:cut_at]
-start_at = tail.find(b"\n")
-if start_at >= 0:
-    tail = tail[start_at + 1:]
-# A cut inside a character leaves incomplete bytes at the edge; drop them.
+# A cut between two lines far from any break can split a character; drop its bytes.
 head = head.decode("utf-8", "ignore").encode("utf-8")
 tail = tail.decode("utf-8", "ignore").encode("utf-8")
 sys.stdout.buffer.write(head + note(len(data) - len(head) - len(tail)) + tail)
@@ -1727,7 +1737,8 @@ pr_ci_is_green() {
     if [ "$total_completed" = 0 ] && [ "$statuses_read" = ok ]; then
       grace=$(_merge_gate_number merge_ci_start_grace_seconds 1800) || true
       if age=$(_pr_head_commit_age "$owner_repo" "$head_sha") && [ "$age" -ge "$grace" ]; then
-        echo "ci: no check run and no status on $head_sha ${age}s after its commit (agents.merge_ci_start_grace_seconds: $grace) — no CI started for this head" >&2
+        # No age in the line: the merge stage posts a new PR comment when a line changes.
+        echo "ci: no check run and no status on $head_sha, and its commit is older than the CI start grace (agents.merge_ci_start_grace_seconds: $grace) — no CI started for this head" >&2
         return 1
       fi
     fi
@@ -1737,22 +1748,38 @@ pr_ci_is_green() {
   return 0
 }
 
-# _merge_gate_number <agents key> <default>: prints .agents.<key> as a whole number
-# (0 is valid). Absent or null prints <default>; any other value (a string, a
-# fraction, a negative number) prints <default> too and returns 1, so a caller can
-# warn. pr_ci_is_green cannot warn itself: its stderr is its gate line
-# (merge-pipeline.sh warns before it runs the gate). The bound keeps the value inside
-# shell arithmetic: jq prints 12345678901234567890 with all its digits.
+# _merge_gate_number <agents key> <default>: prints the whole number the merge gate uses
+# for .agents.<key>, and returns 1 when the value was not a plain whole number, so a
+# caller can warn. One rule, which bureau-doctor.py (gate_number) applies the same way:
+#   absent or null                  → <default>
+#   a whole number from 0           → itself
+#   a string of digits only ("2")   → that number (warn)
+#   a fraction (1.5)                → rounded up, never below what was written (warn)
+#   above 9999999                   → 9999999, still never below a count (warn)
+#   negative, any other string, a boolean, an array or an object → <default> (warn)
+# Before, a string made the gate's count test fail and let the CI check pass with no
+# check at all, and a negative number counted as "no check needed". pr_ci_is_green
+# cannot warn itself: its stderr is its gate line (merge-pipeline.sh warns before it
+# runs the gate). The cap keeps the number inside shell arithmetic.
 _merge_gate_number() {
-  local value
-  value=$(bureau_get ".agents.$1 | if . == null then \"default\"
-    elif type == \"number\" and . == floor and . < 10000000 then (floor | tostring) else \"invalid\" end" 2>/dev/null) \
-    || value=invalid
+  local filter out value flag
+  filter='.agents.KEY as $v
+    | ($v | if type == "number" then .
+            elif type == "string" and test("\\A[0-9]+\\z") then tonumber
+            else null end) as $n
+    | if $v == null then "default ok"
+      elif $n == null or $n < 0 then "default warn"
+      else ([($n | ceil), 9999999] | min | if . == 0 then 0 else . end | tostring)
+           + (if ($v | type) == "string" or $n != ($n | floor) or $n > 9999999 then " warn" else " ok" end)
+      end'
+  out=$(bureau_get "${filter//KEY/$1}" 2>/dev/null) || out="default warn"
+  value=${out% *}; flag=${out##* }
   case "$value" in
-    default) printf '%s' "$2" ;;
-    ''|*[!0-9]*) printf '%s' "$2"; return 1 ;;
-    *) printf '%s' "$((10#$value))" ;;
+    default) value="$2" ;;
+    ''|*[!0-9]*) value="$2"; flag=warn ;;
   esac
+  printf '%s' "$((10#$value))"
+  [ "$flag" = ok ]
 }
 
 # _pr_head_commit_age <owner/repo> <sha>: seconds since the commit's committer

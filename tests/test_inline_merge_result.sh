@@ -10,11 +10,14 @@
 #   1. not yet (no check run on a fresh head): exit 2, no needs-human, no move, the
 #      APPROVE is recorded for reuse, one ticket comment names the gate
 #   2. the next run on the unchanged head: no model call, the gate runs again, no second
-#      review comment on the PR and no second ticket comment
+#      review comment on the PR and no second ticket comment; a build that turns red on
+#      such a run still posts its REQUEST_CHANGES on the PR (no stale APPROVE stays last)
 #   3. the checks turn green: the run after merges, the ticket goes to Done, no model call
-#   4. blocked (a failing check): exit 25, needs-human, the gate line on the ticket, no record
-#   5. the disposable worktree is back on the reviewed head and clean after 2, so the
-#      worker does not keep it as unfinished work
+#   4. blocked (a failing check): exit 25, needs-human, the gate line on the ticket, the
+#      APPROVE recorded: once the check is fixed and the label removed, the next run
+#      merges without a model call; a push after the block means a new review
+#   5. the disposable worktree is back on the reviewed head and clean after 2 and after
+#      25, so the worker does not keep it as unfinished work
 #   6. the shepherd waits on the review stage's "not yet" as it does at Merge
 # Negative control: the v3.0.2 inline call (and the merge stage's inline 0) end the first
 # case with 0 and "Next: Done", and the second run pays the model again.
@@ -83,6 +86,7 @@ labeled_human && fail '2: the retry set needs-human'
 [ "$(record | jq -r .merge_gate_wait)" = true ] || fail '2: the retry did not record the approval again'
 echo 'PASS 2 retry: no model call, gate read again, no new comments, approval recorded again'
 
+
 # ── 3. green: merged, Done ─────────────────────────────────────────────────
 pr2_checks green
 : > "$SANDBOX/calls.log"
@@ -95,6 +99,24 @@ grep -q 'Next: Done' <<< "$LAST_STDOUT" || fail '3: the summary does not say Don
 [ -z "$(record)" ] || fail '3: the approval record survived the merge'
 echo 'PASS 3 green: merged by the reused approval, Done, record consumed'
 
+# 2b. A red build on a reused gate-wait approval folds it into REQUEST_CHANGES, and that
+# verdict reaches the PR: the gate must not keep reading the old APPROVE.
+new_sandbox
+pr2_checks none
+review
+[ "$LAST_RC" = 2 ] || fail "2b: the first run ended $LAST_RC, wanted 2"
+pr2_config '.repo.test_command = "exit 1"'
+: > "$SANDBOX/calls.log"
+review
+[ "$LAST_RC" = 0 ] || fail "2b: the red-build retry ended $LAST_RC, wanted 0 (REQUEST_CHANGES)"
+[ "$(pr2_model_calls)" = 0 ] || fail '2b: the red-build retry paid a model call'
+[ "$(pr2_review_comments)" = 2 ] || fail "2b: $(pr2_review_comments) review comments on the PR, wanted 2 (the APPROVE and the REQUEST_CHANGES)"
+last=$(jq -r '[.[] | select(.body | test("Code Review v2"))] | last | .body' "$PR2_GH/comments.json" | grep -m1 -oE '\*\*Verdict\*\*: [A-Z_]+')
+[ "$last" = '**Verdict**: REQUEST_CHANGES' ] || fail "2b: the latest review comment on the PR says '$last'"
+grep -q $'move_issue\t'"$ISSUE"$'\tstate-build' "$SANDBOX/calls.log" || fail '2b: the ticket did not go back to Build'
+pr2_merged && fail '2b: merged after a red build'
+echo 'PASS 2b a red build on a reused approval posts REQUEST_CHANGES on the PR and goes back to Build'
+
 # ── 4. blocked ─────────────────────────────────────────────────────────────
 new_sandbox
 pr2_checks red
@@ -106,8 +128,29 @@ moved && fail '4: moved the ticket on a blocked gate'
 grep -q 'merge gate is blocked' "$SANDBOX/calls.log" && grep -q 'failing check(s) on' "$SANDBOX/calls.log" \
   || fail '4: the ticket comment lacks the blocked gate line'
 grep -q $'log_escalation\t'"$ISSUE"$'\tcode-review' "$SANDBOX/calls.log" || fail '4: no escalation record'
-[ -z "$(record)" ] || fail '4: recorded an approval for a blocked gate'
-echo 'PASS 4 blocked: exit 25, needs-human, gate line on the ticket, nothing recorded'
+[ "$(record | jq -r '.verdict + " " + ((.merge_gate_wait // false) | tostring)')" = 'APPROVE false' ] \
+  || fail "4: no reusable approval recorded for the blocked gate: $(record)"
+grep -q 'The approval is recorded for head' "$SANDBOX/calls.log" || fail '4: the ticket comment does not say the approval is kept'
+# A human re-runs the check (now green) and removes needs-human (the stub's labels are the
+# run-start labels, as in the record): the next run reuses the approval and merges.
+pr2_checks green
+: > "$SANDBOX/calls.log"
+review
+[ "$LAST_RC" = 0 ] && pr2_merged || fail "4: the run after the fix did not merge (rc $LAST_RC)"
+[ "$(pr2_model_calls)" = 0 ] || fail "4: the run after the fix paid $(pr2_model_calls) model call(s)"
+grep -q $'move_issue\t'"$ISSUE"$'\tstate-done' "$SANDBOX/calls.log" || fail '4: the ticket did not move to Done after the fix'
+# A push after the block: the recorded approval does not cover the new head.
+new_sandbox
+pr2_checks red
+review
+[ "$LAST_RC" = 25 ] || fail "4: the second blocked run ended $LAST_RC"
+bump=$(git -C "$SANDBOX" commit-tree "origin/test-branch^{tree}" -p origin/test-branch -m 'fix pushed')
+git -C "$SANDBOX" push -q origin "$bump:refs/heads/test-branch"
+jq --arg h "$bump" '.headRefOid = $h' "$PR2_GH/pr.json" > "$PR2_GH/pr.tmp" && mv "$PR2_GH/pr.tmp" "$PR2_GH/pr.json"
+pr2_checks green
+review
+[ "$(pr2_model_calls)" -gt 0 ] || fail '4: a new head after the block reused the old approval'
+echo 'PASS 4 blocked: exit 25, needs-human, gate line on the ticket, approval kept; reused after the fix, not after a push'
 
 # ── 5. the worktree the worker finds after a gate outcome ──────────────────
 # The build check leaves a file git does not ignore and a local commit (as the local
@@ -116,7 +159,7 @@ echo 'PASS 4 blocked: exit 25, needs-human, gate line on the ticket, nothing rec
 # gate run could not start. In a disposable worker the stage puts it back. The stage
 # runs in a linked worktree here, as in a worker (the harness sandbox itself holds the
 # scripts and the doubles as untracked files).
-worktree_case() {  # <mode> [norelease] — runs the review in a fresh linked worktree; sets WT
+worktree_case() {  # <mode> [norelease] [checks] — runs the review in a fresh linked worktree; sets WT
   new_sandbox
   if [ "${2:-}" = norelease ]; then
     python3 - "$SCRIPTS_DIR/code-review-pipeline.sh" <<'PY'
@@ -127,7 +170,7 @@ assert src.count(old) == 1, 'release guard not found'
 open(p, 'w').write(src.replace(old, '  return 0\n'))
 PY
   fi
-  pr2_checks pending
+  pr2_checks "${3:-pending}"
   pr2_config '.repo.test_command = "echo out > leftover.txt && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m local-merge"'
   git -C "$SANDBOX" checkout -q --detach
   WT="$SANDBOX/.wt"
@@ -147,6 +190,10 @@ worktree_case disposable
 [ "$LAST_RC" = 2 ] || fail "5: ended $LAST_RC, wanted 2"
 worker_would_keep && fail "5: the worker would keep the worktree: $(git -C "$WT" status --porcelain) ahead=$(git -C "$WT" rev-list --count origin/test-branch..HEAD)"
 [ "$(git -C "$WT" rev-parse HEAD)" = "$(git -C "$SANDBOX" rev-parse origin/test-branch)" ] || fail '5: not on the reviewed head'
+# The same after a blocked gate (25).
+worktree_case disposable '' red
+[ "$LAST_RC" = 25 ] || fail "5: the blocked case ended $LAST_RC, wanted 25"
+worker_would_keep && fail "5: after 25 the worker would keep the worktree: $(git -C "$WT" status --porcelain) ahead=$(git -C "$WT" rev-list --count origin/test-branch..HEAD)"
 # Outside a disposable worker nothing is reset.
 worktree_case current
 [ "$LAST_RC" = 2 ] || fail "5: ended $LAST_RC outside a worker, wanted 2"
@@ -155,7 +202,7 @@ worktree_case current
 worktree_case disposable norelease
 [ "$LAST_RC" = 2 ] || fail "5 control: ended $LAST_RC, wanted 2"
 worker_would_keep || fail '5 control: without the release the worktree should be kept, so this case proves nothing'
-echo 'PASS 5 the disposable worktree is clean and on the reviewed head after exit 2'
+echo 'PASS 5 the disposable worktree is clean and on the reviewed head after exit 2 and 25'
 
 # ── 6. the shepherd waits on the review stage's "not yet" ──────────────────
 # The shepherd's real gate branch, cut from shepherd.sh, fed the report the review

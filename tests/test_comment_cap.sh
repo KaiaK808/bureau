@@ -75,6 +75,41 @@ for line in open(sys.argv[2], encoding='utf-8').read().split('\n'):
     if line and not line.startswith('[… ') and line not in orig:
         sys.exit('not a whole line of the original: %r' % line[:80])
 PY
+# A verdict block that is one long line (a findings list) is kept whole when it fits, and
+# a cut far from any line break falls between characters instead of collapsing the text.
+python3 - "$T/bigblock" "$T/longline" "$T/longtail" "$T/hugeblock" <<'PY'
+import json, sys
+f = [{"file": "src/a.py", "line": i, "class": "MINOR", "msg": "x" * 40} for i in range(500)]
+head = "## Code Review v2 — EXP-1\n\n**Verdict**: APPROVE\n\n"
+body = "".join("- `src/ä.py:%d` — Grüße 😀 finding\n" % i for i in range(3000))
+block = "\n```json\n" + json.dumps({"verdict": "APPROVE", "findings": f}) + "\n```\n\n---\n*Automated review by Bureau pipeline*"
+open(sys.argv[1], "w").write(head + body + block)
+# One 100 KB line (no break) between the header and the verdict.
+open(sys.argv[2], "w").write(head + ("ü" * 50000) + "\n" + body[:20000] + block[:200] + "\n```")
+# One 100 KB line near the end, then a footer.
+open(sys.argv[3], "w").write(head + body[:40000] + ("ü" * 50000) + "\n---\n*Automated review by Bureau pipeline*")
+# A verdict block too large to keep whole (1500 findings on one line, about 110 KB).
+g = [{"file": "src/a.py", "line": i, "class": "MINOR", "msg": "x" * 40} for i in range(1500)]
+open(sys.argv[4], "w").write(head + body[:20000] + "\n```json\n" + json.dumps({"verdict": "APPROVE", "findings": g}) + "\n```\n\n---\n*Automated review by Bureau pipeline*")
+PY
+bureau_cap_comment "$(cat "$T/bigblock")" > "$T/bigblock.out"
+[ "$(bytes < "$T/bigblock.out")" -le 60000 ] && utf8_ok < "$T/bigblock.out" || fail '1: the long verdict block text was not fitted cleanly'
+awk '/^```json$/{on=1; next} /^```$/{on=0} on' "$T/bigblock.out" | jq -e '.verdict == "APPROVE" and (.findings | length) == 500' >/dev/null \
+  || fail '1: the long verdict block was not kept whole'
+[ "$(head -n 1 "$T/bigblock.out")" = '## Code Review v2 — EXP-1' ] || fail '1: the header was lost next to a long verdict block'
+bureau_cap_comment "$(cat "$T/longline")" > "$T/longline.out"
+[ "$(bytes < "$T/longline.out")" -ge 55000 ] && [ "$(bytes < "$T/longline.out")" -le 60000 ] && utf8_ok < "$T/longline.out" \
+  || fail "1: a long line without breaks collapsed the comment to $(bytes < "$T/longline.out") bytes"
+for f in longtail hugeblock; do
+  bureau_cap_comment "$(cat "$T/$f")" > "$T/$f.out"
+  [ "$(bytes < "$T/$f.out")" -ge 55000 ] && [ "$(bytes < "$T/$f.out")" -le 60000 ] && utf8_ok < "$T/$f.out" \
+    && [ "$(head -n 1 "$T/$f.out")" = '## Code Review v2 — EXP-1' ] \
+    || fail "1: $f was not fitted cleanly ($(bytes < "$T/$f.out") bytes)"
+done
+[ "$(tail -n 1 "$T/hugeblock.out")" = '*Automated review by Bureau pipeline*' ] || fail '1: a verdict block too large to keep lost the end'
+# The end is kept, not just the footer after a far line break.
+[ "$(sed -n '/^\[… [0-9]* bytes cut/,$p' "$T/longtail.out" | sed 1d | bytes)" -ge 20000 ] \
+  || fail "1: the end of a text with a long last line was dropped: $(sed -n '/^\[… [0-9]* bytes cut/,$p' "$T/longtail.out" | sed 1d | bytes) bytes kept after the note"
 # Invalid UTF-8 in, valid UTF-8 out; a single line without breaks is cut too.
 printf 'bad \377\376 bytes' > "$T/bad"
 bureau_cap_comment "$(cat "$T/bad")" | utf8_ok || fail '1: invalid UTF-8 passed through'

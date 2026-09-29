@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e336234b2a54a328ddc59f95820fd8d8b89a14b51beffb918bb77416f9427482">
+<meta name="bureau-source-sha256" content="2783e76fa1b7951b034db5183ce47dc5345f9979259c91d5e2da75f97bd5fd9e">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -202,11 +202,12 @@ fixed or re-run check still merges without anyone removing a label. The
 review stage ends every BLOCK (and any unknown verdict) with 25, so a
 driver never reviews the same commit again; it also ends with 25, sets
 <code>needs-human</code> and comments the gate lines when an APPROVE's
-inline merge finds the gate blocked. A stage that hands a ticket to a
-human but cannot write the <code>needs-human</code> label ends with 25
-where it would have ended with 0 (a stage that already ends non-zero
-keeps its code) and holds the ticket locally; see the troubleshooting
-guide.</td>
+inline merge finds the gate blocked, and records that APPROVE, so the
+run after a human clears the blocker and removes the label merges
+without a new review. A stage that hands a ticket to a human but cannot
+write the <code>needs-human</code> label ends with 25 where it would
+have ended with 0 (a stage that already ends non-zero keeps its code)
+and holds the ticket locally; see the troubleshooting guide.</td>
 </tr>
 <tr>
 <td><code>26</code></td>
