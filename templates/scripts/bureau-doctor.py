@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import sys
 import subprocess
+import tempfile
 import uuid
 
 sys.dont_write_bytecode = True
@@ -116,6 +117,46 @@ def template_source(manifest):
     return dict(status='recorded', scopes=sources)
 
 
+def worktree_links(repo, config):
+    """repo.worktree_links as reset_worktree applies it: (report, errors, warnings).
+    Ignore status is asked the way a stage worktree sees it: for a symlink, not for the main
+    checkout's directory. A directory-only pattern like `.venv/` matches the directory here
+    but not the link there, so the question runs in a temporary work tree that holds only
+    the .gitignore files on the path and no file at the path itself."""
+    raw = config.get('repo', {}).get('worktree_links') if isinstance(config.get('repo'), dict) else None
+    if raw is None: return [], [], []
+    if not isinstance(raw, list):
+        return [], ['repo.worktree_links must be a list of relative paths; stages make no links'], []
+    report, errors, warnings = [], [], []
+    git_dir = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--absolute-git-dir'], capture_output=True, text=True).stdout.strip()
+    for entry in raw:
+        if not isinstance(entry, str) or '\n' in entry:
+            errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is not a one-line string'); continue
+        path = entry.rstrip('/')
+        parts = path.split('/')
+        if not path or path.startswith('/') or any(part in ('', '.', '..', '.git') for part in parts):
+            errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' must be a plain relative path (no /, ., .., .git or empty component); stages skip it'); report.append(dict(path=entry, status='invalid')); continue
+        status = 'ok'
+        if not (repo / path).exists():
+            status = 'missing in the main checkout'
+        elif git_dir:
+            with tempfile.TemporaryDirectory(prefix='bureau-doctor-') as shadow:
+                for depth in range(len(parts)):
+                    ignore = repo.joinpath(*parts[:depth], '.gitignore')
+                    if ignore.is_file():
+                        target = Path(shadow).joinpath(*parts[:depth], '.gitignore')
+                        target.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(ignore, target)
+                probe = subprocess.run(['git', '--git-dir=' + git_dir, '--work-tree=' + shadow, '-C', shadow, 'check-ignore', '-q', '--no-index', '--', path], capture_output=True, text=True)
+            if probe.returncode != 0:
+                status = 'not ignored as a symlink'
+        if status == 'missing in the main checkout':
+            warnings.append('repo.worktree_links: ' + path + ' does not exist in the main checkout; stages skip it')
+        elif status == 'not ignored as a symlink':
+            warnings.append('repo.worktree_links: ' + path + ' is not ignored as a symlink, so stages skip it (a link there would leave the worktree dirty); a pattern with a trailing slash matches directories only, add ' + path + ' without it to .gitignore')
+        report.append(dict(path=path, status=status))
+    return report, errors, warnings
+
+
 def diagnose(repo, mode):
     runtime = module('runtime'); provider = module('provider')
     repo = runtime.root_for(repo); path = runtime.config_for(repo); config = json.loads(path.read_text())
@@ -177,8 +218,11 @@ def diagnose(repo, mode):
     hook = repo_cfg.get('post_implement_command')
     if hook is not None and hook is not False and not isinstance(hook, str):
         errors.append('repo.post_implement_command must be a string; the implement stage would run ' + json.dumps(hook) + ' as a shell command')
+    links, link_errors, link_warnings = worktree_links(repo, config)
+    errors.extend(link_errors); warnings.extend(link_warnings)
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),
                 merge_mode=merge, post_implement_command=hook if isinstance(hook, str) and hook.strip() else None,
+                worktree_links=links,
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,
                 template_source=source, drift=drift, errors=errors, warnings=warnings,
                 authentication='not checked', live_model_acceptance='not checked')

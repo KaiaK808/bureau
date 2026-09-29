@@ -182,6 +182,41 @@ class DoctorTests(unittest.TestCase):
                 found=[e for e in result['errors'] if 'post_implement_command' in e]
                 self.assertEqual(bool(found),err,result['errors']); self.assertEqual(result['ok'],not err,result)
 
+    def test_worktree_links_are_reported_and_checked_as_symlinks(self):
+        subprocess.run([sys.executable,str(ROOT/'scripts/bureau_install.py'),'assets','--repo',str(self.repo),
+                        '--target','codex','--scope','interfaces','--scope','scripts','--apply'],check=True,stdout=subprocess.DEVNULL)
+        (self.repo/'.venv'/'bin').mkdir(parents=True); (self.repo/'my env').mkdir(); (self.repo/'dirvenv').mkdir()
+        # .venv and "my env" are ignored as a symlink would be; dirvenv/ only as a directory: in
+        # the main checkout it is a directory and git calls it ignored, in a stage worktree the
+        # link would not be.
+        (self.repo/'.gitignore').write_text('.venv\nmy env\ndirvenv/\n')
+        missing='does not exist in the main checkout'; symlink='is not ignored as a symlink'
+        not_list='must be a list'; plain='must be a plain relative path'; one_line='is not a one-line string'
+        # (value, reported, warnings, errors)
+        for value, reported, warns, errs in (
+                (None, [], (), ()),
+                ([], [], (), ()),
+                (['.venv', 'my env/'], [dict(path='.venv', status='ok'), dict(path='my env', status='ok')], (), ()),
+                (['venv'], [dict(path='venv', status='missing in the main checkout')], (missing,), ()),
+                (['dirvenv'], [dict(path='dirvenv', status='not ignored as a symlink')], (symlink,), ()),
+                ('.venv', [], (), (not_list,)),
+                (['/abs'], [dict(path='/abs', status='invalid')], (), (plain,)),
+                (['../up'], [dict(path='../up', status='invalid')], (), (plain,)),
+                (['.git'], [dict(path='.git', status='invalid')], (), (plain,)),
+                ([7], [], (), (one_line,))):
+            with self.subTest(value=value):
+                config=copy.deepcopy(self.config); config.setdefault('repo',{})
+                if value is not None: config['repo']['worktree_links']=value
+                self.path.write_text(json.dumps(config))
+                result=d.diagnose(self.repo,'app')
+                self.assertEqual(result['worktree_links'],reported,result)
+                for found, wanted in ((result['warnings'], warns), (result['errors'], errs)):
+                    link_found=[w for w in found if 'worktree_links' in w]
+                    self.assertEqual(len(link_found),len(wanted),link_found)
+                    for text in wanted: self.assertTrue(any(text in w for w in link_found),(text,link_found))
+                self.assertEqual(result['ok'],not errs,result)
+        self.assertTrue((self.repo/'.venv').is_dir() and not (self.repo/'.venv').is_symlink())
+
     def test_migration_preserves_effective_models_across_runner_overrides(self):
         provider=d.module('provider')
         for version in (None, 1):

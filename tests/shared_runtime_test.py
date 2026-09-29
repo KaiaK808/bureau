@@ -231,6 +231,37 @@ class RuntimeTests(unittest.TestCase):
         proc=subprocess.run(command,cwd=self.repo,env=env,capture_output=True,text=True)
         self.assertEqual(proc.returncode,21); self.assertTrue((wt/'scratch').exists())
 
+    def test_reset_links_configured_paths_and_clean_keeps_their_target(self):
+        # repo.worktree_links through the real reset_worktree: every reset links the main
+        # checkout's .venv into the disposable worker, the worker stays clean (a dirty worker
+        # would be preserved and the next reset would stop with 21), and the next reset's
+        # clean -fdx removes only the link. Paths contain spaces (the temp dir does).
+        origin=Path(self.temp.name)/'origin.git'
+        subprocess.run(['git','init','-q','--bare',str(origin)],check=True)
+        (self.repo/'.gitignore').write_text('.venv\n.bureau.json\n')
+        r.git(self.repo,'add','.gitignore'); r.git(self.repo,'commit','-q','-m','ignore venv')
+        r.git(self.repo,'remote','add','origin',str(origin)); r.git(self.repo,'push','-q','origin','HEAD:main')
+        venv=self.repo/'.venv'/'bin'; venv.mkdir(parents=True); (venv/'python').write_text('main venv')
+        config=dict(self.config, repo={'worktree_links':['.venv']}); r.save(self.repo/'.bureau.json',config)
+        wt=Path(self.temp.name).resolve()/'disposable worker'
+        run='c'*32
+        self.store.claim('TEAM-1',wt,run,'background',os.getpid())
+        helper=ROOT/'templates/scripts/bureau-config.sh'
+        env={**os.environ,'BUREAU_RUN_ID':run,'BUREAU_CURRENT_ISSUE':'TEAM-1','BUREAU_WORKSPACE_MODE':'disposable'}
+        command=['bash','-c','source "$1"; REPO_DIR="$PWD"; reset_worktree "$2" spec-pipeline.sh','test',str(helper),str(wt)]
+        for attempt in (1,2):
+            with self.subTest(reset=attempt):
+                proc=subprocess.run(command,cwd=self.repo,env=env,capture_output=True,text=True)
+                self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+                self.assertIn('Linked .venv from the main checkout',proc.stdout)
+                link=wt/'.venv'
+                self.assertTrue(link.is_symlink(),proc.stdout+proc.stderr)
+                self.assertEqual(os.readlink(link),str(self.repo/'.venv'))
+                self.assertEqual((link/'bin'/'python').read_text(),'main venv')
+                self.assertEqual(r.git(wt,'status','--porcelain','--untracked-files=all'),'')
+                self.assertEqual((venv/'python').read_text(),'main venv')
+        self.assertFalse((self.repo/'.venv').is_symlink())
+
     def test_app_ticket_flows_through_review_without_provider_processes(self):
         self.state='s1'
         specdir=self.repo/'specs/001-issue'; specdir.mkdir(parents=True)
