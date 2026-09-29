@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="bd9fedb033c028fa8f0feaf529feb5ebd4e7e2995cae99bb6e1c3cec2149151b">
+<meta name="bureau-source-sha256" content="7a20080a287d33f2a423712a05cee7138f1b4ec34e5c08123b1e9e6e4b5ee6a0">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -25,10 +25,12 @@ configuration; it does not upgrade installed assets.</p>
 <p>This guide upgrades installations from the official <a
 href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
-candidates and v3.0.0 to the stable <strong>Bureau v3.0.1</strong>. The
-commands below require the selected release's source skill. See the <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.1">v3.0.1
+candidates, v3.0.0 and v3.0.1 to the stable <strong>Bureau
+v3.0.2</strong>. The commands below require the selected release's
+source skill. See the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">v3.0.2
 release</a> and its <a href="release-notes.html">release notes</a>, the <a
+href="release-notes-v3.0.1.html">v3.0.1 release notes</a>, the <a
 href="release-notes-v3.0.0.html">v3.0.0 release notes</a> (the candidates:
 <a href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a>, <a
 href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>), the previous
@@ -61,10 +63,10 @@ installed commit.</p>
 <p>Confirm that <code>origin</code> identifies the official
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
-clean checkout, select the exact release (<code>v3.0.1</code> for the
-stable release, <code>v3.0.0</code> or <code>v2.0.0</code> for an
-earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.0.1 <span class="co"># or v3.0.0, v2.0.0</span></span>
+clean checkout, select the exact release (<code>v3.0.2</code> for the
+stable release, <code>v3.0.1</code>, <code>v3.0.0</code> or
+<code>v2.0.0</code> for an earlier one):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.0.2 <span class="co"># or v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -85,8 +87,32 @@ loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
 <h2 id="upgrade-to-v3">Upgrade to v3</h2>
+<p><strong>From v3.0.1:</strong> select tag <code>v3.0.2</code> and
+resync the scripts scope as one set; no configuration change is
+required. Every stage then finds the ticket's spec directory the same
+way: the branch loses a <code>prefix/</code> and an issue key, then an
+exact directory name wins, else the one directory whose slug fits the
+branch slug (equal, a truncated start, or whole words inside it), else
+among several fits the one with the branch's number; a number alone
+never selects. A branch that fits two spec directories equally stops at
+implement, spec review or UX with <code>13</code> and
+<code>needs-human</code> instead of taking one of them. An installation
+whose spec directories repeat an <code>NNN-</code> prefix
+(<code>ls specs | cut -d- -f1 | sort | uniq -d</code> prints something)
+should resync before its next implement run; a hand-patched matcher in
+<code>implement-pipeline.sh</code> shows up as a conflict and is
+replaced by the shared function. See <a
+href="troubleshooting.html">troubleshooting</a> for how the match works.
+Optional: a Python installation whose agents need the virtualenv in the
+stage worktrees commits the resynced scripts to <code>main</code> first,
+then adds <code>"worktree_links": [".venv"]</code> under
+<code>repo</code> and lists <code>.venv</code> (without a trailing
+slash) in <code>.gitignore</code>; the link is the main checkout's own
+virtualenv, shared by every stage — see <a
+href="configuration.html#python-repositories">configuration</a> before
+enabling it.</p>
 <p><strong>From v3.0.0 or v3.0.0-rc.2:</strong> select tag
-<code>v3.0.1</code> and resync the scripts scope as one set; no
+<code>v3.0.2</code> and resync the scripts scope as one set; no
 configuration change is required. Afterwards the merge stage ends with
 <code>2</code> when its gate is not yet decided and with <code>25</code>
 when it is blocked, where it used to end with <code>0</code>: wrappers
@@ -94,8 +120,9 @@ and repository tests that read its exit code must accept both, and an
 installation that merges automatically now gets an hourly queue alert
 for a pull request whose gate stays blocked in Merge. A review resumed
 after a <code>--no-merge</code> stop reuses an unchanged APPROVE (see <a
-href="troubleshooting.html">troubleshooting</a>).</p>
-<p><strong>From v3.0.0-rc.1:</strong> select tag <code>v3.0.1</code> and
+href="troubleshooting.html">troubleshooting</a>). The spec-directory
+change of v3.0.2 applies as well (see above).</p>
+<p><strong>From v3.0.0-rc.1:</strong> select tag <code>v3.0.2</code> and
 resync the scripts scope as one set; no configuration change is
 required. New optional settings are
 <code>repo.post_implement_command</code> (with
@@ -108,10 +135,11 @@ href="configuration.html">configuration</a>. After the resync, a missing
 or invalid Linear key shows as <code>27</code> with an hourly queue
 alert, a stage whose <code>needs-human</code> label cannot be written
 ends with <code>25</code> and holds the ticket locally, a failed final
-implement push ends with <code>18</code> when origin lacks commits, and
-the merge stage ends with <code>2</code> or <code>25</code> when it does
-not merge, as described above. The rest of this section applies to an
-upgrade from v2.0.0 or a legacy copy.</p>
+implement push ends with <code>18</code> when origin lacks commits, the
+merge stage ends with <code>2</code> or <code>25</code> when it does not
+merge, and every stage finds the spec directory as described above. The
+rest of this section applies to an upgrade from v2.0.0 or a legacy
+copy.</p>
 <p>v3 changes the exit-code contract between the stages and whatever
 drives them (the shepherd, the queue loop, ticks, wrappers and
 repository tests). Check anything that reads these codes before resuming
@@ -395,7 +423,7 @@ conflict writes no source. The manifest stays at version <code>1</code>:
 installers without source recording still read it.</p>
 <div class="sourceCode" id="cb9"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.0.1&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.0.1&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.0.2&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.0.2&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
 <span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
 <table>

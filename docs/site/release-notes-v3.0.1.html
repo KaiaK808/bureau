@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="07322d0661b61eda46478848ac6d2b1815da46abde1785b54f17c65b8ae2b611">
+<title>release-notes-v3.0.1 · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="bureau-v301--a-merge-stage-that-says-why-it-waits-and-no-second-paid-review">Bureau
+v3.0.1 — a merge stage that says why it waits, and no second paid
+review</h1>
+<p><strong>Stable release · 2026-09-29 · source tag
+<code>v3.0.1</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.1">GitHub
+Release</a> records the exact tagged commit. v3.0.1 is a patch release
+on <a href="release-notes-v3.0.0.html">v3.0.0</a>, superseded by the patch
+release <a href="release-notes.html">v3.0.2</a>; it changes the runtime in
+two places that the second live acceptance of v3.0.0 showed in the
+maintainer's pilot installation. The candidates were <a
+href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a> and <a
+href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>; the previous major
+release is <a href="release-notes-v2.0.0.html">v2.0.0</a>.</p>
+<p>It keeps v3's exit-code contract and adds two codes for the merge
+stage: it now ends with <code>2</code> when its gate is not yet decided
+and with <code>25</code> when the gate is decided against the merge,
+where it used to end with <code>0</code> whenever it did not merge.
+Anything that reads the merge stage's exit code must accept both.</p>
+<h2 id="what-changed">What changed</h2>
+<ul>
+<li><strong>The merge stage says why it did not merge</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/27">#27</a>).
+<ul>
+<li><code>2</code> (not yet): checks pending or not started, GitHub
+still computing the merge state, a gate read that failed (the pull
+request's state, its review comments or its review threads), a hold
+label <code>wip</code>, <code>blocked</code> or <code>needs-human</code>
+on the pull request, and conflicts the rebase stage resolves in the
+queue (<code>agents.rebase</code> on and a bureau-only divergence).</li>
+<li><code>25</code> (blocked): a failing check, other conflicts, a stale
+base, no APPROVE, unresolved review threads, or a pull request that is
+not open. An unreadable thread list used to count as zero unresolved
+threads.</li>
+<li>The queue loop logs <code>2</code> quietly and alerts on
+<code>25</code>, at most once an hour per ticket;
+<code>bureau-tick.sh --allow-merge</code> reports them as
+<code>waiting</code> and <code>blocked</code>. The review stage's inline
+merge and <code>merge-pipeline.sh --dry-run</code> keep ending with
+<code>0</code>. With <code>BUREAU_MERGE_GATE_REPORT</code> set, the
+stage writes the outcome and the gate lines to that file.</li>
+<li>The shepherd waits on a gate that is not yet decided
+(<code>BUREAU_SHEPHERD_MERGE_POLL_SECONDS</code>, default 60; at most
+<code>BUREAU_SHEPHERD_MERGE_WAIT_SECONDS</code>, default 1800; read in
+base 10 and capped at 1 h and 6 h) without the confirmation re-reads and
+without counting as stuck, and halts on a blocked gate, or on a wait
+that ran out, with <code>25</code>, <code>needs-human</code>, a comment
+carrying the gate report and an alert. While the shepherd holds a
+ticket, conflicts are blocked at once, because the queue's rebase stage
+skips tickets the shepherd holds.</li>
+<li>The gate comment on the pull request states the outcome and is
+posted again only when the outcome or a blocker changes. Nothing merges
+on a red or pending gate; the just-in-time recheck before
+<code>gh pr merge</code> applies the same outcomes.</li>
+</ul></li>
+<li><strong>A resumed review reuses an unchanged approval</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/26">#26</a>). A review
+that stopped before merge (<code>--no-merge</code>,
+<code>BUREAU_STOP_REQUESTED</code>) records its verdict with its inputs.
+When the review stage runs again without a stop and the verdict, branch,
+ticket state, head commit, base commit, base branch, pull request and
+ticket fingerprint (title, description, labels) all match, it reuses
+that APPROVE without a model call; the build check still runs, and a red
+build folds the reused APPROVE into REQUEST_CHANGES like a fresh one.
+The record is removed whether it matched or not, so an approval is used
+at most once. A changed model, runner, prompt, configuration or Bureau
+version is not compared; run
+<code>python3 scripts/bureau-supervision.py resume TEAM-123</code> first
+to have the change judge the pull request.</li>
+</ul>
+<p>See the <a
+href="https://github.com/KaiaK808/bureau/blob/v3.0.1/CHANGELOG.md">changelog</a>
+for the full entries and the <a
+href="https://github.com/KaiaK808/bureau/blob/v3.0.1/docs/exit-codes.md">exit
+codes</a> for the vocabulary.</p>
+<h2 id="upgrade-an-existing-installation">Upgrade an existing
+installation</h2>
+<p>From <strong>v3.0.0 or v3.0.0-rc.2</strong>: select tag
+<code>v3.0.1</code> in the source skill checkout and resync the scripts
+scope as one set. No configuration change is required. Two behaviours to
+expect afterwards: in an installation that merges automatically, the
+queue loop now alerts once an hour for a pull request whose merge gate
+stays blocked in Merge, where it used to stay silent; and wrappers or
+repository tests that read the merge stage's exit code must accept
+<code>2</code> and <code>25</code>.</p>
+<p>From <strong>v3.0.0-rc.1, v2.0.0 or a legacy copy</strong>: follow
+the <a href="migration.html#upgrade-to-v3">v3 upgrade section</a> with tag
+<code>v3.0.1</code>.</p>
+<h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
+<p>Dependencies and platforms are unchanged (Python 3.9+, Bash 3.2+, Git
+2.26+, jq, curl; Node.js 18+ for the shared scheduler; Linux and macOS).
+Configuration schema versions 1 and 2 stay supported, and the manifest
+stays at version <code>1</code>, so an older installer still reads it.
+To roll back to v3.0.0, point the source at tag <code>v3.0.0</code> and
+resync the scripts scope, or restore the private backup (<a
+href="migration.html#rollback">rollback</a>); a stop record written by
+v3.0.1 carries an extra <code>verdict</code> field that v3.0.0 ignores.
+Rollback cannot undo commits, pull requests or Linear transitions made
+in between; the needs-human hold caveat of <a
+href="release-notes-v3.0.0.html#compatibility-and-rollback">v3.0.0</a>
+still applies.</p>
+<h2 id="validation-and-known-limitations">Validation and known
+limitations</h2>
+<p>v3.0.1 is validated by the full Linux/macOS suite on the release
+commit, the installer fixtures and an independent verification pass per
+pull request in which each finding was reproduced before it was fixed:
+#26 passed with small follow-ups (documentation and a record left behind
+when the ticket detail could not be fingerprinted), #27 took two rounds,
+and both rounds checked that no path merges on a red or pending gate, in
+the first check and in the just-in-time recheck. Every new guard has a
+test that runs the real code with a negative control against v3.0.0 and
+was mutation-checked; the one surviving mutant in #26 is equivalent (a
+stop that is still requested is decided before the reuse call).
+<strong>No live ticket has run on v3.0.1 yet;</strong> the two live
+acceptances of v3.0.0 in the maintainer's pilot installation predate
+these changes, and the second of them is where both problems were
+seen.</p>
+<p>Known limitations:</p>
+<ul>
+<li>With <code>merge_mode: "manual"</code>, nothing moves a ticket from
+Merge to Done after the merge by hand.</li>
+<li>A <code>manual</code> repository without a Merge state refuses code
+review with <code>24</code> and re-picks the same ticket every tick,
+alerting at most once an hour.</li>
+<li>A check that never starts (for example an offline self-hosted
+runner) keeps the queue at a quiet <code>2</code>; the shepherd waits
+its budget and then halts.</li>
+<li>The review stage's inline merge ignores the merge result and reports
+Done even when the merge did not go through (older than v3.0.1).</li>
+<li>Commits co-authored by Claude count as bureau commits when deciding
+whether the rebase stage can resolve a conflict; this changes
+<code>25</code> into <code>2</code> for such a pull request, never
+whether it merges.</li>
+<li>The shepherd does not read local needs-human holds; a run that names
+a held ticket ignores the hold (the stage's non-zero exit still stops
+it).</li>
+<li>The review build check uses three steps; the QA stage's further
+fallbacks are not used in review.</li>
+<li>The installer copies every file under
+<code>templates/scripts</code>, including files Git ignores; a
+<code>.env</code> placed there would be copied into the target
+repository (the source is then recorded as dirty).</li>
+<li>The alert throttle key has no repository in it, so two installations
+on one machine throttle each other's alerts.</li>
+<li><code>pick_issue</code> and <code>count_in_flight_issues</code>
+still read a missing list as empty; Linear's schema does not allow that
+answer.</li>
+<li>A file that is already modified before
+<code>repo.post_implement_command</code> runs and that the command
+modifies further is not detected as left uncommitted.</li>
+</ul></main>
+</div>
+</body>
+</html>
