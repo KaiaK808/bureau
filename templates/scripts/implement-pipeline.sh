@@ -416,39 +416,16 @@ restore_worktree_deps "$(pwd)" || exit 24
 echo ""
 echo "Phase 1/2: execute tasks (bounded retry loop, MAX_ITER=$MAX_ITER)"
 
+# The ticket's spec directory, matched on the branch the same way every stage
+# does it (bureau_spec_dir_for_branch: exact name, else the one slug that fits).
+# No match, or more than one candidate, leaves TASKS_FILE empty and routes back
+# to Spec below. There is deliberately no "take the only or the
+# first tasks.md" fallback: it fed another ticket's tasks.md to this issue.
+SPEC_DIR_MATCH=$(bureau_spec_dir_for_branch "$BRANCH")
 TASKS_FILE=""
-# Match strategy: leading number first, slug-substring as fallback.
-#
-# Speckit stamps the same `NNN-` prefix onto both the spec dir and the feature
-# branch. Branch names get truncated by speckit / Linear when long (observed:
-# spec dir `091-wire-mcp-tool-metadata` paired with branch `091-wire-mcp-tool`).
-# The post-strip slug then differs and `grep -qi "$slug"` against the branch
-# fails — implement falsely reports "tasks.md missing" and routes back to Spec.
-# The `NNN-` prefix survives truncation, so match on that first.
-BRANCH_NUM=$(echo "$BRANCH" | grep -oE '^[0-9]+' || true)
-for f in "$BUREAU_SPECS_DIR"/*/tasks.md; do
-  [ -f "$f" ] || continue
-  spec_dir=$(basename "$(dirname "$f")")
-  spec_num=$(echo "$spec_dir" | grep -oE '^[0-9]+' || true)
-  if [ -n "$spec_num" ] && [ -n "$BRANCH_NUM" ] && [ "$spec_num" = "$BRANCH_NUM" ]; then
-    TASKS_FILE="$f"
-    break
-  fi
-  # Fallback for branches/spec dirs without a numeric prefix (hand-named, legacy).
-  if [ -z "$BRANCH_NUM" ] || [ -z "$spec_num" ]; then
-    slug=$(echo "$spec_dir" | sed 's/^[0-9]*-//')
-    if [ -n "$slug" ] && echo "$BRANCH" | grep -qi "$slug"; then
-      TASKS_FILE="$f"
-      break
-    fi
-  fi
-done
-# NOTE: no "only one tasks.md exists, use it regardless" fallback.
-# That fallback (a) had a SIGPIPE bug (find | head -1 + pipefail = exit 141)
-# and (b) was semantically wrong — it would feed the wrong tasks.md to an
-# unrelated issue's implement run. If the for-loop above can't match branch
-# to spec dir, fall through to "No tasks.md" below and implement from the
-# issue description instead.
+if [ -n "$SPEC_DIR_MATCH" ] && [ -f "${SPEC_DIR_MATCH}tasks.md" ]; then
+  TASKS_FILE="${SPEC_DIR_MATCH}tasks.md"
+fi
 
 PROJECT_CONTEXT=""
 [ -n "$PROJECT_DESC" ] && PROJECT_CONTEXT="
@@ -470,17 +447,25 @@ Read $DESIGN_FILE before implementing UI tasks.
   fi
 fi
 
-# Resolve the spec_dir for build_spec_context — same match we did for TASKS_FILE.
-SPEC_DIR_MATCH=""
-if [ -n "$TASKS_FILE" ]; then
-  SPEC_DIR_MATCH="$(dirname "$TASKS_FILE")/"
-fi
+# build_spec_context gets the directory matched above only when it holds the
+# tasks.md; without one the stage stops below anyway.
+[ -n "$TASKS_FILE" ] || SPEC_DIR_MATCH=""
 SPEC_CONTEXT=$(build_spec_context "$SPEC_DIR_MATCH")
 
 # tasks.md is guaranteed by the time Build state is reached: spec-pipeline
 # produced it via /speckit-tasks and spec-review aborts if it's missing. If we
 # get here without one, the state machine is broken — fail loud and route the
 # issue back to Spec for re-tasks.
+# Two directories that fit the branch equally are a different fault: running
+# Spec again cannot resolve it (it may add a third), so a human decides.
+SPEC_CANDIDATES=$(bureau_spec_dir_candidates "$BRANCH")
+if [ -z "$TASKS_FILE" ] && [ -n "$SPEC_CANDIDATES" ]; then
+  echo "  ERROR: branch '$BRANCH' fits more than one spec directory: $SPEC_CANDIDATES"
+  post_comment "$ISSUE" "❌ Implement cannot run: branch \`$BRANCH\` fits more than one spec directory ($SPEC_CANDIDATES), and the stages do not guess. Rename or remove the stray directory so that exactly one matches the branch (troubleshooting: exit 13), then remove \`needs-human\`. Routing back to Spec."
+  move_issue "$ISSUE" "$BUREAU_STATE_SPEC"
+  mark_needs_human "$ISSUE" implement 13 || true
+  exit 13
+fi
 if [ -z "$TASKS_FILE" ]; then
   echo "  ERROR: no tasks.md found on branch '$BRANCH' despite valid bureau-branch marker."
   post_comment "$ISSUE" "❌ Implement cannot run: \`tasks.md\` is missing on \`$BRANCH\` despite a valid bureau-branch marker. Routing back to Spec so /speckit-tasks can run again."

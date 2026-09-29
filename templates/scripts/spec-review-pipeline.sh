@@ -85,17 +85,18 @@ else
 fi
 
 echo "→ Locating spec artifacts..."
-SPEC_DIR=""
-for d in $BUREAU_SPECS_DIR/*/; do
-  [ -d "$d" ] || continue
-  dir_name=$(basename "$d")
-  if echo "$BRANCH" | grep -qi "$(echo "$dir_name" | sed 's/^[0-9]*-//')" 2>/dev/null; then
-    SPEC_DIR="$d"
-    break
-  fi
-done
-[ -z "$SPEC_DIR" ] && SPEC_DIR=$(ls -td $BUREAU_SPECS_DIR/*/ 2>/dev/null | head -1 || true)
+# No "newest directory" fallback: in a fresh worktree every directory has the
+# same age, so it picked another ticket's spec. No match aborts below.
+SPEC_DIR=$(bureau_spec_dir_for_branch "$BRANCH")
 
+SPEC_CANDIDATES=$(bureau_spec_dir_candidates "$BRANCH")
+if [ -z "$SPEC_DIR" ] && [ -n "$SPEC_CANDIDATES" ]; then
+  echo "  ERROR: branch '$BRANCH' fits more than one spec directory: $SPEC_CANDIDATES"
+  post_comment "$ISSUE" "❌ Spec review aborted — branch \`$BRANCH\` fits more than one spec directory ($SPEC_CANDIDATES), and the stages do not guess. Rename or remove the stray directory so that exactly one matches the branch (troubleshooting: exit 13), then remove \`needs-human\`. Moving back to Spec."
+  move_issue "$ISSUE" "$BUREAU_STATE_SPEC"
+  mark_needs_human "$ISSUE" spec_review 13 || true
+  exit 13
+fi
 if [ -z "$SPEC_DIR" ] || [ ! -f "${SPEC_DIR}tasks.md" ]; then
   echo "  ERROR: No spec artifacts found"
   post_comment "$ISSUE" "❌ Spec review aborted — no tasks.md found on branch \`$BRANCH\`. Moving back to Spec for re-work."

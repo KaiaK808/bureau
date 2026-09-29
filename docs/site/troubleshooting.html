@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d0a53f64903de8ae133fb9d3e46f6f534110f43ae041f0568e8a77abc45d99ed">
+<meta name="bureau-source-sha256" content="aad0798b020c8935b3925eb2f7dc599be153a85946d10f17c96156d8ae90bc72">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -246,6 +246,28 @@ retained Spec Kit helpers, pass both <code>SPECIFY_FEATURE</code> and
 <code>SPECIFY_FEATURE_DIRECTORY</code> for that exact feature; see <a
 href="migration.html">legacy migration</a>. Inspect ambiguous numeric
 prefixes instead of guessing another feature.</p>
+<p>Every stage finds the spec directory with
+<code>bureau_spec_dir_for_branch</code> (<code>bureau-config.sh</code>).
+It first drops everything up to the branch's last <code>/</code> and a
+leading issue key such as <code>exp-1444-</code>, then takes: a
+directory named exactly like the branch or its last segment; else the
+one directory whose slug (the name without <code>NNN-</code>) fits the
+branch slug — equal, the branch slug as its start up to a <code>-</code>
+(a truncated branch name), or a run of whole <code>-</code>-separated
+words inside the branch slug; when several fit, the one of them that
+carries the branch's number. A number alone never selects a directory.
+Anything else yields no directory: implement stops here rather than
+build from another ticket's <code>tasks.md</code>, and when two
+directories fit equally, implement, spec review and UX name them in
+their comment and set <code>needs-human</code>. To see what a stage will
+pick, run
+<code>bash -c 'source scripts/bureau-config.sh; bureau_spec_dir_for_branch 001-my-branch; bureau_spec_dir_candidates 001-my-branch'</code>
+from the repository root. Typical causes: the spec directory was renamed
+after the branch was created, the branch shares no word with its spec
+directory, or two directories fit equally (<code>001-export-csv</code>
+and <code>001-export-csv-v2</code> for the branch
+<code>001-export-csv-v2-fix</code>) — rename or remove the stray
+directory, then remove <code>needs-human</code>.</p>
 <h3
 id="exit-14-build-failed--implement--upstream-port-build-gate-failed">Exit
 14 (build-failed) — implement / upstream-port build gate failed</h3>

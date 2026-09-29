@@ -223,6 +223,11 @@ if [ -z "$FEATURE_DIR" ] || [ ! -d "$FEATURE_DIR" ]; then
   exit 11
 fi
 FEATURE_BRANCH=$(basename "$FEATURE_DIR")
+# The spec directory of this run, with the trailing slash the other stages use.
+# Every later step reads this one directory instead of "the newest spec": in a
+# fresh worktree all spec directories have the same age, and installs that
+# reuse one `NNN-` prefix have many candidates.
+SPEC_DIR="${FEATURE_DIR%/}/"
 CUR_BRANCH=$(git branch --show-current)
 if [ -z "$CUR_BRANCH" ] || [ "$CUR_BRANCH" = "main" ]; then
   echo "  Creating branch $FEATURE_BRANCH from current HEAD"
@@ -237,20 +242,21 @@ echo "  branch ready: $(git branch --show-current)"
 echo ""
 echo "Phase 2/5: plan"
 "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-plan/SKILL.md and follow its instructions exactly.
-Work on the most recent spec in the $BUREAU_SPECS_DIR/ directory."
+Work on the spec in $SPEC_DIR (and no other directory under $BUREAU_SPECS_DIR/)."
 echo ""
 echo "  plan complete"
 
 echo ""
 echo "Phase 3/5: tasks"
 "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-tasks/SKILL.md and follow its instructions exactly.
-Work on the most recent spec in the $BUREAU_SPECS_DIR/ directory."
+Work on the spec in $SPEC_DIR (and no other directory under $BUREAU_SPECS_DIR/)."
 echo ""
 echo "  tasks complete"
 
 echo ""
 echo "Phase 4/5: crosscheck"
-SPEC_TASKS=$(ls -td "$BUREAU_SPECS_DIR"/*/tasks.md 2>/dev/null | head -1 || true)
+SPEC_TASKS=""
+[ -f "${SPEC_DIR}tasks.md" ] && SPEC_TASKS="${SPEC_DIR}tasks.md"
 if [ -n "$SPEC_TASKS" ]; then
   crosscheck_open_prs "$ISSUE" "$SPEC_TASKS"
 else
@@ -283,8 +289,7 @@ else
   echo "  Pushed branch: $BRANCH"
 fi
 
-# Find the spec directory for this issue
-SPEC_DIR=$(ls -td "$BUREAU_SPECS_DIR"/*/ 2>/dev/null | head -1 || true)
+# The spec directory for this issue is $SPEC_DIR, read from .specify/feature.json above.
 
 # Build a digest from the spec artifacts (creative work — Claude).
 # Idempotency: pull the most recent existing spec-digest comment so Claude can

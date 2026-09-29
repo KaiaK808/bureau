@@ -167,16 +167,7 @@ DIFF_TOTAL=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+[[:space:]]*insertion|[0-9
 DIFF_STATS="${DIFF_SHORTSTAT:-no diff} (~${DIFF_TOTAL:-0} line changes)"
 echo "  Files changed: $FILES_COUNT | $DIFF_STATS"
 
-SPEC_DIR=""
-for d in "$BUREAU_SPECS_DIR"/*/; do
-  [ -d "$d" ] || continue
-  dir_name=$(basename "$d")
-  slug=$(echo "$dir_name" | sed 's/^[0-9]*-//')
-  if echo "$BRANCH" | grep -qi "$slug"; then
-    SPEC_DIR="$d"
-    break
-  fi
-done
+SPEC_DIR=$(bureau_spec_dir_for_branch "$BRANCH")
 
 # Assemble the authoritative context for all three specialists. Every reviewer
 # reads the same grounding so SPEC-override findings get classified SKIP

@@ -29,6 +29,9 @@ n=$((n + 1))
 echo "$n" > "$counter_file"
 
 [ -n "${FAKE_CLAUDE_LOG:-}" ] && echo "iter $n invoked" >> "$FAKE_CLAUDE_LOG"
+# FAKE_CLAUDE_PROMPT_LOG — file to append every prompt to, so a test can check
+# what a stage told the agent (for example which spec directory).
+[ -n "${FAKE_CLAUDE_PROMPT_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_CLAUDE_PROMPT_LOG"
 
 # Resolve the fixture for this call.
 IFS=':' read -ra fixtures <<< "${FAKE_CLAUDE_FIXTURES:?must list at least one fixture}"

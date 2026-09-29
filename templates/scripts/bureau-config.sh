@@ -2778,6 +2778,109 @@ pipeline_pick_next() {
   fi
 }
 
+# ── Spec directory of a branch ─────────────────────────────────────────
+# bureau_spec_dir_for_branch <branch>: print the spec directory that belongs to
+# <branch> as "$BUREAU_SPECS_DIR/<name>/", or nothing when no directory can be
+# told apart. Every stage that needs the ticket's spec asks here, so they all
+# agree on one directory. bureau_spec_dir_candidates <branch> prints the
+# directories that fit equally, as "`a`, `b`", when that is why there is none.
+#
+# Spec dirs and branches share the form `NNN-<slug>`, but the number is not
+# unique: some installs mint `001-<slug>` for every ticket, others repeat a
+# number now and then, and hand-made branches reuse the number of an unrelated
+# spec. Matching on the number handed such a branch another ticket's tasks.md;
+# matching the slug as a loose substring did the same for `001-refund-rate`
+# next to `001-refund`. The branch is normalised first: everything up to its
+# last `/` goes (`codex/`, `exp/`, `user/`), then a leading issue key such as
+# `exp-1444-` (letters, `-`, digits, `-`, any case). Then, highest first:
+#   1. a directory named exactly like the branch or its last segment;
+#   2. the one directory whose slug (name without `NNN-`) fits the branch
+#      slug: equal; or the branch slug is its start up to a `-` (a truncated
+#      branch: `091-wire-mcp-tool` for `091-wire-mcp-tool-metadata`); or it is
+#      a run of whole `-`-separated words inside the branch slug (a branch with
+#      extra words: `t1-automated-tests-unit` for `001-automated-tests`). When
+#      several fit, the one of them that carries the branch's number.
+# Nothing else: a number alone never selects a directory, and a single slug
+# fit wins even when another directory carries the branch's number. Anything
+# ambiguous prints nothing, and the stage works without a spec directory or
+# stops instead of guessing. Slugs compare case-insensitively. bash 3.2 safe.
+bureau_spec_dir_for_branch() {
+  _bureau_spec_scan "${1:-}"
+  if [ -n "$_bsd_result" ]; then printf '%s\n' "$_bsd_result"; fi
+  return 0
+}
+bureau_spec_dir_candidates() {
+  _bureau_spec_scan "${1:-}"
+  if [ -n "$_bsd_candidates" ]; then printf '%s\n' "$_bsd_candidates"; fi
+  return 0
+}
+# _bureau_spec_scan <branch>: sets $_bsd_result (the directory, or empty) and
+# $_bsd_candidates (the tied directories as "`a`, `b`", or empty).
+_bureau_spec_scan() {
+  local branch="${1:-}" specs="${BUREAU_SPECS_DIR:-specs}"
+  local last b_num b_slug d name num slug hit
+  local slug_n=0 slug_hit="" slug_all="" slugnum_n=0 slugnum_hit=""
+  _bsd_result=""; _bsd_candidates=""
+  [ -n "$branch" ] || return 0
+  last="${branch##*/}"
+  _bureau_spec_split "$(_bureau_spec_unkey "$last")"; b_num="$_bsd_num"; b_slug="$_bsd_slug"
+  for d in "$specs"/*/; do
+    [ -d "$d" ] || continue
+    name="${d%/}"; name="${name##*/}"
+    if [ "$name" = "$branch" ] || [ "$name" = "$last" ]; then
+      _bsd_result="$d"
+      return 0
+    fi
+    _bureau_spec_split "$name"; num="$_bsd_num"; slug="$_bsd_slug"
+    hit=""
+    if [ -n "$slug" ] && [ -n "$b_slug" ]; then
+      case "$slug" in "$b_slug"|"$b_slug"-*) hit=1 ;; esac
+      case "-$b_slug-" in *"-$slug-"*) hit=1 ;; esac
+    fi
+    if [ -n "$hit" ]; then
+      slug_n=$((slug_n + 1)); slug_hit="$d"
+      slug_all="${slug_all:+$slug_all, }\`$name\`"
+      if [ -n "$num" ] && [ "$num" = "$b_num" ]; then
+        slugnum_n=$((slugnum_n + 1)); slugnum_hit="$d"
+      fi
+    fi
+  done
+  if [ "$slug_n" -eq 1 ]; then
+    _bsd_result="$slug_hit"
+  elif [ "$slug_n" -gt 1 ]; then
+    if [ "$slugnum_n" -eq 1 ]; then _bsd_result="$slugnum_hit"; else _bsd_candidates="$slug_all"; fi
+  fi
+  return 0
+}
+# _bureau_spec_unkey <segment>: the segment without a leading issue key
+# (`exp-1444-provider-routing` → `provider-routing`).
+_bureau_spec_unkey() {
+  local n="${1:-}" key rest digits
+  key="${n%%-*}"; rest="${n#*-}"
+  case "$n" in *-*-*) ;; *) printf '%s' "$n"; return 0 ;; esac
+  digits="${rest%%-*}"
+  case "$key" in ''|*[!A-Za-z]*) printf '%s' "$n"; return 0 ;; esac
+  case "$digits" in ''|*[!0-9]*) printf '%s' "$n"; return 0 ;; esac
+  printf '%s' "${rest#*-}"
+}
+# _bureau_spec_split <name>: split `NNN-<slug>` into $_bsd_num (digits before
+# the first dash, empty when there are none) and $_bsd_slug (the rest, lower
+# case). A name without a leading `NNN-` is all slug.
+_bureau_spec_split() {
+  local n="${1:-}" head
+  _bsd_num=""; _bsd_slug="$n"
+  case "$n" in
+    *-*)
+      head="${n%%-*}"
+      case "$head" in
+        *[!0-9]*) ;;
+        *) _bsd_num="$head"; _bsd_slug="${n#*-}" ;;
+      esac ;;
+  esac
+  _bsd_slug=$(printf '%s' "$_bsd_slug" | tr '[:upper:]' '[:lower:]')
+}
+# ── End of spec directory of a branch ──────────────────────────────────
+
 # ── Shared prompt helpers ──────────────────────────────────────────
 # build_spec_context: assemble the "pinned decisions win" grounding that every
 # stage prompt should carry. Previously only code-review-pipeline.sh built this

@@ -42,7 +42,7 @@ if stage=='qa':
     pathlib.Path(name).write_text('import unittest\nclass Added(unittest.TestCase):\n    def test_add(self): self.assertEqual(2 + 3, 5)\n')
     value={'status':'GREEN','tests_added':1,'tests_failing':0,'coverage_notes':'Added a passing regression test'}
 elif stage=='spec_review':
-    pathlib.Path('specs/001-branch/acceptance.md').write_text('Acceptance detail\n')
+    pathlib.Path('specs/001-test-branch/acceptance.md').write_text('Acceptance detail\n')
     value={'review_status':'PASS','ui_work_needed':False,'issues_found':1,'issues_fixed':1,'remaining_issues':[],'summary':'Added acceptance detail'}
 else:
     pathlib.Path('messages.json').write_text('{"submit":"Send"}\n')
@@ -55,7 +55,7 @@ export PATH="$SANDBOX/fake-bin:$PATH"
 for stage in qa spec_review copy; do
   case "$stage" in
     qa) state=QA; file=tests/test_added.py; next='state-build-review' ;;
-    spec_review) state='Spec Review'; file=specs/001-branch/acceptance.md; next='state-build' ;;
+    spec_review) state='Spec Review'; file=specs/001-test-branch/acceptance.md; next='state-build' ;;
     copy) state=Copy; file=messages.json; next='state-build' ;;
   esac
   export FAKE_STAGE="$stage" BUREAU_STUB_ISSUE_STATE="$state"
