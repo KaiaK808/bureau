@@ -2146,8 +2146,9 @@ merge_origin_main_or_abort() {
 # EXP-491: count issues currently in-flight between Spec (inclusive) and Done
 # (exclusive). Used by spec-pipeline as a gate before picking new Triage work
 # when BUREAU_MAX_CONCURRENT_ISSUES is non-zero. Issues with parking labels
-# (needs-human, blocked, wip) are excluded from the count — they're already
-# stalled, holding up the cap on them too would deadlock the loop.
+# (needs-human, the configured linear.labels.needs_human.name as in
+# pipeline_pick_next, blocked, wip) are excluded from the count — they're
+# already stalled, holding up the cap on them too would deadlock the loop.
 #
 # What counts is work, not tickets (carried over from installation A,
 # EXP-1462): only issues of the configured projects (.linear.projects, as in
@@ -2200,14 +2201,15 @@ count_in_flight_issues() {
   # node's labels and children): read as `[]`, a missing list counted a parked
   # ticket as work, a missing issue list as "0 in flight". Such an answer is
   # unusable like any other: retried, then 27.
-  local answer
+  local answer human
   answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.children.nodes | type) == "array")') || return $?
+  human=$(bureau_get '.linear.labels.needs_human.name // "needs-human"') || return $?
   printf '%s' "$answer" \
-  | jq '
+  | jq --arg human "$human" '
     [.data.issues.nodes[]
      | select(
          ([.labels.nodes[].name]
-          | map(select(. == "needs-human" or . == "blocked" or . == "wip"))
+          | map(select(. == "needs-human" or . == $human or . == "blocked" or . == "wip"))
           | length) == 0
        )
      | select((.children.nodes | length) == 0)]

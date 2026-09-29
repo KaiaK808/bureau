@@ -120,7 +120,27 @@ else
   WHERE=$(run_in "$NOGIT" "_throttle_where; printf '%s\n%s\n' \"\$_throttle_file\" \"\$_throttle_prefix\"")
   [ "$(printf '%s\n' "$WHERE" | sed -n 1p)" = /tmp/bureau-alerts.log ] || fail "without git the log is not /tmp/bureau-alerts.log: $WHERE"
   [ "$(printf '%s\n' "$WHERE" | sed -n 2p)" = "$NOGIT|" ] || fail "without git the key does not start with the repository path: $WHERE"
-  echo "PASS BUREAU_ALERT_THROTTLE_FILE names the log (a backslash in a key is kept, an unwritable log costs nothing but the throttle); without git the key carries the repository path"
+  # The fallback at work, with its /tmp path patched into the sandbox (everything else is the
+  # real code): the key carries the path on both sides, so one directory without git alerts
+  # once per hour and another one alerts on its own.
+  mkdir -p "$SB/fb"; cp "$SCRIPTS/bureau-config.sh" "$SCRIPTS/bureau-env.sh" "$SB/fb/"
+  python3 - "$SB/fb/bureau-config.sh" "$SB/fallback.log" <<'PY_EOF' || fail "could not patch the fallback path"
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text(); old = '    _throttle_file="/tmp/bureau-alerts.log"\n'
+if t.count(old) != 1: sys.exit(1)
+p.write_text(t.replace(old, '    _throttle_file="%s"\n' % sys.argv[2]))
+PY_EOF
+  NOGIT2="$SB/no git 2"; mkdir -p "$NOGIT2"; cp "$A/.bureau.json" "$NOGIT2/"
+  BEFORE=$(posts)
+  run_in "$NOGIT" "$ALERT" "$SB/fb/bureau-config.sh"
+  run_in "$NOGIT" "$ALERT" "$SB/fb/bureau-config.sh"
+  [ "$(posts)" = $((BEFORE + 1)) ] || fail "without git the same alert posted twice"
+  run_in "$NOGIT2" "$ALERT" "$SB/fb/bureau-config.sh"
+  [ "$(posts)" = $((BEFORE + 2)) ] || fail "without git a second directory's alert was swallowed"
+  grep -qF "$NOGIT|alert|$ISSUE|code-review-pipeline.sh|25	" "$SB/fallback.log" \
+    && grep -qF "$NOGIT2|alert|$ISSUE|code-review-pipeline.sh|25	" "$SB/fallback.log" \
+    || fail "without git the fallback log does not key by directory"
+  echo "PASS BUREAU_ALERT_THROTTLE_FILE names the log (a backslash in a key is kept, an unwritable log costs nothing but the throttle); without git the key carries the repository path, so directories alert apart"
 fi
 if [ -f /tmp/bureau-alerts.log ] && grep -q "$ISSUE" /tmp/bureau-alerts.log; then fail "the test wrote the shared /tmp/bureau-alerts.log"; fi
 

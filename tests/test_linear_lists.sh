@@ -70,6 +70,7 @@ OPEN_BLOCKER='"inverseRelations":{"nodes":[{"type":"blocks","issue":{"identifier
 # Whole nodes (assigned, so no brace expansion touches them).
 H4="{$N4,$L_HUMAN,$NOREL}"; F5="{$N5,$L_FREE,$NOREL}"; B4="{$N4,$L_FREE,$OPEN_BLOCKER}"
 NOLABELS4="{$N4,$NOREL}"; LNULL4="{$N4,\"labels\":null,$NOREL}"; LEMPTY4="{$N4,\"labels\":{},$NOREL}"; NOREL4="{$N4,$L_FREE}"
+RELEMPTY4="{$N4,$L_FREE,\"inverseRelations\":{}}"
 pick_body() { printf '{"data":{"issues":{"nodes":[%s]}}}' "$1"; }
 PICK='pick_issue s5 lane-2 needs-human'
 
@@ -90,7 +91,8 @@ for case_ in "no issue list|{\"data\":{\"issues\":{}}}" \
              "node without labels|$(pick_body "$NOLABELS4,$F5")" \
              "labels null|$(pick_body "$LNULL4,$F5")" \
              "labels without nodes|$(pick_body "$LEMPTY4,$F5")" \
-             "node without blockers|$(pick_body "$NOREL4,$F5")"; do
+             "node without blockers|$(pick_body "$NOREL4,$F5")" \
+             "blockers without nodes|$(pick_body "$RELEMPTY4,$F5")"; do
   call "${case_#*|}" "$PICK"
   [ "$RC" = 27 ] || fail "pick, ${case_%%|*}: exit $RC, wanted 27"
   [ -z "$OUT" ] || fail "pick, ${case_%%|*}: picked '$OUT' from a broken answer"
@@ -111,6 +113,7 @@ EPIC='"labels":{"nodes":[]},"children":{"nodes":[{"id":"C"}]}'
 count_body() { printf '{"data":{"issues":{"nodes":[%s]}}}' "$1"; }
 C_LEAF="{$LEAF}"; C_PARKED="{$PARKED}"; C_EPIC="{$EPIC}"
 C_NOLABELS='{"children":{"nodes":[]}}'; C_NOCHILDREN='{"labels":{"nodes":[]}}'; C_CHILDNULL='{"labels":{"nodes":[]},"children":null}'
+C_CHILDEMPTY='{"labels":{"nodes":[]},"children":{}}'; C_LABELSEMPTY='{"labels":{},"children":{"nodes":[]}}'
 call "$(count_body "$C_LEAF,$C_PARKED,$C_EPIC,$C_LEAF")" "$CNT"
 [ "$RC" = 0 ] && [ "$OUT" = 2 ] || fail "count, well-formed: wanted 2 (two leaves; not parked, not the epic)"
 call '{"data":{"issues":{"nodes":[]}}}' "$CNT"
@@ -118,12 +121,23 @@ call '{"data":{"issues":{"nodes":[]}}}' "$CNT"
 for case_ in "no issue list|{\"data\":{\"issues\":{}}}" \
              "node without labels|$(count_body "$C_LEAF,$C_NOLABELS")" \
              "node without children|$(count_body "$C_LEAF,$C_NOCHILDREN")" \
-             "children null|$(count_body "$C_LEAF,$C_CHILDNULL")"; do
+             "children null|$(count_body "$C_LEAF,$C_CHILDNULL")" \
+             "children without nodes|$(count_body "$C_LEAF,$C_CHILDEMPTY")" \
+             "labels without nodes|$(count_body "$C_LEAF,$C_LABELSEMPTY")"; do
   call "${case_#*|}" "$CNT"
   [ "$RC" = 27 ] || fail "count, ${case_%%|*}: exit $RC, wanted 27"
   [ -z "$OUT" ] || fail "count, ${case_%%|*}: printed a count ($OUT) from a broken answer"
 done
 echo "PASS the in-flight count stops with 27 when the answer lacks the issue list, a node's labels or its children"
+
+# A ticket parked by the configured needs-human name takes no slot, as the picker skips it.
+cp "$SB/.bureau.json" "$SB/bureau.json.orig"
+jq '.linear.labels.needs_human.name = "Human Review"' "$SB/bureau.json.orig" > "$SB/.bureau.json"
+C_PARKED_NAMED='{"labels":{"nodes":[{"name":"Human Review"}]},"children":{"nodes":[]}}'
+call "$(count_body "$C_LEAF,$C_PARKED_NAMED,$C_PARKED")" "$CNT"
+[ "$RC" = 0 ] && [ "$OUT" = 1 ] || fail "count, configured needs-human name: wanted 1 (the leaf only)"
+cp "$SB/bureau.json.orig" "$SB/.bureau.json"
+echo "PASS the in-flight count leaves out a ticket parked by the configured needs-human name"
 
 # --- negative control: the v3.0.2 reads ---------------------------------------------------------
 mkdir -p "$SB/old"; cp "$SCRIPTS/bureau-config.sh" "$SCRIPTS/bureau-env.sh" "$SB/old/"
@@ -141,6 +155,8 @@ subs = [
   ("    .data.issues.nodes\n    | map(select(.identifier", "    (.data.issues.nodes // [])\n    | map(select(.identifier"),
   ("        ([.labels.nodes[].name] | map(select(. as $n", "        ([(.labels.nodes // [])[].name] | map(select(. as $n"),
   ("        ([.inverseRelations.nodes[]\n", "        ([(.inverseRelations.nodes // [])[]\n"),
+  ('          | map(select(. == "needs-human" or . == $human or . == "blocked" or . == "wip"))\n',
+   '          | map(select(. == "needs-human" or . == "blocked" or . == "wip"))\n'),
 ]
 for old, new in subs:
     if t.count(old) != 1: sys.exit("negative control: %d matches for %r" % (t.count(old), old[:70]))
@@ -156,4 +172,9 @@ call "$(pick_body "$NOREL4,$F5")" "$PICK" "$SB/old/bureau-config.sh"
 call '{"data":{"issues":{}}}' "$CNT" "$SB/old/bureau-config.sh"
 [ "$RC" = 0 ] && [ "$OUT" = 0 ] \
   || fail "negative control: the v3.0.2 count no longer reads a missing issue list as 0, so this proves nothing"
-echo "PASS negative control: the v3.0.2 reads pick a ticket without its labels or blockers and count a missing list as 0"
+jq '.linear.labels.needs_human.name = "Human Review"' "$SB/bureau.json.orig" > "$SB/.bureau.json"
+call "$(count_body "$C_LEAF,$C_PARKED_NAMED,$C_PARKED")" "$CNT" "$SB/old/bureau-config.sh"
+cp "$SB/bureau.json.orig" "$SB/.bureau.json"
+[ "$RC" = 0 ] && [ "$OUT" = 2 ] \
+  || fail "negative control: the v3.0.2 count no longer counts a ticket parked by the configured name, so this proves nothing"
+echo "PASS negative control: the v3.0.2 reads pick a ticket without its labels or blockers, count a missing list as 0 and count a ticket parked by the configured name"
