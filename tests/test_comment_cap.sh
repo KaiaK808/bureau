@@ -173,6 +173,9 @@ open(p, 'w').write(src.replace(old, 'REVIEW_COMMENT_BODY="$REVIEW_COMMENT"\n'))
 PY
   fi
   run_pipeline code-review-pipeline.sh EXP-804
+  # The harness exports the stage output, which holds the 150 KB review here: on Linux an
+  # environment string over 128 KB makes every later command fail to start.
+  export -n LAST_STDOUT LAST_STDERR
   jq -j '[.[] | select(.body | test("Code Review v2"))] | last | .body // ""' "$PR2_GH/comments.json" > "$T/pr-comment"
 }
 review_long
