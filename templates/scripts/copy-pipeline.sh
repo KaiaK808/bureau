@@ -94,16 +94,7 @@ if ! merge_origin_main_or_abort "$ISSUE" "Copy"; then
   exit 17
 fi
 
-SPEC_DIR=""
-for d in "$BUREAU_SPECS_DIR"/*/; do
-  [ -d "$d" ] || continue
-  dir_name=$(basename "$d")
-  slug=$(echo "$dir_name" | sed 's/^[0-9]*-//')
-  if echo "$BRANCH" | grep -qi "$slug"; then
-    SPEC_DIR="$d"
-    break
-  fi
-done
+SPEC_DIR=$(bureau_spec_dir_for_branch "$BRANCH")
 SPEC_CONTEXT=$(build_spec_context "$SPEC_DIR")
 
 # Load voice guide if configured. Absence is explicitly OK — the agent falls

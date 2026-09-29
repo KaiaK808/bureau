@@ -98,16 +98,7 @@ fi
 restore_worktree_deps "$(pwd)" || exit 24
 
 # Locate the spec dir so build_spec_context has something to load.
-SPEC_DIR=""
-for d in "$BUREAU_SPECS_DIR"/*/; do
-  [ -d "$d" ] || continue
-  dir_name=$(basename "$d")
-  slug=$(echo "$dir_name" | sed 's/^[0-9]*-//')
-  if echo "$BRANCH" | grep -qi "$slug"; then
-    SPEC_DIR="$d"
-    break
-  fi
-done
+SPEC_DIR=$(bureau_spec_dir_for_branch "$BRANCH")
 SPEC_CONTEXT=$(build_spec_context "$SPEC_DIR")
 TASKS_FILE=""
 [ -n "$SPEC_DIR" ] && [ -f "${SPEC_DIR}tasks.md" ] && TASKS_FILE="${SPEC_DIR}tasks.md"

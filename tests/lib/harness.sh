@@ -48,11 +48,14 @@ sandbox_init() {
   git -C "$SANDBOX" push -q origin main
   git -C "$SANDBOX" push -q origin "$branch"
 
-  # Spec dir with a tasks.md matching the branch slug. The pipeline does:
-  #   for f in $BUREAU_SPECS_DIR/*/tasks.md; if BRANCH matches slug, use $f.
-  # Branch "test-branch" → spec dir "001-test-branch" → slug "test-branch".
-  mkdir -p "$SANDBOX/specs/001-${branch#*-}"
-  cat > "$SANDBOX/specs/001-${branch#*-}/tasks.md" <<EOF
+  # Spec dir with a tasks.md for the branch. The stages find it with the real
+  # bureau_spec_dir_for_branch (exact name > unique slug > unique number), so
+  # the directory is named like the branch, with 001- added when the branch has
+  # no number: "test-branch" → "001-test-branch", "001-foo" → "001-foo".
+  local spec_fixture="001-$branch"
+  case "$branch" in [0-9][0-9][0-9]-*) spec_fixture="$branch" ;; esac
+  mkdir -p "$SANDBOX/specs/$spec_fixture"
+  cat > "$SANDBOX/specs/$spec_fixture/tasks.md" <<EOF
 # Test tasks
 - [ ] T001 Do the first thing
 - [ ] T002 Do the second thing
@@ -80,7 +83,9 @@ EOF
     -e '/^apply_build_failure() {/,/^}/p' -e '/^decide_review_verdict() {/,/^}/p' \
     -e '/^_review_count() {/,/^}/p' -e '/^_review_shown() {/,/^}/p' -e '/^review_verdict_from_text() {/,/^}/p' \
     -e '/^resolve_verdict_exit() {/,/^}/p' \
+    -e '/^# ── Spec directory of a branch/,/^# ── End of spec directory of a branch/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/real-helpers.sh"
+  grep -q '^bureau_spec_dir_for_branch() {' "$SCRIPTS_DIR/real-helpers.sh" || { echo "harness: spec-dir matcher not found in bureau-config.sh" >&2; return 1; }
   # A needs-human label that cannot be written is held locally; the hold helpers run for real
   # on top of the stub's add_issue_label and alert_telegram.
   sed -n '/^# ── needs-human hold (EXP-1516)/,/^# ── End of needs-human hold/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
