@@ -105,10 +105,12 @@ if [ -z "$SPEC_DIR" ] && [ -n "$SPEC_CANDIDATES" ]; then
   mark_needs_human "$ISSUE" ux 13 || true
   exit 13
 fi
+# No directory matches the branch: a name mismatch, so a human decides.
 if [ -z "$SPEC_DIR" ]; then
-  echo "  ERROR: No spec directory found for $ISSUE on branch $BRANCH."
-  post_comment "$ISSUE" "❌ UX pipeline aborted — no spec directory matched branch \`$BRANCH\`. Routing back to Spec Review for spec rework."
+  echo "  ERROR: no spec directory under ${BUREAU_SPECS_DIR%/}/ matches branch '$BRANCH' ($ISSUE)."
+  post_comment "$ISSUE" "❌ UX pipeline aborted — no spec directory under \`${BUREAU_SPECS_DIR%/}/\` matches branch \`$BRANCH\`, and the stages do not guess. Rename the spec directory or the branch so that they match, or send the ticket back to Triage for a fresh spec (troubleshooting: exit 13), then remove \`needs-human\`. Routing back to Spec Review."
   move_issue "$ISSUE" "$BUREAU_STATE_SPEC_REVIEW"
+  mark_needs_human "$ISSUE" ux 13 || true
   exit 13
 fi
 echo "  Spec dir: $SPEC_DIR"
