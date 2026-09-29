@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c4edf59ef1fdb9eb2eec3b18ba3a845e2d68c107a47e5f44480954f241c1ea59">
+<meta name="bureau-source-sha256" content="3b53afc5938c7a44bb3c2366aa603aa442dc38cd4e7f8f7baa043ef2d7e225b1">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -48,7 +48,8 @@ doesn't spam you 30 times an hour.</p>
 (checks pending or not started, GitHub still computing, a gate read that
 failed, a hold label
 <code>wip</code>/<code>blocked</code>/<code>needs-human</code> on the
-PR, conflicts the rebase stage resolves)</td>
+PR, conflicts the rebase stage resolves — never under the shepherd,
+whose ticket the queue's rebase stage skips)</td>
 <td>Normal — happens every tick when there's no work. The queue loop
 stays quiet; the shepherd waits for the gate (see below)</td>
 </tr>

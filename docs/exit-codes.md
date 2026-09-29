@@ -11,7 +11,7 @@ This page is the complete table + how the alerter behaves.
 | Exit | Class | Meaning | Common cause |
 |---|---|---|---|
 | `0` | ok | Pipeline completed successfully | — |
-| `2` | queue-empty | No pickable issue in the polled state; from `merge-pipeline.sh` also: the merge gate is not yet decided (checks pending or not started, GitHub still computing, a gate read that failed, a hold label `wip`/`blocked`/`needs-human` on the PR, conflicts the rebase stage resolves) | Normal — happens every tick when there's no work. The queue loop stays quiet; the shepherd waits for the gate (see below) |
+| `2` | queue-empty | No pickable issue in the polled state; from `merge-pipeline.sh` also: the merge gate is not yet decided (checks pending or not started, GitHub still computing, a gate read that failed, a hold label `wip`/`blocked`/`needs-human` on the PR, conflicts the rebase stage resolves — never under the shepherd, whose ticket the queue's rebase stage skips) | Normal — happens every tick when there's no work. The queue loop stays quiet; the shepherd waits for the gate (see below) |
 | `10` | linear-down | `LINEAR_API_KEY` missing or invalid | Forgot to set it in `.env`, or the key was revoked |
 | `11` | worktree-dirty | Uncommitted changes in the worktree | Manual edits in `.worktrees/queue-<mode>/` — clean up before next tick |
 | `12` | no-branch | `bureau-branch` marker missing or points at a non-existent branch | Spec pipeline didn't post a digest, or the branch was deleted |

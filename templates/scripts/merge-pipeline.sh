@@ -295,9 +295,14 @@ evaluate_merge_gates() {
 
 # merge_dirty_is_rebasable: 0 when a DIRTY PR is one the rebase stage resolves on
 # its own — the rebase agent is on in .bureau.json (read without the shepherd's
-# BUREAU_FORCE_ALL_AGENTS: the shepherd never runs the rebase stage itself) and
-# the divergence is bureau-only (the rebase stage refuses human commits).
+# BUREAU_FORCE_ALL_AGENTS) and the divergence is bureau-only (the rebase stage
+# refuses human commits). Never while a shepherd holds the ticket
+# (BUREAU_HELD_BY_SHEPHERD=1, which shepherd.sh sets for the stages it runs): the
+# queue's rebase picker skips a ticket labeled shepherd-focused and the shepherd
+# runs only the merge stage at Merge, so nothing would rebase it — waiting would
+# only use up the shepherd's budget.
 merge_dirty_is_rebasable() {
+  [ "${BUREAU_HELD_BY_SHEPHERD:-0}" = 1 ] && return 1
   BUREAU_FORCE_ALL_AGENTS=0 agent_enabled rebase || return 1
   git fetch origin --quiet 2>/dev/null || true
   branch_is_bureau_only "$BRANCH"

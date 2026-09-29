@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="188517bcc006d4ba0e1aecf0123e44529d9d503349b3b2de27f9dcc114b631cd">
+<meta name="bureau-source-sha256" content="d0a53f64903de8ae133fb9d3e46f6f534110f43ae041f0568e8a77abc45d99ed">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -410,22 +410,24 @@ or not started, GitHub still computing <code>mergeStateStatus</code>, a
 gate read that failed, a hold label <code>wip</code>,
 <code>blocked</code> or <code>needs-human</code> on the PR, conflicts
 that the rebase stage resolves because <code>agents.rebase</code> is on
-and the divergence is bureau-only) and exit <code>25</code> when it is
-decided against the merge (a failing check, other conflicts, a stale
-base, no APPROVE verdict, unresolved threads, a PR that is not open).
-The gate comment on the PR names the outcome and is posted again only
-when the outcome or a blocker changes. A hold label counts as "not yet"
-on purpose: a human put it there and removes it when ready, so the queue
-does not alert on it every hour; the shepherd waits its budget and then
-halts with the gate report. A check that never starts (an offline
-runner) keeps the gate at "not yet" as well. The queue loop stays quiet
-on <code>2</code> and alerts on <code>25</code>, at most once an hour
-per ticket, and re-evaluates on every tick, so re-running a flaky check
-is enough for the next tick to merge. The shepherd waits on
-<code>2</code> (every <code>BUREAU_SHEPHERD_MERGE_POLL_SECONDS</code>,
-60 s by default, for at most
-<code>BUREAU_SHEPHERD_MERGE_WAIT_SECONDS</code>, 30 minutes by default)
-and halts on <code>25</code> or on a wait that ran out with
+and the divergence is bureau-only; under the shepherd such conflicts are
+blocked at once, because the queue's rebase stage skips a ticket the
+shepherd holds and the shepherd runs only the merge stage at Merge) and
+exit <code>25</code> when it is decided against the merge (a failing
+check, other conflicts, a stale base, no APPROVE verdict, unresolved
+threads, a PR that is not open). The gate comment on the PR names the
+outcome and is posted again only when the outcome or a blocker changes.
+A hold label counts as "not yet" on purpose: a human put it there and
+removes it when ready, so the queue does not alert on it every hour; the
+shepherd waits its budget and then halts with the gate report. A check
+that never starts (an offline runner) keeps the gate at "not yet" as
+well. The queue loop stays quiet on <code>2</code> and alerts on
+<code>25</code>, at most once an hour per ticket, and re-evaluates on
+every tick, so re-running a flaky check is enough for the next tick to
+merge. The shepherd waits on <code>2</code> (every
+<code>BUREAU_SHEPHERD_MERGE_POLL_SECONDS</code>, 60 s by default, for at
+most <code>BUREAU_SHEPHERD_MERGE_WAIT_SECONDS</code>, 30 minutes by
+default) and halts on <code>25</code> or on a wait that ran out with
 <code>needs-human</code> and a ticket comment listing the blockers.
 After fixing the blocker or re-running the check, remove
 <code>needs-human</code> and re-shepherd; the merge stage checks every

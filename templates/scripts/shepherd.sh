@@ -710,7 +710,9 @@ while true; do
   set +e
   : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
   : > "$MERGE_GATE_FILE" 2>/dev/null || true
-  ( cd "$REPO_DIR" && _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" BUREAU_MERGE_GATE_REPORT="$MERGE_GATE_FILE" \
+  # BUREAU_HELD_BY_SHEPHERD tells the stage that this ticket is held here: the
+  # queue skips it (shepherd-focused), so nothing but this loop runs a stage on it.
+  ( cd "$REPO_DIR" && _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" BUREAU_MERGE_GATE_REPORT="$MERGE_GATE_FILE" BUREAU_HELD_BY_SHEPHERD=1 \
       bash "$SCRIPT_REPO/scripts/bureau-worker.sh" "$ISSUE" "$PIPELINE" "$WORKTREE" "${BRANCH:-}" )
   RC=$?
   set -e
