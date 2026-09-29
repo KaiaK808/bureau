@@ -122,17 +122,22 @@ post() {  # <body file> — the real post_comment; sets PRC and BODY (the posted
   set -e
   BODY=$(for f in "$T/linear/payloads/"*.json; do jq -r 'select(.query | test("commentCreate")) | .variables.body' "$f"; done)
 }
+# posted_fitted: the comment reached Linear, fitted, with its marker first and its verdict last.
+posted_fitted() {
+  [ "$PRC" = 0 ] && [ "$(printf '%s' "$BODY" | bytes)" -le 60000 ] \
+    && [ "$(printf '%s\n' "$BODY" | sed -n 1p)" = '<!-- bureau-branch: feat/cap-test -->' ] \
+    && printf '%s\n' "$BODY" | sed -n '$!{h;d;};x;p' | jq -e .verdict >/dev/null
+}
 post "$T/long"
-[ "$PRC" = 0 ] || fail "2: posting a 200 KB comment failed ($PRC): $(cat "$T/post.err")"
-[ "$(printf '%s' "$BODY" | bytes)" -le 60000 ] || fail "2: posted $(printf '%s' "$BODY" | bytes) bytes"
-[ "$(printf '%s\n' "$BODY" | head -n 1)" = '<!-- bureau-branch: feat/cap-test -->' ] || fail '2: the branch marker is not the first line any more'
-printf '%s\n' "$BODY" | tail -n 2 | head -n 1 | jq -e .verdict >/dev/null || fail '2: the JSON verdict is not the end any more'
+posted_fitted || fail "2: a 200 KB comment was not posted fitted (exit $PRC, $(printf '%s' "$BODY" | bytes) bytes): $(cat "$T/post.err")"
 post "$T/short"
 [ "$PRC" = 0 ] && [ "$BODY" = "$(cat "$T/short")" ] || fail '2: a short comment was not posted unchanged'
 echo 'PASS 2 post_comment posts a 200 KB comment fitted; a short one unchanged'
 
-# Negative control: post_comment without the cap sends the whole body, and Linear's
-# refusal ends the stage with 27.
+# Negative control: post_comment without the cap does not deliver the comment. On macOS
+# the whole body goes out and Linear's refusal ends the stage with 27; on Linux a body
+# over 128 KB does not even fit the `jq --arg` that builds the request (the kernel's
+# limit for one argument), and an empty request goes out instead.
 python3 - "$T/linear/scripts/bureau-config.sh" <<'PY'
 import sys
 p = sys.argv[1]; src = open(p).read()
@@ -141,9 +146,9 @@ assert src.count(old) == 1, 'cap call not found'
 open(p, 'w').write(src.replace(old, '  if false; then\n'))
 PY
 post "$T/long"
-[ "$PRC" = 27 ] || fail "negative control: without the cap a 200 KB comment should fail with 27, got $PRC"
-[ "$(printf '%s' "$BODY" | bytes)" -gt 65536 ] || fail 'negative control: without the cap the whole body should be sent'
-echo 'PASS negative control: without the cap the long comment is refused and the stage gets 27'
+posted_fitted && fail 'negative control: without the cap the long comment still reached Linear fitted, so case 2 proves nothing'
+echo "  (without the cap: exit $PRC, $(printf '%s' "$BODY" | bytes) bytes of comment body sent; $(grep -m1 -i 'argument list' "$T/post.err" || echo 'no argument error'))"
+echo 'PASS negative control: without the cap the long comment does not reach Linear'
 
 # ── 3. the review stage's PR comment ───────────────────────────────────────
 review_long() {  # [nocap]
@@ -180,9 +185,11 @@ grep -q '^\*\*Verdict\*\*: REQUEST_CHANGES$' "$T/pr-comment" || fail '3: the PR 
 grep -q 'bytes cut from the middle' "$T/pr-comment" || fail '3: the PR comment does not say it was cut'
 echo 'PASS 3 the review PR comment is fitted and keeps its header, verdict and end'
 
+# Negative control: without the cap the PR gets more than GitHub accepts (macOS), or, on
+# Linux, nothing at all (the body does not fit one argument to gh).
 review_long nocap
-[ "$(python3 -c 'import sys; print(len(sys.stdin.buffer.read().decode()))' < "$T/pr-comment")" -gt 65536 ] \
-  || fail 'negative control: without the cap the PR comment should exceed what GitHub accepts'
-echo 'PASS negative control: without the cap the review posts more than 65,536 characters'
+[ "$(python3 -c 'import sys; print(len(sys.stdin.buffer.read().decode()))' < "$T/pr-comment")" -le 65536 ] && [ -s "$T/pr-comment" ] \
+  && fail 'negative control: without the cap the review still posted an acceptable comment, so case 3 proves nothing'
+echo 'PASS negative control: without the cap the review posts no acceptable PR comment'
 
 echo 'OK test_comment_cap'
