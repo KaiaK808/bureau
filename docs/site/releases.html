@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="430489b595f0a2079f9f21a94e0a9b28f2b96cdf51de926b987f09de34d8063a">
+<meta name="bureau-source-sha256" content="75e0ffc1f7cdc1d2b4a61b31d8952db61cfefab7745770a5a920e7ff70b92a38">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -76,11 +76,15 @@ with negative controls against rc.1 and mutation checks, and an
 independent verification pass with a fix round and a delta check; they
 have not run in an installation yet. The pilot is resynced to rc.2 next,
 and <strong>v3.1.0</strong> follows after that. Release preparation
-changes documentation only: runtime, installer, templates, tests and CI
-are identical to the merge of <a
+changes documentation only: runtime, installer, templates and CI are
+identical to the merge of <a
 href="https://github.com/KaiaK808/bureau/pull/41">#41</a>,
-<code>36ffc8a</code>. The final commit is recorded in the GitHub Release
-body.</p>
+<code>36ffc8a</code>, and the tests to the merge of <a
+href="https://github.com/KaiaK808/bureau/pull/43">#43</a>,
+<code>f833f3b</code>, which names the sandbox repositories of three
+tests with <code>mktemp -d</code>, so a repeated random number no longer
+re-initialises an existing one. The final commit is recorded in the
+GitHub Release body.</p>
 <p>The stable release, marked as latest, is <strong>Bureau
 v3.0.2</strong>, dated <strong>2026-09-29</strong> (<a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">GitHub
