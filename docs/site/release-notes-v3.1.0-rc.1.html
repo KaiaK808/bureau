@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="948fded408a0e19315135a7f09e7bacb99f9357941d7aa539c8416fb7817680c">
+<title>release-notes-v3.1.0-rc.1 · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="bureau-v310-rc1--branch-code-without-bureau-secrets-and-the-gaps-the-installations-found">Bureau
+v3.1.0-rc.1 — branch code without Bureau secrets, and the gaps the
+installations found</h1>
+<p><strong>Release candidate · 2026-09-30 · source tag
+<code>v3.1.0-rc.1</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0-rc.1">GitHub
+Release</a> is marked as a prerelease and records the exact tagged
+commit. This candidate is superseded by <a
+href="release-notes.html">v3.1.0-rc.2</a>. The stable release remains <a
+href="release-notes-v3.0.2.html">v3.0.2</a> until v3.1.0 is published;
+v3.1.0 follows once a pilot installation has been resynced with this
+candidate and has qualified one ticket end to end. Earlier releases: <a
+href="release-notes-v3.0.1.html">v3.0.1</a>, <a
+href="release-notes-v3.0.0.html">v3.0.0</a> with its candidates <a
+href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a> and <a
+href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>, and the previous
+major release <a href="release-notes-v2.0.0.html">v2.0.0</a>.</p>
+<p>v3.1 is a minor release on v3.0.2. It collects six pull requests of
+fixes, guards and opt-in settings found in the installations and in
+cross-checks of their pipelines. The exit codes keep their meaning and
+no code is new; some stages use existing codes in new places: the review
+stage ends with <code>2</code> or <code>25</code> when its inline merge
+does not go through; the spec stage ends with <code>11</code> on a
+missing or malformed <code>.specify/feature.json</code> (was jq's
+<code>2</code> or <code>5</code>) and on a stale one; implement, spec
+review and UX set <code>needs-human</code> with their <code>13</code>
+when no spec directory matches; the shepherd ends with <code>25</code>
+before it claims a ticket a human holds; the queue picker and the
+in-flight count end with <code>27</code> on a Linear answer that lacks a
+list they read; a post-implement hook that edits an already-uncommitted
+file ends implement with <code>14</code>; an unusable
+<code>repo.untrusted_env</code> value refuses before any branch code
+runs (<code>24</code>; <code>14</code> for a post-implement hook,
+<code>18</code> in <code>upstream-port.sh</code>).</p>
+<h2 id="what-changed">What changed</h2>
+<ul>
+<li><strong>Code a branch controls runs without the Bureau
+secrets</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/33">#33</a>).
+<ul>
+<li>Since v3 the queue and the shepherd exported <code>.env</code> to
+every stage, so the review build check, the QA test runs,
+<code>repo.post_implement_command</code>, the Codex completion test, the
+app <code>test</code> action, the build and test of
+<code>upstream-port.sh</code> and the agent processes inherited
+<code>LINEAR_API_KEY</code>, <code>TELEGRAM_BOT_TOKEN</code>,
+<code>TELEGRAM_ALERT_CHAT_ID</code> and any <code>GH_TOKEN</code> or
+<code>GITHUB_TOKEN</code> of the shell that started Bureau. They now
+start through one helper (<code>bureau_untrusted_env</code> in
+<code>bureau-env.sh</code>, <code>untrusted_env</code> in
+<code>bureau-provider.py</code>): without those variables and
+<code>GH_ENTERPRISE_TOKEN</code> / <code>GITHUB_ENTERPRISE_TOKEN</code>,
+without any other variable that carries one of their values (6
+characters or more anywhere inside, a shorter one only as the whole
+value), and without <code>BASH_ENV</code> and <code>ENV</code>.
+Everything else stays, so toolchain variables keep working. The stage
+keeps the keys for its own Linear, GitHub and Telegram calls.</li>
+<li>Branch code that gets in through Bureau's own work gets no keys
+either. Bureau's git commands, and the hooks and filters they run, go
+through a <code>git</code> function without those variables (commands
+that talk to a remote keep the GitHub token variables for the credential
+helper and lose the <code>.env</code> keys), <code>gh</code> through a
+<code>gh</code> function that removes the <code>.env</code> keys and
+keeps the GitHub token variables it logs in with, and the git and
+<code>gh</code> processes Bureau's Python starts through
+<code>process_env</code>. Inline Python runs with
+<code>python3 -I</code>, so a <code>subprocess.py</code> in the branch
+root cannot stand in for the standard library. The provider starts
+without the keys and the runtime wrapper without the <code>.env</code>
+keys, and the Linear and Telegram requests hand the key, the bot token,
+the chat id and the alert text to <code>curl</code> on stdin instead of
+its argument list.</li>
+<li>QA and <code>upstream-port.sh</code> run their commands in a child
+<code>bash --noprofile --norc -o pipefail -c</code>, as the review build
+check does; QA used <code>eval</code> in the stage shell. A command no
+longer sees the stage's unexported variables and functions or its
+<code>set -u</code>.</li>
+<li>The stages skip a <code>repo.worktree_links</code> entry with a
+<code>.env*</code> path component or whose fully resolved path in the
+main checkout passes through a <code>.env*</code> name (both reported as
+an error by doctor), and also a directory with a <code>.env*</code> name
+anywhere below it or whose search for one does not finish, which doctor
+does not check.</li>
+<li>Opt-in <code>repo.untrusted_env: "clean"</code> runs the same
+commands in an allow-list environment of base variables; an agent also
+keeps its own login and network variables.</li>
+<li>What stays readable for code that deliberately looks for the keys as
+the same Unix user is listed in <a
+href="https://github.com/KaiaK808/bureau/blob/v3.1.0-rc.1/SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>
+and under the known limitations below.</li>
+</ul></li>
+<li><strong>Review and merge outcomes</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/38">#38</a>).
+<ul>
+<li>With the merge agent off and <code>agents.merge_mode</code> auto,
+the review stage's inline merge ended with <code>0</code> whether it
+merged or not, and the review reported Done. The review stage now
+follows the merge stage's codes: after a merge the ticket is Done; when
+the gate is not yet decided it records the APPROVE, comments once and
+ends with <code>2</code>, and the next pick reuses the approval without
+a model call and merges once the gate passes; when the gate is blocked
+it sets <code>needs-human</code>, comments the gate lines and ends with
+<code>25</code>, and after a human clears the blocker the next run
+reuses the approval. The shepherd waits on the review stage's "not yet"
+as it does at Merge.</li>
+<li><code>agents.merge_require_green_ci: false</code> and
+<code>agents.merge_require_up_to_date: false</code> switch their gates
+off; the gate read <code>false</code> as <code>true</code>. A quoted
+<code>"false"</code>, which v3.0.2 read as off and so merged on red CI,
+keeps the gate on with a warning.</li>
+<li>A PR head with no check run and no commit status is blocked once its
+commit is older than the new
+<code>agents.merge_ci_start_grace_seconds</code> (default 1800): a
+repository without CI no longer waits silently for ever.</li>
+<li><code>agents.merge_min_required_checks</code> and
+<code>agents.merge_ci_start_grace_seconds</code> follow one number rule
+in the gate and in doctor. v3.0.2 merged a head without any check when
+the minimum was <code>-1</code> or a word such as
+<code>"abc"</code>.</li>
+<li>Every merge call passes <code>--match-head-commit</code> with the
+head the gate checked. A push between the gate and the merge makes the
+merge stage end with <code>2</code>; the next run judges the new
+head.</li>
+<li>The review merger returns a markdown <code>comment</code> and a
+<code>findings</code> list (<code>bureau-review.schema.json</code>), and
+the stage posts them with the verdict on the PR and in the Linear
+REQUEST_CHANGES and BLOCK comments, so the specialists' file:line
+findings reach the implementer and the human merger. The verdict is
+still decided from the object by the same ordered rules.</li>
+<li>Linear and GitHub comments are fitted to 60,000 bytes (beginning and
+end kept, the verdict block kept whole), so one long model answer no
+longer halts a stage with <code>27</code>.</li>
+</ul></li>
+<li><strong>Implement loop</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/37">#37</a>).
+<ul>
+<li>The squash-range check for CI-skip markers also runs after every
+iteration, so a marker stops the loop after the iteration that wrote it
+instead of after the remaining paid iterations.</li>
+<li>New <code>agents.implement.push_each_iteration</code> (default
+<code>true</code>, today's behaviour): with <code>false</code>,
+implement does not push after each iteration while a PR was already open
+when the run started, so a review round starts one CI run instead of one
+per iteration. A stage that ends before its end-of-run push pushes the
+deferred commits first, once and best effort (a provider that fails,
+times out or is interrupted, an unusable Linear, a crash, SIGTERM or
+SIGHUP); only a process killed outright leaves them in its
+worktree.</li>
+<li>A <code>repo.post_implement_command</code> that changes an
+already-uncommitted file without committing it now halts with
+<code>14</code>, like any other change it leaves behind.</li>
+</ul></li>
+<li><strong>Spec directory handling</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/36">#36</a>).
+<ul>
+<li>Implement, spec review and UX set <code>needs-human</code> when no
+spec directory matches the branch; they routed the ticket back without a
+label, where it stayed.</li>
+<li>The spec stage ends with <code>11</code> when
+<code>.specify/feature.json</code> is missing or malformed after
+speckit-specify (it ended with jq's <code>2</code>, which the queue and
+the shepherd read as "queue empty", or <code>5</code>), and it refuses a
+stale file (unchanged by the call, naming a directory that existed
+before and is not the ticket's own) with <code>11</code> and
+<code>needs-human</code> before plan and tasks.</li>
+<li>Among several fitting spec directories, after the branch number, the
+one whose slug equals the branch slug wins; only two or more left are a
+tie. Every answer v3.0.2 gave stays; only former ties can become a
+pick.</li>
+<li>The <code>bureau-branch</code> marker readers skip comments whose
+body is empty or null.</li>
+<li><code>/linear-implement</code> (the Claude command and the Codex
+skill) finds the spec directory with the shared matcher.</li>
+</ul></li>
+<li><strong>Operator guards</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/35">#35</a>).
+<ul>
+<li>The shepherd refuses a ticket a human holds
+(<code>needs-human</code>, the configured
+<code>linear.labels.needs_human.name</code>, <code>blocked</code>,
+<code>wip</code> or a local hold) before it claims it: exit
+<code>25</code>, nothing written. Without <code>--from-stage</code>, a
+hold left on a ticket that is already Done or cancelled does not stop a
+run or a chain.</li>
+<li>Alert throttling is per repository
+(<code>&lt;git common dir&gt;/bureau/alert-throttle.log</code>,
+overridable with <code>BUREAU_ALERT_THROTTLE_FILE</code>), and every
+alert names its repository in a <code>Repo:</code> line.</li>
+<li>A dry run writes no escalation record.</li>
+<li>The queue picker and the in-flight count stop with <code>27</code>
+on a Linear answer that lacks a list they read; the count leaves out a
+ticket parked by the configured needs-human name.</li>
+</ul></li>
+<li><strong>Doctor, defaults and installer</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/34">#34</a>).
+<ul>
+<li>The provider's default timeout per call is 3600 s instead of 900 s;
+doctor warns when an enabled spec, spec review, UX, QA or review stage
+gets less than 1800 s.</li>
+<li>Doctor warns when automatic merging needs CI checks that no workflow
+provides, and when a merge gate switch or
+<code>agents.implement.push_each_iteration</code> is not a JSON boolean;
+it rejects <code>.env*</code> entries in
+<code>repo.worktree_links</code> and judges that list in the main
+checkout, also from a linked worktree.</li>
+<li>The installer treats every form of the legacy
+<code>bureau-init managed</code> marker as a conflict that names the
+line, and it skips template files the source ignores (listed under
+<code>skipped</code>).</li>
+<li>The managed block in <code>CLAUDE.md</code> and
+<code>AGENTS.md</code> describes the three merge routes of
+<code>agents.merge_mode</code>.</li>
+</ul></li>
+</ul>
+<p>See the <a
+href="https://github.com/KaiaK808/bureau/blob/v3.1.0-rc.1/CHANGELOG.md">changelog</a>
+for the full entries, <a
+href="https://github.com/KaiaK808/bureau/blob/v3.1.0-rc.1/docs/configuration.md">configuration</a>
+for the new keys, <a href="exit-codes.html">exit codes</a> for the
+vocabulary and <a
+href="https://github.com/KaiaK808/bureau/blob/v3.1.0-rc.1/docs/troubleshooting.md">troubleshooting</a>
+for the new refusals.</p>
+<h2 id="upgrade-an-existing-installation">Upgrade an existing
+installation</h2>
+<p>From <strong>v3.0.2</strong>, <strong>v3.0.1</strong>,
+<strong>v3.0.0</strong> or <strong>v3.0.0-rc.2</strong>: select tag
+<code>v3.1.0-rc.1</code> in the source skill checkout and resync the
+<strong>scripts scope and the interfaces scope as one set</strong>
+(<code>--resync-interfaces --resync-scripts</code>). The scripts belong
+together (among them <code>bureau-env.sh</code>,
+<code>bureau-config.sh</code>, the stage scripts,
+<code>shepherd.sh</code>, <code>bureau-worker.sh</code>,
+<code>codex-stage-runner.sh</code>, <code>bureau-provider.py</code>,
+<code>bureau-supervision.py</code>, <code>bureau-doctor.py</code>,
+<code>bureau-review.schema.json</code>); the interfaces carry
+<code>/linear-implement</code> with the shared matcher and the managed
+block's corrected merge sentence. A locally edited copy stops the resync
+until it is merged by hand. From v3.0.1 or older, the upgrade notes of
+the releases in between apply as well (<a
+href="migration.html#upgrade-to-v3">Upgrade to v3</a>); from v3.0.0-rc.1,
+v2.0.0 or a legacy copy, follow that section first.</p>
+<p>Check these before dispatch resumes:</p>
+<ul>
+<li><strong>Secrets no longer reach branch code.</strong> A test
+command, hook, <code>repo.post_implement_command</code> or agent step
+that needed <code>LINEAR_API_KEY</code>,
+<code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_ALERT_CHAT_ID</code>,
+<code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code> (or an enterprise
+variant) or <code>BASH_ENV</code> in its environment must get it another
+way; <code>gh</code> in a test still finds its stored login. QA's test
+command runs in a child bash: no stage-shell variables or functions, no
+<code>set -u</code>. A Git LFS checkout that authenticates only through
+<code>GH_TOKEN</code> in the environment no longer gets it during
+checkout and reset; use <code>gh</code>'s stored login or a credential
+helper. Scripts of an installation that source
+<code>bureau-env.sh</code> or <code>bureau-config.sh</code> get the
+<code>git</code> function too.</li>
+<li><strong><code>repo.worktree_links</code>:</strong> remove
+<code>.env*</code> entries and directories that hold a
+<code>.env</code>. The stages skip both; doctor reports a
+<code>.env*</code> entry as an error and does not look inside linked
+directories.</li>
+<li><strong>Stage timeout:</strong> stage calls that 900 s used to cut
+off now run for up to an hour. Set
+<code>agents.&lt;stage&gt;.timeout_seconds</code> or
+<code>agents.providers.&lt;provider&gt;.timeout_seconds</code>
+explicitly where the shorter limit was wanted.</li>
+<li><strong>Merge gate switches:</strong>
+<code>agents.merge_require_green_ci: false</code> and
+<code>agents.merge_require_up_to_date: false</code> now switch their
+gates off; check that each <code>false</code> in
+<code>.bureau.json</code> is meant. A quoted <code>"false"</code> keeps
+the gate on.</li>
+<li><strong>Repositories without CI:</strong> an installation that
+merges automatically and gets no check run on the PR head now sees a
+blocked gate 1800 s after the head commit instead of a silent wait: the
+queue loop alerts (hourly per ticket), and the shepherd and the review
+stage's inline merge halt with <code>25</code> and
+<code>needs-human</code>. Set <code>agents.merge_require_green_ci</code>
+to <code>false</code> there, or raise
+<code>agents.merge_ci_start_grace_seconds</code> for a slow runner.</li>
+<li><strong>Gate numbers:</strong> a
+<code>merge_min_required_checks</code> or
+<code>merge_ci_start_grace_seconds</code> written as a string of digits
+now counts as that number, a negative one or a word as the default;
+doctor names the number the gate uses.</li>
+<li><strong>Review stage exit codes:</strong> wrappers that run the
+review stage must accept <code>2</code> (approved, merge gate not yet
+decided; run it again later) and <code>25</code>, as they already do
+from the merge stage; <code>bureau-tick.sh</code> reports them as
+<code>waiting</code> and <code>blocked</code>. A local review prompt or
+schema that removes <code>comment</code> or <code>findings</code> makes
+the merger's answer fail with <code>22</code>.</li>
+<li><strong>Shepherd holds:</strong> a shepherd run or an orchestrated
+chain that used to drive a held ticket now stops with <code>25</code>
+before its claim; release the hold and re-shepherd. Each run makes one
+more Linear read before its claim.</li>
+<li><strong>Alert throttle file:</strong> the log moves from
+<code>/tmp/bureau-alerts.log</code> to
+<code>&lt;git common dir&gt;/bureau/alert-throttle.log</code>. Expect at
+most one repeated alert per key right after the upgrade; delete the old
+file once every installation on the host runs v3.1.</li>
+<li><strong>Instruction files:</strong> a <code>CLAUDE.md</code> or
+<code>AGENTS.md</code> that still holds a legacy
+<code>bureau-init managed</code> marker stops the resync until its old
+section is delimited with <code>bureau-init:begin/end</code> or removed
+(see <a href="troubleshooting.html">troubleshooting</a>).</li>
+<li><strong>Spec stage:</strong> a wrapper that read the spec stage's
+<code>2</code> or <code>5</code> after a failed specify sees
+<code>11</code>. In installations that track
+<code>.specify/feature.json</code> on <code>main</code>, check that
+speckit-specify records each new feature; a stale file now stops the
+spec stage with <code>needs-human</code>. Tickets that earlier no-match
+stops parked in Spec without the label keep their state; nothing picks a
+ticket in Spec, so look for them and route them by hand.</li>
+<li><strong>Post-implement hook:</strong> a hook that edits an
+already-uncommitted file without committing it now halts implement with
+<code>14</code>; make it commit what it changes.</li>
+<li><strong>Also changed:</strong> a CI-skip marker in a commit now
+stops implement after the iteration that wrote it; the installer skips
+template files the source ignores and names them under
+<code>skipped</code>; alerts carry a <code>Repo:</code> line; escalation
+records that earlier dry runs wrote are not removed.</li>
+<li><strong>Local variants:</strong> an installation that carries its
+own copy of the deferred push or of the secret hardening drops it with
+the resync, together with any strict xfail tests that waited for the
+deferred push (they now pass, and a strict XPASS fails the suite).</li>
+</ul>
+<p>Optional: to defer implement's pushes while a PR is open, make
+<code>agents.implement</code> an object,
+<code>"implement": {"enabled": true, "push_each_iteration": false}</code>.
+To run branch code in an allow-list environment, set
+<code>"untrusted_env": "clean"</code> under <code>repo</code> after
+checking that <code>repo.test_command</code> and
+<code>repo.post_implement_command</code> run with only those variables;
+a test command then also loses an SSH agent, cloud credentials, registry
+tokens, the proxy variables and a private CA, and an agent that logs in
+through cloud credentials cannot start.</p>
+<p>Run doctor after the resync
+(<code>python3 scripts/bureau-doctor.py --mode background</code>), then
+qualify one ticket end to end with the shepherd before dispatch resumes.
+See <a href="migration.html#upgrade-to-v31">Upgrade to v3.1</a>.</p>
+<h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
+<p>Dependencies and platforms are unchanged (Python 3.9+, Bash 3.2+, Git
+2.26+, jq, curl; Node.js 18+ for the shared scheduler; Linux and macOS).
+Configuration schema versions 1 and 2 stay supported, the new keys are
+optional, and the manifest stays at version <code>1</code>. To roll back
+to v3.0.2, point the source at tag <code>v3.0.2</code> and resync the
+scripts and interfaces scopes, or restore the private backup (<a
+href="migration.html#rollback">rollback</a>). That brings back v3.0.2's
+behaviour with its gaps: branch code runs with the Bureau secrets in its
+environment, <code>agents.merge_require_green_ci: false</code> is read
+as <code>true</code>, the merge call is not pinned to the checked head,
+and the review stage reports Done after an inline merge that did not go
+through. Rollback cannot undo commits, pull requests or Linear
+transitions made in between; the caveats of <a
+href="release-notes-v3.0.2.html#compatibility-and-rollback">v3.0.2</a>
+still apply.</p>
+<h2 id="validation-and-known-limitations">Validation and known
+limitations</h2>
+<p>v3.1.0-rc.1 is validated by the full Linux/macOS suite on the release
+commit and the installer fixtures. Each of the six pull requests went
+through an independent verification pass, a fix round for its findings
+and a delta check of the fixes; #33 also went through three Codex
+cross-check rounds. The new tests run the real scripts with doubles only
+at the edges (Linear, GitHub, the models); each carries negative
+controls that fail against v3.0.2, and the new guards were
+mutation-checked:</p>
+<ul>
+<li><strong>#33:</strong> against v3.0.2 the new test files fail 276, 61
+and 40 checks and the provider test 14 failures and 3 errors; the last
+mutation round killed 99 of 100, and the survivor is equivalent (the git
+commands of <code>squash-marker-check.sh</code> run no hook, filter or
+fsmonitor).</li>
+<li><strong>#38:</strong> 58 of 59 mutations killed in the first round
+(the survivor is equivalent), 24 of 24 and 16 of 16 in the fix
+rounds.</li>
+<li><strong>#37:</strong> 37 of 42 mutations killed; the five survivors
+change no outcome (a duplicated record, a batch replaced by per-path
+calls, a redundant pattern, a fallback for a configuration that already
+fails on load, symlinks passed to the batch).</li>
+<li><strong>#36:</strong> 41 of 41 mutations killed. The replay of 1,889
+real branch/listing pairs from eight installations used for v3.0.2 gives
+the same answer as v3.0.2 in every pair (1,858 right, none wrong, no tie
+in either). Among 1,729 synthetic branch names built from the same
+directory names, 7 of the 56 ties became picks: 6 the intended
+directory, 1 the trade-off named below.</li>
+<li><strong>#35:</strong> 43 of 43 mutations killed.</li>
+<li><strong>#34:</strong> 60 of 60 mutations killed, plus 18 of 18 for
+its fix rounds.</li>
+</ul>
+<p><strong>No live ticket has run on v3.1.0-rc.1 yet.</strong> The pilot
+installation does not set <code>push_each_iteration: false</code>, so
+the deferred-push path rests on the harness tests.</p>
+<p>Known limitations:</p>
+<ul>
+<li><strong>Process environments.</strong> On Linux
+<code>/proc/&lt;pid&gt;/environ</code>, and on macOS <code>ps -E</code>
+for executables that are not Apple platform binaries (a Homebrew
+<code>python3</code> or <code>gh</code>, <code>node</code>), show the
+environment a process started with. The processes a stage starts after
+it exported <code>.env</code> (its <code>gh</code> and <code>jq</code>
+calls, its Python helpers) hold the keys while they run, and the GitHub
+token variables of the operator's shell stay in the runtime and the
+stage shells. The ancestors of branch code start without the
+<code>.env</code> keys unless the shell that started the driver exported
+them itself. A branch process left running in the background can read
+them. Closing this needs the stages to stop exporting the keys.</li>
+<li><strong>Git commands that talk to a remote, and
+<code>gh</code>,</strong> keep the GitHub token variables: a branch
+<code>pre-push</code> hook (on a push) or
+<code>reference-transaction</code> hook (on a fetch or a push) and a
+credential helper see them.</li>
+<li><strong>Same-user access.</strong> The main checkout's
+<code>.env</code> and <code>.bureau.json</code>,
+<code>gh auth token</code> and git credential helpers stay readable by
+the same Unix user. The default removes only the Bureau secrets and the
+GitHub token variables (an SSH agent, cloud credentials and registry
+tokens stay unless <code>repo.untrusted_env</code> is
+<code>clean</code>), the agent's own login reaches what it runs, and
+relative PATH entries are not checked.
+<code>bureau-supervision.py</code> in the review stage runs without
+<code>python3 -I</code> (safe unless the operator's
+<code>PYTHONPATH</code> has an empty entry), and doctor does not scan
+linked directories for a <code>.env</code> (the stages do). A secret of
+6 or 7 characters can also remove an unrelated variable that contains
+it. Closing the rest needs isolation at the operating-system level (a
+separate user, a container or a virtual machine), which Bureau does not
+provide.</li>
+<li><strong>A gate that stays "not yet".</strong> The queue picks the
+same ticket on every poll and reruns the review build check each time
+while the gate stays undecided (a queued check on an offline runner, a
+required human review, a hold label, a head whose commit time lies in
+the future); the shepherd is bounded by its wait budget. The CI start
+grace covers only a head with no check run at all: a check that is
+queued but never picked up by a runner still counts as pending.</li>
+<li>The comment cap can leave a code fence open when it cuts inside a
+code block (cosmetic; the gate reads the header).</li>
+<li>A background writer slower than the 2 s settle window after
+<code>repo.post_implement_command</code> can still be blamed on the
+hook. On the <code>/goal</code> path a failed run's own commits stay in
+the worktree in both push modes, as in v3.0.2.</li>
+<li>A branch cut down to exactly a shorter sibling's slug now takes that
+sibling (the trade-off of the tie order). Without a
+<code>bureau-branch</code> marker, Linear's generated branch name can
+resolve to a parent ticket's directory, as in v3.0.1. A ticket without a
+marker whose own directory is on <code>main</code> and named by
+<code>feature.json</code> is held as stale when speckit-specify records
+the same value again; post the marker comment for that directory and
+remove <code>needs-human</code> to release it.</li>
+<li>The stages and the hold flush still write the literal
+<code>needs-human</code> label; a configured name is honoured by the
+picker, the in-flight count and the shepherd.</li>
+<li><strong>A pull request that no workflow runs for.</strong> The
+scaffolded <code>ci.yml</code> has
+<code>paths-ignore: ['**.md', 'specs/**']</code>, so a pull request that
+changes only Markdown files and <code>specs/**</code> gets no check run.
+In a repository that merges automatically, its gate is blocked once the
+1800 s CI start grace has passed. Add a workflow that always reports a
+check, raise <code>agents.merge_ci_start_grace_seconds</code>, or merge
+such a pull request by hand. Doctor does not warn about this: its
+workflow check reads the <code>on:</code> block line by line, not as
+YAML, does not see <code>paths-ignore</code>, and reads only the
+workflows of the checkout it runs in.</li>
+<li>Carried over from v3.0.x: with <code>merge_mode: "manual"</code>,
+nothing moves a ticket from Merge to Done after the merge by hand; a
+<code>manual</code> repository without a Merge state refuses code review
+with <code>24</code> and re-picks the same ticket every tick; the review
+build check uses three steps and not the QA stage's further fallbacks;
+commits co-authored by Claude count as bureau commits when deciding
+whether the rebase stage can resolve a conflict; a linked virtualenv is
+the main checkout's own and is shared by all stage worktrees.</li>
+</ul></main>
+</div>
+</body>
+</html>
