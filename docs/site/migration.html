@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e795a4cf8ab38b645e4b7bc7506c0d8f97c8e7ef37c5c7e10bc2c817b7e42c6e">
+<meta name="bureau-source-sha256" content="c3c64cbffafcbe793518524174a8821a2678cc3f2ce46edd48aa2a937f79b8bf">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -25,22 +25,21 @@ configuration; it does not upgrade installed assets.</p>
 <p>This guide upgrades installations from the official <a
 href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
-candidates, v3.0.0 and v3.0.1 to the stable <strong>Bureau
-v3.0.2</strong>, and v3 installations to the release candidate
-<strong>Bureau v3.1.0-rc.2</strong>. The commands below require the
-selected release's source skill. See the <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0-rc.2">v3.1.0-rc.2
+candidates, v3.0.0, v3.0.1, v3.0.2 and the v3.1 release candidates to
+the stable <strong>Bureau v3.1.0</strong>. The commands below require
+the selected release's source skill. See the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0">v3.1.0
 release</a> and its <a href="release-notes.html">release notes</a> (the
-first candidate: <a
-href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>), the <a
+candidates: <a href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a>, <a
+href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>), the previous
+stable <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">v3.0.2
 release</a> and its <a href="release-notes-v3.0.2.html">release notes</a>,
 the <a href="release-notes-v3.0.1.html">v3.0.1 release notes</a>, the <a
 href="release-notes-v3.0.0.html">v3.0.0 release notes</a> (the candidates:
 <a href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a>, <a
-href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>), the previous
-stable <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">v2.0.0
+href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>), the previous major
+<a href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">v2.0.0
 release</a> and its <a href="release-notes-v2.0.0.html">release notes</a>,
 the <a href="../../CHANGELOG.md">changelog</a> and the <a
 href="releases.html">release process</a>. A Bureau major version marks
@@ -69,11 +68,11 @@ installed commit.</p>
 <p>Confirm that <code>origin</code> identifies the official
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
-clean checkout, select the exact release (<code>v3.0.2</code> for the
-stable release, <code>v3.1.0-rc.2</code> for the candidate,
+clean checkout, select the exact release (<code>v3.1.0</code> for the
+stable release, <code>v3.0.2</code> for the previous stable release,
 <code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
 earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.0.2 <span class="co"># or v3.1.0-rc.2 (candidate), v3.0.1, v3.0.0, v2.0.0</span></span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.1.0 <span class="co"># or v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -94,21 +93,23 @@ loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
 <h2 id="upgrade-to-v31">Upgrade to v3.1</h2>
-<p>The release candidate <strong>v3.1.0-rc.2</strong> is a minor release
-on v3.0.2; v3.0.2 stays the stable release until v3.1.0 is published. It
-keeps the v3 exit-code contract. See its <a
-href="release-notes.html">release notes</a> and those of the first
-candidate, <a href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>, for
-the changes, the validation and the known limitations.</p>
-<p><strong>From v3.1.0-rc.1:</strong> select tag
-<code>v3.1.0-rc.2</code> and resync the scripts scope as one set; no
-configuration or interface change is required. Then follow the steps for
-leftover worktrees and branches at the end of this section.</p>
+<p>The stable release <strong>v3.1.0</strong> is a minor release on
+v3.0.2. It keeps the v3 exit-code contract. See its <a
+href="release-notes.html">release notes</a> for the changes, the
+validation and the known limitations; its candidates were <a
+href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a> and <a
+href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>.</p>
+<p><strong>From v3.1.0-rc.2:</strong> select tag <code>v3.1.0</code>; no
+resync is needed, because the runtime is identical.</p>
+<p><strong>From v3.1.0-rc.1:</strong> select tag <code>v3.1.0</code> and
+resync the scripts scope as one set; no configuration or interface
+change is required. Then follow the steps for leftover worktrees and
+branches at the end of this section.</p>
 <p><strong>From v3.0.2, v3.0.1, v3.0.0 or v3.0.0-rc.2:</strong> select
-tag <code>v3.1.0-rc.2</code> and resync the <strong>scripts scope and
-the interfaces scope as one set</strong>: the scripts depend on each
-other (<code>bureau-env.sh</code>, <code>bureau-config.sh</code>, the
-stage scripts, <code>shepherd.sh</code>, <code>bureau-worker.sh</code>,
+tag <code>v3.1.0</code> and resync the <strong>scripts scope and the
+interfaces scope as one set</strong>: the scripts depend on each other
+(<code>bureau-env.sh</code>, <code>bureau-config.sh</code>, the stage
+scripts, <code>shepherd.sh</code>, <code>bureau-worker.sh</code>,
 <code>codex-stage-runner.sh</code>, <code>bureau-provider.py</code>,
 <code>bureau-supervision.py</code>, <code>bureau-doctor.py</code> and
 <code>bureau-review.schema.json</code> among them), and the interfaces
@@ -186,8 +187,8 @@ it warns about a CI gate without pull-request workflows, calls shorter
 than 1800 s and gate switches that are not booleans. Rollback to v3.0.2
 selects tag <code>v3.0.2</code> and resyncs the same scopes (<a
 href="#rollback">rollback</a>).</p>
-<p><strong>Leftover worktrees and branches (rc.2, from any
-version):</strong> before dispatch resumes, list the worktrees an
+<p><strong>Leftover worktrees and branches (from v3.1.0-rc.1 and every
+v3.0 version):</strong> before dispatch resumes, list the worktrees an
 earlier interrupted or unfinished run left behind
 (<code>git worktree list</code>,
 <code>python3 scripts/bureau-runtime.py status</code>) and drop or adopt
@@ -207,7 +208,15 @@ and delete it with <code>git branch -D BRANCH</code>, or keep it as
 upgrade, an interrupted run prints these steps itself, and
 <code>bureau-worker.sh</code> ends with <code>130</code> on SIGTERM or
 Ctrl-C (<a
-href="troubleshooting.html#shepherdsh-bailed-mid-run--how-to-resume">troubleshooting</a>).</p>
+href="troubleshooting.html#shepherdsh-bailed-mid-run--how-to-resume">troubleshooting</a>).
+A wrapper that reads the worker's exit code sees that <code>130</code>,
+and a stop can take longer: each nested runtime wrapper waits one step
+longer than the one inside it before it kills its child's process group
+(20, 15, 10 and 5 s from the outside in, with the default step of 5 s;
+<code>BUREAU_STOP_GRACE_SECONDS</code> sets the step). A shepherd
+started with <code>--worktree</code> set to the main checkout ends with
+<code>1</code> before it claims anything; give it a worktree of its
+own.</p>
 <h2 id="upgrade-to-v3">Upgrade to v3</h2>
 <p><strong>From v3.0.1:</strong> select tag <code>v3.0.2</code> and
 resync the scripts scope as one set; no configuration change is
@@ -545,7 +554,7 @@ conflict writes no source. The manifest stays at version <code>1</code>:
 installers without source recording still read it.</p>
 <div class="sourceCode" id="cb9"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.0.2&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.0.2&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
 <span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
 <table>

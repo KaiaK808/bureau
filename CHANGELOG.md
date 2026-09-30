@@ -6,9 +6,15 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-01
+
+Stable release of the 3.1.0 candidates. Runtime, installer, templates and tests are identical to v3.1.0-rc.2; since rc.2 only the CI job limit changed: the test job's limit rises from 30 to 45 minutes ([#44](https://github.com/KaiaK808/bureau/pull/44)). The changes since v3.0.2 are recorded in the 3.1.0-rc.2 and 3.1.0-rc.1 sections below, and the [v3.1.0 release notes](docs/release-notes.md) consolidate them. Validation added since rc.2: a live acceptance in the maintainer's pilot installation, resynced to rc.2. PILOT-RC2-RESULT
+
+**Upgrade:** from v3.1.0-rc.2 select tag `v3.1.0`; no resync is needed because the runtime is unchanged. From v3.1.0-rc.1 select tag `v3.1.0`, resync the scripts scope as one set and handle leftover worktrees and branches as the 3.1.0-rc.2 entry below describes. From v3.0.2, v3.0.1, v3.0.0 or v3.0.0-rc.2 select tag `v3.1.0`, resync the scripts scope and the interfaces scope as one set and go through [Upgrade to v3.1](docs/migration.md#upgrade-to-v31).
+
 ## [3.1.0-rc.2] - 2026-09-30
 
-Second release candidate for Bureau v3.1.0, published as a GitHub prerelease; v3.0.2 stays the stable release until v3.1.0 is published. rc.1 passed a live acceptance in the maintainer's pilot installation: one ticket went from Triage to Done with the shepherd, the merge pinned to the head the gate checked and the review comment carrying the merger's findings. Before that run, a run interrupted by SIGTERM and its resume, which stopped with exit 21, showed three gaps; rc.2 carries their fixes and one log line ([#41](https://github.com/KaiaK808/bureau/pull/41)): resume guidance after an interrupted run, a visible halt on exit 21, the pinned head in the merge log line, and the review log saying when it shows only the end of the build output. The exit codes keep their meaning. See the [v3.1.0-rc.2 release notes](docs/release-notes.md).
+Second release candidate for Bureau v3.1.0, published as a GitHub prerelease; v3.0.2 stays the stable release until v3.1.0 is published. rc.1 passed a live acceptance in the maintainer's pilot installation: one ticket went from Triage to Done with the shepherd, the merge pinned to the head the gate checked and the review comment carrying the merger's findings. Before that run, a run interrupted by SIGTERM and its resume, which stopped with exit 21, showed three gaps; rc.2 carries their fixes and one log line ([#41](https://github.com/KaiaK808/bureau/pull/41)): resume guidance after an interrupted run, a visible halt on exit 21, the pinned head in the merge log line, and the review log saying when it shows only the end of the build output. The exit codes keep their meaning. See the [v3.1.0-rc.2 release notes](docs/release-notes-v3.1.0-rc.2.md).
 
 **Upgrade:** from v3.1.0-rc.1 select tag `v3.1.0-rc.2` and resync the scripts scope as one set (`bureau-runtime.py`, `bureau-config.sh`, `bureau-worker.sh`, `shepherd.sh`, `merge-pipeline.sh` and `code-review-pipeline.sh` changed); no configuration or interface change. From v3.0.2, v3.0.1, v3.0.0 or v3.0.0-rc.2 select tag `v3.1.0-rc.2`, resync the scripts scope and the interfaces scope as one set and go through the v3.1.0-rc.1 upgrade list below and in [Upgrade to v3.1](docs/migration.md#upgrade-to-v31). Before dispatch resumes, list the worktrees an earlier interrupted or unfinished run left behind (`git worktree list`, `python3 scripts/bureau-runtime.py status`) and drop or adopt them: they carry no record of their run, so the first ticket whose stage meets one gets `needs-human` and the halt comment, even when another ticket's run left it. A run interrupted before the upgrade still holds its leases; release it with `python3 scripts/bureau-runtime.py release RUN_ID` as before. The old cleanup also detached such a worktree from its branch, so the steps cannot name the stage's leftover local branch, and a spec rerun then stops with `fatal: a branch named '…' already exists`: after dropping the worktree, list the local branches origin does not have with `git for-each-ref --format='%(refname:short)' refs/heads | while read -r b; do git rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null || echo "$b"; done`, check that the stage's branch carries nothing you need (`git log --oneline BRANCH --not --remotes` prints nothing) and delete it with `git branch -D BRANCH`, or keep it under another name (`git branch -m BRANCH BRANCH-saved`) so the rerun can create the branch again. Validated by the new tests below on macOS (bash 3.2) and in CI; the fixes have not yet run in an installation.
 
@@ -353,7 +359,8 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.1.0-rc.2...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.1.0...main
+[3.1.0]: https://github.com/KaiaK808/bureau/compare/v3.0.2...v3.1.0
 [3.1.0-rc.2]: https://github.com/KaiaK808/bureau/compare/v3.1.0-rc.1...v3.1.0-rc.2
 [3.1.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v3.0.2...v3.1.0-rc.1
 [3.0.2]: https://github.com/KaiaK808/bureau/compare/v3.0.1...v3.0.2
