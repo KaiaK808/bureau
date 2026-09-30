@@ -174,6 +174,17 @@ In **upstream-port.sh**, configured path translations have been applied but `git
 - Preserve the local rebased HEAD, fetch and compare the newly published commits before any retry. Refreshing the remote-tracking ref and immediately force-pushing can defeat the protection that just stopped the run.
 - Reconcile the other writer's work and ownership before a separately authorized push.
 
+### Exit 21 (ownership-conflict) — needs-human and one comment
+
+A stage or the shepherd stops with 21 when the run may not take the ticket or its worktree: another run holds the ticket or the worktree (the runtime's claim), the worktree exists but is no registered Bureau worker (preserved from an interrupted or unfinished run or from a review stopped before merge, or a directory Bureau did not create), a registered worker now holds another repository, or the ticket's branch is checked out in another worktree. Since v3.1.0-rc.2 such a halt sets `needs-human` (with the local hold when the label cannot be written, see [`could not add 'needs-human'`](#could-not-add-needs-human--a-ticket-held-without-its-label)) and posts one comment that names the worktree and the way back; stderr carries the same steps. The queue then skips the ticket instead of hitting the same conflict on every tick, where before the ticket stayed in its state with nothing on it.
+
+- The comment goes to the ticket whose run preserved the worktree when Bureau recorded that (`<git common dir>/bureau/preserved/`, written when a worker loses its registration). In a queue that shares one worktree per stage that can be another ticket than the one just picked; the picked ticket then gets nothing. Without a record the first ticket that hits the worktree carries the halt, and later tickets get nothing.
+- A repeat sets the label again but posts no second comment (`<git common dir>/bureau/ownership-halts/<ISSUE>.<key>`); both records are removed once the worktree is reset as a registered worker again.
+- Nothing is written for a cancelled run, or when the holder is a live run: the second run ends with 21 and names the run that is still active.
+- A 21 for another reason writes nothing, as before: the state changed during the stage, a stage started outside a disposable worker, a git command failed inside the reset, or a stage's own branch check at its start.
+
+Follow the comment (for an interrupted run, the steps under [`shepherd.sh` bailed mid-run](#shepherdsh-bailed-mid-run--how-to-resume)), remove `needs-human` and rerun.
+
 ### Exit 1 / 128 / 141 — `error-<N>` catch-all
 
 Anything outside the classified table maps to `error-<N>` in `queue-loop`'s alert throttling. Usually a bug in the pipeline script or an unhandled bash error.
@@ -189,6 +200,14 @@ Anything outside the classified table maps to `error-<N>` in `queue-loop`'s aler
 ### `shepherd.sh` bailed mid-run — how to resume
 
 Inspect the issue's current state, blocker comment, saved run and checkout. Resolve the cause and any human label before rerunning `bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123`. The state guard skips completed stages, but an unfinished/unregistered checkout can still refuse reuse; preserve its work and reconcile ownership first. Use a dry-run to inspect routing only. Exit 20 is the requested review stop, 25 is pause/human attention, and 26 is a cancelled ticket; none is Done.
+
+**After an interrupted run (exit 130).** A run stopped by Ctrl-C or SIGTERM keeps its leases and its worktree, and the worktree loses its disposable-worker registration, so that no later reset erases the work. Releasing the run is therefore not enough: a rerun on the same worktree stops with 21 ("refusing to reset unregistered worktree"), and a spec stage's feature branch that was never pushed stays behind in the repository. The interrupt message names the run, the ticket and the worktree, and prints the steps once, with the actual run ID, paths and branch:
+
+1. Check that no process of the run is left (`python3 scripts/bureau-runtime.py status`), then release its ownership: `python3 scripts/bureau-runtime.py release RUN_ID`. `release` refuses while a process of the run is still alive.
+2. Save anything you want from the worktree, then drop it: `git worktree remove --force WORKTREE`. When the message names the worktree's local branch (never pushed, or with commits that are not on origin), delete that too: `git branch -D BRANCH`; otherwise the next spec run finds its branch name taken. Or keep the worktree and rerun with a new one instead: `shepherd.sh --worktree DIR`.
+3. Rerun the shepherd or the stage.
+
+A rerun that skips step 1 stops with 21 at the claim, one that skips step 2 stops with 21 at the reset; either way the ticket gets `needs-human` and one comment with the same steps (see [Exit 21](#exit-21-ownership-conflict--needs-human-and-one-comment)), so remove the label after the fix. Before v3.1.0-rc.2 the message said only "work preserved; inspect processes and explicitly release ownership", printed once per nested wrapper, and the halt at 21 left nothing on the ticket.
 
 ### `shepherd.sh` refuses a held ticket — exit 25 before the claim
 
@@ -303,7 +322,7 @@ Missing signals allow dispatch. With `pause_on_stale_data: false`, signals older
 
 ### Worktree collision — "branch already checked out at another worktree"
 
-Git refuses to attach a branch already held elsewhere. `free_branch_from_other_worktrees` reports the holder and does not detach it. Inspect `git worktree list` and `python3 scripts/bureau-runtime.py status`, contact the owner and arrange a handoff. An old-looking path is not proof of abandoned work. Only remove a checkout after its owner, saved work and interrupted processes have been reconciled.
+Git refuses to attach a branch already held elsewhere. `free_branch_from_other_worktrees` reports the holder and does not detach it; when the worker's reset hits it, the ticket gets `needs-human` and a comment naming the holder (see [Exit 21](#exit-21-ownership-conflict--needs-human-and-one-comment)). Inspect `git worktree list` and `python3 scripts/bureau-runtime.py status`, contact the owner and arrange a handoff. An old-looking path is not proof of abandoned work. Only remove a checkout after its owner, saved work and interrupted processes have been reconciled.
 
 ### Rebase-pipeline aborted mid-rebase
 

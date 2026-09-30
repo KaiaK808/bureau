@@ -8,6 +8,7 @@ import json
 import os
 import re
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import sys
@@ -154,7 +155,7 @@ class Store:
                 raise
             return child
 
-    def finish_execution(self, run, resources, interrupted):
+    def finish_execution(self, run, resources, interrupted, repo=None, report=True):
         with self.guard():
             path = self.process_path(run)
             record = read(path, {'groups': [], 'interrupted': False})
@@ -162,16 +163,42 @@ class Store:
                 record['interrupted'] = True
                 save(path, record)
                 leases = read(self.leases, {})
+                issue = held_issue(leases, run)
+                workspaces = []
                 for key, lease in leases.items():
                     if lease['run_id'] == run:
                         lease['interrupted'] = True
                         if key.startswith('workspace:'):
-                            worker = hashlib.sha256(key[len('workspace:'):].encode()).hexdigest()
-                            (self.root / 'workers' / worker).unlink(missing_ok=True)
+                            workspace = key[len('workspace:'):]
+                            workspaces.append(workspace)
+                            worker = hashlib.sha256(workspace.encode()).hexdigest()
+                            registration = self.root / 'workers' / worker
+                            if registration.exists():
+                                registration.unlink(missing_ok=True)
+                                self.preserve(worker, run, issue, workspace, 'interrupted')
                 save(self.leases, leases)
-                print('Interrupted Bureau run ' + run + ': work preserved; inspect processes and explicitly release ownership.', file=sys.stderr)
-                return
-        self.release(run, resources)
+            else:
+                record = None
+        if record is None:
+            self.release(run, resources)
+            return
+        # Nested wrappers of one run (shepherd → worker → stage) share it; only
+        # the one that claimed it prints the steps, once, after the others.
+        if report:
+            workspace = workspaces[0] if workspaces else None
+            try:
+                message = interrupted_message(self, repo or self.root.parent.parent, run, issue, workspace)
+            except Exception:  # the exit code is the protocol; the steps are help
+                message = ('Interrupted Bureau run ' + run + ': work preserved; release it (bureau-runtime.py release '
+                           + run + '), then drop or replace its worktree before a rerun.')
+            print(message, file=sys.stderr)
+
+    def preserve(self, key, run, issue, workspace, reason):
+        # The record reset_worktree reads when it refuses the unregistered
+        # worktree: whose run left it, on which branch, and why.
+        branch, _ = branch_state(workspace)
+        save(self.root / 'preserved' / (key + '.json'),
+             dict(run_id=run, issue=issue, workspace=workspace, branch=branch or '', reason=reason, at=time.time()))
 
     def assert_stopped(self, run):
         # Reused live group IDs conservatively prevent release. Never signal
@@ -199,6 +226,151 @@ class Store:
         for key in ('issue:' + issue, 'workspace:' + str(workspace.resolve())):
             if leases.get(key, {}).get('run_id') != run:
                 raise Conflict('Run no longer owns ' + key)
+
+
+def held_issue(leases, run):
+    return next((key[len('issue:'):] for key, lease in leases.items()
+                 if lease.get('run_id') == run and key.startswith('issue:')), None)
+
+
+def held_workspace(leases, run):
+    return next((key[len('workspace:'):] for key, lease in leases.items()
+                 if lease.get('run_id') == run and key.startswith('workspace:')), None)
+
+
+def quiet_git(repo, *args):
+    # For the steps after an interrupt: a checkout that is gone or no checkout
+    # at all is an answer here, not an error for the operator's terminal.
+    command = ['git', '-C', str(repo), *args]
+    return subprocess.check_output(command, text=True, env=process_env(command), stderr=subprocess.DEVNULL).strip()
+
+
+def branch_state(workspace):
+    """(branch, state) of a checkout: state 'never-pushed', or the number of
+    commits not on origin/<branch>. ('', None) when detached or unreadable."""
+    try:
+        branch = quiet_git(workspace, 'branch', '--show-current')
+    except (OSError, subprocess.CalledProcessError):
+        return '', None
+    if not branch:
+        return '', None
+    try:
+        quiet_git(workspace, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/' + branch)
+    except (OSError, subprocess.CalledProcessError):
+        return branch, 'never-pushed'
+    try:
+        return branch, int(quiet_git(workspace, 'rev-list', '--count', 'refs/remotes/origin/' + branch + '..HEAD'))
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return branch, None
+
+
+def linked_worktree(store, path):
+    """Whether <path> is a linked worktree of this repository, the only kind the
+    steps drop with `git worktree remove`: never the main checkout, nothing
+    where nothing exists, and no directory Git does not know as a worktree."""
+    if not path or not path.is_dir():
+        return False
+    try:
+        top = Path(quiet_git(path, 'rev-parse', '--show-toplevel')).resolve()
+        common = (path / quiet_git(path, 'rev-parse', '--git-common-dir')).resolve()
+        own = Path(quiet_git(path, 'rev-parse', '--absolute-git-dir')).resolve()
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    # A plain directory under .worktrees/ answers for the main checkout around it.
+    return top == path.resolve() and common == store.root.parent.resolve() and own != common
+
+
+def resume_steps(store, repo, run, workspace, rerun):
+    """The operator's way back after an interrupted run, as (text, [commands],
+    note) steps: release the run, drop or replace its preserved worktree, rerun.
+    Releasing alone is not enough: the worktree lost its disposable-worker
+    registration, and reset_worktree refuses it with exit 21."""
+    runtime = os.path.relpath(SCRIPTS / 'bureau-runtime.py', repo)
+    if runtime.startswith('..'):
+        runtime = str(SCRIPTS / 'bureau-runtime.py')
+    runtime = 'python3 ' + shlex.quote(runtime)
+    steps = []
+    if run:
+        steps.append(('Check that no process of run ' + run + ' is left (`' + runtime + ' status`), then release its ownership:',
+                      [runtime + ' release ' + run], ''))
+    path = Path(workspace) if workspace else None
+    if linked_worktree(store, path):
+        branch, state = branch_state(path)
+        commands = ['git worktree remove --force ' + shlex.quote(str(path))]
+        text = 'Save anything you want from the worktree, then drop it'
+        if branch and branch not in ('main', 'master') and (state == 'never-pushed' or (isinstance(state, int) and state > 0)):
+            commands.append('git branch -D ' + shlex.quote(branch))
+            text += (' and its local branch ' + branch + ', which has never been pushed' if state == 'never-pushed'
+                     else ' and its local branch ' + branch + ', which has ' + str(state) + ' commit(s) not on origin/' + branch)
+        steps.append((text + ':', commands, 'Or keep it and rerun with a new worktree instead (`shepherd.sh --worktree DIR`): '
+                      'a rerun on this worktree stops with exit 21 until it is dropped.'))
+    steps.append((rerun, [], ''))
+    return steps
+
+
+def render_steps(steps, markdown=False):
+    lines = []
+    for number, (text, commands, note) in enumerate(steps, 1):
+        lines.append(('' if markdown else '    ') + str(number) + '. ' + text)
+        if commands and markdown:
+            lines += ['   ```sh'] + ['   ' + command for command in commands] + ['   ```']
+        elif commands:
+            lines += ['         ' + command for command in commands]
+        if note:
+            lines.append(('   ' if markdown else '       ') + note)
+    return '\n'.join(lines)
+
+
+def interrupted_message(store, repo, run, issue, workspace):
+    head = 'Interrupted Bureau run ' + run + (' (' + issue + ')' if issue else '') + ': work preserved, nothing was reset or deleted.'
+    if workspace and linked_worktree(store, Path(workspace)):
+        head += ('\n  Worktree: ' + workspace + ' (its disposable-worker registration was removed, so no rerun resets it)')
+    steps = resume_steps(store, repo, run, workspace, 'Rerun the shepherd or the stage.')
+    return head + '\n  To resume, from ' + str(repo) + ':\n' + render_steps(steps)
+
+
+def report_conflict(repo, store, args, exc):
+    """A claim that another run holds. A live holder is working: say who and
+    write nothing. A holder that is gone (interrupted, or its process no longer
+    runs) leaves the ticket stuck until a human releases it: print the steps and
+    leave them on the holder's ticket with needs-human, once (the queue skips a
+    labelled ticket instead of hitting the same conflict on every pick)."""
+    try:
+        detail = json.loads(str(exc))
+    except ValueError:
+        return
+    prior, resource = detail.get('owner') or {}, detail.get('resource', '')
+    holder = prior.get('run_id')
+    if not holder:
+        return
+    gone = None
+    if prior.get('interrupted'):
+        gone = 'was interrupted'
+    elif prior.get('pid'):
+        try: os.kill(prior['pid'], 0)
+        except ProcessLookupError: gone = 'lost its process (pid ' + str(prior['pid']) + ')'
+        except PermissionError: pass
+    if not gone:
+        print(resource + ' is held by run ' + holder + ' (' + str(prior.get('owner')) + '), which is still active: '
+              'wait for it or stop it; nothing was written.', file=sys.stderr)
+        return
+    leases = read(store.leases, {})
+    issue, workspace = held_issue(leases, holder), held_workspace(leases, holder)
+    rerun = 'Remove `needs-human` from ' + (issue or 'the ticket') + ' and rerun.'
+    steps = resume_steps(store, repo, holder, workspace, rerun)
+    why = resource + ' is held by run ' + holder + ', which ' + gone + '; no new run can start until it is released.'
+    print(why + '\n  To resume, from ' + str(repo) + ':\n' + render_steps(steps), file=sys.stderr)
+    if not issue:
+        return
+    stage = Path(args.entry or 'exec').name
+    stage = stage[:-len('-pipeline.sh')] if stage.endswith('-pipeline.sh') else stage[:-3] if stage.endswith('.sh') else stage
+    body = ('🛑 Bureau halt (exit 21, ownership-conflict) in `' + stage + '`: ' + why.replace(resource, '`' + resource + '`', 1)
+            + ('\n\nWorktree: `' + workspace + '`' if workspace else '')
+            + '\n\nTo resume, from `' + str(repo) + '`:\n\n' + render_steps(steps, markdown=True))
+    try:
+        shell(repo, 'bureau_ownership_trace', issue, stage, workspace or '', body)
+    except (OSError, subprocess.CalledProcessError) as error:
+        print('bureau: could not leave the halt on ' + issue + ' (' + str(error) + ')', file=sys.stderr)
 
 
 def shell(repo, function, *args):
@@ -386,6 +558,7 @@ def finish(repo, args, store):
 
 
 def execute(repo, args, store):
+    inherited = bool(os.environ.get('BUREAU_RUN_ID'))
     run = os.environ.get('BUREAU_RUN_ID') or uuid.uuid4().hex
     if not re.fullmatch(r'[a-f0-9]{32}', run):
         raise ValueError('BUREAU_RUN_ID must be a 32-character run ID')
@@ -412,7 +585,17 @@ def execute(repo, args, store):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
-        resources = store.claim(args.issue, workspace, run, 'background', os.getpid())
+        try:
+            resources = store.claim(args.issue, workspace, run, 'background', os.getpid())
+        except Conflict as exc:
+            # A cancelled run writes nothing, not even the halt of a conflict.
+            if interrupted: return 130
+            print('bureau conflict: ' + str(exc), file=sys.stderr)
+            try:
+                report_conflict(repo, store, args, exc)
+            except Exception as error:  # the exit code is the protocol; the halt is help
+                print('bureau: could not report the conflict (' + repr(error) + ')', file=sys.stderr)
+            return 21
         if interrupted: return 130
         child = store.spawn(run, command, repo, env={**os.environ, 'BUREAU_RUN_ID': run, 'BUREAU_ACTIVE_ENTRY': args.entry or '',
                  'BUREAU_CURRENT_ISSUE': args.issue, 'BUREAU_CONFIG': str(config_for(repo))})
@@ -427,7 +610,7 @@ def execute(repo, args, store):
                     except subprocess.TimeoutExpired: signal_child(signal.SIGKILL); child.wait()
                     return 130
     finally:
-        store.finish_execution(run, resources, interrupted)
+        store.finish_execution(run, resources, interrupted, repo, report=bool(resources) or not inherited)
 
 
 def main():

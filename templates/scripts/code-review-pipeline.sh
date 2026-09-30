@@ -489,6 +489,7 @@ if [ -n "$BUILD_CMD" ]; then
   # PR code: runs without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).
   bureau_untrusted_env --check || exit 24
   bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
+  BUILD_LOG_LINES=$(wc -l < "$REVIEW_TMP/build.log" | tr -d ' '); [ "$BUILD_LOG_LINES" -le 20 ] || echo "  Build output: last 20 of $BUILD_LOG_LINES lines"
   tail -20 "$REVIEW_TMP/build.log"
   # A dirty worktree makes the worker keep a stopped or failed review's worktree
   # as unfinished work (bureau-worker.sh). A warning only: it never changes the

@@ -523,7 +523,6 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
-echo "  Merging PR #$PR_NUMBER ($BUREAU_MERGE_STRATEGY)..."
 # Just-in-time gate recheck. Closes the race between the initial gate query
 # (potentially seconds-to-minutes ago) and the merge call. Most importantly
 # this re-checks pr_base_is_current — the prior tick's merge of a different
@@ -582,6 +581,9 @@ _merge_pr() {
 }
 
 bureau_stop_requested && exit 20
+# The line names the head the merge is pinned to, so the log shows which commit
+# the gates passed and GitHub was asked to merge (v3.1.0-rc.2).
+echo "  Merging PR #$PR_NUMBER ($BUREAU_MERGE_STRATEGY) at $MERGE_HEAD..."
 if _merge_pr; then
   post_comment "$ISSUE" "✅ Merge gates passed. PR #$PR_NUMBER merged (\`--$BUREAU_MERGE_STRATEGY\`). Moving to Done."
   move_issue "$ISSUE" "$BUREAU_STATE_DONE"

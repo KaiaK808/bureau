@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="78c0a5faa3e927dbd4e5ee59ab8c1e3176fe08617ef395b84e7fd9c143fe3132">
+<meta name="bureau-source-sha256" content="3005818f6e9822d150562dce720b455be36c3f4e9bae1cefc2a350fa449c6fa1">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -414,6 +414,45 @@ stopped the run.</li>
 <li>Reconcile the other writer's work and ownership before a separately
 authorized push.</li>
 </ul>
+<h3 id="exit-21-ownership-conflict--needs-human-and-one-comment">Exit 21
+(ownership-conflict) — needs-human and one comment</h3>
+<p>A stage or the shepherd stops with 21 when the run may not take the
+ticket or its worktree: another run holds the ticket or the worktree
+(the runtime's claim), the worktree exists but is no registered Bureau
+worker (preserved from an interrupted or unfinished run or from a review
+stopped before merge, or a directory Bureau did not create), a
+registered worker now holds another repository, or the ticket's branch
+is checked out in another worktree. Since v3.1.0-rc.2 such a halt sets
+<code>needs-human</code> (with the local hold when the label cannot be
+written, see <a
+href="#could-not-add-needs-human--a-ticket-held-without-its-label"><code>could not add 'needs-human'</code></a>)
+and posts one comment that names the worktree and the way back; stderr
+carries the same steps. The queue then skips the ticket instead of
+hitting the same conflict on every tick, where before the ticket stayed
+in its state with nothing on it.</p>
+<ul>
+<li>The comment goes to the ticket whose run preserved the worktree when
+Bureau recorded that
+(<code>&lt;git common dir&gt;/bureau/preserved/</code>, written when a
+worker loses its registration). In a queue that shares one worktree per
+stage that can be another ticket than the one just picked; the picked
+ticket then gets nothing. Without a record the first ticket that hits
+the worktree carries the halt, and later tickets get nothing.</li>
+<li>A repeat sets the label again but posts no second comment
+(<code>&lt;git common dir&gt;/bureau/ownership-halts/&lt;ISSUE&gt;.&lt;key&gt;</code>);
+both records are removed once the worktree is reset as a registered
+worker again.</li>
+<li>Nothing is written for a cancelled run, or when the holder is a live
+run: the second run ends with 21 and names the run that is still
+active.</li>
+<li>A 21 for another reason writes nothing, as before: the state changed
+during the stage, a stage started outside a disposable worker, a git
+command failed inside the reset, or a stage's own branch check at its
+start.</li>
+</ul>
+<p>Follow the comment (for an interrupted run, the steps under <a
+href="#shepherdsh-bailed-mid-run--how-to-resume"><code>shepherd.sh</code>
+bailed mid-run</a>), remove <code>needs-human</code> and rerun.</p>
 <h3 id="exit-1--128--141--error-n-catch-all">Exit 1 / 128 / 141 —
 <code>error-&lt;N&gt;</code> catch-all</h3>
 <p>Anything outside the classified table maps to
@@ -444,6 +483,39 @@ checkout can still refuse reuse; preserve its work and reconcile
 ownership first. Use a dry-run to inspect routing only. Exit 20 is the
 requested review stop, 25 is pause/human attention, and 26 is a
 cancelled ticket; none is Done.</p>
+<p><strong>After an interrupted run (exit 130).</strong> A run stopped
+by Ctrl-C or SIGTERM keeps its leases and its worktree, and the worktree
+loses its disposable-worker registration, so that no later reset erases
+the work. Releasing the run is therefore not enough: a rerun on the same
+worktree stops with 21 ("refusing to reset unregistered worktree"), and
+a spec stage's feature branch that was never pushed stays behind in the
+repository. The interrupt message names the run, the ticket and the
+worktree, and prints the steps once, with the actual run ID, paths and
+branch:</p>
+<ol type="1">
+<li>Check that no process of the run is left
+(<code>python3 scripts/bureau-runtime.py status</code>), then release
+its ownership:
+<code>python3 scripts/bureau-runtime.py release RUN_ID</code>.
+<code>release</code> refuses while a process of the run is still
+alive.</li>
+<li>Save anything you want from the worktree, then drop it:
+<code>git worktree remove --force WORKTREE</code>. When the message
+names the worktree's local branch (never pushed, or with commits that
+are not on origin), delete that too: <code>git branch -D BRANCH</code>;
+otherwise the next spec run finds its branch name taken. Or keep the
+worktree and rerun with a new one instead:
+<code>shepherd.sh --worktree DIR</code>.</li>
+<li>Rerun the shepherd or the stage.</li>
+</ol>
+<p>A rerun that skips step 1 stops with 21 at the claim, one that skips
+step 2 stops with 21 at the reset; either way the ticket gets
+<code>needs-human</code> and one comment with the same steps (see <a
+href="#exit-21-ownership-conflict--needs-human-and-one-comment">Exit
+21</a>), so remove the label after the fix. Before v3.1.0-rc.2 the
+message said only "work preserved; inspect processes and explicitly
+release ownership", printed once per nested wrapper, and the halt at 21
+left nothing on the ticket.</p>
 <h3
 id="shepherdsh-refuses-a-held-ticket--exit-25-before-the-claim"><code>shepherd.sh</code>
 refuses a held ticket — exit 25 before the claim</h3>
@@ -737,7 +809,10 @@ id="worktree-collision--branch-already-checked-out-at-another-worktree">Worktree
 collision — "branch already checked out at another worktree"</h3>
 <p>Git refuses to attach a branch already held elsewhere.
 <code>free_branch_from_other_worktrees</code> reports the holder and
-does not detach it. Inspect <code>git worktree list</code> and
+does not detach it; when the worker's reset hits it, the ticket gets
+<code>needs-human</code> and a comment naming the holder (see <a
+href="#exit-21-ownership-conflict--needs-human-and-one-comment">Exit
+21</a>). Inspect <code>git worktree list</code> and
 <code>python3 scripts/bureau-runtime.py status</code>, contact the owner
 and arrange a handoff. An old-looking path is not proof of abandoned
 work. Only remove a checkout after its owner, saved work and interrupted
