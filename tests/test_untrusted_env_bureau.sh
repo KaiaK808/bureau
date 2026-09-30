@@ -313,9 +313,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
 server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
 open(sys.argv[1], 'w').write(str(server.server_port)); server.serve_forever()
 PY
-rm -f "$TMP/port"; python3 "$TMP/authserver.py" "$TMP/port" & SERVER=$!
-for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TMP/port" ] && break; sleep 0.3; done
-git -C "$R" remote set-url origin "http://127.0.0.1:$(cat "$TMP/port")/repo.git"
+rm -f "$TMP/port"; python3 "$TMP/authserver.py" "$TMP/port" 2>"$TMP/authserver.err" & SERVER=$!
+# A loaded CI runner can take several seconds to start Python: wait up to 60 s.
+for _ in $(seq 1 200); do [ -s "$TMP/port" ] && break; kill -0 "$SERVER" 2>/dev/null || break; sleep 0.3; done
+[ -s "$TMP/port" ] || fail "F: the local server did not start: $(cat "$TMP/authserver.err" 2>/dev/null | tail -3)"
+git -C "$R" remote set-url origin "http://127.0.0.1:$(cat "$TMP/port" 2>/dev/null || echo 9)/repo.git"
 mkdir -p "$TMP/supgh"
 printf '#!/bin/sh\nenv > "%s/gh-supervision.env"\necho %s\n' "$MARKS" "'{\"state\":\"OPEN\",\"baseRefName\":\"main\"}'" > "$TMP/supgh/gh"; chmod +x "$TMP/supgh/gh"
 DETAIL='{"identifier":"EXP-1","title":"t","description":"d","labels":[]}'
