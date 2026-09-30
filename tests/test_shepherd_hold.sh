@@ -95,7 +95,7 @@ chmod +x "$SB/bin/curl"
 # new_repo <needs-human name> — a fresh sandbox repository with the real scripts; the worker
 # is a recorder whose "stage" moves the ticket to Done. Sets REPO and HOLD.
 new_repo() {
-  REPO="$SB/repo $RANDOM"
+  REPO=$(mktemp -d "$SB/repo XXXXXXXX")
   mkdir -p "$REPO/scripts"
   git -C "$REPO" init -q
   git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init

@@ -205,7 +205,7 @@ echo "PASS 6 an unrecorded checkout: one ticket carries the halt, the checkout i
 # ── 7. the ticket's branch is held by another worktree ─────────────────────────────────
 pr5_new_repo
 git -C "$REPO" branch feat/exp-7; git -C "$REPO" push -q origin feat/exp-7
-HOLDER="$SB/holder $RANDOM"
+HOLDER=$(mktemp -d "$SB/holder XXXXXXXX")
 git -C "$REPO" worktree add -q "$HOLDER" feat/exp-7
 set +e
 (cd "$REPO" && _pr5_env bash scripts/bureau-worker.sh EXP-7 implement-pipeline.sh "$REPO/.worktrees/impl" feat/exp-7 > "$SB/out" 2> "$SB/err")
