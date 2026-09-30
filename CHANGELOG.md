@@ -6,7 +6,7 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
-## [3.1.0] - 2026-10-01
+## [3.1.0] - 2026-09-30
 
 Stable release of the 3.1.0 candidates. Runtime, installer, templates and tests are identical to v3.1.0-rc.2; since rc.2 only the CI job limit changed: the `shell` job of the `test` workflow may now run 45 minutes instead of 30 ([#44](https://github.com/KaiaK808/bureau/pull/44)). The rc.2 tag already carried [#43](https://github.com/KaiaK808/bureau/pull/43): the tests name their sandbox repositories with `mktemp -d`. The changes since v3.0.2 are recorded in the 3.1.0-rc.2 and 3.1.0-rc.1 sections below, and the [v3.1.0 release notes](docs/release-notes.md) consolidate them. Validation added since rc.2: a live acceptance in the maintainer's pilot installation, resynced to rc.2, where one ticket went from Triage to Done with the shepherd in 46 minutes; the merge log line named the pinned head, the head the review had approved, and the review log printed "Build output: last 20 of N lines". The interrupt and exit-`21` paths did not occur in that run.
 
