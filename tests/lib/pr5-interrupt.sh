@@ -110,8 +110,8 @@ EOF
 }
 
 pr5_new_repo() {
-  REPO="$SB/repo $RANDOM"
-  local origin="$SB/origin-$RANDOM.git"
+  REPO=$(mktemp -d "$SB/repo XXXXXXXX")
+  local origin; origin=$(mktemp -d "$SB/origin-XXXXXXXX")
   git init -q --bare "$origin"
   mkdir -p "$REPO/scripts"
   git -C "$REPO" init -q -b main
