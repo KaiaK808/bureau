@@ -24,11 +24,15 @@
 # Gates 3 and 4 are toggleable via .bureau.json:
 #   - agents.merge_require_green_ci   (default true)
 #   - agents.merge_require_up_to_date (default true)
-# Leaving the defaults is strongly recommended; the toggles exist for repos
-# without CI (docs-only) or with deliberate batch-merge workflows.
+# Only the JSON value false switches a gate off (merge_gate_required); any other
+# value keeps it on with a warning. Leaving the defaults is strongly recommended;
+# the toggles exist for repos without CI (docs-only) or with deliberate
+# batch-merge workflows.
 #
 # When eligible, runs `gh pr merge N --$BUREAU_MERGE_STRATEGY` (squash by
-# default; configurable via .agents.merge_strategy in .bureau.json), with a
+# default; configurable via .agents.merge_strategy in .bureau.json), pinned with
+# --match-head-commit to the head the just-in-time gate checked (a push in
+# between makes GitHub refuse it; the stage then ends with 2), with a
 # sanitised --subject/--body for squash and merge (merge-body.sh). Deliberately
 # no --delete-branch and no --auto: see code-review-pipeline.sh:314-322 for the
 # worktree/detached-HEAD rationale; --auto would queue the merge for later, we
@@ -44,10 +48,10 @@
 # check, conflicts nothing here resolves, a stale base, no APPROVE, unresolved
 # threads, a PR that is not open). A shepherd that sets
 # BUREAU_MERGE_GATE_REPORT gets the outcome and the gate lines in that file.
-# The inline merge from the review stage (BUREAU_INLINE_MERGE=1) and --dry-run
-# keep ending with 0 here. The review stage does not read this result today:
-# it reports Done after an inline merge that did not go through (known
-# limitation, older than the gate outcome).
+# The inline merge from the review stage (BUREAU_INLINE_MERGE=1) ends with the
+# same codes, and the review stage acts on them (code-review-pipeline.sh: Done
+# only after a merge, needs-human on 25, a recorded approval and 2 on not yet).
+# --dry-run keeps ending with 0.
 #
 # Opt-in via .bureau.json:
 #   - agents.merge: true
@@ -207,7 +211,9 @@ fi
 #
 # Output rows are stable so the bot's idempotent-comment logic can diff them.
 evaluate_merge_gates() {
-  local pr="$1"
+  # <head-sha>: the head commit this evaluation is about; CI is judged on it and the
+  # merge is pinned to it (--match-head-commit). An empty one cannot be pinned: not yet.
+  local pr="$1" head="${2:-}"
   local _pr_data _pr_state _merge_state _labels_csv _pr_read=ok
   # A read that fails is not a verdict about the PR: it becomes a *_read line,
   # which merge_gate_outcome counts as "not yet", never as "PR not open" or
@@ -249,6 +255,7 @@ evaluate_merge_gates() {
   done
 
   local _blockers=()
+  [ -n "$head" ] || _blockers+=("head_read: the PR's head commit could not be read")
   if [ "$_pr_read" = failed ]; then
     _blockers+=("pr_read: the PR's state, mergeStateStatus and labels could not be read")
   else
@@ -271,14 +278,21 @@ evaluate_merge_gates() {
     _blockers+=("unresolved_threads: $unresolved unresolved review thread(s)")
   fi
 
-  # Bureau-enforced NRSR gates. Toggleable via .bureau.json.
+  # Bureau-enforced NRSR gates. Toggleable via .bureau.json (merge_gate_required).
   local _require_ci _require_uptodate
-  _require_ci=$(bureau_get '.agents.merge_require_green_ci // true')
-  _require_uptodate=$(bureau_get '.agents.merge_require_up_to_date // true')
+  _require_ci=$(merge_gate_required merge_require_green_ci)
+  _require_uptodate=$(merge_gate_required merge_require_up_to_date)
 
-  local _err
+  local _err _key _used
   if [ "$_require_ci" != "false" ]; then
-    _err=$(pr_ci_is_green "$pr" 2>&1 >/dev/null) \
+    # Its numbers are read by one rule (_merge_gate_number in bureau-config.sh); say
+    # here when a value was not a plain whole number, since pr_ci_is_green's own
+    # stderr is its gate line.
+    for _key in merge_min_required_checks:1 merge_ci_start_grace_seconds:1800; do
+      _used=$(_merge_gate_number "${_key%%:*}" "${_key#*:}") \
+        || echo "  WARN: agents.${_key%%:*} should be a whole number of at least 0; using $_used" >&2
+    done
+    _err=$(pr_ci_is_green "$pr" "$head" 2>&1 >/dev/null) \
       || _blockers+=("ci_green: $_err")
   fi
   if [ "$_require_uptodate" != "false" ]; then
@@ -291,6 +305,22 @@ evaluate_merge_gates() {
     return 1
   fi
   return 0
+}
+
+# merge_gate_required <agents key>: prints false when .agents.<key> is the JSON
+# value false, true otherwise. `jq '.x // true'` used to turn a configured false
+# into true, so the documented opt-out never switched a gate off. Absent or null
+# keeps the gate; any other value (the string "false", 0, "no") keeps it too and
+# warns on stderr: a typo must not open a merge gate.
+merge_gate_required() {
+  local key="$1" value
+  value=$(bureau_get ".agents.$key | if . == null then \"true\" elif type == \"boolean\" then tostring else \"invalid\" end" 2>/dev/null) \
+    || value=invalid
+  case "$value" in
+    true|false) printf '%s\n' "$value" ;;
+    *) echo "  WARN: agents.$key must be true or false; keeping the gate on" >&2
+       printf 'true\n' ;;
+  esac
 }
 
 # merge_dirty_is_rebasable: 0 when a DIRTY PR is one the rebase stage resolves on
@@ -328,7 +358,7 @@ merge_gate_outcome() {
       "merge_state: mergeStateStatus=BLOCKED "*|"merge_state: mergeStateStatus=UNSTABLE "*) ;;
       "merge_state: mergeStateStatus=DIRTY (need CLEAN; bureau-only divergence, the rebase stage resolves it)") ;;
       "labels: hold label "*) ;;
-      "pr_read: "*|"verdict_read: "*|"threads_read: "*) ;;
+      "pr_read: "*|"verdict_read: "*|"threads_read: "*|"head_read: "*) ;;
       "base_current: base: cannot resolve "*) ;;
       *) outcome=blocked ;;
     esac
@@ -349,7 +379,8 @@ merge_gate_key() {
 
 # merge_gate_exit <outcome> <gate lines>: records the outcome for a caller that
 # asked for it (BUREAU_MERGE_GATE_REPORT) and ends the run — 2 not yet, 25
-# blocked. The inline merge keeps its 0 (see the header).
+# blocked. The review stage's inline merge ends the same way; it used to end
+# with 0 here, and the review then reported Done for a PR it had not merged.
 merge_gate_exit() {
   local outcome="$1" lines="$2" code=25
   [ "$outcome" = not-yet ] && code=2
@@ -357,16 +388,20 @@ merge_gate_exit() {
     printf '%s\n%s\n' "$outcome" "$lines" > "$BUREAU_MERGE_GATE_REPORT" 2>/dev/null \
       || echo "  WARN: could not write the gate report to $BUREAU_MERGE_GATE_REPORT" >&2
   fi
-  if [ "${BUREAU_INLINE_MERGE:-0}" = 1 ]; then
-    echo "  Gate outcome: $outcome (inline merge — the review stage continues)"
-    exit 0
-  fi
   echo "  Gate outcome: $outcome — exit $code"
   exit "$code"
 }
 
+# pr_head_sha <pr>: the PR's current head commit, or nothing when it cannot be read.
+pr_head_sha() {
+  local sha
+  sha=$(gh pr view "$1" --json headRefOid --jq .headRefOid 2>/dev/null) || sha=""
+  [ "$sha" = null ] && sha=""
+  printf '%s' "$sha"
+}
+
 # Initial gate evaluation (renders report, may post blocker comment).
-GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" || true)
+GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$(pr_head_sha "$PR_NUMBER")" || true)
 echo ""
 echo "  ── Gate report ──"
 if [ -z "$GATE_OUT" ]; then
@@ -495,8 +530,11 @@ echo "  Merging PR #$PR_NUMBER ($BUREAU_MERGE_STRATEGY)..."
 # PR may have advanced main, making this PR's base stale even though the
 # initial pass was clean. If any gate has flipped, abort without merging and
 # report the outcome of the recheck like the initial gate does (2 or 25), so
-# the next tick re-evaluates against fresh state.
-JIT_GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" || true)
+# the next tick re-evaluates against fresh state. The head it judges is the one the
+# merge is pinned to (--match-head-commit): a push between this check and the merge
+# call makes GitHub refuse the merge instead of merging a head no gate has seen.
+MERGE_HEAD=$(pr_head_sha "$PR_NUMBER")
+JIT_GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$MERGE_HEAD" || true)
 if [ -n "$JIT_GATE_OUT" ]; then
   echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"
   printf '    %s\n' "$JIT_GATE_OUT"
@@ -535,10 +573,10 @@ _merge_pr() {
       _subject=$(sanitize_ci_markers "$_title")
       _mbody=$(build_merge_body "$_title" "$_body" && printf x) || return 1
       _mbody=${_mbody%x}
-      gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --subject "$_subject" --body "$_mbody"
+      gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" --subject "$_subject" --body "$_mbody"
       ;;
     *)
-      gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY"
+      gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD"
       ;;
   esac
 }
@@ -549,6 +587,13 @@ if _merge_pr; then
   move_issue "$ISSUE" "$BUREAU_STATE_DONE"
   echo "  Merged. Issue moved to Done."
 else
+  # A head that moved since the gate checked it: GitHub refused the pinned merge. The
+  # new head has not been through the gate: not yet (2), never merged, never blocked.
+  NOW_HEAD=$(pr_head_sha "$PR_NUMBER")
+  if [ -n "$NOW_HEAD" ] && [ "$NOW_HEAD" != "$MERGE_HEAD" ]; then
+    echo "  The PR head moved from $MERGE_HEAD to $NOW_HEAD during the merge — nothing was merged."
+    merge_gate_exit not-yet "merge_head: the PR head moved from $MERGE_HEAD to $NOW_HEAD after the gate checked it; nothing was merged"
+  fi
   echo "  Merge call failed."
   post_comment "$ISSUE" "❌ Merge attempted but \`gh pr merge\` (or its title/body read) failed despite gates passing. PR #$PR_NUMBER. Needs human."
   mark_needs_human "$ISSUE" merge 18 || true

@@ -740,12 +740,16 @@ test_gate_outcome() {
   sb=$(make_sandbox gate_green); populate_happy_fixtures "$sb"
   run_gate "$sb"; gate_case "$sb" green 0 - || return 1
   [ -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL gate green: gh pr merge was not called" >&2; return 1; }
-  # The review stage's inline merge keeps its 0 (the review stage decides what follows).
+  # The review stage's inline merge ends with the same codes (v3.1; it used to end with 0
+  # and the review reported Done). tests/test_inline_merge_result.sh covers the review side.
   sb=$(make_sandbox gate_inline); populate_happy_fixtures "$sb"
   echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
   GATE_ENV="BUREAU_INLINE_MERGE=1" run_gate "$sb" EXP-1
-  [ "$GRC" = 0 ] || { echo "FAIL gate inline: exit $GRC, wanted 0" >&2; return 1; }
-  [ "$(printf '%s\n' "$GREP" | head -n 1)" = blocked ] || { echo "FAIL gate inline: no report" >&2; return 1; }
+  gate_case "$sb" inline-blocked 25 blocked 'failing check(s)' || return 1
+  sb=$(make_sandbox gate_inline_pending); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
+  GATE_ENV="BUREAU_INLINE_MERGE=1" run_gate "$sb" EXP-1
+  gate_case "$sb" inline-not-yet 2 not-yet 'still pending' || return 1
   # --dry-run stays an audit: 0, and it names the outcome.
   sb=$(make_sandbox gate_dry); populate_happy_fixtures "$sb"
   echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"

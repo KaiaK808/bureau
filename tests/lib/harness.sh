@@ -179,3 +179,17 @@ teardown() {
 
 # Convenience: any test sourcing this file gets teardown on EXIT.
 trap 'teardown' EXIT
+
+# ── v3.1 review and merge outcomes: the comment cap runs for real ──────────
+# The review stage fits its PR comment to the size limit with bureau_cap_comment
+# (bureau-config.sh). sandbox_init above cuts the helpers that decide from the real
+# config; this wrapper adds the cap to them, so every harness review posts through
+# the production function.
+eval "$(declare -f sandbox_init | sed '1s/^sandbox_init /_harness_sandbox_init_before_comment_cap /')"
+sandbox_init() {
+  _harness_sandbox_init_before_comment_cap "$@" || return
+  sed -n -e '/^BUREAU_COMMENT_MAX_BYTES=/p' -e '/^bureau_cap_comment() {/,/^}/p' \
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
+  grep -q '^bureau_cap_comment() {' "$SCRIPTS_DIR/real-helpers.sh" \
+    || { echo "harness: bureau_cap_comment not found in bureau-config.sh" >&2; return 1; }
+}

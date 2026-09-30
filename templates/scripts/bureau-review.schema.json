@@ -30,6 +30,42 @@
     },
     "summary": {
       "type": "string"
+    },
+    "comment": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "class": {
+            "type": "string",
+            "enum": [
+              "CRITICAL",
+              "BUG",
+              "MINOR",
+              "SKIP"
+            ]
+          },
+          "msg": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "line",
+          "class",
+          "msg"
+        ]
+      }
     }
   },
   "required": [
@@ -38,6 +74,8 @@
     "security_issues",
     "missing_acceptance",
     "fixes_needed",
-    "summary"
+    "summary",
+    "comment",
+    "findings"
   ]
 }

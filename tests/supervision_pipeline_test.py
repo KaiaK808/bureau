@@ -90,7 +90,9 @@ with open(os.environ['MODEL_LOG'],'a') as out: out.write(os.environ.get('BUREAU_
 if 'QA' in prompt and 'tests_added' in prompt:
     result = {'status':'NEEDS_HUMAN','tests_added':0,'tests_failing':0,'coverage_notes':'A product decision needs human attention'}
 else:
-    result = {'verdict':'APPROVE','bugs':0,'security_issues':0,'missing_acceptance':[],'fixes_needed':[],'summary':'Fixture review passed'}
+    # The merger's schema (bureau-review.schema.json) requires the markdown comment and the findings list.
+    result = {'verdict':'APPROVE','bugs':0,'security_issues':0,'missing_acceptance':[],'fixes_needed':[],'summary':'Fixture review passed',
+              'comment':'## Specialist Summaries\nFixture review passed.','findings':[]}
 pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))
 print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1,'output_tokens':1}}))
 '''

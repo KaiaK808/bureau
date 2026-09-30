@@ -905,13 +905,73 @@ move_issue() {
 }
 
 
-# Post a markdown comment to an issue.
+# bureau_cap_comment <text> [<max-bytes>] — prints <text> fitted to a comment size
+# limit, by default BUREAU_COMMENT_MAX_BYTES (60000 bytes of UTF-8).
+#
+# Linear refuses a comment body over its limit with an error answer, which the
+# transport retries (10 + 30 + 60 s) and then reports as 27 "Linear unusable", so
+# one long model answer halted a stage as if Linear were down; GitHub refuses a PR
+# comment over 65,536 characters, and the review stage swallowed that failure. A
+# text that fits is printed unchanged (bytes that are not UTF-8 become U+FFFD). A
+# longer one keeps its beginning and its end, and a note in the middle says how
+# many bytes were left out: the first line (a branch marker, the "Code Review …
+# Changes Requested" header implement looks for) survives. The last fenced JSON
+# block (the review's verdict) is kept whole, with everything after it, whenever it
+# fits in the limit with 4 KB of beginning to spare. Each cut moves to a line break
+# only when one is within 4 KB, else it falls between two characters: never inside
+# a UTF-8 character, never a collapse to a few bytes. The result is at most
+# <max-bytes> bytes.
+BUREAU_COMMENT_MAX_BYTES=60000
+bureau_cap_comment() {
+  printf '%s' "$1" | python3 -c '
+import sys
+limit = int(sys.argv[1])
+data = sys.stdin.buffer.read().decode("utf-8", "replace").encode("utf-8")
+if len(data) <= limit:
+    sys.stdout.buffer.write(data)
+    sys.exit(0)
+def note(cut):
+    return ("\n\n[… %d bytes cut from the middle of this comment: it was longer than the %d bytes"
+            " Bureau posts to Linear and GitHub. The stage output has the full text. …]\n\n" % (cut, limit)).encode("utf-8")
+# The number of cut bytes has at most as many digits as the whole length.
+room = limit - len(note(len(data)))
+if room < 2:
+    sys.stdout.buffer.write(data[:limit].decode("utf-8", "ignore").encode("utf-8"))
+    sys.exit(0)
+NEAR = 4096
+tail_start = len(data) - (room - room // 2)
+block = data.rfind(b"\n```json\n") + 1
+if 0 < block < tail_start and len(data) - block <= room - NEAR:
+    tail = data[block:]
+else:
+    tail = data[tail_start:]
+    start_at = tail.find(b"\n", 0, NEAR)
+    if start_at >= 0:
+        tail = tail[start_at + 1:]
+head = data[:room - len(tail)]
+cut_at = head.rfind(b"\n", max(0, len(head) - NEAR))
+if cut_at >= 0:
+    head = head[:cut_at]
+# A cut between two lines far from any break can split a character; drop its bytes.
+head = head.decode("utf-8", "ignore").encode("utf-8")
+tail = tail.decode("utf-8", "ignore").encode("utf-8")
+sys.stdout.buffer.write(head + note(len(data) - len(head) - len(tail)) + tail)
+' "${2:-$BUREAU_COMMENT_MAX_BYTES}"
+}
+
+# Post a markdown comment to an issue. The body is fitted to the comment size
+# limit first (bureau_cap_comment), so a long comment never fails the stage.
 # Usage: post_comment <issue-id-or-key> <body>
 post_comment() {
-  local ref="$1" body="$2"
+  local ref="$1" body="$2" capped
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
     echo "[DRY_RUN] post_comment $ref ($(printf '%s' "$body" | head -c 80 | tr '\n' ' ')...)" >&2
     return 0
+  fi
+  if capped=$(bureau_cap_comment "$body"); then
+    body="$capped"
+  else
+    echo "post_comment: could not fit the comment for $ref to the size limit; posting it unchanged" >&2
   fi
   local uuid
   uuid=$(_resolve_issue_uuid "$ref") || return $?
@@ -1600,12 +1660,22 @@ _bureau_gh_owner_repo() {
 # unless .agents.merge_min_required_checks is set to 0 (default 1 — repos
 # without CI should opt out via .agents.merge_require_green_ci=false rather
 # than via this knob).
+#
+# "No checks completed" is normally a check that has not started yet, which the
+# merge stage reads as "not yet". A head that carries nothing at all — no check
+# run, not even a queued one, and no status — when its commit is older than
+# .agents.merge_ci_start_grace_seconds (default 1800) will not get CI any more
+# (no workflow, a trigger that does not match): that is reported as its own
+# line, "ci: no check run and no status on …", which the merge stage reads as
+# blocked. Without the grace the gate stayed "not yet" forever, without an alert.
 pr_ci_is_green() {
+  # <head-sha>, when given, is the commit to judge (the merge stage pins its merge to it);
+  # without it the PR's current head is read here.
   local pr="$1"
-  local owner_repo head_sha
+  local owner_repo head_sha="${2:-}"
   owner_repo=$(_bureau_gh_owner_repo)
   [ -z "$owner_repo" ] && { echo "ci: cannot resolve owner/repo" >&2; return 1; }
-  head_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || echo "")
+  [ -n "$head_sha" ] || head_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || echo "")
   [ -z "$head_sha" ] && { echo "ci: cannot resolve head SHA for #$pr" >&2; return 1; }
 
   # check-runs: paginate-and-slurp; `--paginate --jq` returns per-page
@@ -1621,8 +1691,9 @@ pr_ci_is_green() {
   # Legacy commit status (for status contexts not registered as check-runs,
   # e.g. some third-party CI integrations). The endpoint returns a flat
   # `statuses` array per-context with state ∈ {success,pending,failure,error}.
-  local statuses
-  statuses=$(gh api "repos/$owner_repo/commits/$head_sha/status" --jq '.statuses // []' 2>/dev/null || echo '[]')
+  local statuses statuses_read=ok
+  statuses=$(gh api "repos/$owner_repo/commits/$head_sha/status" --jq '.statuses // []' 2>/dev/null) \
+    || { statuses='[]'; statuses_read=failed; }
 
   local pending failed completed pending_legacy failed_legacy
   pending=$(echo "$checks"   | jq '[.[] | select(.status != "completed")] | length')
@@ -1653,16 +1724,80 @@ pr_ci_is_green() {
     echo "ci: failing check(s) on $head_sha: $all" >&2
     return 1
   fi
+  # A value the test below cannot compare ("abc", 1.5) used to make the test fail and
+  # the function fall through to "green" with no check at all; it counts as 1 now.
   local min_required
-  min_required=$(bureau_get '.agents.merge_min_required_checks // 1')
+  min_required=$(_merge_gate_number merge_min_required_checks 1) || true
   local total_completed=$((completed))
   # Count completed legacy statuses too (any non-pending state counts).
   total_completed=$((total_completed + $(echo "$statuses" | jq '[.[] | select(.state != "pending")] | length')))
   if [ "$total_completed" -lt "$min_required" ]; then
+    # Past the pending check above, zero completed means nothing at all on the head.
+    # Both lists must have been read; a head commit time that cannot be read keeps
+    # the "only 0 completed" line (not yet).
+    local grace age
+    if [ "$total_completed" = 0 ] && [ "$statuses_read" = ok ]; then
+      grace=$(_merge_gate_number merge_ci_start_grace_seconds 1800) || true
+      if age=$(_pr_head_commit_age "$owner_repo" "$head_sha") && [ "$age" -ge "$grace" ]; then
+        # No age in the line: the merge stage posts a new PR comment when a line changes.
+        echo "ci: no check run and no status on $head_sha, and its commit is older than the CI start grace (agents.merge_ci_start_grace_seconds: $grace) — no CI started for this head" >&2
+        return 1
+      fi
+    fi
     echo "ci: only $total_completed completed check(s) on $head_sha (require >= $min_required)" >&2
     return 1
   fi
   return 0
+}
+
+# _merge_gate_number <agents key> <default>: prints the whole number the merge gate uses
+# for .agents.<key>, and returns 1 when the value was not a plain whole number, so a
+# caller can warn. One rule, which bureau-doctor.py (gate_number) applies the same way:
+#   absent or null                  → <default>
+#   a whole number from 0           → itself
+#   a string that reads as a number → that number (warn): ASCII blanks around it and one
+#                                     leading "+" are dropped, then it must be digits
+#                                     with an optional fraction and exponent (" 2",
+#                                     "+2", "2.0", "1e3")
+#   a fraction (1.5)                → rounded up, never below what was written (warn)
+#   above 9999999                   → 9999999, still never below a count (warn)
+#   negative, any other string, a boolean, an array or an object → <default> (warn)
+# Before, a string made the gate's count test fail and let the CI check pass with no
+# check at all, and a negative number counted as "no check needed". pr_ci_is_green
+# cannot warn itself: its stderr is its gate line (merge-pipeline.sh warns before it
+# runs the gate). The cap keeps the number inside shell arithmetic.
+_merge_gate_number() {
+  local filter out value flag
+  filter='.agents.KEY as $v
+    | ($v | if type == "number" then .
+            elif type == "string" then
+              (sub("\\A[ \\t\\n\\r\\f\\x0b]+"; "") | sub("[ \\t\\n\\r\\f\\x0b]+\\z"; "") | ltrimstr("+")
+               | if test("\\A[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?\\z") then tonumber else null end)
+            else null end) as $n
+    | if $v == null then "default ok"
+      elif $n == null or $n < 0 then "default warn"
+      else ([($n | ceil), 9999999] | min | if . == 0 then 0 else . end | tostring)
+           + (if ($v | type) == "string" or $n != ($n | floor) or $n > 9999999 then " warn" else " ok" end)
+      end'
+  out=$(bureau_get "${filter//KEY/$1}" 2>/dev/null) || out="default warn"
+  value=${out% *}; flag=${out##* }
+  case "$value" in
+    default) value="$2" ;;
+    ''|*[!0-9]*) value="$2"; flag=warn ;;
+  esac
+  printf '%s' "$((10#$value))"
+  [ "$flag" = ok ]
+}
+
+# _pr_head_commit_age <owner/repo> <sha>: seconds since the commit's committer
+# time on GitHub (negative for a time in the future). Fails (prints nothing) when
+# the time cannot be read.
+_pr_head_commit_age() {
+  local when
+  when=$(gh api "repos/$1/git/commits/$2" --jq '.committer.date' 2>/dev/null) || return 1
+  when=$(printf '%s' "$when" | jq -Rr 'fromdateiso8601 | floor' 2>/dev/null) || return 1
+  case "$when" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$(( $(date +%s) - when ))"
 }
 
 # pr_base_is_current <pr-number>

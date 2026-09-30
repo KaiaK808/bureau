@@ -127,6 +127,10 @@ def reuse(root, issue, branch, state, head, base, base_ref, pr, raw_detail):
     and never outlives the inputs it describes. That includes a ticket detail that
     cannot be read or fingerprinted: it is judged under the lock like any other
     input, so it removes the record too instead of leaving it for a later run.
+
+    The review stage writes the same record when an APPROVE's inline merge found its
+    gate not yet decided (`stop --merge-gate-wait`); the answer says so, and the stage
+    then retries the gate without posting its comments again.
     """
     with locked(root) as path:
         stops = read(path)
@@ -147,7 +151,8 @@ def reuse(root, issue, branch, state, head, base, base_ref, pr, raw_detail):
     if mismatch:
         prefix = '' if ticket_hash is None else 'recorded approval does not match: '
         return {'reuse': False, 'reason': prefix + mismatch}
-    return {'reuse': True, 'head': head, 'base': base, 'pr': pr, 'stopped_at': record.get('stopped_at')}
+    return {'reuse': True, 'head': head, 'base': base, 'pr': pr, 'stopped_at': record.get('stopped_at'),
+            'merge_gate_wait': record.get('merge_gate_wait') is True}
 
 
 def checkpoint(repo, root, issue):
@@ -206,6 +211,8 @@ def main():
             command.add_argument('--reviewed-head', required=True)
             # The review's verdict; only an APPROVE can be reused (see reuse()).
             command.add_argument('--verdict', choices=('APPROVE',))
+            # Written by the review stage when the inline merge's gate was not yet decided.
+            command.add_argument('--merge-gate-wait', action='store_true')
     args = parser.parse_args()
     if getattr(args, 'issue', None) and not re.fullmatch(r'[A-Z][A-Z0-9]*-[0-9]+', args.issue):
         parser.error('issue must be an identifier such as TEAM-123')
@@ -239,6 +246,8 @@ def main():
                               ticket_hash=ticket_hash, stopped_at=time.time(), revision=uuid.uuid4().hex)
                 if args.verdict:
                     record['verdict'] = args.verdict
+                if args.merge_gate_wait:
+                    record['merge_gate_wait'] = True
                 with locked(root) as path:
                     stops = read(path); stops[args.issue] = record; save(path, stops)
                 result = {'stopped': True, 'issue': args.issue, 'head': args.head, 'pr': args.pr}

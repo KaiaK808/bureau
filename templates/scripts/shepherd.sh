@@ -650,6 +650,7 @@ _shepherd_seconds() {
 MERGE_WAIT_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_WAIT_SECONDS 1800 0 21600)
 MERGE_POLL_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_POLL_SECONDS 60 1 3600)
 MERGE_WAITED=0
+MERGE_WAIT_FOR=""
 
 # _shepherd_no_state_halt — Linear answered MAX_NO_STATE times in a row, without
 # an error and without a state. Nothing tells which stage runs next; the same
@@ -661,10 +662,10 @@ _shepherd_merge_blocked() {
   local what="$1" report
   report=$(sed -n '2,$p' "$MERGE_GATE_FILE" 2>/dev/null | sed -e '/^$/d' -e 's/^/- /')
   echo "[shepherd] merge gate $what for $ISSUE — labeling needs-human and aborting shepherd" >&2
-  alert_telegram "$ISSUE" merge-pipeline.sh 25 "shepherd halt (merge gate $what)" 2>/dev/null || true
+  alert_telegram "$ISSUE" "$PIPELINE" 25 "shepherd halt (merge gate $what)" 2>/dev/null || true
   add_issue_label "$ISSUE" "needs-human" \
     || echo "[shepherd] WARN: could not add the 'needs-human' label to $ISSUE" >&2
-  post_comment "$ISSUE" "🛑 Shepherd halt at Merge: the merge gate $what. Nothing was merged.
+  post_comment "$ISSUE" "🛑 Shepherd halt at $STATE: the merge gate $what. Nothing was merged.
 
 ${report:-- (the merge stage left no gate report)}
 
@@ -810,7 +811,9 @@ while true; do
     session_throttle_guard "$(printf '%s' "${PIPELINE%-pipeline.sh}" | tr '-' '_')" ;;
   esac
 
-  [ "$PIPELINE" = merge-pipeline.sh ] || MERGE_WAITED=0
+  # The wait budget belongs to the gate of one stage: it runs on while that stage runs
+  # again, and starts at 0 for any other stage (MERGE_WAIT_FOR is set by the wait below).
+  if [ "$PIPELINE" != "$MERGE_WAIT_FOR" ]; then MERGE_WAITED=0; MERGE_WAIT_FOR=""; fi
   set +e
   : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
   : > "$MERGE_GATE_FILE" 2>/dev/null || true
@@ -824,9 +827,15 @@ while true; do
   echo "[shepherd] $PIPELINE exit=$RC ($CLASS)"
 
   # The merge stage's gate (see MERGE_WAIT_SECONDS above). Only its own report
-  # counts: a 2 or 25 without one takes the general handling below.
-  if [ "$PIPELINE" = merge-pipeline.sh ]; then
+  # counts: a 2 or 25 without one takes the general handling below. The review
+  # stage's inline merge (agents.merge off) hands on the same report: its "not
+  # yet" is waited for the same way (the next review run reuses the recorded
+  # approval and runs only the build check and the gate); its "blocked" has
+  # already set needs-human and commented, so it halts through the general
+  # handling (alert, 25).
+  if [ "$PIPELINE" = merge-pipeline.sh ] || [ "$PIPELINE" = code-review-pipeline.sh ]; then
     GATE_OUTCOME=$(head -n 1 "$MERGE_GATE_FILE" 2>/dev/null || true)
+    [ "$PIPELINE" = merge-pipeline.sh ] || [ "$GATE_OUTCOME" = not-yet ] || GATE_OUTCOME=""
     case "$RC:$GATE_OUTCOME" in
       2:not-yet)
         [ "$MERGE_WAITED" -ge "$MERGE_WAIT_SECONDS" ] \
@@ -834,6 +843,7 @@ while true; do
         echo "[shepherd] merge gate not yet eligible — waiting ${MERGE_POLL_SECONDS}s (${MERGE_WAITED}/${MERGE_WAIT_SECONDS}s): $(sed -n 2p "$MERGE_GATE_FILE")"
         _shepherd_sleep "$MERGE_POLL_SECONDS"
         MERGE_WAITED=$((MERGE_WAITED + MERGE_POLL_SECONDS))
+        MERGE_WAIT_FOR="$PIPELINE"
         LAST_STATE=""   # waiting for the gate is not a stage that failed to move
         continue
         ;;

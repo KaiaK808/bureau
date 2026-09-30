@@ -41,6 +41,44 @@ _review_cleanup() {
 }
 trap _review_cleanup EXIT
 
+# review_text_from_merger <merger output>: the text the PR comment and the ticket get.
+# The merger answers with the object of bureau-review.schema.json, whose "comment" is
+# its markdown for humans (summaries, findings with file:line, fixes needed): that
+# comment, then the rest of the object as a fenced JSON verdict. A verdict block over
+# 16 KB drops its findings list and says how many it held (the comment names them),
+# so the block always survives the comment size cap. An answer without a verdict or
+# without a comment string (an older schema, a fixture) is printed unchanged: the
+# comment's lines never reach the text-verdict fallback, which reads line starts and
+# finds none inside a JSON string. A cost-tracking envelope is unwrapped as
+# parse_claude_json does. Decides nothing: the verdict is read from the merger's
+# answer itself.
+review_text_from_merger() {
+  local text
+  if text=$(printf '%s' "$1" | jq -r '
+      (if type == "object" and (.result | type) == "string" then (.result | fromjson?) else . end)
+      | select(type == "object" and (.comment | type) == "string" and (.verdict | type) == "string")
+      | (del(.comment)) as $v
+      | (if ($v | tojson | length) > 16000
+         then ($v | del(.findings)) + {findings_omitted: ($v.findings | length? // 0)} else $v end) as $v
+      | .comment + "\n\n```json\n" + ($v | tojson) + "\n```"' 2>/dev/null) && [ -n "$text" ]; then
+    printf '%s' "$text"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# _review_release_worktree: after an APPROVE whose inline merge did not go through, put
+# the disposable worktree back to the reviewed head. The stage then ends with 2 or 25,
+# and bureau-worker.sh keeps a worktree that is ahead of origin (the local validation
+# merge) or dirty (build-check output) as unfinished work and refuses to reset it, so
+# the next run of the gate could not start. Review work is never unpublished: the
+# verdict is on the PR and the ticket.
+_review_release_worktree() {
+  [ "${BUREAU_WORKSPACE_MODE:-}" = disposable ] || return 0
+  git reset --hard --quiet "$REVIEW_HEAD" && git clean -fd --quiet \
+    || echo "  WARN: could not reset the review worktree to $REVIEW_HEAD; the worker may keep it" >&2
+}
+
 precondition_linear
 precondition_runner code_review
 
@@ -222,7 +260,15 @@ fi
 # build check in Phase 2 still runs: it is cheap next to the model review and the
 # environment may have changed since, and a red build folds the reused APPROVE exactly
 # as it folds a fresh one (decide_review_verdict).
+#
+# The same record is written when the inline merge after an APPROVE found its gate not
+# yet decided (merge_gate_wait, see the APPROVE branch below). Reusing such a record
+# posts no new comment on the ticket or the PR while the verdict stays APPROVE: the PR
+# already carries the APPROVE of this head, which the merge gate reads, and a gate that
+# is polled must not add two comments per poll.
 REUSED_APPROVAL=0
+REUSED_GATE_WAIT=0
+STAGE_EXIT=""   # set when an APPROVE's inline merge did not go through (2 or 25)
 if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
   if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
       --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" \
@@ -230,8 +276,13 @@ if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
     if [ "$(printf '%s' "$REUSE" | jq -r '.reuse' 2>/dev/null)" = true ]; then
       REUSED_APPROVAL=1
       REUSED_AT=$(printf '%s' "$REUSE" | jq -r '.stopped_at | floor | todate' 2>/dev/null) || REUSED_AT=""
+      [ "$(printf '%s' "$REUSE" | jq -r '.merge_gate_wait' 2>/dev/null)" = true ] && REUSED_GATE_WAIT=1
       echo "  Reusing the approval recorded ${REUSED_AT:-earlier} for head $REVIEW_HEAD — no new specialist review."
-      post_comment "$ISSUE" "♻️ Code review: reusing the approval recorded ${REUSED_AT:-earlier} for head \`$REVIEW_HEAD\` on \`$PR_BASE_REF\` at \`$REVIEW_BASE\` — PR #$PR_NUMBER, both commits and the ticket are unchanged, so no new model review runs. The build check runs again." || true
+      if [ "$REUSED_GATE_WAIT" = 1 ]; then
+        echo "  (recorded while the merge gate was not yet decided; the gate runs again)"
+      else
+        post_comment "$ISSUE" "♻️ Code review: reusing the approval recorded ${REUSED_AT:-earlier} for head \`$REVIEW_HEAD\` on \`$PR_BASE_REF\` at \`$REVIEW_BASE\` — PR #$PR_NUMBER, both commits and the ticket are unchanged, so no new model review runs. The build check runs again." || true
+      fi
     else
       echo "  No reusable approval: $(printf '%s' "$REUSE" | jq -r '.reason // "unknown"' 2>/dev/null)"
     fi
@@ -248,11 +299,12 @@ if [ "$REUSED_APPROVAL" = 1 ]; then
   # unreadable or positive count ends REQUEST_CHANGES or BLOCK) and the specialist's
   # CRITICAL count was not above 0 (it may have been unreadable, which is only noted in
   # the review). 0 for both reproduces that approval without repeating such a note.
-  MERGED_REVIEW="Reused the approval recorded ${REUSED_AT:-earlier} for head \`$REVIEW_HEAD\` on \`$PR_BASE_REF\` at \`$REVIEW_BASE\`: PR #$PR_NUMBER, both commits and the ticket are unchanged since that review, so no new specialist review ran.
+  MERGED_REVIEW="Reused the approval recorded ${REUSED_AT:-earlier} for head \`$REVIEW_HEAD\` on \`$PR_BASE_REF\` at \`$REVIEW_BASE\`: PR #$PR_NUMBER, both commits and the ticket are unchanged since that review, so no new specialist review ran. That review's findings are in its own comment.
 
 \`\`\`json
-{\"verdict\":\"APPROVE\",\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"Reused the recorded approval of an unchanged head and base.\"}
+{\"verdict\":\"APPROVE\",\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"Reused the recorded approval of an unchanged head and base.\",\"findings\":[]}
 \`\`\`"
+  MERGED_RAW="$MERGED_REVIEW"
   _sec_critical=0
 else
 # The paid review below keeps its original indentation: the prompts are multi-line
@@ -385,7 +437,7 @@ done
 echo ""
 echo "  Merging findings..."
 
-MERGED_REVIEW=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-review.schema.json" "${CAVEMAN_PREFIX}Merge these three specialist reviews into a single verdict for PR #$PR_NUMBER ($ISSUE — $ISSUE_TITLE).
+MERGED_RAW=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-review.schema.json" "${CAVEMAN_PREFIX}Merge these three specialist reviews into a single verdict for PR #$PR_NUMBER ($ISSUE — $ISSUE_TITLE).
 
 ### Correctness
 $CORRECTNESS_REVIEW
@@ -403,11 +455,12 @@ Verdict rules:
 
 Do NOT request changes for MINOR findings, style preferences, or hypothetical edge cases.
 
-Write a human-readable PR comment (Specialist Summaries, All Findings grouped by class, Fixes Needed), then emit a SINGLE fenced json block at the very end:
+Answer with ONE JSON object (the schema is enforced). \"comment\" is the human-readable PR comment in markdown: Specialist Summaries, All Findings grouped by class with file:line for each, Fixes Needed. The implementer reworks from this comment, so name every CRITICAL and BUG finding with its file:line. \"findings\" lists the CRITICAL and BUG findings and the MINOR ones worth reading as {file, line, class, msg} (line 0 when a finding has no single line; class CRITICAL, BUG, MINOR or SKIP). The verdict fields decide; the comment explains them:
 
 \`\`\`json
-{\"verdict\":\"APPROVE|REQUEST_CHANGES|BLOCK\",\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"\"}
+{\"verdict\":\"APPROVE|REQUEST_CHANGES|BLOCK\",\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"\",\"comment\":\"## Specialist Summaries\\n…\",\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\"}]}
 \`\`\`" 2>"$REVIEW_TMP/merge.stderr")
+MERGED_REVIEW=$(review_text_from_merger "$MERGED_RAW")
 fi
 
 echo "$MERGED_REVIEW"
@@ -465,7 +518,10 @@ echo "Phase 3/3: post review + route"
 # the model drops the json verdict; it accepts only an exact verdict word
 # (review_verdict_from_text), so "NOT_APPROVED — BLOCK" can no longer read as
 # APPROVE. Any miss falls back to BLOCK so a bad parse can never auto-merge a PR.
-VERDICT=$(parse_claude_json "$MERGED_REVIEW" '.verdict // empty')
+# The verdict and the counts come from the merger's own answer (MERGED_RAW), not from
+# the text built for the comments (review_text_from_merger): the schema requires the
+# verdict, and the text fallback below only matters for an answer without one.
+VERDICT=$(parse_claude_json "$MERGED_RAW" '.verdict // empty')
 if [ -z "$VERDICT" ]; then
   VERDICT=$(review_verdict_from_text "$MERGED_REVIEW")
 fi
@@ -480,7 +536,7 @@ MAX_REVIEW_CYCLES="$BUREAU_MAX_REVIEW_CYCLES"
 # REVIEW_CYCLE_COUNT was computed at Phase 1 so specialists could reference
 # it; reuse here for the loop-breaker check.
 echo "  Review cycles: ${REVIEW_CYCLE_COUNT:-0}"
-_sec_issues=$(parse_claude_json "$MERGED_REVIEW" '.security_issues')
+_sec_issues=$(parse_claude_json "$MERGED_RAW" '.security_issues')
 _decision=$(decide_review_verdict "$VERDICT" "$_sec_issues" "$_sec_critical" "$BUILD_OK" "$REVIEW_CYCLE_COUNT" "$MAX_REVIEW_CYCLES")
 VERDICT=$(printf '%s\n' "$_decision" | head -n 1)
 ESCALATION_REASON=""
@@ -523,9 +579,15 @@ $MERGED_REVIEW
 ---
 *Automated review by Bureau pipeline*"
 
-gh pr comment "$PR_NUMBER" --body "$REVIEW_COMMENT" || true
-
-echo "  Posted review to PR #$PR_NUMBER"
+if [ "$REUSED_GATE_WAIT" = 1 ] && [ "$VERDICT" = APPROVE ]; then
+  echo "  PR #$PR_NUMBER already carries the APPROVE of this head — no new review comment."
+else
+  # GitHub refuses a comment over 65,536 characters, and the failure is swallowed here;
+  # the cap keeps the header with the verdict the merge gate reads.
+  REVIEW_COMMENT_BODY=$(bureau_cap_comment "$REVIEW_COMMENT") || REVIEW_COMMENT_BODY="$REVIEW_COMMENT"
+  gh pr comment "$PR_NUMBER" --body "$REVIEW_COMMENT_BODY" || true
+  echo "  Posted review to PR #$PR_NUMBER"
+fi
 
 case "$VERDICT" in
   APPROVE)
@@ -557,8 +619,80 @@ case "$VERDICT" in
     else
       # Keep inline completion, but use exactly the same full gate set and JIT
       # checks as the dedicated merge worker, including when no Merge state exists.
-      BUREAU_INLINE_MERGE=1 bash "$SCRIPT_REPO/scripts/merge-pipeline.sh" "$ISSUE"
-      NEXT_STATE="Done"
+      # Its exit code is the outcome, and the review acts on it (it used to report
+      # Done whatever happened):
+      #   0   merged; the merge stage moved the ticket to Done.
+      #   2   the gate is not yet decided (checks pending or not started, GitHub still
+      #       computing): the APPROVE is recorded for reuse like a --no-merge stop, so
+      #       the next pick runs the build check and the gate again without a model
+      #       review; the stage ends with 2 and the shepherd waits as at Merge.
+      #   25  the gate is decided against the merge: needs-human, the gate lines on the
+      #       ticket, the stage ends with 25.
+      # Any other code passes through (15 no PR, 18 the merge call failed, 20 a stop).
+      GATE_REPORT="$REVIEW_TMP/merge-gate.report"
+      INLINE_RC=0
+      BUREAU_INLINE_MERGE=1 BUREAU_MERGE_GATE_REPORT="$GATE_REPORT" \
+        bash "$SCRIPT_REPO/scripts/merge-pipeline.sh" "$ISSUE" || INLINE_RC=$?
+      GATE_OUTCOME=$(head -n 1 "$GATE_REPORT" 2>/dev/null || true)
+      GATE_LINES=$(sed -n '2,$p' "$GATE_REPORT" 2>/dev/null | sed -e '/^$/d' -e 's/^/- /' || true)
+      # A caller that asked for the gate report (the shepherd) gets it as from the merge stage.
+      if [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ] && [ -s "$GATE_REPORT" ]; then
+        cp "$GATE_REPORT" "$BUREAU_MERGE_GATE_REPORT" 2>/dev/null \
+          || echo "  WARN: could not write the gate report to $BUREAU_MERGE_GATE_REPORT" >&2
+      fi
+      case "$INLINE_RC:$GATE_OUTCOME" in
+        0:*)
+          NEXT_STATE="Done"
+          [ "${BUREAU_DRY_RUN:-0}" != 1 ] || NEXT_STATE="Done (dry run: nothing was merged)"
+          ;;
+        2:not-yet)
+          echo "  APPROVED — PR #$PR_NUMBER is not merged yet: its merge gate is not decided."
+          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+              --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
+              --verdict APPROVE --merge-gate-wait >/dev/null; then
+            echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
+          fi
+          if [ "$REUSED_GATE_WAIT" != 1 ]; then
+            post_comment "$ISSUE" "⏳ Code review **APPROVED**. PR #$PR_NUMBER is not merged yet: its merge gate is not decided.
+
+${GATE_LINES:-- (the merge stage left no gate lines)}
+
+The approval is recorded for head \`$REVIEW_HEAD\`; the next run checks the build and the gate again without a new model review." || true
+          fi
+          _review_release_worktree
+          NEXT_STATE="Build Review (merge gate not yet decided; the next run tries again)"
+          STAGE_EXIT=2
+          ;;
+        25:*)
+          echo "  APPROVED, but the merge gate is blocked — needs human review"
+          # The APPROVE is recorded as well: once a human clears the blocker (re-runs
+          # a flaky check) and removes needs-human, the next run reuses it instead of
+          # paying a new review. The record holds the labels from the start of this
+          # run, so it matches again once the label is gone; a push, a moved base or
+          # an edited ticket means a new review.
+          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+              --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
+              --verdict APPROVE >/dev/null; then
+            echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
+          fi
+          if mark_needs_human "$ISSUE" code-review; then
+            log_escalation "$ISSUE" "code-review" "${REVIEW_CYCLE_COUNT:-0}" \
+              "Merge gate blocked after APPROVE" "$PR_NUMBER" "$BRANCH"
+          fi
+          post_comment "$ISSUE" "🛑 Code review **APPROVED**, but the merge gate is blocked: PR #$PR_NUMBER was not merged. Needs human.
+
+${GATE_LINES:-- (the merge stage left no gate lines)}
+
+Clear the blocker and remove needs-human. The approval is recorded for head \`$REVIEW_HEAD\`: the next run checks the build and the gate again without a new model review, unless the PR, its base or the ticket changed."
+          _review_release_worktree
+          NEXT_STATE="Build Review (needs-human: merge gate blocked)"
+          STAGE_EXIT=25
+          ;;
+        *)
+          echo "  The inline merge ended with $INLINE_RC${GATE_OUTCOME:+ ($GATE_OUTCOME)}; nothing was merged by this review." >&2
+          exit "$INLINE_RC"
+          ;;
+      esac
     fi
     ;;
   REQUEST_CHANGES)
@@ -592,6 +726,9 @@ echo "  PR: #${PR_NUMBER:-none}"
 echo "  Verdict: ${VERDICT:-UNKNOWN}"
 echo "  Next: $NEXT_STATE"
 echo "═══════════════════════════════════════"
+# An APPROVE whose inline merge did not go through ends with that merge's outcome
+# (2 not yet, 25 blocked), not with the APPROVE's 0.
+[ -z "${STAGE_EXIT:-}" ] || exit "$STAGE_EXIT"
 # The verdict alone decides the exit code: a BLOCK must not look like a clean
 # review to the driver (resolve_verdict_exit in bureau-config.sh).
 exit "$(resolve_verdict_exit "${VERDICT:-}")"
