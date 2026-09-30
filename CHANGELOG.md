@@ -6,7 +6,11 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
-Work in progress towards v3.1. Each theme below belongs to one pull request, which replaces its own `(pending)` line with its entries; the release preparation writes the version section.
+## [3.1.0-rc.1] - 2026-09-30
+
+First release candidate for Bureau v3.1.0, published as a GitHub prerelease; v3.0.2 stays the stable release until v3.1.0 is published. v3.1 is a minor release on v3.0.2 that collects six pull requests of fixes, guards and opt-in settings found in the installations and in cross-checks of their pipelines: code a branch controls runs without the Bureau secrets ([#33](https://github.com/KaiaK808/bureau/pull/33)); the review stage acts on the result of its inline merge, and the merge gate honours `false` switches, pins the head it checked, blocks a head without any CI after a grace period and reads its numbers by one rule ([#38](https://github.com/KaiaK808/bureau/pull/38)); the implement loop checks for CI markers after every iteration and can defer its pushes while a PR is open ([#37](https://github.com/KaiaK808/bureau/pull/37)); spec directory handling ([#36](https://github.com/KaiaK808/bureau/pull/36)); operator guards ([#35](https://github.com/KaiaK808/bureau/pull/35)); and doctor checks, a one-hour default stage timeout and installer fixes ([#34](https://github.com/KaiaK808/bureau/pull/34)). The exit codes keep their meaning; some stages use existing codes in new places (the review stage ends with `2` or `25` when its inline merge does not go through, the spec stage with `11` on an unusable `.specify/feature.json`, the shepherd with `25` before it claims a held ticket). No live ticket has run on this candidate yet. See the [v3.1.0-rc.1 release notes](docs/release-notes.md) for validation and known limitations.
+
+**Upgrade:** from v3.0.2, v3.0.1, v3.0.0 or v3.0.0-rc.2 select tag `v3.1.0-rc.1` and resync the scripts scope and the interfaces scope as one set; the interfaces carry `/linear-implement` with the shared spec matcher and the managed block's corrected merge sentence. Before dispatch resumes, check what changes for a running installation, among them: test commands, hooks and agent steps no longer see `LINEAR_API_KEY`, the Telegram keys or `GH_TOKEN` / `GITHUB_TOKEN` in their environment; `.env*` entries in `repo.worktree_links` are skipped by the stages and an error in doctor; the provider's default timeout per call is 3600 s instead of 900 s; `agents.merge_require_green_ci: false` and `agents.merge_require_up_to_date: false` now switch their gates off; a repository that merges automatically without any CI gets a blocked gate and an alert 1800 s after the head commit (set `agents.merge_require_green_ci` to `false` there, or raise `agents.merge_ci_start_grace_seconds`); wrappers that run the review stage must accept `2` and `25` from it; a shepherd run on a held ticket stops with `25` before its claim; the alert throttle log moves into the repository's git directory; an instruction file with a legacy `bureau-init managed` marker stops the resync; tickets that earlier no-match stops parked in Spec without the label keep their state. New opt-in settings are `agents.implement.push_each_iteration` and `repo.untrusted_env: "clean"`. From v3.0.1 or older, the upgrade notes of the releases in between apply as well. See [Upgrade to v3.1](docs/migration.md#upgrade-to-v31).
 
 ### Untrusted code runs without Bureau secrets
 
@@ -107,7 +111,7 @@ Work in progress towards v3.1. Each theme below belongs to one pull request, whi
 
 ## [3.0.2] - 2026-09-29
 
-Patch release on v3.0.1 with a runtime fix and an opt-in addition. Every stage now finds the ticket's own spec directory ([#29](https://github.com/KaiaK808/bureau/pull/29)): implement matched spec directories by their number first and handed every ticket in an installation that reuses one `NNN-` prefix the first alphabetical directory's `tasks.md`, and the other stages matched the slug as a loose substring or took the newest directory. New `repo.worktree_links` links paths such as a Python `.venv` from the main checkout into every stage worktree after its reset ([#30](https://github.com/KaiaK808/bureau/pull/30)); empty by default. **Upgrade:** from v3.0.1, v3.0.0 or v3.0.0-rc.2 select tag `v3.0.2` and resync the scripts scope as one set; no configuration change is required. Installations whose spec directories repeat a number should resync before the next implement run; Python installations can add `"worktree_links": [".venv"]`. See the [v3.0.2 release notes](docs/release-notes.md).
+Patch release on v3.0.1 with a runtime fix and an opt-in addition. Every stage now finds the ticket's own spec directory ([#29](https://github.com/KaiaK808/bureau/pull/29)): implement matched spec directories by their number first and handed every ticket in an installation that reuses one `NNN-` prefix the first alphabetical directory's `tasks.md`, and the other stages matched the slug as a loose substring or took the newest directory. New `repo.worktree_links` links paths such as a Python `.venv` from the main checkout into every stage worktree after its reset ([#30](https://github.com/KaiaK808/bureau/pull/30)); empty by default. **Upgrade:** from v3.0.1, v3.0.0 or v3.0.0-rc.2 select tag `v3.0.2` and resync the scripts scope as one set; no configuration change is required. Installations whose spec directories repeat a number should resync before the next implement run; Python installations can add `"worktree_links": [".venv"]`. See the [v3.0.2 release notes](docs/release-notes-v3.0.2.md).
 
 ### Every stage finds the ticket's own spec directory
 
@@ -336,7 +340,8 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.0.2...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.1.0-rc.1...main
+[3.1.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v3.0.2...v3.1.0-rc.1
 [3.0.2]: https://github.com/KaiaK808/bureau/compare/v3.0.1...v3.0.2
 [3.0.1]: https://github.com/KaiaK808/bureau/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/KaiaK808/bureau/compare/v2.0.0...v3.0.0

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="534a326d7fcfeb888fffeb13f35ff052f3ed00f4dcda2d2772325467012beee0">
+<meta name="bureau-source-sha256" content="2382edd364f1e02253f3a0dc306a75ed4a9a9433fa0113d10904829b6442ebad">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -277,9 +277,20 @@ its <a href="release-notes-v3.0.1.html">release notes</a>); v3.0.2 is
 a patch on v3.0.1 (every stage finds the ticket's own spec directory,
 and <code>repo.worktree_links</code> brings a Python <code>.venv</code>
 back into the stage worktrees; see its <a
-href="release-notes.html">release notes</a>). The previous major
-release is <a
+href="release-notes-v3.0.2.html">release notes</a>). The previous
+major release is <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">v2.0.0</a>.</p>
+<p>A release candidate, <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0-rc.1">v3.1.0-rc.1</a>,
+is available for piloting. It keeps the v3 exit-code contract; branch
+code runs without the Bureau secrets, the review stage acts on the
+result of its inline merge, the merge gate honours <code>false</code>
+switches and reads its numbers by one rule, and the default timeout per
+stage call is one hour. Resync the scripts and interfaces scopes
+together and check the list in <a
+href="migration.html#upgrade-to-v31">Upgrade to v3.1</a> first; see
+its <a href="release-notes.html">release notes</a>. The stable
+release stays v3.0.2 until v3.1.0 is published.</p>
 <h2 id="documentation">Documentation</h2>
 <table>
 <thead>
