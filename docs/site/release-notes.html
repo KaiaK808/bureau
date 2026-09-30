@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="eff06669487fd8f9729ef90197c293042fb2120f137e068b51fcb1ce8e61d8d3">
+<meta name="bureau-source-sha256" content="f29aa38f5be3da85809fa30f7cba68a51cd3163292b4e080b4486895c4cccfed">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -297,11 +297,14 @@ href="https://github.com/KaiaK808/bureau/pull/41">#41</a>): "Build
 output: last 20 of N lines" before the tail of a longer output, so
 trailing "running 0 tests" doc-test summaries no longer read as a run
 without tests.</li>
-<li><strong>CI job limit</strong> (<a
+<li><strong>CI and tests</strong> (<a
 href="https://github.com/KaiaK808/bureau/pull/39">#39</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/44">#44</a>): the test job
-of <code>.github/workflows/test.yml</code> may run 45 minutes; v3.0.2
-allowed 20.</li>
+href="https://github.com/KaiaK808/bureau/pull/43">#43</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/44">#44</a>): the
+<code>shell</code> job of the <code>test</code> workflow may run 45
+minutes; v3.0.2 allowed 20. The tests name their sandbox repositories
+with <code>mktemp -d</code>, so a repeated random number no longer
+re-initialises an existing one.</li>
 </ul>
 <p>See the <a
 href="https://github.com/KaiaK808/bureau/blob/v3.1.0/CHANGELOG.md">changelog</a>
@@ -464,16 +467,17 @@ qualify one ticket end to end with the shepherd before dispatch resumes.
 See <a href="migration.html#upgrade-to-v31">Upgrade to v3.1</a>.</p>
 <p><strong>Already on a candidate.</strong> From
 <strong>v3.1.0-rc.2</strong>: select tag <code>v3.1.0</code>; no resync
-is needed, because runtime, installer, templates and tests are
-identical. From <strong>v3.1.0-rc.1</strong>: select tag
-<code>v3.1.0</code> and resync the scripts scope as one set
-(<code>bureau-runtime.py</code>, <code>bureau-config.sh</code>,
-<code>bureau-worker.sh</code>, <code>shepherd.sh</code>,
-<code>merge-pipeline.sh</code> and <code>code-review-pipeline.sh</code>
-changed in rc.2); no configuration or interface change is required.
-Before dispatch resumes, go through the four items rc.2 added to the
-list above: leftover worktrees, leftover branches, the worker's exit
-code and stop time, and the shepherd's <code>--worktree</code>.</p>
+is needed, because runtime, installer, templates and tests are identical
+(the manifest keeps naming rc.2 as its source until the next resync).
+From <strong>v3.1.0-rc.1</strong>: select tag <code>v3.1.0</code> and
+resync the scripts scope as one set (<code>bureau-runtime.py</code>,
+<code>bureau-config.sh</code>, <code>bureau-worker.sh</code>,
+<code>shepherd.sh</code>, <code>merge-pipeline.sh</code> and
+<code>code-review-pipeline.sh</code> changed in rc.2); no configuration
+or interface change is required. Before dispatch resumes, go through the
+four items rc.2 added to the list above: leftover worktrees, leftover
+branches, the worker's exit code and stop time, and the shepherd's
+<code>--worktree</code>.</p>
 <h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
 <p>Dependencies and platforms are unchanged (Python 3.9+, Bash 3.2+, Git
 2.26+, jq, curl; Node.js 18+ for the shared scheduler; Linux and macOS).
@@ -491,9 +495,11 @@ processes and explicitly release ownership", and a halt with
 <code>21</code> leaves nothing on the ticket. v3.0.2 does not read the
 records v3.1 writes under
 <code>&lt;git common dir&gt;/bureau/preserved/</code> and
-<code>bureau/ownership-halts/</code>. Rollback cannot undo commits, pull
-requests, labels, comments or Linear transitions made in between; the
-caveats of <a
+<code>bureau/ownership-halts/</code>. From v3.1.0, roll back to rc.1 by
+selecting tag <code>v3.1.0-rc.1</code> and resyncing the scripts scope;
+rc.1 does not read those records either. Rollback cannot undo commits,
+pull requests, labels, comments or Linear transitions made in between;
+the caveats of <a
 href="release-notes-v3.0.2.html#compatibility-and-rollback">v3.0.2</a>
 still apply.</p>
 <h2 id="validation-and-known-limitations">Validation and known
@@ -554,9 +560,8 @@ printed and resume the ticket to Done;
 ignores SIGTERM ten times and finds nothing left running. All new test
 files fail against rc.1's code (<code>5184cf8</code>), and 40 of 40
 mutations were killed after the fix round.</p>
-<p>The pilot installation did not set
-<code>push_each_iteration: false</code> when rc.1 was published, so the
-deferred-push path rests on the harness tests.</p>
+<p>Neither pilot acceptance set <code>push_each_iteration: false</code>,
+so the deferred-push path rests on the harness tests.</p>
 <p>Known limitations:</p>
 <ul>
 <li><strong>Process environments.</strong> On Linux

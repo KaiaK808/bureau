@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="81cae54e793d20f0056c8da8dcd3ca2f711916d5fd380ef391d55e41b83f081b">
+<meta name="bureau-source-sha256" content="b36b090ab6582031f31dc20dacd39995313be677666f3fbaff24fd70afee4582">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -47,13 +47,14 @@ href="https://github.com/KaiaK808/bureau/pull/36">#36</a>); operator
 guards (<a href="https://github.com/KaiaK808/bureau/pull/35">#35</a>);
 and doctor checks, a one-hour default stage timeout and installer fixes
 (<a href="https://github.com/KaiaK808/bureau/pull/34">#34</a>). A
-seventh carries the three gaps the live acceptance of rc.1 found and one
-log line (<a href="https://github.com/KaiaK808/bureau/pull/41">#41</a>):
-a way back after an interrupted run (printed once, with the run, ticket,
-worktree and branch; the worker ends with <code>130</code> on SIGTERM;
-nested stop graces), a visible halt with <code>needs-human</code> and
-one ticket comment on exit <code>21</code>, the pinned head in the merge
-log line, and "Build output: last 20 of N lines" in the review log. Its
+seventh carries the fixes for the three gaps the live acceptance of rc.1
+found and one log line (<a
+href="https://github.com/KaiaK808/bureau/pull/41">#41</a>): a way back
+after an interrupted run (printed once, with the run, ticket, worktree
+and branch; the worker ends with <code>130</code> on SIGTERM; nested
+stop graces), a visible halt with <code>needs-human</code> and one
+ticket comment on exit <code>21</code>, the pinned head in the merge log
+line, and "Build output: last 20 of N lines" in the review log. Its
 candidates, <a href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a> and
 <a href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a>, stay published
 as prereleases; v3.1.0 has the same runtime as rc.2. An upgrade from
@@ -79,8 +80,9 @@ Release preparation changes documentation only: runtime, installer,
 templates and tests are identical to the rc.2 tag, <code>a81938c</code>,
 and the CI configuration to the merge of <a
 href="https://github.com/KaiaK808/bureau/pull/44">#44</a>,
-<code>c9cd458</code>, which raises the test job's limit to 45 minutes.
-The final commit is recorded in the GitHub Release body.</p>
+<code>c9cd458</code>, which raises the limit of the <code>shell</code>
+job of the <code>test</code> workflow to 45 minutes. The final commit is
+recorded in the GitHub Release body.</p>
 <p>The previous stable release is <strong>Bureau v3.0.2</strong>, dated
 <strong>2026-09-29</strong> (<a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">GitHub
