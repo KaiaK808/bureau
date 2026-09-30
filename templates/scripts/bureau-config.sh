@@ -948,7 +948,7 @@ move_issue() {
 # <max-bytes> bytes.
 BUREAU_COMMENT_MAX_BYTES=60000
 bureau_cap_comment() {
-  printf '%s' "$1" | python3 -c '
+  printf '%s' "$1" | python3 -I -c '
 import sys
 limit = int(sys.argv[1])
 data = sys.stdin.buffer.read().decode("utf-8", "replace").encode("utf-8")
