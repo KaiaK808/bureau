@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="0aa6a0f2f640e7df6a3e754d0129e99f46da571cbf5fd6e7afbc6da7961d3ecb">
+<title>release-notes-v3.0.2 · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="bureau-v302--every-stage-reads-the-tickets-own-spec-and-a-python-venv-in-every-worktree">Bureau
+v3.0.2 — every stage reads the ticket's own spec, and a Python venv in
+every worktree</h1>
+<p><strong>Stable release · 2026-09-29 · source tag
+<code>v3.0.2</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">GitHub
+Release</a> records the exact tagged commit. v3.0.2 is a patch release
+on <a href="release-notes-v3.0.1.html">v3.0.1</a>, which patches <a
+href="release-notes-v3.0.0.html">v3.0.0</a>; it fixes how the stages find
+a ticket's spec and adds one opt-in setting. The candidates of v3.0.0
+were <a href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a> and <a
+href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>; the previous major
+release is <a href="release-notes-v2.0.0.html">v2.0.0</a>.</p>
+<p>The exit codes keep their meaning. A stage that finds no spec
+directory for its ticket ends as it already did: implement and spec
+review with <code>13</code> back to Spec, UX with <code>13</code> back
+to Spec Review; QA, review and copy continue without spec context. New:
+when two directories fit a branch equally, implement, spec review and UX
+say so, name both, and set <code>needs-human</code> as they route
+back.</p>
+<h2 id="what-changed">What changed</h2>
+<ul>
+<li><strong>Every stage finds the ticket's own spec directory</strong>
+(<a href="https://github.com/KaiaK808/bureau/pull/29">#29</a>). Spec
+directories and branches share the form <code>NNN-&lt;slug&gt;</code>,
+but the number is not unique: some installations mint
+<code>001-&lt;slug&gt;</code> for every ticket, others repeat a number
+now and then, and hand-made branches reuse the number of an unrelated
+spec.
+<ul>
+<li>Implement matched the number first and took the first alphabetical
+<code>NNN-*/tasks.md</code>. In an installation whose spec directories
+all start with <code>001-</code>, every ticket was built from the same,
+wrong tasks: in a replay of that installation's history, v3.0.1
+implement found the right directory for 5 of 41 bureau-generated pull
+requests (against the listing each one saw), the new function for all
+41.</li>
+<li>QA, review, copy, UX and spec review matched the directory's slug as
+a loose substring of the branch, so <code>001-refund</code> won over
+<code>001-refund-rate</code>; spec review and UX fell back to the newest
+directory when nothing matched, and the spec stage always used the
+newest directory for its crosscheck and digest. In a fresh worktree
+every directory has the same age.</li>
+<li>All of them now call <code>bureau_spec_dir_for_branch</code> in
+<code>bureau-config.sh</code>. The branch first loses everything up to
+its last <code>/</code> (<code>codex/</code>, <code>exp/</code>, a user
+name) and a leading issue key such as <code>exp-1444-</code>. Then: a
+directory named exactly like the branch or its last segment; else the
+one directory whose slug fits the branch slug — equal, the branch slug
+as its start up to a <code>-</code> (a truncated branch name), or a run
+of whole <code>-</code>-separated words inside the branch slug (a branch
+with extra words); when several fit, the one of them that carries the
+branch's number. A number alone never selects a directory. Anything
+ambiguous yields no directory; slugs compare case-insensitively, as
+before.</li>
+<li>When two directories fit equally, implement, spec review and UX
+comment with both names (<code>bureau_spec_dir_candidates</code>), set
+<code>needs-human</code> and route back: running Spec again cannot
+resolve that.</li>
+<li>The spec stage uses the directory <code>.specify/feature.json</code>
+names for plan, tasks, crosscheck and digest, and tells the agent to
+work on that directory instead of "the most recent spec".</li>
+<li>The implement part was first written in June 2026 on a branch that
+never reached <code>main</code>, from a hand-patch in one installation;
+this release carries it, extends it to every stage and to prefixed
+branch names, and drops its number-only fallback.</li>
+</ul></li>
+<li><strong>Stage worktrees get their virtualenv back</strong> (<a
+href="https://github.com/KaiaK808/bureau/pull/30">#30</a>).
+<code>reset_worktree</code> ends with <code>git clean -fdx</code>, which
+removes every ignored path from a stage worktree; only
+<code>node_modules</code> came back. In a Python installation the
+agents' own commands (<code>.venv/bin/python -m pytest</code> from a
+spec) failed and tickets were parked for a human.
+<ul>
+<li>New <code>repo.worktree_links</code>, a list of relative paths such
+as <code>[".venv"]</code>: after every reset, each is symlinked from the
+main checkout into the stage worktree
+(<code>bureau_link_worktree_paths</code>). Empty by default, which
+changes nothing.</li>
+<li>A path is skipped with one warning line when the entry is not a
+plain relative path (absolute, <code>.</code>, <code>..</code>,
+<code>.git</code> in any case, or an empty component; a leading
+<code>-</code> is fine), when the branch tracks it, when its parent is
+missing in the worktree, leads outside it or runs through a symlink in
+it, when it does not exist in the main checkout, when the worktree's
+gitignore does not ignore it as a symlink, or when a real file or
+directory is at that path; an older link is replaced. The next reset
+removes the link, never its target. The main checkout itself, worktrees
+of a bare repository and repositories whose git directory is kept
+elsewhere (<code>--separate-git-dir</code>) are never linked.</li>
+<li>A directory-only pattern such as <code>.venv/</code> does not match
+a symlink; an untracked link would leave the worktree dirty, the worker
+would preserve it and the next reset would stop with <code>21</code>.
+List <code>.venv</code> in <code>.gitignore</code> without the slash.
+<code>bureau-doctor.py</code> reports each entry with its status, checks
+it the way a stage worktree sees it, and flags what the stages would
+skip.</li>
+<li><strong>The link is the main checkout's own virtualenv, not a
+copy.</strong> Every stage and every parallel worker shares it, and
+commands in a stage worktree act on it:
+<code>python3 -m venv --clear .venv</code> empties it,
+<code>rm -rf .venv/</code> (with the slash) deletes it,
+<code>pip install</code> changes it, and pull-request code that QA or
+the review build check runs before approval can change the environment
+every later stage and the operator use. The system text of every stage
+call (<code>run_stage_for</code>, from the main checkout, so in force
+from the first reset) and, at more length,
+<code>scripts/bureau-stage.md</code> tell the agents: a path such as
+<code>.venv</code> that is a symlink pointing outside the worktree is
+the main checkout's shared environment — never delete, recreate or
+<code>--clear</code> it, and do not install into it unless the ticket
+asks; a missing path or a real directory is handled as usual. Nothing
+enforces that.</li>
+</ul></li>
+</ul>
+<p>See the <a
+href="https://github.com/KaiaK808/bureau/blob/v3.0.2/CHANGELOG.md">changelog</a>
+for the full entries, <a
+href="https://github.com/KaiaK808/bureau/blob/v3.0.2/docs/configuration.md#python-repositories">configuration</a>
+for <code>repo.worktree_links</code> and <a
+href="https://github.com/KaiaK808/bureau/blob/v3.0.2/docs/troubleshooting.md">troubleshooting</a>
+for how to check what a stage will pick.</p>
+<h2 id="upgrade-an-existing-installation">Upgrade an existing
+installation</h2>
+<p>From <strong>v3.0.1</strong>: select tag <code>v3.0.2</code> in the
+source skill checkout and resync the scripts scope as one set. No
+configuration change is required. An installation whose spec directories
+repeat an <code>NNN-</code> prefix is affected and should resync before
+its next implement run; check with
+<code>ls specs | cut -d- -f1 | sort | uniq -d</code> (use
+<code>repo.specs_dir</code> if it is not <code>specs</code>). A matcher
+patched by hand into <code>implement-pipeline.sh</code> shows up as a
+conflict; take the template, the shared function replaces it. After the
+resync, a branch that fits two spec directories equally stops with
+<code>needs-human</code> instead of picking one — rename or remove the
+stray directory, then remove the label. A hand-made branch that reuses
+the number of an unrelated spec and shares no word with any spec
+directory now runs without a spec directory (implement stops with
+<code>13</code>) instead of receiving that spec.</p>
+<p>For a Python installation whose agents need the virtualenv in the
+stage worktrees, first commit the resynced scripts to <code>main</code>
+(so the stage protocol the agents read in their worktree carries the
+rule), then add <code>"worktree_links": [".venv"]</code> under
+<code>repo</code> in <code>.bureau.json</code>, list <code>.venv</code>
+(without a trailing slash) in <code>.gitignore</code>, and check
+<code>python3 scripts/bureau-doctor.py</code>: it shows each link as
+<code>ok</code>, <code>missing in the main checkout</code>,
+<code>tracked in the main checkout</code>,
+<code>not ignored as a symlink</code> or <code>invalid</code>. Decide
+first whether sharing the main checkout's virtualenv with the stages is
+acceptable (see above); if not, leave it out and let
+<code>repo.test_command</code> create what the tests need. With an
+editable install (<code>pip install -e .</code>) the linked virtualenv
+imports the main checkout's <code>src/</code>; run the worktree's tests
+with <code>PYTHONPATH=src</code> (see <a
+href="configuration.html#python-repositories">Python repositories</a>).
+Copying <code>.env</code> or <code>.bureau.json</code> into worktrees is
+not needed: the stages find both through the main checkout.</p>
+<p>From <strong>v3.0.0 or v3.0.0-rc.2</strong>: select tag
+<code>v3.0.2</code> and follow the v3.0.1 notes for the merge stage's
+exit codes as well (<a href="migration.html#upgrade-to-v3">upgrade
+section</a>). From <strong>v3.0.0-rc.1, v2.0.0 or a legacy
+copy</strong>: follow the <a href="migration.html#upgrade-to-v3">v3
+upgrade section</a> with tag <code>v3.0.2</code>.</p>
+<h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
+<p>Dependencies and platforms are unchanged (Python 3.9+, Bash 3.2+, Git
+2.26+, jq, curl; Node.js 18+ for the shared scheduler; Linux and macOS).
+Configuration schema versions 1 and 2 stay supported, and the manifest
+stays at version <code>1</code>. To roll back to v3.0.1, point the
+source at tag <code>v3.0.1</code> and resync the scripts scope, or
+restore the private backup (<a
+href="migration.html#rollback">rollback</a>); that brings the old matchers
+back, and <code>repo.worktree_links</code> is then ignored (the links an
+older reset made are removed by the next reset). Rollback cannot undo
+commits, pull requests or Linear transitions made in between; the
+caveats of <a
+href="release-notes-v3.0.1.html#compatibility-and-rollback">v3.0.1</a>
+still apply.</p>
+<h2 id="validation-and-known-limitations">Validation and known
+limitations</h2>
+<p>v3.0.2 is validated by the full Linux/macOS suite on the release
+commit, the installer fixtures and an independent verification pass per
+pull request, each followed by a fix round.</p>
+<ul>
+<li><strong>Spec directory.</strong> The matching rules were checked
+against a replay of 1,889 real branch/listing pairs from eight
+installations (every pull request and remote branch, against the listing
+at its head and at <code>main</code>): the new function is right in
+1,858, v3.0.1 implement in 1,649 and v3.0.1's loose match in 1,852, with
+no row where either v3.0.1 matcher was right and the new one is not. The
+number-only fallback of the June fix was right in no row that nothing
+else got right and wrong in 7, so it was dropped. The matcher test cuts
+the functions out of the shipped <code>bureau-config.sh</code> and
+checks 48 cases; it fails against the v3.0.1 implement matcher, the old
+loose match, the June fix and the first version of the pull request, and
+18 of 18 mutations turn it red, including three substring mutations the
+verification found surviving at first. A second test runs the seven
+affected stages in the harness against decoy spec directories that sort
+first, fit as a substring and are newer, plus the tie path of implement,
+spec review and UX; each stage reverted alone turns it red.</li>
+<li><strong>Worktree links.</strong> The guard test runs the real
+function with a main checkout path containing a space: every guard with
+its effect on disk and in <code>git status</code>, an older link, a real
+directory in the way, glob-like names, nested paths, an entry starting
+with <code>-</code> under <code>set -euo pipefail</code>, a parent
+through a symlink, a bare repository, a separate git directory. A
+further test sends a prompt through the real <code>run_stage_for</code>
+and provider and checks that Claude and Codex both receive the rule in
+the stage's system text. An end-to-end case goes through the real
+<code>reset_worktree</code> twice (link present, worker clean, target
+survives) and once under <code>set -euo pipefail</code>; a doctor case
+covers every status. Both fail against v3.0.1, and 28 of 28 mutations
+turn them red. The verification also found that no reset, clean or merge
+cycle writes to the main checkout or its virtualenv, and that
+installations without the key behave byte-for-byte as on v3.0.1.</li>
+</ul>
+<p><strong>No live ticket has run on v3.0.2 yet.</strong></p>
+<p>Known limitations (in addition to those of <a
+href="release-notes-v3.0.1.html#validation-and-known-limitations">v3.0.1</a>):</p>
+<ul>
+<li>A linked virtualenv is the main checkout's own and is shared by all
+stage worktrees (see above). A copy mode, as
+<code>restore_worktree_deps</code> uses for <code>node_modules</code>,
+does not exist.</li>
+<li><code>.specify/feature.json</code> missing or malformed makes the
+spec stage abort with jq's exit code before its exit-11 message; a stale
+<code>feature.json</code> (tracked on <code>main</code>, kept per
+branch) is accepted without a staleness check.</li>
+<li>The interactive <code>/linear-implement</code> command still tells
+the agent in words to find "the spec that matches the Linear issue"; it
+does not call the shared function.</li>
+</ul></main>
+</div>
+</body>
+</html>

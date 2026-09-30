@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="fda779c5c20da5ba36f15b3e95dbc944bc2e32ac4fb10a9e043aca5f479b7b14">
+<meta name="bureau-source-sha256" content="bc630b7481493564083b0e3943d042d1e5b7a5f0ea486d42f5742e0c2e332640">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -26,11 +26,14 @@ configuration; it does not upgrade installed assets.</p>
 href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0 and v3.0.1 to the stable <strong>Bureau
-v3.0.2</strong>. The commands below require the selected release's
-source skill. See the <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">v3.0.2
+v3.0.2</strong>, and v3 installations to the release candidate
+<strong>Bureau v3.1.0-rc.1</strong>. The commands below require the
+selected release's source skill. See the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0-rc.1">v3.1.0-rc.1
 release</a> and its <a href="release-notes.html">release notes</a>, the <a
-href="release-notes-v3.0.1.html">v3.0.1 release notes</a>, the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">v3.0.2
+release</a> and its <a href="release-notes-v3.0.2.html">release notes</a>,
+the <a href="release-notes-v3.0.1.html">v3.0.1 release notes</a>, the <a
 href="release-notes-v3.0.0.html">v3.0.0 release notes</a> (the candidates:
 <a href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a>, <a
 href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>), the previous
@@ -41,7 +44,8 @@ the <a href="../../CHANGELOG.md">changelog</a> and the <a
 href="releases.html">release process</a>. A Bureau major version marks
 operational changes (v2.0.0: explicit worker ownership; v3: the
 exit-code contract, see <a href="#upgrade-to-v3">Upgrade to v3</a>); it
-does not require configuration schema v2.</p>
+does not require configuration schema v2. v3.1 keeps that contract; see
+<a href="#upgrade-to-v31">Upgrade to v3.1</a>.</p>
 <h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is
@@ -64,9 +68,10 @@ installed commit.</p>
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
 clean checkout, select the exact release (<code>v3.0.2</code> for the
-stable release, <code>v3.0.1</code>, <code>v3.0.0</code> or
-<code>v2.0.0</code> for an earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.0.2 <span class="co"># or v3.0.1, v3.0.0, v2.0.0</span></span>
+stable release, <code>v3.1.0-rc.1</code> for the candidate,
+<code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
+earlier one):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.0.2 <span class="co"># or v3.1.0-rc.1 (candidate), v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -86,6 +91,94 @@ directory, keep it intact and install a separate official clone from the
 loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
+<h2 id="upgrade-to-v31">Upgrade to v3.1</h2>
+<p>The release candidate <strong>v3.1.0-rc.1</strong> is a minor release
+on v3.0.2; v3.0.2 stays the stable release until v3.1.0 is published. It
+keeps the v3 exit-code contract. See its <a
+href="release-notes.html">release notes</a> for the changes, the
+validation and the known limitations.</p>
+<p><strong>From v3.0.2, v3.0.1, v3.0.0 or v3.0.0-rc.2:</strong> select
+tag <code>v3.1.0-rc.1</code> and resync the <strong>scripts scope and
+the interfaces scope as one set</strong>: the scripts depend on each
+other (<code>bureau-env.sh</code>, <code>bureau-config.sh</code>, the
+stage scripts, <code>shepherd.sh</code>, <code>bureau-worker.sh</code>,
+<code>codex-stage-runner.sh</code>, <code>bureau-provider.py</code>,
+<code>bureau-supervision.py</code>, <code>bureau-doctor.py</code> and
+<code>bureau-review.schema.json</code> among them), and the interfaces
+carry <code>/linear-implement</code> with the shared spec matcher and
+the managed block's corrected merge sentence. From v3.0.1 or older, the
+paragraphs for your version in <a href="#upgrade-to-v3">Upgrade to
+v3</a> apply as well. No configuration change is required for the
+resync, but check these before dispatch resumes:</p>
+<ul>
+<li>Test commands, hooks, <code>repo.post_implement_command</code> and
+agent steps run without <code>LINEAR_API_KEY</code>,
+<code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_ALERT_CHAT_ID</code>,
+<code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, their enterprise
+variants, <code>BASH_ENV</code> and <code>ENV</code>. One that needed
+them must get them another way; <code>gh</code> still finds its stored
+login, and a Git LFS checkout that authenticated only through
+<code>GH_TOKEN</code> needs <code>gh</code>'s stored login or a
+credential helper. QA's test command runs in a child bash without the
+stage's variables, functions and <code>set -u</code>. See <a
+href="../../SECURITY.md">SECURITY.md</a> for what stays readable.</li>
+<li>Remove <code>.env*</code> entries, and directories that hold a
+<code>.env</code>, from <code>repo.worktree_links</code>: the stages
+skip both, and doctor reports a <code>.env*</code> entry as an error (it
+does not look inside linked directories).</li>
+<li>The provider's default timeout per call is 3600 s instead of 900 s;
+set <code>timeout_seconds</code> explicitly where the shorter limit was
+wanted.</li>
+<li><code>agents.merge_require_green_ci: false</code> and
+<code>agents.merge_require_up_to_date: false</code> now switch their
+gates off; a quoted <code>"false"</code> keeps them on. A repository
+that merges automatically without any check run on the PR head gets a
+blocked gate 1800 s after the head commit (an hourly queue alert; the
+shepherd and the review stage's inline merge halt with <code>25</code>
+and <code>needs-human</code>): set
+<code>agents.merge_require_green_ci</code> to <code>false</code> there,
+or raise <code>agents.merge_ci_start_grace_seconds</code>. A
+<code>merge_min_required_checks</code> or
+<code>merge_ci_start_grace_seconds</code> written as a string of digits
+now counts as that number.</li>
+<li>Wrappers that run the review stage must accept <code>2</code>
+(approved, merge gate not yet decided) and <code>25</code> from it; a
+local review prompt or schema without <code>comment</code> and
+<code>findings</code> makes the merger's answer fail with
+<code>22</code>. A wrapper that read the spec stage's <code>2</code> or
+<code>5</code> after a failed specify sees <code>11</code>. Where
+<code>.specify/feature.json</code> is tracked on <code>main</code>,
+check that speckit-specify records each new feature: a stale file now
+stops the spec stage with <code>needs-human</code>. Tickets that earlier
+no-match stops parked in Spec without the label keep their state.</li>
+<li>A shepherd run or orchestrated chain on a held ticket stops with
+<code>25</code> before its claim. The alert throttle log moves to
+<code>&lt;git common dir&gt;/bureau/alert-throttle.log</code>; delete
+<code>/tmp/bureau-alerts.log</code> once every installation on the host
+runs v3.1.</li>
+<li>An instruction file that still holds a legacy
+<code>bureau-init managed</code> marker stops the resync until its old
+section is delimited with <code>bureau-init:begin/end</code> or removed
+(<a href="troubleshooting.html">troubleshooting</a>).</li>
+<li>A post-implement hook that edits an already-uncommitted file without
+committing it now halts implement with <code>14</code>. An installation
+that carries its own copy of the deferred push or of the secret
+hardening drops it with the resync, together with strict xfail tests
+that waited for the deferred push.</li>
+</ul>
+<p>Optional:
+<code>"implement": {"enabled": true, "push_each_iteration": false}</code>
+under <code>agents</code> defers implement's pushes while a PR is open,
+and <code>"untrusted_env": "clean"</code> under <code>repo</code> runs
+branch code in an allow-list environment once
+<code>repo.test_command</code> and
+<code>repo.post_implement_command</code> are known to work with it; an
+agent that logs in through cloud credentials cannot start there (<a
+href="configuration.html">configuration</a>). Run doctor after the resync;
+it warns about a CI gate without pull-request workflows, calls shorter
+than 1800 s and gate switches that are not booleans. Rollback to v3.0.2
+selects tag <code>v3.0.2</code> and resyncs the same scopes (<a
+href="#rollback">rollback</a>).</p>
 <h2 id="upgrade-to-v3">Upgrade to v3</h2>
 <p><strong>From v3.0.1:</strong> select tag <code>v3.0.2</code> and
 resync the scripts scope as one set; no configuration change is
