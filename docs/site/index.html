@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2382edd364f1e02253f3a0dc306a75ed4a9a9433fa0113d10904829b6442ebad">
+<meta name="bureau-source-sha256" content="c9295607ff3766cf3ee9e882f73b0bde1c252d589cf8569bfe3692c9f3ea8c51">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -281,15 +281,17 @@ href="release-notes-v3.0.2.html">release notes</a>). The previous
 major release is <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">v2.0.0</a>.</p>
 <p>A release candidate, <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0-rc.1">v3.1.0-rc.1</a>,
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0-rc.2">v3.1.0-rc.2</a>,
 is available for piloting. It keeps the v3 exit-code contract; branch
 code runs without the Bureau secrets, the review stage acts on the
 result of its inline merge, the merge gate honours <code>false</code>
-switches and reads its numbers by one rule, and the default timeout per
-stage call is one hour. Resync the scripts and interfaces scopes
-together and check the list in <a
-href="migration.html#upgrade-to-v31">Upgrade to v3.1</a> first; see
-its <a href="release-notes.html">release notes</a>. The stable
+switches and reads its numbers by one rule, the default timeout per
+stage call is one hour, and an interrupted run prints its own way back.
+Resync the scripts and interfaces scopes together and check the list in
+<a href="migration.html#upgrade-to-v31">Upgrade to v3.1</a> first;
+see its <a href="release-notes.html">release notes</a> and those of
+the first candidate, <a
+href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>. The stable
 release stays v3.0.2 until v3.1.0 is published.</p>
 <h2 id="documentation">Documentation</h2>
 <table>

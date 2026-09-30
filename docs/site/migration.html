@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="bc630b7481493564083b0e3943d042d1e5b7a5f0ea486d42f5742e0c2e332640">
+<meta name="bureau-source-sha256" content="e795a4cf8ab38b645e4b7bc7506c0d8f97c8e7ef37c5c7e10bc2c817b7e42c6e">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -27,10 +27,12 @@ href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0 and v3.0.1 to the stable <strong>Bureau
 v3.0.2</strong>, and v3 installations to the release candidate
-<strong>Bureau v3.1.0-rc.1</strong>. The commands below require the
+<strong>Bureau v3.1.0-rc.2</strong>. The commands below require the
 selected release's source skill. See the <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0-rc.1">v3.1.0-rc.1
-release</a> and its <a href="release-notes.html">release notes</a>, the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0-rc.2">v3.1.0-rc.2
+release</a> and its <a href="release-notes.html">release notes</a> (the
+first candidate: <a
+href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>), the <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">v3.0.2
 release</a> and its <a href="release-notes-v3.0.2.html">release notes</a>,
 the <a href="release-notes-v3.0.1.html">v3.0.1 release notes</a>, the <a
@@ -68,10 +70,10 @@ installed commit.</p>
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
 clean checkout, select the exact release (<code>v3.0.2</code> for the
-stable release, <code>v3.1.0-rc.1</code> for the candidate,
+stable release, <code>v3.1.0-rc.2</code> for the candidate,
 <code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
 earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.0.2 <span class="co"># or v3.1.0-rc.1 (candidate), v3.0.1, v3.0.0, v2.0.0</span></span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.0.2 <span class="co"># or v3.1.0-rc.2 (candidate), v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -92,13 +94,18 @@ loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
 <h2 id="upgrade-to-v31">Upgrade to v3.1</h2>
-<p>The release candidate <strong>v3.1.0-rc.1</strong> is a minor release
+<p>The release candidate <strong>v3.1.0-rc.2</strong> is a minor release
 on v3.0.2; v3.0.2 stays the stable release until v3.1.0 is published. It
 keeps the v3 exit-code contract. See its <a
-href="release-notes.html">release notes</a> for the changes, the
-validation and the known limitations.</p>
+href="release-notes.html">release notes</a> and those of the first
+candidate, <a href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>, for
+the changes, the validation and the known limitations.</p>
+<p><strong>From v3.1.0-rc.1:</strong> select tag
+<code>v3.1.0-rc.2</code> and resync the scripts scope as one set; no
+configuration or interface change is required. Then follow the steps for
+leftover worktrees and branches at the end of this section.</p>
 <p><strong>From v3.0.2, v3.0.1, v3.0.0 or v3.0.0-rc.2:</strong> select
-tag <code>v3.1.0-rc.1</code> and resync the <strong>scripts scope and
+tag <code>v3.1.0-rc.2</code> and resync the <strong>scripts scope and
 the interfaces scope as one set</strong>: the scripts depend on each
 other (<code>bureau-env.sh</code>, <code>bureau-config.sh</code>, the
 stage scripts, <code>shepherd.sh</code>, <code>bureau-worker.sh</code>,
@@ -179,6 +186,28 @@ it warns about a CI gate without pull-request workflows, calls shorter
 than 1800 s and gate switches that are not booleans. Rollback to v3.0.2
 selects tag <code>v3.0.2</code> and resyncs the same scopes (<a
 href="#rollback">rollback</a>).</p>
+<p><strong>Leftover worktrees and branches (rc.2, from any
+version):</strong> before dispatch resumes, list the worktrees an
+earlier interrupted or unfinished run left behind
+(<code>git worktree list</code>,
+<code>python3 scripts/bureau-runtime.py status</code>) and drop or adopt
+them; they carry no record of their run, so the first ticket whose stage
+meets one gets <code>needs-human</code> and the halt comment, even when
+another ticket's run left it. Release a run interrupted before the
+upgrade with
+<code>python3 scripts/bureau-runtime.py release RUN_ID</code>. The old
+cleanup detached such a worktree from its branch, and a spec rerun then
+stops with <code>fatal: a branch named '…' already exists</code>: after
+dropping the worktree, find the local branches origin does not have
+(<code>git for-each-ref --format='%(refname:short)' refs/heads | while read -r b; do git rev-parse -q --verify "refs/remotes/origin/$b" &gt;/dev/null || echo "$b"; done</code>),
+check that the stage's branch carries nothing you need
+(<code>git log --oneline BRANCH --not --remotes</code> prints nothing)
+and delete it with <code>git branch -D BRANCH</code>, or keep it as
+<code>BRANCH-saved</code> (<code>git branch -m</code>). After the
+upgrade, an interrupted run prints these steps itself, and
+<code>bureau-worker.sh</code> ends with <code>130</code> on SIGTERM or
+Ctrl-C (<a
+href="troubleshooting.html#shepherdsh-bailed-mid-run--how-to-resume">troubleshooting</a>).</p>
 <h2 id="upgrade-to-v3">Upgrade to v3</h2>
 <p><strong>From v3.0.1:</strong> select tag <code>v3.0.2</code> and
 resync the scripts scope as one set; no configuration change is
