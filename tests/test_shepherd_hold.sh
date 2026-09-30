@@ -48,15 +48,20 @@ mkdir -p "$SB/bin" "$SB/tmp"
 cat > "$SB/bin/curl" <<EOF
 #!/bin/bash
 sb="$SB"
-prev=""; payload=""; text=""; url=""
+prev=""; payload=""; text=""; url=""; config=""
 for a in "\$@"; do
   case "\$prev" in
     -d) payload="\$a" ;;
     --data-urlencode) case "\$a" in text=*) text="\${a#text=}" ;; esac ;;
+    -K) [ "\$a" != - ] || config=\$(cat) ;;
   esac
   case "\$a" in https://*) url="\$a" ;; esac
   prev="\$a"
 done
+# The Telegram URL (it holds the token) and the text come on stdin as curl config lines (curl -K -).
+case "\$config" in *'url = "https://api.telegram.org/'*) url=https://api.telegram.org/ ;; esac
+config_text=\$(printf '%s\n' "\$config" | sed -n 's/^data-urlencode = "text=\(.*\)"\$/\1/p')
+[ -z "\$config_text" ] || text="\$config_text"
 case "\$url" in *api.telegram.org*) printf '%s\n' "\$text" >> "\$sb/alerts.log"; exit 0 ;; esac
 labels=\$(jq -c '{nodes: map({name: .})}' "\$sb/labels.json")
 case "\$payload" in

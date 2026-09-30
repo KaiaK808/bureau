@@ -2,6 +2,9 @@
 # Compatibility entry point. New pipelines use run_stage_for + bureau-provider.py.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# The provider needs none of the Bureau secrets (bureau_without_secrets).
+# shellcheck source=templates/scripts/bureau-env.sh
+source "$SCRIPT_DIR/bureau-env.sh"
 export BUREAU_RUNNER_IMPLEMENT=codex
 SCHEMA=""
 while [ "$#" -gt 0 ]; do
@@ -18,9 +21,9 @@ done
 ARGS=(--stage implement --prompt-file -)
 [ -n "$SCHEMA" ] && ARGS+=(--schema "$SCHEMA")
 if [ "$#" = 1 ]; then
-  printf '%s' "$1" | python3 "$SCRIPT_DIR/bureau-provider.py" "${ARGS[@]}"
+  printf '%s' "$1" | bureau_without_secrets python3 -I "$SCRIPT_DIR/bureau-provider.py" "${ARGS[@]}"
 elif [ "$#" = 0 ]; then
-  exec python3 "$SCRIPT_DIR/bureau-provider.py" "${ARGS[@]}"
+  bureau_without_secrets python3 -I "$SCRIPT_DIR/bureau-provider.py" "${ARGS[@]}"
 else
   echo 'Expected one prompt or stdin' >&2; exit 2
 fi

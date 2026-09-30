@@ -26,11 +26,15 @@ ISSUE="EXP-$$$RANDOM"
 mkdir -p "$SB/bin"
 cat > "$SB/bin/curl" <<EOF
 #!/bin/bash
-prev=""
+prev=""; config=""
 for a in "\$@"; do
   [ "\$prev" = --data-urlencode ] && case "\$a" in text=*) printf '%s\n----\n' "\${a#text=}" >> "$SB/posts.log" ;; esac
+  [ "\$prev" = -K ] && [ "\$a" = - ] && config=\$(cat)
   prev="\$a"
 done
+# The alert text comes on stdin as a curl config line (curl -K -), with \n for a newline.
+text=\$(printf '%s\n' "\$config" | sed -n 's/^data-urlencode = "text=\(.*\)"\$/\1/p')
+[ -z "\$text" ] || printf '%s\n----\n' "\$text" >> "$SB/posts.log"
 EOF
 chmod +x "$SB/bin/curl"
 

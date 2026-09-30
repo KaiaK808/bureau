@@ -66,11 +66,116 @@ class AuthError(Exception):
     pass
 
 
+# Untrusted code runs without Bureau secrets. The agent runs the branch's
+# tests (Claude with --dangerously-skip-permissions) and loads the branch's own
+# agent settings, so it starts in the environment bureau_untrusted_env in
+# bureau-env.sh gives every other command the branch controls. Keep
+# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP and UNTRUSTED_KEEP equal to the lists
+# there; tests/test_untrusted_env.sh compares the two implementations and
+# tests/provider_untrusted_env_test.py pins these tuples.
+UNTRUSTED_REMOVE = ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID',
+                    'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')
+# A bash started by the agent sources the file BASH_ENV (or, as sh, ENV) names;
+# pointed at .env it would read the keys back in.
+UNTRUSTED_STARTUP = ('BASH_ENV', 'ENV')
+# A secret this long counts wherever it appears inside another value; a shorter
+# one only as the whole value (inside matching would take out every variable
+# that happens to contain two or three common characters).
+COPY_MIN = 6
+# git subcommands that talk to a remote keep the GitHub token variables their
+# credential helper may read (bureau-env.sh git()); gh keeps them too.
+REMOTE_GIT = ('push', 'fetch', 'pull', 'ls-remote', 'clone', 'remote', 'submodule')
+GIT_VALUE_OPTIONS = ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env')
+UNTRUSTED_KEEP = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
+                  'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI')
+# Under "clean" the agent CLI also keeps its own login and network settings;
+# without them it cannot authenticate or reach its API. Cloud-provider logins
+# (Bedrock, Vertex) are not kept: stay on the default for those.
+AGENT_KEEP_PREFIXES = {'claude': ('ANTHROPIC_', 'CLAUDE_', 'HEADROOM_'), 'codex': ('OPENAI_', 'CODEX_')}
+AGENT_KEEP = ('HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+              'all_proxy', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'XDG_CONFIG_HOME')
+
+
+class UntrustedEnvError(Exception):
+    pass
+
+
+def _carries(environ, names):
+    # The test "carries one of these secrets' values": a value of COPY_MIN
+    # characters or more anywhere inside, a shorter one as the whole value.
+    values = [environ.get(name, '') for name in names]
+    long_secrets = [value for value in values if len(value) >= COPY_MIN]
+    short_secrets = {value for value in values if 0 < len(value) < COPY_MIN}
+    return lambda value: value in short_secrets or any(secret in value for secret in long_secrets)
+
+
+def git_subcommand(args):
+    skip = False
+    for arg in args:
+        if skip: skip = False; continue
+        if arg in GIT_VALUE_OPTIONS: skip = True
+        elif not arg.startswith('-'): return arg
+    return ''
+
+
+def process_env(command, environ=None):
+    # The environment for a git or gh process Bureau starts itself from Python
+    # (bureau-doctor.py uses this one; bureau-supervision.py and
+    # bureau-runtime.py carry a copy so they need no other file): the same as
+    # the git() and gh() functions in bureau-env.sh give the shell's. Hooks,
+    # filters, an fsmonitor or a credential helper such a process runs can come
+    # from the branch. Always without the .env keys, their copies, BASH_ENV and
+    # ENV; without the GitHub token variables too, except for gh and for git
+    # commands that talk to a remote.
+    environ = os.environ if environ is None else environ
+    name = os.path.basename(command[0]) if command else ''
+    remote = name == 'gh' or (name == 'git' and git_subcommand(command[1:]) in REMOTE_GIT)
+    names = UNTRUSTED_REMOVE[:3] if remote else UNTRUSTED_REMOVE
+    carries = _carries(environ, names)
+    return {key: value for key, value in environ.items()
+            if key not in names and key not in UNTRUSTED_STARTUP and not carries(value)}
+
+
+def untrusted_env_mode(config):
+    # Same reading as _bureau_untrusted_env_mode in bureau-env.sh: absent or
+    # null is "default"; anything but "default" or "clean" refuses (24).
+    repo = config.get('repo')
+    if repo is None: return 'default'
+    if not isinstance(repo, dict): raise UntrustedEnvError('repo must be an object')
+    mode = repo.get('untrusted_env')
+    if mode is None: return 'default'
+    if isinstance(mode, str) and mode in ('default', 'clean'): return mode
+    raise UntrustedEnvError('repo.untrusted_env must be absent, "default" or "clean" (read: ' + json.dumps(mode)
+                            + '); the agent was not started (24, environment-blocked)')
+
+
+def untrusted_env(environ, mode, runner=None):
+    # The environment for code the branch controls. "default": everything but
+    # the listed secrets, BASH_ENV and ENV, and any variable that carries one
+    # of their values (_carries). "clean": only UNTRUSTED_KEEP, plus, for an
+    # agent, its own login and network variables, again without any value that
+    # carries a secret. The caller's environment is never changed.
+    carries = _carries(environ, UNTRUSTED_REMOVE)
+    if mode == 'clean':
+        prefixes = AGENT_KEEP_PREFIXES.get(runner, ())
+        def keep(name):
+            return name in UNTRUSTED_KEEP or (runner is not None and (name in AGENT_KEEP or name.startswith(prefixes)))
+    elif mode == 'default':
+        def keep(name):
+            return name not in UNTRUSTED_REMOVE and name not in UNTRUSTED_STARTUP
+    else:
+        raise UntrustedEnvError('unknown untrusted environment mode')
+    return {name: value for name, value in environ.items() if keep(name) and not carries(value)}
+
+
 def auth(options):
     runner = options['runner']
     if not shutil.which(runner): raise AuthError(runner + ' executable is missing')
     cmd = ['claude', 'auth', 'status', '--json'] if runner == 'claude' else ['codex', 'login', 'status']
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    # The login check runs in the environment the agent will get, so a
+    # "clean" mode that drops the agent's login fails here, with 16.
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20,
+                          env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner))
     if proc.returncode != 0: raise AuthError(runner + ' is not authenticated')
     if runner == 'claude':
         try: logged = json.loads(proc.stdout).get('loggedIn') is True
@@ -147,7 +252,8 @@ def run(options, prompt, system, repo, evidence, schema=None):
     started = time.monotonic()
     with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
     with (evidence/'stdout.log').open('wb') as stdout, (evidence/'stderr.log').open('wb') as stderr:
-        child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, start_new_session=True)
+        child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, start_new_session=True,
+                                 env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner))
         if interrupted: kill(interrupted)
         timed_out = False
         try:
@@ -221,6 +327,7 @@ def main():
         config_path=Path(args.config).resolve(); config=json.loads(config_path.read_text())
         options=configuration(args.stage, config, os.environ)
         if args.describe: print(json.dumps(options)); return 0
+        options['untrusted_env']=untrusted_env_mode(config)
         auth(options)
         if args.check: print(json.dumps(dict(runner=options['runner'], authenticated=True))); return 0
         if not args.prompt_file: raise ValueError('--prompt-file is required')
@@ -240,7 +347,7 @@ def main():
         else: print('Bureau provider outcome: '+metadata['outcome'],file=sys.stderr)
         return code
     except AuthError as exc: print(str(exc),file=sys.stderr); return 16
-    except PermissionError as exc: print(str(exc),file=sys.stderr); return 24
+    except (PermissionError, UntrustedEnvError) as exc: print(str(exc),file=sys.stderr); return 24
     except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
         if evidence: (evidence/'result.json').write_text(json.dumps({'outcome':'invalid-result','error':str(exc)}))
         print('Bureau provider: '+str(exc),file=sys.stderr); return 22

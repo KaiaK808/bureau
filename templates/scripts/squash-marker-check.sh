@@ -37,6 +37,11 @@
 set -uo pipefail
 
 LIST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ci-skip-markers.txt"
+# Its git reads run in the stage worktree: through the git function of
+# bureau-env.sh, without the Bureau secrets (an fsmonitor or other hook git
+# starts can come from the branch).
+# shellcheck source=templates/scripts/bureau-env.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-env.sh"
 BASE="${1:-origin/main}"
 RANGE="$BASE..HEAD"
 NL=$'\n'
