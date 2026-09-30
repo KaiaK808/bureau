@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f29aa38f5be3da85809fa30f7cba68a51cd3163292b4e080b4486895c4cccfed">
+<meta name="bureau-source-sha256" content="977abcecdd25a9ddccb14c95549d90fd334db5f96854c287d34eb63d02ff0199">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -513,7 +513,13 @@ interrupted by SIGTERM and ended with <code>130</code>, and its resume
 stopped with exit <code>21</code> ("refusing to reset unregistered
 worktree"). Those two runs showed the three gaps rc.2 fixes; nothing
 else from the acceptance needed a change. The pilot installation was
-then resynced to rc.2. PILOT-RC2-RESULT</p>
+then resynced to rc.2, and a second ticket went from Triage to Done with
+the shepherd in 46 minutes without a halt: one implement iteration, a
+review log that printed "Build output: last 20 of 2088 lines" before the
+tail of the build output, and a merge log line naming the pinned head,
+which was the head the review had approved. The interrupt and
+exit-<code>21</code> paths of rc.2 did not occur in that run; they rest
+on the tests described below.</p>
 <p>v3.1.0 is validated by the full Linux/macOS suite on the release
 commit and the installer fixtures. Each of the six pull requests of rc.1
 went through an independent verification pass, a fix round for its

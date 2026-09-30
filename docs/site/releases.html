@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b36b090ab6582031f31dc20dacd39995313be677666f3fbaff24fd70afee4582">
+<meta name="bureau-source-sha256" content="0e93e38d55f453de80aed30aa778a8ef69a16620b6a5ee2c61bb20c2c51eaa51">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -65,12 +65,15 @@ On rc.1 one ticket went from Triage to Done with the shepherd in 54
 minutes, with the merge pinned to the head the gate checked and the
 review comment carrying the merger's findings; before that run, a run
 interrupted by SIGTERM and its resume, which stopped with exit
-<code>21</code>, showed the gaps rc.2 fixes. PILOT-RC2-RESULT rc.1's
-changes are validated by the full Linux/macOS suite, the installer
-fixtures, tests on the real scripts with negative controls against
-v3.0.2 and mutation checks, and an independent verification pass per
-pull request with a fix round and a delta check of the fixes (#33 also
-went through three Codex cross-check rounds); a replay of the 1,889 real
+<code>21</code>, showed the gaps rc.2 fixes. On rc.2 a second ticket
+went from Triage to Done with the shepherd in 46 minutes; the merge log
+line named the pinned head, the head the review had approved, and the
+interrupt and exit-<code>21</code> paths did not occur. rc.1's changes
+are validated by the full Linux/macOS suite, the installer fixtures,
+tests on the real scripts with negative controls against v3.0.2 and
+mutation checks, and an independent verification pass per pull request
+with a fix round and a delta check of the fixes (#33 also went through
+three Codex cross-check rounds); a replay of the 1,889 real
 branch/listing pairs from eight installations used for v3.0.2 gives the
 same spec directory as v3.0.2 in every pair. rc.2's changes are
 validated by the full Linux/macOS suite on the release commit, new tests
