@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="fd364842bcb10ad52880318bd011ec99a38a42d7e1cbfc7da91f903d02db8062">
+<meta name="bureau-source-sha256" content="7192c90b318c3f39c8d908ad58c335264f59428ee8d6b376cb9e95ab9c940269">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -679,12 +679,14 @@ token variables — <code>LINEAR_API_KEY</code>,
 <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>,
 <code>GH_ENTERPRISE_TOKEN</code>, <code>GITHUB_ENTERPRISE_TOKEN</code>
 —, minus any other variable that carries one of their values (a value of
-8 characters or more anywhere inside, a shorter one as the whole value;
-the stages copy the Linear key into <code>API_KEY</code>, and a token
-also hides in a remote URL or an <code>Authorization</code> header), and
-minus <code>BASH_ENV</code> and <code>ENV</code>, which would make the
-bash child source a file before the command runs. <code>"clean"</code>:
-only <code>PATH</code>, <code>HOME</code>, <code>USER</code>,
+6 characters or more anywhere inside, a shorter one only as the whole
+value, so a very short secret of 6 or 7 characters can also remove an
+unrelated variable that happens to contain it; the stages copy the
+Linear key into <code>API_KEY</code>, and a token also hides in a remote
+URL or an <code>Authorization</code> header), and minus
+<code>BASH_ENV</code> and <code>ENV</code>, which would make the bash
+child source a file before the command runs. <code>"clean"</code>: only
+<code>PATH</code>, <code>HOME</code>, <code>USER</code>,
 <code>LOGNAME</code>, <code>SHELL</code>, <code>TMPDIR</code>,
 <code>TEMP</code>, <code>TMP</code>, <code>LANG</code>,
 <code>LC_ALL</code>, <code>LC_CTYPE</code>, <code>TERM</code>,
@@ -711,17 +713,19 @@ every model stage already does), a hook is not run and halts implement
 with <code>14</code> after the run's commits are pushed,
 <code>upstream-port.sh</code> stops with <code>18</code> before
 building. The stage itself keeps the keys for its own Linear, GitHub and
-Telegram calls. Independent of this key: Bureau's own git commands run
-without the seven (those that talk to a remote keep the GitHub token
-variables), the provider starts without them, the runtime wrapper
-without the <code>.env</code> keys the stage reads back, and the stages
-never link a <code>.env*</code> file into a stage worktree — a
+Telegram calls. Independent of this key: Bureau's own git and
+<code>gh</code> commands, in the shell and from its Python, run without
+the seven (<code>gh</code> and the git commands that talk to a remote
+keep the GitHub token variables), the provider starts without them, the
+runtime wrapper without <code>BASH_ENV</code>, <code>ENV</code> and the
+<code>.env</code> keys the stage reads back, and the stages never link a
+<code>.env*</code> file into a stage worktree — a
 <code>repo.worktree_links</code> entry with a path component starting
 with <code>.env</code> (any case, <code>.envrc</code> too), whose target
 in the main checkout is such a file, or which is a directory with such a
-name among the entries of its top two levels is skipped with one warning
-line. Code running as the same user can still read files and other
-processes' environments; see <a
+name anywhere below it is skipped with one warning line. Code running as
+the same user can still read files and other processes' environments;
+see <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
 </tr>
 <tr>
@@ -787,10 +791,9 @@ into every stage worktree, where pull-request code runs, while the reset
 keeps them out otherwise; the stages find <code>.env</code> through the
 main checkout without it. The stages skip such an entry with one warning
 line, and beyond the doctor's rule also a directory with a
-<code>.env*</code> name among the entries of its top two levels (a
-<code>.env</code> further down is not searched).
-<code>bureau-doctor.py</code> lists each entry with its status
-(<code>ok</code>, <code>missing in the main checkout</code>,
+<code>.env*</code> name anywhere below it. <code>bureau-doctor.py</code>
+lists each entry with its status (<code>ok</code>,
+<code>missing in the main checkout</code>,
 <code>tracked in the main checkout</code>,
 <code>not ignored as a symlink</code>, <code>invalid</code>,
 <code>env file</code>, <code>no main checkout</code>), warns or errors

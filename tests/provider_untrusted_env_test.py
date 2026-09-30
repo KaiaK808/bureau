@@ -158,12 +158,30 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         self.assertEqual(p.untrusted_env_mode({'repo': None}), 'default')
         self.assertEqual(p.untrusted_env_mode({'repo': {'untrusted_env': None}}), 'default')
         self.assertEqual(p.untrusted_env_mode({'repo': {'untrusted_env': 'clean'}}), 'clean')
-        # A secret of 8 characters or more goes wherever it appears inside a value; a shorter one
-        # only as the whole value (CI=1234567 goes with a chat id 1234567, x1234567 stays).
-        short = p.untrusted_env({'TELEGRAM_ALERT_CHAT_ID': '1234567', 'CI': '1234567', 'Z': 'x1234567',
+        # A secret of 6 characters or more goes wherever it appears inside a value; a shorter one
+        # only as the whole value (CI=12345 goes with a chat id 12345, x12345 stays).
+        short = p.untrusted_env({'TELEGRAM_ALERT_CHAT_ID': '12345', 'CI': '12345', 'Z': 'x12345',
+                                 'LINEAR_API_KEY': 'abc123', 'H': 'Authorization: abc123',
                                  'GH_TOKEN': '12345678', 'X': '12345678', 'Y': 'Bearer 12345678 end',
                                  'BASH_ENV': '/tmp/env.sh', 'ENV': '/tmp/env.sh', 'PATH': '/bin'}, 'default')
-        self.assertEqual(short, {'Z': 'x1234567', 'PATH': '/bin'})
+        self.assertEqual(short, {'Z': 'x12345', 'PATH': '/bin'})
+        self.assertEqual(p.COPY_MIN, 6)
+
+    def test_bureau_git_and_gh_processes(self):
+        # process_env: the environment bureau-supervision.py, bureau-runtime.py and bureau-doctor.py
+        # give the git and gh processes they start (the git() and gh() functions of bureau-env.sh).
+        environ = {**SECRETS, **ALIASES, **OPERATOR, 'BASH_ENV': '/dev/null', 'ENV': '/dev/null', 'PATH': '/bin'}
+        local = p.process_env(['git', '-C', '/repo', '--literal-pathspecs', 'status', '--porcelain'], environ)
+        self.assertEqual(local, {**OPERATOR, 'PATH': '/bin'})
+        for command in (['git', '-C', '/repo', 'ls-remote', 'origin'], ['git', 'push'], ['git', '-c', 'x=y', 'fetch'],
+                        ['gh', 'pr', 'create'], ['/usr/local/bin/gh', 'pr', 'merge']):
+            with self.subTest(command=command):
+                remote = p.process_env(command, environ)
+                for name in ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID', 'API_KEY', 'BASH_ENV', 'ENV'):
+                    self.assertFalse(name in remote, name + ' reached ' + command[0])
+                for name in ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'CARGO_ALIAS', 'REMOTE_URL'):
+                    self.assertEqual(remote.get(name), {**SECRETS, **ALIASES}[name], name + ' was taken from ' + command[0])
+        self.assertEqual(p.git_subcommand(['-C', 'push', 'status']), 'status')
 
     def test_lists_are_pinned(self):
         # Literal sets: widening the clean list (an SSH agent, a cloud key) or shortening the

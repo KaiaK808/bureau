@@ -190,13 +190,17 @@ bureau_load_env() {
 # TELEGRAM_BOT_TOKEN, TELEGRAM_ALERT_CHAT_ID) and the GitHub token variables
 # (GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN, GITHUB_ENTERPRISE_TOKEN).
 # Removing a name also removes every other exported variable that carries its
-# value: a value of 8 characters or more anywhere inside another value (the
+# value: a value of 6 characters or more anywhere inside another value (the
 # stages' API_KEY copy of the Linear key, a token inside a remote URL or an
-# Authorization header), a shorter one when it is the whole value. BASH_ENV and
-# ENV go as well: a bash child sources the file BASH_ENV names at startup, and
-# pointed at .env it would read the keys back in. Keep the lists here equal to
-# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP and UNTRUSTED_KEEP in bureau-provider.py;
-# tests/test_untrusted_env.sh compares the two implementations and pins both.
+# Authorization header), a shorter one only when it is the whole value — inside
+# matching of two to five characters would take out every variable that
+# happens to contain them. BASH_ENV and ENV go as well: a bash child sources
+# the file BASH_ENV names at startup (a relative name from its working
+# directory, which can be the branch's worktree), and pointed at .env it would
+# read the keys back in. Keep the lists and the 6 here equal to
+# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, COPY_MIN and UNTRUSTED_KEEP in
+# bureau-provider.py; tests/test_untrusted_env.sh compares the implementations
+# and pins both.
 # Every function below leaves the calling shell alone (the stage keeps its keys
 # for its own Linear, GitHub and Telegram calls), calls env by its absolute path
 # /usr/bin/env (a PATH entry such as node_modules/.bin cannot stand in for it),
@@ -235,6 +239,12 @@ bureau_load_env() {
 #   inline Python. No command: exit 24. The Linear and Telegram requests drop
 #   the same variables in their own subshell (_bureau_drop_secrets).
 #
+# gh
+#   A function in every script that sources this file: gh runs git itself (to
+#   find the repository, to push for `gh pr create`), so it starts without the
+#   three .env keys, their copies, BASH_ENV and ENV; it keeps the GitHub token
+#   variables it authenticates with.
+#
 # git
 #   A function in every script that sources this file. Bureau's own git
 #   commands in a stage worktree run the repository's hooks and filters, and
@@ -249,13 +259,16 @@ bureau_load_env() {
 #
 # bureau_exec_runtime <command> [argument ...]
 #   Replaces the shell with the runtime wrapper (python3 bureau-runtime.py
-#   … exec …) without those of the three .env keys (and their copies) that the
-#   relaunched script reads back from its .env file: set now, defined in
-#   BUREAU_ENV_FILE, and defined in ./.env as well when that exists (a stage
-#   reads ./.env first). The runtime is an ancestor of every stage and runs
-#   under a Python whose environment `ps -E` can read on macOS; it needs none
-#   of the keys. A key that exists only in the calling environment, and the
-#   GitHub token variables the stages' gh calls use, pass on unchanged.
+#   … exec …) without BASH_ENV and ENV — every bash below it (the relaunched
+#   worker or stage, the stage the worker starts after changing into the
+#   branch's worktree) would source a relative BASH_ENV from there — and
+#   without those of the three .env keys (and their copies) that the relaunched
+#   script reads back from its .env file: set now, defined in BUREAU_ENV_FILE,
+#   and defined in ./.env as well when that exists (a stage reads ./.env
+#   first). The runtime is an ancestor of every stage and runs under a Python
+#   whose environment `ps -E` can read on macOS; it needs none of the keys. A
+#   key that exists only in the calling environment, and the GitHub token
+#   variables the stages' gh calls use, pass on unchanged.
 
 # _bureau_env_build <mode> <names> <startup> — sets the array _BUREAU_ENV_ARGV
 # to the options /usr/bin/env needs: mode default|clean, names "seven",
@@ -271,7 +284,7 @@ _bureau_env_build() {
   esac
   for _beb_name in $_beb_names; do
     _beb_value="${!_beb_name:-}"
-    if [ "${#_beb_value}" -ge 8 ]; then _beb_long+=("$_beb_value")
+    if [ "${#_beb_value}" -ge 6 ]; then _beb_long+=("$_beb_value")
     elif [ -n "$_beb_value" ]; then _beb_short+=("$_beb_value"); fi
     _BUREAU_ENV_ARGV+=(-u "$_beb_name")
   done
@@ -423,6 +436,16 @@ _bureau_drop_secrets() {
   return 0
 }
 
+gh() {
+  case $- in
+    (*x*) set +x; local _bgh_trace=1 ;;
+    (*) local _bgh_trace=0 ;;
+  esac
+  _bureau_env_build default dotenv 1
+  if [ "$_bgh_trace" = 1 ]; then set -x; fi
+  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" gh "$@"
+}
+
 # _bureau_env_file_defines <file> <name> — 0 when bureau_load_env sets <name>
 # from <file>. Runs the real reader in a subshell; prints nothing.
 _bureau_env_file_defines() {
@@ -442,8 +465,7 @@ bureau_exec_runtime() {
     if [ -f .env ] && ! _bureau_env_file_defines .env "$_ber_name"; then continue; fi
     _ber_names="$_ber_names $_ber_name"
   done
-  _BUREAU_ENV_ARGV=()
-  if [ -n "$_ber_names" ]; then _bureau_env_build default "$_ber_names" 0; fi
+  _bureau_env_build default "$_ber_names" 1
   if [ "$_ber_trace" = 1 ]; then set -x; fi
-  exec /usr/bin/env ${_BUREAU_ENV_ARGV[@]+"${_BUREAU_ENV_ARGV[@]}"} "$@"
+  exec /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" "$@"
 }

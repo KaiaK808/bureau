@@ -7,9 +7,8 @@
 # link the main checkout's secrets right back in. The stages skip such an entry with one
 # warning line: any path component that starts with `.env` in any case, or an entry whose real
 # target in the main checkout is such a file (the rule env_file in bureau-doctor.py reports as
-# an error), and, beyond the doctor, a directory with such a name among the entries of its top
-# two levels (a .env three levels down is not searched: `deeper` below is linked, by design, so
-# a virtualenv is checked quickly). Names that only contain "env" are linked as before.
+# an error), and, beyond the doctor, a directory with such a name anywhere below it (`deeper`
+# holds one three levels down). Names that only contain "env" are linked as before.
 #
 # Runs the REAL bureau_link_worktree_paths, cut from templates/scripts/bureau-config.sh, as
 # tests/test_worktree_links.sh does, against a real main checkout (with a space in its path)
@@ -60,15 +59,15 @@ setup() {
   mkdir -p "$MAIN/settings" "$MAIN/deep/sub" "$MAIN/deeper/a/b"
   printf 'LINEAR_API_KEY=lin_api_PROBE_linear_0001\n' > "$MAIN/settings/.env"   # a directory holding .env
   printf 'X=1\n' > "$MAIN/deep/sub/.Env.Local"      # ... one level further down
-  printf 'X=1\n' > "$MAIN/deeper/a/b/.env"         # ... below the two levels searched (linked)
+  printf 'X=1\n' > "$MAIN/deeper/a/b/.env"         # ... three levels down
   mkdir -p "$MAIN/.venv/bin" "$MAIN/env"; printf 'x\n' > "$MAIN/my.env"
   git -C "$MAIN" branch feat
   git -C "$MAIN" worktree add -q "$WT" feat
   git -C "$WT" clean -fdx --quiet
 }
 
-ENV_ENTRIES='.env .env.local .envrc .ENV.Local config/.env.production secrets conf upper .Envs/prod tools/.Envs/key settings deep'
-OTHER_ENTRIES='.venv my.env env deeper'
+ENV_ENTRIES='.env .env.local .envrc .ENV.Local config/.env.production secrets conf upper .Envs/prod tools/.Envs/key settings deep deeper'
+OTHER_ENTRIES='.venv my.env env'
 LIST='[".env", ".env.local", ".envrc", ".ENV.Local", "config/.env.production", "secrets", "conf", "upper", ".Envs/prod", "tools/.Envs/key", "settings", "deep", ".venv", "my.env", "env", "deeper"]'
 
 # run_with <fn file> — the configured list through the given copy of the function.
@@ -135,7 +134,7 @@ report, errors, warnings = d.worktree_links(Path(sys.argv[2]), json.loads(open(s
 print(' '.join(sorted(entry['path'] for entry in report if entry.get('status') == 'env file')))
 PY
 )
-stage_skipped=$(for e in $ENV_ENTRIES; do case "$e" in (settings|deep) ;; (*) printf '%s\n' "$e" ;; esac; done | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+stage_skipped=$(for e in $ENV_ENTRIES; do case "$e" in (settings|deep|deeper) ;; (*) printf '%s\n' "$e" ;; esac; done | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
 doctor_sorted=$(printf '%s\n' $doctor_env | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
 [ "$doctor_sorted" = "$stage_skipped" ] || fail "4: the doctor reports [$doctor_sorted] as env file, the stages skip [$stage_skipped] by the same rule"
 [ "$FAILS" = "$before" ] && echo "PASS the stages skip exactly what bureau-doctor.py reports as a .env file, plus directories holding one"

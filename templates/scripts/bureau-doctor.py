@@ -261,10 +261,10 @@ def main_checkout(repo):
     checkout and not itself. Returns (path, None), or (None, reason) for a bare repository and
     for a git directory kept outside the main checkout (--separate-git-dir), where the stages
     make no links. Outside git the checkout is its own main checkout."""
-    raw = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--git-common-dir'], capture_output=True, text=True).stdout.strip()
+    raw = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--git-common-dir'], capture_output=True, text=True, env=module('provider').process_env(['git', '-C', str(repo), 'rev-parse', '--git-common-dir'])).stdout.strip()
     if not raw: return repo, None
     common = raw if os.path.isabs(raw) else os.path.join(str(repo), raw)
-    bare = subprocess.run(['git', '--git-dir=' + common, 'rev-parse', '--is-bare-repository'], capture_output=True, text=True).stdout.strip()
+    bare = subprocess.run(['git', '--git-dir=' + common, 'rev-parse', '--is-bare-repository'], capture_output=True, text=True, env=module('provider').process_env(['git', '--git-dir=' + common, 'rev-parse', '--is-bare-repository'])).stdout.strip()
     if bare == 'true':
         return None, 'the repository is bare, so there is no main checkout to link from'
     # `cd "$common/.." && pwd -P`: the logical parent, then the physical path.
@@ -297,7 +297,7 @@ def worktree_links(repo, config, checkout=None):
     main, no_main = checkout if checkout is not None else main_checkout(repo)
     report, errors, warnings = [], [], []
     if no_main and raw: warnings.append('repo.worktree_links: ' + no_main + '; stages make no links')
-    git_dir = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--absolute-git-dir'], capture_output=True, text=True).stdout.strip()
+    git_dir = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--absolute-git-dir'], capture_output=True, text=True, env=module('provider').process_env(['git', '-C', str(repo), 'rev-parse', '--absolute-git-dir'])).stdout.strip()
     for entry in raw:
         if not isinstance(entry, str) or '\n' in entry:
             errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is not a one-line string'); continue
@@ -311,7 +311,7 @@ def worktree_links(repo, config, checkout=None):
         if main is None:
             report.append(dict(path=path, status='no main checkout')); continue
         status = 'ok'
-        tracked = subprocess.run(['git', '-C', str(main), '--literal-pathspecs', 'ls-files', '--', path], capture_output=True, text=True).stdout.strip() if git_dir else ''
+        tracked = subprocess.run(['git', '-C', str(main), '--literal-pathspecs', 'ls-files', '--', path], capture_output=True, text=True, env=module('provider').process_env(['git', '-C', str(main), '--literal-pathspecs', 'ls-files', '--', path])).stdout.strip() if git_dir else ''
         if tracked:
             status = 'tracked in the main checkout'
         elif not (main / path).exists():
@@ -323,7 +323,7 @@ def worktree_links(repo, config, checkout=None):
                     if ignore.is_file():
                         target = Path(shadow).joinpath(*parts[:depth], '.gitignore')
                         target.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(ignore, target)
-                probe = subprocess.run(['git', '--git-dir=' + git_dir, '--work-tree=' + shadow, '-C', shadow, 'check-ignore', '-q', '--no-index', '--', path], capture_output=True, text=True)
+                probe = subprocess.run(['git', '--git-dir=' + git_dir, '--work-tree=' + shadow, '-C', shadow, 'check-ignore', '-q', '--no-index', '--', path], capture_output=True, text=True, env=module('provider').process_env(['git', '--git-dir=' + git_dir, '--work-tree=' + shadow, '-C', shadow, 'check-ignore', '-q', '--no-index', '--', path]))
             if probe.returncode != 0:
                 status = 'not ignored as a symlink'
         if status == 'tracked in the main checkout':

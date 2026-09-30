@@ -73,13 +73,16 @@ want="CI HOME HOOK_VAR LANG LC_ALL LC_CTYPE LOGNAME PATH SHELL TEMP TERM TMP TMP
 [ "$got" = "$want" ] || fail "1 clean list: got [$got], wanted [$want]"
 pr1_pass "1 default drops the secrets and their copies, clean keeps only its list, the caller keeps its keys"
 
-# A copy of a short secret (under 8 characters) goes when it is the whole value; inside a
-# longer value it stays (a 4-digit chat id would otherwise take out half the environment).
+# A secret of 6 characters or more goes wherever it appears inside a value (a 6-character key
+# in a copied Authorization header); a shorter one only as the whole value (inside matching of
+# a 5-character chat id would take out every variable that happens to contain it).
 rm -f "$H"
-run_helper "$DEFAULT_CFG" "export TELEGRAM_ALERT_CHAT_ID=1234567 CHAT_COPY=1234567 CHAT_INSIDE=x1234567y; \
+run_helper "$DEFAULT_CFG" "export LINEAR_API_KEY=abc123 COPIED_HEADER='Authorization: abc123' \
+  TELEGRAM_ALERT_CHAT_ID=12345 CHAT_COPY=12345 CHAT_INSIDE=x12345y; \
   bureau_untrusted_env /usr/bin/env > \"$H\"" >/dev/null
+if grep -q '^COPIED_HEADER=' "$H"; then fail "1 short: a 6-character secret inside another value reached the command"; fi
 if grep -q '^CHAT_COPY=' "$H"; then fail "1 short: a whole-value copy of a short secret reached the command"; fi
-grep -qx 'CHAT_INSIDE=x1234567y' "$H" || fail "1 short: a value that only contains a short secret was removed"
+grep -qx 'CHAT_INSIDE=x12345y' "$H" || fail "1 short: a value that only contains a 5-character secret was removed"
 if grep -q '^TELEGRAM_ALERT_CHAT_ID=' "$H"; then fail "1 short: the short secret itself reached the command"; fi
 
 # BASH_ENV: a bash child sources the file it names before running its -c string, so a
@@ -140,8 +143,9 @@ pr1_pass "1 under set -x the trace names the removed variables, never a value"
 # Parity: the shell helper and bureau-provider.py reduce the same environment alike.
 for mode in default clean; do
   cfg="$DEFAULT_CFG"; [ "$mode" = clean ] && cfg="$CLEAN_CFG"
-  env -i PATH="$PATH" HOME="$HOME" LANG=C CI=1234567 TZ="UTC$PR1_GH" USER=u \
-    LINEAR_API_KEY="$PR1_LINEAR" GH_TOKEN="$PR1_GH" TELEGRAM_ALERT_CHAT_ID=1234567 SHORT_COPY=1234567 SHORT_INSIDE=x1234567 \
+  env -i PATH="$PATH" HOME="$HOME" LANG=C CI=12345 TZ="UTC$PR1_GH" USER=u \
+    LINEAR_API_KEY="$PR1_LINEAR" GH_TOKEN="$PR1_GH" TELEGRAM_ALERT_CHAT_ID=12345 SHORT_COPY=12345 SHORT_INSIDE=x12345 \
+    TELEGRAM_BOT_TOKEN=abc123 HEADER6="Authorization: abc123" \
     BASH_ENV=/dev/null ENV=/dev/null SSH_AUTH_SOCK=/tmp/agent.sock \
     API_KEY="$PR1_LINEAR" CARGO_ALIAS="$PR1_GH" OPERATOR_TOOL_VAR="$PR1_OPERATOR" BUREAU_CONFIG="$cfg" \
     REMOTE_URL="https://x-access-token:$PR1_GH@github.com/owner/repo.git" LANGUAGE="x${PR1_LINEAR}y" \

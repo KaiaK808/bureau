@@ -14,9 +14,35 @@ import tempfile
 import time
 import uuid
 
+def process_env(command, environ=None):
+    # Bureau's own git and gh calls run without the Bureau secrets: hooks,
+    # filters, an fsmonitor or a credential helper they start can come from the
+    # branch. The same rule as process_env in bureau-provider.py and the git()
+    # and gh() functions in bureau-env.sh (tests/test_untrusted_env_bureau.sh
+    # compares them): never the three .env keys, their copies (6 characters or
+    # more anywhere inside a value, a shorter one as the whole value), BASH_ENV
+    # or ENV; the GitHub token variables only for gh and for git commands that
+    # talk to a remote. Kept here so this script needs no other file.
+    environ = os.environ if environ is None else environ
+    names = ['LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID']
+    sub, skip = '', False
+    for arg in command[1:]:
+        if skip: skip = False
+        elif arg in ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env'): skip = True
+        elif not arg.startswith('-'): sub = arg; break
+    if os.path.basename(command[0]) != 'gh' and sub not in ('push', 'fetch', 'pull', 'ls-remote', 'clone', 'remote', 'submodule'):
+        names += ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']
+    values = [environ.get(name, '') for name in names]
+    long_secrets = [value for value in values if len(value) >= 6]
+    short_secrets = {value for value in values if 0 < len(value) < 6}
+    return {key: value for key, value in environ.items()
+            if key not in names and key not in ('BASH_ENV', 'ENV') and value not in short_secrets
+            and not any(secret in value for secret in long_secrets)}
+
 
 def git(repo, *args):
-    return subprocess.check_output(['git', '-C', str(repo), *args], text=True).strip()
+    command = ['git', '-C', str(repo), *args]
+    return subprocess.check_output(command, text=True, env=process_env(command)).strip()
 
 
 def directory(repo):
@@ -84,9 +110,8 @@ def check(repo, root, issue, branch, state, detail):
     if same:
         # Query the PR itself so a push, closure, or merge can invalidate the
         # stopped boundary without changing or resetting any local checkout.
-        raw = subprocess.check_output(
-            ['gh', 'pr', 'view', str(record['pr']), '--json', 'state,baseRefName'],
-            cwd=repo, text=True, timeout=30)
+        command = ['gh', 'pr', 'view', str(record['pr']), '--json', 'state,baseRefName']
+        raw = subprocess.check_output(command, cwd=repo, text=True, timeout=30, env=process_env(command))
         current = json.loads(raw)
         if not isinstance(current, dict) or current.get('state') not in ('OPEN', 'CLOSED', 'MERGED'):
             raise ValueError('GitHub did not return the PR state')
@@ -94,7 +119,7 @@ def check(repo, root, issue, branch, state, detail):
         if same:
             base_ref = current.get('baseRefName')
             if (not isinstance(base_ref, str) or not base_ref or base_ref.startswith('-')
-                    or subprocess.run(['git', 'check-ref-format', 'refs/heads/' + base_ref],
+                    or subprocess.run(['git', 'check-ref-format', 'refs/heads/' + base_ref], env=process_env(['git', 'check-ref-format']),
                                       cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode):
                 raise ValueError('GitHub did not return a valid PR base branch')
             # Older boundaries were always recorded against main. A retarget
@@ -103,9 +128,8 @@ def check(repo, root, issue, branch, state, detail):
         if same:
             # GitHub's PR snapshot can lag a branch update. Read both remote
             # refs directly; never equate a cached baseRefOid with its current tip.
-            refs = subprocess.check_output(
-                ['git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/' + branch, 'refs/heads/' + base_ref],
-                cwd=repo, text=True, timeout=30)
+            command = ['git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/' + branch, 'refs/heads/' + base_ref]
+            refs = subprocess.check_output(command, cwd=repo, text=True, timeout=30, env=process_env(command))
             tips = dict((ref, sha) for sha, ref in (line.split() for line in refs.splitlines()))
             if 'refs/heads/' + base_ref not in tips:
                 raise ValueError('The current remote base is unavailable')
@@ -239,7 +263,7 @@ def main():
             else:
                 if any(not re.fullmatch(r'[0-9a-f]{40,64}', value) for value in (args.head, args.base, args.reviewed_head)) or args.pr <= 0:
                     raise ValueError('A review stop requires a commit SHA and PR number')
-                if (args.base_ref.startswith('-') or subprocess.run(['git', 'check-ref-format', 'refs/heads/' + args.base_ref],
+                if (args.base_ref.startswith('-') or subprocess.run(['git', 'check-ref-format', 'refs/heads/' + args.base_ref], env=process_env(['git', 'check-ref-format']),
                         cwd=repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode):
                     raise ValueError('A review stop requires a valid base branch')
                 record = dict(workspace=str(repo), branch=args.branch, state=args.state, head=args.head, base=args.base, base_ref=args.base_ref, reviewed_head=args.reviewed_head, pr=args.pr,

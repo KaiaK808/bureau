@@ -78,6 +78,14 @@ UNTRUSTED_REMOVE = ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT
 # A bash started by the agent sources the file BASH_ENV (or, as sh, ENV) names;
 # pointed at .env it would read the keys back in.
 UNTRUSTED_STARTUP = ('BASH_ENV', 'ENV')
+# A secret this long counts wherever it appears inside another value; a shorter
+# one only as the whole value (inside matching would take out every variable
+# that happens to contain two or three common characters).
+COPY_MIN = 6
+# git subcommands that talk to a remote keep the GitHub token variables their
+# credential helper may read (bureau-env.sh git()); gh keeps them too.
+REMOTE_GIT = ('push', 'fetch', 'pull', 'ls-remote', 'clone', 'remote', 'submodule')
+GIT_VALUE_OPTIONS = ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env')
 UNTRUSTED_KEEP = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
                   'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI')
 # Under "clean" the agent CLI also keeps its own login and network settings;
@@ -90,6 +98,42 @@ AGENT_KEEP = ('HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy'
 
 class UntrustedEnvError(Exception):
     pass
+
+
+def _carries(environ, names):
+    # The test "carries one of these secrets' values": a value of COPY_MIN
+    # characters or more anywhere inside, a shorter one as the whole value.
+    values = [environ.get(name, '') for name in names]
+    long_secrets = [value for value in values if len(value) >= COPY_MIN]
+    short_secrets = {value for value in values if 0 < len(value) < COPY_MIN}
+    return lambda value: value in short_secrets or any(secret in value for secret in long_secrets)
+
+
+def git_subcommand(args):
+    skip = False
+    for arg in args:
+        if skip: skip = False; continue
+        if arg in GIT_VALUE_OPTIONS: skip = True
+        elif not arg.startswith('-'): return arg
+    return ''
+
+
+def process_env(command, environ=None):
+    # The environment for a git or gh process Bureau starts itself from Python
+    # (bureau-doctor.py uses this one; bureau-supervision.py and
+    # bureau-runtime.py carry a copy so they need no other file): the same as
+    # the git() and gh() functions in bureau-env.sh give the shell's. Hooks,
+    # filters, an fsmonitor or a credential helper such a process runs can come
+    # from the branch. Always without the .env keys, their copies, BASH_ENV and
+    # ENV; without the GitHub token variables too, except for gh and for git
+    # commands that talk to a remote.
+    environ = os.environ if environ is None else environ
+    name = os.path.basename(command[0]) if command else ''
+    remote = name == 'gh' or (name == 'git' and git_subcommand(command[1:]) in REMOTE_GIT)
+    names = UNTRUSTED_REMOVE[:3] if remote else UNTRUSTED_REMOVE
+    carries = _carries(environ, names)
+    return {key: value for key, value in environ.items()
+            if key not in names and key not in UNTRUSTED_STARTUP and not carries(value)}
 
 
 def untrusted_env_mode(config):
@@ -108,15 +152,10 @@ def untrusted_env_mode(config):
 def untrusted_env(environ, mode, runner=None):
     # The environment for code the branch controls. "default": everything but
     # the listed secrets, BASH_ENV and ENV, and any variable that carries one
-    # of their values: a value of 8 characters or more anywhere inside, a
-    # shorter one as the whole value. "clean": only UNTRUSTED_KEEP, plus, for
-    # an agent, its own login and network variables, again without any value
-    # that carries a secret. The caller's environment is never changed.
-    values = [environ.get(name, '') for name in UNTRUSTED_REMOVE]
-    long_secrets = [value for value in values if len(value) >= 8]
-    short_secrets = {value for value in values if 0 < len(value) < 8}
-    def carries(value):
-        return value in short_secrets or any(secret in value for secret in long_secrets)
+    # of their values (_carries). "clean": only UNTRUSTED_KEEP, plus, for an
+    # agent, its own login and network variables, again without any value that
+    # carries a secret. The caller's environment is never changed.
+    carries = _carries(environ, UNTRUSTED_REMOVE)
     if mode == 'clean':
         prefixes = AGENT_KEEP_PREFIXES.get(runner, ())
         def keep(name):

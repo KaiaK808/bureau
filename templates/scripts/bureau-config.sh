@@ -406,12 +406,16 @@ _bureau_linear_request_limits() {
 # can still take up to the request time limit, so a halt with N writes takes at
 # most N × max-time (30 s by default) — bounded, but it grows with the writes.
 # _bureau_curl_config <option> <value> — one line of a curl config file
-# (curl -K -) with <value> quoted: a secret goes to curl on stdin this way
-# instead of on its argument list.
+# (curl -K -) with <value> quoted and backslash, quote, newline, carriage
+# return and tab escaped: a secret, or text that may hold one (an alert's log
+# tail), goes to curl on stdin this way instead of on its argument list.
 _bureau_curl_config() {
   local value="$2"
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
   printf '%s = "%s"\n' "$1" "$value"
 }
 
@@ -2085,16 +2089,17 @@ alert_telegram() {
   if [ -n "$log_tail" ]; then
     body=$(printf '%s\n\nLog tail:\n```\n%s\n```' "$body" "$log_tail")
   fi
-  # The token (it is in the URL) and the chat id reach curl on stdin (-K -),
-  # never in its argument list, which `ps` shows; curl starts without the
-  # secrets in its environment, and a running `set -x` is off in the subshell.
+  # The token (it is in the URL), the chat id and the text (its log tail can
+  # hold whatever a failing tool printed) reach curl on stdin (-K -), never in
+  # its argument list, which `ps` shows; curl starts without the secrets in its
+  # environment, and a running `set -x` is off in the subshell.
   ( { set +x; } 2>/dev/null
-    config=$(_bureau_curl_config url "https://api.telegram.org/bot${token}/sendMessage"; _bureau_curl_config data-urlencode "chat_id=${chat}")
+    config=$(_bureau_curl_config url "https://api.telegram.org/bot${token}/sendMessage"
+             _bureau_curl_config data-urlencode "chat_id=${chat}"
+             _bureau_curl_config data-urlencode "text=${body}")
     token=""; chat=""
     _bureau_drop_secrets
-    curl -s -X POST -K - \
-      --data-urlencode "parse_mode=Markdown" \
-      --data-urlencode "text=${body}" <<< "$config"
+    curl -s -X POST -K - --data-urlencode "parse_mode=Markdown" <<< "$config"
   ) >/dev/null 2>&1 || true
 }
 
@@ -2591,7 +2596,7 @@ restore_worktree_deps() {
 #     component, not inside `.git`;
 #   - it is not a .env file: no component starts with `.env` (any case) and its
 #     real target in the main checkout does not either (the doctor's env_file),
-#     and, for a directory, none of the entries in its top two levels does;
+#     and, for a directory, no name anywhere below it does;
 #   - the branch tracks nothing at that path (a tracked path is the PR's own);
 #   - its parent directory exists in the worktree and resolves inside it (a
 #     tracked symlink as parent would put the link outside the worktree);
@@ -2673,11 +2678,10 @@ _bureau_link_worktree_path() {
   case "$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')" in
     .env*) echo "  WARNING: worktree link '$p' skipped: it leads to a .env file ($target) in the main checkout, whose secrets must not reach a stage worktree."; return 0 ;;
   esac
-  # Nor a directory that holds one: a .env* name (any case) among its entries
-  # or its subdirectories' entries (two levels, links followed). Deeper levels
-  # are not searched, so a virtualenv is checked in a moment.
+  # Nor a directory that holds one anywhere below it: a .env* name (any case),
+  # links followed; the search stops at the first hit.
   if [ -d "$main/$p" ]; then
-    envfile=$(find -L "$main/$p" -mindepth 1 -maxdepth 2 -iname '.env*' 2>/dev/null | head -n 1) || true
+    envfile=$(find -L "$main/$p" -mindepth 1 -iname '.env*' -print -quit 2>/dev/null) || true
     if [ -n "$envfile" ]; then
       echo "  WARNING: worktree link '$p' skipped: the directory holds a .env file (${envfile#"$main/"}) whose secrets must not reach a stage worktree."; return 0
     fi
