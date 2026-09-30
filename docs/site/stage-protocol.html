@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c81268d081d4888bbb35fa511e112d7dcdbbe42672cfb3be0a0f3976451852cf">
+<meta name="bureau-source-sha256" content="f063b42b6bcf1e73bdeecb4e1c0d221048a411622688d8b7cf5650b3b5bf3c06">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -72,10 +72,14 @@ exited. Inspect the saved work and the process-group record at
 current process identities, stop any remaining writers, then release the
 run explicitly. The preserved checkout remains unregistered: adopt it
 for app recovery or explicitly retire it before creating another
-disposable worker. Process inspection failures and reused live group IDs
-fail closed; do not kill a process solely because an old record mentions
-its ID. After a machine crash, inspect the old run before releasing it;
-app leases have no implicit expiry. This is local coordination, not a
+disposable worker. The interrupt message prints these steps with the run
+ID, the worktree and its unpushed local branch; a background rerun that
+meets the held claim or the unregistered worktree stops with 21 and
+leaves <code>needs-human</code> and one comment with the same steps on
+the ticket. Process inspection failures and reused live group IDs fail
+closed; do not kill a process solely because an old record mentions its
+ID. After a machine crash, inspect the old run before releasing it; app
+leases have no implicit expiry. This is local coordination, not a
 distributed lock or an atomic Linear compare-and-swap across hosts.</p>
 <h2 id="configuration-and-merge-boundaries">Configuration and merge
 boundaries</h2>

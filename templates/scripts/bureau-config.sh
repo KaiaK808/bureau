@@ -2386,6 +2386,18 @@ count_in_flight_issues() {
   '
 }
 
+# Why the last reset_worktree refused its worktree over ownership (v3.1.0-rc.2):
+# BUREAU_RESET_REFUSAL is unregistered, identity, held-branch or not-owner;
+# BUREAU_RESET_REFUSAL_WORKTREE is the worktree the reset was for, and for a held
+# branch BUREAU_RESET_REFUSAL_HOLDER / _BRANCH name the checkout that holds it.
+# Empty after a reset that went through and after a failure that is no ownership
+# refusal (a git command that failed, a signal). bureau-worker.sh reads them to
+# leave the halt on the ticket (bureau_reset_refusal_trace below).
+BUREAU_RESET_REFUSAL=""
+BUREAU_RESET_REFUSAL_WORKTREE=""
+BUREAU_RESET_REFUSAL_HOLDER=""
+BUREAU_RESET_REFUSAL_BRANCH=""
+
 # A held branch is an ownership conflict. Never detach another checkout.
 free_branch_from_other_worktrees() {
   local branch="$1" keep_wt="$2" other
@@ -2397,6 +2409,7 @@ free_branch_from_other_worktrees() {
     /^worktree / { wt=substr($0, 10); next }
     /^branch / { if (substr($0, 8) == b && wt != keep) print wt }')
   if [ -n "$other" ]; then
+    BUREAU_RESET_REFUSAL="held-branch"; BUREAU_RESET_REFUSAL_HOLDER="$other"; BUREAU_RESET_REFUSAL_BRANCH="$branch"
     echo "ERROR: branch $branch is held by $other; release or hand off that checkout explicitly." >&2
     return 21
   fi
@@ -2406,19 +2419,24 @@ free_branch_from_other_worktrees() {
 # under .worktrees is not ownership; pre-existing directories are rejected.
 reset_worktree() {
   local wt="$1" target_script="$2" target_branch="${3:-}" common registry key ref
+  BUREAU_RESET_REFUSAL=""; BUREAU_RESET_REFUSAL_HOLDER=""; BUREAU_RESET_REFUSAL_BRANCH=""
   [ "${BUREAU_WORKSPACE_MODE:-current}" = disposable ] || { echo "ERROR: reset requires disposable worker mode" >&2; return 21; }
   [ -n "${BUREAU_RUN_ID:-}" ] || { echo "ERROR: reset requires an ownership claim" >&2; return 21; }
   wt=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt")
-  python3 "$BUREAU_RUNTIME" --repo "$REPO_DIR" assert-owner --issue "${BUREAU_CURRENT_ISSUE:?missing issue claim}" --workspace "$wt" --run "$BUREAU_RUN_ID" || return 21
+  BUREAU_RESET_REFUSAL_WORKTREE="$wt"
+  # A check that a signal ended is no refusal: it leaves no trace on the ticket.
+  python3 "$BUREAU_RUNTIME" --repo "$REPO_DIR" assert-owner --issue "${BUREAU_CURRENT_ISSUE:?missing issue claim}" --workspace "$wt" --run "$BUREAU_RUN_ID" \
+    || { [ "$?" -gt 128 ] || BUREAU_RESET_REFUSAL=not-owner; return 21; }
   common=$(git -C "$REPO_DIR" rev-parse --git-common-dir)
   case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
   registry="$common/bureau/workers"
   key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
   if [ -e "$wt" ] && [ ! -f "$registry/$key" ]; then
+    BUREAU_RESET_REFUSAL=unregistered
     echo "ERROR: refusing to reset unregistered worktree $wt" >&2; return 21
   fi
   if [ -d "$wt" ]; then
-    [ "$(git -C "$wt" rev-parse --absolute-git-dir)" = "$(cat "$registry/$key")" ] || { echo "ERROR: worker identity changed" >&2; return 21; }
+    [ "$(git -C "$wt" rev-parse --absolute-git-dir)" = "$(cat "$registry/$key")" ] || { BUREAU_RESET_REFUSAL=identity; echo "ERROR: worker identity changed" >&2; return 21; }
   fi
   git -C "$REPO_DIR" fetch origin --prune --quiet || return 18
   ref=origin/main
@@ -2439,9 +2457,226 @@ reset_worktree() {
   if [ "$target_script" != spec-pipeline.sh ]; then
     git -C "$wt" checkout -B "$target_branch" "$ref" --quiet || return 21
   fi
+  # A registered, reset worker: whatever preserved it before and any halt left
+  # for it are settled (bureau_preserve_note, bureau_ownership_trace).
+  rm -f "$common/bureau/preserved/$key.json" "$common/bureau/ownership-halts/"*".$key" 2>/dev/null || true
   # `clean -fdx` above removed every ignored path; put the configured links back.
   bureau_link_worktree_paths "$wt"
 }
+
+# ── Ownership halts leave a trace (v3.1.0-rc.2) ─────────────────────────
+# An exit 21 over ownership used to end the run with a line on stderr and
+# nothing on the ticket: the ticket stayed in its state with lane-2, and a queue
+# picked it again on every tick (pilot EXP-1545: an interrupted run's worktree,
+# released but not dropped). The halt now sets needs-human (mark_needs_human,
+# with its local hold when the label cannot be written) and posts one comment
+# that names the worktree and the way back. A cancelled run writes nothing.
+
+# bureau_preserve_note <worktree> <issue> <reason> — record why <worktree> lost
+# its disposable-worker registration (reason: interrupted, unfinished,
+# review-checkpoint): the run, the ticket, its branch. reset_worktree's refusal
+# reads it to name the owner; a reset that registers the worktree again removes
+# it. bureau-runtime.py writes the same record for an interrupted run.
+bureau_preserve_note() {
+  local wt="$1" issue="$2" reason="$3" common key dir branch
+  wt=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt") || return 1
+  common=$(bureau_common_dir) || return 1
+  key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
+  dir="$common/bureau/preserved"
+  branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
+  mkdir -p "$dir" || return 1
+  jq -n --arg run "${BUREAU_RUN_ID:-}" --arg issue "$issue" --arg ws "$wt" --arg branch "$branch" --arg reason "$reason" \
+    '{run_id: $run, issue: $issue, workspace: $ws, branch: $branch, reason: $reason}' > "$dir/.$key.$$" \
+    && mv -f "$dir/.$key.$$" "$dir/$key.json"
+}
+
+# _bureau_physical <dir> — <dir> with symlinks resolved; empty when it is empty or gone.
+_bureau_physical() {
+  [ -n "${1:-}" ] || return 0
+  (cd "$1" 2>/dev/null && pwd -P) || true
+}
+
+# _bureau_shq <word> — <word> quoted for a shell command line in a comment.
+_bureau_shq() {
+  case "$1" in
+    *"'"*) printf '%q' "$1" ;;
+    *[!A-Za-z0-9_./:@%+=-]*|'') printf "'%s'" "$1" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# bureau_ownership_trace <issue> <stage> <worktree> <body> — needs-human on
+# <issue> (mark_needs_human: the label, or a local hold and an alert when it
+# cannot be written) and <body> as one comment. The comment goes out once per
+# ticket and worktree ($common/bureau/ownership-halts/<issue>.<key>, removed
+# when reset_worktree registers that worktree again): a label a human removed
+# without the fix is set again on the next pick, the comment is not repeated.
+# Writes nothing for a run the runtime marked interrupted. Returns 0 unless the
+# ticket identifier is invalid or the git directory cannot be found.
+bureau_ownership_trace() {
+  local issue="$1" stage="$2" wt="$3" body="$4" common key dir label_rc=0
+  [[ "$issue" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]] || { echo "bureau: not a ticket identifier: $issue" >&2; return 1; }
+  common=$(bureau_common_dir) || return 1
+  if [ -n "${BUREAU_RUN_ID:-}" ] \
+     && jq -e '.interrupted == true' "$common/bureau/processes/$BUREAU_RUN_ID.json" >/dev/null 2>&1; then
+    echo "  run $BUREAU_RUN_ID was cancelled — nothing written to $issue" >&2
+    return 0
+  fi
+  key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
+  dir="$common/bureau/ownership-halts"
+  # A subshell: a Linear that stayed unusable ends mark_needs_human with 27
+  # (the hold is on disk by then), and the halt keeps its own 21.
+  ( mark_needs_human "$issue" "$stage" 21 ) || label_rc=$?
+  if [ -f "$dir/$issue.$key" ]; then
+    echo "  the halt comment for $wt is already on $issue — not posted again" >&2
+    return 0
+  fi
+  if ( [ "$label_rc" != "$BUREAU_EXIT_LINEAR_UNUSABLE" ] || export _BUREAU_LINEAR_SINGLE_ATTEMPT=1
+       post_comment "$issue" "<!-- bureau-ownership-halt: $key -->
+$body" ); then
+    [ "${BUREAU_DRY_RUN:-0}" = 1 ] || { mkdir -p "$dir" && : > "$dir/$issue.$key"; } || true
+  else
+    echo "  could not post the halt comment on $issue — the next halt tries again" >&2
+  fi
+  return 0
+}
+
+# bureau_reset_refusal_trace <issue> <stage> — after reset_worktree refused its
+# worktree over ownership (BUREAU_RESET_REFUSAL): print why and the way back,
+# and leave both on a ticket (bureau_ownership_trace). The ticket is the one
+# whose run preserved the worktree when bureau_preserve_note recorded it, else
+# <issue>. Without a record the trace goes to one ticket per worktree: a queue
+# that shares its worktree between tickets labels the first ticket it hit it
+# with, not every ticket it picks after.
+bureau_reset_refusal_trace() {
+  local issue="$1" stage="$2" wt="$BUREAU_RESET_REFUSAL_WORKTREE" repo="${REPO_DIR:-$PWD}" \
+        common key note="" owner="" run="" reason="" branch="" target why steps drop marker traced \
+        kind wt_common wt_gitdir own_common own text cmds alt hint
+  [ -n "$BUREAU_RESET_REFUSAL" ] && [ -n "$wt" ] || return 0
+  common=$(bureau_common_dir) || return 1
+  key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
+  [ ! -f "$common/bureau/preserved/$key.json" ] || note="$common/bureau/preserved/$key.json"
+  if [ -n "$note" ] && [ "$BUREAU_RESET_REFUSAL" = unregistered ]; then
+    owner=$(jq -r '.issue // empty' "$note" 2>/dev/null || true)
+    run=$(jq -r '.run_id // empty' "$note" 2>/dev/null || true)
+    reason=$(jq -r '.reason // empty' "$note" 2>/dev/null || true)
+    [[ "$owner" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]] || owner=""
+  fi
+  target="${owner:-$issue}"
+  steps="To resume, from \`$repo\`:"
+  case "$BUREAU_RESET_REFUSAL" in
+    unregistered|identity)
+      # Where the worktree stands: a linked worktree of this repository (dropped
+      # with git), the main checkout (never reset, never dropped), or anything
+      # else (a plain directory, another repository). A plain directory under
+      # .worktrees/ answers for the main checkout around it, hence the toplevel.
+      kind=other
+      if [ "$(_bureau_physical "$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null)")" = "$(_bureau_physical "$wt")" ]; then
+        wt_common=$(_bureau_physical "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")
+        wt_gitdir=$(_bureau_physical "$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null)")
+        own_common=$(_bureau_physical "$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")
+        if [ -n "$wt_common" ] && [ "$wt_common" = "$own_common" ]; then
+          if [ "$wt_gitdir" = "$wt_common" ]; then kind=main; else kind=linked; fi
+        fi
+      fi
+      if [ "$kind" = main ]; then
+        why="the worktree \`$wt\` is the repository's main checkout, which Bureau never resets or drops."
+      elif [ "$BUREAU_RESET_REFUSAL" = unregistered ]; then
+        why="the worktree \`$wt\` is not registered as a disposable Bureau worker, so Bureau will not reset it: it may hold work nobody saved."
+        case "$reason" in
+          interrupted) why="$why It was preserved when run \`$run\` of ${owner:-its ticket} was interrupted." ;;
+          unfinished) why="$why It was preserved with the unfinished work of run \`$run\` of ${owner:-its ticket}." ;;
+          review-checkpoint) why="$why It holds the checkpoint of a review of ${owner:-its ticket} that stopped before merge (run \`$run\`)." ;;
+        esac
+      else
+        why="the worktree \`$wt\` is registered as a Bureau worker, but it now belongs to another Git checkout, so Bureau will not reset it."
+      fi
+      alt="Or keep the worktree and rerun with a new one instead (\`shepherd.sh --worktree DIR\`): a rerun on this worktree stops with exit 21 until it is dropped."
+      case "$kind" in
+        main)
+          steps="$steps
+1. Rerun with a worktree of its own (\`shepherd.sh --worktree DIR\` with DIR under \`.worktrees/\`, or no \`--worktree\` at all)." ;;
+        other)
+          steps="$steps
+1. It is no worktree of this repository: save anything you want from it, then move it away, or delete it once nothing in it is needed.
+   $alt" ;;
+        linked)
+          # The branch: `git branch -D` only for one that was never pushed and
+          # has no commits of its own (the spec stage's fresh branch, whose name
+          # a rerun needs again). Commits on no remote are pushed, never deleted
+          # (an implement stage whose final push failed leaves finished work);
+          # a branch origin has needs no deletion (the rerun's checkout -B).
+          branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
+          drop="git worktree remove --force $(_bureau_shq "$wt")"
+          text="Save anything you want from the worktree, then drop it:"; cmds="$drop"; hint="$alt"
+          if [ -z "$branch" ] || [ "$branch" = main ] || [ "$branch" = master ]; then
+            :
+          elif git -C "$wt" rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null 2>&1; then
+            own=$(git -C "$wt" rev-list --count "refs/remotes/origin/$branch..HEAD" 2>/dev/null || echo 1)
+            if [ "$own" = 0 ]; then
+              hint="Its branch \`$branch\` is on origin; deleting it is not needed: the rerun's \`git checkout -B\` resets it. $alt"
+            else
+              text="Its branch \`$branch\` has $own commit(s) that are not on origin/$branch: push them (or keep them on another branch), then save anything else you want from the worktree and drop it:"
+              cmds="git push origin $(_bureau_shq "$branch")
+$drop"
+              hint="Deleting \`$branch\` is not needed: the rerun's \`git checkout -B\` resets it to origin/$branch. $alt"
+            fi
+          else
+            own=$(git -C "$wt" rev-list --count HEAD --not --remotes 2>/dev/null || echo 1)
+            if [ "$own" = 0 ]; then
+              text="Save anything you want from the worktree, then drop it and its local branch \`$branch\`, which was never pushed and has no commits of its own:"
+              cmds="$drop
+git branch -D $(_bureau_shq "$branch")"
+            else
+              # The rerun creates a branch of this name again: kept, renamed.
+              text="Its local branch \`$branch\` has $own commit(s) that are on no remote: push them, save anything else you want from the worktree and drop it, then keep the branch as \`$branch-saved\`, since the rerun creates \`$branch\` again:"
+              cmds="git push -u origin $(_bureau_shq "$branch")
+$drop
+git branch -m $(_bureau_shq "$branch") $(_bureau_shq "$branch-saved")"
+            fi
+          fi
+          steps="$steps
+1. $text
+   \`\`\`sh
+$(printf '%s\n' "$cmds" | sed 's/^/   /')
+   \`\`\`
+   $hint" ;;
+      esac
+      ;;
+    held-branch)
+      why="branch \`$BUREAU_RESET_REFUSAL_BRANCH\` is checked out in another worktree, \`$BUREAU_RESET_REFUSAL_HOLDER\`, so Bureau will not take it for \`$wt\`."
+      steps="$steps
+1. Finish or save the work in \`$BUREAU_RESET_REFUSAL_HOLDER\`, then free the branch there (or drop that checkout once nothing in it is needed):
+   \`\`\`sh
+   git -C $(_bureau_shq "$BUREAU_RESET_REFUSAL_HOLDER") switch --detach
+   \`\`\`"
+      ;;
+    not-owner)
+      why="this run (\`${BUREAU_RUN_ID:-}\`) no longer owns $issue and the worktree \`$wt\`, so it stopped before touching the worktree."
+      steps="$steps
+1. Find the run that holds them (\`python3 scripts/bureau-runtime.py status\`); release it only once it has stopped."
+      ;;
+    *) return 0 ;;
+  esac
+  steps="$steps
+2. Remove \`needs-human\` from $target and rerun."
+  printf '%s\n%s\n' "$why" "$steps" | sed 's/^/  /' >&2
+  # Without a record, one ticket per worktree carries the halt.
+  if [ -z "$owner" ] && [ "$BUREAU_RESET_REFUSAL" != held-branch ]; then
+    for marker in "$common/bureau/ownership-halts/"*".$key"; do
+      [ -f "$marker" ] || continue
+      traced=${marker##*/}; traced=${traced%".$key"}
+      if [ "$traced" != "$target" ]; then
+        echo "  the halt for this worktree is on $traced — nothing written to $target" >&2
+        return 0
+      fi
+    done
+  fi
+  bureau_ownership_trace "$target" "$stage" "$wt" "🛑 Bureau halt (exit 21, ownership-conflict) in \`$stage\`: $why
+
+$steps"
+}
+# ── End of ownership halts ──────────────────────────────────────────────
 
 # restore_worktree_deps <worktree> — put node_modules back after reset_worktree's
 # `clean -fdx`, for an npm project. Returns 0 when there is nothing to do or the

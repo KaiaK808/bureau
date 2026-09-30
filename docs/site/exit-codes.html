@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="19e52a17286373967db55ae50fb8480df3e96bc5887734e93b39ad8b7ca52099">
+<meta name="bureau-source-sha256" content="95e526ab99167b0ef7274937986baf4c4f956f0d3158d0678b17c66cc78a0466">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -159,7 +159,13 @@ for without an alert; any other <code>20</code> alerts</td>
 <td><code>21</code></td>
 <td>ownership-conflict</td>
 <td>Ticket, checkout or branch held; stale result</td>
-<td>Inspect owner/run, preserve work and reconcile</td>
+<td>Inspect owner/run, preserve work and reconcile. Since v3.1.0-rc.2 a
+halt over a ticket or worktree an interrupted run still holds, an
+unregistered or foreign worktree or a branch held by another worktree
+sets <code>needs-human</code> and posts one comment with the way back
+(not for a live holder or a cancelled run); after an interrupted run,
+release it and drop or replace its worktree before a rerun. See the
+troubleshooting guide</td>
 </tr>
 <tr>
 <td><code>22</code></td>
