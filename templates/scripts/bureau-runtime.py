@@ -282,10 +282,12 @@ def branch_step(path, alternative):
         return ('Save anything you want from the worktree, then drop it and its local branch ' + branch
                 + ', which was never pushed and has no commits of its own:', [remove, 'git branch -D ' + quoted], alternative)
     if not pushed:
-        return ('Its local branch ' + branch + ' has ' + str(own) + ' commit(s) that are on no remote: push them (or keep the branch), '
-                'then save anything else you want from the worktree and drop it:', ['git push -u origin ' + quoted, remove],
-                'A rerun that creates a branch of this name needs it out of the way: keep it as `git branch -m ' + quoted + ' '
-                + shlex.quote(branch + '-saved') + '` instead of deleting it. ' + alternative)
+        # The rerun creates a branch of this name again: the pushed one is kept
+        # under another name, not deleted.
+        return ('Its local branch ' + branch + ' has ' + str(own) + ' commit(s) that are on no remote: push them, save anything else '
+                'you want from the worktree and drop it, then keep the branch as ' + branch + '-saved, since the rerun creates '
+                + branch + ' again:', ['git push -u origin ' + quoted, remove, 'git branch -m ' + quoted + ' ' + shlex.quote(branch + '-saved')],
+                alternative)
     if own:
         return ('Its branch ' + branch + ' has ' + str(own) + ' commit(s) that are not on origin/' + branch + ': push them (or keep them '
                 'on another branch), then save anything else you want from the worktree and drop it:', ['git push origin ' + quoted, remove],

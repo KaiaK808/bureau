@@ -124,7 +124,9 @@ assert 'git branch -D feat/fresh' in text and 'never pushed and has no commits o
 git(fresh, 'commit', '-q', '--allow-empty', '-m', 'local work')
 text = steps(str(fresh))
 assert 'git branch -D' not in text, 'a never-pushed branch with commits is offered for deletion:\n' + text
-assert 'git push -u origin feat/fresh' in text and '1 commit(s) that are on no remote' in text and 'git branch -m feat/fresh feat/fresh-saved' in text, text
+assert 'git push -u origin feat/fresh' in text and '1 commit(s) that are on no remote' in text, text
+assert '         git branch -m feat/fresh feat/fresh-saved' in text, 'the rename is not a command of the step:\n' + text
+assert text.index('git push -u origin') < text.index('git branch -m'), 'the branch is renamed before it is pushed:\n' + text
 text = steps(str(repo))
 assert 'worktree remove' not in text and 'branch -D' not in text, 'the main checkout is offered for removal:\n' + text
 assert 'release ' + 'a' * 32 in text, text

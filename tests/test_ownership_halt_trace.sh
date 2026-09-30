@@ -31,7 +31,8 @@
 #      comment without git commands of this repository
 #   9. finished work that is not on origin (an implement stage whose final push failed, and a
 #      spec stage that committed before the interrupt): the comment pushes it, never offers
-#      `git branch -D`, and its commands, run as written, keep the commit
+#      `git branch -D`, and its commands, run as written, keep the commit (the spec branch under
+#      <branch>-saved, so the rerun can create its branch again and reaches Done)
 #  10. the main checkout as the worktree: the comment asks for a worktree of its own and offers
 #      neither `git worktree remove` nor `git branch -D`; shepherd.sh --worktree . is refused
 #      before anything is claimed or written
@@ -283,9 +284,22 @@ pr5_shepherd
 [ "$RC" = 21 ] || fail "9: the rerun on the unregistered worktree ended $RC, wanted 21"
 BODY=$(pr5_comment 7)
 grep -q 'git branch -D' <<< "$BODY" && fail "9: a never-pushed branch with a commit is offered for deletion: $BODY"
-grep -qF 'Its local branch `145-probe-feature` has 1 commit(s) that are on no remote: push them (or keep the branch)' <<< "$BODY" || fail "9: the comment does not say the commit is on no remote"
+grep -qF 'Its local branch `145-probe-feature` has 1 commit(s) that are on no remote: push them' <<< "$BODY" || fail "9: the comment does not say the commit is on no remote"
 grep -qxF '   git push -u origin 145-probe-feature' <<< "$BODY" || fail "9: the comment does not push the never-pushed branch"
-grep -qF 'git branch -m 145-probe-feature 145-probe-feature-saved' <<< "$BODY" || fail "9: the comment does not say how to keep the branch out of the rerun's way"
+grep -qxF '   git branch -m 145-probe-feature 145-probe-feature-saved' <<< "$BODY" || fail "9: the comment's commands do not keep the branch out of the rerun's way"
+SPEC=$(git -C "$REPO" rev-parse 145-probe-feature)
+FIX=$(sed -n '/^   ```sh$/,/^   ```$/{ /```/d; s/^   //p; }' <<< "$BODY")
+[ "$(grep -c . <<< "$FIX")" = 3 ] || fail "9: expected three commands in the comment, got: $FIX"
+while IFS= read -r step; do
+  (cd "$REPO" && bash -c "$step" >/dev/null 2>&1) || fail "9: the comment's step failed: $step"
+done <<< "$FIX"
+git -C "$REPO" branch -r --contains "$SPEC" | grep -q 'origin/145-probe-feature' || fail "9: the spec commit is not on origin after the comment's steps"
+[ "$(git -C "$REPO" rev-parse 145-probe-feature-saved)" = "$SPEC" ] || fail "9: the spec commit is not kept on 145-probe-feature-saved"
+pr5_ticket 7 '["lane-2"]'
+printf finish > "$SB/probe-mode"; printf s1 > "$SB/state"
+pr5_shepherd
+[ "$RC" = 0 ] || fail "9: the rerun after the comment's steps ended $RC, wanted 0"
+[ "$(cat "$SB/state")" = s8 ] || fail "9: the rerun did not reach Done"
 echo "PASS 9 finished work that is not on origin: pushed, never offered for deletion, kept by the steps"
 
 # ── 10. the main checkout as the worktree ──────────────────────────────────────────────

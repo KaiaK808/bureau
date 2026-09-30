@@ -2628,10 +2628,11 @@ $drop"
               cmds="$drop
 git branch -D $(_bureau_shq "$branch")"
             else
-              text="Its local branch \`$branch\` has $own commit(s) that are on no remote: push them (or keep the branch), then save anything else you want from the worktree and drop it:"
+              # The rerun creates a branch of this name again: kept, renamed.
+              text="Its local branch \`$branch\` has $own commit(s) that are on no remote: push them, save anything else you want from the worktree and drop it, then keep the branch as \`$branch-saved\`, since the rerun creates \`$branch\` again:"
               cmds="git push -u origin $(_bureau_shq "$branch")
-$drop"
-              hint="A rerun that creates a branch of this name needs it out of the way: keep it as \`git branch -m $(_bureau_shq "$branch") $(_bureau_shq "$branch-saved")\` instead of deleting it. $alt"
+$drop
+git branch -m $(_bureau_shq "$branch") $(_bureau_shq "$branch-saved")"
             fi
           fi
           steps="$steps

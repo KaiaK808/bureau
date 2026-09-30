@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="7079d285c3ebdadf733d837dd7a15b5f95f02b742b2515a040e96c1156c27615">
+<meta name="bureau-source-sha256" content="d529b27c2b785e56607fa14d319ab11f48006943d0761bdb6da1d2fc945900f5">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -507,13 +507,14 @@ of its own (the spec stage's fresh branch) is deleted,
 taken. Commits that are on no remote, or not on
 <code>origin/BRANCH</code> (an implement stage whose final push failed),
 are pushed first, <code>git push -u origin BRANCH</code> or
-<code>git push origin BRANCH</code>, never deleted; to keep a
-never-pushed branch out of a rerun's way instead, rename it. A branch
-origin has needs no deletion: the rerun's <code>git checkout -B</code>
-resets it. Or keep the worktree and rerun with a new one instead:
-<code>shepherd.sh --worktree DIR</code> (a worktree of its own: the
-shepherd refuses the main checkout, <code>--worktree .</code>, with exit
-1 before it claims anything).</li>
+<code>git push origin BRANCH</code>, never deleted; a never-pushed
+branch is then kept as <code>BRANCH-saved</code>
+(<code>git branch -m</code>), since the rerun creates
+<code>BRANCH</code> again. A branch origin has needs no deletion: the
+rerun's <code>git checkout -B</code> resets it. Or keep the worktree and
+rerun with a new one instead: <code>shepherd.sh --worktree DIR</code> (a
+worktree of its own: the shepherd refuses the main checkout,
+<code>--worktree .</code>, with exit 1 before it claims anything).</li>
 <li>Rerun the shepherd or the stage.</li>
 </ol>
 <p>The runtime gives a stage time to end after the signal before it
