@@ -196,7 +196,7 @@ _post_implement_hash_paths() {
   out=""
   if [ "$n" -gt 0 ]; then
     out=$(for p in "$@"; do if [ -f "$p" ] && [ ! -L "$p" ]; then printf '%s\0' "$p"; fi; done \
-      | xargs -0 git hash-object --no-filters -- 2>/dev/null) || out=""
+      | bureau_without_secrets xargs -0 git hash-object --no-filters -- 2>/dev/null) || out=""
   fi
   hashes=()
   if [ -n "$out" ]; then

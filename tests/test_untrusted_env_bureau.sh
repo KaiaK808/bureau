@@ -128,6 +128,11 @@ key=$(cd "$R" && WORKTREE="$R" && env "${PROBES[@]}" /bin/bash -c "$line"' && ec
 # run in a stage worktree today; this keeps a new one from coming back without the flag.
 stray=$(grep -rnE 'python3? +(-[A-HJ-Za-z]+ +)*(-c|-)( |$)|python3? +<<' "$SCRIPTS" | grep -v -- ' -I ' | grep -vE ':[0-9]+: *#' || true)
 [ -z "$stray" ] || fail "A: inline Python without -I: $stray"
+# And no git or gh started past the git()/gh() functions: xargs, exec, command, env or an
+# absolute path would run it with the stage's full environment.
+stray=$(grep -rnE '(xargs|exec|command|nice|timeout|/usr/bin/env|[^_a-z]env) +(-[^ ]+ +)*(git|gh)( |$)|/(usr/)?(local/)?bin/(git|gh)( |$)' "$SCRIPTS"/*.sh \
+  | grep -v 'bureau_without_secrets xargs' | grep -vE ':[0-9]+: *#' | grep -v '/usr/bin/env "\${_BUREAU_ENV_ARGV\[@\]}" \(git\|gh\)' || true)
+[ -z "$stray" ] || fail "A: git or gh started past the git()/gh() functions: $stray"
 pr1_pass "A+B: branch hooks, filter and Python modules run without the secrets; push keeps the GitHub tokens"
 
 # Control: the v3.0.2 forms (no git function, python3 - without -I and without the reduction).
