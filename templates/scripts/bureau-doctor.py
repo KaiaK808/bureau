@@ -279,6 +279,17 @@ def env_file(name):
     return name.lower().startswith('.env')
 
 
+def env_path(main, path):
+    """A worktree_links entry that leads to a .env* name: any component of the entry, or of its fully
+    resolved path relative to the main checkout (`alias/key` with `alias -> .envdir`; a target outside
+    the checkout keeps the components after the common part). The stages apply the same rule
+    (_bureau_link_worktree_path in bureau-config.sh)."""
+    if any(env_file(part) for part in path.split('/')): return True
+    if main is None: return False
+    rel = os.path.relpath(os.path.realpath(os.path.join(str(main), path)), os.path.realpath(str(main)))
+    return any(env_file(part) for part in rel.split(os.sep) if part not in ('', '.', '..'))
+
+
 def worktree_links(repo, config, checkout=None):
     """repo.worktree_links as reset_worktree applies it: (report, errors, warnings).
     Existence and tracking are judged in the main checkout the stages link from (`checkout`,
@@ -305,7 +316,7 @@ def worktree_links(repo, config, checkout=None):
         parts = path.split('/')
         if not path or path.startswith('/') or any(part.lower() in ('', '.', '..', '.git') for part in parts):
             errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' must be a plain relative path (no /, ., .., .git or empty component); stages skip it'); report.append(dict(path=entry, status='invalid')); continue
-        if any(env_file(part) for part in parts) or (main is not None and env_file(Path(os.path.realpath(main / path)).name)):
+        if env_path(main, path):
             errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is a .env file: stages would link the main checkout\'s secrets into every stage worktree, where pull-request code runs; remove it (the stages read .env from the main checkout)')
             report.append(dict(path=path, status='env file')); continue
         if main is None:

@@ -21,7 +21,8 @@ REPO_ROOT="$(cd "$(dirname "$0")" && cd .. && pwd)"
 SCRIPTS="$REPO_ROOT/templates/scripts"
 TMP=$(mktemp -d -t bureau-test.links-env.XXXXXXXX)
 TMP=$(cd "$TMP" && pwd -P)
-trap 'rm -rf "$TMP"' EXIT
+unlock() { [ ! -d "$MAIN/locked/inner" ] || chmod 700 "$MAIN/locked/inner"; }
+trap 'unlock 2>/dev/null; rm -rf "$TMP"' EXIT
 FAILS=0
 fail() { echo "FAIL $*" >&2; FAILS=$((FAILS + 1)); }
 
@@ -34,15 +35,16 @@ cut_fn "$SCRIPTS/bureau-config.sh" "$TMP/fn.sh"
 MAIN="$TMP/main checkout"; WT="$TMP/stage worktree"
 export BUREAU_CONFIG="$TMP/bureau config.json"
 # key_readable: the Linear probe can be read through anything in the worktree, links followed.
-key_readable() { find -L "$WT" -name .git -prune -o -type f -exec grep -l 'lin_api_PROBE_linear_0001' {} + 2>/dev/null | grep -q .; }
+# find's own status is ignored (under pipefail an unreadable directory would hide a hit).
+key_readable() { { find -L "$WT" -name .git -prune -o -type f -exec grep -l 'lin_api_PROBE_linear_0001' {} + 2>/dev/null || true; } | grep -q .; }
 kind() { if [ -L "$1" ]; then echo "link:$(readlink "$1")"; elif [ -e "$1" ]; then echo present; else echo none; fi; }
 
 setup() {
-  rm -rf "$MAIN" "$WT"
+  unlock 2>/dev/null; rm -rf "$MAIN" "$WT"
   mkdir -p "$MAIN"
   git -C "$MAIN" init -q -b main
   git -C "$MAIN" config user.email t@t; git -C "$MAIN" config user.name t
-  printf '%s\n' .env '.env.*' .envrc .ENV.Local 'config/.env.production' secrets conf upper '.Envs/prod' \
+  printf '%s\n' .env '.env.*' .envrc .ENV.Local 'config/.env.production' secrets conf upper '.Envs/prod' alias locked \
     'tools/.Envs/key' settings deep deeper .venv my.env env > "$MAIN/.gitignore"
   mkdir -p "$MAIN/config" "$MAIN/.Envs" "$MAIN/tools/.Envs"; printf 'config\n' > "$MAIN/config/readme.txt"
   printf 'tracked\n' > "$MAIN/.Envs/README"          # a tracked directory with a .env* name
@@ -64,11 +66,19 @@ setup() {
   git -C "$MAIN" branch feat
   git -C "$MAIN" worktree add -q "$WT" feat
   git -C "$WT" clean -fdx --quiet
+  # A symlinked ancestor: `alias -> .envdir` in the main checkout, a real `alias/` in the worktree
+  # (as when the branch tracks a directory there), and the entry `alias/key`.
+  printf 'LINEAR_API_KEY=lin_api_PROBE_linear_0001\n' > "$MAIN/.envdir/key"
+  ln -s .envdir "$MAIN/alias"; mkdir -p "$WT/alias"
+  # A directory whose search cannot finish: an unreadable subdirectory (as root it is readable).
+  mkdir -p "$MAIN/locked/inner"; printf 'x\n' > "$MAIN/locked/readme"
+  [ "$(id -u)" = 0 ] || chmod 000 "$MAIN/locked/inner"
 }
 
-ENV_ENTRIES='.env .env.local .envrc .ENV.Local config/.env.production secrets conf upper .Envs/prod tools/.Envs/key settings deep deeper'
+ENV_ENTRIES='.env .env.local .envrc .ENV.Local config/.env.production secrets conf upper .Envs/prod tools/.Envs/key settings deep deeper alias/key'
+[ "$(id -u)" = 0 ] || ENV_ENTRIES="$ENV_ENTRIES locked"
 OTHER_ENTRIES='.venv my.env env'
-LIST='[".env", ".env.local", ".envrc", ".ENV.Local", "config/.env.production", "secrets", "conf", "upper", ".Envs/prod", "tools/.Envs/key", "settings", "deep", ".venv", "my.env", "env", "deeper"]'
+LIST='["alias/key", "locked", ".env", ".env.local", ".envrc", ".ENV.Local", "config/.env.production", "secrets", "conf", "upper", ".Envs/prod", "tools/.Envs/key", "settings", "deep", ".venv", "my.env", "env", "deeper"]'
 
 # run_with <fn file> — the configured list through the given copy of the function.
 run_with() {
@@ -134,7 +144,7 @@ report, errors, warnings = d.worktree_links(Path(sys.argv[2]), json.loads(open(s
 print(' '.join(sorted(entry['path'] for entry in report if entry.get('status') == 'env file')))
 PY
 )
-stage_skipped=$(for e in $ENV_ENTRIES; do case "$e" in (settings|deep|deeper) ;; (*) printf '%s\n' "$e" ;; esac; done | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+stage_skipped=$(for e in $ENV_ENTRIES; do case "$e" in (settings|deep|deeper|locked) ;; (*) printf '%s\n' "$e" ;; esac; done | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
 doctor_sorted=$(printf '%s\n' $doctor_env | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
 [ "$doctor_sorted" = "$stage_skipped" ] || fail "4: the doctor reports [$doctor_sorted] as env file, the stages skip [$stage_skipped] by the same rule"
 [ "$FAILS" = "$before" ] && echo "PASS the stages skip exactly what bureau-doctor.py reports as a .env file, plus directories holding one"

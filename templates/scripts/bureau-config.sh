@@ -2594,9 +2594,10 @@ restore_worktree_deps() {
 # one warning line, and the stage runs on as it would without the link:
 #   - the entry is a plain relative path: not absolute, no `.`, `..` or empty
 #     component, not inside `.git`;
-#   - it is not a .env file: no component starts with `.env` (any case) and its
-#     real target in the main checkout does not either (the doctor's env_file),
-#     and, for a directory, no name anywhere below it does;
+#   - it is not a .env file: no component starts with `.env` (any case), of the
+#     entry or of its resolved path in the main checkout (the doctor's
+#     env_path), and, for a directory, no name anywhere below it does — a search
+#     that fails refuses the link;
 #   - the branch tracks nothing at that path (a tracked path is the PR's own);
 #   - its parent directory exists in the worktree and resolves inside it (a
 #     tracked symlink as parent would put the link outside the worktree);
@@ -2664,24 +2665,35 @@ _bureau_link_worktree_path() {
       echo "  WARNING: worktree link '$3' skipped: '.', '..', '.git' and empty components are not allowed."; return 0 ;;
   esac
   # Never a .env file: any component starting with `.env` in any case (.env,
-  # .env.local, .envrc), or a path whose real target in the main checkout is one.
+  # .env.local, .envrc) — of the entry, or of its fully resolved path in the
+  # main checkout (`alias/key` with `alias -> .envdir` resolves through one).
   # The link would put the main checkout's secrets into every stage worktree,
   # where code from the branch runs; the reset keeps them out otherwise, and the
-  # stages read .env from the main checkout. Same rule as env_file in
+  # stages read .env from the main checkout. Same rule as env_path in
   # bureau-doctor.py, which reports such an entry as an error.
   case "/$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')" in
     */.env*) echo "  WARNING: worktree link '$p' skipped: a .env file holds the main checkout's secrets and must not reach a stage worktree."; return 0 ;;
   esac
-  target=$(python3 -I -c 'import os, sys; print(os.path.basename(os.path.realpath(sys.argv[1])))' "$main/$p" 2>/dev/null) || {
+  # The resolved path, relative to the main checkout (a target outside it keeps
+  # the components after the common part); prints its first .env* component.
+  target=$(python3 -I -c '
+import os, sys
+main = os.path.realpath(sys.argv[1])
+rel = os.path.relpath(os.path.realpath(os.path.join(sys.argv[1], sys.argv[2])), main)
+print(next((c for c in rel.split(os.sep) if c not in ("", ".", "..") and c.lower().startswith(".env")), ""))' "$main" "$p" 2>/dev/null) || {
     echo "  WARNING: worktree link '$p' skipped: its target in the main checkout could not be resolved."; return 0
   }
-  case "$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')" in
-    .env*) echo "  WARNING: worktree link '$p' skipped: it leads to a .env file ($target) in the main checkout, whose secrets must not reach a stage worktree."; return 0 ;;
-  esac
+  if [ -n "$target" ]; then
+    echo "  WARNING: worktree link '$p' skipped: it resolves through a .env file or directory ($target) in the main checkout, whose secrets must not reach a stage worktree."; return 0
+  fi
   # Nor a directory that holds one anywhere below it: a .env* name (any case),
-  # links followed; the search stops at the first hit.
+  # links followed; the search stops at the first hit. A search that fails (an
+  # unreadable subdirectory, a link loop) refuses the link: what it did not see
+  # can hold a .env.
   if [ -d "$main/$p" ]; then
-    envfile=$(find -L "$main/$p" -mindepth 1 -iname '.env*' -print -quit 2>/dev/null) || true
+    if ! envfile=$(find -L "$main/$p" -mindepth 1 -iname '.env*' -print -quit 2>/dev/null); then
+      echo "  WARNING: worktree link '$p' skipped: the directory could not be searched completely for .env files."; return 0
+    fi
     if [ -n "$envfile" ]; then
       echo "  WARNING: worktree link '$p' skipped: the directory holds a .env file (${envfile#"$main/"}) whose secrets must not reach a stage worktree."; return 0
     fi

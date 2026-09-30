@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="7192c90b318c3f39c8d908ad58c335264f59428ee8d6b376cb9e95ab9c940269">
+<meta name="bureau-source-sha256" content="57a932807ca3618a1eabe0deb64181520116da802e3f33ea827b014d9bc18c19">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -721,9 +721,11 @@ runtime wrapper without <code>BASH_ENV</code>, <code>ENV</code> and the
 <code>.env</code> keys the stage reads back, and the stages never link a
 <code>.env*</code> file into a stage worktree — a
 <code>repo.worktree_links</code> entry with a path component starting
-with <code>.env</code> (any case, <code>.envrc</code> too), whose target
-in the main checkout is such a file, or which is a directory with such a
-name anywhere below it is skipped with one warning line. Code running as
+with <code>.env</code> (any case, <code>.envrc</code> too), whose fully
+resolved path in the main checkout passes through such a name
+(<code>alias/key</code> with <code>alias -&gt; .envdir</code>), or which
+is a directory with such a name anywhere below it or that cannot be
+searched completely is skipped with one warning line. Code running as
 the same user can still read files and other processes' environments;
 see <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
@@ -791,9 +793,10 @@ into every stage worktree, where pull-request code runs, while the reset
 keeps them out otherwise; the stages find <code>.env</code> through the
 main checkout without it. The stages skip such an entry with one warning
 line, and beyond the doctor's rule also a directory with a
-<code>.env*</code> name anywhere below it. <code>bureau-doctor.py</code>
-lists each entry with its status (<code>ok</code>,
-<code>missing in the main checkout</code>,
+<code>.env*</code> name anywhere below it or one that cannot be searched
+completely; both sides also check every component of the entry's fully
+resolved path. <code>bureau-doctor.py</code> lists each entry with its
+status (<code>ok</code>, <code>missing in the main checkout</code>,
 <code>tracked in the main checkout</code>,
 <code>not ignored as a symlink</code>, <code>invalid</code>,
 <code>env file</code>, <code>no main checkout</code>), warns or errors
