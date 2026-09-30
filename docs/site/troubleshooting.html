@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3005818f6e9822d150562dce720b455be36c3f4e9bae1cefc2a350fa449c6fa1">
+<meta name="bureau-source-sha256" content="7079d285c3ebdadf733d837dd7a15b5f95f02b742b2515a040e96c1156c27615">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -420,11 +420,11 @@ authorized push.</li>
 ticket or its worktree: another run holds the ticket or the worktree
 (the runtime's claim), the worktree exists but is no registered Bureau
 worker (preserved from an interrupted or unfinished run or from a review
-stopped before merge, or a directory Bureau did not create), a
-registered worker now holds another repository, or the ticket's branch
-is checked out in another worktree. Since v3.1.0-rc.2 such a halt sets
-<code>needs-human</code> (with the local hold when the label cannot be
-written, see <a
+stopped before merge, a directory Bureau did not create, or the main
+checkout), a registered worker now holds another repository, or the
+ticket's branch is checked out in another worktree. Since v3.1.0-rc.2
+such a halt sets <code>needs-human</code> (with the local hold when the
+label cannot be written, see <a
 href="#could-not-add-needs-human--a-ticket-held-without-its-label"><code>could not add 'needs-human'</code></a>)
 and posts one comment that names the worktree and the way back; stderr
 carries the same steps. The queue then skips the ticket instead of
@@ -500,17 +500,30 @@ its ownership:
 <code>release</code> refuses while a process of the run is still
 alive.</li>
 <li>Save anything you want from the worktree, then drop it:
-<code>git worktree remove --force WORKTREE</code>. When the message
-names the worktree's local branch (never pushed, or with commits that
-are not on origin), delete that too: <code>git branch -D BRANCH</code>;
-otherwise the next spec run finds its branch name taken. Or keep the
-worktree and rerun with a new one instead:
-<code>shepherd.sh --worktree DIR</code>.</li>
+<code>git worktree remove --force WORKTREE</code>. The message says what
+to do with its branch. A branch that was never pushed and has no commits
+of its own (the spec stage's fresh branch) is deleted,
+<code>git branch -D BRANCH</code>, or the next spec run finds its name
+taken. Commits that are on no remote, or not on
+<code>origin/BRANCH</code> (an implement stage whose final push failed),
+are pushed first, <code>git push -u origin BRANCH</code> or
+<code>git push origin BRANCH</code>, never deleted; to keep a
+never-pushed branch out of a rerun's way instead, rename it. A branch
+origin has needs no deletion: the rerun's <code>git checkout -B</code>
+resets it. Or keep the worktree and rerun with a new one instead:
+<code>shepherd.sh --worktree DIR</code> (a worktree of its own: the
+shepherd refuses the main checkout, <code>--worktree .</code>, with exit
+1 before it claims anything).</li>
 <li>Rerun the shepherd or the stage.</li>
 </ol>
-<p>A rerun that skips step 1 stops with 21 at the claim, one that skips
-step 2 stops with 21 at the reset; either way the ticket gets
-<code>needs-human</code> and one comment with the same steps (see <a
+<p>The runtime gives a stage time to end after the signal before it
+kills it: 10 s for a stage under the shepherd, 15 s under a queue
+worker, since each wrapper waits 5 s longer than the one inside it
+(<code>BUREAU_STOP_GRACE_SECONDS</code> sets the step). Until the stage
+has ended, <code>release</code> refuses. A rerun that skips step 1 stops
+with 21 at the claim, one that skips step 2 stops with 21 at the reset;
+either way the ticket gets <code>needs-human</code> and one comment with
+the same steps (see <a
 href="#exit-21-ownership-conflict--needs-human-and-one-comment">Exit
 21</a>), so remove the label after the fix. Before v3.1.0-rc.2 the
 message said only "work preserved; inspect processes and explicitly

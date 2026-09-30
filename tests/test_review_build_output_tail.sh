@@ -10,6 +10,7 @@
 # reviewers), with repo.test_command printing numbered lines.
 #   1. 30 lines: the line names 20 of 30, and exactly lines 11 to 30 follow
 #   2. 5 lines: printed whole, no line
+#   3. exactly 20 lines: printed whole, no line; 21 lines: the line names 20 of 21
 # Negative control: against v3.1.0-rc.1 (5184cf8) case 1 has no such line and fails.
 set -euo pipefail
 source "$(dirname "$0")/lib/harness.sh"
@@ -46,3 +47,10 @@ run_review 5
 grep -q 'Build output: last 20 of' <<< "$LAST_STDOUT" && fail "2: a 5-line output is introduced as cut"
 [ "$(grep -c . <<< "$SHOWN")" = 5 ] || fail "2: the 5-line output is not shown whole: $SHOWN"
 echo "PASS 2 a short build output is printed whole, without the line"
+
+run_review 20
+grep -q 'Build output: last 20 of' <<< "$LAST_STDOUT" && fail "3: an output of exactly 20 lines is introduced as cut"
+[ "$(grep -c . <<< "$SHOWN")" = 20 ] || fail "3: the 20-line output is not shown whole"
+run_review 21
+grep -qx '  Build output: last 20 of 21 lines' <<< "$LAST_STDOUT" || fail "3: a 21-line output is not introduced as cut"
+echo "PASS 3 the boundary: 20 lines whole, 21 lines introduced"

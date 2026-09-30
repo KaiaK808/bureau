@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="57a932807ca3618a1eabe0deb64181520116da802e3f33ea827b014d9bc18c19">
+<meta name="bureau-source-sha256" content="a653ebe0812487e79c9e9df7e3393f14e2eece88b83a1e36a55777112ca95af6">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -949,6 +949,15 @@ intentionally disabled for cron</td>
 <td>Skips the usage guard for this process; does not change its
 threshold or <code>.bureau.json</code>. Provider quota errors can still
 stop work</td>
+</tr>
+<tr>
+<td><code>BUREAU_STOP_GRACE_SECONDS</code></td>
+<td>Step, in seconds (1 to 600, default 5), of the time a runtime
+wrapper gives its child after forwarding Ctrl-C or SIGTERM before it
+kills the child's process group. The wrappers of one run nest (shepherd
+→ worker → stage), and each waits one step longer than the one inside
+it: 4, 3, 2 steps, then 1 from the fourth level on (20, 15, 10, 5 s by
+default), so an inner wrapper always ends its own child first</td>
 </tr>
 <tr>
 <td><code>BUREAU_MAX_CONCURRENT</code></td>

@@ -193,3 +193,26 @@ sandbox_init() {
   grep -q '^bureau_cap_comment() {' "$SCRIPTS_DIR/real-helpers.sh" \
     || { echo "harness: bureau_cap_comment not found in bureau-config.sh" >&2; return 1; }
 }
+
+# ── v3.1.0-rc.2: no process outlives its sandbox ───────────────────────────
+# teardown first stops every process that still runs a command of the sandbox, and says so
+# on stderr: a job a test left behind (in the background, or a stage chain in a session of
+# its own) would run on against a removed directory, and a looping one for good. A process
+# in the test's own process group is stopped alone, any other with its whole group.
+eval "$(declare -f teardown | sed '1s/^teardown /_harness_teardown_before_leftovers /')"
+teardown() {
+  if [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ]; then
+    local own pid pgid rest left
+    left=$(ps -A -o pid=,pgid=,args= | grep -F "$SANDBOX/" | grep -v 'grep -F' || true)
+    if [ -n "$left" ]; then
+      own=$(ps -o pgid= -p $$ | tr -d ' ')
+      while read -r pid pgid rest; do
+        [ -n "$pid" ] || continue
+        if [ "$pgid" = "$own" ]; then kill -KILL "$pid" 2>/dev/null || true
+        else kill -KILL -- "-$pgid" 2>/dev/null || true; fi
+      done <<< "$left"
+      echo "harness: stopped $(printf '%s\n' "$left" | grep -c .) process(es) still running in $SANDBOX" >&2
+    fi
+  fi
+  _harness_teardown_before_leftovers
+}

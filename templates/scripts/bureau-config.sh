@@ -2490,6 +2490,12 @@ bureau_preserve_note() {
     && mv -f "$dir/.$key.$$" "$dir/$key.json"
 }
 
+# _bureau_physical <dir> — <dir> with symlinks resolved; empty when it is empty or gone.
+_bureau_physical() {
+  [ -n "${1:-}" ] || return 0
+  (cd "$1" 2>/dev/null && pwd -P) || true
+}
+
 # _bureau_shq <word> — <word> quoted for a shell command line in a comment.
 _bureau_shq() {
   case "$1" in
@@ -2544,8 +2550,8 @@ $body" ); then
 # with, not every ticket it picks after.
 bureau_reset_refusal_trace() {
   local issue="$1" stage="$2" wt="$BUREAU_RESET_REFUSAL_WORKTREE" repo="${REPO_DIR:-$PWD}" \
-        common key note="" owner="" run="" reason="" branch="" state="" target why steps drop marker traced \
-        wt_common own_common
+        common key note="" owner="" run="" reason="" branch="" target why steps drop marker traced \
+        kind wt_common wt_gitdir own_common own text cmds alt hint
   [ -n "$BUREAU_RESET_REFUSAL" ] && [ -n "$wt" ] || return 0
   common=$(bureau_common_dir) || return 1
   key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
@@ -2560,7 +2566,22 @@ bureau_reset_refusal_trace() {
   steps="To resume, from \`$repo\`:"
   case "$BUREAU_RESET_REFUSAL" in
     unregistered|identity)
-      if [ "$BUREAU_RESET_REFUSAL" = unregistered ]; then
+      # Where the worktree stands: a linked worktree of this repository (dropped
+      # with git), the main checkout (never reset, never dropped), or anything
+      # else (a plain directory, another repository). A plain directory under
+      # .worktrees/ answers for the main checkout around it, hence the toplevel.
+      kind=other
+      if [ "$(_bureau_physical "$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null)")" = "$(_bureau_physical "$wt")" ]; then
+        wt_common=$(_bureau_physical "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")
+        wt_gitdir=$(_bureau_physical "$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null)")
+        own_common=$(_bureau_physical "$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")
+        if [ -n "$wt_common" ] && [ "$wt_common" = "$own_common" ]; then
+          if [ "$wt_gitdir" = "$wt_common" ]; then kind=main; else kind=linked; fi
+        fi
+      fi
+      if [ "$kind" = main ]; then
+        why="the worktree \`$wt\` is the repository's main checkout, which Bureau never resets or drops."
+      elif [ "$BUREAU_RESET_REFUSAL" = unregistered ]; then
         why="the worktree \`$wt\` is not registered as a disposable Bureau worker, so Bureau will not reset it: it may hold work nobody saved."
         case "$reason" in
           interrupted) why="$why It was preserved when run \`$run\` of ${owner:-its ticket} was interrupted." ;;
@@ -2570,47 +2591,56 @@ bureau_reset_refusal_trace() {
       else
         why="the worktree \`$wt\` is registered as a Bureau worker, but it now belongs to another Git checkout, so Bureau will not reset it."
       fi
-      # Only a linked worktree of this repository is dropped with git; its branch
-      # is named when it was never pushed or has commits that are not on origin.
-      # (A plain directory under .worktrees/ answers for the main checkout around it.)
-      wt_common=""
-      if [ "$(cd "$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null || echo /nonexistent)" 2>/dev/null && pwd -P)" = "$(cd "$wt" && pwd -P)" ]; then
-        wt_common=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-        [ -z "$wt_common" ] || wt_common=$(cd "$wt_common" 2>/dev/null && pwd -P || true)
-      fi
-      own_common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-      [ -z "$own_common" ] || own_common=$(cd "$own_common" 2>/dev/null && pwd -P || true)
-      if [ -n "$wt_common" ] && [ "$wt_common" = "$own_common" ]; then
-        branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
-        if [ -n "$branch" ] && [ "$branch" != main ] && [ "$branch" != master ]; then
-          if ! git -C "$wt" rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null 2>&1; then
-            state="never pushed"
+      alt="Or keep the worktree and rerun with a new one instead (\`shepherd.sh --worktree DIR\`): a rerun on this worktree stops with exit 21 until it is dropped."
+      case "$kind" in
+        main)
+          steps="$steps
+1. Rerun with a worktree of its own (\`shepherd.sh --worktree DIR\` with DIR under \`.worktrees/\`, or no \`--worktree\` at all)." ;;
+        other)
+          steps="$steps
+1. It is no worktree of this repository: save anything you want from it, then move it away, or delete it once nothing in it is needed.
+   $alt" ;;
+        linked)
+          # The branch: `git branch -D` only for one that was never pushed and
+          # has no commits of its own (the spec stage's fresh branch, whose name
+          # a rerun needs again). Commits on no remote are pushed, never deleted
+          # (an implement stage whose final push failed leaves finished work);
+          # a branch origin has needs no deletion (the rerun's checkout -B).
+          branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
+          drop="git worktree remove --force $(_bureau_shq "$wt")"
+          text="Save anything you want from the worktree, then drop it:"; cmds="$drop"; hint="$alt"
+          if [ -z "$branch" ] || [ "$branch" = main ] || [ "$branch" = master ]; then
+            :
+          elif git -C "$wt" rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null 2>&1; then
+            own=$(git -C "$wt" rev-list --count "refs/remotes/origin/$branch..HEAD" 2>/dev/null || echo 1)
+            if [ "$own" = 0 ]; then
+              hint="Its branch \`$branch\` is on origin; deleting it is not needed: the rerun's \`git checkout -B\` resets it. $alt"
+            else
+              text="Its branch \`$branch\` has $own commit(s) that are not on origin/$branch: push them (or keep them on another branch), then save anything else you want from the worktree and drop it:"
+              cmds="git push origin $(_bureau_shq "$branch")
+$drop"
+              hint="Deleting \`$branch\` is not needed: the rerun's \`git checkout -B\` resets it to origin/$branch. $alt"
+            fi
           else
-            state=$(git -C "$wt" rev-list --count "refs/remotes/origin/$branch..HEAD" 2>/dev/null || echo 0)
-            if [ "$state" = 0 ]; then state=""; else state="$state commit(s) not on origin/$branch"; fi
+            own=$(git -C "$wt" rev-list --count HEAD --not --remotes 2>/dev/null || echo 1)
+            if [ "$own" = 0 ]; then
+              text="Save anything you want from the worktree, then drop it and its local branch \`$branch\`, which was never pushed and has no commits of its own:"
+              cmds="$drop
+git branch -D $(_bureau_shq "$branch")"
+            else
+              text="Its local branch \`$branch\` has $own commit(s) that are on no remote: push them (or keep the branch), then save anything else you want from the worktree and drop it:"
+              cmds="git push -u origin $(_bureau_shq "$branch")
+$drop"
+              hint="A rerun that creates a branch of this name needs it out of the way: keep it as \`git branch -m $(_bureau_shq "$branch") $(_bureau_shq "$branch-saved")\` instead of deleting it. $alt"
+            fi
           fi
-        fi
-        drop="git worktree remove --force $(_bureau_shq "$wt")"
-        if [ -n "$state" ]; then
           steps="$steps
-1. Save anything you want from the worktree, then drop it and its local branch \`$branch\` ($state):
+1. $text
    \`\`\`sh
-   $drop
-   git branch -D $(_bureau_shq "$branch")
-   \`\`\`"
-        else
-          steps="$steps
-1. Save anything you want from the worktree, then drop it:
-   \`\`\`sh
-   $drop
-   \`\`\`"
-        fi
-      else
-        steps="$steps
-1. It is no worktree of this repository: save anything you want from it, then move it away, or delete it once nothing in it is needed."
-      fi
-      steps="$steps
-   Or keep it and rerun with a new worktree instead (\`shepherd.sh --worktree DIR\`): a rerun on this worktree stops with exit 21 until it is dropped."
+$(printf '%s\n' "$cmds" | sed 's/^/   /')
+   \`\`\`
+   $hint" ;;
+      esac
       ;;
     held-branch)
       why="branch \`$BUREAU_RESET_REFUSAL_BRANCH\` is checked out in another worktree, \`$BUREAU_RESET_REFUSAL_HOLDER\`, so Bureau will not take it for \`$wt\`."

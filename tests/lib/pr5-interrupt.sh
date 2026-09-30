@@ -10,10 +10,16 @@
 # stage is a probe for the provider work: it enters through the real bureau_stage_enter, so
 # a shepherd run nests three runtime wrappers of one run as in the field (shepherd → worker
 # → stage); it creates the stage's feature branch (never pushed) and a file, then blocks
-# until a signal ends it, or, with $SB/probe-mode = finish, moves the ticket to Done (idle:
-# blocks before it writes anything).
+# until a signal ends it. $SB/probe-mode changes that: finish moves the ticket to Done, idle
+# blocks before it writes anything, commit commits its work first, ignore ignores SIGTERM and
+# Ctrl-C, slowexit spends 7 s in an EXIT trap (like implement's deferred push) and then
+# writes $SB/pushed.
 #
 # pr5_setup                    — $SB (physical path), the fake Linear/Telegram, and a repo
+# pr5_teardown                 — the tests' EXIT trap: stops every process group still running a
+#                                command of the sandbox (a failed case can leave a shepherd chain
+#                                behind, whose probe stage never ends), then removes the sandbox;
+#                                after a test that passed, a leftover process fails it
 # pr5_new_repo                 — a fresh repository: $REPO, $WT (the shepherd worktree), $COMMON
 # pr5_ticket <n> <labels-json> — ticket EXP-<n>'s labels (the state is shared: $SB/state)
 # pr5_shepherd [args…]         — run the shepherd on EXP-7 to its end: RC, OUT, ERR
@@ -125,11 +131,12 @@ bureau_stage_enter "\$1" "\$@"
 if [ "\$(cat "$SB/probe-mode" 2>/dev/null || echo block)" = idle ]; then : > "$SB/probe-started"; while :; do sleep 1; done; fi
 git checkout -q -b 145-probe-feature
 echo 'spec draft' > probe-work.txt
-if [ "\$(cat "$SB/probe-mode" 2>/dev/null || echo block)" = finish ]; then
-  echo "\$1" >> "$SB/finished.log"
-  printf s8 > "$SB/state"
-  exit 0
-fi
+case "\$(cat "$SB/probe-mode" 2>/dev/null || echo block)" in
+  finish) echo "\$1" >> "$SB/finished.log"; printf s8 > "$SB/state"; exit 0 ;;
+  commit) git add probe-work.txt; git -c user.name=t -c user.email=t@t commit -q -m 'spec draft' ;;
+  ignore) trap '' TERM INT ;;
+  slowexit) trap 'sleep 7; echo pushed > "$SB/pushed"' EXIT ;;
+esac
 : > "$SB/probe-started"
 while :; do sleep 1; done
 PROBE
@@ -144,7 +151,7 @@ PROBE
   printf 'LINEAR_API_KEY=k\nTELEGRAM_BOT_TOKEN=t\nTELEGRAM_ALERT_CHAT_ID=c\n' > "$REPO/.env"
   WT="$REPO/.worktrees/shepherd-EXP-7"
   COMMON="$REPO/.git"
-  printf s1 > "$SB/state"; rm -f "$SB/labels/"*.json "$SB/probe-mode" "$SB/probe-started" "$SB/finished.log"
+  printf s1 > "$SB/state"; rm -f "$SB/labels/"*.json "$SB/probe-mode" "$SB/probe-started" "$SB/finished.log" "$SB/pushed"
   : > "$SB/linear.log"; : > "$SB/comments.jsonl"; : > "$SB/alerts.log"
 }
 
@@ -193,3 +200,36 @@ pr5_writes() { grep -E "^(add-label|remove-label|comment|move) $1( |\$)" "$SB/li
 pr5_comments() { jq -s --arg n "$1" '[.[] | select(.issue == $n)] | length' "$SB/comments.jsonl"; }
 pr5_comment() { jq -rs --arg n "$1" '[.[] | select(.issue == $n)] | last | .body // ""' "$SB/comments.jsonl"; }
 pr5_run_id() { jq -r 'to_entries[] | select(.key | startswith("issue:")) | .value.run_id' "$COMMON/bureau/leases.json" 2>/dev/null | head -1; }
+
+# _pr5_leftovers — "pid pgid command" of every process whose command names the sandbox.
+_pr5_leftovers() { ps -A -o pid=,pgid=,args= | grep -F "$SB/" | grep -v -e 'grep -F' -e 'ps -A' || true; }
+
+# _pr5_stop_leftovers — SIGKILL each leftover's process group, or only the process when it shares
+# the test's own group (a job the test put in the background without a session of its own).
+_pr5_stop_leftovers() {
+  local own pid pgid rest i=0
+  own=$(ps -o pgid= -p $$ | tr -d ' ')
+  while [ -n "$(_pr5_leftovers)" ] && [ "$i" -lt 25 ]; do
+    while read -r pid pgid rest; do
+      [ -n "$pid" ] || continue
+      if [ "$pgid" = "$own" ]; then kill -KILL "$pid" 2>/dev/null || true
+      else kill -KILL -- "-$pgid" 2>/dev/null || true; fi
+    done <<< "$(_pr5_leftovers)"
+    sleep 0.2; i=$((i + 1))
+  done
+}
+
+pr5_teardown() {
+  local rc=$? left
+  left=$(_pr5_leftovers)
+  if [ -n "$left" ]; then
+    _pr5_stop_leftovers
+    if [ "$rc" = 0 ]; then
+      echo "FAIL the test left processes behind (stopped now):" >&2
+      printf '%s\n' "$left" | sed "s#$SB#<sandbox>#g; s/^/  | /" >&2
+      rc=1
+    fi
+  fi
+  rm -rf "$SB"
+  exit "$rc"
+}

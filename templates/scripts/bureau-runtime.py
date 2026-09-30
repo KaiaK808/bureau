@@ -196,7 +196,7 @@ class Store:
     def preserve(self, key, run, issue, workspace, reason):
         # The record reset_worktree reads when it refuses the unregistered
         # worktree: whose run left it, on which branch, and why.
-        branch, _ = branch_state(workspace)
+        branch = branch_state(workspace)[0]
         save(self.root / 'preserved' / (key + '.json'),
              dict(run_id=run, issue=issue, workspace=workspace, branch=branch or '', reason=reason, at=time.time()))
 
@@ -246,22 +246,52 @@ def quiet_git(repo, *args):
 
 
 def branch_state(workspace):
-    """(branch, state) of a checkout: state 'never-pushed', or the number of
-    commits not on origin/<branch>. ('', None) when detached or unreadable."""
+    """(branch, pushed, own) of a checkout: whether origin has the branch, and
+    how many of its commits are not there (not on origin/<branch> when pushed,
+    on no remote at all when not). ('', False, 0) when detached or unreadable."""
     try:
         branch = quiet_git(workspace, 'branch', '--show-current')
     except (OSError, subprocess.CalledProcessError):
-        return '', None
+        return '', False, 0
     if not branch:
-        return '', None
+        return '', False, 0
     try:
         quiet_git(workspace, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/' + branch)
+        pushed, count = True, ['rev-list', '--count', 'refs/remotes/origin/' + branch + '..HEAD']
     except (OSError, subprocess.CalledProcessError):
-        return branch, 'never-pushed'
+        pushed, count = False, ['rev-list', '--count', 'HEAD', '--not', '--remotes']
     try:
-        return branch, int(quiet_git(workspace, 'rev-list', '--count', 'refs/remotes/origin/' + branch + '..HEAD'))
+        return branch, pushed, int(quiet_git(workspace, *count))
     except (OSError, subprocess.CalledProcessError, ValueError):
-        return branch, None
+        return branch, pushed, 1
+
+
+def branch_step(path, alternative):
+    """The step that drops a preserved worktree, and what it says about its
+    branch. `git branch -D` only for a branch that was never pushed and has no
+    commits of its own (the spec stage's fresh branch, whose name a rerun needs
+    again). Commits that are on no remote are pushed first, never deleted: an
+    implement stage whose final push failed leaves finished work there. A branch
+    origin has needs no deletion: the rerun's `git checkout -B` resets it."""
+    branch, pushed, own = branch_state(path)
+    remove = 'git worktree remove --force ' + shlex.quote(str(path))
+    if not branch or branch in ('main', 'master'):
+        return ('Save anything you want from the worktree, then drop it:', [remove], alternative)
+    quoted = shlex.quote(branch)
+    if not pushed and not own:
+        return ('Save anything you want from the worktree, then drop it and its local branch ' + branch
+                + ', which was never pushed and has no commits of its own:', [remove, 'git branch -D ' + quoted], alternative)
+    if not pushed:
+        return ('Its local branch ' + branch + ' has ' + str(own) + ' commit(s) that are on no remote: push them (or keep the branch), '
+                'then save anything else you want from the worktree and drop it:', ['git push -u origin ' + quoted, remove],
+                'A rerun that creates a branch of this name needs it out of the way: keep it as `git branch -m ' + quoted + ' '
+                + shlex.quote(branch + '-saved') + '` instead of deleting it. ' + alternative)
+    if own:
+        return ('Its branch ' + branch + ' has ' + str(own) + ' commit(s) that are not on origin/' + branch + ': push them (or keep them '
+                'on another branch), then save anything else you want from the worktree and drop it:', ['git push origin ' + quoted, remove],
+                'Deleting ' + branch + ' is not needed: the rerun\'s `git checkout -B` resets it to origin/' + branch + '. ' + alternative)
+    return ('Save anything you want from the worktree, then drop it:', [remove],
+            'Its branch ' + branch + ' is on origin; deleting it is not needed: the rerun\'s `git checkout -B` resets it. ' + alternative)
 
 
 def linked_worktree(store, path):
@@ -295,15 +325,8 @@ def resume_steps(store, repo, run, workspace, rerun):
                       [runtime + ' release ' + run], ''))
     path = Path(workspace) if workspace else None
     if linked_worktree(store, path):
-        branch, state = branch_state(path)
-        commands = ['git worktree remove --force ' + shlex.quote(str(path))]
-        text = 'Save anything you want from the worktree, then drop it'
-        if branch and branch not in ('main', 'master') and (state == 'never-pushed' or (isinstance(state, int) and state > 0)):
-            commands.append('git branch -D ' + shlex.quote(branch))
-            text += (' and its local branch ' + branch + ', which has never been pushed' if state == 'never-pushed'
-                     else ' and its local branch ' + branch + ', which has ' + str(state) + ' commit(s) not on origin/' + branch)
-        steps.append((text + ':', commands, 'Or keep it and rerun with a new worktree instead (`shepherd.sh --worktree DIR`): '
-                      'a rerun on this worktree stops with exit 21 until it is dropped.'))
+        steps.append(branch_step(path, 'Or keep the worktree and rerun with a new one instead (`shepherd.sh --worktree DIR`): '
+                                 'a rerun on this worktree stops with exit 21 until it is dropped.'))
     steps.append((rerun, [], ''))
     return steps
 
@@ -557,8 +580,23 @@ def finish(repo, args, store):
     print(json.dumps(record, indent=2))
 
 
+def stop_grace(depth):
+    """Seconds a runtime waits for its child after forwarding a signal, before
+    it kills the child's process group. The wrappers of one run nest (shepherd
+    → worker → stage), and an outer kill of the inner wrapper's group also takes
+    the inner runtime with it, before that one killed its own child: a stage
+    that ignored the signal then ran on. So each level waits one step (5 s,
+    BUREAU_STOP_GRACE_SECONDS) longer than the level inside it: 20 s at the
+    top, 15, 10, then 5 s from the fourth level on."""
+    unit = os.environ.get('BUREAU_STOP_GRACE_SECONDS', '')
+    unit = int(unit) if unit.isdigit() and 1 <= int(unit) <= 600 else 5
+    return unit * (4 - min(depth, 3))
+
+
 def execute(repo, args, store):
     inherited = bool(os.environ.get('BUREAU_RUN_ID'))
+    depth = os.environ.get('BUREAU_RUN_DEPTH', '')
+    depth = int(depth) if inherited and depth.isdigit() else 0
     run = os.environ.get('BUREAU_RUN_ID') or uuid.uuid4().hex
     if not re.fullmatch(r'[a-f0-9]{32}', run):
         raise ValueError('BUREAU_RUN_ID must be a 32-character run ID')
@@ -597,7 +635,7 @@ def execute(repo, args, store):
                 print('bureau: could not report the conflict (' + repr(error) + ')', file=sys.stderr)
             return 21
         if interrupted: return 130
-        child = store.spawn(run, command, repo, env={**os.environ, 'BUREAU_RUN_ID': run, 'BUREAU_ACTIVE_ENTRY': args.entry or '',
+        child = store.spawn(run, command, repo, env={**os.environ, 'BUREAU_RUN_ID': run, 'BUREAU_RUN_DEPTH': str(depth + 1), 'BUREAU_ACTIVE_ENTRY': args.entry or '',
                  'BUREAU_CURRENT_ISSUE': args.issue, 'BUREAU_CONFIG': str(config_for(repo))})
         if interrupted: signal_child(interrupted)
         while True:
@@ -606,7 +644,7 @@ def execute(repo, args, store):
                 return 130 if interrupted else code
             except subprocess.TimeoutExpired:
                 if interrupted:
-                    try: child.wait(timeout=5)
+                    try: child.wait(timeout=stop_grace(depth))
                     except subprocess.TimeoutExpired: signal_child(signal.SIGKILL); child.wait()
                     return 130
     finally:

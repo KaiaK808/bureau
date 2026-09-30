@@ -29,6 +29,14 @@
 #      names the holder and how to free the branch
 #   8. a registered worker whose directory now holds another repository: needs-human and a
 #      comment without git commands of this repository
+#   9. finished work that is not on origin (an implement stage whose final push failed, and a
+#      spec stage that committed before the interrupt): the comment pushes it, never offers
+#      `git branch -D`, and its commands, run as written, keep the commit
+#  10. the main checkout as the worktree: the comment asks for a worktree of its own and offers
+#      neither `git worktree remove` nor `git branch -D`; shepherd.sh --worktree . is refused
+#      before anything is claimed or written
+#  11. a signal while the claim waits for the runtime's lock, before it conflicts: exit 130 and
+#      nothing written
 # Negative control: against v3.1.0-rc.1 (5184cf8) every halt above writes nothing to Linear,
 # and case 1 fails.
 set -euo pipefail
@@ -42,7 +50,7 @@ fail() {
   exit 1
 }
 pr5_setup
-trap 'rm -rf "$SB"' EXIT
+trap pr5_teardown EXIT
 
 settle() {
   local i=0
@@ -97,7 +105,7 @@ BODY=$(pr5_comment 7)
 grep -q '^🛑 Bureau halt (exit 21, ownership-conflict) in `spec`: the worktree `'"$WT"'` is not registered' <<< "$BODY" \
   || fail "2: the comment does not name the worktree: $BODY"
 grep -q "It was preserved when run \`$RUN\` of EXP-7 was interrupted" <<< "$BODY" || fail "2: the comment does not name the interrupted run"
-grep -qF 'drop it and its local branch `145-probe-feature` (never pushed)' <<< "$BODY" || fail "2: the comment does not name the unpushed branch"
+grep -qF 'drop it and its local branch `145-probe-feature`, which was never pushed and has no commits of its own' <<< "$BODY" || fail "2: the comment does not name the unpushed branch"
 grep -qF 'shepherd.sh --worktree DIR' <<< "$BODY" || fail "2: the --worktree alternative is missing"
 grep -qF "2. Remove \`needs-human\` from EXP-7 and rerun." <<< "$BODY" || fail "2: the rerun step is missing"
 grep -qF "git worktree remove --force '$WT'" <<< "$ERR" || fail "2: stderr does not carry the fix"
@@ -227,3 +235,101 @@ grep -qF "the worktree \`$WT\` is registered as a Bureau worker, but it now belo
   || fail "8: the comment does not say what changed"
 grep -q 'git worktree remove\|git branch -D' <<< "$BODY" && fail "8: the comment runs git of this repository on another repository"
 echo "PASS 8 a worker whose identity changed: needs-human and a comment"
+
+# ── 9. finished work that is not on origin ─────────────────────────────────────────────
+pr5_new_repo
+git -C "$REPO" branch feat/exp-7; git -C "$REPO" push -q origin feat/exp-7
+cat > "$REPO/scripts/implement-pipeline.sh" <<'PROBE'
+#!/bin/bash
+# Probe: an implement stage that commits its work and then fails its final push (exit 18).
+set -euo pipefail
+source "$(dirname "$0")/bureau-config.sh"
+if [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"; fi
+bureau_stage_enter "$1" "$@"
+echo done > feature.txt; git add feature.txt
+git -c user.name=t -c user.email=t@t commit -q -m 'implement iteration 1 (finished work)'
+exit 18
+PROBE
+IWT="$REPO/.worktrees/queue-implement"
+set +e
+(cd "$REPO" && _pr5_env bash scripts/bureau-worker.sh EXP-7 implement-pipeline.sh "$IWT" feat/exp-7 > "$SB/out" 2> "$SB/err"); RC=$?
+set -e
+[ "$RC" = 18 ] || { ERR=$(cat "$SB/err"); fail "9: the implement probe ended $RC, wanted 18"; }
+DONE=$(git -C "$REPO" log --all --format=%H --grep='implement iteration 1' | head -1)
+set +e
+(cd "$REPO" && _pr5_env bash scripts/bureau-worker.sh EXP-7 implement-pipeline.sh "$IWT" feat/exp-7 > "$SB/out" 2> "$SB/err"); RC=$?
+set -e
+ERR=$(cat "$SB/err")
+[ "$RC" = 21 ] || fail "9: the next pick on the preserved worktree ended $RC, wanted 21"
+BODY=$(pr5_comment 7)
+grep -q 'git branch -D' <<< "$BODY" && fail "9: finished work that is not on origin is offered for deletion: $BODY"
+grep -qF 'Its branch `feat/exp-7` has 1 commit(s) that are not on origin/feat/exp-7: push them' <<< "$BODY" || fail "9: the comment does not say the commit is not on origin"
+grep -qxF '   git push origin feat/exp-7' <<< "$BODY" || fail "9: the comment does not push the branch"
+grep -qF "Deleting \`feat/exp-7\` is not needed: the rerun's \`git checkout -B\` resets it to origin/feat/exp-7." <<< "$BODY" || fail "9: the comment does not say deleting is not needed"
+FIX=$(sed -n '/^   ```sh$/,/^   ```$/{ /```/d; s/^   //p; }' <<< "$BODY")
+while IFS= read -r step; do
+  (cd "$REPO" && bash -c "$step" >/dev/null 2>&1) || fail "9: the comment's step failed: $step"
+done <<< "$FIX"
+git -C "$REPO" branch -r --contains "$DONE" | grep -q 'origin/feat/exp-7' || fail "9: the finished commit is not on origin after the comment's steps"
+git -C "$REPO" branch --contains "$DONE" | grep -q 'feat/exp-7' || fail "9: the finished commit left its branch"
+# A spec stage that committed before the interrupt: its branch was never pushed.
+pr5_new_repo
+printf commit > "$SB/probe-mode"
+pr5_shepherd_start || fail "9: the probe stage did not start"
+RUN=$(pr5_run_id); pr5_interrupt; settle
+(cd "$REPO" && python3 scripts/bureau-runtime.py release "$RUN" >/dev/null)
+: > "$SB/linear.log"
+pr5_shepherd
+[ "$RC" = 21 ] || fail "9: the rerun on the unregistered worktree ended $RC, wanted 21"
+BODY=$(pr5_comment 7)
+grep -q 'git branch -D' <<< "$BODY" && fail "9: a never-pushed branch with a commit is offered for deletion: $BODY"
+grep -qF 'Its local branch `145-probe-feature` has 1 commit(s) that are on no remote: push them (or keep the branch)' <<< "$BODY" || fail "9: the comment does not say the commit is on no remote"
+grep -qxF '   git push -u origin 145-probe-feature' <<< "$BODY" || fail "9: the comment does not push the never-pushed branch"
+grep -qF 'git branch -m 145-probe-feature 145-probe-feature-saved' <<< "$BODY" || fail "9: the comment does not say how to keep the branch out of the rerun's way"
+echo "PASS 9 finished work that is not on origin: pushed, never offered for deletion, kept by the steps"
+
+# ── 10. the main checkout as the worktree ──────────────────────────────────────────────
+pr5_new_repo
+git -C "$REPO" checkout -q -b local-only-work
+pr5_worker EXP-8 "$REPO"
+[ "$RC" = 21 ] || fail "10: the worker on the main checkout ended $RC, wanted 21"
+BODY=$(pr5_comment 8)
+grep -qF "the worktree \`$REPO\` is the repository's main checkout, which Bureau never resets or drops" <<< "$BODY" || fail "10: the comment does not say it is the main checkout: $BODY"
+grep -q 'git worktree remove\|git branch -D' <<< "$BODY" && fail "10: the comment offers to drop the main checkout or its branch: $BODY"
+grep -qF 'Rerun with a worktree of its own' <<< "$BODY" || fail "10: the comment does not ask for a worktree of its own"
+[ "$(git -C "$REPO" branch --show-current)" = local-only-work ] || fail "10: the main checkout was touched"
+: > "$SB/linear.log"
+for arg in . "$REPO"; do
+  pr5_shepherd --worktree "$arg"
+  [ "$RC" = 1 ] || fail "10: shepherd.sh --worktree $arg ended $RC, wanted 1"
+  grep -qF 'the shepherd needs a worktree of its own' <<< "$ERR" || fail "10: shepherd.sh --worktree $arg does not say why"
+done
+[ ! -s "$SB/linear.log" ] || fail "10: a refused --worktree reached Linear: $(tr '\n' ';' < "$SB/linear.log")"
+[ ! -s "$COMMON/bureau/leases.json" ] || [ "$(jq length "$COMMON/bureau/leases.json")" = 0 ] || fail "10: a refused --worktree claimed something"
+echo "PASS 10 the main checkout: a comment that asks for a worktree of its own, and shepherd.sh refuses it up front"
+
+# ── 11. a signal while the claim waits, before it conflicts ────────────────────────────
+interrupted
+python3 - "$COMMON/bureau/guard" "$SB/lock-held" "$SB/lock-release" <<'PY' &
+import fcntl, os, sys, time
+with open(sys.argv[1], 'a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    open(sys.argv[2], 'w').close()
+    while not os.path.exists(sys.argv[3]): time.sleep(0.05)
+PY
+LOCKER=$!
+i=0; while [ ! -f "$SB/lock-held" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+(cd "$REPO" && exec env PATH="$SB/bin:$PATH" TMPDIR="$SB/tmp" BUREAU_LINEAR_RETRIES=0 \
+   bash scripts/shepherd.sh --no-tmux --worktree .worktrees/shepherd-EXP-7 EXP-7 > "$SB/out" 2> "$SB/err") &
+SECOND=$!
+i=0; while ! ps -o args= -p "$SECOND" 2>/dev/null | grep -q 'bureau-runtime.py' && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+sleep 1   # the runtime has its signal handlers and waits for the lock
+kill -TERM "$SECOND"
+sleep 0.5
+touch "$SB/lock-release"; wait "$LOCKER" || true
+set +e; wait "$SECOND"; RC=$?; set -e
+ERR=$(cat "$SB/err")
+[ "$RC" = 130 ] || fail "11: a signal during the claim ended $RC, wanted 130"
+grep -q 'bureau conflict' <<< "$ERR" && fail "11: a cancelled claim still reported the conflict"
+[ -z "$(pr5_writes 7)" ] || fail "11: a cancelled claim wrote to Linear: $(pr5_writes 7 | tr '\n' ';')"
+echo "PASS 11 a signal while the claim waits: 130 and nothing written"

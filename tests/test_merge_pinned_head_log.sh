@@ -11,8 +11,8 @@
 # with the real gate helpers against the pr2 gh double (tests/lib/pr2-gate.sh); Linear is the
 # harness stub, the reviewers fake_claude.sh.
 #   1. the merge stage: the line names the PR's head, the same SHA the merge call is pinned to
-#   2. a push between the gate and the merge call: the line names the head that was checked
-#      and pinned, not the one that arrived; nothing is merged
+#   2. a push that lands after the head was pinned and before the line is printed: the line
+#      names the head that was checked and pinned, not the one that arrived; nothing is merged
 #   3. the review stage's inline merge (merge agent off) prints the same line
 # Negative control: against v3.1.0-rc.1 (5184cf8) the line carries no SHA and case 1 fails.
 set -euo pipefail
@@ -51,14 +51,17 @@ echo "PASS 1 the merge line names the head the merge call is pinned to"
 # ── 2. a push between the gate and the merge call ──────────────────────────────────────
 new_sandbox
 NEW_SHA=1111111111111111111111111111111111111111
-printf '%s' "$NEW_SHA" > "$PR2_GH/move_head_on_merge"
+# The push lands right after the second read of the head (the gate's, then the one the merge
+# is pinned to), before the merge line is printed: a line that read the head again would
+# name the new one.
+printf '2 %s' "$NEW_SHA" > "$PR2_GH/move_head_after_reads"
 run_pipeline merge-pipeline.sh "$ISSUE"
 pr2_merged && fail "2: merged a head no gate has seen"
 [ "$LAST_RC" = 2 ] || fail "2: a moved head ended $LAST_RC, wanted 2"
 grep -qxF "  Merging PR #99 (squash) at $HEAD_SHA..." <<< "$LAST_STDOUT" || fail "2: the merge line does not name the checked head"
 grep -qF "at $NEW_SHA" <<< "$LAST_STDOUT" && fail "2: the merge line names the head that arrived after the gate"
 grep -qF "The PR head moved from $HEAD_SHA to $NEW_SHA" <<< "$LAST_STDOUT" || fail "2: the move is not reported"
-echo "PASS 2 a push after the gate: the line names the checked and pinned head, nothing merged"
+echo "PASS 2 a push after the pin: the line names the checked and pinned head, nothing merged"
 
 # ── 3. the inline merge of the review stage ────────────────────────────────────────────
 new_sandbox

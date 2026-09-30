@@ -131,6 +131,19 @@ if [ -n "$WORKTREE_OVERRIDE" ]; then
   done
   ORIG_ARGS=("${_args[@]}")
   unset _args _a _next_is_worktree
+  # A disposable worker needs a worktree of its own. The main checkout (or the
+  # checkout the shepherd runs from) is never reset: the stage would stop with
+  # 21 and the halt would ask to drop a checkout nobody may drop (v3.1.0-rc.2).
+  _wt_real=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$WORKTREE_OVERRIDE")
+  _main=$(git -C "$REPO_DIR" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p' || true)
+  for _co in "$_main" "$(git -C "$REPO_DIR" rev-parse --show-toplevel 2>/dev/null || true)"; do
+    [ -n "$_co" ] || continue
+    if [ "$_wt_real" = "$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$_co")" ]; then
+      echo "ERROR: --worktree $WORKTREE_OVERRIDE is the checkout $_co; the shepherd needs a worktree of its own (e.g. --worktree .worktrees/shepherd-${ISSUE:-TEAM-123})" >&2
+      exit 1
+    fi
+  done
+  unset _wt_real _main _co
 fi
 
 if [ -z "$ISSUE" ]; then

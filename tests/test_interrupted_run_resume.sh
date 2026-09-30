@@ -15,8 +15,9 @@
 #      worktree and of its unpushed local branch, the --worktree alternative and the rerun;
 #      nothing written to Linear but the shepherd's own claim label; the work is still there
 #   2. the steps, run exactly as printed, resume: the rerun goes through to Done
-#   3. the steps follow the checkout: a branch that is pushed and even is not deleted, one
-#      with local commits is (and the count is named), the main checkout and a missing
+#   3. the steps follow the checkout: `git branch -D` only for a branch never pushed and without
+#      commits of its own; commits that are on no remote, or not on origin/<branch>, are
+#      pushed first, never deleted; a pushed branch needs no deletion; the main checkout, a missing
 #      worktree and a directory Git does not know are never offered to `git worktree remove`
 #      (bureau-runtime.py's resume_steps on real repos)
 #   4. a run interrupted before its stage wrote anything: the worker leaves the clean worktree
@@ -35,7 +36,7 @@ fail() {
   exit 1
 }
 pr5_setup
-trap 'rm -rf "$SB"' EXIT
+trap pr5_teardown EXIT
 
 # settle — wait until no process of the sandbox repository is left (the nested wrappers and
 # the worker finish after the shepherd's own runtime has returned).
@@ -63,7 +64,7 @@ grep -qF "Worktree: $WT (" <<< "$MSG" || fail "1: the message does not name the 
 grep -qxF "         python3 scripts/bureau-runtime.py release $RUN" <<< "$MSG" || fail "1: no release command for $RUN"
 grep -qxF "         git worktree remove --force '$WT'" <<< "$MSG" || fail "1: no (quoted) removal of the preserved worktree"
 grep -qxF "         git branch -D 145-probe-feature" <<< "$MSG" || fail "1: the unpushed local branch is not named for deletion"
-grep -q 'local branch 145-probe-feature, which has never been pushed' <<< "$MSG" || fail "1: the message does not say the branch was never pushed"
+grep -q 'local branch 145-probe-feature, which was never pushed and has no commits of its own' <<< "$MSG" || fail "1: the message does not say why the branch may go"
 grep -qF 'shepherd.sh --worktree DIR' <<< "$MSG" || fail "1: the --worktree alternative is missing"
 grep -q 'stops with exit 21 until it is dropped' <<< "$MSG" || fail "1: the message does not say a rerun on it stops with 21"
 grep -q '3\. Rerun the shepherd or the stage\.' <<< "$MSG" || fail "1: the rerun step is missing"
@@ -106,10 +107,24 @@ def steps(ws): return r.render_steps(r.resume_steps(store, repo, 'a' * 32, ws, '
 pushed = base / 'pushed wt'; git(repo, 'worktree', 'add', '-q', '-b', 'feat/pushed', str(pushed), 'main'); git(pushed, 'push', '-q', 'origin', 'feat/pushed')
 text = steps(str(pushed))
 assert "git worktree remove --force '" + str(pushed) + "'" in text, text
-assert 'git branch -D' not in text, 'a pushed, even branch is offered for deletion:\n' + text
+assert 'git branch -D' not in text and 'git push' not in text, 'a pushed, even branch gets a push or a deletion:\n' + text
+assert 'Its branch feat/pushed is on origin; deleting it is not needed' in text, text
+# Finished work that did not reach origin (an implement stage whose final push failed):
+# pushed, never deleted.
 git(pushed, 'commit', '-q', '--allow-empty', '-m', 'one'); git(pushed, 'commit', '-q', '--allow-empty', '-m', 'two')
 text = steps(str(pushed))
-assert 'git branch -D feat/pushed' in text and '2 commit(s) not on origin/feat/pushed' in text, text
+assert 'git branch -D' not in text, 'commits that are not on origin are offered for deletion:\n' + text
+assert '         git push origin feat/pushed\n' in text and '2 commit(s) that are not on origin/feat/pushed' in text, text
+assert text.index('git push origin') < text.index('git worktree remove'), 'the worktree goes before its commits are pushed:\n' + text
+assert 'Deleting feat/pushed is not needed' in text, text
+# A branch that was never pushed: deleted only while it has no commits of its own.
+fresh = base / 'fresh wt'; git(repo, 'worktree', 'add', '-q', '-b', 'feat/fresh', str(fresh), 'main')
+text = steps(str(fresh))
+assert 'git branch -D feat/fresh' in text and 'never pushed and has no commits of its own' in text, text
+git(fresh, 'commit', '-q', '--allow-empty', '-m', 'local work')
+text = steps(str(fresh))
+assert 'git branch -D' not in text, 'a never-pushed branch with commits is offered for deletion:\n' + text
+assert 'git push -u origin feat/fresh' in text and '1 commit(s) that are on no remote' in text and 'git branch -m feat/fresh feat/fresh-saved' in text, text
 text = steps(str(repo))
 assert 'worktree remove' not in text and 'branch -D' not in text, 'the main checkout is offered for removal:\n' + text
 assert 'release ' + 'a' * 32 in text, text
