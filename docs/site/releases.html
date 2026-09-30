@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="75e0ffc1f7cdc1d2b4a61b31d8952db61cfefab7745770a5a920e7ff70b92a38">
+<meta name="bureau-source-sha256" content="55de661b2d84b7554a2e12ba7f37235f17cfe85c79d7fdbd9ed994f162f0fb96">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,25 +24,16 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.1.0-rc.2</strong>, dated
-<strong>2026-09-30</strong>, the second release candidate for v3.1.0,
-published as a GitHub prerelease. Its <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0-rc.2">GitHub
+<p>This source tree contains <strong>Bureau v3.1.0</strong>, dated
+<strong>2026-09-30</strong>, the current stable release, marked as
+latest. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0">GitHub
 Release</a> identifies the exact tagged commit; the <a
 href="../../CHANGELOG.md">changelog</a> and <a
 href="release-notes.html">release notes</a> describe the changes and the
-upgrade. rc.2 carries the three gaps the live acceptance of rc.1 found
-and one log line (<a
-href="https://github.com/KaiaK808/bureau/pull/41">#41</a>): a way back
-after an interrupted run (printed once, with the run, ticket, worktree
-and branch; the worker ends with <code>130</code> on SIGTERM; nested
-stop graces), a visible halt with <code>needs-human</code> and one
-ticket comment on exit <code>21</code>, the pinned head in the merge log
-line, and "Build output: last 20 of N lines" in the review log. The
-first candidate, <a href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>,
-stays published. v3.1 is a minor release on v3.0.2 and keeps the v3
-exit-code contract. It collects six pull requests: code a branch
-controls runs without the Bureau secrets (<a
+upgrade. v3.1 is a minor release on v3.0.2 and keeps the v3 exit-code
+contract. It collects six pull requests: code a branch controls runs
+without the Bureau secrets (<a
 href="https://github.com/KaiaK808/bureau/pull/33">#33</a>); the review
 stage acts on the result of its inline merge, and the merge gate honours
 <code>false</code> switches, pins the head it checked and blocks a head
@@ -55,38 +46,48 @@ directory handling (<a
 href="https://github.com/KaiaK808/bureau/pull/36">#36</a>); operator
 guards (<a href="https://github.com/KaiaK808/bureau/pull/35">#35</a>);
 and doctor checks, a one-hour default stage timeout and installer fixes
-(<a href="https://github.com/KaiaK808/bureau/pull/34">#34</a>). An
-upgrade resyncs the scripts and interfaces scopes as one set; see <a
+(<a href="https://github.com/KaiaK808/bureau/pull/34">#34</a>). A
+seventh carries the fixes for the three gaps the live acceptance of rc.1
+found and one log line (<a
+href="https://github.com/KaiaK808/bureau/pull/41">#41</a>): a way back
+after an interrupted run (printed once, with the run, ticket, worktree
+and branch; the worker ends with <code>130</code> on SIGTERM; nested
+stop graces), a visible halt with <code>needs-human</code> and one
+ticket comment on exit <code>21</code>, the pinned head in the merge log
+line, and "Build output: last 20 of N lines" in the review log. Its
+candidates, <a href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a> and
+<a href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a>, stay published
+as prereleases; v3.1.0 has the same runtime as rc.2. An upgrade from
+v3.0.2 resyncs the scripts and interfaces scopes as one set; see <a
 href="migration.html#upgrade-to-v31">Upgrade to v3.1</a>.</p>
-<p>rc.1 passed a live acceptance: the maintainer's pilot installation
-was resynced to it, and one ticket went from Triage to Done with the
-shepherd in 54 minutes, with the merge pinned to the head the gate
-checked and the review comment carrying the merger's findings. Before
-that run, a run interrupted by SIGTERM and its resume, which stopped
-with exit <code>21</code>, showed the gaps rc.2 fixes. rc.1's changes
+<p>The maintainer's pilot installation was resynced to each candidate.
+On rc.1 one ticket went from Triage to Done with the shepherd in 54
+minutes, with the merge pinned to the head the gate checked and the
+review comment carrying the merger's findings; before that run, a run
+interrupted by SIGTERM and its resume, which stopped with exit
+<code>21</code>, showed the gaps rc.2 fixes. On rc.2 a second ticket
+went from Triage to Done with the shepherd in 46 minutes; the merge log
+line named the pinned head, the head the review had approved, and the
+interrupt and exit-<code>21</code> paths did not occur. rc.1's changes
 are validated by the full Linux/macOS suite, the installer fixtures,
 tests on the real scripts with negative controls against v3.0.2 and
 mutation checks, and an independent verification pass per pull request
 with a fix round and a delta check of the fixes (#33 also went through
 three Codex cross-check rounds); a replay of the 1,889 real
 branch/listing pairs from eight installations used for v3.0.2 gives the
-same spec directory as v3.0.2 in every pair. rc.2's own changes are
+same spec directory as v3.0.2 in every pair. rc.2's changes are
 validated by the full Linux/macOS suite on the release commit, new tests
 with negative controls against rc.1 and mutation checks, and an
-independent verification pass with a fix round and a delta check; they
-have not run in an installation yet. The pilot is resynced to rc.2 next,
-and <strong>v3.1.0</strong> follows after that. Release preparation
-changes documentation only: runtime, installer, templates and CI are
-identical to the merge of <a
-href="https://github.com/KaiaK808/bureau/pull/41">#41</a>,
-<code>36ffc8a</code>, and the tests to the merge of <a
-href="https://github.com/KaiaK808/bureau/pull/43">#43</a>,
-<code>f833f3b</code>, which names the sandbox repositories of three
-tests with <code>mktemp -d</code>, so a repeated random number no longer
-re-initialises an existing one. The final commit is recorded in the
-GitHub Release body.</p>
-<p>The stable release, marked as latest, is <strong>Bureau
-v3.0.2</strong>, dated <strong>2026-09-29</strong> (<a
+independent verification pass with a fix round and a delta check.
+Release preparation changes documentation only: runtime, installer,
+templates and tests are identical to the rc.2 tag, <code>a81938c</code>,
+and the CI configuration to the merge of <a
+href="https://github.com/KaiaK808/bureau/pull/44">#44</a>,
+<code>c9cd458</code>, which raises the limit of the <code>shell</code>
+job of the <code>test</code> workflow to 45 minutes. The final commit is
+recorded in the GitHub Release body.</p>
+<p>The previous stable release is <strong>Bureau v3.0.2</strong>, dated
+<strong>2026-09-29</strong> (<a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">GitHub
 Release</a>, <a href="release-notes-v3.0.2.html">release notes</a>): a
 patch on v3.0.1. v3.0.2 changes the runtime in two places: every stage

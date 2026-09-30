@@ -21,10 +21,10 @@ Codex support is implemented and covered by local fixtures. Before unattended ad
 
 ## Install
 
-Install the stable v3.0.2 source, keep one clone and expose it to the assistants you use:
+Install the stable v3.1.0 source, keep one clone and expose it to the assistants you use:
 
 ```sh
-git clone --branch v3.0.2 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
+git clone --branch v3.1.0 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
 mkdir -p "$HOME/.agents/skills"
 ln -s "$HOME/bureau-init" "$HOME/.agents/skills/bureau-init"
 # Optional Claude Code entry point:
@@ -90,7 +90,7 @@ The [background operations reference](references/operations.md) covers these mod
 
 ## Update and migrate
 
-Select `v3.0.2` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release), refresh skill discovery, then resync **each adopting repository**. In Claude Code, after loading the new source skill:
+Select `v3.1.0` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release), refresh skill discovery, then resync **each adopting repository**. In Claude Code, after loading the new source skill:
 
 ```text
 /bureau-init --resync-interfaces --resync-scripts --target both
@@ -108,11 +108,11 @@ Pause dispatch and preserve local work first. Resync previews conflicts; one unr
 
 Version 1 configs remain supported. Optional schema-v2 migration preserves existing values, adds the absent legacy runner default and records `model_compatibility: "v1"` to retain model ownership. Its private backup covers configuration only. Installing Codex interfaces does not switch the background runner.
 
-The [v3.0.2 release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.2) and [changelog](CHANGELOG.md) list what changes and what adopters must do. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
+The [v3.1.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.1.0) and [changelog](CHANGELOG.md) list what changes and what adopters must do. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
 
 v3 changes the exit-code contract between stages and their drivers and needs configuration set before the resync; see the [v3.0.0 release notes](docs/release-notes-v3.0.0.md) and [Upgrade to v3](docs/migration.md#upgrade-to-v3). v3.0.1 is a patch on v3.0.0 (the merge stage's exit codes and a reused approval; see its [release notes](docs/release-notes-v3.0.1.md)); v3.0.2 is a patch on v3.0.1 (every stage finds the ticket's own spec directory, and `repo.worktree_links` brings a Python `.venv` back into the stage worktrees; see its [release notes](docs/release-notes-v3.0.2.md)). The previous major release is [v2.0.0](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0).
 
-A release candidate, [v3.1.0-rc.2](https://github.com/KaiaK808/bureau/releases/tag/v3.1.0-rc.2), is available for piloting. It keeps the v3 exit-code contract; branch code runs without the Bureau secrets, the review stage acts on the result of its inline merge, the merge gate honours `false` switches and reads its numbers by one rule, the default timeout per stage call is one hour, and an interrupted run prints its own way back. Resync the scripts and interfaces scopes together and check the list in [Upgrade to v3.1](docs/migration.md#upgrade-to-v31) first; see its [release notes](docs/release-notes.md) and those of the first candidate, [v3.1.0-rc.1](docs/release-notes-v3.1.0-rc.1.md). The stable release stays v3.0.2 until v3.1.0 is published.
+v3.1.0 is a minor release on v3.0.2 and keeps the v3 exit-code contract; branch code runs without the Bureau secrets, the review stage acts on the result of its inline merge, the merge gate honours `false` switches, pins the head it checked and reads its numbers by one rule, the default timeout per stage call is one hour, and an interrupted run prints its own way back. Resync the scripts and interfaces scopes together and check the list in [Upgrade to v3.1](docs/migration.md#upgrade-to-v31) first; see its [release notes](docs/release-notes.md) and those of its candidates, [v3.1.0-rc.2](docs/release-notes-v3.1.0-rc.2.md) and [v3.1.0-rc.1](docs/release-notes-v3.1.0-rc.1.md). The previous stable release is [v3.0.2](https://github.com/KaiaK808/bureau/releases/tag/v3.0.2).
 
 ## Documentation
 
