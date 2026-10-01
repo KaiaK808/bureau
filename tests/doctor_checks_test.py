@@ -264,7 +264,10 @@ class TestCommandWarningTests(Repo):
     warned on every installation. Each case first runs the REAL lines of implement-pipeline.sh that
     decide it, in a bash that sourced the real bureau-config.sh: the .env loading at the top and the
     Codex completion gate (resolve_runner_for_stage implement, then `exit 24` on an empty
-    repo.test_command). Doctor must warn exactly where that gate stops the stage."""
+    repo.test_command). Doctor must warn exactly where that gate stops the stage. The stage runs as it
+    does under the worker: in a linked worktree without a .env, with BUREAU_CONFIG naming the main
+    checkout's .bureau.json, as the tick exports it. LOAD and GATE are cut from implement-pipeline.sh
+    by their exact text: a change to those lines must come here too (a deliberate tripwire)."""
     WARNING = 'repo.test_command is missing; required for Codex background implementation'
     CONFIG_SH = ROOT / 'templates/scripts/bureau-config.sh'
     IMPLEMENT = (ROOT / 'templates/scripts/implement-pipeline.sh').read_text().splitlines()
@@ -272,7 +275,8 @@ class TestCommandWarningTests(Repo):
     LOAD = '\n'.join(IMPLEMENT[_load:_load + 4])
     _gate = next(i for i, line in enumerate(IMPLEMENT) if line.startswith('if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then'))
     GATE = '\n'.join(IMPLEMENT[_gate:_gate + 3]) + '\nfi'
-    STAGE = ('cd "$REPO" && source "$CONFIG_SH" >/dev/null 2>&1 || exit 99; SCRIPT_REPO="$REPO"; eval "$LOAD" >/dev/null 2>&1 || exit 98\n'
+    STAGE = ('cd "$WORKTREE" && [ ! -e .env ] || exit 97\n'
+             'source "$CONFIG_SH" >/dev/null 2>&1 || exit 99; SCRIPT_REPO="$REPO"; eval "$LOAD" >/dev/null 2>&1 || exit 98\n'
              'runner=$(resolve_runner_for_stage implement 2>/dev/null) || runner=unresolved\n'
              'STATUS=COMPLETE; rc=0; ( eval "$GATE" ) >/dev/null 2>&1 || rc=$?; printf "%s %s" "$runner" "$rc"')
 
@@ -282,11 +286,13 @@ class TestCommandWarningTests(Repo):
         assert 'exit 24' in self.GATE, self.GATE
         for name in [name for name in os.environ if name.startswith('BUREAU_RUNNER_')] + ['BUREAU_ENV_FILE']: os.environ.pop(name, None)
         with (self.repo / '.git/info/exclude').open('a') as out: out.write('.env\n')
+        self.worktree = self.base / 'implement worktree'
+        git(self.repo, 'worktree', 'add', '-q', '--detach', str(self.worktree))
 
     def stage(self, env):
         """(runner implement resolves, whether the Codex completion gate stops the stage with 24)."""
         proc = subprocess.run(['/bin/bash', '-c', self.STAGE], capture_output=True, text=True,
-                              env={**os.environ, 'REPO': str(self.repo), 'CONFIG_SH': str(self.CONFIG_SH), 'LOAD': self.LOAD, 'GATE': self.GATE,
+                              env={**os.environ, 'REPO': str(self.repo), 'WORKTREE': str(self.worktree), 'CONFIG_SH': str(self.CONFIG_SH), 'LOAD': self.LOAD, 'GATE': self.GATE,
                                    'BUREAU_CONFIG': str(self.repo / '.bureau.json'), 'LINEAR_API_KEY': 'lin_test', **env})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         runner, rc = proc.stdout.split()
@@ -384,6 +390,22 @@ class TestCommandWarningTests(Repo):
         elsewhere = self.base / 'secrets' / 'bureau.env'; elsewhere.parent.mkdir()
         (self.repo / '.env').unlink(missing_ok=True)
         self.assertEqual(self.check(claude, {'BUREAU_ENV_FILE': str(elsewhere)}, env_file='BUREAU_RUNNER_IMPLEMENT=codex\n', at=elsewhere), ('codex', True))
+
+    def test_bureau_env_file_wins_over_the_checkout_doctor_runs_in(self):
+        # The stage's worktree has no .env, so the stage reads BUREAU_ENV_FILE and never the main
+        # checkout's .env; doctor, run in the main checkout, must read the same file.
+        claude = {'runner': 'claude', 'implement': True}
+        elsewhere = self.base / 'secrets' / 'bureau.env'; elsewhere.parent.mkdir()
+        cases = [  # BUREAU_ENV_FILE's text (None: unset), the main checkout's .env, runner, stops
+            ('BUREAU_RUNNER_IMPLEMENT=codex\n', 'LINEAR_API_KEY=lin_test\n', 'codex', True),
+            ('LINEAR_API_KEY=lin_test\n', 'BUREAU_RUNNER_IMPLEMENT=codex\n', 'claude', False),
+            (None, 'BUREAU_RUNNER_IMPLEMENT=codex\n', 'codex', True),   # unset: both read the .env next to .bureau.json
+        ]
+        for other, main, runner, halts in cases:
+            with self.subTest(bureau_env_file=other, main_env=main):
+                env = {}
+                if other is not None: elsewhere.write_text(other); env['BUREAU_ENV_FILE'] = str(elsewhere)
+                self.assertEqual(self.check(claude, env, env_file=main), (runner, halts))
 
     def test_an_implement_runner_that_does_not_resolve_is_no_codex(self):
         # Implement off and an unknown runner in the environment: the stage would stop on it,

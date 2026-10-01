@@ -125,16 +125,16 @@ LONG_CALL_STAGES = ('spec', 'spec_review', 'ux', 'qa', 'code_review')
 LONG_CALL_MIN_SECONDS = 1800
 
 
-def stage_env_value(repo, config_path, name):
-    """<name> as the implement stage sees it once it has loaded .env (implement-pipeline.sh:16-18): from
-    the workspace's ./.env when there is one, else from BUREAU_ENV_FILE, else from the .env next to
-    .bureau.json (bureau-config.sh:35). The file is read by the stages' own reader, bureau_load_env in
+def stage_env_value(config_path, name):
+    """<name> as the implement stage sees it once it has loaded .env (implement-pipeline.sh:17-20). The
+    stage runs in its worktree, which holds no ./.env after the reset (git clean -fdx), so it reads
+    BUREAU_ENV_FILE, by default the .env next to .bureau.json (bureau-config.sh:35); so does doctor,
+    whichever checkout it runs in. The file is read by the stages' own reader, bureau_load_env in
     bureau-env.sh, run here unchanged: it never executes the file, takes only the keys on its list, and
     a key the file sets replaces the environment's value while a key it lacks leaves the environment's.
     Returns the value, or None when neither sets it; the environment's value when there is no such
     file or it cannot be read."""
-    env_file = repo / '.env'
-    if not env_file.is_file(): env_file = Path(os.environ.get('BUREAU_ENV_FILE') or config_path.parent / '.env')
+    env_file = Path(os.environ.get('BUREAU_ENV_FILE') or config_path.parent / '.env')
     if not env_file.is_file(): return os.environ.get(name)
     script = 'source "$1" || exit 1; bureau_load_env "$2" 2>/dev/null || exit 1; n=$3; [ -z "${!n+set}" ] || printf "set:%s" "${!n}"'
     try:
@@ -436,7 +436,7 @@ def diagnose(repo, mode):
     if not config.get('repo', {}).get('test_command'):
         # BUREAU_RUNNER_IMPLEMENT is a .env key the stages load; the stage's value decides.
         stage_env = {key: value for key, value in os.environ.items() if key != 'BUREAU_RUNNER_IMPLEMENT'}
-        runner_override = stage_env_value(repo, path, 'BUREAU_RUNNER_IMPLEMENT')
+        runner_override = stage_env_value(path, 'BUREAU_RUNNER_IMPLEMENT')
         if runner_override is not None: stage_env['BUREAU_RUNNER_IMPLEMENT'] = runner_override
         if implement_runner(config, provider, stage_env) == 'codex':
             warnings.append('repo.test_command is missing; required for Codex background implementation')

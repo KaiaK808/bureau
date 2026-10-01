@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b7f929ef105980db0ef2ca919a5fda1ee59e89938c1f5d8544aa2d78534c03e7">
+<meta name="bureau-source-sha256" content="089425531d4b1806689b51d87ed9e2ac11768cdfff7f1a5fdb7b548c68702792">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -718,10 +718,12 @@ agent, and stops with <code>24</code> when none is set (absent,
 <code>null</code>, <code>false</code> or <code>""</code>). The warning
 appears only when implement resolves to Codex:
 <code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it (the value in
-<code>.env</code>, which doctor reads with the stages' own reader and
-never executes, else doctor's environment), else
-<code>agents.implement.runner</code> when <code>agents.implement</code>
-is an object, else <code>agents.runner</code>. It appears with
+the <code>.env</code> the stages read, <code>BUREAU_ENV_FILE</code> or
+else the one next to <code>.bureau.json</code>, which doctor reads with
+the stages' own reader and never executes; else doctor's environment),
+else <code>agents.implement.runner</code> when
+<code>agents.implement</code> is an object, else
+<code>agents.runner</code>. It appears with
 <code>agents.implement</code> off as well, because the shepherd runs
 every stage unless <code>--respect-config</code>. Set
 <code>repo.test_command</code> to the project's real test command.
