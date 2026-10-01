@@ -22,12 +22,13 @@ if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
   bureau_exec_runtime python3 -I "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" "$@"
 fi
 export BUREAU_WORKSPACE_MODE=disposable
-# A signal (the runtime forwards Ctrl-C and SIGTERM to this process group) ends
-# the worker with 130 once the command in flight returns. Untrapped, bash hands
+# A signal (the runtime forwards Ctrl-C and SIGTERM to this process group, and
+# SIGTERM after a hang-up; a SIGHUP sent to the group counts the same) ends the
+# worker with 130 once the command in flight returns. Untrapped, bash hands
 # its EXIT trap $? = 0 after a signal: the cleanup below took a cancelled stage
 # for a finished one and detached the worktree from the branch it was building,
 # and the resume steps could no longer name that branch.
-trap 'exit 130' INT TERM
+trap 'exit 130' INT TERM HUP
 # A reset that refuses the worktree over ownership (exit 21: an unregistered or
 # foreign worktree, the branch held by another checkout, a lost claim) leaves the
 # halt on the ticket: needs-human and one comment naming the worktree and the way
