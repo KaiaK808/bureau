@@ -624,6 +624,7 @@ ITER_LOG=""
 i=0
 CLAUDE_EXIT=0
 TIMED_OUT_AFTER=0
+IMPL_RUNNER=$(resolve_runner_for_stage implement)
 
 # agents.implement.push_each_iteration. true (the default): the branch is
 # pushed after every iteration and after the /goal run, as it always was.
@@ -858,12 +859,22 @@ for (( i=1; i<=MAX_ITER; i++ )); do
 
   # The pass after one that timed out is told so first: it checks the task
   # list and the branch before it does anything, and reports COMPLETE when
-  # nothing is left, instead of starting over or waiting for CI again.
+  # nothing is left, instead of starting over or waiting for CI again. Only a
+  # Claude pass commits itself; after a Codex pass the shell has committed
+  # (commit_codex_changes), and Codex is told not to touch Git. A git lock the
+  # stopped pass left need not be stale: the adapter ends the pass's process
+  # group, but Claude starts its Bash tool shells detached, in sessions of
+  # their own, so a git process of the old pass can still be running.
   TIMEOUT_NOTE=""
   if [ "$STATUS" = "TIMEOUT" ]; then
+    if [ "$IMPL_RUNNER" = codex ]; then
+      TIMEOUT_GIT="The Bureau shell committed the changes it left."
+    else
+      TIMEOUT_GIT="It may have left uncommitted changes: commit finished work that is still uncommitted. If git reports an index.lock, a process of the stopped pass may still be running: remove the lock only when no git process has this worktree as its working directory (check with lsof -a -c git -d cwd, or pgrep -l git where lsof is missing); otherwise leave it, and report status NEEDS_HUMAN naming the lock and the process."
+    fi
     TIMEOUT_NOTE="
 --- The previous pass timed out ---
-Pass $((i - 1)) of this stage was stopped at its time limit of ${TIMED_OUT_AFTER}s before it reported a status. Its commits are kept; it may have left uncommitted changes in the worktree, and an index.lock that git reports is stale (the stopped pass's processes were ended), so remove it. Before anything else, read $TASKS_FILE and the branch state (git status, git log --oneline origin/main..HEAD). Commit finished work that is still uncommitted. If every task is marked [X] and its work is committed, report status COMPLETE right away and stop: do not redo the work, and do not wait for, poll or re-trigger CI. Otherwise go on with the open tasks.
+Pass $((i - 1)) of this stage was stopped at its time limit of ${TIMED_OUT_AFTER}s before it reported a status. Its commits are kept. $TIMEOUT_GIT Before any new work, read $TASKS_FILE and the branch state (git status, git log --oneline origin/main..HEAD). If every task is marked [X] and its work is in the commits on the branch, report status COMPLETE right away and stop: do not redo the work, and do not wait for, poll or re-trigger CI. Otherwise go on with the open tasks.
 --- End of note ---
 "
   fi

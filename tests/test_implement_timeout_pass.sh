@@ -18,6 +18,8 @@
 #   5  another provider failure (22) still ends the stage after the pass, with its code
 #   6  agents.implement.push_each_iteration false with a PR open: the timed-out pass's commit
 #      is held back like any other and goes out with the end-of-run push
+#   7  a Codex implementation: the note does not ask the agent to commit or to touch a git
+#      lock (the shell commits after a Codex pass); case 1 checks the Claude wording
 set -euo pipefail
 source "$(dirname "$0")/lib/harness.sh"
 source "$(dirname "$0")/lib/pr3-doubles.sh"
@@ -67,6 +69,9 @@ grep -qF -- "$NOTE" "$SANDBOX/.prompts/prompt-2.txt" || fail "1 pass 2's prompt 
 grep -qF 'Pass 1 of this stage was stopped at its time limit of 1800s before it reported a status' "$SANDBOX/.prompts/prompt-2.txt" \
   || fail "1 the note names the pass and its limit"
 grep -qF 'report status COMPLETE right away and stop' "$SANDBOX/.prompts/prompt-2.txt" || fail "1 the note asks for COMPLETE when nothing is left"
+grep -qF 'commit finished work that is still uncommitted' "$SANDBOX/.prompts/prompt-2.txt" || fail "1 a Claude pass is asked to commit what is left"
+grep -qF 'remove the lock only when no git process has this worktree as its working directory' "$SANDBOX/.prompts/prompt-2.txt" \
+  || fail "1 the note removes a git lock only when no git process runs there"
 check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "1 the timed-out pass's commit is on origin"
 has 'move_issue	EXP-100	state-build-review' "$(calls)" "1 handed on to Build Review"
 hasnt 'add_issue_label.*needs-human' "$(calls)" "1 no needs-human"
@@ -138,6 +143,17 @@ has 'push deferred \(iter 1\)' "$LAST_STDOUT" "6 the timed-out pass's push is de
 check_eq 1 "$(pr3_pushes)" "6 one push, at the end"
 check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "6 every commit on origin"
 has 'terminal status=COMPLETE \(after 2 iter\(s\)\)' "$LAST_STDOUT" "6 terminal COMPLETE"
+teardown
+
+# 7 — Codex: the shell commits, the note leaves Git alone
+setup
+export BUREAU_STUB_RUNNER=codex BUREAU_IMPL_MAX_ITER=2 FAKE_CLAUDE_TIMEOUT_ON_ITERS=1:2 FAKE_CLAUDE_COMMIT_ON_ITERS=1
+run_implement_pipeline
+unset BUREAU_STUB_RUNNER
+check_eq 124 "$LAST_RC" "7 exit"
+grep -qF -- "$NOTE" "$SANDBOX/.prompts/prompt-2.txt" || fail "7 pass 2 was told"
+grep -qF 'The Bureau shell committed the changes it left.' "$SANDBOX/.prompts/prompt-2.txt" || fail "7 the note says the shell committed"
+if grep -qE 'commit finished work|index\.lock' "$SANDBOX/.prompts/prompt-2.txt"; then fail "7 a Codex pass is asked to commit or to touch a git lock"; fi
 teardown
 
 trap - EXIT  # every case tore its own sandbox down
