@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a653ebe0812487e79c9e9df7e3393f14e2eece88b83a1e36a55777112ca95af6">
+<meta name="bureau-source-sha256" content="e3f03487d7ca641be6a6339094abd1811310fd44712c775c81768876373576d5">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -716,10 +716,13 @@ building. The stage itself keeps the keys for its own Linear, GitHub and
 Telegram calls. Independent of this key: Bureau's own git and
 <code>gh</code> commands, in the shell and from its Python, run without
 the seven (<code>gh</code> and the git commands that talk to a remote
-keep the GitHub token variables), the provider starts without them, the
-runtime wrapper without <code>BASH_ENV</code>, <code>ENV</code> and the
-<code>.env</code> keys the stage reads back, and the stages never link a
-<code>.env*</code> file into a stage worktree — a
+keep the GitHub token variables; those git commands run without hooks
+unless <code>repo.remote_git_runs_hooks</code> is <code>true</code>),
+the stages and drivers keep the three <code>.env</code> keys as shell
+variables they never export (v3.2), the provider starts without them,
+the runtime wrapper without <code>BASH_ENV</code>, <code>ENV</code> and
+the <code>.env</code> keys the stage reads back, and the stages never
+link a <code>.env*</code> file into a stage worktree — a
 <code>repo.worktree_links</code> entry with a path component starting
 with <code>.env</code> (any case, <code>.envrc</code> too), whose fully
 resolved path in the main checkout passes through such a name
@@ -728,6 +731,34 @@ is a directory with such a name anywhere below it or that cannot be
 searched completely is skipped with one warning line. Code running as
 the same user can still read files and other processes' environments;
 see <a
+href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
+</tr>
+<tr>
+<td><code>repo.remote_git_runs_hooks</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Whether Bureau's own git commands that talk to a remote —
+<code>push</code>, <code>fetch</code>, <code>pull</code>,
+<code>ls-remote</code>, <code>clone</code>, <code>remote</code>,
+<code>submodule</code>, all of which keep the GitHub token variables for
+the credential helper — run the repository's hooks. Since v3.2 they run
+with <code>-c core.hooksPath=/dev/null</code> (the <code>git</code>
+function in <code>scripts/bureau-env.sh</code>): a hook from the branch
+would see the GitHub tokens, <code>pre-push</code> on a push and
+<code>reference-transaction</code> on every ref update a fetch or a push
+makes. A <code>pre-push</code> hook (lint, tests) therefore no longer
+runs when Bureau pushes; CI runs those checks on the pull request.
+<strong>A repository that uses Git LFS needs <code>true</code></strong>:
+<code>git lfs install</code> uploads the LFS objects in a
+<code>pre-push</code> hook, and without it Bureau's push leaves them off
+the remote. <code>true</code> (the JSON value) runs the hooks again, as
+v3.1 did. Absent, <code>null</code>, <code>false</code>, any other value
+and a <code>.bureau.json</code> that cannot be read keep them off;
+doctor warns on a value that is not a JSON boolean. Local commands
+(commit, checkout, merge, reset) run their hooks either way, without the
+Bureau secrets. Hooks only: a credential helper, a filter or an
+fsmonitor named in the git configuration still runs, and
+<code>gh</code>'s own git calls keep their hooks; see <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
 </tr>
 <tr>
@@ -982,7 +1013,13 @@ separate <code>agents.max_concurrent_issues</code> ticket cap</td>
 <td>Always (agents)</td>
 <td>Set in <code>.env</code>. The interactive <code>/bureau-init</code>
 works without it via MCP; the headless agents need direct GraphQL
-access</td>
+access. The scripts that read <code>.env</code> keep it in a shell
+variable they never export (v3.2) and hand it to <code>curl</code> on
+stdin, so the processes they start do not see it; a key set only in the
+environment of the shell that starts Bureau, and not in
+<code>.env</code>, stays exported there and reaches every process below
+that shell, so keep it in <code>.env</code> and out of the shell
+environment. The same holds for the two Telegram keys</td>
 </tr>
 <tr>
 <td><code>BUREAU_LINEAR_RETRIES</code></td>
