@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c1f06cc991c772049c2291e54de85f0e034bbd01b5cf9d7357dba57995ee35fe">
+<meta name="bureau-source-sha256" content="57a91bd4c7b567899d0ea06f1ca7e24db1bdae7bce8d4b4c1937f12e3fb82d2c">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -455,11 +455,14 @@ href="#shepherdsh-bailed-mid-run--how-to-resume"><code>shepherd.sh</code>
 bailed mid-run</a>), remove <code>needs-human</code> and rerun.</p>
 <h3 id="exit-124-timeout--a-provider-pass-hit-its-time-limit">Exit 124
 (timeout) — a provider pass hit its time limit</h3>
-<p>A provider call that runs past its limit is stopped with its whole
-process group, and the stage gets 124. Before v3.2 the implement stage
-ended on the first such pass, although in the field the agent had
-usually finished, committed and pushed every task and was only polling
-CI until the limit killed it.</p>
+<p>A provider call that runs past its limit is stopped: the adapter ends
+its process group, and the stage gets 124. A shell the agent started
+detached (Claude's Bash tool does so) is outside that group and can keep
+running for a while; see <a href="provider-runtime.html">provider
+runtime</a>. Before v3.2 the implement stage ended on the first such
+pass, although in the field the agent had usually finished, committed
+and pushed every task and was only polling CI until the limit killed
+it.</p>
 <p><strong>Implement (since v3.2):</strong> a pass that times out is
 counted like any other pass, and the loop goes on. The pass appears in
 the iteration log, on stdout and in the summary comment, as
@@ -473,11 +476,17 @@ The squash-range check and the push (or its deferral, see
 <code>agents.implement.push_each_iteration</code>) run after it as after
 any pass. The next pass gets a note at the top of its prompt ("The
 previous pass timed out"): it checks <code>tasks.md</code> and the
-branch first, commits finished work, and reports <code>COMPLETE</code>
-at once when nothing is left. The stage ends with 124 only when no pass
-is left after a timed-out one: <code>BUREAU_IMPL_MAX_ITER</code> passes
-have run, or <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> leaves 60 s or less
-for another. Then the deferred commits are pushed first and stderr says
+branch first and reports <code>COMPLETE</code> at once when nothing is
+left. A Claude pass is also asked to commit finished work the stopped
+pass left uncommitted, and to remove a git <code>index.lock</code> only
+when no git process has the worktree as its working directory
+(<code>lsof -a -c git -d cwd</code>, or <code>pgrep -l git</code>), else
+to report <code>NEEDS_HUMAN</code> naming the lock; after a Codex pass
+the shell has already committed, and the note says so. The stage ends
+with 124 only when no pass is left after a timed-out one:
+<code>BUREAU_IMPL_MAX_ITER</code> passes have run, or
+<code>BUREAU_IMPL_TOTAL_TIMEOUT</code> leaves 60 s or less for another.
+Then the deferred commits are pushed first and stderr says
 <code>Provider pass failed with exit 124 (iter N timed out) and no pass is left: …</code>
 with the reason. Every other non-zero provider exit (16, 22, 23, 24,
 130) still ends the stage right after its pass, as before.</p>
@@ -486,10 +495,14 @@ with the reason. Every other non-zero provider exit (16, 22, 23, 24,
 together bounded by <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> (each pass
 gets <code>BUREAU_IMPL_ITER_TIMEOUT</code>, cut to what is left of the
 total). With the defaults that is at most 5400 s of provider time where
-a stage used to end after the first 1800 s pass. To keep the old
-ceiling, set <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> to the value of
-<code>BUREAU_IMPL_ITER_TIMEOUT</code>: a timed-out pass then leaves no
-budget for another and the stage ends with 124 as before. The
+a stage used to end after the first 1800 s pass. Two settings bring back
+the old ceiling, each at a cost. <code>BUREAU_IMPL_TOTAL_TIMEOUT</code>
+equal to <code>BUREAU_IMPL_ITER_TIMEOUT</code>: a timed-out pass leaves
+no budget for another and the stage ends with 124 as before, but a
+productive run whose passes end in time (<code>PARTIAL</code>, then
+more) also gets no more than that one pass's time in total.
+<code>BUREAU_IMPL_MAX_ITER=1</code>: one pass of any kind, so a
+<code>PARTIAL</code> pass is never followed up either. The
 <code>/goal</code> path (<code>agents.use_goal_loop</code>) is
 unchanged: one call bounded by <code>BUREAU_IMPL_TOTAL_TIMEOUT</code>,
 and a timeout ends the stage with 124.</p>
@@ -503,7 +516,11 @@ the transcript Claude writes while it works:</p>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="fu">tail</span> <span class="at">-n</span> 20 <span class="st">&quot;</span><span class="va">$(</span><span class="ex">jq</span> <span class="at">-r</span> .transcript logs/provider-runs/RUN/result.json<span class="va">)</span><span class="st">&quot;</span> <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-c</span> <span class="st">&#39;.message.content? // .&#39;</span></span></code></pre></div>
 <p>The stage log names the same path in a line
 <code>Bureau provider transcript: …</code> next to
-<code>Bureau provider evidence: …</code>. For Codex,
+<code>Bureau provider evidence: …</code>. A Claude CLI that does not
+list <code>--session-id</code> in <code>claude --help</code> runs
+without it, as before v3.2; then <code>session_id</code> is
+<code>null</code>, <code>transcript_found</code> is <code>false</code>,
+and <code>transcript_note</code> says why. For Codex,
 <code>session_id</code> is the thread id from the first
 <code>thread.started</code> event in <code>stdout.log</code> (Codex
 streams its events, so <code>stdout.log</code> holds the run up to the
@@ -516,12 +533,15 @@ in the repository's <code>CLAUDE.md</code> reads to the agent as its own
 job. Since v3.2 every stage's system text, and
 <code>scripts/bureau-stage.md</code>, say never to wait for, poll or
 re-trigger CI or a merge gate inside a stage and never to commit CI
-results as evidence, and that this rule wins over project instructions.
-Waiting on CI is the merge gate's and the shepherd's job. If a
-transcript still shows <code>gh pr checks</code> or
-<code>gh run view</code> loops, check that the main checkout runs the
-v3.2 scripts (the system text comes from there) and that no stage prompt
-of your own asks for the wait.</p>
+results as evidence, that a missing, pending or failed CI run does not
+change the status the agent reports for its own work (not merging is all
+a rule like "do not merge without green CI" asks of a stage, so the
+agent does not turn to <code>NEEDS_HUMAN</code> instead), and that this
+rule wins over project instructions. Waiting on CI is the merge gate's
+and the shepherd's job. If a transcript still shows
+<code>gh pr checks</code> or <code>gh run view</code> loops, check that
+the main checkout runs the v3.2 scripts (the system text comes from
+there) and that no stage prompt of your own asks for the wait.</p>
 <h3 id="exit-1--128--141--error-n-catch-all">Exit 1 / 128 / 141 —
 <code>error-&lt;N&gt;</code> catch-all</h3>
 <p>Anything outside the classified table maps to

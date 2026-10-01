@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="56493bbbb88741b243cd9f76ae0599a9f7eedbed285f4c88d03c5491d6d12683">
+<meta name="bureau-source-sha256" content="7854f653e45d0bc8df11de052e02a84f860e09ff93888da43f11d17dff54e620">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -93,14 +93,20 @@ probe generation. Missing executables/login return 16. Provider errors
 or malformed final results return 22; quota 23; environment/permission
 problems 24; timeout 124; cancellation 130. Timeout and cancellation
 finish by killing the provider process group even if its immediate CLI
-process has already exited; a surviving descendant cannot keep writing
-after the bounded invocation returns. Per-stage/provider
-<code>timeout_seconds</code> defaults to 3600 per call (900 before
-v3.1); doctor warns when an enabled spec, spec review, UX, QA or review
-stage gets less than 1800 s. Implementation uses its existing
-iteration/total bounds through <code>BUREAU_STAGE_TIMEOUT</code>; since
-v3.2 a pass that times out is one pass of the loop, and the stage ends
-with 124 only when no pass is left (<a
+process has already exited. A process the agent started in a session of
+its own is outside that group and can outlive the call: Claude Code
+starts its Bash tool shells detached (checked in 2.1.286), so a command
+one of them runs, a git commit with long hooks for example, can still be
+running after a timeout. The implement stage's next pass is told to
+check for that before it removes a git lock (see <a
+href="troubleshooting.html#exit-124-timeout--a-provider-pass-hit-its-time-limit">troubleshooting</a>).
+Per-stage/provider <code>timeout_seconds</code> defaults to 3600 per
+call (900 before v3.1); doctor warns when an enabled spec, spec review,
+UX, QA or review stage gets less than 1800 s. Implementation uses its
+existing iteration/total bounds through
+<code>BUREAU_STAGE_TIMEOUT</code>; since v3.2 a pass that times out is
+one pass of the loop, and the stage ends with 124 only when no pass is
+left (<a
 href="troubleshooting.html#exit-124-timeout--a-provider-pass-hit-its-time-limit">troubleshooting</a>).</p>
 <p>JSON schema contracts cover implementation iterations, QA, and the
 merged review verdict. Both plain JSON and legacy fenced JSON are
@@ -111,11 +117,23 @@ remain under <code>logs/provider-runs/RUN/</code>.
 the call, which outlives a timeout: since v3.2 every Claude call starts
 with a fresh <code>--session-id</code>, and <code>session_id</code>,
 <code>transcript</code>
-(<code>&lt;CLAUDE_CONFIG_DIR or ~/.claude&gt;/projects/&lt;slug&gt;/&lt;session id&gt;.jsonl</code>,
-the slug being the resolved working directory with every character other
-than a letter or digit replaced by <code>-</code>; when Claude placed it
-elsewhere under <code>projects/</code>, the file found there) and
-<code>transcript_found</code> record it. For Codex,
+(<code>&lt;CLAUDE_CONFIG_DIR or ~/.claude&gt;/projects/&lt;slug&gt;/&lt;session id&gt;.jsonl</code>;
+when Claude placed it elsewhere under <code>projects/</code>, the file
+found there) and <code>transcript_found</code> record it. The slug is
+Claude Code's own project-directory name, reproduced from its 2.1.286
+binary: the resolved working directory with every UTF-16 code unit other
+than an ASCII letter or digit replaced by <code>-</code> (an emoji
+becomes <code>--</code>), and a name over 200 characters cut to 200 plus
+<code>-</code> and a base-36 hash of the path. Should a later Claude
+version name the directory differently, the search for the session id
+under <code>projects/</code> still finds the file. The flag is passed
+only to a Claude CLI that lists it in <code>claude --help</code>; the
+adapter asks once per binary (resolved path, size and modification time,
+kept in <code>logs/provider-runs/.claude-cli.json</code>) and asks again
+after an update. A CLI without it runs the stage as before v3.2, without
+the flag, and <code>result.json</code> then has
+<code>session_id: null</code>, <code>transcript_found: false</code> and
+a <code>transcript_note</code> saying why. For Codex,
 <code>session_id</code> is the thread id of the first
 <code>thread.started</code> event in <code>stdout.log</code> and
 <code>transcript</code> the matching rollout file under

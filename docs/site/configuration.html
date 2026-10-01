@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="39889025b4f3f6173336108020bf60cc8dbd4bd904cb6c50d4328a250590bb26">
+<meta name="bureau-source-sha256" content="e661af09f62cdd1425ef5771dd6eb514233d37ab485cbd37b4cb5668adccdbbc">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1063,9 +1063,11 @@ providers</td>
 executor tests and publication can add time after it; this is not a
 monetary cap. Since v3.2 it, not one timed-out pass, bounds a stage
 whose passes time out; a timed-out pass that leaves 60 s or less of it
-ends the stage with <code>124</code>. Set it to
-<code>BUREAU_IMPL_ITER_TIMEOUT</code> to keep the pre-v3.2 ceiling of
-one timed-out pass</td>
+ends the stage with <code>124</code>. Setting it to
+<code>BUREAU_IMPL_ITER_TIMEOUT</code> brings back the pre-v3.2 ceiling
+of one timed-out pass, but also caps a productive multi-pass run at that
+one pass's time; <code>BUREAU_IMPL_MAX_ITER=1</code> is the other
+trade-off (one pass of any kind)</td>
 </tr>
 <tr>
 <td><code>BUREAU_POST_IMPLEMENT_TIMEOUT</code></td>
