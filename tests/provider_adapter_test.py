@@ -29,6 +29,17 @@ root=pathlib.Path(os.environ['FAKE_ROOT'])
 if sys.argv[1] in ('auth','login'):
     if os.environ.get('AUTH_FAIL'): sys.exit(1)
     print(json.dumps({'loggedIn':True})); sys.exit(0)
+# A Claude CLI before --session-id (OLD_CLI): its help does not list the flag and it rejects
+# the flag as an unknown option, as commander does. HELP_FAIL: the help itself fails.
+if sys.argv[1]=='--help':
+    with (root/'help-calls').open('a') as calls: calls.write('help\\n')
+    if os.environ.get('HELP_FAIL'): sys.exit(2)
+    print('Usage: claude [options] [command] [prompt]')
+    print('  -p, --print   Print response and exit')
+    if not os.environ.get('OLD_CLI'): print('  --session-id <uuid>   Use a specific session ID for the conversation')
+    sys.exit(0)
+if os.environ.get('OLD_CLI') and '--session-id' in sys.argv:
+    print("error: unknown option '--session-id'",file=sys.stderr); sys.exit(1)
 (root/'argv.json').write_text(json.dumps(sys.argv[1:]))
 (root/'stdin.txt').write_text(sys.stdin.read())
 if os.environ.get('FORK_IGNORE_TERM'):
@@ -246,7 +257,7 @@ else:
 
     # ── The provider's own record of a call (v3.2) ─────────────────────────
     def evidence(self):
-        runs=sorted((self.root/'evidence').iterdir(),key=lambda path:path.stat().st_mtime)
+        runs=sorted((path for path in (self.root/'evidence').iterdir() if path.is_dir()),key=lambda path:path.stat().st_mtime)
         return runs[-1], json.loads((runs[-1]/'result.json').read_text())
 
     def claude_projects_dir(self,config_dir):
@@ -348,5 +359,73 @@ else:
         _,metadata=self.evidence()
         self.assertEqual((metadata['session_id'],metadata['transcript'],metadata['transcript_found']),
                          ('01a0f1b9-0000-7cf0-807b-497141dcd44c',None,False))
+
+    def help_calls(self):
+        path=self.root/'help-calls'
+        return len(path.read_text().splitlines()) if path.exists() else 0
+
+    def test_claude_without_session_id_runs_as_before(self):
+        # A Claude CLI that does not know --session-id: the call runs as in v3.1.0, without the
+        # flag, and the evidence says that no session id was set and why.
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        for _ in range(2):
+            result=self.run_provider(OLD_CLI='1')
+            self.assertEqual(result.stdout.strip(),'final response')
+            self.assertNotIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+            _,metadata=self.evidence()
+            self.assertEqual((metadata['outcome'],metadata['session_id'],metadata['transcript'],metadata['transcript_found']),
+                             ('complete',None,None,False))
+            self.assertIn('does not take --session-id',metadata['transcript_note'])
+            self.assertIn('no session id was set',metadata['transcript_note'])
+            self.assertNotIn('Bureau provider transcript',result.stderr)
+        self.assertEqual(self.help_calls(),1,'the answer is kept for the unchanged binary')
+
+    def test_session_id_support_is_asked_once_per_binary(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        for _ in range(3): self.run_provider()
+        self.assertEqual(self.help_calls(),1,'one claude --help for three calls')
+        self.assertIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+        # An updated binary (another mtime) is asked again; so is one at another path.
+        stat=(self.bin/'claude').stat(); os.utime(self.bin/'claude',ns=(stat.st_atime_ns,stat.st_mtime_ns+10**9))
+        self.run_provider()
+        self.assertEqual(self.help_calls(),2,'a changed binary is asked again')
+        self.run_provider()
+        self.assertEqual(self.help_calls(),2)
+
+    def test_failed_help_leaves_the_flag_off_and_is_not_kept(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        for expected_calls in (1,2):
+            self.run_provider(HELP_FAIL='1')
+            self.assertNotIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+            _,metadata=self.evidence()
+            self.assertIsNone(metadata['session_id'])
+            self.assertIn('claude --help failed with exit 2',metadata['transcript_note'])
+            self.assertEqual(self.help_calls(),expected_calls)
+
+    def test_claude_project_slug_matches_claude_code(self):
+        # Expected values from Claude Code 2.1.286's own functions (k, tx, EQ, copied from its
+        # binary and run under node): a space, a dot and an underscore; an emoji (two UTF-16
+        # code units) and a non-ASCII letter; two paths over 200 characters (cut, base-36 hash).
+        long_ab='/srv/'+'a'*120+'/'+'b'*120
+        deep='/srv/\u00dcn\u00efc\u00f6d\u00e9/'+'deep-dir-'*30+'\U0001f680'
+        for path,slug in (('/tmp/x y.z_w','-tmp-x-y-z-w'),
+                          ('/srv/repo \U0001f680 gr\u00fcn','-srv-repo----gr-n'),
+                          (long_ab,'-srv-'+'a'*120+'-'+'b'*74+'-ak6yfc'),
+                          (deep,'-srv--n-c-d--'+('deep-dir-'*21)[:187]+'-9adu9o')):
+            with self.subTest(path=path[:40]):
+                self.assertEqual(p.claude_project_slug(path),slug)
+                self.assertLessEqual(len(slug),200+1+7)
+
+    def test_claude_transcript_in_an_emoji_and_a_long_directory(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        for name in ('repo \U0001f680 gr\u00fcn','x'*120+'/'+'y'*120):
+            with self.subTest(name=name[:20]):
+                self.repo=self.root/name; self.repo.mkdir(parents=True)
+                slug=p.claude_project_slug(os.path.realpath(self.repo))
+                folder=Path(self.env['CLAUDE_CONFIG_DIR'])/'projects'/slug
+                self.run_provider(TRANSCRIPT_DIR=str(folder))
+                _,metadata=self.evidence()
+                self.assertEqual(metadata['transcript'],str(folder/(metadata['session_id']+'.jsonl')))
+                self.assertTrue(metadata['transcript_found'])
 
 if __name__=='__main__': unittest.main()

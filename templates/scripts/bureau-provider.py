@@ -323,14 +323,35 @@ def run(options, prompt, system, repo, evidence, schema=None):
 # `claude -p --output-format json` writes stdout.log only when it finishes, so
 # a call that timed out leaves it empty; Claude's transcript is written while it
 # works, at <config dir>/projects/<slug>/<session id>.jsonl. The config dir is
-# CLAUDE_CONFIG_DIR, else ~/.claude; the slug is the resolved working directory
-# with every character other than A-Z, a-z and 0-9 replaced by '-' (checked
-# against Claude Code 2.1: '/tmp/x y.z_w' -> '-private-tmp-x-y-z-w'). Should a
-# Claude version place it elsewhere, a search for the session id under
-# projects/ finds it. `codex exec --json` streams its events, the first being
-# thread.started with the thread id; its rollout file is
+# CLAUDE_CONFIG_DIR, else ~/.claude; the slug is claude_project_slug of the
+# resolved working directory. Should a Claude version place it elsewhere, a
+# search for the session id under projects/ finds it. `codex exec --json`
+# streams its events, the first being thread.started with the thread id; its
+# rollout file is
 # <CODEX_HOME or ~/.codex>/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl.
 CODEX_THREAD = re.compile(r'^[0-9A-Za-z-]{8,64}$')
+SLUG_MAX = 200
+BASE36 = '0123456789abcdefghijklmnopqrstuvwxyz'
+
+
+def claude_project_slug(path):
+    # Claude Code's own project-directory name (functions k, tx and EQ in the
+    # 2.1.286 binary): every UTF-16 code unit other than an ASCII letter or digit
+    # becomes '-' (an emoji, two code units, becomes '--'); a result longer than
+    # 200 characters is cut to 200 and gets '-' plus the base-36 absolute value
+    # of a 32-bit hash, e = (e << 5) - e + unit, over the code units of the path.
+    raw = path.encode('utf-16-le', 'surrogatepass')
+    units = [int.from_bytes(raw[i:i + 2], 'little') for i in range(0, len(raw), 2)]
+    slug = ''.join(chr(u) if 48 <= u <= 57 or 65 <= u <= 90 or 97 <= u <= 122 else '-' for u in units)
+    if len(slug) <= SLUG_MAX: return slug
+    value = 0
+    for u in units: value = (value * 31 + u) & 0xFFFFFFFF
+    value = abs(value - 0x100000000 if value & 0x80000000 else value)
+    digits = ''
+    while True:
+        value, rest = divmod(value, 36); digits = BASE36[rest] + digits
+        if not value: break
+    return slug[:SLUG_MAX] + '-' + digits
 
 
 def _found(root, pattern):
@@ -340,14 +361,50 @@ def _found(root, pattern):
     except OSError: return None
 
 
+def claude_takes_session_id(cache, mode='default', environ=None):
+    # Whether the claude CLI on PATH takes --session-id, so a CLI without the
+    # flag runs as before v3.2: without it. `claude --help` is asked once per
+    # binary; the answer is kept in `cache` (the evidence directory's
+    # .claude-cli.json) under the binary's resolved path, size and mtime, so an
+    # update asks again and an unchanged binary costs no extra process. Returns
+    # (answer, reason); a failed check is not kept and leaves the flag off. The
+    # check runs in the environment the agent gets (mode: repo.untrusted_env).
+    environ = os.environ if environ is None else environ
+    found = shutil.which('claude', path=environ.get('PATH'))
+    if not found: return False, 'claude executable not found on PATH'
+    real = os.path.realpath(found)
+    try: stat = os.stat(real)
+    except OSError as exc: return False, 'claude executable unreadable: ' + str(exc)
+    key = [real, stat.st_size, stat.st_mtime_ns]
+    try:
+        saved = json.loads(cache.read_text())
+        if isinstance(saved, dict) and saved.get('key') == key and isinstance(saved.get('session_id'), bool):
+            return saved['session_id'], None if saved['session_id'] else 'the claude CLI at ' + real + ' does not take --session-id (claude --help)'
+    except (OSError, ValueError): pass
+    try:
+        proc = subprocess.run([found, '--help'], capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL,
+                              env=untrusted_env(environ, mode, 'claude'))
+    except (OSError, subprocess.SubprocessError) as exc: return False, 'claude --help failed: ' + str(exc)
+    if proc.returncode != 0: return False, 'claude --help failed with exit ' + str(proc.returncode)
+    answer = '--session-id' in proc.stdout
+    try:
+        temp = cache.with_name(cache.name + '.' + str(os.getpid()))
+        temp.write_text(json.dumps(dict(key=key, session_id=answer)) + '\n'); os.replace(temp, cache)
+    except OSError: pass
+    return answer, None if answer else 'the claude CLI at ' + real + ' does not take --session-id (claude --help)'
+
+
 def transcript(options, repo, evidence, environ=None):
     environ = os.environ if environ is None else environ
     home = Path(environ.get('HOME') or os.path.expanduser('~'))
     if options['runner'] == 'claude':
         session = options.get('session_id')
-        if not session: return dict(session_id=None, transcript=None, transcript_found=False)
+        if not session:
+            missing = dict(session_id=None, transcript=None, transcript_found=False)
+            if options.get('session_note'): missing['transcript_note'] = options['session_note'] + '; no session id was set'
+            return missing
         projects = Path(environ.get('CLAUDE_CONFIG_DIR') or home/'.claude')/'projects'
-        expected = projects/re.sub(r'[^A-Za-z0-9]', '-', str(repo))/(session + '.jsonl')
+        expected = projects/claude_project_slug(str(repo))/(session + '.jsonl')
         found = _found(expected.parent, expected.name) or _found(projects, '*/' + session + '.jsonl')
         return dict(session_id=session, transcript=str(found or expected), transcript_found=found is not None)
     thread = None
@@ -388,7 +445,9 @@ def main():
         base=Path(os.environ.get('BUREAU_PROVIDER_LOG_DIR',str(config_path.parent/'logs/provider-runs')))
         evidence=base/uuid.uuid4().hex; evidence.mkdir(parents=True,mode=0o700)
         schema=Path(args.schema).resolve() if args.schema else None
-        if options['runner']=='claude': options['session_id']=str(uuid.uuid4())
+        if options['runner']=='claude':
+            supported,options['session_note']=claude_takes_session_id(base/'.claude-cli.json',options['untrusted_env'])
+            if supported: options['session_id']=str(uuid.uuid4())
         code,text,metadata=run(options,prompt,system,repo,evidence,schema)
         metadata.update(run_id=os.environ.get('BUREAU_RUN_ID'), issue=os.environ.get('BUREAU_CURRENT_ISSUE'),
                         estimated_cost_usd=metadata.get('total_cost_usd'), actual_billed_cost_usd=None,
