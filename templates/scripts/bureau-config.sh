@@ -16,6 +16,11 @@
 _BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=templates/scripts/bureau-env.sh
 source "$_BUREAU_SCRIPTS_DIR/bureau-env.sh"
+# The scripts that source this file copy the Linear key into API_KEY once they
+# have read .env. bureau_load_env never exports the key itself (v3.2); an
+# API_KEY the operator's shell happens to export would still carry the copy to
+# every process the script starts, so it loses the export attribute here.
+export -n API_KEY
 
 _find_config() {
   local common primary candidate

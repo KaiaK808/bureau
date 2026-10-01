@@ -19,10 +19,16 @@
 #     accepts. Returns 0 when the file was read, even if no key was taken, and
 #     1 with the single line "bureau_load_env: cannot read <file>" on stderr
 #     when it is missing, not a regular file or unreadable. --export exports
-#     every key it sets. Writes nothing to stdout and never prints a line or a
-#     value; the only name it prints is that of a numeric key it dropped (L13).
+#     every key it sets except the three secrets (bureau_env_key_secret): those
+#     stay shell variables of the reading script, with or without --export, and
+#     lose the export attribute a parent shell gave them (v3.2). Writes nothing
+#     to stdout and never prints a line or a value; the only name it prints is
+#     that of a numeric key it dropped (L13).
 #   bureau_env_key_allowed <name>
 #     0 for a name on the key list, 1 otherwise. Silent.
+#   bureau_env_key_secret <name>
+#     0 for LINEAR_API_KEY, TELEGRAM_BOT_TOKEN and TELEGRAM_ALERT_CHAT_ID, 1
+#     otherwise. Silent.
 #   bureau_env_key_numeric <name>
 #     0 for a key whose value later lands in bash arithmetic, 1 otherwise.
 #     Silent.
@@ -114,6 +120,24 @@ bureau_env_key_numeric() {
   return 1
 }
 
+# The secrets among them (v3.2). An exported variable is in the environment of
+# every process the script starts — its gh, jq, date and Python helpers — and
+# any process of the same user (a test server a branch left running) reads
+# that through /proc/<pid>/environ on Linux and `ps -E` on macOS (for
+# executables that are not Apple platform binaries). The stages' own Linear
+# and Telegram requests read these as shell variables and hand them to curl on
+# stdin (_bureau_linear_fetch and alert_telegram in bureau-config.sh), and
+# every Bureau script that needs one reads .env itself, so bureau_load_env
+# never exports them. A secret only the environment holds (the operator's shell
+# exported it, .env does not define it) is left as it is: it is already in the
+# environment of every process below that shell.
+bureau_env_key_secret() {
+  case "$1" in
+    LINEAR_API_KEY | TELEGRAM_BOT_TOKEN | TELEGRAM_ALERT_CHAT_ID) return 0 ;;
+  esac
+  return 1
+}
+
 bureau_load_env() {
   # L1: the very first statement turns a running trace off, before any line or
   # value is expanded; every return below restores it.
@@ -176,7 +200,9 @@ bureau_load_env() {
     fi
 
     printf -v "$_be_name" '%s' "$_be_value"
-    if [ "$_be_export" = 1 ]; then
+    if bureau_env_key_secret "$_be_name"; then
+      export -n "$_be_name"
+    elif [ "$_be_export" = 1 ]; then
       export "$_be_name"
     fi
   done < "$_be_file"
