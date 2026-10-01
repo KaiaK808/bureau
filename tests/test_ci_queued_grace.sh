@@ -2,7 +2,7 @@
 # A check run that no runner takes is blocked after a grace (v3.2, O3).
 #
 # A check run on the PR head that stays "queued" (an offline self-hosted runner, a runner
-# label nothing serves, no Actions minutes left) counted as pending for ever, so the merge
+# label nothing serves) counted as pending for ever, so the merge
 # gate stayed "not yet" for ever: the queue picked the ticket on every poll without an
 # alert, and the shepherd waited out its budget. Once a check run has been queued longer
 # than agents.merge_ci_queued_grace_seconds (default 3600), measured from its started_at
@@ -120,6 +120,9 @@ checks "queued:3700:lint"$'\n'"fast"$'\t'"x"; gate; case_is 'a name with a line 
 # A pending commit status (the legacy API) stays pending: it is not a check run.
 checks; echo '{"statuses":[{"context":"ext","state":"pending","created_at":"2020-01-01T00:00:00Z"}]}' > "$PR2_GH/status.json"
 gate; case_is 'a pending status' 2 not-yet 'still pending'
+# … and does not hide a check run queued past the grace next to it.
+checks queued:3700
+gate; case_is 'a pending status next to a check queued past the grace' 25 blocked "$(queued_line ci 3700 3600)"
 echo '{"statuses":[]}' > "$PR2_GH/status.json"
 # Several: the longest-queued one is named, the others counted; a running or a green
 # check beside them changes nothing.

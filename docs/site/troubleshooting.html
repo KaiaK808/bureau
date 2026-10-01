@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6f4ac9ace16401f9a059bf5fe530d1908eac8c923946bb23a7835e57c85bb00e">
+<meta name="bureau-source-sha256" content="e035419b2210153f4c9a7f88f51b7baf858ce21978eb935ec200cd9e67cc40fa">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -68,12 +68,11 @@ picking up issues</h3>
 <code>blocked</code>, <code>wip</code>)</li>
 <li>Is not blocked by another issue (Linear <code>blockedBy</code>
 relation)</li>
-<li>In Build Review: is not an approved ticket waiting on its merge gate
-(the queue log says
-<code>pick: skip TEAM-123 — approved, waiting on its merge gate …</code>;
-see <a
-href="#an-approved-ticket-waits-in-build-review-for-its-merge-gate">An
-approved ticket waits in Build Review</a>)</li>
+<li>In Build Review or Merge: another ticket may go first while this one
+waits on its merge gate (the queue log says
+<code>pick: TEAM-123 waits on its merge gate …</code>; see <a
+href="#a-ticket-waiting-on-its-merge-gate-is-picked-after-the-others">A
+ticket waiting on its merge gate is picked after the others</a>)</li>
 </ul>
 <h3 id="pipeline-exits-2-every-tick-despite-eligible-issues">Pipeline
 exits 2 every tick despite eligible issues</h3>
@@ -644,15 +643,16 @@ that no runner takes is "not yet" only for
 blocked after it (see <a href="#a-check-stays-queued-runner-offline">A
 check stays queued</a>). The queue loop stays quiet on <code>2</code>
 and alerts on <code>25</code>, at most once an hour per ticket. The
-merge stage re-evaluates on every tick, so re-running a flaky check is
-enough for the next tick to merge; an approval the review stage recorded
-on a "not yet" is checked again on a backoff (see <a
-href="#an-approved-ticket-waits-in-build-review-for-its-merge-gate">An
-approved ticket waits in Build Review</a>). The shepherd waits on
-<code>2</code> (every <code>BUREAU_SHEPHERD_MERGE_POLL_SECONDS</code>,
-60 s by default, for at most
-<code>BUREAU_SHEPHERD_MERGE_WAIT_SECONDS</code>, 30 minutes by default)
-and halts on <code>25</code> or on a wait that ran out with
+merge stage re-evaluates when it next picks the ticket, so re-running a
+flaky check is enough for it to merge; while other tickets wait, a
+ticket whose gate was not yet decided or blocked is picked after them
+for a while (see <a
+href="#a-ticket-waiting-on-its-merge-gate-is-picked-after-the-others">A
+ticket waiting on its merge gate is picked after the others</a>). The
+shepherd waits on <code>2</code> (every
+<code>BUREAU_SHEPHERD_MERGE_POLL_SECONDS</code>, 60 s by default, for at
+most <code>BUREAU_SHEPHERD_MERGE_WAIT_SECONDS</code>, 30 minutes by
+default) and halts on <code>25</code> or on a wait that ran out with
 <code>needs-human</code> and a ticket comment listing the blockers.
 After fixing the blocker or re-running the check, remove
 <code>needs-human</code> and re-shepherd; the merge stage checks every
@@ -701,13 +701,16 @@ runner offline</h3>
 <code>ci: check &lt;name&gt; queued for N s on &lt;head&gt;, past the CI queue grace (agents.merge_ci_queued_grace_seconds: 3600) — runner offline?</code>
 means a check run on the PR head was created but no runner has taken it
 for longer than the grace: a self-hosted runner that is offline or
-stopped, a <code>runs-on</code> label no runner carries, or no GitHub
-Actions minutes left. GitHub itself cancels such a job only after 24
-hours. The gate is blocked (<code>25</code>): the merge stage's gate
-comment says so and the queue alerts, at most once an hour per ticket;
-after an approval the review stage sets <code>needs-human</code> and
-puts the line on the ticket; the shepherd halts. Before v3.2 the check
-counted as pending for ever and the ticket waited without an alert.</p>
+stopped, or a <code>runs-on</code> label no runner carries. GitHub
+itself cancels such a job only after 24 hours. A job that GitHub refuses
+to start for billing reasons (no Actions minutes, a spending limit) is
+not queued: it fails at once ("The job was not started because recent
+account payments have failed…") and shows as a failing check. The gate
+is blocked (<code>25</code>): the merge stage's gate comment says so and
+the queue alerts, at most once an hour per ticket; after an approval the
+review stage sets <code>needs-human</code> and puts the line on the
+ticket; the shepherd halts. Before v3.2 the check counted as pending for
+ever and the ticket waited without an alert.</p>
 <p>What to do: look at the job (<code>gh pr checks &lt;N&gt;</code>, or
 the run's page in GitHub) and at the runner
 (<code>gh api repos/OWNER/REPO/actions/runners</code>, or on the runner
@@ -721,45 +724,83 @@ Review remove <code>needs-human</code> and the next review run reuses
 the recorded approval without a model call. The time is the check run's
 <code>started_at</code>, which GitHub sets when it queues the job; a
 check without a readable time stays pending. A busy single runner that
-works through other jobs first can also cross the grace: raise
-<code>agents.merge_ci_queued_grace_seconds</code> there. Only the status
-<code>queued</code> counts; a check waiting for a deployment approval
-(<code>waiting</code>) or for its concurrency group
-(<code>pending</code>) stays "not yet".</p>
-<h3 id="an-approved-ticket-waits-in-build-review-for-its-merge-gate">An
-approved ticket waits in Build Review for its merge gate</h3>
-<p>With the merge agent off, the review stage merges inline after an
-APPROVE. When that merge gate is not yet decided (checks still running
-or queued, GitHub still computing), the stage records the APPROVE,
-comments once ("not merged yet: its merge gate is not decided") and ends
-with <code>2</code>. Since v3.2 the review picker then leaves the ticket
-alone for a while, so the other Build Review tickets are reviewed
-meanwhile, and the queue log says, on every pick in that time:</p>
-<pre class="text"><code>pick: skip TEAM-123 — approved, waiting on its merge gate at the unchanged head 1a2b3c4d5e6f; checked again in 240 s (not yet 1 time(s) in a row)</code></pre>
-<p>The wait is 300 s after the first "not yet" at the same head, then
-600 s, 1200 s and 2400 s, and never longer than
-<code>agents.merge_gate_recheck_seconds</code> (default 3600). The run
-after the wait reuses the approval (no model call, no new comment) and
-does not run the build check again when it passed for the same head,
-base and command
+works through other jobs first can also cross the grace: on a single
+self-hosted runner, measure how long jobs wait to start (the gap between
+<code>created_at</code> and <code>started_at</code> in
+<code>gh api repos/OWNER/REPO/actions/runs/&lt;run-id&gt;/jobs</code>)
+before keeping the default, and raise
+<code>agents.merge_ci_queued_grace_seconds</code> above the longest
+normal wait. A runner outage longer than the grace blocks every approved
+PR waiting on it, and with the inline merge each of those tickets gets
+<code>needs-human</code>. Only the status <code>queued</code> counts; a
+check waiting for a deployment approval (<code>waiting</code>) or for
+its concurrency group (<code>pending</code>) stays "not yet".</p>
+<h3 id="a-ticket-waiting-on-its-merge-gate-is-picked-after-the-others">A
+ticket waiting on its merge gate is picked after the others</h3>
+<p>A merge gate can stay undecided for a while (checks still running or
+queued, GitHub still computing) or be blocked without
+<code>needs-human</code> at the merge stage (a failing check, a stale
+base). Before v3.2 the picker handed out such a ticket on every poll,
+and the other tickets of its state waited behind it. Since v3.2 it goes
+after every other ticket for a while:</p>
+<ul>
+<li><strong>Build Review</strong> (merge agent off): the review stage
+approved, its inline merge found the gate not yet decided; it recorded
+the APPROVE, commented once ("not merged yet: its merge gate is not
+decided") and ended with <code>2</code>.</li>
+<li><strong>Merge</strong> (<code>agents.merge</code> on): the merge
+stage ended with <code>2</code> (not yet) or <code>25</code> (blocked)
+and marked the ticket in
+<code>$(git rev-parse --git-common-dir)/bureau/merge-gate-waits.json</code>.
+The rebase stage is never held.</li>
+</ul>
+<p>The queue log says, on every pick in that time:</p>
+<pre class="text"><code>pick: TEAM-123 waits on its merge gate (not yet) at the unchanged head 1a2b3c4d5e6f — after every other ticket for 2400 s more (1 time(s) in a row)</code></pre>
+<p>The ticket is still taken when no other ticket of the stage can be
+picked
+(<code>pick: TEAM-123 taken although it waits on its merge gate — no other ticket of the stage can be picked</code>),
+so a hold never delays a merge while nothing else waits. The hold lasts
+two poll intervals after the first "not yet" (at least 300 s; the queue
+loop's own interval, else <code>agents.poll_interval_minutes</code>),
+doubles with each further one at the same head, and never exceeds
+<code>agents.merge_gate_recheck_seconds</code> (default 3600). Two
+intervals, because the queue loop sleeps a whole interval after its
+poll: a hold of one interval has always run out at the next pick. With
+the default 30-minute poll and other tickets waiting, the ticket is
+passed over at the next poll and checked again at the one after, so
+about once an hour; alone, on every poll. With a 5-minute poll the holds
+are 600, 1200, 2400 and then 3600 s, so it is checked again after about
+2, 4, 8 and then every 12 polls while others wait. With a poll of an
+hour or longer the default cap is shorter than two intervals and nothing
+is held: set <code>agents.merge_gate_recheck_seconds</code> to at least
+two intervals there.</p>
+<p>A push to the branch, a branch gone from origin and a record time in
+the future (a clock that stepped back) end the hold at once. At Build
+Review the run after the hold reuses the approval (no model call, no new
+comment) and does not run the build check again when it passed for the
+same head, base and command with the same
+<code>repo.untrusted_env</code> and <code>repo.worktree_links</code>
 (<code>Build check not run again: … passed for head …</code> in the
-stage output); it runs the gate and merges once it passes. A push to the
-branch ends the wait at once, and the next pick reviews the new head.
-Before v3.2 the queue picked the same ticket on every poll and ran the
-build check each time, and the other Build Review tickets waited behind
-it.</p>
-<p>To check it now instead of after the wait, run the review stage for
-the ticket (<code>bash scripts/code-review-pipeline.sh TEAM-123</code>)
-or shepherd it; neither asks the picker. To switch the wait off, set
+stage output); it runs the gate and merges once it passes. A merge
+clears the merge stage's mark.</p>
+<p>To check a ticket now, run its stage for it
+(<code>bash scripts/code-review-pipeline.sh TEAM-123</code>,
+<code>bash scripts/merge-pipeline.sh TEAM-123</code>) or shepherd it;
+none of them asks the picker. To switch the holds off, set
 <code>agents.merge_gate_recheck_seconds</code> to <code>0</code>. The
-record lives in
-<code>$(git rev-parse --git-common-dir)/bureau/review-stops.json</code>;
-<code>python3 scripts/bureau-supervision.py resume TEAM-123</code>
-removes it, and the next run is a full review. When the gate cannot pass
-by itself (a check that never starts is covered by the queue grace
-above; a hold label on the PR, a required human review), the gate stays
-"not yet" and the ticket is rechecked about once an hour until a human
-acts.</p>
+review record lives in
+<code>$(git rev-parse --git-common-dir)/bureau/review-stops.json</code>
+(<code>python3 scripts/bureau-supervision.py resume TEAM-123</code>
+removes it, and the next run is a full review), the merge mark in
+<code>merge-gate-waits.json</code> next to it
+(<code>python3 scripts/bureau-supervision.py merge-wait TEAM-123 --clear</code>).
+When a record or origin cannot be read, the picker holds nothing back
+and says so in one line
+(<code>pick: WARN: the merge gate waits could not be read (…)</code>).
+When the gate cannot pass by itself (a hold label on the PR, a required
+human review; a check that never starts is covered by the queue grace
+above), the ticket keeps being checked about once an hour while others
+wait, until a human acts.</p>
 <h3 id="code-review-hit-bureau_max_review_cycles--what-now">Code-review
 hit <code>BUREAU_MAX_REVIEW_CYCLES</code> — what now?</h3>
 <p><code>agents.max_review_cycles</code> (default 3) caps how many
@@ -1052,10 +1093,11 @@ same PR, base branch, head and base commits, ticket text and state, and
 moved on without a new model review; only the build check ran again. An
 approval recorded because the merge gate was not yet decided is reused
 without that comment, and without the build check when it passed for the
-same command (see <a
-href="#an-approved-ticket-waits-in-build-review-for-its-merge-gate">An
-approved ticket waits in Build Review</a>). The record is gone after
-that. To get a fresh model review at the same head instead, run
+same command and environment settings (see <a
+href="#a-ticket-waiting-on-its-merge-gate-is-picked-after-the-others">A
+ticket waiting on its merge gate is picked after the others</a>). The
+record is gone after that. To get a fresh model review at the same head
+instead, run
 <code>python3 scripts/bureau-supervision.py resume TEAM-123</code>
 before the next run. A changed head, base, ticket or PR, a record
 written without a verdict (by a runtime from before this change), a
