@@ -141,8 +141,9 @@ GATE_NUMBER_CAP = 9999999
 
 
 def gate_number(agents, key, default, warnings):
-    """A number of the merge gate's CI check (agents.merge_min_required_checks,
-    agents.merge_ci_start_grace_seconds), read by the one rule the gate itself uses
+    """A number of the merge gate (agents.merge_min_required_checks,
+    agents.merge_ci_start_grace_seconds, agents.merge_ci_queued_grace_seconds, and the
+    review picker's agents.merge_gate_recheck_seconds), read by the one rule the gate itself uses
     (_merge_gate_number in bureau-config.sh): absent or null is <default>; a whole number
     from 0 is itself; a string that reads as a number (ASCII blanks around it and one
     leading "+" dropped, then digits with an optional fraction and exponent) is that
@@ -414,6 +415,8 @@ def diagnose(repo, mode):
     gate_switch(config['agents'], 'merge_require_up_to_date', warnings)
     minimum = gate_number(config['agents'], 'merge_min_required_checks', 1, warnings)
     gate_number(config['agents'], 'merge_ci_start_grace_seconds', 1800, warnings)
+    gate_number(config['agents'], 'merge_ci_queued_grace_seconds', 3600, warnings)
+    gate_number(config['agents'], 'merge_gate_recheck_seconds', 3600, warnings)
     if merge == 'auto' and require_ci and any(runtime.enabled(config, stage) for stage in ('code_review', 'merge')):
         ci = ci_gate_without_workflows(repo, minimum)
         if ci: warnings.append(ci)

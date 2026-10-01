@@ -39,6 +39,8 @@ Preserve existing values during updates and add these only where useful. The [co
 | `agents.max_concurrent_issues` | `0` (unlimited); `1` gates new Spec admissions until in-flight issues drain |
 | `agents.code_review_sampling_threshold` | `500` changed lines before reviewers receive sampling guidance |
 | `agents.merge_min_required_checks` | `1`; retains protection against a vacuous green-CI result |
+| `agents.merge_ci_queued_grace_seconds` | `3600`; a check run queued longer (no runner took it) blocks the merge gate |
+| `agents.merge_gate_recheck_seconds` | `3600`; the longest wait before the review queue checks an approved ticket's undecided merge gate again |
 | `session.cost_tracking` | `false`; optional usage/cost evidence |
 | `session.usage_threshold_pct` | `80`; pause according to the selected provider's available usage signal |
 | `session.pause_on_stale_data` | `false`; opt into pausing on stale signals |

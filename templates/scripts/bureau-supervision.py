@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -154,7 +155,10 @@ def reuse(root, issue, branch, state, head, base, base_ref, pr, raw_detail):
 
     The review stage writes the same record when an APPROVE's inline merge found its
     gate not yet decided (`stop --merge-gate-wait`); the answer says so, and the stage
-    then retries the gate without posting its comments again.
+    then retries the gate without posting its comments again. Such a record also keeps
+    the build check that passed for its inputs (`--build-check passed` with its
+    command) and the count of "not yet" answers in a row (`--gate-waits`): the stage
+    does not run that build check again, and gate_waits() below spaces the rechecks.
     """
     with locked(root) as path:
         stops = read(path)
@@ -175,8 +179,54 @@ def reuse(root, issue, branch, state, head, base, base_ref, pr, raw_detail):
     if mismatch:
         prefix = '' if ticket_hash is None else 'recorded approval does not match: '
         return {'reuse': False, 'reason': prefix + mismatch}
+    waits = record.get('gate_waits')
     return {'reuse': True, 'head': head, 'base': base, 'pr': pr, 'stopped_at': record.get('stopped_at'),
-            'merge_gate_wait': record.get('merge_gate_wait') is True}
+            'merge_gate_wait': record.get('merge_gate_wait') is True,
+            # v3.2: the build check that passed for these inputs (gate waits only), and how
+            # many times in a row the gate was not yet decided for this head.
+            'build_check': 'passed' if record.get('build_check') == 'passed' else None,
+            'build_command': record.get('build_command') if isinstance(record.get('build_command'), str) else None,
+            'gate_waits': waits if type(waits) is int and waits >= 1 else 1}
+
+
+GATE_WAIT_FIRST = 300
+
+
+def gate_waits(repo, root, cap, now=None):
+    """The approved reviews the review picker leaves out for now (v3.2).
+
+    A record written while the merge gate was not yet decided (`merge_gate_wait`)
+    holds its ticket back for a backoff that doubles with each "not yet" in a row at
+    the same head (`gate_waits`: 300 s, 600 s, 1200 s, ...), never longer than `cap`
+    seconds, counted from `stopped_at`; a timestamp in the future counts as now. Only
+    while the branch on origin is still at the recorded head: one `git ls-remote` for
+    all such branches, and a branch that moved or is gone ends the wait. Returns
+    {"waiting": [{"issue", "head", "due_in", "waits"}]}; an unreadable file or origin
+    raises, and the caller then holds nothing back.
+    """
+    now = time.time() if now is None else now
+    held = []
+    for issue, record in sorted(read(root / 'review-stops.json').items()):
+        if not isinstance(record, dict) or record.get('merge_gate_wait') is not True:
+            continue
+        branch, head, at = record.get('branch'), record.get('head'), record.get('stopped_at')
+        if (not re.fullmatch(r'[A-Z][A-Z0-9]*-[0-9]+', issue) or not isinstance(branch, str) or not branch
+                or branch.startswith('-') or not isinstance(head, str) or not re.fullmatch(r'[0-9a-f]{40,64}', head)
+                or type(at) not in (int, float) or not math.isfinite(at)):
+            continue
+        waits = record.get('gate_waits')
+        waits = waits if type(waits) is int and waits >= 1 else 1
+        wait = min(GATE_WAIT_FIRST * 2 ** (min(waits, 16) - 1), cap)
+        left = min(at, now) + wait - now
+        if left > 0:
+            held.append((issue, branch, head, int(math.ceil(left)), waits))
+    if not held:
+        return {'waiting': []}
+    command = ['git', 'ls-remote', 'origin'] + sorted({'refs/heads/' + branch for _, branch, _, _, _ in held})
+    refs = subprocess.check_output(command, cwd=repo, text=True, timeout=30, env=process_env(command))
+    tips = {ref: sha for sha, ref in (line.split('\t', 1) for line in refs.splitlines() if '\t' in line)}
+    return {'waiting': [{'issue': issue, 'head': head, 'due_in': left, 'waits': waits}
+                        for issue, branch, head, left, waits in held if tips.get('refs/heads/' + branch) == head]}
 
 
 def checkpoint(repo, root, issue):
@@ -223,6 +273,7 @@ def main():
     work = commands.add_parser('workspace'); work.add_argument('issue')
     work.add_argument('--stage', required=True, choices=('spec','spec_review','ux','copy','implement','qa','code_review','merge','rebase'))
     again = commands.add_parser('resume'); again.add_argument('issue')
+    waits = commands.add_parser('gate-waits'); waits.add_argument('--cap', type=int, required=True)
     for action in ('stop', 'check', 'reuse'):
         command = commands.add_parser(action)
         command.add_argument('issue'); command.add_argument('--branch', required=True)
@@ -237,6 +288,11 @@ def main():
             command.add_argument('--verdict', choices=('APPROVE',))
             # Written by the review stage when the inline merge's gate was not yet decided.
             command.add_argument('--merge-gate-wait', action='store_true')
+            # v3.2, with --merge-gate-wait: the build check passed for these inputs (and its
+            # command), and how many times in a row the gate was not yet decided.
+            command.add_argument('--build-check', choices=('passed',))
+            command.add_argument('--build-command')
+            command.add_argument('--gate-waits', type=int)
     args = parser.parse_args()
     if getattr(args, 'issue', None) and not re.fullmatch(r'[A-Z][A-Z0-9]*-[0-9]+', args.issue):
         parser.error('issue must be an identifier such as TEAM-123')
@@ -250,6 +306,10 @@ def main():
             result = {'workspace': str(workspace(repo, root, args.issue, args.stage))}
         elif args.action == 'resume':
             result = {'issue': args.issue, 'resumed': resume(root, args.issue)}
+        elif args.action == 'gate-waits':
+            if args.cap < 0:
+                raise ValueError('--cap must be a whole number of seconds from 0')
+            result = gate_waits(repo, root, args.cap)
         elif args.action == 'reuse':
             # reuse() reads the ticket detail itself, under the lock, so an unreadable
             # detail still removes the recorded approval.
@@ -272,6 +332,10 @@ def main():
                     record['verdict'] = args.verdict
                 if args.merge_gate_wait:
                     record['merge_gate_wait'] = True
+                    record['gate_waits'] = args.gate_waits if args.gate_waits and args.gate_waits >= 1 else 1
+                    if args.build_check == 'passed' and args.build_command:
+                        record['build_check'] = 'passed'
+                        record['build_command'] = args.build_command
                 with locked(root) as path:
                     stops = read(path); stops[args.issue] = record; save(path, stops)
                 result = {'stopped': True, 'issue': args.issue, 'head': args.head, 'pr': args.pr}

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a653ebe0812487e79c9e9df7e3393f14e2eece88b83a1e36a55777112ca95af6">
+<meta name="bureau-source-sha256" content="de769992b5a29bdf1527561718da6d8ef5688b9fc94cc1a86aa960c6a5e73650">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -365,9 +365,11 @@ href="recipes.html#single-flight-pipeline">recipes</a></td>
 after review, or the gated merge stage when <code>agents.merge</code> is
 on). The inline merge runs the merge stage's full gate, and the review
 stage ends with its outcome: Done after a merge, <code>2</code> with the
-approval kept for the next run when the gate is not yet decided,
-<code>25</code> and <code>needs-human</code> when it is blocked.
-<code>manual</code>: a human — the merge and rebase agents are off,
+approval kept for the next run when the gate is not yet decided (the
+queue rechecks it on a backoff, see
+<code>agents.merge_gate_recheck_seconds</code>), <code>25</code> and
+<code>needs-human</code> when it is blocked. <code>manual</code>: a
+human — the merge and rebase agents are off,
 <code>merge-pipeline.sh</code> and <code>rebase-pipeline.sh</code> exit
 <code>2</code> before any Linear, gh or git call, the review stage parks
 an APPROVE in the Merge state, and the shepherd ends its run at Merge
@@ -445,7 +447,50 @@ repository whose workflow never runs for the PR stops waiting silently.
 is read by the same rule as <code>merge_min_required_checks</code>
 (default <code>1800</code>). A time that cannot be read keeps the gate
 at "not yet"; does not apply when <code>merge_min_required_checks</code>
-is <code>0</code></td>
+is <code>0</code>. A check run that exists but is still queued is
+covered by <code>merge_ci_queued_grace_seconds</code></td>
+</tr>
+<tr>
+<td><code>agents.merge_ci_queued_grace_seconds</code></td>
+<td>number</td>
+<td><code>3600</code></td>
+<td>How long a check run on the PR head may stay queued — created, but
+taken by no runner — before the merge gate gives up on it (v3.2). Past
+it the gate reports
+<code>ci: check &lt;name&gt; queued for N s on &lt;head&gt;, past the CI queue grace (agents.merge_ci_queued_grace_seconds: N) — runner offline?</code>
+and is blocked (<code>25</code>; the queue loop alerts, at most once an
+hour per ticket; the review stage sets <code>needs-human</code>; the
+shepherd halts); before v3.2 such a check counted as pending for ever.
+The time is the check run's <code>started_at</code>, which GitHub sets
+when it queues the run; a run without a readable time stays pending.
+Only the status <code>queued</code> counts: a running check, a
+deployment approval (<code>waiting</code>), a concurrency wait
+(<code>pending</code>) and a pending commit status stay "not yet". The
+default leaves room for a single self-hosted runner that works through a
+few jobs ahead of this one; lower it where runners pick up jobs within
+minutes, raise it where jobs regularly wait longer. <code>0</code>
+blocks a queued check at once; to keep v3.1's behaviour set
+<code>9999999</code>. Read by the same rule as
+<code>merge_min_required_checks</code> (default <code>3600</code>)</td>
+</tr>
+<tr>
+<td><code>agents.merge_gate_recheck_seconds</code></td>
+<td>number</td>
+<td><code>3600</code></td>
+<td>The longest pause before the queue reviews an approved ticket again
+whose merge gate was not yet decided (v3.2). The review stage records
+such an APPROVE and ends with <code>2</code>; the review picker then
+skips the ticket while its branch on origin is still at the approved
+head, for 300 s after the first "not yet", 600 s after the second, then
+1200 s, 2400 s, never longer than this value, so the other Build Review
+tickets are reviewed meanwhile. A push to the branch ends the wait at
+once. The run after the wait reuses the approval without a model call
+and without the build check that passed for the same head, base and
+command, and merges once the gate passes. Only the review stage's picker
+reads it; the merge stage and the shepherd are not affected.
+<code>0</code> switches the wait off (the ticket is picked on every
+poll, as before v3.2). Read by the same rule as
+<code>merge_min_required_checks</code> (default <code>3600</code>)</td>
 </tr>
 <tr>
 <td><code>agents.model</code></td>

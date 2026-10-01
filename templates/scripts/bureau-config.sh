@@ -1693,6 +1693,16 @@ _bureau_gh_owner_repo() {
 # (no workflow, a trigger that does not match): that is reported as its own
 # line, "ci: no check run and no status on …", which the merge stage reads as
 # blocked. Without the grace the gate stayed "not yet" forever, without an alert.
+#
+# A check run that a runner never takes stays "queued" (an offline self-hosted
+# runner, a runner label nothing serves, no Actions minutes left). Once one has been
+# queued longer than .agents.merge_ci_queued_grace_seconds (default 3600) it is
+# reported as its own line, "ci: check <name> queued for N s on … — runner
+# offline?", which the merge stage reads as blocked (v3.2). The time is the check
+# run's started_at, which GitHub sets when it queues the run (for an Actions job:
+# the job's created_at); a run without a readable time stays pending. Only the
+# status "queued" counts: "waiting" (a deployment approval), "pending" and
+# "requested" stay pending, as does a pending commit status.
 pr_ci_is_green() {
   # <head-sha>, when given, is the commit to judge (the merge stage pins its merge to it);
   # without it the PR's current head is read here.
@@ -1732,6 +1742,25 @@ pr_ci_is_green() {
   failed_legacy=$(echo "$statuses"  | jq '[.[] | select(.state == "failure" or .state == "error")] | length')
 
   if [ "$pending" -gt 0 ] || [ "$pending_legacy" -gt 0 ]; then
+    # The longest-queued check run past the queue grace, as "<age>\t<count>\t<name>".
+    # A time that cannot be read (null, not GitHub's ISO form) leaves that run pending.
+    local queued_grace queued queued_age queued_count queued_name
+    queued_grace=$(_merge_gate_number merge_ci_queued_grace_seconds 3600) || true
+    queued=$(printf '%s' "$checks" | jq -r --argjson now "$(date +%s)" --argjson grace "$queued_grace" '
+        [ .[] | select(.status == "queued")
+          | {name: (.name // "?" | tostring | gsub("[\\t\\n\\r]"; " ")),
+             at: (.started_at | if type == "string" then (try fromdateiso8601 catch null) else null end)}
+          | select(.at != null) | .age = (($now - .at) | floor) | select(.age >= $grace) ]
+        | sort_by(-.age)
+        | if length == 0 then empty else "\(.[0].age)\t\(length)\t\(.[0].name)" end' 2>/dev/null) || queued=""
+    if [ -n "$queued" ]; then
+      IFS=$'\t' read -r queued_age queued_count queued_name <<< "$queued"
+      # The age changes from poll to poll; merge_gate_key (merge-pipeline.sh) leaves it
+      # out of the comparison, so a PR gets one comment for it, not one per poll.
+      if [ "$queued_count" -gt 1 ]; then queued_count=", $((queued_count - 1)) more check(s) as well"; else queued_count=""; fi
+      echo "ci: check $queued_name queued for $queued_age s on $head_sha, past the CI queue grace (agents.merge_ci_queued_grace_seconds: $queued_grace)$queued_count — runner offline?" >&2
+      return 1
+    fi
     echo "ci: $((pending + pending_legacy)) check(s) still pending on $head_sha" >&2
     return 1
   fi
@@ -1791,6 +1820,9 @@ pr_ci_is_green() {
 # check at all, and a negative number counted as "no check needed". pr_ci_is_green
 # cannot warn itself: its stderr is its gate line (merge-pipeline.sh warns before it
 # runs the gate). The cap keeps the number inside shell arithmetic.
+# The keys read by this rule: merge_min_required_checks, merge_ci_start_grace_seconds,
+# merge_ci_queued_grace_seconds (pr_ci_is_green) and merge_gate_recheck_seconds
+# (review_gate_waits, the review picker's backoff).
 _merge_gate_number() {
   local filter out value flag
   filter='.agents.KEY as $v
@@ -3394,6 +3426,43 @@ pipeline_picker_args() {
   esac
 }
 
+# ── Review gate waits (v3.2) ───────────────────────────────────────
+# When the review stage approves and its inline merge finds the merge gate not yet
+# decided (checks still running or queued, GitHub still computing), it records the
+# APPROVE (bureau-supervision.py stop --merge-gate-wait) and ends with 2. The picker
+# used to hand out that ticket again on every poll: the other Build Review tickets
+# waited behind it for as long as the gate stayed undecided, and every pick ran the
+# review stage on a head that had not changed.
+#
+# review_gate_waits prints, comma-separated, the tickets the review picker leaves out
+# for now: a recorded gate wait younger than its backoff whose branch on origin is
+# still at the recorded head. The backoff doubles with each "not yet" in a row at the
+# same head — 300 s, 600 s, 1200 s, 2400 s — and never exceeds
+# .agents.merge_gate_recheck_seconds (default 3600, read by _merge_gate_number; 0
+# switches the backoff off and the ticket is picked on every poll, as before v3.2).
+# A push to the branch ends the wait at once: the next pick reviews the new head. A
+# moved base does not end it (the recheck then reviews again, as before). A record or
+# an origin that cannot be read holds nothing back, with one line on stderr: this
+# never fails a pick. The shepherd names its ticket and never asks the picker, so
+# its own waiting at Build Review is unchanged.
+review_gate_waits() {
+  local cap base common out
+  cap=$(_merge_gate_number merge_gate_recheck_seconds 3600) \
+    || echo "pick: WARN: agents.merge_gate_recheck_seconds should be a whole number of at least 0; using $cap" >&2
+  [ "$cap" -gt 0 ] || return 0
+  # Most picks find no record file at all, and then start no Python.
+  common=$(bureau_common_dir 2>/dev/null) || return 0
+  [ -f "$common/bureau/review-stops.json" ] || return 0
+  base="."; [ -z "${BUREAU_CONFIG:-}" ] || base=$(dirname "$BUREAU_CONFIG")
+  if ! out=$(python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-supervision.py" --repo "$base" gate-waits --cap "$cap"); then
+    echo "pick: WARN: the review gate waits could not be read; no ticket is held back" >&2
+    return 0
+  fi
+  printf '%s' "$out" | jq -r '.waiting[]
+    | "pick: skip \(.issue) — approved, waiting on its merge gate at the unchanged head \(.head[0:12]); checked again in \(.due_in) s (not yet \(.waits) time(s) in a row)"' >&2 2>/dev/null || true
+  printf '%s' "$out" | jq -r '[.waiting[].issue] | join(",")' 2>/dev/null || true
+}
+
 # pipeline_pick_next <script-name> [skip-issue-ids-csv]
 #   Reads the registry above, dispatches to pick_issue with the right args.
 #   Returns the picked issue identifier on stdout, empty on queue-empty or
@@ -3428,6 +3497,13 @@ pipeline_pick_next() {
   if [ -n "$held" ]; then
     echo "pick: skipping ticket(s) held for a human whose needs-human label is not written yet: $held" >&2
     skip="${skip:+$skip,}$held"
+  fi
+  # An approved review whose merge gate is not yet decided waits out its backoff while
+  # its head is unchanged, so the other Build Review tickets get the stage meanwhile.
+  if [ "$1" = code-review-pipeline.sh ]; then
+    local waiting
+    waiting=$(review_gate_waits)
+    [ -z "$waiting" ] || skip="${skip:+$skip,}$waiting"
   fi
   if [ -n "$skip" ]; then
     pick_issue "$state" "$required" "$exclude" "$skip"

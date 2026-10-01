@@ -45,7 +45,8 @@
 # yet decided (checks pending or not started, GitHub still computing, a gate
 # read that failed, a hold label a human put on the PR, conflicts the rebase
 # stage resolves) and `25` when a gate is decided against the merge (a failing
-# check, conflicts nothing here resolves, a stale base, no APPROVE, unresolved
+# check, a check queued past agents.merge_ci_queued_grace_seconds that no runner
+# took, conflicts nothing here resolves, a stale base, no APPROVE, unresolved
 # threads, a PR that is not open). A shepherd that sets
 # BUREAU_MERGE_GATE_REPORT gets the outcome and the gate lines in that file.
 # The inline merge from the review stage (BUREAU_INLINE_MERGE=1) ends with the
@@ -288,7 +289,7 @@ evaluate_merge_gates() {
     # Its numbers are read by one rule (_merge_gate_number in bureau-config.sh); say
     # here when a value was not a plain whole number, since pr_ci_is_green's own
     # stderr is its gate line.
-    for _key in merge_min_required_checks:1 merge_ci_start_grace_seconds:1800; do
+    for _key in merge_min_required_checks:1 merge_ci_start_grace_seconds:1800 merge_ci_queued_grace_seconds:3600; do
       _used=$(_merge_gate_number "${_key%%:*}" "${_key#*:}") \
         || echo "  WARN: agents.${_key%%:*} should be a whole number of at least 0; using $_used" >&2
     done
@@ -345,7 +346,10 @@ merge_dirty_is_rebasable() {
 # (it stays until they remove it; the queue does not alert on it), conflicts the
 # rebase stage resolves — and "blocked" as soon as one blocker needs someone to
 # act. mergeStateStatus BLOCKED/UNSTABLE count as "not yet": they also show
-# pending checks, and a failing check is decided by its own ci_green line.
+# pending checks, and a failing check is decided by its own ci_green line. So is a
+# check queued longer than agents.merge_ci_queued_grace_seconds ("ci: check <name>
+# queued for N s on … — runner offline?", v3.2): none of the patterns below matches
+# it, and it is blocked.
 merge_gate_outcome() {
   local line outcome=not-yet
   while IFS= read -r line; do
@@ -369,12 +373,16 @@ merge_gate_outcome() {
 # merge_gate_key: the idempotent-comment key — the outcome and the blocker lines
 # with the counts of running or completed checks replaced, so a PR gets a new
 # gate comment when the outcome or a blocker changes, not when one more check
-# finished.
+# finished. The age of a check queued past its grace and the number of others
+# queued with it are replaced too (v3.2): the merge stage polls a blocked head on
+# every run, and the age grows each time.
 merge_gate_key() {
   printf 'Outcome: %s\n' "$1"
   printf '%s\n' "$2" | sed -n '/^- /p' \
     | sed -E -e 's/[0-9]+ check\(s\) still pending/N check(s) still pending/' \
-             -e 's/only [0-9]+ completed check\(s\)/only N completed check(s)/' | sort
+             -e 's/only [0-9]+ completed check\(s\)/only N completed check(s)/' \
+             -e 's/ queued for [0-9]+ s on / queued for N s on /' \
+             -e 's/, [0-9]+ more check\(s\) as well — runner offline\?$/, N more check(s) as well — runner offline?/' | sort
 }
 
 # merge_gate_exit <outcome> <gate lines>: records the outcome for a caller that

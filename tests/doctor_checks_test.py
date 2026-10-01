@@ -214,6 +214,18 @@ class CiGateTests(Repo):
                 self.assertEqual(found, ['agents.merge_ci_start_grace_seconds ' + json.dumps(value)
                                          + ' should be a whole number of at least 0; the merge gate uses %d' % used] if warned else [])
 
+    def test_the_queue_grace_and_the_review_recheck_are_read_by_the_gate_rule(self):
+        # v3.2: agents.merge_ci_queued_grace_seconds (pr_ci_is_green) and
+        # agents.merge_gate_recheck_seconds (review_gate_waits) follow the same rule, default 3600.
+        for key in ('merge_ci_queued_grace_seconds', 'merge_gate_recheck_seconds'):
+            for value, used, warned in (('600', 600, True), (-5, 3600, True), ('abc', 3600, True), (1.5, 2, True),
+                                        (True, 3600, True), (0, 0, False), (900, 900, False), (None, 3600, False)):
+                with self.subTest(key=key, value=value):
+                    result = self.diagnose(self.config(**{key: value}))
+                    found = [w for w in result['warnings'] if w.startswith('agents.' + key + ' ')]
+                    self.assertEqual(found, ['agents.' + key + ' ' + json.dumps(value)
+                                             + ' should be a whole number of at least 0; the merge gate uses %d' % used] if warned else [])
+
     def test_the_minimum_is_read_by_the_gate_rule(self):
         # The merge gate's own reading (gate_number, _merge_gate_number in bureau-config.sh):
         # "2" needs 2, -1 and "abc" need the default 1, 1.5 needs 2; each warns once.
