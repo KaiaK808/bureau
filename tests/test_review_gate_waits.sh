@@ -158,7 +158,14 @@ cat > "$PICKBIN/curl" <<'EOF'
 node() { printf '{"identifier":"%s","priority":%s,"createdAt":"%s","labels":{"nodes":[{"name":"lane-2"},{"name":"ai-implementable"}]},"inverseRelations":{"nodes":[]}}' "$@"; }
 printf '{"data":{"issues":{"nodes":[%s,%s]}}}' "$(node EXP-801 1 2026-01-01)" "$(node EXP-802 2 2026-01-02)"
 EOF
-chmod +x "$PICKBIN/curl"
+# python3 passes through and counts the picker's gate-waits calls.
+cat > "$PICKBIN/python3" <<EOF
+#!/bin/bash
+case " \$* " in *" gate-waits "*) echo call >> "$PICKBIN/gate-waits.log" ;; esac
+exec "$(command -v python3)" "\$@"
+EOF
+chmod +x "$PICKBIN/curl" "$PICKBIN/python3"
+gate_wait_calls() { if [ -f "$PICKBIN/gate-waits.log" ]; then grep -c call "$PICKBIN/gate-waits.log"; else echo 0; fi; }
 pick() {  # <stage script> [skip csv] — the REAL pipeline_pick_next; sets PICKED, PICK_RC, PICK_ERR
   set +e
   PICKED=$(cd "$SANDBOX" && PATH="$PICKBIN:$PATH" LINEAR_API_KEY=k BUREAU_LINEAR_RETRIES=0 BUREAU_CONFIG="$SANDBOX/.bureau.json" \
@@ -183,10 +190,12 @@ PY
 set_waits() { jq --arg i "$ISSUE" --argjson n "$1" '.[$i].gate_waits = $n' "$STOPS" > "$STOPS.tmp" && mv "$STOPS.tmp" "$STOPS"; }
 
 picks "$ISSUE" 'without any record'
+[ "$(gate_wait_calls)" = 0 ] || fail 'pick: without a record file the picker still started the gate-waits read'
 pr2_checks pending
 review; [ "$LAST_RC" = 2 ] || fail "pick: setup review ended $LAST_RC, wanted 2"
 HEAD_SHA=$(git -C "$SANDBOX" rev-parse origin/test-branch)
 picks "$OTHER" 'a fresh gate wait'
+[ "$(gate_wait_calls)" -ge 1 ] || fail 'pick: the python3 counter saw no gate-waits call, so it proves nothing'
 grep -qE "^pick: skip $ISSUE — approved, waiting on its merge gate at the unchanged head ${HEAD_SHA:0:12}; checked again in ([1-9][0-9]?|[12][0-9][0-9]|300) s \(not yet 1 time\(s\) in a row\)$" <<< "$PICK_ERR" \
   || fail "pick: the skip is not logged as it should be: $PICK_ERR"
 picks "$ISSUE" 'another stage' implement-pipeline.sh
@@ -211,7 +220,9 @@ age_record 610; picks "$ISSUE" 'a 600 s cap, 610 s'
 grep -q 'should be a whole number' <<< "$PICK_ERR" && fail 'pick: warned about a valid recheck value'
 # 0 switches the backoff off: the ticket is picked on every poll, as in v3.1.
 pr2_config '.agents.merge_gate_recheck_seconds = 0'
+calls=$(gate_wait_calls)
 age_record 1; picks "$ISSUE" 'recheck 0'
+[ "$(gate_wait_calls)" = "$calls" ] || fail 'pick: recheck 0 still started the gate-waits read'
 # A value that is not a plain whole number: the shared rule, with a warning.
 pr2_config '.agents.merge_gate_recheck_seconds = "abc"'
 age_record 1; picks "$OTHER" 'recheck "abc" (default 3600)'

@@ -98,6 +98,7 @@ if want merge; then
 merge_sandbox
 checks queued:3700
 gate; case_is 'queued 3700 s' 25 blocked "$(queued_line ci 3700 3600)"
+[ "$(printf '%s\n' "$LINES" | grep -c .)" = 1 ] || fail "merge: the queued check should be the only gate line: $LINES"
 [ "$(jq -r '[.[] | select(.body | test("Bureau merge gate"))] | last | .body' "$PR2_GH/comments.json" | sed -n 's/^Outcome: //p')" = 'blocked — needs someone to act' ] \
   || fail 'merge: the PR gate comment does not say blocked'
 grep -q 'should be a whole number' <<< "$LAST_STDERR" && fail 'merge: warned about the default grace'
