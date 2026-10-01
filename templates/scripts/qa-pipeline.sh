@@ -14,8 +14,8 @@ SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
-if [ -f .env ]; then bureau_load_env --export .env
-elif [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
+# BUREAU_ENV_FILE only, never ./.env: in a stage worktree that is a file the branch controls.
+if [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
 else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
 
 CLAUDE=(run_stage_for qa)

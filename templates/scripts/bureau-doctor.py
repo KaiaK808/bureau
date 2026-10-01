@@ -255,6 +255,15 @@ def ci_gate_without_workflows(repo, minimum):
             + ' (bureau_install.py assets --scope ci scaffolds one), or set agents.merge_require_green_ci to false for a repository without CI, or agents.merge_mode to manual')
 
 
+def uses_git_lfs(main):
+    """True when the main checkout's .gitattributes gives a pattern the Git LFS filter (filter=lfs);
+    a comment line does not count. LFS uploads its objects in its pre-push hook, which Bureau's
+    remote git skips unless repo.remote_git_runs_hooks is true (v3.2)."""
+    try: text = (main / '.gitattributes').read_text(errors='replace')
+    except OSError: return False
+    return any(re.search(r'(^|\s)filter=lfs(\s|$)', line) for line in text.splitlines() if not line.lstrip().startswith('#'))
+
+
 def main_checkout(repo):
     """The checkout reset_worktree links from, resolved as bureau_link_worktree_paths does: the
     parent of the git common directory, so doctor run in a linked worktree judges the main
@@ -425,7 +434,14 @@ def diagnose(repo, mode):
     hook = repo_cfg.get('post_implement_command')
     if hook is not None and hook is not False and not isinstance(hook, str):
         errors.append('repo.post_implement_command must be a string; the implement stage would run ' + json.dumps(hook) + ' as a shell command')
+    # v3.2: the git function in bureau-env.sh (_bureau_remote_git_runs_hooks) runs Bureau's push, fetch and
+    # other remote git commands with hooks only for the JSON value true; anything else keeps them off.
+    remote_hooks = repo_cfg.get('remote_git_runs_hooks')
+    if remote_hooks is not None and type(remote_hooks) is not bool:
+        warnings.append('repo.remote_git_runs_hooks ' + json.dumps(remote_hooks) + ' is not a JSON boolean; Bureau counts it as false and runs its push, fetch and other remote git commands without the repository\'s hooks: only true runs them')
     checkout = main_checkout(repo); main = checkout[0]
+    if remote_hooks is not True and main is not None and uses_git_lfs(main):
+        warnings.append('repo.remote_git_runs_hooks is not true, but .gitattributes in the main checkout uses Git LFS (filter=lfs): Bureau pushes without the repository\'s hooks, so the pre-push hook of git lfs does not upload the LFS objects and the remote lacks them; set repo.remote_git_runs_hooks to true')
     links, link_errors, link_warnings = worktree_links(repo, config, checkout)
     errors.extend(link_errors); warnings.extend(link_warnings)
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),

@@ -45,9 +45,8 @@ SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$(dirname "$0")/bureau-config.sh"
 
-if [ -f .env ]; then
-  bureau_load_env --export .env
-elif [ -f "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}" ]; then
+# BUREAU_ENV_FILE only, never ./.env: started in a stage worktree, that is the branch's file.
+if [ -f "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}" ]; then
   bureau_load_env --export "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 else
   echo "ERROR: No .env found"

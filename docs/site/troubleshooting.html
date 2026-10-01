@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d529b27c2b785e56607fa14d319ab11f48006943d0761bdb6da1d2fc945900f5">
+<meta name="bureau-source-sha256" content="f6996f78ac3ffe63c9dc4feb82a2ea2c77daf8f0189f241c7a0b22acc3789f61">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -818,6 +818,41 @@ silence another's for an hour (a ticket number both teams use, or
 log is empty: an alert sent in the hour before may come once more. The
 old <code>/tmp/bureau-alerts.log</code> is no longer read once every
 installation on the host runs v3.1; it can then be deleted.</p>
+<h3 id="a-pre-push-hook-no-longer-runs-when-bureau-pushes">A
+<code>pre-push</code> hook no longer runs when Bureau pushes</h3>
+<p>Since v3.2 Bureau's own git commands that talk to a remote (push,
+fetch, pull, ls-remote, clone, remote, submodule) run with
+<code>-c core.hooksPath=/dev/null</code>: they keep the GitHub token
+variables, and a hook from the branch would see them. A
+<code>pre-push</code> hook (husky, lefthook, the pre-commit framework's
+<code>pre-push</code> stage) that ran lint or tests on Bureau's pushes
+therefore no longer runs, nor does a <code>reference-transaction</code>
+hook on a fetch or a push; hooks of local commands
+(<code>pre-commit</code>, <code>commit-msg</code>,
+<code>post-checkout</code>) still run, without the Bureau secrets. Let
+CI run what the <code>pre-push</code> hook checked, or set
+<code>repo.remote_git_runs_hooks</code> to <code>true</code> (the JSON
+value) to run the hooks again with the GitHub tokens in their
+environment, as in v3.1. A repository that uses Git LFS needs
+<code>true</code>: LFS uploads its objects in the <code>pre-push</code>
+hook, so without it the pull request's LFS files point at objects the
+remote does not have; doctor warns when the main checkout's
+<code>.gitattributes</code> uses <code>filter=lfs</code> and the key is
+not <code>true</code> (<a href="configuration.html">configuration</a>, <a
+href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).
+Doctor warns when the value is not a JSON boolean; any value other than
+<code>true</code> keeps the hooks off.</p>
+<h3 id="a-command-a-stage-starts-no-longer-finds-linear_api_key">A
+command a stage starts no longer finds <code>LINEAR_API_KEY</code></h3>
+<p>Since v3.2 the stages and drivers read <code>LINEAR_API_KEY</code>,
+<code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_ALERT_CHAT_ID</code>
+from <code>.env</code> into shell variables they never export, so the
+processes they start do not see them. A Bureau script reads
+<code>.env</code> itself (<code>bureau_load_env</code> in
+<code>scripts/bureau-env.sh</code>); a script of an installation that a
+stage starts and that needs one of the keys must do the same. A key that
+only the shell environment holds (not in <code>.env</code>) is still
+exported; move it into <code>.env</code> instead.</p>
 <h3
 id="worktree-collision--branch-already-checked-out-at-another-worktree">Worktree
 collision — "branch already checked out at another worktree"</h3>

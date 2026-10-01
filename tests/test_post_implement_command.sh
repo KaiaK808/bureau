@@ -286,7 +286,7 @@ teardown
 setup c11b
 REAL_GIT=$(command -v git)
 mkdir -p "$SANDBOX/.shim"
-printf '#!/bin/bash\nif [ "${1:-}" = push ]; then n=$(cat "%s/.pushes" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "%s/.pushes"; if [ "$n" -ge 2 ]; then echo "fatal: unable to access origin: Could not resolve host" >&2; exit 128; fi; fi\nexec "%s" "$@"\n' "$SANDBOX" "$SANDBOX" "$REAL_GIT" > "$SANDBOX/.shim/git"
+printf '#!/bin/bash\ns=${1:-}; [ "$s" != -c ] || s=${3:-}\nif [ "$s" = push ]; then n=$(cat "%s/.pushes" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "%s/.pushes"; if [ "$n" -ge 2 ]; then echo "fatal: unable to access origin: Could not resolve host" >&2; exit 128; fi; fi\nexec "%s" "$@"\n' "$SANDBOX" "$SANDBOX" "$REAL_GIT" > "$SANDBOX/.shim/git"
 chmod +x "$SANDBOX/.shim/git"
 PATH="$SANDBOX/.shim:$PATH" run_implement_pipeline
 check_eq 0 "$LAST_RC" "11b exit"
@@ -303,7 +303,8 @@ mkdir -p "$SANDBOX/.shim"
 cat > "$SANDBOX/.shim/git" <<SHIM
 #!/bin/bash
 n=\$(cat "$SANDBOX/.pushes" 2>/dev/null || echo 0)
-if [ "\${1:-}" = push ]; then n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"; if [ "\$n" -ge 2 ]; then echo "fatal: unable to access origin" >&2; exit 128; fi; fi
+s=\${1:-}; [ "\$s" != -c ] || s=\${3:-}
+if [ "\$s" = push ]; then n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"; if [ "\$n" -ge 2 ]; then echo "fatal: unable to access origin" >&2; exit 128; fi; fi
 if [ "\$n" -ge 2 ] && [ "\${1:-}" = rev-list ] && [ "\${3:-}" = "origin/test-branch..HEAD" ]; then echo "fatal: bad revision" >&2; exit 128; fi
 exec "$REAL_GIT" "\$@"
 SHIM
@@ -323,7 +324,8 @@ REAL_GIT=$(command -v git)
 mkdir -p "$SANDBOX/.shim"
 cat > "$SANDBOX/.shim/git" <<SHIM
 #!/bin/bash
-if [ "\${1:-}" = push ]; then
+s=\${1:-}; [ "\$s" != -c ] || s=\${3:-}
+if [ "\$s" = push ]; then
   n=\$(cat "$SANDBOX/.pushes" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"
   if [ "\$n" = 2 ]; then
     o="$SANDBOX/.fake-origin.git"
@@ -352,7 +354,8 @@ REAL_GIT=$(command -v git)
 mkdir -p "$SANDBOX/.shim"
 cat > "$SANDBOX/.shim/git" <<SHIM
 #!/bin/bash
-if [ "\${1:-}" = push ]; then
+s=\${1:-}; [ "\$s" != -c ] || s=\${3:-}
+if [ "\$s" = push ]; then
   n=\$(cat "$SANDBOX/.pushes" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"
   if [ "\$n" = 2 ]; then
     o="$SANDBOX/.fake-origin.git"
@@ -381,8 +384,9 @@ mkdir -p "$SANDBOX/.shim"
 cat > "$SANDBOX/.shim/git" <<SHIM
 #!/bin/bash
 n=\$(cat "$SANDBOX/.pushes" 2>/dev/null || echo 0)
-if [ "\${1:-}" = push ]; then n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"; fi
-if [ "\$n" -ge 2 ] && { [ "\${1:-}" = push ] || [ "\${1:-}" = fetch ]; }; then echo "fatal: unable to access origin: Could not resolve host" >&2; exit 128; fi
+s=\${1:-}; [ "\$s" != -c ] || s=\${3:-}
+if [ "\$s" = push ]; then n=\$((n+1)); echo "\$n" > "$SANDBOX/.pushes"; fi
+if [ "\$n" -ge 2 ] && { [ "\$s" = push ] || [ "\$s" = fetch ]; }; then echo "fatal: unable to access origin: Could not resolve host" >&2; exit 128; fi
 exec "$REAL_GIT" "\$@"
 SHIM
 chmod +x "$SANDBOX/.shim/git"
