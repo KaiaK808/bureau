@@ -25,8 +25,9 @@
 #  15  the same with an exhausted quota (23) on a call that made no commit
 #  16  the same with an interrupted provider (130)
 #  17  the same when the stage itself gets SIGTERM during call 2 (the EXIT trap): 143
-#  18  default, provider timeout on call 3: the iterations before it are on origin from their
-#      own pushes, and nothing extra is pushed
+#  18  default, provider timeout on call 3, the last: every pass is pushed after it, the
+#      timed-out one too (since v3.2 it is counted like any pass), nothing is deferred, and
+#      the stage still ends with 124
 #  19  false, PR open, a hook that resets HEAD to origin's tip: 14, HEAD is not pushed, the
 #      commit the hook started from is
 #  20  false, PR open, SIGTERM while a hook that reset HEAD runs: the EXIT trap pushes the
@@ -221,14 +222,15 @@ check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "17 every commit 
 has 'pushing the deferred commits of test-branch \(the stage ends before its end-of-run push\)' "$LAST_STDERR" "17 says why"
 teardown
 
-# 18 — default, provider timeout on call 3: nothing extra
+# 18 — default, provider timeout on call 3, the last: one push per pass, nothing deferred
 setup
 pr3_fake_claude
 export GH_STUB_EXISTING_PR=7 PR3_EXIT_ON=3 PR3_EXIT_CODE=124
 pr3_run_implement
 unset PR3_EXIT_ON PR3_EXIT_CODE
 check_eq 124 "$LAST_RC" "18 exit"
-check_eq 2 "$(pr3_pushes)" "18 the two iteration pushes only"
+check_eq 3 "$(pr3_pushes)" "18 one push after each pass, the timed-out third included"
+check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "18 every commit of the run on origin"
 hasnt 'deferred' "$LAST_STDERR$LAST_STDOUT" "18 nothing deferred"
 teardown
 

@@ -226,6 +226,9 @@ def run(options, prompt, system, repo, evidence, schema=None):
         prompt = system + '\n\n' + prompt + '\n\nDo not run git commit or git push. Leave changes for the Bureau shell executor. Mark completed tasks truthfully. If tests are denied by the environment, report the permission blocker separately from code failures.'
     else:
         command = ['claude', '-p', '--output-format', 'json']
+        # The session id names the transcript Claude writes while it works
+        # (transcript()); stdout.log gets the JSON envelope only at the end.
+        if options.get('session_id'): command += ['--session-id', options['session_id']]
         if options['stage'] == 'upstream_summary': command += ['--tools', '']
         else: command += ['--dangerously-skip-permissions']
         if system:
@@ -316,6 +319,148 @@ def run(options, prompt, system, repo, evidence, schema=None):
     return 0, text, metadata
 
 
+# The provider's own record of a call, for a pass that ends without a result.
+# `claude -p --output-format json` writes stdout.log only when it finishes, so
+# a call that timed out leaves it empty; Claude's transcript is written while it
+# works, at <config dir>/projects/<slug>/<session id>.jsonl. The config dir is
+# CLAUDE_CONFIG_DIR, else ~/.claude; the slug is claude_project_slug of the
+# resolved working directory. Should a Claude version place it elsewhere, a
+# search for the session id under projects/ finds it. `codex exec --json`
+# streams its events, the first being thread.started with the thread id; its
+# rollout file is
+# <CODEX_HOME or ~/.codex>/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl.
+CODEX_THREAD = re.compile(r'^[0-9A-Za-z-]{8,64}$')
+SLUG_MAX = 200
+BASE36 = '0123456789abcdefghijklmnopqrstuvwxyz'
+
+
+def claude_project_slug(path):
+    # Claude Code's own project-directory name (functions k, tx and EQ in the
+    # 2.1.286 binary): every UTF-16 code unit other than an ASCII letter or digit
+    # becomes '-' (an emoji, two code units, becomes '--'); a result longer than
+    # 200 characters is cut to 200 and gets '-' plus the base-36 absolute value
+    # of a 32-bit hash, e = (e << 5) - e + unit, over the code units of the path.
+    raw = path.encode('utf-16-le', 'surrogatepass')
+    units = [int.from_bytes(raw[i:i + 2], 'little') for i in range(0, len(raw), 2)]
+    slug = ''.join(chr(u) if 48 <= u <= 57 or 65 <= u <= 90 or 97 <= u <= 122 else '-' for u in units)
+    if len(slug) <= SLUG_MAX: return slug
+    value = 0
+    for u in units: value = (value * 31 + u) & 0xFFFFFFFF
+    value = abs(value - 0x100000000 if value & 0x80000000 else value)
+    digits = ''
+    while True:
+        value, rest = divmod(value, 36); digits = BASE36[rest] + digits
+        if not value: break
+    return slug[:SLUG_MAX] + '-' + digits
+
+
+def _found(root, pattern):
+    # The first file under root matching pattern, or None. Looking for evidence
+    # never fails the call: an unreadable directory is the same as no file.
+    try: return next(iter(sorted(root.glob(pattern))), None)
+    except OSError: return None
+
+
+# How long a cached "no" holds. A "yes" holds until the binary changes or the CLI
+# rejects the flag (claude_rejected_session_id); a "no" is asked again after a
+# day, because behind an unchanged wrapper or shim (mise, asdf, a script of
+# one's own) the CLI can be upgraded without the key below changing.
+SESSION_FLAG_RECHECK = 86400
+
+
+def _claude_cli(environ):
+    # The claude found on PATH and the cache key of the file found there: its
+    # resolved path, size and mtime. Returns (path, key, reason-if-none).
+    found = shutil.which('claude', path=environ.get('PATH'))
+    if not found: return None, None, 'claude executable not found on PATH'
+    real = os.path.realpath(found)
+    try: stat = os.stat(real)
+    except OSError as exc: return None, None, 'claude executable unreadable: ' + str(exc)
+    return found, [real, stat.st_size, stat.st_mtime_ns], None
+
+
+def remember_session_flag(cache, key, answer, source):
+    # Atomic, so parallel calls (the review's three specialists) can share the
+    # file; a temporary file that could not be moved into place is removed.
+    temp = cache.with_name(cache.name + '.' + str(os.getpid()))
+    try:
+        temp.write_text(json.dumps(dict(key=key, session_id=answer, source=source, checked=int(time.time()))) + '\n')
+        os.replace(temp, cache)
+    except OSError:
+        try: temp.unlink()
+        except OSError: pass
+
+
+def claude_takes_session_id(cache, mode='default', environ=None):
+    # Whether the claude CLI on PATH takes --session-id, so a CLI without the
+    # flag runs as before v3.2: without it. `claude --help` is asked once per
+    # binary; the answer is kept in `cache` (the evidence directory's
+    # .claude-cli.json) under the binary's resolved path, size and mtime, so an
+    # update asks again and an unchanged binary costs no extra process; a "no"
+    # is asked again after SESSION_FLAG_RECHECK. Returns (answer, reason); a
+    # failed check is not kept and leaves the flag off. The check runs in the
+    # environment the agent gets (mode: repo.untrusted_env).
+    environ = os.environ if environ is None else environ
+    found, key, reason = _claude_cli(environ)
+    if reason: return False, reason
+    no = 'the claude CLI at ' + key[0] + ' does not take --session-id'
+    try:
+        saved = json.loads(cache.read_text())
+        if isinstance(saved, dict) and saved.get('key') == key and isinstance(saved.get('session_id'), bool):
+            if saved['session_id']: return True, None
+            checked = saved.get('checked')
+            if type(checked) is int and 0 <= time.time() - checked < SESSION_FLAG_RECHECK:
+                return False, no + ' (' + str(saved.get('source') or 'claude --help') + ')'
+    except (OSError, ValueError): pass
+    try:
+        proc = subprocess.run([found, '--help'], capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL,
+                              env=untrusted_env(environ, mode, 'claude'))
+    except (OSError, subprocess.SubprocessError) as exc: return False, 'claude --help failed: ' + str(exc)
+    if proc.returncode != 0: return False, 'claude --help failed with exit ' + str(proc.returncode)
+    answer = '--session-id' in proc.stdout
+    remember_session_flag(cache, key, answer, 'claude --help')
+    return answer, None if answer else no + ' (claude --help)'
+
+
+def claude_rejected_session_id(evidence):
+    # The CLI refused the flag at argument parsing, before any model call:
+    # commander's "error: unknown option '--session-id'", as Claude Code prints
+    # it for an option it does not know.
+    try: text = (evidence/'stderr.log').read_text(errors='replace')
+    except OSError: return False
+    return re.search(r"unknown option '--session-id'", text) is not None
+
+
+def transcript(options, repo, evidence, environ=None):
+    environ = os.environ if environ is None else environ
+    home = Path(environ.get('HOME') or os.path.expanduser('~'))
+    if options['runner'] == 'claude':
+        session = options.get('session_id')
+        if not session:
+            missing = dict(session_id=None, transcript=None, transcript_found=False)
+            if options.get('session_note'): missing['transcript_note'] = options['session_note'] + '; no session id was set'
+            return missing
+        projects = Path(environ.get('CLAUDE_CONFIG_DIR') or home/'.claude')/'projects'
+        expected = projects/claude_project_slug(str(repo))/(session + '.jsonl')
+        found = _found(expected.parent, expected.name) or _found(projects, '*/' + session + '.jsonl')
+        return dict(session_id=session, transcript=str(found or expected), transcript_found=found is not None)
+    thread = None
+    try: lines = (evidence/'stdout.log').read_text(errors='replace').splitlines()
+    except OSError: lines = []
+    for line in lines:
+        try: event = json.loads(line)
+        except ValueError: continue
+        if isinstance(event, dict) and event.get('type') == 'thread.started':
+            value = event.get('thread_id')
+            if isinstance(value, str) and CODEX_THREAD.match(value): thread = value
+            break
+    if not thread:
+        return dict(session_id=None, transcript=None, transcript_found=False,
+                    transcript_note='codex reported no thread id (no thread.started event in stdout.log)')
+    found = _found(Path(environ.get('CODEX_HOME') or home/'.codex')/'sessions', '*/*/*/rollout-*-' + thread + '.jsonl')
+    return dict(session_id=thread, transcript=str(found) if found else None, transcript_found=found is not None)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stage', required=True); parser.add_argument('--repo', default='.')
@@ -337,19 +482,41 @@ def main():
         base=Path(os.environ.get('BUREAU_PROVIDER_LOG_DIR',str(config_path.parent/'logs/provider-runs')))
         evidence=base/uuid.uuid4().hex; evidence.mkdir(parents=True,mode=0o700)
         schema=Path(args.schema).resolve() if args.schema else None
+        if options['runner']=='claude':
+            supported,options['session_note']=claude_takes_session_id(base/'.claude-cli.json',options['untrusted_env'])
+            if supported: options['session_id']=str(uuid.uuid4())
         code,text,metadata=run(options,prompt,system,repo,evidence,schema)
+        if options.get('session_id') and code not in (0,124,130) and claude_rejected_session_id(evidence):
+            # A "yes" gone stale: the CLI behind an unchanged path (a wrapper, a
+            # shim) no longer takes the flag. The call failed while parsing its
+            # arguments, so nothing was paid: remember "no", keep the refused
+            # attempt's logs, and run the call once more without the flag.
+            _,key,reason=_claude_cli(os.environ)
+            if not reason: remember_session_flag(base/'.claude-cli.json',key,False,'rejected by the CLI')
+            for name in ('stdout.log','stderr.log'):
+                if (evidence/name).exists(): (evidence/name).replace(evidence/('session-id-rejected.'+name))
+            options['session_id']=None
+            options['session_note']="the claude CLI rejected --session-id (unknown option), and the call ran again without it"
+            code,text,metadata=run(options,prompt,system,repo,evidence,schema)
+            metadata['session_id_rejected']=True
         metadata.update(run_id=os.environ.get('BUREAU_RUN_ID'), issue=os.environ.get('BUREAU_CURRENT_ISSUE'),
                         estimated_cost_usd=metadata.get('total_cost_usd'), actual_billed_cost_usd=None,
                         account_used_percent=None, stage=args.stage, provider=options['runner'], model=options['model'], evidence=str(evidence))
+        metadata.update(transcript(options,repo,evidence))
         (evidence/'result.json').write_text(json.dumps(metadata,indent=2)+'\n')
         print('Bureau provider evidence: '+str(evidence),file=sys.stderr)
+        if metadata['transcript']: print('Bureau provider transcript: '+metadata['transcript'],file=sys.stderr)
         if code==0: print(text)
         else: print('Bureau provider outcome: '+metadata['outcome'],file=sys.stderr)
         return code
     except AuthError as exc: print(str(exc),file=sys.stderr); return 16
     except (PermissionError, UntrustedEnvError) as exc: print(str(exc),file=sys.stderr); return 24
     except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
-        if evidence: (evidence/'result.json').write_text(json.dumps({'outcome':'invalid-result','error':str(exc)}))
+        if evidence:
+            failed={'outcome':'invalid-result','error':str(exc)}
+            try: failed.update(transcript(options,repo,evidence))
+            except OSError: pass
+            (evidence/'result.json').write_text(json.dumps(failed))
         print('Bureau provider: '+str(exc),file=sys.stderr); return 22
 
 
