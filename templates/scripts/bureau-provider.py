@@ -361,25 +361,56 @@ def _found(root, pattern):
     except OSError: return None
 
 
+# How long a cached "no" holds. A "yes" holds until the binary changes or the CLI
+# rejects the flag (claude_rejected_session_id); a "no" is asked again after a
+# day, because behind an unchanged wrapper or shim (mise, asdf, a script of
+# one's own) the CLI can be upgraded without the key below changing.
+SESSION_FLAG_RECHECK = 86400
+
+
+def _claude_cli(environ):
+    # The claude found on PATH and the cache key of the file found there: its
+    # resolved path, size and mtime. Returns (path, key, reason-if-none).
+    found = shutil.which('claude', path=environ.get('PATH'))
+    if not found: return None, None, 'claude executable not found on PATH'
+    real = os.path.realpath(found)
+    try: stat = os.stat(real)
+    except OSError as exc: return None, None, 'claude executable unreadable: ' + str(exc)
+    return found, [real, stat.st_size, stat.st_mtime_ns], None
+
+
+def remember_session_flag(cache, key, answer, source):
+    # Atomic, so parallel calls (the review's three specialists) can share the
+    # file; a temporary file that could not be moved into place is removed.
+    temp = cache.with_name(cache.name + '.' + str(os.getpid()))
+    try:
+        temp.write_text(json.dumps(dict(key=key, session_id=answer, source=source, checked=int(time.time()))) + '\n')
+        os.replace(temp, cache)
+    except OSError:
+        try: temp.unlink()
+        except OSError: pass
+
+
 def claude_takes_session_id(cache, mode='default', environ=None):
     # Whether the claude CLI on PATH takes --session-id, so a CLI without the
     # flag runs as before v3.2: without it. `claude --help` is asked once per
     # binary; the answer is kept in `cache` (the evidence directory's
     # .claude-cli.json) under the binary's resolved path, size and mtime, so an
-    # update asks again and an unchanged binary costs no extra process. Returns
-    # (answer, reason); a failed check is not kept and leaves the flag off. The
-    # check runs in the environment the agent gets (mode: repo.untrusted_env).
+    # update asks again and an unchanged binary costs no extra process; a "no"
+    # is asked again after SESSION_FLAG_RECHECK. Returns (answer, reason); a
+    # failed check is not kept and leaves the flag off. The check runs in the
+    # environment the agent gets (mode: repo.untrusted_env).
     environ = os.environ if environ is None else environ
-    found = shutil.which('claude', path=environ.get('PATH'))
-    if not found: return False, 'claude executable not found on PATH'
-    real = os.path.realpath(found)
-    try: stat = os.stat(real)
-    except OSError as exc: return False, 'claude executable unreadable: ' + str(exc)
-    key = [real, stat.st_size, stat.st_mtime_ns]
+    found, key, reason = _claude_cli(environ)
+    if reason: return False, reason
+    no = 'the claude CLI at ' + key[0] + ' does not take --session-id'
     try:
         saved = json.loads(cache.read_text())
         if isinstance(saved, dict) and saved.get('key') == key and isinstance(saved.get('session_id'), bool):
-            return saved['session_id'], None if saved['session_id'] else 'the claude CLI at ' + real + ' does not take --session-id (claude --help)'
+            if saved['session_id']: return True, None
+            checked = saved.get('checked')
+            if type(checked) is int and 0 <= time.time() - checked < SESSION_FLAG_RECHECK:
+                return False, no + ' (' + str(saved.get('source') or 'claude --help') + ')'
     except (OSError, ValueError): pass
     try:
         proc = subprocess.run([found, '--help'], capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL,
@@ -387,11 +418,17 @@ def claude_takes_session_id(cache, mode='default', environ=None):
     except (OSError, subprocess.SubprocessError) as exc: return False, 'claude --help failed: ' + str(exc)
     if proc.returncode != 0: return False, 'claude --help failed with exit ' + str(proc.returncode)
     answer = '--session-id' in proc.stdout
-    try:
-        temp = cache.with_name(cache.name + '.' + str(os.getpid()))
-        temp.write_text(json.dumps(dict(key=key, session_id=answer)) + '\n'); os.replace(temp, cache)
-    except OSError: pass
-    return answer, None if answer else 'the claude CLI at ' + real + ' does not take --session-id (claude --help)'
+    remember_session_flag(cache, key, answer, 'claude --help')
+    return answer, None if answer else no + ' (claude --help)'
+
+
+def claude_rejected_session_id(evidence):
+    # The CLI refused the flag at argument parsing, before any model call:
+    # commander's "error: unknown option '--session-id'", as Claude Code prints
+    # it for an option it does not know.
+    try: text = (evidence/'stderr.log').read_text(errors='replace')
+    except OSError: return False
+    return re.search(r"unknown option '--session-id'", text) is not None
 
 
 def transcript(options, repo, evidence, environ=None):
@@ -449,6 +486,19 @@ def main():
             supported,options['session_note']=claude_takes_session_id(base/'.claude-cli.json',options['untrusted_env'])
             if supported: options['session_id']=str(uuid.uuid4())
         code,text,metadata=run(options,prompt,system,repo,evidence,schema)
+        if options.get('session_id') and code not in (0,124,130) and claude_rejected_session_id(evidence):
+            # A "yes" gone stale: the CLI behind an unchanged path (a wrapper, a
+            # shim) no longer takes the flag. The call failed while parsing its
+            # arguments, so nothing was paid: remember "no", keep the refused
+            # attempt's logs, and run the call once more without the flag.
+            _,key,reason=_claude_cli(os.environ)
+            if not reason: remember_session_flag(base/'.claude-cli.json',key,False,'rejected by the CLI')
+            for name in ('stdout.log','stderr.log'):
+                if (evidence/name).exists(): (evidence/name).replace(evidence/('session-id-rejected.'+name))
+            options['session_id']=None
+            options['session_note']="the claude CLI rejected --session-id (unknown option), and the call ran again without it"
+            code,text,metadata=run(options,prompt,system,repo,evidence,schema)
+            metadata['session_id_rejected']=True
         metadata.update(run_id=os.environ.get('BUREAU_RUN_ID'), issue=os.environ.get('BUREAU_CURRENT_ISSUE'),
                         estimated_cost_usd=metadata.get('total_cost_usd'), actual_billed_cost_usd=None,
                         account_used_percent=None, stage=args.stage, provider=options['runner'], model=options['model'], evidence=str(evidence))

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="57a91bd4c7b567899d0ea06f1ca7e24db1bdae7bce8d4b4c1937f12e3fb82d2c">
+<meta name="bureau-source-sha256" content="f611d5336749b5119c04017038ed1ef42029d31f9028eced462ba223c392e7b3">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -520,7 +520,11 @@ the transcript Claude writes while it works:</p>
 list <code>--session-id</code> in <code>claude --help</code> runs
 without it, as before v3.2; then <code>session_id</code> is
 <code>null</code>, <code>transcript_found</code> is <code>false</code>,
-and <code>transcript_note</code> says why. For Codex,
+and <code>transcript_note</code> says why. A CLI that refuses the flag
+although it was cached as taking it (a downgrade behind an unchanged
+wrapper) costs no failed stage: the call runs again without the flag,
+and <code>result.json</code> says
+<code>session_id_rejected: true</code>. For Codex,
 <code>session_id</code> is the thread id from the first
 <code>thread.started</code> event in <code>stdout.log</code> (Codex
 streams its events, so <code>stdout.log</code> holds the run up to the

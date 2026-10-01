@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="7854f653e45d0bc8df11de052e02a84f860e09ff93888da43f11d17dff54e620">
+<meta name="bureau-source-sha256" content="54ffde2fb05e039a6998bb8547c15b6f9b602558def21a868c9727a793dcf3ef">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -133,7 +133,17 @@ kept in <code>logs/provider-runs/.claude-cli.json</code>) and asks again
 after an update. A CLI without it runs the stage as before v3.2, without
 the flag, and <code>result.json</code> then has
 <code>session_id: null</code>, <code>transcript_found: false</code> and
-a <code>transcript_note</code> saying why. For Codex,
+a <code>transcript_note</code> saying why. Behind a wrapper or shim that
+does not change (mise, asdf, a script of one's own) the CLI can change
+without the key: a cached "no" is therefore asked again after a day, and
+when a call with the flag fails because the CLI answers
+<code>error: unknown option '--session-id'</code> (a downgrade), the
+adapter records "no", keeps that attempt's logs as
+<code>session-id-rejected.stdout.log</code>/<code>.stderr.log</code>,
+and runs the call once more without the flag right away (the refused
+call stopped at argument parsing, before any model call);
+<code>result.json</code> then carries
+<code>session_id_rejected: true</code>. For Codex,
 <code>session_id</code> is the thread id of the first
 <code>thread.started</code> event in <code>stdout.log</code> and
 <code>transcript</code> the matching rollout file under

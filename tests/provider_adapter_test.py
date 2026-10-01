@@ -80,6 +80,7 @@ else:
 '''
         for name in ('claude','codex'):
             path=self.bin/name; path.write_text(fake); path.chmod(0o755)
+        self.fake=fake
         self.env={**os.environ,'PATH':str(self.bin)+os.pathsep+os.environ['PATH'],'FAKE_ROOT':str(self.root),
                   'BUREAU_PROVIDER_LOG_DIR':str(self.root/'evidence')}
         for key in list(self.env):
@@ -429,5 +430,79 @@ else:
                 _,metadata=self.evidence()
                 self.assertEqual(metadata['transcript'],str(folder/(metadata['session_id']+'.jsonl')))
                 self.assertTrue(metadata['transcript_found'])
+
+    # ── A cached answer gone stale behind an unchanged wrapper (v3.2) ──────
+    def wrap_claude(self,old):
+        # bin/claude is a wrapper that never changes (as a mise or asdf shim is); the CLI it
+        # starts, cli/claude, is swapped between a version with --session-id and one without.
+        cli=self.root/'cli'; cli.mkdir(exist_ok=True)
+        lines=self.fake.split('\n',1)
+        (cli/'claude').write_text(lines[0]+'\n'+("import os; os.environ['OLD_CLI']='1'\n" if old else '')+lines[1])
+        (cli/'claude').chmod(0o755)
+        wrapper=self.bin/'claude'
+        text='#!/bin/sh\nexec "'+str(cli/'claude')+'" "$@"\n'
+        if not wrapper.exists() or wrapper.read_text()!=text:
+            wrapper.write_text(text); wrapper.chmod(0o755)
+
+    def cache(self):
+        return json.loads((self.root/'evidence'/'.claude-cli.json').read_text())
+
+    def test_downgraded_cli_behind_a_wrapper_reruns_without_the_flag(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        self.wrap_claude(old=False)
+        self.run_provider()
+        self.assertIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+        self.assertTrue(self.cache()['session_id'])
+        wrapper_stat=(self.bin/'claude').stat()
+        self.wrap_claude(old=True)
+        self.assertEqual((self.bin/'claude').stat().st_mtime_ns,wrapper_stat.st_mtime_ns,'the wrapper did not change')
+        result=self.run_provider()
+        self.assertEqual(result.stdout.strip(),'final response')
+        self.assertNotIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+        run,metadata=self.evidence()
+        self.assertEqual((metadata['outcome'],metadata['session_id'],metadata['transcript_found'],metadata['session_id_rejected']),
+                         ('complete',None,False,True))
+        self.assertIn('rejected --session-id',metadata['transcript_note'])
+        self.assertIn("error: unknown option '--session-id'",(run/'session-id-rejected.stderr.log').read_text())
+        self.assertEqual((self.cache()['session_id'],self.cache()['source']),(False,'rejected by the CLI'))
+        self.assertEqual(self.help_calls(),1,'the refusal is the answer; no extra --help')
+        self.run_provider()
+        self.assertNotIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+        self.assertNotIn('session_id_rejected',self.evidence()[1])
+        self.assertEqual(self.help_calls(),1)
+
+    def test_upgraded_cli_behind_a_wrapper_is_asked_again_after_a_day(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        self.wrap_claude(old=True)
+        self.run_provider()
+        self.assertNotIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+        self.wrap_claude(old=False)
+        self.run_provider()
+        self.assertNotIn('--session-id',json.loads((self.root/'argv.json').read_text()),'a fresh "no" holds')
+        self.assertEqual(self.help_calls(),1)
+        saved=self.cache(); saved['checked']=int(time.time())-86400-1  # a day and a second ago
+        (self.root/'evidence'/'.claude-cli.json').write_text(json.dumps(saved))
+        self.run_provider()
+        self.assertEqual(self.help_calls(),2,'a "no" older than a day is asked again')
+        self.assertIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+        self.assertIsNotNone(self.evidence()[1]['session_id'])
+        # A "no" written before the check time was kept (no "checked" field) is asked again too.
+        saved=self.cache(); saved['session_id']=False; del saved['checked']
+        (self.root/'evidence'/'.claude-cli.json').write_text(json.dumps(saved))
+        self.run_provider()
+        self.assertEqual(self.help_calls(),3)
+        self.assertIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+        # A "no" dated in the future (a clock set back) is not trusted either.
+        saved=self.cache(); saved['session_id']=False; saved['checked']=int(time.time())+10*86400
+        (self.root/'evidence'/'.claude-cli.json').write_text(json.dumps(saved))
+        self.run_provider()
+        self.assertEqual(self.help_calls(),4)
+
+    def test_cache_file_that_cannot_be_replaced_leaves_no_temporary_file(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        (self.root/'evidence'/'.claude-cli.json').mkdir(parents=True)
+        self.run_provider()
+        self.assertIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+        self.assertEqual(sorted(path.name for path in (self.root/'evidence').iterdir() if path.name.startswith('.claude-cli.json.')),[])
 
 if __name__=='__main__': unittest.main()
