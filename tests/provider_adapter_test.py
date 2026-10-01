@@ -33,6 +33,7 @@ if sys.argv[1] in ('auth','login'):
 # the flag as an unknown option, as commander does. HELP_FAIL: the help itself fails.
 if sys.argv[1]=='--help':
     with (root/'help-calls').open('a') as calls: calls.write('help\\n')
+    (root/'help-env.json').write_text(json.dumps(sorted(os.environ)))
     if os.environ.get('HELP_FAIL'): sys.exit(2)
     print('Usage: claude [options] [command] [prompt]')
     print('  -p, --print   Print response and exit')
@@ -382,8 +383,9 @@ else:
 
     def test_session_id_support_is_asked_once_per_binary(self):
         self.config.write_text('{"agents":{"runner":"claude"}}')
-        for _ in range(3): self.run_provider()
+        for _ in range(3): self.run_provider(GH_TOKEN='ghp_probe_help_check')
         self.assertEqual(self.help_calls(),1,'one claude --help for three calls')
+        self.assertNotIn('GH_TOKEN',json.loads((self.root/'help-env.json').read_text()),'the help check gets the agent environment')
         self.assertIn('--session-id',json.loads((self.root/'argv.json').read_text()))
         # An updated binary (another mtime) is asked again; so is one at another path.
         stat=(self.bin/'claude').stat(); os.utime(self.bin/'claude',ns=(stat.st_atime_ns,stat.st_mtime_ns+10**9))
