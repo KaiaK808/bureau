@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0dd0bc8ff3023489cff12d1ac0e7f873f96075f713f1e850a257bc836334d73d">
+<meta name="bureau-source-sha256" content="56493bbbb88741b243cd9f76ae0599a9f7eedbed285f4c88d03c5491d6d12683">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -98,14 +98,35 @@ after the bounded invocation returns. Per-stage/provider
 <code>timeout_seconds</code> defaults to 3600 per call (900 before
 v3.1); doctor warns when an enabled spec, spec review, UX, QA or review
 stage gets less than 1800 s. Implementation uses its existing
-iteration/total bounds through <code>BUREAU_STAGE_TIMEOUT</code>.</p>
+iteration/total bounds through <code>BUREAU_STAGE_TIMEOUT</code>; since
+v3.2 a pass that times out is one pass of the loop, and the stage ends
+with 124 only when no pass is left (<a
+href="troubleshooting.html#exit-124-timeout--a-provider-pass-hit-its-time-limit">troubleshooting</a>).</p>
 <p>JSON schema contracts cover implementation iterations, QA, and the
 merged review verdict. Both plain JSON and legacy fenced JSON are
 parsed; Claude envelopes are unwrapped. A provider's diagnostic stream
 cannot supply the verdict. Raw prompt/output/error evidence and metadata
-remain under <code>logs/provider-runs/RUN/</code>. Optional
-<code>session.cost_tracking</code> preserves the legacy usage envelope
-interface. Unknown dollar cost stays unavailable for Codex.</p>
+remain under <code>logs/provider-runs/RUN/</code>.
+<code>result.json</code> there also names the provider's own record of
+the call, which outlives a timeout: since v3.2 every Claude call starts
+with a fresh <code>--session-id</code>, and <code>session_id</code>,
+<code>transcript</code>
+(<code>&lt;CLAUDE_CONFIG_DIR or ~/.claude&gt;/projects/&lt;slug&gt;/&lt;session id&gt;.jsonl</code>,
+the slug being the resolved working directory with every character other
+than a letter or digit replaced by <code>-</code>; when Claude placed it
+elsewhere under <code>projects/</code>, the file found there) and
+<code>transcript_found</code> record it. For Codex,
+<code>session_id</code> is the thread id of the first
+<code>thread.started</code> event in <code>stdout.log</code> and
+<code>transcript</code> the matching rollout file under
+<code>&lt;CODEX_HOME or ~/.codex&gt;/sessions/</code>, or
+<code>null</code> with a <code>transcript_note</code> when Codex
+reported no thread id. The stage log carries the path as
+<code>Bureau provider transcript: …</code>. The transcript holds the
+whole session, tool output included; it stays where the CLI wrote it,
+outside <code>logs/</code>. Optional <code>session.cost_tracking</code>
+preserves the legacy usage envelope interface. Unknown dollar cost stays
+unavailable for Codex.</p>
 <p>Claude <code>/goal</code> and Headroom are Claude capabilities. A
 Codex implementation uses the portable bounded loop even when the old
 goal flag is enabled. Interactive bench panes use

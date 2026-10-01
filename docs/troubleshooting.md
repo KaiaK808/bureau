@@ -185,6 +185,25 @@ A stage or the shepherd stops with 21 when the run may not take the ticket or it
 
 Follow the comment (for an interrupted run, the steps under [`shepherd.sh` bailed mid-run](#shepherdsh-bailed-mid-run--how-to-resume)), remove `needs-human` and rerun.
 
+### Exit 124 (timeout) — a provider pass hit its time limit
+
+A provider call that runs past its limit is stopped with its whole process group, and the stage gets 124. Before v3.2 the implement stage ended on the first such pass, although in the field the agent had usually finished, committed and pushed every task and was only polling CI until the limit killed it.
+
+**Implement (since v3.2):** a pass that times out is counted like any other pass, and the loop goes on. The pass appears in the iteration log, on stdout and in the summary comment, as `iter N: status=TIMEOUT tasks_done=M commits=K (timed out after Ss)`: `commits` comes from Git as for every pass, `tasks_done` is the number of tasks the pass marked `[X]` in `tasks.md` (it reported no status block), and stderr says `iter N timed out after Ss (exit 124); it counts as a pass like any other`. The squash-range check and the push (or its deferral, see `agents.implement.push_each_iteration`) run after it as after any pass. The next pass gets a note at the top of its prompt ("The previous pass timed out"): it checks `tasks.md` and the branch first, commits finished work, and reports `COMPLETE` at once when nothing is left. The stage ends with 124 only when no pass is left after a timed-out one: `BUREAU_IMPL_MAX_ITER` passes have run, or `BUREAU_IMPL_TOTAL_TIMEOUT` leaves 60 s or less for another. Then the deferred commits are pushed first and stderr says `Provider pass failed with exit 124 (iter N timed out) and no pass is left: …` with the reason. Every other non-zero provider exit (16, 22, 23, 24, 130) still ends the stage right after its pass, as before.
+
+So an implement stage can now take up to `BUREAU_IMPL_MAX_ITER` provider passes when passes time out, together bounded by `BUREAU_IMPL_TOTAL_TIMEOUT` (each pass gets `BUREAU_IMPL_ITER_TIMEOUT`, cut to what is left of the total). With the defaults that is at most 5400 s of provider time where a stage used to end after the first 1800 s pass. To keep the old ceiling, set `BUREAU_IMPL_TOTAL_TIMEOUT` to the value of `BUREAU_IMPL_ITER_TIMEOUT`: a timed-out pass then leaves no budget for another and the stage ends with 124 as before. The `/goal` path (`agents.use_goal_loop`) is unchanged: one call bounded by `BUREAU_IMPL_TOTAL_TIMEOUT`, and a timeout ends the stage with 124.
+
+**What the pass did:** `stdout.log` in the provider evidence is empty after a Claude timeout, because `claude -p --output-format json` writes its result only at the end. Since v3.2 the adapter starts every Claude call with its own `--session-id`, and `result.json` records it with the transcript Claude writes while it works:
+
+```sh
+jq '{outcome, session_id, transcript, transcript_found}' logs/provider-runs/RUN/result.json
+tail -n 20 "$(jq -r .transcript logs/provider-runs/RUN/result.json)" | jq -c '.message.content? // .'
+```
+
+The stage log names the same path in a line `Bureau provider transcript: …` next to `Bureau provider evidence: …`. For Codex, `session_id` is the thread id from the first `thread.started` event in `stdout.log` (Codex streams its events, so `stdout.log` holds the run up to the timeout) and `transcript` its rollout file under `~/.codex/sessions/` (`CODEX_HOME`), when it is there. See [provider runtime](provider-runtime.md).
+
+**Why a pass polls CI at all:** a project instruction such as "a missing CI run means do not merge, wait for it or trigger it" in the repository's `CLAUDE.md` reads to the agent as its own job. Since v3.2 every stage's system text, and `scripts/bureau-stage.md`, say never to wait for, poll or re-trigger CI or a merge gate inside a stage and never to commit CI results as evidence, and that this rule wins over project instructions. Waiting on CI is the merge gate's and the shepherd's job. If a transcript still shows `gh pr checks` or `gh run view` loops, check that the main checkout runs the v3.2 scripts (the system text comes from there) and that no stage prompt of your own asks for the wait.
+
 ### Exit 1 / 128 / 141 — `error-<N>` catch-all
 
 Anything outside the classified table maps to `error-<N>` in `queue-loop`'s alert throttling. Usually a bug in the pipeline script or an unhandled bash error.
@@ -396,7 +415,7 @@ Exit 16 now covers the selected provider. Inspect `claude auth status --json` or
 
 ### Headless Claude calls hang or timeout
 
-Inspect the adapter's preserved stdout/stderr and result metadata before retrying. Confirm provider login, network availability and the configured timeout. Exit 124 indicates the bound was reached, 130 cancellation, and 24 an environment/permission failure. The bound is `timeout_seconds` per provider call: 3600 s by default since v3.1 (900 s before), set per stage or per provider in `.bureau.json`; doctor warns when an enabled spec, spec review, UX, QA or review stage gets less than 1800 s. A retry requires inspection of interrupted ownership; avoid an unbounded probe or a permissions bypass as a diagnostic shortcut.
+Inspect the adapter's preserved stdout/stderr and result metadata before retrying; after a Claude timeout `stdout.log` is empty, and the transcript path in `result.json` shows what the call did (see [Exit 124](#exit-124-timeout--a-provider-pass-hit-its-time-limit)). Confirm provider login, network availability and the configured timeout. Exit 124 indicates the bound was reached, 130 cancellation, and 24 an environment/permission failure. The bound is `timeout_seconds` per provider call: 3600 s by default since v3.1 (900 s before), set per stage or per provider in `.bureau.json`; doctor warns when an enabled spec, spec review, UX, QA or review stage gets less than 1800 s. A retry requires inspection of interrupted ownership; avoid an unbounded probe or a permissions bypass as a diagnostic shortcut.
 
 ### Speckit phases produce empty `tasks.md`
 The spec pipeline routes back to Triage automatically. To debug:
