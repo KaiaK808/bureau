@@ -226,8 +226,8 @@ def gate_waits(repo, root, stage, first, cap, now=None):
     if not held:
         return {'waiting': []}
     command = ['git', 'ls-remote', 'origin'] + sorted({'refs/heads/' + branch for _, branch, _, _, _, _ in held})
-    answer = subprocess.run(command, cwd=repo, text=True, timeout=30, env=process_env(command),
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    answer = subprocess.run(command, cwd=repo, text=True, timeout=30, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            env=process_env(command))
     if answer.returncode:
         # git's own reason in one line: its first fatal line, else its last line.
         lines = [line.strip() for line in answer.stderr.splitlines() if line.strip()]
