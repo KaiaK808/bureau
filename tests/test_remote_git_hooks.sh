@@ -24,8 +24,11 @@
 #      bureau-config.sh's bureau_get): hooks off
 #   4  bureau-env.sh alone (no bureau_get, no BUREAU_CONFIG, as squash-marker-check.sh): hooks off
 #   5  doctor: a non-boolean value is a warning; true, false and absent are not
+#   6  doctor: the main checkout's .gitattributes uses Git LFS (filter=lfs) and the key is not true —
+#      a warning naming the key (also from a linked worktree); none for true, another filter, a
+#      comment line or a name that only starts with lfs
 # Negative control: against v3.1.0 (9411b3b) 1, 3 and 4 fail ("pre-push ran during Bureau's push,
-# with GH_TOKEN") and 5 fails (no warning).
+# with GH_TOKEN") and 5 and 6 fail (no warning).
 set -uo pipefail
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 source "$(dirname "$0")/lib/pr1-untrusted-env.sh"
@@ -152,12 +155,17 @@ hooks_off "4 bureau-env.sh alone"
 pr1_pass "4 without bureau-config.sh and BUREAU_CONFIG: hooks off"
 
 # ── 5  doctor ─────────────────────────────────────────────────────────────────
-doctor_warnings() {  # <repo json> — the doctor's warnings about the key, one per line
-  local d="$TMP/doctor"
-  rm -rf "$d"; mkdir -p "$d/scripts"; cp "$SCRIPTS"/bureau-doctor.py "$SCRIPTS"/bureau-runtime.py "$SCRIPTS"/bureau-provider.py "$SCRIPTS"/bureau-stage.md "$d/scripts/"
-  git -C "$d" init -q -b main
+# doctor_warnings <repo json> [.gitattributes text] [worktree] — the doctor's warnings and errors
+# about the key, one per line. With "worktree" doctor runs in a linked worktree of the repository
+# whose own checkout has no .gitattributes; the text goes to the main checkout's file.
+doctor_warnings() {
+  local d="$TMP/doctor" at="$TMP/doctor"
+  rm -rf "$d" "$TMP/doctor-wt"; mkdir -p "$d/scripts"; cp "$SCRIPTS"/bureau-doctor.py "$SCRIPTS"/bureau-runtime.py "$SCRIPTS"/bureau-provider.py "$SCRIPTS"/bureau-stage.md "$d/scripts/"
+  git -C "$d" init -q -b main; git -C "$d" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
   jq -n --argjson repo "$1" '{version: 2, linear: {teams: [{id: "t", key: "EXP", states: {build: "s"}}]}, agents: {}, repo: $repo}' > "$d/.bureau.json"
-  (cd "$d" && python3 scripts/bureau-doctor.py --repo "$d") | jq -r '(.warnings // [])[], (.errors // [])[]' | grep 'remote_git_runs_hooks' || true
+  [ -z "${2:-}" ] || printf '%s\n' "$2" > "$d/.gitattributes"
+  if [ "${3:-}" = worktree ]; then git -C "$d" worktree add -q "$TMP/doctor-wt" -b wt; at="$TMP/doctor-wt"; fi
+  (cd "$at" && python3 "$d/scripts/bureau-doctor.py" --repo "$at") | jq -r '(.warnings // [])[], (.errors // [])[]' | grep 'remote_git_runs_hooks' || true
 }
 for value in true false; do
   [ -z "$(doctor_warnings "{\"remote_git_runs_hooks\":$value}")" ] || fail "5: doctor warns on $value"
@@ -168,6 +176,26 @@ for value in '"true"' 1 '"yes"'; do
   case "$w" in *"is not a JSON boolean"*) ;; *) fail "5: doctor does not warn on $value: ${w:-no warning}" ;; esac
 done
 pr1_pass "5 doctor warns on a value that is not a JSON boolean"
+
+# ── 6  doctor: Git LFS needs the hooks ────────────────────────────────────────
+# git lfs uploads its objects in its pre-push hook: with the hooks off, Bureau's push leaves them
+# off the remote. Doctor warns when the main checkout's .gitattributes uses filter=lfs and the key
+# is not the JSON value true.
+LFS='*.psd filter=lfs diff=lfs merge=lfs -text'
+for value in absent false '"true"' 1; do
+  if [ "$value" = absent ]; then cfg='{}'; else cfg="{\"remote_git_runs_hooks\":$value}"; fi
+  w=$(doctor_warnings "$cfg" "$LFS")
+  case "$w" in *"uses Git LFS (filter=lfs)"*) ;; *) fail "6: no Git LFS warning with the key $value: ${w:-no warning}" ;; esac
+done
+w=$(doctor_warnings '{"remote_git_runs_hooks":true}' "$LFS")
+case "$w" in *"uses Git LFS"*) fail "6: a Git LFS warning although the key is true" ;; esac
+for text in '*.txt filter=probe' "# $LFS" '*.bin filter=lfsish'; do
+  w=$(doctor_warnings '{}' "$text")
+  case "$w" in *"uses Git LFS"*) fail "6: a Git LFS warning for .gitattributes '$text'" ;; esac
+done
+w=$(doctor_warnings '{}' "$LFS" worktree)
+case "$w" in *"uses Git LFS (filter=lfs)"*) ;; *) fail "6: doctor in a linked worktree does not read the main checkout's .gitattributes: ${w:-no warning}" ;; esac
+pr1_pass "6 doctor warns when the main checkout uses Git LFS and the hooks are off"
 
 if [ "$PR1_FAILS" != 0 ]; then echo "$PR1_FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_remote_git_hooks"

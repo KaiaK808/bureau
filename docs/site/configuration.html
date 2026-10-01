@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="17cf8aa661082ea27ad4c226c1a01d2124d2d7a1d514a507a2e8943acbc8233d">
+<meta name="bureau-source-sha256" content="f2074457f56204ca1a3765d2d52b177752113d10e25e155a454e5bd76af8d02d">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -751,13 +751,15 @@ runs when Bureau pushes; CI runs those checks on the pull request.
 <strong>A repository that uses Git LFS needs <code>true</code></strong>:
 <code>git lfs install</code> uploads the LFS objects in a
 <code>pre-push</code> hook, and without it Bureau's push leaves them off
-the remote. <code>true</code> (the JSON value) runs the hooks again, as
-v3.1 did. Absent, <code>null</code>, <code>false</code>, any other value
-and a <code>.bureau.json</code> that cannot be read keep them off;
-doctor warns on a value that is not a JSON boolean. Local commands
-(commit, checkout, merge, reset) run their hooks either way, without the
-Bureau secrets. Hooks only: a credential helper, a filter or an
-fsmonitor named in the git configuration still runs, and
+the remote; doctor warns when the main checkout's
+<code>.gitattributes</code> uses <code>filter=lfs</code> and the key is
+not <code>true</code>. <code>true</code> (the JSON value) runs the hooks
+again, as v3.1 did. Absent, <code>null</code>, <code>false</code>, any
+other value and a <code>.bureau.json</code> that cannot be read keep
+them off; doctor warns on a value that is not a JSON boolean. Local
+commands (commit, checkout, merge, reset) run their hooks either way,
+without the Bureau secrets. Hooks only: a credential helper, a filter or
+an fsmonitor named in the git configuration still runs, and
 <code>gh</code>'s own git calls keep their hooks; see <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
 </tr>
@@ -1015,11 +1017,12 @@ separate <code>agents.max_concurrent_issues</code> ticket cap</td>
 works without it via MCP; the headless agents need direct GraphQL
 access. The scripts that read <code>.env</code> keep it in a shell
 variable they never export (v3.2) and hand it to <code>curl</code> on
-stdin, so the processes they start do not see it; a key set only in the
-environment of the shell that starts Bureau, and not in
-<code>.env</code>, stays exported there and reaches every process below
-that shell, so keep it in <code>.env</code> and out of the shell
-environment. The same holds for the two Telegram keys</td>
+stdin, so the processes they start do not see it; a key that only the
+shell which starts Bureau sets, and not <code>.env</code>, is left as it
+is — Bureau does not change values from the operator's shell — so it
+reaches every process below that shell, Bureau's own children included;
+keeping the key only in <code>.env</code> closes this. The same holds
+for the two Telegram keys</td>
 </tr>
 <tr>
 <td><code>BUREAU_LINEAR_RETRIES</code></td>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="5833bb9070cb435d920818c74cb2b1fceeefb7192c36170c42fd81e955f7a997">
+<meta name="bureau-source-sha256" content="f6996f78ac3ffe63c9dc4feb82a2ea2c77daf8f0189f241c7a0b22acc3789f61">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -836,7 +836,9 @@ value) to run the hooks again with the GitHub tokens in their
 environment, as in v3.1. A repository that uses Git LFS needs
 <code>true</code>: LFS uploads its objects in the <code>pre-push</code>
 hook, so without it the pull request's LFS files point at objects the
-remote does not have (<a href="configuration.html">configuration</a>, <a
+remote does not have; doctor warns when the main checkout's
+<code>.gitattributes</code> uses <code>filter=lfs</code> and the key is
+not <code>true</code> (<a href="configuration.html">configuration</a>, <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).
 Doctor warns when the value is not a JSON boolean; any value other than
 <code>true</code> keeps the hooks off.</p>

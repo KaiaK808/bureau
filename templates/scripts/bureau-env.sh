@@ -129,8 +129,9 @@ bureau_env_key_numeric() {
 # stdin (_bureau_linear_fetch and alert_telegram in bureau-config.sh), and
 # every Bureau script that needs one reads .env itself, so bureau_load_env
 # never exports them. A secret only the environment holds (the operator's shell
-# exported it, .env does not define it) is left as it is: it is already in the
-# environment of every process below that shell.
+# exported it, .env does not define it) is left as it is: Bureau does not change
+# values from the operator's shell, and it is already in the environment of
+# every process below that shell (SECURITY.md: keep the keys only in .env).
 bureau_env_key_secret() {
   case "$1" in
     LINEAR_API_KEY | TELEGRAM_BOT_TOKEN | TELEGRAM_ALERT_CHAT_ID) return 0 ;;
