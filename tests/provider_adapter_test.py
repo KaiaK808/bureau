@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPT=ROOT/'templates/scripts/bureau-provider.py'
@@ -42,6 +43,13 @@ if os.environ.get('FORK_IGNORE_TERM'):
             (root/'heartbeat').write_text(str(time.monotonic_ns()))
             time.sleep(.05)
     while not (root/'descendant.json').exists(): time.sleep(.01)
+# What the CLI itself records while it works: Claude its transcript, named by --session-id,
+# under TRANSCRIPT_DIR (the test computes that directory); Codex its thread.started event.
+if name=='claude' and os.environ.get('TRANSCRIPT_DIR') and '--session-id' in sys.argv:
+    folder=pathlib.Path(os.environ['TRANSCRIPT_DIR']); folder.mkdir(parents=True,exist_ok=True)
+    (folder/(sys.argv[sys.argv.index('--session-id')+1]+'.jsonl')).write_text('{"type":"user"}\\n')
+if name=='codex' and os.environ.get('THREAD'):
+    print(json.dumps({'type':'thread.started','thread_id':os.environ['THREAD']}),flush=True)
 (root/'ready').touch()
 if os.environ.get('IGNORE_TERM'): signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if os.environ.get('SLEEP'): time.sleep(float(os.environ['SLEEP']))
@@ -53,6 +61,8 @@ if name=='codex':
     if not os.environ.get('EMPTY'): pathlib.Path(output).write_text(final)
     print(json.dumps({'type':'turn.completed','usage':{'input_tokens':12,'output_tokens':3}}))
     print('diagnostic APPROVE text should never become the result')
+elif os.environ.get('RAW'):
+    print(os.environ['RAW'])
 else:
     print(json.dumps({'result':final,'usage':{'input_tokens':12,'output_tokens':3},'total_cost_usd':0.01}))
 '''
@@ -62,10 +72,12 @@ else:
                   'BUREAU_PROVIDER_LOG_DIR':str(self.root/'evidence')}
         for key in list(self.env):
             if key.startswith(('BUREAU_RUNNER_','BUREAU_MODEL_','BUREAU_CODEX_MODEL_','BUREAU_STAGE_TIMEOUT')): self.env.pop(key)
+        # The provider looks for the CLI's own records here, never in the real home.
+        self.env.update(CLAUDE_CONFIG_DIR=str(self.root/'claude config'),CODEX_HOME=str(self.root/'codex home'))
 
     def command(self,*extra):
         return [sys.executable,str(SCRIPT),'--stage','implement','--config',str(self.config),
-                '--repo',str(self.root),'--prompt-file',str(self.prompt),*extra]
+                '--repo',str(getattr(self,'repo',self.root)),'--prompt-file',str(self.prompt),*extra]
 
     def run_provider(self,*extra,code=0,**env):
         result=subprocess.run(self.command(*extra),capture_output=True,text=True,env={**self.env,**env},timeout=12)
@@ -231,5 +243,110 @@ else:
         (self.bin/'claude').write_text('#!/bin/sh\necho unexpected Claude >&2\nexit 99\n')
         self.run_provider()
 
+
+    # ── The provider's own record of a call (v3.2) ─────────────────────────
+    def evidence(self):
+        runs=sorted((self.root/'evidence').iterdir(),key=lambda path:path.stat().st_mtime)
+        return runs[-1], json.loads((runs[-1]/'result.json').read_text())
+
+    def claude_projects_dir(self,config_dir):
+        # Claude Code's rule, written out independently of the adapter: the resolved working
+        # directory with every character other than an ASCII letter or digit turned into '-'.
+        # The Claude tests work in a directory whose name holds a space, a dot and an underscore.
+        if not hasattr(self,'repo'):
+            self.repo=self.root/'work tree.v3_2'; self.repo.mkdir()
+        slug=''.join(c if c.isascii() and c.isalnum() else '-' for c in os.path.realpath(self.repo))
+        self.assertIn('-work-tree-v3-2',slug)
+        return Path(config_dir)/'projects'/slug
+
+    def test_claude_gets_a_session_id_and_the_transcript_is_recorded(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        folder=self.claude_projects_dir(self.env['CLAUDE_CONFIG_DIR'])
+        seen=set()
+        for _ in range(2):
+            result=self.run_provider(TRANSCRIPT_DIR=str(folder))
+            argv=json.loads((self.root/'argv.json').read_text())
+            session=argv[argv.index('--session-id')+1]
+            self.assertEqual(str(uuid.UUID(session)),session)
+            run,metadata=self.evidence()
+            self.assertEqual(metadata['session_id'],session)
+            self.assertEqual(metadata['transcript'],str(folder/(session+'.jsonl')))
+            self.assertTrue(metadata['transcript_found'])
+            self.assertIn('Bureau provider transcript: '+metadata['transcript'],result.stderr)
+            seen.add(session)
+        self.assertEqual(len(seen),2,'every call gets its own session id')
+
+    def test_claude_timeout_keeps_the_transcript_path_although_stdout_is_empty(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        folder=self.claude_projects_dir(self.env['CLAUDE_CONFIG_DIR'])
+        result=self.run_provider(TRANSCRIPT_DIR=str(folder),SLEEP='10',BUREAU_STAGE_TIMEOUT='0.5',code=124)
+        run,metadata=self.evidence()
+        self.assertEqual(metadata['outcome'],'timeout')
+        self.assertEqual((run/'stdout.log').read_text(),'')
+        self.assertTrue(metadata['transcript_found'])
+        self.assertEqual(metadata['transcript'],str(folder/(metadata['session_id']+'.jsonl')))
+        self.assertTrue(Path(metadata['transcript']).exists())
+        self.assertIn('Bureau provider transcript: '+metadata['transcript'],result.stderr)
+
+    def test_claude_transcript_under_home_elsewhere_or_missing(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        env={k:v for k,v in self.env.items() if k!='CLAUDE_CONFIG_DIR'}
+        home=self.root/'home'
+        folder=self.claude_projects_dir(home/'.claude')
+        result=subprocess.run(self.command(),capture_output=True,text=True,timeout=12,
+                              env={**env,'HOME':str(home),'TRANSCRIPT_DIR':str(folder)})
+        self.assertEqual(result.returncode,0,result.stderr)
+        _,metadata=self.evidence()
+        self.assertEqual(metadata['transcript'],str(folder/(metadata['session_id']+'.jsonl')))
+        self.assertTrue(metadata['transcript_found'])
+        # Where a Claude version names the project directory differently, the session id finds it.
+        other=Path(self.env['CLAUDE_CONFIG_DIR'])/'projects'/'another-name'
+        self.run_provider(TRANSCRIPT_DIR=str(other))
+        _,metadata=self.evidence()
+        self.assertEqual(metadata['transcript'],str(other/(metadata['session_id']+'.jsonl')))
+        self.assertTrue(metadata['transcript_found'])
+        # Not written at all: the expected path, marked as not found.
+        self.run_provider()
+        _,metadata=self.evidence()
+        expected=self.claude_projects_dir(self.env['CLAUDE_CONFIG_DIR'])/(metadata['session_id']+'.jsonl')
+        self.assertEqual(metadata['transcript'],str(expected))
+        self.assertFalse(metadata['transcript_found'])
+
+    def test_claude_invalid_result_still_records_the_transcript(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        folder=self.claude_projects_dir(self.env['CLAUDE_CONFIG_DIR'])
+        self.run_provider(TRANSCRIPT_DIR=str(folder),RAW='no envelope',code=22)
+        _,metadata=self.evidence()
+        self.assertEqual(metadata['outcome'],'invalid-result')
+        self.assertTrue(metadata['transcript_found'])
+        self.assertEqual(metadata['transcript'],str(folder/(metadata['session_id']+'.jsonl')))
+
+    def test_codex_thread_id_and_rollout_file_are_recorded_also_on_timeout(self):
+        thread='01a0f1b9-222e-7cf0-807b-497141dcd44c'
+        day=Path(self.env['CODEX_HOME'])/'sessions'/'2026'/'10'/'01'; day.mkdir(parents=True)
+        rollout=day/('rollout-2026-10-01T09-00-00-'+thread+'.jsonl'); rollout.write_text('{}\n')
+        result=self.run_provider(THREAD=thread)
+        _,metadata=self.evidence()
+        self.assertEqual((metadata['session_id'],metadata['transcript'],metadata['transcript_found']),(thread,str(rollout),True))
+        self.assertIn('Bureau provider transcript: '+str(rollout),result.stderr)
+        self.assertNotIn('--session-id',json.loads((self.root/'argv.json').read_text()))
+        self.run_provider(THREAD=thread,SLEEP='10',BUREAU_STAGE_TIMEOUT='0.5',code=124)
+        _,metadata=self.evidence()
+        self.assertEqual((metadata['outcome'],metadata['session_id'],metadata['transcript']),('timeout',thread,str(rollout)))
+
+    def test_codex_without_a_usable_thread_id_records_none(self):
+        for thread in (None,'../../x*','short'):
+            with self.subTest(thread=thread):
+                env={} if thread is None else {'THREAD':thread}
+                self.run_provider(**env)
+                _,metadata=self.evidence()
+                self.assertIsNone(metadata['session_id']); self.assertIsNone(metadata['transcript'])
+                self.assertFalse(metadata['transcript_found'])
+                self.assertIn('no thread id',metadata['transcript_note'])
+        # A thread id whose rollout file is not there: the id, no path.
+        self.run_provider(THREAD='01a0f1b9-0000-7cf0-807b-497141dcd44c')
+        _,metadata=self.evidence()
+        self.assertEqual((metadata['session_id'],metadata['transcript'],metadata['transcript_found']),
+                         ('01a0f1b9-0000-7cf0-807b-497141dcd44c',None,False))
 
 if __name__=='__main__': unittest.main()

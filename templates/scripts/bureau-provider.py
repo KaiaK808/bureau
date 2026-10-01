@@ -226,6 +226,9 @@ def run(options, prompt, system, repo, evidence, schema=None):
         prompt = system + '\n\n' + prompt + '\n\nDo not run git commit or git push. Leave changes for the Bureau shell executor. Mark completed tasks truthfully. If tests are denied by the environment, report the permission blocker separately from code failures.'
     else:
         command = ['claude', '-p', '--output-format', 'json']
+        # The session id names the transcript Claude writes while it works
+        # (transcript()); stdout.log gets the JSON envelope only at the end.
+        if options.get('session_id'): command += ['--session-id', options['session_id']]
         if options['stage'] == 'upstream_summary': command += ['--tools', '']
         else: command += ['--dangerously-skip-permissions']
         if system:
@@ -316,6 +319,54 @@ def run(options, prompt, system, repo, evidence, schema=None):
     return 0, text, metadata
 
 
+# The provider's own record of a call, for a pass that ends without a result.
+# `claude -p --output-format json` writes stdout.log only when it finishes, so
+# a call that timed out leaves it empty; Claude's transcript is written while it
+# works, at <config dir>/projects/<slug>/<session id>.jsonl. The config dir is
+# CLAUDE_CONFIG_DIR, else ~/.claude; the slug is the resolved working directory
+# with every character other than A-Z, a-z and 0-9 replaced by '-' (checked
+# against Claude Code 2.1: '/tmp/x y.z_w' -> '-private-tmp-x-y-z-w'). Should a
+# Claude version place it elsewhere, a search for the session id under
+# projects/ finds it. `codex exec --json` streams its events, the first being
+# thread.started with the thread id; its rollout file is
+# <CODEX_HOME or ~/.codex>/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl.
+CODEX_THREAD = re.compile(r'^[0-9A-Za-z-]{8,64}$')
+
+
+def _found(root, pattern):
+    # The first file under root matching pattern, or None. Looking for evidence
+    # never fails the call: an unreadable directory is the same as no file.
+    try: return next(iter(sorted(root.glob(pattern))), None)
+    except OSError: return None
+
+
+def transcript(options, repo, evidence, environ=None):
+    environ = os.environ if environ is None else environ
+    home = Path(environ.get('HOME') or os.path.expanduser('~'))
+    if options['runner'] == 'claude':
+        session = options.get('session_id')
+        if not session: return dict(session_id=None, transcript=None, transcript_found=False)
+        projects = Path(environ.get('CLAUDE_CONFIG_DIR') or home/'.claude')/'projects'
+        expected = projects/re.sub(r'[^A-Za-z0-9]', '-', str(repo))/(session + '.jsonl')
+        found = _found(expected.parent, expected.name) or _found(projects, '*/' + session + '.jsonl')
+        return dict(session_id=session, transcript=str(found or expected), transcript_found=found is not None)
+    thread = None
+    try: lines = (evidence/'stdout.log').read_text(errors='replace').splitlines()
+    except OSError: lines = []
+    for line in lines:
+        try: event = json.loads(line)
+        except ValueError: continue
+        if isinstance(event, dict) and event.get('type') == 'thread.started':
+            value = event.get('thread_id')
+            if isinstance(value, str) and CODEX_THREAD.match(value): thread = value
+            break
+    if not thread:
+        return dict(session_id=None, transcript=None, transcript_found=False,
+                    transcript_note='codex reported no thread id (no thread.started event in stdout.log)')
+    found = _found(Path(environ.get('CODEX_HOME') or home/'.codex')/'sessions', '*/*/*/rollout-*-' + thread + '.jsonl')
+    return dict(session_id=thread, transcript=str(found) if found else None, transcript_found=found is not None)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stage', required=True); parser.add_argument('--repo', default='.')
@@ -337,19 +388,26 @@ def main():
         base=Path(os.environ.get('BUREAU_PROVIDER_LOG_DIR',str(config_path.parent/'logs/provider-runs')))
         evidence=base/uuid.uuid4().hex; evidence.mkdir(parents=True,mode=0o700)
         schema=Path(args.schema).resolve() if args.schema else None
+        if options['runner']=='claude': options['session_id']=str(uuid.uuid4())
         code,text,metadata=run(options,prompt,system,repo,evidence,schema)
         metadata.update(run_id=os.environ.get('BUREAU_RUN_ID'), issue=os.environ.get('BUREAU_CURRENT_ISSUE'),
                         estimated_cost_usd=metadata.get('total_cost_usd'), actual_billed_cost_usd=None,
                         account_used_percent=None, stage=args.stage, provider=options['runner'], model=options['model'], evidence=str(evidence))
+        metadata.update(transcript(options,repo,evidence))
         (evidence/'result.json').write_text(json.dumps(metadata,indent=2)+'\n')
         print('Bureau provider evidence: '+str(evidence),file=sys.stderr)
+        if metadata['transcript']: print('Bureau provider transcript: '+metadata['transcript'],file=sys.stderr)
         if code==0: print(text)
         else: print('Bureau provider outcome: '+metadata['outcome'],file=sys.stderr)
         return code
     except AuthError as exc: print(str(exc),file=sys.stderr); return 16
     except (PermissionError, UntrustedEnvError) as exc: print(str(exc),file=sys.stderr); return 24
     except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
-        if evidence: (evidence/'result.json').write_text(json.dumps({'outcome':'invalid-result','error':str(exc)}))
+        if evidence:
+            failed={'outcome':'invalid-result','error':str(exc)}
+            try: failed.update(transcript(options,repo,evidence))
+            except OSError: pass
+            (evidence/'result.json').write_text(json.dumps(failed))
         print('Bureau provider: '+str(exc),file=sys.stderr); return 22
 
 
