@@ -251,7 +251,14 @@ pr2_config '.agents.poll_interval_minutes = 10'
 age_record 1140; picks "$OTHER" 'poll interval 10 min, 1140 s'
 age_record 1260; picks "$ISSUE" 'poll interval 10 min, 1260 s'
 pr2_config '.agents.poll_interval_minutes = 1'
-# … or the queue loop's own interval, which wins (900 s: 1800 s).
+# … or the queue loop's own interval, which wins (900 s: 1800 s). queue-loop.sh hands
+# its interval on (its real lines, cut up to LOG_DIR, run with `queue-loop.sh all 15` and
+# with no interval argument).
+for row in '15:900' ':1800'; do
+  qenv=$(QL="$REPO_ROOT/templates/scripts/queue-loop.sh" ARG="${row%%:*}" BUREAU_POLL_INTERVAL=30 /bin/bash -c '
+    code=$(sed -n "/^INTERVAL_MINUTES=/,/^LOG_DIR=/p" "$QL"); set -- all $ARG; eval "$code"; env' | grep '^BUREAU_QUEUE_POLL_SECONDS=' || true)
+  [ "$qenv" = "BUREAU_QUEUE_POLL_SECONDS=${row#*:}" ] || fail "pick: queue-loop.sh ${row%%:*} did not hand on its interval (${row#*:} s): '$qenv'"
+done
 export BUREAU_QUEUE_POLL_SECONDS=900
 age_record 1740; picks "$OTHER" 'loop interval 900 s, 1740 s'
 age_record 1860; picks "$ISSUE" 'loop interval 900 s, 1860 s'
@@ -339,12 +346,14 @@ merge_run() { : > "$SANDBOX/calls.log"; rm -f "$PR2_GH/merge_calls.log"; run_pip
 # The review's APPROVE the gate reads.
 jq -n '[{createdAt: "2026-09-29T09:00:00Z", body: "## Code Review v2 — EXP-801\n\n**Verdict**: APPROVE"}]' > "$PR2_GH/comments.json"
 HEAD_SHA=$(jq -r .headRefOid "$PR2_GH/pr.json")
+calls=$(gate_wait_calls)
 picks "$ISSUE" 'the merge picker without any mark' merge-pipeline.sh
+[ "$(gate_wait_calls)" = "$calls" ] || fail 'merge: without a mark file the merge picker still started the gate-waits read'
 pr2_checks pending
 merge_run
 [ "$LAST_RC" = 2 ] || fail "merge: a pending gate ended the merge stage $LAST_RC, wanted 2"
+picks "$OTHER" 'the merge picker, a fresh not-yet gate' merge-pipeline.sh
 [ "$(mark | jq -r '"\(.outcome) \(.gate_waits) \(.head) \(.branch)"')" = "not-yet 1 $HEAD_SHA test-branch" ] || fail "merge: no mark for the not-yet gate: $(mark)"
-picks "$OTHER" 'the merge picker, a fresh not-yet mark' merge-pipeline.sh
 grep -qE "$(held_line 'not yet' 1)" <<< "$PICK_ERR" || fail "merge: the hold is not logged as it should be: $PICK_ERR"
 # Not for the rebase stage (it resolves a conflicted gate) and not for the review picker.
 picks "$ISSUE" 'the rebase picker with a merge mark' rebase-pipeline.sh
