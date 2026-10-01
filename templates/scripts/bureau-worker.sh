@@ -40,8 +40,7 @@ _worker_reset_refused() {
   if [ "$rc" = 21 ] && [ -n "${BUREAU_RESET_REFUSAL:-}" ]; then
     # The runtime above runs without the .env keys; read them back as a stage does.
     if [ -z "${LINEAR_API_KEY:-}" ]; then
-      if [ -f .env ]; then bureau_load_env --export .env || true
-      elif [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env --export "$BUREAU_ENV_FILE" || true; fi
+      if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env --export "$BUREAU_ENV_FILE" || true; fi
     fi
     bureau_reset_refusal_trace "$ISSUE" "${PIPELINE%-pipeline.sh}" || true
   fi

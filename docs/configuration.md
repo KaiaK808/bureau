@@ -265,7 +265,7 @@ Env overrides for the `repo.upstream_port.*` config family. Set inline when runn
 | Var | Default | Notes |
 |---|---|---|
 | `BUREAU_CONFIG` | discovered | Explicit config path; otherwise resolve the current checkout and primary worktree. Keep the trusted private config out of commits |
-| `BUREAU_ENV_FILE` | caller-dependent | Explicit trusted environment file used by runtime helpers when needed; doctor/provider `--describe` do not source it |
+| `BUREAU_ENV_FILE` | caller-dependent | The `.env` every script reads its keys from (`bureau_load_env`, parsed, never sourced); default: `.env` in the directory of `.bureau.json`, the main checkout. A relative value counts from that directory. Since v3.2 no script reads `./.env` of its working directory any more: a stage runs in the branch's worktree, where `./.env` would be a file the branch commits. doctor/provider `--describe` do not read it |
 | `BUREAU_ALERT_THROTTLE_FILE` | `<git common dir>/bureau/alert-throttle.log` | The log that throttles Telegram alerts (and the merge-conflict comment) to once an hour per key. By default one per repository, shared by its worktrees; only without a git directory `/tmp/bureau-alerts.log`, with the repository path in the key. Set it for tests; see [exit codes](exit-codes.md#telegram-alerts) |
 | `BUREAU_SCRIPT_DIR` | derived from `$0` | Path to the target repo's `scripts/`. Auto-detected in normal use — set only when sourcing helpers from an unusual location |
 

@@ -38,6 +38,10 @@ _find_config() {
   BUREAU_CONFIG="$(cd "$(dirname "$BUREAU_CONFIG")" && pwd)/$(basename "$BUREAU_CONFIG")"
   export BUREAU_CONFIG
   BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$(dirname "$BUREAU_CONFIG")/.env}"
+  # The .env every script reads (v3.2: never ./.env, which in a stage worktree is a file the
+  # branch controls). A relative value counts from the directory of .bureau.json, not from the
+  # working directory.
+  case "$BUREAU_ENV_FILE" in /*) ;; *) BUREAU_ENV_FILE="$(dirname "$BUREAU_CONFIG")/$BUREAU_ENV_FILE" ;; esac
 }
 _find_config
 # Capture the caller boundary separately from user-facing .env settings. An

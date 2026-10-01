@@ -295,10 +295,10 @@ bureau_load_env() {
 #   worker or stage, the stage the worker starts after changing into the
 #   branch's worktree) would source a relative BASH_ENV from there — and
 #   without those of the three .env keys (and their copies) that the relaunched
-#   script reads back from its .env file: set now, defined in BUREAU_ENV_FILE,
-#   and defined in ./.env as well when that exists (a stage reads ./.env
-#   first). The runtime is an ancestor of every stage and runs under a Python
-#   whose environment `ps -E` can read on macOS; it needs none of the keys. A
+#   script reads back from its .env file: set now and defined in
+#   BUREAU_ENV_FILE, the only .env a stage reads (v3.2; before, a stage read
+#   ./.env first). The runtime is an ancestor of every stage and runs under a
+#   Python whose environment `ps -E` can read on macOS; it needs none of the keys. A
 #   key that exists only in the calling environment, and the GitHub token
 #   variables the stages' gh calls use, pass on unchanged.
 
@@ -518,7 +518,6 @@ bureau_exec_runtime() {
   for _ber_name in LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID; do
     [ -n "${!_ber_name:-}" ] || continue
     _bureau_env_file_defines "${BUREAU_ENV_FILE:-}" "$_ber_name" || continue
-    if [ -f .env ] && ! _bureau_env_file_defines .env "$_ber_name"; then continue; fi
     _ber_names="$_ber_names $_ber_name"
   done
   _bureau_env_build default "$_ber_names" 1

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e3f03487d7ca641be6a6339094abd1811310fd44712c775c81768876373576d5">
+<meta name="bureau-source-sha256" content="17cf8aa661082ea27ad4c226c1a01d2124d2d7a1d514a507a2e8943acbc8233d">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1434,8 +1434,14 @@ primary worktree. Keep the trusted private config out of commits</td>
 <tr>
 <td><code>BUREAU_ENV_FILE</code></td>
 <td>caller-dependent</td>
-<td>Explicit trusted environment file used by runtime helpers when
-needed; doctor/provider <code>--describe</code> do not source it</td>
+<td>The <code>.env</code> every script reads its keys from
+(<code>bureau_load_env</code>, parsed, never sourced); default:
+<code>.env</code> in the directory of <code>.bureau.json</code>, the
+main checkout. A relative value counts from that directory. Since v3.2
+no script reads <code>./.env</code> of its working directory any more: a
+stage runs in the branch's worktree, where <code>./.env</code> would be
+a file the branch commits. doctor/provider <code>--describe</code> do
+not read it</td>
 </tr>
 <tr>
 <td><code>BUREAU_ALERT_THROTTLE_FILE</code></td>

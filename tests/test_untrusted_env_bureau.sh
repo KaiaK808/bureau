@@ -222,13 +222,15 @@ mkdir -p "$R/noenv"
 grep -qx "LINEAR_API_KEY=$PR1_LINEAR" "$MARKS/runtime.env" 2>/dev/null || fail "D: a Linear key that BUREAU_ENV_FILE does not define must pass on (no ./.env)"
 if grep -qF -- "$PR1_TG_TOKEN" "$MARKS/runtime.env" 2>/dev/null; then fail "D: the bot token BUREAU_ENV_FILE defines reached the runtime (no ./.env)"; fi
 rm -f "$MARKS/runtime.env"
-# A stage reads ./.env first: when that exists and lacks the key, the key must pass on even
-# though BUREAU_ENV_FILE defines it (the relaunched stage would not find it again).
+# v3.2: a stage reads BUREAU_ENV_FILE only, never ./.env (in a stage worktree that is a file the
+# branch controls), so ./.env does not decide either: a key BUREAU_ENV_FILE defines is dropped even
+# where ./.env exists and lacks it (v3.1 passed it on, because the stage read ./.env first).
 printf 'LINEAR_API_KEY=%s\nTELEGRAM_BOT_TOKEN=%s\n' "$PR1_LINEAR" "$PR1_TG_TOKEN" > "$R/.env"
 mkdir -p "$R/sub"; printf 'TELEGRAM_BOT_TOKEN=%s\n' "$PR1_TG_TOKEN" > "$R/sub/.env"
 (cd "$R/sub" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" BUREAU_WORKSPACE_MODE=disposable \
    /bin/bash -c 'source ../scripts/bureau-config.sh; bureau_stage_enter EXP-1' "$R/scripts/qa-pipeline.sh") >/dev/null 2>&1
-grep -qx "LINEAR_API_KEY=$PR1_LINEAR" "$MARKS/runtime.env" 2>/dev/null || fail "D: a key that ./.env does not define must pass on, whatever BUREAU_ENV_FILE holds"
+[ -s "$MARKS/runtime.env" ] || fail "D ./.env: the runtime did not start"
+if grep -qF -- "$PR1_LINEAR" "$MARKS/runtime.env" 2>/dev/null; then fail "D: the Linear key BUREAU_ENV_FILE defines reached the runtime because ./.env lacks it"; fi
 if grep -qF -- "$PR1_TG_TOKEN" "$MARKS/runtime.env" 2>/dev/null; then fail "D: the bot token that both .env files define reached the runtime"; fi
 rm -f "$MARKS/runtime.env"
 # A relative BASH_ENV names a script the branch committed to its worktree: the bash the worker

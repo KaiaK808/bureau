@@ -18,8 +18,8 @@ if merge_mode_lacks_merge_state; then
 fi
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
-if [ -f .env ]; then bureau_load_env --export .env
-elif [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
+# BUREAU_ENV_FILE only, never ./.env: in a stage worktree that is a file the branch controls.
+if [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
 else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
 
 # Honor BUREAU_MODEL_CODE_REVIEW / .agents.code_review.model like every other
