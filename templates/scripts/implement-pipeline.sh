@@ -2,7 +2,9 @@
 # Implement pipeline: Pick Build issue → checkout branch → execute tasks via a
 # bounded retry loop → push → PR. Each tick attempts up to MAX_ITER passes
 # through Claude, parsing the JSON status block emitted at the end of each
-# iteration to decide whether to continue. Terminal states:
+# iteration to decide whether to continue. A pass that times out is counted
+# and followed by another while one is left; when none is left, the stage ends
+# with 124. Terminal states:
 #   COMPLETE                  → push + mark PR ready + move to QA / Build Review
 #   NEEDS_HUMAN/STUCK/        → push + draft PR + needs-human label + summary
 #   CAP_TIME/PARTIAL            comment + no state move (issue stays in Build)
@@ -26,7 +28,8 @@ API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
 # ITER_TIMEOUT caps wall-time per pass; TOTAL_TIMEOUT caps cumulative wall-time
 # so a single tick can't burn unbounded compute even if every iteration is
 # productive. Defaults give ≤90 min worst case before the issue is parked for
-# human review.
+# human review. A pass that times out is one of the MAX_ITER passes (v3.2), so
+# TOTAL_TIMEOUT, not ITER_TIMEOUT, bounds a stage whose passes time out.
 MAX_ITER="${BUREAU_IMPL_MAX_ITER:-3}"
 ITER_TIMEOUT="${BUREAU_IMPL_ITER_TIMEOUT:-1800}"
 TOTAL_TIMEOUT="${BUREAU_IMPL_TOTAL_TIMEOUT:-5400}"
@@ -620,6 +623,7 @@ COMMITS_TOTAL=0
 ITER_LOG=""
 i=0
 CLAUDE_EXIT=0
+TIMED_OUT_AFTER=0
 
 # agents.implement.push_each_iteration. true (the default): the branch is
 # pushed after every iteration and after the /goal run, as it always was.
@@ -794,11 +798,47 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   fi
 fi
 
+# ─── a pass that times out (v3.2) ─────────────────────────────────────────
+# A provider pass that hits its time limit (exit 124) is normal flow in the
+# loop below: it is counted like every other pass — commits from Git, the
+# squash-range check, the push — with the status TIMEOUT, because it reported
+# none, and the loop goes on with another pass that is told so (TIMEOUT_NOTE).
+# Before v3.2 the first timeout ended the stage with 124, although the agent
+# had usually finished, committed and pushed everything and was only waiting
+# for CI. Only when no pass is left after a timed-out one — BUREAU_IMPL_MAX_ITER
+# is reached, or the total budget leaves too little for another — does the
+# stage still end with 124, as it always did (end_timed_out).
+
+# checked_task_count: how many tasks $TASKS_FILE marks done. A pass that timed
+# out reported no tasks_done; the marks it set in the file are its count.
+# grep -c prints 0 and exits 1 when nothing matches; a missing file prints
+# nothing, so 0 too.
+checked_task_count() {
+  local n
+  n=$(grep -cE '^[[:space:]]*[-*][[:space:]]+\[[xX]\]' "$TASKS_FILE" 2>/dev/null) || true
+  printf '%s' "${n:-0}"
+}
+
+# end_timed_out <pass> <why no pass is left>: the end after a pass that timed
+# out when no further pass runs — the deferred commits go out first, then the
+# stage ends with 124 (timeout), as before v3.2. The pass's own commits went out
+# with its push_iteration already.
+end_timed_out() {
+  echo "Provider pass failed with exit 124 (iter $1 timed out) and no pass is left: $2. Preserved any changes. See provider evidence." >&2
+  push_deferred "provider exit 124"
+  exit 124
+}
+
 if ! use_goal_loop_enabled; then
 for (( i=1; i<=MAX_ITER; i++ )); do
   ELAPSED=$(( $(date +%s) - START_TS ))
   REMAINING=$(( TOTAL_TIMEOUT - ELAPSED ))
   if [ "$REMAINING" -le 60 ]; then
+    # STATUS still holds the previous pass's: one that timed out ends the stage
+    # with 124 here instead of becoming CAP_TIME.
+    if [ "$STATUS" = "TIMEOUT" ]; then
+      end_timed_out "$((i - 1))" "the total budget BUREAU_IMPL_TOTAL_TIMEOUT=${TOTAL_TIMEOUT}s leaves ${REMAINING}s"
+    fi
     echo "  Total wall-time cap exhausted (${ELAPSED}s elapsed of ${TOTAL_TIMEOUT}s). Stopping."
     STATUS="CAP_TIME"
     break
@@ -814,6 +854,19 @@ for (( i=1; i<=MAX_ITER; i++ )); do
   REVIEW_CONTEXT=$(refresh_review_context "$ISSUE")
 
   HEAD_BEFORE=$(git rev-parse HEAD)
+  TASKS_CHECKED_BEFORE=$(checked_task_count)
+
+  # The pass after one that timed out is told so first: it checks the task
+  # list and the branch before it does anything, and reports COMPLETE when
+  # nothing is left, instead of starting over or waiting for CI again.
+  TIMEOUT_NOTE=""
+  if [ "$STATUS" = "TIMEOUT" ]; then
+    TIMEOUT_NOTE="
+--- The previous pass timed out ---
+Pass $((i - 1)) of this stage was stopped at its time limit of ${TIMED_OUT_AFTER}s before it reported a status. Its commits are kept; it may have left uncommitted changes in the worktree, and an index.lock that git reports is stale (the stopped pass's processes were ended), so remove it. Before anything else, read $TASKS_FILE and the branch state (git status, git log --oneline origin/main..HEAD). Commit finished work that is still uncommitted. If every task is marked [X] and its work is committed, report status COMPLETE right away and stop: do not redo the work, and do not wait for, poll or re-trigger CI. Otherwise go on with the open tasks.
+--- End of note ---
+"
+  fi
 
   # `set +e` around the Claude invocation: timeout-on-iter is normal flow, not
   # an error to bail on. We capture the exit code and decide. No EXIT trap
@@ -828,6 +881,7 @@ $SPEC_CONTEXT
 $PROJECT_CONTEXT
 $DESIGN_CONTEXT
 $REVIEW_CONTEXT
+$TIMEOUT_NOTE
 
 Parent issue: $ISSUE — $ISSUE_TITLE
 $ISSUE_DESC
@@ -873,10 +927,15 @@ At the end of your work, emit a single fenced json block so the shell can summar
   CLAUDE_EXIT=$?
   set -e
   commit_codex_changes implement "$ISSUE"
-  if [ "$CLAUDE_EXIT" != 0 ]; then
+  # 124 (the pass hit its time limit) goes on below like any pass; every other
+  # non-zero exit ends the stage with its code, after the deferred push.
+  if [ "$CLAUDE_EXIT" != 0 ] && [ "$CLAUDE_EXIT" != 124 ]; then
     echo "Provider pass failed with exit $CLAUDE_EXIT; preserved any changes. See provider evidence." >&2
     push_deferred "provider exit $CLAUDE_EXIT"
     exit "$CLAUDE_EXIT"
+  fi
+  if [ "$CLAUDE_EXIT" = 124 ]; then
+    echo "  iter $i timed out after ${THIS_TIMEOUT}s (exit 124); it counts as a pass like any other. See provider evidence." >&2
   fi
 
   # EXP-671 — record this iteration's token usage + est. $ (no-op unless cost
@@ -894,16 +953,26 @@ At the end of your work, emit a single fenced json block so the shell can summar
   HEAD_AFTER=$(git rev-parse HEAD)
   COMMITS_THIS_ITER=$(git rev-list --count "$HEAD_BEFORE..$HEAD_AFTER" 2>/dev/null || echo 0)
 
-  STATUS=$(parse_claude_json "$RESULT" '.status // "PARTIAL"')
-  [ -z "$STATUS" ] && STATUS="PARTIAL"
-  TASKS_DONE=$(parse_claude_json "$RESULT" '.tasks_done // 0')
-  [[ "$TASKS_DONE" =~ ^[0-9]+$ ]] || TASKS_DONE=0
+  if [ "$CLAUDE_EXIT" = 124 ]; then
+    # A pass that timed out returned nothing to parse. TIMEOUT is the shell's
+    # own status for it: the stuck detector and the status break below do not
+    # match it, so the loop goes on. Its tasks_done are the marks it set.
+    STATUS="TIMEOUT"
+    TASKS_DONE=$(( $(checked_task_count) - TASKS_CHECKED_BEFORE ))
+    [ "$TASKS_DONE" -ge 0 ] || TASKS_DONE=0
+    TIMED_OUT_AFTER=$THIS_TIMEOUT
+  else
+    STATUS=$(parse_claude_json "$RESULT" '.status // "PARTIAL"')
+    [ -z "$STATUS" ] && STATUS="PARTIAL"
+    TASKS_DONE=$(parse_claude_json "$RESULT" '.tasks_done // 0')
+    [[ "$TASKS_DONE" =~ ^[0-9]+$ ]] || TASKS_DONE=0
+  fi
   FIXED_REVIEW=$(parse_claude_json "$RESULT" '.fixed_review_items // [] | length')
   [[ "$FIXED_REVIEW" =~ ^[0-9]+$ ]] || FIXED_REVIEW=0
   TASKS_DONE_TOTAL=$(( TASKS_DONE_TOTAL + TASKS_DONE ))
 
   LINE="iter $i: status=$STATUS tasks_done=$TASKS_DONE commits=$COMMITS_THIS_ITER"
-  [ "$CLAUDE_EXIT" = 124 ] && LINE+=" (timed out)"
+  [ "$CLAUDE_EXIT" = 124 ] && LINE+=" (timed out after ${THIS_TIMEOUT}s)"
   echo "    $LINE"
   ITER_LOG+="  $LINE"$'\n'
 
@@ -978,6 +1047,11 @@ At the end of your work, emit a single fenced json block so the shell can summar
     COMPLETE|NEEDS_HUMAN) break ;;
   esac
 done
+
+# The last allowed pass timed out: no pass is left, the stage ends with 124.
+if [ "$STATUS" = "TIMEOUT" ]; then
+  end_timed_out "$((i - 1))" "BUREAU_IMPL_MAX_ITER=${MAX_ITER} passes have run"
+fi
 
 # If the loop ran to completion without hitting a terminal break, status is
 # either COMPLETE (rare — loop would have broken) or PARTIAL with progress.
