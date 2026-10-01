@@ -3450,7 +3450,7 @@ review_gate_waits() {
   cap=$(_merge_gate_number merge_gate_recheck_seconds 3600) \
     || echo "pick: WARN: agents.merge_gate_recheck_seconds should be a whole number of at least 0; using $cap" >&2
   [ "$cap" -gt 0 ] || return 0
-  # Most picks find no record file at all, and then start no Python.
+  # A repository where no review ever recorded a stop has no record file: no Python then.
   common=$(bureau_common_dir 2>/dev/null) || return 0
   [ -f "$common/bureau/review-stops.json" ] || return 0
   base="."; [ -z "${BUREAU_CONFIG:-}" ] || base=$(dirname "$BUREAU_CONFIG")
