@@ -125,15 +125,40 @@ LONG_CALL_STAGES = ('spec', 'spec_review', 'ux', 'qa', 'code_review')
 LONG_CALL_MIN_SECONDS = 1800
 
 
-def implement_runner(config, provider):
+def stage_env_value(repo, config_path, name):
+    """<name> as the implement stage sees it once it has loaded .env (implement-pipeline.sh:16-18): from
+    the workspace's ./.env when there is one, else from BUREAU_ENV_FILE, else from the .env next to
+    .bureau.json (bureau-config.sh:35). The file is read by the stages' own reader, bureau_load_env in
+    bureau-env.sh, run here unchanged: it never executes the file, takes only the keys on its list, and
+    a key the file sets replaces the environment's value while a key it lacks leaves the environment's.
+    Returns the value, or None when neither sets it; the environment's value when there is no such
+    file or it cannot be read."""
+    env_file = repo / '.env'
+    if not env_file.is_file(): env_file = Path(os.environ.get('BUREAU_ENV_FILE') or config_path.parent / '.env')
+    if not env_file.is_file(): return os.environ.get(name)
+    script = 'source "$1" || exit 1; bureau_load_env "$2" 2>/dev/null || exit 1; n=$3; [ -z "${!n+set}" ] || printf "set:%s" "${!n}"'
+    try:
+        proc = subprocess.run(['bash', '--noprofile', '--norc', '-c', script, 'bureau-doctor', str(SCRIPTS / 'bureau-env.sh'), str(env_file), name],
+                              stdin=subprocess.DEVNULL, capture_output=True,
+                              env={key: value for key, value in os.environ.items() if key not in ('BASH_ENV', 'ENV')})
+    except OSError:
+        return os.environ.get(name)
+    if proc.returncode != 0: return os.environ.get(name)
+    out = os.fsdecode(proc.stdout)
+    return out[len('set:'):] if out.startswith('set:') else None
+
+
+def implement_runner(config, provider, env):
     """The runner the implement stage resolves (resolve_runner_for_stage implement in bureau-config.sh,
     the same ladder as configuration() in bureau-provider.py, which this calls): BUREAU_RUNNER_IMPLEMENT,
     then agents.implement.runner when agents.implement is an object (a boolean or legacy string has
-    none), then agents.runner, then claude. Only a codex implement needs repo.test_command: its
-    completion runs the command as an independent check (implement-pipeline.sh). Judged whether or not
-    agents.implement is on, since the shepherd runs every stage unless --respect-config. None when it
-    does not resolve (an unknown runner: the stage stops on it, and doctor reports it for an enabled stage)."""
-    try: return provider.configuration('implement', config, os.environ)['runner']
+    none), then agents.runner, then claude. `env` is the environment the stage has after loading .env
+    (stage_env_value). Only a codex implement needs repo.test_command: its completion runs the command
+    as an independent check and stops with 24 when it is empty (implement-pipeline.sh:1102-1104).
+    Judged whether or not agents.implement is on, since the shepherd runs every stage unless
+    --respect-config. None when it does not resolve (an unknown runner: the stage stops on it, and
+    doctor reports it for an enabled stage)."""
+    try: return provider.configuration('implement', config, env)['runner']
     except (ValueError, TypeError, AttributeError): return None
 
 
@@ -359,7 +384,7 @@ def worktree_links(repo, config, checkout=None):
             report.append(dict(path=path, status='no main checkout')); continue
         hit, complete = env_inside(main, path)
         if not complete:
-            errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is a directory that could not be searched completely for .env files (an unreadable subdirectory or a link loop): stages skip it, since what the search did not see can hold the main checkout\'s secrets; make it readable or remove the entry')
+            errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is a directory that could not be searched completely for .env files (an unreadable subdirectory, or a link loop where find reports one, as GNU find does): stages skip it, since what the search did not see can hold the main checkout\'s secrets; make it readable or remove the entry')
             report.append(dict(path=path, status='not searched completely')); continue
         if hit:
             errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is a directory that holds a .env file (' + hit + '): stages skip it, since a link would put the main checkout\'s secrets into every stage worktree, where pull-request code runs; move the .env file out or remove the entry')
@@ -408,15 +433,20 @@ def diagnose(repo, mode):
     errors.extend('Missing executable: ' + name for name in missing)
     if not isinstance(config, dict): return dict(ok=False, errors=errors)
     if errors: return dict(ok=False, workspace=str(repo), config=str(path), errors=errors)
-    if not config.get('repo', {}).get('test_command') and implement_runner(config, provider) == 'codex':
-        warnings.append('repo.test_command is missing; required for Codex background implementation')
+    if not config.get('repo', {}).get('test_command'):
+        # BUREAU_RUNNER_IMPLEMENT is a .env key the stages load; the stage's value decides.
+        stage_env = {key: value for key, value in os.environ.items() if key != 'BUREAU_RUNNER_IMPLEMENT'}
+        runner_override = stage_env_value(repo, path, 'BUREAU_RUNNER_IMPLEMENT')
+        if runner_override is not None: stage_env['BUREAU_RUNNER_IMPLEMENT'] = runner_override
+        if implement_runner(config, provider, stage_env) == 'codex':
+            warnings.append('repo.test_command is missing; required for Codex background implementation')
     short = [stage + ' ' + format(effective[stage]['timeout'], 'g') + ' s' for stage in LONG_CALL_STAGES
              if stage in effective and effective[stage]['timeout'] < LONG_CALL_MIN_SECONDS]
     if short:
         warnings.append('Provider timeout below ' + str(LONG_CALL_MIN_SECONDS) + ' s per call: ' + ', '.join(short) + '. Spec, spec review, UX, QA and review calls'
                         ' often run 15 to 30 minutes and end with 124 when cut off; raise agents.<stage>.timeout_seconds or agents.providers.<runner>.timeout_seconds (default 3600)'
                         + ('; BUREAU_STAGE_TIMEOUT in the environment wins over both' if os.environ.get('BUREAU_STAGE_TIMEOUT') else ''))
-    if (path.parent / '.env').is_file(): warnings.append('Doctor resolves JSON and process environment only; it does not execute .env. Source trusted overrides before running doctor for matching effective settings.')
+    if (path.parent / '.env').is_file(): warnings.append('Doctor resolves JSON and process environment only; it does not execute .env (it reads only BUREAU_RUNNER_IMPLEMENT from it, for the repo.test_command warning). Source trusted overrides before running doctor for matching effective settings.')
     active = runtime.read(repo / '.specify/integration.json', {})
     manifest = runtime.read(repo / '.bureau-install.json', {})
     drift = []

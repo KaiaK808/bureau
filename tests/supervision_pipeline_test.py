@@ -200,11 +200,12 @@ class SupervisionPipelineTests(unittest.TestCase):
 
 
     def test_supervision_imports_nothing_from_the_branch(self):
-        # v3.2: bureau-supervision.py starts with python3 -I. The worker's cleanup runs its checkpoint
-        # in the stage worktree, as the review stage runs its check and stop there; with an empty
-        # PYTHONPATH entry Python looked in that directory first and imported a module the branch
-        # committed in place of the standard library. Each module below records its name and argv,
-        # then hands over to the real one, so the run goes on either way.
+        # v3.2: every Python start of the scripts carries -I. The worker's cleanup runs its checkpoint
+        # in the stage worktree, as the review stage runs its check and stop there; the tick (check,
+        # workspace) and reset_worktree's ownership check (bureau-runtime.py assert-owner) run in the
+        # checkout the tick starts in. With an empty PYTHONPATH entry Python looked in the working
+        # directory first and imported a module found there in place of the standard library. Each
+        # module below records its name and argv, then hands over to the real one, so the run goes on.
         mark=self.root/'shadow.log'
         shadow=('import os, sys\n'
                 f'with open({str(mark)!r}, "a") as _out: _out.write(__name__ + " " + " ".join(sys.argv) + "\\n")\n'
@@ -224,6 +225,9 @@ class SupervisionPipelineTests(unittest.TestCase):
         for name in modules: (self.repo/name).write_text(shadow)
         self.git('add',*modules); self.git('commit','-qm','feat: modules named like the standard library\n\nBureau-Generated: true')
         self.git('push','-q','origin','HEAD'); self.git('checkout','-q','main')
+        # The same modules, untracked, in the checkout the tick runs in.
+        for name in modules: (self.repo/name).write_text(shadow)
+        with (self.repo/'.git/info/exclude').open('a') as out: out.write(''.join(name+'\n' for name in modules))
         # main advances, so the review's local validation merge leaves the worktree ahead of origin
         # and the worker's cleanup keeps it as a checkpoint (bureau-worker.sh, rc 20).
         (self.repo/'main-change.txt').write_text('Concurrent main work\n')

@@ -1,5 +1,6 @@
 #!/bin/bash
-# bureau-supervision.py starts with `python3 -I` at every call of the stages (v3.2).
+# bureau-supervision.py starts with `python3 -I` at every call of the stages (v3.2), and so does
+# every other start of Python in templates/scripts.
 #
 # The review stage calls it with the branch's worktree as its working directory (check, reuse,
 # stop, stop --merge-gate-wait), the worker's cleanup too (checkpoint), and the bounded tick from
@@ -17,12 +18,16 @@
 # tests/test_supervision.sh, each with PYTHONPATH=":" and modules that shadow the standard library
 # in the working directory. Each module appends its name and the process's argv to a marker file,
 # then hands over to the real module, so a run goes on and the marker names every call it reached.
-# The worker's checkpoint call runs end to end in tests/supervision_pipeline_test.py.
-#   S  every start of bureau-supervision.py in templates/scripts carries -I
+# The worker's checkpoint call, the tick and reset_worktree's ownership check (bureau-runtime.py
+# assert-owner) run end to end in tests/supervision_pipeline_test.py.
+#   S  every start of Python in templates/scripts/*.sh carries -I, bureau-supervision.py's eight
+#      among them (inline Python is also checked in tests/test_untrusted_env_bureau.sh)
 #   1  a --no-merge review records its stop (stop); the next one finds it (check); a run without
 #      a stop reuses it (reuse)
 #   2  the inline merge's gate is not yet decided (stop --merge-gate-wait), then blocked (stop)
 #   3  a bounded tick of the review stage (check, workspace)
+#   4  the app actions (bureau-app.sh doctor, status, setup) and bureau-status.sh --config, whose
+#      provider rows start bureau-provider.py --describe
 # Control: the same runs with -I removed import the branch's modules at every one of those calls.
 set -euo pipefail
 source "$(dirname "$0")/lib/harness.sh"
@@ -102,7 +107,26 @@ starts=$(grep -rnE 'python3?( +-[A-Za-z]+)* +[^ ]*bureau-supervision\.py' "$SCRI
 [ "$(printf '%s\n' "$starts" | grep -c .)" -ge 8 ] || fail "S: fewer than the eight known starts of bureau-supervision.py: $starts"
 stray=$(printf '%s\n' "$starts" | grep -vE 'python3? +(-[A-Za-z]+ +)*-I ' || true)
 [ -z "$stray" ] || fail "S: bureau-supervision.py started without -I: $stray"
-pass "S every start of bureau-supervision.py in templates/scripts carries -I ($(printf '%s\n' "$starts" | grep -c .))"
+# Every other start of Python in the scripts too: each `python3` word outside a comment must carry
+# -I among its options. One exception, listed by its text: the operator command quoted in the
+# needs-human comment that bureau_reset_refusal_trace writes, which nothing runs.
+all_starts=$(python3 -I - "$SCRIPTS" <<'PY'
+import pathlib, re, sys
+allowed = [('bureau-config.sh', r'Find the run that holds them (\`python3 scripts/bureau-runtime.py status\`)')]
+count, stray = 0, []
+for path in sorted(pathlib.Path(sys.argv[1]).glob('*.sh')):
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if line.lstrip().startswith('#') or any(path.name == name and text in line for name, text in allowed): continue
+        for match in re.finditer(r'(?:^|[^A-Za-z0-9_./-])python3?((?: +-[A-Za-z]+)*)(?= |$)', line):
+            count += 1
+            if '-I' not in match.group(1).split(): stray.append(path.name + ':' + str(number) + ': ' + line.strip())
+print(count); print('\n'.join(stray))
+PY
+)
+[ "$(printf '%s\n' "$all_starts" | sed -n 1p)" -ge 20 ] || fail "S: the scan found too few Python starts: $all_starts"
+stray=$(printf '%s\n' "$all_starts" | sed 1d)
+[ -z "$stray" ] || fail "S: Python started without -I: $stray"
+pass "S every start of Python in templates/scripts carries -I ($(printf '%s\n' "$all_starts" | sed -n 1p), $(printf '%s\n' "$starts" | grep -c .) of bureau-supervision.py)"
 
 # ── 1  stop, check, reuse ─────────────────────────────────────────────────────
 section1() {  # $1: label
@@ -191,6 +215,36 @@ tick control
 [ "$(calls ' check ')" = 1 ] && [ "$(calls ' workspace ')" = 1 ] \
   || fail "3 control: without -I the checkout's argparse.py should have run at check and workspace: $(cut -c1-300 "$MARK" 2>/dev/null)"
 pass "3 control: without -I the checkout's module runs at check and workspace"
+
+# ── 4  app actions and the status report ─────────────────────────────────────
+# bureau-app.sh doctor, status and setup start bureau-doctor.py and bureau-runtime.py, and
+# bureau-status.sh --config starts bureau-provider.py --describe for each enabled stage; the app
+# runs them in the checkout it works in.
+A="$TMP/app"; mkdir -p "$A"; cp -R "$SCRIPTS" "$A/scripts"; git -C "$A" init -q
+jq -n '{linear:{teams:[{id:"t",key:"T",name:"Test",states:{build:"b",build_review:"br",merge:"m",done:"d"}}],labels:{lane2:{id:"l",name:"lane-2"}}},agents:{code_review:true},repo:{}}' > "$A/.bureau.json"
+shadow "$A"
+app() {  # $1: label
+  local action out
+  for action in doctor status setup; do
+    out=$(cd "$A" && PYTHONPATH=":" env -u BUREAU_CONFIG bash scripts/bureau-app.sh "$action" 2>/dev/null) || true
+    [ "$(printf '%s' "$out" | jq -r .workspace 2>/dev/null)" = "$A" ] || fail "4 $1: bureau-app.sh $action did not answer for the checkout: $(printf '%s' "$out" | head -c 300)"
+  done
+  out=$(cd "$A" && PYTHONPATH=":" env -u BUREAU_CONFIG /bin/bash scripts/bureau-status.sh --config 2>&1 | sed 's/\x1b\[[0-9;]*m//g') || true
+  grep -qx '    code_review: claude / CLI default / read-only' <<< "$out" || fail "4 $1: bureau-status.sh --config lacks the provider row: $(printf '%s' "$out" | grep -A2 PROVIDERS)"
+}
+rm -f "$MARK"
+app isolated
+marker_empty "4 (bureau-app.sh doctor, status, setup; bureau-status.sh --config)"
+pass "4 the app actions and the status report import nothing from the checkout"
+sed -i.bak -E 's/python3 -I ("\$SCRIPT_DIR\/bureau-)/python3 \1/' "$A/scripts/bureau-app.sh"
+sed -i.bak -E 's/python3 -I ("\$\(dirname "\$BUREAU_RUNTIME"\)\/bureau-provider\.py")/python3 \1/' "$A/scripts/bureau-status.sh"
+rm -f "$A"/scripts/*.bak
+! grep -qE 'python3 -I' "$A/scripts/bureau-app.sh" "$A/scripts/bureau-status.sh" || { echo "control: -I is still in the app or status script" >&2; exit 1; }
+app control
+for call in 'bureau-doctor\.py' 'bureau-runtime\.py status' 'bureau-runtime\.py setup' 'bureau-provider\.py .*--describe'; do
+  grep -qE "^argparse .*$call" "$MARK" 2>/dev/null || fail "4 control: without -I the checkout's argparse.py should have run at $call"
+done
+pass "4 control: without -I the checkout's module runs at doctor, status, setup and --describe"
 
 if [ "$FAILS" != 0 ]; then echo "$FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_supervision_isolated"

@@ -261,21 +261,53 @@ class PushEachIterationTests(Repo):
 class TestCommandWarningTests(Repo):
     """repo.test_command is required only where implement runs on Codex: its completion runs the
     command as an independent check and stops with 24 without one (implement-pipeline.sh). v3.1
-    warned on every installation. Each case is first resolved by the REAL resolve_runner_for_stage
-    of bureau-config.sh, the function implement-pipeline.sh asks, so doctor cannot drift from it."""
+    warned on every installation. Each case first runs the REAL lines of implement-pipeline.sh that
+    decide it, in a bash that sourced the real bureau-config.sh: the .env loading at the top and the
+    Codex completion gate (resolve_runner_for_stage implement, then `exit 24` on an empty
+    repo.test_command). Doctor must warn exactly where that gate stops the stage."""
     WARNING = 'repo.test_command is missing; required for Codex background implementation'
     CONFIG_SH = ROOT / 'templates/scripts/bureau-config.sh'
+    IMPLEMENT = (ROOT / 'templates/scripts/implement-pipeline.sh').read_text().splitlines()
+    _load = IMPLEMENT.index('BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"')
+    LOAD = '\n'.join(IMPLEMENT[_load:_load + 4])
+    _gate = next(i for i, line in enumerate(IMPLEMENT) if line.startswith('if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then'))
+    GATE = '\n'.join(IMPLEMENT[_gate:_gate + 3]) + '\nfi'
+    STAGE = ('cd "$REPO" && source "$CONFIG_SH" >/dev/null 2>&1 || exit 99; SCRIPT_REPO="$REPO"; eval "$LOAD" >/dev/null 2>&1 || exit 98\n'
+             'runner=$(resolve_runner_for_stage implement 2>/dev/null) || runner=unresolved\n'
+             'STATUS=COMPLETE; rc=0; ( eval "$GATE" ) >/dev/null 2>&1 || rc=$?; printf "%s %s" "$runner" "$rc"')
 
     def setUp(self):
         super().setUp()
-        for name in [name for name in os.environ if name.startswith('BUREAU_RUNNER_')]: os.environ.pop(name)
+        assert self.LOAD.endswith('fi') and 'bureau_load_env --export .env' in self.LOAD, self.LOAD
+        assert 'exit 24' in self.GATE, self.GATE
+        for name in [name for name in os.environ if name.startswith('BUREAU_RUNNER_')] + ['BUREAU_ENV_FILE']: os.environ.pop(name, None)
+        with (self.repo / '.git/info/exclude').open('a') as out: out.write('.env\n')
 
-    def stage_runner(self, env):
-        proc = subprocess.run(['/bin/bash', '-c', 'source "$1" >/dev/null 2>&1; resolve_runner_for_stage implement', '_', str(self.CONFIG_SH)],
-                              cwd=self.repo, capture_output=True, text=True,
-                              env={**os.environ, 'BUREAU_CONFIG': str(self.repo / '.bureau.json'), **env})
+    def stage(self, env):
+        """(runner implement resolves, whether the Codex completion gate stops the stage with 24)."""
+        proc = subprocess.run(['/bin/bash', '-c', self.STAGE], capture_output=True, text=True,
+                              env={**os.environ, 'REPO': str(self.repo), 'CONFIG_SH': str(self.CONFIG_SH), 'LOAD': self.LOAD, 'GATE': self.GATE,
+                                   'BUREAU_CONFIG': str(self.repo / '.bureau.json'), 'LINEAR_API_KEY': 'lin_test', **env})
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        return proc.stdout.strip()
+        runner, rc = proc.stdout.split()
+        self.assertIn(rc, ('0', '24'), proc.stdout)
+        return runner, rc == '24'
+
+    def check(self, agents, env=None, test_command=None, env_file=None, at=None):
+        """Doctor warns exactly where the stage's gate stops it. Returns the stage's runner."""
+        config = copy.deepcopy(BASE); config['agents'] = {'spec': True, 'code_review': True, **agents}
+        if test_command is None: del config['repo']['test_command']
+        else: config['repo']['test_command'] = test_command
+        self.write_config(config)
+        target = at or (self.repo / '.env')
+        if env_file is None: target.unlink(missing_ok=True)
+        else: target.write_bytes(env_file.encode())
+        runner, halts = self.stage(env or {})
+        with patch.dict(os.environ, env or {}):
+            result = self.diagnose(config)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['warnings'].count(self.WARNING), int(halts), (runner, result['warnings']))
+        return runner, halts
 
     def test_only_a_codex_implement_needs_the_test_command(self):
         cases = [  # agents, environment, the runner implement resolves
@@ -297,19 +329,61 @@ class TestCommandWarningTests(Repo):
         warned = 0
         for agents, env, runner in cases:
             with self.subTest(agents=agents, env=env):
-                config = copy.deepcopy(BASE); config['agents'] = {'spec': True, 'code_review': True, **agents}
-                del config['repo']['test_command']
-                self.write_config(config)
-                self.assertEqual(self.stage_runner(env), runner)
-                with patch.dict(os.environ, env):
-                    result = self.diagnose(config)
-                    self.assertTrue(result['ok'], result)
-                    self.assertEqual(result['warnings'].count(self.WARNING), int(runner == 'codex'), result['warnings'])
-                    warned += runner == 'codex'
-                    # A configured command satisfies it.
-                    config['repo']['test_command'] = 'python3 test.py'
-                    self.assertNotIn(self.WARNING, self.diagnose(config)['warnings'])
+                self.assertEqual(self.check(agents, env), (runner, runner == 'codex'))
+                warned += runner == 'codex'
+                # A configured command satisfies it.
+                self.assertEqual(self.check(agents, env, test_command='python3 test.py'), (runner, False))
         self.assertEqual(warned, 7)
+
+    def test_an_empty_test_command_is_a_missing_one(self):
+        # The gate reads `.repo.test_command // empty` and stops on an empty result: "", false and
+        # null stop a Codex implement with 24, a command of blanks runs (and passes) as a command.
+        # On Claude an empty command stops nothing (v3.1 warned there too).
+        codex = {'runner': 'codex', 'implement': True}
+        for value, halts in (('', True), (False, True), ('  ', False), ('true', False)):
+            with self.subTest(test_command=value):
+                self.assertEqual(self.check(codex, test_command=value), ('codex', halts))
+        for value in ('', False):
+            with self.subTest(test_command=value, runner='claude'):
+                self.assertEqual(self.check({'runner': 'claude', 'implement': True}, test_command=value), ('claude', False))
+        config = copy.deepcopy(BASE); config['agents'].update(codex); config['repo']['test_command'] = None
+        self.write_config(config)
+        self.assertEqual(self.stage({}), ('codex', True))
+        self.assertIn(self.WARNING, self.diagnose(config)['warnings'])
+
+    def test_a_codex_implement_set_in_the_env_file_counts(self):
+        # BUREAU_RUNNER_IMPLEMENT is one of the keys the stages load from .env (bureau-env.sh), and a
+        # key the file sets replaces the environment's. Doctor reads it with the stages' own reader;
+        # nothing in the file runs.
+        claude = {'runner': 'claude', 'implement': True}
+        mark = self.base / 'executed'
+        cases = [  # .env text, environment, runner, stops
+            ('BUREAU_RUNNER_IMPLEMENT=codex\n', {}, 'codex', True),
+            ("  export BUREAU_RUNNER_IMPLEMENT='codex'   # set by hand\r\n", {}, 'codex', True),
+            ('LINEAR_API_KEY=lin_test\nBUREAU_RUNNER_IMPLEMENT=claude\nBUREAU_RUNNER_IMPLEMENT="codex"\n', {}, 'codex', True),  # the last entry wins
+            ('# BUREAU_RUNNER_IMPLEMENT=codex\n', {}, 'claude', False),
+            ('BUREAU_RUNNER_IMPLEMENT = codex\n', {}, 'claude', False),                  # not a NAME=VALUE line
+            ('BUREAU_RUNNER_IMPLEMENT=claude\n', {'BUREAU_RUNNER_IMPLEMENT': 'codex'}, 'claude', False),  # the file wins
+            ('LINEAR_API_KEY=lin_test\n', {'BUREAU_RUNNER_IMPLEMENT': 'codex'}, 'codex', True),       # the environment stays
+            (f"BUREAU_RUNNER_IMPLEMENT=codex; touch '{mark}'\ntouch '{mark}'\n$(touch '{mark}')\n", {}, 'unresolved', False),
+        ]
+        for text, env, runner, halts in cases:
+            with self.subTest(env_file=text, env=env):
+                self.assertEqual(self.check(claude, env, env_file=text), (runner, halts))
+        self.assertFalse(mark.exists(), 'a line of .env ran')
+        # The reader's bash starts without BASH_ENV, which a non-interactive bash would source first.
+        hook = self.base / 'bash-env.sh'; hook.write_text(f"touch '{mark}'\nBUREAU_RUNNER_IMPLEMENT=codex\n")
+        config = copy.deepcopy(BASE); del config['repo']['test_command']
+        (self.repo / '.env').write_text('LINEAR_API_KEY=lin_test\n')
+        with patch.dict(os.environ, {'BASH_ENV': str(hook)}):
+            self.assertNotIn(self.WARNING, self.diagnose(config)['warnings'])
+        self.assertFalse(mark.exists(), 'doctor ran BASH_ENV')
+        # A configured Codex default that the file turns back to Claude.
+        self.assertEqual(self.check({'runner': 'codex', 'implement': True}, env_file='BUREAU_RUNNER_IMPLEMENT=claude\n'), ('claude', False))
+        # No .env next to .bureau.json: the stages read BUREAU_ENV_FILE.
+        elsewhere = self.base / 'secrets' / 'bureau.env'; elsewhere.parent.mkdir()
+        (self.repo / '.env').unlink(missing_ok=True)
+        self.assertEqual(self.check(claude, {'BUREAU_ENV_FILE': str(elsewhere)}, env_file='BUREAU_RUNNER_IMPLEMENT=codex\n', at=elsewhere), ('codex', True))
 
     def test_an_implement_runner_that_does_not_resolve_is_no_codex(self):
         # Implement off and an unknown runner in the environment: the stage would stop on it,
@@ -391,11 +465,14 @@ class WorktreeLinkTests(Repo):
         (self.repo / '.venv/bin').mkdir(parents=True); (self.repo / '.venv/bin/python').write_text('')
         (self.repo / 'tools/envs').mkdir(parents=True); (self.repo / 'tools/my.env').write_text('x\n')  # names that only contain env
         (self.repo / 'notes.txt').write_text('x\n')                             # a file: nothing to search
+        for inner in ('a', 'b'):                                                 # two hits: the search stops at the first
+            (self.repo / 'twice' / inner).mkdir(parents=True); (self.repo / 'twice' / inner / '.env').write_text('x\n')
         with (self.repo / '.gitignore').open('a') as out:
-            out.write('settings\ndeeper\nstore\nvia\nalias\ntools\nnotes.txt\nlocked\n')
+            out.write('settings\ndeeper\nstore\nvia\nalias\ntools\nnotes.txt\nlocked\ntwice\n')
         expected = {'settings': ('holds an env file', 'settings/.env'), 'deeper': ('holds an env file', 'deeper/a/b/.Env.Local'),
                     'store': ('holds an env file', 'store/.envdir'), 'via': ('holds an env file', 'via/conf/.env'),
-                    'alias': ('holds an env file', 'alias/.env'), '.venv': ('ok', None), 'tools': ('ok', None), 'notes.txt': ('ok', None)}
+                    'alias': ('holds an env file', 'alias/.env'), 'twice': ('holds an env file', ('twice/a/.env', 'twice/b/.env')),
+                    '.venv': ('ok', None), 'tools': ('ok', None), 'notes.txt': ('ok', None)}
         if os.getuid() != 0:  # as root an unreadable directory is readable
             (self.repo / 'locked/inner').mkdir(parents=True); (self.repo / 'locked/inner').chmod(0o000)
             self.addCleanup((self.repo / 'locked/inner').chmod, 0o700)
@@ -407,7 +484,10 @@ class WorktreeLinkTests(Repo):
                 found = [e for e in result['errors'] if 'worktree_links' in e]
                 self.assertEqual(len(found), int(status != 'ok'), result['errors'])
                 self.assertEqual(result['ok'], status == 'ok', result)
-                if hit: self.assertIn(json.dumps(entry) + ' is a directory that holds a .env file (' + hit + ')', found[0])
+                if hit:
+                    named = [h for h in ((hit,) if isinstance(hit, str) else hit)
+                             if json.dumps(entry) + ' is a directory that holds a .env file (' + h + '):' in found[0]]
+                    self.assertEqual(len(named), 1, found[0])
                 if status == 'not searched completely': self.assertIn('could not be searched completely', found[0])
         # Each entry is judged on its own; a trailing slash names the same directory.
         result = self.links('.venv', 'settings/', 'tools')

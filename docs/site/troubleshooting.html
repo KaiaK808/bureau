@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="5a505ef4a421dbfcf5decd07e8fcdc350fabb5216e1ba07ca25a9ff3f1ee9cda">
+<meta name="bureau-source-sha256" content="b7f929ef105980db0ef2ca919a5fda1ee59e89938c1f5d8544aa2d78534c03e7">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -701,19 +701,25 @@ create what the tests need. A virtualenv with a <code>.env*</code> name
 anywhere inside (a package's example file, say) is skipped the same way.
 <code>could not be searched completely</code> (status
 <code>not searched completely</code>) means the search failed, usually
-on an unreadable subdirectory (on Linux also a link loop); the stages
-skip such a directory too, since what the search did not see can hold a
-<code>.env</code>. Make it readable, or remove the entry. Doctor before
-v3.2 reported both as <code>ok</code> while the stages skipped them.</p>
+on an unreadable subdirectory (with GNU find also on a link loop, which
+the BSD find of macOS skips); the stages skip such a directory too,
+since what the search did not see can hold a <code>.env</code>. Make it
+readable, or remove the entry. Doctor before v3.2 reported both as
+<code>ok</code> while the stages skipped them. The search goes by names:
+a link under another name that points at a <code>.env</code> file is not
+found, so do not keep such a link in a linked directory.</p>
 <h3
 id="doctor-warns-repotest_command-is-missing-required-for-codex-background-implementation">Doctor
 warns
 <code>repo.test_command is missing; required for Codex background implementation</code></h3>
 <p>Implement on Codex runs <code>repo.test_command</code> itself once
 the agent reports the work complete, as a check independent of the
-agent, and stops with <code>24</code> when none is set. The warning
+agent, and stops with <code>24</code> when none is set (absent,
+<code>null</code>, <code>false</code> or <code>""</code>). The warning
 appears only when implement resolves to Codex:
-<code>BUREAU_RUNNER_IMPLEMENT</code> in doctor's environment, else
+<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it (the value in
+<code>.env</code>, which doctor reads with the stages' own reader and
+never executes, else doctor's environment), else
 <code>agents.implement.runner</code> when <code>agents.implement</code>
 is an object, else <code>agents.runner</code>. It appears with
 <code>agents.implement</code> off as well, because the shepherd runs

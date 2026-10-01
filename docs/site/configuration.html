@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="458c7fec3aa02825d6348745e2e76bf0f5504cd678658e7fc70f336ca7536abd">
+<meta name="bureau-source-sha256" content="0dd82b51b9d59423bec48b4cd4e078945c39881cf41c23311531f85ece5ec0ff">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -661,8 +661,11 @@ pause</td>
 and stops there (QA also tries <code>npm test</code>,
 <code>cargo test</code>, <code>pytest</code>, <code>go test</code>).
 Required for Codex implementation completion and the app tests action.
-<code>bureau-doctor.py</code> warns that it is missing only when
-implement resolves to Codex (<code>BUREAU_RUNNER_IMPLEMENT</code>, else
+<code>bureau-doctor.py</code> warns that it is missing (absent,
+<code>null</code>, <code>false</code> or <code>""</code>, which stop a
+Codex completion with <code>24</code>) only when implement resolves to
+Codex (<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it, from
+<code>.env</code> before the environment, else
 <code>agents.implement.runner</code>, else <code>agents.runner</code>),
 also with <code>agents.implement</code> off, since the shepherd runs
 every stage unless <code>--respect-config</code></td>
@@ -809,13 +812,18 @@ warns or errors the way the stages would skip, and reports a
 <code>.env*</code> entry, a directory that holds one (naming the first
 it finds) and a directory it cannot search completely as errors; it runs
 the stages' own search
-(<code>find -L DIR -mindepth 1 -iname '.env*'</code>, no depth limit);
-<code>false</code> counts as no links, like an absent key. It judges
-existence and tracking in the main checkout the stages link from, which
-it reports as <code>main_checkout</code>, also when it runs in a linked
-worktree; for a bare repository or a git directory outside the main
-checkout it reports none and warns that the stages make no links. See <a
-href="#python-repositories">Python repositories</a></td>
+(<code>find -L DIR -mindepth 1 -iname '.env*'</code>, no depth limit).
+That search matches names and follows links into directories: a link
+under another name that points at a <code>.env</code> file
+(<code>creds -&gt; ../.env</code> inside a linked directory) is not
+detected, by the stages or by doctor. It fails on an unreadable
+subdirectory, and with GNU find on a link loop, which the BSD find of
+macOS skips; <code>false</code> counts as no links, like an absent key.
+It judges existence and tracking in the main checkout the stages link
+from, which it reports as <code>main_checkout</code>, also when it runs
+in a linked worktree; for a bare repository or a git directory outside
+the main checkout it reports none and warns that the stages make no
+links. See <a href="#python-repositories">Python repositories</a></td>
 </tr>
 <tr>
 <td><code>repo.copy_voice_file</code></td>

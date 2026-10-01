@@ -7,7 +7,8 @@
 # link the main checkout's secrets right back in. The stages skip such an entry with one
 # warning line: any path component that starts with `.env` in any case, or an entry whose real
 # target in the main checkout is such a file, and a directory with such a name anywhere below it
-# (`deeper` holds one three levels down) or one the search cannot finish. bureau-doctor.py
+# (`deeper` holds one three levels down, `linkdir` one through a link inside it) or one the
+# search cannot finish. bureau-doctor.py
 # reports each of them as an error (since v3.2 also the directories). Names that only contain
 # "env" are linked as before.
 #
@@ -46,7 +47,7 @@ setup() {
   git -C "$MAIN" init -q -b main
   git -C "$MAIN" config user.email t@t; git -C "$MAIN" config user.name t
   printf '%s\n' .env '.env.*' .envrc .ENV.Local 'config/.env.production' secrets conf upper '.Envs/prod' alias locked \
-    'tools/.Envs/key' settings deep deeper .venv my.env env looped > "$MAIN/.gitignore"
+    'tools/.Envs/key' settings deep deeper .venv my.env env looped linkdir > "$MAIN/.gitignore"
   mkdir -p "$MAIN/config" "$MAIN/.Envs" "$MAIN/tools/.Envs"; printf 'config\n' > "$MAIN/config/readme.txt"
   printf 'tracked\n' > "$MAIN/.Envs/README"          # a tracked directory with a .env* name
   printf 'tracked\n' > "$MAIN/tools/.Envs/README"    # the same, below the first path component
@@ -63,6 +64,7 @@ setup() {
   printf 'LINEAR_API_KEY=lin_api_PROBE_linear_0001\n' > "$MAIN/settings/.env"   # a directory holding .env
   printf 'X=1\n' > "$MAIN/deep/sub/.Env.Local"      # ... one level further down
   printf 'X=1\n' > "$MAIN/deeper/a/b/.env"         # ... three levels down
+  mkdir -p "$MAIN/linkdir"; ln -s ../settings "$MAIN/linkdir/conf"   # ... reached through a link inside
   mkdir -p "$MAIN/.venv/bin" "$MAIN/env"; printf 'x\n' > "$MAIN/my.env"
   git -C "$MAIN" branch feat
   git -C "$MAIN" worktree add -q "$WT" feat
@@ -79,10 +81,10 @@ setup() {
   mkdir -p "$MAIN/looped/sub"; ln -s .. "$MAIN/looped/sub/up"
 }
 
-ENV_ENTRIES='.env .env.local .envrc .ENV.Local config/.env.production secrets conf upper .Envs/prod tools/.Envs/key settings deep deeper alias/key'
+ENV_ENTRIES='.env .env.local .envrc .ENV.Local config/.env.production secrets conf upper .Envs/prod tools/.Envs/key settings deep deeper linkdir alias/key'
 [ "$(id -u)" = 0 ] || ENV_ENTRIES="$ENV_ENTRIES locked"
 OTHER_ENTRIES='.venv my.env env'
-LIST='["alias/key", "locked", ".env", ".env.local", ".envrc", ".ENV.Local", "config/.env.production", "secrets", "conf", "upper", ".Envs/prod", "tools/.Envs/key", "settings", "deep", ".venv", "my.env", "env", "deeper"]'
+LIST='["alias/key", "locked", ".env", ".env.local", ".envrc", ".ENV.Local", "config/.env.production", "secrets", "conf", "upper", ".Envs/prod", "tools/.Envs/key", "settings", "deep", ".venv", "my.env", "env", "deeper", "linkdir"]'
 
 # run_with <fn file> — the configured list through the given copy of the function.
 run_with() {
@@ -138,8 +140,8 @@ case "$OUT" in *"worktree link '.venv' skipped: its target in the main checkout 
 #     reason (`env file`, `holds an env file`, `not searched completely`) are exactly the entries
 #     the real stage function skips with a .env warning, read from its own output, for every
 #     entry above and a directory with a link loop below it (where find's answer differs by
-#     platform). Before v3.2 doctor did not look inside directories: settings, deep, deeper and
-#     locked were `ok` there while the stages skipped them.
+#     platform). Before v3.2 doctor did not look inside directories: settings, deep, deeper,
+#     linkdir and locked were `ok` there while the stages skipped them.
 before=$FAILS
 LIST="${LIST%]}, \"looped\"]"
 run_with "$TMP/fn.sh"

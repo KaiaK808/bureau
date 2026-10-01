@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2bb4ee8adc264eef6f41ae46a52a36a56c42c3138eab62db76ae05a765acc416">
+<meta name="bureau-source-sha256" content="bf0f4f244e15d907a57cd0643d4f065d1661febedd3f07c06488d48c3de978d6">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -773,14 +773,16 @@ the next asset <code>--apply</code> that installs files records it), or
 record was written. That is what an installer without source recording
 leaves behind: it rewrites the hashes and carries the old record along.
 It resolves JSON and the process environment; it does not execute
-<code>.env</code>, authenticate providers, call Linear/models or run
-tests. Source trusted overrides before invoking it when needed. App mode
-does not require background CLIs; background GitHub stages require
-<code>gh</code>. The runtime uses the first configured Linear team's
-state map; doctor warns on multiple teams. It also warns when an enabled
-spec, spec review, UX, QA or review stage gets less than 1800 s per
-provider call, when automatic merging needs CI checks
-(<code>agents.merge_mode</code> auto,
+<code>.env</code> (it reads only <code>BUREAU_RUNNER_IMPLEMENT</code>
+from it, with the stages' own reader, for the
+<code>repo.test_command</code> warning), authenticate providers, call
+Linear/models or run tests. Source trusted overrides before invoking it
+when needed. App mode does not require background CLIs; background
+GitHub stages require <code>gh</code>. The runtime uses the first
+configured Linear team's state map; doctor warns on multiple teams. It
+also warns when an enabled spec, spec review, UX, QA or review stage
+gets less than 1800 s per provider call, when automatic merging needs CI
+checks (<code>agents.merge_mode</code> auto,
 <code>agents.merge_require_green_ci</code> not <code>false</code>,
 <code>agents.merge_min_required_checks</code> at least 1) but no
 workflow under <code>.github/workflows</code> runs on pull requests or
