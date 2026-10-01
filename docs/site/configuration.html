@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a653ebe0812487e79c9e9df7e3393f14e2eece88b83a1e36a55777112ca95af6">
+<meta name="bureau-source-sha256" content="458c7fec3aa02825d6348745e2e76bf0f5504cd678658e7fc70f336ca7536abd">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -660,8 +660,12 @@ pause</td>
 <code>scripts/bureau-test.sh</code>, then <code>npm run build</code>,
 and stops there (QA also tries <code>npm test</code>,
 <code>cargo test</code>, <code>pytest</code>, <code>go test</code>).
-Required for Codex implementation completion and the app tests
-action</td>
+Required for Codex implementation completion and the app tests action.
+<code>bureau-doctor.py</code> warns that it is missing only when
+implement resolves to Codex (<code>BUREAU_RUNNER_IMPLEMENT</code>, else
+<code>agents.implement.runner</code>, else <code>agents.runner</code>),
+also with <code>agents.implement</code> off, since the shepherd runs
+every stage unless <code>--respect-config</code></td>
 </tr>
 <tr>
 <td><code>repo.untrusted_env</code></td>
@@ -792,21 +796,26 @@ name, or a link to one): the link would put the main checkout's secrets
 into every stage worktree, where pull-request code runs, while the reset
 keeps them out otherwise; the stages find <code>.env</code> through the
 main checkout without it. The stages skip such an entry with one warning
-line, and beyond the doctor's rule also a directory with a
-<code>.env*</code> name anywhere below it or one that cannot be searched
-completely; both sides also check every component of the entry's fully
-resolved path. <code>bureau-doctor.py</code> lists each entry with its
-status (<code>ok</code>, <code>missing in the main checkout</code>,
+line, and also a directory with a <code>.env*</code> name anywhere below
+it (links followed) or one that cannot be searched completely; both
+sides also check every component of the entry's fully resolved path.
+<code>bureau-doctor.py</code> lists each entry with its status
+(<code>ok</code>, <code>missing in the main checkout</code>,
 <code>tracked in the main checkout</code>,
 <code>not ignored as a symlink</code>, <code>invalid</code>,
-<code>env file</code>, <code>no main checkout</code>), warns or errors
-the way the stages would skip, and reports a <code>.env*</code> entry as
-an error; <code>false</code> counts as no links, like an absent key. It
-judges existence and tracking in the main checkout the stages link from,
-which it reports as <code>main_checkout</code>, also when it runs in a
-linked worktree; for a bare repository or a git directory outside the
-main checkout it reports none and warns that the stages make no links.
-See <a href="#python-repositories">Python repositories</a></td>
+<code>env file</code>, <code>holds an env file</code>,
+<code>not searched completely</code>, <code>no main checkout</code>),
+warns or errors the way the stages would skip, and reports a
+<code>.env*</code> entry, a directory that holds one (naming the first
+it finds) and a directory it cannot search completely as errors; it runs
+the stages' own search
+(<code>find -L DIR -mindepth 1 -iname '.env*'</code>, no depth limit);
+<code>false</code> counts as no links, like an absent key. It judges
+existence and tracking in the main checkout the stages link from, which
+it reports as <code>main_checkout</code>, also when it runs in a linked
+worktree; for a bare repository or a git directory outside the main
+checkout it reports none and warns that the stages make no links. See <a
+href="#python-repositories">Python repositories</a></td>
 </tr>
 <tr>
 <td><code>repo.copy_voice_file</code></td>

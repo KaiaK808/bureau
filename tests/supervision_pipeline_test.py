@@ -1,4 +1,5 @@
 """Real bounded ticks/stages/ownership/picker; only external services are faked."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -197,6 +198,54 @@ class SupervisionPipelineTests(unittest.TestCase):
         self.assertEqual(subprocess.check_output(['git','-C',str(preserved),'rev-parse','HEAD'],text=True).strip(),actual)
         self.assertEqual({str(path.relative_to(preserved)):path.read_bytes() for path in preserved.rglob('*') if path.is_file()},original_bytes)
 
+
+    def test_supervision_imports_nothing_from_the_branch(self):
+        # v3.2: bureau-supervision.py starts with python3 -I. The worker's cleanup runs its checkpoint
+        # in the stage worktree, as the review stage runs its check and stop there; with an empty
+        # PYTHONPATH entry Python looked in that directory first and imported a module the branch
+        # committed in place of the standard library. Each module below records its name and argv,
+        # then hands over to the real one, so the run goes on either way.
+        mark=self.root/'shadow.log'
+        shadow=('import os, sys\n'
+                f'with open({str(mark)!r}, "a") as _out: _out.write(__name__ + " " + " ".join(sys.argv) + "\\n")\n'
+                '_name, _here, _saved = __name__, os.path.dirname(os.path.abspath(__file__)), sys.path[:]\n'
+                'sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.curdir) != _here]\n'
+                'del sys.modules[_name]\n'
+                'try:\n    import importlib\n    sys.modules[_name] = importlib.import_module(_name)\n'
+                'finally:\n    sys.path[:] = _saved\n')
+        # The doubles are Python scripts as well, and the review build check runs branch code on
+        # purpose; neither is under test here.
+        for name,body in [('curl',CURL),('gh',GH),('codex',CODEX)]:
+            (self.root/'bin'/name).write_text('#!'+sys.executable+' -I\n'+body)
+        config=json.loads((self.repo/'.bureau.json').read_text()); config['repo']['test_command']='true'
+        (self.repo/'.bureau.json').write_text(json.dumps(config))
+        self.git('checkout','-q','001-task')
+        modules=[name+'.py' for name in ('argparse','json','subprocess','hashlib','tempfile','uuid')]
+        for name in modules: (self.repo/name).write_text(shadow)
+        self.git('add',*modules); self.git('commit','-qm','feat: modules named like the standard library\n\nBureau-Generated: true')
+        self.git('push','-q','origin','HEAD'); self.git('checkout','-q','main')
+        # main advances, so the review's local validation merge leaves the worktree ahead of origin
+        # and the worker's cleanup keeps it as a checkpoint (bureau-worker.sh, rc 20).
+        (self.repo/'main-change.txt').write_text('Concurrent main work\n')
+        self.git('add','main-change.txt'); self.git('commit','-qm','feat: main advances'); self.git('push','-q','origin','main')
+        empty_entry={'PYTHONPATH':':'}
+        first=self.run_tick(20,empty_entry); self.assertEqual((first['issue'],first['outcome']),('T-1','stopped_for_review'))
+        worktree=(self.repo/'.worktrees/tick-code_review-T-1').resolve()
+        self.assertTrue(all((worktree/name).is_file() for name in modules))
+        checkpoints=self.repo/'.git/bureau/review-checkpoints'
+        key=hashlib.sha256(str(worktree).encode()).hexdigest()
+        self.assertTrue((checkpoints/(key+'.json')).is_file(),list(checkpoints.glob('*')) if checkpoints.exists() else 'none')
+        self.assertFalse(mark.exists(),mark.read_text() if mark.exists() else '')
+        # Control: the v3.1 checkpoint call, without -I, imports the branch's modules in the worktree.
+        worker=self.repo/'scripts/bureau-worker.sh'; text=worker.read_text()
+        isolated='python3 -I "$SCRIPT_DIR/bureau-supervision.py" --repo "$WORKTREE" checkpoint'
+        self.assertEqual(text.count(isolated),1); worker.write_text(text.replace(isolated,isolated.replace(' -I','')))
+        subprocess.run(['python3','-I','scripts/bureau-supervision.py','resume','T-1'],cwd=self.repo,env=self.env,check=True,stdout=subprocess.DEVNULL)
+        second=self.run_tick(20,empty_entry); self.assertEqual((second['issue'],second['outcome']),('T-1','stopped_for_review'))
+        lines=mark.read_text().splitlines() if mark.exists() else []
+        self.assertTrue(lines,'without -I the checkpoint call should have imported the branch modules')
+        self.assertTrue(all('bureau-supervision.py --repo '+str(self.repo/'.worktrees') in line and ' checkpoint T-1' in line for line in lines),lines)
+        self.assertIn('argparse',[line.split()[0] for line in lines])
 
     def test_real_stages_stop_skip_notify_and_resume(self):
         first=self.run_tick(20); self.assertEqual(first['issue'],'T-1'); self.assertEqual(first['outcome'],'stopped_for_review')

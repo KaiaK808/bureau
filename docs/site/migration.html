@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="7e3f4ecff00ac118718108f897a0d358987e73ee4b953f2724630e1b20939b58">
+<meta name="bureau-source-sha256" content="2bb4ee8adc264eef6f41ae46a52a36a56c42c3138eab62db76ae05a765acc416">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -134,8 +134,9 @@ stage's variables, functions and <code>set -u</code>. See <a
 href="../../SECURITY.md">SECURITY.md</a> for what stays readable.</li>
 <li>Remove <code>.env*</code> entries, and directories that hold a
 <code>.env</code>, from <code>repo.worktree_links</code>: the stages
-skip both, and doctor reports a <code>.env*</code> entry as an error (it
-does not look inside linked directories).</li>
+skip both, and doctor reports a <code>.env*</code> entry as an error
+(from v3.2 on also a linked directory that holds one or cannot be
+searched completely; v3.1's doctor does not look inside).</li>
 <li>The provider's default timeout per call is 3600 s instead of 900 s;
 set <code>timeout_seconds</code> explicitly where the shorter limit was
 wanted.</li>
@@ -786,10 +787,12 @@ workflow under <code>.github/workflows</code> runs on pull requests or
 on pushes to every branch, and when
 <code>agents.merge_require_green_ci</code>,
 <code>agents.merge_require_up_to_date</code> or
-<code>agents.implement.push_each_iteration</code> is not a JSON boolean;
-it rejects <code>.env*</code> entries in
-<code>repo.worktree_links</code> and judges that list in the main
-checkout, also from a linked worktree.</p>
+<code>agents.implement.push_each_iteration</code> is not a JSON boolean,
+and when <code>repo.test_command</code> is missing while implement
+resolves to Codex; it rejects <code>.env*</code> entries in
+<code>repo.worktree_links</code>, and directories in that list that hold
+a <code>.env*</code> name or cannot be searched completely, and judges
+that list in the main checkout, also from a linked worktree.</p>
 <p>Qualify a representative ticket through the intended app/background
 path with the review-only boundary before enabling unattended dispatch.
 Authenticate selected providers normally. Resume workers/automations

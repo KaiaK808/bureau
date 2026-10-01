@@ -125,6 +125,18 @@ LONG_CALL_STAGES = ('spec', 'spec_review', 'ux', 'qa', 'code_review')
 LONG_CALL_MIN_SECONDS = 1800
 
 
+def implement_runner(config, provider):
+    """The runner the implement stage resolves (resolve_runner_for_stage implement in bureau-config.sh,
+    the same ladder as configuration() in bureau-provider.py, which this calls): BUREAU_RUNNER_IMPLEMENT,
+    then agents.implement.runner when agents.implement is an object (a boolean or legacy string has
+    none), then agents.runner, then claude. Only a codex implement needs repo.test_command: its
+    completion runs the command as an independent check (implement-pipeline.sh). Judged whether or not
+    agents.implement is on, since the shepherd runs every stage unless --respect-config. None when it
+    does not resolve (an unknown runner: the stage stops on it, and doctor reports it for an enabled stage)."""
+    try: return provider.configuration('implement', config, os.environ)['runner']
+    except (ValueError, TypeError, AttributeError): return None
+
+
 def gate_switch(agents, key, warnings):
     """A merge gate switch read by the v3.1 rule for agents.merge_require_*: absent or null is
     true (required), a JSON boolean is itself, and any other value counts as required, with a
@@ -290,6 +302,28 @@ def env_path(main, path):
     return any(env_file(part) for part in rel.split(os.sep) if part not in ('', '.', '..'))
 
 
+def env_inside(main, path):
+    """For an entry that is a directory in the main checkout (links followed), the search the stages
+    run before they link it (_bureau_link_worktree_path in bureau-config.sh), run the same way:
+    `find -L <dir> -mindepth 1 -iname '.env*' -print -quit` from PATH, links followed, no depth or
+    time limit, stopping at the first hit. Returns (hit, complete): the first .env* name found,
+    relative to the main checkout, or None; and False when find did not finish cleanly (an
+    unreadable subdirectory, a link loop where find reports one, no find at all), since what it did
+    not see can hold a .env and the stages skip such a directory too. Not a directory: (None, True)."""
+    target = os.path.join(str(main), path)
+    if not os.path.isdir(target): return None, True
+    try:
+        proc = subprocess.run(['find', '-L', target, '-mindepth', '1', '-iname', '.env*', '-print', '-quit'],
+                              stdin=subprocess.DEVNULL, capture_output=True)
+    except OSError:
+        return None, False
+    if proc.returncode != 0: return None, False
+    hit = os.fsdecode(proc.stdout).rstrip('\n')
+    if not hit: return None, True
+    prefix = str(main) + '/'
+    return (hit[len(prefix):] if hit.startswith(prefix) else hit), True
+
+
 def worktree_links(repo, config, checkout=None):
     """repo.worktree_links as reset_worktree applies it: (report, errors, warnings).
     Existence and tracking are judged in the main checkout the stages link from (`checkout`,
@@ -299,7 +333,9 @@ def worktree_links(repo, config, checkout=None):
     link there, so the question runs in a temporary work tree that holds only this checkout's
     .gitignore files on the path and no file at the path itself. A .env* entry is an error:
     it would put the main checkout's secrets into every stage worktree, where pull-request
-    code runs, and stage worktrees otherwise hold no .env (their reset runs git clean -fdx)."""
+    code runs, and stage worktrees otherwise hold no .env (their reset runs git clean -fdx).
+    So is a directory with a .env* name anywhere below it, and one whose search does not
+    finish (env_inside): the stages skip both."""
     raw = config.get('repo', {}).get('worktree_links') if isinstance(config.get('repo'), dict) else None
     # Like the stages' `// []`: absent, null and false mean "no links".
     if raw is None or raw is False: return [], [], []
@@ -321,6 +357,13 @@ def worktree_links(repo, config, checkout=None):
             report.append(dict(path=path, status='env file')); continue
         if main is None:
             report.append(dict(path=path, status='no main checkout')); continue
+        hit, complete = env_inside(main, path)
+        if not complete:
+            errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is a directory that could not be searched completely for .env files (an unreadable subdirectory or a link loop): stages skip it, since what the search did not see can hold the main checkout\'s secrets; make it readable or remove the entry')
+            report.append(dict(path=path, status='not searched completely')); continue
+        if hit:
+            errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is a directory that holds a .env file (' + hit + '): stages skip it, since a link would put the main checkout\'s secrets into every stage worktree, where pull-request code runs; move the .env file out or remove the entry')
+            report.append(dict(path=path, status='holds an env file')); continue
         status = 'ok'
         tracked = subprocess.run(['git', '-C', str(main), '--literal-pathspecs', 'ls-files', '--', path], capture_output=True, text=True, env=module('provider').process_env(['git', '-C', str(main), '--literal-pathspecs', 'ls-files', '--', path])).stdout.strip() if git_dir else ''
         if tracked:
@@ -365,7 +408,8 @@ def diagnose(repo, mode):
     errors.extend('Missing executable: ' + name for name in missing)
     if not isinstance(config, dict): return dict(ok=False, errors=errors)
     if errors: return dict(ok=False, workspace=str(repo), config=str(path), errors=errors)
-    if not config.get('repo', {}).get('test_command'): warnings.append('repo.test_command is missing; required for Codex background implementation')
+    if not config.get('repo', {}).get('test_command') and implement_runner(config, provider) == 'codex':
+        warnings.append('repo.test_command is missing; required for Codex background implementation')
     short = [stage + ' ' + format(effective[stage]['timeout'], 'g') + ' s' for stage in LONG_CALL_STAGES
              if stage in effective and effective[stage]['timeout'] < LONG_CALL_MIN_SECONDS]
     if short:

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d529b27c2b785e56607fa14d319ab11f48006943d0761bdb6da1d2fc945900f5">
+<meta name="bureau-source-sha256" content="5a505ef4a421dbfcf5decd07e8fcdc350fabb5216e1ba07ca25a9ff3f1ee9cda">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -683,6 +683,44 @@ boolean switches the gate: doctor also warns when
 <code>agents.merge_require_up_to_date</code> holds another value, such
 as the string <code>"false"</code>, which counts as
 <code>true</code>.</p>
+<h3
+id="doctor-reports-a-repoworktree_links-directory-that-holds-a-env-file">Doctor
+reports a <code>repo.worktree_links</code> directory that holds a
+<code>.env</code> file</h3>
+<p><code>repo.worktree_links entry "settings" is a directory that holds a .env file (settings/.env)</code>
+means the stages skip that link: before they link a directory they
+search it for a <code>.env*</code> name in any case, links followed and
+without a depth limit
+(<code>find -L DIR -mindepth 1 -iname '.env*'</code>), because the link
+would put the main checkout's secrets into every stage worktree, where
+pull-request code runs. Doctor runs the same search and names the first
+hit; its status for the entry is <code>holds an env file</code>. Move
+the file out of the directory, or remove the entry and let
+<code>repo.test_command</code> or <code>scripts/bureau-test.sh</code>
+create what the tests need. A virtualenv with a <code>.env*</code> name
+anywhere inside (a package's example file, say) is skipped the same way.
+<code>could not be searched completely</code> (status
+<code>not searched completely</code>) means the search failed, usually
+on an unreadable subdirectory (on Linux also a link loop); the stages
+skip such a directory too, since what the search did not see can hold a
+<code>.env</code>. Make it readable, or remove the entry. Doctor before
+v3.2 reported both as <code>ok</code> while the stages skipped them.</p>
+<h3
+id="doctor-warns-repotest_command-is-missing-required-for-codex-background-implementation">Doctor
+warns
+<code>repo.test_command is missing; required for Codex background implementation</code></h3>
+<p>Implement on Codex runs <code>repo.test_command</code> itself once
+the agent reports the work complete, as a check independent of the
+agent, and stops with <code>24</code> when none is set. The warning
+appears only when implement resolves to Codex:
+<code>BUREAU_RUNNER_IMPLEMENT</code> in doctor's environment, else
+<code>agents.implement.runner</code> when <code>agents.implement</code>
+is an object, else <code>agents.runner</code>. It appears with
+<code>agents.implement</code> off as well, because the shepherd runs
+every stage unless <code>--respect-config</code>. Set
+<code>repo.test_command</code> to the project's real test command.
+Doctor before v3.2 warned on every installation, Claude-only ones
+included.</p>
 <h3 id="code-review-hit-bureau_max_review_cycles--what-now">Code-review
 hit <code>BUREAU_MAX_REVIEW_CYCLES</code> — what now?</h3>
 <p><code>agents.max_review_cycles</code> (default 3) caps how many

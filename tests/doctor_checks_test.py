@@ -1,7 +1,9 @@
 """Doctor checks added in v3.1 and the provider's default stage timeout, run against real
 temporary Git repositories: the CI gate without pull-request workflows, merge gate switches
 and agents.implement.push_each_iteration that are not booleans, short provider timeouts,
-repo.worktree_links judged in the main checkout from a linked worktree, and .env* links."""
+repo.worktree_links judged in the main checkout from a linked worktree, and .env* links; since
+v3.2 also linked directories that hold a .env* name or cannot be searched, and the
+repo.test_command warning only where implement runs on Codex."""
 import copy
 import importlib.util
 import json
@@ -17,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('doctor', ROOT / 'templates/scripts/bureau-doctor.py')
 d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
 PROVIDER = ROOT / 'templates/scripts/bureau-provider.py'
+REAL_RUN = subprocess.run
 INSTALLER = ROOT / 'scripts/bureau_install.py'
 GIT_ENV = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
            'GIT_AUTHOR_NAME': 'Bureau Test', 'GIT_AUTHOR_EMAIL': 'test@example.invalid',
@@ -255,6 +258,68 @@ class PushEachIterationTests(Repo):
                 self.assertTrue(result['ok'], result)
 
 
+class TestCommandWarningTests(Repo):
+    """repo.test_command is required only where implement runs on Codex: its completion runs the
+    command as an independent check and stops with 24 without one (implement-pipeline.sh). v3.1
+    warned on every installation. Each case is first resolved by the REAL resolve_runner_for_stage
+    of bureau-config.sh, the function implement-pipeline.sh asks, so doctor cannot drift from it."""
+    WARNING = 'repo.test_command is missing; required for Codex background implementation'
+    CONFIG_SH = ROOT / 'templates/scripts/bureau-config.sh'
+
+    def setUp(self):
+        super().setUp()
+        for name in [name for name in os.environ if name.startswith('BUREAU_RUNNER_')]: os.environ.pop(name)
+
+    def stage_runner(self, env):
+        proc = subprocess.run(['/bin/bash', '-c', 'source "$1" >/dev/null 2>&1; resolve_runner_for_stage implement', '_', str(self.CONFIG_SH)],
+                              cwd=self.repo, capture_output=True, text=True,
+                              env={**os.environ, 'BUREAU_CONFIG': str(self.repo / '.bureau.json'), **env})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout.strip()
+
+    def test_only_a_codex_implement_needs_the_test_command(self):
+        cases = [  # agents, environment, the runner implement resolves
+            ({'runner': 'claude', 'implement': True}, {}, 'claude'),
+            ({'implement': True}, {}, 'claude'),                                          # no agents.runner: claude
+            ({'runner': 'codex', 'implement': True}, {}, 'codex'),                        # a boolean takes the default runner
+            ({'runner': 'claude', 'implement': 'true'}, {}, 'claude'),                    # so does a legacy string
+            ({'runner': 'claude', 'implement': {'enabled': True, 'runner': 'codex'}}, {}, 'codex'),
+            ({'runner': 'codex', 'implement': {'enabled': True, 'runner': 'claude'}}, {}, 'claude'),
+            ({'runner': 'codex', 'implement': {'enabled': True}}, {}, 'codex'),          # an object without a runner
+            ({'runner': 'codex', 'implement': {'enabled': True, 'runner': ''}}, {}, 'codex'),
+            ({'runner': 'claude', 'implement': {'enabled': False, 'runner': 'codex'}}, {}, 'codex'),  # off: the shepherd still runs it
+            ({'runner': 'codex', 'implement': False}, {}, 'codex'),
+            ({'runner': 'claude', 'implement': True, 'qa': {'enabled': True, 'runner': 'codex'},
+              'providers': {'codex': {'model': 'gpt-test', 'timeout_seconds': 3600}}}, {}, 'claude'),  # Codex for other stages only
+            ({'runner': 'claude', 'implement': True}, {'BUREAU_RUNNER_IMPLEMENT': 'codex'}, 'codex'),
+            ({'runner': 'codex', 'implement': {'enabled': True, 'runner': 'codex'}}, {'BUREAU_RUNNER_IMPLEMENT': 'claude'}, 'claude'),
+        ]
+        warned = 0
+        for agents, env, runner in cases:
+            with self.subTest(agents=agents, env=env):
+                config = copy.deepcopy(BASE); config['agents'] = {'spec': True, 'code_review': True, **agents}
+                del config['repo']['test_command']
+                self.write_config(config)
+                self.assertEqual(self.stage_runner(env), runner)
+                with patch.dict(os.environ, env):
+                    result = self.diagnose(config)
+                    self.assertTrue(result['ok'], result)
+                    self.assertEqual(result['warnings'].count(self.WARNING), int(runner == 'codex'), result['warnings'])
+                    warned += runner == 'codex'
+                    # A configured command satisfies it.
+                    config['repo']['test_command'] = 'python3 test.py'
+                    self.assertNotIn(self.WARNING, self.diagnose(config)['warnings'])
+        self.assertEqual(warned, 7)
+
+    def test_an_implement_runner_that_does_not_resolve_is_no_codex(self):
+        # Implement off and an unknown runner in the environment: the stage would stop on it,
+        # doctor (which reports it for an enabled stage only) gives no test_command warning.
+        config = copy.deepcopy(BASE); config['agents']['implement'] = False; del config['repo']['test_command']
+        with patch.dict(os.environ, {'BUREAU_RUNNER_IMPLEMENT': 'other'}):
+            result = self.diagnose(config)
+        self.assertTrue(result['ok'], result); self.assertNotIn(self.WARNING, result['warnings'])
+
+
 class WorktreeLinkTests(Repo):
     def setUp(self):
         super().setUp()
@@ -313,6 +378,58 @@ class WorktreeLinkTests(Repo):
         # One bad entry does not hide the others.
         result = self.links('.venv', '.env')
         self.assertEqual(self.statuses(result), {'.venv': 'ok', '.env': 'env file'}); self.assertFalse(result['ok'])
+
+    def test_directories_holding_env_files_are_rejected(self):
+        # v3.2: a directory entry is searched the way the stages search it before they link it
+        # (find -L, links followed, no depth limit): a .env* name anywhere below it, or a search
+        # that does not finish, is an error. v3.1 reported every one of these as `ok`.
+        (self.repo / 'settings').mkdir(); (self.repo / 'settings/.env').write_text('LINEAR_API_KEY=probe\n')
+        (self.repo / 'deeper/a/b').mkdir(parents=True); (self.repo / 'deeper/a/b/.Env.Local').write_text('x\n')
+        (self.repo / 'store/.envdir').mkdir(parents=True)                       # a .env* directory below, empty
+        (self.repo / 'via').mkdir(); (self.repo / 'via/conf').symlink_to('../settings')   # a link inside, followed
+        (self.repo / 'alias').symlink_to('settings')                            # the entry itself is a link
+        (self.repo / '.venv/bin').mkdir(parents=True); (self.repo / '.venv/bin/python').write_text('')
+        (self.repo / 'tools/envs').mkdir(parents=True); (self.repo / 'tools/my.env').write_text('x\n')  # names that only contain env
+        (self.repo / 'notes.txt').write_text('x\n')                             # a file: nothing to search
+        with (self.repo / '.gitignore').open('a') as out:
+            out.write('settings\ndeeper\nstore\nvia\nalias\ntools\nnotes.txt\nlocked\n')
+        expected = {'settings': ('holds an env file', 'settings/.env'), 'deeper': ('holds an env file', 'deeper/a/b/.Env.Local'),
+                    'store': ('holds an env file', 'store/.envdir'), 'via': ('holds an env file', 'via/conf/.env'),
+                    'alias': ('holds an env file', 'alias/.env'), '.venv': ('ok', None), 'tools': ('ok', None), 'notes.txt': ('ok', None)}
+        if os.getuid() != 0:  # as root an unreadable directory is readable
+            (self.repo / 'locked/inner').mkdir(parents=True); (self.repo / 'locked/inner').chmod(0o000)
+            self.addCleanup((self.repo / 'locked/inner').chmod, 0o700)
+            expected['locked'] = ('not searched completely', None)
+        for entry, (status, hit) in expected.items():
+            with self.subTest(entry=entry):
+                result = self.links(entry)
+                self.assertEqual(self.statuses(result), {entry: status}, result)
+                found = [e for e in result['errors'] if 'worktree_links' in e]
+                self.assertEqual(len(found), int(status != 'ok'), result['errors'])
+                self.assertEqual(result['ok'], status == 'ok', result)
+                if hit: self.assertIn(json.dumps(entry) + ' is a directory that holds a .env file (' + hit + ')', found[0])
+                if status == 'not searched completely': self.assertIn('could not be searched completely', found[0])
+        # Each entry is judged on its own; a trailing slash names the same directory.
+        result = self.links('.venv', 'settings/', 'tools')
+        self.assertEqual(self.statuses(result), {'.venv': 'ok', 'settings': 'holds an env file', 'tools': 'ok'})
+        self.assertEqual(len(result['errors']), 1, result['errors'])
+
+    def test_a_search_that_fails_is_an_error(self):
+        # Fail closed as the stages do: a find that fails is no answer, even when it printed a hit
+        # first; a missing find too. A file entry is not searched at all.
+        (self.repo / '.venv/bin').mkdir(parents=True); (self.repo / 'notes.txt').write_text('x\n')
+        with (self.repo / '.gitignore').open('a') as out: out.write('notes.txt\n')
+        fake = self.base / 'fake find'; fake.mkdir()
+        (fake / 'find').write_text('#!/bin/sh\necho "$2/.env"\nexit 1\n'); (fake / 'find').chmod(0o755)
+        os.environ['PATH'] = str(fake) + os.pathsep + os.environ['PATH']
+        result = self.links('.venv', 'notes.txt')
+        self.assertEqual(self.statuses(result), {'.venv': 'not searched completely', 'notes.txt': 'ok'}, result)
+        self.assertFalse(result['ok'])
+        # No find on PATH at all: the search cannot run, the directory is not linked.
+        with patch.object(d.subprocess, 'run', side_effect=lambda command, *a, **k: (_ for _ in ()).throw(FileNotFoundError(command[0]))
+                          if command[0] == 'find' else REAL_RUN(command, *a, **k)):
+            result = self.links('.venv')
+        self.assertEqual(self.statuses(result), {'.venv': 'not searched completely'}, result)
 
     def test_no_main_checkout_means_no_links(self):
         # A git directory kept outside the checkout: the stages make no links.
