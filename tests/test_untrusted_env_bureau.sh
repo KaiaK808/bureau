@@ -9,7 +9,9 @@
 #      commits to its root is not imported by commit_stage_changes or the worker's cleanup
 #   B  git hooks and filters: with core.hooksPath pointing at a tracked directory and a
 #      .gitattributes filter, Bureau's own add/commit/checkout run them without the seven;
-#      a pre-push hook sees the GitHub token variables (push needs them) but not the .env keys
+#      Bureau's push runs no pre-push hook (v3.2, tests/test_remote_git_hooks.sh), and with
+#      repo.remote_git_runs_hooks: true the hook sees the GitHub token variables (push needs
+#      them) but not the .env keys
 #   C  the provider (run_stage_for, precondition_runner) starts without the seven
 #   D  the runtime wrapper (bureau_stage_enter, bureau-worker.sh, shepherd.sh) starts without
 #      the .env keys the relaunched script reads back, and keeps a key .env does not define
@@ -109,15 +111,22 @@ if [ -s "$MARKS/gh.env" ]; then
 else
   fail "B gh: gh did not run"
 fi
+# v3.2: Bureau's own push runs no hook by default; with repo.remote_git_runs_hooks: true the
+# pre-push hook runs as in v3.1, with the GitHub tokens and without the .env keys.
+[ ! -e "$MARKS/pre-push.env" ] || fail "B pre-push: the hook ran during Bureau's push (hooks are off by default)"
+[ "$(git -C "$R.origin" rev-parse other)" = "$(git -C "$R" rev-parse HEAD)" ] || fail "B: the pushed commit is not on origin"
+printf '{"repo":{"remote_git_runs_hooks":true}}\n' > "$R/.bureau.json"
+out=$(stage "$SCRIPTS" 'git checkout -q -b other2; git -C "$PWD" push -q origin HEAD 2>/dev/null; echo "push=$?"')
+printf '{"repo":{}}\n' > "$R/.bureau.json"
+case "$out" in *push=0*) ;; *) fail "B: the push with hooks failed: $out" ;; esac
 if [ -s "$MARKS/pre-push.env" ]; then
   grep -qx "GH_TOKEN=$PR1_GH" "$MARKS/pre-push.env" || fail "B pre-push: GH_TOKEN (push credentials) was removed"
   for v in "$PR1_LINEAR" "$PR1_TG_TOKEN" "$PR1_TG_CHAT"; do
     if grep -qF -- "$v" "$MARKS/pre-push.env"; then fail "B pre-push: a .env key reached the hook"; fi
   done
 else
-  fail "B pre-push: the hook did not run"
+  fail "B pre-push: with repo.remote_git_runs_hooks: true the hook did not run"
 fi
-[ "$(git -C "$R.origin" rev-parse other)" = "$(git -C "$R" rev-parse HEAD)" ] || fail "B: the pushed commit is not on origin"
 # The worker's cleanup line, as it runs: in the stage worktree, next to the branch's modules.
 line=$(grep -F "key=\$(python3" "$SCRIPTS/bureau-worker.sh" | sed 's/^ *//')
 case "$line" in *'python3 -I -c'*) ;; *) fail "A: the worker's registry key line is not found or not isolated: $line" ;; esac
@@ -133,7 +142,7 @@ stray=$(grep -rnE 'python3? +(-[A-HJ-Za-z]+ +)*(-c|-)( |$)|python3? +<<' "$SCRIP
 stray=$(grep -rnE '(xargs|exec|command|nice|timeout|/usr/bin/env|[^_a-z]env) +(-[^ ]+ +)*(git|gh)( |$)|/(usr/)?(local/)?bin/(git|gh)( |$)' "$SCRIPTS"/*.sh \
   | grep -v 'bureau_without_secrets xargs' | grep -vE ':[0-9]+: *#' | grep -v '/usr/bin/env "\${_BUREAU_ENV_ARGV\[@\]}" \(git\|gh\)' || true)
 [ -z "$stray" ] || fail "A: git or gh started past the git()/gh() functions: $stray"
-pr1_pass "A+B: branch hooks, filter and Python modules run without the secrets; push keeps the GitHub tokens"
+pr1_pass "A+B: branch hooks, filter and Python modules run without the secrets; push runs no hook, or keeps the GitHub tokens when hooks are on"
 
 # Control: the v3.0.2 forms (no git function, python3 - without -I and without the reduction).
 repo "$R"; printf 'work\n' > "$R/work.txt"

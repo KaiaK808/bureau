@@ -279,9 +279,15 @@ bureau_load_env() {
 #   picked in .gitattributes). Every git command therefore runs in the default
 #   reduction; those that talk to a remote (push, fetch, pull, ls-remote,
 #   clone, remote, submodule) keep the GitHub token variables a credential
-#   helper may read and lose the three .env keys and their copies. Hooks and
-#   filters keep running, only without the keys; a pre-push hook still sees
-#   the GitHub tokens (SECURITY.md).
+#   helper may read and lose the three .env keys and their copies. Local
+#   commands keep running hooks and filters, only without the keys. The remote
+#   ones run without hooks (v3.2): `-c core.hooksPath=/dev/null`, because a
+#   hook during them — pre-push on a push, reference-transaction on every ref
+#   update a fetch or push makes, the hooks of a pull's merge — would see the
+#   GitHub tokens. repo.remote_git_runs_hooks: true in .bureau.json (the JSON
+#   value true, nothing else) runs them with hooks again, as v3.1 did. The
+#   setting covers hooks only: a filter, an fsmonitor or a credential helper
+#   the configuration names still runs (SECURITY.md).
 #
 # bureau_exec_runtime <command> [argument ...]
 #   Replaces the shell with the runtime wrapper (python3 bureau-runtime.py
@@ -417,12 +423,31 @@ bureau_without_secrets() {
   /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bws_assign[@]+"${_bws_assign[@]}"} "$@"
 }
 
+# _bureau_remote_git_runs_hooks — 0 when repo.remote_git_runs_hooks is the JSON
+# value true, 1 otherwise: absent, null, false, any other value, no
+# BUREAU_CONFIG, or a .bureau.json jq cannot read (the hooks stay off). Read on
+# every call, like repo.untrusted_env; bureau-doctor.py warns on a value that
+# is not a JSON boolean.
+_bureau_remote_git_runs_hooks() {
+  local _brh_filter='if (.repo | type) == "object" and .repo.remote_git_runs_hooks == true then "on" else "off" end' _brh_value
+  if declare -F bureau_get >/dev/null 2>&1; then
+    _brh_value=$(bureau_get "$_brh_filter" 2>/dev/null) || return 1
+  elif [ -n "${BUREAU_CONFIG:-}" ]; then
+    _brh_value=$(jq -r "$_brh_filter" "$BUREAU_CONFIG" 2>/dev/null) || return 1
+  else
+    return 1
+  fi
+  [ "$_brh_value" = on ]
+}
+
 git() {
   case $- in
     (*x*) set +x; local _bg_trace=1 ;;
     (*) local _bg_trace=0 ;;
   esac
   local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven
+  local -a _bg_hooks
+  _bg_hooks=()
   # The subcommand is the first word after git's own options; -C, -c,
   # --git-dir, --work-tree, --namespace, --super-prefix and --config-env
   # take the next word as their value.
@@ -435,11 +460,16 @@ git() {
     esac
   done
   case "$_bg_sub" in
-    push|fetch|pull|ls-remote|clone|remote|submodule) _bg_names=dotenv ;;
+    push|fetch|pull|ls-remote|clone|remote|submodule)
+      _bg_names=dotenv
+      # Placed before the caller's own options; git passes -c on to the git
+      # processes it starts itself (a pull's fetch and merge, submodules).
+      _bureau_remote_git_runs_hooks || _bg_hooks=(-c core.hooksPath=/dev/null)
+      ;;
   esac
   _bureau_env_build default "$_bg_names" 1
   if [ "$_bg_trace" = 1 ]; then set -x; fi
-  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" git "$@"
+  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" git ${_bg_hooks[@]+"${_bg_hooks[@]}"} "$@"
 }
 
 # _bureau_drop_secrets — unsets the seven, their copies, BASH_ENV and ENV in the

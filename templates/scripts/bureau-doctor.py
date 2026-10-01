@@ -425,6 +425,11 @@ def diagnose(repo, mode):
     hook = repo_cfg.get('post_implement_command')
     if hook is not None and hook is not False and not isinstance(hook, str):
         errors.append('repo.post_implement_command must be a string; the implement stage would run ' + json.dumps(hook) + ' as a shell command')
+    # v3.2: the git function in bureau-env.sh (_bureau_remote_git_runs_hooks) runs Bureau's push, fetch and
+    # other remote git commands with hooks only for the JSON value true; anything else keeps them off.
+    remote_hooks = repo_cfg.get('remote_git_runs_hooks')
+    if remote_hooks is not None and type(remote_hooks) is not bool:
+        warnings.append('repo.remote_git_runs_hooks ' + json.dumps(remote_hooks) + ' is not a JSON boolean; Bureau counts it as false and runs its push, fetch and other remote git commands without the repository\'s hooks: only true runs them')
     checkout = main_checkout(repo); main = checkout[0]
     links, link_errors, link_warnings = worktree_links(repo, config, checkout)
     errors.extend(link_errors); warnings.extend(link_warnings)
