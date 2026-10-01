@@ -615,7 +615,15 @@ run_stage_for() {
   [ "$#" = 1 ] || { echo 'run_stage_for requires one prompt' >&2; return 22; }
   temp=$(mktemp -d)
   printf '%s' "$1" > "$temp/prompt"
-  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual." "$system" > "$temp/system"
+  # The CI rule (v3.2, scope O7) sits in the system text, not only in
+  # scripts/bureau-stage.md: a stage reads that file from its worktree, so it
+  # holds there only once the resynced file is on the branch, and this text
+  # comes from the main checkout's scripts from the first run on. It says
+  # outright that it wins over project instructions: an installation's own
+  # CLAUDE.md told the agent to wait for a missing CI run, and three implement
+  # passes were killed at their time limit while polling checks of finished,
+  # pushed work.
+  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. Push, report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system"
   local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
   [ -n "$schema" ] && args+=(--schema "$schema")
   # The provider needs none of the Bureau secrets: it starts without them, so
