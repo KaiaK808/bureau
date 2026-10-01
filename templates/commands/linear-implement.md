@@ -133,7 +133,7 @@ After all ai-implementable tasks are done (or blocked by needs-human tasks):
 
 ### 8. Update Linear status
 
-Write the shared result JSON using the prepared run ID, actual HEAD, completed artifacts and test evidence. Mark outcome `complete` only when all required tasks are done and checks pass; use `partial` or `blocked` otherwise. Keep incomplete work as a draft PR.
+Write the shared result JSON using the prepared run ID, actual HEAD, completed artifacts and test evidence. Mark outcome `complete` only when all required tasks are done and the tests pass (your own test runs, not the PR's CI checks; see CI and merge gates in `scripts/bureau-stage.md`); use `partial` or `blocked` otherwise. Keep incomplete work as a draft PR.
 
 Run `python3 scripts/bureau-runtime.py finish RUN --result FILE`. It moves complete work to configured QA when enabled, otherwise Build Review. Partial/blocked work stays in Build. Do not mark incomplete work ready or move it into review manually. Include the PR link and remaining tasks in the summary. Do not merge.
 
