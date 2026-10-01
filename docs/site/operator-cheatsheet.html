@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="560967def1299752df87cc91dd544bf54a0631d6e1e0e826dbe524ad8ef1006e">
+<meta name="bureau-source-sha256" content="872f7a8cd98553757ca9483ed04ab2526533255d60de7d321a9c62eafb50441e">
 <title>OPERATOR-CHEATSHEET · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -72,9 +72,15 @@ scopes: ownership is shared between worktrees of one Git repository, not
 between separate clones. Select one active team per configuration.</p>
 <p>To stop dispatch, run
 <code>python3 scripts/bureau-runtime.py pause</code>, inspect active
-runs and let their stages finish. Stop the selected tmux session only
-after accounting for its workers. Killing tmux alone does not prove that
-nested provider processes stopped.</p>
+runs and let their stages finish. To stop a run at once, press Ctrl-C in
+its pane or close its tmux session: since v3.2 a hang-up stops every
+process of the run like SIGTERM (exit 130) and keeps its work and leases
+for the resume. From another terminal,
+<code>kill -TERM &lt;pid&gt;</code> with the <code>pid</code> that
+<code>python3 scripts/bureau-runtime.py status</code> shows for the
+run's leases does the same; a signal to an inner process group alone, or
+<code>kill -9</code>, does not. See <a
+href="troubleshooting.html#how-to-stop-a-run">How to stop a run</a>.</p>
 <h2 id="dry-run-preview">Dry-run preview</h2>
 <div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
 <p>Queue/shepherd previews can read Linear but do not invoke creative
