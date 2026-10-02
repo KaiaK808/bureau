@@ -1693,6 +1693,16 @@ _bureau_gh_owner_repo() {
 # (no workflow, a trigger that does not match): that is reported as its own
 # line, "ci: no check run and no status on …", which the merge stage reads as
 # blocked. Without the grace the gate stayed "not yet" forever, without an alert.
+#
+# A check run that a runner never takes stays "queued" (an offline self-hosted
+# runner, a runner label nothing serves). Once one has been
+# queued longer than .agents.merge_ci_queued_grace_seconds (default 3600) it is
+# reported as its own line, "ci: check <name> queued for N s on … — runner
+# offline?", which the merge stage reads as blocked (v3.2). The time is the check
+# run's started_at, which GitHub sets when it queues the run (for an Actions job:
+# the job's created_at); a run without a readable time stays pending. Only the
+# status "queued" counts: "waiting" (a deployment approval), "pending" and
+# "requested" stay pending, as does a pending commit status.
 pr_ci_is_green() {
   # <head-sha>, when given, is the commit to judge (the merge stage pins its merge to it);
   # without it the PR's current head is read here.
@@ -1732,6 +1742,25 @@ pr_ci_is_green() {
   failed_legacy=$(echo "$statuses"  | jq '[.[] | select(.state == "failure" or .state == "error")] | length')
 
   if [ "$pending" -gt 0 ] || [ "$pending_legacy" -gt 0 ]; then
+    # The longest-queued check run past the queue grace, as "<age>\t<count>\t<name>".
+    # A time that cannot be read (null, not GitHub's ISO form) leaves that run pending.
+    local queued_grace queued queued_age queued_count queued_name
+    queued_grace=$(_merge_gate_number merge_ci_queued_grace_seconds 3600) || true
+    queued=$(printf '%s' "$checks" | jq -r --argjson now "$(date +%s)" --argjson grace "$queued_grace" '
+        [ .[] | select(.status == "queued")
+          | {name: (.name // "?" | tostring | gsub("[\\t\\n\\r]"; " ")),
+             at: (.started_at | if type == "string" then (try fromdateiso8601 catch null) else null end)}
+          | select(.at != null) | .age = (($now - .at) | floor) | select(.age >= $grace) ]
+        | sort_by(-.age)
+        | if length == 0 then empty else "\(.[0].age)\t\(length)\t\(.[0].name)" end' 2>/dev/null) || queued=""
+    if [ -n "$queued" ]; then
+      IFS=$'\t' read -r queued_age queued_count queued_name <<< "$queued"
+      # The age changes from poll to poll; merge_gate_key (merge-pipeline.sh) leaves it
+      # out of the comparison, so a PR gets one comment for it, not one per poll.
+      if [ "$queued_count" -gt 1 ]; then queued_count=", $((queued_count - 1)) more check(s) as well"; else queued_count=""; fi
+      echo "ci: check $queued_name queued for $queued_age s on $head_sha, past the CI queue grace (agents.merge_ci_queued_grace_seconds: $queued_grace)$queued_count — runner offline?" >&2
+      return 1
+    fi
     echo "ci: $((pending + pending_legacy)) check(s) still pending on $head_sha" >&2
     return 1
   fi
@@ -1791,6 +1820,9 @@ pr_ci_is_green() {
 # check at all, and a negative number counted as "no check needed". pr_ci_is_green
 # cannot warn itself: its stderr is its gate line (merge-pipeline.sh warns before it
 # runs the gate). The cap keeps the number inside shell arithmetic.
+# The keys read by this rule: merge_min_required_checks, merge_ci_start_grace_seconds,
+# merge_ci_queued_grace_seconds (pr_ci_is_green) and merge_gate_recheck_seconds
+# (merge_gate_waits, the pickers' hold on a ticket waiting on its gate).
 _merge_gate_number() {
   local filter out value flag
   filter='.agents.KEY as $v
@@ -3241,12 +3273,13 @@ precondition_clean_worktree() {
 # and Linear's MCP OAuth tokens expire after ~1h.
 #
 # Usage:
-#   pick_issue <state-uuid> <required-label-names-csv> [exclude-label-names-csv] [skip-issue-ids-csv]
+#   pick_issue <state-uuid> <required-label-names-csv> [exclude-label-names-csv] [skip-issue-ids-csv] [last-issue-ids-csv]
 #
 # Filters: team=$BUREAU_TEAM_KEY, state by UUID, at least one required label,
 #          project ∈ $BUREAU_PROJECTS — all listed projects (if set), parent is null.
 # Exclude: drops issues that carry any excluded label (filtered client-side in jq).
-# Sort:    priority ASC (1=Urgent first; 0=None treated as last), then createdAt ASC.
+# Sort:    priority ASC (1=Urgent first; 0=None treated as last), then createdAt ASC;
+#          the tickets in [last-issue-ids-csv] (merge gate waits, v3.2) after all others.
 # Output:  issue identifier on stdout, empty string if queue empty or every
 #          candidate has an open blocker.
 #
@@ -3264,6 +3297,7 @@ pick_issue() {
   local required_csv="$2"
   local exclude_csv="${3:-}"
   local skip_csv="${4:-}"
+  local last_csv="${5:-}"
 
   local required_gql
   required_gql=$(printf '%s' "$required_csv" | awk -F',' '
@@ -3318,14 +3352,15 @@ pick_issue() {
   answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.inverseRelations.nodes | type) == "array")') || return $?
   local candidates
   candidates=$(printf '%s' "$answer" \
-  | jq -r --argjson excl "$exclude_json" --arg skip "$skip_csv" '
+  | jq -r --argjson excl "$exclude_json" --arg skip "$skip_csv" --arg last "$last_csv" '
     .data.issues.nodes
     | map(select(.identifier as $id | ($skip | split(",") | index($id)) == null))
     | map(select(
         ([.labels.nodes[].name] | map(select(. as $n | $excl | index($n))) | length) == 0
       ))
-    | map(. + {_pri: (if .priority == 0 then 5 else .priority end)})
-    | sort_by(._pri, .createdAt)
+    | map(. + {_pri: (if .priority == 0 then 5 else .priority end),
+               _last: (if (.identifier as $id | ($last | split(",") | index($id))) == null then 0 else 1 end)})
+    | sort_by(._last, ._pri, .createdAt)
     | .[]
     | [ .identifier,
         ([.inverseRelations.nodes[]
@@ -3397,6 +3432,65 @@ pipeline_picker_args() {
   esac
 }
 
+# ── Merge gate waits (v3.2) ────────────────────────────────────────
+# A merge gate that is not yet decided (checks still running or queued, GitHub still
+# computing), or blocked without needs-human at the merge stage, used to keep its ticket
+# at the head of its queue: the picker handed it out on every poll, and the other
+# tickets of that state waited behind it for as long as the gate stayed so. Two
+# records say that a ticket waits on its gate:
+#   review  the review stage's APPROVE kept after its inline merge found the gate not
+#           yet decided (review-stops.json, `bureau-supervision.py stop --merge-gate-wait`)
+#   merge   the merge stage's mark after a gate that was not yet decided or blocked
+#           (merge-gate-waits.json, `bureau-supervision.py merge-wait`, merge-pipeline.sh)
+#
+# merge_gate_waits <review|merge> prints, comma-separated, the tickets the picker of
+# that stage puts after every other candidate for now: a record younger than its hold
+# whose branch on origin is still at the recorded head. pipeline_pick_next then hands
+# out such a ticket only when no other ticket of the state can be picked, so a hold
+# never delays a merge while nothing else waits. The hold doubles with each "not yet"
+# or "blocked" in a row at the same head, starting at two poll intervals (at least
+# 300 s), and never exceeds .agents.merge_gate_recheck_seconds (default 3600, read by
+# _merge_gate_number; 0 switches the holds off, as before v3.2). Two poll intervals,
+# because the queue loop sleeps a whole interval after its poll: a hold of one interval
+# has always run out when the next poll picks. The poll interval is the queue loop's
+# own (BUREAU_QUEUE_POLL_SECONDS, exported by queue-loop.sh), else
+# .agents.poll_interval_minutes (default 30).
+#
+# A push to the branch, a branch gone from origin, and a record time in the future (a
+# clock that stepped back) end the hold at once. A record or an origin that cannot be
+# read holds nothing back, with one line on stderr: this never fails a pick. The rebase
+# stage shares the Merge picker but is never held (it is what resolves a conflicted
+# gate). The shepherd names its ticket and never asks the picker, so its own waiting
+# is unchanged.
+merge_gate_waits() {
+  local stage="$1" cap poll first common out
+  cap=$(_merge_gate_number merge_gate_recheck_seconds 3600) \
+    || echo "pick: WARN: agents.merge_gate_recheck_seconds should be a whole number of at least 0; using $cap" >&2
+  [ "$cap" -gt 0 ] || return 0
+  # Without a record file (no review recorded a stop, no merge stage waited) no Python starts.
+  common=$(bureau_common_dir 2>/dev/null) || return 0
+  case "$stage" in
+    review) [ -f "$common/bureau/review-stops.json" ] || return 0 ;;
+    merge)  [ -f "$common/bureau/merge-gate-waits.json" ] || return 0 ;;
+    *) return 0 ;;
+  esac
+  poll="${BUREAU_QUEUE_POLL_SECONDS:-}"
+  case "$poll" in ''|*[!0-9]*|0) poll=$(bureau_get '.agents.poll_interval_minutes // 30' 2>/dev/null) || poll=30
+    case "$poll" in ''|*[!0-9]*) poll=30 ;; esac
+    poll=$(( 10#$poll * 60 )) ;;
+  esac
+  [ "${#poll}" -le 7 ] || poll=9999999
+  first=$(( 2 * 10#$poll )); [ "$first" -ge 300 ] || first=300
+  if ! out=$(python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-supervision.py" --repo "$(dirname "${BUREAU_CONFIG:-./x}")" \
+      gate-waits --stage "$stage" --first "$first" --cap "$cap" 2>&1); then
+    echo "pick: WARN: the merge gate waits could not be read (${out##*$'\n'}); no ticket is held back" >&2
+    return 0
+  fi
+  printf '%s' "$out" | jq -r '.waiting[]
+    | "pick: \(.issue) waits on its merge gate (\(.outcome)) at the unchanged head \(.head[0:12]) — after every other ticket for \(.due_in) s more (\(.waits) time(s) in a row)"' >&2 2>/dev/null || true
+  printf '%s' "$out" | jq -r '[.waiting[].issue] | join(",")' 2>/dev/null || true
+}
+
 # pipeline_pick_next <script-name> [skip-issue-ids-csv]
 #   Reads the registry above, dispatches to pick_issue with the right args.
 #   Returns the picked issue identifier on stdout, empty on queue-empty or
@@ -3431,6 +3525,22 @@ pipeline_pick_next() {
   if [ -n "$held" ]; then
     echo "pick: skipping ticket(s) held for a human whose needs-human label is not written yet: $held" >&2
     skip="${skip:+$skip,}$held"
+  fi
+  # A ticket waiting on its merge gate at an unchanged head goes after every other
+  # candidate of the review or the merge stage while its hold lasts (merge_gate_waits).
+  local wait_stage="" waiting picked pick_rc=0
+  case "$1" in code-review-pipeline.sh) wait_stage=review ;; merge-pipeline.sh) wait_stage=merge ;; esac
+  if [ -n "$wait_stage" ]; then
+    waiting=$(merge_gate_waits "$wait_stage")
+    if [ -n "$waiting" ]; then
+      picked=$(pick_issue "$state" "$required" "$exclude" "$skip" "$waiting") || pick_rc=$?
+      [ "$pick_rc" = 0 ] || return "$pick_rc"
+      case ",$waiting," in
+        *",$picked,"*) [ -z "$picked" ] || echo "pick: $picked taken although it waits on its merge gate — no other ticket of the stage can be picked" >&2 ;;
+      esac
+      printf '%s' "$picked"
+      return 0
+    fi
   fi
   if [ -n "$skip" ]; then
     pick_issue "$state" "$required" "$exclude" "$skip"
