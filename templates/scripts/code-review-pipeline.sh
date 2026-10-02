@@ -130,8 +130,11 @@ echo "  Branch: $BRANCH"
 
 # Recheck under the worker's issue lease: another tick may have selected this
 # ticket just before the previous reviewer saved its stop and released ownership.
+# Every call of bureau-supervision.py runs with `python3 -I`: the working directory
+# is the branch's worktree, and an empty or relative PYTHONPATH entry of the
+# operator's would otherwise import a subprocess.py or json.py the branch committed.
 if bureau_stop_requested; then
-  REVIEW_STOP=$(printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" check "$ISSUE" \
+  REVIEW_STOP=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" check "$ISSUE" \
     --branch "$BRANCH" --state "$ACTUAL_STATE") || exit 18
   if [ "$(printf '%s' "$REVIEW_STOP" | jq -r .stopped)" = true ]; then
     echo "Review already approved at the unchanged head; still stopped before merge."
@@ -276,7 +279,7 @@ REUSED_GATE_WAIT=0
 REUSED_GATE_WAITS=0
 STAGE_EXIT=""   # set when an APPROVE's inline merge did not go through (2 or 25)
 if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
-  if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
+  if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
       --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" \
       --base-ref "$PR_BASE_REF" --pr "$PR_NUMBER"); then
     if [ "$(printf '%s' "$REUSE" | jq -r '.reuse' 2>/dev/null)" = true ]; then
@@ -638,7 +641,7 @@ case "$VERDICT" in
       # Save before the owning worker releases its lease, closing the gap where
       # another tick could start the same paid review. Record the reviewed inputs.
       if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
-        printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+        printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
           --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
           --verdict APPROVE >/dev/null
       fi
@@ -688,7 +691,7 @@ case "$VERDICT" in
           GATE_WAIT_ARGS=(--merge-gate-wait --gate-waits "$((REUSED_GATE_WAITS + 1))")
           [ "$BUILD_PASSED" != 1 ] || [ -z "$BUILD_KEY" ] \
             || GATE_WAIT_ARGS+=(--build-check passed "--build-command=$BUILD_CMD" "--build-key=$BUILD_KEY")
-          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
               --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
               --verdict APPROVE "${GATE_WAIT_ARGS[@]}" >/dev/null; then
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
@@ -711,7 +714,7 @@ The approval is recorded for head \`$REVIEW_HEAD\`; the queue checks the gate ag
           # paying a new review. The record holds the labels from the start of this
           # run, so it matches again once the label is gone; a push, a moved base or
           # an edited ticket means a new review.
-          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
               --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
               --verdict APPROVE >/dev/null; then
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2

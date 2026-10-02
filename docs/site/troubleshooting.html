@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e035419b2210153f4c9a7f88f51b7baf858ce21978eb935ec200cd9e67cc40fa">
+<meta name="bureau-source-sha256" content="2f4f47f9888bd96d0745e6eedad86e3e20f57891d5cff23c9dffb7ee225b0683">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -801,6 +801,52 @@ When the gate cannot pass by itself (a hold label on the PR, a required
 human review; a check that never starts is covered by the queue grace
 above), the ticket keeps being checked about once an hour while others
 wait, until a human acts.</p>
+<h3
+id="doctor-reports-a-repoworktree_links-directory-that-holds-a-env-file">Doctor
+reports a <code>repo.worktree_links</code> directory that holds a
+<code>.env</code> file</h3>
+<p><code>repo.worktree_links entry "settings" is a directory that holds a .env file (settings/.env)</code>
+means the stages skip that link: before they link a directory they
+search it for a <code>.env*</code> name in any case, links followed and
+without a depth limit
+(<code>find -L DIR -mindepth 1 -iname '.env*'</code>), because the link
+would put the main checkout's secrets into every stage worktree, where
+pull-request code runs. Doctor runs the same search and names the first
+hit; its status for the entry is <code>holds an env file</code>. Move
+the file out of the directory, or remove the entry and let
+<code>repo.test_command</code> or <code>scripts/bureau-test.sh</code>
+create what the tests need. A virtualenv with a <code>.env*</code> name
+anywhere inside (a package's example file, say) is skipped the same way.
+<code>could not be searched completely</code> (status
+<code>not searched completely</code>) means the search failed, usually
+on an unreadable subdirectory (with GNU find also on a link loop, which
+the BSD find of macOS skips); the stages skip such a directory too,
+since what the search did not see can hold a <code>.env</code>. Make it
+readable, or remove the entry. Doctor before v3.2 reported both as
+<code>ok</code> while the stages skipped them. The search goes by names:
+a link under another name that points at a <code>.env</code> file is not
+found, so do not keep such a link in a linked directory.</p>
+<h3
+id="doctor-warns-repotest_command-is-missing-required-for-codex-background-implementation">Doctor
+warns
+<code>repo.test_command is missing; required for Codex background implementation</code></h3>
+<p>Implement on Codex runs <code>repo.test_command</code> itself once
+the agent reports the work complete, as a check independent of the
+agent, and stops with <code>24</code> when none is set (absent,
+<code>null</code>, <code>false</code> or <code>""</code>). The warning
+appears only when implement resolves to Codex:
+<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it (the value in
+the <code>.env</code> the stages read, <code>BUREAU_ENV_FILE</code> or
+else the one next to <code>.bureau.json</code>, which doctor reads with
+the stages' own reader and never executes; else doctor's environment),
+else <code>agents.implement.runner</code> when
+<code>agents.implement</code> is an object, else
+<code>agents.runner</code>. It appears with
+<code>agents.implement</code> off as well, because the shepherd runs
+every stage unless <code>--respect-config</code>. Set
+<code>repo.test_command</code> to the project's real test command.
+Doctor before v3.2 warned on every installation, Claude-only ones
+included.</p>
 <h3 id="code-review-hit-bureau_max_review_cycles--what-now">Code-review
 hit <code>BUREAU_MAX_REVIEW_CYCLES</code> — what now?</h3>
 <p><code>agents.max_review_cycles</code> (default 3) caps how many

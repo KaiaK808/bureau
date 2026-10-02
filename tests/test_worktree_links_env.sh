@@ -6,9 +6,11 @@
 # the stages read .env from the main checkout. A `.env*` entry in repo.worktree_links would
 # link the main checkout's secrets right back in. The stages skip such an entry with one
 # warning line: any path component that starts with `.env` in any case, or an entry whose real
-# target in the main checkout is such a file (the rule env_file in bureau-doctor.py reports as
-# an error), and, beyond the doctor, a directory with such a name anywhere below it (`deeper`
-# holds one three levels down). Names that only contain "env" are linked as before.
+# target in the main checkout is such a file, and a directory with such a name anywhere below it
+# (`deeper` holds one three levels down, `linkdir` one through a link inside it) or one the
+# search cannot finish. bureau-doctor.py
+# reports each of them as an error (since v3.2 also the directories). Names that only contain
+# "env" are linked as before.
 #
 # Runs the REAL bureau_link_worktree_paths, cut from templates/scripts/bureau-config.sh, as
 # tests/test_worktree_links.sh does, against a real main checkout (with a space in its path)
@@ -45,7 +47,7 @@ setup() {
   git -C "$MAIN" init -q -b main
   git -C "$MAIN" config user.email t@t; git -C "$MAIN" config user.name t
   printf '%s\n' .env '.env.*' .envrc .ENV.Local 'config/.env.production' secrets conf upper '.Envs/prod' alias locked \
-    'tools/.Envs/key' settings deep deeper .venv my.env env > "$MAIN/.gitignore"
+    'tools/.Envs/key' settings deep deeper .venv my.env env looped linkdir > "$MAIN/.gitignore"
   mkdir -p "$MAIN/config" "$MAIN/.Envs" "$MAIN/tools/.Envs"; printf 'config\n' > "$MAIN/config/readme.txt"
   printf 'tracked\n' > "$MAIN/.Envs/README"          # a tracked directory with a .env* name
   printf 'tracked\n' > "$MAIN/tools/.Envs/README"    # the same, below the first path component
@@ -62,6 +64,7 @@ setup() {
   printf 'LINEAR_API_KEY=lin_api_PROBE_linear_0001\n' > "$MAIN/settings/.env"   # a directory holding .env
   printf 'X=1\n' > "$MAIN/deep/sub/.Env.Local"      # ... one level further down
   printf 'X=1\n' > "$MAIN/deeper/a/b/.env"         # ... three levels down
+  mkdir -p "$MAIN/linkdir"; ln -s ../settings "$MAIN/linkdir/conf"   # ... reached through a link inside
   mkdir -p "$MAIN/.venv/bin" "$MAIN/env"; printf 'x\n' > "$MAIN/my.env"
   git -C "$MAIN" branch feat
   git -C "$MAIN" worktree add -q "$WT" feat
@@ -73,12 +76,15 @@ setup() {
   # A directory whose search cannot finish: an unreadable subdirectory (as root it is readable).
   mkdir -p "$MAIN/locked/inner"; printf 'x\n' > "$MAIN/locked/readme"
   [ "$(id -u)" = 0 ] || chmod 000 "$MAIN/locked/inner"
+  # A directory with a link loop below it: GNU find reports the loop and fails, BSD find (macOS)
+  # skips it and succeeds. Only case 4 lists it; the stages and doctor must give the same answer.
+  mkdir -p "$MAIN/looped/sub"; ln -s .. "$MAIN/looped/sub/up"
 }
 
-ENV_ENTRIES='.env .env.local .envrc .ENV.Local config/.env.production secrets conf upper .Envs/prod tools/.Envs/key settings deep deeper alias/key'
+ENV_ENTRIES='.env .env.local .envrc .ENV.Local config/.env.production secrets conf upper .Envs/prod tools/.Envs/key settings deep deeper linkdir alias/key'
 [ "$(id -u)" = 0 ] || ENV_ENTRIES="$ENV_ENTRIES locked"
 OTHER_ENTRIES='.venv my.env env'
-LIST='["alias/key", "locked", ".env", ".env.local", ".envrc", ".ENV.Local", "config/.env.production", "secrets", "conf", "upper", ".Envs/prod", "tools/.Envs/key", "settings", "deep", ".venv", "my.env", "env", "deeper"]'
+LIST='["alias/key", "locked", ".env", ".env.local", ".envrc", ".ENV.Local", "config/.env.production", "secrets", "conf", "upper", ".Envs/prod", "tools/.Envs/key", "settings", "deep", ".venv", "my.env", "env", "deeper", "linkdir"]'
 
 # run_with <fn file> — the configured list through the given copy of the function.
 run_with() {
@@ -130,24 +136,35 @@ PATH="$TMP/nopy:$PATH" run_with "$TMP/fn.sh"
 case "$OUT" in *"worktree link '.venv' skipped: its target in the main checkout could not be resolved"*) ;; *) fail "3: no warning for the unresolved target: $OUT" ;; esac
 [ "$FAILS" = "$before" ] && echo "PASS an entry whose target cannot be resolved is skipped, not linked"
 
-# 4 · the stages and bureau-doctor.py agree: every entry the doctor reports as `env file` is
-#     skipped by the stages, and the stages skip nothing else except the directories that hold a
-#     .env* entry (their own, deeper check).
+# 4 · the stages and bureau-doctor.py agree: the entries doctor reports as errors for a .env
+#     reason (`env file`, `holds an env file`, `not searched completely`) are exactly the entries
+#     the real stage function skips with a .env warning, read from its own output, for every
+#     entry above and a directory with a link loop below it (where find's answer differs by
+#     platform). Before v3.2 doctor did not look inside directories: settings, deep, deeper,
+#     linkdir and locked were `ok` there while the stages skipped them.
 before=$FAILS
-setup
-printf '{"repo":{"worktree_links":%s}}\n' "$LIST" > "$BUREAU_CONFIG"
-doctor_env=$(python3 - "$SCRIPTS/bureau-doctor.py" "$MAIN" "$BUREAU_CONFIG" <<'PY'
+LIST="${LIST%]}, \"looped\"]"
+run_with "$TMP/fn.sh"
+[ "$RC" = 0 ] || fail "4: bureau_link_worktree_paths returned $RC"
+stage_skipped=$(printf '%s\n' "$OUT" | sed -n -e "s/^  WARNING: worktree link '\(.*\)' skipped: .*\.env file.*/\1/p" \
+  -e "s/^  WARNING: worktree link '\(.*\)' skipped: the directory could not be searched completely for \.env files\./\1/p" | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
+doctor=$(python3 - "$SCRIPTS/bureau-doctor.py" "$MAIN" "$BUREAU_CONFIG" <<'PY'
 import importlib.util, json, sys
 from pathlib import Path
 spec = importlib.util.spec_from_file_location('doctor', sys.argv[1]); d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
 report, errors, warnings = d.worktree_links(Path(sys.argv[2]), json.loads(open(sys.argv[3]).read()))
-print(' '.join(sorted(entry['path'] for entry in report if entry.get('status') == 'env file')))
+env = sorted(entry['path'] for entry in report if entry['status'] in ('env file', 'holds an env file', 'not searched completely'))
+print(len(errors)); print(' '.join(env))
 PY
 )
-stage_skipped=$(for e in $ENV_ENTRIES; do case "$e" in (settings|deep|deeper|locked) ;; (*) printf '%s\n' "$e" ;; esac; done | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
-doctor_sorted=$(printf '%s\n' $doctor_env | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
-[ "$doctor_sorted" = "$stage_skipped" ] || fail "4: the doctor reports [$doctor_sorted] as env file, the stages skip [$stage_skipped] by the same rule"
-[ "$FAILS" = "$before" ] && echo "PASS the stages skip exactly what bureau-doctor.py reports as a .env file, plus directories holding one"
+doctor_errors=$(printf '%s\n' "$doctor" | sed -n 1p)
+doctor_env=$(printf '%s\n' "$doctor" | sed -n 2p | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+[ "$doctor_env" = "$stage_skipped" ] || fail "4: the doctor reports [$doctor_env] as .env errors, the stages skip [$stage_skipped] for a .env reason"
+[ "$doctor_errors" = "$(printf '%s\n' $doctor_env | grep -c .)" ] || fail "4: the doctor has $doctor_errors errors for [$doctor_env]"
+for e in $ENV_ENTRIES; do
+  case " $stage_skipped " in *" $e "*) ;; *) fail "4: the stages did not skip '$e' (the fixture lost a case)" ;; esac
+done
+[ "$FAILS" = "$before" ] && echo "PASS the stages skip exactly what bureau-doctor.py reports as a .env error, directories and a link loop included ($(printf '%s\n' $stage_skipped | grep -c .) entries)"
 
 if [ "$FAILS" != 0 ]; then echo "$FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_worktree_links_env"
