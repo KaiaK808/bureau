@@ -2425,7 +2425,7 @@ reset_worktree() {
   wt=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt")
   BUREAU_RESET_REFUSAL_WORKTREE="$wt"
   # A check that a signal ended is no refusal: it leaves no trace on the ticket.
-  python3 "$BUREAU_RUNTIME" --repo "$REPO_DIR" assert-owner --issue "${BUREAU_CURRENT_ISSUE:?missing issue claim}" --workspace "$wt" --run "$BUREAU_RUN_ID" \
+  python3 -I "$BUREAU_RUNTIME" --repo "$REPO_DIR" assert-owner --issue "${BUREAU_CURRENT_ISSUE:?missing issue claim}" --workspace "$wt" --run "$BUREAU_RUN_ID" \
     || { [ "$?" -gt 128 ] || BUREAU_RESET_REFUSAL=not-owner; return 21; }
   common=$(git -C "$REPO_DIR" rev-parse --git-common-dir)
   case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
@@ -2832,7 +2832,7 @@ restore_worktree_deps() {
 #   - it is not a .env file: no component starts with `.env` (any case), of the
 #     entry or of its resolved path in the main checkout (the doctor's
 #     env_path), and, for a directory, no name anywhere below it does — a search
-#     that fails refuses the link;
+#     that fails refuses the link (the doctor's env_inside runs the same search);
 #   - the branch tracks nothing at that path (a tracked path is the PR's own);
 #   - its parent directory exists in the worktree and resolves inside it (a
 #     tracked symlink as parent would put the link outside the worktree);
@@ -2923,8 +2923,11 @@ print(next((c for c in rel.split(os.sep) if c not in ("", ".", "..") and c.lower
   fi
   # Nor a directory that holds one anywhere below it: a .env* name (any case),
   # links followed; the search stops at the first hit. A search that fails (an
-  # unreadable subdirectory, a link loop) refuses the link: what it did not see
-  # can hold a .env.
+  # unreadable subdirectory; with GNU find also a link loop, which the BSD find
+  # of macOS skips) refuses the link: what it did not see can hold a .env. The
+  # search matches names: a link under another name that points at a .env file
+  # is not found. env_inside in bureau-doctor.py runs the same find and
+  # reports both cases as errors.
   if [ -d "$main/$p" ]; then
     if ! envfile=$(find -L "$main/$p" -mindepth 1 -iname '.env*' -print -quit 2>/dev/null); then
       echo "  WARNING: worktree link '$p' skipped: the directory could not be searched completely for .env files."; return 0
