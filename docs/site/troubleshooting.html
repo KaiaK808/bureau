@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2f4f47f9888bd96d0745e6eedad86e3e20f57891d5cff23c9dffb7ee225b0683">
+<meta name="bureau-source-sha256" content="65fc870f16cf7eda5325b7018780d9a56df8730fb5469faf8949d03f06ccaa5d">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -477,6 +477,146 @@ where the actual error will be.</li>
 <hr />
 <h2 id="driver-failures-shepherd--orchestrate--upstream-port">Driver
 failures (shepherd / orchestrate / upstream-port)</h2>
+<h3 id="how-to-stop-a-run">How to stop a run</h3>
+<p>A shepherd run, and a stage a queue worker started, is a chain of
+processes: the runtime in front (<code>bureau-runtime.py … exec</code>,
+which <code>shepherd.sh</code> and <code>bureau-worker.sh</code> turn
+into as they start), the shepherd, the worker, the stage, the provider
+adapter and the agent. Each wrapper starts the next one in a session and
+process group of its own, forwards a stop to it and waits a grace period
+before it kills that group, each one step longer than the wrapper inside
+it (<code>BUREAU_STOP_GRACE_SECONDS</code>, 20, 15, 10 and 5 s by
+default). A stop that reaches the runtime in front therefore reaches
+every process of the run. These ways do that:</p>
+<ul>
+<li><strong>Ctrl-C</strong> in the run's terminal or tmux pane.</li>
+<li><strong>Close the terminal, the ssh connection, the tmux window or
+the tmux session</strong>, for example
+<code>tmux kill-session -t bureau-shepherd-&lt;repo&gt;</code> or the
+session <code>start-bureau-v2.sh</code> opened. Since v3.2 a hang-up
+(SIGHUP) stops the run like SIGTERM. The runtime in front forwards it as
+SIGTERM, so a stage or an agent that ignores SIGHUP stops too, and the
+shepherd, the worker, the provider adapter and the queue supervisor end
+on a SIGHUP of their own as on SIGTERM. Until v3.1 a hang-up ended only
+the runtime in front: the shepherd, the worker and the stage ran on
+without a terminal and kept the claim until someone stopped their
+process groups by hand. Detaching from tmux (<code>Ctrl-b d</code>), or
+closing a terminal window that only shows an attached tmux client, hangs
+up nothing: the tmux server keeps the pane, and the run goes on.</li>
+<li><strong><code>kill -TERM &lt;pid&gt;</code></strong> from another
+terminal, where <code>&lt;pid&gt;</code> is the runtime in front:
+<code>python3 scripts/bureau-runtime.py status</code> lists the run's
+leases, and their <code>pid</code> is that process. It works wherever
+the run was started. <code>kill -TERM -- -&lt;pid&gt;</code>, the
+runtime's whole process group, does the same only while the runtime
+leads its own group, which <code>ps -o pid=,pgid= -p &lt;pid&gt;</code>
+shows as two equal numbers. That holds for a shepherd that opened its
+own tmux window (started without <code>--no-tmux</code>) and for a
+command typed at an interactive shell prompt, in a terminal or a tmux
+pane, since the shell's job control gives each command a group of its
+own. It does not hold when a script, cron or another program started the
+shepherd as its child, nor for the runtime of a queue stage, which runs
+in the queue supervisor's group: there <code>kill</code> answers "No
+such process" and nothing stops.</li>
+<li><strong>A queue</strong>: Ctrl-C in its pane, closing the pane, its
+window or its session, or
+<code>kill -TERM -- -&lt;supervisor pid&gt;</code>, the supervisor's
+whole process group (it leads one when it was typed into the pane's
+shell, as <code>start-bureau-v2.sh</code> does). The signal reaches the
+supervisor, the queue loop and the runtime in front of the stage in
+flight, and that runtime stops the stage as above.</li>
+</ul>
+<p>Each of them ends the run with exit 130, a cancelled run, and nothing
+of it is left running once the grace periods are over. The shepherd
+writes nothing to Linear but the release of
+<code>shepherd-focused</code> (one attempt; when Linear fails right
+then, remove the label by hand). The work stays for the resume: the
+runtime keeps the run's leases and marks them interrupted, the worktree
+keeps every file and commit the stage made and loses its
+disposable-worker registration so that no later reset erases it, and an
+implement stage that held back its pushes
+(<code>push_each_iteration: false</code>) tries to push them on its way
+out when the signal stops it, since v3.2 also when its terminal is gone.
+When a queue's log pipe goes first (its <code>tee</code> ends with the
+pane, for example on Ctrl-C or when the pane closes) and the stage
+writes to it before the signal reaches the stage, the write ends the
+stage at once and nothing is pushed: the commits stay in the preserved
+worktree, and step 2 of the resume pushes them. The resume steps are
+printed once on stderr. After a closed terminal they are gone with it;
+<code>python3 scripts/bureau-runtime.py status</code> then shows the
+run's leases with <code>"interrupted": true</code>, and the steps are
+the ones below, in <a
+href="#shepherdsh-bailed-mid-run--how-to-resume"><code>shepherd.sh</code>
+bailed mid-run — how to resume</a>.</p>
+<p>These do not stop a run cleanly:</p>
+<ul>
+<li><p><strong>SIGTERM or SIGHUP to an inner process or process group
+only.</strong> The runtime in front gets no signal. Since v3.2 it counts
+a 130 from its child as a stop all the same (it keeps the leases
+interrupted and prints the steps), but the run does not end the way a
+clean stop ends it. It ends in one of these four ways, depending on
+which process got the signal:</p>
+<ul>
+<li><strong>The shepherd's own group</strong> (the one under the runtime
+in front; the worker's runtime runs in it as well). The shepherd
+releases the claim and ends with 130, and the stage stops through the
+worker's runtime. The shepherd can end first, before a stage with a slow
+way out has stopped (implement's deferred push, a build that cleans up),
+and the runtime in front ends with it: the steps are printed while the
+stage is still stopping. Run
+<code>python3 scripts/bureau-runtime.py release RUN_ID</code> until it
+no longer answers "Background process group still alive", then follow
+the other steps; <code>status</code> cannot tell, since it lists the
+run's leases and their <code>pid</code> and says nothing about whether
+those processes still run. Until v3.1 whether the leases were kept
+depended on that order: kept when the stage had stopped before the
+shepherd ended, released while the stage still ran when the shepherd
+ended first, or when no stage ran (the shepherd stopped during a Linear
+read or its own wait), and no steps were printed then.</li>
+<li><strong>The worker's group</strong> (or the stage's runtime in it).
+The stage stops and the worker ends with 130, but the shepherd got no
+signal: it takes the 130 for a stage that halted, sends a Telegram alert
+<code>shepherd halt (cancelled-run)</code>, releases the claim and ends
+with 130. The leases are kept interrupted and the steps are printed, as
+after a clean stop. Nothing else is wrong; ignore the alert and follow
+the steps.</li>
+<li><strong>The stage's own process group.</strong> The stage dies of
+the signal, and its runtime, which got none, ends with 256 minus the
+signal's number (241 for SIGTERM, 254 for Ctrl-C's SIGINT). The worker
+and the shepherd take that code for a failed stage: the shepherd halts
+with a Telegram alert <code>shepherd halt (error-241)</code> (or the
+code it got), and the runtime in front releases the leases, as after any
+halt. When the stage left changes or commits, the worker keeps the
+worktree as unfinished work.</li>
+<li><strong>On bash 3.2 (macOS), the shepherd's subshell.</strong> The
+shepherd runs the worker in a subshell (<code>shepherd.sh</code>, the
+call to <code>bureau-worker.sh</code>), a process of its own with the
+same command line as the shepherd. A SIGTERM to that process alone ends
+it, the shepherd takes its 143 for a failed stage, halts with an alert
+and ends with 143, and the runtime in front releases the leases while
+the stage still runs under the worker.</li>
+</ul>
+<p>Always send the stop to the lease <code>pid</code>, the runtime in
+front.</p></li>
+<li><p><strong>SIGTERM or SIGHUP to the queue supervisor's process
+alone</strong> (<code>kill -TERM &lt;supervisor pid&gt;</code>). The
+supervisor sends SIGTERM to the queue loop's process only and exits; the
+loop ends, but the runtime in front of the stage in flight gets nothing,
+and the stage runs to its end without a queue around it (as in v3.1).
+Stop the whole group instead, as above, or the stage's runtime with
+<code>kill -TERM &lt;pid&gt;</code>.</p></li>
+<li><p><strong><code>kill -9</code> (SIGKILL) of the runtime in
+front.</strong> It cannot be forwarded: the rest of the run goes on
+without it, as after a hang-up before v3.2, and its leases are not
+marked interrupted.</p></li>
+<li><p><strong><code>python3 scripts/bureau-runtime.py pause</code>.</strong>
+It stops dispatch: the queue starts no new stage, and a stage in flight
+runs to its end. Pause first, then stop the queue sessions, so that no
+new stage starts while you close them.</p></li>
+</ul>
+<p>A run started under <code>nohup</code> ignores the hang-up on purpose
+and outlives its terminal, as before v3.2; stop it with
+<code>kill -TERM &lt;pid&gt;</code> as above.</p>
 <h3
 id="shepherdsh-bailed-mid-run--how-to-resume"><code>shepherd.sh</code>
 bailed mid-run — how to resume</h3>
@@ -489,7 +629,8 @@ ownership first. Use a dry-run to inspect routing only. Exit 20 is the
 requested review stop, 25 is pause/human attention, and 26 is a
 cancelled ticket; none is Done.</p>
 <p><strong>After an interrupted run (exit 130).</strong> A run stopped
-by Ctrl-C or SIGTERM keeps its leases and its worktree, and the worktree
+by Ctrl-C, SIGTERM or a hang-up (see <a href="#how-to-stop-a-run">How to
+stop a run</a>) keeps its leases and its worktree, and the worktree
 loses its disposable-worker registration, so that no later reset erases
 the work. Releasing the run is therefore not enough: a rerun on the same
 worktree stops with 21 ("refusing to reset unregistered worktree"), and
@@ -498,12 +639,15 @@ repository. The interrupt message names the run, the ticket and the
 worktree, and prints the steps once, with the actual run ID, paths and
 branch:</p>
 <ol type="1">
-<li>Check that no process of the run is left
-(<code>python3 scripts/bureau-runtime.py status</code>), then release
-its ownership:
-<code>python3 scripts/bureau-runtime.py release RUN_ID</code>.
-<code>release</code> refuses while a process of the run is still
-alive.</li>
+<li>Release the run's ownership:
+<code>python3 scripts/bureau-runtime.py release RUN_ID</code>. While a
+process of the run is still alive, <code>release</code> refuses with
+"Background process group still alive; stop it before releasing": run it
+again until it no longer gives that answer.
+<code>python3 scripts/bureau-runtime.py status</code> cannot tell: it
+lists the run's leases and their <code>pid</code> and says nothing about
+whether those processes still run. (The printed step still says to check
+<code>status</code> first.)</li>
 <li>Save anything you want from the worktree, then drop it:
 <code>git worktree remove --force WORKTREE</code>. The message says what
 to do with its branch. A branch that was never pushed and has no commits
@@ -901,6 +1045,30 @@ only the build check failed.</li>
 <p>A BLOCK labels <code>needs-human</code> and ends the stage with 25;
 the escalation log names the rule that caused it, or the merger's own
 BLOCK. Remove the label once the cause is dealt with.</p>
+<p>To send the ticket back for the fixes, remove the label and restart
+it with
+<code>scripts/shepherd.sh --from-stage build &lt;ISSUE&gt;</code>. Since
+v3.2 implement reads the newest comment that carries findings for it,
+whichever stage or person wrote it: a Changes Requested review, a BLOCK
+(<code>🚫 Code review **BLOCKED** — needs human review.</code>), QA RED
+(<code>🔄 QA: tests failing — routing back to Build.</code>), QA
+NEEDS_HUMAN (<code>🚫 QA flagged for human review.</code>), a
+<code>VERDICT: REQUEST_CHANGES</code> or <code>VERDICT: BLOCK</code>
+line from the app runtime, or a <code>FIXES_NEEDED</code> comment; the
+three headings count only at the start of a comment, and comments a v3.1
+stage posted count too. So a <code>FIXES_NEEDED</code> comment written
+after the BLOCK (your own list, for example one without a finding you
+overrule) takes precedence; before v3.2 the BLOCK, QA RED, QA
+NEEDS_HUMAN and app-runtime <code>VERDICT: BLOCK</code> comments were
+not read at all, and the build stage ran without their findings unless
+someone had written such a comment. Only another finding replaces one:
+an approval, a passed QA or a halt comment does not, so a build pass
+that follows one of them (a restart from build, or a stage that moves
+the ticket to Build without a finding, such as review or QA after a
+merge conflict with the base or a missing branch marker or PR) is still
+told to address the older finding; to run a build pass from another
+list, or with nothing to fix, first write a <code>FIXES_NEEDED</code>
+comment that says so.</p>
 <h3 id="review-comment-says-build-not-checked">Review comment says
 <code>**Build**: not checked</code></h3>
 <p>The review build check found nothing to run: no
@@ -935,6 +1103,15 @@ issue, flaky test, missing service).</p>
 <p>Typically: pull the branch locally, run the tests yourself, and
 either fix the code or mark the test as skip/ignore with a
 rationale.</p>
+<p>To have the implement stage fix a bug QA found, remove the label and
+restart with
+<code>scripts/shepherd.sh --from-stage build &lt;ISSUE&gt;</code>: since
+v3.2 the implement prompt carries QA's summary from the NEEDS_HUMAN
+comment, as it does on every QA RED, which sends the ticket back to
+Build by itself. A newer finding takes its place (a review's Changes
+Requested or BLOCK, another QA RED or NEEDS_HUMAN, a
+<code>FIXES_NEEDED</code> comment); an approval or a passed QA does not
+(see "Why a review ended BLOCKED").</p>
 <h3 id="codex-stage-runner-failed-spuriously">Codex-stage-runner failed
 spuriously</h3>
 <p>Current pipelines use <code>bureau-provider.py</code>; the old

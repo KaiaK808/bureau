@@ -33,20 +33,42 @@ TOTAL_TIMEOUT="${BUREAU_IMPL_TOTAL_TIMEOUT:-5400}"
 
 # The provider adapter enforces per-pass timeouts on both macOS and Linux.
 
-# refresh_review_context: pull the latest "Code Review … Changes Requested"
-# comment for $1 and emit the prompt block the implement loop interpolates.
+# refresh_review_context: pull the newest comment for $1 that asks implement
+# for fixes and emit the prompt block the implement loop interpolates. Such a
+# comment is any of:
+#   - a code review's "Code Review: **Changes Requested**" (code-review-pipeline.sh)
+#   - a build review BLOCK, "🚫 Code review **BLOCKED** — needs human review."
+#   - QA RED, "🔄 QA: tests failing — routing back to Build." (qa-pipeline.sh)
+#   - QA NEEDS_HUMAN, "🚫 QA flagged for human review." (qa-pipeline.sh)
+#   - the app runtime's review, a `VERDICT: REQUEST_CHANGES` or `VERDICT: BLOCK`
+#     line (finish in bureau-runtime.py)
+#   - a person's FIXES_NEEDED note
+# The three headings with an emoji are matched at the start of the comment,
+# byte for byte as every release since v3.0.0 posts them, so comments already
+# on tickets count after an upgrade; a comment that only quotes one further
+# down is not one. Before v3.2 only Changes Requested, FIXES_NEEDED and
+# `VERDICT: REQUEST_CHANGES` counted: a QA RED rework, and a restart from build
+# after a BLOCK or a QA NEEDS_HUMAN, ran without the findings. Comments come
+# newest first (get_issue_branch_and_comments) and the first match wins,
+# whichever stage or person wrote it. The block's label names no stage; the
+# comment's own heading says where it comes from.
 # Returns empty if there's nothing relevant. Called once per iteration so a
 # human comment posted mid-run is seen by the next pass.
 refresh_review_context() {
   local issue="$1"
-  local blob feedback
+  local blob feedback pattern
   # No fallback to '{}': a failed read would drop the reviewer's requested
   # fixes from the prompt without a word. The caller's `$(…)` ends the stage.
   blob=$(get_issue_branch_and_comments "$issue") || return $?
+  pattern='Code Review.*Changes Requested|FIXES_NEEDED'
+  pattern+='|\A🚫 Code review \*\*BLOCKED\*\* — needs human review\.'
+  pattern+='|\A🔄 QA: tests failing — routing back to Build\.'
+  pattern+='|\A🚫 QA flagged for human review\.'
+  pattern+='|(?m)^VERDICT: (REQUEST_CHANGES|BLOCK)[[:space:]]*$'
   feedback=$(printf '%s' "$blob" \
-    | jq -r '[.comments[] | select(.body | test("Code Review.*Changes Requested|FIXES_NEEDED|(?m)^VERDICT: REQUEST_CHANGES[[:space:]]*$"))][0].body // empty' 2>/dev/null || echo "")
+    | jq -r --arg re "$pattern" '[.comments[] | select(.body | test($re))][0].body // empty' 2>/dev/null || echo "")
   if [ -n "$feedback" ] && [ "${#feedback}" -gt 20 ]; then
-    printf '\n--- Code Review Feedback (PRIORITY) ---\n%s\nAddress ALL fixes before remaining tasks.\n--- End feedback ---\n' "$feedback"
+    printf '\n--- Feedback to address (PRIORITY) ---\n%s\nAddress ALL fixes before remaining tasks.\n--- End feedback ---\n' "$feedback"
   fi
 }
 
@@ -674,7 +696,11 @@ push_iteration() {
 push_deferred() {
   [ "$DEFERRED_PUSH_PENDING" = 1 ] || return 0
   DEFERRED_PUSH_PENDING=0
-  echo "  pushing the deferred commits of $BRANCH ($1)" >&2
+  # After a hang-up stderr is a terminal that is gone, or a pipe whose reader is
+  # gone (the queue loop's tee): the write fails, and under set -e, or by SIGPIPE
+  # in bash 3.2 even without it, it ended the EXIT trap before the push it
+  # announces. Written from a subshell, as in shepherd.sh, it cannot.
+  ( echo "  pushing the deferred commits of $BRANCH ($1)" >&2 ) || true
   push_branch_loud "$1" "" "${2:-HEAD}"
 }
 # Every way out before the end-of-run push goes through this EXIT trap while
