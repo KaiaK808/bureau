@@ -60,7 +60,7 @@ refresh_review_context() {
 # say so loudly, and carry on — or, with `status`, return git's exit code so
 # the caller can decide. Only the end-of-run push uses it: after it the ticket
 # is handed on, and a hand-off of work that is not on origin must not happen.
-# rev (default HEAD) is what gets pushed; push_deferred passes the commit a
+# rev (default HEAD) is what gets pushed; push_if_ahead passes the commit a
 # hook started from when the hook moved HEAD.
 #
 # Carried over from installation A (EXP-1462). Every push here used to end
@@ -104,30 +104,35 @@ push_branch_loud() {
   return 0
 }
 
-# push_confirmed <label> <count>: one line once a push of HEAD went through —
+# push_confirmed <label> <count> [rev]: one line once a push went through —
 # the branch, how many commits origin lacked before it (an empty count: the
-# comparison could not be read) and the head it pushed. push_branch_loud speaks
-# only on failure, so a log used to announce a push and never confirm it. The
-# write cannot end the stage (a terminal that went away).
+# comparison could not be read) and the head it pushed (rev, HEAD by default).
+# push_branch_loud speaks only on failure, so a log used to announce a push and
+# never confirm it. The write cannot end the stage (a terminal that went away).
 push_confirmed() {
   [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
   local count="$2" head
-  head=$(git rev-parse --short HEAD 2>/dev/null) || head="unreadable"
+  head=$(git rev-parse --short "${3:-HEAD}" 2>/dev/null) || head="unreadable"
   if [ -n "$count" ]; then count="$count commit(s) origin lacked"
   else count="origin/$BRANCH could not be compared before the push"; fi
   ( echo "  pushed $BRANCH ($1): $count, head $head" ) || true
 }
 
-# push_if_ahead <why>: the push before the stage ends without reaching its
-# end-of-run push because a provider pass failed — any exit but 0 and 124 — or
-# timed out with no pass left (end_timed_out). It pushes HEAD whenever
-# origin/$BRANCH lacks commits of it, whatever
+# push_if_ahead <why> [rev]: the push on every way out that does not reach the
+# end-of-run push: a provider pass that failed — any exit but 0 and 124 — or
+# timed out with no pass left (end_timed_out), the EXIT trap (_push_on_exit:
+# a signal, a crash, an unusable Linear, a failed /goal run), and the commit a
+# post-implement hook started from when the hook moved HEAD. It pushes rev
+# (HEAD by default) whenever origin/$BRANCH lacks commits of it, whatever
 # agents.implement.push_each_iteration says and whether or not a pass has
 # completed yet: push_iteration runs only after a pass that returned, so the
 # commits of a first pass that died used to stay in the worktree. An unreadable
 # comparison counts as ahead, as for the end-of-run push. Best effort and loud
-# on failure like every push here; the caller keeps its exit code. It carries
-# whatever push_iteration held back, so push_deferred has nothing left to do.
+# on failure like every push here; the caller keeps its exit code. It disarms
+# the EXIT trap first (EXIT_PUSH_ARMED), so nothing is pushed twice. Its writes
+# to stderr come from a subshell: after a hang-up stderr is a terminal or a
+# pipe that is gone, and a failed write (under set -e, or by SIGPIPE in bash
+# 3.2 even without it) would end the stage before the push it announces.
 #
 # The bound on an interrupt: the push runs in the stage's own process group —
 # nothing here starts a session or group of its own — which is the group
@@ -135,13 +140,13 @@ push_confirmed() {
 # grace ends (stop_grace). A push in flight ends with the rest of the stage,
 # and one that hangs on a remote cannot hold a stop past that grace.
 push_if_ahead() {
-  local why="$1" ahead
-  DEFERRED_PUSH_PENDING=0
-  ahead=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null) || ahead=""
+  local why="$1" rev="${2:-HEAD}" ahead
+  EXIT_PUSH_ARMED=0
+  ahead=$(git rev-list --count "origin/$BRANCH..$rev" 2>/dev/null) || ahead=""
   [ "$ahead" != 0 ] || return 0
   ( echo "  pushing ${ahead:-the} commit(s) of $BRANCH that origin lacks before the stage ends ($why)" >&2 ) || true
-  if push_branch_loud "$why" status; then
-    push_confirmed "$why" "$ahead"
+  if push_branch_loud "$why" status "$rev"; then
+    push_confirmed "$why" "$ahead" "$rev"
   else
     ( echo "  ✗✗ the work is only in this worktree until a later push succeeds" >&2 ) || true
   fi
@@ -705,47 +710,40 @@ if [ "$PUSH_EACH_ITERATION" = false ]; then
   fi
 fi
 
-# push_iteration <label>: the push after an iteration or after the /goal run.
-DEFERRED_PUSH_PENDING=0
+# push_iteration <label>: the push after an iteration or after the /goal run,
+# held back while a PR was open at the start and the key is false: the
+# end-of-run push carries it, or on an earlier way out push_if_ahead.
 HEAD_BEFORE_HOOK=""
 push_iteration() {
   if [ -n "$OPEN_PR_AT_START" ]; then
-    DEFERRED_PUSH_PENDING=1
     echo "  push deferred ($1): PR #$OPEN_PR_AT_START is open, the end-of-run push carries the work"
   else
     push_branch_loud "$1"
   fi
 }
 
-# push_deferred <label> [rev]: push what push_iteration held back (rev, HEAD by
-# default), once, loud and best effort, on a way out that does not reach the
-# end-of-run push. Nothing held back, nothing to do; it never fails.
-push_deferred() {
-  [ "$DEFERRED_PUSH_PENDING" = 1 ] || return 0
-  DEFERRED_PUSH_PENDING=0
-  # After a hang-up stderr is a terminal that is gone, or a pipe whose reader is
-  # gone (the queue loop's tee): the write fails, and under set -e, or by SIGPIPE
-  # in bash 3.2 even without it, it ended the EXIT trap before the push it
-  # announces. Written from a subshell, as in shepherd.sh, it cannot.
-  ( echo "  pushing the deferred commits of $BRANCH ($1)" >&2 ) || true
-  push_branch_loud "$1" "" "${2:-HEAD}"
-}
-# Every way out before the end-of-run push goes through this EXIT trap while
-# pushes are deferred: a provider that fails or times out, an unusable Linear,
-# a crash under set -e, SIGTERM or SIGHUP (bash runs the EXIT trap for those;
-# `$?` in it is then not the signal's code, so the pending flag decides). The
-# exit code stays what it was. Without it the held-back iterations would be
-# only in the worktree: the worker keeps that worktree, but the next run on
+# Every way out before the end-of-run push goes through this EXIT trap, with
+# either value of push_each_iteration (since v3.2; before, only while pushes
+# were deferred, and only what a pass that returned had held back): an
+# unusable Linear, a crash under set -e, a failed /goal run, SIGTERM, SIGINT
+# or SIGHUP (bash runs the EXIT trap for those). It pushes whatever origin
+# lacks (push_if_ahead): what a pass held back, and the commits of a pass that
+# was still running, the first one included; the exit code stays what it was.
+# A provider failure and a timeout with no pass left push before they exit, and
+# from the end-of-run push on that push owns it: both disarm the trap
+# (EXIT_PUSH_ARMED=0), so nothing is pushed twice. Without it the commits would
+# be only in the worktree: the worker keeps that worktree, but the next run on
 # the branch stops at it, and a run outside the worker checks the branch out
-# again from origin. Once repo.post_implement_command is about to run, the
-# trap pushes the commit the hook starts from, never HEAD: a stage ended
-# during or after the hook must not publish what the hook did to HEAD.
-_push_deferred_on_exit() {
-  push_deferred "the stage ends before its end-of-run push" "${HEAD_BEFORE_HOOK:-HEAD}"
+# again from origin. Once repo.post_implement_command is about to run, the trap
+# pushes the commit the hook starts from, never HEAD: a stage ended during or
+# after the hook must not publish what the hook did to HEAD. On a stop the push
+# runs in the stage's process group, bounded by the runtime's stop grace.
+EXIT_PUSH_ARMED=1
+_push_on_exit() {
+  [ "$EXIT_PUSH_ARMED" = 1 ] || return 0
+  push_if_ahead "the stage ends before its end-of-run push" "${HEAD_BEFORE_HOOK:-HEAD}"
 }
-if [ -n "$OPEN_PR_AT_START" ]; then
-  trap _push_deferred_on_exit EXIT
-fi
+trap _push_on_exit EXIT
 
 # EXP-token-efficiency — /goal-driven path. Closes the EXP-573 / EXP-571 /
 # EXP-624 / EXP-627 stuck-detector lineage: instead of bash counting commits
@@ -873,7 +871,7 @@ checked_task_count() {
 # (push_if_ahead: the deferred ones, or one whose push after its pass failed),
 # then the stage ends with 124 (timeout), as before v3.2.
 end_timed_out() {
-  echo "Provider pass failed with exit 124 (iter $1 timed out) and no pass is left: $2. Preserved any changes. See provider evidence." >&2
+  ( echo "Provider pass failed with exit 124 (iter $1 timed out) and no pass is left: $2. Preserved any changes. See provider evidence." >&2 ) || true
   push_if_ahead "provider exit 124"
   exit 124
 }
@@ -907,7 +905,9 @@ for (( i=1; i<=MAX_ITER; i++ )); do
 
   # The pass after one that timed out is told so first: it checks the task
   # list and the branch before it does anything, and reports COMPLETE when
-  # nothing is left, instead of starting over or waiting for CI again. Only a
+  # nothing is left, instead of starting over or waiting for CI again. In a
+  # rework every task is already [X]; "nothing is left" then also needs the
+  # review feedback above the note addressed. Only a
   # Claude pass commits itself; after a Codex pass the shell has committed
   # (commit_codex_changes), and Codex is told not to touch Git. A git lock the
   # stopped pass left need not be stale: the adapter ends the pass's process
@@ -922,7 +922,7 @@ for (( i=1; i<=MAX_ITER; i++ )); do
     fi
     TIMEOUT_NOTE="
 --- The previous pass timed out ---
-Pass $((i - 1)) of this stage was stopped at its time limit of ${TIMED_OUT_AFTER}s before it reported a status. Its commits are kept. $TIMEOUT_GIT Before any new work, read $TASKS_FILE and the branch state (git status, git log --oneline origin/main..HEAD). If every task is marked [X] and its work is in the commits on the branch, report status COMPLETE right away and stop: do not redo the work, and do not wait for, poll or re-trigger CI. Otherwise go on with the open tasks.
+Pass $((i - 1)) of this stage was stopped at its time limit of ${TIMED_OUT_AFTER}s before it reported a status. Its commits are kept. $TIMEOUT_GIT Before any new work, read $TASKS_FILE and the branch state (git status, git log --oneline origin/main..HEAD). If every task is marked [X], its work is in the commits on the branch and any feedback above is addressed, report status COMPLETE right away and stop: do not redo the work, and do not wait for, poll or re-trigger CI. Otherwise go on with the open tasks and the feedback that is not yet addressed.
 --- End of note ---
 "
   fi
@@ -932,7 +932,7 @@ Pass $((i - 1)) of this stage was stopped at its time limit of ${TIMED_OUT_AFTER
   # routes the ticket anywhere — a hard crash bails via `set -e` at the outer
   # scope, queue-loop sees non-zero, alert fires, issue stays in Build, next
   # tick re-picks. The retry loop preserves that. The only EXIT trap
-  # (_push_deferred_on_exit, set only while pushes are deferred) pushes and
+  # (_push_on_exit) pushes what origin lacks and
   # changes nothing else.
   PROMPT="Implement tasks from $TASKS_FILE for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
 
@@ -988,14 +988,16 @@ At the end of your work, emit a single fenced json block so the shell can summar
   commit_codex_changes implement "$ISSUE"
   # 124 (the pass hit its time limit) goes on below like any pass; every other
   # non-zero exit ends the stage with its code, after pushing every commit
-  # origin lacks — this pass's own included (push_if_ahead).
+  # origin lacks — this pass's own included (push_if_ahead). The lines on
+  # stderr come from a subshell, so a stderr that is gone cannot end the stage
+  # before that push (push_if_ahead says why).
   if [ "$CLAUDE_EXIT" != 0 ] && [ "$CLAUDE_EXIT" != 124 ]; then
-    echo "Provider pass failed with exit $CLAUDE_EXIT; preserved any changes. See provider evidence." >&2
+    ( echo "Provider pass failed with exit $CLAUDE_EXIT; preserved any changes. See provider evidence." >&2 ) || true
     push_if_ahead "provider exit $CLAUDE_EXIT"
     exit "$CLAUDE_EXIT"
   fi
   if [ "$CLAUDE_EXIT" = 124 ]; then
-    echo "  iter $i timed out after ${THIS_TIMEOUT}s (exit 124); it counts as a pass like any other. See provider evidence." >&2
+    ( echo "  iter $i timed out after ${THIS_TIMEOUT}s (exit 124); it counts as a pass like any other. See provider evidence." >&2 ) || true
   fi
 
   # EXP-671 — record this iteration's token usage + est. $ (no-op unless cost
@@ -1177,14 +1179,15 @@ echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 AHEAD_READ=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null) || AHEAD_READ=""
 AHEAD_OF_ORIGIN=${AHEAD_READ:-1}
 # A hook that moved HEAD off the commit it started from gets no push below.
-# With deferred pushes origin then lacks the run's own commits: push the commit
-# the hook started from, which is what the per-iteration pushes would have put
-# there. From here on the end-of-run push owns the push, and the EXIT trap has
-# nothing left to do.
+# When origin then lacks the run's own commits (pushes deferred, or a
+# per-iteration push that failed), push the commit the hook started from, which
+# is what the per-iteration pushes would have put there (push_if_ahead, which
+# confirms it). From here on the end-of-run push owns the push, and the EXIT
+# trap has nothing left to do.
 if [ "$POST_IMPLEMENT_HEAD_REWRITTEN" = 1 ]; then
-  push_deferred "the run's commits, without the hook's rewrite" "$HEAD_BEFORE_HOOK"
+  push_if_ahead "the run's commits, without the hook's rewrite" "$HEAD_BEFORE_HOOK"
 fi
-DEFERRED_PUSH_PENDING=0
+EXIT_PUSH_ARMED=0
 # A failed push here is retried once after a short wait. If it still fails,
 # the branch is fetched from origin (a rejected push does not update
 # origin/$BRANCH, and someone may have rewritten it) and HEAD is compared with

@@ -280,7 +280,7 @@ Reviewed PRs accumulate when nothing closes the loop: mergeable-and-approved PRs
 
 ### Bounded retry loop in implement-pipeline.sh
 
-`implement-pipeline.sh` runs the selected provider inside a `for (( i=1; i<=MAX_ITER; i++ ))` loop instead of a single call. Each iteration: invoke `$CLAUDE`, parse the strict JSON status block via `parse_claude_json`, run the squash-range check (a CI suppressor in a commit message, or a range that cannot be read, stops the loop as `CI_MARKER`), push whatever was committed (deferred to the end-of-run push while a PR is open when `agents.implement.push_each_iteration` is `false`), decide whether to continue. A pass whose provider call fails, or a timed-out one when no pass is left, ends the stage after pushing every commit origin lacks, in both push modes (`push_if_ahead`). The pipeline previously emitted that JSON contract but never read it back — every exit-0 run shipped to Build Review even on `status: PARTIAL`, leaking half-done work into review.
+`implement-pipeline.sh` runs the selected provider inside a `for (( i=1; i<=MAX_ITER; i++ ))` loop instead of a single call. Each iteration: invoke `$CLAUDE`, parse the strict JSON status block via `parse_claude_json`, run the squash-range check (a CI suppressor in a commit message, or a range that cannot be read, stops the loop as `CI_MARKER`), push whatever was committed (deferred to the end-of-run push while a PR is open when `agents.implement.push_each_iteration` is `false`), decide whether to continue. A pass whose provider call fails, or a timed-out one when no pass is left, ends the stage after pushing every commit origin lacks, in both push modes (`push_if_ahead`); every other way out before the end-of-run push (a signal, a crash, a failed `/goal` run) does the same from the EXIT trap. The pipeline previously emitted that JSON contract but never read it back — every exit-0 run shipped to Build Review even on `status: PARTIAL`, leaking half-done work into review.
 
 Knobs (env-tunable, all have safe defaults):
 
@@ -297,7 +297,7 @@ Loop invariants:
 - **Preserve every iteration.** The executor commits Codex changes and publishes progress when permitted. A failed worker with dirty or unpublished work loses its disposable registration; inspect/resume it before another reset.
 - **Single-strike stuck detector.** `tasks_done == 0 AND fixed_review_items == [] AND COMMITS_THIS_ITER == 0` ⇒ park the issue. Commit count is the load-bearing signal — it catches the "spent the iter debugging without marking [X]" case the tasks.md hash alone would miss.
 - **Re-fetch review feedback per iteration.** Humans may add `Code Review … Changes Requested` comments mid-run.
-- **No `trap ... EXIT`.** A hard crash bails via `set -e` and queue-loop sees the non-zero exit. Adding an EXIT trap would route the issue away from Build on crash — the opposite of what's wanted.
+- **No routing `trap ... EXIT`.** A hard crash bails via `set -e` and queue-loop sees the non-zero exit; a trap that routed the issue away from Build on crash would be the opposite of what's wanted. The only EXIT trap (`_push_on_exit`, both push modes since v3.2) pushes whatever origin lacks, keeps the exit code and touches nothing in Linear.
 
 Terminal status routing:
 

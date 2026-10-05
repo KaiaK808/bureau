@@ -20,6 +20,9 @@
 #      is held back like any other and goes out with the end-of-run push
 #   7  a Codex implementation: the note does not ask the agent to commit or to touch a git
 #      lock (the shell commits after a Codex pass); case 1 checks the Claude wording
+#   8  a rework: every task is [X] before the run and review feedback asks for fixes; pass 1
+#      times out: pass 2's prompt carries the feedback above the note, and the note asks for
+#      COMPLETE only once that feedback is addressed too
 set -euo pipefail
 source "$(dirname "$0")/lib/harness.sh"
 source "$(dirname "$0")/lib/pr3-doubles.sh"
@@ -49,7 +52,7 @@ setup() {
   export BUREAU_DRY_RUN=0 BUREAU_IMPL_MAX_ITER=3
   unset FAKE_CLAUDE_COMMIT_ON_ITERS FAKE_CLAUDE_CHECK_TASKS_ON_ITERS FAKE_CLAUDE_TIMEOUT_ON_ITERS \
     FAKE_CLAUDE_TIMEOUT_SLEEP BUREAU_IMPL_TOTAL_TIMEOUT BUREAU_IMPL_ITER_TIMEOUT GH_STUB_EXISTING_PR \
-    PR3_EXIT_ON PR3_EXIT_CODE PR3_ON_CALL_1 BUREAU_USE_GOAL_LOOP
+    PR3_EXIT_ON PR3_EXIT_CODE PR3_ON_CALL_1 BUREAU_USE_GOAL_LOOP BUREAU_STUB_REVIEW_COMMENT
 }
 
 # 1 — timeout after finished work, then COMPLETE
@@ -69,6 +72,8 @@ grep -qF -- "$NOTE" "$SANDBOX/.prompts/prompt-2.txt" || fail "1 pass 2's prompt 
 grep -qF 'Pass 1 of this stage was stopped at its time limit of 1800s before it reported a status' "$SANDBOX/.prompts/prompt-2.txt" \
   || fail "1 the note names the pass and its limit"
 grep -qF 'report status COMPLETE right away and stop' "$SANDBOX/.prompts/prompt-2.txt" || fail "1 the note asks for COMPLETE when nothing is left"
+grep -qF 'its work is in the commits on the branch and any feedback above is addressed, report status COMPLETE' "$SANDBOX/.prompts/prompt-2.txt" \
+  || fail "1 the note asks for COMPLETE only with any feedback above addressed"
 grep -qF 'commit finished work that is still uncommitted' "$SANDBOX/.prompts/prompt-2.txt" || fail "1 a Claude pass is asked to commit what is left"
 grep -qF 'remove the lock only when no git process has this worktree as its working directory' "$SANDBOX/.prompts/prompt-2.txt" \
   || fail "1 the note removes a git lock only when no git process runs there"
@@ -154,6 +159,24 @@ check_eq 124 "$LAST_RC" "7 exit"
 grep -qF -- "$NOTE" "$SANDBOX/.prompts/prompt-2.txt" || fail "7 pass 2 was told"
 grep -qF 'The Bureau shell committed the changes it left.' "$SANDBOX/.prompts/prompt-2.txt" || fail "7 the note says the shell committed"
 if grep -qE 'commit finished work|index\.lock' "$SANDBOX/.prompts/prompt-2.txt"; then fail "7 a Codex pass is asked to commit or to touch a git lock"; fi
+teardown
+
+# 8 — a rework: every task is [X] already, the review asks for fixes, pass 1 times out
+setup
+sed 's/^- \[ \]/- [X]/' "$SANDBOX/specs/001-test-branch/tasks.md" > "$SANDBOX/t.tmp" && mv "$SANDBOX/t.tmp" "$SANDBOX/specs/001-test-branch/tasks.md"
+git -C "$SANDBOX" add specs && git -C "$SANDBOX" commit -q -m "all tasks done earlier" && git -C "$SANDBOX" push -q origin test-branch
+export BUREAU_STUB_REVIEW_COMMENT=$'## Code Review — Changes Requested\nFIX-1: the parser drops the last line of the input file' \
+  FAKE_CLAUDE_TIMEOUT_ON_ITERS=1 FAKE_CLAUDE_COMMIT_ON_ITERS=1
+run_implement_pipeline
+check_eq 2 "$(invocations)" "8 a second pass ran"
+p2="$SANDBOX/.prompts/prompt-2.txt"
+grep -qF 'FIX-1: the parser drops the last line of the input file' "$p2" || fail "8 pass 2 sees the review feedback"
+fb=$(grep -nF -- '--- Code Review Feedback (PRIORITY) ---' "$p2" | head -1 | cut -d: -f1)
+nt=$(grep -nF -- "$NOTE" "$p2" | head -1 | cut -d: -f1)
+[ -n "$fb" ] && [ -n "$nt" ] && [ "$fb" -lt "$nt" ] || fail "8 the feedback stands above the note (feedback line ${fb:-none}, note line ${nt:-none})"
+grep -qF 'and any feedback above is addressed, report status COMPLETE right away' "$p2" \
+  || fail "8 with every task [X], the note does not send pass 2 to COMPLETE before the feedback is addressed"
+grep -qF 'Otherwise go on with the open tasks and the feedback that is not yet addressed.' "$p2" || fail "8 the note sends pass 2 on to the feedback"
 teardown
 
 trap - EXIT  # every case tore its own sandbox down

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="880dd8d90afb7740aee8c71a72b245db8ed838e15c0af8a2c6e62146d2b64ee5">
+<meta name="bureau-source-sha256" content="de1bd66a5806454a28d39b3b7f8a627566f541bce58ccea3d143d639f2d44dbf">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -482,9 +482,12 @@ The squash-range check and the push (or its deferral, see
 any pass. The next pass gets a note at the top of its prompt ("The
 previous pass timed out"): it checks <code>tasks.md</code> and the
 branch first and reports <code>COMPLETE</code> at once when nothing is
-left. A Claude pass is also asked to commit finished work the stopped
-pass left uncommitted, and to remove a git <code>index.lock</code> only
-when no git process has the worktree as its working directory
+left: every task marked <code>[X]</code>, its work in the commits on the
+branch, and any review feedback above the note addressed (in a rework
+every task is <code>[X]</code> already, so the feedback decides). A
+Claude pass is also asked to commit finished work the stopped pass left
+uncommitted, and to remove a git <code>index.lock</code> only when no
+git process has the worktree as its working directory
 (<code>lsof -a -c git -d cwd</code>, or <code>pgrep -l git</code>), else
 to report <code>NEEDS_HUMAN</code> naming the lock; after a Codex pass
 the shell has already committed, and the note says so. The stage ends
@@ -504,9 +507,15 @@ pass): stderr says
 <code>pushing N commit(s) of &lt;branch&gt; that origin lacks before the stage ends (provider exit X)</code>,
 stdout
 <code>pushed &lt;branch&gt; (provider exit X): N commit(s) origin lacked, head &lt;sha&gt;</code>
-once it went through. The stage keeps the provider's exit code; a
-refused push is reported on stderr and the work stays in the
-worktree.</p>
+once it went through. The stage keeps the provider's exit code, also
+when stderr is gone (a closed terminal, a queue loop's tee that ended);
+a refused push is reported on stderr and the work stays in the worktree.
+A stage that ends before its end-of-run push in any other way (a signal,
+a crash, an unusable Linear, a failed <code>/goal</code> run) pushes the
+same way from its EXIT trap, labelled
+<code>the stage ends before its end-of-run push</code> (see
+<code>agents.implement.push_each_iteration</code> in the <a
+href="configuration.html">configuration</a>).</p>
 <p>So an implement stage can now take up to
 <code>BUREAU_IMPL_MAX_ITER</code> provider passes when passes time out,
 together bounded by <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> (each pass
@@ -639,16 +648,18 @@ then, remove the label by hand). The work stays for the resume: the
 runtime keeps the run's leases and marks them interrupted, the worktree
 keeps every file and commit the stage made and loses its
 disposable-worker registration so that no later reset erases it, and an
-implement stage that held back its pushes
-(<code>push_each_iteration: false</code>) tries to push them on its way
-out when the signal stops it, since v3.2 also when its terminal is gone.
-When a queue's log pipe goes first (its <code>tee</code> ends with the
-pane, for example on Ctrl-C or when the pane closes) and the stage
-writes to it before the signal reaches the stage, the write ends the
-stage at once and nothing is pushed: the commits stay in the preserved
-worktree, and step 2 of the resume pushes them. The resume steps are
-printed once on stderr. After a closed terminal they are gone with it;
-<code>python3 scripts/bureau-runtime.py status</code> then shows the
+implement stage tries to push every commit origin lacks on its way out
+when the signal stops it (since v3.2 with either value of
+<code>push_each_iteration</code>, the commits of the pass that was
+running included, and also when its terminal is gone). When a queue's
+log pipe goes first (its <code>tee</code> ends with the pane, for
+example on Ctrl-C or when the pane closes) and the stage writes to it
+before the signal reaches the stage, the write ends the stage at once
+(SIGPIPE, exit 141); its EXIT trap still pushes. A commit that did not
+reach origin (a refused push, a push cut by the stop grace) stays in the
+preserved worktree, and step 2 of the resume pushes it. The resume steps
+are printed once on stderr. After a closed terminal they are gone with
+it; <code>python3 scripts/bureau-runtime.py status</code> then shows the
 run's leases with <code>"interrupted": true</code>, and the steps are
 the ones below, in <a
 href="#shepherdsh-bailed-mid-run--how-to-resume"><code>shepherd.sh</code>

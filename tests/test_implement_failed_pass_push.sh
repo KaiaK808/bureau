@@ -33,6 +33,23 @@
 #  10  the bound on an interrupt: under the real bureau-runtime.py the provider fails with 130
 #      after a commit and the push hangs on origin; a stop (SIGTERM to the runtime) ends the
 #      run within its grace with 130, and no process of the push is left
+#
+# The EXIT trap (since the third round: in both modes, whatever origin lacks):
+#  11  the default, under the real runtime: the run is stopped (SIGTERM to the runtime) while
+#      the first pass, which has committed, still runs: 130, the EXIT trap pushes the commit
+#      once and confirms it; 11b the same with false and a PR open
+#  11c the same stop, and the trap's push hangs on origin: the runtime's grace ends it (the
+#      run ends 130 after the 4 s grace, not later), and no process of the push is left
+#  12  the default, the stage on a terminal that closes during the first pass (hang-up): 129,
+#      the EXIT trap pushes the commit although every write to the terminal fails
+#  12b the default, stderr a pipe whose reader is gone and SIGTERM to the stage during the
+#      first pass: 143, the commit is pushed
+# A stderr that is gone before the push of a failed pass:
+#  13  stderr's reader goes during the first pass, which commits and fails with 1: the stage
+#      still ends with 1 (not 141, SIGPIPE), and the commit is pushed
+#  13b false, PR open, BUREAU_IMPL_MAX_ITER=1: the same pass times out instead: 124, pushed
+#  14  the /goal path (agents.use_goal_loop), the default: the run commits and fails with 1;
+#      its exit goes through the EXIT trap, which pushes the commit
 set -euo pipefail
 source "$(dirname "$0")/lib/harness.sh"
 source "$(dirname "$0")/lib/pr3-doubles.sh"
@@ -250,6 +267,163 @@ else
   has 'pushing 1 commit\(s\) of test-branch that origin lacks before the stage ends \(provider exit 130\)' \
     "$(cat "$SANDBOX/runtime.err")" "10 the push was the stage's"
 fi
+teardown
+
+# ── The EXIT trap, and a stderr that is gone ───────────────────────────────────────────────
+# HOLD: the first pass, after its commit, waits (up to 30 s) until the case releases it or a
+# signal ends it, and says so with .pr3-in-pass.
+HOLD=': > .pr3-in-pass; i=0; while [ ! -f .pr3-stage-stopped ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done'
+
+# runtime_start: the stage under the real bureau-runtime.py exec (grace step 1 s: 4 s at the
+# front), in the background. RUNTIME is its pid, the only process these cases signal.
+runtime_start() {
+  [ -f "$SANDBOX/.bureau.json" ] || echo '{}' > "$SANDBOX/.bureau.json"
+  (cd "$SANDBOX" && exec env -u BUREAU_RUN_ID -u BUREAU_RUN_DEPTH -u BUREAU_ACTIVE_ENTRY -u BUREAU_CONFIG \
+     PATH="$SANDBOX/.pr3-bin:$PATH" BUREAU_STOP_GRACE_SECONDS=1 \
+     python3 -I "$SCRIPTS_DIR/bureau-runtime.py" --repo "$SANDBOX" exec --issue EXP-100 -- \
+     bash "$SCRIPTS_DIR/implement-pipeline.sh" > "$SANDBOX/runtime.out" 2> "$SANDBOX/runtime.err") &
+  RUNTIME=$!
+}
+# fifo_stage_start: the stage alone, stdout to a file, stderr to a pipe whose reader (READER)
+# a case can end, as a queue loop's tee ends with a hang-up. STAGE is the stage's pid.
+fifo_stage_start() {
+  mkfifo "$SANDBOX/.pr3-stderr"
+  cat "$SANDBOX/.pr3-stderr" > "$SANDBOX/stderr.log" &
+  READER=$!
+  (cd "$SANDBOX" && PATH="$SANDBOX/.pr3-bin:$PATH" exec bash "$SCRIPTS_DIR/implement-pipeline.sh" \
+     > "$SANDBOX/stdout.log" 2> "$SANDBOX/.pr3-stderr") &
+  STAGE=$!
+}
+# wait_file <file> <pid>: up to 30 s for the file while the process runs.
+wait_file() {
+  local n=0
+  while [ ! -e "$1" ] && kill -0 "$2" 2>/dev/null && [ "$n" -lt 300 ]; do sleep 0.1; n=$((n + 1)); done
+  [ -e "$1" ]
+}
+# finish <label> <pid>: wait up to 30 s for the process (SIGKILL to it and a failure after
+# that); RC is its exit code, TOOK the seconds since STARTED.
+finish() {
+  local n=0
+  { while kill -0 "$2" && [ "$n" -lt 300 ]; do sleep 0.1; n=$((n + 1)); done; } 2>/dev/null
+  if kill -0 "$2" 2>/dev/null; then fail "$1 still runs after 30 s"; kill -KILL "$2" 2>/dev/null || true; fi
+  set +e; { wait "$2"; RC=$?; } 2>/dev/null; set -e
+  TOOK=$(( $(date +%s) - STARTED ))
+}
+# quiet: wait up to 10 s until no process of the sandbox runs any more (lookups only).
+quiet() {
+  local n=0
+  : > "$SANDBOX/.pr3-stage-stopped"
+  while ps -A -o args= | grep -F "$SANDBOX/" | grep -v grep >/dev/null && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+}
+TRAP_WHY='the stage ends before its end-of-run push'
+
+# 11, 11b — the run is stopped during the first pass, which has committed
+for c in "11 default" "11b false"; do
+  set -- $c
+  if [ "$2" = false ]; then setup "$OFF"; export GH_STUB_EXISTING_PR=7; else setup; fi
+  export FAKE_CLAUDE_COMMIT_ON_ITERS=1 PR3_ON_CALL_1="$HOLD"
+  runtime_start
+  if wait_file "$SANDBOX/.pr3-in-pass" "$RUNTIME"; then
+    STARTED=$(date +%s); kill -TERM "$RUNTIME"; finish "$1 the runtime" "$RUNTIME"
+    quiet
+    check_eq 130 "$RC" "$1 the run ends as interrupted"
+    check_eq 1 "$(pr3_pushes)" "$1 one push, from the EXIT trap"
+    on_origin "$1 the first pass's commit is on origin"
+    has "pushing 1 commit\(s\) of test-branch that origin lacks before the stage ends \($TRAP_WHY\)" "$(cat "$SANDBOX/runtime.err")" "$1 says why"
+    has "^  pushed test-branch \($TRAP_WHY\): 1 commit\(s\) origin lacked, head $(head_short)$" "$(cat "$SANDBOX/runtime.out")" "$1 confirms the push"
+  else
+    fail "$1 the first pass never started ($(tr '\n' '|' < "$SANDBOX/runtime.err"))"
+    kill -KILL "$RUNTIME" 2>/dev/null || true; wait "$RUNTIME" 2>/dev/null || true
+  fi
+  teardown
+done
+
+# 11c — the trap's push hangs on origin: the runtime's grace ends it
+setup
+export FAKE_CLAUDE_COMMIT_ON_ITERS=1 PR3_ON_CALL_1="$HOLD"
+hook pre-receive "echo \$\$ > '$SANDBOX/.hook-pid'; exec sleep 60"
+runtime_start
+if wait_file "$SANDBOX/.pr3-in-pass" "$RUNTIME"; then
+  STARTED=$(date +%s); kill -TERM "$RUNTIME"; finish "11c the runtime" "$RUNTIME"
+  check_eq 130 "$RC" "11c the run ends as interrupted"
+  [ -s "$SANDBOX/.hook-pid" ] || fail "11c the EXIT trap's push never reached origin"
+  [ "$TOOK" -ge 3 ] && [ "$TOOK" -le 7 ] || fail "11c the stop took ${TOOK}s; the hanging push should hold it for the 4 s grace and no longer"
+  if [ -s "$SANDBOX/.hook-pid" ]; then
+    HOOK_PID=$(cat "$SANDBOX/.hook-pid"); n=0
+    while kill -0 "$HOOK_PID" 2>/dev/null && [ "$n" -lt 20 ]; do sleep 0.1; n=$((n + 1)); done
+    if kill -0 "$HOOK_PID" 2>/dev/null; then fail "11c a process of the push outlived the stop"; kill -KILL "$HOOK_PID" 2>/dev/null || true; fi
+  fi
+  quiet
+else
+  fail "11c the first pass never started"; kill -KILL "$RUNTIME" 2>/dev/null || true; wait "$RUNTIME" 2>/dev/null || true
+fi
+teardown
+
+# 12 — the default, the stage's terminal closes during the first pass
+setup
+export FAKE_CLAUDE_COMMIT_ON_ITERS=1 PR3_ON_CALL_1="$HOLD"
+result=$(cd "$SANDBOX" && PATH="$SANDBOX/.pr3-bin:$PATH" python3 "$LIB_DIR/hangup.py" --ready "$SANDBOX/.pr3-in-pass" \
+  --how close --hung-up "$SANDBOX/.pr3-stage-stopped" --out "$SANDBOX/stdout.log" -- bash "$SCRIPTS_DIR/implement-pipeline.sh") || true
+quiet
+check_eq 129 "$(sed -n 's/^rc=\([0-9]*\) .*/\1/p' <<< "$result")" "12 ended by the hang-up ($result)"
+check_eq 1 "$(pr3_pushes)" "12 one push, from the EXIT trap"
+on_origin "12 the first pass's commit is on origin"
+has "^  pushed test-branch \($TRAP_WHY\): 1 commit\(s\) origin lacked" "$(cat "$SANDBOX/stdout.log")" "12 confirms the push"
+teardown
+
+# 12b — the default, stderr's reader is gone and the stage gets SIGTERM during the first pass
+setup
+export FAKE_CLAUDE_COMMIT_ON_ITERS=1 PR3_ON_CALL_1="$HOLD"
+fifo_stage_start
+if wait_file "$SANDBOX/.pr3-in-pass" "$STAGE"; then
+  kill "$READER" 2>/dev/null || true; wait "$READER" 2>/dev/null || true
+  # Only the stage gets the signal here, as in case 20c of test_implement_push_open_pr.sh: bash
+  # acts on it once the provider call it waits for returns, so the pass is released too.
+  STARTED=$(date +%s); kill -TERM "$STAGE"; : > "$SANDBOX/.pr3-stage-stopped"; finish "12b the stage" "$STAGE"
+  quiet
+  check_eq 143 "$RC" "12b ended by SIGTERM"
+  check_eq 1 "$(pr3_pushes)" "12b one push, from the EXIT trap"
+  on_origin "12b the first pass's commit is on origin"
+else
+  fail "12b the first pass never started"; kill -KILL "$STAGE" "$READER" 2>/dev/null || true
+fi
+teardown
+
+# 13, 13b — stderr's reader goes during the first pass, which then fails (1) or times out (124)
+for c in "13 1" "13b 124"; do
+  set -- $c
+  if [ "$2" = 124 ]; then
+    setup "$OFF"
+    export GH_STUB_EXISTING_PR=7 BUREAU_IMPL_MAX_ITER=1 FAKE_CLAUDE_TIMEOUT_ON_ITERS=1
+  else
+    setup
+    export PR3_EXIT_ON=1 PR3_EXIT_CODE=1
+  fi
+  export FAKE_CLAUDE_COMMIT_ON_ITERS=1 PR3_ON_CALL_1="$HOLD"
+  fifo_stage_start
+  if wait_file "$SANDBOX/.pr3-in-pass" "$STAGE"; then
+    kill "$READER" 2>/dev/null || true; wait "$READER" 2>/dev/null || true
+    STARTED=$(date +%s); : > "$SANDBOX/.pr3-stage-stopped"; finish "$1 the stage" "$STAGE"
+    quiet
+    check_eq "$2" "$RC" "$1 the provider's exit code is kept, no SIGPIPE"
+    check_eq 1 "$(pr3_pushes)" "$1 one push"
+    on_origin "$1 the first pass's commit is on origin"
+    has "^  pushed test-branch \(provider exit $2\): 1 commit\(s\) origin lacked" "$(cat "$SANDBOX/stdout.log")" "$1 confirms the push"
+  else
+    fail "$1 the first pass never started"; kill -KILL "$STAGE" "$READER" 2>/dev/null || true
+  fi
+  teardown
+done
+
+# 14 — the /goal path: a failed run's commit goes out through the EXIT trap
+setup
+export BUREAU_USE_GOAL_LOOP=1 FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_complete.txt" FAKE_CLAUDE_COMMIT_ON_ITERS=1 \
+  PR3_EXIT_ON=1 PR3_EXIT_CODE=1
+pr3_run_implement
+check_eq 1 "$LAST_RC" "14 the provider's exit code is kept"
+check_eq 1 "$(pr3_pushes)" "14 one push, from the EXIT trap"
+on_origin "14 the run's commit is on origin"
+has "^  pushed test-branch \($TRAP_WHY\): 1 commit\(s\) origin lacked, head $(head_short)$" "$LAST_STDOUT" "14 confirms the push"
 teardown
 
 trap - EXIT  # every case tore its own sandbox down

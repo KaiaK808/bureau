@@ -185,6 +185,7 @@ check_eq 2 "$(pr3_pushes)" "11 the end-of-run push and its retry"
 has 'post_comment.*final push of `test-branch` to origin failed twice \(3 commit\(s\) missing on origin\)' "$(calls)" "11 comment names the missing commits"
 hasnt 'move_issue' "$(calls)" "11 no hand-off"
 hasnt $'^gh\tpr\tready' "$(gh_log)" "11 PR not marked ready"
+hasnt '^  pushed ' "$LAST_STDOUT" "11 no push is confirmed"
 teardown
 
 # 12 — false, PR open, COMPLETE
@@ -226,7 +227,8 @@ unset PR3_TERM_STAGE_ON
 check_eq 143 "$LAST_RC" "17 ended by SIGTERM"
 check_eq 1 "$(pr3_pushes)" "17 one push, from the EXIT trap"
 check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "17 every commit of the run on origin"
-has 'pushing the deferred commits of test-branch \(the stage ends before its end-of-run push\)' "$LAST_STDERR" "17 says why"
+has 'pushing 2 commit\(s\) of test-branch that origin lacks before the stage ends \(the stage ends before its end-of-run push\)' "$LAST_STDERR" "17 says why"
+has "^  pushed test-branch \(the stage ends before its end-of-run push\): 2 commit\(s\) origin lacked, head $(git -C "$SANDBOX" rev-parse --short HEAD)$" "$LAST_STDOUT" "17 confirms the push"
 teardown
 
 # 18 — default, provider timeout on call 3, the last: one push per pass, nothing deferred
@@ -250,6 +252,8 @@ check_eq 14 "$LAST_RC" "19 exit"
 has 'not pushing: repo.post_implement_command moved HEAD' "$LAST_STDERR" "19 HEAD not pushed"
 check_eq 1 "$(pr3_pushes)" "19 one push"
 check_eq 'fake-claude iter 1 progress' "$(git -C "$SANDBOX/.fake-origin.git" log -1 --format=%s test-branch)" "19 the run's commit is on origin"
+has "^  pushed test-branch \(the run's commits, without the hook's rewrite\): 1 commit\(s\) origin lacked, head $(git -C "$SANDBOX" rev-parse --short "$(origin_tip)")$" "$LAST_STDOUT" "19 confirms the push of the commit the hook started from"
+hasnt '^  pushed test-branch \(end of run' "$LAST_STDOUT" "19 the skipped end-of-run push is not confirmed"
 teardown
 
 # 20 — false, PR open, the stage gets SIGTERM while a hook that reset HEAD is still running:

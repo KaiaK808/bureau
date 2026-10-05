@@ -25,6 +25,9 @@
 #       BUREAU_STUB_ADD_LABEL_RC=<n>   → add_issue_label returns <n> instead of 0
 #       BUREAU_STUB_ISSUE_STATE=<name> → get_issue_state returns this (default Build)
 #       BUREAU_STUB_BRANCH=<name>      → branch returned by get_issue_branch_and_comments
+#       BUREAU_STUB_REVIEW_COMMENT=<text> → one comment with this body returned by
+#                                        get_issue_branch_and_comments (a rework's
+#                                        "Code Review … Changes Requested"); default none
 #       BUREAU_STUB_LABELS=<json>      → JSON array put into get_issue_detail.labels
 #                                        (default '[]'). Used by tests that need
 #                                        a label-driven branch to fire.
@@ -150,8 +153,8 @@ get_issue_branch_and_comments() {
     [ "$calls" -lt "${BUREAU_STUB_COMMENTS_RC_FROM:-1}" ] || return "$BUREAU_STUB_COMMENTS_RC"
   fi
   local branch="${BUREAU_STUB_BRANCH:-test-branch}"
-  jq -n --arg b "$branch" \
-    '{branch:$b, comments:[]}'
+  jq -n --arg b "$branch" --arg c "${BUREAU_STUB_REVIEW_COMMENT:-}" \
+    '{branch:$b, comments:(if $c == "" then [] else [{body:$c}] end)}'
 }
 
 get_issue_branch() {

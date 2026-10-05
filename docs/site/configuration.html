@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="48ce9221ebbd39012495a49c39a692f8219e3ca0be47c160f732eb0c769efd7a">
+<meta name="bureau-source-sha256" content="6b366c609e0a320fc708fdca6df17b1afd57c84fa69840185e9d828910d79e08">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -287,23 +287,28 @@ warning. The end-of-run push keeps its rules: retried once, and the
 stage ends with <code>18</code> before any hand-off when origin still
 lacks commits; once it goes through it says so on stdout,
 <code>pushed &lt;branch&gt; (end of run): N commit(s) origin lacked, head &lt;sha&gt;</code>
-(<code>end of run, retry</code> after a retry). A provider pass that
-fails (any exit but <code>0</code> and <code>124</code>), or one that
-times out when no pass is left, pushes every commit origin lacks before
-the stage ends (since v3.2), with either value of this key, the failed
-pass's own commits included (before, those stayed in the worktree with
+(<code>end of run, retry</code> after a retry). Every way out before the
+end-of-run push pushes every commit origin lacks first (since v3.2),
+with either value of this key, the commits of the pass that was running
+included, the first pass's too (before, they stayed in the worktree with
 <code>true</code>, and with <code>false</code> when the pass was the
-first): stderr says
-<code>pushing N commit(s) of &lt;branch&gt; that origin lacks before the stage ends (provider exit X)</code>,
-stdout confirms it as above; once and best effort, and the stage keeps
-the provider's exit code. A stage that ends before its end-of-run push
-in another way (an unusable Linear, a crash, SIGTERM or SIGHUP) pushes
-the deferred commits first, once and best effort, and keeps its exit
-code; after a <code>repo.post_implement_command</code> that moved HEAD
-it pushes the commit the command started from, never the rewritten HEAD.
-These pushes run in the stage's own process group, which the runtime
-stops on an interrupt and kills when its stop grace ends, so a push that
-hangs on a remote cannot hold a stop longer. A process killed outright
+first; with <code>false</code> only what a finished pass had held back
+was pushed): a provider pass that fails (any exit but <code>0</code> and
+<code>124</code>) or times out when no pass is left, a failed
+<code>/goal</code> run, an unusable Linear, a crash, SIGTERM, SIGINT and
+SIGHUP, also when the stage's terminal or the pipe on its stderr is
+gone. stderr says
+<code>pushing N commit(s) of &lt;branch&gt; that origin lacks before the stage ends (&lt;why&gt;)</code>
+(<code>provider exit X</code>, or
+<code>the stage ends before its end-of-run push</code> from the stage's
+EXIT trap), stdout confirms it as above; once and best effort, and the
+stage keeps its exit code. After a
+<code>repo.post_implement_command</code> that moved HEAD the stage
+pushes the commit the command started from, when origin lacks it, never
+the rewritten HEAD, and confirms it the same way. These pushes run in
+the stage's own process group, which the runtime stops on an interrupt
+and kills when its stop grace ends, so a push that hangs on a remote
+cannot hold a stop longer than that grace. A process killed outright
 (SIGKILL, a host crash) pushes nothing, and its commits stay in the
 worktree</td>
 </tr>
