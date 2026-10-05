@@ -33,8 +33,17 @@ TOTAL_TIMEOUT="${BUREAU_IMPL_TOTAL_TIMEOUT:-5400}"
 
 # The provider adapter enforces per-pass timeouts on both macOS and Linux.
 
-# refresh_review_context: pull the latest "Code Review … Changes Requested"
-# comment for $1 and emit the prompt block the implement loop interpolates.
+# refresh_review_context: pull the newest review feedback comment for $1 and
+# emit the prompt block the implement loop interpolates. Feedback is a review's
+# "Code Review: **Changes Requested**", a `VERDICT: REQUEST_CHANGES` line, a
+# human's FIXES_NEEDED note, or a build review BLOCK. The BLOCK is found by the
+# heading the review stage posts at the start of it (code-review-pipeline.sh,
+# the same bytes since v3.0.0, so BLOCKs already on tickets count too); a
+# comment that only quotes that heading further down is not one. Before v3.2 a
+# BLOCK matched nothing here, and a restart from build after it ran without the
+# review's findings. Comments come newest first (get_issue_branch_and_comments)
+# and the first match wins: a FIXES_NEEDED note written after a BLOCK replaces
+# it, and a newer review replaces an older BLOCK.
 # Returns empty if there's nothing relevant. Called once per iteration so a
 # human comment posted mid-run is seen by the next pass.
 refresh_review_context() {
@@ -44,7 +53,7 @@ refresh_review_context() {
   # fixes from the prompt without a word. The caller's `$(…)` ends the stage.
   blob=$(get_issue_branch_and_comments "$issue") || return $?
   feedback=$(printf '%s' "$blob" \
-    | jq -r '[.comments[] | select(.body | test("Code Review.*Changes Requested|FIXES_NEEDED|(?m)^VERDICT: REQUEST_CHANGES[[:space:]]*$"))][0].body // empty' 2>/dev/null || echo "")
+    | jq -r '[.comments[] | select(.body | test("Code Review.*Changes Requested|FIXES_NEEDED|(?m)^VERDICT: REQUEST_CHANGES[[:space:]]*$|\\A🚫 Code review \\*\\*BLOCKED\\*\\* — needs human review\\."))][0].body // empty' 2>/dev/null || echo "")
   if [ -n "$feedback" ] && [ "${#feedback}" -gt 20 ]; then
     printf '\n--- Code Review Feedback (PRIORITY) ---\n%s\nAddress ALL fixes before remaining tasks.\n--- End feedback ---\n' "$feedback"
   fi
