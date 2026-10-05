@@ -24,16 +24,23 @@
 #      bureau-config.sh's bureau_get): hooks off
 #   4  bureau-env.sh alone (no bureau_get, no BUREAU_CONFIG, as squash-marker-check.sh): hooks off
 #   5  doctor: a non-boolean value is a warning; true, false and absent are not
-#   6  doctor: the main checkout's .gitattributes uses Git LFS (filter=lfs) and the key is not true —
-#      a warning naming the key (also from a linked worktree); none for true, another filter, a
-#      comment line or a name that only starts with lfs
+#   6  doctor: the main checkout uses Git LFS (filter=lfs, in any position, in its .gitattributes, a
+#      committed or untracked assets/.gitattributes, or .git/info/attributes) and the key is not
+#      true — a warning naming the key (also from a linked worktree); none for true, another filter,
+#      a comment line or a name that only starts with lfs
 #   7  the two `git ls-remote` of bureau-supervision.py (a stopped review's check, the gate waits of
-#      the pickers) get -c core.hooksPath=/dev/null too (a git on PATH records its arguments)
+#      the pickers) get -c core.hooksPath=/dev/null and the hook event switches of git() too (a git
+#      on PATH records its arguments)
 #   8  static: every shell template with a remote git command has the git() function, and every
 #      remote git command line in the Python templates carries NO_HOOKS
+#   9  git 2.54 and later: hooks the configuration defines (hook.<name>.command and .event) run
+#      neither on Bureau's push nor on its fetches, also under a name with `=` and next to a hook
+#      named like the event; true runs them (skipped, with a SKIP line, on an older git)
 # Negative control: against v3.1.0 (9411b3b) 1, 3 and 4 fail ("pre-push ran during Bureau's push,
 # with GH_TOKEN") and 5 and 6 fail (no warning); 7 and 8 fail against the merge of main (a9c754c),
-# whose supervision ls-remote runs without the flag.
+# whose supervision ls-remote runs without the flag; against 735496e 6 fails for the committed and
+# the untracked assets/.gitattributes and for info/attributes, 7 on the event switches and 9 (with
+# git 2.54 or 2.55) on every configured hook.
 set -uo pipefail
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 source "$(dirname "$0")/lib/pr1-untrusted-env.sh"
@@ -160,15 +167,19 @@ hooks_off "4 bureau-env.sh alone"
 pr1_pass "4 without bureau-config.sh and BUREAU_CONFIG: hooks off"
 
 # ── 5  doctor ─────────────────────────────────────────────────────────────────
-# doctor_warnings <repo json> [.gitattributes text] [worktree] — the doctor's warnings and errors
-# about the key, one per line. With "worktree" doctor runs in a linked worktree of the repository
-# whose own checkout has no .gitattributes; the text goes to the main checkout's file.
+# doctor_warnings <repo json> [attributes text] [place] — the doctor's warnings and errors about
+# the key, one per line. The text goes to the main checkout's .gitattributes, or with place
+# "nested" to a committed assets/.gitattributes, with "untracked" to an uncommitted
+# assets/.gitattributes, with "info" to .git/info/attributes; with
+# "worktree" doctor runs in a linked worktree of the repository whose own checkout has none of them.
 doctor_warnings() {
-  local d="$TMP/doctor" at="$TMP/doctor"
+  local d="$TMP/doctor" at="$TMP/doctor" file=.gitattributes
   rm -rf "$d" "$TMP/doctor-wt"; mkdir -p "$d/scripts"; cp "$SCRIPTS"/bureau-doctor.py "$SCRIPTS"/bureau-runtime.py "$SCRIPTS"/bureau-provider.py "$SCRIPTS"/bureau-stage.md "$d/scripts/"
   git -C "$d" init -q -b main; git -C "$d" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
   jq -n --argjson repo "$1" '{version: 2, linear: {teams: [{id: "t", key: "EXP", states: {build: "s"}}]}, agents: {}, repo: $repo}' > "$d/.bureau.json"
-  [ -z "${2:-}" ] || printf '%s\n' "$2" > "$d/.gitattributes"
+  case "${3:-}" in nested|untracked) file=assets/.gitattributes ;; info) file=.git/info/attributes ;; esac
+  if [ -n "${2:-}" ]; then mkdir -p "$(dirname "$d/$file")"; printf '%s\n' "$2" > "$d/$file"; fi
+  if [ "${3:-}" = nested ]; then git -C "$d" add assets; git -C "$d" -c user.email=t@t -c user.name=t commit -q -m attributes; fi
   if [ "${3:-}" = worktree ]; then git -C "$d" worktree add -q "$TMP/doctor-wt" -b wt; at="$TMP/doctor-wt"; fi
   (cd "$at" && python3 "$d/scripts/bureau-doctor.py" --repo "$at") | jq -r '(.warnings // [])[], (.errors // [])[]' | grep 'remote_git_runs_hooks' || true
 }
@@ -190,7 +201,7 @@ LFS='*.psd filter=lfs diff=lfs merge=lfs -text'
 for value in absent false '"true"' 1; do
   if [ "$value" = absent ]; then cfg='{}'; else cfg="{\"remote_git_runs_hooks\":$value}"; fi
   w=$(doctor_warnings "$cfg" "$LFS")
-  case "$w" in *"uses Git LFS (filter=lfs)"*) ;; *) fail "6: no Git LFS warning with the key $value: ${w:-no warning}" ;; esac
+  case "$w" in *"uses Git LFS (filter=lfs"*) ;; *) fail "6: no Git LFS warning with the key $value: ${w:-no warning}" ;; esac
 done
 w=$(doctor_warnings '{"remote_git_runs_hooks":true}' "$LFS")
 case "$w" in *"uses Git LFS"*) fail "6: a Git LFS warning although the key is true" ;; esac
@@ -199,7 +210,17 @@ for text in '*.txt filter=probe' "# $LFS" '*.bin filter=lfsish'; do
   case "$w" in *"uses Git LFS"*) fail "6: a Git LFS warning for .gitattributes '$text'" ;; esac
 done
 w=$(doctor_warnings '{}' "$LFS" worktree)
-case "$w" in *"uses Git LFS (filter=lfs)"*) ;; *) fail "6: doctor in a linked worktree does not read the main checkout's .gitattributes: ${w:-no warning}" ;; esac
+case "$w" in *"uses Git LFS (filter=lfs"*) ;; *) fail "6: doctor in a linked worktree does not read the main checkout's .gitattributes: ${w:-no warning}" ;; esac
+# The filter anywhere among the attributes; a .gitattributes below the top (git applies it to its
+# directory, committed or not) and the git directory's info/attributes count too.
+for place in '*.bin -text filter=lfs|' "$LFS|nested" "$LFS|untracked" "$LFS|info"; do
+  w=$(doctor_warnings '{}' "${place%|*}" "${place##*|}")
+  case "$w" in *"uses Git LFS (filter=lfs"*) ;; *) fail "6: no Git LFS warning for '${place%|*}' in ${place##*|}: ${w:-no warning}" ;; esac
+done
+w=$(doctor_warnings '{"remote_git_runs_hooks":true}' "$LFS" nested)
+case "$w" in *"uses Git LFS"*) fail "6: a Git LFS warning for a nested .gitattributes although the key is true" ;; esac
+w=$(doctor_warnings '{}' "# $LFS" info)
+case "$w" in *"uses Git LFS"*) fail "6: a Git LFS warning for a comment in info/attributes" ;; esac
 pr1_pass "6 doctor warns when the main checkout uses Git LFS and the hooks are off"
 
 # ── 7  the remote git Bureau's Python starts ──────────────────────────────────
@@ -222,8 +243,13 @@ printf '%s' "$DETAIL" | supervise stop EXP-1 --branch feat --state 'Build Review
 out=$(printf '%s' "$DETAIL" | supervise check EXP-1 --branch feat --state 'Build Review')
 case "$out" in *'"stopped": true'*) ;; *) fail "7 check: the stop was not confirmed against origin (its ls-remote failed?): $out" ;; esac
 [ "$(grep -c 'ls-remote' "$TMP/argv.log")" = 2 ] || fail "7: expected two ls-remote runs (gate-waits, check): $(tr '\n' ';' < "$TMP/argv.log")"
-bare=$(grep 'ls-remote' "$TMP/argv.log" | grep -v '^-c core.hooksPath=/dev/null ls-remote ' || true)
-[ -z "$bare" ] || fail "7: Bureau's Python ran a remote git without -c core.hooksPath=/dev/null: $(printf '%s' "$bare" | tr '\n' ';')"
+# The same switches as git() of bureau-env.sh: no hooks directory, and every hook event git knows
+# switched off for the hooks the configuration defines (git 2.55; ls-remote fires none of them).
+OFF="-c core.hooksPath=/dev/null"
+for event in $(/bin/bash -c 'source "$1/bureau-env.sh"; printf "%s" "$_BUREAU_GIT_HOOK_EVENTS"' _ "$SCRIPTS"); do OFF="$OFF -c hook.$event.enabled=false"; done
+case "$OFF" in *hook.pre-push.enabled=false*hook.reference-transaction.enabled=false*) ;; *) fail "7: the event list of bureau-env.sh lacks pre-push or reference-transaction: $OFF" ;; esac
+bare=$(grep 'ls-remote' "$TMP/argv.log" | grep -vF -- "$OFF ls-remote " || true)
+[ -z "$bare" ] || fail "7: Bureau's Python ran a remote git without the hook switches of git(): $(printf '%s' "$bare" | cut -c1-200 | tr '\n' ';')"
 hooks_off "7 bureau-supervision.py"
 pr1_pass "7 the ls-remote of bureau-supervision.py (stop check, gate waits) runs with the hooks off"
 
@@ -253,6 +279,63 @@ grep -q ' upstream-port\.sh:' <<< "$lint" || fail "8: the lint found no shell si
 bad=$(grep '^BAD' <<< "$lint" || true)
 [ -z "$bad" ] || fail "8: a remote git without the hooks flag: $(printf '%s' "$bad" | tr '\n' ';')"
 pr1_pass "8 every remote git in the templates runs through git() or carries NO_HOOKS ($(grep -c '^ok' <<< "$lint") sites)"
+
+# ── 9  hooks the configuration defines (git 2.54 and later) ──────────────────
+# hook.<name>.command + hook.<name>.event (git 2.54; what the pre-commit framework sets up for its
+# pre-push stage, running hooks from the branch's .pre-commit-config.yaml) run whatever
+# core.hooksPath says. Here the repository's configuration names a TRACKED script for pre-push and
+# reference-transaction, under three names: scan, a name with `=` in it (cannot follow -c), and
+# txscan; and it defines a hook named like the event (hook.pre-push.command), which makes git 2.55
+# read hook.pre-push.enabled=false as a per-name switch, so only the per-name switches stop scan.
+# Runs with the git of BUREAU_TEST_GIT_DIR when set, else with the git on PATH, and is skipped,
+# with a SKIP line, when that git is older than 2.54.
+GIT9_DIR="${BUREAU_TEST_GIT_DIR:-}"
+GIT9_PATH="$PATH"; GIT9_EXEC=""
+if [ -n "$GIT9_DIR" ]; then
+  GIT9_PATH="$GIT9_DIR:$PATH"
+  if [ -d "$GIT9_DIR/../libexec/git-core" ]; then GIT9_EXEC="$(cd "$GIT9_DIR/../libexec/git-core" && pwd)"; fi
+fi
+git9() { if [ -n "$GIT9_EXEC" ]; then PATH="$GIT9_PATH" GIT_EXEC_PATH="$GIT9_EXEC" "$@"; else PATH="$GIT9_PATH" "$@"; fi; }
+GIT9_VERSION=$(git9 git --version 2>/dev/null | sed -n 's/^git version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')
+if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 54 ]; }; then
+  hooks9() {  # <repo json> — a fresh repository with the configured hooks; Bureau's push and fetch
+    repo "$R"; config "$1"
+    mkdir -p "$R/tools"
+    printf '%s\n' '#!/bin/sh' 'gh=no; [ -z "${GH_TOKEN:-}" ] || gh=yes' \
+      "dotenv=no; /usr/bin/env | grep -qF -e '$PR1_LINEAR' -e '$PR1_TG_TOKEN' -e '$PR1_TG_CHAT' && dotenv=yes" \
+      "echo \"config-hook \$1 gh=\$gh env=\$dotenv\" >> '$MARKS'" 'cat >/dev/null' 'exit 0' > "$R/tools/scan.sh"
+    chmod +x "$R/tools/scan.sh"
+    git -C "$R" add tools; git -C "$R" -c core.hooksPath=/dev/null commit -q -m tools
+    git9 git -C "$R" config hook.scan.command "$R/tools/scan.sh pre-push"
+    git9 git -C "$R" config --add hook.scan.event pre-push
+    git9 git -C "$R" config 'hook.eq=name.command' "$R/tools/scan.sh pre-push-eq"
+    git9 git -C "$R" config --add 'hook.eq=name.event' pre-push
+    git9 git -C "$R" config hook.txscan.command "$R/tools/scan.sh reference-transaction"
+    git9 git -C "$R" config --add hook.txscan.event reference-transaction
+    git9 git -C "$R" config hook.pre-push.command "$R/tools/scan.sh named-like-the-event"
+    upstream_commit; : > "$MARKS"
+    # A local commit runs the configured hooks (reference-transaction), tokenless; then Bureau's
+    # push and fetch from the stage shell, and a fetch with -C from another directory.
+    (cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
+      git checkout -q -b c9; echo w > w9.txt; git add w9.txt; git commit -q -m w9' _ "$SCRIPTS") >/dev/null 2>&1
+    cp "$MARKS" "$TMP/local9.log"; : > "$MARKS"
+    out=$(cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
+      git push -q origin HEAD; echo "push=$?"; git fetch -q origin; echo "fetch=$?"
+      (cd / && git -C "$2" fetch -q origin; echo "fetch-C=$?")' _ "$SCRIPTS" "$R" 2>&1)
+    case "$out" in *push=0*fetch=0*fetch-C=0*) ;; *) fail "9 $1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+    [ "$(git -C "$R.origin" rev-parse c9 2>/dev/null)" = "$(git -C "$R" rev-parse HEAD)" ] || fail "9 $1: the push did not land"
+  }
+  hooks9 '{}'
+  if marks | grep -q '^config-hook'; then fail "9 default: a hook the configuration defines ran during Bureau's push or fetch: $(marks | sort | uniq -c | tr -s ' ' | tr '\n' ';')"; fi
+  grep -q '^config-hook reference-transaction gh=no env=no' "$TMP/local9.log" || fail "9: the configured hooks did not run at all (the local commit ran none): $(tr '\n' ';' < "$TMP/local9.log")"
+  hooks9 '{"remote_git_runs_hooks":true}'
+  for hook in 'pre-push' 'pre-push-eq' 'reference-transaction'; do
+    marks | grep -q "^config-hook $hook gh=yes env=no" || fail "9 true: the configured $hook hook did not run with GH_TOKEN and without the .env keys: $(marks | sort -u | tr '\n' ';')"
+  done
+  pr1_pass "9 hooks the configuration defines stay off on Bureau's push and fetch ($(git9 git --version)); true runs them"
+else
+  echo "SKIP 9 hooks the configuration defines: needs git 2.54 or later, found $(git9 git --version 2>/dev/null || echo none); set BUREAU_TEST_GIT_DIR to the bin directory of one"
+fi
 
 if [ "$PR1_FAILS" != 0 ]; then echo "$PR1_FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_remote_git_hooks"

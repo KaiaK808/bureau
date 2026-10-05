@@ -21,9 +21,15 @@
 #   C  every script that reads a .env reads it through bureau_load_env: no `source`/`.` of an
 #      env file, no `set -a`, no `export` of the three names or of API_KEY, in the shell
 #      templates and in the inline bash of the Python runtime
+#   D  an operator shell that ran `set -a` or `set -x` and exported SHELLOPTS starts every Bureau
+#      bash with allexport or xtrace on: the REAL bureau-config.sh (load, the API_KEY copy, the
+#      presence check, a Linear request, a Telegram alert, curl doubled) and the nine stages of B
+#      export no key and print none in their trace, and the Linear request and the alert still
+#      reach curl with the key and the token
 # The drivers (shepherd, worker, runtime) run for real in tests/test_env_keys_drivers.sh.
 # Negative control: against v3.1.0 (9411b3b) A fails on every "exported" check and B on every
-# stage ("a process the script started carries a .env key: … jq LINEAR_API_KEY …").
+# stage ("a process the script started carries a .env key: … jq LINEAR_API_KEY …"); against
+# 735496e D fails ("the trace shows a secret", "API_KEY is exported").
 set -uo pipefail
 source "$(dirname "$0")/lib/harness.sh"
 source "$(dirname "$0")/lib/c1-env-probes.sh"
@@ -108,10 +114,19 @@ stage_run() {
       BUREAU_STUB_ISSUE_STATE="$state" BUREAU_STUB_STATE_QA=state-qa BUREAU_STUB_STATE_COPY=state-copy \
       BUREAU_STUB_STATE_MERGE=state-merge GH_STUB_EXISTING_PR=99 BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=0
     [ "$label" != merge ] || export BUREAU_NO_MERGE=0
+    # D: the shell that starts the stage has these options on and exports SHELLOPTS.
+    if [ -n "${C1_SHELLOPTS:-}" ]; then for opt in $C1_SHELLOPTS; do set -o "$opt"; done; export SHELLOPTS; fi
     run_pipeline "$script" "$@" </dev/null
+    { set +x; } 2>/dev/null
     printf '%s\n' "$LAST_RC" > "$SANDBOX/.c1/rc"
-    printf '%s\n' "$LAST_STDERR" | tail -3 > "$SANDBOX/.c1/err" )
-  c1_check_log "$SANDBOX/.c1/probe.log" "B $label (exit $(cat "$SANDBOX/.c1/rc" 2>/dev/null); $(tr '\n' ' ' < "$SANDBOX/.c1/err" 2>/dev/null | cut -c1-200))"
+    cp "$SANDBOX/stderr.log" "$SANDBOX/.c1/stage.err"
+    printf '%s\n' "$LAST_STDERR" | tail -3 > "$SANDBOX/.c1/err" ) 2>/dev/null
+  c1_check_log "$SANDBOX/.c1/probe.log" "${C1_LABEL:-B} $label (exit $(cat "$SANDBOX/.c1/rc" 2>/dev/null); $(tr '\n' ' ' < "$SANDBOX/.c1/err" 2>/dev/null | cut -c1-200))"
+  case " ${C1_SHELLOPTS:-} " in
+    *" xtrace "*)
+      grep -q '^+' "$SANDBOX/.c1/stage.err" || c1_fail "${C1_LABEL:-B} $label: the stage did not trace (SHELLOPTS not taken)"
+      c1_no_secret "$SANDBOX/.c1/stage.err" "${C1_LABEL:-B} $label: the trace shows a secret" ;;
+  esac
   teardown
 }
 stage_run implement Build implement-pipeline.sh
@@ -137,6 +152,66 @@ stray=$(grep -nE '(^|[;&|{( ])(source|\.) +[^ ]*(\.env|ENV_FILE)|set -a|set -o a
           "$SCRIPTS"/*.sh "$SCRIPTS"/*.py | grep -vE ':[0-9]+: *#' | grep -v 'export -n API_KEY' || true)
 [ -z "$stray" ] || c1_fail "C: a script reads .env past bureau_load_env or exports a key: $stray"
 [ "$C1_FAILS" = "$C_FAILS_BEFORE" ] && echo "PASS C every .env reader goes through bureau_load_env, and nothing exports the keys"
+
+# ── D  allexport and xtrace from the operator's shell ─────────────────────────
+D_FAILS_BEFORE=$C1_FAILS
+# c1_no_secret <file> <label> — none of the three key values in <file>.
+c1_no_secret() {
+  local v
+  for v in "$C1_LINEAR" "$C1_TG_TOKEN" "$C1_TG_CHAT"; do
+    if grep -qF -- "$v" "$1"; then c1_fail "$2: $(grep -F -- "$v" "$1" | head -2 | cut -c1-160 | tr '\n' ';')"; fi
+  done
+}
+D="$TMP/d"; mkdir -p "$D/scripts" "$TMP/dbin"; cp "$SCRIPTS"/bureau-config.sh "$SCRIPTS"/bureau-env.sh "$D/scripts/"
+git -C "$D" init -q -b main
+printf '{"linear":{"teams":[{"id":"t","key":"EXP","states":{}}],"labels":{}},"agents":{},"repo":{}}\n' > "$D/.bureau.json"
+c1_env_file "$D/.env"
+printf '%s\n' '#!/bin/bash' "cat > \"$TMP/curl.\$\$.stdin\"" "printf '%s' '{\"data\":{\"viewer\":{\"id\":\"u\"}}}'" \
+  "bash '$REPO_ROOT/tests/lib/curl-writeout.sh' 200 \"\$@\"" > "$TMP/dbin/curl"
+chmod +x "$TMP/dbin/curl"
+# The real config in a shell whose options come from SHELLOPTS: the load, the stages' API_KEY copy
+# and presence check, a Linear request and a Telegram alert; then what that shell exports.
+SECRETS_CODE='source scripts/bureau-config.sh; bureau_load_env --export .env
+bureau_secret_copy API_KEY LINEAR_API_KEY
+bureau_secret_set LINEAR_API_KEY && echo key-present
+_bureau_linear_fetch "{\"query\":\"{ viewer { id } }\"}" >/dev/null || echo linear-failed
+alert_telegram EXP-1 qa 1 "probe alert"
+echo "copy-length=${#API_KEY}"; /usr/bin/env'
+shellopts() {
+  rm -f "$TMP"/curl.*.stdin; rm -rf "$D/.git/bureau"   # the alert throttle of the run before
+  (cd "$D" && env -u LINEAR_API_KEY -u TELEGRAM_BOT_TOKEN -u TELEGRAM_ALERT_CHAT_ID -u API_KEY PATH="$TMP/dbin:$PATH" \
+     BUREAU_CONFIG="$D/.bureau.json" BUREAU_LINEAR_RETRIES=0 SHELLOPTS="$1" /bin/bash -c "$SECRETS_CODE" > "$TMP/d.out" 2>&1)
+  cat "$TMP"/curl.*.stdin > "$TMP/d.curl" 2>/dev/null || : > "$TMP/d.curl"
+}
+d_requests() {  # <label> — the Linear request carried the key and the alert the token, on curl's stdin
+  grep -q '^key-present$' "$TMP/d.out" || c1_fail "$1: the shell lost the key"
+  grep -qx "copy-length=${#C1_LINEAR}" "$TMP/d.out" || c1_fail "$1: the API_KEY copy is not the key"
+  grep -qF "Authorization: $C1_LINEAR" "$TMP/d.curl" || c1_fail "$1: the Linear request did not carry the key on curl's stdin: $(head -c 200 "$TMP/d.curl" | tr '\n' ' ')"
+  grep -qF "bot$C1_TG_TOKEN/sendMessage" "$TMP/d.curl" || c1_fail "$1: the alert did not reach curl with the token"
+}
+shellopts xtrace:braceexpand:hashall:interactive-comments
+grep -q '^+' "$TMP/d.out" || c1_fail "D xtrace: the shell did not trace (SHELLOPTS not taken)"
+d_requests "D xtrace"
+c1_no_secret "$TMP/d.out" "D xtrace: the trace shows a secret"
+shellopts allexport:braceexpand:hashall:interactive-comments
+d_requests "D allexport"
+for name in API_KEY LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID; do
+  if grep -q "^$name=" "$TMP/d.out"; then c1_fail "D allexport: $name is exported"; fi
+done
+c1_no_secret "$TMP/d.out" "D allexport: an exported variable carries a secret"
+# The nine stages of B, started from a shell with both options on and SHELLOPTS exported.
+C1_SHELLOPTS="allexport xtrace" C1_LABEL="D allexport+xtrace"
+stage_run implement Build implement-pipeline.sh
+stage_run spec Triage spec-pipeline.sh EXP-321
+stage_run spec-review 'Spec Review' spec-review-pipeline.sh EXP-321
+stage_run ux Design ux-pipeline.sh EXP-321
+stage_run copy Copy copy-pipeline.sh EXP-321
+stage_run qa QA qa-pipeline.sh EXP-321
+stage_run code-review 'Build Review' code-review-pipeline.sh EXP-321
+stage_run merge Merge merge-pipeline.sh EXP-321
+stage_run rebase Merge rebase-pipeline.sh
+C1_SHELLOPTS="" C1_LABEL=""
+[ "$C1_FAILS" = "$D_FAILS_BEFORE" ] && echo "PASS D with allexport or xtrace from the operator's shell no key is exported or traced, and Linear and Telegram still get them"
 
 if [ "$C1_FAILS" != 0 ]; then echo "$C1_FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_env_keys_unexported"

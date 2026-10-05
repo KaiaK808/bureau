@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="72d3a6829109c66ac7ee6f49c4e021d5a73e4629e5325d6fbf2cfe8b9bca673c">
+<meta name="bureau-source-sha256" content="2c0cece013bb2523de1a30e2f6f78f6405d3065a90f7fc8ec2fced5254698a38">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -993,21 +993,44 @@ variables, and a hook from the branch would see them. A
 <code>pre-push</code> hook (husky, lefthook, the pre-commit framework's
 <code>pre-push</code> stage) that ran lint or tests on Bureau's pushes
 therefore no longer runs, nor does a <code>reference-transaction</code>
-hook on a fetch or a push; hooks of local commands
-(<code>pre-commit</code>, <code>commit-msg</code>,
-<code>post-checkout</code>) still run, without the Bureau secrets. Let
-CI run what the <code>pre-push</code> hook checked, or set
-<code>repo.remote_git_runs_hooks</code> to <code>true</code> (the JSON
-value) to run the hooks again with the GitHub tokens in their
-environment, as in v3.1. A repository that uses Git LFS needs
-<code>true</code>: LFS uploads its objects in the <code>pre-push</code>
-hook, so without it the pull request's LFS files point at objects the
-remote does not have; doctor warns when the main checkout's
-<code>.gitattributes</code> uses <code>filter=lfs</code> and the key is
-not <code>true</code> (<a href="configuration.html">configuration</a>, <a
+hook on a fetch or a push; with git 2.54 and later the same holds for
+hooks the configuration defines (<code>hook.&lt;name&gt;.command</code>
+and <code>hook.&lt;name&gt;.event</code>, which
+<code>core.hooksPath</code> does not reach): Bureau also passes
+<code>hook.&lt;event&gt;.enabled=false</code> for every hook event and
+<code>hook.&lt;name&gt;.enabled=false</code> for every such hook name;
+hooks of local commands (<code>pre-commit</code>,
+<code>commit-msg</code>, <code>post-checkout</code>) still run, without
+the Bureau secrets. Let CI run what the <code>pre-push</code> hook
+checked, or set <code>repo.remote_git_runs_hooks</code> to
+<code>true</code> (the JSON value) to run the hooks again with the
+GitHub tokens in their environment, as in v3.1. A repository that uses
+Git LFS needs <code>true</code>: LFS uploads its objects in the
+<code>pre-push</code> hook, so without it the pull request's LFS files
+point at objects the remote does not have; doctor warns when the main
+checkout uses <code>filter=lfs</code> (in its
+<code>.gitattributes</code>, a <code>.gitattributes</code> further down
+that git lists, or <code>.git/info/attributes</code>) and the key is not
+<code>true</code> (<a href="configuration.html">configuration</a>, <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).
 Doctor warns when the value is not a JSON boolean; any value other than
 <code>true</code> keeps the hooks off.</p>
+<h3 id="tracing-a-stage-with-bash--x">Tracing a stage with
+<code>bash -x</code></h3>
+<p>Tracing a stage, a driver or the queue loop
+(<code>bash -x scripts/…</code>, or <code>set -x</code> and
+<code>export SHELLOPTS</code> in the shell that starts Bureau) is
+supported. Since v3.2 Bureau looks at and copies
+<code>LINEAR_API_KEY</code>, <code>TELEGRAM_BOT_TOKEN</code> and
+<code>TELEGRAM_ALERT_CHAT_ID</code> with the trace switched off
+(<code>bureau_secret_set</code>, <code>bureau_secret_copy</code> in
+<code>scripts/bureau-env.sh</code>), so the trace, which the queue loop
+writes to its log, shows no key; before,
+<code>+ API_KEY=lin_api_…</code> and the presence checks printed it. A
+script of an installation that a stage starts and that handles a key
+must do the same. <code>set -a</code> with an exported
+<code>SHELLOPTS</code> is switched off in every Bureau script, so it no
+longer exports the stages' copy of the key.</p>
 <h3 id="a-command-a-stage-starts-no-longer-finds-linear_api_key">A
 command a stage starts no longer finds <code>LINEAR_API_KEY</code></h3>
 <p>Since v3.2 the stages and drivers read <code>LINEAR_API_KEY</code>,

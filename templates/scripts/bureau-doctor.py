@@ -129,8 +129,13 @@ def stage_env_file(config_path):
     """The .env every stage reads, as _find_config in bureau-config.sh sets it (bureau-config.sh:40-44):
     BUREAU_ENV_FILE, by default (unset or empty) the .env next to .bureau.json; a relative value counts
     from the directory of .bureau.json, never from the working directory. Never ./.env of the checkout
-    doctor runs in: in a stage worktree that is a file the branch controls (v3.2)."""
-    return config_path.parent / (os.environ.get('BUREAU_ENV_FILE') or '.env')
+    doctor runs in: in a stage worktree that is a file the branch controls (v3.2). "The directory of
+    .bureau.json" is the one BUREAU_CONFIG names, as the stages take it (dirname, no link resolved):
+    config_for resolves an explicit BUREAU_CONFIG, so a .bureau.json that is a link would otherwise
+    point doctor at the directory of the link's target."""
+    explicit = os.environ.get('BUREAU_CONFIG')
+    base = Path(os.path.abspath(explicit)).parent if explicit else config_path.parent
+    return base / (os.environ.get('BUREAU_ENV_FILE') or '.env')
 
 
 def stage_env_value(config_path, name):
@@ -300,12 +305,22 @@ def ci_gate_without_workflows(repo, minimum):
 
 
 def uses_git_lfs(main):
-    """True when the main checkout's .gitattributes gives a pattern the Git LFS filter (filter=lfs);
-    a comment line does not count. LFS uploads its objects in its pre-push hook, which Bureau's
-    remote git skips unless repo.remote_git_runs_hooks is true (v3.2)."""
-    try: text = (main / '.gitattributes').read_text(errors='replace')
-    except OSError: return False
-    return any(re.search(r'(^|\s)filter=lfs(\s|$)', line) for line in text.splitlines() if not line.lstrip().startswith('#'))
+    """True when an attributes file of the main checkout gives a pattern the Git LFS filter
+    (filter=lfs, in any position among the pattern's attributes): its top-level .gitattributes, every
+    other .gitattributes in it that git lists (tracked, or untracked and not ignored), and the git
+    directory's info/attributes; a comment line does not count. LFS uploads its objects in its
+    pre-push hook, which Bureau's remote git skips unless repo.remote_git_runs_hooks is true (v3.2)."""
+    files = [main / '.gitattributes', main / '.git' / 'info' / 'attributes']
+    command = ['git', '-C', str(main), 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.gitattributes']
+    try: listed = subprocess.run(command, capture_output=True, env=module('provider').process_env(command)).stdout
+    except OSError: listed = b''
+    files += [main / os.fsdecode(name) for name in listed.split(b'\0') if os.path.basename(os.fsdecode(name)) == '.gitattributes']
+    for path in files:
+        try: text = path.read_text(errors='replace')
+        except OSError: continue
+        if any(re.search(r'(^|\s)filter=lfs(\s|$)', line) for line in text.splitlines() if not line.lstrip().startswith('#')):
+            return True
+    return False
 
 
 def main_checkout(repo):
@@ -524,7 +539,7 @@ def diagnose(repo, mode):
         warnings.append('repo.remote_git_runs_hooks ' + json.dumps(remote_hooks) + ' is not a JSON boolean; Bureau counts it as false and runs its push, fetch and other remote git commands without the repository\'s hooks: only true runs them')
     checkout = main_checkout(repo); main = checkout[0]
     if remote_hooks is not True and main is not None and uses_git_lfs(main):
-        warnings.append('repo.remote_git_runs_hooks is not true, but .gitattributes in the main checkout uses Git LFS (filter=lfs): Bureau pushes without the repository\'s hooks, so the pre-push hook of git lfs does not upload the LFS objects and the remote lacks them; set repo.remote_git_runs_hooks to true')
+        warnings.append('repo.remote_git_runs_hooks is not true, but the main checkout uses Git LFS (filter=lfs in a .gitattributes file or in info/attributes): Bureau pushes without the repository\'s hooks, so the pre-push hook of git lfs does not upload the LFS objects and the remote lacks them; set repo.remote_git_runs_hooks to true')
     links, link_errors, link_warnings = worktree_links(repo, config, checkout)
     errors.extend(link_errors); warnings.extend(link_warnings)
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),

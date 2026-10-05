@@ -292,7 +292,7 @@ class TestCommandWarningTests(Repo):
         LOAD_FIRST,
         '# BUREAU_ENV_FILE only, never ./.env: in a stage worktree that is a file the branch controls.',
         'if [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"',
-        'else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi'))
+        'else bureau_secret_set LINEAR_API_KEY || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi'))
     GATE_FIRST = 'if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then'
     GATE_TEXT = '\n'.join((
         GATE_FIRST,
@@ -459,12 +459,17 @@ class TestCommandWarningTests(Repo):
         # source they read. Doctor (the real diagnose, with the process in that checkout) names it
         # through its repo.test_command warning: it warns when only that source sets codex and does
         # not when every other source does; its .env note appears exactly when the file exists.
-        # The worktree's branch tracks a .env and a conf/bureau.env of its own.
+        # The worktree's branch tracks a .env and a conf/bureau.env of its own. BUREAU_CONFIG is
+        # exported (as the drivers and the runtime do), found from the checkout, or names a link to
+        # the main checkout's .bureau.json in another directory: the stages take the directory of
+        # the link (dirname), so doctor must not resolve it.
         config = self.config(runner='claude', implement=True); del config['repo']['test_command']; self.write_config(config)
         with (self.repo / '.git/info/exclude').open('a') as out: out.write('conf/\n')
         elsewhere = self.base / 'secrets' / 'bureau.env'; elsewhere.parent.mkdir()
+        linked = self.base / 'linked config'; linked.mkdir(); (linked / '.bureau.json').symlink_to(self.repo / '.bureau.json')
         files = {'main': self.repo / '.env', 'main-conf': self.repo / 'conf/bureau.env', 'elsewhere': elsewhere,
-                 'branch': self.worktree / '.env', 'branch-conf': self.worktree / 'conf/bureau.env'}
+                 'branch': self.worktree / '.env', 'branch-conf': self.worktree / 'conf/bureau.env',
+                 'link': linked / '.env', 'link-conf': linked / 'conf/bureau.env'}
         for path in files.values(): path.parent.mkdir(parents=True, exist_ok=True); path.write_text('LINEAR_API_KEY=x\n')
         git(self.worktree, 'add', '-f', '.env', 'conf/bureau.env'); git(self.worktree, 'commit', '-qm', 'the branch tracks .env files')
         self.assertEqual(git(self.worktree, 'ls-files', '.env', 'conf/bureau.env').stdout.split(), ['.env', 'conf/bureau.env'])
@@ -498,14 +503,18 @@ class TestCommandWarningTests(Repo):
             ('relative, missing next to .bureau.json', 'conf/bureau.env', ('main-conf',), 'env'),
             ('unset, no .env next to .bureau.json', None, ('main',), 'env'),
         ]
-        for label, value, removed, source in cases:
-            for path in files.values(): path.write_text('LINEAR_API_KEY=x\n')
-            for name in removed: files[name].unlink()
+        configs = {'exported': self.repo / '.bureau.json', 'found': None, 'link': linked / '.bureau.json'}
+        for label, value, removed, main_source in cases:
             case_env = {} if value is None else {'BUREAU_ENV_FILE': value}
             for place in (self.repo, self.worktree):
-                for exported in (True, False):  # BUREAU_CONFIG as the drivers export it, or found from the checkout
-                    with self.subTest(case=label, place=place.name, bureau_config=exported):
-                        env = {**case_env, **({'BUREAU_CONFIG': str(self.repo / '.bureau.json')} if exported else {})}
+                for mode, named in configs.items():
+                    # Through the link the directory of .bureau.json is the link's: its .env.
+                    to_link = {'main': 'link', 'main-conf': 'link-conf'} if mode == 'link' else {}
+                    source = to_link.get(main_source, main_source)
+                    for path in files.values(): path.write_text('LINEAR_API_KEY=x\n')
+                    for name in removed: files[to_link.get(name, name)].unlink()
+                    with self.subTest(case=label, place=place.name, bureau_config=mode):
+                        env = {**case_env, **({'BUREAU_CONFIG': str(named)} if named else {})}
                         stage_env = {**os.environ, **write(lambda name: False), **env, 'REPO': str(self.repo), 'PLACE': str(place), 'CONFIG_SH': str(self.CONFIG_SH)}
                         for name in [n for n in ('BUREAU_ENV_FILE', 'BUREAU_CONFIG') if n not in env]: stage_env.pop(name, None)
                         proc = subprocess.run(['/bin/bash', '-c', self.PROBE, 'probe', *loaders], capture_output=True, text=True, env=stage_env)

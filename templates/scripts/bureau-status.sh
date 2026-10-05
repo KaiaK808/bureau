@@ -169,17 +169,17 @@ show_effective_config() {
   _resolve_env_only BUREAU_SESSION_NAME "(bureau-v2-$(basename "$REPO_DIR"))"
   _row runtime BUREAU_SESSION_NAME "$row_source" "$row_value"
   # Secrets: never show the actual value — just whether it's set.
-  if [ -n "${LINEAR_API_KEY:-}" ]; then
+  if bureau_secret_set LINEAR_API_KEY; then
     _row runtime LINEAR_API_KEY      "env *" "set"
   else
     _row runtime LINEAR_API_KEY      "def" "${RED}UNSET${RESET}  (required)"
   fi
-  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  if bureau_secret_set TELEGRAM_BOT_TOKEN; then
     _row runtime TELEGRAM_BOT_TOKEN  "env *" "set"
   else
     _row runtime TELEGRAM_BOT_TOKEN  "def" "unset (alerts disabled)"
   fi
-  if [ -n "${TELEGRAM_ALERT_CHAT_ID:-}" ]; then
+  if bureau_secret_set TELEGRAM_ALERT_CHAT_ID; then
     _row runtime TELEGRAM_ALERT_CHAT_ID "env *" "set"
   else
     _row runtime TELEGRAM_ALERT_CHAT_ID "def" "unset"

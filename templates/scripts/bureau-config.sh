@@ -16,6 +16,12 @@
 _BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=templates/scripts/bureau-env.sh
 source "$_BUREAU_SCRIPTS_DIR/bureau-env.sh"
+# v3.2: allexport off in every Bureau script. An operator shell that ran `set -a` and exported
+# SHELLOPTS starts each Bureau bash with it on, and then every assignment would be exported: the
+# stages' API_KEY copy, the Linear request's config line in _bureau_linear_fetch (which
+# _bureau_drop_secrets would then unset before curl reads it), any later value. bureau_load_env
+# switches it off as well.
+set +a
 # The scripts that source this file copy the Linear key into API_KEY once they
 # have read .env. bureau_load_env never exports the key itself (v3.2); an
 # API_KEY the operator's shell happens to export would still carry the copy to
@@ -2115,10 +2121,10 @@ alert_telegram() {
     echo "[DRY_RUN] alert_telegram $issue $pipeline exit=$exit_code: $message" >&2
     return 0
   fi
-  local token="${TELEGRAM_BOT_TOKEN:-}"
-  local chat="${TELEGRAM_ALERT_CHAT_ID:-}"
-  [ -z "$token" ] && return 0
-  [ -z "$chat" ] && return 0
+  # The token and the chat id are looked at with a running `set -x` off and read only inside the
+  # traceless subshell below (v3.2): a local copy assigned here would print them in the trace.
+  bureau_secret_set TELEGRAM_BOT_TOKEN || return 0
+  bureau_secret_set TELEGRAM_ALERT_CHAT_ID || return 0
 
   local throttle_key="alert|$issue|$pipeline|$exit_code"
   _throttle_should_suppress "$throttle_key" 3600 && return 0
@@ -2135,10 +2141,9 @@ alert_telegram() {
   # its argument list, which `ps` shows; curl starts without the secrets in its
   # environment, and a running `set -x` is off in the subshell.
   ( { set +x; } 2>/dev/null
-    config=$(_bureau_curl_config url "https://api.telegram.org/bot${token}/sendMessage"
-             _bureau_curl_config data-urlencode "chat_id=${chat}"
+    config=$(_bureau_curl_config url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
+             _bureau_curl_config data-urlencode "chat_id=${TELEGRAM_ALERT_CHAT_ID}"
              _bureau_curl_config data-urlencode "text=${body}")
-    token=""; chat=""
     _bureau_drop_secrets
     curl -s -X POST -K - --data-urlencode "parse_mode=Markdown" <<< "$config"
   ) >/dev/null 2>&1 || true

@@ -45,6 +45,10 @@ c1_probe_tools() {
     case "$real" in "$dir"/*) continue ;; esac
     cat > "$dir/$tool" <<EOF
 #!/bin/sh
+# A stage traced through an exported SHELLOPTS must not trace the probe's own constants, and a
+# /bin/sh that is bash must not hand the POSIX mode it runs in on to the tool through SHELLOPTS.
+{ set +x; } 2>/dev/null
+if ( set +o posix ) 2>/dev/null; then set +o posix; fi
 if [ "\${$C1_MARK_NAME:-}" = '$C1_MARK_VALUE' ]; then
   hit=\$(/usr/bin/env | /usr/bin/awk -F= -v a='$C1_LINEAR' -v b='$C1_TG_TOKEN' -v c='$C1_TG_CHAT' \
     '\$1 == "LINEAR_API_KEY" || \$1 == "API_KEY" || \$1 == "TELEGRAM_BOT_TOKEN" || \$1 == "TELEGRAM_ALERT_CHAT_ID" || index(\$0, a) || index(\$0, b) || index(\$0, c) { printf "%s ", \$1 }')

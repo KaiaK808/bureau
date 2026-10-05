@@ -18,7 +18,7 @@ source "$(dirname "$0")/bureau-config.sh"
 if [ -f "${BUREAU_ENV_FILE:-$REPO_DIR/.env}" ]; then
   bureau_load_env --export "${BUREAU_ENV_FILE:-$REPO_DIR/.env}"
 fi
-API_KEY="${LINEAR_API_KEY:-}"
+bureau_secret_copy --optional API_KEY LINEAR_API_KEY
 
 # --dry-run flag (env-var BUREAU_DRY_RUN=1 also honoured) flips bureau-config.sh's
 # move_issue / post_comment / add_issue_label / alert_telegram into log-only mode

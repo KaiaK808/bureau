@@ -42,11 +42,20 @@ def process_env(command, environ=None):
 
 
 # Bureau's own git commands that talk to a remote run without the repository's hooks (v3.2): the
-# flag the git() function in bureau-env.sh adds, since such a command keeps the GitHub token
-# variables and a hook from the branch would see them. The one this script runs, ls-remote, updates
-# no ref and starts no hook, so the flag changes nothing there today and repo.remote_git_runs_hooks
-# has nothing to bring back; it keeps the rule the same at every remote command Bureau starts.
-NO_HOOKS = ['-c', 'core.hooksPath=/dev/null']
+# switches the git() function in bureau-env.sh adds (_bureau_git_hooks_off), since such a command
+# keeps the GitHub token variables and a hook from the branch would see them: no hooks directory,
+# and hook.<event>.enabled=false for every event git knows, which turns off the hooks the
+# configuration defines (git 2.55). The one command this script runs, ls-remote, updates no ref and
+# fires no hook event in any git version, so the switches change nothing there today, git() adds
+# the per-name switches of git 2.54 only where an event can fire, and repo.remote_git_runs_hooks
+# has nothing to bring back; they keep the rule the same at every remote command Bureau starts.
+HOOK_EVENTS = ('applypatch-msg', 'commit-msg', 'fsmonitor-watchman', 'p4-changelist', 'p4-post-changelist',
+               'p4-pre-submit', 'p4-prepare-changelist', 'post-applypatch', 'post-checkout', 'post-commit',
+               'post-index-change', 'post-merge', 'post-receive', 'post-rewrite', 'post-update', 'pre-applypatch',
+               'pre-auto-gc', 'pre-commit', 'pre-merge-commit', 'pre-push', 'pre-rebase', 'pre-receive',
+               'prepare-commit-msg', 'proc-receive', 'push-to-checkout', 'reference-transaction',
+               'sendemail-validate', 'update')
+NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'] + [part for event in HOOK_EVENTS for part in ('-c', 'hook.' + event + '.enabled=false')]
 
 
 def git(repo, *args):

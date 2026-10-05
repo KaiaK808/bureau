@@ -20,14 +20,14 @@ fi
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 # BUREAU_ENV_FILE only, never ./.env: in a stage worktree that is a file the branch controls.
 if [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
-else [ -n "${LINEAR_API_KEY:-}" ] || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
+else bureau_secret_set LINEAR_API_KEY || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
 
 # Honor BUREAU_MODEL_CODE_REVIEW / .agents.code_review.model like every other
 # pipeline (EXP-490). Without this, code review silently ignored the per-stage
 # model knob and stuck to the CLI default — making it ineligible for the
 # cheap-model migration the per-stage map was designed for.
 CLAUDE=(run_stage_for code_review)
-API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
+bureau_secret_copy API_KEY LINEAR_API_KEY
 REVIEW_TMP=$(mktemp -d)
 # Preserve REVIEW_TMP only on real failures. 0 = success, 2 = queue-empty —
 # both are clean early exits with no specialist output to inspect.

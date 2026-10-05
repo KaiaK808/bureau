@@ -91,7 +91,7 @@ BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 if [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
 else echo "ERROR: No .env found"; exit 1; fi
 
-API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
+bureau_secret_copy API_KEY LINEAR_API_KEY
 
 DRY_RUN=false
 POSITIONAL=()

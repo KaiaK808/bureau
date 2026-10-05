@@ -521,7 +521,7 @@ _shepherd_start_failed() {
 
 ( _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" precondition_linear ) || _shepherd_start_failed $?
 
-: "${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
+bureau_secret_set LINEAR_API_KEY || { echo "$0: LINEAR_API_KEY: Set LINEAR_API_KEY in .env" >&2; exit 1; }
 
 # ── Refuse a held ticket before claiming it (v3.1) ────────────────────
 # The loop below reads the labels on every turn, but only after the claim and

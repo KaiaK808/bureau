@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3541e954ed007e7530fb77bdf972cdaefb9914403655095baa29b7cb4eafbd32">
+<meta name="bureau-source-sha256" content="a6386164f578e9fc074daa7075a40d37740bf7a08f51ac07bd841a9dd6ae0130">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -807,25 +807,31 @@ href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>
 <code>ls-remote</code>, <code>clone</code>, <code>remote</code>,
 <code>submodule</code>, all of which keep the GitHub token variables for
 the credential helper — run the repository's hooks. Since v3.2 they run
-with <code>-c core.hooksPath=/dev/null</code> (the <code>git</code>
-function in <code>scripts/bureau-env.sh</code>): a hook from the branch
-would see the GitHub tokens, <code>pre-push</code> on a push and
+with <code>-c core.hooksPath=/dev/null</code> and, for the hooks the
+configuration defines (git 2.54 and later),
+<code>hook.&lt;event&gt;.enabled=false</code> for every hook event and
+<code>hook.&lt;name&gt;.enabled=false</code> for every configured hook
+name (the <code>git</code> function in
+<code>scripts/bureau-env.sh</code>): a hook from the branch would see
+the GitHub tokens, <code>pre-push</code> on a push and
 <code>reference-transaction</code> on every ref update a fetch or a push
 makes. A <code>pre-push</code> hook (lint, tests) therefore no longer
 runs when Bureau pushes; CI runs those checks on the pull request.
 <strong>A repository that uses Git LFS needs <code>true</code></strong>:
 <code>git lfs install</code> uploads the LFS objects in a
 <code>pre-push</code> hook, and without it Bureau's push leaves them off
-the remote; doctor warns when the main checkout's
-<code>.gitattributes</code> uses <code>filter=lfs</code> and the key is
-not <code>true</code>. <code>true</code> (the JSON value) runs the hooks
-again, as v3.1 did. Absent, <code>null</code>, <code>false</code>, any
-other value and a <code>.bureau.json</code> that cannot be read keep
-them off; doctor warns on a value that is not a JSON boolean. Local
-commands (commit, checkout, merge, reset) run their hooks either way,
-without the Bureau secrets. Hooks only: a credential helper, a filter or
-an fsmonitor named in the git configuration still runs, and
-<code>gh</code>'s own git calls keep their hooks; see <a
+the remote; doctor warns when the main checkout uses
+<code>filter=lfs</code> (in its <code>.gitattributes</code>, a
+<code>.gitattributes</code> further down that git lists, or
+<code>.git/info/attributes</code>) and the key is not <code>true</code>.
+<code>true</code> (the JSON value) runs the hooks again, as v3.1 did.
+Absent, <code>null</code>, <code>false</code>, any other value and a
+<code>.bureau.json</code> that cannot be read keep them off; doctor
+warns on a value that is not a JSON boolean. Local commands (commit,
+checkout, merge, reset) run their hooks either way, without the Bureau
+secrets. Hooks only: a credential helper, a filter or an fsmonitor named
+in the git configuration still runs, and <code>gh</code>'s own git calls
+keep their hooks; see <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
 </tr>
 <tr>
