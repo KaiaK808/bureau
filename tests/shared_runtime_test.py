@@ -15,6 +15,8 @@ import time
 import unittest
 from unittest.mock import patch
 
+import git_maintenance
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'templates/scripts/bureau-runtime.py'
 spec = importlib.util.spec_from_file_location('runtime', SCRIPT)
@@ -25,10 +27,7 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau stage ')
         self.addCleanup(self.temp.cleanup)
-        self.repo = Path(self.temp.name).resolve() / 'repo'; self.repo.mkdir()
-        for args in [('init', '-q', '-b', 'main'), ('config', 'user.name', 'Test'), ('config', 'user.email', 'test@example.invalid'),
-                     ('commit', '-q', '--allow-empty', '-m', 'init'), ('switch', '-q', '-c', 'feat/issue')]:
-            r.git(self.repo, *args)
+        self.repo = self.make_repo(Path(self.temp.name).resolve() / 'repo')
         self.config = {'linear': {'teams': [{'key':'TEAM','id':'team','states': {
             'triage':'s1','spec_review':'s2','build':'s3','qa':'s4','build_review':'s5','merge':'s6','done':'s7'}}]},
             'agents': {'qa':True}, 'repo':{}}
@@ -38,6 +37,32 @@ class RuntimeTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.dict(os.environ, {'BUREAU_CONFIG':str(self.repo / '.bureau.json')}).start()
         patch.object(r, 'shell', self.shell).start()
+
+    def make_repo(self, repo):
+        # git maintenance off in the repository's own config: r.git and the stages run git with their
+        # own environment (git_maintenance.py).
+        repo.mkdir()
+        for args in [('init', '-q', '-b', 'main'), git_maintenance.OFF_CONFIG, ('config', 'user.name', 'Test'), ('config', 'user.email', 'test@example.invalid'),
+                     ('commit', '-q', '--allow-empty', '-m', 'init'), ('switch', '-q', '-c', 'feat/issue')]:
+            r.git(repo, *args)
+        return repo
+
+    def bare_origin(self, name='origin.git'):
+        origin = Path(self.temp.name) / name
+        subprocess.run(['git', 'init', '-q', '--bare', str(origin)], check=True)
+        subprocess.run(['git', '--git-dir', str(origin), *git_maintenance.OFF_CONFIG], check=True)  # for receive-pack behind a push
+        return origin
+
+    def test_fixture_repository_and_push_start_no_git_maintenance(self):
+        trace = Path(self.temp.name) / 'trace2.json'
+        with patch.dict(os.environ, {'GIT_TRACE2_EVENT': str(trace)}):
+            repo = self.make_repo(Path(self.temp.name).resolve() / 'traced repo')
+            origin = self.bare_origin('traced origin.git')
+            r.git(repo, 'remote', 'add', 'origin', str(origin)); r.git(repo, 'push', '-q', 'origin', 'main', 'feat/issue')
+        commands = git_maintenance.commands(trace)
+        self.assertTrue(any('commit' in argv for argv in commands), commands)  # both sides were traced
+        self.assertTrue(any('receive-pack' in ' '.join(argv) for argv in commands), commands)
+        self.assertEqual(git_maintenance.maintenance_started(trace), [])
 
     def shell(self, repo, function, *args):
         if function == 'bureau_issue_snapshot':
@@ -209,8 +234,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(sentinel.read_text(),'preserve worker progress')
 
     def test_reset_requires_matching_claim_and_registered_worker(self):
-        origin=Path(self.temp.name)/'origin.git'
-        subprocess.run(['git','init','-q','--bare',str(origin)],check=True)
+        origin=self.bare_origin()
         r.git(self.repo,'remote','add','origin',str(origin)); r.git(self.repo,'push','-q','origin','main')
         wt=Path(self.temp.name).resolve()/'disposable worker'
         run='a'*32
@@ -236,8 +260,7 @@ class RuntimeTests(unittest.TestCase):
         # checkout's .venv into the disposable worker, the worker stays clean (a dirty worker
         # would be preserved and the next reset would stop with 21), and the next reset's
         # clean -fdx removes only the link. Paths contain spaces (the temp dir does).
-        origin=Path(self.temp.name)/'origin.git'
-        subprocess.run(['git','init','-q','--bare',str(origin)],check=True)
+        origin=self.bare_origin()
         (self.repo/'.gitignore').write_text('.venv\n.bureau.json\n')
         r.git(self.repo,'add','.gitignore'); r.git(self.repo,'commit','-q','-m','ignore venv')
         r.git(self.repo,'remote','add','origin',str(origin)); r.git(self.repo,'push','-q','origin','HEAD:main')
@@ -266,8 +289,7 @@ class RuntimeTests(unittest.TestCase):
         # The worker runs under set -euo pipefail. An entry starting with '-' used to reach
         # `dirname`, which read it as an option and failed; the failed assignment ended the
         # worker before the stage, for every ticket.
-        origin=Path(self.temp.name)/'origin.git'
-        subprocess.run(['git','init','-q','--bare',str(origin)],check=True)
+        origin=self.bare_origin()
         (self.repo/'.gitignore').write_text('.venv\n-venv\n.bureau.json\n')
         r.git(self.repo,'add','.gitignore'); r.git(self.repo,'commit','-q','-m','ignore venvs')
         r.git(self.repo,'remote','add','origin',str(origin)); r.git(self.repo,'push','-q','origin','HEAD:main')
@@ -520,8 +542,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn('Address ALL fixes before remaining tasks',feedback)
 
     def test_nested_worker_cancellation_quarantines_until_explicit_recovery(self):
-        origin=Path(self.temp.name)/'origin.git'
-        subprocess.run(['git','init','-q','--bare',str(origin)],check=True)
+        origin=self.bare_origin()
         r.git(self.repo,'remote','add','origin',str(origin)); r.git(self.repo,'push','-q','origin','main','feat/issue')
         r.git(self.repo,'switch','-q','main')
         scripts=self.repo/'scripts'; shutil.copytree(ROOT/'templates/scripts',scripts)

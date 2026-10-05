@@ -10,13 +10,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import git_maintenance
+
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts/bureau_install.py"
 spec = importlib.util.spec_from_file_location("installer", INSTALLER)
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
-# Test repositories must not inherit the operator's signing, hooks or identity settings.
-GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+# Test repositories must not inherit the operator's signing, hooks or identity settings, and no
+# detached git maintenance may still write into one while its temp dir is deleted (git_maintenance.py).
+GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", **git_maintenance.OFF_ENV,
            "GIT_AUTHOR_NAME": "Bureau Test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
            "GIT_COMMITTER_NAME": "Bureau Test", "GIT_COMMITTER_EMAIL": "test@example.invalid"}
 
@@ -160,6 +163,24 @@ class InstallationTests(unittest.TestCase):
 
     def manifest(self):
         return json.loads((self.repo / ".bureau-install.json").read_text())
+
+    def test_the_tagged_source_starts_no_git_maintenance(self):
+        trace = self.root / "trace2.json"
+        with patch.dict(GIT_ENV, {"GIT_TRACE2_EVENT": str(trace)}):
+            self.tagged_source()
+        self.assertTrue(any("commit" in argv for argv in git_maintenance.commands(trace)))  # the commit was traced
+        self.assertEqual(git_maintenance.maintenance_started(trace), [])
+
+    def test_the_trace_reader_finds_maintenance_and_gc_children(self):
+        # The helper the no-maintenance tests rely on, on a trace whose answer is known.
+        trace = self.root / "synthetic-trace2.json"
+        events = [{"event": "start", "argv": ["git", "-C", "repo", "commit", "-qm", "x"]},
+                  {"event": "child_start", "argv": ["git", "maintenance", "run", "--auto", "--quiet", "--detach"]},
+                  {"event": "child_start", "argv": ["git", "gc", "--auto"]},
+                  {"event": "child_start", "argv": ["git", "repack", "-d", "-l"]}]
+        trace.write_text("".join(json.dumps(event) + "\n" for event in events))
+        self.assertEqual(git_maintenance.maintenance_started(trace), [events[1]["argv"], events[2]["argv"]])
+        self.assertEqual(git_maintenance.commands(trace), [events[0]["argv"]])
 
     def test_apply_records_tagged_untagged_and_dirty_source_per_scope(self):
         source, program = self.tagged_source()
