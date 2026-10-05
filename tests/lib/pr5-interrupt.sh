@@ -13,7 +13,13 @@
 # until a signal ends it. $SB/probe-mode changes that: finish moves the ticket to Done, idle
 # blocks before it writes anything, commit commits its work first, ignore ignores SIGTERM and
 # Ctrl-C, slowexit spends 7 s in an EXIT trap (like implement's deferred push) and then
-# writes $SB/pushed.
+# writes $SB/pushed, ignorehup ignores SIGHUP and writes $SB/stopped in its EXIT trap,
+# ignoreall ignores SIGHUP, SIGTERM and Ctrl-C, retry ends with 10 after its work (the
+# shepherd waits 60 s and retries) (tests/test_hangup_stop.sh). Each release of a label also
+# records whether it was a single attempt in $SB/release-single.log. Before it marks that it
+# runs, the probe writes its own process and its ancestors up to the first one outside the
+# sandbox to $SB/run-procs ("pid pgid command" per line): a test that signals one process group
+# of the run takes the group from there, so it can never name a process of another run.
 #
 # pr5_setup                    — $SB (physical path), the fake Linear/Telegram, and a repo
 # pr5_teardown                 — the tests' EXIT trap: stops every process group still running a
@@ -83,6 +89,7 @@ case "\$query" in
         b='{"data":{"issueAddLabel":{"success":true}}}' ;;
       *)
         echo "remove-label \${id#U} \$name" >> "\$sb/linear.log"
+        echo "\${_BUREAU_LINEAR_SINGLE_ATTEMPT:-0}" >> "\$sb/release-single.log"
         jq -c --arg n "\$name" 'map(select(. != \$n))' "\$f" > "\$f.new" && mv "\$f.new" "\$f"
         b='{"data":{"issueRemoveLabel":{"success":true}}}' ;;
     esac ;;
@@ -136,7 +143,17 @@ case "\$(cat "$SB/probe-mode" 2>/dev/null || echo block)" in
   commit) git add probe-work.txt; git -c user.name=t -c user.email=t@t commit -q -m 'spec draft' ;;
   ignore) trap '' TERM INT ;;
   slowexit) trap 'sleep 7; echo pushed > "$SB/pushed"' EXIT ;;
+  ignorehup) trap '' HUP; trap 'echo stopped > "$SB/stopped"' EXIT ;;
+  ignoreall) trap '' TERM INT HUP ;;
+  retry) exit 10 ;;
 esac
+p=\$\$; : > "$SB/run-procs.new"
+while [ -n "\$p" ] && [ "\$p" -gt 1 ]; do
+  line=\$(ps -ww -o pid=,pgid=,args= -p "\$p" 2>/dev/null) || break
+  case "\$line" in *"$SB/"*) printf '%s\\n' "\$line" >> "$SB/run-procs.new" ;; *) break ;; esac
+  p=\$(ps -o ppid= -p "\$p" 2>/dev/null | tr -d ' ') || p=""
+done
+mv "$SB/run-procs.new" "$SB/run-procs"
 : > "$SB/probe-started"
 while :; do sleep 1; done
 PROBE
@@ -151,8 +168,8 @@ PROBE
   printf 'LINEAR_API_KEY=k\nTELEGRAM_BOT_TOKEN=t\nTELEGRAM_ALERT_CHAT_ID=c\n' > "$REPO/.env"
   WT="$REPO/.worktrees/shepherd-EXP-7"
   COMMON="$REPO/.git"
-  printf s1 > "$SB/state"; rm -f "$SB/labels/"*.json "$SB/probe-mode" "$SB/probe-started" "$SB/finished.log" "$SB/pushed"
-  : > "$SB/linear.log"; : > "$SB/comments.jsonl"; : > "$SB/alerts.log"
+  printf s1 > "$SB/state"; rm -f "$SB/labels/"*.json "$SB/probe-mode" "$SB/probe-started" "$SB/finished.log" "$SB/pushed" "$SB/stopped" "$SB/run-procs"
+  : > "$SB/linear.log"; : > "$SB/comments.jsonl"; : > "$SB/alerts.log"; rm -f "$SB/release-single.log"
 }
 
 pr5_ticket() { printf '%s' "$2" > "$SB/labels/$1.json"; }
