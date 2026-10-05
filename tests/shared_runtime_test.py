@@ -369,12 +369,24 @@ class RuntimeTests(unittest.TestCase):
         # leases while the stage still ran, and printed no steps.
         tmp=Path(self.temp.name)
         started, may_end, ended, inner_log = tmp/'stage-started', tmp/'stage-may-end', tmp/'stage-ended', tmp/'inner.log'
-        self.addCleanup(may_end.touch)  # the inner wrapper and its stage end with the test
-        stage=('import pathlib, time\npathlib.Path(%r).touch()\nwhile not pathlib.Path(%r).exists(): time.sleep(.02)\n'
+        inner_pid=tmp/'inner.pid'
+        def end_stage():
+            # The inner wrapper and its stage end with the test, also when it fails early,
+            # before the temporary directory goes (cleanups run last-in, first-out).
+            may_end.touch()
+            pid=int(inner_pid.read_text()) if inner_pid.exists() else None
+            deadline=time.monotonic()+20
+            while pid and time.monotonic()<deadline:
+                try: os.kill(pid,0)
+                except ProcessLookupError: break
+                time.sleep(.05)
+        self.addCleanup(end_stage)
+        stage=('import pathlib, time\nstarted, may_end = pathlib.Path(%r), pathlib.Path(%r)\nstarted.touch()\n'
+               'while not may_end.exists() and started.exists(): time.sleep(.02)\n'
                'pathlib.Path(%r).touch()' % (str(started), str(may_end), str(ended)))
         shepherd=('"$PY" "$RUNTIME" --repo "$REPO" exec --issue TEAM-1 -- "$PY" -c "$STAGE" > "$INNER_LOG" 2>&1 &\n'
-                  'while [ ! -e "$STARTED" ]; do sleep .02; done\nexit 130\n')
-        proc=self.front_exec(shepherd,STAGE=stage,STARTED=str(started),INNER_LOG=str(inner_log))
+                  'echo $! > "$INNER_PID"\nwhile [ ! -e "$STARTED" ]; do sleep .02; done\nexit 130\n')
+        proc=self.front_exec(shepherd,STAGE=stage,STARTED=str(started),INNER_LOG=str(inner_log),INNER_PID=str(inner_pid))
         self.assertEqual(proc.returncode,130,proc.stderr)
         self.assertFalse(ended.exists(),'the stage ended first: the order was not forced')
         leases=r.read(self.store.leases,{})
@@ -383,8 +395,7 @@ class RuntimeTests(unittest.TestCase):
         run=leases['issue:TEAM-1']['run_id']
         self.assertEqual(proc.stderr.count('Interrupted Bureau run '+run),1,proc.stderr)
         self.assertIn('bureau-runtime.py release '+run,proc.stderr)
-        # The stage still runs under the inner wrapper: release refuses until it ends,
-        # and the inner wrapper starts nothing new in an interrupted run.
+        # The stage still runs under the inner wrapper: release refuses until it ends.
         held=self.release_run(run)
         self.assertEqual(held.returncode,21,held.stdout+held.stderr)
         self.assertIn('still alive',held.stderr)
@@ -411,6 +422,9 @@ class RuntimeTests(unittest.TestCase):
         # by a signal it did not handle (129, 143) release the leases as before.
         for code in (0, 1, 25, 129, 143):
             with self.subTest(code=code):
+                # Each code on its own: leases a failed code left behind would turn the next
+                # run into an ownership conflict instead.
+                self.store.leases.unlink(missing_ok=True)
                 proc=self.front_exec('exit %d' % code)
                 self.assertEqual(proc.returncode,code,proc.stderr)
                 self.assertEqual(r.read(self.store.leases,{}),{},proc.stderr)
