@@ -35,6 +35,9 @@ if [ "${#POSITIONAL[@]}" -gt 0 ]; then set -- "${POSITIONAL[@]}"; else set --; f
 MODE="${1:-all}"
 INTERVAL_MINUTES="${2:-$BUREAU_POLL_INTERVAL}"
 INTERVAL_SECONDS=$((INTERVAL_MINUTES * 60))
+# The picker's hold on a ticket waiting on its merge gate starts at two of this loop's
+# intervals (merge_gate_waits in bureau-config.sh), not the configured one.
+export BUREAU_QUEUE_POLL_SECONDS="$INTERVAL_SECONDS"
 LOG_DIR="$REPO_DIR/logs"
 LOG_FILE="$LOG_DIR/queue-$MODE.log"
 WORKTREE_DIR="$REPO_DIR/.worktrees/queue-$MODE"

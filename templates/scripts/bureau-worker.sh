@@ -71,7 +71,7 @@ _worker_cleanup() {
     if [ "$rc" = 20 ] && [ "$PIPELINE" = code-review-pipeline.sh ] && [ -z "$(git -C "$WORKTREE" status --porcelain)" ]; then
       bureau_preserve_note "$WORKTREE" "$ISSUE" review-checkpoint || true
       git -C "$WORKTREE" checkout --detach --quiet || return
-      python3 "$SCRIPT_DIR/bureau-supervision.py" --repo "$WORKTREE" checkpoint "$ISSUE" >/dev/null || return
+      python3 -I "$SCRIPT_DIR/bureau-supervision.py" --repo "$WORKTREE" checkpoint "$ISSUE" >/dev/null || return
       echo "Preserved stopped review checkpoint in $WORKTREE; future work uses another checkout." >&2
     else
       if [ "$rc" = 130 ]; then bureau_preserve_note "$WORKTREE" "$ISSUE" interrupted || true
