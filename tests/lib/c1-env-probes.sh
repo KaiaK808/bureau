@@ -45,15 +45,20 @@ c1_probe_tools() {
     case "$real" in "$dir"/*) continue ;; esac
     cat > "$dir/$tool" <<EOF
 #!/bin/sh
-# A stage traced through an exported SHELLOPTS must not trace the probe's own constants, and a
-# /bin/sh that is bash must not hand the POSIX mode it runs in on to the tool through SHELLOPTS.
+# The options the shell that started the probe passed on (SHELLOPTS; empty under dash, which leaves
+# it alone): with xtrace or allexport in them (test_env_keys_*.sh D and 5) the tool gets them back
+# unchanged, so a traced stage stays traced past a probed python3 or jq, minus the POSIX mode a
+# /bin/sh that is bash adds. The probe itself does not trace (its constants are the key values).
+c1_opts=\${SHELLOPTS:-}
 { set +x; } 2>/dev/null
-if ( set +o posix ) 2>/dev/null; then set +o posix; fi
 if [ "\${$C1_MARK_NAME:-}" = '$C1_MARK_VALUE' ]; then
   hit=\$(/usr/bin/env | /usr/bin/awk -F= -v a='$C1_LINEAR' -v b='$C1_TG_TOKEN' -v c='$C1_TG_CHAT' \
     '\$1 == "LINEAR_API_KEY" || \$1 == "API_KEY" || \$1 == "TELEGRAM_BOT_TOKEN" || \$1 == "TELEGRAM_ALERT_CHAT_ID" || index(\$0, a) || index(\$0, b) || index(\$0, c) { printf "%s ", \$1 }')
   printf '%s %s\n' '$tool' "\${hit:-clean}" >> '$log'
 fi
+case ":\$c1_opts:" in *:xtrace:*|*:allexport:*)
+  exec /usr/bin/env SHELLOPTS="\$(printf '%s' "\$c1_opts" | /usr/bin/sed -e 's/:posix:/:/' -e 's/^posix://' -e 's/:posix\$//')" '$real' "\$@" ;;
+esac
 exec '$real' "\$@"
 EOF
     chmod +x "$dir/$tool"

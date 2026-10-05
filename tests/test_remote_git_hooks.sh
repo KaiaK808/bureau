@@ -289,8 +289,10 @@ pr1_pass "8 every remote git in the templates runs through git() or carries NO_H
 # hook.reference-transaction.command), which makes git 2.55 read hook.<event>.enabled=false as a
 # per-name switch, so only the per-name switches stop them, also for a fetch with -C from another
 # directory (the names are listed with the command's own options).
-# Runs with the git of BUREAU_TEST_GIT_DIR when set, else with the git on PATH, and is skipped,
-# with a SKIP line, when that git is older than 2.54.
+# A name with an event and no command (git refuses every hook then) is switched off as well. With
+# git 2.55 also a clone whose template brings a configured post-checkout hook (only the event
+# switch reaches that one). Runs with the git of BUREAU_TEST_GIT_DIR when set, else with the git on
+# PATH, and is skipped, with a SKIP line, when that git is older than 2.54.
 GIT9_DIR="${BUREAU_TEST_GIT_DIR:-}"
 GIT9_PATH="$PATH"; GIT9_EXEC=""
 if [ -n "$GIT9_DIR" ]; then
@@ -322,17 +324,33 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     (cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
       git checkout -q -b c9; echo w > w9.txt; git add w9.txt; git commit -q -m w9' _ "$SCRIPTS") >/dev/null 2>&1
     cp "$MARKS" "$TMP/local9.log"; : > "$MARKS"
+    # A name with an event and no command makes git refuse to run any hook of the repository; it
+    # is switched off like the others, so Bureau's remote commands still run (default only: with
+    # the hooks on, git refuses them, as it would without Bureau).
+    if [ "$1" = '{}' ]; then git9 git -C "$R" config hook.nocommand.event pre-push; fi
     out=$(cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
       git push -q origin HEAD; echo "push=$?"; git fetch -q origin; echo "fetch=$?"
       (cd / && git -C "$2" fetch -q origin; echo "fetch-C=$?")' _ "$SCRIPTS" "$R" 2>&1)
     case "$out" in *push=0*fetch=0*fetch-C=0*) ;; *) fail "9 $1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
     [ "$(git -C "$R.origin" rev-parse c9 2>/dev/null)" = "$(git -C "$R" rev-parse HEAD)" ] || fail "9 $1: the push did not land"
+    # git 2.55: a clone whose template directory brings a configured post-checkout hook. git()
+    # lists the names before the clone exists, so only the event switch stops this one; git 2.54
+    # has no event switch and runs it (a documented limit; Bureau's stages run no clone).
+    if [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 55 ]; then
+      rm -rf "$TMP/tmpl9" "$TMP/clone9"; mkdir -p "$TMP/tmpl9"
+      printf '[hook "fromtemplate"]\n\tcommand = %s post-checkout-template\n\tevent = post-checkout\n' "$R/tools/scan.sh" > "$TMP/tmpl9/config"
+      out=$(cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
+        git -c init.templateDir="$2" clone -q "$3" "$4"; echo "clone=$?"' _ "$SCRIPTS" "$TMP/tmpl9" "$R.origin" "$TMP/clone9" 2>&1)
+      case "$out" in *clone=0*) ;; *) fail "9 $1: the clone failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+    fi
   }
   hooks9 '{}'
   if marks | grep -q '^config-hook'; then fail "9 default: a hook the configuration defines ran during Bureau's push or fetch: $(marks | sort | uniq -c | tr -s ' ' | tr '\n' ';')"; fi
   grep -q '^config-hook reference-transaction gh=no env=no' "$TMP/local9.log" || fail "9: the configured hooks did not run at all (the local commit ran none): $(tr '\n' ';' < "$TMP/local9.log")"
   hooks9 '{"remote_git_runs_hooks":true}'
-  for hook in 'pre-push' 'pre-push-eq' 'reference-transaction'; do
+  wanted='pre-push pre-push-eq reference-transaction'
+  if [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 55 ]; then wanted="$wanted post-checkout-template"; fi
+  for hook in $wanted; do
     marks | grep -q "^config-hook $hook gh=yes env=no" || fail "9 true: the configured $hook hook did not run with GH_TOKEN and without the .env keys: $(marks | sort -u | tr '\n' ';')"
   done
   pr1_pass "9 hooks the configuration defines stay off on Bureau's push and fetch ($(git9 git --version)); true runs them"
