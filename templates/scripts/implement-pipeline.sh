@@ -929,7 +929,8 @@ for (( i=1; i<=MAX_ITER; i++ )); do
   # list and the branch before it does anything, and reports COMPLETE when
   # nothing is left, instead of starting over or waiting for CI again. In a
   # rework every task is already [X]; "nothing is left" then also needs the
-  # review feedback above the note addressed. Only a
+  # feedback above the note ("Feedback to address", refresh_review_context)
+  # addressed. Only a
   # Claude pass commits itself; after a Codex pass the shell has committed
   # (commit_codex_changes), and Codex is told not to touch Git. A git lock the
   # stopped pass left need not be stale: the adapter ends the pass's process
