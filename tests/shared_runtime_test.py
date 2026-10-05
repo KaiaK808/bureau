@@ -490,17 +490,34 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.state,'s5'); self.store.assert_owner('TEAM-1',self.repo,run['run_id'])
         r.save(Path(args.result),original_result); self.finish(args); self.assertEqual(self.state,'s3')
 
-    def test_app_review_comment_reaches_actual_implementation_consumer(self):
-        self.state='s5'; run=self.prepare('code_review')
-        self.finish(self.result(run,verdict='REQUEST_CHANGES',summary='Reject unsigned requests before processing them'))
-        blob=self.repo/'comments.json'; blob.write_text(json.dumps({'comments':self.comments}))
+    def implementation_feedback(self):
+        # The implement stage's own reader, over the comments this run posted (newest first).
+        blob=self.repo/'comments.json'; blob.write_text(json.dumps({'comments':list(reversed(self.comments))}))
         source=(ROOT/'templates/scripts/implement-pipeline.sh').read_text()
         function=source[source.index('refresh_review_context() {'):source.index('# open_or_update_pr_draft:')]
         command='get_issue_branch_and_comments() { cat "$1"; }; '+function+'\nrefresh_review_context "$1"'
         proc=subprocess.run(['bash','-c',command,'test',str(blob)],capture_output=True,text=True)
         self.assertEqual(proc.returncode,0,proc.stderr)
-        self.assertIn('Reject unsigned requests before processing them',proc.stdout)
-        self.assertIn('Address ALL fixes before remaining tasks',proc.stdout)
+        return proc.stdout
+
+    def test_app_review_comment_reaches_actual_implementation_consumer(self):
+        self.state='s5'; run=self.prepare('code_review')
+        self.finish(self.result(run,verdict='REQUEST_CHANGES',summary='Reject unsigned requests before processing them'))
+        feedback=self.implementation_feedback()
+        self.assertIn('Reject unsigned requests before processing them',feedback)
+        self.assertIn('Address ALL fixes before remaining tasks',feedback)
+
+    def test_app_review_block_reaches_implementation_on_a_restart(self):
+        # A BLOCK keeps the ticket in Build Review with needs-human; an operator who sends it
+        # back to Build gets the review's findings in the implement prompt (v3.2; before, only
+        # a VERDICT: REQUEST_CHANGES line counted).
+        self.state='s5'; run=self.prepare('code_review')
+        self.finish(self.result(run,verdict='BLOCK',summary='Verify the webhook signature before parsing the body'))
+        self.assertEqual(self.state,'s5'); self.assertIn('needs-human',self.label_adds)
+        self.assertIn('\nVERDICT: BLOCK',self.comments[-1]['body'])
+        feedback=self.implementation_feedback()
+        self.assertIn('Verify the webhook signature before parsing the body',feedback)
+        self.assertIn('Address ALL fixes before remaining tasks',feedback)
 
     def test_nested_worker_cancellation_quarantines_until_explicit_recovery(self):
         origin=Path(self.temp.name)/'origin.git'
