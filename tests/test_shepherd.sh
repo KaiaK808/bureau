@@ -1324,7 +1324,7 @@ STALE_EOF
   sb=$(make_sandbox stale_spec_between_old)
   _stale_reads "$sb"; _record_sleeps "$sb" 40
   echo "$stale_moves" >> "$sb/scripts/bureau-config.sh"
-  _mutate "$sb/scripts/shepherd.sh" 'spec-pipeline.sh) MOVED_VIA="Spec" ;;' 'spec-pipeline.sh) ;;' || return 1
+  _mutate "$sb/scripts/shepherd.sh" '0:spec-pipeline.sh) MOVED_VIA="Spec" ;;' '0:spec-pipeline.sh) ;;' || return 1
   echo s1 > "$sb/state.txt"
   set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; set -e
   grep -q '^s1$' "$sb/labels.log.moves" && grep -q "auto-bump" "$sb/shepherd.out" \
@@ -1407,6 +1407,28 @@ STALE_EOF
   assert_eq "$rc" 0 "fresh reads: exit" || return 1
   assert_eq "$(wc -l < "$sb/labels.log.reads" | tr -d ' ')" 6 "fresh reads: one read per state (Triage … Done)" || return 1
   [ ! -e "$sb/sleeps.log" ] || { echo "FAIL: fresh reads: the shepherd waited"; cat "$sb/sleeps.log"; return 1; }
+
+  # A real Spec costs nothing extra: spec review sends the ticket back to Spec once,
+  # the bump follows at once, and the second round goes on to Done without a wait.
+  sb=$(make_sandbox fresh_spec_back)
+  echo 'get_issue_state() { echo read >> "$LABEL_LOG.reads"; _uuid_to_name "$(cat "$STATE_FILE" 2>/dev/null || echo "")"; }' >> "$sb/scripts/bureau-config.sh"
+  cat > "$sb/scripts/spec-review-pipeline.sh" <<'SPEC_BACK_EOF'
+#!/bin/bash
+set -euo pipefail
+source "$(dirname "$0")/bureau-config.sh"
+ISSUE="${1:-}"
+echo spec-review-pipeline.sh >> "$INVOCATIONS_LOG"
+if [ "$(grep -c '^spec-review-pipeline.sh$' "$INVOCATIONS_LOG")" = 1 ]; then move_issue "$ISSUE" s2; else move_issue "$ISSUE" s5; fi
+exit 0
+SPEC_BACK_EOF
+  _record_sleeps "$sb" 40
+  echo s1 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; rc=$?; set -e
+  assert_eq "$rc" 0 "spec sent back: exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(tr '\n' ' ' < "$sb/invocations.log" | sed 's/ $//')" \
+    "spec-pipeline.sh spec-review-pipeline.sh spec-pipeline.sh spec-review-pipeline.sh implement-pipeline.sh code-review-pipeline.sh merge-pipeline.sh" \
+    "spec sent back: stages" || return 1
+  [ ! -e "$sb/sleeps.log" ] || { echo "FAIL: spec sent back: the shepherd waited before the bump"; cat "$sb/sleeps.log"; return 1; }
 
   # Negative control: without the confirmation the stale read starts the stage again.
   sb=$(make_sandbox stale_old)

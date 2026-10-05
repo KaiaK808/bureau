@@ -887,7 +887,7 @@ while true; do
       # Success / queue-empty — re-read state on next iteration, and confirm
       # the stage's move there before starting the next stage.
       MOVED_FROM="$STATE"
-      case "$PIPELINE" in spec-pipeline.sh) MOVED_VIA="Spec" ;; esac
+      case "$RC:$PIPELINE" in 0:spec-pipeline.sh) MOVED_VIA="Spec" ;; esac
       ;;
     retry)
       # Transient: linear-down / provider-unauth. Throttled re-attempt.
