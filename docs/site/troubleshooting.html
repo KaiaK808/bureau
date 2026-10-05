@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4a10acb9a1f2d4325ce5f7effbd402c6bb8181e81d9c368268d3c159e6e26ef8">
+<meta name="bureau-source-sha256" content="0e85409ac86896bcbf179388a34617361c890634e52f8785d9370e8738a1dca8">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -507,9 +507,24 @@ up nothing: the tmux server keeps the pane, and the run goes on.</li>
 terminal, where <code>&lt;pid&gt;</code> is the runtime in front:
 <code>python3 scripts/bureau-runtime.py status</code> lists the run's
 leases, and their <code>pid</code> is that process. It works wherever
-the run was started; when it was started from a terminal or a tmux pane,
-it also leads its own process group, and
-<code>kill -TERM -- -&lt;pid&gt;</code> does the same.</li>
+the run was started. <code>kill -TERM -- -&lt;pid&gt;</code>, the
+runtime's whole process group, does the same only while the runtime
+leads its own group, which <code>ps -o pid=,pgid= -p &lt;pid&gt;</code>
+shows as two equal numbers. That holds for a shepherd that opened its
+own tmux window (started without <code>--no-tmux</code>) and for a
+command typed at an interactive shell prompt, in a terminal or a tmux
+pane, since the shell's job control gives each command a group of its
+own. It does not hold when a script, cron or another program started the
+shepherd as its child, nor for the runtime of a queue stage, which runs
+in the queue supervisor's group: there <code>kill</code> answers "No
+such process" and nothing stops.</li>
+<li><strong>A queue</strong>: Ctrl-C in its pane, closing the pane, its
+window or its session, or
+<code>kill -TERM -- -&lt;supervisor pid&gt;</code>, the supervisor's
+whole process group (it leads one when it was typed into the pane's
+shell, as <code>start-bureau-v2.sh</code> does). The signal reaches the
+supervisor, the queue loop and the runtime in front of the stage in
+flight, and that runtime stops the stage as above.</li>
 </ul>
 <p>Each of them ends the run with exit 130, a cancelled run, and nothing
 of it is left running once the grace periods are over. The shepherd
@@ -520,9 +535,10 @@ runtime keeps the run's leases and marks them interrupted, the worktree
 keeps every file and commit the stage made and loses its
 disposable-worker registration so that no later reset erases it, and an
 implement stage that held back its pushes
-(<code>push_each_iteration: false</code>) pushes them on its way out.
-The resume steps are printed once on stderr. After a closed terminal
-they are gone with it;
+(<code>push_each_iteration: false</code>) pushes them on its way out,
+since v3.2 also when its terminal or the queue's log pipe is already
+gone. The resume steps are printed once on stderr. After a closed
+terminal they are gone with it;
 <code>python3 scripts/bureau-runtime.py status</code> then shows the
 run's leases with <code>"interrupted": true</code>, and the steps are
 the ones below, in <a
@@ -530,20 +546,50 @@ href="#shepherdsh-bailed-mid-run--how-to-resume"><code>shepherd.sh</code>
 bailed mid-run — how to resume</a>.</p>
 <p>These do not stop a run cleanly:</p>
 <ul>
-<li><strong>SIGTERM or SIGHUP to an inner process group only</strong>
-(the shepherd's own group under the runtime, the worker's, the stage's).
-The stage stops, but the runtime in front gets no signal: when the
-shepherd has ended before the stage, it releases the run's leases while
-the stage still runs, and prints no resume steps. Send the stop to the
-runtime in front instead.</li>
-<li><strong><code>kill -9</code> (SIGKILL) of the runtime in
+<li><p><strong>SIGTERM or SIGHUP to an inner process group
+only.</strong> The runtime in front gets no signal. Since v3.2 it counts
+a 130 from its child as a stop all the same (it keeps the leases
+interrupted and prints the steps), but the run does not end the way a
+clean stop ends it, in one of two ways:</p>
+<ul>
+<li><strong>The shepherd's own group</strong> (the one under the runtime
+in front; the worker's runtime runs in it as well). The shepherd
+releases the claim and ends with 130, and the stage stops through the
+worker's runtime. The shepherd can end first, before a stage with a slow
+way out has stopped (implement's deferred push, a build that cleans up),
+and the runtime in front ends with it: the steps are printed while the
+stage is still stopping. Wait until
+<code>python3 scripts/bureau-runtime.py status</code> shows no live
+process of the run (<code>release</code> refuses until then), then
+follow the steps. Until v3.1 whether the leases were kept depended on
+that order: kept when the stage had stopped before the shepherd ended,
+released while the stage still ran when the shepherd ended first, or
+when no stage ran (the shepherd stopped during a Linear read or its own
+wait), and no steps were printed then.</li>
+<li><strong>The worker's group</strong> (or the stage's runtime in it).
+The stage stops and the worker ends with 130, but the shepherd got no
+signal: it takes the 130 for a stage that halted, sends a Telegram alert
+<code>shepherd halt (cancelled-run)</code>, releases the claim and ends
+with 130. The leases are kept interrupted and the steps are printed, as
+after a clean stop. Nothing else is wrong; ignore the alert and follow
+the steps.</li>
+</ul>
+<p>Send the stop to the runtime in front instead.</p></li>
+<li><p><strong>SIGTERM or SIGHUP to the queue supervisor's process
+alone</strong> (<code>kill -TERM &lt;supervisor pid&gt;</code>). The
+supervisor sends SIGTERM to the queue loop's process only and exits; the
+loop ends, but the runtime in front of the stage in flight gets nothing,
+and the stage runs to its end without a queue around it (as in v3.1).
+Stop the whole group instead, as above, or the stage's runtime with
+<code>kill -TERM &lt;pid&gt;</code>.</p></li>
+<li><p><strong><code>kill -9</code> (SIGKILL) of the runtime in
 front.</strong> It cannot be forwarded: the rest of the run goes on
 without it, as after a hang-up before v3.2, and its leases are not
-marked interrupted.</li>
-<li><strong><code>python3 scripts/bureau-runtime.py pause</code>.</strong>
+marked interrupted.</p></li>
+<li><p><strong><code>python3 scripts/bureau-runtime.py pause</code>.</strong>
 It stops dispatch: the queue starts no new stage, and a stage in flight
 runs to its end. Pause first, then stop the queue sessions, so that no
-new stage starts while you close them.</li>
+new stage starts while you close them.</p></li>
 </ul>
 <p>A run started under <code>nohup</code> ignores the hang-up on purpose
 and outlives its terminal, as before v3.2; stop it with

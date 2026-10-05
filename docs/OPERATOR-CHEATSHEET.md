@@ -41,7 +41,7 @@ One supervised queue per enabled agent polls at `agents.poll_interval_minutes`. 
 
 Use `BUREAU_SESSION_NAME=nightshift bash scripts/start-bureau-v2.sh` for a custom name. Different repositories need disjoint Linear project scopes: ownership is shared between worktrees of one Git repository, not between separate clones. Select one active team per configuration.
 
-To stop dispatch, run `python3 scripts/bureau-runtime.py pause`, inspect active runs and let their stages finish. To stop a run at once, press Ctrl-C in its pane or close its tmux session: since v3.2 a hang-up stops every process of the run like SIGTERM (exit 130) and keeps its work and leases for the resume. From another terminal, `kill -TERM <pid>` with the `pid` that `python3 scripts/bureau-runtime.py status` shows for the run's leases does the same; a signal to an inner process group alone, or `kill -9`, does not. See [How to stop a run](troubleshooting.md#how-to-stop-a-run).
+To stop dispatch, run `python3 scripts/bureau-runtime.py pause`, inspect active runs and let their stages finish. To stop a run at once, press Ctrl-C in its pane or close its tmux session: since v3.2 a hang-up stops every process of the run like SIGTERM (exit 130) and keeps its work and leases for the resume. From another terminal, `kill -TERM <pid>` with the `pid` that `python3 scripts/bureau-runtime.py status` shows for the run's leases does the same. `kill -9` does not stop a run, and a signal to an inner process group alone, or to a queue supervisor's process alone, does not stop it cleanly. See [How to stop a run](troubleshooting.md#how-to-stop-a-run).
 
 ## Dry-run preview
 
