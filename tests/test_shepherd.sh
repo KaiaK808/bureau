@@ -177,22 +177,26 @@ STUB_EOF
   sed -n '/^# ── needs-human hold (EXP-1516)/,/^# ── End of needs-human hold/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
 
-  # Stub pipelines: log invocation, advance to the next happy-path state.
+  # Stub pipelines: log invocation, advance to the next happy-path state through
+  # the same moves as the real stage, in the same order.
   _make_stub_pipeline() {
-    local name="$1" next_uuid="$2"
+    local name="$1" moves="" uuid
+    shift
+    for uuid in "$@"; do moves="${moves}move_issue \"\$ISSUE\" \"$uuid\""$'\n'; done
     cat > "$sb/scripts/$name" <<PIPELINE_EOF
 #!/bin/bash
 set -euo pipefail
 source "\$(dirname "\$0")/bureau-config.sh"
 ISSUE="\${1:-}"
 echo "$name" >> "\$INVOCATIONS_LOG"
-move_issue "\$ISSUE" "$next_uuid"
-exit 0
+${moves}exit 0
 PIPELINE_EOF
     chmod +x "$sb/scripts/$name"
   }
 
-  _make_stub_pipeline spec-pipeline.sh        "$BUREAU_STATE_SPEC_REVIEW_SIM"
+  # spec-pipeline.sh moves twice: Triage → Spec at its start, Spec → Spec Review
+  # at its end. A stub with one move hid the Spec in between from every test.
+  _make_stub_pipeline spec-pipeline.sh        "$BUREAU_STATE_SPEC_SIM" "$BUREAU_STATE_SPEC_REVIEW_SIM"
   _make_stub_pipeline spec-review-pipeline.sh "$BUREAU_STATE_BUILD_SIM"
   _make_stub_pipeline ux-pipeline.sh          "$BUREAU_STATE_BUILD_SIM"
   _make_stub_pipeline copy-pipeline.sh        "$BUREAU_STATE_BUILD_SIM"
@@ -222,6 +226,7 @@ RUNTIME
 # heredoc-embedded stubs see them at sandbox-build time (the heredoc itself
 # does $-expansion at the OUTER bash level).
 export BUREAU_STATE_TRIAGE_SIM="s1"
+export BUREAU_STATE_SPEC_SIM="s2"
 export BUREAU_STATE_SPEC_REVIEW_SIM="s3"
 export BUREAU_STATE_BUILD_SIM="s5"
 export BUREAU_STATE_BUILD_REVIEW_SIM="s6"
@@ -1275,6 +1280,10 @@ move_issue() {
 }
 get_issue_state() {
   echo read >> "$LABEL_LOG.reads"
+  # A run that never settles (a shepherd acting on the moment-old Spec bumps the
+  # finished spec back, the stubs move on regardless, and no state repeats, so the
+  # stuck detector never fires) ends at the 60th read: the read fails and halts.
+  [ "$(wc -l < "$LABEL_LOG.reads")" -lt 60 ] || return 1
   local left
   if [ -s "$STATE_FILE.stale" ]; then
     left=$(cat "$STATE_FILE.left"); _uuid_to_name "$(cat "$STATE_FILE.stale")"
@@ -1295,6 +1304,31 @@ STALE_EOF
   assert_eq "$(tr '\n' ' ' < "$sb/invocations.log" | sed 's/ $//')" "$happy" "stale reads: each stage runs once" || return 1
   # One stale read per stage, each read again after the default 5 s.
   assert_eq "$(tr '\n' ' ' < "$sb/sleeps.log" | sed 's/ $//')" "5 5 5 5 5" "stale reads: the waits" || return 1
+
+  # EXP-1476 (17.09.2026) and EXP-1554 (05.10.2026): after the spec stage, the read a
+  # moment old shows the Spec in between. It is read again, and the finished spec is
+  # not bumped back to Triage. Every move is recorded.
+  local stale_moves='move_issue() { echo "$2" >> "$LABEL_LOG.moves"; local old; old=$(cat "$STATE_FILE"); printf "%s" "$2" > "$STATE_FILE"; [ "$old" = "$2" ] || { printf "%s" "$old" > "$STATE_FILE.stale"; echo 1 > "$STATE_FILE.left"; }; }'
+  sb=$(make_sandbox stale_spec_between)
+  _stale_reads "$sb"; _record_sleeps "$sb" 40
+  echo "$stale_moves" >> "$sb/scripts/bureau-config.sh"
+  echo s1 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; rc=$?; set -e
+  assert_eq "$rc" 0 "the Spec in between: exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(tr '\n' ' ' < "$sb/labels.log.moves" | sed 's/ $//')" "s2 s3 s5 s6 s7 s8" "the Spec in between: no move back to Triage" || return 1
+  grep -q "EXP-19 still reads 'Spec' after the move" "$sb/shepherd.out" \
+    || { echo "FAIL: the Spec in between: it was not read again"; cat "$sb/shepherd.out"; return 1; }
+  if grep -q "auto-bump" "$sb/shepherd.out"; then echo "FAIL: the Spec in between: bumped"; return 1; fi
+  # Negative control: without MOVED_VIA the Spec in between counts as confirmed and the
+  # bump sends the finished spec back to Triage, as on 17.09. and 05.10.
+  sb=$(make_sandbox stale_spec_between_old)
+  _stale_reads "$sb"; _record_sleeps "$sb" 40
+  echo "$stale_moves" >> "$sb/scripts/bureau-config.sh"
+  _mutate "$sb/scripts/shepherd.sh" '0:spec-pipeline.sh) MOVED_VIA="Spec" ;;' '0:spec-pipeline.sh) ;;' || return 1
+  echo s1 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; set -e
+  grep -q '^s1$' "$sb/labels.log.moves" && grep -q "auto-bump" "$sb/shepherd.out" \
+    || { echo "FAIL: negative control: the old shepherd did not bump the finished spec, so this proves nothing"; cat "$sb/labels.log.moves"; return 1; }
 
   # A read that stays moment-old twice is read again twice: each stage still once.
   sb=$(make_sandbox stale_twice)
@@ -1373,6 +1407,28 @@ STALE_EOF
   assert_eq "$rc" 0 "fresh reads: exit" || return 1
   assert_eq "$(wc -l < "$sb/labels.log.reads" | tr -d ' ')" 6 "fresh reads: one read per state (Triage … Done)" || return 1
   [ ! -e "$sb/sleeps.log" ] || { echo "FAIL: fresh reads: the shepherd waited"; cat "$sb/sleeps.log"; return 1; }
+
+  # A real Spec costs nothing extra: spec review sends the ticket back to Spec once,
+  # the bump follows at once, and the second round goes on to Done without a wait.
+  sb=$(make_sandbox fresh_spec_back)
+  echo 'get_issue_state() { echo read >> "$LABEL_LOG.reads"; _uuid_to_name "$(cat "$STATE_FILE" 2>/dev/null || echo "")"; }' >> "$sb/scripts/bureau-config.sh"
+  cat > "$sb/scripts/spec-review-pipeline.sh" <<'SPEC_BACK_EOF'
+#!/bin/bash
+set -euo pipefail
+source "$(dirname "$0")/bureau-config.sh"
+ISSUE="${1:-}"
+echo spec-review-pipeline.sh >> "$INVOCATIONS_LOG"
+if [ "$(grep -c '^spec-review-pipeline.sh$' "$INVOCATIONS_LOG")" = 1 ]; then move_issue "$ISSUE" s2; else move_issue "$ISSUE" s5; fi
+exit 0
+SPEC_BACK_EOF
+  _record_sleeps "$sb" 40
+  echo s1 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; rc=$?; set -e
+  assert_eq "$rc" 0 "spec sent back: exit" || { cat "$sb/shepherd.err"; return 1; }
+  assert_eq "$(tr '\n' ' ' < "$sb/invocations.log" | sed 's/ $//')" \
+    "spec-pipeline.sh spec-review-pipeline.sh spec-pipeline.sh spec-review-pipeline.sh implement-pipeline.sh code-review-pipeline.sh merge-pipeline.sh" \
+    "spec sent back: stages" || return 1
+  [ ! -e "$sb/sleeps.log" ] || { echo "FAIL: spec sent back: the shepherd waited before the bump"; cat "$sb/sleeps.log"; return 1; }
 
   # Negative control: without the confirmation the stale read starts the stage again.
   sb=$(make_sandbox stale_old)
