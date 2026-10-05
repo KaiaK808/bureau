@@ -8,6 +8,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+
+import git_maintenance
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -105,6 +108,8 @@ class SupervisionPipelineTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve(); self.repo = self.root/'repo'; self.repo.mkdir()
         self.git('init','-q','-b','main'); self.git('config','user.email','test@bureau'); self.git('config','user.name','Bureau Test')
+        # In the repository's own config, so the stages' git calls get it too (git_maintenance.py).
+        self.git(*git_maintenance.OFF_CONFIG)
         # The review build check runs repo.test_command in the worker; like a real Python
         # project, the fixture ignores the bytecode it writes.
         (self.repo/'.gitignore').write_text('.bureau.json\n.env\nlogs/\n.worktrees/\n__pycache__/\n')
@@ -112,6 +117,7 @@ class SupervisionPipelineTests(unittest.TestCase):
         shutil.copytree(ROOT/'templates/scripts',self.repo/'scripts',ignore=shutil.ignore_patterns('__pycache__'))
         self.git('add','.'); self.git('commit','-qm','test: fixture main')
         self.origin = self.root/'origin.git'; subprocess.run(['git','init','-q','--bare',str(self.origin)],check=True)
+        subprocess.run(['git','--git-dir',str(self.origin),*git_maintenance.OFF_CONFIG],check=True)  # for receive-pack behind a push
         self.git('remote','add','origin',str(self.origin)); self.git('push','-q','origin','main')
         for number in (1,2,3):
             self.git('checkout','-qb',f'{number:03d}-task','main')
@@ -141,6 +147,16 @@ class SupervisionPipelineTests(unittest.TestCase):
 
     def git(self,*args):
         return subprocess.check_output(['git','-C',str(self.repo),*args],stderr=subprocess.STDOUT,text=True).strip()
+
+    def test_fixture_commit_and_push_start_no_git_maintenance(self):
+        trace=self.root/'trace2.json'
+        (self.repo/'traced.txt').write_text('traced\n')
+        with patch.dict(os.environ,{'GIT_TRACE2_EVENT':str(trace)}):
+            self.git('add','traced.txt'); self.git('commit','-qm','traced'); self.git('push','-q','origin','main')
+        commands=git_maintenance.commands(trace)
+        self.assertTrue(any('commit' in argv for argv in commands),commands)  # both sides were traced
+        self.assertTrue(any('receive-pack' in ' '.join(argv) for argv in commands),commands)
+        self.assertEqual(git_maintenance.maintenance_started(trace),[])
 
     def run_tick(self,code=0,extra_env=None):
         proc=subprocess.run(['bash','scripts/bureau-tick.sh'],cwd=self.repo,env={**self.env,**(extra_env or {})},capture_output=True,text=True,timeout=90)
