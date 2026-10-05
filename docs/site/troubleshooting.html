@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f0975e0530130ec3ce7aba7e4fb057f282c657ae60ba99b2fc9cf793f0a30eaa">
+<meta name="bureau-source-sha256" content="c9263e6fecdd1be4d19fc1fca91b41bee4567e001df35df10cb202de9a0da713">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -914,9 +914,17 @@ line from the app runtime, or a <code>FIXES_NEEDED</code> comment; the
 three headings count only at the start of a comment, and comments a v3.1
 stage posted count too. So a <code>FIXES_NEEDED</code> comment written
 after the BLOCK (your own list, for example one without a finding you
-overrule) takes precedence; before v3.2 the BLOCK, QA RED and QA
-NEEDS_HUMAN comments were not read at all, and the build stage ran
-without their findings unless someone had written such a comment.</p>
+overrule) takes precedence; before v3.2 the BLOCK, QA RED, QA
+NEEDS_HUMAN and app-runtime <code>VERDICT: BLOCK</code> comments were
+not read at all, and the build stage ran without their findings unless
+someone had written such a comment. Only another finding replaces one:
+an approval, a passed QA or a halt comment does not, so a build pass
+that follows one of them (a restart from build, or a stage that moves
+the ticket to Build without a finding, such as review or QA after a
+merge conflict with the base or a missing branch marker or PR) is still
+told to address the older finding; to run a build pass from another
+list, or with nothing to fix, first write a <code>FIXES_NEEDED</code>
+comment that says so.</p>
 <h3 id="review-comment-says-build-not-checked">Review comment says
 <code>**Build**: not checked</code></h3>
 <p>The review build check found nothing to run: no
@@ -956,8 +964,10 @@ restart with
 <code>scripts/shepherd.sh --from-stage build &lt;ISSUE&gt;</code>: since
 v3.2 the implement prompt carries QA's summary from the NEEDS_HUMAN
 comment, as it does on every QA RED, which sends the ticket back to
-Build by itself; a newer review, QA comment or <code>FIXES_NEEDED</code>
-comment takes its place (see "Why a review ended BLOCKED").</p>
+Build by itself. A newer finding takes its place (a review's Changes
+Requested or BLOCK, another QA RED or NEEDS_HUMAN, a
+<code>FIXES_NEEDED</code> comment); an approval or a passed QA does not
+(see "Why a review ended BLOCKED").</p>
 <h3 id="codex-stage-runner-failed-spuriously">Codex-stage-runner failed
 spuriously</h3>
 <p>Current pipelines use <code>bureau-provider.py</code>; the old
