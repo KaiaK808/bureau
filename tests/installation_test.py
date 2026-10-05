@@ -171,6 +171,17 @@ class InstallationTests(unittest.TestCase):
         self.assertTrue(any("commit" in argv for argv in git_maintenance.commands(trace)))  # the commit was traced
         self.assertEqual(git_maintenance.maintenance_started(trace), [])
 
+    def test_the_trace_reader_finds_maintenance_and_gc_children(self):
+        # The helper the no-maintenance tests rely on, on a trace whose answer is known.
+        trace = self.root / "synthetic-trace2.json"
+        events = [{"event": "start", "argv": ["git", "-C", "repo", "commit", "-qm", "x"]},
+                  {"event": "child_start", "argv": ["git", "maintenance", "run", "--auto", "--quiet", "--detach"]},
+                  {"event": "child_start", "argv": ["git", "gc", "--auto"]},
+                  {"event": "child_start", "argv": ["git", "repack", "-d", "-l"]}]
+        trace.write_text("".join(json.dumps(event) + "\n" for event in events))
+        self.assertEqual(git_maintenance.maintenance_started(trace), [events[1]["argv"], events[2]["argv"]])
+        self.assertEqual(git_maintenance.commands(trace), [events[0]["argv"]])
+
     def test_apply_records_tagged_untagged_and_dirty_source_per_scope(self):
         source, program = self.tagged_source()
         tagged = self.git(source, "rev-parse", "HEAD")

@@ -106,25 +106,7 @@ class SupervisionPipelineTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau supervision ')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name).resolve(); self.repo = self.root/'repo'; self.repo.mkdir()
-        self.git('init','-q','-b','main'); self.git('config','user.email','test@bureau'); self.git('config','user.name','Bureau Test')
-        # In the repository's own config, so the stages' git calls get it too (git_maintenance.py).
-        self.git(*git_maintenance.OFF_CONFIG)
-        # The review build check runs repo.test_command in the worker; like a real Python
-        # project, the fixture ignores the bytecode it writes.
-        (self.repo/'.gitignore').write_text('.bureau.json\n.env\nlogs/\n.worktrees/\n__pycache__/\n')
-        (self.repo/'tests').mkdir(); (self.repo/'tests/test_smoke.py').write_text('import unittest\nclass Smoke(unittest.TestCase):\n    def test_ok(self): self.assertEqual(2 + 3, 5)\n')
-        shutil.copytree(ROOT/'templates/scripts',self.repo/'scripts',ignore=shutil.ignore_patterns('__pycache__'))
-        self.git('add','.'); self.git('commit','-qm','test: fixture main')
-        self.origin = self.root/'origin.git'; subprocess.run(['git','init','-q','--bare',str(self.origin)],check=True)
-        subprocess.run(['git','--git-dir',str(self.origin),*git_maintenance.OFF_CONFIG],check=True)  # for receive-pack behind a push
-        self.git('remote','add','origin',str(self.origin)); self.git('push','-q','origin','main')
-        for number in (1,2,3):
-            self.git('checkout','-qb',f'{number:03d}-task','main')
-            (self.repo/f'task{number}.txt').write_text('Task implementation\n')
-            specs=self.repo/f'specs/{number:03d}-task';specs.mkdir(parents=True);(specs/'tasks.md').write_text('- [X] T001 Add behavior\n')
-            self.git('add','.'); self.git('commit','-qm','feat: fixture task\n\nBureau-Generated: true'); self.git('push','-q','origin','HEAD')
-        self.git('checkout','-q','main')
+        self.root = Path(self.temp.name).resolve(); self.build_fixture(self.root)
         states = {s:s for s in ('triage','spec','spec_review','design','build','qa','build_review','merge','done')}
         config = {'linear':{'teams':[{'id':'team','key':'T','name':'Test','states':states}], 'labels':{key:{'id':name,'name':name} for key,name in [('lane2','lane-2'),('needs_human','needs-human'),('needs_ux','needs-ux'),('ai_implementable','ai-implementable')]}},
                   'agents':{'runner':'codex','code_review':True,'qa':True},'repo':{'test_command':'python3 -m unittest discover -s tests'}}
@@ -145,14 +127,36 @@ class SupervisionPipelineTests(unittest.TestCase):
                   'BUREAU_USAGE_FILE':str(self.root/'none')}
         for key in ('BUREAU_ACTIVE_ENTRY','BUREAU_RUN_ID','BUREAU_CURRENT_ISSUE'): self.env.pop(key,None)
 
+    def build_fixture(self,root):
+        """The fixture repository (main plus three task branches) and its bare origin, under root."""
+        self.repo = root/'repo'; self.repo.mkdir(parents=True)
+        self.git('init','-q','-b','main'); self.git('config','user.email','test@bureau'); self.git('config','user.name','Bureau Test')
+        # In the repository's own config, so the stages' git calls get it too (git_maintenance.py).
+        self.git(*git_maintenance.OFF_CONFIG)
+        # The review build check runs repo.test_command in the worker; like a real Python
+        # project, the fixture ignores the bytecode it writes.
+        (self.repo/'.gitignore').write_text('.bureau.json\n.env\nlogs/\n.worktrees/\n__pycache__/\n')
+        (self.repo/'tests').mkdir(); (self.repo/'tests/test_smoke.py').write_text('import unittest\nclass Smoke(unittest.TestCase):\n    def test_ok(self): self.assertEqual(2 + 3, 5)\n')
+        shutil.copytree(ROOT/'templates/scripts',self.repo/'scripts',ignore=shutil.ignore_patterns('__pycache__'))
+        self.git('add','.'); self.git('commit','-qm','test: fixture main')
+        self.origin = root/'origin.git'; subprocess.run(['git','init','-q','--bare',str(self.origin)],check=True)
+        subprocess.run(['git','--git-dir',str(self.origin),*git_maintenance.OFF_CONFIG],check=True)  # for receive-pack behind a push
+        self.git('remote','add','origin',str(self.origin)); self.git('push','-q','origin','main')
+        for number in (1,2,3):
+            self.git('checkout','-qb',f'{number:03d}-task','main')
+            (self.repo/f'task{number}.txt').write_text('Task implementation\n')
+            specs=self.repo/f'specs/{number:03d}-task';specs.mkdir(parents=True);(specs/'tasks.md').write_text('- [X] T001 Add behavior\n')
+            self.git('add','.'); self.git('commit','-qm','feat: fixture task\n\nBureau-Generated: true'); self.git('push','-q','origin','HEAD')
+        self.git('checkout','-q','main')
+
     def git(self,*args):
         return subprocess.check_output(['git','-C',str(self.repo),*args],stderr=subprocess.STDOUT,text=True).strip()
 
-    def test_fixture_commit_and_push_start_no_git_maintenance(self):
+    def test_fixture_commits_and_pushes_start_no_git_maintenance(self):
+        # The whole fixture again, under the trace: the template commit, the origin and every push.
         trace=self.root/'trace2.json'
-        (self.repo/'traced.txt').write_text('traced\n')
         with patch.dict(os.environ,{'GIT_TRACE2_EVENT':str(trace)}):
-            self.git('add','traced.txt'); self.git('commit','-qm','traced'); self.git('push','-q','origin','main')
+            self.build_fixture(self.root/'traced')
         commands=git_maintenance.commands(trace)
         self.assertTrue(any('commit' in argv for argv in commands),commands)  # both sides were traced
         self.assertTrue(any('receive-pack' in ' '.join(argv) for argv in commands),commands)
