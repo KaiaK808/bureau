@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b250c949c0d974e1a84262ff8a71a6a667c6e95adb0a7c4050463dc78db9e17f">
+<meta name="bureau-source-sha256" content="f27065b9e8c835b0fccff5ea449743669582bdcc972f70aeed2e8f89904a701c">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -288,15 +288,21 @@ and <code>needs-human</code>. A failed read never counts as "no state",
 (<code>--from-stage</code>, and the bump from Spec to Triage) follow the
 same rule. Its start check runs before it claims the ticket: a failure
 there ends with <code>10</code> and an alert naming the fault class, and
-writes nothing to the ticket. Ctrl-C or SIGTERM during a read, a move, a
-wait or a stage ends the run as a cancelled run (<code>130</code>) that
-writes nothing to Linear but the release of
-<code>shepherd-focused</code> (one attempt); the shepherd's own waits
-are cut short at once. A SIGTERM sent to the shepherd alone takes effect
-when the command in flight returns: the usage-throttle wait before a
-stage and the retry ladder's waits inside a Linear call run to their end
-first. <code>--dry-run</code> runs without the runtime and without these
-traps: Ctrl-C there ends with <code>130</code>, a SIGTERM with
+writes nothing to the ticket. Ctrl-C, SIGTERM or a hang-up (closing the
+terminal or the tmux session, since v3.2; the runtime forwards it as
+SIGTERM) during a read, a move, a wait or a stage ends the run as a
+cancelled run (<code>130</code>) that writes nothing to Linear but the
+release of <code>shepherd-focused</code> (one attempt); the shepherd's
+own waits are cut short at once. The runtime in front of the shepherd
+counts its <code>130</code> as a stop also when the signal went to an
+inner process group only (since v3.2): it keeps the run's leases
+interrupted and prints the resume steps (<a
+href="troubleshooting.html#how-to-stop-a-run">How to stop a run</a>). A
+SIGTERM sent to the shepherd alone takes effect when the command in
+flight returns: the usage-throttle wait before a stage and the retry
+ladder's waits inside a Linear call run to their end first.
+<code>--dry-run</code> runs without the runtime and without these traps:
+Ctrl-C there ends with <code>130</code>, a SIGTERM with
 <code>143</code>. Linear answering five times in a row without a state
 halts with <code>1</code> and <code>needs-human</code>. After
 <code>--from-stage</code> a read that does not yet show its target, and
@@ -439,9 +445,19 @@ of <code>logs/queue-&lt;mode&gt;.log</code> and exit 1</li>
 <li>Counter resets after <code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code>
 seconds (default 1 h) of clean runtime</li>
 </ul>
-<p><code>SIGINT</code> / <code>SIGTERM</code> are forwarded to the
-child, so <code>Ctrl+C</code> in the tmux pane stops everything cleanly
-without triggering the restart logic.</p>
+<p><code>SIGINT</code>, <code>SIGTERM</code> and (since v3.2)
+<code>SIGHUP</code> stop the supervisor and its queue loop (the loop
+gets <code>SIGTERM</code>) without triggering the restart logic.
+<code>Ctrl+C</code> in the tmux pane, closing the pane or its session,
+or <code>kill -TERM -- -&lt;supervisor pid&gt;</code> sends the signal
+to the supervisor's whole process group, which holds the queue loop and
+the runtime in front of the stage in flight too: everything stops
+cleanly, and the stage stops with <code>130</code> and keeps its work,
+as under the shepherd (<a
+href="troubleshooting.html#how-to-stop-a-run">How to stop a run</a>). A
+signal to the supervisor's process alone reaches only the queue loop's
+process: the stage in flight and its runtime get nothing and run to
+their end (so in v3.1 as well).</p>
 <p>To opt out for a debugging session: call
 <code>./scripts/queue-loop.sh &lt;mode&gt; &lt;interval&gt;</code>
 directly from a workbench pane instead of attaching to the agent

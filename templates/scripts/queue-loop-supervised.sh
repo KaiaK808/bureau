@@ -12,8 +12,9 @@
 #     seconds of clean runtime (default 1h).
 #   - After BUREAU_SUPERVISOR_MAX_CRASHES consecutive crashes (default 5),
 #     gives up and fires a Telegram alert with the tail of the queue log.
-#   - Forwards SIGINT / SIGTERM to the child so Ctrl+C in the tmux pane
-#     stops everything cleanly without triggering the restart logic.
+#   - On SIGINT, SIGTERM or SIGHUP stops the child with SIGTERM and exits 0,
+#     so Ctrl+C in the tmux pane, or closing the pane or its session, stops
+#     everything cleanly without triggering the restart logic.
 #
 # Usage (drop-in replacement for queue-loop.sh):
 #   ./scripts/queue-loop-supervised.sh implement 30
@@ -66,7 +67,7 @@ cleanup() {
   fi
   exit 0
 }
-trap cleanup INT TERM
+trap cleanup INT TERM HUP
 
 log "Supervisor starting: ./scripts/queue-loop.sh $*"
 log "Config: max_crashes=$MAX_CRASHES, stability_window=${STABILITY_WINDOW}s"

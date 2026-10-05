@@ -33,6 +33,11 @@
 #      commit the hook started from is
 #  20  false, PR open, SIGTERM while a hook that reset HEAD runs: the EXIT trap pushes the
 #      commit the hook started from
+#  20b false, PR open, the stage's terminal hangs up while the hook runs (set -e is on there):
+#      every write to stderr fails, and the EXIT trap still pushes the held-back commits
+#  20c the same with stderr a pipe whose reader is gone (the queue loop's tee after a hang-up)
+#      and SIGTERM to the stage, as its runtime forwards it: SIGPIPE does not end the trap
+#      before the push
 #  13  negative control: the stage with the per-iteration and /goal pushes of v3.0.2 pushes
 #      after every iteration under false with a PR open
 set -euo pipefail
@@ -256,6 +261,71 @@ export GH_STUB_EXISTING_PR=7 FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_complete
 pr3_run_implement
 check_eq 143 "$LAST_RC" "20 ended by SIGTERM"
 check_eq 'fake-claude iter 1 progress' "$(git -C "$SANDBOX/.fake-origin.git" log -1 --format=%s test-branch)" "20 the run's commit is on origin"
+teardown
+
+# 20b, 20c — the deferred push after a hang-up, when stderr is gone. Iteration 1's push is held
+# back (false, PR open); right after call 2 the stage is stopped while it waits for git under
+# set -e, as it runs almost everywhere outside the provider calls (the hook runs inside a
+# redirected call, where stderr is its log, so it cannot show this). The stage's EXIT trap then
+# has the held-back commits to push and a dead stderr to announce it on.
+hangup_setup() {
+  setup "$OFF"
+  pr3_fake_claude
+  pr3_ignore_harness_files
+  export GH_STUB_EXISTING_PR=7 PR3_ON_CALL_2="touch .pr3-hold-git"
+  # The first `git rev-parse` after call 2 (HEAD_AFTER) marks that the stage waits there and
+  # holds it until the stage has been hung up or signalled; every other git call passes through.
+  mv "$SANDBOX/.pr3-bin/git" "$SANDBOX/.pr3-bin/git-counted"
+  cat > "$SANDBOX/.pr3-bin/git" <<SHIM
+#!/bin/bash
+if [ "\${1:-}" = rev-parse ] && [ -f "$SANDBOX/.pr3-hold-git" ]; then
+  rm -f "$SANDBOX/.pr3-hold-git"; : > "$SANDBOX/.pr3-stage-waits"
+  i=0; while [ ! -f "$SANDBOX/.pr3-stage-stopped" ] && [ "\$i" -lt 300 ]; do sleep 0.1; i=\$((i + 1)); done
+fi
+exec "$SANDBOX/.pr3-bin/git-counted" "\$@"
+SHIM
+  chmod +x "$SANDBOX/.pr3-bin/git"
+}
+# hangup_done — wait (up to 10 s) until no process of the sandbox runs any more. Lookups only;
+# nothing is signalled here.
+hangup_done() {
+  local i=0
+  : > "$SANDBOX/.pr3-stage-stopped"
+  unset PR3_ON_CALL_2
+  while ps -A -o args= | grep -F "$SANDBOX/" | grep -v grep >/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+}
+
+# 20b — the terminal closes: the kernel hangs up the stage, and every write to it fails
+hangup_setup
+result=$(cd "$SANDBOX" && PATH="$SANDBOX/.pr3-bin:$PATH" python3 "$LIB_DIR/hangup.py" --ready "$SANDBOX/.pr3-stage-waits" \
+  --how close --hung-up "$SANDBOX/.pr3-stage-stopped" --out "$SANDBOX/stdout.log" -- bash "$SCRIPTS_DIR/implement-pipeline.sh") || true
+hangup_done
+check_eq 129 "$(sed -n 's/^rc=\([0-9]*\) .*/\1/p' <<< "$result")" "20b ended by the hang-up ($result)"
+has 'push deferred \(iter 1\)' "$(cat "$SANDBOX/stdout.log")" "20b iteration 1's push was held back"
+check_eq 1 "$(pr3_pushes)" "20b one push, from the EXIT trap"
+check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "20b every commit of the run on origin"
+teardown
+
+# 20c — stderr is a pipe whose reader is gone, and the stage gets SIGTERM: bash 3.2 dies of
+# SIGPIPE at the first write there, with or without set -e
+hangup_setup
+mkfifo "$SANDBOX/.pr3-stderr"
+cat "$SANDBOX/.pr3-stderr" > "$SANDBOX/stderr.log" &
+READER=$!
+(cd "$SANDBOX" && PATH="$SANDBOX/.pr3-bin:$PATH" exec bash "$SCRIPTS_DIR/implement-pipeline.sh" > "$SANDBOX/stdout.log" 2> "$SANDBOX/.pr3-stderr") &
+STAGE=$!
+waited=0
+while [ ! -f "$SANDBOX/.pr3-stage-waits" ] && [ "$waited" -lt 300 ]; do sleep 0.1; waited=$((waited + 1)); done
+[ -f "$SANDBOX/.pr3-stage-waits" ] || fail "20c the stage never reached the held git call"
+kill "$READER" 2>/dev/null || true
+wait "$READER" 2>/dev/null || true
+kill -TERM "$STAGE" 2>/dev/null || true
+: > "$SANDBOX/.pr3-stage-stopped"
+{ wait "$STAGE"; rc=$?; } 2>/dev/null || true
+hangup_done
+check_eq 143 "$rc" "20c ended by SIGTERM"
+check_eq 1 "$(pr3_pushes)" "20c one push, from the EXIT trap"
+check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "20c every commit of the run on origin"
 teardown
 
 # 13 — negative control: the per-iteration and /goal pushes as in v3.0.2

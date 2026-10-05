@@ -723,7 +723,11 @@ push_iteration() {
 push_deferred() {
   [ "$DEFERRED_PUSH_PENDING" = 1 ] || return 0
   DEFERRED_PUSH_PENDING=0
-  echo "  pushing the deferred commits of $BRANCH ($1)" >&2
+  # After a hang-up stderr is a terminal that is gone, or a pipe whose reader is
+  # gone (the queue loop's tee): the write fails, and under set -e, or by SIGPIPE
+  # in bash 3.2 even without it, it ended the EXIT trap before the push it
+  # announces. Written from a subshell, as in shepherd.sh, it cannot.
+  ( echo "  pushing the deferred commits of $BRANCH ($1)" >&2 ) || true
   push_branch_loud "$1" "" "${2:-HEAD}"
 }
 # Every way out before the end-of-run push goes through this EXIT trap while

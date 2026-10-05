@@ -191,7 +191,14 @@ class Store:
             except Exception:  # the exit code is the protocol; the steps are help
                 message = ('Interrupted Bureau run ' + run + ': work preserved; release it (bureau-runtime.py release '
                            + run + '), then drop or replace its worktree before a rerun.')
-            print(message, file=sys.stderr)
+            try:
+                print(message, file=sys.stderr)
+            except OSError:
+                # The terminal is gone (a hang-up): the steps are lost, `status`
+                # still shows the run, and the exit code must stay. Python's last
+                # flush of stderr would fail again and end the runtime with 120.
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                os.dup2(devnull, 2); os.close(devnull)
 
     def preserve(self, key, run, issue, workspace, reason):
         # The record reset_worktree reads when it refuses the unregistered
@@ -609,6 +616,7 @@ def execute(repo, args, store):
     child = None
     interrupted = None
     resources = []
+    code = None
 
     def signal_child(signum):
         if child is not None:
@@ -617,6 +625,10 @@ def execute(repo, args, store):
 
     def stop(signum, frame):
         nonlocal interrupted
+        # A hang-up stops the run like SIGTERM, and the child gets SIGTERM: it
+        # runs in a session of its own, without the terminal, where a hang-up
+        # can be ignored or mean "reload" (a dev server, a daemon).
+        if signum == signal.SIGHUP: signum = signal.SIGTERM
         # Record cancellation even if it arrives during Popen, before the child
         # handle is assigned. Raising here can orphan that just-created process.
         interrupted = signum
@@ -624,6 +636,13 @@ def execute(repo, args, store):
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    # Closing the terminal, the ssh connection or the tmux session sends SIGHUP
+    # to the wrapper in front, the only one of the run on that terminal (each
+    # child starts a session of its own). Untrapped, it ended that wrapper alone
+    # and the run went on without it. A run started under nohup (SIGHUP already
+    # ignored) is meant to outlive its terminal and keeps ignoring it.
+    if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN:
+        signal.signal(signal.SIGHUP, stop)
     try:
         try:
             resources = store.claim(args.issue, workspace, run, 'background', os.getpid())
@@ -650,7 +669,15 @@ def execute(repo, args, store):
                     except subprocess.TimeoutExpired: signal_child(signal.SIGKILL); child.wait()
                     return 130
     finally:
-        store.finish_execution(run, resources, interrupted, repo, report=bool(resources) or not inherited)
+        # A child that ends with 130 was stopped (Ctrl-C, SIGTERM or a hang-up)
+        # even when this wrapper got no signal: a stop sent to an inner process
+        # group only (the shepherd's, the worker's). The run then counts as
+        # interrupted here too: leases kept, steps printed. Before, the wrapper
+        # in front kept them only when an inner wrapper had already recorded the
+        # interrupt, and a shepherd that ended before the stage it ran (a stage
+        # with a slow EXIT trap, or no stage at all during the shepherd's own
+        # waits) released them while the stage still ran.
+        store.finish_execution(run, resources, interrupted or code == 130, repo, report=bool(resources) or not inherited)
 
 
 def main():

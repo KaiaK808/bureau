@@ -248,9 +248,15 @@ def run(options, prompt, system, repo, evidence, schema=None):
             except ProcessLookupError: pass
     def stop(signum, frame):
         nonlocal interrupted
+        # A hang-up stops the call like SIGTERM, and the provider's process
+        # group gets SIGTERM: it runs in a session of its own, without the
+        # terminal, where a hang-up can be ignored (bureau-runtime.py execute).
+        if signum == signal.SIGHUP: signum = signal.SIGTERM
         interrupted = signum; kill(signum)
         signal.setitimer(signal.ITIMER_REAL, 5)
     signal.signal(signal.SIGTERM, stop); signal.signal(signal.SIGINT, stop)
+    # Left ignored when the run started under nohup, as in the runtime.
+    if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN: signal.signal(signal.SIGHUP, stop)
     signal.signal(signal.SIGALRM, lambda signum, frame: kill(signal.SIGKILL))
     started = time.monotonic()
     with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
@@ -461,6 +467,17 @@ def transcript(options, repo, evidence, environ=None):
     return dict(session_id=thread, transcript=str(found) if found else None, transcript_found=found is not None)
 
 
+def note(text):
+    """A line on stderr for the stage's log. After a hang-up the terminal is
+    gone and the write fails: the outcome and the exit code stay (Python's last
+    flush of stderr would fail again and end the adapter with 120)."""
+    try:
+        print(text, file=sys.stderr); sys.stderr.flush()
+    except OSError:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, 2); os.close(devnull)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stage', required=True); parser.add_argument('--repo', default='.')
@@ -504,10 +521,10 @@ def main():
                         account_used_percent=None, stage=args.stage, provider=options['runner'], model=options['model'], evidence=str(evidence))
         metadata.update(transcript(options,repo,evidence))
         (evidence/'result.json').write_text(json.dumps(metadata,indent=2)+'\n')
-        print('Bureau provider evidence: '+str(evidence),file=sys.stderr)
-        if metadata['transcript']: print('Bureau provider transcript: '+metadata['transcript'],file=sys.stderr)
+        note('Bureau provider evidence: '+str(evidence))
+        if metadata['transcript']: note('Bureau provider transcript: '+metadata['transcript'])
         if code==0: print(text)
-        else: print('Bureau provider outcome: '+metadata['outcome'],file=sys.stderr)
+        else: note('Bureau provider outcome: '+metadata['outcome'])
         return code
     except AuthError as exc: print(str(exc),file=sys.stderr); return 16
     except (PermissionError, UntrustedEnvError) as exc: print(str(exc),file=sys.stderr); return 24
