@@ -616,6 +616,7 @@ def execute(repo, args, store):
     child = None
     interrupted = None
     resources = []
+    code = None
 
     def signal_child(signum):
         if child is not None:
@@ -668,7 +669,15 @@ def execute(repo, args, store):
                     except subprocess.TimeoutExpired: signal_child(signal.SIGKILL); child.wait()
                     return 130
     finally:
-        store.finish_execution(run, resources, interrupted, repo, report=bool(resources) or not inherited)
+        # A child that ends with 130 was stopped (Ctrl-C, SIGTERM or a hang-up)
+        # even when this wrapper got no signal: a stop sent to an inner process
+        # group only (the shepherd's, the worker's). The run then counts as
+        # interrupted here too: leases kept, steps printed. Before, the wrapper
+        # in front kept them only when an inner wrapper had already recorded the
+        # interrupt, and a shepherd that ended before the stage it ran (a stage
+        # with a slow EXIT trap, or no stage at all during the shepherd's own
+        # waits) released them while the stage still ran.
+        store.finish_execution(run, resources, interrupted or code == 130, repo, report=bool(resources) or not inherited)
 
 
 def main():

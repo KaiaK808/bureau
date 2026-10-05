@@ -27,14 +27,24 @@
 #   5. a stage that ignores SIGHUP, SIGTERM and Ctrl-C (step 1 s), three runs: the chain ends by
 #      itself every time, nothing left running
 #   6. a run started under nohup outlives its terminal, as in v3.1; SIGTERM still stops it
-#   7. SIGHUP to the shepherd's own process group: cancelled like SIGTERM, exit 130, released
-#   8. SIGHUP to the worker's process group: the worker ends with 130, its work preserved
+#   7. SIGHUP to the shepherd's own process group: cancelled like SIGTERM, exit 130, released;
+#      the runtime in front got no signal and keeps the leases for the resume all the same
+#  7b. SIGTERM to the shepherd's own process group while the stage needs 7 s to stop (an EXIT
+#      trap such as implement's deferred push): the shepherd ends first, and the runtime in
+#      front still keeps the leases interrupted and prints the steps once (the maintainer's
+#      decision for v3.2: a child's 130 counts as interrupted)
+#   8. SIGHUP to the worker's process group: the worker ends with 130, its work preserved; the
+#      shepherd takes the stage's 130 for a halt and alerts, and the leases are kept
 #   9. tmux kill-session on the shepherd's session (skipped where tmux is not installed)
 #  10. SIGHUP to the queue supervisor: it stops its queue loop instead of leaving it running
 # Negative control: against v3.1.0 (9411b3b) every case but 6 fails (the outer runtime dies
 # with 129 and the rest of the run keeps running; the shepherd and the worker die with the
 # hang-up and end with 255; the supervisor dies with 129 and leaves its queue loop behind);
-# case 6 holds there as well, since v3.1 never stopped on a hang-up.
+# case 6 holds there as well, since v3.1 never stopped on a hang-up. Against the first head of
+# this change (af97f45, before a child's 130 counted) case 7b fails on macOS's bash 3.2: the
+# leases were released while the stage still ran, and no steps were printed. Case 7 holds
+# there: a stage that stops at once lets the worker's runtime record the interrupt before the
+# shepherd ends, the order that happened to work.
 set -euo pipefail
 source "$(dirname "$0")/lib/pr5-interrupt.sh"
 HANGUP="$PR5_ROOT/tests/lib/hangup.py"
@@ -95,9 +105,11 @@ hup_wait() {
 }
 
 # group_of <fixed text> — the process group of the run's process that leads its own group and
-# whose command line holds <fixed text> (the inner shepherd, the worker).
+# whose command line holds <fixed text> (the inner shepherd, the worker). Taken from the
+# probe stage's own ancestry ($SB/run-procs, tests/lib/pr5-interrupt.sh), never from all
+# processes of the host: a signal from this test can only reach this run.
 group_of() {
-  ps -A -o pid=,pgid=,args= | awk -v want="$1" '$1 == $2 && index($0, want) && !found { print $1; found = 1 }'
+  awk -v want="$1" '$1 == $2 && index($0, want) && !found { print $1; found = 1 }' "$SB/run-procs"
 }
 
 # stopped <case> — the run ended as a cancelled one and left everything for the resume:
@@ -203,38 +215,62 @@ steps 6
 echo "PASS 6 a run started under nohup outlives its terminal, as before; SIGTERM still stops it"
 
 # ── 7. SIGHUP to the shepherd's own process group ────────────────────────────────────
+# The runtime in front gets no signal here. It keeps the leases because the shepherd ended
+# with 130, whichever wrapper inside recorded the interrupt first, or none.
 pr5_new_repo
 hup_start || fail "7: the probe stage did not start"
 SHEPHERD_GROUP=$(group_of "shepherd.sh --no-tmux --no-tmux --worktree $REPO/")
-[ -n "$SHEPHERD_GROUP" ] || fail "7: no process group of the inner shepherd: $(left)"
+case "$SHEPHERD_GROUP" in ''|*[!0-9]*) fail "7: no process group of the inner shepherd: $(cat "$SB/run-procs")" ;; esac
 kill -HUP -- "-$SHEPHERD_GROUP"
 hup_wait
 [ "$RC" = 130 ] || fail "7: SIGHUP to the shepherd's group ended the run with $RC, wanted 130"
 grep -qF '[shepherd] interrupted by SIGHUP — cancelled; nothing written but the release of EXP-7' <<< "$ERR" \
   || fail "7: the shepherd did not end as a cancelled run on SIGHUP"
-gone 30 || fail "7: a process of the run outlived SIGHUP to the shepherd: $(left)"
-[ "$(pr5_writes 7)" = "$(printf 'add-label 7 shepherd-focused\nremove-label 7 shepherd-focused')" ] \
-  || fail "7: Linear got other writes than the claim and its release: $(pr5_writes 7 | tr '\n' ';')"
-[ ! -s "$SB/alerts.log" ] || fail "7: an alert went out: $(cat "$SB/alerts.log")"
-# Not checked here: the leases. The runtime in front got no signal, and when the shepherd
-# ends before the worker's runtime has recorded the interrupt, it releases them as after any
-# run (a stop meant for the run goes to the runtime in front; docs/troubleshooting.md).
-echo "PASS 7 SIGHUP to the shepherd's own process group: cancelled like SIGTERM, 130"
+stopped 7
+steps 7
+echo "PASS 7 SIGHUP to the shepherd's own process group: cancelled like SIGTERM, 130, the leases kept"
+
+# ── 7b. SIGTERM to the shepherd's group while the stage needs 7 s to stop ────────────
+# The stage's EXIT trap takes 7 s (inside the 10 s its runtime grants). On bash 3.2 the
+# subshell the shepherd runs the worker in dies of the signal at once, and the shepherd releases
+# the claim and ends with 130 while the stage still runs; on a newer bash it may wait. Either
+# way the runtime in front, which got no signal, keeps the leases interrupted and prints the
+# steps once.
+pr5_new_repo
+printf slowexit > "$SB/probe-mode"
+hup_start || fail "7b: the probe stage did not start"
+SHEPHERD_GROUP=$(group_of "shepherd.sh --no-tmux --no-tmux --worktree $REPO/")
+case "$SHEPHERD_GROUP" in ''|*[!0-9]*) fail "7b: no process group of the inner shepherd: $(cat "$SB/run-procs")" ;; esac
+kill -TERM -- "-$SHEPHERD_GROUP"
+hup_wait
+[ "$RC" = 130 ] || fail "7b: SIGTERM to the shepherd's group ended the run with $RC, wanted 130"
+grep -qF '[shepherd] interrupted by SIGTERM — cancelled' <<< "$ERR" || fail "7b: the shepherd did not end as a cancelled run"
+stopped 7b
+steps 7b
+[ -f "$SB/pushed" ] || fail "7b: the stage was killed before its 7-second EXIT trap finished"
+echo "PASS 7b SIGTERM to the shepherd's group, stage slow to stop: the leases kept, the steps once"
 
 # ── 8. SIGHUP to the worker's process group ──────────────────────────────────────────
+# The second way an inner signal ends a run: the shepherd got none, so it takes the stage's
+# 130 for a stage that halted, with an alert (docs/troubleshooting.md, How to stop a run).
 pr5_new_repo
 hup_start || fail "8: the probe stage did not start"
 WORKER_GROUP=$(group_of "$REPO/scripts/bureau-worker.sh EXP-7 spec-pipeline.sh")
-[ -n "$WORKER_GROUP" ] || fail "8: no process group of the worker: $(left)"
+case "$WORKER_GROUP" in ''|*[!0-9]*) fail "8: no process group of the worker: $(cat "$SB/run-procs")" ;; esac
 kill -HUP -- "-$WORKER_GROUP"
 hup_wait
 gone 30 || fail "8: a process of the run outlived SIGHUP to the worker: $(left)"
+[ "$RC" = 130 ] || fail "8: SIGHUP to the worker's group ended the run with $RC, wanted 130"
 grep -qF '[shepherd] spec-pipeline.sh exit=130 (' <<< "$OUT" || fail "8: the worker did not end with 130: $(grep -F 'exit=' <<< "$OUT")"
 grep -qF "Preserved unfinished work in $WT" <<< "$ERR" || fail "8: the worker did not preserve the stage's work"
 [ "$(jq -r .reason "$COMMON"/bureau/preserved/*.json)" = interrupted ] \
   || fail "8: the worktree is not recorded as interrupted: $(cat "$COMMON"/bureau/preserved/*.json)"
 [ -f "$WT/probe-work.txt" ] || fail "8: the stage's work is gone from the worktree"
-echo "PASS 8 SIGHUP to the worker's process group: the worker ends with 130 and preserves the work"
+[ "$(jq '[.[] | select(.interrupted == true)] | length' "$COMMON/bureau/leases.json")" = 2 ] \
+  || fail "8: the leases are not kept as interrupted: $(cat "$COMMON/bureau/leases.json")"
+steps 8
+grep -qF 'cancelled-run' "$SB/alerts.log" || fail "8: no halt alert for the stage's 130: $(cat "$SB/alerts.log")"
+echo "PASS 8 SIGHUP to the worker's process group: the worker ends with 130 and preserves the work, the leases kept, one halt alert"
 
 # ── 9. tmux kill-session ─────────────────────────────────────────────────────────────
 if command -v tmux >/dev/null 2>&1; then

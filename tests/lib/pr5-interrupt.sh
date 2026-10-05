@@ -16,7 +16,10 @@
 # writes $SB/pushed, ignorehup ignores SIGHUP and writes $SB/stopped in its EXIT trap,
 # ignoreall ignores SIGHUP, SIGTERM and Ctrl-C, retry ends with 10 after its work (the
 # shepherd waits 60 s and retries) (tests/test_hangup_stop.sh). Each release of a label also
-# records whether it was a single attempt in $SB/release-single.log.
+# records whether it was a single attempt in $SB/release-single.log. Before it marks that it
+# runs, the probe writes its own process and its ancestors up to the first one outside the
+# sandbox to $SB/run-procs ("pid pgid command" per line): a test that signals one process group
+# of the run takes the group from there, so it can never name a process of another run.
 #
 # pr5_setup                    — $SB (physical path), the fake Linear/Telegram, and a repo
 # pr5_teardown                 — the tests' EXIT trap: stops every process group still running a
@@ -144,6 +147,13 @@ case "\$(cat "$SB/probe-mode" 2>/dev/null || echo block)" in
   ignoreall) trap '' TERM INT HUP ;;
   retry) exit 10 ;;
 esac
+p=\$\$; : > "$SB/run-procs.new"
+while [ -n "\$p" ] && [ "\$p" -gt 1 ]; do
+  line=\$(ps -ww -o pid=,pgid=,args= -p "\$p" 2>/dev/null) || break
+  case "\$line" in *"$SB/"*) printf '%s\\n' "\$line" >> "$SB/run-procs.new" ;; *) break ;; esac
+  p=\$(ps -o ppid= -p "\$p" 2>/dev/null | tr -d ' ') || p=""
+done
+mv "$SB/run-procs.new" "$SB/run-procs"
 : > "$SB/probe-started"
 while :; do sleep 1; done
 PROBE
@@ -158,7 +168,7 @@ PROBE
   printf 'LINEAR_API_KEY=k\nTELEGRAM_BOT_TOKEN=t\nTELEGRAM_ALERT_CHAT_ID=c\n' > "$REPO/.env"
   WT="$REPO/.worktrees/shepherd-EXP-7"
   COMMON="$REPO/.git"
-  printf s1 > "$SB/state"; rm -f "$SB/labels/"*.json "$SB/probe-mode" "$SB/probe-started" "$SB/finished.log" "$SB/pushed" "$SB/stopped"
+  printf s1 > "$SB/state"; rm -f "$SB/labels/"*.json "$SB/probe-mode" "$SB/probe-started" "$SB/finished.log" "$SB/pushed" "$SB/stopped" "$SB/run-procs"
   : > "$SB/linear.log"; : > "$SB/comments.jsonl"; : > "$SB/alerts.log"; rm -f "$SB/release-single.log"
 }
 
