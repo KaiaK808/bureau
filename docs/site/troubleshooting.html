@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0e85409ac86896bcbf179388a34617361c890634e52f8785d9370e8738a1dca8">
+<meta name="bureau-source-sha256" content="5a6eb09cee5e4247ac9e69b3234c37d522de3fe9fa034956213c6e28ee710837">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -535,10 +535,14 @@ runtime keeps the run's leases and marks them interrupted, the worktree
 keeps every file and commit the stage made and loses its
 disposable-worker registration so that no later reset erases it, and an
 implement stage that held back its pushes
-(<code>push_each_iteration: false</code>) pushes them on its way out,
-since v3.2 also when its terminal or the queue's log pipe is already
-gone. The resume steps are printed once on stderr. After a closed
-terminal they are gone with it;
+(<code>push_each_iteration: false</code>) tries to push them on its way
+out when the signal stops it, since v3.2 also when its terminal is gone.
+When a queue's log pipe goes first (its <code>tee</code> ends with the
+pane, for example on Ctrl-C or when the pane closes) and the stage
+writes to it before the signal reaches the stage, the write ends the
+stage at once and nothing is pushed: the commits stay in the preserved
+worktree, and step 2 of the resume pushes them. The resume steps are
+printed once on stderr. After a closed terminal they are gone with it;
 <code>python3 scripts/bureau-runtime.py status</code> then shows the
 run's leases with <code>"interrupted": true</code>, and the steps are
 the ones below, in <a
@@ -546,11 +550,12 @@ href="#shepherdsh-bailed-mid-run--how-to-resume"><code>shepherd.sh</code>
 bailed mid-run — how to resume</a>.</p>
 <p>These do not stop a run cleanly:</p>
 <ul>
-<li><p><strong>SIGTERM or SIGHUP to an inner process group
+<li><p><strong>SIGTERM or SIGHUP to an inner process or process group
 only.</strong> The runtime in front gets no signal. Since v3.2 it counts
 a 130 from its child as a stop all the same (it keeps the leases
 interrupted and prints the steps), but the run does not end the way a
-clean stop ends it, in one of two ways:</p>
+clean stop ends it. It ends in one of these four ways, depending on
+which process got the signal:</p>
 <ul>
 <li><strong>The shepherd's own group</strong> (the one under the runtime
 in front; the worker's runtime runs in it as well). The shepherd
@@ -558,14 +563,16 @@ releases the claim and ends with 130, and the stage stops through the
 worker's runtime. The shepherd can end first, before a stage with a slow
 way out has stopped (implement's deferred push, a build that cleans up),
 and the runtime in front ends with it: the steps are printed while the
-stage is still stopping. Wait until
-<code>python3 scripts/bureau-runtime.py status</code> shows no live
-process of the run (<code>release</code> refuses until then), then
-follow the steps. Until v3.1 whether the leases were kept depended on
-that order: kept when the stage had stopped before the shepherd ended,
-released while the stage still ran when the shepherd ended first, or
-when no stage ran (the shepherd stopped during a Linear read or its own
-wait), and no steps were printed then.</li>
+stage is still stopping. Run
+<code>python3 scripts/bureau-runtime.py release RUN_ID</code> until it
+no longer answers "Background process group still alive", then follow
+the other steps; <code>status</code> cannot tell, since it lists the
+run's leases and their <code>pid</code> and says nothing about whether
+those processes still run. Until v3.1 whether the leases were kept
+depended on that order: kept when the stage had stopped before the
+shepherd ended, released while the stage still ran when the shepherd
+ended first, or when no stage ran (the shepherd stopped during a Linear
+read or its own wait), and no steps were printed then.</li>
 <li><strong>The worker's group</strong> (or the stage's runtime in it).
 The stage stops and the worker ends with 130, but the shepherd got no
 signal: it takes the 130 for a stage that halted, sends a Telegram alert
@@ -573,8 +580,24 @@ signal: it takes the 130 for a stage that halted, sends a Telegram alert
 with 130. The leases are kept interrupted and the steps are printed, as
 after a clean stop. Nothing else is wrong; ignore the alert and follow
 the steps.</li>
+<li><strong>The stage's own process group.</strong> The stage dies of
+the signal, and its runtime, which got none, ends with 256 minus the
+signal's number (241 for SIGTERM, 254 for Ctrl-C's SIGINT). The worker
+and the shepherd take that code for a failed stage: the shepherd halts
+with a Telegram alert <code>shepherd halt (error-241)</code> (or the
+code it got), and the runtime in front releases the leases, as after any
+halt. When the stage left changes or commits, the worker keeps the
+worktree as unfinished work.</li>
+<li><strong>On bash 3.2 (macOS), the shepherd's subshell.</strong> The
+shepherd runs the worker in a subshell (<code>shepherd.sh</code>, the
+call to <code>bureau-worker.sh</code>), a process of its own with the
+same command line as the shepherd. A SIGTERM to that process alone ends
+it, the shepherd takes its 143 for a failed stage, halts with an alert
+and ends with 143, and the runtime in front releases the leases while
+the stage still runs under the worker.</li>
 </ul>
-<p>Send the stop to the runtime in front instead.</p></li>
+<p>Always send the stop to the lease <code>pid</code>, the runtime in
+front.</p></li>
 <li><p><strong>SIGTERM or SIGHUP to the queue supervisor's process
 alone</strong> (<code>kill -TERM &lt;supervisor pid&gt;</code>). The
 supervisor sends SIGTERM to the queue loop's process only and exits; the
@@ -616,12 +639,15 @@ repository. The interrupt message names the run, the ticket and the
 worktree, and prints the steps once, with the actual run ID, paths and
 branch:</p>
 <ol type="1">
-<li>Check that no process of the run is left
-(<code>python3 scripts/bureau-runtime.py status</code>), then release
-its ownership:
-<code>python3 scripts/bureau-runtime.py release RUN_ID</code>.
-<code>release</code> refuses while a process of the run is still
-alive.</li>
+<li>Release the run's ownership:
+<code>python3 scripts/bureau-runtime.py release RUN_ID</code>. While a
+process of the run is still alive, <code>release</code> refuses with
+"Background process group still alive; stop it before releasing": run it
+again until it no longer gives that answer.
+<code>python3 scripts/bureau-runtime.py status</code> cannot tell: it
+lists the run's leases and their <code>pid</code> and says nothing about
+whether those processes still run. (The printed step still says to check
+<code>status</code> first.)</li>
 <li>Save anything you want from the worktree, then drop it:
 <code>git worktree remove --force WORKTREE</code>. The message says what
 to do with its branch. A branch that was never pushed and has no commits
