@@ -32,14 +32,30 @@ write_result() {
 if bureau_is_paused; then OUTCOME=paused; write_result; exit 0; fi
 case "$MODE" in all|spec|spec_review|ux|copy|implement|qa|code_review|merge|rebase) ;; *) echo 'Unknown stage' >&2; exit 1 ;; esac
 if ! (precondition_linear); then RC=10; OUTCOME=failed; write_result; exit 10; fi
-for stage in merge rebase code_review qa implement copy ux spec_review spec; do
-  [ "$MODE" = all ] || [ "$MODE" = "$stage" ] || continue
-  agent_enabled "$stage" || continue
-  if [ "$stage" = merge ] && [ "$BUREAU_NO_MERGE" = 1 ]; then continue; fi
+# A ticket waiting on its merge gate (merge_gate_waits in bureau-config.sh) does not take
+# the tick while another stage has work (v3.2). With --allow-merge over all stages, a stage
+# whose only pick is such a ticket is passed over (pipeline_pick_next marks that pick), and
+# the stages passed over pick again, in their order and as before, once no other stage had a
+# ticket to run. With --stage there is no other stage; --no-merge runs no merge stage and
+# skips a review held at its boundary (below): both pick as before.
+PASS_HELD="" PASSED=""
+if [ "$MODE" = all ] && [ "$BUREAU_NO_MERGE" = 0 ]; then PASS_HELD="mark-held"; fi
+# tick_stage <stage> [mark-held]: run one ticket of <stage>, write the result and exit;
+# return when the stage has no ticket to run now.
+tick_stage() {
+  local stage="$1" mark="${2:-}" pipeline
+  [ "$MODE" = all ] || [ "$MODE" = "$stage" ] || return 0
+  agent_enabled "$stage" || return 0
+  if [ "$stage" = merge ] && [ "$BUREAU_NO_MERGE" = 1 ]; then return 0; fi
   pipeline="$(printf '%s' "$stage" | tr '_' '-')-pipeline.sh"
   SKIPPED=""
   while :; do
-    if ! ISSUE=$(pipeline_pick_next "$pipeline" "$SKIPPED"); then RC=10; OUTCOME=failed; write_result; exit "$RC"; fi
+    if ! ISSUE=$(pipeline_pick_next "$pipeline" "$SKIPPED" ${mark:+"$mark"}); then RC=10; OUTCOME=failed; write_result; exit "$RC"; fi
+    case "$ISSUE" in *" held")
+      echo "tick: ${ISSUE% held} waits on its merge gate and is the only $stage ticket that can be picked — passed over while another stage has work" >&2
+      PASSED="${PASSED:+$PASSED }$stage" ISSUE=""
+      return 0 ;;
+    esac
     [ -n "$ISSUE" ] || break
     # A bounded tick may skip several unchanged review boundaries but execute
     # only one stage. The picker must walk past held tickets in this same queue.
@@ -64,7 +80,7 @@ for stage in merge rebase code_review qa implement copy ux spec_review spec; do
     fi
     break
   done
-  [ -n "$ISSUE" ] || continue
+  [ -n "$ISSUE" ] || return 0
   case "$stage" in merge|rebase) ;; *)
     if ! BUREAU_THROTTLE_ONCE=1 session_throttle_guard "$stage"; then
       OUTCOME=waiting; RC=23; write_result; exit 0
@@ -97,5 +113,12 @@ for stage in merge rebase code_review qa implement copy ux spec_review spec; do
   esac
   write_result
   exit "$RC"
+}
+for stage in merge rebase code_review qa implement copy ux spec_review spec; do
+  tick_stage "$stage" "$PASS_HELD"
+done
+for stage in $PASSED; do
+  echo "tick: no other stage has work — back to $stage, whose only ticket waits on its merge gate" >&2
+  tick_stage "$stage"
 done
 write_result

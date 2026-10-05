@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="701b1f19b990de9eafa447d5248c97754883b804bee50250f2a703cad0c3c044">
+<meta name="bureau-source-sha256" content="623845c9da6e0edeba98fe1a6aa815606db26e7411a20343f14a5af0fe6c16c5">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -487,22 +487,25 @@ APPROVE and ends with <code>2</code>; the merge stage ends with
 that stage (review or merge; never rebase) then puts the ticket after
 every other candidate while its branch on origin is still at the judged
 head, and still takes it when nothing else can be picked, so a hold
-never delays a merge while nothing else waits. The hold is two poll
-intervals after the first answer (at least 300 s; the queue loop's own
-interval, else <code>agents.poll_interval_minutes</code>) and doubles
-with each further one, never above this value: with the default
-30-minute poll and other tickets waiting, such a ticket is checked about
-every other poll; with a 5-minute poll after about 2, 4, 8 and then
-every 12 polls. With a poll of an hour or longer set this to at least
-two intervals, or nothing is held. A push, a branch gone from origin and
-a record time in the future end the hold. At Build Review the next run
-reuses the approval without a model call and without the build check
-that passed for the same head, base, command,
-<code>repo.untrusted_env</code> and <code>repo.worktree_links</code>.
-The shepherd is not affected. <code>0</code> switches the holds off (the
-ticket is picked on every poll, as before v3.2). Read by the same rule
-as <code>merge_min_required_checks</code> (default
-<code>3600</code>)</td>
+never delays a merge while nothing else waits (the bounded tick with
+<code>--allow-merge</code> runs another stage that has work first, see
+<a
+href="troubleshooting.html#a-ticket-waiting-on-its-merge-gate-is-picked-after-the-others">troubleshooting</a>).
+The hold is two poll intervals after the first answer (at least 300 s;
+the queue loop's own interval, else
+<code>agents.poll_interval_minutes</code>) and doubles with each further
+one, never above this value: with the default 30-minute poll and other
+tickets waiting, such a ticket is checked about every other poll; with a
+5-minute poll after about 2, 4, 8 and then every 12 polls. With a poll
+of an hour or longer set this to at least two intervals, or nothing is
+held. A push, a branch gone from origin and a record time in the future
+end the hold. At Build Review the next run reuses the approval without a
+model call and without the build check that passed for the same head,
+base, command, <code>repo.untrusted_env</code> and
+<code>repo.worktree_links</code>. The shepherd is not affected.
+<code>0</code> switches the holds off (the ticket is picked on every
+poll, as before v3.2). Read by the same rule as
+<code>merge_min_required_checks</code> (default <code>3600</code>)</td>
 </tr>
 <tr>
 <td><code>agents.model</code></td>

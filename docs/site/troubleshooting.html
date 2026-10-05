@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2f4f47f9888bd96d0745e6eedad86e3e20f57891d5cff23c9dffb7ee225b0683">
+<meta name="bureau-source-sha256" content="377742f028cebf92e63cebe38ec1517d5e0bd6440e76a5f6c915c003e0c4c535">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -774,6 +774,26 @@ are 600, 1200, 2400 and then 3600 s, so it is checked again after about
 hour or longer the default cap is shorter than two intervals and nothing
 is held: set <code>agents.merge_gate_recheck_seconds</code> to at least
 two intervals there.</p>
+<p>The bounded tick (<code>bureau-tick.sh</code>, one stage per tick)
+does not spend a tick on such a ticket while another stage has work
+(v3.2). With <code>--allow-merge</code>, when the only ticket it can
+pick in Build Review or Merge waits on its merge gate, the tick passes
+over that stage and goes on with the next one:</p>
+<pre class="text"><code>tick: TEAM-123 waits on its merge gate and is the only code_review ticket that can be picked — passed over while another stage has work</code></pre>
+<p>It comes back to that stage only when no other stage has a ticket to
+run
+(<code>tick: no other stage has work — back to code_review, whose only ticket waits on its merge gate</code>,
+then the picker's <code>taken although</code> line), and once the hold
+has run out the ticket is picked in its stage's turn again.
+<code>logs/bureau-tick.json</code> names the stage and ticket that ran,
+with the usual outcome and exit code; nothing is written for the stage
+passed over. With <code>--stage code_review</code> or
+<code>--stage merge</code> there is no other stage, and the ticket is
+taken as before. The default <code>--no-merge</code> tick is unchanged:
+it runs no merge stage and skips an approved review at its unchanged PR
+head and base (<code>skipped_reviews</code> in the result). Before, an
+<code>--allow-merge</code> tick took the waiting ticket on every tick,
+and the stages after it did not run until its gate was decided.</p>
 <p>A push to the branch, a branch gone from origin and a record time in
 the future (a clock that stepped back) end the hold at once. At Build
 Review the run after the hold reuses the approval (no model call, no new
@@ -930,8 +950,8 @@ with exit 21.</p>
 <p>QA parks a ticket with <code>needs-human</code> when it can't decide
 whether a failure is legitimate (test genuinely fails) or spurious (env
 issue, flaky test, missing service).</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># See what QA saw</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;</span><span class="va">$ISSUE</span><span class="st">&quot;</span> logs/events.jsonl <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">&#39;select(.event==&quot;qa_verdict&quot;)&#39;</span></span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># See what QA saw</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;</span><span class="va">$ISSUE</span><span class="st">&quot;</span> logs/events.jsonl <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">&#39;select(.event==&quot;qa_verdict&quot;)&#39;</span></span></code></pre></div>
 <p>Typically: pull the branch locally, run the tests yourself, and
 either fix the code or mark the test as skip/ignore with a
 rationale.</p>
@@ -1010,8 +1030,9 @@ resuming.</p>
 <code>BUREAU_DRY_RUN</code> to debug a specific stage</h3>
 <p>Use a queue preview for one stage or a named-ticket shepherd
 preview:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/queue-loop.sh code-review 1</span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/queue-loop.sh code-review 1</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
 <p>The queue example continues polling until stopped; <code>1</code> is
 its interval in minutes. Previews can read Linear, but do not invoke
 creative work or reset workers. Calling a background pipeline directly
@@ -1038,9 +1059,9 @@ after <code>headroom_wrap: true</code></h3>
 <p>The flag is read live; turning it on doesn't auto-install Headroom.
 Install on the host running the pipeline (typically the operator's local
 box, not the CI runner):</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="st">&quot;headroom-ai[all]&quot;</span></span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">headroom</span> <span class="at">--version</span>    <span class="co"># confirm</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="st">&quot;headroom-ai[all]&quot;</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">headroom</span> <span class="at">--version</span>    <span class="co"># confirm</span></span></code></pre></div>
 <p>If <code>pip</code> resolves to a Python that doesn't have user-level
 installs on PATH, prefer <code>pip install --user</code> and add
 <code>~/.local/bin</code> to PATH, or use a venv. The provider adapter
@@ -1123,9 +1144,9 @@ permissions bypass as a diagnostic shortcut.</p>
 <h3 id="speckit-phases-produce-empty-tasksmd">Speckit phases produce
 empty <code>tasks.md</code></h3>
 <p>The spec pipeline routes back to Triage automatically. To debug:</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> <span class="at">-la</span> specs/<span class="op">&lt;</span>NNN-feature<span class="op">&gt;</span>/</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> logs/queue-spec.log <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-100</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> <span class="at">-la</span> specs/<span class="op">&lt;</span>NNN-feature<span class="op">&gt;</span>/</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> logs/queue-spec.log <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-100</span></span></code></pre></div>
 <p>Most common cause: the Linear issue description was too thin for
 <code>/speckit-tasks</code> to extract anything. Add acceptance criteria
 to the description and re-trigger.</p>
