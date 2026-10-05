@@ -1,7 +1,7 @@
 #!/bin/bash
 # bureau-env.sh — read the pipeline's keys from a .env file without ever
-# executing it, and run code the branch controls without them. A pure library:
-# sourcing it defines functions and does nothing else. One of them is named
+# executing it, and run code the branch controls without them. A library:
+# sourcing it switches allexport off (v3.2, see below) and defines functions. One of them is named
 # `git`: in every script that sources this file, git commands run without the
 # secrets (see the end of the file). The three .env readers read no file on
 # their own and need no .bureau.json, no jq and no other external program;
@@ -66,6 +66,12 @@
 # Must run under bash 3.2 (/bin/bash on macOS): there is no `local -` and no
 # `declare -g`, so keys are assigned with `printf -v`, and every local name
 # starts with _be_ so it can never shadow a key.
+
+# v3.2: with allexport on (`set -a`, or an exported SHELLOPTS of the operator's
+# shell), every function defined below would be exported to the processes the
+# script starts (BASH_FUNC_git%% and the rest), and every later assignment with
+# it. Off before anything is defined; bureau_load_env switches it off again.
+set +a
 
 # The key list: every name with prefix BUREAU_, LINEAR_, TELEGRAM_ or
 # BRAINHUGGERS_ that one of the 16 readers or bureau-config.sh reads and that

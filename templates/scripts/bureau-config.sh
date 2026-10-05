@@ -13,15 +13,17 @@
 # _BUREAU_SCRIPTS_DIR is this file's own directory, resolved once at source time: helpers
 # that run a sibling script must take it from the checkout this config came from, never
 # from ./scripts/ relative to wherever the stage has cd'd to.
+#
+# v3.2: allexport off in every Bureau script, before anything is defined. An operator shell that
+# ran `set -a` and exported SHELLOPTS starts each Bureau bash with it on, and then every assignment
+# and every function definition would be exported: the stages' API_KEY copy, the Linear request's
+# config line in _bureau_linear_fetch (which _bureau_drop_secrets would then unset before curl
+# reads it), the functions of this file and bureau-env.sh (which a /bin/sh child cannot even
+# import). bureau-env.sh and bureau_load_env switch it off as well.
+set +a
 _BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=templates/scripts/bureau-env.sh
 source "$_BUREAU_SCRIPTS_DIR/bureau-env.sh"
-# v3.2: allexport off in every Bureau script. An operator shell that ran `set -a` and exported
-# SHELLOPTS starts each Bureau bash with it on, and then every assignment would be exported: the
-# stages' API_KEY copy, the Linear request's config line in _bureau_linear_fetch (which
-# _bureau_drop_secrets would then unset before curl reads it), any later value. bureau_load_env
-# switches it off as well.
-set +a
 # The scripts that source this file copy the Linear key into API_KEY once they
 # have read .env. bureau_load_env never exports the key itself (v3.2); an
 # API_KEY the operator's shell happens to export would still carry the copy to

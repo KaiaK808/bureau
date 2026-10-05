@@ -199,6 +199,8 @@ for name in API_KEY LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID; do
   if grep -q "^$name=" "$TMP/d.out"; then c1_fail "D allexport: $name is exported"; fi
 done
 c1_no_secret "$TMP/d.out" "D allexport: an exported variable carries a secret"
+if grep -q '^BASH_FUNC' "$TMP/d.out"; then c1_fail "D allexport: Bureau's functions are exported: $(grep -c '^BASH_FUNC' "$TMP/d.out") (e.g. $(grep -m1 -o '^BASH_FUNC[^=]*' "$TMP/d.out"))"; fi
+if grep -q '^_BUREAU_SCRIPTS_DIR=' "$TMP/d.out"; then c1_fail "D allexport: bureau-config.sh exported its own variables (allexport still on when it started)"; fi
 # The reader alone (a script that sources bureau-env.sh only) under allexport: a later assignment
 # of the key is not exported. The config without a .env file (the key from the environment) under
 # allexport: the Linear request still carries the key (its config line is not exported, so
@@ -206,6 +208,7 @@ c1_no_secret "$TMP/d.out" "D allexport: an exported variable carries a secret"
 out=$(cd "$D" && env SHELLOPTS=allexport:braceexpand:hashall:interactive-comments /bin/bash -c \
   'source scripts/bureau-env.sh; bureau_load_env .env; COPY="$LINEAR_API_KEY"; /usr/bin/env' 2>&1)
 if printf '%s\n' "$out" | grep -q '^COPY='; then c1_fail "D allexport: the reader left allexport on (a later copy of the key is exported)"; fi
+if printf '%s\n' "$out" | grep -q '^BASH_FUNC'; then c1_fail "D allexport: sourcing bureau-env.sh alone exports its functions"; fi
 rm -f "$TMP"/curl.*.stdin; rm -rf "$D/.git/bureau"
 (cd "$D" && env PATH="$TMP/dbin:$PATH" BUREAU_CONFIG="$D/.bureau.json" BUREAU_LINEAR_RETRIES=0 LINEAR_API_KEY="$C1_LINEAR" \
    SHELLOPTS=allexport:braceexpand:hashall:interactive-comments BUREAU_ENV_FILE="$D/missing.env" /bin/bash -c \

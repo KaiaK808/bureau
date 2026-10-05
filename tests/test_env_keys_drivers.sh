@@ -21,9 +21,10 @@
 #   3. bureau-tick.sh (no stage enabled): its processes carry no key, also when the shell that
 #      starts it exported the keys that .env defines
 #   4. queue-loop-supervised.sh → queue-loop.sh, one round: no process carries a key
-#   5. 1 and 4 again from an operator shell that ran `set -a` and `set -x` and exported SHELLOPTS
-#      (every Bureau bash then starts with allexport and xtrace on), with long key values: no
-#      process carries a key, the trace on stderr and in the logs shows none, Linear still answers
+#   5. 1 and 4 again from an operator shell that ran `set -a` (then `set -x`) and exported
+#      SHELLOPTS (every Bureau bash then starts with that option on), with long key values: no
+#      process carries a key, every child starts cleanly, the trace on stderr and in the logs
+#      (traced past the runtime relaunch) shows none, Linear still answers
 # Negative control: against v3.1.0 (9411b3b) all four fail ("jq LINEAR_API_KEY …"), and 2 also
 # fails on the executed .env line; against 735496e 5 fails (the shepherd's key check and the queue
 # loop's API_KEY copy print the key in the trace).
@@ -116,7 +117,6 @@ c1_check_log "$SB/probe.log" "4 queue loop and supervisor"
 
 # ── 5. allexport and xtrace from the operator's shell ─────────────────────────
 F5=$C1_FAILS
-OPTS=allexport:braceexpand:hashall:interactive-comments:xtrace
 # Long key values, so a trace line that carries one can be found; Linear answers the long key.
 sed -i.bak "s/Authorization: k\"/Authorization: $C1_LINEAR\"/" "$SB/bin/curl"
 long_env() {
@@ -133,32 +133,41 @@ no_secret() {  # <label> <file …>
     done
   done
 }
-setup_repo; long_env
-printf finish > "$SB/probe-mode"
-set +e
-(cd "$REPO" && PATH="$PROBES:$PATH" _pr5_env SHELLOPTS="$OPTS" bash scripts/shepherd.sh --no-tmux --worktree .worktrees/shepherd-EXP-7 EXP-7 > "$SB/out" 2> "$SB/err")
-RC=$?
-set -e
-[ "$RC" = 0 ] || fail "5 shepherd: ended $RC, wanted 0: $(grep -v '^+' "$SB/err" | tail -3 | tr '\n' ' ')"
-[ "$(cat "$SB/state")" = s8 ] || fail "5 shepherd: the ticket did not reach Done"
-if grep -qx unauthorized "$SB/linear.log"; then fail "5 shepherd: a Linear request went out without the key"; fi
-grep -q '^+' "$SB/err" || fail "5 shepherd: nothing was traced (SHELLOPTS not taken)"
-c1_check_log "$SB/probe.log" "5 shepherd chain with allexport and xtrace"
-no_secret "5 shepherd" "$SB/out" "$SB/err" "$REPO"/logs/*.log
-setup_repo; long_env
-set -m
-(cd "$REPO" && exec env PATH="$PROBES:$SB/bin:$PATH" TMPDIR="$SB/tmp" BUREAU_LINEAR_RETRIES=0 BUREAU_DISABLE_THROTTLE=1 SHELLOPTS="$OPTS" \
-   bash "$REPO/scripts/queue-loop-supervised.sh" all 1 > "$SB/out" 2> "$SB/err") &
-LOOP=$!
-set +m
-for _ in $(seq 1 300); do grep -q '^sleep ' "$SB/probe.log" 2>/dev/null && break; sleep 0.1; done
-kill -KILL -- "-$LOOP" 2>/dev/null || true
-wait "$LOOP" 2>/dev/null || true
-grep -q '^sleep ' "$SB/probe.log" || fail "5 queue loop: it did not finish a round"
-grep -qE 'Queues drained|All queues empty' "$REPO/logs/queue-all.log" 2>/dev/null || fail "5 queue loop: it logged no round"
-grep -q '^+' "$SB/err" "$REPO"/logs/*.log 2>/dev/null || fail "5 queue loop: nothing was traced (SHELLOPTS not taken)"
-c1_check_log "$SB/probe.log" "5 queue loop with allexport and xtrace"
-no_secret "5 queue loop" "$SB/out" "$SB/err" "$REPO"/logs/*.log
+# Each option on its own: under allexport alone a broken run (exported functions, a dropped Linear
+# config line) shows as a failed run, under xtrace alone the trace is complete.
+for OPTS in allexport:braceexpand:hashall:interactive-comments braceexpand:hashall:interactive-comments:xtrace; do
+  opt=allexport; case "$OPTS" in *xtrace*) opt=xtrace ;; esac
+  setup_repo; long_env
+  printf finish > "$SB/probe-mode"
+  set +e
+  (cd "$REPO" && PATH="$PROBES:$PATH" _pr5_env SHELLOPTS="$OPTS" bash scripts/shepherd.sh --no-tmux --worktree .worktrees/shepherd-EXP-7 EXP-7 > "$SB/out" 2> "$SB/err")
+  RC=$?
+  set -e
+  [ "$RC" = 0 ] || fail "5 $opt shepherd: ended $RC, wanted 0: $(grep -v '^+' "$SB/err" | tail -3 | tr '\n' ' ')"
+  [ "$(cat "$SB/state")" = s8 ] || fail "5 $opt shepherd: the ticket did not reach Done"
+  if grep -qx unauthorized "$SB/linear.log"; then fail "5 $opt shepherd: a Linear request went out without the key"; fi
+  if grep -q 'error importing function definition\|SHELLOPTS: readonly' "$SB/err"; then fail "5 $opt shepherd: a child could not start cleanly: $(grep -m1 'error importing\|readonly' "$SB/err")"; fi
+  if [ "$opt" = xtrace ]; then
+    grep -q '^+' "$SB/err" || fail "5 xtrace shepherd: nothing was traced (SHELLOPTS not taken)"
+    grep -q '^+.*LINEAR_API_KEY' "$SB/err" || fail "5 xtrace shepherd: the shepherd's key check after the runtime relaunch was not traced"
+  fi
+  c1_check_log "$SB/probe.log" "5 $opt shepherd chain"
+  no_secret "5 $opt shepherd" "$SB/out" "$SB/err" "$REPO"/logs/*.log
+  setup_repo; long_env
+  set -m
+  (cd "$REPO" && exec env PATH="$PROBES:$SB/bin:$PATH" TMPDIR="$SB/tmp" BUREAU_LINEAR_RETRIES=0 BUREAU_DISABLE_THROTTLE=1 SHELLOPTS="$OPTS" \
+     bash "$REPO/scripts/queue-loop-supervised.sh" all 1 > "$SB/out" 2> "$SB/err") &
+  LOOP=$!
+  set +m
+  for _ in $(seq 1 300); do grep -q '^sleep ' "$SB/probe.log" 2>/dev/null && break; sleep 0.1; done
+  kill -KILL -- "-$LOOP" 2>/dev/null || true
+  wait "$LOOP" 2>/dev/null || true
+  grep -q '^sleep ' "$SB/probe.log" || fail "5 $opt queue loop: it did not finish a round"
+  grep -qE 'Queues drained|All queues empty' "$REPO/logs/queue-all.log" 2>/dev/null || fail "5 $opt queue loop: it logged no round"
+  if [ "$opt" = xtrace ]; then grep -q '^+' "$SB/err" "$REPO"/logs/*.log 2>/dev/null || fail "5 xtrace queue loop: nothing was traced (SHELLOPTS not taken)"; fi
+  c1_check_log "$SB/probe.log" "5 $opt queue loop"
+  no_secret "5 $opt queue loop" "$SB/out" "$SB/err" "$REPO"/logs/*.log
+done
 [ "$C1_FAILS" = "$F5" ] && echo "PASS 5 with allexport and xtrace from the operator's shell no process carries a key and no trace shows one"
 
 if [ "$C1_FAILS" != 0 ]; then echo "$C1_FAILS check(s) failed" >&2; exit 1; fi
