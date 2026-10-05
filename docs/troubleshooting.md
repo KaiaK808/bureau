@@ -355,6 +355,8 @@ The review stage decides its verdict in one order (`decide_review_verdict` in `s
 
 A BLOCK labels `needs-human` and ends the stage with 25; the escalation log names the rule that caused it, or the merger's own BLOCK. Remove the label once the cause is dealt with.
 
+To send the ticket back for the fixes, remove the label and restart it with `scripts/shepherd.sh --from-stage build <ISSUE>`. Since v3.2 implement reads the newest comment that carries findings for it, whichever stage or person wrote it: a Changes Requested review, a BLOCK (`🚫 Code review **BLOCKED** — needs human review.`), QA RED (`🔄 QA: tests failing — routing back to Build.`), QA NEEDS_HUMAN (`🚫 QA flagged for human review.`), a `VERDICT: REQUEST_CHANGES` or `VERDICT: BLOCK` line from the app runtime, or a `FIXES_NEEDED` comment; the three headings count only at the start of a comment, and comments a v3.1 stage posted count too. So a `FIXES_NEEDED` comment written after the BLOCK (your own list, for example one without a finding you overrule) takes precedence; before v3.2 the BLOCK, QA RED, QA NEEDS_HUMAN and app-runtime `VERDICT: BLOCK` comments were not read at all, and the build stage ran without their findings unless someone had written such a comment. Only another finding replaces one: an approval, a passed QA or a halt comment does not, so a build pass that follows one of them (a restart from build, or a stage that moves the ticket to Build without a finding, such as review or QA after a merge conflict with the base or a missing branch marker or PR) is still told to address the older finding; to run a build pass from another list, or with nothing to fix, first write a `FIXES_NEEDED` comment that says so.
+
 ### Review comment says `**Build**: not checked`
 
 The review build check found nothing to run: no `repo.test_command`, no `scripts/bureau-test.sh` and no `package.json`. Unlike the QA stage, review does not fall back to `npm test`, `cargo test`, `pytest` or `go test`. The verdict is left as the reviewers gave it, and stderr carries a warning. Set `repo.test_command` in `.bureau.json` to the project's real check so a red build can reach the verdict. When it is set, it wins over the shim and over `npm run build`; a red command (a failure anywhere in a pipe counts, as in QA) turns an APPROVE into REQUEST_CHANGES and never softens a BLOCK. The last 20 lines of the check are in the stage output. The full output, `build.log` in the review's temporary directory, is kept only when the stage exits non-zero; a red check under APPROVE ends in REQUEST_CHANGES with exit 0, and the directory is removed.
@@ -371,6 +373,8 @@ grep "$ISSUE" logs/events.jsonl | jq -r 'select(.event=="qa_verdict")'
 ```
 
 Typically: pull the branch locally, run the tests yourself, and either fix the code or mark the test as skip/ignore with a rationale.
+
+To have the implement stage fix a bug QA found, remove the label and restart with `scripts/shepherd.sh --from-stage build <ISSUE>`: since v3.2 the implement prompt carries QA's summary from the NEEDS_HUMAN comment, as it does on every QA RED, which sends the ticket back to Build by itself. A newer finding takes its place (a review's Changes Requested or BLOCK, another QA RED or NEEDS_HUMAN, a `FIXES_NEEDED` comment); an approval or a passed QA does not (see "Why a review ended BLOCKED").
 
 ### Codex-stage-runner failed spuriously
 
