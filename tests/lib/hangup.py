@@ -3,7 +3,7 @@
 
     hangup.py --ready FILE [--out FILE] [--err FILE] [--nohup] [--how close|group]
               [--start-wait SECONDS] [--wait SECONDS] [--transcript FILE] [--pid FILE]
-              -- COMMAND [ARG ...]
+              [--hung-up FILE] -- COMMAND [ARG ...]
 
 COMMAND starts as the session leader of a new pseudo-terminal, as the command of a tmux pane
 or of a terminal window does; that terminal is its controlling terminal and its stdin, and its
@@ -22,7 +22,8 @@ and exits with that code; 97 when FILE never appeared within --start-wait (defau
 when COMMAND outlived --wait (default 60 s) after the hang-up (it is still running then, and
 the caller's teardown stops it). --nohup starts COMMAND with SIGHUP ignored, as nohup does;
 otherwise SIGHUP and SIGINT start at their defaults, whatever the test runner left. --pid
-writes COMMAND's process ID to FILE.
+writes COMMAND's process ID to FILE. --hung-up creates FILE right after the hang-up, for a
+double that holds COMMAND until then.
 """
 import argparse
 import os
@@ -37,6 +38,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--ready', required=True)
     parser.add_argument('--out'); parser.add_argument('--err'); parser.add_argument('--transcript'); parser.add_argument('--pid')
+    parser.add_argument('--hung-up')
     parser.add_argument('--nohup', action='store_true')
     parser.add_argument('--how', choices=('close', 'group'), default='close')
     parser.add_argument('--start-wait', type=float, default=30)
@@ -91,6 +93,7 @@ def main():
     else:
         os.killpg(pid, signal.SIGHUP)
     hung_up = time.monotonic()
+    if args.hung_up: open(args.hung_up, 'w').close()
     while True:
         code = exited()
         if code is not None: break
