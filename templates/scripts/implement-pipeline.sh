@@ -33,29 +33,42 @@ TOTAL_TIMEOUT="${BUREAU_IMPL_TOTAL_TIMEOUT:-5400}"
 
 # The provider adapter enforces per-pass timeouts on both macOS and Linux.
 
-# refresh_review_context: pull the newest review feedback comment for $1 and
-# emit the prompt block the implement loop interpolates. Feedback is a review's
-# "Code Review: **Changes Requested**", a `VERDICT: REQUEST_CHANGES` line, a
-# human's FIXES_NEEDED note, or a build review BLOCK. The BLOCK is found by the
-# heading the review stage posts at the start of it (code-review-pipeline.sh,
-# the same bytes since v3.0.0, so BLOCKs already on tickets count too); a
-# comment that only quotes that heading further down is not one. Before v3.2 a
-# BLOCK matched nothing here, and a restart from build after it ran without the
-# review's findings. Comments come newest first (get_issue_branch_and_comments)
-# and the first match wins: a FIXES_NEEDED note written after a BLOCK replaces
-# it, and a newer review replaces an older BLOCK.
+# refresh_review_context: pull the newest comment for $1 that asks implement
+# for fixes and emit the prompt block the implement loop interpolates. Such a
+# comment is any of:
+#   - a code review's "Code Review: **Changes Requested**" (code-review-pipeline.sh)
+#   - a build review BLOCK, "🚫 Code review **BLOCKED** — needs human review."
+#   - QA RED, "🔄 QA: tests failing — routing back to Build." (qa-pipeline.sh)
+#   - QA NEEDS_HUMAN, "🚫 QA flagged for human review." (qa-pipeline.sh)
+#   - the app runtime's review, a `VERDICT: REQUEST_CHANGES` or `VERDICT: BLOCK`
+#     line (finish in bureau-runtime.py)
+#   - a person's FIXES_NEEDED note
+# The three headings with an emoji are matched at the start of the comment,
+# byte for byte as every release since v3.0.0 posts them, so comments already
+# on tickets count after an upgrade; a comment that only quotes one further
+# down is not one. Before v3.2 only Changes Requested, FIXES_NEEDED and
+# `VERDICT: REQUEST_CHANGES` counted: a QA RED rework, and a restart from build
+# after a BLOCK or a QA NEEDS_HUMAN, ran without the findings. Comments come
+# newest first (get_issue_branch_and_comments) and the first match wins,
+# whichever stage or person wrote it. The block's label names no stage; the
+# comment's own heading says where it comes from.
 # Returns empty if there's nothing relevant. Called once per iteration so a
 # human comment posted mid-run is seen by the next pass.
 refresh_review_context() {
   local issue="$1"
-  local blob feedback
+  local blob feedback pattern
   # No fallback to '{}': a failed read would drop the reviewer's requested
   # fixes from the prompt without a word. The caller's `$(…)` ends the stage.
   blob=$(get_issue_branch_and_comments "$issue") || return $?
+  pattern='Code Review.*Changes Requested|FIXES_NEEDED'
+  pattern+='|\A🚫 Code review \*\*BLOCKED\*\* — needs human review\.'
+  pattern+='|\A🔄 QA: tests failing — routing back to Build\.'
+  pattern+='|\A🚫 QA flagged for human review\.'
+  pattern+='|(?m)^VERDICT: (REQUEST_CHANGES|BLOCK)[[:space:]]*$'
   feedback=$(printf '%s' "$blob" \
-    | jq -r '[.comments[] | select(.body | test("Code Review.*Changes Requested|FIXES_NEEDED|(?m)^VERDICT: REQUEST_CHANGES[[:space:]]*$|\\A🚫 Code review \\*\\*BLOCKED\\*\\* — needs human review\\."))][0].body // empty' 2>/dev/null || echo "")
+    | jq -r --arg re "$pattern" '[.comments[] | select(.body | test($re))][0].body // empty' 2>/dev/null || echo "")
   if [ -n "$feedback" ] && [ "${#feedback}" -gt 20 ]; then
-    printf '\n--- Code Review Feedback (PRIORITY) ---\n%s\nAddress ALL fixes before remaining tasks.\n--- End feedback ---\n' "$feedback"
+    printf '\n--- Feedback to address (PRIORITY) ---\n%s\nAddress ALL fixes before remaining tasks.\n--- End feedback ---\n' "$feedback"
   fi
 }
 

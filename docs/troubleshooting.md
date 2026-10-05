@@ -321,7 +321,7 @@ The review stage decides its verdict in one order (`decide_review_verdict` in `s
 
 A BLOCK labels `needs-human` and ends the stage with 25; the escalation log names the rule that caused it, or the merger's own BLOCK. Remove the label once the cause is dealt with.
 
-To send the ticket back for the fixes, remove the label and restart it with `scripts/shepherd.sh --from-stage build <ISSUE>`: since v3.2 implement reads the BLOCK comment (`🚫 Code review **BLOCKED** — needs human review.`, also one that v3.1 posted) as its review feedback, where before it ran without the findings unless someone had written a `FIXES_NEEDED` comment. Implement takes the newest of the BLOCK, a Changes Requested review and a `FIXES_NEEDED` comment, so a `FIXES_NEEDED` comment written after the BLOCK (your own list, for example one without a finding you overrule) takes precedence.
+To send the ticket back for the fixes, remove the label and restart it with `scripts/shepherd.sh --from-stage build <ISSUE>`. Since v3.2 implement reads the newest comment that carries findings for it, whichever stage or person wrote it: a Changes Requested review, a BLOCK (`🚫 Code review **BLOCKED** — needs human review.`), QA RED (`🔄 QA: tests failing — routing back to Build.`), QA NEEDS_HUMAN (`🚫 QA flagged for human review.`), a `VERDICT: REQUEST_CHANGES` or `VERDICT: BLOCK` line from the app runtime, or a `FIXES_NEEDED` comment; the three headings count only at the start of a comment, and comments a v3.1 stage posted count too. So a `FIXES_NEEDED` comment written after the BLOCK (your own list, for example one without a finding you overrule) takes precedence; before v3.2 the BLOCK, QA RED and QA NEEDS_HUMAN comments were not read at all, and the build stage ran without their findings unless someone had written such a comment.
 
 ### Review comment says `**Build**: not checked`
 
@@ -339,6 +339,8 @@ grep "$ISSUE" logs/events.jsonl | jq -r 'select(.event=="qa_verdict")'
 ```
 
 Typically: pull the branch locally, run the tests yourself, and either fix the code or mark the test as skip/ignore with a rationale.
+
+To have the implement stage fix a bug QA found, remove the label and restart with `scripts/shepherd.sh --from-stage build <ISSUE>`: since v3.2 the implement prompt carries QA's summary from the NEEDS_HUMAN comment, as it does on every QA RED, which sends the ticket back to Build by itself; a newer review, QA comment or `FIXES_NEEDED` comment takes its place (see "Why a review ended BLOCKED").
 
 ### Codex-stage-runner failed spuriously
 

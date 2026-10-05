@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b4ce2b06a6858796fcb76dac5a3c10b83fc6bc118c89822dd836c2b35bb20d0a">
+<meta name="bureau-source-sha256" content="f0975e0530130ec3ce7aba7e4fb057f282c657ae60ba99b2fc9cf793f0a30eaa">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -903,16 +903,20 @@ the escalation log names the rule that caused it, or the merger's own
 BLOCK. Remove the label once the cause is dealt with.</p>
 <p>To send the ticket back for the fixes, remove the label and restart
 it with
-<code>scripts/shepherd.sh --from-stage build &lt;ISSUE&gt;</code>: since
-v3.2 implement reads the BLOCK comment
-(<code>🚫 Code review **BLOCKED** — needs human review.</code>, also one
-that v3.1 posted) as its review feedback, where before it ran without
-the findings unless someone had written a <code>FIXES_NEEDED</code>
-comment. Implement takes the newest of the BLOCK, a Changes Requested
-review and a <code>FIXES_NEEDED</code> comment, so a
-<code>FIXES_NEEDED</code> comment written after the BLOCK (your own
-list, for example one without a finding you overrule) takes
-precedence.</p>
+<code>scripts/shepherd.sh --from-stage build &lt;ISSUE&gt;</code>. Since
+v3.2 implement reads the newest comment that carries findings for it,
+whichever stage or person wrote it: a Changes Requested review, a BLOCK
+(<code>🚫 Code review **BLOCKED** — needs human review.</code>), QA RED
+(<code>🔄 QA: tests failing — routing back to Build.</code>), QA
+NEEDS_HUMAN (<code>🚫 QA flagged for human review.</code>), a
+<code>VERDICT: REQUEST_CHANGES</code> or <code>VERDICT: BLOCK</code>
+line from the app runtime, or a <code>FIXES_NEEDED</code> comment; the
+three headings count only at the start of a comment, and comments a v3.1
+stage posted count too. So a <code>FIXES_NEEDED</code> comment written
+after the BLOCK (your own list, for example one without a finding you
+overrule) takes precedence; before v3.2 the BLOCK, QA RED and QA
+NEEDS_HUMAN comments were not read at all, and the build stage ran
+without their findings unless someone had written such a comment.</p>
 <h3 id="review-comment-says-build-not-checked">Review comment says
 <code>**Build**: not checked</code></h3>
 <p>The review build check found nothing to run: no
@@ -947,6 +951,13 @@ issue, flaky test, missing service).</p>
 <p>Typically: pull the branch locally, run the tests yourself, and
 either fix the code or mark the test as skip/ignore with a
 rationale.</p>
+<p>To have the implement stage fix a bug QA found, remove the label and
+restart with
+<code>scripts/shepherd.sh --from-stage build &lt;ISSUE&gt;</code>: since
+v3.2 the implement prompt carries QA's summary from the NEEDS_HUMAN
+comment, as it does on every QA RED, which sends the ticket back to
+Build by itself; a newer review, QA comment or <code>FIXES_NEEDED</code>
+comment takes its place (see "Why a review ended BLOCKED").</p>
 <h3 id="codex-stage-runner-failed-spuriously">Codex-stage-runner failed
 spuriously</h3>
 <p>Current pipelines use <code>bureau-provider.py</code>; the old
