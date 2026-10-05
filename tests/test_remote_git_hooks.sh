@@ -285,8 +285,10 @@ pr1_pass "8 every remote git in the templates runs through git() or carries NO_H
 # pre-push stage, running hooks from the branch's .pre-commit-config.yaml) run whatever
 # core.hooksPath says. Here the repository's configuration names a TRACKED script for pre-push and
 # reference-transaction, under three names: scan, a name with `=` in it (cannot follow -c), and
-# txscan; and it defines a hook named like the event (hook.pre-push.command), which makes git 2.55
-# read hook.pre-push.enabled=false as a per-name switch, so only the per-name switches stop scan.
+# txscan; and it defines hooks named like the events (hook.pre-push.command,
+# hook.reference-transaction.command), which makes git 2.55 read hook.<event>.enabled=false as a
+# per-name switch, so only the per-name switches stop them, also for a fetch with -C from another
+# directory (the names are listed with the command's own options).
 # Runs with the git of BUREAU_TEST_GIT_DIR when set, else with the git on PATH, and is skipped,
 # with a SKIP line, when that git is older than 2.54.
 GIT9_DIR="${BUREAU_TEST_GIT_DIR:-}"
@@ -313,6 +315,7 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     git9 git -C "$R" config hook.txscan.command "$R/tools/scan.sh reference-transaction"
     git9 git -C "$R" config --add hook.txscan.event reference-transaction
     git9 git -C "$R" config hook.pre-push.command "$R/tools/scan.sh named-like-the-event"
+    git9 git -C "$R" config hook.reference-transaction.command "$R/tools/scan.sh named-like-the-event"
     upstream_commit; : > "$MARKS"
     # A local commit runs the configured hooks (reference-transaction), tokenless; then Bureau's
     # push and fetch from the stage shell, and a fetch with -C from another directory.

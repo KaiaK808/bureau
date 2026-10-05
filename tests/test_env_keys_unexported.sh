@@ -199,6 +199,33 @@ for name in API_KEY LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID; do
   if grep -q "^$name=" "$TMP/d.out"; then c1_fail "D allexport: $name is exported"; fi
 done
 c1_no_secret "$TMP/d.out" "D allexport: an exported variable carries a secret"
+# The reader alone (a script that sources bureau-env.sh only) under allexport: a later assignment
+# of the key is not exported. The config without a .env file (the key from the environment) under
+# allexport: the Linear request still carries the key (its config line is not exported, so
+# _bureau_drop_secrets does not unset it before curl reads it).
+out=$(cd "$D" && env SHELLOPTS=allexport:braceexpand:hashall:interactive-comments /bin/bash -c \
+  'source scripts/bureau-env.sh; bureau_load_env .env; COPY="$LINEAR_API_KEY"; /usr/bin/env' 2>&1)
+if printf '%s\n' "$out" | grep -q '^COPY='; then c1_fail "D allexport: the reader left allexport on (a later copy of the key is exported)"; fi
+rm -f "$TMP"/curl.*.stdin; rm -rf "$D/.git/bureau"
+(cd "$D" && env PATH="$TMP/dbin:$PATH" BUREAU_CONFIG="$D/.bureau.json" BUREAU_LINEAR_RETRIES=0 LINEAR_API_KEY="$C1_LINEAR" \
+   SHELLOPTS=allexport:braceexpand:hashall:interactive-comments BUREAU_ENV_FILE="$D/missing.env" /bin/bash -c \
+   'source scripts/bureau-config.sh; _bureau_linear_fetch "{\"query\":\"{ viewer { id } }\"}" >/dev/null' >/dev/null 2>&1)
+cat "$TMP"/curl.*.stdin 2>/dev/null | grep -qF "Authorization: $C1_LINEAR" \
+  || c1_fail "D allexport: without a .env load the Linear request lost the key (bureau-config.sh left allexport on)"
+# bureau_secret_copy: an unset source ends the script with 1 and the message ${source:?} gave;
+# --optional copies an empty value and goes on.
+out=$(env -u NO_SUCH_KEY /bin/bash -c 'source "$1/bureau-env.sh"; bureau_secret_copy API_KEY NO_SUCH_KEY; echo continued' c1-script "$SCRIPTS" 2>&1); rc=$?
+[ "$rc" = 1 ] && [ "$out" = 'c1-script: NO_SUCH_KEY: Set NO_SUCH_KEY in .env' ] || c1_fail "D: bureau_secret_copy of an unset key did not stop with 1: rc=$rc $out"
+out=$(env -u NO_SUCH_KEY /bin/bash -c 'source "$1/bureau-env.sh"; API_KEY=x; bureau_secret_copy --optional API_KEY NO_SUCH_KEY; echo "continued=[$API_KEY]"' _ "$SCRIPTS" 2>&1)
+[ "$out" = 'continued=[]' ] || c1_fail "D: bureau_secret_copy --optional did not copy the empty value and go on: $out"
+# Static: outside bureau-env.sh a key is expanded only on the three lines that run with the trace
+# off (the Linear request's config line, the alert's two config lines); everywhere else the
+# scripts go through bureau_secret_set and bureau_secret_copy.
+expands=$(grep -nE '\$\{?!?(LINEAR_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_ALERT_CHAT_ID|API_KEY)\b' "$SCRIPTS"/*.sh | grep -v '/bureau-env\.sh:' \
+  | grep -vE ':[0-9]+: *#' | grep -vF 'auth_config=$(_bureau_curl_config header "Authorization: ${API_KEY:-$LINEAR_API_KEY}")' \
+  | grep -vF 'config=$(_bureau_curl_config url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"' \
+  | grep -vF '_bureau_curl_config data-urlencode "chat_id=${TELEGRAM_ALERT_CHAT_ID}"' || true)
+[ -z "$expands" ] || c1_fail "D: a script expands a key where a trace would print it: $(printf '%s' "$expands" | sed "s#$SCRIPTS/##g" | tr '\n' ';')"
 # The nine stages of B, started from a shell with both options on and SHELLOPTS exported.
 C1_SHELLOPTS="allexport xtrace" C1_LABEL="D allexport+xtrace"
 stage_run implement Build implement-pipeline.sh
