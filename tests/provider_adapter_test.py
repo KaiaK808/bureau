@@ -42,6 +42,11 @@ if os.environ.get('FORK_IGNORE_TERM'):
             (root/'heartbeat').write_text(str(time.monotonic_ns()))
             time.sleep(.05)
     while not (root/'descendant.json').exists(): time.sleep(.01)
+if os.environ.get('RECORD_SIGNALS'):
+    def record(signum, frame):
+        with open(root/'signals','a') as out: out.write(signal.Signals(signum).name+chr(10))
+        sys.exit(128+signum)
+    for name in ('SIGTERM','SIGINT','SIGHUP'): signal.signal(getattr(signal,name),record)
 (root/'ready').touch()
 if os.environ.get('IGNORE_TERM'): signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if os.environ.get('SLEEP'): time.sleep(float(os.environ['SLEEP']))
@@ -119,6 +124,48 @@ else:
         while not (self.root/'ready').exists() and time.monotonic()<deadline: time.sleep(.02)
         proc.terminate(); stdout,stderr=proc.communicate(timeout=8)
         self.assertEqual(proc.returncode,130,stderr.decode()); self.assertEqual(stdout,b'')
+
+    def test_hangup_stops_the_call_like_sigterm(self):
+        # A hang-up reaches the adapter when SIGHUP goes to a stage's process group (the
+        # runtime itself forwards one as SIGTERM). It ends the call as cancelled, 130, and the
+        # agent's process group gets SIGTERM, not SIGHUP, which it may ignore (v3.2.0, O1).
+        # Under nohup (SIGHUP ignored when the adapter starts) the call goes on, as in v3.1.
+        for nohup in (False,True):
+            with self.subTest(nohup=nohup):
+                for name in ('ready','signals'): (self.root/name).unlink(missing_ok=True)
+                disposition=signal.SIG_IGN if nohup else signal.SIG_DFL
+                proc=subprocess.Popen(self.command(),env={**self.env,'SLEEP':'10','RECORD_SIGNALS':'1'},
+                                      stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                                      preexec_fn=lambda: signal.signal(signal.SIGHUP,disposition))
+                try:
+                    deadline=time.monotonic()+4
+                    while not (self.root/'ready').exists() and time.monotonic()<deadline: time.sleep(.02)
+                    self.assertTrue((self.root/'ready').exists(),'fake provider did not start')
+                    proc.send_signal(signal.SIGHUP)
+                    if nohup:
+                        time.sleep(1)
+                        self.assertIsNone(proc.poll(),'a call started under nohup ended on SIGHUP')
+                        self.assertFalse((self.root/'signals').exists(),'the agent got a signal under nohup')
+                        proc.terminate()
+                    stdout,stderr=proc.communicate(timeout=8)
+                    self.assertEqual(proc.returncode,130,stderr.decode()); self.assertEqual(stdout,b'')
+                    self.assertIn(b'Bureau provider outcome: cancelled',stderr)
+                    self.assertEqual((self.root/'signals').read_text(),'SIGTERM\n')
+                finally:
+                    if proc.poll() is None: proc.kill()
+                    proc.communicate()
+
+    def test_hangup_on_a_closing_terminal_keeps_the_cancelled_outcome(self):
+        # The adapter on a terminal that closes (a pane of a killed tmux session): the kernel's
+        # SIGHUP stops the call, and the exit code and the evidence still say cancelled,
+        # although the terminal is gone for the adapter's last lines (v3.2.0, O1).
+        result=subprocess.run([sys.executable,str(ROOT/'tests/lib/hangup.py'),'--ready',str(self.root/'ready'),
+                               '--how','close','--wait','15','--',*self.command()],
+                              env={**self.env,'SLEEP':'10','RECORD_SIGNALS':'1'},capture_output=True,text=True,timeout=40)
+        self.assertEqual(result.stdout.split()[:1],['rc=130'],result.stdout+result.stderr)
+        outcomes=[json.loads(path.read_text()).get('outcome') for path in (self.root/'evidence').glob('*/result.json')]
+        self.assertEqual(outcomes,['cancelled'])
+        self.assertEqual((self.root/'signals').read_text(),'SIGTERM\n')
 
     def test_timeout_and_cancel_stop_descendant_after_leader_exits(self):
         for mode, code in (('timeout', 124), ('term', 130), ('interrupt', 130), ('runtime-timeout', 124)):
