@@ -25,7 +25,7 @@
 #     not write the label). The same check runs on every turn of the loop.
 #     A hold left on a finished ticket changes nothing: without --from-stage
 #     Done still ends with 0 and a cancelled ticket with 26.
-#   - Adds `shepherd-focused` label on entry, removes on EXIT/INT/TERM.
+#   - Adds `shepherd-focused` label on entry, removes on EXIT/INT/TERM/HUP.
 #     pipeline_pick_next excludes that label so queue-loop stays out of
 #     shepherd's way while a ticket is being driven.
 #
@@ -394,21 +394,27 @@ MERGE_GATE_FILE=$(mktemp "${TMPDIR:-/tmp}/bureau-merge-gate.XXXXXX")
 trap 'rm -f "$SHEPHERD_FAULT_FILE" "$MERGE_GATE_FILE" 2>/dev/null || true' EXIT
 
 # _shepherd_cancelled <signal> — Ctrl-C, or the runtime forwarding a SIGTERM to
-# the process group, ends the run as cancelled: exit 130, the code the runtime
-# reports for an interrupted child. The EXIT trap then releases the claim (one
-# attempt: the runtime kills the group five seconds after forwarding the
-# signal) and nothing else is written — no label, no comment, no alert. The trap
+# the process group (also after a hang-up: closing the terminal or the tmux
+# session), or a SIGHUP sent to the group, ends the run as cancelled: exit 130,
+# the code the runtime reports for an interrupted child. The EXIT trap then
+# releases the claim (one attempt: the runtime kills the group after a grace
+# period) and nothing else is written — no label, no comment, no alert. The trap
 # runs as soon as the command in flight returns, before its caller can take a
 # failed read or a failed stage for a finding. Before, INT and TERM only
 # released the claim and the loop went on: the next read, or the next stage,
 # ran on a ticket nobody held any more.
+# After a hang-up every write to the terminal fails, and bash 3.2 keeps the text
+# it could not write and hands it to the next redirection or command
+# substitution: there it went into the Linear answer of the release, which then
+# failed and left shepherd-focused on the ticket. So this path writes its lines
+# from a subshell, which takes that text with it, and a failed write ends nothing.
 _shepherd_cancelled() {
-  trap - INT TERM
+  trap - INT TERM HUP
   [ -n "${SHEPHERD_SLEEP_PID:-}" ] && kill "$SHEPHERD_SLEEP_PID" 2>/dev/null || true
   if [ "$SHEPHERD_CLAIMED" = 1 ]; then
-    echo "[shepherd] interrupted by $1 — cancelled; nothing written but the release of $ISSUE" >&2
+    ( echo "[shepherd] interrupted by $1 — cancelled; nothing written but the release of $ISSUE" >&2 ) || true
   else
-    echo "[shepherd] interrupted by $1 — cancelled before $ISSUE was claimed; nothing written" >&2
+    ( echo "[shepherd] interrupted by $1 — cancelled before $ISSUE was claimed; nothing written" >&2 ) || true
   fi
   export _BUREAU_LINEAR_SINGLE_ATTEMPT=1
   exit 130
@@ -416,6 +422,7 @@ _shepherd_cancelled() {
 SHEPHERD_CLAIMED=0
 trap '_shepherd_cancelled SIGINT' INT
 trap '_shepherd_cancelled SIGTERM' TERM
+trap '_shepherd_cancelled SIGHUP' HUP
 
 # _shepherd_sleep <seconds> — a wait the traps above can cut short. Bash runs a
 # trap only when the foreground command returns, so a SIGTERM sent to the
@@ -580,8 +587,9 @@ fi
 # ── Claim the ticket; the trap releases it on any exit path ───────────
 # The trap is set before the claim: a signal during the claim still releases.
 # Any exit above 128 (a signal, whichever way it ended the shell) releases with
-# one attempt, like a cancelled run.
-trap '[ $? -gt 128 ] && export _BUREAU_LINEAR_SINGLE_ATTEMPT=1; echo "[shepherd] releasing $ISSUE"; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" "$MERGE_GATE_FILE" 2>/dev/null || true' EXIT
+# one attempt, like a cancelled run. The line is written from a subshell, as in
+# _shepherd_cancelled: after a hang-up it cannot stop or spoil the release.
+trap '[ $? -gt 128 ] && export _BUREAU_LINEAR_SINGLE_ATTEMPT=1; ( echo "[shepherd] releasing $ISSUE" ) || true; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" "$MERGE_GATE_FILE" 2>/dev/null || true' EXIT
 SHEPHERD_CLAIMED=1
 echo "[shepherd] claiming $ISSUE (label: shepherd-focused)"
 add_issue_label "$ISSUE" "shepherd-focused" \

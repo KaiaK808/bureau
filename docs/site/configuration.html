@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a6386164f578e9fc074daa7075a40d37740bf7a08f51ac07bd841a9dd6ae0130">
+<meta name="bureau-source-sha256" content="cf9cfa5b623b83959f94d366eb5f07bc4c50745977386544f3dbf0c3482b02cc">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1067,11 +1067,12 @@ stop work</td>
 <tr>
 <td><code>BUREAU_STOP_GRACE_SECONDS</code></td>
 <td>Step, in seconds (1 to 600, default 5), of the time a runtime
-wrapper gives its child after forwarding Ctrl-C or SIGTERM before it
-kills the child's process group. The wrappers of one run nest (shepherd
-→ worker → stage), and each waits one step longer than the one inside
-it: 4, 3, 2 steps, then 1 from the fourth level on (20, 15, 10, 5 s by
-default), so an inner wrapper always ends its own child first</td>
+wrapper gives its child after forwarding Ctrl-C or SIGTERM (a hang-up is
+forwarded as SIGTERM, since v3.2) before it kills the child's process
+group. The wrappers of one run nest (shepherd → worker → stage), and
+each waits one step longer than the one inside it: 4, 3, 2 steps, then 1
+from the fourth level on (20, 15, 10, 5 s by default), so an inner
+wrapper always ends its own child first</td>
 </tr>
 <tr>
 <td><code>BUREAU_MAX_CONCURRENT</code></td>
