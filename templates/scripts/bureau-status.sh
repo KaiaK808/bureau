@@ -158,7 +158,7 @@ show_effective_config() {
   local stage effective
   for stage in spec spec_review research ux copy implement qa code_review; do
     agent_enabled "$stage" || continue
-    effective=$(python3 "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" --config "$BUREAU_CONFIG" --stage "$stage" --describe) || return $?
+    effective=$(python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" --config "$BUREAU_CONFIG" --stage "$stage" --describe) || return $?
     printf '    %s: %s\n' "$stage" "$(printf '%s' "$effective" | jq -r '.runner + " / " + (.model // "CLI default") + " / " + .sandbox')"
   done
   echo ""

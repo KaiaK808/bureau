@@ -619,7 +619,14 @@ MAX_NO_STATE=5
 # CONFIRM_SECONDS apart, before the shepherd acts on it. A read that already
 # shows the move costs nothing extra; a ticket that really stayed where it was
 # reaches the stuck detector as before, 15 s later.
+# A stage that moves twice leaves a third state a read may show: spec-pipeline.sh
+# moves Triage → Spec at its start and Spec → Spec Review at its end, and a read a
+# moment old shows the Spec in between (MOVED_VIA). That read is not the state the
+# stage started from, so it used to count as confirmed, and the bump below sent the
+# finished spec back to Triage — the actual sequence of EXP-1476 (17.09.2026) and
+# again of EXP-1554 (05.10.2026). MOVED_VIA is read again like MOVED_FROM.
 MOVED_FROM=""
+MOVED_VIA=""
 CONFIRM_TRIES=3
 CONFIRM_SECONDS="${BUREAU_SHEPHERD_CONFIRM_SECONDS:-5}"
 case "$CONFIRM_SECONDS" in
@@ -628,7 +635,8 @@ case "$CONFIRM_SECONDS" in
     CONFIRM_SECONDS=5 ;;
 esac
 _shepherd_unconfirmed() {
-  { [ -n "$MOVED_TO" ] && [ "$STATE" != "$MOVED_TO" ]; } || { [ -n "$MOVED_FROM" ] && [ "$STATE" = "$MOVED_FROM" ]; }
+  { [ -n "$MOVED_TO" ] && [ "$STATE" != "$MOVED_TO" ]; } || { [ -n "$MOVED_FROM" ] && [ "$STATE" = "$MOVED_FROM" ]; } \
+    || { [ -n "$MOVED_VIA" ] && [ "$STATE" = "$MOVED_VIA" ]; }
 }
 # Waiting on the merge gate (v3.0.1). A merge stage that did not merge used to
 # end with 0: the shepherd then took the unchanged Merge state for a move it had
@@ -717,7 +725,7 @@ while true; do
   fi
   NO_STATE_COUNT=0
 
-  # Confirm a move before acting on it (see MOVED_TO / MOVED_FROM above).
+  # Confirm a move before acting on it (see MOVED_TO / MOVED_FROM / MOVED_VIA above).
   CONFIRM_COUNT=0
   while _shepherd_unconfirmed && [ "$CONFIRM_COUNT" -lt "$CONFIRM_TRIES" ]; do
     CONFIRM_COUNT=$((CONFIRM_COUNT + 1))
@@ -725,7 +733,7 @@ while true; do
     _shepherd_sleep "$CONFIRM_SECONDS"
     STATE=$(_shepherd_state) || _shepherd_read_failed state $?
   done
-  MOVED_FROM=""; MOVED_TO=""
+  MOVED_FROM=""; MOVED_TO=""; MOVED_VIA=""
   # An answer without a state while confirming goes through the check above.
   [ -z "$STATE" ] && continue
 
@@ -798,7 +806,8 @@ while true; do
   fi
   LAST_STATE="$STATE"
 
-  # Auto-bump Spec → Triage (spec-pipeline guards on Triage entry).
+  # Auto-bump Spec → Triage (spec-pipeline guards on Triage entry). It moves the
+  # ticket back, so a Spec read right after the spec stage was confirmed above.
   if [ "$STATE" = "Spec" ]; then
     echo "[shepherd] auto-bump Spec → Triage (spec-pipeline only accepts Triage entry)"
     : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
@@ -877,6 +886,7 @@ while true; do
       # Success / queue-empty — re-read state on next iteration, and confirm
       # the stage's move there before starting the next stage.
       MOVED_FROM="$STATE"
+      case "$RC:$PIPELINE" in 0:spec-pipeline.sh) MOVED_VIA="Spec" ;; esac
       ;;
     retry)
       # Transient: linear-down / provider-unauth. Throttled re-attempt.

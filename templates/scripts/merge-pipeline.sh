@@ -45,9 +45,13 @@
 # yet decided (checks pending or not started, GitHub still computing, a gate
 # read that failed, a hold label a human put on the PR, conflicts the rebase
 # stage resolves) and `25` when a gate is decided against the merge (a failing
-# check, conflicts nothing here resolves, a stale base, no APPROVE, unresolved
+# check, a check queued past agents.merge_ci_queued_grace_seconds that no runner
+# took, conflicts nothing here resolves, a stale base, no APPROVE, unresolved
 # threads, a PR that is not open). A shepherd that sets
 # BUREAU_MERGE_GATE_REPORT gets the outcome and the gate lines in that file.
+# The merge stage's own run (not the inline merge, not a dry run) also marks a gate
+# that ended with 2 or 25 for the head it judged (merge_gate_mark, v3.2): while that
+# head is unchanged the merge picker takes the other Merge tickets first.
 # The inline merge from the review stage (BUREAU_INLINE_MERGE=1) ends with the
 # same codes, and the review stage acts on them (code-review-pipeline.sh: Done
 # only after a merge, needs-human on 25, a recorded approval and 2 on not yet).
@@ -288,7 +292,7 @@ evaluate_merge_gates() {
     # Its numbers are read by one rule (_merge_gate_number in bureau-config.sh); say
     # here when a value was not a plain whole number, since pr_ci_is_green's own
     # stderr is its gate line.
-    for _key in merge_min_required_checks:1 merge_ci_start_grace_seconds:1800; do
+    for _key in merge_min_required_checks:1 merge_ci_start_grace_seconds:1800 merge_ci_queued_grace_seconds:3600; do
       _used=$(_merge_gate_number "${_key%%:*}" "${_key#*:}") \
         || echo "  WARN: agents.${_key%%:*} should be a whole number of at least 0; using $_used" >&2
     done
@@ -345,7 +349,10 @@ merge_dirty_is_rebasable() {
 # (it stays until they remove it; the queue does not alert on it), conflicts the
 # rebase stage resolves — and "blocked" as soon as one blocker needs someone to
 # act. mergeStateStatus BLOCKED/UNSTABLE count as "not yet": they also show
-# pending checks, and a failing check is decided by its own ci_green line.
+# pending checks, and a failing check is decided by its own ci_green line. So is a
+# check queued longer than agents.merge_ci_queued_grace_seconds ("ci: check <name>
+# queued for N s on … — runner offline?", v3.2): none of the patterns below matches
+# it, and it is blocked.
 merge_gate_outcome() {
   local line outcome=not-yet
   while IFS= read -r line; do
@@ -369,12 +376,16 @@ merge_gate_outcome() {
 # merge_gate_key: the idempotent-comment key — the outcome and the blocker lines
 # with the counts of running or completed checks replaced, so a PR gets a new
 # gate comment when the outcome or a blocker changes, not when one more check
-# finished.
+# finished. The age of a check queued past its grace and the number of others
+# queued with it are replaced too (v3.2): the merge stage polls a blocked head on
+# every run, and the age grows each time.
 merge_gate_key() {
   printf 'Outcome: %s\n' "$1"
   printf '%s\n' "$2" | sed -n '/^- /p' \
     | sed -E -e 's/[0-9]+ check\(s\) still pending/N check(s) still pending/' \
-             -e 's/only [0-9]+ completed check\(s\)/only N completed check(s)/' | sort
+             -e 's/only [0-9]+ completed check\(s\)/only N completed check(s)/' \
+             -e 's/ queued for [0-9]+ s on / queued for N s on /' \
+             -e 's/, [0-9]+ more check\(s\) as well — runner offline\?$/, N more check(s) as well — runner offline?/' | sort
 }
 
 # merge_gate_exit <outcome> <gate lines>: records the outcome for a caller that
@@ -384,12 +395,33 @@ merge_gate_key() {
 merge_gate_exit() {
   local outcome="$1" lines="$2" code=25
   [ "$outcome" = not-yet ] && code=2
+  merge_gate_mark "$outcome"
   if [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ]; then
     printf '%s\n%s\n' "$outcome" "$lines" > "$BUREAU_MERGE_GATE_REPORT" 2>/dev/null \
       || echo "  WARN: could not write the gate report to $BUREAU_MERGE_GATE_REPORT" >&2
   fi
   echo "  Gate outcome: $outcome — exit $code"
   exit "$code"
+}
+
+# merge_gate_mark <not-yet|blocked> / merge_gate_mark clear (v3.2): the merge stage's own
+# run marks a gate that was not yet decided or blocked, for the head it judged
+# (GATE_HEAD), so the merge picker puts the ticket after every other Merge ticket while
+# that head is unchanged (merge_gate_waits in bureau-config.sh). Before, the stage sets
+# no needs-human on either outcome and the picker handed out the same ticket on every
+# poll. A merge clears the mark. Not for the review stage's inline merge (the review
+# keeps its own record) and not in a dry run. Best effort: a mark that cannot be
+# written only means the picker takes the ticket again on its next poll.
+merge_gate_mark() {
+  [ "${BUREAU_INLINE_MERGE:-0}" != 1 ] && [ "$DRY_RUN" != true ] || return 0
+  if [ "$1" = clear ]; then
+    python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" merge-wait "$ISSUE" --clear >/dev/null 2>&1 || true
+    return 0
+  fi
+  [ -n "${GATE_HEAD:-}" ] || return 0
+  python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" merge-wait "$ISSUE" \
+      --branch "$BRANCH" --head "$GATE_HEAD" --outcome "$1" >/dev/null \
+    || echo "  WARN: could not mark the merge gate wait of $ISSUE; the merge picker takes it again on its next poll" >&2
 }
 
 # pr_head_sha <pr>: the PR's current head commit, or nothing when it cannot be read.
@@ -401,7 +433,8 @@ pr_head_sha() {
 }
 
 # Initial gate evaluation (renders report, may post blocker comment).
-GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$(pr_head_sha "$PR_NUMBER")" || true)
+GATE_HEAD=$(pr_head_sha "$PR_NUMBER")
+GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$GATE_HEAD" || true)
 echo ""
 echo "  ── Gate report ──"
 if [ -z "$GATE_OUT" ]; then
@@ -533,6 +566,7 @@ fi
 # merge is pinned to (--match-head-commit): a push between this check and the merge
 # call makes GitHub refuse the merge instead of merging a head no gate has seen.
 MERGE_HEAD=$(pr_head_sha "$PR_NUMBER")
+GATE_HEAD="$MERGE_HEAD"
 JIT_GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$MERGE_HEAD" || true)
 if [ -n "$JIT_GATE_OUT" ]; then
   echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"
@@ -585,6 +619,7 @@ bureau_stop_requested && exit 20
 # the gates passed and GitHub was asked to merge (v3.1.0-rc.2).
 echo "  Merging PR #$PR_NUMBER ($BUREAU_MERGE_STRATEGY) at $MERGE_HEAD..."
 if _merge_pr; then
+  merge_gate_mark clear
   post_comment "$ISSUE" "✅ Merge gates passed. PR #$PR_NUMBER merged (\`--$BUREAU_MERGE_STRATEGY\`). Moving to Done."
   move_issue "$ISSUE" "$BUREAU_STATE_DONE"
   echo "  Merged. Issue moved to Done."
@@ -594,6 +629,7 @@ else
   NOW_HEAD=$(pr_head_sha "$PR_NUMBER")
   if [ -n "$NOW_HEAD" ] && [ "$NOW_HEAD" != "$MERGE_HEAD" ]; then
     echo "  The PR head moved from $MERGE_HEAD to $NOW_HEAD during the merge — nothing was merged."
+    GATE_HEAD=""   # the new head has not been judged: no mark, the next poll takes it
     merge_gate_exit not-yet "merge_head: the PR head moved from $MERGE_HEAD to $NOW_HEAD after the gate checked it; nothing was merged"
   fi
   echo "  Merge call failed."

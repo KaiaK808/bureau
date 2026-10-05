@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f6996f78ac3ffe63c9dc4feb82a2ea2c77daf8f0189f241c7a0b22acc3789f61">
+<meta name="bureau-source-sha256" content="e114c945e774c2bb1ff5196b7a2c1ee38e3f97fa3417d1e4dd76f82d8c8ecaab">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -68,6 +68,11 @@ picking up issues</h3>
 <code>blocked</code>, <code>wip</code>)</li>
 <li>Is not blocked by another issue (Linear <code>blockedBy</code>
 relation)</li>
+<li>In Build Review or Merge: another ticket may go first while this one
+waits on its merge gate (the queue log says
+<code>pick: TEAM-123 waits on its merge gate …</code>; see <a
+href="#a-ticket-waiting-on-its-merge-gate-is-picked-after-the-others">A
+ticket waiting on its merge gate is picked after the others</a>)</li>
 </ul>
 <h3 id="pipeline-exits-2-every-tick-despite-eligible-issues">Pipeline
 exits 2 every tick despite eligible issues</h3>
@@ -633,11 +638,18 @@ outcome and is posted again only when the outcome or a blocker changes.
 A hold label counts as "not yet" on purpose: a human put it there and
 removes it when ready, so the queue does not alert on it every hour; the
 shepherd waits its budget and then halts with the gate report. A check
-that never starts (an offline runner) keeps the gate at "not yet" as
-well. The queue loop stays quiet on <code>2</code> and alerts on
-<code>25</code>, at most once an hour per ticket, and re-evaluates on
-every tick, so re-running a flaky check is enough for the next tick to
-merge. The shepherd waits on <code>2</code> (every
+that no runner takes is "not yet" only for
+<code>agents.merge_ci_queued_grace_seconds</code> (default 3600) and
+blocked after it (see <a href="#a-check-stays-queued-runner-offline">A
+check stays queued</a>). The queue loop stays quiet on <code>2</code>
+and alerts on <code>25</code>, at most once an hour per ticket. The
+merge stage re-evaluates when it next picks the ticket, so re-running a
+flaky check is enough for it to merge; while other tickets wait, a
+ticket whose gate was not yet decided or blocked is picked after them
+for a while (see <a
+href="#a-ticket-waiting-on-its-merge-gate-is-picked-after-the-others">A
+ticket waiting on its merge gate is picked after the others</a>). The
+shepherd waits on <code>2</code> (every
 <code>BUREAU_SHEPHERD_MERGE_POLL_SECONDS</code>, 60 s by default, for at
 most <code>BUREAU_SHEPHERD_MERGE_WAIT_SECONDS</code>, 30 minutes by
 default) and halts on <code>25</code> or on a wait that ran out with
@@ -683,6 +695,158 @@ boolean switches the gate: doctor also warns when
 <code>agents.merge_require_up_to_date</code> holds another value, such
 as the string <code>"false"</code>, which counts as
 <code>true</code>.</p>
+<h3 id="a-check-stays-queued-runner-offline">A check stays queued:
+runner offline</h3>
+<p>The gate line
+<code>ci: check &lt;name&gt; queued for N s on &lt;head&gt;, past the CI queue grace (agents.merge_ci_queued_grace_seconds: 3600) — runner offline?</code>
+means a check run on the PR head was created but no runner has taken it
+for longer than the grace: a self-hosted runner that is offline or
+stopped, or a <code>runs-on</code> label no runner carries. GitHub
+itself cancels such a job only after 24 hours. A job that GitHub refuses
+to start for billing reasons (no Actions minutes, a spending limit) is
+not queued: it fails at once ("The job was not started because recent
+account payments have failed…") and shows as a failing check. The gate
+is blocked (<code>25</code>): the merge stage's gate comment says so and
+the queue alerts, at most once an hour per ticket; after an approval the
+review stage sets <code>needs-human</code> and puts the line on the
+ticket; the shepherd halts. Before v3.2 the check counted as pending for
+ever and the ticket waited without an alert.</p>
+<p>What to do: look at the job (<code>gh pr checks &lt;N&gt;</code>, or
+the run's page in GitHub) and at the runner
+(<code>gh api repos/OWNER/REPO/actions/runners</code>, or on the runner
+host its service and <code>_diag</code> log). Bring the runner back, or
+cancel the run and start it again
+(<code>gh run cancel &lt;run-id&gt;</code>,
+<code>gh run rerun &lt;run-id&gt;</code>), or fix the
+<code>runs-on</code> label. Once the check runs, the next merge-stage
+tick finds it pending (not yet) and merges when it passes; at Build
+Review remove <code>needs-human</code> and the next review run reuses
+the recorded approval without a model call. The time is the check run's
+<code>started_at</code>, which GitHub sets when it queues the job; a
+check without a readable time stays pending. A busy single runner that
+works through other jobs first can also cross the grace: on a single
+self-hosted runner, measure how long jobs wait to start (the gap between
+<code>created_at</code> and <code>started_at</code> in
+<code>gh api repos/OWNER/REPO/actions/runs/&lt;run-id&gt;/jobs</code>)
+before keeping the default, and raise
+<code>agents.merge_ci_queued_grace_seconds</code> above the longest
+normal wait. A runner outage longer than the grace blocks every approved
+PR waiting on it, and with the inline merge each of those tickets gets
+<code>needs-human</code>. Only the status <code>queued</code> counts; a
+check waiting for a deployment approval (<code>waiting</code>) or for
+its concurrency group (<code>pending</code>) stays "not yet".</p>
+<h3 id="a-ticket-waiting-on-its-merge-gate-is-picked-after-the-others">A
+ticket waiting on its merge gate is picked after the others</h3>
+<p>A merge gate can stay undecided for a while (checks still running or
+queued, GitHub still computing) or be blocked without
+<code>needs-human</code> at the merge stage (a failing check, a stale
+base). Before v3.2 the picker handed out such a ticket on every poll,
+and the other tickets of its state waited behind it. Since v3.2 it goes
+after every other ticket for a while:</p>
+<ul>
+<li><strong>Build Review</strong> (merge agent off): the review stage
+approved, its inline merge found the gate not yet decided; it recorded
+the APPROVE, commented once ("not merged yet: its merge gate is not
+decided") and ended with <code>2</code>.</li>
+<li><strong>Merge</strong> (<code>agents.merge</code> on): the merge
+stage ended with <code>2</code> (not yet) or <code>25</code> (blocked)
+and marked the ticket in
+<code>$(git rev-parse --git-common-dir)/bureau/merge-gate-waits.json</code>.
+The rebase stage is never held.</li>
+</ul>
+<p>The queue log says, on every pick in that time:</p>
+<pre class="text"><code>pick: TEAM-123 waits on its merge gate (not yet) at the unchanged head 1a2b3c4d5e6f — after every other ticket for 2400 s more (1 time(s) in a row)</code></pre>
+<p>The ticket is still taken when no other ticket of the stage can be
+picked
+(<code>pick: TEAM-123 taken although it waits on its merge gate — no other ticket of the stage can be picked</code>),
+so a hold never delays a merge while nothing else waits. The hold lasts
+two poll intervals after the first "not yet" (at least 300 s; the queue
+loop's own interval, else <code>agents.poll_interval_minutes</code>),
+doubles with each further one at the same head, and never exceeds
+<code>agents.merge_gate_recheck_seconds</code> (default 3600). Two
+intervals, because the queue loop sleeps a whole interval after its
+poll: a hold of one interval has always run out at the next pick. With
+the default 30-minute poll and other tickets waiting, the ticket is
+passed over at the next poll and checked again at the one after, so
+about once an hour; alone, on every poll. With a 5-minute poll the holds
+are 600, 1200, 2400 and then 3600 s, so it is checked again after about
+2, 4, 8 and then every 12 polls while others wait. With a poll of an
+hour or longer the default cap is shorter than two intervals and nothing
+is held: set <code>agents.merge_gate_recheck_seconds</code> to at least
+two intervals there.</p>
+<p>A push to the branch, a branch gone from origin and a record time in
+the future (a clock that stepped back) end the hold at once. At Build
+Review the run after the hold reuses the approval (no model call, no new
+comment) and does not run the build check again when it passed for the
+same head, base and command with the same
+<code>repo.untrusted_env</code> and <code>repo.worktree_links</code>
+(<code>Build check not run again: … passed for head …</code> in the
+stage output); it runs the gate and merges once it passes. A merge
+clears the merge stage's mark.</p>
+<p>To check a ticket now, run its stage for it
+(<code>bash scripts/code-review-pipeline.sh TEAM-123</code>,
+<code>bash scripts/merge-pipeline.sh TEAM-123</code>) or shepherd it;
+none of them asks the picker. To switch the holds off, set
+<code>agents.merge_gate_recheck_seconds</code> to <code>0</code>. The
+review record lives in
+<code>$(git rev-parse --git-common-dir)/bureau/review-stops.json</code>
+(<code>python3 scripts/bureau-supervision.py resume TEAM-123</code>
+removes it, and the next run is a full review), the merge mark in
+<code>merge-gate-waits.json</code> next to it
+(<code>python3 scripts/bureau-supervision.py merge-wait TEAM-123 --clear</code>).
+When a record or origin cannot be read, the picker holds nothing back
+and says so in one line
+(<code>pick: WARN: the merge gate waits could not be read (…)</code>).
+When the gate cannot pass by itself (a hold label on the PR, a required
+human review; a check that never starts is covered by the queue grace
+above), the ticket keeps being checked about once an hour while others
+wait, until a human acts.</p>
+<h3
+id="doctor-reports-a-repoworktree_links-directory-that-holds-a-env-file">Doctor
+reports a <code>repo.worktree_links</code> directory that holds a
+<code>.env</code> file</h3>
+<p><code>repo.worktree_links entry "settings" is a directory that holds a .env file (settings/.env)</code>
+means the stages skip that link: before they link a directory they
+search it for a <code>.env*</code> name in any case, links followed and
+without a depth limit
+(<code>find -L DIR -mindepth 1 -iname '.env*'</code>), because the link
+would put the main checkout's secrets into every stage worktree, where
+pull-request code runs. Doctor runs the same search and names the first
+hit; its status for the entry is <code>holds an env file</code>. Move
+the file out of the directory, or remove the entry and let
+<code>repo.test_command</code> or <code>scripts/bureau-test.sh</code>
+create what the tests need. A virtualenv with a <code>.env*</code> name
+anywhere inside (a package's example file, say) is skipped the same way.
+<code>could not be searched completely</code> (status
+<code>not searched completely</code>) means the search failed, usually
+on an unreadable subdirectory (with GNU find also on a link loop, which
+the BSD find of macOS skips); the stages skip such a directory too,
+since what the search did not see can hold a <code>.env</code>. Make it
+readable, or remove the entry. Doctor before v3.2 reported both as
+<code>ok</code> while the stages skipped them. The search goes by names:
+a link under another name that points at a <code>.env</code> file is not
+found, so do not keep such a link in a linked directory.</p>
+<h3
+id="doctor-warns-repotest_command-is-missing-required-for-codex-background-implementation">Doctor
+warns
+<code>repo.test_command is missing; required for Codex background implementation</code></h3>
+<p>Implement on Codex runs <code>repo.test_command</code> itself once
+the agent reports the work complete, as a check independent of the
+agent, and stops with <code>24</code> when none is set (absent,
+<code>null</code>, <code>false</code> or <code>""</code>). The warning
+appears only when implement resolves to Codex:
+<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it (the value in
+the <code>.env</code> the stages read, <code>BUREAU_ENV_FILE</code> or
+else the one next to <code>.bureau.json</code>, which doctor reads with
+the stages' own reader and never executes; else doctor's environment),
+else <code>agents.implement.runner</code> when
+<code>agents.implement</code> is an object, else
+<code>agents.runner</code>. It appears with
+<code>agents.implement</code> off as well, because the shepherd runs
+every stage unless <code>--respect-config</code>. Set
+<code>repo.test_command</code> to the project's real test command.
+Doctor before v3.2 warned on every installation, Claude-only ones
+included.</p>
 <h3 id="code-review-hit-bureau_max_review_cycles--what-now">Code-review
 hit <code>BUREAU_MAX_REVIEW_CYCLES</code> — what now?</h3>
 <p><code>agents.max_review_cycles</code> (default 3) caps how many
@@ -766,8 +930,8 @@ with exit 21.</p>
 <p>QA parks a ticket with <code>needs-human</code> when it can't decide
 whether a failure is legitimate (test genuinely fails) or spurious (env
 issue, flaky test, missing service).</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># See what QA saw</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;</span><span class="va">$ISSUE</span><span class="st">&quot;</span> logs/events.jsonl <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">&#39;select(.event==&quot;qa_verdict&quot;)&#39;</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># See what QA saw</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;</span><span class="va">$ISSUE</span><span class="st">&quot;</span> logs/events.jsonl <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">&#39;select(.event==&quot;qa_verdict&quot;)&#39;</span></span></code></pre></div>
 <p>Typically: pull the branch locally, run the tests yourself, and
 either fix the code or mark the test as skip/ignore with a
 rationale.</p>
@@ -881,8 +1045,8 @@ resuming.</p>
 <code>BUREAU_DRY_RUN</code> to debug a specific stage</h3>
 <p>Use a queue preview for one stage or a named-ticket shepherd
 preview:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/queue-loop.sh code-review 1</span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/queue-loop.sh code-review 1</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
 <p>The queue example continues polling until stopped; <code>1</code> is
 its interval in minutes. Previews can read Linear, but do not invoke
 creative work or reset workers. Calling a background pipeline directly
@@ -909,8 +1073,9 @@ after <code>headroom_wrap: true</code></h3>
 <p>The flag is read live; turning it on doesn't auto-install Headroom.
 Install on the host running the pipeline (typically the operator's local
 box, not the CI runner):</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="st">&quot;headroom-ai[all]&quot;</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">headroom</span> <span class="at">--version</span>    <span class="co"># confirm</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="st">&quot;headroom-ai[all]&quot;</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">headroom</span> <span class="at">--version</span>    <span class="co"># confirm</span></span></code></pre></div>
 <p>If <code>pip</code> resolves to a Python that doesn't have user-level
 installs on PATH, prefer <code>pip install --user</code> and add
 <code>~/.local/bin</code> to PATH, or use a venv. The provider adapter
@@ -993,9 +1158,9 @@ permissions bypass as a diagnostic shortcut.</p>
 <h3 id="speckit-phases-produce-empty-tasksmd">Speckit phases produce
 empty <code>tasks.md</code></h3>
 <p>The spec pipeline routes back to Triage automatically. To debug:</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> <span class="at">-la</span> specs/<span class="op">&lt;</span>NNN-feature<span class="op">&gt;</span>/</span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> logs/queue-spec.log <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-100</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> <span class="at">-la</span> specs/<span class="op">&lt;</span>NNN-feature<span class="op">&gt;</span>/</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> logs/queue-spec.log <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-100</span></span></code></pre></div>
 <p>Most common cause: the Linear issue description was too thin for
 <code>/speckit-tasks</code> to extract anything. Add acceptance criteria
 to the description and re-trigger.</p>
@@ -1006,7 +1171,12 @@ the approval</h3>
 <p>The ticket comment "reusing the approval recorded …" means the review
 stage found the approval a <code>--no-merge</code> run recorded for the
 same PR, base branch, head and base commits, ticket text and state, and
-moved on without a new model review; only the build check ran again. The
+moved on without a new model review; only the build check ran again. An
+approval recorded because the merge gate was not yet decided is reused
+without that comment, and without the build check when it passed for the
+same command and environment settings (see <a
+href="#a-ticket-waiting-on-its-merge-gate-is-picked-after-the-others">A
+ticket waiting on its merge gate is picked after the others</a>). The
 record is gone after that. To get a fresh model review at the same head
 instead, run
 <code>python3 scripts/bureau-supervision.py resume TEAM-123</code>

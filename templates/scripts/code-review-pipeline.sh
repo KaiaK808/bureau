@@ -130,8 +130,11 @@ echo "  Branch: $BRANCH"
 
 # Recheck under the worker's issue lease: another tick may have selected this
 # ticket just before the previous reviewer saved its stop and released ownership.
+# Every call of bureau-supervision.py runs with `python3 -I`: the working directory
+# is the branch's worktree, and an empty or relative PYTHONPATH entry of the
+# operator's would otherwise import a subprocess.py or json.py the branch committed.
 if bureau_stop_requested; then
-  REVIEW_STOP=$(printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" check "$ISSUE" \
+  REVIEW_STOP=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" check "$ISSUE" \
     --branch "$BRANCH" --state "$ACTUAL_STATE") || exit 18
   if [ "$(printf '%s' "$REVIEW_STOP" | jq -r .stopped)" = true ]; then
     echo "Review already approved at the unchanged head; still stopped before merge."
@@ -265,18 +268,28 @@ fi
 # yet decided (merge_gate_wait, see the APPROVE branch below). Reusing such a record
 # posts no new comment on the ticket or the PR while the verdict stays APPROVE: the PR
 # already carries the APPROVE of this head, which the merge gate reads, and a gate that
-# is polled must not add two comments per poll.
+# is polled must not add two comments per poll. Since v3.2 such a record also keeps the
+# build check that passed for it, and the build check is not run again while its
+# command and its environment settings are the same (Phase 2); the picker puts such a
+# ticket after the other Build Review tickets for a while (merge_gate_waits in
+# bureau-config.sh), and the count of "not yet" answers in a row it reads is kept here
+# (REUSED_GATE_WAITS).
 REUSED_APPROVAL=0
 REUSED_GATE_WAIT=0
+REUSED_GATE_WAITS=0
 STAGE_EXIT=""   # set when an APPROVE's inline merge did not go through (2 or 25)
 if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
-  if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
+  if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
       --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" \
       --base-ref "$PR_BASE_REF" --pr "$PR_NUMBER"); then
     if [ "$(printf '%s' "$REUSE" | jq -r '.reuse' 2>/dev/null)" = true ]; then
       REUSED_APPROVAL=1
       REUSED_AT=$(printf '%s' "$REUSE" | jq -r '.stopped_at | floor | todate' 2>/dev/null) || REUSED_AT=""
-      [ "$(printf '%s' "$REUSE" | jq -r '.merge_gate_wait' 2>/dev/null)" = true ] && REUSED_GATE_WAIT=1
+      if [ "$(printf '%s' "$REUSE" | jq -r '.merge_gate_wait' 2>/dev/null)" = true ]; then
+        REUSED_GATE_WAIT=1
+        REUSED_GATE_WAITS=$(printf '%s' "$REUSE" | jq -r '.gate_waits // 1' 2>/dev/null) || REUSED_GATE_WAITS=1
+        [[ "$REUSED_GATE_WAITS" =~ ^[1-9][0-9]{0,2}$ ]] || REUSED_GATE_WAITS=1
+      fi
       echo "  Reusing the approval recorded ${REUSED_AT:-earlier} for head $REVIEW_HEAD — no new specialist review."
       if [ "$REUSED_GATE_WAIT" = 1 ]; then
         echo "  (recorded while the merge gate was not yet decided; the gate runs again)"
@@ -477,12 +490,32 @@ echo "Phase 2/3: build check"
 # verdict comes from its own exit status, never from a pipe into `tail`. Its full
 # output is REVIEW_TMP/build.log, which survives only when the stage exits
 # non-zero; the last 20 lines are always in the stage output.
+#
+# A reused approval that was recorded while the merge gate was not yet decided
+# (REUSED_GATE_WAIT) carries the build check that passed for exactly this head, this
+# base and this ticket (bureau-supervision.py reuse checks all of them): when its key —
+# the command, repo.untrusted_env and repo.worktree_links (BUILD_KEY) — is the same, it
+# is not run again (v3.2). Any other reuse — a --no-merge stop, an approval kept after a
+# blocked gate — and a gate wait recorded without a passed check (none configured, or
+# recorded before v3.2) runs it as before.
 BUILD_OK=true
 BUILD_STATUS="Passed"
+BUILD_PASSED=0   # 1: this run's build check passed, or its recorded pass stands
 BUILD_CMD=$(bureau_get '.repo.test_command // empty')
 if [ -z "$BUILD_CMD" ] && [ -f "scripts/bureau-test.sh" ]; then BUILD_CMD="bash scripts/bureau-test.sh"; fi
 if [ -z "$BUILD_CMD" ] && [ -f "package.json" ]; then BUILD_CMD="npm run build"; fi
-if [ -n "$BUILD_CMD" ]; then
+# SHA-256 of the command and the two settings that change the environment it runs in;
+# empty (no reuse, no record) when the configuration cannot be read.
+BUILD_KEY=""
+if [ -n "$BUILD_CMD" ] && BUILD_ENV_JSON=$(bureau_get '[(.repo.untrusted_env // null), (.repo.worktree_links // null)] | tojson' 2>/dev/null); then
+  BUILD_KEY=$(printf '%s\n%s' "$BUILD_CMD" "$BUILD_ENV_JSON" | python3 -I -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' 2>/dev/null) || BUILD_KEY=""
+fi
+if [ -n "$BUILD_KEY" ] && [ "$REUSED_GATE_WAIT" = 1 ] \
+   && printf '%s' "$REUSE" | jq -e --arg key "$BUILD_KEY" '.build_check == "passed" and .build_key == $key' >/dev/null 2>&1; then
+  BUILD_PASSED=1
+  BUILD_STATUS="Passed (recorded ${REUSED_AT:-earlier} for this head and base; not run again)"
+  echo "  Build check not run again: \`$BUILD_CMD\` passed for head $REVIEW_HEAD on $REVIEW_BASE when the approval was recorded (${REUSED_AT:-earlier}), and neither changed."
+elif [ -n "$BUILD_CMD" ]; then
   echo "  Running build check: $BUILD_CMD"
   BUILD_RC=0
   BUILD_TREE_BEFORE=$(git status --porcelain --untracked-files=all 2>/dev/null | sort || true)
@@ -506,7 +539,7 @@ if [ -n "$BUILD_CMD" ]; then
     { echo "  WARN: the build check changed tracked files; it must not write to them:"
       printf '%s\n' "$BUILD_TREE_TRACKED" | sed -n '1,20s/^/    /p'; } >&2 || true
   fi
-  if [ "$BUILD_RC" = 0 ]; then echo "  Build passed"
+  if [ "$BUILD_RC" = 0 ]; then echo "  Build passed"; BUILD_PASSED=1
   else echo "  Build failed (exit $BUILD_RC)"; BUILD_OK=false; BUILD_STATUS="FAILED"; fi
 else
   BUILD_STATUS="not checked (no repo.test_command, no scripts/bureau-test.sh, no package.json)"
@@ -608,7 +641,7 @@ case "$VERDICT" in
       # Save before the owning worker releases its lease, closing the gap where
       # another tick could start the same paid review. Record the reviewed inputs.
       if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
-        printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+        printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
           --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
           --verdict APPROVE >/dev/null
       fi
@@ -626,9 +659,12 @@ case "$VERDICT" in
       # Done whatever happened):
       #   0   merged; the merge stage moved the ticket to Done.
       #   2   the gate is not yet decided (checks pending or not started, GitHub still
-      #       computing): the APPROVE is recorded for reuse like a --no-merge stop, so
-      #       the next pick runs the build check and the gate again without a model
-      #       review; the stage ends with 2 and the shepherd waits as at Merge.
+      #       computing): the APPROVE is recorded for reuse like a --no-merge stop, with
+      #       the build check that passed and the count of "not yet" answers in a row,
+      #       so the next pick runs the gate again without a model review and without
+      #       the build check while the head, the base and its key are unchanged; the
+      #       queue's picker puts the ticket after the others for a while
+      #       (merge_gate_waits); the stage ends with 2 and the shepherd waits as at Merge.
       #   25  the gate is decided against the merge: needs-human, the gate lines on the
       #       ticket, the stage ends with 25.
       # Any other code passes through (15 no PR, 18 the merge call failed, 20 a stop).
@@ -650,9 +686,14 @@ case "$VERDICT" in
           ;;
         2:not-yet)
           echo "  APPROVED — PR #$PR_NUMBER is not merged yet: its merge gate is not decided."
-          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+          # The count of "not yet" answers in a row at this head spaces the queue's
+          # rechecks (merge_gate_waits); a passed build check is kept with its key.
+          GATE_WAIT_ARGS=(--merge-gate-wait --gate-waits "$((REUSED_GATE_WAITS + 1))")
+          [ "$BUILD_PASSED" != 1 ] || [ -z "$BUILD_KEY" ] \
+            || GATE_WAIT_ARGS+=(--build-check passed "--build-command=$BUILD_CMD" "--build-key=$BUILD_KEY")
+          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
               --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
-              --verdict APPROVE --merge-gate-wait >/dev/null; then
+              --verdict APPROVE "${GATE_WAIT_ARGS[@]}" >/dev/null; then
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
           fi
           if [ "$REUSED_GATE_WAIT" != 1 ]; then
@@ -660,7 +701,7 @@ case "$VERDICT" in
 
 ${GATE_LINES:-- (the merge stage left no gate lines)}
 
-The approval is recorded for head \`$REVIEW_HEAD\`; the next run checks the build and the gate again without a new model review." || true
+The approval is recorded for head \`$REVIEW_HEAD\`; the queue checks the gate again without a new model review, and without the build check while the head and the base are unchanged. While other Build Review tickets wait, it reviews them first for a while that grows as the gate stays undecided (at most \`agents.merge_gate_recheck_seconds\`); a push ends that wait." || true
           fi
           _review_release_worktree
           NEXT_STATE="Build Review (merge gate not yet decided; the next run tries again)"
@@ -673,7 +714,7 @@ The approval is recorded for head \`$REVIEW_HEAD\`; the next run checks the buil
           # paying a new review. The record holds the labels from the start of this
           # run, so it matches again once the label is gone; a push, a moved base or
           # an edited ticket means a new review.
-          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
               --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
               --verdict APPROVE >/dev/null; then
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
