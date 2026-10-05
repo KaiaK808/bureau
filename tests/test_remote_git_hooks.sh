@@ -27,8 +27,13 @@
 #   6  doctor: the main checkout's .gitattributes uses Git LFS (filter=lfs) and the key is not true —
 #      a warning naming the key (also from a linked worktree); none for true, another filter, a
 #      comment line or a name that only starts with lfs
+#   7  the two `git ls-remote` of bureau-supervision.py (a stopped review's check, the gate waits of
+#      the pickers) get -c core.hooksPath=/dev/null too (a git on PATH records its arguments)
+#   8  static: every shell template with a remote git command has the git() function, and every
+#      remote git command line in the Python templates carries NO_HOOKS
 # Negative control: against v3.1.0 (9411b3b) 1, 3 and 4 fail ("pre-push ran during Bureau's push,
-# with GH_TOKEN") and 5 and 6 fail (no warning).
+# with GH_TOKEN") and 5 and 6 fail (no warning); 7 and 8 fail against the merge of main (a9c754c),
+# whose supervision ls-remote runs without the flag.
 set -uo pipefail
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 source "$(dirname "$0")/lib/pr1-untrusted-env.sh"
@@ -196,6 +201,58 @@ done
 w=$(doctor_warnings '{}' "$LFS" worktree)
 case "$w" in *"uses Git LFS (filter=lfs)"*) ;; *) fail "6: doctor in a linked worktree does not read the main checkout's .gitattributes: ${w:-no warning}" ;; esac
 pr1_pass "6 doctor warns when the main checkout uses Git LFS and the hooks are off"
+
+# ── 7  the remote git Bureau's Python starts ──────────────────────────────────
+# bureau-supervision.py runs `git ls-remote` for a stopped review's check (the review stage) and
+# for the gate waits (the pickers, v3.2). ls-remote starts no hook, but it keeps the GitHub tokens
+# like every remote command, so it carries the same flag. A git on PATH records the arguments it
+# gets, then runs the real git.
+repo "$R"; config '{}'
+REAL_GIT=$(type -P git); mkdir -p "$TMP/argv"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\nexec "%s" "$@"\n' "$TMP/argv.log" "$REAL_GIT" > "$TMP/argv/git"; chmod +x "$TMP/argv/git"
+printf '#!/bin/sh\necho %s\n' "'{\"state\":\"OPEN\",\"baseRefName\":\"main\"}'" > "$TMP/argv/gh"; chmod +x "$TMP/argv/gh"
+git -C "$R" -c core.hooksPath=/dev/null push -q origin HEAD:refs/heads/feat
+HEAD_SHA=$(git -C "$R" rev-parse HEAD); : > "$MARKS"; : > "$TMP/argv.log"
+supervise() { (cd "$R" && PATH="$TMP/argv:$PATH" env "${PROBES[@]}" python3 -I "$SCRIPTS/bureau-supervision.py" --repo "$R" "$@" 2>&1); }
+supervise merge-wait EXP-1 --branch feat --head "$HEAD_SHA" --outcome not-yet >/dev/null
+out=$(supervise gate-waits --stage merge --first 300 --cap 3600)
+case "$out" in *'"issue": "EXP-1"'*) ;; *) fail "7 gate-waits: the held ticket is not listed (its ls-remote failed?): $out" ;; esac
+DETAIL='{"identifier":"EXP-1","title":"t","description":"d","labels":[]}'
+printf '%s' "$DETAIL" | supervise stop EXP-1 --branch feat --state 'Build Review' --head "$HEAD_SHA" --base "$HEAD_SHA" --reviewed-head "$HEAD_SHA" --pr 5 >/dev/null
+out=$(printf '%s' "$DETAIL" | supervise check EXP-1 --branch feat --state 'Build Review')
+case "$out" in *'"stopped": true'*) ;; *) fail "7 check: the stop was not confirmed against origin (its ls-remote failed?): $out" ;; esac
+[ "$(grep -c 'ls-remote' "$TMP/argv.log")" = 2 ] || fail "7: expected two ls-remote runs (gate-waits, check): $(tr '\n' ';' < "$TMP/argv.log")"
+bare=$(grep 'ls-remote' "$TMP/argv.log" | grep -v '^-c core.hooksPath=/dev/null ls-remote ' || true)
+[ -z "$bare" ] || fail "7: Bureau's Python ran a remote git without -c core.hooksPath=/dev/null: $(printf '%s' "$bare" | tr '\n' ';')"
+hooks_off "7 bureau-supervision.py"
+pr1_pass "7 the ls-remote of bureau-supervision.py (stop check, gate waits) runs with the hooks off"
+
+# ── 8  every remote git in the templates gets the flag (static) ──────────────
+# Shell: a script that runs push, fetch, pull, ls-remote, clone, remote or submodule has the git()
+# function (it sources bureau-env.sh, directly or through bureau-config.sh), which adds the flag;
+# tests/test_untrusted_env_bureau.sh A already checks that no git starts past that function.
+# Python: every remote git command line carries NO_HOOKS. Prints each site it checked.
+lint=$(python3 - "$SCRIPTS" <<'PY'
+import pathlib, re, sys
+scripts = pathlib.Path(sys.argv[1]); remote = '(push|fetch|pull|ls-remote|clone|remote|submodule)'
+for path in sorted(scripts.glob('*.sh')):
+    if path.name == 'bureau-env.sh': continue
+    text = path.read_text()
+    sources = re.search(r'^\s*(source|\.)\s+.*(bureau-config\.sh|bureau-env\.sh|\$BUREAU_CONFIG_SH)', text, re.M)
+    for n, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith('#') or not re.search(r'(^|[^\w.-])git(\s+(-C\s+\S+|-c\s+\S+|--[\w-]+(=\S+)?))*\s+' + remote + r'\b', line): continue
+        print(('ok ' if sources else 'BAD (no git function) ') + path.name + ':' + str(n))
+for path in sorted(scripts.glob('*.py')):
+    for n, line in enumerate(path.read_text().splitlines(), 1):
+        if line.lstrip().startswith('#') or not re.search(r"(\['git'|\bgit\(|quiet_git\().*'" + remote + "'", line): continue
+        print(('ok ' if 'NO_HOOKS' in line else 'BAD (no NO_HOOKS) ') + path.name + ':' + str(n))
+PY
+)
+grep -q ' bureau-supervision\.py:' <<< "$lint" || fail "8: the lint found no Python site (its pattern is broken)"
+grep -q ' upstream-port\.sh:' <<< "$lint" || fail "8: the lint found no shell site in upstream-port.sh (its pattern is broken)"
+bad=$(grep '^BAD' <<< "$lint" || true)
+[ -z "$bad" ] || fail "8: a remote git without the hooks flag: $(printf '%s' "$bad" | tr '\n' ';')"
+pr1_pass "8 every remote git in the templates runs through git() or carries NO_HOOKS ($(grep -c '^ok' <<< "$lint") sites)"
 
 if [ "$PR1_FAILS" != 0 ]; then echo "$PR1_FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_remote_git_hooks"

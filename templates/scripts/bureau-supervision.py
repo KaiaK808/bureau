@@ -41,6 +41,14 @@ def process_env(command, environ=None):
             and not any(secret in value for secret in long_secrets)}
 
 
+# Bureau's own git commands that talk to a remote run without the repository's hooks (v3.2): the
+# flag the git() function in bureau-env.sh adds, since such a command keeps the GitHub token
+# variables and a hook from the branch would see them. The one this script runs, ls-remote, updates
+# no ref and starts no hook, so the flag changes nothing there today and repo.remote_git_runs_hooks
+# has nothing to bring back; it keeps the rule the same at every remote command Bureau starts.
+NO_HOOKS = ['-c', 'core.hooksPath=/dev/null']
+
+
 def git(repo, *args):
     command = ['git', '-C', str(repo), *args]
     return subprocess.check_output(command, text=True, env=process_env(command)).strip()
@@ -129,7 +137,7 @@ def check(repo, root, issue, branch, state, detail):
         if same:
             # GitHub's PR snapshot can lag a branch update. Read both remote
             # refs directly; never equate a cached baseRefOid with its current tip.
-            command = ['git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/' + branch, 'refs/heads/' + base_ref]
+            command = ['git', *NO_HOOKS, 'ls-remote', '--exit-code', 'origin', 'refs/heads/' + branch, 'refs/heads/' + base_ref]
             refs = subprocess.check_output(command, cwd=repo, text=True, timeout=30, env=process_env(command))
             tips = dict((ref, sha) for sha, ref in (line.split() for line in refs.splitlines()))
             if 'refs/heads/' + base_ref not in tips:
@@ -225,7 +233,7 @@ def gate_waits(repo, root, stage, first, cap, now=None):
             held.append((issue, branch, head, int(math.ceil(left)), waits, outcome.replace('-', ' ')))
     if not held:
         return {'waiting': []}
-    command = ['git', 'ls-remote', 'origin'] + sorted({'refs/heads/' + branch for _, branch, _, _, _, _ in held})
+    command = ['git', *NO_HOOKS, 'ls-remote', 'origin'] + sorted({'refs/heads/' + branch for _, branch, _, _, _, _ in held})
     answer = subprocess.run(command, cwd=repo, text=True, timeout=30, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env=process_env(command))
     if answer.returncode:
