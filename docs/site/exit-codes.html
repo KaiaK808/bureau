@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9a8675c4fe3ec41f55fcd8a35e71cc2cb7101146a90094126d95531023209f85">
+<meta name="bureau-source-sha256" content="e59333ed0c2b9a13355289e5f84aee13d936f8c1d92b5c58174376612a0da025">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -318,18 +318,30 @@ move" and then stuck (<code>13</code>). The review stage's inline merge
 codes since v3.1, and the review stage acts on them: after a gate that
 is not yet decided it records the APPROVE and ends with <code>2</code>,
 and the shepherd waits the same way at Build Review (each retry reuses
-the approval without a model review and runs the build check and the
-gate again); after a blocked gate it sets <code>needs-human</code>,
-comments the gate lines and ends with <code>25</code>, which the
-shepherd handles like any <code>25</code> (alert, halt). Before, the
-review stage reported Done after an inline merge that did not go
-through. <code>merge-pipeline.sh --dry-run</code> still ends with
-<code>0</code>. A check that is queued but never starts, for example on
-an offline runner, keeps the gate at <code>2</code>: the queue loop
-stays quiet, the shepherd waits its budget and then halts. A head with
-no check run and no status at all is blocked once its commit is older
-than <code>agents.merge_ci_start_grace_seconds</code> (default 1800).
-The wait settings are read in base 10 and capped at 6 h (wait) and 1 h
+the approval without a model review and runs the gate again, since v3.2
+without the build check when it passed for the same head, base and
+command), while the queue's review picker puts such a ticket after the
+other Build Review tickets for a hold of two poll intervals (at least
+300 s) doubling up to <code>agents.merge_gate_recheck_seconds</code>
+(default 3600) unless its branch moves, and still takes it when nothing
+else can be picked; after a blocked gate it sets
+<code>needs-human</code>, comments the gate lines and ends with
+<code>25</code>, which the shepherd handles like any <code>25</code>
+(alert, halt). Before, the review stage reported Done after an inline
+merge that did not go through. <code>merge-pipeline.sh --dry-run</code>
+still ends with <code>0</code>. Since v3.2 the merge stage marks a gate
+that ended with <code>2</code> or <code>25</code>, and the merge picker
+(not the rebase picker) puts that ticket after the other Merge tickets
+the same way while its head is unchanged. A check run that stays queued
+longer than <code>agents.merge_ci_queued_grace_seconds</code> (default
+3600), for example on an offline runner, is blocked (<code>25</code>)
+since v3.2: the queue loop alerts, the review stage sets
+<code>needs-human</code>, the shepherd halts; before, it kept the gate
+at <code>2</code> for ever, the queue stayed quiet and the shepherd
+waited its budget. A head with no check run and no status at all is
+blocked once its commit is older than
+<code>agents.merge_ci_start_grace_seconds</code> (default 1800). The
+wait settings are read in base 10 and capped at 6 h (wait) and 1 h
 (poll).</p>
 <p>Before it claims a ticket, <code>shepherd.sh</code> checks whether a
 human holds it: <code>needs-human</code> or the configured

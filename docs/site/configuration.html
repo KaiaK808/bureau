@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1208bc3433a0106e0c74910147d6ae51d0142cc20a399ad9d4b461a2ba7e8b03">
+<meta name="bureau-source-sha256" content="1ec930f79a2d573f875f521b0cd4cf752c45c68eb49e0cae6234956054466254">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -365,9 +365,11 @@ href="recipes.html#single-flight-pipeline">recipes</a></td>
 after review, or the gated merge stage when <code>agents.merge</code> is
 on). The inline merge runs the merge stage's full gate, and the review
 stage ends with its outcome: Done after a merge, <code>2</code> with the
-approval kept for the next run when the gate is not yet decided,
-<code>25</code> and <code>needs-human</code> when it is blocked.
-<code>manual</code>: a human — the merge and rebase agents are off,
+approval kept for the next run when the gate is not yet decided (while
+other tickets wait, the queue picks it after them for a while, see
+<code>agents.merge_gate_recheck_seconds</code>), <code>25</code> and
+<code>needs-human</code> when it is blocked. <code>manual</code>: a
+human — the merge and rebase agents are off,
 <code>merge-pipeline.sh</code> and <code>rebase-pipeline.sh</code> exit
 <code>2</code> before any Linear, gh or git call, the review stage parks
 an APPROVE in the Merge state, and the shepherd ends its run at Merge
@@ -445,7 +447,62 @@ repository whose workflow never runs for the PR stops waiting silently.
 is read by the same rule as <code>merge_min_required_checks</code>
 (default <code>1800</code>). A time that cannot be read keeps the gate
 at "not yet"; does not apply when <code>merge_min_required_checks</code>
-is <code>0</code></td>
+is <code>0</code>. A check run that exists but is still queued is
+covered by <code>merge_ci_queued_grace_seconds</code></td>
+</tr>
+<tr>
+<td><code>agents.merge_ci_queued_grace_seconds</code></td>
+<td>number</td>
+<td><code>3600</code></td>
+<td>How long a check run on the PR head may stay queued — created, but
+taken by no runner — before the merge gate gives up on it (v3.2). Past
+it the gate reports
+<code>ci: check &lt;name&gt; queued for N s on &lt;head&gt;, past the CI queue grace (agents.merge_ci_queued_grace_seconds: N) — runner offline?</code>
+and is blocked (<code>25</code>; the queue loop alerts, at most once an
+hour per ticket; the review stage sets <code>needs-human</code>; the
+shepherd halts); before v3.2 such a check counted as pending for ever.
+The time is the check run's <code>started_at</code>, which GitHub sets
+when it queues the run; a run without a readable time stays pending.
+Only the status <code>queued</code> counts: a running check, a
+deployment approval (<code>waiting</code>), a concurrency wait
+(<code>pending</code>) and a pending commit status stay "not yet". The
+default leaves room for a single self-hosted runner that works through a
+few jobs ahead of this one; measure how long jobs wait to start there
+before keeping it (a runner outage longer than the grace blocks every
+approved PR waiting on it, with <code>needs-human</code> after an inline
+merge), lower it where runners pick up jobs within minutes, raise it
+where jobs regularly wait longer. <code>0</code> blocks a queued check
+at once; to keep v3.1's behaviour set <code>9999999</code>. Read by the
+same rule as <code>merge_min_required_checks</code> (default
+<code>3600</code>)</td>
+</tr>
+<tr>
+<td><code>agents.merge_gate_recheck_seconds</code></td>
+<td>number</td>
+<td><code>3600</code></td>
+<td>The longest hold on a ticket whose merge gate was not yet decided,
+or blocked at the merge stage (v3.2). The review stage records such an
+APPROVE and ends with <code>2</code>; the merge stage ends with
+<code>2</code> or <code>25</code> and marks the ticket. The picker of
+that stage (review or merge; never rebase) then puts the ticket after
+every other candidate while its branch on origin is still at the judged
+head, and still takes it when nothing else can be picked, so a hold
+never delays a merge while nothing else waits. The hold is two poll
+intervals after the first answer (at least 300 s; the queue loop's own
+interval, else <code>agents.poll_interval_minutes</code>) and doubles
+with each further one, never above this value: with the default
+30-minute poll and other tickets waiting, such a ticket is checked about
+every other poll; with a 5-minute poll after about 2, 4, 8 and then
+every 12 polls. With a poll of an hour or longer set this to at least
+two intervals, or nothing is held. A push, a branch gone from origin and
+a record time in the future end the hold. At Build Review the next run
+reuses the approval without a model call and without the build check
+that passed for the same head, base, command,
+<code>repo.untrusted_env</code> and <code>repo.worktree_links</code>.
+The shepherd is not affected. <code>0</code> switches the holds off (the
+ticket is picked on every poll, as before v3.2). Read by the same rule
+as <code>merge_min_required_checks</code> (default
+<code>3600</code>)</td>
 </tr>
 <tr>
 <td><code>agents.model</code></td>
@@ -660,8 +717,15 @@ pause</td>
 <code>scripts/bureau-test.sh</code>, then <code>npm run build</code>,
 and stops there (QA also tries <code>npm test</code>,
 <code>cargo test</code>, <code>pytest</code>, <code>go test</code>).
-Required for Codex implementation completion and the app tests
-action</td>
+Required for Codex implementation completion and the app tests action.
+<code>bureau-doctor.py</code> warns that it is missing (absent,
+<code>null</code>, <code>false</code> or <code>""</code>, which stop a
+Codex completion with <code>24</code>) only when implement resolves to
+Codex (<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it, from
+<code>.env</code> before the environment, else
+<code>agents.implement.runner</code>, else <code>agents.runner</code>),
+also with <code>agents.implement</code> off, since the shepherd runs
+every stage unless <code>--respect-config</code></td>
 </tr>
 <tr>
 <td><code>repo.untrusted_env</code></td>
@@ -792,21 +856,31 @@ name, or a link to one): the link would put the main checkout's secrets
 into every stage worktree, where pull-request code runs, while the reset
 keeps them out otherwise; the stages find <code>.env</code> through the
 main checkout without it. The stages skip such an entry with one warning
-line, and beyond the doctor's rule also a directory with a
-<code>.env*</code> name anywhere below it or one that cannot be searched
-completely; both sides also check every component of the entry's fully
-resolved path. <code>bureau-doctor.py</code> lists each entry with its
-status (<code>ok</code>, <code>missing in the main checkout</code>,
+line, and also a directory with a <code>.env*</code> name anywhere below
+it (links followed) or one that cannot be searched completely; both
+sides also check every component of the entry's fully resolved path.
+<code>bureau-doctor.py</code> lists each entry with its status
+(<code>ok</code>, <code>missing in the main checkout</code>,
 <code>tracked in the main checkout</code>,
 <code>not ignored as a symlink</code>, <code>invalid</code>,
-<code>env file</code>, <code>no main checkout</code>), warns or errors
-the way the stages would skip, and reports a <code>.env*</code> entry as
-an error; <code>false</code> counts as no links, like an absent key. It
-judges existence and tracking in the main checkout the stages link from,
-which it reports as <code>main_checkout</code>, also when it runs in a
-linked worktree; for a bare repository or a git directory outside the
-main checkout it reports none and warns that the stages make no links.
-See <a href="#python-repositories">Python repositories</a></td>
+<code>env file</code>, <code>holds an env file</code>,
+<code>not searched completely</code>, <code>no main checkout</code>),
+warns or errors the way the stages would skip, and reports a
+<code>.env*</code> entry, a directory that holds one (naming the first
+it finds) and a directory it cannot search completely as errors; it runs
+the stages' own search
+(<code>find -L DIR -mindepth 1 -iname '.env*'</code>, no depth limit).
+That search matches names and follows links into directories: a link
+under another name that points at a <code>.env</code> file
+(<code>creds -&gt; ../.env</code> inside a linked directory) is not
+detected, by the stages or by doctor. It fails on an unreadable
+subdirectory, and with GNU find on a link loop, which the BSD find of
+macOS skips; <code>false</code> counts as no links, like an absent key.
+It judges existence and tracking in the main checkout the stages link
+from, which it reports as <code>main_checkout</code>, also when it runs
+in a linked worktree; for a bare repository or a git directory outside
+the main checkout it reports none and warns that the stages make no
+links. See <a href="#python-repositories">Python repositories</a></td>
 </tr>
 <tr>
 <td><code>repo.copy_voice_file</code></td>
