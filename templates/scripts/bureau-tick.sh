@@ -35,10 +35,12 @@ if ! (precondition_linear); then RC=10; OUTCOME=failed; write_result; exit 10; f
 # A ticket waiting on its merge gate (merge_gate_waits in bureau-config.sh) does not take
 # the tick while another stage has work (v3.2). With --allow-merge over all stages, a stage
 # whose only pick is such a ticket is passed over (pipeline_pick_next marks that pick), and
-# the stages passed over pick again, in their order and as before, once no other stage had a
-# ticket to run. With --stage there is no other stage; --no-merge runs no merge stage and
-# skips a review held at its boundary (below): both pick as before.
-PASS_HELD="" PASSED=""
+# no later stage of that pass picks the ticket either: the rebase stage shares the merge
+# picker and is never held, and on a gate that is only not yet decided it would end 2 on the
+# same ticket. The stages passed over pick again, in their order and as before, once no other
+# stage had a ticket to run. With --stage there is no other stage; --no-merge runs no merge
+# stage and skips a review held at its boundary (below): both pick as before.
+PASS_HELD="" PASSED="" PASSED_IDS=""
 if [ "$MODE" = all ] && [ "$BUREAU_NO_MERGE" = 0 ]; then PASS_HELD="mark-held"; fi
 # tick_stage <stage> [mark-held]: run one ticket of <stage>, write the result and exit;
 # return when the stage has no ticket to run now.
@@ -48,12 +50,15 @@ tick_stage() {
   agent_enabled "$stage" || return 0
   if [ "$stage" = merge ] && [ "$BUREAU_NO_MERGE" = 1 ]; then return 0; fi
   pipeline="$(printf '%s' "$stage" | tr '_' '-')-pipeline.sh"
-  SKIPPED=""
+  SKIPPED="${mark:+$PASSED_IDS}"
   while :; do
     if ! ISSUE=$(pipeline_pick_next "$pipeline" "$SKIPPED" ${mark:+"$mark"}); then RC=10; OUTCOME=failed; write_result; exit "$RC"; fi
     case "$ISSUE" in *" held")
-      echo "tick: ${ISSUE% held} waits on its merge gate and is the only $stage ticket that can be picked — passed over while another stage has work" >&2
-      PASSED="${PASSED:+$PASSED }$stage" ISSUE=""
+      ISSUE=${ISSUE% held}
+      echo "tick: $ISSUE waits on its merge gate and is the only $stage ticket that can be picked — passed over while another stage has work" >&2
+      PASSED="${PASSED:+$PASSED }$stage"
+      PASSED_IDS="${PASSED_IDS:+$PASSED_IDS,}$ISSUE"
+      ISSUE=""
       return 0 ;;
     esac
     [ -n "$ISSUE" ] || break
@@ -118,7 +123,7 @@ for stage in merge rebase code_review qa implement copy ux spec_review spec; do
   tick_stage "$stage" "$PASS_HELD"
 done
 for stage in $PASSED; do
-  echo "tick: no other stage has work — back to $stage, whose only ticket waits on its merge gate" >&2
+  echo "tick: no other stage has work — back to $stage" >&2
   tick_stage "$stage"
 done
 write_result

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="377742f028cebf92e63cebe38ec1517d5e0bd6440e76a5f6c915c003e0c4c535">
+<meta name="bureau-source-sha256" content="2953e5bfc8322f2c374635d996255b15f3b85153260015651288534083f38400">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -780,11 +780,16 @@ does not spend a tick on such a ticket while another stage has work
 pick in Build Review or Merge waits on its merge gate, the tick passes
 over that stage and goes on with the next one:</p>
 <pre class="text"><code>tick: TEAM-123 waits on its merge gate and is the only code_review ticket that can be picked — passed over while another stage has work</code></pre>
-<p>It comes back to that stage only when no other stage has a ticket to
-run
-(<code>tick: no other stage has work — back to code_review, whose only ticket waits on its merge gate</code>,
-then the picker's <code>taken although</code> line), and once the hold
-has run out the ticket is picked in its stage's turn again.
+<p>No later stage of that tick picks the ticket either (the rebase stage
+shares the Merge picker). The tick comes back to the stages it passed
+over, in their order, only when no other stage has a ticket to run
+(<code>tick: no other stage has work — back to code_review</code>, then
+the picker's <code>taken although</code> line when the ticket is still
+there and still held), and once the hold has run out the ticket is
+picked in its stage's turn again. While the usage throttle stops the
+stage that has work, the tick ends there (result <code>exit_code</code>
+23) and does not come back: a Merge ticket passed over then has its gate
+checked again only once its hold has run out.
 <code>logs/bureau-tick.json</code> names the stage and ticket that ran,
 with the usual outcome and exit code; nothing is written for the stage
 passed over. With <code>--stage code_review</code> or
