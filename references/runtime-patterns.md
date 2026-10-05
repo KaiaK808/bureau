@@ -123,7 +123,7 @@ Each background invocation starts a separate provider process. Share explicit ar
 1. **Restarts on crash** with exponential backoff: 10 s → 30 s → 60 s → 300 s (capped at 5 min).
 2. **Resets the crash counter** after `BUREAU_SUPERVISOR_STABILITY_WINDOW` seconds of clean runtime (default 1 h). A long-lived agent that crashes once doesn't permanently cap its restart speed.
 3. **Gives up** after `BUREAU_SUPERVISOR_MAX_CRASHES` consecutive crashes (default 5) and fires a Telegram alert with the tail of the queue log before exiting 1.
-4. **Forwards SIGINT / SIGTERM** to the child so `Ctrl+C` in the tmux pane stops everything cleanly without triggering the restart logic.
+4. **Stops on SIGINT, SIGTERM and SIGHUP** (SIGHUP since v3.2): it sends SIGTERM to the queue loop and exits 0 without triggering the restart logic. `Ctrl+C` in the tmux pane, or closing the pane, signals the whole pane group, the runtime in front of the stage in flight included, so everything stops cleanly; a signal to the supervisor's process alone reaches only the queue loop, and the stage in flight runs to its end (docs/troubleshooting.md, "How to stop a run").
 
 Logs to `logs/supervisor-<mode>.log`. The Telegram alert uses the standard `alert_telegram` helper, so it's a no-op when credentials are unset.
 

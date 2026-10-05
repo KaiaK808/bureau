@@ -347,6 +347,89 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(released.returncode,0,released.stderr)
         self.assertEqual(r.read(self.store.leases),{})
 
+    def front_exec(self, script, **env):
+        """The wrapper in front of a run (`bureau-runtime.py exec`, as shepherd.sh
+        starts it) around `bash -c <script>`, which stands in for the shepherd;
+        no signal reaches the wrapper."""
+        env={**os.environ,'PY':sys.executable,'RUNTIME':str(SCRIPT),'REPO':str(self.repo),**env}
+        env.pop('BUREAU_RUN_ID',None); env.pop('BUREAU_RUN_DEPTH',None)
+        return subprocess.run([sys.executable,str(SCRIPT),'--repo',str(self.repo),'exec','--issue','TEAM-1','--','bash','-c',script],
+                              env=env,capture_output=True,text=True,timeout=60)
+
+    def release_run(self, run):
+        return subprocess.run([sys.executable,str(SCRIPT),'--repo',str(self.repo),'release',run],capture_output=True,text=True)
+
+    def test_child_exit_130_keeps_the_run_interrupted_while_an_inner_wrapper_still_runs(self):
+        # A stop sent to an inner process group only (v3.2, O1; the maintainer's
+        # decision: a child's 130 counts as interrupted). The shepherd ends with 130
+        # while the worker's wrapper of the same run still waits for its stage (a
+        # slow EXIT trap, such as implement's deferred push), so no inner wrapper has
+        # recorded the interrupt yet. The order is forced with files, without a
+        # signal. Before, the wrapper in front returned the 130 and released the
+        # leases while the stage still ran, and printed no steps.
+        tmp=Path(self.temp.name)
+        started, may_end, ended, inner_log = tmp/'stage-started', tmp/'stage-may-end', tmp/'stage-ended', tmp/'inner.log'
+        inner_pid=tmp/'inner.pid'
+        def end_stage():
+            # The inner wrapper and its stage end with the test, also when it fails early,
+            # before the temporary directory goes (cleanups run last-in, first-out).
+            may_end.touch()
+            pid=int(inner_pid.read_text()) if inner_pid.exists() else None
+            deadline=time.monotonic()+20
+            while pid and time.monotonic()<deadline:
+                try: os.kill(pid,0)
+                except ProcessLookupError: break
+                time.sleep(.05)
+        self.addCleanup(end_stage)
+        stage=('import pathlib, time\nstarted, may_end = pathlib.Path(%r), pathlib.Path(%r)\nstarted.touch()\n'
+               'while not may_end.exists() and started.exists(): time.sleep(.02)\n'
+               'pathlib.Path(%r).touch()' % (str(started), str(may_end), str(ended)))
+        shepherd=('"$PY" "$RUNTIME" --repo "$REPO" exec --issue TEAM-1 -- "$PY" -c "$STAGE" > "$INNER_LOG" 2>&1 &\n'
+                  'echo $! > "$INNER_PID"\nwhile [ ! -e "$STARTED" ]; do sleep .02; done\nexit 130\n')
+        proc=self.front_exec(shepherd,STAGE=stage,STARTED=str(started),INNER_LOG=str(inner_log),INNER_PID=str(inner_pid))
+        self.assertEqual(proc.returncode,130,proc.stderr)
+        self.assertFalse(ended.exists(),'the stage ended first: the order was not forced')
+        leases=r.read(self.store.leases,{})
+        self.assertEqual(sorted(leases),['issue:TEAM-1','workspace:'+str(self.repo)],proc.stderr)
+        self.assertTrue(all(lease['interrupted'] for lease in leases.values()),leases)
+        run=leases['issue:TEAM-1']['run_id']
+        self.assertEqual(proc.stderr.count('Interrupted Bureau run '+run),1,proc.stderr)
+        self.assertIn('bureau-runtime.py release '+run,proc.stderr)
+        # The stage still runs under the inner wrapper: release refuses until it ends.
+        held=self.release_run(run)
+        self.assertEqual(held.returncode,21,held.stdout+held.stderr)
+        self.assertIn('still alive',held.stderr)
+        may_end.touch()
+        deadline=time.monotonic()+15
+        while (released:=self.release_run(run)).returncode!=0 and time.monotonic()<deadline: time.sleep(.1)
+        self.assertEqual(released.returncode,0,released.stdout+released.stderr+inner_log.read_text())
+        self.assertTrue(ended.exists())
+        self.assertEqual(r.read(self.store.leases),{})
+
+    def test_child_exit_130_without_an_inner_wrapper_keeps_the_run_interrupted(self):
+        # The shepherd stopped while no stage ran (a Linear read, its own wait before a
+        # retry): no inner wrapper exists that could record the interrupt.
+        proc=self.front_exec('exit 130')
+        self.assertEqual(proc.returncode,130,proc.stderr)
+        leases=r.read(self.store.leases,{})
+        self.assertEqual(len(leases),2,proc.stderr)
+        self.assertTrue(all(lease['interrupted'] for lease in leases.values()),leases)
+        self.assertEqual(proc.stderr.count('Interrupted Bureau run '),1,proc.stderr)
+        self.assertEqual(self.release_run(leases['issue:TEAM-1']['run_id']).returncode,0)
+
+    def test_child_exit_other_than_130_still_releases_the_run(self):
+        # Only 130 is a stop: a finished run (0), a halt (1, 25) and a child that died
+        # by a signal it did not handle (129, 143) release the leases as before.
+        for code in (0, 1, 25, 129, 143):
+            with self.subTest(code=code):
+                # Each code on its own: leases a failed code left behind would turn the next
+                # run into an ownership conflict instead.
+                self.store.leases.unlink(missing_ok=True)
+                proc=self.front_exec('exit %d' % code)
+                self.assertEqual(proc.returncode,code,proc.stderr)
+                self.assertEqual(r.read(self.store.leases,{}),{},proc.stderr)
+                self.assertNotIn('Interrupted Bureau run',proc.stderr)
+
 
     def test_app_blockers_apply_durable_queue_exclusion(self):
         self.config['linear']['labels']={'lane2':{'name':'lane-2'},'needs_human':{'name':'human-decision'}}
