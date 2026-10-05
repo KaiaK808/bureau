@@ -104,6 +104,50 @@ push_branch_loud() {
   return 0
 }
 
+# push_confirmed <label> <count>: one line once a push of HEAD went through —
+# the branch, how many commits origin lacked before it (an empty count: the
+# comparison could not be read) and the head it pushed. push_branch_loud speaks
+# only on failure, so a log used to announce a push and never confirm it. The
+# write cannot end the stage (a terminal that went away).
+push_confirmed() {
+  [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  local count="$2" head
+  head=$(git rev-parse --short HEAD 2>/dev/null) || head="unreadable"
+  if [ -n "$count" ]; then count="$count commit(s) origin lacked"
+  else count="origin/$BRANCH could not be compared before the push"; fi
+  ( echo "  pushed $BRANCH ($1): $count, head $head" ) || true
+}
+
+# push_if_ahead <why>: the push before the stage ends without reaching its
+# end-of-run push because a provider pass failed — any exit but 0 and 124 — or
+# timed out with no pass left (end_timed_out). It pushes HEAD whenever
+# origin/$BRANCH lacks commits of it, whatever
+# agents.implement.push_each_iteration says and whether or not a pass has
+# completed yet: push_iteration runs only after a pass that returned, so the
+# commits of a first pass that died used to stay in the worktree. An unreadable
+# comparison counts as ahead, as for the end-of-run push. Best effort and loud
+# on failure like every push here; the caller keeps its exit code. It carries
+# whatever push_iteration held back, so push_deferred has nothing left to do.
+#
+# The bound on an interrupt: the push runs in the stage's own process group —
+# nothing here starts a session or group of its own — which is the group
+# bureau-runtime.py sends the stop signal to and kills with SIGKILL when its
+# grace ends (stop_grace). A push in flight ends with the rest of the stage,
+# and one that hangs on a remote cannot hold a stop past that grace.
+push_if_ahead() {
+  local why="$1" ahead
+  DEFERRED_PUSH_PENDING=0
+  ahead=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null) || ahead=""
+  [ "$ahead" != 0 ] || return 0
+  ( echo "  pushing ${ahead:-the} commit(s) of $BRANCH that origin lacks before the stage ends ($why)" >&2 ) || true
+  if push_branch_loud "$why" status; then
+    push_confirmed "$why" "$ahead"
+  else
+    ( echo "  ✗✗ the work is only in this worktree until a later push succeeds" >&2 ) || true
+  fi
+  return 0
+}
+
 # run_post_implement_command: the optional repo.post_implement_command hook
 # (.bureau.json), for a repo that has to derive files from an implementation
 # run — regenerate generated docs or contracts — before anyone sees the branch.
@@ -821,12 +865,12 @@ checked_task_count() {
 }
 
 # end_timed_out <pass> <why no pass is left>: the end after a pass that timed
-# out when no further pass runs — the deferred commits go out first, then the
-# stage ends with 124 (timeout), as before v3.2. The pass's own commits went out
-# with its push_iteration already.
+# out when no further pass runs — every commit origin lacks goes out first
+# (push_if_ahead: the deferred ones, or one whose push after its pass failed),
+# then the stage ends with 124 (timeout), as before v3.2.
 end_timed_out() {
   echo "Provider pass failed with exit 124 (iter $1 timed out) and no pass is left: $2. Preserved any changes. See provider evidence." >&2
-  push_deferred "provider exit 124"
+  push_if_ahead "provider exit 124"
   exit 124
 }
 
@@ -939,10 +983,11 @@ At the end of your work, emit a single fenced json block so the shell can summar
   set -e
   commit_codex_changes implement "$ISSUE"
   # 124 (the pass hit its time limit) goes on below like any pass; every other
-  # non-zero exit ends the stage with its code, after the deferred push.
+  # non-zero exit ends the stage with its code, after pushing every commit
+  # origin lacks — this pass's own included (push_if_ahead).
   if [ "$CLAUDE_EXIT" != 0 ] && [ "$CLAUDE_EXIT" != 124 ]; then
     echo "Provider pass failed with exit $CLAUDE_EXIT; preserved any changes. See provider evidence." >&2
-    push_deferred "provider exit $CLAUDE_EXIT"
+    push_if_ahead "provider exit $CLAUDE_EXIT"
     exit "$CLAUDE_EXIT"
   fi
   if [ "$CLAUDE_EXIT" = 124 ]; then
@@ -1124,7 +1169,9 @@ echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 # Pushes when the run committed or when this worktree holds anything origin
 # does not (a merge of origin/main before the loop is counted by neither
 # COMMITS_TOTAL nor the iter log). An unreadable comparison counts as ahead.
-AHEAD_OF_ORIGIN=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo 1)
+# A push that goes through says so (push_confirmed), with this count.
+AHEAD_READ=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null) || AHEAD_READ=""
+AHEAD_OF_ORIGIN=${AHEAD_READ:-1}
 # A hook that moved HEAD off the commit it started from gets no push below.
 # With deferred pushes origin then lacks the run's own commits: push the commit
 # the hook started from, which is what the per-iteration pushes would have put
@@ -1180,7 +1227,11 @@ ${POST_IMPLEMENT_REPORT}
         post_comment "$ISSUE" "$PUSH_FAIL_COMMENT" || true
         exit 18
       fi
+    else
+      push_confirmed "end of run, retry" "$AHEAD_READ"
     fi
+  else
+    push_confirmed "end of run" "$AHEAD_READ"
   fi
 fi
 

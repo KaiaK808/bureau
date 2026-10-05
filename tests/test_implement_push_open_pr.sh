@@ -21,7 +21,8 @@
 #  12  false, PR open, COMPLETE: one push, then the PR is marked ready and the ticket moves
 #  4b  false, gh answers text that is not a number (exit 0): no PR, pushes as by default
 #  14  false, PR open, the provider times out (124) on call 3: the held-back iterations are
-#      pushed before the stage ends, and it still ends with 124
+#      pushed before the stage ends (since v3.2 by push_if_ahead, whatever origin lacks), and
+#      it still ends with 124
 #  15  the same with an exhausted quota (23) on a call that made no commit
 #  16  the same with an interrupted provider (130)
 #  17  the same when the stage itself gets SIGTERM during call 2 (the EXIT trap): 143
@@ -194,7 +195,8 @@ has 'move_issue.*state-build-review' "$(calls)" "12 hand-off"
 teardown
 
 # 14–16 — false, PR open, the provider fails: the held-back commits go out before the exit
-for c in "14 3 124" "15 2 23" "16 2 130"; do
+# (the fourth field: how many commits origin lacks by then)
+for c in "14 3 124 3" "15 2 23 1" "16 2 130 2"; do
   set -- $c
   setup "$OFF"
   pr3_fake_claude
@@ -205,7 +207,7 @@ for c in "14 3 124" "15 2 23" "16 2 130"; do
   check_eq "$3" "$LAST_RC" "$1 the provider's exit code is kept"
   check_eq 1 "$(pr3_pushes)" "$1 one push, before the exit"
   check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "$1 every commit of the run on origin"
-  has "pushing the deferred commits of test-branch \(provider exit $3\)" "$LAST_STDERR" "$1 says why"
+  has "pushing $4 commit\(s\) of test-branch that origin lacks before the stage ends \(provider exit $3\)" "$LAST_STDERR" "$1 says why"
   hasnt 'move_issue' "$(calls)" "$1 no hand-off"
   teardown
 done

@@ -280,7 +280,7 @@ Reviewed PRs accumulate when nothing closes the loop: mergeable-and-approved PRs
 
 ### Bounded retry loop in implement-pipeline.sh
 
-`implement-pipeline.sh` runs the selected provider inside a `for (( i=1; i<=MAX_ITER; i++ ))` loop instead of a single call. Each iteration: invoke `$CLAUDE`, parse the strict JSON status block via `parse_claude_json`, run the squash-range check (a CI suppressor in a commit message, or a range that cannot be read, stops the loop as `CI_MARKER`), push whatever was committed (deferred to the end-of-run push while a PR is open when `agents.implement.push_each_iteration` is `false`), decide whether to continue. The pipeline previously emitted that JSON contract but never read it back — every exit-0 run shipped to Build Review even on `status: PARTIAL`, leaking half-done work into review.
+`implement-pipeline.sh` runs the selected provider inside a `for (( i=1; i<=MAX_ITER; i++ ))` loop instead of a single call. Each iteration: invoke `$CLAUDE`, parse the strict JSON status block via `parse_claude_json`, run the squash-range check (a CI suppressor in a commit message, or a range that cannot be read, stops the loop as `CI_MARKER`), push whatever was committed (deferred to the end-of-run push while a PR is open when `agents.implement.push_each_iteration` is `false`), decide whether to continue. A pass whose provider call fails, or a timed-out one when no pass is left, ends the stage after pushing every commit origin lacks, in both push modes (`push_if_ahead`). The pipeline previously emitted that JSON contract but never read it back — every exit-0 run shipped to Build Review even on `status: PARTIAL`, leaking half-done work into review.
 
 Knobs (env-tunable, all have safe defaults):
 

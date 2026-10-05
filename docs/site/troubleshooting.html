@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="36328a2437c1b38d806e2edb9736cb56dc9ea5038d17c6eaef1034c73723c065">
+<meta name="bureau-source-sha256" content="9470b813907362e972102f479f905cb633f3b7cc5c8ce1a32c2d84f8e52cc658">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -491,10 +491,22 @@ the shell has already committed, and the note says so. The stage ends
 with 124 only when no pass is left after a timed-out one:
 <code>BUREAU_IMPL_MAX_ITER</code> passes have run, or
 <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> leaves 60 s or less for another.
-Then the deferred commits are pushed first and stderr says
+Then stderr says
 <code>Provider pass failed with exit 124 (iter N timed out) and no pass is left: …</code>
-with the reason. Every other non-zero provider exit (16, 22, 23, 24,
-130) still ends the stage right after its pass, as before.</p>
+with the reason, and every commit origin lacks is pushed before the
+stage ends. Every other non-zero provider exit (16, 22, 23, 24, 130)
+still ends the stage right after its pass, as before, and since v3.2
+also pushes every commit origin lacks first, the failed pass's own
+included, whatever <code>agents.implement.push_each_iteration</code>
+says (before, the failed pass's commits stayed in the worktree with
+<code>true</code>, and with <code>false</code> when it was the first
+pass): stderr says
+<code>pushing N commit(s) of &lt;branch&gt; that origin lacks before the stage ends (provider exit X)</code>,
+stdout
+<code>pushed &lt;branch&gt; (provider exit X): N commit(s) origin lacked, head &lt;sha&gt;</code>
+once it went through. The stage keeps the provider's exit code; a
+refused push is reported on stderr and the work stays in the
+worktree.</p>
 <p>So an implement stage can now take up to
 <code>BUREAU_IMPL_MAX_ITER</code> provider passes when passes time out,
 together bounded by <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> (each pass
