@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9672c1a7c77ab8271908b70a4825163d3a19e724f93126094b4e575daadea14d">
+<meta name="bureau-source-sha256" content="3541e954ed007e7530fb77bdf972cdaefb9914403655095baa29b7cb4eafbd32">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -722,10 +722,11 @@ Required for Codex implementation completion and the app tests action.
 <code>null</code>, <code>false</code> or <code>""</code>, which stop a
 Codex completion with <code>24</code>) only when implement resolves to
 Codex (<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it, from
-<code>.env</code> before the environment, else
-<code>agents.implement.runner</code>, else <code>agents.runner</code>),
-also with <code>agents.implement</code> off, since the shepherd runs
-every stage unless <code>--respect-config</code></td>
+the <code>.env</code> the stages read (<code>BUREAU_ENV_FILE</code>)
+before the environment, else <code>agents.implement.runner</code>, else
+<code>agents.runner</code>), also with <code>agents.implement</code>
+off, since the shepherd runs every stage unless
+<code>--respect-config</code></td>
 </tr>
 <tr>
 <td><code>repo.untrusted_env</code></td>
@@ -1517,8 +1518,11 @@ primary worktree. Keep the trusted private config out of commits</td>
 main checkout. A relative value counts from that directory. Since v3.2
 no script reads <code>./.env</code> of its working directory any more: a
 stage runs in the branch's worktree, where <code>./.env</code> would be
-a file the branch commits. doctor/provider <code>--describe</code> do
-not read it</td>
+a file the branch commits. <code>bureau-doctor.py</code> reads only
+<code>BUREAU_RUNNER_IMPLEMENT</code> from it (for the
+<code>repo.test_command</code> warning), from the same file by the same
+rule, also when it runs in a linked worktree; provider
+<code>--describe</code> does not read it</td>
 </tr>
 <tr>
 <td><code>BUREAU_ALERT_THROTTLE_FILE</code></td>

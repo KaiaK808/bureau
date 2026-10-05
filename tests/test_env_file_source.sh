@@ -119,9 +119,11 @@ F=$FAILS
 stray=$(grep -nE '\[ -f \.env \]|bureau_load_env( --export)? +\.env\b|_bureau_env_file_defines +\.env\b' "$SCRIPTS"/*.sh "$SCRIPTS"/*.py \
           | grep -vE ':[0-9]+: *#' || true)
 [ -z "$stray" ] || fail "5: a script reads .env relative to its working directory: $(printf '%s' "$stray" | sed "s#$SCRIPTS/##g" | tr '\n' ';')"
-# … and every reader outside the library reads BUREAU_ENV_FILE.
-loose=$(grep -nE 'bureau_load_env( --export)? +[^ ]' "$SCRIPTS"/*.sh "$SCRIPTS"/*.py | grep -v '/bureau-env\.sh:' | grep -vE ':[0-9]+: *#' \
-          | grep -vE 'bureau_load_env( --export)? +"\$(\{)?BUREAU_ENV_FILE' || true)
+# … and every reader outside the library reads BUREAU_ENV_FILE. Doctor's reader takes its file as
+# an argument from stage_env_file (bureau-doctor.py); tests/doctor_checks_test.py runs it next to the
+# nine stages' loaders and checks that both read the same file.
+loose=$(grep -nE 'bureau_load_env( --export)? +["$.~/]' "$SCRIPTS"/*.sh "$SCRIPTS"/*.py | grep -v '/bureau-env\.sh:' | grep -vE ':[0-9]+: *#' \
+          | grep -vE 'bureau_load_env( --export)? +"\$(\{)?BUREAU_ENV_FILE' | grep -vE '/bureau-doctor\.py:[0-9]+:.*bureau_load_env "\$2" ' || true)
 [ -z "$loose" ] || fail "5: a script reads a .env other than BUREAU_ENV_FILE: $(printf '%s' "$loose" | sed "s#$SCRIPTS/##g" | tr '\n' ';')"
 section "$F" "5 no script reads a .env relative to its working directory"
 

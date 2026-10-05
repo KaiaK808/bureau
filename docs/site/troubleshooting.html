@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e114c945e774c2bb1ff5196b7a2c1ee38e3f97fa3417d1e4dd76f82d8c8ecaab">
+<meta name="bureau-source-sha256" content="72d3a6829109c66ac7ee6f49c4e021d5a73e4629e5325d6fbf2cfe8b9bca673c">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -837,11 +837,13 @@ agent, and stops with <code>24</code> when none is set (absent,
 appears only when implement resolves to Codex:
 <code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it (the value in
 the <code>.env</code> the stages read, <code>BUREAU_ENV_FILE</code> or
-else the one next to <code>.bureau.json</code>, which doctor reads with
-the stages' own reader and never executes; else doctor's environment),
-else <code>agents.implement.runner</code> when
-<code>agents.implement</code> is an object, else
-<code>agents.runner</code>. It appears with
+else the one next to <code>.bureau.json</code>, a relative
+<code>BUREAU_ENV_FILE</code> counted from the directory of
+<code>.bureau.json</code>, never a <code>.env</code> of the checkout
+doctor runs in; doctor reads it with the stages' own reader and never
+executes it; else doctor's environment), else
+<code>agents.implement.runner</code> when <code>agents.implement</code>
+is an object, else <code>agents.runner</code>. It appears with
 <code>agents.implement</code> off as well, because the shepherd runs
 every stage unless <code>--respect-config</code>. Set
 <code>repo.test_command</code> to the project's real test command.

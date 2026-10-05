@@ -125,16 +125,22 @@ LONG_CALL_STAGES = ('spec', 'spec_review', 'ux', 'qa', 'code_review')
 LONG_CALL_MIN_SECONDS = 1800
 
 
+def stage_env_file(config_path):
+    """The .env every stage reads, as _find_config in bureau-config.sh sets it (bureau-config.sh:40-44):
+    BUREAU_ENV_FILE, by default (unset or empty) the .env next to .bureau.json; a relative value counts
+    from the directory of .bureau.json, never from the working directory. Never ./.env of the checkout
+    doctor runs in: in a stage worktree that is a file the branch controls (v3.2)."""
+    return config_path.parent / (os.environ.get('BUREAU_ENV_FILE') or '.env')
+
+
 def stage_env_value(config_path, name):
-    """<name> as the implement stage sees it once it has loaded .env (implement-pipeline.sh:17-20). The
-    stage runs in its worktree, which holds no ./.env after the reset (git clean -fdx), so it reads
-    BUREAU_ENV_FILE, by default the .env next to .bureau.json (bureau-config.sh:35); so does doctor,
-    whichever checkout it runs in. The file is read by the stages' own reader, bureau_load_env in
-    bureau-env.sh, run here unchanged: it never executes the file, takes only the keys on its list, and
-    a key the file sets replaces the environment's value while a key it lacks leaves the environment's.
-    Returns the value, or None when neither sets it; the environment's value when there is no such
-    file or it cannot be read."""
-    env_file = Path(os.environ.get('BUREAU_ENV_FILE') or config_path.parent / '.env')
+    """<name> as the implement stage sees it once it has loaded .env (implement-pipeline.sh:17-20): the
+    stage reads stage_env_file and nothing else, whichever checkout it runs in, and so does doctor. The
+    file is read by the stages' own reader, bureau_load_env in bureau-env.sh, run here unchanged: it
+    never executes the file, takes only the keys on its list, and a key the file sets replaces the
+    environment's value while a key it lacks leaves the environment's. Returns the value, or None when
+    neither sets it; the environment's value when there is no such file or it cannot be read."""
+    env_file = stage_env_file(config_path)
     if not env_file.is_file(): return os.environ.get(name)
     script = 'source "$1" || exit 1; bureau_load_env "$2" 2>/dev/null || exit 1; n=$3; [ -z "${!n+set}" ] || printf "set:%s" "${!n}"'
     try:
@@ -456,7 +462,7 @@ def diagnose(repo, mode):
         warnings.append('Provider timeout below ' + str(LONG_CALL_MIN_SECONDS) + ' s per call: ' + ', '.join(short) + '. Spec, spec review, UX, QA and review calls'
                         ' often run 15 to 30 minutes and end with 124 when cut off; raise agents.<stage>.timeout_seconds or agents.providers.<runner>.timeout_seconds (default 3600)'
                         + ('; BUREAU_STAGE_TIMEOUT in the environment wins over both' if os.environ.get('BUREAU_STAGE_TIMEOUT') else ''))
-    if (path.parent / '.env').is_file(): warnings.append('Doctor resolves JSON and process environment only; it does not execute .env (it reads only BUREAU_RUNNER_IMPLEMENT from it, for the repo.test_command warning). Source trusted overrides before running doctor for matching effective settings.')
+    if stage_env_file(path).is_file(): warnings.append('Doctor resolves JSON and process environment only; it does not execute .env (it reads only BUREAU_RUNNER_IMPLEMENT from it, for the repo.test_command warning). Source trusted overrides before running doctor for matching effective settings.')
     active = runtime.read(repo / '.specify/integration.json', {})
     manifest = runtime.read(repo / '.bureau-install.json', {})
     drift = []
