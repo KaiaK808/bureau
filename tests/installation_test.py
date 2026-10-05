@@ -16,7 +16,12 @@ spec = importlib.util.spec_from_file_location("installer", INSTALLER)
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 # Test repositories must not inherit the operator's signing, hooks or identity settings.
+# maintenance.auto=false: every commit starts `git maintenance run --auto --detach`. From git 2.54 on,
+# its default strategy repacks once objects/17/ holds two loose objects (the template copy already
+# puts one there), and that detached repack can still write into .git while the temp-dir cleanup
+# deletes it ("Directory not empty: '.git'").
 GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "maintenance.auto", "GIT_CONFIG_VALUE_0": "false",
            "GIT_AUTHOR_NAME": "Bureau Test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
            "GIT_COMMITTER_NAME": "Bureau Test", "GIT_COMMITTER_EMAIL": "test@example.invalid"}
 
@@ -160,6 +165,16 @@ class InstallationTests(unittest.TestCase):
 
     def manifest(self):
         return json.loads((self.repo / ".bureau-install.json").read_text())
+
+    def test_commits_through_git_env_start_no_maintenance(self):
+        # Unless maintenance.auto is off, a commit starts `git maintenance run --auto --detach`, the writer the cleanup can race.
+        repo, trace = self.root / "maintenance", self.root / "trace2.json"
+        self.git(self.root, "init", "-q", str(repo))
+        (repo / "file").write_text("content\n")
+        self.git(repo, "add", "-A")
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "one"], check=True, env={**GIT_ENV, "GIT_TRACE2_EVENT": str(trace)})
+        started = [event["argv"] for event in map(json.loads, trace.read_text().splitlines()) if event["event"] == "child_start"]
+        self.assertEqual([argv for argv in started if argv[1:2] in (["maintenance"], ["gc"])], [], started)
 
     def test_apply_records_tagged_untagged_and_dirty_source_per_scope(self):
         source, program = self.tagged_source()
