@@ -626,7 +626,7 @@ test_merge_mode_auto_merges() {
 # ── Gate outcome (v3.0.1): the merge stage tells its caller why it did not merge ──
 # It used to end with 0 whether it merged or not; a shepherd then took the
 # unchanged Merge state for an unseen move and ran into its stuck detector
-# (pilot run EXP-1534). Now: 2 = not yet (pending, not started, still computing),
+# (observed in a pilot run). Now: 2 = not yet (pending, not started, still computing),
 # 25 = blocked; with BUREAU_MERGE_GATE_REPORT the outcome and gate lines land in
 # that file. Inline merges and --dry-run keep their 0.
 run_gate() {  # <sb> [args…] — sets GRC (exit code) and GREP (report file content)
@@ -714,7 +714,7 @@ test_gate_outcome() {
   jq '.agents.rebase = true' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
   echo 'branch_is_bureau_only() { return 0; }' >> "$sb/scripts/bureau-config.sh"
   GATE_ENV="BUREAU_HELD_BY_SHEPHERD=1" run_gate "$sb"; gate_case "$sb" dirty-held 25 blocked 'DIRTY (need CLEAN)' || return 1
-  # A failing check (the EXP-1534 case): blocked, whatever GitHub's state says.
+  # A failing check (the failed-CI case): blocked, whatever GitHub's state says.
   sb=$(make_sandbox gate_red); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNSTABLE"'
   echo '{"check_runs":[{"name":"build + test","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
   run_gate "$sb"; gate_case "$sb" red 25 blocked 'failing check(s) on HEAD_SHA: build + test' || return 1

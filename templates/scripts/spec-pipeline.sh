@@ -19,7 +19,7 @@ bureau_secret_copy API_KEY LINEAR_API_KEY
 precondition_linear
 precondition_runner spec
 
-# EXP-491: single-flight / bounded-parallelism gate. When
+# single-flight / bounded-parallelism gate. When
 # BUREAU_MAX_CONCURRENT_ISSUES is non-zero, refuse to pick new Triage work
 # until existing in-flight issues drain below the cap. Spec is the only
 # stage that admits new work into the pipeline — gating here is sufficient.
@@ -68,7 +68,7 @@ echo "→ Moving $ISSUE to Spec..."
 move_issue "$ISSUE" "$BUREAU_STATE_SPEC"
 echo "  Done."
 
-# EXP-416 Part A: trap failure and route back to Triage. Installed right after
+# trap failure and route back to Triage. Installed right after
 # the Triage→Spec move so any crash in speckit phases doesn't strand the issue.
 # Cleared before the final move_issue → Spec Review so success doesn't fire it.
 _spec_recovery() {
@@ -400,7 +400,7 @@ SPEC_DIGEST_TRIMMED=$(printf '%s' "$SPEC_DIGEST" | sed 's/^[[:space:]]*//; s/[[:
 if [ "$SPEC_DIGEST_TRIMMED" = "SKIP" ]; then
   echo "  Spec digest unchanged — no new comment posted."
 else
-  # Post the combined digest + bureau-branch marker (EXP-413 deterministic
+  # Post the combined digest + bureau-branch marker (deterministic
   # branch discovery). The marker is an HTML comment so it renders invisibly
   # in Linear but can be parsed by get_issue_branch() in implement/spec-review/ux.
   DIGEST_BODY="<!-- bureau-branch: $BRANCH -->

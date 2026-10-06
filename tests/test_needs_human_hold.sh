@@ -1,11 +1,11 @@
 #!/bin/bash
-# A needs-human escalation survives a label write that fails (EXP-1516, EXP-1482 path 6).
+# A needs-human escalation survives a label write that fails.
 #
 # Part 1 runs the REAL mark_needs_human and pipeline_pick_next/pick_issue from
 # templates/scripts/bureau-config.sh under /bin/bash against a stubbed `curl`: the label
 # lookup answers with the label, with none (a plain failure) or with HTML (Linear unusable,
 # 27); `adderr` fails only the label mutation (GraphQL errors), `down` fails every call; the
-# issue list holds EXP-1 (older, higher priority) and EXP-2, and EXP-1 carries needs-human
+# issue list holds two tickets, and the older, higher-priority one carries needs-human
 # once a label mutation went out. Part 3 runs QA's cleanup trap and queue-loop's run_script,
 # both cut from the real scripts.
 # Part 2 runs the needs-human arms cut out of the REAL stage scripts with the harness's stub

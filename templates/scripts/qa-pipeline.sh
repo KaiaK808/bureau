@@ -173,7 +173,7 @@ else
   # cheaply distinguishes test-runner flakes from real failures. ONE retry
   # only — two attempts catches the common single-shot races (parallel
   # cargo, stale target/, transient network); three would mask intermittent
-  # real bugs that should land in needs-human. See EXP-487: parked on a
+  # real bugs that should land in needs-human. An installation parked on a
   # `running 0 tests` / `target failed` flake that passed cleanly on rerun.
   sleep 5
   if bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$TEST_CMD" > "$QA_TMP/test1.retry.log" 2>&1; then
@@ -362,6 +362,6 @@ echo "  Next: $NEXT_STATE"
 echo "═══════════════════════════════════════"
 
 # A needs-human escalation whose label could not be written must not read as
-# success to the driver (EXP-1516): the local hold keeps the queue away, the
+# success to the driver: the local hold keeps the queue away, the
 # non-zero exit stops a shepherd.
 if [ "$NEEDS_HUMAN_UNMARKED" = 1 ]; then exit 25; fi

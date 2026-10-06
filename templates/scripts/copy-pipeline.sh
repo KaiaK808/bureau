@@ -86,7 +86,7 @@ else
   exit 12
 fi
 
-# Same EXP-484 reasoning as implement/qa/code-review: copy commits land in
+# Same base-selection reasoning as implement/qa/code-review: copy commits land in
 # user-facing strings and are pushed. The PR diff is computed against
 # origin/main, so a stale base pollutes review.
 if ! merge_origin_main_or_abort "$ISSUE" "Copy"; then

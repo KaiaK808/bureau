@@ -2,7 +2,7 @@
 # Cross-check spec task files against open PR branches to detect file conflicts,
 # and say whether that check was complete.
 #
-# Carried over from installation A (EXP-1469). Three outcomes, each visible
+# Carried over from an installation. Three outcomes, each visible
 # in the exit code AND in the result line, which is always the last line on
 # stdout:
 #   0  clean       the PR list was read, every open PR was compared, no overlap

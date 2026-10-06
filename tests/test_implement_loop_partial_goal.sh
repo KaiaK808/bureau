@@ -1,6 +1,6 @@
 #!/bin/bash
 # /goal-driven PARTIAL: the single $CLAUDE invocation returns PARTIAL with
-# a real commit (productive-but-cap-time-ish). EXP-622 ready-flip applies on
+# a real commit (productive-but-cap-time-ish). The ready-flip applies on
 # the /goal path the same as the iter-loop path: PARTIAL+commits>0 → PR ready,
 # needs-human label, stays in Build (no state move). Mirrors the contract
 # from test_implement_loop_cap_partial.sh but on BUREAU_USE_GOAL_LOOP=1.

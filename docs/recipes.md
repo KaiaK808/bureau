@@ -234,7 +234,7 @@ tail -F logs/escalations.log
 Line format:
 
 ```
-2026-05-13T19:18:23Z<TAB>ESCALATED<TAB>EXP-402<TAB>code-review<TAB>cycle=3<TAB>reason="REQUEST_CHANGES exceeded max_review_cycles"<TAB>pr=56<TAB>branch=049-parliament-debate
+2000-01-01T00:00:00Z<TAB>ESCALATED<TAB>TEAM-123<TAB>code-review<TAB>cycle=3<TAB>reason="REQUEST_CHANGES exceeded max_review_cycles"<TAB>pr=56<TAB>branch=049-parliament-debate
 ```
 
 Filter to today's escalations from a specific pipeline:
@@ -421,7 +421,7 @@ Mine the pipeline's own runs for recurring failure modes and review-feedback pat
 1. **`queue-loop.sh` emits events.** Every time the queue picks a real candidate, `run_script` writes two JSONL lines to `logs/events.jsonl` — one `stage_start`, one `stage_end` with `issue`, `branch`, `exit_code`, `class`, `duration_s`. Queue-empty ticks emit nothing.
 
    ```json
-   {"ts":"2026-05-11T14:23:01Z","event":"stage_end","mode":"all","stage":"code-review-pipeline.sh","issue":"EXP-512","branch":"037-foo","exit_code":14,"class":"build-failed","duration_s":287}
+   {"ts":"2000-01-01T00:00:00Z","event":"stage_end","mode":"all","stage":"code-review-pipeline.sh","issue":"TEAM-123","branch":"037-foo","exit_code":14,"class":"build-failed","duration_s":287}
    ```
 
    `logs/` is gitignored. `events.jsonl` is append-only — truncate it manually if it grows large; there's no auto-rotation in v1.
@@ -454,7 +454,7 @@ Low-volume early data produces noisy clusters. Auto-applying would amplify garba
 | `event` | string | `stage_start` \| `stage_end` |
 | `mode` | string | `queue-loop.sh` mode (`spec`, `implement`, `all`, …) |
 | `stage` | string | Pipeline script name (e.g. `spec-pipeline.sh`) |
-| `issue` | string | Linear identifier (e.g. `EXP-512`) |
+| `issue` | string | Linear identifier (e.g. `TEAM-123`) |
 | `branch` | string | Spec branch from `<!-- bureau-branch: -->` marker (omitted if not yet resolved) |
 | `exit_code` | number | Pipeline exit status (only on `stage_end`) |
 | `class` | string | Mapping per [`docs/exit-codes.md`](exit-codes.md): `ok`, `queue-empty`, `linear-down`, `build-failed`, … |

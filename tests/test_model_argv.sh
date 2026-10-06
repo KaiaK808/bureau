@@ -6,7 +6,7 @@
 # through the real path — bureau_load_env reads the .env, run_stage_for starts the real
 # provider, and a stub `claude` on PATH records the argv it received. The negative control
 # runs the legacy string form (`$(claude_cmd_for_stage …)` word-split unquoted, which
-# installation A closed as EXP-1476) with the same value and shows the injected option arrive
+# an installation fixed) with the same value and shows the injected option arrive
 # as an argument of its own.
 set -euo pipefail
 

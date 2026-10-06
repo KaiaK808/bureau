@@ -154,9 +154,9 @@ Bureau-init is a **CLI-native, self-hosted, spec-driven multi-agent pipeline** t
 | **LangSmith** | Commercial (free tier) | LangGraph-native | Only if using LangGraph. |
 
 ### Recommended Stack for Bureau-Init
-1. **Helicone** — flip a switch, get cost dashboard (EXP-397)
-2. **Langfuse** — self-hosted deeper traces (EXP-398)
-3. **Flipside** — our custom visualization layer on top (EXP-389)
+1. **Helicone** — flip a switch, get cost dashboard
+2. **Langfuse** — self-hosted deeper traces
+3. **Flipside** — our custom visualization layer on top
 
 ---
 
@@ -166,7 +166,7 @@ Bureau-init is a **CLI-native, self-hosted, spec-driven multi-agent pipeline** t
 - **URL:** agents-ui.com
 - **Type:** Commercial Mac app
 - **What it does:** Tauri + Rust + bundled nushell + zellij. Runs Claude, Codex, Gemini side by side. Manages SSH hosts, files, sessions.
-- **Relevance:** GUI equivalent of Bureau's tmux setup. Model for our Mac app (EXP-388).
+- **Relevance:** GUI equivalent of Bureau's tmux setup. Model for our Mac app.
 
 ### Claudia
 - **URL:** GitHub (React + Rust + Tauri 2)
@@ -178,7 +178,7 @@ Bureau-init is a **CLI-native, self-hosted, spec-driven multi-agent pipeline** t
 - **URL:** github.com/wesm/agentsview
 - **Type:** Open source (Tauri + Go)
 - **What it does:** Browses, searches, analyzes AI agent coding sessions. Supports Claude Code, Codex, Gemini, OpenCode, Copilot. Activity heatmaps, tool usage, velocity metrics.
-- **Relevance:** Post-hoc analysis companion. Run agents with bureau-init, analyze with agentsview (EXP-399).
+- **Relevance:** Post-hoc analysis companion. Run agents with bureau-init, analyze with agentsview.
 
 ---
 
@@ -187,7 +187,7 @@ Bureau-init is a **CLI-native, self-hosted, spec-driven multi-agent pipeline** t
 | Protocol | Org | Purpose | Relevance |
 |---|---|---|---|
 | **MCP** (Model Context Protocol) | Anthropic | Tool access layer | Already used by Claude Code. |
-| **ACP** (Agent Communication Protocol) | Linux Foundation | REST-based agent-to-agent messaging | Future interop layer (EXP-400). |
+| **ACP** (Agent Communication Protocol) | Linux Foundation | REST-based agent-to-agent messaging | Future interop layer. |
 | **A2A** (Agent-to-Agent Protocol) | Google | Multi-agent task execution | Competing standard with ACP. |
 | **Agent Protocol** | Community | Open standard for agent interfaces | Generic, less traction. |
 

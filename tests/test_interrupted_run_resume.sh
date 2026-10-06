@@ -6,7 +6,7 @@
 # message said only "work preserved; inspect processes and explicitly release ownership",
 # three times (once per nested wrapper). Releasing alone and rerunning ended in exit 21
 # ("refusing to reset unregistered worktree"), and the spec stage's feature branch, never
-# pushed, stayed behind to block the next spec run (pilot EXP-1545, runs 1 and 2).
+# pushed, stayed behind to block the next spec run (observed in two pilot runs).
 #
 # Runs the REAL shepherd.sh → bureau-worker.sh → probe stage chain (tests/lib/pr5-interrupt.sh)
 # with the real runtime and config; Linear and Telegram are the curl double.

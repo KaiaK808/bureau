@@ -140,9 +140,7 @@ _Generated: <ISO-8601 UTC>_
 ## Recurring failure modes
 
 <one bullet per cluster, with issue IDs in parens, e.g.:>
-- **build-failed in `src/pipeline/foo.rs`** — 4 issues hit `cargo build` errors
-  in this file. (EXP-512, EXP-518, EXP-531, EXP-540) Last error preview:
-  `error[E0277]: the trait bound ... is not satisfied`.
+- **build-failed in `src/pipeline/foo.rs`** — 4 issues hit `cargo build` errors in this file. (TEAM-123, TEAM-124, TEAM-125, TEAM-126) Last error preview: `error[E0277]: the trait bound ... is not satisfied`.
 
 <or, if nothing clusters:>
 - _No failure modes clear the 3-issue threshold this window._
@@ -150,9 +148,7 @@ _Generated: <ISO-8601 UTC>_
 ## Review feedback that repeats
 
 <one bullet per n-gram cluster, with quoted phrase + issue list, e.g.:>
-- _"the spec doesn't define what happens when X is null"_ — appeared in 5
-  review comments (EXP-489, EXP-501, EXP-507, EXP-512, EXP-522). Likely a
-  spec-pipeline prompt fix: prompt should require an "edge cases" section.
+- _"the spec doesn't define what happens when X is null"_ — appeared in 5 review comments (TEAM-123, TEAM-124, TEAM-125, TEAM-126, TEAM-127). Likely a spec-pipeline prompt fix: prompt should require an "edge cases" section.
 
 ## Stage timing (p50 / p90, seconds)
 

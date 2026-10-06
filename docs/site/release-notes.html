@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3cdc7a2b0ec94f7c7283660100abdeaff466db81d9cb0969fe38564099d8e13b">
+<meta name="bureau-source-sha256" content="ce454238ba1aad065b9e9b6b6ebd14c001b66d2a4e1553847312d31bbfeed921">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -16,17 +16,18 @@
 <a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
 </nav></aside>
 <main class="bhb-main"><h1
-id="bureau-v320--unexported-secrets-implement-work-kept-on-origin-and-queues-that-move-past-a-waiting-gate">Bureau
-v3.2.0 — unexported secrets, implement work kept on origin, and queues
-that move past a waiting gate</h1>
+id="bureau-v321--public-reference-cleanup-without-behaviour-change">Bureau
+v3.2.1 — public reference cleanup without behaviour change</h1>
 <p><strong>Stable release · 2026-10-06 · source tag
-<code>v3.2.0</code>.</strong> The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">GitHub
+<code>v3.2.1</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">GitHub
 Release</a> is marked as latest and records the exact tagged commit.
-v3.2.0 has the same runtime, installer, templates and tests as its
-candidate, <a href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>. The
-previous stable release is <a href="release-notes-v3.1.0.html">v3.1.0</a>.
-Earlier releases: v3.1.0's candidates <a
+v3.2.1 is a patch release on <a
+href="release-notes-v3.2.0.html">v3.2.0</a>, without behaviour change. The
+v3.2.0 candidate was <a
+href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>; the previous minor
+release is <a href="release-notes-v3.1.0.html">v3.1.0</a>. Earlier
+releases: v3.1.0's candidates <a
 href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a> and <a
 href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>, <a
 href="release-notes-v3.0.2.html">v3.0.2</a>, <a
@@ -35,6 +36,29 @@ href="release-notes-v3.0.0.html">v3.0.0</a> with its candidates <a
 href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a> and <a
 href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>, and the previous
 major release <a href="release-notes-v2.0.0.html">v2.0.0</a>.</p>
+<h2 id="what-changed-since-v320">What changed since v3.2.0</h2>
+<p>This patch removes internal references without changing behaviour.
+Configuration defaults, environment variable names, runtime logic and
+test fixture data are unchanged; there are no dependency or exit-code
+changes.</p>
+<ul>
+<li>Internal ticket references and incident dates were removed from
+comments, documentation, changelog history, AGENTS.md, command and skill
+texts and test comments.</li>
+<li>Ticket-format examples now use <code>TEAM-123</code>, including the
+two shepherd help/error texts and the command texts.</li>
+<li>The internal drift inventory document was removed.</li>
+<li>The <code>needs-human</code> section marker in
+<code>bureau-config.sh</code> was renamed; the test harness
+(<code>tests/lib/harness.sh</code>) and shepherd test
+(<code>tests/test_shepherd.sh</code>), which extract that section,
+follow the new marker.</li>
+<li>New <code>tests/test_no_internal_refs.sh</code> guards private
+ticket references in templates, public prose and test comments and
+checks that the internal drift inventory is absent. Its matcher
+self-check permits test fixture data and neutral examples.</li>
+</ul>
+<h2 id="what-changed-since-v310">What changed since v3.1.0</h2>
 <p>v3.2 is a minor release on v3.1.0 with eleven pull requests. It
 closes indirect paths to the Bureau secrets, retries timed-out implement
 passes and pushes their work before a failure ends the stage, brings
@@ -42,7 +66,6 @@ review and QA findings into rework, lets queues move past a waiting
 merge gate, stops a run on a hang-up, and fixes stale spec-state reads
 and broken-pipe handling. The v3 exit-code contract stays; no exit code
 is new.</p>
-<h2 id="what-changed-since-v310">What changed since v3.1.0</h2>
 <ul>
 <li><strong>The stages keep the <code>.env</code> keys unexported, and
 remote git runs without branch hooks</strong> (<a
@@ -81,7 +104,7 @@ top-level or listed nested <code>.gitattributes</code>, or
 it; keep the keys only in <code>.env</code> to get the protection.
 Stored logins, same-user files and commands branch code can name in
 <code>.git/config</code> remain outside this boundary (see <a
-href="https://github.com/KaiaK808/bureau/blob/v3.2.0/SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).</li>
+href="https://github.com/KaiaK808/bureau/blob/v3.2.1/SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).</li>
 </ul></li>
 <li><strong>Python helpers are isolated, and doctor checks the same
 linked directories and implement runner as the stages</strong> (<a
@@ -293,16 +316,26 @@ PR.</li>
 </ul></li>
 </ul>
 <p>See the <a
-href="https://github.com/KaiaK808/bureau/blob/v3.2.0/CHANGELOG.md">changelog</a>
+href="https://github.com/KaiaK808/bureau/blob/v3.2.1/CHANGELOG.md">changelog</a>
 for the full entries, <a
-href="https://github.com/KaiaK808/bureau/blob/v3.2.0/docs/configuration.md">configuration</a>
+href="https://github.com/KaiaK808/bureau/blob/v3.2.1/docs/configuration.md">configuration</a>
 for the new keys, <a href="exit-codes.html">exit codes</a> for the
 vocabulary and <a
-href="https://github.com/KaiaK808/bureau/blob/v3.2.0/docs/troubleshooting.md">troubleshooting</a>
+href="https://github.com/KaiaK808/bureau/blob/v3.2.1/docs/troubleshooting.md">troubleshooting</a>
 for stopping and resuming a run.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p>From <strong>v3.1.0</strong>: select tag <code>v3.2.0</code> in the
+<p>From <strong>v3.2.0</strong>: select tag <code>v3.2.1</code> in the
+source skill checkout and refresh skill discovery. A resync is optional
+because the scripts and interfaces change only in comments, help texts
+and example values; installers will report those files as updates. To
+receive the cleaned text, resync the scripts and interfaces scopes
+(<code>--resync-interfaces --resync-scripts</code>), preserving
+customized files as in <a
+href="migration.html#preview-and-resolve-asset-conflicts">migration</a>.
+No configuration change is required. Without a resync, the manifest
+keeps naming the previously installed source.</p>
+<p>From <strong>v3.1.0</strong>: select tag <code>v3.2.1</code> in the
 source skill checkout and resync the <strong>scripts scope and the
 interfaces scope as one set</strong>
 (<code>--resync-interfaces --resync-scripts</code>). The scripts depend
@@ -317,7 +350,7 @@ href="migration.html#before-changing-an-adopting-repository">migration</a>;
 <code>/bureau-init --update</code> changes configuration only. From a
 v3.1 candidate or older release, go through <a
 href="migration.html#upgrade-to-v31">Upgrade to v3.1</a> and the earlier
-upgrade notes too, selecting <code>v3.2.0</code> and both scopes.</p>
+upgrade notes too, selecting <code>v3.2.1</code> and both scopes.</p>
 <p>Check these before dispatch resumes; the complete operator list is in
 <a href="migration.html#upgrade-to-v32">Upgrade to v3.2</a>:</p>
 <ul>
@@ -443,10 +476,10 @@ old scripts because the installer replaces files atomically. Run doctor
 (<code>python3 scripts/bureau-doctor.py --mode background</code>), then
 qualify a representative ticket before dispatch resumes.</p>
 <p><strong>Already on the candidate.</strong> From
-<strong>v3.2.0-rc.1</strong>: select tag <code>v3.2.0</code>; no resync
-is needed, because runtime, installer, templates and tests are identical
-(the manifest keeps naming rc.1 as its source until the next
-resync).</p>
+<strong>v3.2.0-rc.1</strong>: select tag <code>v3.2.1</code>; a resync
+is optional for the same comment and help-text cleanup as from v3.2.0.
+Behaviour is unchanged, and the manifest keeps naming rc.1 as its source
+until the next resync.</p>
 <h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
 <p>Dependencies and platforms are unchanged (Python 3.9+, Bash 3.2+, Git
 2.26+, jq, curl; Node.js 18+ for the shared scheduler; Linux and macOS).
@@ -455,7 +488,12 @@ optional, and the manifest stays at version <code>1</code>. The exit
 codes keep their meanings; a queued check past its grace now uses 25,
 and a hang-up or child's 130 keeps interrupted leases. Git LFS
 installations need <code>repo.remote_git_runs_hooks: true</code> before
-using v3.2.0.</p>
+using v3.2.1.</p>
+<p>To roll back to v3.2.0, select tag <code>v3.2.0</code> in the source
+skill checkout; a resync is optional because this patch changes no
+behaviour. If the cleaned text was installed and the old text is wanted,
+resync the scripts and interfaces scopes or restore the private backup
+(<a href="migration.html#rollback">rollback</a>).</p>
 <p>To roll back to v3.1.0, point the source at tag <code>v3.1.0</code>
 and resync the scripts and interfaces scopes as one set, or restore the
 private backup (<a href="migration.html#rollback">rollback</a>). That
@@ -487,9 +525,17 @@ verifier before its merge; <a
 href="https://github.com/KaiaK808/bureau/pull/49">#49</a> was checked by
 a security verifier and a Codex cross-check over three rounds. CI is
 green on ubuntu and macOS on the tagged commit of
-<code>v3.2.0-rc.1</code> (<code>14fc936</code>). Release preparation
-changes documentation only; runtime, installer, templates and tests are
-identical to that candidate.</p>
+<code>v3.2.0-rc.1</code> (<code>14fc936</code>). v3.2.0's release
+preparation changed documentation only; its runtime, installer,
+templates and tests are identical to that candidate.</p>
+<p><strong>Patch validation.</strong> The v3.2.1 checks are
+<code>python3 scripts/render_docs.py</code>,
+<code>bash tests/test_docs.sh</code> and
+<code>bash tests/test_no_internal_refs.sh</code>: regenerated
+documentation must match its canonical sources and resolve local links,
+and the reference guard must pass its self-check and scans. The full
+suite remains a CI check. The live acceptance above was on v3.2.0-rc.1;
+no new live-ticket run was performed for this patch.</p>
 <p>Known limitations:</p>
 <ul>
 <li><strong>Process environments.</strong> Linux
@@ -579,7 +625,7 @@ user).</li>
 <li>Branch code runs as the same operating-system user: it can read the
 operator's files and can write <code>.git/config</code> to name a
 command Bureau's later push runs (see <a
-href="https://github.com/KaiaK808/bureau/blob/v3.2.0/SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>);
+href="https://github.com/KaiaK808/bureau/blob/v3.2.1/SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>);
 isolate with separate users or containers where that matters.</li>
 <li>During a usage throttle, a held Merge ticket the bounded tick passed
 over waits for its hold (at most

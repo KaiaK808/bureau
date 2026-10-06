@@ -8,7 +8,7 @@
 # bureau_untrusted_env (at the end) reads repo.untrusted_env through bureau_get
 # or jq when it is called.
 #
-# EXP-1469. Sixteen scripts under scripts/ used to `source` their .env, so the
+# Sixteen scripts under scripts/ used to `source` their .env, so the
 # file ran as shell code. A single space after `=` in a future entry
 # (`KEY= value`) would have run `value` as a command, and bash prints it in its
 # "command not found" message — straight into a log that ends up in Linear or
@@ -80,11 +80,11 @@ set +a
 # in tests/unit/test_pipeline_env_read.py fails when a script starts reading a
 # name that is on neither side.
 #
-# EXP-1478 added the four BUREAU_LINEAR_RETRY* keys (retry count and the three
+# Allow the four BUREAU_LINEAR_RETRY* keys (retry count and the three
 # waits of a Linear fetch). They are NOT on the numeric list: their values stay
 # digits with a possible leading zero, and _bureau_linear_number in
 # bureau-config.sh checks each one before it can reach an arithmetic context.
-# EXP-1482 added BUREAU_LINEAR_MAX_TIME and BUREAU_LINEAR_CONNECT_TIMEOUT (the
+# Allow BUREAU_LINEAR_MAX_TIME and BUREAU_LINEAR_CONNECT_TIMEOUT (the
 # time limit of one Linear request) on the same terms.
 # BUREAU_POST_IMPLEMENT_TIMEOUT (the limit of repo.post_implement_command) sits
 # with the implement timeouts, on the numeric list too; implement-pipeline.sh

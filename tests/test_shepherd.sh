@@ -140,7 +140,7 @@ get_issue_branch() { echo "feat/$1-stub"; }
 reset_worktree()                  { mkdir -p "$1"; }
 free_branch_from_other_worktrees(){ :; }
 
-# EXP-670 — shepherd's stage loop calls this before each stage; no-op in the
+# shepherd's stage loop calls this before each stage; no-op in the
 # test (the real guard pauses on near-limit usage, no-ops without a signal).
 session_throttle_guard()          { return 0; }
 
@@ -174,7 +174,7 @@ STUB_EOF
   } >> "$sb/scripts/bureau-config.sh"
   # The hold check (bureau_human_hold, v3.1) runs for real on top of the label read,
   # with the needs-human hold block it belongs to, against the sandbox repository.
-  sed -n '/^# ── needs-human hold (EXP-1516)/,/^# ── End of needs-human hold/p' \
+  sed -n '/^# ── needs-human hold/,/^# ── End of needs-human hold/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
 
   # Stub pipelines: log invocation, advance to the next happy-path state through
@@ -345,7 +345,7 @@ test_stuck() {
   echo "s1" > "$sb/state.txt"   # Triage; stub never advances
 
   set +e
-  # The shepherd confirms each unchanged state before re-running (EXP-1482); a
+  # The shepherd confirms each unchanged state before re-running; a
   # zero-second wait keeps this scenario fast. The default is held in scenario 19.
   BUREAU_SHEPHERD_CONFIRM_SECONDS=0 run_shepherd "$sb" EXP-4
   local rc=$?
@@ -481,7 +481,7 @@ test_block_halts() {
   return 0
 }
 
-# ── Scenarios 7–11: the shepherd's own Linear reads (EXP-1528) ─────
+# ── Scenarios 7–11: the shepherd's own Linear reads ─────
 # These run the REAL read family out of bureau-config.sh — get_issue_state,
 # get_issue_detail and the fetch with its fault record — against a stubbed curl
 # that plays $sb/queue, one answer form per call, the last line repeating (the
@@ -538,7 +538,7 @@ SLEEP_EOF
   chmod +x "$sb/bin/curl" "$sb/bin/sleep"
 }
 
-# _put_old_reads <sb> — the negative control: today's reads (before EXP-1528),
+# _put_old_reads <sb> — the negative control: the earlier unchecked reads,
 # verbatim, defined after the new ones so they win. Checks that they landed.
 _put_old_reads() {
   local sb="$1"
@@ -795,7 +795,7 @@ with open(f"{sb}/shepherd.out", "w") as out, open(f"{sb}/shepherd.err", "w") as 
             p.kill(); print("the shepherd never reached the slow read", file=sys.stderr); sys.exit(97)
         time.sleep(0.05)
     if sig == "INT": os.killpg(p.pid, signal.SIGINT)
-    elif sig == "TERM-SHEPHERD":  # the shepherd alone, its pid left by a stub (EXP-1482)
+    elif sig == "TERM-SHEPHERD":  # the shepherd alone, its pid left by a stub
         os.kill(int(open(f"{sb}/shepherd.pid").read()), signal.SIGTERM)
     else: os.kill(p.pid, signal.SIGTERM)
     sent = time.time()
@@ -826,7 +826,7 @@ test_interrupted_read_is_cancelled() {
     printf '%s\n' $queue > "$sb/queue"
     _run_signal "$sb" "$sig" EXP-7
     assert_eq "$READS_RC" 130 "$sig during the $what read: exit" || { cat "$sb/shepherd.err"; return 1; }
-    # The INT/TERM trap ends the run as soon as the read returns (EXP-1482); the
+    # The INT/TERM trap ends the run as soon as the read returns; the
     # read's own cancelled branch is held by the code-only cases below.
     grep -q "interrupted by SIG$sig — cancelled" "$sb/shepherd.err" \
       || { echo "FAIL: $sig during the $what read: the shepherd did not end as cancelled"; cat "$sb/shepherd.err"; return 1; }
@@ -981,7 +981,7 @@ test_review_stop_quiet() {
   return 0
 }
 
-# ── EXP-1482: the shepherd's own calls outside the stages ─────────────
+# ── the shepherd's own calls outside the stages ─────────────
 # _mutate <file> <old> <new> — replaces exactly one occurrence; builds a negative
 # control out of the current script (CI's shallow checkout has no older copy).
 _mutate() {
@@ -993,7 +993,7 @@ p.write_text(t.replace(old, new))
 PY_EOF
 }
 
-# _old_signal_trap <sb> — INT/TERM as before EXP-1482: release the claim and go on.
+# _old_signal_trap <sb> — the earlier INT/TERM trap: release the claim and go on.
 _old_signal_trap() {
   _mutate "$1/scripts/shepherd.sh" "trap '_shepherd_cancelled SIGINT' INT
 trap '_shepherd_cancelled SIGTERM' TERM" "trap 'remove_issue_label \"\$ISSUE\" shepherd-focused 2>/dev/null || true' INT TERM"
@@ -1259,7 +1259,7 @@ STAGE_EOF
 
 # Scenario 19: a move is confirmed before the next stage — a read that still shows
 # the state the stage left is read again, so the stage does not start twice
-# (EXP-1476). A read that shows the new state costs no extra read and no wait.
+# A read that shows the new state costs no extra read and no wait.
 test_move_confirmed_before_next_stage() {
   local sb
   _stale_reads() {
@@ -1305,7 +1305,7 @@ STALE_EOF
   # One stale read per stage, each read again after the default 5 s.
   assert_eq "$(tr '\n' ' ' < "$sb/sleeps.log" | sed 's/ $//')" "5 5 5 5 5" "stale reads: the waits" || return 1
 
-  # EXP-1476 (17.09.2026) and EXP-1554 (05.10.2026): after the spec stage, the read a
+  # After the spec stage, a read that is a
   # moment old shows the Spec in between. It is read again, and the finished spec is
   # not bumped back to Triage. Every move is recorded.
   local stale_moves='move_issue() { echo "$2" >> "$LABEL_LOG.moves"; local old; old=$(cat "$STATE_FILE"); printf "%s" "$2" > "$STATE_FILE"; [ "$old" = "$2" ] || { printf "%s" "$old" > "$STATE_FILE.stale"; echo 1 > "$STATE_FILE.left"; }; }'
@@ -1320,7 +1320,7 @@ STALE_EOF
     || { echo "FAIL: the Spec in between: it was not read again"; cat "$sb/shepherd.out"; return 1; }
   if grep -q "auto-bump" "$sb/shepherd.out"; then echo "FAIL: the Spec in between: bumped"; return 1; fi
   # Negative control: without MOVED_VIA the Spec in between counts as confirmed and the
-  # bump sends the finished spec back to Triage, as on 17.09. and 05.10.
+  # bump sends the finished spec back to Triage, as an installation observed twice.
   sb=$(make_sandbox stale_spec_between_old)
   _stale_reads "$sb"; _record_sleeps "$sb" 40
   echo "$stale_moves" >> "$sb/scripts/bureau-config.sh"
@@ -1488,7 +1488,7 @@ test_no_state_is_bounded() {
 # repo root. Every stage runs in that worktree, and nothing fails after a stage.
 # Before, the relative path went to bureau-worker.sh as it was; the worker changes
 # into the worktree and its EXIT cleanup ran `git -C <relative>` from there — exit
-# 128 after a finished stage (pilot EXP-1533, rc.1). Either fix alone closes it:
+# 128 after a finished stage (observed in the rc.1 pilot). Either fix alone closes it:
 # the shepherd makes the path absolute, and the worker does the same for any caller.
 _run_relative_worktree() {  # $1 = sandbox, $2 = form (split|equals); sets RELWT_RC
   local sb="$1" s
@@ -1566,7 +1566,7 @@ test_relative_worktree() {
 }
 
 # ── Scenario 22 (v3.0.1): the shepherd at the merge gate ─────────────────
-# The pilot run EXP-1534 met a merge stage that did not merge (red CI) and ended
+# A pilot run met a merge stage that did not merge (red CI) and ended
 # with 0: the shepherd printed "still reads 'Merge' after the move", ran the stage
 # again and its stuck detector labeled the ticket (13). The merge stage now
 # reports its gate (tests/test_merge_pipeline_correctness.sh, test_gate_outcome):

@@ -60,7 +60,7 @@ call() {
   WAITS=""; [ ! -f "$SB/waits.log" ] || WAITS=$(tr '\n' ' ' < "$SB/waits.log" | sed 's/ $//')
 }
 
-# Pick answers: EXP-4 (older, urgent) carries needs-human, EXP-5 is free.
+# Pick answers: the older urgent ticket carries needs-human, the other is free.
 N4='"identifier":"EXP-4","priority":1,"createdAt":"2026-01-01"'
 N5='"identifier":"EXP-5","priority":2,"createdAt":"2026-01-02"'
 L_HUMAN='"labels":{"nodes":[{"name":"lane-2"},{"name":"needs-human"}]}'

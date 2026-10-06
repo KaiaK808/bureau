@@ -68,7 +68,7 @@ fi
 echo "  Branch: $BRANCH"
 git fetch origin
 
-# Fail loud: branch must exist. No silent fresh-from-main fallback (EXP-413).
+# Fail loud: branch must exist. No silent fresh-from-main fallback.
 # Also detach any other worktree that currently holds $BRANCH — two worktrees
 # can't hold the same branch, and this pipeline may run back-to-back with
 # spec-pipeline on the same branch.

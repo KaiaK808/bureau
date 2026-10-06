@@ -1,5 +1,5 @@
 #!/bin/bash
-# queue-loop-supervised.sh — auto-restart wrapper for queue-loop.sh (EXP-382).
+# queue-loop-supervised.sh — auto-restart wrapper for queue-loop.sh.
 #
 # queue-loop.sh has its own infinite while-true loop, so any exit means
 # something killed it: OOM, terminal disconnect, unhandled bash error, or a

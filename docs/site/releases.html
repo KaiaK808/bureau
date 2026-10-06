@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="5bd63d370b3b943e3f7046bccbedd8b82b626d6891050353859f7b7815fe20a0">
+<meta name="bureau-source-sha256" content="4bff8059b372de30a552f290d2653d4f59e82314da45323be8c337761ec4eb24">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,16 +24,29 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.2.0</strong>, dated
+<p>This source tree contains <strong>Bureau v3.2.1</strong>, dated
 <strong>2026-10-06</strong>, the current stable release, marked as
 latest. Its <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">GitHub
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">GitHub
 Release</a> identifies the exact tagged commit; the <a
 href="../../CHANGELOG.md">changelog</a> and <a
 href="release-notes.html">release notes</a> describe the changes and the
-upgrade. v3.2 is a minor release on v3.1.0 and keeps the v3 exit-code
-contract. It collects eleven pull requests: unexported secrets and
-remote git without branch hooks (<a
+upgrade. v3.2.1 is a patch on v3.2.0 that removes internal ticket
+references and incident dates without behaviour change, uses
+<code>TEAM-123</code> in ticket examples, removes the internal drift
+inventory, renames the <code>needs-human</code> section marker and adds
+<code>tests/test_no_internal_refs.sh</code>. From v3.2.0, select tag
+<code>v3.2.1</code>; a resync is optional because the scripts and
+interfaces change only in comments, help texts and example values
+(installers will report those files as updates). From v3.1.0, select tag
+<code>v3.2.1</code> and follow <a
+href="migration.html#upgrade-to-v32">Upgrade to v3.2</a>.</p>
+<p><strong>Bureau v3.2.0</strong>, dated <strong>2026-10-06</strong> (<a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">GitHub
+Release</a>, <a href="release-notes-v3.2.0.html">release notes</a>), is
+the release it supersedes. v3.2 is a minor release on v3.1.0 and keeps
+the v3 exit-code contract. It collects eleven pull requests: unexported
+secrets and remote git without branch hooks (<a
 href="https://github.com/KaiaK808/bureau/pull/49">#49</a>); isolated
 Python helpers and doctor checks (<a
 href="https://github.com/KaiaK808/bureau/pull/47">#47</a>); implement
@@ -77,11 +90,11 @@ verifier before its merge; <a
 href="https://github.com/KaiaK808/bureau/pull/49">#49</a> was checked by
 a security verifier and a Codex cross-check over three rounds. CI is
 green on ubuntu and macOS on the tagged commit of
-<code>v3.2.0-rc.1</code> (<code>14fc936</code>). Release preparation
-changes documentation only; runtime, installer, templates and tests are
-identical to that candidate. The final commit is recorded in the GitHub
-Release body.</p>
-<p>The previous stable release is <strong>Bureau v3.1.0</strong>, dated
+<code>v3.2.0-rc.1</code> (<code>14fc936</code>). v3.2.0's release
+preparation changed documentation only; its runtime, installer,
+templates and tests are identical to that candidate. The final commit is
+recorded in its GitHub Release body.</p>
+<p>The earlier stable release is <strong>Bureau v3.1.0</strong>, dated
 <strong>2026-09-30</strong>. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0">GitHub
 Release</a> identifies the exact tagged commit; the <a

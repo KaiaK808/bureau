@@ -1,14 +1,14 @@
 #!/bin/bash
-# orchestrate.sh — the bureau-workflow EXECUTOR (PR #137 Decision D).
+# orchestrate.sh — the bureau-workflow EXECUTOR.
 #
 # Consumes a conflict-aware schedule (from the `conflict-aware-schedule`
 # workflow brain) and drives `shepherd.sh` over it. The brain decides WHAT can
 # run together; this script EXECUTES that decision durably in bash — the
-# load-bearing split from PR #137 (planning in a workflow, execution in
+# load-bearing split (planning in a workflow, execution in
 # cron-friendly bash).
 #
 # Usage:
-#   scripts/orchestrate.sh --chain EXP-644,EXP-640,EXP-645,EXP-473,EXP-474
+#   scripts/orchestrate.sh --chain TEAM-123,TEAM-124,TEAM-125,TEAM-126,TEAM-127
 #       Run an explicit serial chain, one shepherd at a time, in order.
 #   scripts/orchestrate.sh --schedule path/to/schedule.json
 #       Read {"serialChains":[[...]],"parallelSafe":[...]} (the brain's output)
@@ -34,7 +34,7 @@
 #     own worktree `.worktrees/shepherd-lane-<i>` (via `shepherd.sh --worktree`),
 #     so two builds never share a checkout. The conflict-aware-schedule brain is
 #     trusted to keep main.rs-colliding tickets OUT of the parallelSafe set
-#     (EXP-515 widens that frontier later; the executor needs no change for it).
+#     (The frontier can widen later; the executor needs no change for it).
 #     Spawned shepherds inherit BUREAU_RUNNER_*/BUREAU_CODEX_MODEL_* env, so
 #     concurrent lanes can run qa/code_review on Codex (off the Claude quota).
 #
@@ -105,7 +105,7 @@ elif [ -n "$SCHEDULE_FILE" ]; then
       done <<< "$PSAFE"
     else
       # Legacy: no per-worktree concurrency → run them serially, logged loudly
-      # (no silent cap — see PR #137 §"No silent caps"). Use --execute for real
+      # (no silent cap). Use --execute for real
       # concurrency.
       echo "orchestrate: NOTE — parallelSafe set present; running SERIALLY"
       echo "             (pass --execute for concurrent per-worktree lanes):"

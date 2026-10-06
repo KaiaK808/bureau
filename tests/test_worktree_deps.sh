@@ -2,7 +2,7 @@
 # After reset_worktree's `clean -fdx`, an npm project gets its node_modules back — safely,
 # freshly, and a failure stops the stage with 24 (environment-blocked) instead of building red.
 #
-# Carried over from installation B's scripts/worktree-deps.test.sh (EXP-1375). Runs the REAL
+# Carried over from an installation's scripts/worktree-deps.test.sh. Runs the REAL
 # restore_worktree_deps, cut from templates/scripts/bureau-config.sh, against a real main
 # checkout with a linked worktree; npm and mv are shell functions where a case needs them to
 # fail. The function reports its path ("Dependencies: …"), and the cases check the path, not

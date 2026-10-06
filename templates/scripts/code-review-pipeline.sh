@@ -23,7 +23,7 @@ if [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
 else bureau_secret_set LINEAR_API_KEY || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi
 
 # Honor BUREAU_MODEL_CODE_REVIEW / .agents.code_review.model like every other
-# pipeline (EXP-490). Without this, code review silently ignored the per-stage
+# pipeline. Without this, code review silently ignored the per-stage
 # model knob and stuck to the CLI default — making it ineligible for the
 # cheap-model migration the per-stage map was designed for.
 CLAUDE=(run_stage_for code_review)

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="58038b6c9f7322c8827f5e35beae4c457a5afcf1fe35387df43a570489a17dd2">
+<meta name="bureau-source-sha256" content="2d97272dce6185da950e1dd3eff12e05a84f688ea81be67887e2c8d230c14446">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -139,7 +139,7 @@ release the ticket without the label. <code>shepherd.sh</code> reads the
 hold before it claims the ticket and refuses a held one with 25 (see <a
 href="#shepherdsh-refuses-a-held-ticket--exit-25-before-the-claim"><code>shepherd.sh</code>
 refuses a held ticket</a>); a stage started with a ticket key
-(<code>stage.sh EXP-123</code>) does not read it.</p>
+(<code>stage.sh TEAM-123</code>) does not read it.</p>
 <p>An implement halt (<code>PARTIAL</code>, <code>STUCK</code>,
 <code>CAP_TIME</code>, <code>NEEDS_HUMAN</code>, <code>CI_MARKER</code>)
 whose label could not be written now ends with 25 instead of 0. If the

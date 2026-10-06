@@ -30,12 +30,12 @@
 #     shepherd's way while a ticket is being driven.
 #
 # Usage:
-#   ./scripts/shepherd.sh EXP-123
-#   ./scripts/shepherd.sh --dry-run EXP-123
-#   ./scripts/shepherd.sh --no-tmux EXP-123
-#   ./scripts/shepherd.sh --no-merge EXP-123
-#   ./scripts/shepherd.sh --from-stage build EXP-123
-#   ./scripts/shepherd.sh --respect-config EXP-123
+#   ./scripts/shepherd.sh TEAM-123
+#   ./scripts/shepherd.sh --dry-run TEAM-123
+#   ./scripts/shepherd.sh --no-tmux TEAM-123
+#   ./scripts/shepherd.sh --no-merge TEAM-123
+#   ./scripts/shepherd.sh --from-stage build TEAM-123
+#   ./scripts/shepherd.sh --respect-config TEAM-123
 
 set -euo pipefail
 unset CLAUDECODE 2>/dev/null || true
@@ -79,7 +79,7 @@ Flags:
                        NAME ∈ triage|spec_review|design|build|qa|build_review|merge
   --respect-config     Honor .agents.<stage> toggles. Default: force all on.
   --worktree DIR       Build worktree dir (default: .worktrees/shepherd). Use a
-                       per-ticket dir (e.g. .worktrees/shepherd-EXP-123) so
+                       per-ticket dir (e.g. .worktrees/shepherd-TEAM-123) so
                        multiple shepherds can run concurrently without clobbering
                        one another's checkout — the basis of the d&a executor.
                        A relative DIR is taken from the repo root (the directory
@@ -116,7 +116,7 @@ done
 # and the re-exec under the runtime. Handed on relative, it broke the worker: the
 # worker changes into the worktree and its EXIT cleanup ran `git -C <relative>`
 # from there — "fatal: cannot change to …", exit 128 after a stage that had
-# finished (pilot EXP-1533, rc.1).
+# finished (in the rc.1 pilot).
 if [ -n "$WORKTREE_OVERRIDE" ]; then
   case "$WORKTREE_OVERRIDE" in /*) ;; *) WORKTREE_OVERRIDE="$REPO_DIR/$WORKTREE_OVERRIDE" ;; esac
   _args=(); _next_is_worktree=0
@@ -150,7 +150,7 @@ if [ -z "$ISSUE" ]; then
   exit 1
 fi
 if [[ ! "$ISSUE" =~ ^[A-Z]+-[0-9]+$ ]]; then
-  echo "ERROR: ISSUE must look like 'EXP-123', got: '$ISSUE'" >&2
+  echo "ERROR: ISSUE must look like 'TEAM-123', got: '$ISSUE'" >&2
   exit 1
 fi
 
@@ -221,7 +221,7 @@ state_to_pipeline() {
   esac
 }
 
-# ── The shepherd's own Linear reads (EXP-1528) ────────────────────────
+# ── The shepherd's own Linear reads ────────────────────────
 # Each read is captured first and its exit code decides before anything looks
 # at the value. Defaulted with `|| echo ""` or piped straight into jq, a Linear
 # that stayed unusable read as "no state" (the loop slept and re-read forever)
@@ -486,7 +486,7 @@ _shepherd_read_failed() {
 }
 
 # _shepherd_move_failed <state> <exit-code> — the shepherd's own move of the
-# ticket to <state> (--from-stage, or the Spec → Triage bump) failed (EXP-1482).
+# ticket to <state> (--from-stage, or the Spec → Triage bump) failed.
 # Called bare under `set -e`, a failed move used to end the shepherd with the
 # move's code before any halt handling: no alert, no label, no comment. The
 # same three ways out as a failed read: a signal only the move saw → cancelled
@@ -509,7 +509,7 @@ _shepherd_move_failed() {
   exit 1
 }
 
-# Start check (EXP-1482). It runs before the claim, so a failure has touched
+# Start check. It runs before the claim, so a failure has touched
 # nothing on the ticket: no needs-human (it would keep the queue away from a
 # ticket that is fine, and it needs the Linear that just failed) and no comment.
 # It used to end inside precondition_linear with a bare exit 10 and a message
@@ -615,12 +615,12 @@ STUCK_COUNT=0
 MAX_STUCK=2
 # Linear answering without a state (an unknown or hidden ticket, not a failed
 # read — those end above) used to be retried every 60 s without end. The fifth
-# such answer in a row halts (EXP-1482 handover).
+# such answer in a row halts.
 NO_STATE_COUNT=0
 MAX_NO_STATE=5
-# Confirming a move (EXP-1482 path 3). A read right after a move may be a
-# moment old — a second start of the same stage came from exactly that
-# (EXP-1476, 17.09.2026). --from-stage knows only where it went (MOVED_TO: the
+# Confirming a move. A read right after a move may be a
+# moment old — a second start of the same stage came from exactly that.
+# --from-stage knows only where it went (MOVED_TO: the
 # state before it is never read); the bump to Triage and a stage that returned
 # 0 know where the ticket was (MOVED_FROM). A read that does not show MOVED_TO,
 # or still shows MOVED_FROM, is read again, up to CONFIRM_TRIES times,
@@ -631,8 +631,8 @@ MAX_NO_STATE=5
 # moves Triage → Spec at its start and Spec → Spec Review at its end, and a read a
 # moment old shows the Spec in between (MOVED_VIA). That read is not the state the
 # stage started from, so it used to count as confirmed, and the bump below sent the
-# finished spec back to Triage — the actual sequence of EXP-1476 (17.09.2026) and
-# again of EXP-1554 (05.10.2026). MOVED_VIA is read again like MOVED_FROM.
+# finished spec back to Triage — the sequence an installation hit twice.
+# MOVED_VIA is read again like MOVED_FROM.
 MOVED_FROM=""
 MOVED_VIA=""
 CONFIRM_TRIES=3
@@ -770,7 +770,7 @@ while true; do
   # The existing stuck-detector (STUCK_COUNT >= MAX_STUCK) eventually
   # catches the loop, but only after one wasted pipeline pass at $
   # per Opus call. Fail loud and early instead — and a label list that could
-  # not be read halts too, it never counts as "no label" (EXP-1528).
+  # not be read halts too, it never counts as "no label".
   HUMAN_HOLD=$(_shepherd_human_label) || _shepherd_read_failed labels $?
   if [ "${HUMAN_HOLD%% *}" = hold ]; then
     echo "[shepherd] $(_shepherd_hold_text "$HUMAN_HOLD") @ '$STATE' — halting"
@@ -834,7 +834,7 @@ while true; do
 
   BRANCH=$(_shepherd_branch) || _shepherd_read_failed branch $?
   echo "[shepherd] → $PIPELINE  (branch: ${BRANCH:-<none yet>})"
-  # EXP-670 — pause before this (claude-heavy) stage if session usage is near
+  # pause before this (claude-heavy) stage if session usage is near
   # the limit. No-op when no usage signal is available.
   case "$PIPELINE" in merge-pipeline.sh|rebase-pipeline.sh) ;; *)
     session_throttle_guard "$(printf '%s' "${PIPELINE%-pipeline.sh}" | tr '-' '_')" ;;

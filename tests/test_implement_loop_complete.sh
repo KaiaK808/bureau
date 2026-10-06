@@ -6,7 +6,7 @@ source "$(dirname "$0")/lib/harness.sh"
 sandbox_init "EXP-100" "test-branch"
 export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_complete.txt"
 # Fixture self-reports tasks_done=3, but implement-pipeline's belt-and-suspenders
-# check (EXP-573) overrides terminal status=COMPLETE → STUCK when COMMITS_TOTAL==0.
+# check overrides terminal status=COMPLETE → STUCK when COMMITS_TOTAL==0.
 # Produce a real commit on iter 1 so the COMPLETE path survives the override.
 export FAKE_CLAUDE_COMMIT_ON_ITERS="1"
 export BUREAU_DRY_RUN=0

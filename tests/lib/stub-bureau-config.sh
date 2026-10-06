@@ -96,7 +96,7 @@ claude_cmd_for_stage() {
   echo "${FAKE_CLAUDE_BIN:?FAKE_CLAUDE_BIN must be set by harness}"
 }
 
-# EXP-671 — the pipeline calls this after each claude invocation; no-op in the
+# the pipeline calls this after each claude invocation; no-op in the
 # stub (the real one records token usage only when cost tracking is enabled).
 record_stage_cost() { return 0; }
 

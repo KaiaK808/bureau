@@ -165,7 +165,7 @@ else
   git rebase --abort 2>/dev/null || true
   post_comment "$ISSUE" "🛑 Rebase produced conflicts on \`$BRANCH\` against \`main\`. Needs human resolution."
   # Ends with 0 only when the label is on the ticket: without it a driver would
-  # read success and the queue would pick the ticket again (EXP-1516, EXP-1482).
+  # read success and the queue would pick the ticket again.
   if mark_needs_human "$ISSUE" rebase; then exit 0; fi
   exit 25
 fi

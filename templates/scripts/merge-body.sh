@@ -5,7 +5,7 @@
 # effects, no network, no `set`. merge-pipeline.sh sources it next to
 # bureau-config.sh.
 #
-# Why (carried over from installation B, EXP-1318): `gh pr merge` without --body
+# Why (carried over from an installation): `gh pr merge` without --body
 # lets GitHub compose the squash message from the branch's commit list. A CI
 # suppressor anywhere in that list — `[skip ci]` in an iteration commit, a task
 # title, a body the agent wrote — lands in the merge commit on main, and GitHub

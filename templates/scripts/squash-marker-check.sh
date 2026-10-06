@@ -2,7 +2,7 @@
 # squash-marker-check.sh — read the message of every commit in the squash range
 # and report each one that carries an entry of scripts/ci-skip-markers.txt.
 #
-# Carried over from installation A (EXP-1465). A squash merge without an
+# Carried over from an installation. A squash merge without an
 # explicit body writes the full message of every branch commit — subject and
 # body — into the merge commit on main, and GitHub reads a CI suppressor there
 # again: the run on main stays away. The stages no longer append one, and
