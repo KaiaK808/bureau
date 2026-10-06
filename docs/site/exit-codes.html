@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="bc4f35e118135a2724fce5cb9f5d6bd99228db5af76007d87c529d5865ed9c63">
+<meta name="bureau-source-sha256" content="f27065b9e8c835b0fccff5ea449743669582bdcc972f70aeed2e8f89904a701c">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -244,8 +244,12 @@ not read as an empty queue.</td>
 <tr>
 <td><code>124</code></td>
 <td>timeout</td>
-<td>Provider exceeded time bound</td>
-<td>Inspect preserved progress</td>
+<td>Provider exceeded time bound. Implement (since v3.2): the last pass
+that could run timed out — a timed-out pass with another pass left goes
+on to that pass instead</td>
+<td>Inspect preserved progress and the transcript named in the provider
+evidence (<code>session_id</code>, <code>transcript</code> in
+<code>result.json</code>); see the troubleshooting guide</td>
 </tr>
 <tr>
 <td><code>130</code></td>

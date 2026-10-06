@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="20de7dfe17133eb1a08369b1bf01cc9d60f6b26ec8dfb93dc404c77c171c3672">
+<meta name="bureau-source-sha256" content="89c3250bf618fed6dd694409e294ede6dee3a09f5d84a2c3396a3ba83e897db0">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -285,13 +285,35 @@ failing <code>gh</code> count as no open PR. Read only when
 mean <code>true</code>, any other value means <code>true</code> with a
 warning. The end-of-run push keeps its rules: retried once, and the
 stage ends with <code>18</code> before any hand-off when origin still
-lacks commits. A stage that ends before its end-of-run push (a provider
-that fails or times out, an unusable Linear, a crash, SIGTERM or SIGHUP)
-pushes the deferred commits first, once and best effort, and keeps its
-exit code; after a <code>repo.post_implement_command</code> that moved
-HEAD it pushes the commit the command started from, never the rewritten
-HEAD. A process killed outright (SIGKILL, a host crash) pushes nothing,
-and its commits stay in the worktree</td>
+lacks commits; once it goes through it says so on stdout,
+<code>pushed &lt;branch&gt; (end of run): N commit(s) origin lacked, head &lt;sha&gt;</code>
+(<code>end of run, retry</code> after a retry). Every way out before the
+end-of-run push pushes every commit origin lacks first (since v3.2),
+with either value of this key, the commits of the pass that was running
+included, the first pass's too, and also the stage's own merge of
+<code>origin/main</code> before its first pass when that is all origin
+lacks (with <code>false</code> and an open PR that push costs one CI
+run) (before, they stayed in the worktree with <code>true</code>, and
+with <code>false</code> when the pass was the first; with
+<code>false</code> only what a finished pass had held back was pushed):
+a provider pass that fails (any exit but <code>0</code> and
+<code>124</code>) or times out when no pass is left, a failed
+<code>/goal</code> run, an unusable Linear, a crash, SIGTERM, SIGINT and
+SIGHUP, also when the stage's terminal or the pipe on its stderr is
+gone. stderr says
+<code>pushing N commit(s) of &lt;branch&gt; that origin lacks before the stage ends (&lt;why&gt;)</code>
+(<code>provider exit X</code>, or
+<code>the stage ends before its end-of-run push</code> from the stage's
+EXIT trap), stdout confirms it as above; once and best effort, and the
+stage keeps its exit code. After a
+<code>repo.post_implement_command</code> that moved HEAD the stage
+pushes the commit the command started from, when origin lacks it, never
+the rewritten HEAD, and confirms it the same way. These pushes run in
+the stage's own process group, which the runtime stops on an interrupt
+and kills when its stop grace ends, so a push that hangs on a remote
+cannot hold a stop longer than that grace. A process killed outright
+(SIGKILL, a host crash) pushes nothing, and its commits stay in the
+worktree</td>
 </tr>
 <tr>
 <td><code>agents.qa</code></td>
@@ -1169,7 +1191,10 @@ if it doesn't reach <code>status: COMPLETE</code> within the budget.</p>
 <td>Max provider passes per tick. Each iter parses the JSON status
 block, runs the squash-range check, pushes commits (see
 <code>agents.implement.push_each_iteration</code>), and decides
-continue/stop</td>
+continue/stop. Since v3.2 a pass that times out counts as one of them
+(status <code>TIMEOUT</code> in the iteration log) and the loop goes on;
+the stage ends with <code>124</code> only when the last allowed pass
+times out</td>
 </tr>
 <tr>
 <td><code>BUREAU_IMPL_ITER_TIMEOUT</code></td>
@@ -1183,7 +1208,13 @@ providers</td>
 <td><code>5400</code></td>
 <td>Budget in seconds for the implementation provider loop. Independent
 executor tests and publication can add time after it; this is not a
-monetary cap</td>
+monetary cap. Since v3.2 it, not one timed-out pass, bounds a stage
+whose passes time out; a timed-out pass that leaves 60 s or less of it
+ends the stage with <code>124</code>. Setting it to
+<code>BUREAU_IMPL_ITER_TIMEOUT</code> brings back the pre-v3.2 ceiling
+of one timed-out pass, but also caps a productive multi-pass run at that
+one pass's time; <code>BUREAU_IMPL_MAX_ITER=1</code> is the other
+trade-off (one pass of any kind)</td>
 </tr>
 <tr>
 <td><code>BUREAU_POST_IMPLEMENT_TIMEOUT</code></td>
@@ -1194,12 +1225,16 @@ process group is ended and the stage halts with <code>14</code></td>
 </tr>
 </tbody>
 </table>
-<p>The default provider-loop budget is 90 minutes. An unproductive first
-<code>PARTIAL</code> iteration can become <code>STUCK</code>; prior
-productive iterations and legitimate <code>COMPLETE</code> results have
-separate handling. The executor checks Git evidence and, for Codex
-completion, the configured project tests. A provider's success text
-alone cannot complete the stage.</p>
+<p>The default provider-loop budget is 90 minutes, and since v3.2 a
+stage whose passes time out can use all of it: a timed-out pass no
+longer ends the stage while another pass fits (see <a
+href="troubleshooting.html#exit-124-timeout--a-provider-pass-hit-its-time-limit">Exit
+124</a>). An unproductive first <code>PARTIAL</code> iteration can
+become <code>STUCK</code>; a timed-out pass never does; prior productive
+iterations and legitimate <code>COMPLETE</code> results have separate
+handling. The executor checks Git evidence and, for Codex completion,
+the configured project tests. A provider's success text alone cannot
+complete the stage.</p>
 <p>Terminal states map to PR state + Linear:</p>
 <table>
 <thead>

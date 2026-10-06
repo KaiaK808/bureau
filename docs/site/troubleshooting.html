@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="adc2a4276946fabc387931ebc745ed9e0a41be41f16ab14a60d935c8af238da2">
+<meta name="bureau-source-sha256" content="44efd6d0ec246c4ad7ec7710d36833243a482ae08a83b0d17012beee8996b756">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -458,6 +458,120 @@ start.</li>
 <p>Follow the comment (for an interrupted run, the steps under <a
 href="#shepherdsh-bailed-mid-run--how-to-resume"><code>shepherd.sh</code>
 bailed mid-run</a>), remove <code>needs-human</code> and rerun.</p>
+<h3 id="exit-124-timeout--a-provider-pass-hit-its-time-limit">Exit 124
+(timeout) — a provider pass hit its time limit</h3>
+<p>A provider call that runs past its limit is stopped: the adapter ends
+its process group, and the stage gets 124. A shell the agent started
+detached (Claude's Bash tool does so) is outside that group and can keep
+running for a while; see <a href="provider-runtime.html">provider
+runtime</a>. Before v3.2 the implement stage ended on the first such
+pass, although in the field the agent had usually finished, committed
+and pushed every task and was only polling CI until the limit killed
+it.</p>
+<p><strong>Implement (since v3.2):</strong> a pass that times out is
+counted like any other pass, and the loop goes on. The pass appears in
+the iteration log, on stdout and in the summary comment, as
+<code>iter N: status=TIMEOUT tasks_done=M commits=K (timed out after Ss)</code>:
+<code>commits</code> comes from Git as for every pass,
+<code>tasks_done</code> is the number of tasks the pass marked
+<code>[X]</code> in <code>tasks.md</code> (it reported no status block),
+and stderr says
+<code>iter N timed out after Ss (exit 124); it counts as a pass like any other</code>.
+The squash-range check and the push (or its deferral, see
+<code>agents.implement.push_each_iteration</code>) run after it as after
+any pass. The next pass gets a note at the top of its prompt ("The
+previous pass timed out"): it checks <code>tasks.md</code> and the
+branch first and reports <code>COMPLETE</code> at once when nothing is
+left: every task marked <code>[X]</code>, its work in the commits on the
+branch, and any feedback above the note (the "Feedback to address"
+block) addressed: in a rework every task is <code>[X]</code> already, so
+the feedback decides. A Claude pass is also asked to commit finished
+work the stopped pass left uncommitted, and to remove a git
+<code>index.lock</code> only when no git process has the worktree as its
+working directory (<code>lsof -a -c git -d cwd</code>, or
+<code>pgrep -l git</code>), else to report <code>NEEDS_HUMAN</code>
+naming the lock; after a Codex pass the shell has already committed, and
+the note says so. The stage ends with 124 only when no pass is left
+after a timed-out one: <code>BUREAU_IMPL_MAX_ITER</code> passes have
+run, or <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> leaves 60 s or less for
+another. Then stderr says
+<code>Provider pass failed with exit 124 (iter N timed out) and no pass is left: …</code>
+with the reason, and every commit origin lacks is pushed before the
+stage ends. Every other non-zero provider exit (16, 22, 23, 24, 130)
+still ends the stage right after its pass, as before, and since v3.2
+also pushes every commit origin lacks first, the failed pass's own
+included, whatever <code>agents.implement.push_each_iteration</code>
+says (before, the failed pass's commits stayed in the worktree with
+<code>true</code>, and with <code>false</code> when it was the first
+pass): stderr says
+<code>pushing N commit(s) of &lt;branch&gt; that origin lacks before the stage ends (provider exit X)</code>,
+stdout
+<code>pushed &lt;branch&gt; (provider exit X): N commit(s) origin lacked, head &lt;sha&gt;</code>
+once it went through. The stage keeps the provider's exit code, also
+when stderr is gone (a closed terminal, a queue loop's tee that ended);
+a refused push is reported on stderr and the work stays in the worktree.
+A stage that ends before its end-of-run push in any other way (a signal,
+a crash, an unusable Linear, a failed <code>/goal</code> run) pushes the
+same way from its EXIT trap, labelled
+<code>the stage ends before its end-of-run push</code> (see
+<code>agents.implement.push_each_iteration</code> in the <a
+href="configuration.html">configuration</a>).</p>
+<p>So an implement stage can now take up to
+<code>BUREAU_IMPL_MAX_ITER</code> provider passes when passes time out,
+together bounded by <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> (each pass
+gets <code>BUREAU_IMPL_ITER_TIMEOUT</code>, cut to what is left of the
+total). With the defaults that is at most 5400 s of provider time where
+a stage used to end after the first 1800 s pass. Two settings bring back
+the old ceiling, each at a cost. <code>BUREAU_IMPL_TOTAL_TIMEOUT</code>
+equal to <code>BUREAU_IMPL_ITER_TIMEOUT</code>: a timed-out pass leaves
+no budget for another and the stage ends with 124 as before, but a
+productive run whose passes end in time (<code>PARTIAL</code>, then
+more) also gets no more than that one pass's time in total.
+<code>BUREAU_IMPL_MAX_ITER=1</code>: one pass of any kind, so a
+<code>PARTIAL</code> pass is never followed up either. The
+<code>/goal</code> path (<code>agents.use_goal_loop</code>) is
+unchanged: one call bounded by <code>BUREAU_IMPL_TOTAL_TIMEOUT</code>,
+and a timeout ends the stage with 124.</p>
+<p><strong>What the pass did:</strong> <code>stdout.log</code> in the
+provider evidence is empty after a Claude timeout, because
+<code>claude -p --output-format json</code> writes its result only at
+the end. Since v3.2 the adapter starts every Claude call with its own
+<code>--session-id</code>, and <code>result.json</code> records it with
+the transcript Claude writes while it works:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">jq</span> <span class="st">&#39;{outcome, session_id, transcript, transcript_found}&#39;</span> logs/provider-runs/RUN/result.json</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="fu">tail</span> <span class="at">-n</span> 20 <span class="st">&quot;</span><span class="va">$(</span><span class="ex">jq</span> <span class="at">-r</span> .transcript logs/provider-runs/RUN/result.json<span class="va">)</span><span class="st">&quot;</span> <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-c</span> <span class="st">&#39;.message.content? // .&#39;</span></span></code></pre></div>
+<p>The stage log names the same path in a line
+<code>Bureau provider transcript: …</code> next to
+<code>Bureau provider evidence: …</code>. A Claude CLI that does not
+list <code>--session-id</code> in <code>claude --help</code> runs
+without it, as before v3.2; then <code>session_id</code> is
+<code>null</code>, <code>transcript_found</code> is <code>false</code>,
+and <code>transcript_note</code> says why. A CLI that refuses the flag
+although it was cached as taking it (a downgrade behind an unchanged
+wrapper) costs no failed stage: the call runs again without the flag,
+and <code>result.json</code> says
+<code>session_id_rejected: true</code>. For Codex,
+<code>session_id</code> is the thread id from the first
+<code>thread.started</code> event in <code>stdout.log</code> (Codex
+streams its events, so <code>stdout.log</code> holds the run up to the
+timeout) and <code>transcript</code> its rollout file under
+<code>~/.codex/sessions/</code> (<code>CODEX_HOME</code>), when it is
+there. See <a href="provider-runtime.html">provider runtime</a>.</p>
+<p><strong>Why a pass polls CI at all:</strong> a project instruction
+such as "a missing CI run means do not merge, wait for it or trigger it"
+in the repository's <code>CLAUDE.md</code> reads to the agent as its own
+job. Since v3.2 every stage's system text, and
+<code>scripts/bureau-stage.md</code>, say never to wait for, poll or
+re-trigger CI or a merge gate inside a stage and never to commit CI
+results as evidence, that a missing, pending or failed CI run does not
+change the status the agent reports for its own work (not merging is all
+a rule like "do not merge without green CI" asks of a stage, so the
+agent does not turn to <code>NEEDS_HUMAN</code> instead), and that this
+rule wins over project instructions. Waiting on CI is the merge gate's
+and the shepherd's job. If a transcript still shows
+<code>gh pr checks</code> or <code>gh run view</code> loops, check that
+the main checkout runs the v3.2 scripts (the system text comes from
+there) and that no stage prompt of your own asks for the wait.</p>
 <h3 id="exit-1--128--141--error-n-catch-all">Exit 1 / 128 / 141 —
 <code>error-&lt;N&gt;</code> catch-all</h3>
 <p>Anything outside the classified table maps to
@@ -534,16 +648,18 @@ then, remove the label by hand). The work stays for the resume: the
 runtime keeps the run's leases and marks them interrupted, the worktree
 keeps every file and commit the stage made and loses its
 disposable-worker registration so that no later reset erases it, and an
-implement stage that held back its pushes
-(<code>push_each_iteration: false</code>) tries to push them on its way
-out when the signal stops it, since v3.2 also when its terminal is gone.
-When a queue's log pipe goes first (its <code>tee</code> ends with the
-pane, for example on Ctrl-C or when the pane closes) and the stage
-writes to it before the signal reaches the stage, the write ends the
-stage at once and nothing is pushed: the commits stay in the preserved
-worktree, and step 2 of the resume pushes them. The resume steps are
-printed once on stderr. After a closed terminal they are gone with it;
-<code>python3 scripts/bureau-runtime.py status</code> then shows the
+implement stage tries to push every commit origin lacks on its way out
+when the signal stops it (since v3.2 with either value of
+<code>push_each_iteration</code>, the commits of the pass that was
+running included, and also when its terminal is gone). When a queue's
+log pipe goes first (its <code>tee</code> ends with the pane, for
+example on Ctrl-C or when the pane closes) and the stage writes to it
+before the signal reaches the stage, the write ends the stage at once
+(SIGPIPE, exit 141); its EXIT trap still pushes. A commit that did not
+reach origin (a refused push, a push cut by the stop grace) stays in the
+preserved worktree, and step 2 of the resume pushes it. The resume steps
+are printed once on stderr. After a closed terminal they are gone with
+it; <code>python3 scripts/bureau-runtime.py status</code> then shows the
 run's leases with <code>"interrupted": true</code>, and the steps are
 the ones below, in <a
 href="#shepherdsh-bailed-mid-run--how-to-resume"><code>shepherd.sh</code>
@@ -716,11 +832,11 @@ stops at its first nonzero result, including review-stop 20 and
 human-attention 25. Dependent tickets are not complete merely because
 their predecessor reached review.</p>
 <p>To recover:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># See lane status</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/bureau-status.sh</span></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Rerun a specific lane</span></span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/shepherd.sh</span> <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-9 <span class="at">--worktree</span> .worktrees/shepherd-lane-2</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># See lane status</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/bureau-status.sh</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Rerun a specific lane</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/shepherd.sh</span> <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-9 <span class="at">--worktree</span> .worktrees/shepherd-lane-2</span></code></pre></div>
 <p>Inspect that lane's saved work and ownership before reuse. After
 resolving the blocker, recheck the schedule and current ticket states;
 completed tickets are skipped, but preserved workers are not
@@ -750,8 +866,8 @@ refuses to merge a PR that looks green</h3>
 <code>mergeStateStatus == CLEAN</code> (GitHub's own answer). All three
 must pass.</p>
 <p>To diagnose:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> pr view <span class="op">&lt;</span>N<span class="op">&gt;</span> --json statusCheckRollup,baseRefOid,mergeStateStatus</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch origin <span class="kw">&amp;&amp;</span> <span class="fu">git</span> rev-parse origin/main</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> pr view <span class="op">&lt;</span>N<span class="op">&gt;</span> --json statusCheckRollup,baseRefOid,mergeStateStatus</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch origin <span class="kw">&amp;&amp;</span> <span class="fu">git</span> rev-parse origin/main</span></code></pre></div>
 <ul>
 <li><strong><code>mergeStateStatus</code> isn't CLEAN</strong>: usually
 <code>BEHIND</code> (need to rebase) or <code>BLOCKED</code> (missing
@@ -1125,8 +1241,9 @@ with exit 21.</p>
 <p>QA parks a ticket with <code>needs-human</code> when it can't decide
 whether a failure is legitimate (test genuinely fails) or spurious (env
 issue, flaky test, missing service).</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># See what QA saw</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;</span><span class="va">$ISSUE</span><span class="st">&quot;</span> logs/events.jsonl <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">&#39;select(.event==&quot;qa_verdict&quot;)&#39;</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># See what QA saw</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;</span><span class="va">$ISSUE</span><span class="st">&quot;</span> logs/events.jsonl <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-r</span> <span class="st">&#39;select(.event==&quot;qa_verdict&quot;)&#39;</span></span></code></pre></div>
 <p>Typically: pull the branch locally, run the tests yourself, and
 either fix the code or mark the test as skip/ignore with a
 rationale.</p>
@@ -1272,9 +1389,9 @@ resuming.</p>
 <code>BUREAU_DRY_RUN</code> to debug a specific stage</h3>
 <p>Use a queue preview for one stage or a named-ticket shepherd
 preview:</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/queue-loop.sh code-review 1</span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/queue-loop.sh code-review 1</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
 <p>The queue example continues polling until stopped; <code>1</code> is
 its interval in minutes. Previews can read Linear, but do not invoke
 creative work or reset workers. Calling a background pipeline directly
@@ -1301,9 +1418,9 @@ after <code>headroom_wrap: true</code></h3>
 <p>The flag is read live; turning it on doesn't auto-install Headroom.
 Install on the host running the pipeline (typically the operator's local
 box, not the CI runner):</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="st">&quot;headroom-ai[all]&quot;</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">headroom</span> <span class="at">--version</span>    <span class="co"># confirm</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="st">&quot;headroom-ai[all]&quot;</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">headroom</span> <span class="at">--version</span>    <span class="co"># confirm</span></span></code></pre></div>
 <p>If <code>pip</code> resolves to a Python that doesn't have user-level
 installs on PATH, prefer <code>pip install --user</code> and add
 <code>~/.local/bin</code> to PATH, or use a venv. The provider adapter
@@ -1374,7 +1491,11 @@ This is separate from the Linear API key used for ticket CRUD.</p>
 <h3 id="headless-claude-calls-hang-or-timeout">Headless Claude calls
 hang or timeout</h3>
 <p>Inspect the adapter's preserved stdout/stderr and result metadata
-before retrying. Confirm provider login, network availability and the
+before retrying; after a Claude timeout <code>stdout.log</code> is
+empty, and the transcript path in <code>result.json</code> shows what
+the call did (see <a
+href="#exit-124-timeout--a-provider-pass-hit-its-time-limit">Exit
+124</a>). Confirm provider login, network availability and the
 configured timeout. Exit 124 indicates the bound was reached, 130
 cancellation, and 24 an environment/permission failure. The bound is
 <code>timeout_seconds</code> per provider call: 3600 s by default since
@@ -1386,9 +1507,9 @@ permissions bypass as a diagnostic shortcut.</p>
 <h3 id="speckit-phases-produce-empty-tasksmd">Speckit phases produce
 empty <code>tasks.md</code></h3>
 <p>The spec pipeline routes back to Triage automatically. To debug:</p>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> <span class="at">-la</span> specs/<span class="op">&lt;</span>NNN-feature<span class="op">&gt;</span>/</span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> logs/queue-spec.log <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-100</span></span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> <span class="at">-la</span> specs/<span class="op">&lt;</span>NNN-feature<span class="op">&gt;</span>/</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> logs/queue-spec.log <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-100</span></span></code></pre></div>
 <p>Most common cause: the Linear issue description was too thin for
 <code>/speckit-tasks</code> to extract anything. Add acceptance criteria
 to the description and re-trigger.</p>
