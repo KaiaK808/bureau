@@ -574,7 +574,9 @@ MAX_REVIEW_CYCLES="$BUREAU_MAX_REVIEW_CYCLES"
 echo "  Review cycles: ${REVIEW_CYCLE_COUNT:-0}"
 _sec_issues=$(parse_claude_json "$MERGED_RAW" '.security_issues')
 _decision=$(decide_review_verdict "$VERDICT" "$_sec_issues" "$_sec_critical" "$BUILD_OK" "$REVIEW_CYCLE_COUNT" "$MAX_REVIEW_CYCLES")
-VERDICT=$(printf '%s\n' "$_decision" | head -n 1)
+# The first line, by parameter expansion: `printf … | head -n 1` could end the stage
+# here (set -e, pipefail) with a broken pipe after the paid review.
+VERDICT="${_decision%%$'\n'*}"
 ESCALATION_REASON=""
 while IFS=$'\037' read -r _rule _reason _text; do
   [ -n "$_rule" ] || continue

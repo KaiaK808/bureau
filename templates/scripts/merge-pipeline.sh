@@ -245,7 +245,7 @@ evaluate_merge_gates() {
     verdict=$(printf '%s\n' "$_review_body" \
       | grep -oE '\*\*Verdict\*\*[[:space:]]*:[[:space:]]*[A-Z_]+' \
       | grep -oE 'APPROVE|AUTO_APPROVE|REQUEST_CHANGES|BLOCK' \
-      | head -1 || true)
+      | sed -n 1p || true)
   else
     _verdict_read=failed; verdict=""
   fi
@@ -253,7 +253,7 @@ evaluate_merge_gates() {
   local _block_label=""
   local _l
   for _l in needs-human blocked wip; do
-    if printf ',%s,' "$_labels_csv" | grep -q ",$_l,"; then
+    if grep -q ",$_l," <<< ",$_labels_csv,"; then
       _block_label="$_l"; break
     fi
   done
@@ -506,7 +506,7 @@ $BLOCKER_LINES"
   # An unreadable comment list posts again rather than ending the stage.
   LAST_BOT_BODY=$(gh pr view "$PR_NUMBER" --json comments \
     --jq '[.comments[] | select(.body | test("Bureau merge gate"))] | sort_by(.createdAt) | last | .body // ""') || LAST_BOT_BODY=""
-  case "$(printf '%s\n' "$LAST_BOT_BODY" | sed -n 's/^Outcome: \([a-z]*\).*/\1/p' | head -n 1)" in
+  case "$(sed -n 's/^Outcome: \([a-z]*\).*/\1/p' <<< "$LAST_BOT_BODY" | sed -n 1p)" in
     not) LAST_OUTCOME=not-yet ;;
     blocked) LAST_OUTCOME=blocked ;;
     *) LAST_OUTCOME="" ;;

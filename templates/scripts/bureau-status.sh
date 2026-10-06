@@ -264,17 +264,17 @@ status_color() {
 
 parse_status() {
   local line="$1"
-  if echo "$line" | grep -q "queue empty"; then echo "idle"
-  elif echo "$line" | grep -q "error (exit"; then echo "error"
-  elif echo "$line" | grep -qi "done\\."; then echo "done"
-  elif echo "$line" | grep -q "\\.\\.\\."; then echo "working"
-  elif echo "$line" | grep -q "Next check"; then echo "sleeping"
-  elif echo "$line" | grep -q "Queue Worker Started"; then echo "idle"
+  if grep -q "queue empty" <<< "$line"; then echo "idle"
+  elif grep -q "error (exit" <<< "$line"; then echo "error"
+  elif grep -qi "done\\." <<< "$line"; then echo "done"
+  elif grep -q "\\.\\.\\." <<< "$line"; then echo "working"
+  elif grep -q "Next check" <<< "$line"; then echo "sleeping"
+  elif grep -q "Queue Worker Started" <<< "$line"; then echo "idle"
   else echo "---"; fi
 }
 
 parse_issue() {
-  echo "$1" | grep -oE '[A-Z]+-[0-9]+' | head -1 || echo ""
+  grep -oE '[A-Z]+-[0-9]+' <<< "$1" | sed -n 1p || echo ""
 }
 
 # Build agent list from config
@@ -346,7 +346,7 @@ while true; do
   echo -e "  ${BOLD}WORKBENCH${RESET} [$WIN]"
   echo ""
 
-  if tmux list-panes -t "$SESSION:bench" 2>/dev/null | head -2 | while read -r pane; do true; done; then
+  if tmux list-panes -t "$SESSION:bench" 2>/dev/null | sed -n 1,2p | while read -r pane; do true; done; then
     PANE_COUNT=$(tmux list-panes -t "$SESSION:bench" 2>/dev/null | wc -l | tr -d ' ')
     for p in $(seq 0 $((PANE_COUNT - 1))); do
       pane_cmd=$(tmux display-message -t "$SESSION:bench.$p" -p '#{pane_current_command}' 2>/dev/null || echo "---")
