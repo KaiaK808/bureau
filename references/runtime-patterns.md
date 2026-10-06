@@ -42,7 +42,7 @@ Stage → registry mapping (defined once in `bureau-config.sh:pipeline_picker_ar
 
 `pick_issue` uses label **names** (not UUIDs) in its GraphQL filter, so custom labels like `ai-implementable`, `needs-human`, `needs-ux` work even when `.bureau.json` doesn't have their UUIDs captured. It reads the team/project/state config from the `$BUREAU_*` variables and does one direct GraphQL POST using `LINEAR_API_KEY` — no MCP, no OAuth, no Claude subprocess, no token expiry.
 
-### All Linear glue uses direct GraphQL, never `$CLAUDE` (EXP-412)
+### All Linear glue uses direct GraphQL, never `$CLAUDE`
 
 The same reasoning that kills `$CLAUDE` for queue picking kills it for every other Linear interaction. Headless `claude -p` subprocesses cannot refresh Linear's OAuth tokens, and a failing MCP call returns empty output that bash's `if [ -z "$X" ]` guards mistake for "no work". Every Linear glue operation must go through a helper in `bureau-config.sh`:
 
@@ -58,21 +58,21 @@ The same reasoning that kills `$CLAUDE` for queue picking kills it for every oth
 
 `$CLAUDE` is reserved for **creative work only**: spec-pipeline's optional pre-spec research call (WebFetch/WebSearch against current API docs, label-gated on `needs-research`) and its `speckit-specify`/`speckit-plan`/`speckit-tasks` invocations (read via the `.claude/skills/speckit-*/SKILL.md` files), implement-pipeline's main implementation call, code-review-pipeline's specialist review calls, spec-review-pipeline's validation prose. A rule of thumb: if the prompt is shorter than the response, it's glue — use a helper. If the prompt is longer and describes a task, Claude does the work.
 
-### Deterministic branch discovery via bureau-branch marker (EXP-413)
+### Deterministic branch discovery via bureau-branch marker
 
-Linear's auto-generated `branchName` field is derived from the issue title and does **not** match the sequential spec-number branches the spec pipeline creates (`001-automated-tests`, `004-graphify-integration`, etc.). Every pre-EXP-413 "find the branch" lookup was a silent mismatch.
+Linear's auto-generated `branchName` field is derived from the issue title and does **not** match the sequential spec-number branches the spec pipeline creates (`001-automated-tests`, `004-graphify-integration`, etc.). Before marker-based discovery, every "find the branch" lookup was a silent mismatch.
 
 The fix is a marker comment that the **spec pipeline** posts along with the spec digest:
 
 ```markdown
 <!-- bureau-branch: 001-automated-tests -->
-**Spec Artifacts — EXP-404**
+**Spec Artifacts — TEAM-123**
 ...
 ```
 
 The marker renders invisibly in Linear (HTML comment) but is parsed by `get_issue_branch()` on the way back. Every downstream pipeline (spec-review, ux, implement, code-review) resolves the branch from this marker, not from `branchName`. When the marker is missing or points at a branch that no longer exists, pipelines **fail loud** with stage-specific diagnostics, routing and a non-zero result. No silent fresh-from-main fallback, no 1300-line implementation runs on the wrong base.
 
-### Validate against the appropriate base (EXP-484)
+### Validate against the appropriate base
 
 Implementation and QA call `merge_origin_main_or_abort <issue> <stage-label>` after checking out their worker branch. With no third argument, the helper fetches and merges `origin/main`; it skips an already-contained base. It resolves only the supported trivial conflicts, aborts other conflicts and returns failure for stage-specific routing.
 
@@ -82,7 +82,7 @@ Before posting or routing, review rechecks the PR identity/target and both autho
 
 On a merge conflict, implementation, QA and code review return 17; the caller owns state/label routing. These local checks do not replace the independent CI/base gates at merge time.
 
-### Per-stage model override (EXP-490)
+### Per-stage model override
 
 Each pipeline can run on a different model — different stages have meaningfully different requirements (spec/plan want strongest reasoning; implementation wants strongest coding; validators want a *different perspective* than workers; mechanical stages can use Haiku).
 
@@ -114,7 +114,7 @@ Each background invocation starts a separate provider process. Share explicit ar
 
 **Validator independence.** The strongest reason to mix models is that a validator using a *different model* from the worker catches what the worker missed. Bureau's code-review pipeline already runs 3 specialists in parallel for orthogonal *perspectives*; setting `agents.code_review.model` to a different model than `agents.implement.model` adds a *model-level* difference on top of the role-level one.
 
-### Auto-restart supervisor for queue-loop (EXP-382)
+### Auto-restart supervisor for queue-loop
 
 `queue-loop.sh` runs an infinite while-true loop — any exit means the process was killed (OOM, terminal disconnect, unhandled bash error, panicked subprocess). Without a supervisor the dead tmux pane stays dead until a human notices.
 
@@ -140,9 +140,9 @@ Configuration in `.bureau.json`:
 
 `start-bureau-v2.sh`'s `add_agent_window` function calls `./scripts/queue-loop-supervised.sh $mode $INTERVAL` instead of `queue-loop.sh` directly. To opt out of supervision (e.g. for debugging), call `queue-loop.sh` directly from a bench pane.
 
-### Drain before refilling — single-flight + stage-priority (EXP-491)
+### Drain before refilling — single-flight + stage-priority
 
-In active repos with many concurrent feature tickets, branches accumulate divergence faster than the pipeline can drain them. Cause: every cron tick, multiple branches re-run `merge_origin_main_or_abort` against an `origin/main` that advanced since last tick. Trivial conflicts auto-resolve (per the resolver added 2026-05-08), but real conflicts pile up and the loop spins. Two complementary knobs:
+In active repos with many concurrent feature tickets, branches accumulate divergence faster than the pipeline can drain them. Cause: every cron tick, multiple branches re-run `merge_origin_main_or_abort` against an `origin/main` that advanced since last tick. Trivial conflicts auto-resolve, but real conflicts pile up and the loop spins. Two complementary knobs:
 
 **A. Stage-priority sort in `queue-loop.sh`'s `all` mode.** Fan-out order is *reversed* from state-machine sequence — `merge`/`rebase` first, `spec` last. When multiple stages have pickable issues, attention goes to the ones closest to Done. Drains before refilling. Zero behaviour change for the default deployment (each agent runs in its own tmux window with its own `queue-loop.sh <mode>` — independent, so cross-stage ordering only affects the single-process `all` mode).
 
@@ -164,7 +164,7 @@ Configuration in `.bureau.json`:
 
 The cap is a Linear query, not an atomic cross-repository admission lock. Keep issue/workspace ownership and intentionally separated project scopes; do not treat single-flight configuration as distributed coordination.
 
-### Fail-loud observability (EXP-414)
+### Fail-loud observability
 
 Every pipeline script:
 
@@ -201,7 +201,7 @@ Other codes map to `error-N`; inspect the diagnostic rather than inferring compl
 
 `queue-loop.sh` captures the exit code, maps it to a class, and calls `alert_telegram` (throttled to max 1 alert per issue/pipeline/exit code per hour and repository via `<git common dir>/bureau/alert-throttle.log`; the alert names the repository). The alerter is a best-effort no-op when `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ALERT_CHAT_ID` are unset, so dev environments don't break.
 
-### Spec pipeline failure recovery (EXP-416)
+### Spec pipeline failure recovery
 
 `spec-pipeline.sh` moves the issue from Triage → Spec **before** running speckit phases. To prevent stranding issues in Spec on failure:
 
@@ -316,7 +316,7 @@ Every `needs-human` escalation appends one tab-separated line to `logs/escalatio
 Line format (verbatim, tab-separated):
 
 ```
-2026-05-13T19:18:23Z<TAB>ESCALATED<TAB>EXP-402<TAB>code-review<TAB>cycle=3<TAB>reason="REQUEST_CHANGES exceeded max_review_cycles"<TAB>pr=56<TAB>branch=049-parliament-debate
+2000-01-01T00:00:00Z<TAB>ESCALATED<TAB>TEAM-123<TAB>code-review<TAB>cycle=3<TAB>reason="REQUEST_CHANGES exceeded max_review_cycles"<TAB>pr=56<TAB>branch=049-parliament-debate
 ```
 
 Required regex (used by the test suite and external monitors):

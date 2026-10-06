@@ -28,7 +28,7 @@
 #                                after a test that passed, a leftover process fails it
 # pr5_new_repo                 — a fresh repository: $REPO, $WT (the shepherd worktree), $COMMON
 # pr5_ticket <n> <labels-json> — ticket EXP-<n>'s labels (the state is shared: $SB/state)
-# pr5_shepherd [args…]         — run the shepherd on EXP-7 to its end: RC, OUT, ERR
+# pr5_shepherd [args…]         — run the shepherd on the fixture ticket to its end: RC, OUT, ERR
 # pr5_shepherd_start [args…]   — start it in the background (SHEP_PID) and wait for the probe
 # pr5_interrupt                — SIGTERM the shepherd, as the pilot did; RC, ERR
 # pr5_worker <issue> <wt>      — run the real worker for the spec stage, as queue-loop does

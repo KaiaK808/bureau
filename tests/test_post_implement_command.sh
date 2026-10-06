@@ -7,7 +7,7 @@
 #   2  hook set, run made commits → runs once, in the worktree, with
 #      BUREAU_ISSUE/BUREAU_BRANCH; its commit counts, is pushed, hand-off as usual
 #   3  hook set, status does not release the work (NEEDS_HUMAN) → not run
-#  3d  PARTIAL with commits (PR marked ready, EXP-622) → the hook runs first,
+#  3d  PARTIAL with commits (PR marked ready) → the hook runs first,
 #      its file reaches origin, the PR is ready
 #  3e  PARTIAL with commits and a failing hook → exit 14, the PR stays a draft
 #  3f  PARTIAL without commits (goal path; the PR stays a draft) → not run
@@ -111,7 +111,7 @@ run_implement_pipeline
 has 'post_implement_command: skipped \(status NEEDS_HUMAN does not release the work for review\)' "$LAST_STDOUT" "3 skip line"
 teardown
 
-# 3d — PARTIAL with commits marks the PR ready (EXP-622): the hook runs before that
+# 3d — PARTIAL with commits marks the PR ready: the hook runs before that
 setup c3d "$HOOK_OK"
 export FAKE_CLAUDE_FIXTURES="$FIXTURES_DIR/claude_partial_progress.txt" FAKE_CLAUDE_COMMIT_ON_ITERS="1:2:3"
 run_implement_pipeline

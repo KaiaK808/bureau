@@ -11,7 +11,7 @@ description: >
 $ARGUMENTS
 ```
 
-You **MUST** have a Linear parent issue identifier (e.g. EXP-75) to proceed.
+You **MUST** have a Linear parent issue identifier (e.g. TEAM-123) to proceed.
 If `$ARGUMENTS` is empty, ask the user for one.
 
 ## Purpose

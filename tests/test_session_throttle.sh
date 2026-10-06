@@ -1,5 +1,5 @@
 #!/bin/bash
-# test_session_throttle.sh — EXP-670 session-usage throttle: pure decision,
+# test_session_throttle.sh — session-usage throttle: pure decision,
 # lenient signal parser, and the guard's no-op / fast-proceed / disable paths.
 # (Ported from brainhuggers-cli.)
 

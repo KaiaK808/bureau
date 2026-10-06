@@ -94,7 +94,7 @@ run_script() {
     fi ;;
   esac
 
-  # EXP-415 Part A: preselect and reset worktree to a known state.
+  # preselect and reset worktree to a known state.
   local picked=""
   local target_branch=""
   # A pick that fails because Linear stayed unusable is reported, once an hour
@@ -210,7 +210,7 @@ while true; do
       run_one "merge-pipeline.sh" "Merge (gated PR merger, Merge → Done)" "$WORKTREE_DIR" && DID_WORK=true
       ;;
     all)
-      # EXP-491: drain before refilling. Fan-out order is REVERSED from state-
+      # drain before refilling. Fan-out order is REVERSED from state-
       # machine sequence — merge/rebase first, spec last. Reasoning: when
       # multiple stages have pickable issues, prefer the ones closest to Done
       # so existing tickets clear before new ones enter. Without this, an

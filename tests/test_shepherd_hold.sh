@@ -117,7 +117,7 @@ WORKER
   HOLD="$REPO/.git/bureau/needs-human-held"
 }
 
-# ticket <state-id> <labels-json> — what the fake Linear answers for EXP-7.
+# ticket <state-id> <labels-json> — what the fake Linear answers for the fixture ticket.
 ticket() {
   printf '%s' "$1" > "$SB/state"; printf '%s' "$2" > "$SB/labels.json"
   rm -f "$SB/labels-broken" "$SB/state-broken" "$SB/state-name" "$SB/on-move" "$SB/stages.log"

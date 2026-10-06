@@ -9,7 +9,7 @@
 # every Linear caller hands 27 on — mutators without sending anything after the failed read.
 # The negative control puts the old unchecked fetch back and shows the silent empty success
 # this replaces. Stage wiring: tests/test_linear_stages.sh; shepherd: tests/test_shepherd.sh.
-# EXP-1482: an HTTP error status, `{"data":{}}` and null root fields, NUL bytes, the
+# an HTTP error status, `{"data":{}}` and null root fields, NUL bytes, the
 # per-request time limit and its settings, and the shapes the issue readers
 # depend on — with a negative control against the transport this replaces, and the same
 # checks with the REAL curl against a local server (status line, NUL byte, time limit).
@@ -61,7 +61,7 @@ printf '%s' '{"data":null,"note":"CANARY-ANSWER"}'                      > "$SB/f
 printf '%s' '["CANARY-ANSWER"]'                                         > "$SB/forms/array"
 printf '%s' '{"data":{}} {"data":{}}'                                   > "$SB/forms/twojson"
 
-# EXP-1482: an HTTP error page with a JSON body, a missing root field, a NUL byte in the
+# an HTTP error page with a JSON body, a missing root field, a NUL byte in the
 # body, a node without the list a reader depends on, and a hanging request.
 printf '%s' '{"data":{}}'                                               > "$SB/forms/dataempty"
 printf '%s' '{"data":{"issues":null}}'                                  > "$SB/forms/rootnull"
@@ -221,7 +221,7 @@ get_issue_state EXP-1"
 [ "$RC" = 0 ] && [ -z "$OUT" ] || fail "negative control: the old fetch no longer reads a broken answer as an empty success, so this test proves nothing"
 echo "PASS negative control: the old fetch turns a broken answer into an empty success (exit 0)"
 
-# --- EXP-1482: status, time limit, NUL bytes, missing nodes ------------------------------
+# --- status, time limit, NUL bytes, missing nodes ------------------------------
 for pair in dataempty:no-data rootnull:no-data issuenull:no-data nul:not-json nulinside:not-json \
             healthy@500:no-response healthy@404:no-response \
             errors@400:graphql-errors html@502:not-json hang:no-response; do
@@ -367,7 +367,7 @@ for call in '_resolve_issue_uuid EXP-1' 'get_issue_state EXP-1' 'get_issue_detai
 done
 echo "PASS every Linear caller returns 0 on answers carrying only the fields its query asks for"
 
-# --- negative control for EXP-1482: the transport this replaces ----------------------------
+# --- negative control: the transport this replaces ----------------------------
 OLD_TRANSPORT='
 _bureau_linear_fetch() {
   local answer code=0 finding

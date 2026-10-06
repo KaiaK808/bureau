@@ -85,7 +85,7 @@ refresh_review_context() {
 # rev (default HEAD) is what gets pushed; push_if_ahead passes the commit a
 # hook started from when the hook moved HEAD.
 #
-# Carried over from installation A (EXP-1462). Every push here used to end
+# Carried over from an installation. Every push here used to end
 # in `|| true`, so a failed push left no trace: whether the branch was out
 # could only be learned by diffing origin against the worktree. Now a failure
 # names branch, exit code and git's own output on stderr, distinct from
@@ -99,7 +99,7 @@ refresh_review_context() {
 # un-negated form is `$?` git's own code (`if ! …` has already turned it to 0).
 #
 # The target is HEAD:refs/heads/$BRANCH. Plain HEAD has no target when HEAD is
-# detached (installation A's EXP-1420 log shows two such pushes swallowed while
+# detached (an installation swallowed two such pushes while
 # the run walked on to QA). Installation A's HEAD:"$BRANCH" fixes that only while
 # the branch already exists on origin: for a new one git cannot tell that the
 # name is meant as a branch and refuses ("not a full refname").
@@ -184,9 +184,9 @@ push_if_ahead() {
 #
 # Runs wherever the stage releases the work for review: when the terminal
 # status is COMPLETE (hand-off to QA or Build Review), and when it is PARTIAL
-# with commits (the PR is marked ready so CI runs, EXP-622). COMPLETE already
+# with commits (the PR is marked ready so CI runs). COMPLETE already
 # implies commits beyond origin/main — both paths turn a COMPLETE on an empty
-# branch into STUCK (EXP-573) before this point. A failing hook turns either
+# branch into STUCK before this point. A failing hook turns either
 # into the POST_IMPLEMENT_FAILED halt, whose PR stays a draft.
 # It does not depend on whether THIS run committed: after a
 # halt on the hook, a human fixes it and removes needs-human, and the next run
@@ -565,7 +565,7 @@ echo "→ Finding branch and prior review feedback..."
 ISSUE_BLOB=$(get_issue_branch_and_comments "$ISSUE")
 BRANCH=$(printf '%s' "$ISSUE_BLOB" | jq -r '.branch // empty')
 
-# EXP-413: fail loud — no silent fresh-from-main fallback. Spec pipeline must
+# fail loud — no silent fresh-from-main fallback. Spec pipeline must
 # have produced a branch with artifacts before implement can run. The legacy
 # behaviour silently created a new branch from main on lookup failure and
 # burned Claude tokens on implementations with zero spec context.
@@ -770,8 +770,8 @@ _push_on_exit() {
 }
 trap _push_on_exit EXIT
 
-# EXP-token-efficiency — /goal-driven path. Closes the EXP-573 / EXP-571 /
-# EXP-624 / EXP-627 stuck-detector lineage: instead of bash counting commits
+# /goal-driven path. Resolves the stuck-detector lineage:
+# instead of bash counting commits
 # and parsing self-reported status per iter, delegate completion-evaluation
 # to Haiku via Claude Code's `/goal` slash command. Haiku reads the
 # transcript after every turn and decides whether the goal is met; the
@@ -783,7 +783,7 @@ trap _push_on_exit EXIT
 # goal condition itself stays under the documented 4000-char limit and
 # describes only the verifiable end-state. parse_claude_json finds the last
 # fenced JSON block in the combined transcript — same parse path the iter
-# loop used, so the downstream PR / state-move / EXP-622 ready-flip logic
+# loop used, so the downstream PR / state-move / ready-flip logic
 # is unchanged.
 #
 # Opt-in via .agents.use_goal_loop in .bureau.json (or BUREAU_USE_GOAL_LOOP=1).
@@ -861,7 +861,7 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   push_iteration "/goal run"
 
   # Lying-COMPLETE backstop (same belt-and-suspenders the iter-loop path
-  # carries via the post-loop EXP-571/EXP-624 check). Haiku is good but not
+  # carries via the post-loop branch check). Haiku is good but not
   # infallible; verify against the actual branch state.
   BRANCH_COMMITS_AHEAD=$(git rev-list --count "origin/main..HEAD" 2>/dev/null || echo 0)
   if [ "$STATUS" = "COMPLETE" ] && [ "$BRANCH_COMMITS_AHEAD" -eq 0 ]; then
@@ -1026,7 +1026,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
     ( echo "  iter $i timed out after ${THIS_TIMEOUT}s (exit 124); it counts as a pass like any other. See provider evidence." >&2 ) || true
   fi
 
-  # EXP-671 — record this iteration's token usage + est. $ (no-op unless cost
+  # record this iteration's token usage + est. $ (no-op unless cost
   # tracking is enabled and the output carries a usage envelope).
   record_stage_cost "$RESULT" "$ISSUE" "implement"
 
@@ -1087,18 +1087,18 @@ At the end of your work, emit a single fenced json block so the shell can summar
   # so commits that never reach origin are wiped.
   push_iteration "iter $i"
 
-  # Single-strike stuck detector (EXP-573). Runs BEFORE the status-based
+  # Single-strike stuck detector. Runs BEFORE the status-based
   # break so a model that self-reports PARTIAL with zero commits and zero
   # tasks done can't loop forever — force-park instead. Commits are the
   # load-bearing signal: self-reported tasks_done and fixed_review_items
   # are unverifiable hot air without a commit to back them up.
   #
-  # COMPLETE skipped (EXP-571, brainhuggers-cli PR #109). status=COMPLETE
+  # COMPLETE skipped (the task list is already done). status=COMPLETE
   # means "task list is done, no further work needed" — typical when
   # qa-pipeline bounced the ticket to Build after writing tests and
   # ticking them itself, and implement re-runs to find the production
   # code already present. Flagging that as STUCK is a false positive that
-  # parks a mergeable ticket. This previously inverted EXP-573's "model
+  # parks a mergeable ticket. This previously inverted the stuck detector's "model
   # lies about COMPLETE" carve-out; the post-loop COMMITS_TOTAL==0 check
   # below remains as belt-and-suspenders for the lying case.
   #
@@ -1113,10 +1113,10 @@ At the end of your work, emit a single fenced json block so the shell can summar
   if [ "$COMMITS_THIS_ITER" -eq 0 ] && [ "$TASKS_DONE" -eq 0 ]; then
     case "$STATUS" in
       PARTIAL)
-        # EXP-627: only force-park to STUCK when no iter has committed.
+        # only force-park to STUCK when no iter has committed.
         # A productive-then-exhausted run (commits early, dry late) is not
         # stuck — it's done with what was achievable. Let the loop exit
-        # naturally at MAX_ITER with terminal status=PARTIAL so EXP-622's
+        # naturally at MAX_ITER with terminal status=PARTIAL so the
         # ready-flip logic can take it from there. Promoting to STUCK
         # here would suppress that flip (it only matches PARTIAL) and
         # the PR would stay draft despite real commits landing.
@@ -1148,11 +1148,11 @@ if [ "$i" -gt "$MAX_ITER" ] && [ "$STATUS" != "COMPLETE" ] && [ "$STATUS" != "NE
   STATUS="PARTIAL"
 fi
 
-# Belt-and-suspenders for EXP-573: if the loop ended with COMPLETE but the
+# Belt-and-suspenders for the stuck detector: if the loop ended with COMPLETE but the
 # branch has no commits beyond origin/main, the model is lying — override
 # to STUCK so the issue is parked, not shipped.
 #
-# Branch-wide check, not COMMITS_TOTAL this tick (EXP-571 / EXP-624). The
+# Branch-wide check, not COMMITS_TOTAL this tick. The
 # legit case the per-iter exemption above admits — qa-pipeline bounced the
 # ticket to Build after writing tests, implement re-runs and sees nothing
 # left to do — produces COMMITS_TOTAL=0 in THIS tick but the branch
@@ -1298,7 +1298,7 @@ case "$STATUS" in
 
   NEEDS_HUMAN|STUCK|CAP_TIME|PARTIAL|CI_MARKER|POST_IMPLEMENT_FAILED)
     # PARTIAL with real commits proceeds to downstream gates as ready-for-review
-    # so CI fires on the ready_for_review transition (EXP-622 / FR-001). Every
+    # so CI fires on the ready_for_review transition (the ready-flip requirement). Every
     # other halt status — and PARTIAL with zero commits — stays draft (FR-002,
     # FR-003). The summary comment, needs-human label, escalation log, and
     # operator status report below are unchanged (FR-005).
@@ -1335,7 +1335,7 @@ echo "  Status: $NEXT_STATE_LABEL ($STATUS)"
 echo "═══════════════════════════════════════"
 
 # A needs-human escalation whose label could not be written must not read as
-# success to the driver (EXP-1516): the local hold keeps the queue away, the
+# success to the driver: the local hold keeps the queue away, the
 # non-zero exit stops a shepherd.
 if [ "$NEEDS_HUMAN_UNMARKED" = 1 ]; then exit 25; fi
 

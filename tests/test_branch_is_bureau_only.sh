@@ -102,7 +102,7 @@ fi
 
 # Case 4: branch with a merge commit + a spec-artifacts commit (no trailer) +
 # Claude-co-authored commits. None of the three should count as human, so the
-# branch must be reported bureau-only. This is the EXP-411 / PR #62 case the
+# branch must be reported bureau-only. This is the merge-commit case the
 # widened predicate is meant to unblock.
 git checkout -q main
 git checkout -q -b bureau-multi-branch

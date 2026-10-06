@@ -170,8 +170,8 @@ real_picker() {  # the Linear part of the real config next to the stub's setting
       | .agents = ((.agents // {}) + {poll_interval_minutes: 1, max_review_cycles: 3})' "$SANDBOX/.bureau.json" > "$SANDBOX/.bureau.json.tmp"
   mv "$SANDBOX/.bureau.json.tmp" "$SANDBOX/.bureau.json"
   PICKBIN="$SANDBOX/.pick-bin"; mkdir -p "$PICKBIN"
-  # Linear: the tickets in $PICKBIN/issues (default EXP-801, priority 1 and older, then
-  # EXP-802) in whatever state is asked for; no blockers.
+  # Linear: the tickets in $PICKBIN/issues (the first is priority 1 and older)
+  # in whatever state is asked for; no blockers.
   echo "$ISSUE $OTHER" > "$PICKBIN/issues"
   cat > "$PICKBIN/curl" <<EOF
 #!/bin/bash
@@ -234,7 +234,7 @@ pick code-review-pipeline.sh
 [ "$PICK_RC" = 27 ] && [ -z "$PICKED" ] || fail "pick: Linear down while a hold is active ended $PICK_RC with '$PICKED', wanted 27 and nothing"
 grep -qE "$(held_line 'not yet' 1)" <<< "$PICK_ERR" || fail "pick: Linear down: no hold was active, so this proves nothing: $PICK_ERR"
 mv "$PICKBIN/curl.ok" "$PICKBIN/curl"
-# Only the review picker: the merge, rebase and implement pickers take EXP-801 first.
+# Only the review picker: the merge, rebase and implement pickers take the first fixture ticket.
 for stage in merge-pipeline.sh rebase-pipeline.sh implement-pipeline.sh; do
   picks "$ISSUE" "the review record seen by $stage" "$stage"
   grep -q 'waits on its merge gate' <<< "$PICK_ERR" && fail "pick: $stage consulted the review gate waits"

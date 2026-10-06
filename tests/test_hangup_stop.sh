@@ -69,7 +69,7 @@ gone() {
 }
 left() { ps -A -o pid=,pgid=,args= | grep -F "$REPO/" | grep -v grep | sed "s#$SB#<sandbox>#g" || true; }
 
-# hup_run <how> [hangup.py options…] — the shepherd on EXP-7 on a terminal of its own; the
+# hup_run <how> [hangup.py options…] — the shepherd on the fixture ticket on a terminal of its own; the
 # terminal hangs up (<how>: close or group) once the probe stage runs. RC and SECS (from the
 # hang-up to the end); OUT and ERR when --out/--err sent them to $SB/out and $SB/err.
 hup_run() {
@@ -85,7 +85,7 @@ hup_run() {
   OUT=$(cat "$SB/out" 2>/dev/null || true); ERR=$(cat "$SB/err" 2>/dev/null || true)
 }
 
-# hup_start — the shepherd on EXP-7 in the background (SHEP_PID, its outer runtime) with
+# hup_start — the shepherd on the fixture ticket in the background (SHEP_PID, its outer runtime) with
 # SIGHUP at its default, output to $SB/out and $SB/err; returns once the probe stage runs.
 hup_start() {
   rm -f "$SB/probe-started"

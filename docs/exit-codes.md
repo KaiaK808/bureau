@@ -64,7 +64,7 @@ A typical alert includes:
 
 - The repository (`Repo:`, the directory name of its main checkout)
 - The pipeline that failed (`spec`, `qa`, etc.)
-- The Linear issue identifier (`EXP-491`)
+- The Linear issue identifier (`TEAM-123`)
 - The exit code class
 - A short reason from the pipeline (`merge_origin_main_or_abort: non-trivial conflict on src/foo.ts`)
 - Tail of the queue log when the supervisor gives up (last 30 lines, see [auto-restart supervisor](#auto-restart-supervisor))

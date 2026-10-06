@@ -135,7 +135,7 @@ BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD=$(bureau_get '.agents.code_review_sampling
 # squash so shipped main never carries the in-development merge commits the
 # pipelines accumulate. Repos that want explicit merge-commit history (or
 # strict linear via rebase) opt out per-repo.
-# Per-stage model override (EXP-490). Resolution is performed live by
+# Per-stage model override. Resolution is performed live by
 # resolve_model_for_stage / claude_cmd_for_stage — see below for the
 # precedence contract. Example .bureau.json shape:
 #   {"agents": {"model": "claude-sonnet-4-6",
@@ -162,7 +162,7 @@ bureau_get_agent_model() {
 #       from the JSON pre-load, so resolution precedence was indeterminate.
 # Resolution now happens live via resolve_model_for_stage on every call.
 
-# Cap on concurrent in-flight issues (EXP-491). 0 = unlimited (current default).
+# Cap on concurrent in-flight issues. 0 = unlimited (current default).
 # 1 = single-flight (drain one issue end-to-end before another enters Spec).
 # Higher values bound parallelism without forbidding it. Only spec-pipeline
 # honours this; downstream stages keep operating on whatever's already in
@@ -234,7 +234,7 @@ BUREAU_SPECS_DIR=$(bureau_get '.repo.specs_dir // "specs"')
 BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 
 # ── Linear fetches: check the answer, retry, else stop with our own code ──
-# Carried over from installation A (EXP-1478), where every fetch used to be
+# Carried over from an installation, where every fetch used to be
 # passed on unchecked: an error page ended at `jq` with exit 5, while an answer
 # carrying `errors`, an empty answer and a failed connection all came back as
 # SUCCESS with an empty result — and the stage then decided on that empty
@@ -251,7 +251,7 @@ BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 # If it stays unusable the fetch prints NOTHING and returns
 # $BUREAU_EXIT_LINEAR_UNUSABLE; no answer text and no key travels in a message.
 #
-# EXP-1482 (carried over from installation A's follow-up): curl used to run
+# Carried over from an installation: curl used to run
 # with neither a status check nor a time limit. An error page whose body was
 # `{"data":{}}` counted as a success, every reader then answered "nothing"
 # (no state, no labels) with exit 0 and the shepherd slept forever or walked
@@ -551,7 +551,7 @@ linear_issue_query() {
   _bureau_linear_fetch "{\"query\": \"$1\"}" "$2"
 }
 
-# EXP-490: per-stage model resolution. Resolution order (first non-empty
+# per-stage model resolution. Resolution order (first non-empty
 # wins):
 #   1. BUREAU_MODEL_<STAGE> env  (operator override, e.g. ad-hoc shell var)
 #   2. .agents.<stage>.model     (per-stage JSON)
@@ -708,7 +708,7 @@ PY_PATHS
 # bureau-provider.py as an argument list. Kept for installations' own scripts
 # and tests/test_model_resolution.sh. Do NOT word-split its output
 # (`$(claude_cmd_for_stage …)` unquoted): a model value from .env then adds
-# runner options of its own (installation A EXP-1476, tests/test_model_argv.sh).
+# runner options of its own (see tests/test_model_argv.sh).
 claude_cmd_for_stage() {
   local stage="$1"
   local model runner
@@ -742,7 +742,7 @@ claude_cmd_for_stage() {
     return
   fi
 
-  # EXP-671 — cost tracking swaps `--print` (text) for `--output-format json`
+  # cost tracking swaps `--print` (text) for `--output-format json`
   # (envelope with usage). Default OFF → `--print`, byte-identical. parse_claude_json
   # unwraps the envelope transparently, so consumers are unaffected either way.
   local out_flag="--print"
@@ -788,8 +788,8 @@ headroom_wrap_enabled() {
 }
 
 # use_goal_loop_enabled: implement-pipeline.sh drives via `claude -p "/goal …"`
-# instead of the bash for-loop when this is true. Closes the EXP-573 / EXP-571
-# / EXP-624 / EXP-627 stuck-detector tangle structurally.
+# instead of the bash for-loop when this is true. Resolves the stuck-detector
+# tangle structurally.
 use_goal_loop_enabled() {
   [ "$(resolve_runner_for_stage implement)" = claude ] || return 1
   [ "${BUREAU_USE_GOAL_LOOP:-}" = "1" ] && return 0
@@ -815,7 +815,7 @@ caveman_level() {
   esac
 }
 
-# EXP-671 — opt-in per-stage cost/token tracking. Default OFF (the pipeline is
+# opt-in per-stage cost/token tracking. Default OFF (the pipeline is
 # byte-identical). Enable via BUREAU_COST_TRACKING=1 or .bureau.json
 # session.cost_tracking=true.
 cost_tracking_enabled() {
@@ -824,7 +824,7 @@ cost_tracking_enabled() {
   [ "$(jq -r '.session.cost_tracking // false' "${BUREAU_CONFIG:-.bureau.json}" 2>/dev/null)" = "true" ]
 }
 
-# EXP-671 — append one stage's token usage + est. $ to a per-issue cost log.
+# append one stage's token usage + est. $ to a per-issue cost log.
 # Pipelines call this once after each claude invocation:
 #   record_stage_cost "$RESULT" "$ISSUE" "implement"
 # No-op when cost tracking is off, jq is missing, or the output carries no usage
@@ -851,7 +851,7 @@ record_stage_cost() {
       cost_usd:$cost,estimated_cost_usd:$cost,actual_billed_cost_usd:null}' >> "$dir/$issue.jsonl"
 }
 
-# EXP-671 — aggregate the per-issue cost logs into a report. Used by
+# aggregate the per-issue cost logs into a report. Used by
 # `bureau-status.sh --cost`. Prints a per-issue / per-stage token + $ summary.
 report_costs() {
   local dir="${BUREAU_COST_DIR:-$HOME/.bureau/cost}"
@@ -895,14 +895,14 @@ agent_enabled() {
   [ "$val" != "false" ] && [ "$val" != "null" ]
 }
 
-# ── Linear glue helpers (EXP-412) ──────────────────────────────────
+# ── Linear glue helpers ──────────────────────────────────
 # These replace the legacy pattern of spawning `claude -p` + remote Linear MCP
 # to perform routine CRUD. Remote MCP uses short-lived OAuth tokens that can't
 # be refreshed from headless subprocesses — the first cron tick worked, every
 # subsequent tick failed silently. Direct GraphQL + LINEAR_API_KEY is stable,
 # fast, and free of hidden Claude token burn.
 
-# Resolve "EXP-123" → Linear UUID. Caches nothing — re-queried per call.
+# Resolve "TEAM-123" → Linear UUID. Caches nothing — re-queried per call.
 _resolve_issue_uuid() {
   local ref="$1"
   if [[ "$ref" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]]; then
@@ -1053,7 +1053,7 @@ post_comment() {
 # crosscheck_open_prs: cross-check <tasks-file> against the open PRs and report
 # the outcome on <issue>. Always returns 0.
 #
-# Carried over from installation A (EXP-1469). "No file conflicts" is only
+# Carried over from an installation. "No file conflicts" is only
 # said after an explicit success: exit code 0 AND a last non-empty output line
 # "CROSSCHECK RESULT: clean …". Exit 3 with "conflicts" posts the conflict
 # warning as before. Every other pairing — an abort (bash itself exits 1 or 2),
@@ -1165,7 +1165,7 @@ $body
 # suppressor? Runs squash-marker-check.sh against <base>..HEAD and leaves the
 # answer in two globals; the caller decides what a halt means.
 #
-# Carried over from installation A (EXP-1465). The second layer behind
+# Carried over from an installation. The second layer behind
 # merge-body.sh: that one defangs the message merge-pipeline.sh writes, this one
 # reads the commits themselves, which is what reaches main on a rebase merge or
 # a merge done by hand. The implement stage calls it before the hand-off, the
@@ -1214,7 +1214,7 @@ $out"
 # comment_on_branch_pr: post <text> as a comment on the open PR of <branch>,
 # if there is one. Loud on failure, never fatal; always returns 0.
 #
-# Carried over from installation A (EXP-1465). A halt for a CI suppressor has
+# Carried over from an installation. A halt for a CI suppressor has
 # to show where the merge happens, not only in Linear. It is a comment and not
 # a flip back to draft on purpose: no stage makes that transition today.
 #
@@ -1256,7 +1256,7 @@ comment_on_branch_pr() {
 #   1. A bureau-branch marker comment posted by the spec pipeline. The marker
 #      MUST be the first line of the comment body:
 #        <!-- bureau-branch: 001-automated-tests -->
-#        **Spec Artifacts — EXP-123**
+#        **Spec Artifacts — TEAM-123**
 #        ...
 #      Newest wins if multiple marker comments exist. Anchoring to the first
 #      line avoids false positives from documentation/review comments that
@@ -1377,7 +1377,7 @@ get_issue_state() {
 # unusable; 2 when the answer was usable but a matching label could not be
 # classified.
 #
-# Carried over from installation B (EXP-1340). The name-only lookup with
+# Carried over from an installation. The name-only lookup with
 # `first: 1` returned whichever label of that name the server listed first. In
 # a workspace where two teams both have `needs-human` (or `shepherd-focused`),
 # that was deterministically the other team's label, which cannot attach to
@@ -1394,7 +1394,7 @@ get_issue_state() {
 # never skipped into "not found": that is exit 2, unless a usable winner exists
 # anyway. Empty output with exit 0 is reserved for a clean no-match.
 #
-# The team comes from an identifier like EXP-123; for a UUID reference the
+# The team comes from an identifier like TEAM-123; for a UUID reference the
 # configured team key applies.
 _resolve_label_id() {
   local name="$1" ref="$2" team_key answer selection
@@ -1510,7 +1510,7 @@ remove_issue_label() {
   [ "$ok" = "true" ]
 }
 
-# ── needs-human hold (EXP-1516) ─────────────────────────────────────────
+# ── needs-human hold ─────────────────────────────────────────
 # A stage that hands a ticket to a human adds the needs-human label, and the
 # picker excludes that label: that is what keeps the paid stage from running the
 # same ticket again. When the label write fails, the escalation must not live
@@ -1918,7 +1918,7 @@ pr_base_is_current() {
   return 1
 }
 
-# ── Observability helpers (EXP-414) ────────────────────────────────
+# ── Observability helpers ────────────────────────────────
 # Shared throttle: returns 0 if the event for $key fired within the last
 # $window_sec seconds (caller should suppress), 1 if not seen recently
 # (caller should fire AND will record). On the "fire" path, the caller calls
@@ -2001,7 +2001,7 @@ _bureau_repo_name() {
   fi
 }
 
-# ── Session-usage throttling (EXP-670) ──────────────────────────────
+# ── Session-usage throttling ──────────────────────────────
 # Pause before a work unit when session usage is near the limit, so unattended
 # executor/shepherd runs don't exhaust quota mid-build. GRACEFULLY NO-OPS when no
 # usage signal is available — never block work just because the signal is missing
@@ -2375,15 +2375,15 @@ merge_origin_main_or_abort() {
   return 1
 }
 
-# EXP-491: count issues currently in-flight between Spec (inclusive) and Done
+# count issues currently in-flight between Spec (inclusive) and Done
 # (exclusive). Used by spec-pipeline as a gate before picking new Triage work
 # when BUREAU_MAX_CONCURRENT_ISSUES is non-zero. Issues with parking labels
 # (needs-human, the configured linear.labels.needs_human.name as in
 # pipeline_pick_next, blocked, wip) are excluded from the count — they're
 # already stalled, holding up the cap on them too would deadlock the loop.
 #
-# What counts is work, not tickets (carried over from installation A,
-# EXP-1462): only issues of the configured projects (.linear.projects, as in
+# What counts is work, not tickets (carried over from an installation):
+# only issues of the configured projects (.linear.projects, as in
 # pick_issue), and only issues without children — an epic is a bracket, not
 # work, and one on Spec used to hold every new run. Sub-issues count: the old
 # `parent: { null: true }` filter counted epics and skipped the work under
@@ -2530,7 +2530,7 @@ reset_worktree() {
 # ── Ownership halts leave a trace (v3.1.0-rc.2) ─────────────────────────
 # An exit 21 over ownership used to end the run with a line on stderr and
 # nothing on the ticket: the ticket stayed in its state with lane-2, and a queue
-# picked it again on every tick (pilot EXP-1545: an interrupted run's worktree,
+# picked it again on every tick (an interrupted run's worktree,
 # released but not dropped). The halt now sets needs-human (mark_needs_human,
 # with its local hold when the label cannot be written) and posts one comment
 # that names the worktree and the way back. A cancelled run writes nothing.
@@ -2747,7 +2747,7 @@ $steps"
 # restored. The stages call it after their own checkout and merge of
 # origin/main (both can change the manifests) as `|| exit 24`.
 #
-# Carried over from installation B (EXP-1375). `clean -fdx` removes ignored files,
+# Carried over from an installation. `clean -fdx` removes ignored files,
 # node_modules included, and nothing installed them again: the review stage's
 # build check ran without dependencies every time, the build was red, and the
 # red build turned four unanimous APPROVEs into REQUEST_CHANGES. Only for npm
@@ -2885,7 +2885,7 @@ restore_worktree_deps() {
 # ignored path, a Python virtualenv included, and the agents' own commands
 # (`.venv/bin/python -m pytest` from a spec) then fail in every stage. This is
 # the Python counterpart of restore_worktree_deps, carried over from
-# installation A, which linked `.venv` by hand after the reset (EXP-799).
+# installation A, which linked `.venv` by hand after the reset.
 # Nothing is configured by default, and then nothing happens.
 #
 # A link is only made when it cannot hurt; otherwise the path is skipped with
@@ -3048,8 +3048,8 @@ print(next((c for c in rel.split(os.sep) if c not in ("", ".", "..") and c.lower
 # reasons that have nothing to do with the code — missing dependencies in the
 # worktree, no network, a broken stub — and in that case a BLOCK lost its
 # escalation: the finding stayed in the review text while the ticket went into
-# ordinary rework without `needs-human`. That happened in a live installation on
-# 2026-08-11 and was logged there as CRITICAL.
+# ordinary rework without `needs-human`. That happened in a live installation
+# and was logged there as CRITICAL.
 #
 # The table is fail-closed: what it does not know becomes BLOCK. An unknown verdict
 # is a fault in the caller, and a fault in the caller must not reach a merge.
@@ -3073,7 +3073,7 @@ apply_build_failure() {
 #   1. verdict   anything but APPROVE, REQUEST_CHANGES or BLOCK is BLOCK.
 #   2. security  the merged review's security_issues must be a count (a non-negative
 #                integer). Missing, negative or anything else is BLOCK: an unreadable
-#                count is not "none" (EXP-1518 in installation A: it used to read as 0,
+#                count is not "none" (it used to read as 0,
 #                so the floor did nothing exactly when the review was unreliable).
 #   3. critical  the security specialist's own count of CRITICAL findings above 0 is BLOCK,
 #                whatever verdict the merger chose. The merger's rules already say "any
@@ -3089,7 +3089,7 @@ apply_build_failure() {
 #   6. cap       last, so it also sees a REQUEST_CHANGES the build fold produced: at or past
 #                max_review_cycles it escalates to BLOCK. It used to run before the fold, so
 #                "reviewers approve, build red" never met the cap and went round forever
-#                (EXP-1514 in installation A). A cycle count or cap that is not a count
+#                in an installation. A cycle count or cap that is not a count
 #                escalates too.
 decide_review_verdict() {
   local verdict="${1:-}" sec="${2:-}" crit="${3:-}" build_ok="${4:-}" cycles="${5:-}" max="${6:-}"
@@ -3182,7 +3182,7 @@ _review_shown() {
 # line. X must be exactly one verdict word (bold, backticks and a trailing period
 # stripped); anything else gives nothing, which the stage reads as BLOCK. The old form
 # took the first verdict word anywhere on those lines, so "NOT_APPROVED — BLOCK" read
-# as APPROVE (EXP-1513 in installation A).
+# as APPROVE (in an installation).
 review_verdict_from_text() {
   local line
   line=$(printf '%s\n' "${1:-}" | sed 's/\*\*//g' | awk '
@@ -3205,7 +3205,7 @@ review_verdict_from_text() {
 # (needs-human-or-paused), the same fail-closed direction as the stage's
 # `VERDICT="${VERDICT:-BLOCK}"`.
 #
-# Carried over from installation B (EXP-1322), with this template's code: installation B
+# Carried over from an installation, with this template's code: that installation
 # ends a BLOCK with 20, which here means stopped-before-merge. A BLOCK used to
 # label, comment and exit 0, indistinguishable from an approved review. The
 # queue picker skips the needs-human ticket, but a shepherd saw 0, found the
@@ -3222,7 +3222,7 @@ resolve_verdict_exit() {
 # shepherd_rc_action <exit-code> → ok | retry | halt — how shepherd.sh answers a
 # stage's exit code, as a pure table.
 #
-# Carried over from installation B. The shepherd used to list its halt codes one
+# Carried over from an installation. The shepherd used to list its halt codes one
 # by one and send everything else to an "unexpected exit" that stopped without
 # an alert — so every code added later (22 to 26 here) halted silently. Now
 # halt is the default and only the exceptions are listed:
@@ -3314,7 +3314,7 @@ precondition_clean_worktree() {
 # Output:  issue identifier on stdout, empty string if queue empty or every
 #          candidate has an open blocker.
 #
-# Dependency awareness (EXP-437): each candidate's Linear inverseRelations are
+# Dependency awareness: each candidate's Linear inverseRelations are
 # inspected. A candidate is skipped when any relation of type "blocks" points
 # from an issue whose state.type is neither "completed" nor "canceled". The
 # picker walks the sorted list and returns the first unblocked candidate. Deep

@@ -84,7 +84,7 @@ else
   exit 12
 fi
 
-# Same EXP-484 reasoning as implement/qa/code-review: design.md is committed
+# Same base-selection reasoning as implement/qa/code-review: design.md is committed
 # and pushed; the PR diff is computed against origin/main, so a stale base
 # pollutes the design-review with phantom-revert hunks.
 if ! merge_origin_main_or_abort "$ISSUE" "UX/Design"; then
@@ -258,6 +258,6 @@ echo "  Status: $NEXT_STATE_LABEL"
 echo "═══════════════════════════════════════"
 
 # A needs-human escalation whose label could not be written must not read as
-# success to the driver (EXP-1516): the local hold keeps the queue away, the
+# success to the driver: the local hold keeps the queue away, the
 # non-zero exit stops a shepherd.
 if [ "$NEEDS_HUMAN_UNMARKED" = 1 ]; then exit 25; fi

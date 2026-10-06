@@ -3,7 +3,7 @@
 #
 # The review stage prints the last 20 lines of its build check. For a cargo workspace those
 # are the doc-test summaries ("running 0 tests", four times), and the log read as if no test
-# had run (pilot EXP-1545). A longer output is now introduced with "Build output: last 20 of
+# had run (observed in a pilot run). A longer output is now introduced with "Build output: last 20 of
 # <n> lines"; an output of 20 lines or fewer is printed whole, without the line.
 #
 # Runs the REAL code-review-pipeline.sh in the harness sandbox (stub gh, stub Linear, fake

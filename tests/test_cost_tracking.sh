@@ -1,5 +1,5 @@
 #!/bin/bash
-# test_cost_tracking.sh — EXP-671 opt-in per-stage cost tracking. Verifies the
+# test_cost_tracking.sh — opt-in per-stage cost tracking. Verifies the
 # toggle, the --print↔--output-format-json flag, the backward-compatible
 # envelope unwrap in parse_claude_json, the usage capture, and the report.
 # Default-OFF must be byte-identical (no log, --print, raw parse unchanged).

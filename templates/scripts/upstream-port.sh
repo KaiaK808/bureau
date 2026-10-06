@@ -505,7 +505,7 @@ fi
 rm -f /tmp/upstream-port-gh-err.$$
 
 # --------------------------------------------------------------------------
-# Step 8.5 — optional path translation (EXP-629).
+# Step 8.5 — optional path translation.
 # --------------------------------------------------------------------------
 # If <repo>/.bureau-port-map.json exists, rewrite the fetched diff before
 # applying. Lets a downstream repo absorb upstream renames (e.g.

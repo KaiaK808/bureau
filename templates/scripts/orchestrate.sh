@@ -8,7 +8,7 @@
 # cron-friendly bash).
 #
 # Usage:
-#   scripts/orchestrate.sh --chain EXP-644,EXP-640,EXP-645,EXP-473,EXP-474
+#   scripts/orchestrate.sh --chain TEAM-123,TEAM-124,TEAM-125,TEAM-126,TEAM-127
 #       Run an explicit serial chain, one shepherd at a time, in order.
 #   scripts/orchestrate.sh --schedule path/to/schedule.json
 #       Read {"serialChains":[[...]],"parallelSafe":[...]} (the brain's output)
@@ -34,7 +34,7 @@
 #     own worktree `.worktrees/shepherd-lane-<i>` (via `shepherd.sh --worktree`),
 #     so two builds never share a checkout. The conflict-aware-schedule brain is
 #     trusted to keep main.rs-colliding tickets OUT of the parallelSafe set
-#     (EXP-515 widens that frontier later; the executor needs no change for it).
+#     (The frontier can widen later; the executor needs no change for it).
 #     Spawned shepherds inherit BUREAU_RUNNER_*/BUREAU_CODEX_MODEL_* env, so
 #     concurrent lanes can run qa/code_review on Codex (off the Claude quota).
 #

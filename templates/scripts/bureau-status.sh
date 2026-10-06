@@ -245,7 +245,7 @@ if [ "${1:-}" = "--config" ]; then
   exit 0
 fi
 
-# EXP-671 — per-issue / per-stage cost report (opt-in cost tracking).
+# per-issue / per-stage cost report (opt-in cost tracking).
 if [ "${1:-}" = "--cost" ]; then
   report_costs
   exit 0

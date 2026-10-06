@@ -3,8 +3,8 @@
 #
 # A stage or shepherd that stopped with 21 because a worktree was unregistered or foreign, or
 # because another run held the ticket, wrote only a line on stderr: the ticket stayed in its
-# state with lane-2 and nothing on it, and a queue picked it again on every tick (pilot
-# EXP-1545, run 2). Now the halt sets needs-human (mark_needs_human, with its local hold) and
+# state with lane-2 and nothing on it, and a queue picked it again on every tick.
+# Now the halt sets needs-human (mark_needs_human, with its local hold) and
 # posts one comment naming the worktree and the way back; a repeat sets the label again but
 # posts no second comment, and a cancelled run writes nothing.
 #
@@ -59,7 +59,7 @@ settle() {
     sleep 0.1; i=$((i + 1))
   done
 }
-# interrupted — a fresh repository whose shepherd run on EXP-7 was cancelled in the stage.
+# interrupted — a fresh repository whose shepherd run on the fixture ticket was cancelled in the stage.
 interrupted() {
   pr5_new_repo
   pr5_ticket 7 '["lane-2"]'

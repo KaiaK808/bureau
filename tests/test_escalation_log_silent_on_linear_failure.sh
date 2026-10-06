@@ -14,7 +14,7 @@ export BUREAU_STUB_ADD_LABEL_RC=1
 
 run_implement_pipeline
 
-# EXP-1516: a needs-human escalation whose label could not be written does not end as success.
+# a needs-human escalation whose label could not be written does not end as success.
 assert_eq 25 "$LAST_RC" "exit code (the label failed, so the stage must not read as success)"
 
 # add_issue_label was attempted ...

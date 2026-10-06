@@ -3,8 +3,8 @@
 #
 # merge-pipeline.sh pins `gh pr merge` to the head its just-in-time gate checked
 # (--match-head-commit), but the log said only "Merging PR #233 (squash)...": which commit the
-# gates passed and GitHub was asked to merge had to be dug out of GitHub afterwards (pilot
-# EXP-1545). The line now reads "Merging PR #<n> (<strategy>) at <head>...", printed where
+# gates passed and GitHub was asked to merge had to be dug out of GitHub afterwards.
+# The line now reads "Merging PR #<n> (<strategy>) at <head>...", printed where
 # the merge call is made.
 #
 # Runs the REAL merge-pipeline.sh (on its own, and inline from the REAL code-review-pipeline.sh)

@@ -2,8 +2,8 @@
 # The review stage's verdict rules run in one order: verdict check, security count, the
 # security specialist's CRITICAL count, security floor, build fold, cycle cap last.
 #
-# Two defects came from the old order and the old defaults (EXP-1514, EXP-1518 in
-# installation A, same lines in the template):
+# Two defects came from the old order and the old defaults in
+# an installation, with the same lines in the template:
 #   - the cycle cap ran before the build fold, so "reviewers approve, build red" reached
 #     the cap as APPROVE, was folded to REQUEST_CHANGES afterwards and went round forever;
 #   - the security floor read a missing or unreadable security_issues as 0, and raised
@@ -44,14 +44,14 @@ expect() {  # expect "<verdict> <rules>" <args...>
 }
 
 # The ticket rows.
-expect "BLOCK build,cycle-cap"          APPROVE 0 0 false 7 3    # EXP-1514: approve + red build at the cap
+expect "BLOCK build,cycle-cap"          APPROVE 0 0 false 7 3    # approve + red build at the cap
 expect "BLOCK build,cycle-cap"          APPROVE 0 0 false 3 3    # exactly at the cap
 expect "REQUEST_CHANGES build"          APPROVE 0 0 false 2 3    # below the cap: rework
-expect "BLOCK security-critical"        REQUEST_CHANGES 2 2 true 0 3   # EXP-1518: CRITICAL under a REQUEST_CHANGES header
+expect "BLOCK security-critical"        REQUEST_CHANGES 2 2 true 0 3   # CRITICAL under a REQUEST_CHANGES header
 expect "BLOCK security-critical"        APPROVE 2 1 true 0 3
 expect "REQUEST_CHANGES "               REQUEST_CHANGES 2 0 true 0 3   # non-critical security bug: rework
 expect "REQUEST_CHANGES security-floor" APPROVE 1 0 true 0 3
-expect "BLOCK security-unreadable"      APPROVE -1 0 true 0 3    # EXP-1518: -1 used to become 0
+expect "BLOCK security-unreadable"      APPROVE -1 0 true 0 3    # -1 used to become 0
 expect "BLOCK security-unreadable"      APPROVE high 0 true 0 3
 expect "BLOCK security-unreadable"      APPROVE "" 0 true 0 3    # missing field
 expect "BLOCK security-unreadable"      APPROVE null 0 true 0 3
@@ -90,7 +90,7 @@ reason=$(/bin/bash -c 'source "$1"; decide_review_verdict APPROVE "" 0 true 0 3'
 [ "$reason" = "security_issues unreadable" ] || fail "an unreadable count that caused the BLOCK did not name itself: '$reason'"
 echo "PASS model text is sanitised and the logged reason is the rule that caused the BLOCK"
 
-# The legacy text verdict: only an exact verdict word counts (EXP-1513 in installation A).
+# The legacy text verdict: only an exact verdict word counts (observed in an installation).
 fallback() { /bin/bash -c 'source "$1"; review_verdict_from_text "$2"' _ "$FNS" "$1"; }
 for pair in 'REVIEW_VERDICT: NOT_APPROVED — BLOCK|' 'REVIEW_VERDICT: APPROVE|APPROVE' \
             'REVIEW_VERDICT: **REQUEST_CHANGES**|REQUEST_CHANGES' 'REVIEW_VERDICT: `BLOCK`.|BLOCK' \
@@ -212,7 +212,7 @@ run_case() {
   VERDICT_LINE=$(grep -E '^\*\*Verdict\*\*: ' <<< "$POSTED" || true)
 }
 
-# EXP-1514: reviewers approve, the build stays red, three rework cycles already posted.
+# reviewers approve, the build stays red, three rework cycles already posted.
 run_case APPROVE 0 0 red 3
 [ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "approve + red build at the cap posted '$VERDICT_LINE'"
 [ "$LAST_RC" = 25 ] || fail "approve + red build at the cap ended with $LAST_RC, wanted 25"
@@ -236,7 +236,7 @@ assert_calls_include 'move_issue' 'rework goes back to Build'
 teardown
 echo "PASS below the cap a red build is rework"
 
-# EXP-1518: a CRITICAL security finding under a REQUEST_CHANGES header.
+# a CRITICAL security finding under a REQUEST_CHANGES header.
 run_case REQUEST_CHANGES 2 2 green 0
 [ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "CRITICAL under REQUEST_CHANGES posted '$VERDICT_LINE'"
 [ "$LAST_RC" = 25 ] || fail "CRITICAL under REQUEST_CHANGES ended with $LAST_RC"
@@ -266,7 +266,7 @@ role_case 2 0
 teardown
 echo "PASS the CRITICAL count comes from the security specialist's own block"
 
-# EXP-1518: an unreadable or missing security count is not "none".
+# an unreadable or missing security count is not "none".
 for sec in -1 -; do
   run_case APPROVE "$sec" 0 green 0
   [ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "security_issues '$sec' posted '$VERDICT_LINE'"
@@ -317,7 +317,7 @@ grep -q 'CRITICAL findings could not be read' <<< "$POSTED" || fail "negative co
 teardown
 echo "PASS the CRITICAL count is read before the merge trim (after it, a wrapped review lost it)"
 
-# The merger dropped its json verdict and wrote "NOT_APPROVED — BLOCK" (EXP-1513).
+# The merger dropped its json verdict and wrote "NOT_APPROVED — BLOCK".
 fallback_case() {  # $1 = control patch ('' = none)
   run_case APPROVE 0 0 green 0 hold
   [ -z "$1" ] || control_patch "$1"
