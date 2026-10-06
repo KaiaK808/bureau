@@ -16,13 +16,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import git_maintenance
+
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('doctor', ROOT / 'templates/scripts/bureau-doctor.py')
 d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
 PROVIDER = ROOT / 'templates/scripts/bureau-provider.py'
 REAL_RUN = subprocess.run
 INSTALLER = ROOT / 'scripts/bureau_install.py'
-GIT_ENV = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
+# No detached git maintenance may still write into a test repository while its temp dir is deleted (git_maintenance.py).
+GIT_ENV = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', **git_maintenance.OFF_ENV,
            'GIT_AUTHOR_NAME': 'Bureau Test', 'GIT_AUTHOR_EMAIL': 'test@example.invalid',
            'GIT_COMMITTER_NAME': 'Bureau Test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
 BASE = {'version': 2,
@@ -68,6 +71,16 @@ class Repo(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(text if isinstance(text, bytes) else text.encode())
         return path
+
+
+class GitMaintenanceTests(Repo):
+    def test_commits_through_the_git_helper_start_no_git_maintenance(self):
+        trace = self.base / 'trace2.json'
+        (self.repo / 'traced.txt').write_text('traced\n')
+        with patch.dict(GIT_ENV, {'GIT_TRACE2_EVENT': str(trace)}):
+            git(self.repo, 'add', 'traced.txt'); git(self.repo, 'commit', '-qm', 'traced')
+        self.assertTrue(any('commit' in argv for argv in git_maintenance.commands(trace)))  # the commit was traced
+        self.assertEqual(git_maintenance.maintenance_started(trace), [])
 
 
 class StageTimeoutTests(Repo):

@@ -10,13 +10,17 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+
+import git_maintenance
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts/bureau_install.py"
 spec = importlib.util.spec_from_file_location("installer", INSTALLER)
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
-GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+# No detached git maintenance may still write into a test repository while its temp dir is deleted (git_maintenance.py).
+GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", **git_maintenance.OFF_ENV,
            "GIT_AUTHOR_NAME": "Bureau Test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
            "GIT_COMMITTER_NAME": "Bureau Test", "GIT_COMMITTER_EMAIL": "test@example.invalid"}
 # The forms older installers and hand edits left behind, one per line of a CLAUDE.md.
@@ -126,6 +130,13 @@ class IgnoredTemplateFileTests(Target):
         return source, source / "scripts/bureau_install.py"
 
     ALL = ("assets", "--target", "both", "--scope", "interfaces", "--scope", "scripts", "--scope", "workflows")
+
+    def test_the_source_commit_starts_no_git_maintenance(self):
+        trace = self.root / "trace2.json"
+        with patch.dict(GIT_ENV, {"GIT_TRACE2_EVENT": str(trace)}):
+            self.source()
+        self.assertTrue(any("commit" in argv for argv in git_maintenance.commands(trace)))  # the commit was traced
+        self.assertEqual(git_maintenance.maintenance_started(trace), [])
 
     def installed(self):
         return set(self.snapshot())
