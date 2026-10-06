@@ -6,7 +6,9 @@
 #
 #   pr3_count_pushes      git on PATH stays the real git; a pass-through in front of it
 #                         appends every `git push` to $SANDBOX/.pr3-pushes and, for the
-#                         order against gh, to $SANDBOX/gh_calls.log.
+#                         order against gh, to $SANDBOX/gh_calls.log (without the
+#                         `-c` options Bureau's git puts first, v3.2: core.hooksPath and the
+#                         hook switches).
 #   pr3_count_receives    a post-receive hook in the bare origin appends one line per push
 #                         that reached it ("<old> <new> <ref>") to $SANDBOX/.pr3-receives.
 #   pr3_gh_pr_list <mode> gh answers `gh pr list` with the literal `null` (mode null), with
@@ -54,11 +56,17 @@ pr3_count_pushes() {
   local real_git
   real_git=$(command -v git)
   pr3_bin
+  # Bureau's git function puts -c options (core.hooksPath, the hook switches) and, for a hook
+  # name with =, --config-env before a remote subcommand (v3.2); the shim reads the subcommand
+  # after them and logs the call without them.
   cat > "$SANDBOX/.pr3-bin/git" <<SHIM
 #!/bin/bash
-if [ "\${1:-}" = push ]; then
+args=("\$@")
+while :; do case "\${args[0]:-}" in -c) args=("\${args[@]:2}") ;; --config-env=*) args=("\${args[@]:1}") ;; *) break ;; esac; done
+sub=\${args[0]:-}
+if [ "\$sub" = push ]; then
   printf 'push\n' >> "$SANDBOX/.pr3-pushes"
-  { printf 'git'; for a in "\$@"; do printf '\t%s' "\$a"; done; printf '\n'; } >> "$SANDBOX/gh_calls.log"
+  { printf 'git'; for a in "\${args[@]}"; do printf '\t%s' "\$a"; done; printf '\n'; } >> "$SANDBOX/gh_calls.log"
 fi
 exec "$real_git" "\$@"
 SHIM

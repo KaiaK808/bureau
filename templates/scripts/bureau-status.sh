@@ -18,10 +18,9 @@ source "$(dirname "$0")/bureau-config.sh"
 # missing because they need LINEAR_API_KEY to function; bureau-status.sh just
 # *reports* on the environment, so missing .env is non-fatal — the report
 # will show those secrets as UNSET, which is the truth in that case.
-if [ -f .env ]; then
-  bureau_load_env --export .env
-elif [ -f "$REPO_DIR/.env" ]; then
-  bureau_load_env --export "$REPO_DIR/.env"
+# BUREAU_ENV_FILE (the .env next to .bureau.json), never ./.env of whatever directory this runs in.
+if [ -f "${BUREAU_ENV_FILE:-$REPO_DIR/.env}" ]; then
+  bureau_load_env --export "${BUREAU_ENV_FILE:-$REPO_DIR/.env}"
 fi
 
 LOG_DIR="$REPO_DIR/logs"
@@ -170,17 +169,17 @@ show_effective_config() {
   _resolve_env_only BUREAU_SESSION_NAME "(bureau-v2-$(basename "$REPO_DIR"))"
   _row runtime BUREAU_SESSION_NAME "$row_source" "$row_value"
   # Secrets: never show the actual value — just whether it's set.
-  if [ -n "${LINEAR_API_KEY:-}" ]; then
+  if bureau_secret_set LINEAR_API_KEY; then
     _row runtime LINEAR_API_KEY      "env *" "set"
   else
     _row runtime LINEAR_API_KEY      "def" "${RED}UNSET${RESET}  (required)"
   fi
-  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  if bureau_secret_set TELEGRAM_BOT_TOKEN; then
     _row runtime TELEGRAM_BOT_TOKEN  "env *" "set"
   else
     _row runtime TELEGRAM_BOT_TOKEN  "def" "unset (alerts disabled)"
   fi
-  if [ -n "${TELEGRAM_ALERT_CHAT_ID:-}" ]; then
+  if bureau_secret_set TELEGRAM_ALERT_CHAT_ID; then
     _row runtime TELEGRAM_ALERT_CHAT_ID "env *" "set"
   else
     _row runtime TELEGRAM_ALERT_CHAT_ID "def" "unset"

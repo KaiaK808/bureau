@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1170d53a0d154abb1b001d41c94e3db83d62405abc76e44baab2d39161506111">
+<meta name="bureau-source-sha256" content="89c3250bf618fed6dd694409e294ede6dee3a09f5d84a2c3396a3ba83e897db0">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -285,13 +285,35 @@ failing <code>gh</code> count as no open PR. Read only when
 mean <code>true</code>, any other value means <code>true</code> with a
 warning. The end-of-run push keeps its rules: retried once, and the
 stage ends with <code>18</code> before any hand-off when origin still
-lacks commits. A stage that ends before its end-of-run push (a provider
-that fails or times out, an unusable Linear, a crash, SIGTERM or SIGHUP)
-pushes the deferred commits first, once and best effort, and keeps its
-exit code; after a <code>repo.post_implement_command</code> that moved
-HEAD it pushes the commit the command started from, never the rewritten
-HEAD. A process killed outright (SIGKILL, a host crash) pushes nothing,
-and its commits stay in the worktree</td>
+lacks commits; once it goes through it says so on stdout,
+<code>pushed &lt;branch&gt; (end of run): N commit(s) origin lacked, head &lt;sha&gt;</code>
+(<code>end of run, retry</code> after a retry). Every way out before the
+end-of-run push pushes every commit origin lacks first (since v3.2),
+with either value of this key, the commits of the pass that was running
+included, the first pass's too, and also the stage's own merge of
+<code>origin/main</code> before its first pass when that is all origin
+lacks (with <code>false</code> and an open PR that push costs one CI
+run) (before, they stayed in the worktree with <code>true</code>, and
+with <code>false</code> when the pass was the first; with
+<code>false</code> only what a finished pass had held back was pushed):
+a provider pass that fails (any exit but <code>0</code> and
+<code>124</code>) or times out when no pass is left, a failed
+<code>/goal</code> run, an unusable Linear, a crash, SIGTERM, SIGINT and
+SIGHUP, also when the stage's terminal or the pipe on its stderr is
+gone. stderr says
+<code>pushing N commit(s) of &lt;branch&gt; that origin lacks before the stage ends (&lt;why&gt;)</code>
+(<code>provider exit X</code>, or
+<code>the stage ends before its end-of-run push</code> from the stage's
+EXIT trap), stdout confirms it as above; once and best effort, and the
+stage keeps its exit code. After a
+<code>repo.post_implement_command</code> that moved HEAD the stage
+pushes the commit the command started from, when origin lacks it, never
+the rewritten HEAD, and confirms it the same way. These pushes run in
+the stage's own process group, which the runtime stops on an interrupt
+and kills when its stop grace ends, so a push that hangs on a remote
+cannot hold a stop longer than that grace. A process killed outright
+(SIGKILL, a host crash) pushes nothing, and its commits stay in the
+worktree</td>
 </tr>
 <tr>
 <td><code>agents.qa</code></td>
@@ -725,10 +747,11 @@ Required for Codex implementation completion and the app tests action.
 <code>null</code>, <code>false</code> or <code>""</code>, which stop a
 Codex completion with <code>24</code>) only when implement resolves to
 Codex (<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it, from
-<code>.env</code> before the environment, else
-<code>agents.implement.runner</code>, else <code>agents.runner</code>),
-also with <code>agents.implement</code> off, since the shepherd runs
-every stage unless <code>--respect-config</code></td>
+the <code>.env</code> the stages read (<code>BUREAU_ENV_FILE</code>)
+before the environment, else <code>agents.implement.runner</code>, else
+<code>agents.runner</code>), also with <code>agents.implement</code>
+off, since the shepherd runs every stage unless
+<code>--respect-config</code></td>
 </tr>
 <tr>
 <td><code>repo.untrusted_env</code></td>
@@ -783,10 +806,13 @@ building. The stage itself keeps the keys for its own Linear, GitHub and
 Telegram calls. Independent of this key: Bureau's own git and
 <code>gh</code> commands, in the shell and from its Python, run without
 the seven (<code>gh</code> and the git commands that talk to a remote
-keep the GitHub token variables), the provider starts without them, the
-runtime wrapper without <code>BASH_ENV</code>, <code>ENV</code> and the
-<code>.env</code> keys the stage reads back, and the stages never link a
-<code>.env*</code> file into a stage worktree — a
+keep the GitHub token variables; those git commands run without hooks
+unless <code>repo.remote_git_runs_hooks</code> is <code>true</code>),
+the stages and drivers keep the three <code>.env</code> keys as shell
+variables they never export (v3.2), the provider starts without them,
+the runtime wrapper without <code>BASH_ENV</code>, <code>ENV</code> and
+the <code>.env</code> keys the stage reads back, and the stages never
+link a <code>.env*</code> file into a stage worktree — a
 <code>repo.worktree_links</code> entry with a path component starting
 with <code>.env</code> (any case, <code>.envrc</code> too), whose fully
 resolved path in the main checkout passes through such a name
@@ -795,6 +821,42 @@ is a directory with such a name anywhere below it or that cannot be
 searched completely is skipped with one warning line. Code running as
 the same user can still read files and other processes' environments;
 see <a
+href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
+</tr>
+<tr>
+<td><code>repo.remote_git_runs_hooks</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Whether Bureau's own git commands that talk to a remote —
+<code>push</code>, <code>fetch</code>, <code>pull</code>,
+<code>ls-remote</code>, <code>clone</code>, <code>remote</code>,
+<code>submodule</code>, all of which keep the GitHub token variables for
+the credential helper — run the repository's hooks. Since v3.2 they run
+with <code>-c core.hooksPath=/dev/null</code> and, for the hooks the
+configuration defines (git 2.54 and later),
+<code>hook.&lt;event&gt;.enabled=false</code> for every hook event and
+<code>hook.&lt;name&gt;.enabled=false</code> for every configured hook
+name (the <code>git</code> function in
+<code>scripts/bureau-env.sh</code>): a hook from the branch would see
+the GitHub tokens, <code>pre-push</code> on a push and
+<code>reference-transaction</code> on every ref update a fetch or a push
+makes. A <code>pre-push</code> hook (lint, tests) therefore no longer
+runs when Bureau pushes; CI runs those checks on the pull request.
+<strong>A repository that uses Git LFS needs <code>true</code></strong>:
+<code>git lfs install</code> uploads the LFS objects in a
+<code>pre-push</code> hook, and without it Bureau's push leaves them off
+the remote; doctor warns when the main checkout uses
+<code>filter=lfs</code> (in its <code>.gitattributes</code>, a
+<code>.gitattributes</code> further down that git lists, or
+<code>.git/info/attributes</code>) and the key is not <code>true</code>.
+<code>true</code> (the JSON value) runs the hooks again, as v3.1 did.
+Absent, <code>null</code>, <code>false</code>, any other value and a
+<code>.bureau.json</code> that cannot be read keep them off; doctor
+warns on a value that is not a JSON boolean. Local commands (commit,
+checkout, merge, reset) run their hooks either way, without the Bureau
+secrets. Hooks only: a credential helper, a filter or an fsmonitor named
+in the git configuration still runs, and <code>gh</code>'s own git calls
+keep their hooks; see <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
 </tr>
 <tr>
@@ -1060,7 +1122,14 @@ separate <code>agents.max_concurrent_issues</code> ticket cap</td>
 <td>Always (agents)</td>
 <td>Set in <code>.env</code>. The interactive <code>/bureau-init</code>
 works without it via MCP; the headless agents need direct GraphQL
-access</td>
+access. The scripts that read <code>.env</code> keep it in a shell
+variable they never export (v3.2) and hand it to <code>curl</code> on
+stdin, so the processes they start do not see it; a key that only the
+shell which starts Bureau sets, and not <code>.env</code>, is left as it
+is — Bureau does not change values from the operator's shell — so it
+reaches every process below that shell, Bureau's own children included;
+keeping the key only in <code>.env</code> closes this. The same holds
+for the two Telegram keys</td>
 </tr>
 <tr>
 <td><code>BUREAU_LINEAR_RETRIES</code></td>
@@ -1122,7 +1191,10 @@ if it doesn't reach <code>status: COMPLETE</code> within the budget.</p>
 <td>Max provider passes per tick. Each iter parses the JSON status
 block, runs the squash-range check, pushes commits (see
 <code>agents.implement.push_each_iteration</code>), and decides
-continue/stop</td>
+continue/stop. Since v3.2 a pass that times out counts as one of them
+(status <code>TIMEOUT</code> in the iteration log) and the loop goes on;
+the stage ends with <code>124</code> only when the last allowed pass
+times out</td>
 </tr>
 <tr>
 <td><code>BUREAU_IMPL_ITER_TIMEOUT</code></td>
@@ -1136,7 +1208,13 @@ providers</td>
 <td><code>5400</code></td>
 <td>Budget in seconds for the implementation provider loop. Independent
 executor tests and publication can add time after it; this is not a
-monetary cap</td>
+monetary cap. Since v3.2 it, not one timed-out pass, bounds a stage
+whose passes time out; a timed-out pass that leaves 60 s or less of it
+ends the stage with <code>124</code>. Setting it to
+<code>BUREAU_IMPL_ITER_TIMEOUT</code> brings back the pre-v3.2 ceiling
+of one timed-out pass, but also caps a productive multi-pass run at that
+one pass's time; <code>BUREAU_IMPL_MAX_ITER=1</code> is the other
+trade-off (one pass of any kind)</td>
 </tr>
 <tr>
 <td><code>BUREAU_POST_IMPLEMENT_TIMEOUT</code></td>
@@ -1147,12 +1225,16 @@ process group is ended and the stage halts with <code>14</code></td>
 </tr>
 </tbody>
 </table>
-<p>The default provider-loop budget is 90 minutes. An unproductive first
-<code>PARTIAL</code> iteration can become <code>STUCK</code>; prior
-productive iterations and legitimate <code>COMPLETE</code> results have
-separate handling. The executor checks Git evidence and, for Codex
-completion, the configured project tests. A provider's success text
-alone cannot complete the stage.</p>
+<p>The default provider-loop budget is 90 minutes, and since v3.2 a
+stage whose passes time out can use all of it: a timed-out pass no
+longer ends the stage while another pass fits (see <a
+href="troubleshooting.html#exit-124-timeout--a-provider-pass-hit-its-time-limit">Exit
+124</a>). An unproductive first <code>PARTIAL</code> iteration can
+become <code>STUCK</code>; a timed-out pass never does; prior productive
+iterations and legitimate <code>COMPLETE</code> results have separate
+handling. The executor checks Git evidence and, for Codex completion,
+the configured project tests. A provider's success text alone cannot
+complete the stage.</p>
 <p>Terminal states map to PR state + Linear:</p>
 <table>
 <thead>
@@ -1475,8 +1557,21 @@ primary worktree. Keep the trusted private config out of commits</td>
 <tr>
 <td><code>BUREAU_ENV_FILE</code></td>
 <td>caller-dependent</td>
-<td>Explicit trusted environment file used by runtime helpers when
-needed; doctor/provider <code>--describe</code> do not source it</td>
+<td>The <code>.env</code> every script reads its keys from
+(<code>bureau_load_env</code>, parsed, never sourced); default:
+<code>.env</code> in the directory of <code>.bureau.json</code>, the
+main checkout. A relative value counts from that directory (the one
+<code>BUREAU_CONFIG</code> names, a link not resolved), and every script
+exports the result, so a script the runtime relaunches reads the same
+file even when <code>.bureau.json</code> is a link (the runtime passes
+on its resolved path). Since v3.2 no script reads <code>./.env</code> of
+its working directory any more: a stage runs in the branch's worktree,
+where <code>./.env</code> would be a file the branch commits.
+<code>bureau-doctor.py</code> reads only
+<code>BUREAU_RUNNER_IMPLEMENT</code> from it (for the
+<code>repo.test_command</code> warning), from the same file by the same
+rule, also when it runs in a linked worktree; provider
+<code>--describe</code> does not read it</td>
 </tr>
 <tr>
 <td><code>BUREAU_ALERT_THROTTLE_FILE</code></td>

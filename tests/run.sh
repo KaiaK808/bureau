@@ -15,6 +15,8 @@ for t in test_*.sh; do
   log=$(mktemp -t bureau-test.XXXXXX.log)
   if bash "$t" >"$log" 2>&1; then
     echo "PASS  $t"
+    # A test that skips a part says so in a line starting with SKIP; show it.
+    grep '^SKIP' "$log" | sed 's/^/      /' || true
     pass=$((pass + 1))
   else
     echo "FAIL  $t"

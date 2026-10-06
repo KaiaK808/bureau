@@ -13,9 +13,22 @@
 # _BUREAU_SCRIPTS_DIR is this file's own directory, resolved once at source time: helpers
 # that run a sibling script must take it from the checkout this config came from, never
 # from ./scripts/ relative to wherever the stage has cd'd to.
+#
+# v3.2: allexport off in every Bureau script, before anything is defined. An operator shell that
+# ran `set -a` and exported SHELLOPTS starts each Bureau bash with it on, and then every assignment
+# and every function definition would be exported: the stages' API_KEY copy, the Linear request's
+# config line in _bureau_linear_fetch (which _bureau_drop_secrets would then unset before curl
+# reads it), the functions of this file and bureau-env.sh (which a /bin/sh child cannot even
+# import). bureau-env.sh and bureau_load_env switch it off as well.
+set +a
 _BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=templates/scripts/bureau-env.sh
 source "$_BUREAU_SCRIPTS_DIR/bureau-env.sh"
+# The scripts that source this file copy the Linear key into API_KEY once they
+# have read .env. bureau_load_env never exports the key itself (v3.2); an
+# API_KEY the operator's shell happens to export would still carry the copy to
+# every process the script starts, so it loses the export attribute here.
+export -n API_KEY
 
 _find_config() {
   local common primary candidate
@@ -33,6 +46,14 @@ _find_config() {
   BUREAU_CONFIG="$(cd "$(dirname "$BUREAU_CONFIG")" && pwd)/$(basename "$BUREAU_CONFIG")"
   export BUREAU_CONFIG
   BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$(dirname "$BUREAU_CONFIG")/.env}"
+  # The .env every script reads (v3.2: never ./.env, which in a stage worktree is a file the
+  # branch controls). A relative value counts from the directory of .bureau.json, not from the
+  # working directory.
+  case "$BUREAU_ENV_FILE" in /*) ;; *) BUREAU_ENV_FILE="$(dirname "$BUREAU_CONFIG")/$BUREAU_ENV_FILE" ;; esac
+  # Exported, so the runs below this one read the same file: the runtime hands a relaunched stage
+  # the RESOLVED path of .bureau.json (config_for in bureau-runtime.py), and when .bureau.json is a
+  # link, its target's directory is not the one this script took the .env from (v3.2).
+  export BUREAU_ENV_FILE
 }
 _find_config
 # Capture the caller boundary separately from user-facing .env settings. An
@@ -615,7 +636,18 @@ run_stage_for() {
   [ "$#" = 1 ] || { echo 'run_stage_for requires one prompt' >&2; return 22; }
   temp=$(mktemp -d)
   printf '%s' "$1" > "$temp/prompt"
-  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual." "$system" > "$temp/system"
+  # The CI rule (v3.2, scope O7) sits in the system text, not only in
+  # scripts/bureau-stage.md: a stage reads that file from its worktree, so it
+  # holds there only once the resynced file is on the branch, and this text
+  # comes from the main checkout's scripts from the first run on. It says
+  # outright that it wins over project instructions: an installation's own
+  # CLAUDE.md told the agent to wait for a missing CI run, and three implement
+  # passes were killed at their time limit while polling checks of finished,
+  # pushed work. It names no Git step of its own: Codex stages and read-only
+  # stages leave commits and pushes to the Bureau shell. And it says that CI
+  # does not decide the reported status, so an agent kept from waiting does not
+  # report NEEDS_HUMAN instead.
+  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system"
   local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
   [ -n "$schema" ] && args+=(--schema "$schema")
   # The provider needs none of the Bureau secrets: it starts without them, so
@@ -2106,10 +2138,10 @@ alert_telegram() {
     echo "[DRY_RUN] alert_telegram $issue $pipeline exit=$exit_code: $message" >&2
     return 0
   fi
-  local token="${TELEGRAM_BOT_TOKEN:-}"
-  local chat="${TELEGRAM_ALERT_CHAT_ID:-}"
-  [ -z "$token" ] && return 0
-  [ -z "$chat" ] && return 0
+  # The token and the chat id are looked at with a running `set -x` off and read only inside the
+  # traceless subshell below (v3.2): a local copy assigned here would print them in the trace.
+  bureau_secret_set TELEGRAM_BOT_TOKEN || return 0
+  bureau_secret_set TELEGRAM_ALERT_CHAT_ID || return 0
 
   local throttle_key="alert|$issue|$pipeline|$exit_code"
   _throttle_should_suppress "$throttle_key" 3600 && return 0
@@ -2126,10 +2158,9 @@ alert_telegram() {
   # its argument list, which `ps` shows; curl starts without the secrets in its
   # environment, and a running `set -x` is off in the subshell.
   ( { set +x; } 2>/dev/null
-    config=$(_bureau_curl_config url "https://api.telegram.org/bot${token}/sendMessage"
-             _bureau_curl_config data-urlencode "chat_id=${chat}"
+    config=$(_bureau_curl_config url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
+             _bureau_curl_config data-urlencode "chat_id=${TELEGRAM_ALERT_CHAT_ID}"
              _bureau_curl_config data-urlencode "text=${body}")
-    token=""; chat=""
     _bureau_drop_secrets
     curl -s -X POST -K - --data-urlencode "parse_mode=Markdown" <<< "$config"
   ) >/dev/null 2>&1 || true

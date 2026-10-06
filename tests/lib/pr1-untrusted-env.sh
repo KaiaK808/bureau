@@ -3,7 +3,7 @@
 # Bureau secrets). Source after tests/lib/harness.sh; call pr1_setup after sandbox_init.
 #
 #   pr1_setup                  — writes the sandbox .env with the Linear and Telegram
-#                                probes (the stage exports them, as under the queue),
+#                                probes (the stage reads them; before v3.2 it exported them),
 #                                exports the four GitHub token probes, an empty exported
 #                                API_KEY (the stage copies the Linear key into it), a
 #                                remote URL with a token inside and an operator variable; puts a recording gh in front of the
@@ -22,7 +22,8 @@
 #                                Linear call saw LINEAR_API_KEY and API_KEY, and each
 #                                named kind was recorded AFTER the last untrusted run.
 #   pr1_passthrough <scripts dir> — negative control: bureau_untrusted_env becomes the
-#                                v3.0.2 behaviour (the command inherits everything).
+#                                v3.0.2 behaviour (the command inherits everything), and
+#                                the stage exports the .env keys again (before v3.2 it did).
 # Failures go through pr1_fail, which counts them in PR1_FAILS.
 
 PR1_LINEAR=lin_api_PROBE_linear_0001
@@ -138,5 +139,7 @@ pr1_passthrough() {
   cat >> "$1/bureau-config.sh" <<'EOF'
 # ── pr1 negative control: the v3.0.2 behaviour, the command inherits everything ──
 bureau_untrusted_env() { [ "${1:-}" = --check ] && return 0; env "$@"; }
+# … and the stage exports the .env keys, as every stage did before v3.2 (bureau-env.sh).
+bureau_env_key_secret() { return 1; }
 EOF
 }

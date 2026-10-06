@@ -1,7 +1,7 @@
 #!/bin/bash
 # bureau-env.sh — read the pipeline's keys from a .env file without ever
-# executing it, and run code the branch controls without them. A pure library:
-# sourcing it defines functions and does nothing else. One of them is named
+# executing it, and run code the branch controls without them. A library:
+# sourcing it switches allexport off (v3.2, see below) and defines functions. One of them is named
 # `git`: in every script that sources this file, git commands run without the
 # secrets (see the end of the file). The three .env readers read no file on
 # their own and need no .bureau.json, no jq and no other external program;
@@ -19,13 +19,28 @@
 #     accepts. Returns 0 when the file was read, even if no key was taken, and
 #     1 with the single line "bureau_load_env: cannot read <file>" on stderr
 #     when it is missing, not a regular file or unreadable. --export exports
-#     every key it sets. Writes nothing to stdout and never prints a line or a
-#     value; the only name it prints is that of a numeric key it dropped (L13).
+#     every key it sets except the three secrets (bureau_env_key_secret): those
+#     stay shell variables of the reading script, with or without --export, and
+#     lose the export attribute a parent shell gave them (v3.2). Writes nothing
+#     to stdout and never prints a line or a value; the only name it prints is
+#     that of a numeric key it dropped (L13).
 #   bureau_env_key_allowed <name>
 #     0 for a name on the key list, 1 otherwise. Silent.
+#   bureau_env_key_secret <name>
+#     0 for LINEAR_API_KEY, TELEGRAM_BOT_TOKEN and TELEGRAM_ALERT_CHAT_ID, 1
+#     otherwise. Silent.
 #   bureau_env_key_numeric <name>
 #     0 for a key whose value later lands in bash arithmetic, 1 otherwise.
 #     Silent.
+#   bureau_secret_set <name>
+#     0 when the variable <name> holds a non-empty value, 1 otherwise; a
+#     running `set -x` is off while the value is looked at (v3.2). Silent.
+#   bureau_secret_copy [--optional] <target> <source>
+#     Sets the shell variable <target> to the value of <source> with a running
+#     `set -x` off, and never exports <target> (v3.2): the stages' copy of the
+#     Linear key (API_KEY). Without --optional an empty or unset <source> ends
+#     the script with 1 and "<script>: <source>: Set <source> in .env" on
+#     stderr, as ${source:?Set <source> in .env} did.
 #
 # Reading rules (specs/023-crosscheck-env-read/contracts/env-read.md, L1–L13):
 #   - only `NAME=VALUE` lines count, optionally indented and prefixed with
@@ -40,6 +55,9 @@
 #     value, and a key missing from the file leaves the environment alone
 #   - a running `set -x` is switched off first and restored before returning,
 #     so no value reaches the trace
+#   - allexport (`set -a`, also from an exported SHELLOPTS) is switched off
+#     and left off (v3.2): with it on, every later assignment of the reading
+#     script, the API_KEY copy of the Linear key among them, would be exported
 #   - a key whose value later lands in bash arithmetic is taken only as `0` or
 #     as digits without a leading zero (bureau_env_key_numeric); any other
 #     value — `08` and `010` among them, which bash reads as octal — is dropped
@@ -48,6 +66,12 @@
 # Must run under bash 3.2 (/bin/bash on macOS): there is no `local -` and no
 # `declare -g`, so keys are assigned with `printf -v`, and every local name
 # starts with _be_ so it can never shadow a key.
+
+# v3.2: with allexport on (`set -a`, or an exported SHELLOPTS of the operator's
+# shell), every function defined below would be exported to the processes the
+# script starts (BASH_FUNC_git%% and the rest), and every later assignment with
+# it. Off before anything is defined; bureau_load_env switches it off again.
+set +a
 
 # The key list: every name with prefix BUREAU_, LINEAR_, TELEGRAM_ or
 # BRAINHUGGERS_ that one of the 16 readers or bureau-config.sh reads and that
@@ -114,6 +138,25 @@ bureau_env_key_numeric() {
   return 1
 }
 
+# The secrets among them (v3.2). An exported variable is in the environment of
+# every process the script starts — its gh, jq, date and Python helpers — and
+# any process of the same user (a test server a branch left running) reads
+# that through /proc/<pid>/environ on Linux and `ps -E` on macOS (for
+# executables that are not Apple platform binaries). The stages' own Linear
+# and Telegram requests read these as shell variables and hand them to curl on
+# stdin (_bureau_linear_fetch and alert_telegram in bureau-config.sh), and
+# every Bureau script that needs one reads .env itself, so bureau_load_env
+# never exports them. A secret only the environment holds (the operator's shell
+# exported it, .env does not define it) is left as it is: Bureau does not change
+# values from the operator's shell, and it is already in the environment of
+# every process below that shell (SECURITY.md: keep the keys only in .env).
+bureau_env_key_secret() {
+  case "$1" in
+    LINEAR_API_KEY | TELEGRAM_BOT_TOKEN | TELEGRAM_ALERT_CHAT_ID) return 0 ;;
+  esac
+  return 1
+}
+
 bureau_load_env() {
   # L1: the very first statement turns a running trace off, before any line or
   # value is expanded; every return below restores it.
@@ -121,6 +164,11 @@ bureau_load_env() {
     (*x*) set +x; local _be_trace=1 ;;
     (*) local _be_trace=0 ;;
   esac
+  # v3.2: an operator shell that ran `set -a` and exported SHELLOPTS starts every Bureau bash with
+  # allexport on, and then each assignment the reading script makes after this load would be
+  # exported to the processes it starts, the stages' API_KEY copy of the Linear key included. Off
+  # here, and left off: the shell that holds the secrets exports only what it names.
+  set +a
   local _be_export=0
   if [ "${1:-}" = "--export" ]; then
     _be_export=1
@@ -176,12 +224,46 @@ bureau_load_env() {
     fi
 
     printf -v "$_be_name" '%s' "$_be_value"
-    if [ "$_be_export" = 1 ]; then
+    if bureau_env_key_secret "$_be_name"; then
+      export -n "$_be_name"
+    elif [ "$_be_export" = 1 ]; then
       export "$_be_name"
     fi
   done < "$_be_file"
 
   if [ "$_be_trace" = 1 ]; then set -x; fi
+  return 0
+}
+
+# bureau_secret_set and bureau_secret_copy (v3.2) — a stage run under `bash -x`, or with xtrace in
+# an exported SHELLOPTS, prints every command it runs with its words expanded: `[ -n "$KEY" ]`
+# and `API_KEY="$LINEAR_API_KEY"` would put the key on stderr, which the queue loop writes to its
+# log. These two look at and copy a secret with the trace off, and restore it.
+bureau_secret_set() {
+  case $- in
+    (*x*) set +x; local _bss_trace=1 ;;
+    (*) local _bss_trace=0 ;;
+  esac
+  local _bss_rc=1
+  [ -z "${!1:-}" ] || _bss_rc=0
+  if [ "$_bss_trace" = 1 ]; then set -x; fi
+  return "$_bss_rc"
+}
+
+bureau_secret_copy() {
+  case $- in
+    (*x*) set +x; local _bsc_trace=1 ;;
+    (*) local _bsc_trace=0 ;;
+  esac
+  local _bsc_optional=0
+  if [ "${1:-}" = --optional ]; then _bsc_optional=1; shift; fi
+  if [ "$_bsc_optional" = 0 ] && [ -z "${!2:-}" ]; then
+    echo "$0: $2: Set $2 in .env" >&2
+    exit 1
+  fi
+  printf -v "$1" '%s' "${!2:-}"
+  export -n "$1"
+  if [ "$_bsc_trace" = 1 ]; then set -x; fi
   return 0
 }
 
@@ -253,9 +335,15 @@ bureau_load_env() {
 #   picked in .gitattributes). Every git command therefore runs in the default
 #   reduction; those that talk to a remote (push, fetch, pull, ls-remote,
 #   clone, remote, submodule) keep the GitHub token variables a credential
-#   helper may read and lose the three .env keys and their copies. Hooks and
-#   filters keep running, only without the keys; a pre-push hook still sees
-#   the GitHub tokens (SECURITY.md).
+#   helper may read and lose the three .env keys and their copies. Local
+#   commands keep running hooks and filters, only without the keys. The remote
+#   ones run without hooks (v3.2): `-c core.hooksPath=/dev/null`, because a
+#   hook during them — pre-push on a push, reference-transaction on every ref
+#   update a fetch or push makes, the hooks of a pull's merge — would see the
+#   GitHub tokens. repo.remote_git_runs_hooks: true in .bureau.json (the JSON
+#   value true, nothing else) runs them with hooks again, as v3.1 did. The
+#   setting covers hooks only: a filter, an fsmonitor or a credential helper
+#   the configuration names still runs (SECURITY.md).
 #
 # bureau_exec_runtime <command> [argument ...]
 #   Replaces the shell with the runtime wrapper (python3 bureau-runtime.py
@@ -263,10 +351,10 @@ bureau_load_env() {
 #   worker or stage, the stage the worker starts after changing into the
 #   branch's worktree) would source a relative BASH_ENV from there — and
 #   without those of the three .env keys (and their copies) that the relaunched
-#   script reads back from its .env file: set now, defined in BUREAU_ENV_FILE,
-#   and defined in ./.env as well when that exists (a stage reads ./.env
-#   first). The runtime is an ancestor of every stage and runs under a Python
-#   whose environment `ps -E` can read on macOS; it needs none of the keys. A
+#   script reads back from its .env file: set now and defined in
+#   BUREAU_ENV_FILE, the only .env a stage reads (v3.2; before, a stage read
+#   ./.env first). The runtime is an ancestor of every stage and runs under a
+#   Python whose environment `ps -E` can read on macOS; it needs none of the keys. A
 #   key that exists only in the calling environment, and the GitHub token
 #   variables the stages' gh calls use, pass on unchanged.
 
@@ -391,29 +479,104 @@ bureau_without_secrets() {
   /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bws_assign[@]+"${_bws_assign[@]}"} "$@"
 }
 
+# _bureau_remote_git_runs_hooks — 0 when repo.remote_git_runs_hooks is the JSON
+# value true, 1 otherwise: absent, null, false, any other value, no
+# BUREAU_CONFIG, or a .bureau.json jq cannot read (the hooks stay off). Read on
+# every call, like repo.untrusted_env; bureau-doctor.py warns on a value that
+# is not a JSON boolean.
+_bureau_remote_git_runs_hooks() {
+  local _brh_filter='if (.repo | type) == "object" and .repo.remote_git_runs_hooks == true then "on" else "off" end' _brh_value
+  if declare -F bureau_get >/dev/null 2>&1; then
+    _brh_value=$(bureau_get "$_brh_filter" 2>/dev/null) || return 1
+  elif [ -n "${BUREAU_CONFIG:-}" ]; then
+    _brh_value=$(jq -r "$_brh_filter" "$BUREAU_CONFIG" 2>/dev/null) || return 1
+  else
+    return 1
+  fi
+  [ "$_brh_value" = on ]
+}
+
+# The hook events git knows (hook-list.h of git 2.55, generated from githooks(5)).
+_BUREAU_GIT_HOOK_EVENTS='applypatch-msg commit-msg fsmonitor-watchman p4-changelist p4-post-changelist p4-pre-submit p4-prepare-changelist post-applypatch post-checkout post-commit post-index-change post-merge post-receive post-rewrite post-update pre-applypatch pre-auto-gc pre-commit pre-merge-commit pre-push pre-rebase pre-receive prepare-commit-msg proc-receive push-to-checkout reference-transaction sendemail-validate update'
+
+# _bureau_git_hooks_off [git's own options of the command] — sets the array
+# _BUREAU_GIT_HOOKS_OFF to the options that run a git command without any hook
+# (v3.2), and _BUREAU_GIT_HOOKS_ENV to the variables they need; uses the
+# _BUREAU_ENV_ARGV that _bureau_env_build set for the command:
+#   - -c core.hooksPath=/dev/null: no hook from a hooks directory;
+#   - -c hook.<event>.enabled=false for every event git knows: no hook the
+#     configuration defines (hook.<name>.command and hook.<name>.event, git 2.54
+#     and later) for that event, from git 2.55 on;
+#   - -c hook.<name>.enabled=false for every <name> with a hook.<name>.command
+#     or hook.<name>.event that `git config` lists for the command (with its
+#     own -C, -c and --git-dir): git 2.54 knows only this per-name switch, and
+#     git 2.55 treats hook.<event>.enabled as per-name too when a hook named
+#     like the event exists (hook.pre-push.command). The empty name counts
+#     (`[hook ""]`, the keys hook..command and hook..event; switched off as
+#     hook..enabled). A name with `=` in it cannot follow -c; it goes through
+#     --config-env and the variable BUREAU_GIT_HOOK_OFF=false. The listing runs
+#     without GIT_CONFIG: `git config` alone reads only the file that variable
+#     names, while the remote command ignores it and reads the configuration
+#     every git command reads.
+# git before 2.54 runs no hook from the configuration and ignores the hook.*
+# options.
+_bureau_git_hooks_off() {
+  local _bgo_event _bgo_keys _bgo_key _bgo_name _bgo_seen=$'\n'
+  _BUREAU_GIT_HOOKS_OFF=(-c core.hooksPath=/dev/null)
+  _BUREAU_GIT_HOOKS_ENV=()
+  for _bgo_event in $_BUREAU_GIT_HOOK_EVENTS; do
+    _BUREAU_GIT_HOOKS_OFF+=(-c "hook.$_bgo_event.enabled=false")
+  done
+  # Key names only (a configuration key holds no newline); no process substitution, so the file
+  # still parses in a bash that runs in POSIX mode.
+  _bgo_keys=$(/usr/bin/env -u GIT_CONFIG "${_BUREAU_ENV_ARGV[@]}" git "$@" config --name-only -z --get-regexp '^hook\..*\.(command|event)$' 2>/dev/null | tr '\000' '\n') || true
+  while IFS= read -r _bgo_key; do
+    [ -n "$_bgo_key" ] || continue
+    _bgo_name="${_bgo_key#hook.}"; _bgo_name="${_bgo_name%.*}"
+    case "$_bgo_seen" in (*$'\n'"$_bgo_name"$'\n'*) continue ;; esac
+    _bgo_seen="$_bgo_seen$_bgo_name"$'\n'
+    case "$_bgo_name" in
+      *=*) _BUREAU_GIT_HOOKS_OFF+=("--config-env=hook.$_bgo_name.enabled=BUREAU_GIT_HOOK_OFF")
+           _BUREAU_GIT_HOOKS_ENV=(BUREAU_GIT_HOOK_OFF=false) ;;
+      *) _BUREAU_GIT_HOOKS_OFF+=(-c "hook.$_bgo_name.enabled=false") ;;
+    esac
+  done <<< "$_bgo_keys"
+  return 0
+}
+
 git() {
   case $- in
     (*x*) set +x; local _bg_trace=1 ;;
     (*) local _bg_trace=0 ;;
   esac
-  local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven
+  local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven _bg_lead=0
+  local -a _bg_hooks _bg_hooks_env
+  _bg_hooks=(); _bg_hooks_env=()
   # The subcommand is the first word after git's own options; -C, -c,
   # --git-dir, --work-tree, --namespace, --super-prefix and --config-env
   # take the next word as their value.
   for _bg_arg in "$@"; do
-    if [ "$_bg_skip" = 1 ]; then _bg_skip=0; continue; fi
+    if [ "$_bg_skip" = 1 ]; then _bg_skip=0; _bg_lead=$((_bg_lead + 1)); continue; fi
     case "$_bg_arg" in
       -C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env) _bg_skip=1 ;;
       -*) ;;
       *) _bg_sub="$_bg_arg"; break ;;
     esac
+    _bg_lead=$((_bg_lead + 1))
   done
   case "$_bg_sub" in
     push|fetch|pull|ls-remote|clone|remote|submodule) _bg_names=dotenv ;;
   esac
   _bureau_env_build default "$_bg_names" 1
+  if [ "$_bg_names" = dotenv ] && ! _bureau_remote_git_runs_hooks; then
+    # Placed before the caller's own options; git passes them on to the git
+    # processes it starts itself (a pull's fetch and merge, submodules).
+    _bureau_git_hooks_off "${@:1:$_bg_lead}"
+    _bg_hooks=("${_BUREAU_GIT_HOOKS_OFF[@]}")
+    _bg_hooks_env=(${_BUREAU_GIT_HOOKS_ENV[@]+"${_BUREAU_GIT_HOOKS_ENV[@]}"})
+  fi
   if [ "$_bg_trace" = 1 ]; then set -x; fi
-  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" git "$@"
+  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bg_hooks_env[@]+"${_bg_hooks_env[@]}"} git ${_bg_hooks[@]+"${_bg_hooks[@]}"} "$@"
 }
 
 # _bureau_drop_secrets — unsets the seven, their copies, BASH_ENV and ENV in the
@@ -462,7 +625,6 @@ bureau_exec_runtime() {
   for _ber_name in LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID; do
     [ -n "${!_ber_name:-}" ] || continue
     _bureau_env_file_defines "${BUREAU_ENV_FILE:-}" "$_ber_name" || continue
-    if [ -f .env ] && ! _bureau_env_file_defines .env "$_ber_name"; then continue; fi
     _ber_names="$_ber_names $_ber_name"
   done
   _bureau_env_build default "$_ber_names" 1
