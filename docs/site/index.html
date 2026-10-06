@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b72b96c581a9999e5a393c315abaa9e5f2e3aa2e1d3c9ced02606cc440af481e">
+<meta name="bureau-source-sha256" content="37a028eee3214fe97276ebc7cd01d8f41c8b3272b44bcfecf0c0307a16faaf67">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -69,9 +69,9 @@ unattended adoption, qualify a representative live ticket in your
 repository. See the <a href="codex-acceptance.html">acceptance
 record</a> for verified coverage and remaining live checks.</p>
 <h2 id="install">Install</h2>
-<p>Install the stable v3.1.0 source, keep one clone and expose it to the
+<p>Install the stable v3.2.0 source, keep one clone and expose it to the
 assistants you use:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.1.0 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.2.0 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills&quot;</span></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills/bureau-init&quot;</span></span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optional Claude Code entry point:</span></span>
@@ -233,7 +233,7 @@ controls. <code>agents.max_concurrent_issues: 1</code> prevents Spec
 from admitting another issue while work is in flight; it does not
 replace ownership checks or schedule validation.</p>
 <h2 id="update-and-migrate">Update and migrate</h2>
-<p>Select <code>v3.1.0</code> in the source clone that supplies
+<p>Select <code>v3.2.0</code> in the source clone that supplies
 <code>bureau-init</code> using the <a
 href="migration.html#select-the-source-release">source-update
 instructions</a>, refresh skill discovery, then resync <strong>each
@@ -261,7 +261,7 @@ records <code>model_compatibility: "v1"</code> to retain model
 ownership. Its private backup covers configuration only. Installing
 Codex interfaces does not switch the background runner.</p>
 <p>The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0">v3.1.0
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">v3.2.0
 release</a> and <a href="../../CHANGELOG.md">changelog</a> list what changes
 and what adopters must do. v2.0.0 was the first tagged release; earlier
 source installs were untagged. The <a href="releases.html">release
@@ -291,22 +291,24 @@ href="migration.html#upgrade-to-v31">Upgrade to v3.1</a> first; see
 its <a href="release-notes-v3.1.0.html">release notes</a> and those
 of its candidates, <a
 href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a> and <a
-href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>. The previous
-stable release is <a
+href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>. v3.1.0
+followed <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">v3.0.2</a>.</p>
-<p>A release candidate, <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0-rc.1">v3.2.0-rc.1</a>,
-is available for piloting. It keeps the v3 exit-code contract; stages
-keep the <code>.env</code> keys unexported, remote git runs without
-branch hooks, implement retries timeouts and pushes failed work, rework
-receives the newest review or QA findings, queues move past waiting
-gates, and a hang-up stops the run. Resync the scripts and interfaces
-scopes together, restart queue loops and supervisors, and check <a
+<p>v3.2.0 is the current stable release, a minor release on v3.1.0, and
+keeps the v3 exit-code contract; stages keep the <code>.env</code> keys
+unexported, remote git runs without branch hooks, implement retries
+timeouts and pushes failed work, rework receives the newest review or QA
+findings, queues move past waiting gates, and a hang-up stops the run.
+Resync the scripts and interfaces scopes together, restart queue loops
+and supervisors, and check <a
 href="migration.html#upgrade-to-v32">Upgrade to v3.2</a> first; Git
 LFS repositories need <code>repo.remote_git_runs_hooks: true</code>
-before resync. See its <a href="release-notes.html">release
-notes</a>. The stable release stays v3.1.0 until v3.2.0 is
-published.</p>
+before resync. See its <a href="release-notes.html">release notes</a>
+and those of its candidate, <a
+href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>. From
+v3.2.0-rc.1, select <code>v3.2.0</code>; no resync is needed because the
+runtime is unchanged. The previous stable release is <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0">v3.1.0</a>.</p>
 <h2 id="documentation">Documentation</h2>
 <table>
 <thead>

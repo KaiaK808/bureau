@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3cdc7a2b0ec94f7c7283660100abdeaff466db81d9cb0969fe38564099d8e13b">
-<title>release-notes · Bureau</title>
+<meta name="bureau-source-sha256" content="35f3d768f80be63b1cb8a0034729910b681b94abae3f93876210ecde4ffbf5ae">
+<title>release-notes-v3.2.0-rc.1 · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
 <style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
@@ -16,17 +16,16 @@
 <a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
 </nav></aside>
 <main class="bhb-main"><h1
-id="bureau-v320--unexported-secrets-implement-work-kept-on-origin-and-queues-that-move-past-a-waiting-gate">Bureau
-v3.2.0 — unexported secrets, implement work kept on origin, and queues
-that move past a waiting gate</h1>
-<p><strong>Stable release · 2026-10-06 · source tag
-<code>v3.2.0</code>.</strong> The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">GitHub
-Release</a> is marked as latest and records the exact tagged commit.
-v3.2.0 has the same runtime, installer, templates and tests as its
-candidate, <a href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>. The
-previous stable release is <a href="release-notes-v3.1.0.html">v3.1.0</a>.
-Earlier releases: v3.1.0's candidates <a
+id="bureau-v320-rc1--unexported-secrets-implement-work-kept-on-origin-and-queues-that-move-past-a-waiting-gate">Bureau
+v3.2.0-rc.1 — unexported secrets, implement work kept on origin, and
+queues that move past a waiting gate</h1>
+<p><strong>Release candidate · 2026-10-06 · source tag
+<code>v3.2.0-rc.1</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0-rc.1">GitHub
+Release</a> is marked as a prerelease and records the exact tagged
+commit. This candidate is superseded by the stable <a
+href="release-notes.html">v3.2.0</a>, which has the same runtime,
+installer, templates and tests. Earlier releases: v3.1.0's candidates <a
 href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a> and <a
 href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>, <a
 href="release-notes-v3.0.2.html">v3.0.2</a>, <a
@@ -81,7 +80,7 @@ top-level or listed nested <code>.gitattributes</code>, or
 it; keep the keys only in <code>.env</code> to get the protection.
 Stored logins, same-user files and commands branch code can name in
 <code>.git/config</code> remain outside this boundary (see <a
-href="https://github.com/KaiaK808/bureau/blob/v3.2.0/SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).</li>
+href="https://github.com/KaiaK808/bureau/blob/v3.2.0-rc.1/SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).</li>
 </ul></li>
 <li><strong>Python helpers are isolated, and doctor checks the same
 linked directories and implement runner as the stages</strong> (<a
@@ -293,17 +292,17 @@ PR.</li>
 </ul></li>
 </ul>
 <p>See the <a
-href="https://github.com/KaiaK808/bureau/blob/v3.2.0/CHANGELOG.md">changelog</a>
+href="https://github.com/KaiaK808/bureau/blob/v3.2.0-rc.1/CHANGELOG.md">changelog</a>
 for the full entries, <a
-href="https://github.com/KaiaK808/bureau/blob/v3.2.0/docs/configuration.md">configuration</a>
+href="https://github.com/KaiaK808/bureau/blob/v3.2.0-rc.1/docs/configuration.md">configuration</a>
 for the new keys, <a href="exit-codes.html">exit codes</a> for the
 vocabulary and <a
-href="https://github.com/KaiaK808/bureau/blob/v3.2.0/docs/troubleshooting.md">troubleshooting</a>
+href="https://github.com/KaiaK808/bureau/blob/v3.2.0-rc.1/docs/troubleshooting.md">troubleshooting</a>
 for stopping and resuming a run.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p>From <strong>v3.1.0</strong>: select tag <code>v3.2.0</code> in the
-source skill checkout and resync the <strong>scripts scope and the
+<p>From <strong>v3.1.0</strong>: select tag <code>v3.2.0-rc.1</code> in
+the source skill checkout and resync the <strong>scripts scope and the
 interfaces scope as one set</strong>
 (<code>--resync-interfaces --resync-scripts</code>). The scripts depend
 on each other, including <code>bureau-env.sh</code>,
@@ -317,7 +316,7 @@ href="migration.html#before-changing-an-adopting-repository">migration</a>;
 <code>/bureau-init --update</code> changes configuration only. From a
 v3.1 candidate or older release, go through <a
 href="migration.html#upgrade-to-v31">Upgrade to v3.1</a> and the earlier
-upgrade notes too, selecting <code>v3.2.0</code> and both scopes.</p>
+upgrade notes too, selecting this candidate and both scopes.</p>
 <p>Check these before dispatch resumes; the complete operator list is in
 <a href="migration.html#upgrade-to-v32">Upgrade to v3.2</a>:</p>
 <ul>
@@ -441,12 +440,8 @@ neither needs a setting. #52 and #55 change tests only.</li>
 its configuration once at startup, and a stage already running keeps the
 old scripts because the installer replaces files atomically. Run doctor
 (<code>python3 scripts/bureau-doctor.py --mode background</code>), then
-qualify a representative ticket before dispatch resumes.</p>
-<p><strong>Already on the candidate.</strong> From
-<strong>v3.2.0-rc.1</strong>: select tag <code>v3.2.0</code>; no resync
-is needed, because runtime, installer, templates and tests are identical
-(the manifest keeps naming rc.1 as its source until the next
-resync).</p>
+qualify a representative ticket before dispatch resumes; live acceptance
+on the maintainer's pilot installation follows this candidate.</p>
 <h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
 <p>Dependencies and platforms are unchanged (Python 3.9+, Bash 3.2+, Git
 2.26+, jq, curl; Node.js 18+ for the shared scheduler; Linux and macOS).
@@ -455,7 +450,7 @@ optional, and the manifest stays at version <code>1</code>. The exit
 codes keep their meanings; a queued check past its grace now uses 25,
 and a hang-up or child's 130 keeps interrupted leases. Git LFS
 installations need <code>repo.remote_git_runs_hooks: true</code> before
-using v3.2.0.</p>
+using this candidate.</p>
 <p>To roll back to v3.1.0, point the source at tag <code>v3.1.0</code>
 and resync the scripts and interfaces scopes as one set, or restore the
 private backup (<a href="migration.html#rollback">rollback</a>). That
@@ -472,24 +467,15 @@ href="release-notes-v3.1.0.html#compatibility-and-rollback">v3.1.0</a>
 still apply.</p>
 <h2 id="validation-and-known-limitations">Validation and known
 limitations</h2>
-<p><strong>Live acceptance in the maintainer's pilot
-installation.</strong> The pilot installation was resynced to
-<code>v3.2.0-rc.1</code>: 29 files updated, 0 conflicts and doctor
-without error. One ticket went from Triage to Done with the shepherd in
-44 minutes: spec 15.5 min, spec review 2 min, build 12 min in one pass,
-QA 7 min, build review 8 min with APPROVE and merge 27 s. The squash
-merge was pinned to the head the review checked. There was no timeout,
-no <code>needs-human</code> and no return to Triage after the spec
-stage; the run's leases were empty afterwards, and the end-of-run push
-printed its new confirmation line.</p>
 <p>Every one of the eleven pull requests was checked by an independent
 verifier before its merge; <a
 href="https://github.com/KaiaK808/bureau/pull/49">#49</a> was checked by
-a security verifier and a Codex cross-check over three rounds. CI is
-green on ubuntu and macOS on the tagged commit of
-<code>v3.2.0-rc.1</code> (<code>14fc936</code>). Release preparation
-changes documentation only; runtime, installer, templates and tests are
-identical to that candidate.</p>
+a security verifier and a Codex cross-check over three rounds. CI on
+<code>main</code> at <code>7b1273d</code> (the merge of <a
+href="https://github.com/KaiaK808/bureau/pull/56">#56</a>) is green on
+ubuntu and macOS. Live acceptance on the maintainer's pilot installation
+follows this candidate. Release preparation changes documentation only;
+runtime, installer, templates, tests and CI stay at that baseline.</p>
 <p>Known limitations:</p>
 <ul>
 <li><strong>Process environments.</strong> Linux
@@ -579,7 +565,7 @@ user).</li>
 <li>Branch code runs as the same operating-system user: it can read the
 operator's files and can write <code>.git/config</code> to name a
 command Bureau's later push runs (see <a
-href="https://github.com/KaiaK808/bureau/blob/v3.2.0/SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>);
+href="https://github.com/KaiaK808/bureau/blob/v3.2.0-rc.1/SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>);
 isolate with separate users or containers where that matters.</li>
 <li>During a usage throttle, a held Merge ticket the bounded tick passed
 over waits for its hold (at most
