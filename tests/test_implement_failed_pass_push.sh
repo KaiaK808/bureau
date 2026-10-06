@@ -43,11 +43,15 @@
 #  12  the default, the stage on a terminal that closes during the first pass (hang-up): 129,
 #      the EXIT trap pushes the commit although every write to the terminal fails
 #  12b the default, stderr a pipe whose reader is gone and SIGTERM to the stage during the
-#      first pass: 143, the commit is pushed
+#      first pass: 143, the commit is pushed; 12c the same when origin refuses the push: 143
+#      all the same (the refused push's report cannot end the stage with SIGPIPE), one attempt
 # A stderr that is gone before the push of a failed pass:
 #  13  stderr's reader goes during the first pass, which commits and fails with 1: the stage
 #      still ends with 1 (not 141, SIGPIPE), and the commit is pushed
 #  13b false, PR open, BUREAU_IMPL_MAX_ITER=1: the same pass times out instead: 124, pushed
+#  13c the provider runs out of quota (23) instead and origin refuses the push: 23, not 141,
+#      after one attempt, nothing confirmed; 13d the default, BUREAU_IMPL_MAX_ITER=1, the pass
+#      times out and origin refuses both its own push and the one before the exit: 124
 #  14  the /goal path (agents.use_goal_loop), the default: the run commits and fails with 1;
 #      its exit goes through the EXIT trap, which pushes the commit
 set -euo pipefail
@@ -371,34 +375,42 @@ on_origin "12 the first pass's commit is on origin"
 has "^  pushed test-branch \($TRAP_WHY\): 1 commit\(s\) origin lacked" "$(cat "$SANDBOX/stdout.log")" "12 confirms the push"
 teardown
 
-# 12b — the default, stderr's reader is gone and the stage gets SIGTERM during the first pass
-setup
-export FAKE_CLAUDE_COMMIT_ON_ITERS=1 PR3_ON_CALL_1="$HOLD"
-fifo_stage_start
-if wait_file "$SANDBOX/.pr3-in-pass" "$STAGE"; then
-  kill "$READER" 2>/dev/null || true; wait "$READER" 2>/dev/null || true
-  # Only the stage gets the signal here, as in case 20c of test_implement_push_open_pr.sh: bash
-  # acts on it once the provider call it waits for returns, so the pass is released too.
-  STARTED=$(date +%s); kill -TERM "$STAGE"; : > "$SANDBOX/.pr3-stage-stopped"; finish "12b the stage" "$STAGE"
-  quiet
-  check_eq 143 "$RC" "12b ended by SIGTERM"
-  check_eq 1 "$(pr3_pushes)" "12b one push, from the EXIT trap"
-  on_origin "12b the first pass's commit is on origin"
-else
-  fail "12b the first pass never started"; kill -KILL "$STAGE" "$READER" 2>/dev/null || true
-fi
-teardown
-
-# 13, 13b — stderr's reader goes during the first pass, which then fails (1) or times out (124)
-for c in "13 1" "13b 124"; do
+# 12b, 12c — the default, stderr's reader is gone and the stage gets SIGTERM during the first
+# pass; in 12c origin refuses the push
+for c in "12b accept" "12c refuse"; do
   set -- $c
-  if [ "$2" = 124 ]; then
-    setup "$OFF"
-    export GH_STUB_EXISTING_PR=7 BUREAU_IMPL_MAX_ITER=1 FAKE_CLAUDE_TIMEOUT_ON_ITERS=1
+  setup
+  export FAKE_CLAUDE_COMMIT_ON_ITERS=1 PR3_ON_CALL_1="$HOLD"
+  [ "$2" = accept ] || hook pre-receive 'echo "rejected by test" >&2; exit 1'
+  fifo_stage_start
+  if wait_file "$SANDBOX/.pr3-in-pass" "$STAGE"; then
+    kill "$READER" 2>/dev/null || true; wait "$READER" 2>/dev/null || true
+    # Only the stage gets the signal here, as in case 20c of test_implement_push_open_pr.sh: bash
+    # acts on it once the provider call it waits for returns, so the pass is released too.
+    STARTED=$(date +%s); kill -TERM "$STAGE"; : > "$SANDBOX/.pr3-stage-stopped"; finish "$1 the stage" "$STAGE"
+    quiet
+    check_eq 143 "$RC" "$1 ended by SIGTERM"
+    check_eq 1 "$(pr3_pushes)" "$1 one push, from the EXIT trap"
+    if [ "$2" = accept ]; then on_origin "$1 the first pass's commit is on origin"
+    else hasnt '^  pushed ' "$(cat "$SANDBOX/stdout.log")" "$1 a refused push is not confirmed"; fi
   else
-    setup
-    export PR3_EXIT_ON=1 PR3_EXIT_CODE=1
+    fail "$1 the first pass never started"; kill -KILL "$STAGE" "$READER" 2>/dev/null || true
   fi
+  teardown
+done
+
+# 13, 13b, 13c, 13d — stderr's reader goes during the first pass, which then fails (1, 23) or
+# times out (124, with false and a PR open, or by default); in 13c and 13d origin refuses every
+# push. Fields: case, exit code, push mode, origin, push attempts.
+for c in "13 1 default accept 1" "13b 124 false accept 1" "13c 23 default refuse 1" "13d 124 default refuse 2"; do
+  set -- $c
+  if [ "$3" = false ]; then setup "$OFF"; export GH_STUB_EXISTING_PR=7; else setup; fi
+  if [ "$2" = 124 ]; then
+    export BUREAU_IMPL_MAX_ITER=1 FAKE_CLAUDE_TIMEOUT_ON_ITERS=1
+  else
+    export PR3_EXIT_ON=1 PR3_EXIT_CODE="$2"
+  fi
+  [ "$4" = accept ] || hook pre-receive 'echo "rejected by test" >&2; exit 1'
   export FAKE_CLAUDE_COMMIT_ON_ITERS=1 PR3_ON_CALL_1="$HOLD"
   fifo_stage_start
   if wait_file "$SANDBOX/.pr3-in-pass" "$STAGE"; then
@@ -406,9 +418,13 @@ for c in "13 1" "13b 124"; do
     STARTED=$(date +%s); : > "$SANDBOX/.pr3-stage-stopped"; finish "$1 the stage" "$STAGE"
     quiet
     check_eq "$2" "$RC" "$1 the provider's exit code is kept, no SIGPIPE"
-    check_eq 1 "$(pr3_pushes)" "$1 one push"
-    on_origin "$1 the first pass's commit is on origin"
-    has "^  pushed test-branch \(provider exit $2\): 1 commit\(s\) origin lacked" "$(cat "$SANDBOX/stdout.log")" "$1 confirms the push"
+    check_eq "$5" "$(pr3_pushes)" "$1 push attempts"
+    if [ "$4" = accept ]; then
+      on_origin "$1 the first pass's commit is on origin"
+      has "^  pushed test-branch \(provider exit $2\): 1 commit\(s\) origin lacked" "$(cat "$SANDBOX/stdout.log")" "$1 confirms the push"
+    else
+      hasnt '^  pushed ' "$(cat "$SANDBOX/stdout.log")" "$1 a refused push is not confirmed"
+    fi
   else
     fail "$1 the first pass never started"; kill -KILL "$STAGE" "$READER" 2>/dev/null || true
   fi

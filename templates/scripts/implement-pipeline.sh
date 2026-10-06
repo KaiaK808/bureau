@@ -113,15 +113,18 @@ push_branch_loud() {
     :
   else
     rc=$?
+    # The report comes from a subshell: on a way out after a hang-up stderr can
+    # be a terminal or a pipe that is gone, and a failed write (under set -e, or
+    # by SIGPIPE in bash 3.2) would end the stage with 141 instead of its own code.
     if [ "$mode" = status ]; then
       # The caller compares HEAD with origin/$BRANCH and says what is missing.
-      echo "  ✗✗ PUSH FAILED ($label): branch '$BRANCH' — git exit $rc" >&2
-      printf '%s\n' "$push_out" | sed 's/^/       git: /' >&2
+      ( echo "  ✗✗ PUSH FAILED ($label): branch '$BRANCH' — git exit $rc" >&2
+        printf '%s\n' "$push_out" | sed 's/^/       git: /' >&2 ) || true
       return "$rc"
     fi
-    echo "  ✗✗ PUSH FAILED ($label): branch '$BRANCH' is NOT on origin — git exit $rc" >&2
-    printf '%s\n' "$push_out" | sed 's/^/       git: /' >&2
-    echo "  ✗✗ the work is only in this worktree until a later push succeeds" >&2
+    ( echo "  ✗✗ PUSH FAILED ($label): branch '$BRANCH' is NOT on origin — git exit $rc" >&2
+      printf '%s\n' "$push_out" | sed 's/^/       git: /' >&2
+      echo "  ✗✗ the work is only in this worktree until a later push succeeds" >&2 ) || true
   fi
   return 0
 }

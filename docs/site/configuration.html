@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f2ada5447a4cf2cdc2f6c5b6ad1bdfcc76aba6ab3efbf17ccb5801f4500649d7">
+<meta name="bureau-source-sha256" content="0eca09c7629a4ecb59a4eeda3f304aad6ce63a0fdb637de2e5d33c06f98383c7">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -290,10 +290,13 @@ lacks commits; once it goes through it says so on stdout,
 (<code>end of run, retry</code> after a retry). Every way out before the
 end-of-run push pushes every commit origin lacks first (since v3.2),
 with either value of this key, the commits of the pass that was running
-included, the first pass's too (before, they stayed in the worktree with
-<code>true</code>, and with <code>false</code> when the pass was the
-first; with <code>false</code> only what a finished pass had held back
-was pushed): a provider pass that fails (any exit but <code>0</code> and
+included, the first pass's too, and also the stage's own merge of
+<code>origin/main</code> before its first pass when that is all origin
+lacks (with <code>false</code> and an open PR that push costs one CI
+run) (before, they stayed in the worktree with <code>true</code>, and
+with <code>false</code> when the pass was the first; with
+<code>false</code> only what a finished pass had held back was pushed):
+a provider pass that fails (any exit but <code>0</code> and
 <code>124</code>) or times out when no pass is left, a failed
 <code>/goal</code> run, an unusable Linear, a crash, SIGTERM, SIGINT and
 SIGHUP, also when the stage's terminal or the pipe on its stderr is
