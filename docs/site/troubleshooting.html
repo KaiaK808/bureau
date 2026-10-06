@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="920b346239bed08611c466884b9d418a04813868b44200450cad9f0f9173e636">
+<meta name="bureau-source-sha256" content="224cee7464f46650460853fde0f9f9cd6be65316d5b32a7074beead817f80e67">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -584,7 +584,14 @@ and runtime ownership. A held branch requires a coordinated handoff, not
 forced removal of the other checkout.</li>
 <li><code>141</code> indicates SIGPIPE. Inspect whether a consumer
 exited early and whether the stage produced a valid result; do not count
-this as a successful stage automatically.</li>
+this as a successful stage automatically. Before v3.2 three stage lines
+could end this way on a long text: the build review right after the paid
+review (exit 141, or 1 with
+<code>printf: write error: Broken pipe</code>), the spec stage's
+research check (no exit, the digest was dropped as "research produced no
+valid output") and <code>upstream-port.sh</code>'s commit-title fetch
+(exit 18, "could not fetch commit message"). v3.2 reads those texts
+without a pipe; on an older installation rerun the stage.</li>
 <li><code>1</code> catch-all: read the last 20 lines of stderr; that's
 where the actual error will be.</li>
 </ul>

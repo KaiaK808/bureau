@@ -1341,7 +1341,7 @@ get_issue_state() {
   local snapshot id key
   snapshot=$(bureau_issue_snapshot "$1") || return $?
   id=$(printf '%s' "$snapshot" | jq -r '.state.id // empty')
-  key=$(jq -r --arg id "$id" '.linear.teams[0].states | to_entries[] | select(.value == $id and $id != "") | .key' "$BUREAU_CONFIG" | head -1)
+  key=$(jq -r --arg id "$id" '.linear.teams[0].states | to_entries[] | select(.value == $id and $id != "") | .key' "$BUREAU_CONFIG" | sed -n 1p)
   case "$key" in
     triage) echo Triage ;; spec) echo Spec ;; spec_review) echo 'Spec Review' ;;
     design) echo Design ;; copy) echo Copy ;; build) echo Build ;; qa) echo QA ;;

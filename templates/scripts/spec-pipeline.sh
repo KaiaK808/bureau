@@ -155,8 +155,9 @@ After the marker, write a concise markdown body with inline doc URLs. No preambl
   # wrap in code fences, or add an intro sentence — all valid research
   # content that the strict line-1 check used to discard. The marker
   # itself is what signals "real research happened"; its position is
-  # cosmetic.
-  if printf '%s' "$RESEARCH_RAW" | grep -q '<!-- bureau-research:'; then
+  # cosmetic. A here-string, not a pipe: grep -q leaves at the marker, and under
+  # pipefail the writer's broken pipe would drop a long digest as "no valid output".
+  if grep -q '<!-- bureau-research:' <<< "$RESEARCH_RAW"; then
     RESEARCH_CONTEXT="
 --- API research (auto-generated; treat as authoritative for API shapes) ---
 $RESEARCH_RAW

@@ -438,11 +438,14 @@ fi
 # ~80-char budget so the commit subject + "port: upstream/<short_sha> " prefix
 # stays legible in PR-list views and `git log --oneline`.
 log_step "fetching upstream commit title"
-UPSTREAM_TITLE="$(gh api "repos/${UPSTREAM_REPO}/commits/${FULL_SHA}" \
-  --jq '.commit.message' 2>&1 | head -n 1)" || {
+# The whole message first, then its first line: `gh api … | head -n 1` broke gh's
+# pipe on a long message and reported that as "could not fetch" (pipefail).
+UPSTREAM_MESSAGE="$(gh api "repos/${UPSTREAM_REPO}/commits/${FULL_SHA}" \
+  --jq '.commit.message' 2>&1)" || {
   echo "ERROR: gh api could not fetch commit message for ${FULL_SHA}" >&2
   on_failure "$EXIT_GH_FAILED" "gh api commit message"
 }
+UPSTREAM_TITLE="${UPSTREAM_MESSAGE%%$'\n'*}"
 if [ -z "$UPSTREAM_TITLE" ]; then
   echo "ERROR: upstream commit ${FULL_SHA} has an empty title" >&2
   on_failure "$EXIT_GH_FAILED" "empty upstream title"

@@ -210,7 +210,7 @@ The stage log names the same path in a line `Bureau provider transcript: …` ne
 Anything outside the classified table maps to `error-<N>` in `queue-loop`'s alert throttling. Usually a bug in the pipeline script or an unhandled bash error.
 
 - `128` from git: inspect `git worktree list` and runtime ownership. A held branch requires a coordinated handoff, not forced removal of the other checkout.
-- `141` indicates SIGPIPE. Inspect whether a consumer exited early and whether the stage produced a valid result; do not count this as a successful stage automatically.
+- `141` indicates SIGPIPE. Inspect whether a consumer exited early and whether the stage produced a valid result; do not count this as a successful stage automatically. Before v3.2 three stage lines could end this way on a long text: the build review right after the paid review (exit 141, or 1 with `printf: write error: Broken pipe`), the spec stage's research check (no exit, the digest was dropped as "research produced no valid output") and `upstream-port.sh`'s commit-title fetch (exit 18, "could not fetch commit message"). v3.2 reads those texts without a pipe; on an older installation rerun the stage.
 - `1` catch-all: read the last 20 lines of stderr; that's where the actual error will be.
 
 ---
