@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="86cdc717d69878dbb5b1fd74d12a37b0011e23194f928a9245b0c9f5ea81f308">
+<meta name="bureau-source-sha256" content="4f45daef04840f9c4d0ece4ad9c3317f729a90c3e28a0ea943885d8ff7295463">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -17,22 +17,26 @@
 </nav></aside>
 <main class="bhb-main"><h1 id="upgrade-migration-and-rollback">Upgrade,
 migration and rollback</h1>
-<p>An upgrade has two steps: update the <strong>Bureau source
-skill</strong>, then resync its assets into <strong>each adopting
-repository</strong>. Updating the source clone alone leaves installed
-scripts and commands unchanged. <code>/bureau-init --update</code> edits
-configuration; it does not upgrade installed assets.</p>
+<p>An upgrade that refreshes installed assets has two steps: update the
+<strong>Bureau source skill</strong>, then resync its assets into
+<strong>each adopting repository</strong>. Updating the source clone
+alone leaves installed scripts and commands unchanged.
+<code>/bureau-init --update</code> edits configuration; it does not
+upgrade installed assets.</p>
 <p>This guide upgrades installations from the official <a
 href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
-candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0
-and the v3.2 release candidate to the stable <strong>Bureau
-v3.2.0</strong>. The commands below require the selected release's
+candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
+the v3.2 release candidate and v3.2.0 to the stable <strong>Bureau
+v3.2.1</strong>. The commands below require the selected release's
 source skill. See the <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">v3.2.0
-release</a> and its <a href="release-notes.html">release notes</a> (the
-candidate: <a href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>), the
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">v3.2.1
+release</a> and its <a href="release-notes.html">release notes</a>, the
 previous stable <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">v3.2.0
+release</a> and its <a href="release-notes-v3.2.0.html">release notes</a>
+(the candidate: <a href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>),
+the <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0">v3.1.0
 release</a> and its <a href="release-notes-v3.1.0.html">release notes</a>
 (the candidates: <a href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a>,
@@ -73,11 +77,11 @@ installed commit.</p>
 <p>Confirm that <code>origin</code> identifies the official
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
-clean checkout, select the exact release (<code>v3.2.0</code> for the
-stable release, <code>v3.1.0</code> for the previous stable release,
-<code>v3.0.2</code>, <code>v3.0.1</code>, <code>v3.0.0</code> or
-<code>v2.0.0</code> for an earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.2.0 <span class="co"># or v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+clean checkout, select the exact release (<code>v3.2.1</code> for the
+stable release, <code>v3.2.0</code> for the previous stable release,
+<code>v3.1.0</code>, <code>v3.0.2</code>, <code>v3.0.1</code>,
+<code>v3.0.0</code> or <code>v2.0.0</code> for an earlier one):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.2.1 <span class="co"># or v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -98,15 +102,24 @@ loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
 <h2 id="upgrade-to-v32">Upgrade to v3.2</h2>
-<p>The stable release <strong>v3.2.0</strong> is a minor release on
-v3.1.0. It keeps the v3 exit-code contract. See its <a
-href="release-notes.html">release notes</a> for the eleven pull requests,
-validation and known limitations; its candidate was <a
+<p>The stable release <strong>v3.2.1</strong> is a patch on <a
+href="release-notes-v3.2.0.html">v3.2.0</a> that removes internal
+references without behaviour change. v3.2.0 is a minor release on v3.1.0
+and keeps the v3 exit-code contract. The <a
+href="release-notes.html">v3.2.1 release notes</a> include the patch, the
+eleven v3.2 pull requests, validation and known limitations; the v3.2.0
+candidate was <a
 href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>.</p>
-<p><strong>From v3.2.0-rc.1:</strong> select tag <code>v3.2.0</code>; no
-resync is needed, because the runtime is identical (the manifest keeps
-naming rc.1 as its source until the next resync).</p>
-<p><strong>From v3.1.0:</strong> select tag <code>v3.2.0</code> and
+<p><strong>From v3.2.0 or v3.2.0-rc.1:</strong> select tag
+<code>v3.2.1</code>; a resync is optional because the scripts and
+interfaces change only in comments and help texts, with no behaviour
+change. Installers will report those files as updates. To receive the
+cleaned text, resync the scripts and interfaces scopes
+(<code>--resync-interfaces --resync-scripts</code>) using <a
+href="#preview-and-resolve-asset-conflicts">preview and resolve</a>. No
+configuration change is required; without a resync, the manifest keeps
+naming the previously installed source.</p>
+<p><strong>From v3.1.0:</strong> select tag <code>v3.2.1</code> and
 resync the <strong>scripts scope and the interfaces scope as one
 set</strong> (<code>--resync-interfaces --resync-scripts</code>). The
 scripts depend on each other: <code>bureau-env.sh</code>,
@@ -130,7 +143,7 @@ and resolve</a> instead of a blanket overwrite;
 <code>/bureau-init --update</code> changes configuration only. From a
 v3.1 candidate or older release, go through <a
 href="#upgrade-to-v31">Upgrade to v3.1</a> and the earlier sections too,
-selecting <code>v3.2.0</code> and both scopes.</p>
+selecting <code>v3.2.1</code> and both scopes.</p>
 <p>Before the resync and before dispatch resumes, check every item that
 applies:</p>
 <ul>

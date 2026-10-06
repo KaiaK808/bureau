@@ -2,17 +2,30 @@
 
 User-visible changes and upgrade actions are recorded here. Releases use dated version sections and immutable Git tags; see the [release process](docs/releases.md). Earlier changes on `main` were not tagged and remain listed separately below. Configuration schema numbers are not Bureau release versions.
 
-An upgrade requires **updating the source skill and resyncing each adopting repository**. Neither `git pull` alone nor `/bureau-init --update` refreshes installed assets. Follow the [upgrade and conflict guide](docs/migration.md).
+Refreshing installed assets requires **updating the source skill and resyncing each adopting repository**. Neither `git pull` alone nor `/bureau-init --update` refreshes installed assets. Follow the [upgrade and conflict guide](docs/migration.md).
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-10-06
+
+Patch release on v3.2.0 that removes internal references without behaviour change. Configuration defaults, environment variable names, runtime logic and test fixture data are unchanged. See the [v3.2.1 release notes](docs/release-notes.md) for the patch and the complete upgrade from v3.1.0.
+
 ### Changed
 
-- Removed private ticket references and incident dates from template comments, public documentation and test commentary; examples now use neutral team keys, and the internal drift inventory was removed. Added a self-checking guard against reintroducing internal references. **Upgrade:** update the source skill and resync the scripts and interfaces scopes to receive the scrubbed text. Configuration defaults, environment variable names, runtime logic and test fixture data are unchanged; validation covers the reference guard and regenerated documentation, with the full suite left to CI.
+- Removed internal ticket references and incident dates from comments, documentation, changelog history, AGENTS.md, command and skill texts and test comments.
+- Ticket-format examples now use `TEAM-123`, including the two shepherd help/error texts and the command texts.
+- Removed the internal drift inventory document.
+- Renamed the `needs-human` section marker in `bureau-config.sh`; the test harness (`tests/lib/harness.sh`) and shepherd test (`tests/test_shepherd.sh`), which extract that section, follow the new marker.
+
+### Added
+
+- `tests/test_no_internal_refs.sh` guards against reintroducing private ticket references in templates, public prose and test comments, with a matcher self-check that preserves fixture data and neutral examples.
+
+**Upgrade:** from v3.2.0 select tag `v3.2.1`; a resync is optional because the scripts and interfaces change only in comments and help texts (installers will report those files as updates). Resync the scripts and interfaces scopes to receive the cleaned text. From v3.1.0 select tag `v3.2.1` and follow [Upgrade to v3.2](docs/migration.md#upgrade-to-v32), including both scopes. Validation covers the reference guard and regenerated documentation; the full suite remains a CI check.
 
 ## [3.2.0] - 2026-10-06
 
-Stable release of the 3.2.0 candidate. Runtime, installer, templates and tests are identical to v3.2.0-rc.1. The changes since v3.1.0 are recorded in the 3.2.0-rc.1 section below, and the [v3.2.0 release notes](docs/release-notes.md) consolidate them. Validation added since rc.1: a live acceptance in the maintainer's pilot installation, resynced to rc.1 (29 files updated, 0 conflicts, doctor without error), where one ticket went from Triage to Done with the shepherd in 44 minutes; the squash merge was pinned to the head the review checked. There was no timeout, no `needs-human` and no return to Triage after the spec stage; the run's leases were empty afterwards, and the end-of-run push printed its new confirmation line.
+Stable release of the 3.2.0 candidate. Runtime, installer, templates and tests are identical to v3.2.0-rc.1. The changes since v3.1.0 are recorded in the 3.2.0-rc.1 section below, and the [v3.2.0 release notes](docs/release-notes-v3.2.0.md) consolidate them. Validation added since rc.1: a live acceptance in the maintainer's pilot installation, resynced to rc.1 (29 files updated, 0 conflicts, doctor without error), where one ticket went from Triage to Done with the shepherd in 44 minutes; the squash merge was pinned to the head the review checked. There was no timeout, no `needs-human` and no return to Triage after the spec stage; the run's leases were empty afterwards, and the end-of-run push printed its new confirmation line.
 
 **Upgrade:** from v3.2.0-rc.1 select tag `v3.2.0`; no resync is needed because the runtime is unchanged (the manifest keeps naming rc.1 as its source until the next resync). From v3.1.0 select tag `v3.2.0`, resync the scripts scope and the interfaces scope as one set and follow [Upgrade to v3.2](docs/migration.md#upgrade-to-v32).
 
@@ -464,7 +477,8 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.2.0...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.2.1...main
+[3.2.1]: https://github.com/KaiaK808/bureau/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/KaiaK808/bureau/compare/v3.1.0...v3.2.0
 [3.2.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v3.1.0...v3.2.0-rc.1
 [3.1.0]: https://github.com/KaiaK808/bureau/compare/v3.0.2...v3.1.0
