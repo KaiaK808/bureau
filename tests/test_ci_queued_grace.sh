@@ -241,7 +241,7 @@ poll() {
     run_script merge-pipeline.sh "Merge" "$Q/wt"' ) > /dev/null 2>&1 || true
 }
 poll; poll; poll
-grep -c 'Gate outcome: blocked — exit 25' "$Q/queue.log" | grep -qx 3 || fail "queue: the merge stage did not end blocked on all three polls: $(tail -5 "$Q/queue.log")"
+[ "$(grep -c 'Gate outcome: blocked — exit 25' "$Q/queue.log")" = 3 ] || fail "queue: the merge stage did not end blocked on all three polls: $(tail -5 "$Q/queue.log")"
 grep -q 'error (exit 25 / needs-human-or-paused)' "$Q/queue.log" || fail 'queue: the queue log does not name the blocked gate'
 posts=$(grep -c post "$Q/telegram.log" 2>/dev/null || true)
 [ "$posts" = 1 ] || fail "queue: three polls of the blocked gate sent $posts alert(s), wanted 1"

@@ -30,7 +30,7 @@ for rendered in .claude/commands/linear-implement.md .agents/skills/linear-imple
     fail "$rendered still describes the lookup in words" ;; esac
   case "$text" in *bureau_spec_dir_candidates*) : ;; *) fail "$rendered does not name bureau_spec_dir_candidates" ;; esac
   # The command line exactly as the agent reads it.
-  cmd=$(printf '%s\n' "$text" | grep -o "bash -c 'source scripts/bureau-config.sh; bureau_spec_dir_for_branch \"\$1\"' _ BRANCH" | head -1)
+  cmd=$(grep -o "bash -c 'source scripts/bureau-config.sh; bureau_spec_dir_for_branch \"\$1\"' _ BRANCH" <<< "$text" | sed -n 1p)
   [ -n "$cmd" ] || fail "$rendered carries no matcher command line"
   run() {  # <function> <branch> — the rendered line with the branch filled in, run from the repository root
     local line="${cmd/bureau_spec_dir_for_branch/$1}"

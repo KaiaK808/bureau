@@ -478,7 +478,7 @@ merge_arg() {
   return 1
 }
 has_ci_marker() {
-  printf '%s' "$1" | grep -qiE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|skip-checks[[:space:]]*:'
+  grep -qiE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|skip-checks[[:space:]]*:' <<< "$1"
 }
 # merge_message_is_clean <sb>: 0 when the merge carried a marker-free --subject and --body.
 merge_message_is_clean() {
@@ -646,9 +646,9 @@ gate_case() {  # <sb> <label> <want rc> <want outcome|-> [pattern in the report]
   if [ "$want_out" = - ]; then
     [ -z "$GREP" ] || { echo "FAIL gate $label: wrote a report although it merged: $GREP" >&2; return 1; }
   else
-    [ "$(printf '%s\n' "$GREP" | head -n 1)" = "$want_out" ] \
-      || { echo "FAIL gate $label: report outcome '$(printf '%s\n' "$GREP" | head -n 1)', wanted '$want_out'" >&2; return 1; }
-    [ -z "$pat" ] || printf '%s\n' "$GREP" | sed -n '2,$p' | grep -q -- "$pat" \
+    [ "$(sed -n 1p <<< "$GREP")" = "$want_out" ] \
+      || { echo "FAIL gate $label: report outcome '$(sed -n 1p <<< "$GREP")', wanted '$want_out'" >&2; return 1; }
+    [ -z "$pat" ] || grep -q -- "$pat" <<< "$(sed -n '2,$p' <<< "$GREP")" \
       || { echo "FAIL gate $label: report lacks '$pat': $GREP" >&2; return 1; }
     [ ! -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL gate $label: gh pr merge was called" >&2; return 1; }
   fi
@@ -690,7 +690,7 @@ test_gate_outcome() {
       comments_read) gate_case "$sb" "$r" 2 not-yet 'verdict_read: ' || return 1 ;;
       threads_read)  gate_case "$sb" "$r" 2 not-yet 'threads_read: ' || return 1 ;;
     esac
-    printf '%s\n' "$GREP" | grep -qE '^(pr_state|verdict|unresolved_threads):' \
+    grep -qE '^(pr_state|verdict|unresolved_threads):' <<< "$GREP" \
       && { echo "FAIL gate $r: a failed read still reads as a verdict: $GREP" >&2; return 1; }
   done
   # A hold label a human put on the PR: not yet (the queue stays quiet until they remove it).
@@ -906,7 +906,7 @@ CUT_EOF
     run_gate "$sb"
     case "$ci" in
       pending) gate_case "$sb" reuse-pending 2 not-yet 'still pending' || return 1
-               printf '%s\n' "$GREP" | grep -q '^verdict:' && { echo "FAIL reuse: the gate did not read the reused APPROVE" >&2; return 1; } ;;
+               grep -q '^verdict:' <<< "$GREP" && { echo "FAIL reuse: the gate did not read the reused APPROVE" >&2; return 1; } ;;
       green)   gate_case "$sb" reuse-green 0 - || return 1
                [ -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL reuse: no merge after a reused approval" >&2; return 1; } ;;
     esac

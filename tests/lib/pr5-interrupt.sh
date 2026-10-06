@@ -65,7 +65,7 @@ config_text=\$(printf '%s\n' "\$config" | sed -n 's/^data-urlencode = "text=\(.*
 [ -z "\$config_text" ] || text="\$config_text"
 case "\$url" in *api.telegram.org*) printf '%s\n' "\$text" >> "\$sb/alerts.log"; exit 0 ;; esac
 # Linear answers only a request that carries the key from the sandbox .env.
-if ! printf '%s\n' "\$config" | grep -qx 'header = "Authorization: k"'; then
+if ! grep -qx 'header = "Authorization: k"' <<< "\$config"; then
   echo unauthorized >> "\$sb/linear.log"
   printf '%s' '{"errors":[{"message":"Authentication required"}]}'
   "$PR5_ROOT/tests/lib/curl-writeout.sh" 401 "\$@"
@@ -216,7 +216,7 @@ pr5_worker() {
 pr5_writes() { grep -E "^(add-label|remove-label|comment|move) $1( |\$)" "$SB/linear.log" 2>/dev/null || true; }
 pr5_comments() { jq -s --arg n "$1" '[.[] | select(.issue == $n)] | length' "$SB/comments.jsonl"; }
 pr5_comment() { jq -rs --arg n "$1" '[.[] | select(.issue == $n)] | last | .body // ""' "$SB/comments.jsonl"; }
-pr5_run_id() { jq -r 'to_entries[] | select(.key | startswith("issue:")) | .value.run_id' "$COMMON/bureau/leases.json" 2>/dev/null | head -1; }
+pr5_run_id() { jq -r 'to_entries[] | select(.key | startswith("issue:")) | .value.run_id' "$COMMON/bureau/leases.json" 2>/dev/null | sed -n 1p; }
 
 # _pr5_leftovers — "pid pgid command" of every process whose command names the sandbox.
 _pr5_leftovers() { ps -A -o pid=,pgid=,args= | grep -F "$SB/" | grep -v -e 'grep -F' -e 'ps -A' || true; }

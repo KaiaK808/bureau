@@ -47,8 +47,8 @@ source "$(dirname "$0")/lib/pr3-doubles.sh"
 FAILS=0
 fail() { echo "FAIL $*" >&2; FAILS=$((FAILS + 1)); }
 check_eq() { [ "$1" = "$2" ] || fail "$3: expected '$1', got '$2'"; }
-has() { printf '%s' "$2" | grep -qE -- "$1" || fail "$3 (no match for /$1/)"; }
-hasnt() { if printf '%s' "$2" | grep -qE -- "$1"; then fail "$3 (unexpected /$1/)"; fi; }
+has() { grep -qE -- "$1" <<< "$2" || fail "$3 (no match for /$1/)"; }
+hasnt() { if grep -qE -- "$1" <<< "$2"; then fail "$3 (unexpected /$1/)"; fi; }
 calls() { cat "$SANDBOX/calls.log" 2>/dev/null || true; }
 gh_log() { cat "$SANDBOX/gh_calls.log" 2>/dev/null || true; }
 open_pr_reads() { grep -c $'^gh\tpr\tlist\t--head\ttest-branch\t--state\topen' "$SANDBOX/gh_calls.log" 2>/dev/null || true; }

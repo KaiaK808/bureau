@@ -53,8 +53,8 @@ psafe_wts=$(grep -E '^EXP-[3456] ' "$LOG" | awk '{print $2}' | sort -u | wc -l |
 check "4 distinct parallelSafe worktrees" '[ "$psafe_wts" -eq 4 ]' "$psafe_wts"
 chain_wts=$(grep -E '^EXP-[12] ' "$LOG" | awk '{print $2}' | sort -u | wc -l | tr -d ' ')
 check "serialChain shares 1 worktree" '[ "$chain_wts" -eq 1 ]' "$chain_wts"
-i1=$(grep -n '^EXP-1 ' "$LOG" | head -1 | cut -d: -f1)
-i2=$(grep -n '^EXP-2 ' "$LOG" | head -1 | cut -d: -f1)
+i1=$(grep -n -m 1 '^EXP-1 ' "$LOG" | cut -d: -f1)
+i2=$(grep -n -m 1 '^EXP-2 ' "$LOG" | cut -d: -f1)
 check "serialChain ordered (EXP-1 before EXP-2)" '[ "$i1" -lt "$i2" ]' "$i1<$i2"
 
 [ "$fail" -eq 0 ] && echo "PASS — orchestrate executor"

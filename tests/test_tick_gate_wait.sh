@@ -168,7 +168,7 @@ else fail "C: the held review ticket was not taken when no other stage has work 
 line "$PASSED_REVIEW" && line "$BACK_REVIEW" && has "$TAKEN" || fail 'C: the tick did not say that it passed over code_review and came back to it'
 # In this order: passed over, back to the stage, taken by the picker, then the worker.
 order=""
-for line in "$PASSED_REVIEW" "$BACK_REVIEW" "$TAKEN" '[DRY_RUN] VFY-901 '; do order="$order $(grep -nF -- "$line" "$SB/tick.err" | head -1 | cut -d: -f1)"; done
+for line in "$PASSED_REVIEW" "$BACK_REVIEW" "$TAKEN" '[DRY_RUN] VFY-901 '; do order="$order $(grep -nF -m 1 -- "$line" "$SB/tick.err" | cut -d: -f1)"; done
 [ "$(wc -w <<< "$order")" -eq 4 ] && [ "$order" = " $(tr ' ' '\n' <<< "$order" | sed '/^$/d' | sort -n | tr '\n' ' ' | sed 's/ $//')" ] \
   || fail "C: the lines are not in the order passed over, back, taken, worker (lines$order)"
 # At Merge with the rebase stage on: the ticket is taken by the merge stage when the tick comes back.

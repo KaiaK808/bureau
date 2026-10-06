@@ -580,7 +580,7 @@ _run_reads() {
 
 # _no_fault_files <sb> — the shepherd left no fault file behind in its TMPDIR.
 _no_fault_files() {
-  if ls "$1/tmp" 2>/dev/null | grep -q '^bureau-linear-fault\.'; then
+  if grep -q '^bureau-linear-fault\.' <<< "$(ls "$1/tmp" 2>/dev/null)"; then
     echo "FAIL: a fault file was left behind in TMPDIR"; ls "$1/tmp"; return 1
   fi
 }
@@ -880,7 +880,7 @@ PY_EOF
   mv "$sb3/scripts/shepherd.old" "$sb3/scripts/shepherd.sh"
   rm -f "$sb3/bin/sleep"; echo slow > "$sb3/queue"
   _run_signal "$sb3" INT --dry-run EXP-7
-  if ! ls "$sb3/tmp" | grep -q '^bureau-linear-fault\.'; then
+  if ! grep -q '^bureau-linear-fault\.' <<< "$(ls "$sb3/tmp")"; then
     echo "FAIL: negative control: the dry run's fault file goes away without the trap, so this proves nothing"; return 1
   fi
   return 0
@@ -1106,7 +1106,7 @@ MOVE_EOF
       grep -q "^-EXP-17"$'\t'"shepherd-focused" "$sb/labels.log" \
         || { echo "FAIL: $site move fails with $code: the claim was not released"; return 1; }
       # The ticket is claimed before it moves, so the queue keeps away from it.
-      assert_eq "$(grep -n -e 'shepherd-focused' -e '^move$' "$sb/labels.log" | head -2 | cut -d: -f2 | cut -c1-2 | tr '\n' ' ')" "+E mo " \
+      assert_eq "$(grep -n -m 2 -e 'shepherd-focused' -e '^move$' "$sb/labels.log" | cut -d: -f2 | cut -c1-2 | tr '\n' ' ')" "+E mo " \
         "$site move fails with $code: claim before move" || { cat "$sb/labels.log"; return 1; }
     done
   done
@@ -1673,7 +1673,7 @@ test_merge_gate() {
   _run_gate "$sb"
   assert_eq "$GATE_RC" 1 "not-yet with exit 1: the shepherd halts with the stage's 1" || { tail -5 "$sb/shepherd.out"; return 1; }
   grep -q "not yet eligible" "$sb/shepherd.out" && { echo "FAIL: not-yet with exit 1 was waited for"; return 1; }
-  ls "$sb/tmp" | grep -q '^bureau-merge-gate\.' && { echo "FAIL: the gate report file was left behind"; return 1; }
+  grep -q '^bureau-merge-gate\.' <<< "$(ls "$sb/tmp")" && { echo "FAIL: the gate report file was left behind"; return 1; }
   case "$(head -n 1 "$sb/report.path")" in "$sb/tmp/bureau-merge-gate."*) ;;
     *) echo "FAIL: the gate report lives outside the sandbox's TMPDIR: $(head -n 1 "$sb/report.path")"; return 1 ;; esac
 

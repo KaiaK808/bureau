@@ -124,13 +124,13 @@ pr1_check_bureau_calls() {
   shift
   if [ ! -s "$PR1_MARKS/seq.log" ]; then pr1_fail "$label: nothing recorded"; return; fi
   if grep -Eq '^(gh|linear) (missing|other) ' "$PR1_MARKS/seq.log"; then
-    pr1_fail "$label: a Bureau call ran without its key: $(grep -E '^(gh|linear) (missing|other) ' "$PR1_MARKS/seq.log" | head -3 | tr '\n' ';')"
+    pr1_fail "$label: a Bureau call ran without its key: $(grep -E -m 3 '^(gh|linear) (missing|other) ' "$PR1_MARKS/seq.log" | tr '\n' ';')"
   fi
   last=$(grep -n '^untrusted ' "$PR1_MARKS/seq.log" | tail -1 | cut -d: -f1)
   [ -n "$last" ] || { pr1_fail "$label: no untrusted run recorded"; return; }
   tail_lines=$(sed -n "$((last + 1)),\$p" "$PR1_MARKS/seq.log")
   for kind in "$@"; do
-    printf '%s\n' "$tail_lines" | grep -q "^$kind ok " \
+    grep -q "^$kind ok " <<< "$tail_lines" \
       || pr1_fail "$label: no $kind call with its key after the last untrusted run"
   done
 }

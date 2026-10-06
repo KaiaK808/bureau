@@ -132,7 +132,7 @@ no_secret() {  # <label> <file …>
   for f in "$@"; do
     [ -f "$f" ] || continue
     for v in "$C1_LINEAR" "$C1_TG_TOKEN" "$C1_TG_CHAT"; do
-      if grep -qF -- "$v" "$f"; then fail "$label: the trace shows a secret in ${f##*/}: $(grep -F -- "$v" "$f" | head -2 | cut -c1-160 | tr '\n' ';')"; fi
+      if grep -qF -- "$v" "$f"; then fail "$label: the trace shows a secret in ${f##*/}: $(grep -F -- "$v" "$f" | sed -n 1,2p | cut -c1-160 | tr '\n' ';')"; fi
     done
   done
 }

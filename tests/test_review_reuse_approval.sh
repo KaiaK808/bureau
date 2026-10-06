@@ -111,7 +111,7 @@ reset_logs; resumed_review; expect_paid '4a no record'
 printf 'not json\n' > "$STOPS"
 reset_logs; run_pipeline code-review-pipeline.sh "$ISSUE"
 [ "$(model_calls)" -gt 0 ] || fail '4b an unreadable record file was not answered with a full review'
-printf '%s' "$LAST_STDERR" | grep -q 'review boundary file could not be checked' || fail '4b no warning for an unreadable record file'
+grep -q 'review boundary file could not be checked' <<< "$LAST_STDERR" || fail '4b no warning for an unreadable record file'
 [ "$(cat "$STOPS")" = 'not json' ] || fail '4b the unreadable record file was changed'
 rm -f "$STOPS"
 # 4c. A ticket detail without a label list cannot be fingerprinted: full review, the
@@ -119,8 +119,8 @@ rm -f "$STOPS"
 stop_review
 export BUREAU_STUB_LABELS=null; resumed_review; unset BUREAU_STUB_LABELS
 expect_paid '4c ticket detail without a label list'
-printf '%s' "$LAST_STDOUT" | grep -q 'No reusable approval: ticket detail unreadable' || fail '4c the reason does not name the ticket detail'
-printf '%s' "$LAST_STDERR" | grep -q 'could not be checked' && fail '4c an unreadable ticket detail was reported as a file problem'
+grep -q 'No reusable approval: ticket detail unreadable' <<< "$LAST_STDOUT" || fail '4c the reason does not name the ticket detail'
+grep -q 'could not be checked' <<< "$LAST_STDERR" && fail '4c an unreadable ticket detail was reported as a file problem'
 echo 'PASS 4 no record, an unreadable record file or an unreadable ticket detail: full review'
 
 # 5. A stop that is still requested behaves as before: exit 20, no model call, record kept.
