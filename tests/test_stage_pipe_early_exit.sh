@@ -31,6 +31,7 @@ fail() { echo "FAIL: $1" >&2; for f in "$T/out" "$T/err"; do [ ! -f "$f" ] || cu
 run_sig() {
   local sig="$1" dir="$2"; shift 2
   set +e
+  export LC_ALL=C  # bash's write-error text is matched below; keep it English
   ( cd "$dir" && python3 -I -c 'import os, signal, sys
 signal.signal(signal.SIGPIPE, signal.SIG_IGN if sys.argv[1] == "ignore" else signal.SIG_DFL)
 os.execv(sys.argv[2], sys.argv[2:])' "$sig" "$BASH" "$@" > "$T/out" 2> "$T/err" < /dev/null )
@@ -193,6 +194,9 @@ source "$3"; printf "%s\n" "$SUBJECT"' _ "$T/bin" "$FULL" "$T/title.sh"
   GH_DOUBLE_DOWN=1 port_run "$sig"
   [ "$RC" = 18 ] && grep -q 'could not fetch commit message' "$T/err" \
     || fail "3 $sig: a failing gh api did not end the port at the title with 18 (exit $RC)"
+  # The collision guard after the title also exits 18; only a port that stopped at the gh failure never reaches it.
+  ! grep -q 'already exists locally' "$T/err" \
+    || fail "3 $sig: a failing gh api did not stop the port at the title, it ran on to the branch guard"
   port_run "$sig" old
   [ "$RC" = 18 ] && grep -q 'could not fetch commit message' "$T/err" \
     || fail "3 negative control, $sig: the old line fetched the long message, so this proves nothing (exit $RC)"
