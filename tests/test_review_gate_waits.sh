@@ -21,7 +21,8 @@
 #          3600, 0 = off, read by the shared number rule); a push, a deleted branch, a
 #          record from the future, a record that is not a gate wait, an origin or record
 #          file that cannot be read (one warning line) end or skip the hold, and none of
-#          it fails a pick
+#          it fails a pick; a pick that fails because Linear is unusable still fails with
+#          27 while a hold is active (the queue loop alerts on it), never as an empty queue
 #   merge  the REAL merge stage marks a not-yet or blocked gate (count per head, cleared
 #          by a merge; nothing in a dry run or the review's inline merge); the merge
 #          picker, and neither the rebase nor the review picker, holds it the same way
@@ -226,6 +227,13 @@ HEAD_SHA=$(git -C "$SANDBOX" rev-parse origin/test-branch)
 picks "$OTHER" 'a fresh gate wait'
 [ "$(gate_wait_calls)" -ge 1 ] || fail 'pick: the python3 counter saw no gate-waits call, so it proves nothing'
 grep -qE "$(held_line 'not yet' 1)" <<< "$PICK_ERR" || fail "pick: the hold is not logged as it should be: $PICK_ERR"
+# Linear unusable while the hold is active: the pick fails with 27 (BUREAU_EXIT_LINEAR_UNUSABLE),
+# as it does without a hold, and is not read as an empty queue.
+mv "$PICKBIN/curl" "$PICKBIN/curl.ok"; printf '#!/bin/bash\nexit 7\n' > "$PICKBIN/curl"; chmod +x "$PICKBIN/curl"
+pick code-review-pipeline.sh
+[ "$PICK_RC" = 27 ] && [ -z "$PICKED" ] || fail "pick: Linear down while a hold is active ended $PICK_RC with '$PICKED', wanted 27 and nothing"
+grep -qE "$(held_line 'not yet' 1)" <<< "$PICK_ERR" || fail "pick: Linear down: no hold was active, so this proves nothing: $PICK_ERR"
+mv "$PICKBIN/curl.ok" "$PICKBIN/curl"
 # Only the review picker: the merge, rebase and implement pickers take EXP-801 first.
 for stage in merge-pipeline.sh rebase-pipeline.sh implement-pipeline.sh; do
   picks "$ISSUE" "the review record seen by $stage" "$stage"
