@@ -302,7 +302,9 @@ py_git_status "$SCRIPTS"
 no_secret "$MARKS/fsmonitor.env" "F fsmonitor (supervision and runtime git)"
 # F2: a stopped review's check (bureau-supervision.py check, called by the review stage with its
 # .env exported) asks gh for the PR and reads the remote tips with `git ls-remote`; the remote
-# asks for credentials, so git runs the credential helper the operator's config names.
+# asks for credentials, so git runs the credential helper the operator's config names. The
+# pickers' gate-waits read (merge_gate_waits, v3.2) runs `git ls-remote` too, for a fresh
+# gate-wait record: the stop below writes one.
 cat > "$TMP/authserver.py" <<'PY'
 import http.server, sys
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -324,12 +326,15 @@ DETAIL='{"identifier":"EXP-1","title":"t","description":"d","labels":[]}'
 HEAD_SHA=$(git -C "$R" rev-parse HEAD)
 supervise() {  # <scripts dir>
   (cd "$R" && printf '%s' "$DETAIL" | env "${PROBES[@]}" python3 "$1/bureau-supervision.py" --repo "$R" stop EXP-1 --branch feat \
-     --state 'Build Review' --head "$HEAD_SHA" --base "$HEAD_SHA" --reviewed-head "$HEAD_SHA" --pr 5 >/dev/null 2>&1
+     --state 'Build Review' --head "$HEAD_SHA" --base "$HEAD_SHA" --reviewed-head "$HEAD_SHA" --pr 5 --merge-gate-wait >/dev/null 2>&1
+   env "${PROBES[@]}" python3 "$1/bureau-supervision.py" --repo "$R" gate-waits --stage review --first 300 --cap 3600 >/dev/null 2>&1
    printf '%s' "$DETAIL" | PATH="$TMP/supgh:$PATH" env "${PROBES[@]}" python3 "$1/bureau-supervision.py" --repo "$R" check EXP-1 \
      --branch feat --state 'Build Review' >/dev/null 2>&1)
 }
 rm -f "$MARKS/cred.env" "$MARKS/gh-supervision.env"
 supervise "$SCRIPTS"
+# Two credential requests: one from the gate-waits read, one from the check.
+[ "$(grep -c '^--- run get$' "$MARKS/cred.env" 2>/dev/null)" -ge 2 ] || fail "F: the gate-waits read and the check did not both run git ls-remote"
 if [ -s "$MARKS/cred.env" ]; then
   grep -qx "GH_TOKEN=$PR1_GH" "$MARKS/cred.env" || fail "F credential helper: GH_TOKEN (the remote's credentials) was removed"
   for v in "$PR1_LINEAR" "$PR1_TG_TOKEN" "$PR1_TG_CHAT"; do

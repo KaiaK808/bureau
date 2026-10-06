@@ -3491,10 +3491,13 @@ merge_gate_waits() {
   printf '%s' "$out" | jq -r '[.waiting[].issue] | join(",")' 2>/dev/null || true
 }
 
-# pipeline_pick_next <script-name> [skip-issue-ids-csv]
+# pipeline_pick_next <script-name> [skip-issue-ids-csv] [mark-held]
 #   Reads the registry above, dispatches to pick_issue with the right args.
 #   Returns the picked issue identifier on stdout, empty on queue-empty or
-#   when an opt-in pipeline isn't configured for this repo.
+#   when an opt-in pipeline isn't configured for this repo. With mark-held (the
+#   bounded tick, bureau-tick.sh) a pick that waits on its merge gate, taken only
+#   because nothing else of the stage can be picked, is printed as "<id> held":
+#   the tick tries its other stages first. Every other caller gets the bare id.
 #
 # Usage in pipelines:
 #   ISSUE=$(pipeline_pick_next "$(basename "$0")")
@@ -3536,7 +3539,9 @@ pipeline_pick_next() {
       picked=$(pick_issue "$state" "$required" "$exclude" "$skip" "$waiting") || pick_rc=$?
       [ "$pick_rc" = 0 ] || return "$pick_rc"
       case ",$waiting," in
-        *",$picked,"*) [ -z "$picked" ] || echo "pick: $picked taken although it waits on its merge gate — no other ticket of the stage can be picked" >&2 ;;
+        *",$picked,"*)
+          if [ -n "$picked" ] && [ "${3:-}" = mark-held ]; then printf '%s held' "$picked"; return 0; fi
+          [ -z "$picked" ] || echo "pick: $picked taken although it waits on its merge gate — no other ticket of the stage can be picked" >&2 ;;
       esac
       printf '%s' "$picked"
       return 0
