@@ -21,6 +21,9 @@
 #   3. bureau-tick.sh (no stage enabled): its processes carry no key, also when the shell that
 #      starts it exported the keys that .env defines
 #   4. queue-loop-supervised.sh → queue-loop.sh, one round: no process carries a key
+#   6. the main checkout's .bureau.json is a link into another directory with a .env of its own:
+#      the shepherd and the stage read the .env next to the link before and after the runtime
+#      relaunch (which passes on the resolved path of .bureau.json); Linear answers
 #   5. 1 and 4 again from an operator shell that ran `set -a` (then `set -x`) and exported
 #      SHELLOPTS (every Bureau bash then starts with that option on), with long key values: no
 #      process carries a key, every child starts cleanly, the trace on stderr and in the logs
@@ -169,6 +172,24 @@ for OPTS in allexport:braceexpand:hashall:interactive-comments braceexpand:hasha
   no_secret "5 $opt queue loop" "$SB/out" "$SB/err" "$REPO"/logs/*.log
 done
 [ "$C1_FAILS" = "$F5" ] && echo "PASS 5 with allexport and xtrace from the operator's shell no process carries a key and no trace shows one"
+
+# ── 6. a .bureau.json that is a link, across the runtime relaunch ────────────
+# The main checkout's .bureau.json is a link to a file in another directory, whose own .env holds
+# another key. The first run of a script takes the .env next to the link (the directory
+# BUREAU_CONFIG names; doctor too, tests/doctor_checks_test.py); the runtime relaunches the shepherd and the stage with the RESOLVED path in
+# BUREAU_CONFIG, and they must keep reading the same .env (bureau-config.sh exports
+# BUREAU_ENV_FILE). With the target's key Linear would answer "unauthorized".
+F6=$C1_FAILS
+setup_repo; long_env   # Linear answers the long key since 5
+TARGET="$SB/config-target"; mkdir -p "$TARGET"
+mv "$REPO/.bureau.json" "$TARGET/.bureau.json"; ln -s "$TARGET/.bureau.json" "$REPO/.bureau.json"
+printf 'LINEAR_API_KEY=wrong-key-next-to-the-target\n' > "$TARGET/.env"
+printf finish > "$SB/probe-mode"; : > "$SB/linear.log"
+PATH="$PROBES:$PATH" pr5_shepherd
+[ "$RC" = 0 ] || fail "6: the shepherd ended $RC, wanted 0: $(printf '%s\n' "$ERR" | tail -3 | tr '\n' ' ')"
+grep -qx EXP-7 "$SB/finished.log" 2>/dev/null || fail "6: the probe stage did not run to its end after the relaunch"
+if grep -qx unauthorized "$SB/linear.log"; then fail "6: a run after the runtime relaunch read the .env next to the link's target (Linear: unauthorized)"; fi
+[ "$C1_FAILS" = "$F6" ] && echo "PASS 6 a linked .bureau.json: the runs after the runtime relaunch read the .env the first run read"
 
 if [ "$C1_FAILS" != 0 ]; then echo "$C1_FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_env_keys_drivers"

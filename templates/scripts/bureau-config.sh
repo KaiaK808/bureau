@@ -50,6 +50,10 @@ _find_config() {
   # branch controls). A relative value counts from the directory of .bureau.json, not from the
   # working directory.
   case "$BUREAU_ENV_FILE" in /*) ;; *) BUREAU_ENV_FILE="$(dirname "$BUREAU_CONFIG")/$BUREAU_ENV_FILE" ;; esac
+  # Exported, so the runs below this one read the same file: the runtime hands a relaunched stage
+  # the RESOLVED path of .bureau.json (config_for in bureau-runtime.py), and when .bureau.json is a
+  # link, its target's directory is not the one this script took the .env from (v3.2).
+  export BUREAU_ENV_FILE
 }
 _find_config
 # Capture the caller boundary separately from user-facing .env settings. An

@@ -289,7 +289,9 @@ pr1_pass "8 every remote git in the templates runs through git() or carries NO_H
 # hook.reference-transaction.command), which makes git 2.55 read hook.<event>.enabled=false as a
 # per-name switch, so only the per-name switches stop them, also for a fetch with -C from another
 # directory (the names are listed with the command's own options).
-# A name with an event and no command (git refuses every hook then) is switched off as well. With
+# The empty name (`[hook ""]`) counts too, and so does a hook when the operator's environment
+# exports GIT_CONFIG (which only `git config` reads). A name with an event and no command (git
+# refuses every hook then) is switched off as well. With
 # git 2.55 also a clone whose template brings a configured post-checkout hook (only the event
 # switch reaches that one). Runs with the git of BUREAU_TEST_GIT_DIR when set, else with the git on
 # PATH, and is skipped, with a SKIP line, when that git is older than 2.54.
@@ -302,7 +304,8 @@ fi
 git9() { if [ -n "$GIT9_EXEC" ]; then PATH="$GIT9_PATH" GIT_EXEC_PATH="$GIT9_EXEC" "$@"; else PATH="$GIT9_PATH" "$@"; fi; }
 GIT9_VERSION=$(git9 git --version 2>/dev/null | sed -n 's/^git version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')
 if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 54 ]; }; then
-  hooks9() {  # <repo json> — a fresh repository with the configured hooks; Bureau's push and fetch
+  hooks9() {  # <repo json> [GIT_CONFIG value] — a fresh repository with the configured hooks;
+    # Bureau's push and fetch, with GIT_CONFIG exported in the stage shell when given
     repo "$R"; config "$1"
     mkdir -p "$R/tools"
     printf '%s\n' '#!/bin/sh' 'gh=no; [ -z "${GH_TOKEN:-}" ] || gh=yes' \
@@ -314,6 +317,8 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     git9 git -C "$R" config --add hook.scan.event pre-push
     git9 git -C "$R" config 'hook.eq=name.command' "$R/tools/scan.sh pre-push-eq"
     git9 git -C "$R" config --add 'hook.eq=name.event' pre-push
+    git9 git -C "$R" config 'hook..command' "$R/tools/scan.sh pre-push-empty"
+    git9 git -C "$R" config --add 'hook..event' pre-push
     git9 git -C "$R" config hook.txscan.command "$R/tools/scan.sh reference-transaction"
     git9 git -C "$R" config --add hook.txscan.event reference-transaction
     git9 git -C "$R" config hook.pre-push.command "$R/tools/scan.sh named-like-the-event"
@@ -328,7 +333,7 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     # is switched off like the others, so Bureau's remote commands still run (default only: with
     # the hooks on, git refuses them, as it would without Bureau).
     if [ "$1" = '{}' ]; then git9 git -C "$R" config hook.nocommand.event pre-push; fi
-    out=$(cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
+    out=$(cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" ${2:+GIT_CONFIG="$2"} /bin/bash -c 'source "$1/bureau-config.sh"
       git push -q origin HEAD; echo "push=$?"; git fetch -q origin; echo "fetch=$?"
       (cd / && git -C "$2" fetch -q origin; echo "fetch-C=$?")' _ "$SCRIPTS" "$R" 2>&1)
     case "$out" in *push=0*fetch=0*fetch-C=0*) ;; *) fail "9 $1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
@@ -346,9 +351,13 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
   }
   hooks9 '{}'
   if marks | grep -q '^config-hook'; then fail "9 default: a hook the configuration defines ran during Bureau's push or fetch: $(marks | sort | uniq -c | tr -s ' ' | tr '\n' ';')"; fi
+  # GIT_CONFIG from the operator's environment: `git config` alone would read only that file, the
+  # remote command reads the repository's configuration all the same.
+  hooks9 '{}' /dev/null
+  if marks | grep -q '^config-hook'; then fail "9 GIT_CONFIG=/dev/null: a hook the configuration defines ran during Bureau's push or fetch: $(marks | sort | uniq -c | tr -s ' ' | tr '\n' ';')"; fi
   grep -q '^config-hook reference-transaction gh=no env=no' "$TMP/local9.log" || fail "9: the configured hooks did not run at all (the local commit ran none): $(tr '\n' ';' < "$TMP/local9.log")"
   hooks9 '{"remote_git_runs_hooks":true}'
-  wanted='pre-push pre-push-eq reference-transaction'
+  wanted='pre-push pre-push-eq pre-push-empty reference-transaction'
   if [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 55 ]; then wanted="$wanted post-checkout-template"; fi
   for hook in $wanted; do
     marks | grep -q "^config-hook $hook gh=yes env=no" || fail "9 true: the configured $hook hook did not run with GH_TOKEN and without the .env keys: $(marks | sort -u | tr '\n' ';')"

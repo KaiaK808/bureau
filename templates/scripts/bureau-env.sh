@@ -511,9 +511,13 @@ _BUREAU_GIT_HOOK_EVENTS='applypatch-msg commit-msg fsmonitor-watchman p4-changel
 #     or hook.<name>.event that `git config` lists for the command (with its
 #     own -C, -c and --git-dir): git 2.54 knows only this per-name switch, and
 #     git 2.55 treats hook.<event>.enabled as per-name too when a hook named
-#     like the event exists (hook.pre-push.command). A name with `=` in it
-#     cannot follow -c; it goes through --config-env and the variable
-#     BUREAU_GIT_HOOK_OFF=false.
+#     like the event exists (hook.pre-push.command). The empty name counts
+#     (`[hook ""]`, the keys hook..command and hook..event; switched off as
+#     hook..enabled). A name with `=` in it cannot follow -c; it goes through
+#     --config-env and the variable BUREAU_GIT_HOOK_OFF=false. The listing runs
+#     without GIT_CONFIG: `git config` alone reads only the file that variable
+#     names, while the remote command ignores it and reads the configuration
+#     every git command reads.
 # git before 2.54 runs no hook from the configuration and ignores the hook.*
 # options.
 _bureau_git_hooks_off() {
@@ -525,7 +529,7 @@ _bureau_git_hooks_off() {
   done
   # Key names only (a configuration key holds no newline); no process substitution, so the file
   # still parses in a bash that runs in POSIX mode.
-  _bgo_keys=$(/usr/bin/env "${_BUREAU_ENV_ARGV[@]}" git "$@" config --name-only -z --get-regexp '^hook\..+\.(command|event)$' 2>/dev/null | tr '\000' '\n') || true
+  _bgo_keys=$(/usr/bin/env -u GIT_CONFIG "${_BUREAU_ENV_ARGV[@]}" git "$@" config --name-only -z --get-regexp '^hook\..*\.(command|event)$' 2>/dev/null | tr '\000' '\n') || true
   while IFS= read -r _bgo_key; do
     [ -n "$_bgo_key" ] || continue
     _bgo_name="${_bgo_key#hook.}"; _bgo_name="${_bgo_name%.*}"

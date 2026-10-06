@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="00c2c108c2e63e6a91c98cbb4eb8f132b701d9f931054bd4b2c1fa78c1240a0c">
+<meta name="bureau-source-sha256" content="20de7dfe17133eb1a08369b1bf01cc9d60f6b26ec8dfb93dc404c77c171c3672">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1525,10 +1525,14 @@ primary worktree. Keep the trusted private config out of commits</td>
 <td>The <code>.env</code> every script reads its keys from
 (<code>bureau_load_env</code>, parsed, never sourced); default:
 <code>.env</code> in the directory of <code>.bureau.json</code>, the
-main checkout. A relative value counts from that directory. Since v3.2
-no script reads <code>./.env</code> of its working directory any more: a
-stage runs in the branch's worktree, where <code>./.env</code> would be
-a file the branch commits. <code>bureau-doctor.py</code> reads only
+main checkout. A relative value counts from that directory (the one
+<code>BUREAU_CONFIG</code> names, a link not resolved), and every script
+exports the result, so a script the runtime relaunches reads the same
+file even when <code>.bureau.json</code> is a link (the runtime passes
+on its resolved path). Since v3.2 no script reads <code>./.env</code> of
+its working directory any more: a stage runs in the branch's worktree,
+where <code>./.env</code> would be a file the branch commits.
+<code>bureau-doctor.py</code> reads only
 <code>BUREAU_RUNNER_IMPLEMENT</code> from it (for the
 <code>repo.test_command</code> warning), from the same file by the same
 rule, also when it runs in a linked worktree; provider
