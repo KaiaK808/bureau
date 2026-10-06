@@ -43,8 +43,8 @@ source "$(dirname "$0")/lib/harness.sh"
 FAILS=0
 fail() { echo "FAIL $*" >&2; FAILS=$((FAILS + 1)); }
 check_eq() { [ "$1" = "$2" ] || fail "$3: expected '$1', got '$2'"; }
-has() { printf '%s' "$2" | grep -qE -- "$1" || fail "$3 (no match for /$1/)"; }
-hasnt() { if printf '%s' "$2" | grep -qE -- "$1"; then fail "$3 (unexpected /$1/)"; fi; }
+has() { grep -qE -- "$1" <<< "$2" || fail "$3 (no match for /$1/)"; }
+hasnt() { if grep -qE -- "$1" <<< "$2"; then fail "$3 (unexpected /$1/)"; fi; }
 calls() { cat "$SANDBOX/calls.log" 2>/dev/null || true; }
 
 MARK_DIR=$(mktemp -d -t bureau-postimpl-mark.XXXXXX)

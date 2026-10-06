@@ -227,7 +227,7 @@ app() {  # $1: label
   local action out
   for action in doctor status setup; do
     out=$(cd "$A" && PYTHONPATH=":" env -u BUREAU_CONFIG bash scripts/bureau-app.sh "$action" 2>/dev/null) || true
-    [ "$(printf '%s' "$out" | jq -r .workspace 2>/dev/null)" = "$A" ] || fail "4 $1: bureau-app.sh $action did not answer for the checkout: $(printf '%s' "$out" | head -c 300)"
+    [ "$(printf '%s' "$out" | jq -r .workspace 2>/dev/null)" = "$A" ] || fail "4 $1: bureau-app.sh $action did not answer for the checkout: ${out:0:300}"
   done
   out=$(cd "$A" && PYTHONPATH=":" env -u BUREAU_CONFIG /bin/bash scripts/bureau-status.sh --config 2>&1 | sed 's/\x1b\[[0-9;]*m//g') || true
   grep -qx '    code_review: claude / CLI default / read-only' <<< "$out" || fail "4 $1: bureau-status.sh --config lacks the provider row: $(printf '%s' "$out" | grep -A2 PROVIDERS)"

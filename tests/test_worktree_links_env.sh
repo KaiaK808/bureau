@@ -37,8 +37,8 @@ cut_fn "$SCRIPTS/bureau-config.sh" "$TMP/fn.sh"
 MAIN="$TMP/main checkout"; WT="$TMP/stage worktree"
 export BUREAU_CONFIG="$TMP/bureau config.json"
 # key_readable: the Linear probe can be read through anything in the worktree, links followed.
-# find's own status is ignored (under pipefail an unreadable directory would hide a hit).
-key_readable() { { find -L "$WT" -name .git -prune -o -type f -exec grep -l 'lin_api_PROBE_linear_0001' {} + 2>/dev/null || true; } | grep -q .; }
+# find's own status is ignored: an unreadable directory must not hide a hit.
+key_readable() { [ -n "$(find -L "$WT" -name .git -prune -o -type f -exec grep -l 'lin_api_PROBE_linear_0001' {} + 2>/dev/null || true)" ]; }
 kind() { if [ -L "$1" ]; then echo "link:$(readlink "$1")"; elif [ -e "$1" ]; then echo present; else echo none; fi; }
 
 setup() {

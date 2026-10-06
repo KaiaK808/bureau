@@ -60,7 +60,7 @@ bureau_cap_comment "$(cat "$T/long")" > "$T/long.out"
 [ "$(bytes < "$T/long.out")" -ge 55000 ] || fail "1: fitted comment is only $(bytes < "$T/long.out") bytes"
 utf8_ok < "$T/long.out" || fail '1: the fitted comment is not valid UTF-8'
 [ "$(head -n 1 "$T/long.out")" = '<!-- bureau-branch: feat/cap-test -->' ] || fail '1: the first line was lost'
-sed -n 2p "$T/long.out" | grep -q 'Code Review.*Changes Requested' || fail "1: the review header was lost"
+grep -q 'Code Review.*Changes Requested' <<< "$(sed -n 2p "$T/long.out")" || fail "1: the review header was lost"
 tail -n 3 "$T/long.out" | sed -n '2p' | jq -e '.verdict == "REQUEST_CHANGES"' >/dev/null || fail '1: the closing JSON verdict was lost'
 [ "$(tail -n 1 "$T/long.out")" = '```' ] || fail '1: the closing fence was lost'
 cut=$(grep -oE '\[… [0-9]+ bytes cut from the middle' "$T/long.out" | grep -oE '[0-9]+') || fail '1: no note about the cut'

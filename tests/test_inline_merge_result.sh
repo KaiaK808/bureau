@@ -113,7 +113,7 @@ review
 [ "$LAST_RC" = 0 ] || fail "2b: the red-build retry ended $LAST_RC, wanted 0 (REQUEST_CHANGES)"
 [ "$(pr2_model_calls)" = 0 ] || fail '2b: the red-build retry paid a model call'
 [ "$(pr2_review_comments)" = 2 ] || fail "2b: $(pr2_review_comments) review comments on the PR, wanted 2 (the APPROVE and the REQUEST_CHANGES)"
-last=$(jq -r '[.[] | select(.body | test("Code Review v2"))] | last | .body' "$PR2_GH/comments.json" | grep -m1 -oE '\*\*Verdict\*\*: [A-Z_]+')
+last=$(jq -r '[.[] | select(.body | test("Code Review v2"))] | last | .body' "$PR2_GH/comments.json" | grep -oE '\*\*Verdict\*\*: [A-Z_]+' | sed -n 1p)
 [ "$last" = '**Verdict**: REQUEST_CHANGES' ] || fail "2b: the latest review comment on the PR says '$last'"
 grep -q $'move_issue\t'"$ISSUE"$'\tstate-build' "$SANDBOX/calls.log" || fail '2b: the ticket did not go back to Build'
 pr2_merged && fail '2b: merged after a red build'

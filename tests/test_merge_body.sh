@@ -14,7 +14,7 @@ fail() { echo "FAIL $*" >&2; exit 1; }
 
 # Any form GitHub reads as "do not run CI", case-insensitive.
 has_marker() {
-  printf '%s' "$1" | grep -qiE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|skip-checks[[:space:]]*:|\*\*\*no_ci\*\*\*'
+  grep -qiE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|skip-checks[[:space:]]*:|\*\*\*no_ci\*\*\*' <<< "$1"
 }
 
 # The negative control for has_marker itself: it must see every form, or G1 below proves nothing.

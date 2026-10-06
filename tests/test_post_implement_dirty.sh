@@ -25,9 +25,9 @@ source "$(dirname "$0")/lib/pr3-doubles.sh"
 FAILS=0
 fail() { echo "FAIL $*" >&2; FAILS=$((FAILS + 1)); }
 check_eq() { [ "$1" = "$2" ] || fail "$3: expected '$1', got '$2'"; }
-has() { printf '%s' "$2" | grep -qE -- "$1" || { fail "$3 (no match for /$1/)"; report >&2; }; }
+has() { grep -qE -- "$1" <<< "$2" || { fail "$3 (no match for /$1/)"; report >&2; }; }
 report() { calls | sed -n '/Post-implement command:/,$p' | sed 's/^/  | /'; }
-hasnt() { if printf '%s' "$2" | grep -qE -- "$1"; then fail "$3 (unexpected /$1/)"; fi; }
+hasnt() { if grep -qE -- "$1" <<< "$2"; then fail "$3 (unexpected /$1/)"; fi; }
 calls() { cat "$SANDBOX/calls.log" 2>/dev/null || true; }
 
 setup() {  # setup <hook-command> — tracked a.txt, old.txt and "dir with space/b c.txt" on the branch
