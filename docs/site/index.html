@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4de81da6916e69b98b4aca0c6f9acb5c05c14c4f2f3f72aedcc9abc3a4798c39">
+<meta name="bureau-source-sha256" content="b72b96c581a9999e5a393c315abaa9e5f2e3aa2e1d3c9ced02606cc440af481e">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -288,11 +288,25 @@ numbers by one rule, the default timeout per stage call is one hour, and
 an interrupted run prints its own way back. Resync the scripts and
 interfaces scopes together and check the list in <a
 href="migration.html#upgrade-to-v31">Upgrade to v3.1</a> first; see
-its <a href="release-notes.html">release notes</a> and those of its
-candidates, <a href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a>
-and <a href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>. The
-previous stable release is <a
+its <a href="release-notes-v3.1.0.html">release notes</a> and those
+of its candidates, <a
+href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a> and <a
+href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>. The previous
+stable release is <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">v3.0.2</a>.</p>
+<p>A release candidate, <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0-rc.1">v3.2.0-rc.1</a>,
+is available for piloting. It keeps the v3 exit-code contract; stages
+keep the <code>.env</code> keys unexported, remote git runs without
+branch hooks, implement retries timeouts and pushes failed work, rework
+receives the newest review or QA findings, queues move past waiting
+gates, and a hang-up stops the run. Resync the scripts and interfaces
+scopes together, restart queue loops and supervisors, and check <a
+href="migration.html#upgrade-to-v32">Upgrade to v3.2</a> first; Git
+LFS repositories need <code>repo.remote_git_runs_hooks: true</code>
+before resync. See its <a href="release-notes.html">release
+notes</a>. The stable release stays v3.1.0 until v3.2.0 is
+published.</p>
 <h2 id="documentation">Documentation</h2>
 <table>
 <thead>

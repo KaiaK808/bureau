@@ -6,9 +6,104 @@ An upgrade requires **updating the source skill and resyncing each adopting repo
 
 ## [Unreleased]
 
+## [3.2.0-rc.1] - 2026-10-06
+
+First release candidate for Bureau v3.2.0, published as a GitHub prerelease; v3.1.0 stays the stable release until v3.2.0 is published. v3.2 is a minor release on v3.1.0 with eleven pull requests: the stages keep the `.env` keys unexported and remote git runs without branch hooks ([#49](https://github.com/KaiaK808/bureau/pull/49)); Python helpers and doctor ([#47](https://github.com/KaiaK808/bureau/pull/47)); implement retries timed-out passes and pushes failed work ([#46](https://github.com/KaiaK808/bureau/pull/46)); rework gets the newest review or QA findings ([#53](https://github.com/KaiaK808/bureau/pull/53)); gate waits and queued CI ([#48](https://github.com/KaiaK808/bureau/pull/48)); the bounded tick moves past a held gate ([#54](https://github.com/KaiaK808/bureau/pull/54)); stopping on a hang-up ([#50](https://github.com/KaiaK808/bureau/pull/50)); spec-state confirmation ([#51](https://github.com/KaiaK808/bureau/pull/51)); long text in the stages ([#56](https://github.com/KaiaK808/bureau/pull/56)); and test reliability ([#52](https://github.com/KaiaK808/bureau/pull/52), [#55](https://github.com/KaiaK808/bureau/pull/55)). The v3 exit-code contract stays; no exit code is new. Live acceptance on the maintainer's pilot installation follows this candidate. See the [v3.2.0-rc.1 release notes](docs/release-notes.md) for validation and known limitations.
+
+**Upgrade:** from v3.1.0 select tag `v3.2.0-rc.1` and resync the scripts scope and the interfaces scope as one set (`--resync-interfaces --resync-scripts`); #46 changes `/linear-implement` and `scripts/bureau-stage.md` as well as the runtime. Restart queue loops and supervisors after resync; a stage already running keeps the old scripts, which the installer replaces atomically. Before resync, repositories with Git LFS must set `repo.remote_git_runs_hooks: true`, or pushes leave LFS objects off the remote. Move an operator `.env` next to `.bureau.json` or set `BUREAU_ENV_FILE` (relative to that config's directory, exported as an absolute path); the three secrets no longer reach child environments, and custom scripts must read the file themselves. Doctor now errors on linked directories containing `.env*` or an incomplete search. Implement can spend its whole 5400 s budget retrying timeouts and pushes work on failure in both push modes; every stage stops instead of waiting for CI, even if project instructions ask it to wait. Measure single-runner job queue waits before keeping `agents.merge_ci_queued_grace_seconds` at 3600 s; raise `agents.merge_gate_recheck_seconds` to at least two poll intervals where the poll is an hour or longer. Follow the changed implement push confirmations, tick lines and rework label in [Upgrade to v3.2](docs/migration.md#upgrade-to-v32), and its stop/resume steps for interrupted leases. From a v3.1 candidate or older release, the earlier upgrade notes apply as well.
+
+### Secrets stay unexported, and remote git runs without branch hooks
+
+#### Added
+
+- `repo.remote_git_runs_hooks` (default `false`): the JSON value `true` restores the shell's remote git hooks, which then see the GitHub token variables. Doctor warns on a non-boolean and when the main checkout uses `filter=lfs` in its top-level or listed nested `.gitattributes`, or `.git/info/attributes`, without `true`; Git LFS needs the key before using v3.2. ([#49](https://github.com/KaiaK808/bureau/pull/49))
+
+#### Changed
+
+- The stages, drivers and runtime keep `LINEAR_API_KEY`, `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALERT_CHAT_ID` as unexported shell variables: `bureau_load_env` never exports them and un-exports what a parent exported; the stages' `API_KEY` copy is not exported either, also when the operator's shell exported `SHELLOPTS` with `allexport`. Their child processes no longer carry the `.env` keys, a traced run (`bash -x`) no longer prints them, and the runtime parses `.env` instead of sourcing it for its Linear calls. A key set only in the operator's shell is left as it is; keep the keys only in `.env`. ([#49](https://github.com/KaiaK808/bureau/pull/49))
+- Every script reads `.env` only from `BUREAU_ENV_FILE`, by default the `.env` next to `.bureau.json`, never `./.env`. A relative value counts from the config's directory without resolving a link, and the absolute path is exported so a runtime relaunch reads the same file. Before, a stage in a worktree read a `.env` the branch committed, with its Linear key, Telegram bot and settings; doctor reads `BUREAU_RUNNER_IMPLEMENT` from the same file by the same rule. ([#49](https://github.com/KaiaK808/bureau/pull/49))
+- Bureau's own remote git commands (push, fetch, pull, ls-remote, clone, remote and submodule, also supervision's `ls-remote`) run without repository hooks: `-c core.hooksPath=/dev/null`, and with git 2.54 and later also configuration-defined hooks through event and per-name switches, including the empty name and a listing made without inherited `GIT_CONFIG`. A branch `pre-push` or `reference-transaction` hook no longer sees the GitHub tokens by default; local hooks still run tokenless. SECURITY.md documents remaining same-user access, commands branch code can name in `.git/config`, and secrets shorter than 6 characters inside other values not being removed. ([#49](https://github.com/KaiaK808/bureau/pull/49))
+
+### Python helpers and doctor follow the stage boundary
+
+#### Fixed
+
+- `bureau-supervision.py` starts with `python3 -I` at all eight calls (review's check, reuse and three stops, the worker's checkpoint, the tick's check and workspace). An empty or relative `PYTHONPATH` entry no longer lets a branch's module stand in for the standard library with the stage's environment. Every other Python start in the shell scripts gets `-I` too: the reset's ownership check, `bureau-status.sh --config` and `bureau-app.sh` actions. ([#47](https://github.com/KaiaK808/bureau/pull/47))
+- Doctor searches each directory in `repo.worktree_links` as the stages do (`find -L DIR -mindepth 1 -iname '.env*' -print -quit`, no depth limit), and reports a `.env*` name (`holds an env file`, first hit) or incomplete search (`not searched completely`) as an error. The stages already skipped those links. The docs say the search matches names, so a differently named link to a `.env` file is not found, and only GNU find fails on a link loop. ([#47](https://github.com/KaiaK808/bureau/pull/47))
+- Doctor warns that `repo.test_command` is missing (absent, null, false or empty) only when implement resolves to Codex: `BUREAU_RUNNER_IMPLEMENT` as the stage sees it, including `.env` read with the stages' reader, then `agents.implement.runner`, then `agents.runner`. It also checks with implement off, since the shepherd can force it on; Claude installations no longer get the warning. Doctor never executes `.env`, and its effective-settings report still uses JSON and the process environment. ([#47](https://github.com/KaiaK808/bureau/pull/47))
+
+### Implement retries a timed-out pass and keeps failed work on origin
+
+#### Added
+
+- Provider evidence names the session transcript (`session_id`, `transcript`, `transcript_found` in `result.json`, `transcript_note` when no id is known), so a timed-out call can be read even with empty stdout. Claude calls get a fresh `--session-id` when the CLI supports it, cached in `logs/provider-runs/.claude-cli.json`; a refused flag behind an unchanged wrapper is retried without it, and a cached unsupported answer is checked again within a day. Codex's thread id names its rollout file; looking for a transcript never fails a call. ([#46](https://github.com/KaiaK808/bureau/pull/46))
+
+#### Changed
+
+- Every stage's system text and `bureau-stage.md` forbid waiting for, polling or re-triggering CI or a merge gate inside the stage and committing CI results as evidence, take precedence over project instructions, and say missing, pending or failed CI does not decide the reported status of the stage's own work. Waiting stays with the merge gate and shepherd; `/linear-implement` asks for passing tests instead of passing checks. ([#46](https://github.com/KaiaK808/bureau/pull/46))
+
+#### Fixed
+
+- A provider pass that hits its time limit (124) no longer ends implement at once: it is counted like any pass (`status=TIMEOUT`, its Git commits and `tasks.md` marks, the squash-range check and push), and the next pass checks the task list and branch first and reports `COMPLETE` when nothing is left and any feedback above is addressed. The stage ends with 124 only when no pass is left under `BUREAU_IMPL_MAX_ITER` or `BUREAU_IMPL_TOTAL_TIMEOUT`; the last timed-out pass's commits are pushed too. A stage can now spend its total budget on timeouts. ([#46](https://github.com/KaiaK808/bureau/pull/46))
+- Every way out before the end-of-run push (a failed or timed-out last pass, a signal, crash, unusable Linear or failed `/goal` run) tries to push every commit origin lacks first, in both push modes and from a first pass. The EXIT trap is armed after the stage's merge of `origin/main`, so a stopped first pass can push that merge alone. Failure keeps the exit code even with stderr gone and says the work is only in the worktree; a stop bounds the push by its existing grace. Every successful end-of-run or failure push confirms its branch, commit count and head. ([#46](https://github.com/KaiaK808/bureau/pull/46))
+
+### A rework reads the newest review or QA findings
+
+#### Fixed
+
+- Implement now takes QA RED, QA NEEDS_HUMAN, a build review BLOCK and the app runtime's `VERDICT: BLOCK` as feedback, next to Changes Requested and `FIXES_NEEDED`, and the newest finding wins. Every QA RED rework carries QA's summary, and a restart with `--from-stage build` after a BLOCK or QA NEEDS_HUMAN carries its findings; before, those reworks ran without them unless someone wrote `FIXES_NEEDED`. Comments posted by v3.1 count too. An approval, QA PASSED or a halt comment does not retire an older finding; write a later `FIXES_NEEDED` for a different list or nothing to fix. The block is labelled `--- Feedback to address (PRIORITY) ---`, with “Address ALL fixes before remaining tasks.” kept. ([#53](https://github.com/KaiaK808/bureau/pull/53))
+
+### Merge-gate waits leave room for other tickets
+
+#### Added
+
+- `agents.merge_gate_recheck_seconds` (default 3600, 0 restores every poll) caps a hold that starts at two queue poll intervals, at least 300 s, and doubles on each further gate answer at the same head. Review and merge pickers sort held tickets after other candidates and still take one when nothing else of that stage can be picked. A push, branch gone from origin or future record time ends a hold; an unreadable record or origin warns and holds nothing. The merge stage records both 2 and 25 without `needs-human`; rebase is never held. ([#48](https://github.com/KaiaK808/bureau/pull/48))
+- `agents.merge_ci_queued_grace_seconds` (default 3600, 0 blocks at once): a check with status `queued` past this grace from its `started_at` blocks the gate with 25 and `ci: check <name> queued for N s on <head>, past the CI queue grace (…) — runner offline?`. The queue alerts hourly per ticket, review's inline merge sets `needs-human`, and the shepherd halts. A pending commit status does not hide it, and the PR gets one gate comment as its age grows. Other pending states and unreadable times stay “not yet”; doctor validates both new keys with the gate's number rule. ([#48](https://github.com/KaiaK808/bureau/pull/48))
+
+#### Changed
+
+- A review gate-wait record keeps a passed build check for the same head, base and key (the command, `repo.untrusted_env`, `repo.worktree_links`), so retries skip that check, including the shepherd's. Other reused approvals and old records without a pass still run it; a red check is never kept as passed. The shepherd names its ticket and is not delayed by picker holds. ([#48](https://github.com/KaiaK808/bureau/pull/48))
+
+### The bounded tick moves on past a lone held gate
+
+#### Changed
+
+- An all-stage `bureau-tick.sh --allow-merge` passes over a held ticket alone in Build Review or Merge while another stage has work; no later stage of that tick picks it, including rebase. It comes back to the stages passed over, in order, only when no other stage has work, or takes the ticket in its turn once its hold expires. `--stage`, `--no-merge` and the queue loop keep their behaviour; log lines say when a stage is passed over and revisited, and `logs/bureau-tick.json` still describes only the stage that ran. A usage throttle ends the tick before it comes back. ([#54](https://github.com/KaiaK808/bureau/pull/54))
+
+#### Fixed
+
+- Tests check the effects of two gate-wait guards: `git ls-remote` runs without the Bureau secrets, and an unusable Linear pick fails with 27 even with a hold active. ([#54](https://github.com/KaiaK808/bureau/pull/54))
+
+### A hang-up stops a run like SIGTERM
+
+#### Fixed
+
+- Closing a terminal, ssh connection, tmux window or tmux session used to end only the runtime in front, leaving the shepherd, worker and stage running detached with their claim. Runtime and provider now stop on SIGHUP and forward SIGTERM; shepherd, worker and queue supervisor trap it too. Exit 130, the same stop graces, preserved work and resume steps apply; `nohup` still outlives its terminal. On a dead terminal the runtime still exits 130, the shepherd releases `shepherd-focused`, and the provider records `cancelled`; implement's push-on-exit is completed by #46 above. ([#50](https://github.com/KaiaK808/bureau/pull/50))
+- A runtime counts its child's exit 130 as interrupted: an inner process group's stop keeps the run's leases interrupted and prints the resume steps even when the shepherd ends before its stage or between stages. `release` refuses while a recorded process group remains alive; kept leases on a queue lane's shared worktree block its picks with 21 until released. ([#50](https://github.com/KaiaK808/bureau/pull/50))
+- Troubleshooting has “How to stop a run”: clean stops, when `kill -TERM -- -<pid>` works, how to stop a queue as a whole, and the four endings of a signal to an inner process. The docs use retrying `release` as the liveness check; the runtime's printed step still says `status`. ([#50](https://github.com/KaiaK808/bureau/pull/50))
+
+### The shepherd confirms Spec between the spec stage's moves
+
+#### Fixed
+
+- After a successful spec stage, a moment-old Linear read showing the intermediate Spec state is now re-read through the existing bounded move confirmation before the auto-bump can act. Before, it was taken as confirmed and a finished Spec Review ticket was bumped back to Triage and specified again. A real Spec returned by spec review costs no extra wait; no setting or exit-code change. ([#51](https://github.com/KaiaK808/bureau/pull/51))
+
+### Stage text is not handed to an early-exiting pipe reader
+
+#### Fixed
+
+- Three stage lines no longer pass long model or API text through a pipe to a reader that leaves early: spec dropped a long research digest as “no valid output”, build review could end with 141 or 1 after the paid review, and `upstream-port.sh` reported a long commit message as “could not fetch commit message” (18). A failing `gh` still ends with 18. Other template instances use here-strings or readers that read to the end; two ignored-status dry-run byte-truncation lines remain allowed. The early-exit scan now also covers `templates/scripts/*.sh`. ([#56](https://github.com/KaiaK808/bureau/pull/56))
+
+### Tests avoid cleanup and broken-pipe races
+
+#### Fixed
+
+- Python tests that commit or push into temporary repositories switch git's automatic maintenance off through `tests/git_maintenance.py`, including the receiving bare origins. With git 2.54 or later a detached repack could still write into a test repository while cleanup deleted it and fail with “Directory not empty: '.git'”; trace tests assert no maintenance or gc child starts. Tests only, nothing installed changes. ([#52](https://github.com/KaiaK808/bureau/pull/52))
+- Tests no longer pipe into a reader that can leave early (`head`, `grep -q`/`-m`/`-l`, `awk … exit`, `sed … q`), apart from deliberate negative controls. Under `pipefail` the writer's broken pipe sometimes failed `test_needs_human_hold.sh` on ubuntu (“printf: write error: Broken pipe”) and could let a `hasnt` check pass over a match. `tests/test_pipe_early_exit.sh` probes the real helpers on 1 MB inputs and scans tests for the pattern. Tests only, nothing installed changes in this PR. ([#55](https://github.com/KaiaK808/bureau/pull/55))
+
 ## [3.1.0] - 2026-09-30
 
-Stable release of the 3.1.0 candidates. Runtime, installer, templates and tests are identical to v3.1.0-rc.2; since rc.2 only the CI job limit changed: the `shell` job of the `test` workflow may now run 45 minutes instead of 30 ([#44](https://github.com/KaiaK808/bureau/pull/44)). The rc.2 tag already carried [#43](https://github.com/KaiaK808/bureau/pull/43): the tests name their sandbox repositories with `mktemp -d`. The changes since v3.0.2 are recorded in the 3.1.0-rc.2 and 3.1.0-rc.1 sections below, and the [v3.1.0 release notes](docs/release-notes.md) consolidate them. Validation added since rc.2: a live acceptance in the maintainer's pilot installation, resynced to rc.2, where one ticket went from Triage to Done with the shepherd in 46 minutes; the merge log line named the pinned head, the head the review had approved, and the review log printed "Build output: last 20 of N lines". The interrupt and exit-`21` paths did not occur in that run.
+Stable release of the 3.1.0 candidates. Runtime, installer, templates and tests are identical to v3.1.0-rc.2; since rc.2 only the CI job limit changed: the `shell` job of the `test` workflow may now run 45 minutes instead of 30 ([#44](https://github.com/KaiaK808/bureau/pull/44)). The rc.2 tag already carried [#43](https://github.com/KaiaK808/bureau/pull/43): the tests name their sandbox repositories with `mktemp -d`. The changes since v3.0.2 are recorded in the 3.1.0-rc.2 and 3.1.0-rc.1 sections below, and the [v3.1.0 release notes](docs/release-notes-v3.1.0.md) consolidate them. Validation added since rc.2: a live acceptance in the maintainer's pilot installation, resynced to rc.2, where one ticket went from Triage to Done with the shepherd in 46 minutes; the merge log line named the pinned head, the head the review had approved, and the review log printed "Build output: last 20 of N lines". The interrupt and exit-`21` paths did not occur in that run.
 
 **Upgrade:** from v3.1.0-rc.2 select tag `v3.1.0`; no resync is needed because the runtime is unchanged. From v3.1.0-rc.1 select tag `v3.1.0`, resync the scripts scope as one set and go through the four rc.2 checks in [Upgrade to v3.1](docs/migration.md#upgrade-to-v31) (leftover worktrees, leftover branches, the worker's exit code and stop time, the shepherd's `--worktree`). From v3.0.2, v3.0.1, v3.0.0 or v3.0.0-rc.2 select tag `v3.1.0`, resync the scripts scope and the interfaces scope as one set and go through [Upgrade to v3.1](docs/migration.md#upgrade-to-v31).
 
@@ -359,7 +454,8 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.1.0...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.2.0-rc.1...main
+[3.2.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v3.1.0...v3.2.0-rc.1
 [3.1.0]: https://github.com/KaiaK808/bureau/compare/v3.0.2...v3.1.0
 [3.1.0-rc.2]: https://github.com/KaiaK808/bureau/compare/v3.1.0-rc.1...v3.1.0-rc.2
 [3.1.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v3.0.2...v3.1.0-rc.1
