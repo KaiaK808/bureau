@@ -21,12 +21,14 @@
 #  12  false, PR open, COMPLETE: one push, then the PR is marked ready and the ticket moves
 #  4b  false, gh answers text that is not a number (exit 0): no PR, pushes as by default
 #  14  false, PR open, the provider times out (124) on call 3: the held-back iterations are
-#      pushed before the stage ends, and it still ends with 124
+#      pushed before the stage ends (since v3.2 by push_if_ahead, whatever origin lacks), and
+#      it still ends with 124
 #  15  the same with an exhausted quota (23) on a call that made no commit
 #  16  the same with an interrupted provider (130)
 #  17  the same when the stage itself gets SIGTERM during call 2 (the EXIT trap): 143
-#  18  default, provider timeout on call 3: the iterations before it are on origin from their
-#      own pushes, and nothing extra is pushed
+#  18  default, provider timeout on call 3, the last: every pass is pushed after it, the
+#      timed-out one too (since v3.2 it is counted like any pass), nothing is deferred, and
+#      the stage still ends with 124
 #  19  false, PR open, a hook that resets HEAD to origin's tip: 14, HEAD is not pushed, the
 #      commit the hook started from is
 #  20  false, PR open, SIGTERM while a hook that reset HEAD runs: the EXIT trap pushes the
@@ -183,6 +185,7 @@ check_eq 2 "$(pr3_pushes)" "11 the end-of-run push and its retry"
 has 'post_comment.*final push of `test-branch` to origin failed twice \(3 commit\(s\) missing on origin\)' "$(calls)" "11 comment names the missing commits"
 hasnt 'move_issue' "$(calls)" "11 no hand-off"
 hasnt $'^gh\tpr\tready' "$(gh_log)" "11 PR not marked ready"
+hasnt '^  pushed ' "$LAST_STDOUT" "11 no push is confirmed"
 teardown
 
 # 12 — false, PR open, COMPLETE
@@ -198,7 +201,8 @@ has 'move_issue.*state-build-review' "$(calls)" "12 hand-off"
 teardown
 
 # 14–16 — false, PR open, the provider fails: the held-back commits go out before the exit
-for c in "14 3 124" "15 2 23" "16 2 130"; do
+# (the fourth field: how many commits origin lacks by then)
+for c in "14 3 124 3" "15 2 23 1" "16 2 130 2"; do
   set -- $c
   setup "$OFF"
   pr3_fake_claude
@@ -209,7 +213,7 @@ for c in "14 3 124" "15 2 23" "16 2 130"; do
   check_eq "$3" "$LAST_RC" "$1 the provider's exit code is kept"
   check_eq 1 "$(pr3_pushes)" "$1 one push, before the exit"
   check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "$1 every commit of the run on origin"
-  has "pushing the deferred commits of test-branch \(provider exit $3\)" "$LAST_STDERR" "$1 says why"
+  has "pushing $4 commit\(s\) of test-branch that origin lacks before the stage ends \(provider exit $3\)" "$LAST_STDERR" "$1 says why"
   hasnt 'move_issue' "$(calls)" "$1 no hand-off"
   teardown
 done
@@ -223,17 +227,19 @@ unset PR3_TERM_STAGE_ON
 check_eq 143 "$LAST_RC" "17 ended by SIGTERM"
 check_eq 1 "$(pr3_pushes)" "17 one push, from the EXIT trap"
 check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "17 every commit of the run on origin"
-has 'pushing the deferred commits of test-branch \(the stage ends before its end-of-run push\)' "$LAST_STDERR" "17 says why"
+has 'pushing 2 commit\(s\) of test-branch that origin lacks before the stage ends \(the stage ends before its end-of-run push\)' "$LAST_STDERR" "17 says why"
+has "^  pushed test-branch \(the stage ends before its end-of-run push\): 2 commit\(s\) origin lacked, head $(git -C "$SANDBOX" rev-parse --short HEAD)$" "$LAST_STDOUT" "17 confirms the push"
 teardown
 
-# 18 — default, provider timeout on call 3: nothing extra
+# 18 — default, provider timeout on call 3, the last: one push per pass, nothing deferred
 setup
 pr3_fake_claude
 export GH_STUB_EXISTING_PR=7 PR3_EXIT_ON=3 PR3_EXIT_CODE=124
 pr3_run_implement
 unset PR3_EXIT_ON PR3_EXIT_CODE
 check_eq 124 "$LAST_RC" "18 exit"
-check_eq 2 "$(pr3_pushes)" "18 the two iteration pushes only"
+check_eq 3 "$(pr3_pushes)" "18 one push after each pass, the timed-out third included"
+check_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(origin_tip)" "18 every commit of the run on origin"
 hasnt 'deferred' "$LAST_STDERR$LAST_STDOUT" "18 nothing deferred"
 teardown
 
@@ -246,6 +252,8 @@ check_eq 14 "$LAST_RC" "19 exit"
 has 'not pushing: repo.post_implement_command moved HEAD' "$LAST_STDERR" "19 HEAD not pushed"
 check_eq 1 "$(pr3_pushes)" "19 one push"
 check_eq 'fake-claude iter 1 progress' "$(git -C "$SANDBOX/.fake-origin.git" log -1 --format=%s test-branch)" "19 the run's commit is on origin"
+has "^  pushed test-branch \(the run's commits, without the hook's rewrite\): 1 commit\(s\) origin lacked, head $(git -C "$SANDBOX" rev-parse --short "$(origin_tip)")$" "$LAST_STDOUT" "19 confirms the push of the commit the hook started from"
+hasnt '^  pushed test-branch \(end of run' "$LAST_STDOUT" "19 the skipped end-of-run push is not confirmed"
 teardown
 
 # 20 — false, PR open, the stage gets SIGTERM while a hook that reset HEAD is still running:

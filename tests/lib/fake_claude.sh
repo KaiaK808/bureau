@@ -17,6 +17,16 @@
 #                            the iter timeout is shorter than the sleep.
 #   FAKE_CLAUDE_LOG        — file to append "iter N invoked" lines to.
 #   FAKE_CLAUDE_COMMIT_MSG — message for those commits (default "fake-claude iter N progress").
+#   FAKE_CLAUDE_CHECK_TASKS_ON_ITERS — colon-separated iter numbers on which the stub marks
+#                            every open task in the sandbox's specs/*/tasks.md done
+#                            ("- [ ]" → "- [X]") and stages the file, so a commit on the
+#                            same iter carries the marks.
+#   FAKE_CLAUDE_TIMEOUT_ON_ITERS — colon-separated iter numbers that end like a provider
+#                            pass that hit its time limit: after the commit (if any), no
+#                            output and exit 124, as bureau-provider.py returns a timeout.
+#                            FAKE_CLAUDE_TIMEOUT_SLEEP seconds pass before that exit.
+#   FAKE_CLAUDE_PROMPT_DIR — directory that receives each call's arguments (the prompt)
+#                            as prompt-N.txt.
 #
 # The pipeline's $CLAUDE is unquoted on call, so this script receives the
 # prompt as its arguments. We ignore them — the prompt is irrelevant to the
@@ -32,6 +42,15 @@ echo "$n" > "$counter_file"
 # FAKE_CLAUDE_PROMPT_LOG — file to append every prompt to, so a test can check
 # what a stage told the agent (for example which spec directory).
 [ -n "${FAKE_CLAUDE_PROMPT_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_CLAUDE_PROMPT_LOG"
+[ -z "${FAKE_CLAUDE_PROMPT_DIR:-}" ] || printf '%s\n' "$*" > "$FAKE_CLAUDE_PROMPT_DIR/prompt-$n.txt"
+
+# in_iters <n> <colon-separated list>: whether call n is on the list.
+in_iters() {
+  local item items
+  IFS=':' read -ra items <<< "$2"
+  for item in "${items[@]}"; do [ "$item" = "$1" ] && return 0; done
+  return 1
+}
 
 # Resolve the fixture for this call.
 IFS=':' read -ra fixtures <<< "${FAKE_CLAUDE_FIXTURES:?must list at least one fixture}"
@@ -45,6 +64,14 @@ case "$*" in
   *"You are a SECURITY specialist"*)             [ -z "${FAKE_CLAUDE_SECURITY_FIXTURE:-}" ] || fixture="$FAKE_CLAUDE_SECURITY_FIXTURE" ;;
   *"Merge these three specialist reviews"*)      [ -z "${FAKE_CLAUDE_MERGE_FIXTURE:-}" ] || fixture="$FAKE_CLAUDE_MERGE_FIXTURE" ;;
 esac
+
+if [ -n "${FAKE_CLAUDE_CHECK_TASKS_ON_ITERS:-}" ] && in_iters "$n" "$FAKE_CLAUDE_CHECK_TASKS_ON_ITERS"; then
+  for tasks_file in "$SANDBOX"/specs/*/tasks.md; do
+    [ -f "$tasks_file" ] || continue
+    sed 's/^- \[ \]/- [X]/' "$tasks_file" > "$tasks_file.tmp" && mv "$tasks_file.tmp" "$tasks_file"
+    git -C "$SANDBOX" add -- "${tasks_file#"$SANDBOX"/}" >/dev/null 2>&1 || true
+  done
+fi
 
 # Optionally make a git commit before emitting output. The pipeline's stuck
 # detector uses commit count between HEAD_BEFORE and HEAD_AFTER as a signal;
@@ -61,6 +88,11 @@ if [ -n "${FAKE_CLAUDE_COMMIT_ON_ITERS:-}" ]; then
       break
     fi
   done
+fi
+
+if [ -n "${FAKE_CLAUDE_TIMEOUT_ON_ITERS:-}" ] && in_iters "$n" "$FAKE_CLAUDE_TIMEOUT_ON_ITERS"; then
+  [ -z "${FAKE_CLAUDE_TIMEOUT_SLEEP:-}" ] || sleep "$FAKE_CLAUDE_TIMEOUT_SLEEP"
+  exit 124
 fi
 
 cat "$fixture"
