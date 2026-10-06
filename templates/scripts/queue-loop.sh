@@ -12,11 +12,13 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
-# Load .env so LINEAR_API_KEY, TELEGRAM_* etc are available to pipelines
-if [ -f "$REPO_DIR/.env" ]; then
-  bureau_load_env --export "$REPO_DIR/.env"
+# Load .env (BUREAU_ENV_FILE, next to .bureau.json) for this loop's own Linear and
+# Telegram calls and its settings. The three secrets stay unexported (bureau-env.sh);
+# every stage reads .env itself.
+if [ -f "${BUREAU_ENV_FILE:-$REPO_DIR/.env}" ]; then
+  bureau_load_env --export "${BUREAU_ENV_FILE:-$REPO_DIR/.env}"
 fi
-API_KEY="${LINEAR_API_KEY:-}"
+bureau_secret_copy --optional API_KEY LINEAR_API_KEY
 
 # --dry-run flag (env-var BUREAU_DRY_RUN=1 also honoured) flips bureau-config.sh's
 # move_issue / post_comment / add_issue_label / alert_telegram into log-only mode

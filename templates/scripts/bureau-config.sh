@@ -13,9 +13,22 @@
 # _BUREAU_SCRIPTS_DIR is this file's own directory, resolved once at source time: helpers
 # that run a sibling script must take it from the checkout this config came from, never
 # from ./scripts/ relative to wherever the stage has cd'd to.
+#
+# v3.2: allexport off in every Bureau script, before anything is defined. An operator shell that
+# ran `set -a` and exported SHELLOPTS starts each Bureau bash with it on, and then every assignment
+# and every function definition would be exported: the stages' API_KEY copy, the Linear request's
+# config line in _bureau_linear_fetch (which _bureau_drop_secrets would then unset before curl
+# reads it), the functions of this file and bureau-env.sh (which a /bin/sh child cannot even
+# import). bureau-env.sh and bureau_load_env switch it off as well.
+set +a
 _BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=templates/scripts/bureau-env.sh
 source "$_BUREAU_SCRIPTS_DIR/bureau-env.sh"
+# The scripts that source this file copy the Linear key into API_KEY once they
+# have read .env. bureau_load_env never exports the key itself (v3.2); an
+# API_KEY the operator's shell happens to export would still carry the copy to
+# every process the script starts, so it loses the export attribute here.
+export -n API_KEY
 
 _find_config() {
   local common primary candidate
@@ -33,6 +46,14 @@ _find_config() {
   BUREAU_CONFIG="$(cd "$(dirname "$BUREAU_CONFIG")" && pwd)/$(basename "$BUREAU_CONFIG")"
   export BUREAU_CONFIG
   BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$(dirname "$BUREAU_CONFIG")/.env}"
+  # The .env every script reads (v3.2: never ./.env, which in a stage worktree is a file the
+  # branch controls). A relative value counts from the directory of .bureau.json, not from the
+  # working directory.
+  case "$BUREAU_ENV_FILE" in /*) ;; *) BUREAU_ENV_FILE="$(dirname "$BUREAU_CONFIG")/$BUREAU_ENV_FILE" ;; esac
+  # Exported, so the runs below this one read the same file: the runtime hands a relaunched stage
+  # the RESOLVED path of .bureau.json (config_for in bureau-runtime.py), and when .bureau.json is a
+  # link, its target's directory is not the one this script took the .env from (v3.2).
+  export BUREAU_ENV_FILE
 }
 _find_config
 # Capture the caller boundary separately from user-facing .env settings. An
@@ -2117,10 +2138,10 @@ alert_telegram() {
     echo "[DRY_RUN] alert_telegram $issue $pipeline exit=$exit_code: $message" >&2
     return 0
   fi
-  local token="${TELEGRAM_BOT_TOKEN:-}"
-  local chat="${TELEGRAM_ALERT_CHAT_ID:-}"
-  [ -z "$token" ] && return 0
-  [ -z "$chat" ] && return 0
+  # The token and the chat id are looked at with a running `set -x` off and read only inside the
+  # traceless subshell below (v3.2): a local copy assigned here would print them in the trace.
+  bureau_secret_set TELEGRAM_BOT_TOKEN || return 0
+  bureau_secret_set TELEGRAM_ALERT_CHAT_ID || return 0
 
   local throttle_key="alert|$issue|$pipeline|$exit_code"
   _throttle_should_suppress "$throttle_key" 3600 && return 0
@@ -2137,10 +2158,9 @@ alert_telegram() {
   # its argument list, which `ps` shows; curl starts without the secrets in its
   # environment, and a running `set -x` is off in the subshell.
   ( { set +x; } 2>/dev/null
-    config=$(_bureau_curl_config url "https://api.telegram.org/bot${token}/sendMessage"
-             _bureau_curl_config data-urlencode "chat_id=${chat}"
+    config=$(_bureau_curl_config url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
+             _bureau_curl_config data-urlencode "chat_id=${TELEGRAM_ALERT_CHAT_ID}"
              _bureau_curl_config data-urlencode "text=${body}")
-    token=""; chat=""
     _bureau_drop_secrets
     curl -s -X POST -K - --data-urlencode "parse_mode=Markdown" <<< "$config"
   ) >/dev/null 2>&1 || true

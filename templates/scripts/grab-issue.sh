@@ -3,9 +3,9 @@
 set -euo pipefail
 
 source "$(dirname "$0")/bureau-config.sh"
-bureau_load_env .env 2>/dev/null || true
+bureau_load_env "$BUREAU_ENV_FILE" 2>/dev/null || true
 
-API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
+bureau_secret_copy API_KEY LINEAR_API_KEY
 
 # Through linear_query: an unusable answer is retried and then ends this script
 # with $BUREAU_EXIT_LINEAR_UNUSABLE, instead of reading as "nothing in Triage".

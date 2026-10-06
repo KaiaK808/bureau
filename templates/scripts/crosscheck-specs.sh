@@ -35,8 +35,8 @@ set -euo pipefail
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
-if [ -f .env ]; then bureau_load_env --export .env
-elif [ -f "$SCRIPT_REPO/.env" ]; then bureau_load_env --export "$SCRIPT_REPO/.env"; fi
+# BUREAU_ENV_FILE only, never ./.env: a stage runs this in its worktree, where that is the branch's file.
+if [ -f "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}" ]; then bureau_load_env --export "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"; fi
 
 extract_paths() {
   local file="$1"

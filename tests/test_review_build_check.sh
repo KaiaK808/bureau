@@ -54,6 +54,9 @@ run_review() {
       split) rm -rf "$MARKS/elsewhere"; mkdir -p "$MARKS/elsewhere"
              cp -R "$SCRIPTS_DIR" "$MARKS/elsewhere/scripts"
              printf '#!/bin/bash\ntouch "%s/shim"\n' "$MARKS" > "$MARKS/elsewhere/scripts/bureau-test.sh"
+             # The operator's .env sits in the checkout the scripts come from (BUREAU_ENV_FILE),
+             # as for a disposable worker; since v3.2 no stage reads ./.env of its worktree.
+             mv "$SANDBOX/.env" "$MARKS/elsewhere/.env"
              SCRIPTS_DIR="$MARKS/elsewhere/scripts" ;;
       old)  python3 - "$SCRIPTS_DIR/code-review-pipeline.sh" <<'PY'
 import sys

@@ -2,8 +2,9 @@
 temporary Git repositories: the CI gate without pull-request workflows, merge gate switches
 and agents.implement.push_each_iteration that are not booleans, short provider timeouts,
 repo.worktree_links judged in the main checkout from a linked worktree, and .env* links; since
-v3.2 also linked directories that hold a .env* name or cannot be searched, and the
-repo.test_command warning only where implement runs on Codex."""
+v3.2 also linked directories that hold a .env* name or cannot be searched, the
+repo.test_command warning only where implement runs on Codex, and that doctor reads the .env file
+the nine stages read (BUREAU_ENV_FILE only, never a .env of the checkout it runs in)."""
 import copy
 import importlib.util
 import json
@@ -292,14 +293,29 @@ class TestCommandWarningTests(Repo):
     repo.test_command). Doctor must warn exactly where that gate stops the stage. The stage runs as it
     does under the worker: in a linked worktree without a .env, with BUREAU_CONFIG naming the main
     checkout's .bureau.json, as the tick exports it. LOAD and GATE are cut from implement-pipeline.sh
-    by their exact text: a change to those lines must come here too (a deliberate tripwire)."""
+    and must equal LOAD_TEXT and GATE_TEXT exactly: a change to those lines fails every test here
+    until doctor's reading (stage_env_file, stage_env_value, implement_runner in bureau-doctor.py) is
+    checked against it and the copies are updated (a deliberate tripwire). v3.2 (S1b): the stage reads
+    BUREAU_ENV_FILE only, never ./.env."""
     WARNING = 'repo.test_command is missing; required for Codex background implementation'
     CONFIG_SH = ROOT / 'templates/scripts/bureau-config.sh'
     IMPLEMENT = (ROOT / 'templates/scripts/implement-pipeline.sh').read_text().splitlines()
-    _load = IMPLEMENT.index('BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"')
-    LOAD = '\n'.join(IMPLEMENT[_load:_load + 4])
-    _gate = next(i for i, line in enumerate(IMPLEMENT) if line.startswith('if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then'))
-    GATE = '\n'.join(IMPLEMENT[_gate:_gate + 3]) + '\nfi'
+    LOAD_FIRST = 'BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"'
+    LOAD_TEXT = '\n'.join((
+        LOAD_FIRST,
+        '# BUREAU_ENV_FILE only, never ./.env: in a stage worktree that is a file the branch controls.',
+        'if [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"',
+        'else bureau_secret_set LINEAR_API_KEY || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi'))
+    GATE_FIRST = 'if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then'
+    GATE_TEXT = '\n'.join((
+        GATE_FIRST,
+        "  TEST_COMMAND=$(bureau_get '.repo.test_command // empty')",
+        "  [ -n \"$TEST_COMMAND\" ] || { echo 'Codex completion needs repo.test_command for independent verification.' >&2; exit 24; }",
+        'fi'))
+    _load = IMPLEMENT.index(LOAD_FIRST) if LOAD_FIRST in IMPLEMENT else None
+    LOAD = None if _load is None else '\n'.join(IMPLEMENT[_load:_load + LOAD_TEXT.count('\n') + 1])
+    _gate = IMPLEMENT.index(GATE_FIRST) if GATE_FIRST in IMPLEMENT else None
+    GATE = None if _gate is None else '\n'.join(IMPLEMENT[_gate:_gate + GATE_TEXT.count('\n')] + ['fi'])
     STAGE = ('cd "$WORKTREE" && [ ! -e .env ] || exit 97\n'
              'source "$CONFIG_SH" >/dev/null 2>&1 || exit 99; SCRIPT_REPO="$REPO"; eval "$LOAD" >/dev/null 2>&1 || exit 98\n'
              'runner=$(resolve_runner_for_stage implement 2>/dev/null) || runner=unresolved\n'
@@ -307,8 +323,9 @@ class TestCommandWarningTests(Repo):
 
     def setUp(self):
         super().setUp()
-        assert self.LOAD.endswith('fi') and 'bureau_load_env --export .env' in self.LOAD, self.LOAD
-        assert 'exit 24' in self.GATE, self.GATE
+        drifted = 'implement-pipeline.sh changed the lines this test copies; check bureau-doctor.py against them, then update '
+        self.assertEqual(self.LOAD, self.LOAD_TEXT, drifted + 'LOAD_TEXT')
+        self.assertEqual(self.GATE, self.GATE_TEXT, drifted + 'GATE_TEXT')
         for name in [name for name in os.environ if name.startswith('BUREAU_RUNNER_')] + ['BUREAU_ENV_FILE']: os.environ.pop(name, None)
         with (self.repo / '.git/info/exclude').open('a') as out: out.write('.env\n')
         self.worktree = self.base / 'implement worktree'
@@ -431,6 +448,100 @@ class TestCommandWarningTests(Repo):
                 env = {}
                 if other is not None: elsewhere.write_text(other); env['BUREAU_ENV_FILE'] = str(elsewhere)
                 self.assertEqual(self.check(claude, env, env_file=main), (runner, halts))
+
+    # The nine stages' own .env loading, each cut from its script: from LOAD_FIRST through the line
+    # that closes its `if` (implement's is LOAD above; merge and rebase stop without the file).
+    STAGES = ('implement', 'spec', 'spec-review', 'ux', 'copy', 'qa', 'code-review', 'merge', 'rebase')
+    PROBE = ('cd "$PLACE" || exit 97\n'
+             'source "$CONFIG_SH" >/dev/null 2>&1 || exit 99; SCRIPT_REPO="$REPO"\n'
+             'for block in "$@"; do ( eval "$block" >/dev/null 2>&1; printf "%s\\n" "${LINEAR_API_KEY-}" ) || echo stopped; done')
+
+    @classmethod
+    def loader(cls, stage):
+        lines = (ROOT / 'templates/scripts' / (stage + '-pipeline.sh')).read_text().splitlines()
+        start = lines.index(cls.LOAD_FIRST)
+        end = next(i for i in range(start, len(lines)) if lines[i].rstrip().endswith('fi'))
+        return '\n'.join(lines[start:end + 1])
+
+    def test_doctor_reads_the_env_file_every_stage_reads(self):
+        # Doctor and the stages must take BUREAU_RUNNER_IMPLEMENT (and every other .env key) from
+        # the same file: BUREAU_ENV_FILE, by default the .env next to .bureau.json, a relative value
+        # counted from there, never a .env of the checkout they run in, which in a stage worktree
+        # the branch controls. Every source holds its own Linear key, so the stages' loaders (cut
+        # from the nine scripts, run in a bash that sourced the real bureau-config.sh) name the
+        # source they read. Doctor (the real diagnose, with the process in that checkout) names it
+        # through its repo.test_command warning: it warns when only that source sets codex and does
+        # not when every other source does; its .env note appears exactly when the file exists.
+        # The worktree's branch tracks a .env and a conf/bureau.env of its own. BUREAU_CONFIG is
+        # exported (as the drivers and the runtime do), found from the checkout, or names a link to
+        # the main checkout's .bureau.json in another directory: the stages take the directory of
+        # the link (dirname), so doctor must not resolve it.
+        config = self.config(runner='claude', implement=True); del config['repo']['test_command']; self.write_config(config)
+        with (self.repo / '.git/info/exclude').open('a') as out: out.write('conf/\n')
+        elsewhere = self.base / 'secrets' / 'bureau.env'; elsewhere.parent.mkdir()
+        linked = self.base / 'linked config'; linked.mkdir(); (linked / '.bureau.json').symlink_to(self.repo / '.bureau.json')
+        files = {'main': self.repo / '.env', 'main-conf': self.repo / 'conf/bureau.env', 'elsewhere': elsewhere,
+                 'branch': self.worktree / '.env', 'branch-conf': self.worktree / 'conf/bureau.env',
+                 'link': linked / '.env', 'link-conf': linked / 'conf/bureau.env'}
+        for path in files.values(): path.parent.mkdir(parents=True, exist_ok=True); path.write_text('LINEAR_API_KEY=x\n')
+        git(self.worktree, 'add', '-f', '.env', 'conf/bureau.env'); git(self.worktree, 'commit', '-qm', 'the branch tracks .env files')
+        self.assertEqual(git(self.worktree, 'ls-files', '.env', 'conf/bureau.env').stdout.split(), ['.env', 'conf/bureau.env'])
+        loaders = [self.loader(stage) for stage in self.STAGES]
+        self.assertEqual(loaders[0], self.LOAD)
+        for stage, block in zip(self.STAGES, loaders):
+            self.assertIn('bureau_load_env --export "$BUREAU_ENV_FILE"', block, stage)
+
+        def write(codex):  # every source gets its own Linear key; `codex` decides the runner
+            for name, path in files.items():
+                if path.exists(): path.write_text('LINEAR_API_KEY=lin_' + name + '\nBUREAU_RUNNER_IMPLEMENT=' + ('codex' if codex(name) else 'claude') + '\n')
+            return {'LINEAR_API_KEY': 'lin_env', 'BUREAU_RUNNER_IMPLEMENT': 'codex' if codex('env') else 'claude'}
+
+        def doctor(place, env):
+            before = os.getcwd(); os.chdir(place)
+            try:
+                with patch.dict(os.environ, env):
+                    for name in [n for n in ('BUREAU_ENV_FILE', 'BUREAU_CONFIG') if n not in env]: os.environ.pop(name, None)
+                    result = d.diagnose(place, 'app')
+            finally: os.chdir(before)
+            self.assertTrue(result['ok'], result)
+            return self.WARNING in result['warnings'], any(w.startswith('Doctor resolves JSON') for w in result['warnings'])
+
+        cases = [  # label, BUREAU_ENV_FILE (None: unset), sources removed, the source the stages read
+            ('unset', None, (), 'main'),
+            ('empty', '', (), 'main'),
+            ('absolute', str(elsewhere), (), 'elsewhere'),
+            ('absolute, missing', str(self.base / 'secrets/missing.env'), (), 'env'),
+            ('relative .env', '.env', (), 'main'),
+            ('relative conf/bureau.env', 'conf/bureau.env', (), 'main-conf'),
+            ('relative, missing next to .bureau.json', 'conf/bureau.env', ('main-conf',), 'env'),
+            ('unset, no .env next to .bureau.json', None, ('main',), 'env'),
+        ]
+        configs = {'exported': self.repo / '.bureau.json', 'found': None, 'link': linked / '.bureau.json'}
+        for label, value, removed, main_source in cases:
+            case_env = {} if value is None else {'BUREAU_ENV_FILE': value}
+            for place in (self.repo, self.worktree):
+                for mode, named in configs.items():
+                    # Through the link the directory of .bureau.json is the link's: its .env.
+                    to_link = {'main': 'link', 'main-conf': 'link-conf'} if mode == 'link' else {}
+                    source = to_link.get(main_source, main_source)
+                    for path in files.values(): path.write_text('LINEAR_API_KEY=x\n')
+                    for name in removed: files[to_link.get(name, name)].unlink()
+                    with self.subTest(case=label, place=place.name, bureau_config=mode):
+                        env = {**case_env, **({'BUREAU_CONFIG': str(named)} if named else {})}
+                        stage_env = {**os.environ, **write(lambda name: False), **env, 'REPO': str(self.repo), 'PLACE': str(place), 'CONFIG_SH': str(self.CONFIG_SH)}
+                        for name in [n for n in ('BUREAU_ENV_FILE', 'BUREAU_CONFIG') if n not in env]: stage_env.pop(name, None)
+                        proc = subprocess.run(['/bin/bash', '-c', self.PROBE, 'probe', *loaders], capture_output=True, text=True, env=stage_env)
+                        self.assertEqual(proc.returncode, 0, proc.stderr)
+                        read = dict(zip(self.STAGES, proc.stdout.split()))
+                        expected = {stage: 'stopped' if source == 'env' and stage in ('merge', 'rebase') else 'lin_' + source for stage in self.STAGES}
+                        self.assertEqual(read, expected)
+                        warned, note = doctor(place, {**env, **write(lambda name: name == source)})
+                        if not warned:
+                            used = [name for name in list(files) + ['env'] if (name == 'env' or files[name].exists())
+                                    and doctor(place, {**env, **write(lambda other: other == name)})[0]]
+                            self.fail('doctor did not read ' + source + ', the source every stage read; it read ' + (', '.join(used) or 'none'))
+                        self.assertEqual(note, source != 'env')
+                        self.assertEqual(doctor(place, {**env, **write(lambda name: name != source)}), (False, source != 'env'))
 
     def test_an_implement_runner_that_does_not_resolve_is_no_codex(self):
         # Implement off and an unknown runner in the environment: the stage would stop on it,

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="920b346239bed08611c466884b9d418a04813868b44200450cad9f0f9173e636">
+<meta name="bureau-source-sha256" content="44efd6d0ec246c4ad7ec7710d36833243a482ae08a83b0d17012beee8996b756">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1122,11 +1122,13 @@ agent, and stops with <code>24</code> when none is set (absent,
 appears only when implement resolves to Codex:
 <code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it (the value in
 the <code>.env</code> the stages read, <code>BUREAU_ENV_FILE</code> or
-else the one next to <code>.bureau.json</code>, which doctor reads with
-the stages' own reader and never executes; else doctor's environment),
-else <code>agents.implement.runner</code> when
-<code>agents.implement</code> is an object, else
-<code>agents.runner</code>. It appears with
+else the one next to <code>.bureau.json</code>, a relative
+<code>BUREAU_ENV_FILE</code> counted from the directory of
+<code>.bureau.json</code>, never a <code>.env</code> of the checkout
+doctor runs in; doctor reads it with the stages' own reader and never
+executes it; else doctor's environment), else
+<code>agents.implement.runner</code> when <code>agents.implement</code>
+is an object, else <code>agents.runner</code>. It appears with
 <code>agents.implement</code> off as well, because the shepherd runs
 every stage unless <code>--respect-config</code>. Set
 <code>repo.test_command</code> to the project's real test command.
@@ -1301,6 +1303,64 @@ silence another's for an hour (a ticket number both teams use, or
 log is empty: an alert sent in the hour before may come once more. The
 old <code>/tmp/bureau-alerts.log</code> is no longer read once every
 installation on the host runs v3.1; it can then be deleted.</p>
+<h3 id="a-pre-push-hook-no-longer-runs-when-bureau-pushes">A
+<code>pre-push</code> hook no longer runs when Bureau pushes</h3>
+<p>Since v3.2 Bureau's own git commands that talk to a remote (push,
+fetch, pull, ls-remote, clone, remote, submodule) run with
+<code>-c core.hooksPath=/dev/null</code>: they keep the GitHub token
+variables, and a hook from the branch would see them. A
+<code>pre-push</code> hook (husky, lefthook, the pre-commit framework's
+<code>pre-push</code> stage) that ran lint or tests on Bureau's pushes
+therefore no longer runs, nor does a <code>reference-transaction</code>
+hook on a fetch or a push; with git 2.54 and later the same holds for
+hooks the configuration defines (<code>hook.&lt;name&gt;.command</code>
+and <code>hook.&lt;name&gt;.event</code>, which
+<code>core.hooksPath</code> does not reach): Bureau also passes
+<code>hook.&lt;event&gt;.enabled=false</code> for every hook event and
+<code>hook.&lt;name&gt;.enabled=false</code> for every such hook name;
+hooks of local commands (<code>pre-commit</code>,
+<code>commit-msg</code>, <code>post-checkout</code>) still run, without
+the Bureau secrets. Let CI run what the <code>pre-push</code> hook
+checked, or set <code>repo.remote_git_runs_hooks</code> to
+<code>true</code> (the JSON value) to run the hooks again with the
+GitHub tokens in their environment, as in v3.1. A repository that uses
+Git LFS needs <code>true</code>: LFS uploads its objects in the
+<code>pre-push</code> hook, so without it the pull request's LFS files
+point at objects the remote does not have; doctor warns when the main
+checkout uses <code>filter=lfs</code> (in its
+<code>.gitattributes</code>, a <code>.gitattributes</code> further down
+that git lists, or <code>.git/info/attributes</code>) and the key is not
+<code>true</code> (<a href="configuration.html">configuration</a>, <a
+href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).
+Doctor warns when the value is not a JSON boolean; any value other than
+<code>true</code> keeps the hooks off.</p>
+<h3 id="tracing-a-stage-with-bash--x">Tracing a stage with
+<code>bash -x</code></h3>
+<p>Tracing a stage, a driver or the queue loop
+(<code>bash -x scripts/…</code>, or <code>set -x</code> and
+<code>export SHELLOPTS</code> in the shell that starts Bureau) is
+supported. Since v3.2 Bureau looks at and copies
+<code>LINEAR_API_KEY</code>, <code>TELEGRAM_BOT_TOKEN</code> and
+<code>TELEGRAM_ALERT_CHAT_ID</code> with the trace switched off
+(<code>bureau_secret_set</code>, <code>bureau_secret_copy</code> in
+<code>scripts/bureau-env.sh</code>), so the trace, which the queue loop
+writes to its log, shows no key; before,
+<code>+ API_KEY=lin_api_…</code> and the presence checks printed it. A
+script of an installation that a stage starts and that handles a key
+must do the same. <code>set -a</code> with an exported
+<code>SHELLOPTS</code> is switched off in every Bureau script, so it no
+longer exports the stages' copy of the key.</p>
+<h3 id="a-command-a-stage-starts-no-longer-finds-linear_api_key">A
+command a stage starts no longer finds <code>LINEAR_API_KEY</code></h3>
+<p>Since v3.2 the stages and drivers read <code>LINEAR_API_KEY</code>,
+<code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_ALERT_CHAT_ID</code>
+from <code>.env</code> into shell variables they never export, so the
+processes they start do not see them. A Bureau script reads
+<code>.env</code> itself (<code>bureau_load_env</code> in
+<code>scripts/bureau-env.sh</code>); a script of an installation that a
+stage starts and that needs one of the keys must do the same. A key that
+only the shell environment holds (not in <code>.env</code>) is still
+exported; move it into <code>.env</code> instead.</p>
 <h3
 id="worktree-collision--branch-already-checked-out-at-another-worktree">Worktree
 collision — "branch already checked out at another worktree"</h3>
