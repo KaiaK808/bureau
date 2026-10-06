@@ -90,7 +90,7 @@ The [background operations reference](references/operations.md) covers these mod
 
 ## Update and migrate
 
-Select `v3.2.1` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release) and refresh skill discovery. From v3.2.0, a resync is optional because the scripts and interfaces change only in comments and help texts; installers will report those files as updates. From v3.1.0 or older, resync **each adopting repository** following [Upgrade to v3.2](docs/migration.md#upgrade-to-v32) and the earlier notes for your version. In Claude Code, after loading the new source skill:
+Select `v3.2.1` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release) and refresh skill discovery. From v3.2.0, a resync is optional because the scripts and interfaces change only in comments, help texts and example values; installers will report those files as updates. From v3.1.0 or older, resync **each adopting repository** following [Upgrade to v3.2](docs/migration.md#upgrade-to-v32) and the earlier notes for your version. In Claude Code, after loading the new source skill:
 
 ```text
 /bureau-init --resync-interfaces --resync-scripts --target both

@@ -1,10 +1,10 @@
 #!/bin/bash
-# orchestrate.sh — the bureau-workflow EXECUTOR (PR #137 Decision D).
+# orchestrate.sh — the bureau-workflow EXECUTOR.
 #
 # Consumes a conflict-aware schedule (from the `conflict-aware-schedule`
 # workflow brain) and drives `shepherd.sh` over it. The brain decides WHAT can
 # run together; this script EXECUTES that decision durably in bash — the
-# load-bearing split from PR #137 (planning in a workflow, execution in
+# load-bearing split (planning in a workflow, execution in
 # cron-friendly bash).
 #
 # Usage:
@@ -105,7 +105,7 @@ elif [ -n "$SCHEDULE_FILE" ]; then
       done <<< "$PSAFE"
     else
       # Legacy: no per-worktree concurrency → run them serially, logged loudly
-      # (no silent cap — see PR #137 §"No silent caps"). Use --execute for real
+      # (no silent cap). Use --execute for real
       # concurrency.
       echo "orchestrate: NOTE — parallelSafe set present; running SERIALLY"
       echo "             (pass --execute for concurrent per-worktree lanes):"

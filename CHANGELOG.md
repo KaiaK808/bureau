@@ -21,7 +21,7 @@ Patch release on v3.2.0 that removes internal references without behaviour chang
 
 - `tests/test_no_internal_refs.sh` guards against reintroducing private ticket references in templates, public prose and test comments, with a matcher self-check that preserves fixture data and neutral examples.
 
-**Upgrade:** from v3.2.0 select tag `v3.2.1`; a resync is optional because the scripts and interfaces change only in comments and help texts (installers will report those files as updates). Resync the scripts and interfaces scopes to receive the cleaned text. From v3.1.0 select tag `v3.2.1` and follow [Upgrade to v3.2](docs/migration.md#upgrade-to-v32), including both scopes. Validation covers the reference guard and regenerated documentation; the full suite remains a CI check.
+**Upgrade:** from v3.2.0 select tag `v3.2.1`; a resync is optional because the scripts and interfaces change only in comments, help texts and example values (installers will report those files as updates). Resync the scripts and interfaces scopes to receive the cleaned text. From v3.1.0 select tag `v3.2.1` and follow [Upgrade to v3.2](docs/migration.md#upgrade-to-v32), including both scopes. Validation covers the reference guard and regenerated documentation; the full suite remains a CI check.
 
 ## [3.2.0] - 2026-10-06
 

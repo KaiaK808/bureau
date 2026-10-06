@@ -4,7 +4,7 @@
 # has its OWN `-p/--port` flag, so `headroom wrap claude -p …` makes headroom
 # parse claude's `-p` (print) as the port and die: "'--print' is not a valid
 # integer" (exit 2). The OFF path must stay byte-identical to plain `claude -p`.
-# (Found 2026-06-23 piloting the #22 token-efficiency stack on brainhuggers-cli.)
+# (Found while piloting the token-efficiency stack in an installation.)
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && cd .. && pwd)"
