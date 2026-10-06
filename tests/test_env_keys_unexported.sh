@@ -47,13 +47,13 @@ reader() { env -u LINEAR_API_KEY -u TELEGRAM_BOT_TOKEN -u TELEGRAM_ALERT_CHAT_ID
 reader_env() { local code="$1"; shift; env "$@" /bin/bash -c 'set -u; source "$1/bureau-env.sh"; cd "$2"; '"$code" _ "$SCRIPTS" "$TMP" 2>&1; }
 for form in '--export' ''; do
   out=$(reader "bureau_load_env $form .env; echo \"shell=\${LINEAR_API_KEY:-}|\${TELEGRAM_BOT_TOKEN:-}|\${TELEGRAM_ALERT_CHAT_ID:-}\"; /usr/bin/env")
-  printf '%s\n' "$out" | grep -qxF "shell=$C1_LINEAR|$C1_TG_TOKEN|$C1_TG_CHAT" \
-    || c1_fail "A ${form:-plain}: the reading shell does not hold the three keys: $(printf '%s\n' "$out" | head -1)"
+  grep -qxF "shell=$C1_LINEAR|$C1_TG_TOKEN|$C1_TG_CHAT" <<< "$out" \
+    || c1_fail "A ${form:-plain}: the reading shell does not hold the three keys: $(sed -n 1p <<< "$out")"
   for name in LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID; do
-    if printf '%s\n' "$out" | grep -q "^$name="; then c1_fail "A ${form:-plain}: $name is exported to a child"; fi
+    if grep -q "^$name=" <<< "$out"; then c1_fail "A ${form:-plain}: $name is exported to a child"; fi
   done
   if [ "$form" = --export ]; then
-    printf '%s\n' "$out" | grep -qxF "$C1_MARK_NAME=$C1_MARK_VALUE" || c1_fail "A --export: a non-secret .env key is no longer exported"
+    grep -qxF "$C1_MARK_NAME=$C1_MARK_VALUE" <<< "$out" || c1_fail "A --export: a non-secret .env key is no longer exported"
   fi
 done
 # The environment exported the keys (a parent that still exports them, an operator shell) and
@@ -61,16 +61,16 @@ done
 for form in '--export' ''; do
   out=$(reader_env "bureau_load_env $form .env; echo \"shell=\$LINEAR_API_KEY\"; /usr/bin/env" \
           LINEAR_API_KEY=from-parent-env TELEGRAM_BOT_TOKEN=from-parent-env TELEGRAM_ALERT_CHAT_ID=from-parent-env)
-  printf '%s\n' "$out" | grep -qxF "shell=$C1_LINEAR" || c1_fail "A ${form:-plain} over an exported key: the .env value does not win"
+  grep -qxF "shell=$C1_LINEAR" <<< "$out" || c1_fail "A ${form:-plain} over an exported key: the .env value does not win"
   for name in LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID; do
-    if printf '%s\n' "$out" | grep -q "^$name="; then c1_fail "A ${form:-plain} over an exported key: $name stays exported"; fi
+    if grep -q "^$name=" <<< "$out"; then c1_fail "A ${form:-plain} over an exported key: $name stays exported"; fi
   done
 done
 # A key only the environment holds (not in .env) is not the reader's: left as the shell has it.
 printf 'LINEAR_API_KEY=%s\n' "$C1_LINEAR" > "$TMP/only-linear.env"
 out=$(reader_env "bureau_load_env --export only-linear.env; /usr/bin/env" TELEGRAM_ALERT_CHAT_ID=env-only-chat)
-printf '%s\n' "$out" | grep -qx 'TELEGRAM_ALERT_CHAT_ID=env-only-chat' || c1_fail "A: a key only the environment holds was changed or dropped"
-if printf '%s\n' "$out" | grep -q '^LINEAR_API_KEY='; then c1_fail "A: the key .env defines is exported next to an environment-only key"; fi
+grep -qx 'TELEGRAM_ALERT_CHAT_ID=env-only-chat' <<< "$out" || c1_fail "A: a key only the environment holds was changed or dropped"
+if grep -q '^LINEAR_API_KEY=' <<< "$out"; then c1_fail "A: the key .env defines is exported next to an environment-only key"; fi
 # The stages copy the key into API_KEY after sourcing bureau-config.sh; an API_KEY the operator's
 # shell exported must not carry that copy to the stage's children.
 mkdir -p "$TMP/cfg/scripts"; cp "$SCRIPTS"/bureau-config.sh "$SCRIPTS"/bureau-env.sh "$TMP/cfg/scripts/"
@@ -78,8 +78,8 @@ printf '{"linear":{"teams":[{"id":"t","key":"EXP","states":{}}],"labels":{}},"ag
 c1_env_file "$TMP/cfg/.env"
 out=$(cd "$TMP/cfg" && env API_KEY=operator-value BUREAU_CONFIG="$TMP/cfg/.bureau.json" /bin/bash -c \
   'source scripts/bureau-config.sh; bureau_load_env --export .env; API_KEY="${LINEAR_API_KEY:?}"; echo "shell=$API_KEY"; /usr/bin/env' 2>&1)
-printf '%s\n' "$out" | grep -qxF "shell=$C1_LINEAR" || c1_fail "A API_KEY: the stage shell lost its copy"
-if printf '%s\n' "$out" | grep -q '^API_KEY='; then c1_fail "A API_KEY: the stage's copy of the Linear key is exported (the operator's shell exported API_KEY)"; fi
+grep -qxF "shell=$C1_LINEAR" <<< "$out" || c1_fail "A API_KEY: the stage shell lost its copy"
+if grep -q '^API_KEY=' <<< "$out"; then c1_fail "A API_KEY: the stage's copy of the Linear key is exported (the operator's shell exported API_KEY)"; fi
 [ "$C1_FAILS" = 0 ] && echo "PASS A the reader sets the three keys unexported, exports the rest with --export, and un-exports what a parent exported"
 
 # ── B  the nine stages ────────────────────────────────────────────────────────
@@ -159,7 +159,7 @@ D_FAILS_BEFORE=$C1_FAILS
 c1_no_secret() {
   local v
   for v in "$C1_LINEAR" "$C1_TG_TOKEN" "$C1_TG_CHAT"; do
-    if grep -qF -- "$v" "$1"; then c1_fail "$2: $(grep -F -- "$v" "$1" | head -2 | cut -c1-160 | tr '\n' ';')"; fi
+    if grep -qF -- "$v" "$1"; then c1_fail "$2: $(grep -F -- "$v" "$1" | sed -n 1,2p | cut -c1-160 | tr '\n' ';')"; fi
   done
 }
 D="$TMP/d"; mkdir -p "$D/scripts" "$TMP/dbin"; cp "$SCRIPTS"/bureau-config.sh "$SCRIPTS"/bureau-env.sh "$D/scripts/"
@@ -207,13 +207,13 @@ if grep -q '^_BUREAU_SCRIPTS_DIR=' "$TMP/d.out"; then c1_fail "D allexport: bure
 # _bureau_drop_secrets does not unset it before curl reads it).
 out=$(cd "$D" && env SHELLOPTS=allexport:braceexpand:hashall:interactive-comments /bin/bash -c \
   'source scripts/bureau-env.sh; bureau_load_env .env; COPY="$LINEAR_API_KEY"; /usr/bin/env' 2>&1)
-if printf '%s\n' "$out" | grep -q '^COPY='; then c1_fail "D allexport: the reader left allexport on (a later copy of the key is exported)"; fi
-if printf '%s\n' "$out" | grep -q '^BASH_FUNC'; then c1_fail "D allexport: sourcing bureau-env.sh alone exports its functions"; fi
+if grep -q '^COPY=' <<< "$out"; then c1_fail "D allexport: the reader left allexport on (a later copy of the key is exported)"; fi
+if grep -q '^BASH_FUNC' <<< "$out"; then c1_fail "D allexport: sourcing bureau-env.sh alone exports its functions"; fi
 rm -f "$TMP"/curl.*.stdin; rm -rf "$D/.git/bureau"
 (cd "$D" && env PATH="$TMP/dbin:$PATH" BUREAU_CONFIG="$D/.bureau.json" BUREAU_LINEAR_RETRIES=0 LINEAR_API_KEY="$C1_LINEAR" \
    SHELLOPTS=allexport:braceexpand:hashall:interactive-comments BUREAU_ENV_FILE="$D/missing.env" /bin/bash -c \
    'source scripts/bureau-config.sh; _bureau_linear_fetch "{\"query\":\"{ viewer { id } }\"}" >/dev/null' >/dev/null 2>&1)
-cat "$TMP"/curl.*.stdin 2>/dev/null | grep -qF "Authorization: $C1_LINEAR" \
+grep -qF "Authorization: $C1_LINEAR" <<< "$(cat "$TMP"/curl.*.stdin 2>/dev/null)" \
   || c1_fail "D allexport: without a .env load the Linear request lost the key (bureau-config.sh left allexport on)"
 # bureau_secret_copy: an unset source ends the script with 1 and the message ${source:?} gave;
 # --optional copies an empty value and goes on.

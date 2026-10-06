@@ -11,7 +11,7 @@
 # test_needs_human_hold.sh's cut() failed three times on ubuntu CI with
 # "line 250: printf: write error: Broken pipe", each time green on the rerun.
 #
-#   1. the REAL shared helpers, read out of the test files (cut, has/hasnt in four files,
+#   1. the REAL shared helpers, read out of the test files (cut, has/hasnt in six files,
 #      has_marker, has_ci_marker, pr5_run_id), on 1 MB inputs they match in the first lines,
 #      under this suite's bash with set -euo pipefail, SIGPIPE ignored and SIGPIPE default:
 #      each gives its answer. Negative control: the same helpers in their pipe form before this
@@ -41,11 +41,14 @@ definition() {
   awk -v n="$2() {" 'index($0, n) == 1 { f = 1 } f { print } f && (/^}/ || /; }$/) { exit }' "$ROOT/tests/$1"
 }
 # probe <ignore|default> <definitions> <check>: definitions + check in a fresh "$BASH" (the
-# bash that runs this suite) under set -euo pipefail, SIGPIPE ignored or default. Sets PRC, POUT.
+# bash that runs this suite) under set -euo pipefail, SIGPIPE ignored or default, LC_ALL=C (the
+# message the negative control looks for is English; bash 5 prints "Schreibfehler" under de_DE).
+# Sets PRC, POUT.
 probe() {
   set +e
   POUT=$(python3 -I -c 'import os, signal, sys
 signal.signal(signal.SIGPIPE, signal.SIG_IGN if sys.argv[1] == "ignore" else signal.SIG_DFL)
+os.environ["LC_ALL"] = "C"
 os.execv(sys.argv[2], [sys.argv[2], "-c", "set -euo pipefail\n" + sys.argv[3] + "\n" + sys.argv[4], "probe"])' \
     "$1" "$BASH" "fail() { echo \"FAIL \$*\" >&2; exit 1; }; report() { :; }
 $2" "$3" 2>&1)
@@ -82,14 +85,15 @@ expect_seen() {
 
 # ── 1. the real helpers on 1 MB inputs ─────────────────────────────────────
 expect_found "cut (test_needs_human_hold.sh)" "$(definition test_needs_human_hold.sh cut)" "$CHECK_CUT"
-for f in test_implement_marker_in_loop.sh test_implement_push_open_pr.sh test_post_implement_command.sh test_post_implement_dirty.sh; do
+for f in test_implement_marker_in_loop.sh test_implement_push_open_pr.sh test_post_implement_command.sh test_post_implement_dirty.sh \
+         test_implement_failed_pass_push.sh test_implement_timeout_pass.sh; do
   expect_found "has ($f)" "$(definition "$f" has)" "$CHECK_HAS"
   expect_seen "hasnt ($f)" "$(definition "$f" hasnt)"
 done
 expect_found "has_marker (test_merge_body.sh)" "$(definition test_merge_body.sh has_marker)" "$CHECK_MARKER"
 expect_found "has_ci_marker (test_merge_pipeline_correctness.sh)" "$(definition test_merge_pipeline_correctness.sh has_ci_marker)" "$CHECK_CI_MARKER"
 expect_found "pr5_run_id (lib/pr5-interrupt.sh)" "$(definition lib/pr5-interrupt.sh pr5_run_id)" "$CHECK_RUN_ID"
-echo 'PASS 1 cut, has/hasnt (four files), has_marker, has_ci_marker and pr5_run_id answer right on 1 MB inputs, SIGPIPE ignored and default'
+echo 'PASS 1 cut, has/hasnt (six files), has_marker, has_ci_marker and pr5_run_id answer right on 1 MB inputs, SIGPIPE ignored and default'
 
 # Negative control: the pipe forms these helpers had before.
 OLD_CUT=$(cat <<'EOF'
@@ -159,13 +163,20 @@ def command(rest):
             break
         out.append(ch)
     return ''.join(out)
+WRAP = ('command', 'builtin', 'exec', 'env', 'nohup', 'time')
 def early(cmd):
     words = cmd.split()
-    if not words:
+    i = 0  # skip VAR=value, command, env [-opts] ...: LC_ALL=C grep -q, command grep -q
+    while i < len(words) and (re.match(r'[A-Za-z_][A-Za-z0-9_]*=', words[i]) or words[i] in WRAP
+                              or (i and words[i - 1] == 'env' and words[i].startswith('-'))):
+        i += 1
+    if i >= len(words):
         return None
-    if words[0] == 'head':
+    name, words = words[i].rsplit('/', 1)[-1], words[i:]
+    cmd = ' '.join(words)
+    if name == 'head':
         return 'head'
-    if words[0] in ('grep', 'egrep', 'fgrep'):
+    if name in ('grep', 'egrep', 'fgrep'):
         for o in words[1:]:
             if o == '--' or not o.startswith('-'):
                 return None
@@ -175,18 +186,29 @@ def early(cmd):
             elif GREP_EARLY & set(o[1:]):
                 return 'grep ' + o
         return None
-    if words[0] in ('awk', 'gawk', 'mawk', 'nawk') and re.search(r'\bexit\b', cmd):
+    if name in ('awk', 'gawk', 'mawk', 'nawk') and re.search(r'\bexit\b', cmd):
         return 'awk ... exit'
-    if words[0] == 'sed' and re.search(r"(?:^|[\s;'\"{0-9/$])q(?=$|[\s;'\"}0-9])", cmd[3:]):
+    if name == 'sed' and re.search(r"(?:^|[\s;'\"{0-9/$])q(?=$|[\s;'\"}0-9])", cmd[len(words[0]):]):
         return 'sed ... q'
     return None
 allow = set(l for l in open(sys.argv[1]).read().split('\n') if l)
 hits = 0
-for path in sys.argv[2:]:
-    for n, line in enumerate(open(path, encoding='utf-8', errors='replace'), 1):
-        line = line.rstrip('\n')
+CONT = re.compile(r'(?<!\|)\|\s*\\?$')  # ends in a single | (or "| \"): the reader is on the next line
+def logical(path):
+    """(first line number, text): a line ending in a pipe is joined with the next one."""
+    lines = open(path, encoding='utf-8', errors='replace').read().split('\n')
+    i = 0
+    while i < len(lines):
+        n, line = i + 1, lines[i]
+        i += 1
         if line.lstrip().startswith('#'):
             continue
+        while CONT.search(line) and i < len(lines):
+            line = CONT.sub('|', line) + ' ' + lines[i].strip()
+            i += 1
+        yield n, line
+for path in sys.argv[2:]:
+    for n, line in logical(path):
         for m in PIPE.finditer(line):
             what = early(command(line[m.end():]))
             if what and '%s\t%s' % (path.rsplit('tests/', 1)[-1], line.strip()) not in allow:
@@ -209,6 +231,16 @@ cmd | egrep -qi x
 cmd |& grep -q x
 cmd | sed -n '1p;q'
 cmd | sed 1q
+cmd | awk '$0 ~ s { print; exit 0 }'
+cmd | head
+cmd | LC_ALL=C grep -q x
+cmd | command grep -q x
+cmd | env LC_ALL=C grep -q x
+cmd | /usr/bin/head -n 1
+cmd |
+  head -1
+cmd | \
+  grep -q x
 EOF
 cat > "$T/clean.sh" <<'EOF'
 awk -v s="$2" '$0 ~ s { print; exit }' <<< "$1"
@@ -224,13 +256,22 @@ cmd | grep -v -- -q
 cmd | awk '{ print }'
 cmd | awk '{ print $1 }' || exit 1
 # cmd | head -1
+cmd | LC_ALL=C grep -c x
+cmd | command sed -n 1p
+cmd | env LC_ALL=C awk '{ print }'
+cmd |
+  tail -n +2
+cmd ||
+  head -1
 EOF
 : > "$T/none"
 set +e
 FLAGGED=$(python3 -I "$T/scan.py" "$T/none" "$T/flag.sh"); FRC=$?
 CLEAN=$(python3 -I "$T/scan.py" "$T/none" "$T/clean.sh"); CRC=$?
 set -e
-[ "$FRC" = 1 ] && [ "$(cut -d: -f2 <<< "$FLAGGED" | tr '\n' ' ')" = "$(seq 1 "$(grep -c . "$T/flag.sh")" | tr '\n' ' ')" ] \
+# A form on two lines (the second indented) counts once, at its first line.
+WANT=$(grep -n '^[^[:space:]]' "$T/flag.sh" | cut -d: -f1 | tr '\n' ' ')
+[ "$FRC" = 1 ] && [ "$(cut -d: -f2 <<< "$FLAGGED" | tr '\n' ' ')" = "$WANT" ] \
   || fail "2: the scan did not report each form it must, once (exit $FRC): $FLAGGED"
 [ "$CRC" = 0 ] && [ -z "$CLEAN" ] || fail "2: the scan reported a form that cannot break a pipe (exit $CRC): $CLEAN"
 printf '%s\t%s\n' \
@@ -246,4 +287,4 @@ HITS=$(python3 -I "$T/scan.py" "$T/allow" "${FILES[@]}"); HRC=$?
 set -e
 [ "$HRC" = 0 ] || fail "2: a test pipes into a reader that can leave early; feed it a here-string or let it read to the end:
 $HITS"
-echo "PASS 2 none of ${#FILES[@]} shell files under tests/ pipes into a reader that can leave early (scan checked on $(grep -c . "$T/flag.sh") forms it must report and $(grep -c . "$T/clean.sh") it must not)"
+echo "PASS 2 none of ${#FILES[@]} shell files under tests/ pipes into a reader that can leave early (scan checked on $(wc -w <<< "$WANT" | tr -d " ") forms it must report and $(grep -c "^[^[:space:]#]" "$T/clean.sh") it must not)"
