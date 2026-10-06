@@ -407,8 +407,11 @@ def report_conflict(repo, store, args, exc):
 
 def shell(repo, function, *args):
     # Fixed helper names and positional arguments; never interpolate issue prose into shell code.
+    # .env is read like every stage reads it (bureau_load_env in bureau-env.sh): parsed, never run
+    # as shell code, the three secrets kept as unexported shell variables for the helper's own
+    # Linear request (curl gets the key on stdin), so the processes this bash starts lack them.
     script = '''source "$1/bureau-config.sh"
-if [ -f "${BUREAU_ENV_FILE:-}" ]; then set -a; source "$BUREAU_ENV_FILE"; set +a; fi
+if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"; fi
 shift
 "$@"
 '''

@@ -45,9 +45,8 @@ SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$(dirname "$0")/bureau-config.sh"
 
-if [ -f .env ]; then
-  bureau_load_env --export .env
-elif [ -f "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}" ]; then
+# BUREAU_ENV_FILE only, never ./.env: started in a stage worktree, that is the branch's file.
+if [ -f "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}" ]; then
   bureau_load_env --export "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 else
   echo "ERROR: No .env found"
@@ -529,7 +528,7 @@ _shepherd_start_failed() {
 
 ( _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" precondition_linear ) || _shepherd_start_failed $?
 
-: "${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
+bureau_secret_set LINEAR_API_KEY || { echo "$0: LINEAR_API_KEY: Set LINEAR_API_KEY in .env" >&2; exit 1; }
 
 # ── Refuse a held ticket before claiming it (v3.1) ────────────────────
 # The loop below reads the labels on every turn, but only after the claim and

@@ -43,11 +43,11 @@ fi
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 # shellcheck disable=SC1090
-if [ -f .env ]; then bureau_load_env --export .env
-elif [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
+# BUREAU_ENV_FILE only, never ./.env: in a stage worktree that is a file the branch controls.
+if [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"
 else echo "ERROR: No .env found"; exit 1; fi
 
-API_KEY="${LINEAR_API_KEY:?Set LINEAR_API_KEY in .env}"
+bureau_secret_copy API_KEY LINEAR_API_KEY
 
 DRY_RUN=false
 POSITIONAL=()

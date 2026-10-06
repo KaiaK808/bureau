@@ -1,0 +1,195 @@
+#!/bin/bash
+# The drivers keep the .env keys unexported too, and the runtime no longer sources .env (v3.2, S1).
+#
+# The queue loop, its supervisor, the tick, the shepherd and the worker read .env like a stage
+# (bureau_load_env), and bureau-runtime.py read it for its own Linear calls through an inline
+# bash that ran `set -a; source "$BUREAU_ENV_FILE"`: that executed the file as shell code (a
+# line `NAME= command` ran the command, the risk bureau_load_env exists for) and exported every
+# key to the processes that bash started. Each driver now keeps the three keys unexported, and
+# the runtime reads .env through bureau_load_env.
+#
+# Runs the REAL scripts in the sandbox of tests/lib/pr5-interrupt.sh (curl plays Linear and
+# answers only a request that carries the sandbox key, so a run that reaches Done proves the
+# key still reached curl, on stdin), with the probes of tests/lib/c1-env-probes.sh in front of
+# PATH; the .env carries one line that runs a command when the file is sourced.
+#   1. shepherd → worker → runtime → spec probe stage, to Done: no process any of them starts
+#      after reading .env carries a key; the stage's Linear calls went through (Done)
+#   2. the runtime's own Linear calls (bureau-runtime.py shell(), here the ownership halt of
+#      tests/test_ownership_halt_trace.sh case 1: a shepherd on a ticket an interrupted run still
+#      holds ends 21 and leaves needs-human and a comment): the halt reached Linear, the .env line
+#      ran nowhere, and the processes that inline bash started carry no key
+#   3. bureau-tick.sh (no stage enabled): its processes carry no key, also when the shell that
+#      starts it exported the keys that .env defines
+#   4. queue-loop-supervised.sh → queue-loop.sh, one round: no process carries a key
+#   6. the main checkout's .bureau.json is a link into another directory with a .env of its own:
+#      the shepherd and the stage read the .env next to the link before and after the runtime
+#      relaunch (which passes on the resolved path of .bureau.json); Linear answers
+#   5. 1 and 4 again from an operator shell that ran `set -a` (then `set -x`) and exported
+#      SHELLOPTS (every Bureau bash then starts with that option on), with long key values: no
+#      process carries a key, every child starts cleanly, the trace on stderr and in the logs
+#      (traced past the runtime relaunch) shows none, Linear still answers
+# Negative control: against v3.1.0 (9411b3b) all four fail ("jq LINEAR_API_KEY …"), and 2 also
+# fails on the executed .env line; against 735496e 5 fails (the shepherd's key check and the queue
+# loop's API_KEY copy print the key in the trace).
+set -euo pipefail
+source "$(dirname "$0")/lib/pr5-interrupt.sh"
+source "$(dirname "$0")/lib/c1-env-probes.sh"
+
+fail() { c1_fail "$@"; }
+pr5_setup
+trap pr5_teardown EXIT
+PROBES="$SB/c1bin"
+c1_probe_tools "$PROBES" "$SB/probe.log" jq python3 date mktemp cat sed grep head tail tr wc sort cut mkdir rm basename dirname tee sleep
+# setup_repo — a fresh pr5 repository whose .env also carries the marker and the sourced-only line.
+setup_repo() {
+  pr5_new_repo
+  chmod +x "$REPO/scripts/"*.sh   # as bureau_install.py installs them (queue-loop.sh is 0644 in git)
+  printf '%s=%s\nC1_NOT_A_KEY= touch %s/env-executed\n' "$C1_MARK_NAME" "$C1_MARK_VALUE" "$SB" >> "$REPO/.env"
+  rm -f "$SB/env-executed"; : > "$SB/probe.log"
+}
+
+# ── 1. shepherd → worker → runtime → stage ────────────────────────────────────
+setup_repo
+printf finish > "$SB/probe-mode"
+PATH="$PROBES:$PATH" pr5_shepherd
+[ "$RC" = 0 ] || fail "1: the shepherd ended $RC, wanted 0: $(printf '%s\n' "$ERR" | tail -3 | tr '\n' ' ')"
+grep -qx EXP-7 "$SB/finished.log" 2>/dev/null || fail "1: the probe stage did not run to its end"
+[ "$(cat "$SB/state")" = s8 ] || fail "1: the ticket did not reach Done"
+if grep -qx unauthorized "$SB/linear.log"; then fail "1: a Linear request went out without the key"; fi
+c1_check_log "$SB/probe.log" "1 shepherd chain"
+grep -q '^python3 ' "$SB/probe.log" || fail "1: no python3 (runtime, supervision) was recorded"
+[ ! -e "$SB/env-executed" ] || fail "1: a line of .env ran as a command"
+[ "$C1_FAILS" = 0 ] && echo "PASS 1 shepherd, worker, runtime and stage start no process with a .env key; Linear still answered"
+
+# ── 2. the runtime's own Linear calls ─────────────────────────────────────────
+F2=$C1_FAILS
+setup_repo
+pr5_ticket 7 '["lane-2"]'
+PATH="$PROBES:$PATH" pr5_shepherd_start || fail "2: the probe stage did not start"
+pr5_interrupt
+[ "$RC" = 130 ] || fail "2: the interrupted shepherd ended $RC, wanted 130"
+: > "$SB/linear.log"; : > "$SB/probe.log"
+PATH="$PROBES:$PATH" pr5_shepherd
+[ "$RC" = 21 ] || fail "2: the shepherd on a held ticket ended $RC, wanted 21"
+grep -qx 'add-label 7 needs-human' "$SB/linear.log" || fail "2: the runtime's halt did not set needs-human: $(tr '\n' ' ' < "$SB/linear.log")"
+grep -qx 'comment 7' "$SB/linear.log" || fail "2: the runtime's halt did not comment"
+if grep -qx unauthorized "$SB/linear.log"; then fail "2: a Linear request of the runtime went out without the key"; fi
+[ ! -e "$SB/env-executed" ] || fail "2: the runtime ran a line of .env as a command (it sourced the file)"
+c1_check_log "$SB/probe.log" "2 runtime halt"
+[ "$C1_FAILS" = "$F2" ] && echo "PASS 2 the runtime reads .env without running it and hands no key to what its bash starts; the halt reached Linear"
+
+# ── 3. bureau-tick.sh ─────────────────────────────────────────────────────────
+F3=$C1_FAILS
+setup_repo
+set +e
+(cd "$REPO" && PATH="$PROBES:$PATH" _pr5_env bash scripts/bureau-tick.sh --result-file "$SB/tick.json" > "$SB/out" 2> "$SB/err")
+RC=$?
+set -e
+[ "$RC" = 0 ] || fail "3: the tick ended $RC: $(tail -3 "$SB/err" | tr '\n' ' ')"
+[ "$(jq -r .outcome "$SB/tick.json" 2>/dev/null)" = waiting ] || fail "3: the tick did not report waiting"
+c1_check_log "$SB/probe.log" "3 tick"
+# The operator's shell exported the keys too (and .env defines them): the tick starts with them,
+# but what it starts does not get them.
+: > "$SB/probe.log"
+set +e
+(cd "$REPO" && PATH="$PROBES:$PATH" _pr5_env LINEAR_API_KEY=k TELEGRAM_BOT_TOKEN=t TELEGRAM_ALERT_CHAT_ID=c \
+   bash scripts/bureau-tick.sh --result-file "$SB/tick.json" > "$SB/out" 2> "$SB/err")
+RC=$?
+set -e
+[ "$RC" = 0 ] || fail "3 exported: the tick ended $RC: $(tail -3 "$SB/err" | tr '\n' ' ')"
+c1_check_log "$SB/probe.log" "3 tick started with the keys exported"
+[ "$C1_FAILS" = "$F3" ] && echo "PASS 3 the tick starts no process with a .env key"
+
+# ── 4. queue-loop-supervised.sh → queue-loop.sh ───────────────────────────────
+F4=$C1_FAILS
+setup_repo
+set -m
+(cd "$REPO" && exec env PATH="$PROBES:$SB/bin:$PATH" TMPDIR="$SB/tmp" BUREAU_LINEAR_RETRIES=0 BUREAU_DISABLE_THROTTLE=1 \
+   bash "$REPO/scripts/queue-loop-supervised.sh" all 1 > "$SB/out" 2> "$SB/err") &
+LOOP=$!
+set +m
+# One round ends with the loop's `sleep` until the next check.
+for _ in $(seq 1 300); do grep -q '^sleep ' "$SB/probe.log" 2>/dev/null && break; sleep 0.1; done
+kill -KILL -- "-$LOOP" 2>/dev/null || true
+wait "$LOOP" 2>/dev/null || true
+grep -q '^sleep ' "$SB/probe.log" || fail "4: the queue loop did not finish a round: $(tail -3 "$SB/err" | tr '\n' ' ')"
+grep -qE 'Queues drained|All queues empty' "$REPO/logs/queue-all.log" 2>/dev/null || fail "4: the queue loop logged no round"
+grep -q 'Supervisor starting' "$REPO/logs/supervisor-all.log" 2>/dev/null || fail "4: the supervisor did not start"
+c1_check_log "$SB/probe.log" "4 queue loop and supervisor"
+[ "$C1_FAILS" = "$F4" ] && echo "PASS 4 the queue loop and its supervisor start no process with a .env key"
+
+# ── 5. allexport and xtrace from the operator's shell ─────────────────────────
+F5=$C1_FAILS
+# Long key values, so a trace line that carries one can be found; Linear answers the long key.
+sed -i.bak "s/Authorization: k\"/Authorization: $C1_LINEAR\"/" "$SB/bin/curl"
+long_env() {
+  sed -i.bak -e "s/^LINEAR_API_KEY=k\$/LINEAR_API_KEY=$C1_LINEAR/" -e "s/^TELEGRAM_BOT_TOKEN=t\$/TELEGRAM_BOT_TOKEN=$C1_TG_TOKEN/" \
+    -e "s/^TELEGRAM_ALERT_CHAT_ID=c\$/TELEGRAM_ALERT_CHAT_ID=$C1_TG_CHAT/" "$REPO/.env"
+  grep -qx "LINEAR_API_KEY=$C1_LINEAR" "$REPO/.env" || fail "5: the sandbox .env has no long key"
+}
+no_secret() {  # <label> <file …>
+  local label="$1" v f; shift
+  for f in "$@"; do
+    [ -f "$f" ] || continue
+    for v in "$C1_LINEAR" "$C1_TG_TOKEN" "$C1_TG_CHAT"; do
+      if grep -qF -- "$v" "$f"; then fail "$label: the trace shows a secret in ${f##*/}: $(grep -F -- "$v" "$f" | head -2 | cut -c1-160 | tr '\n' ';')"; fi
+    done
+  done
+}
+# Each option on its own: under allexport alone a broken run (exported functions, a dropped Linear
+# config line) shows as a failed run, under xtrace alone the trace is complete.
+for OPTS in allexport:braceexpand:hashall:interactive-comments braceexpand:hashall:interactive-comments:xtrace; do
+  opt=allexport; case "$OPTS" in *xtrace*) opt=xtrace ;; esac
+  setup_repo; long_env
+  printf finish > "$SB/probe-mode"
+  set +e
+  (cd "$REPO" && PATH="$PROBES:$PATH" _pr5_env SHELLOPTS="$OPTS" bash scripts/shepherd.sh --no-tmux --worktree .worktrees/shepherd-EXP-7 EXP-7 > "$SB/out" 2> "$SB/err")
+  RC=$?
+  set -e
+  [ "$RC" = 0 ] || fail "5 $opt shepherd: ended $RC, wanted 0: $(grep -v '^+' "$SB/err" | tail -3 | tr '\n' ' ')"
+  [ "$(cat "$SB/state")" = s8 ] || fail "5 $opt shepherd: the ticket did not reach Done"
+  if grep -qx unauthorized "$SB/linear.log"; then fail "5 $opt shepherd: a Linear request went out without the key"; fi
+  if grep -q 'error importing function definition\|SHELLOPTS: readonly' "$SB/err"; then fail "5 $opt shepherd: a child could not start cleanly: $(grep -m1 'error importing\|readonly' "$SB/err")"; fi
+  if [ "$opt" = xtrace ]; then
+    grep -q '^+' "$SB/err" || fail "5 xtrace shepherd: nothing was traced (SHELLOPTS not taken)"
+    grep -q '^+.*LINEAR_API_KEY' "$SB/err" || fail "5 xtrace shepherd: the shepherd's key check after the runtime relaunch was not traced"
+  fi
+  c1_check_log "$SB/probe.log" "5 $opt shepherd chain"
+  no_secret "5 $opt shepherd" "$SB/out" "$SB/err" "$REPO"/logs/*.log
+  setup_repo; long_env
+  set -m
+  (cd "$REPO" && exec env PATH="$PROBES:$SB/bin:$PATH" TMPDIR="$SB/tmp" BUREAU_LINEAR_RETRIES=0 BUREAU_DISABLE_THROTTLE=1 SHELLOPTS="$OPTS" \
+     bash "$REPO/scripts/queue-loop-supervised.sh" all 1 > "$SB/out" 2> "$SB/err") &
+  LOOP=$!
+  set +m
+  for _ in $(seq 1 300); do grep -q '^sleep ' "$SB/probe.log" 2>/dev/null && break; sleep 0.1; done
+  kill -KILL -- "-$LOOP" 2>/dev/null || true
+  wait "$LOOP" 2>/dev/null || true
+  grep -q '^sleep ' "$SB/probe.log" || fail "5 $opt queue loop: it did not finish a round"
+  grep -qE 'Queues drained|All queues empty' "$REPO/logs/queue-all.log" 2>/dev/null || fail "5 $opt queue loop: it logged no round"
+  if [ "$opt" = xtrace ]; then grep -q '^+' "$SB/err" "$REPO"/logs/*.log 2>/dev/null || fail "5 xtrace queue loop: nothing was traced (SHELLOPTS not taken)"; fi
+  c1_check_log "$SB/probe.log" "5 $opt queue loop"
+  no_secret "5 $opt queue loop" "$SB/out" "$SB/err" "$REPO"/logs/*.log
+done
+[ "$C1_FAILS" = "$F5" ] && echo "PASS 5 with allexport and xtrace from the operator's shell no process carries a key and no trace shows one"
+
+# ── 6. a .bureau.json that is a link, across the runtime relaunch ────────────
+# The main checkout's .bureau.json is a link to a file in another directory, whose own .env holds
+# another key. The first run of a script takes the .env next to the link (the directory
+# BUREAU_CONFIG names; doctor too, tests/doctor_checks_test.py); the runtime relaunches the shepherd and the stage with the RESOLVED path in
+# BUREAU_CONFIG, and they must keep reading the same .env (bureau-config.sh exports
+# BUREAU_ENV_FILE). With the target's key Linear would answer "unauthorized".
+F6=$C1_FAILS
+setup_repo; long_env   # Linear answers the long key since 5
+TARGET="$SB/config-target"; mkdir -p "$TARGET"
+mv "$REPO/.bureau.json" "$TARGET/.bureau.json"; ln -s "$TARGET/.bureau.json" "$REPO/.bureau.json"
+printf 'LINEAR_API_KEY=wrong-key-next-to-the-target\n' > "$TARGET/.env"
+printf finish > "$SB/probe-mode"; : > "$SB/linear.log"
+PATH="$PROBES:$PATH" pr5_shepherd
+[ "$RC" = 0 ] || fail "6: the shepherd ended $RC, wanted 0: $(printf '%s\n' "$ERR" | tail -3 | tr '\n' ' ')"
+grep -qx EXP-7 "$SB/finished.log" 2>/dev/null || fail "6: the probe stage did not run to its end after the relaunch"
+if grep -qx unauthorized "$SB/linear.log"; then fail "6: a run after the runtime relaunch read the .env next to the link's target (Linear: unauthorized)"; fi
+[ "$C1_FAILS" = "$F6" ] && echo "PASS 6 a linked .bureau.json: the runs after the runtime relaunch read the .env the first run read"
+
+if [ "$C1_FAILS" != 0 ]; then echo "$C1_FAILS check(s) failed" >&2; exit 1; fi
+echo "OK test_env_keys_drivers"

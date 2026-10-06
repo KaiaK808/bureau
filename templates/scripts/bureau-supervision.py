@@ -41,6 +41,23 @@ def process_env(command, environ=None):
             and not any(secret in value for secret in long_secrets)}
 
 
+# Bureau's own git commands that talk to a remote run without the repository's hooks (v3.2): the
+# switches the git() function in bureau-env.sh adds (_bureau_git_hooks_off), since such a command
+# keeps the GitHub token variables and a hook from the branch would see them: no hooks directory,
+# and hook.<event>.enabled=false for every event git knows, which turns off the hooks the
+# configuration defines (git 2.55). The one command this script runs, ls-remote, updates no ref and
+# fires no hook event in any git version, so the switches change nothing there today, git() adds
+# the per-name switches of git 2.54 only where an event can fire, and repo.remote_git_runs_hooks
+# has nothing to bring back; they keep the rule the same at every remote command Bureau starts.
+HOOK_EVENTS = ('applypatch-msg', 'commit-msg', 'fsmonitor-watchman', 'p4-changelist', 'p4-post-changelist',
+               'p4-pre-submit', 'p4-prepare-changelist', 'post-applypatch', 'post-checkout', 'post-commit',
+               'post-index-change', 'post-merge', 'post-receive', 'post-rewrite', 'post-update', 'pre-applypatch',
+               'pre-auto-gc', 'pre-commit', 'pre-merge-commit', 'pre-push', 'pre-rebase', 'pre-receive',
+               'prepare-commit-msg', 'proc-receive', 'push-to-checkout', 'reference-transaction',
+               'sendemail-validate', 'update')
+NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'] + [part for event in HOOK_EVENTS for part in ('-c', 'hook.' + event + '.enabled=false')]
+
+
 def git(repo, *args):
     command = ['git', '-C', str(repo), *args]
     return subprocess.check_output(command, text=True, env=process_env(command)).strip()
@@ -129,7 +146,7 @@ def check(repo, root, issue, branch, state, detail):
         if same:
             # GitHub's PR snapshot can lag a branch update. Read both remote
             # refs directly; never equate a cached baseRefOid with its current tip.
-            command = ['git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/' + branch, 'refs/heads/' + base_ref]
+            command = ['git', *NO_HOOKS, 'ls-remote', '--exit-code', 'origin', 'refs/heads/' + branch, 'refs/heads/' + base_ref]
             refs = subprocess.check_output(command, cwd=repo, text=True, timeout=30, env=process_env(command))
             tips = dict((ref, sha) for sha, ref in (line.split() for line in refs.splitlines()))
             if 'refs/heads/' + base_ref not in tips:
@@ -225,7 +242,7 @@ def gate_waits(repo, root, stage, first, cap, now=None):
             held.append((issue, branch, head, int(math.ceil(left)), waits, outcome.replace('-', ' ')))
     if not held:
         return {'waiting': []}
-    command = ['git', 'ls-remote', 'origin'] + sorted({'refs/heads/' + branch for _, branch, _, _, _, _ in held})
+    command = ['git', *NO_HOOKS, 'ls-remote', 'origin'] + sorted({'refs/heads/' + branch for _, branch, _, _, _, _ in held})
     answer = subprocess.run(command, cwd=repo, text=True, timeout=30, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env=process_env(command))
     if answer.returncode:
