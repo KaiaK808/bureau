@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="55de661b2d84b7554a2e12ba7f37235f17cfe85c79d7fdbd9ed994f162f0fb96">
+<meta name="bureau-source-sha256" content="9e979566f8c14c9cefe8a679aadbbcba5d18e39b297395c13d7c8ec4b95fffeb">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,16 +24,61 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.1.0</strong>, dated
-<strong>2026-09-30</strong>, the current stable release, marked as
-latest. Its <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0">GitHub
+<p>This source tree contains <strong>Bureau v3.2.0-rc.1</strong>, dated
+<strong>2026-10-06</strong>, the first release candidate for v3.2.0,
+published as a GitHub prerelease. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0-rc.1">GitHub
 Release</a> identifies the exact tagged commit; the <a
 href="../../CHANGELOG.md">changelog</a> and <a
 href="release-notes.html">release notes</a> describe the changes and the
-upgrade. v3.1 is a minor release on v3.0.2 and keeps the v3 exit-code
-contract. It collects six pull requests: code a branch controls runs
-without the Bureau secrets (<a
+upgrade. v3.2 is a minor release on v3.1.0 and keeps the v3 exit-code
+contract. It collects eleven pull requests: unexported secrets and
+remote git without branch hooks (<a
+href="https://github.com/KaiaK808/bureau/pull/49">#49</a>); isolated
+Python helpers and doctor checks (<a
+href="https://github.com/KaiaK808/bureau/pull/47">#47</a>); implement
+timeout retries, failure pushes and the rule against waiting for CI
+inside a stage (<a
+href="https://github.com/KaiaK808/bureau/pull/46">#46</a>); the newest
+review or QA findings in rework (<a
+href="https://github.com/KaiaK808/bureau/pull/53">#53</a>); merge-gate
+holds and queued CI grace (<a
+href="https://github.com/KaiaK808/bureau/pull/48">#48</a>); bounded
+ticks moving past a lone held gate (<a
+href="https://github.com/KaiaK808/bureau/pull/54">#54</a>); stopping
+runs on a hang-up (<a
+href="https://github.com/KaiaK808/bureau/pull/50">#50</a>); confirmation
+of the spec stage's intermediate state (<a
+href="https://github.com/KaiaK808/bureau/pull/51">#51</a>); long
+model/API text in stage scripts (<a
+href="https://github.com/KaiaK808/bureau/pull/56">#56</a>); and test
+cleanup and broken-pipe fixes (<a
+href="https://github.com/KaiaK808/bureau/pull/52">#52</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/55">#55</a>). An upgrade
+resyncs the scripts and interfaces scopes as one set and restarts queue
+loops and supervisors; Git LFS repositories need
+<code>repo.remote_git_runs_hooks: true</code> before resync. See <a
+href="migration.html#upgrade-to-v32">Upgrade to v3.2</a>.</p>
+<p>Every one of the eleven pull requests was checked by an independent
+verifier before its merge; #49 was checked by a security verifier and a
+Codex cross-check over three rounds. CI on <code>main</code> at
+<code>7b1273d</code> is green on ubuntu and macOS. Live acceptance on
+the maintainer's pilot installation follows this candidate;
+<strong>v3.1.0 stays the stable release until v3.2.0 is
+published</strong>. Release preparation changes documentation only:
+runtime, installer, templates, tests and CI are identical to
+<code>main</code> at <code>7b1273d</code>, the merge of <a
+href="https://github.com/KaiaK808/bureau/pull/56">#56</a>. The final
+commit is recorded in the GitHub Release body.</p>
+<p>The stable release, marked as latest, is <strong>Bureau
+v3.1.0</strong>, dated <strong>2026-09-30</strong>. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.1.0">GitHub
+Release</a> identifies the exact tagged commit; the <a
+href="../../CHANGELOG.md">changelog</a> and <a
+href="release-notes-v3.1.0.html">release notes</a> describe the changes
+and the upgrade. v3.1 is a minor release on v3.0.2 and keeps the v3
+exit-code contract. It collects six pull requests: code a branch
+controls runs without the Bureau secrets (<a
 href="https://github.com/KaiaK808/bureau/pull/33">#33</a>); the review
 stage acts on the result of its inline merge, and the merge gate honours
 <code>false</code> switches, pins the head it checked and blocks a head
@@ -78,12 +123,12 @@ branch/listing pairs from eight installations used for v3.0.2 gives the
 same spec directory as v3.0.2 in every pair. rc.2's changes are
 validated by the full Linux/macOS suite on the release commit, new tests
 with negative controls against rc.1 and mutation checks, and an
-independent verification pass with a fix round and a delta check.
-Release preparation changes documentation only: runtime, installer,
-templates and tests are identical to the rc.2 tag, <code>a81938c</code>,
-and the CI configuration to the merge of <a
+independent verification pass with a fix round and a delta check. Its
+release preparation changed documentation only: runtime, installer,
+templates and tests were identical to the rc.2 tag,
+<code>a81938c</code>, and the CI configuration to the merge of <a
 href="https://github.com/KaiaK808/bureau/pull/44">#44</a>,
-<code>c9cd458</code>, which raises the limit of the <code>shell</code>
+<code>c9cd458</code>, which raised the limit of the <code>shell</code>
 job of the <code>test</code> workflow to 45 minutes. The final commit is
 recorded in the GitHub Release body.</p>
 <p>The previous stable release is <strong>Bureau v3.0.2</strong>, dated
