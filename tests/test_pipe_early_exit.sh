@@ -19,6 +19,9 @@
 #      under both settings, every time.
 #   2. no shell file under tests/ pipes into such a reader: a static scan, itself checked
 #      against forms it must and must not report.
+#   3. the same scan over the stage scripts in templates/scripts/: none does either, except the
+#      two lines allowed below with their reason. The stages' own behaviour on long texts is
+#      held by test_stage_pipe_early_exit.sh.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T=$(mktemp -d -t bureau-test.pipe.XXXXXXXX)
@@ -145,7 +148,8 @@ echo 'PASS negative control: the pipe forms fail on the same inputs (CI line wit
 
 # ── 2. no pipe into an early-exiting reader under tests/ ───────────────────
 # Kept on purpose: test_crosscheck.sh holds spec-pipeline.sh's old Phase 4 verbatim as its
-# negative control, and this file holds the old helpers above.
+# negative control, test_stage_pipe_early_exit.sh three old stage lines (see the allowlist),
+# and this file holds the old helpers above.
 cat > "$T/scan.py" <<'PY'
 import re, sys
 PIPE = re.compile(r'(?<![|>])\|(?!\|)&?')
@@ -192,6 +196,11 @@ def early(cmd):
         return 'sed ... q'
     return None
 allow = set(l for l in open(sys.argv[1]).read().split('\n') if l)
+def key(path):
+    """The allowlist name: relative to tests/, or templates/… for a stage script."""
+    if '/templates/' in path or path.startswith('templates/'):
+        return 'templates/' + path.rsplit('templates/', 1)[-1]
+    return path.rsplit('tests/', 1)[-1]
 hits = 0
 CONT = re.compile(r'(?<!\|)\|\s*\\?$')  # ends in a single | (or "| \"): the reader is on the next line
 def logical(path):
@@ -211,7 +220,7 @@ for path in sys.argv[2:]:
     for n, line in logical(path):
         for m in PIPE.finditer(line):
             what = early(command(line[m.end():]))
-            if what and '%s\t%s' % (path.rsplit('tests/', 1)[-1], line.strip()) not in allow:
+            if what and '%s\t%s' % (key(path), line.strip()) not in allow:
                 print('%s:%d: %s: %s' % (path, n, what, line.strip()))
                 hits += 1
 sys.exit(1 if hits else 0)
@@ -277,6 +286,16 @@ WANT=$(grep -n '^[^[:space:]]' "$T/flag.sh" | cut -d: -f1 | tr '\n' ' ')
 printf '%s\t%s\n' \
   test_crosscheck.sh 'SPEC_TASKS=$(ls -td "$BUREAU_SPECS_DIR"/*/tasks.md 2>/dev/null | head -1 || true)' \
   test_crosscheck.sh 'if echo "$CROSSCHECK_OUTPUT" | grep -q "conflicts detected"; then' > "$T/allow"
+# Also kept on purpose in test_stage_pipe_early_exit.sh: the three old stage lines its negative
+# controls put back, and the broken pipe that checks its runner's SIGPIPE setting.
+python3 -I - "$ROOT/tests/test_stage_pipe_early_exit.sh" >> "$T/allow" <<'PY'
+import sys
+want = ('OLD_SPEC=', 'OLD_REVIEW=', 'OLD_PORT=', "run_sig \"$sig\" \"$T\" -c 'yes | head -c 1")
+lines = [l.strip() for l in open(sys.argv[1]) if l.strip().startswith(want)]
+assert len(lines) == 4, lines
+for l in lines:
+    print('test_stage_pipe_early_exit.sh\t' + l)
+PY
 FILES=()
 for f in "$ROOT"/tests/*.sh "$ROOT"/tests/lib/*.sh "$ROOT"/tests/lib/bin/*; do
   [ "$f" = "$ROOT/tests/test_pipe_early_exit.sh" ] || FILES+=("$f")
@@ -288,3 +307,24 @@ set -e
 [ "$HRC" = 0 ] || fail "2: a test pipes into a reader that can leave early; feed it a here-string or let it read to the end:
 $HITS"
 echo "PASS 2 none of ${#FILES[@]} shell files under tests/ pipes into a reader that can leave early (scan checked on $(wc -w <<< "$WANT" | tr -d " ") forms it must report and $(grep -c "^[^[:space:]#]" "$T/clean.sh") it must not)"
+
+# ── 3. the stage scripts ───────────────────────────────────────────────────
+# Allowed, with the reason: bureau-config.sh's two dry-run messages cut a comment to 80 bytes
+# with `head -c 80` inside an echo argument, so no exit status is read and the worst case is a
+# "write error" line on stderr in a dry run; a here-string would add a newline and
+# ${body:0:80} counts characters, so there is no identical form without the pipe.
+printf '%s\t%s\n' \
+  templates/scripts/bureau-config.sh 'echo "[DRY_RUN] post_comment $ref ($(printf '"'"'%s'"'"' "$body" | head -c 80 | tr '"'"'\n'"'"' '"'"' '"'"')...)" >&2' \
+  templates/scripts/bureau-config.sh 'echo "[DRY_RUN] comment_on_branch_pr $branch ($(printf '"'"'%s'"'"' "$text" | head -c 80 | tr '"'"'\n'"'"' '"'"' '"'"')...)" >&2' \
+  > "$T/allow-templates"
+STAGES=("$ROOT"/templates/scripts/*.sh)
+[ "${#STAGES[@]}" -gt 20 ] || fail "3: only ${#STAGES[@]} shell scripts found under templates/scripts/"
+set +e
+HITS=$(python3 -I "$T/scan.py" "$T/allow-templates" "${STAGES[@]}"); HRC=$?
+ALLOWED=$(python3 -I "$T/scan.py" "$T/none" "$ROOT/templates/scripts/bureau-config.sh" | grep -c 'DRY_RUN')
+set -e
+[ "$HRC" = 0 ] || fail "3: a stage script pipes into a reader that can leave early; feed it a here-string, take the first line by parameter expansion or let the reader read to the end:
+$HITS"
+# The two allowed lines are still there and still the only ones: a fix there drops its entry.
+[ "$ALLOWED" = 2 ] || fail "3: the scan finds $ALLOWED of the two allowed dry-run lines; update the allowlist"
+echo "PASS 3 none of ${#STAGES[@]} stage scripts under templates/scripts/ pipes into a reader that can leave early, apart from the two allowed dry-run lines"
