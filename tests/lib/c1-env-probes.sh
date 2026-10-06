@@ -69,6 +69,6 @@ c1_check_log() {
   local log="$1" label="$2"
   if [ ! -s "$log" ]; then c1_fail "$label: no process started after the .env load was recorded"; return; fi
   if grep -v ' clean$' "$log" >/dev/null; then
-    c1_fail "$label: a process the script started carries a .env key: $(grep -v ' clean$' "$log" | sort | uniq -c | head -5 | tr -s ' ' | tr '\n' ';')"
+    c1_fail "$label: a process the script started carries a .env key: $(grep -v ' clean$' "$log" | sort | uniq -c | sed -n 1,5p | tr -s ' ' | tr '\n' ';')"
   fi
 }

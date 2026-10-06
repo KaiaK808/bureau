@@ -63,7 +63,7 @@ check_prompts() {
 # check_stdout <label> <prefix> — the stage printed "<prefix> …/specs/001-test-branch/…".
 check_stdout() {
   local line
-  line=$(printf '%s\n' "$LAST_STDOUT" | grep -F "$2" | head -1 || true)
+  line=$(grep -F -m 1 "$2" <<< "$LAST_STDOUT" || true)
   case "$line" in
     *"$OWN"*) : ;;
     *) fail "$1" "expected '${2} …${OWN}…', got '${line:-<nothing>}'" ;;

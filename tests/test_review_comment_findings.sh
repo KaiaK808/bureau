@@ -77,7 +77,7 @@ echo 'PASS 1 the provider requires the comment and well-formed findings (22 othe
 jq 'del(.properties.comment, .properties.findings) | .required -= ["comment", "findings"]' "$SCHEMA" > "$P/old-schema.json"
 provider "$(printf '%s' "$VERDICT_RC" | jq -c 'del(.comment, .findings)')" "$P/old-schema.json"
 [ "$PRC" = 0 ] || fail "negative control: the v3.0.2 schema rejected the verdict ($PRC)"
-printf '%s' "$POUT" | grep -q 'src/a.py:12' && fail 'negative control: the v3.0.2 schema kept the file:line, so this case proves nothing'
+grep -q 'src/a.py:12' <<< "$POUT" && fail 'negative control: the v3.0.2 schema kept the file:line, so this case proves nothing'
 echo 'PASS negative control: under the v3.0.2 schema the provider drops the prose with the file:line'
 
 # ── 2. the review stage posts the comment ──────────────────────────────────
@@ -118,7 +118,7 @@ VERDICT_BLOCK=$(awk '/^```json$/{b=""; on=1; next} /^```$/{if(on){last=b}; on=0;
 printf '%s' "$VERDICT_BLOCK" | jq -e '.verdict == "REQUEST_CHANGES" and (has("comment") | not) and .findings[0].line == 12' >/dev/null \
   || fail "2: the verdict block should keep the findings and drop the prose: $VERDICT_BLOCK"
 grep -qE "$MARKDOWN_FINDING" <<< "$LINEAR_BODY" || fail "2: the Linear comment lacks the finding: $LINEAR_BODY"
-jq -n --arg b "$LINEAR_BODY" '[{body: $b}] | [.[] | select(.body | test("Code Review.*Changes Requested"))] | length' | grep -qx 1 \
+[ "$(jq -n --arg b "$LINEAR_BODY" '[{body: $b}] | [.[] | select(.body | test("Code Review.*Changes Requested"))] | length')" = 1 ] \
   || fail "2: the Linear comment no longer matches implement's regex"
 grep -q $'move_issue\t'"$ISSUE"$'\tstate-build' "$SANDBOX/calls.log" || fail '2: REQUEST_CHANGES did not go back to Build'
 echo 'PASS 2 the PR and the Linear comment carry the merger markdown with file:line; implement still finds it'
@@ -153,7 +153,7 @@ run_review "$MANY" '' '🔄 Code Review: **Changes Requested**'
 [ "$(printf '%s' "$PR_BODY" | LC_ALL=C wc -c | tr -d ' ')" -le 60000 ] || fail '4: the PR comment is over the limit'
 VERDICT_BLOCK=$(awk '/^```json$/{b=""; on=1; next} /^```$/{if(on){last=b}; on=0; next} on{b=b $0 "\n"} END{printf "%s", last}' <<< "$PR_BODY")
 printf '%s' "$VERDICT_BLOCK" | jq -e '.verdict == "REQUEST_CHANGES" and .findings_omitted == 1500 and (has("findings") | not)' >/dev/null \
-  || fail "4: the verdict block did not keep the verdict with a findings count: $(printf '%s' "$VERDICT_BLOCK" | head -c 300)"
+  || fail "4: the verdict block did not keep the verdict with a findings count: ${VERDICT_BLOCK:0:300}"
 grep -qE "$MARKDOWN_FINDING" <<< "$PR_BODY" || fail '4: the comment was lost'
 echo 'PASS 4 a verdict block over 16 KB keeps the verdict and counts its findings'
 

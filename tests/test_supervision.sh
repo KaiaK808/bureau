@@ -59,7 +59,8 @@ rc=0; BUREAU_THROTTLE_ONCE=1 session_throttle_guard implement || rc=$?
 export BUREAU_COST_DIR="$TMP/cost"
 record_stage_cost '{"provider":"codex","usage":{"input_tokens":1,"output_tokens":2},"total_cost_usd":null}' T-1 implement
 jq -e '.cost_usd == null and .provider == "codex"' "$BUREAU_COST_DIR/T-1.jsonl"
-report_costs | grep -q unavailable
+COSTS=$(report_costs)
+grep -q unavailable <<< "$COSTS"
 python3 - "$ROOT" <<'PY'
 import importlib.util, pathlib, sys
 sys.dont_write_bytecode=True

@@ -68,7 +68,7 @@ fi
 run_fold() {  # $1 = build_ok, $2 = incoming verdict; echoes "<verdict>|<review text>"
   local out
   out=$(decide_review_verdict "$2" 0 0 "$1" 0 3)
-  printf '%s|%s' "$(printf '%s\n' "$out" | head -n 1)" \
+  printf '%s|%s' "$(sed -n 1p <<< "$out")" \
     "$(printf '%s\n' "$out" | tail -n +2 | awk -F'\037' '$1 == "build" {print $3}')"
 }
 

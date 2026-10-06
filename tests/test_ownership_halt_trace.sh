@@ -256,7 +256,7 @@ set +e
 (cd "$REPO" && _pr5_env bash scripts/bureau-worker.sh EXP-7 implement-pipeline.sh "$IWT" feat/exp-7 > "$SB/out" 2> "$SB/err"); RC=$?
 set -e
 [ "$RC" = 18 ] || { ERR=$(cat "$SB/err"); fail "9: the implement probe ended $RC, wanted 18"; }
-DONE=$(git -C "$REPO" log --all --format=%H --grep='implement iteration 1' | head -1)
+DONE=$(git -C "$REPO" log --all --format=%H --grep='implement iteration 1' -n 1)
 set +e
 (cd "$REPO" && _pr5_env bash scripts/bureau-worker.sh EXP-7 implement-pipeline.sh "$IWT" feat/exp-7 > "$SB/out" 2> "$SB/err"); RC=$?
 set -e
@@ -271,8 +271,8 @@ FIX=$(sed -n '/^   ```sh$/,/^   ```$/{ /```/d; s/^   //p; }' <<< "$BODY")
 while IFS= read -r step; do
   (cd "$REPO" && bash -c "$step" >/dev/null 2>&1) || fail "9: the comment's step failed: $step"
 done <<< "$FIX"
-git -C "$REPO" branch -r --contains "$DONE" | grep -q 'origin/feat/exp-7' || fail "9: the finished commit is not on origin after the comment's steps"
-git -C "$REPO" branch --contains "$DONE" | grep -q 'feat/exp-7' || fail "9: the finished commit left its branch"
+grep -q 'origin/feat/exp-7' <<< "$(git -C "$REPO" branch -r --contains "$DONE")" || fail "9: the finished commit is not on origin after the comment's steps"
+grep -q 'feat/exp-7' <<< "$(git -C "$REPO" branch --contains "$DONE")" || fail "9: the finished commit left its branch"
 # A spec stage that committed before the interrupt: its branch was never pushed.
 pr5_new_repo
 printf commit > "$SB/probe-mode"
@@ -293,7 +293,7 @@ FIX=$(sed -n '/^   ```sh$/,/^   ```$/{ /```/d; s/^   //p; }' <<< "$BODY")
 while IFS= read -r step; do
   (cd "$REPO" && bash -c "$step" >/dev/null 2>&1) || fail "9: the comment's step failed: $step"
 done <<< "$FIX"
-git -C "$REPO" branch -r --contains "$SPEC" | grep -q 'origin/145-probe-feature' || fail "9: the spec commit is not on origin after the comment's steps"
+grep -q 'origin/145-probe-feature' <<< "$(git -C "$REPO" branch -r --contains "$SPEC")" || fail "9: the spec commit is not on origin after the comment's steps"
 [ "$(git -C "$REPO" rev-parse 145-probe-feature-saved)" = "$SPEC" ] || fail "9: the spec commit is not kept on 145-probe-feature-saved"
 pr5_ticket 7 '["lane-2"]'
 printf finish > "$SB/probe-mode"; printf s1 > "$SB/state"
@@ -336,7 +336,7 @@ i=0; while [ ! -f "$SB/lock-held" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 
 (cd "$REPO" && exec env PATH="$SB/bin:$PATH" TMPDIR="$SB/tmp" BUREAU_LINEAR_RETRIES=0 \
    bash scripts/shepherd.sh --no-tmux --worktree .worktrees/shepherd-EXP-7 EXP-7 > "$SB/out" 2> "$SB/err") &
 SECOND=$!
-i=0; while ! ps -o args= -p "$SECOND" 2>/dev/null | grep -q 'bureau-runtime.py' && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+i=0; while ! grep -q 'bureau-runtime.py' <<< "$(ps -o args= -p "$SECOND" 2>/dev/null)" && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 sleep 1   # the runtime has its signal handlers and waits for the lock
 kill -TERM "$SECOND"
 sleep 0.5

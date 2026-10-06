@@ -24,10 +24,10 @@ echo '{"session":{"cost_tracking":true}}' > on.json
 check "on via .bureau.json session.cost_tracking" '( export BUREAU_CONFIG="'"$TMP"'/on.json"; cost_tracking_enabled )'
 
 # ── invocation flag ──────────────────────────────────────────────────────────
-check "cmd uses --print when off" 'claude_cmd_for_stage implement | grep -q -- "--print"'
+check "cmd uses --print when off" 'grep -q -- "--print" <<< "$(claude_cmd_for_stage implement)"'
 check "cmd uses --output-format json when on" \
-  '( export BUREAU_COST_TRACKING=1; claude_cmd_for_stage implement ) | grep -q -- "--output-format json"'
-check "cmd is NOT json when off" '! claude_cmd_for_stage implement | grep -q -- "--output-format json"'
+  'grep -q -- "--output-format json" <<< "$( export BUREAU_COST_TRACKING=1; claude_cmd_for_stage implement )"'
+check "cmd is NOT json when off" '! grep -q -- "--output-format json" <<< "$(claude_cmd_for_stage implement)"'
 
 # ── parse_claude_json: backward-compatible envelope unwrap ────────────────────
 RAW=$'preamble text\n```json\n{"status":"DONE","tasks_done":3}\n```\ntrailer'
@@ -52,10 +52,10 @@ check "record no-op when no usage envelope (codex/--print)" '[ ! -f "'"$TMP"'/co
 
 # ── report ───────────────────────────────────────────────────────────────────
 report=$( export BUREAU_COST_DIR="$TMP/cost"; report_costs )
-check "report names the issue" 'echo "$report" | grep -q "EXP-1"'
-check "report shows the implement stage + tokens" 'echo "$report" | grep -q "implement: 100 in"'
+check "report names the issue" 'grep -q "EXP-1" <<< "$report"'
+check "report shows the implement stage + tokens" 'grep -q "implement: 100 in" <<< "$report"'
 empty=$( export BUREAU_COST_DIR="$TMP/empty"; report_costs )
-check "report graceful when no data" 'echo "$empty" | grep -qi "No cost data"'
+check "report graceful when no data" 'grep -qi "No cost data" <<< "$empty"'
 
 [ "$fail" -eq 0 ] && echo "PASS — cost tracking (opt-in, backward-compatible)"
 exit "$fail"

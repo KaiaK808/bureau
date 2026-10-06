@@ -30,8 +30,8 @@ source "$(dirname "$0")/lib/pr3-doubles.sh"
 FAILS=0
 fail() { echo "FAIL $*" >&2; FAILS=$((FAILS + 1)); }
 check_eq() { [ "$1" = "$2" ] || fail "$3: expected '$1', got '$2'"; }
-has() { printf '%s' "$2" | grep -qE -- "$1" || fail "$3 (no match for /$1/)"; }
-hasnt() { if printf '%s' "$2" | grep -qE -- "$1"; then fail "$3 (unexpected /$1/)"; fi; }
+has() { grep -qE -- "$1" <<< "$2" || fail "$3 (no match for /$1/)"; }
+hasnt() { if grep -qE -- "$1" <<< "$2"; then fail "$3 (unexpected /$1/)"; fi; }
 calls() { cat "$SANDBOX/calls.log" 2>/dev/null || true; }
 invocations() { cat "$SANDBOX/fake_claude_counter" 2>/dev/null || echo 0; }
 origin_tip() { git -C "$SANDBOX/.fake-origin.git" rev-parse test-branch; }
@@ -171,8 +171,8 @@ run_implement_pipeline
 check_eq 2 "$(invocations)" "8 a second pass ran"
 p2="$SANDBOX/.prompts/prompt-2.txt"
 grep -qF 'FIX-1: the parser drops the last line of the input file' "$p2" || fail "8 pass 2 sees the review feedback"
-fb=$(grep -nF -- '--- Feedback to address (PRIORITY) ---' "$p2" | head -1 | cut -d: -f1)
-nt=$(grep -nF -- "$NOTE" "$p2" | head -1 | cut -d: -f1)
+fb=$(grep -m 1 -nF -- '--- Feedback to address (PRIORITY) ---' "$p2" | cut -d: -f1)
+nt=$(grep -m 1 -nF -- "$NOTE" "$p2" | cut -d: -f1)
 [ -n "$fb" ] && [ -n "$nt" ] && [ "$fb" -lt "$nt" ] || fail "8 the feedback stands above the note (feedback line ${fb:-none}, note line ${nt:-none})"
 grep -qF 'and any feedback above is addressed, report status COMPLETE right away' "$p2" \
   || fail "8 with every task [X], the note does not send pass 2 to COMPLETE before the feedback is addressed"

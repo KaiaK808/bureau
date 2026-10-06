@@ -65,7 +65,7 @@ repo() {
 #!/bin/sh
 refs=\$(cat 2>/dev/null | awk '{ printf "%s,", \$NF }')
 gh=no; [ -z "\${GH_TOKEN:-}" ] || gh=yes
-dotenv=no; /usr/bin/env | grep -qF -e '$PR1_LINEAR' -e '$PR1_TG_TOKEN' -e '$PR1_TG_CHAT' && dotenv=yes
+dotenv=no; /usr/bin/env | grep -F -e '$PR1_LINEAR' -e '$PR1_TG_TOKEN' -e '$PR1_TG_CHAT' >/dev/null && dotenv=yes
 echo "$h \${1:-} gh=\$gh env=\$dotenv refs=\$refs" >> '$MARKS'
 exit 0
 EOF
@@ -109,9 +109,9 @@ remote_round() {
   [ "$(git -C "$R.origin" rev-parse "c-$ROUND" 2>/dev/null)" = "$(git -C "$R" rev-parse HEAD)" ] || fail "$1: the pushed branch is not on origin"
 }
 hooks_off() {  # <label>
-  if marks | grep -q '^pre-push '; then fail "$1: pre-push ran during Bureau's push ($(marks | grep '^pre-push ' | head -1))"; fi
-  if marks | grep -q 'refs=.*refs/remotes/'; then fail "$1: reference-transaction ran for a remote-tracking ref ($(marks | grep 'refs/remotes/' | head -1))"; fi
-  if marks | grep -q 'gh=yes'; then fail "$1: a hook saw GH_TOKEN"; fi
+  if grep -q '^pre-push ' <<< "$(marks)"; then fail "$1: pre-push ran during Bureau's push ($(grep '^pre-push ' <<< "$(marks)" | sed -n 1p))"; fi
+  if grep -q 'refs=.*refs/remotes/' <<< "$(marks)"; then fail "$1: reference-transaction ran for a remote-tracking ref ($(grep 'refs/remotes/' <<< "$(marks)" | sed -n 1p))"; fi
+  if grep -q 'gh=yes' <<< "$(marks)"; then fail "$1: a hook saw GH_TOKEN"; fi
 }
 
 # ── 1  default: no hooks on Bureau's remote git ───────────────────────────────
@@ -121,7 +121,7 @@ hooks_off "1 default"
 # Local commands keep running the hooks, without any secret.
 grep -q '^pre-commit ' "$TMP/local.log" || fail "1: the local commit did not run pre-commit"
 grep -q '^reference-transaction .*refs/heads/' "$TMP/local.log" || fail "1: the local commit did not run reference-transaction"
-if grep -q 'gh=yes\|env=yes' "$TMP/local.log"; then fail "1: a local hook saw a secret: $(grep 'gh=yes\|env=yes' "$TMP/local.log" | head -1)"; fi
+if grep -q 'gh=yes\|env=yes' "$TMP/local.log"; then fail "1: a local hook saw a secret: $(grep 'gh=yes\|env=yes' "$TMP/local.log" | sed -n 1p)"; fi
 # The real merge_origin_main_or_abort: its fetch runs no hook, its local merge runs them, tokenless.
 git -C "$R" checkout -q main; git -C "$R" checkout -q -b behind; git -C "$R" reset -q --hard "$(git -C "$R" rev-list --max-parents=0 HEAD)"
 echo mine > "$R/mine.txt"; git -C "$R" add mine.txt; git -C "$R" -c core.hooksPath=/dev/null commit -q -m mine
@@ -130,15 +130,15 @@ out=$(stage 'merge_origin_main_or_abort EXP-1 QA >/dev/null 2>&1; echo "merge=$?
 case "$out" in *merge=0*) ;; *) fail "1: merge_origin_main_or_abort failed: $out" ;; esac
 git -C "$R" merge-base --is-ancestor "$(git -C "$R.origin" rev-parse main)" HEAD || fail "1: merge_origin_main_or_abort did not merge the fetched main"
 hooks_off "1 merge_origin_main_or_abort"
-marks | grep -q '^reference-transaction .*refs/heads/behind' || fail "1: the local merge of merge_origin_main_or_abort ran no hook"
+grep -q '^reference-transaction .*refs/heads/behind' <<< "$(marks)" || fail "1: the local merge of merge_origin_main_or_abort ran no hook"
 pr1_pass "1 default: Bureau's push and fetch run no hook; local commands run them without secrets"
 
 # ── 2  repo.remote_git_runs_hooks: true ───────────────────────────────────────
 repo "$R"; config '{"remote_git_runs_hooks":true}'
 remote_round "2 true"
-marks | grep -q '^pre-push origin gh=yes env=no' || fail "2: pre-push did not run with GH_TOKEN and without the .env keys: $(marks | tr '\n' ';')"
-marks | grep -q '^reference-transaction .*gh=yes env=no refs=.*refs/remotes/origin/main' || fail "2: the fetch ran no reference-transaction with the token: $(marks | tr '\n' ';')"
-if marks | grep -q 'env=yes'; then fail "2: a hook saw a .env key"; fi
+grep -q '^pre-push origin gh=yes env=no' <<< "$(marks)" || fail "2: pre-push did not run with GH_TOKEN and without the .env keys: $(marks | tr '\n' ';')"
+grep -q '^reference-transaction .*gh=yes env=no refs=.*refs/remotes/origin/main' <<< "$(marks)" || fail "2: the fetch ran no reference-transaction with the token: $(marks | tr '\n' ';')"
+if grep -q 'env=yes' <<< "$(marks)"; then fail "2: a hook saw a .env key"; fi
 pr1_pass "2 true: the hooks run again on push and fetch, with the GitHub token and without the .env keys"
 
 # ── 3  other values keep the hooks off ────────────────────────────────────────
@@ -309,7 +309,7 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     repo "$R"; config "$1"
     mkdir -p "$R/tools"
     printf '%s\n' '#!/bin/sh' 'gh=no; [ -z "${GH_TOKEN:-}" ] || gh=yes' \
-      "dotenv=no; /usr/bin/env | grep -qF -e '$PR1_LINEAR' -e '$PR1_TG_TOKEN' -e '$PR1_TG_CHAT' && dotenv=yes" \
+      "dotenv=no; /usr/bin/env | grep -F -e '$PR1_LINEAR' -e '$PR1_TG_TOKEN' -e '$PR1_TG_CHAT' >/dev/null && dotenv=yes" \
       "echo \"config-hook \$1 gh=\$gh env=\$dotenv\" >> '$MARKS'" 'cat >/dev/null' 'exit 0' > "$R/tools/scan.sh"
     chmod +x "$R/tools/scan.sh"
     git -C "$R" add tools; git -C "$R" -c core.hooksPath=/dev/null commit -q -m tools
@@ -350,17 +350,17 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     fi
   }
   hooks9 '{}'
-  if marks | grep -q '^config-hook'; then fail "9 default: a hook the configuration defines ran during Bureau's push or fetch: $(marks | sort | uniq -c | tr -s ' ' | tr '\n' ';')"; fi
+  if grep -q '^config-hook' <<< "$(marks)"; then fail "9 default: a hook the configuration defines ran during Bureau's push or fetch: $(marks | sort | uniq -c | tr -s ' ' | tr '\n' ';')"; fi
   # GIT_CONFIG from the operator's environment: `git config` alone would read only that file, the
   # remote command reads the repository's configuration all the same.
   hooks9 '{}' /dev/null
-  if marks | grep -q '^config-hook'; then fail "9 GIT_CONFIG=/dev/null: a hook the configuration defines ran during Bureau's push or fetch: $(marks | sort | uniq -c | tr -s ' ' | tr '\n' ';')"; fi
+  if grep -q '^config-hook' <<< "$(marks)"; then fail "9 GIT_CONFIG=/dev/null: a hook the configuration defines ran during Bureau's push or fetch: $(marks | sort | uniq -c | tr -s ' ' | tr '\n' ';')"; fi
   grep -q '^config-hook reference-transaction gh=no env=no' "$TMP/local9.log" || fail "9: the configured hooks did not run at all (the local commit ran none): $(tr '\n' ';' < "$TMP/local9.log")"
   hooks9 '{"remote_git_runs_hooks":true}'
   wanted='pre-push pre-push-eq pre-push-empty reference-transaction'
   if [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 55 ]; then wanted="$wanted post-checkout-template"; fi
   for hook in $wanted; do
-    marks | grep -q "^config-hook $hook gh=yes env=no" || fail "9 true: the configured $hook hook did not run with GH_TOKEN and without the .env keys: $(marks | sort -u | tr '\n' ';')"
+    grep -q "^config-hook $hook gh=yes env=no" <<< "$(marks)" || fail "9 true: the configured $hook hook did not run with GH_TOKEN and without the .env keys: $(marks | sort -u | tr '\n' ';')"
   done
   pr1_pass "9 hooks the configuration defines stay off on Bureau's push and fetch ($(git9 git --version)); true runs them"
 else

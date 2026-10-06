@@ -247,7 +247,9 @@ arm() {  # $1 = code block, $2 = label rc; sets ARM_OUT ARM_RC
   set -e
 }
 cut() {  # $1 = file content, $2 = start regex, $3 = end regex (awk)
-  printf '%s\n' "$1" | awk -v s="$2" -v e="$3" '$0 ~ s { f = 1 } f { print } f && $0 ~ e { exit }'
+  # A here-string, not a pipe: awk leaves at the end regex, and under pipefail a writer still
+  # writing then fails the test with a broken pipe (test_pipe_early_exit.sh).
+  awk -v s="$2" -v e="$3" '$0 ~ s { f = 1 } f { print } f && $0 ~ e { exit }' <<< "$1"
 }
 expect() {  # $1 = label, $2 = rc wanted, $3 = hold wanted (yes|no)
   [ "$ARM_RC" = "$2" ] || fail "$1: exit $ARM_RC, wanted $2: $ARM_OUT"
