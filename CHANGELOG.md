@@ -6,9 +6,17 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-10-07
+
+Stable release of the 3.3.0 candidates. v3.3 is a minor release on v3.2.1 with two pull requests: the shell gate for Codex implement turns and private temporary directories ([#60](https://github.com/KaiaK808/bureau/pull/60)), and the shell gate for Codex QA turns ([#62](https://github.com/KaiaK808/bureau/pull/62)). The v3 exit-code contract stays; no exit code is new. Claude runs are unchanged. Runtime, installer, templates and tests are identical to v3.3.0-rc.2. The changes since v3.2.1 are recorded in the 3.3.0-rc.2 and 3.3.0-rc.1 sections below, and the [v3.3.0 release notes](docs/release-notes.md) consolidate them.
+
+Validation added since rc.2: an installation ran its first real Codex implement turn (`gpt-6.1-sol`, reasoning `high`) on the gate. Codex reported `NEEDS_HUMAN` with exactly one `notes.needs_human` reason beginning with `SANDBOX_GATE:`: 9 tests failed inside the sandbox on socket binds, the same as in an unchanged baseline run. The shell treated the run as `COMPLETE` before the post-implement hook, ran the project test command outside the sandbox, which was green, and the stage ended with exit `0` and handed the ticket on to QA. No `bureau-codex-*` directory was left under `/tmp`. An earlier attempt in the same installation timed out inside the Codex pass before the gate was reached, on its older pre-v3.2 runtime, where a timed-out pass ends the stage; that behaviour has been fixed since v3.2. The QA gate has no live run yet because no installation runs QA on Codex; its full-stage harness tests and mutation controls are green. CI is green on macOS and Ubuntu; all 105 harness tests passed.
+
+**Upgrade:** from v3.2.1 select tag `v3.3.0` and resync the scripts scope as one set (`--resync-scripts`), then restart queue loops and supervisors and follow [Upgrade to v3.3](docs/migration.md#upgrade-to-v33). From a v3.3.0 candidate select tag `v3.3.0`; there are no file changes beyond what rc.2 had. From rc.2 no resync is needed because the runtime is unchanged; from rc.1 resync the scripts scope as one set for rc.2's QA changes and restart queue loops and supervisors. No configuration, interface or schema migration is needed. Keep `repo.test_command` configured with the full project gate. From v3.1.0 or older go through [Upgrade to v3.2](docs/migration.md#upgrade-to-v32) first.
+
 ## [3.3.0-rc.2] - 2026-10-07
 
-Second release candidate for Bureau v3.3.0, published as a GitHub prerelease; v3.2.1 stays the stable release, marked as latest, until v3.3.0 is published. rc.2 adds one pull request ([#62](https://github.com/KaiaK808/bureau/pull/62)) on top of v3.3.0-rc.1: a shell gate for Codex QA turns blocked only by tests the sandbox denies. This addition applies to Codex QA runs only; Claude runs, the QA schema and the v3 exit-code contract are unchanged. See the [v3.3.0-rc.2 release notes](docs/release-notes.md) and those of the first candidate, [v3.3.0-rc.1](docs/release-notes-v3.3.0-rc.1.md), for validation and known limitations.
+Second release candidate for Bureau v3.3.0, published as a GitHub prerelease; v3.2.1 stays the stable release, marked as latest, until v3.3.0 is published. rc.2 adds one pull request ([#62](https://github.com/KaiaK808/bureau/pull/62)) on top of v3.3.0-rc.1: a shell gate for Codex QA turns blocked only by tests the sandbox denies. This addition applies to Codex QA runs only; Claude runs, the QA schema and the v3 exit-code contract are unchanged. See the [v3.3.0-rc.2 release notes](docs/release-notes-v3.3.0-rc.2.md) and those of the first candidate, [v3.3.0-rc.1](docs/release-notes-v3.3.0-rc.1.md), for validation and known limitations.
 
 **Upgrade:** from v3.3.0-rc.1 select tag `v3.3.0-rc.2` and resync the scripts scope as one set (`--resync-scripts`; `qa-pipeline.sh`, `bureau-config.sh` and `bureau-provider.py` changed), then restart queue loops and supervisors. From v3.2.1, the v3.3.0-rc.1 upgrade steps below apply with tag `v3.3.0-rc.2`; see [Upgrade to v3.3](docs/migration.md#upgrade-to-v33). No configuration or schema migration is needed. Keep `repo.test_command` configured with the full project gate: the prefix is the Codex turn's own diagnosis, and the outside run protects only what that command covers.
 
@@ -18,7 +26,7 @@ Second release candidate for Bureau v3.3.0, published as a GitHub prerelease; v3
 
 ## [3.3.0-rc.1] - 2026-10-07
 
-First release candidate for Bureau v3.3.0, published as a GitHub prerelease; v3.2.1 stays the stable release, marked as latest, until v3.3.0 is published. v3.3 is a minor release on v3.2.1 with one pull request ([#60](https://github.com/KaiaK808/bureau/pull/60)): a shell gate lets Codex implement runs blocked only by the sandbox finish when the full project test command passes outside it, and Codex calls without `TMPDIR` get a private directory under `/tmp`. The v3 exit-code contract stays; no exit code is new. Claude runs are unchanged. Acceptance in an installation is the next real Codex implement run and is still pending at tagging. See the [v3.3.0-rc.1 release notes](docs/release-notes.md) for validation and known limitations.
+First release candidate for Bureau v3.3.0, published as a GitHub prerelease; v3.2.1 stays the stable release, marked as latest, until v3.3.0 is published. v3.3 is a minor release on v3.2.1 with one pull request ([#60](https://github.com/KaiaK808/bureau/pull/60)): a shell gate lets Codex implement runs blocked only by the sandbox finish when the full project test command passes outside it, and Codex calls without `TMPDIR` get a private directory under `/tmp`. The v3 exit-code contract stays; no exit code is new. Claude runs are unchanged. Acceptance in an installation is the next real Codex implement run and is still pending at tagging. See the [v3.3.0-rc.1 release notes](docs/release-notes-v3.3.0-rc.1.md) for validation and known limitations.
 
 ### Added
 
@@ -501,7 +509,8 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.3.0-rc.2...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.3.0...main
+[3.3.0]: https://github.com/KaiaK808/bureau/compare/v3.2.1...v3.3.0
 [3.3.0-rc.2]: https://github.com/KaiaK808/bureau/compare/v3.3.0-rc.1...v3.3.0-rc.2
 [3.3.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v3.2.1...v3.3.0-rc.1
 [3.2.1]: https://github.com/KaiaK808/bureau/compare/v3.2.0...v3.2.1

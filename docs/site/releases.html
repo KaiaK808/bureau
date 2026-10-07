@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f1e3395e4e8bf48eb866789d5fa5b0a494f982d3bf62404aaf15f5d4b28e8fb5">
+<meta name="bureau-source-sha256" content="630d58b6456707542777f88f539e300c48c5074b42764b5e1ef1babf0bc54178">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,41 +24,60 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.3.0-rc.2</strong>, dated
-<strong>2026-10-07</strong>, the second release candidate for v3.3.0,
-published as a prerelease; v3.2.1 stays the stable release marked as
-latest until v3.3.0 is published. Its <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0-rc.2">GitHub
+<p>This source tree contains <strong>Bureau v3.3.0</strong>, dated
+<strong>2026-10-07</strong>, the current stable release, marked as
+latest. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0">GitHub
 Release</a> records the exact tagged commit; the <a
 href="../../CHANGELOG.md">changelog</a> and <a
 href="release-notes.html">release notes</a> describe the changes and the
-upgrade. rc.2 adds one pull request (<a
-href="https://github.com/KaiaK808/bureau/pull/62">#62</a>) on top of
-rc.1's <a href="https://github.com/KaiaK808/bureau/pull/60">#60</a>: a
-shell gate for Codex QA turns blocked only by tests the sandbox denies.
-v3.3 is a minor release on v3.2.1 with the implement gate, the QA gate
-and a private temporary directory for Codex calls without
-<code>TMPDIR</code>; Claude runs and the v3 exit-code contract are
-unchanged. From v3.3.0-rc.1 or v3.2.1 select tag
-<code>v3.3.0-rc.2</code>, resync the scripts scope as one set, check the
-full project gate in <code>repo.test_command</code> and restart queue
-loops and supervisors; see <a href="migration.html#upgrade-to-v33">Upgrade
-to v3.3</a>.</p>
-<p>The earlier candidate, <a
-href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>, stays published as
-a prerelease; its notes describe the implement gate and private
-temporary directories.</p>
-<p>CI on <code>main</code> at <code>51f713e</code> (the merge of <a
-href="https://github.com/KaiaK808/bureau/pull/62">#62</a>) is green on
-macOS and Ubuntu, all 105 harness tests passed, and an independent
-review found no blocker. Implement acceptance is an installation's next
-real Codex implement run, still pending at tagging. The QA gate has no
-live run yet because no installation runs QA on Codex. Release
-preparation changes documentation only; runtime, installer, templates,
-tests and CI stay at that baseline. The final tagged commit is recorded
-in the GitHub Release body.</p>
-<p>The current stable release, marked as latest, is <strong>Bureau
-v3.2.1</strong>, dated <strong>2026-10-06</strong>. Its <a
+upgrade. v3.3 is a minor release on v3.2.1 with shell gates for Codex
+implement (<a href="https://github.com/KaiaK808/bureau/pull/60">#60</a>)
+and QA (<a href="https://github.com/KaiaK808/bureau/pull/62">#62</a>)
+turns blocked only by tests the sandbox denies, plus private temporary
+directories for Codex calls without <code>TMPDIR</code>; an
+installation's first real Codex implement turn passed the outside
+project gate, ended with exit <code>0</code> and handed the ticket on to
+QA. Claude runs and the v3 exit-code contract are unchanged. From v3.2.1
+select tag <code>v3.3.0</code>, resync the scripts scope as one set,
+check the full project gate in <code>repo.test_command</code> and
+restart queue loops and supervisors; see <a
+href="migration.html#upgrade-to-v33">Upgrade to v3.3</a>.</p>
+<p>Its candidates, <a
+href="release-notes-v3.3.0-rc.2.html">v3.3.0-rc.2</a> and <a
+href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>, stay published as
+prereleases; v3.3.0 has the same runtime, installer, templates and tests
+as rc.2. From rc.2 select tag <code>v3.3.0</code>; no resync is needed.
+From rc.1 select tag <code>v3.3.0</code> and resync the scripts scope as
+one set for rc.2's QA changes, then restart queue loops and supervisors.
+There are no file changes beyond what rc.2 had.</p>
+<p><strong>Live implement acceptance in an installation.</strong> An
+installation ran its first real Codex implement turn
+(<code>gpt-6.1-sol</code>, reasoning <code>high</code>) on the gate.
+Codex reported <code>NEEDS_HUMAN</code> with exactly one
+<code>notes.needs_human</code> reason beginning with
+<code>SANDBOX_GATE:</code>: 9 tests failed inside the sandbox on socket
+binds, the same as in an unchanged baseline run. The shell treated the
+run as <code>COMPLETE</code> before the post-implement hook, ran the
+project test command outside the sandbox, which was green, and the stage
+ended with exit <code>0</code> and handed the ticket on to QA. No
+<code>bureau-codex-*</code> directory was left under <code>/tmp</code>.
+An earlier attempt in the same installation timed out inside the Codex
+pass before the gate was reached, on its older pre-v3.2 runtime, where a
+timed-out pass ends the stage; that behaviour has been fixed since
+v3.2.</p>
+<p><strong>The QA gate has no live run yet.</strong> No installation
+runs QA on Codex. Its full-stage harness tests and mutation controls are
+green; live Codex QA acceptance remains pending.</p>
+<p>CI on <code>51f713e</code> (the merge of <a
+href="https://github.com/KaiaK808/bureau/pull/62">#62</a>, the candidate
+runtime baseline) is green on macOS and Ubuntu, all 105 harness tests
+passed, and an independent review found no blocker. Release preparation
+changes documentation only; runtime, installer, templates, tests and CI
+are identical to <code>v3.3.0-rc.2</code> (<code>a3e0288</code>). The
+final tagged commit is recorded in the GitHub Release body.</p>
+<p>The previous stable release is <strong>Bureau v3.2.1</strong>, dated
+<strong>2026-10-06</strong>. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">GitHub
 Release</a> identifies the exact tagged commit; the <a
 href="../../CHANGELOG.md">changelog</a> and <a
