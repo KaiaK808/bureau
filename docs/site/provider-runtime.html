@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="54ffde2fb05e039a6998bb8547c15b6f9b602558def21a868c9727a793dcf3ef">
+<meta name="bureau-source-sha256" content="1a1812cd7dfe3af00705566c3f582749f84f601294edcf972c2e9a473cd84ae0">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -176,8 +176,40 @@ failures stop routing so that the next stage cannot receive an
 unpublished result.</p>
 <p>Validation currently uses fake executors and real local Git/test
 commands. Run a representative live ticket in an adopting repository
-before relying on unattended Codex or mixed-provider
-operation.</p></main>
+before relying on unattended Codex or mixed-provider operation.</p>
+<h2 id="codex-implementation-sandbox-gate">Codex implementation sandbox
+gate</h2>
+<p>A Codex implement turn normally uses <code>workspace-write</code>,
+where socket bind/listen, network access or the per-user temporary
+directory can be denied. Finish the other work and report
+<code>NEEDS_HUMAN</code> with one <code>notes.needs_human</code> object
+per affected task. Its string <code>reason</code> must begin with
+<code>SANDBOX_GATE:</code> and name the failing tests and denied
+operation. Never change, skip or deselect tests to bypass the sandbox;
+code failures and other blockers must not use this prefix.</p>
+<p>Only a non-empty array with every reason prefixed qualifies. The
+provider passes that Codex result to the shell even when it contains
+“Operation not permitted”. The shell accepts one JSON object or a cost
+envelope whose <code>result</code> string holds one object; fenced JSON,
+trailing garbage, multiple values and malformed or mixed reasons do not
+qualify. With <code>repo.test_command</code> configured and commits
+beyond <code>origin/main</code>, the stage promotes to COMPLETE before
+the post-implement hook and squash-range check. If both allow
+completion, it runs the tests once after the final push, outside the
+Codex sandbox via
+<code>bureau_untrusted_env bash --noprofile --norc -c</code>, without
+Bureau secrets. Green hands off to QA or Build Review; red or an emptied
+command restores NEEDS_HUMAN. The summary comment records the decision.
+Hook failures still halt with exit 14; other intervening halts and
+Claude behaviour stay as before.</p>
+<p>A Codex child without <code>TMPDIR</code> gets a private
+<code>bureau-codex-*</code> directory under resolved <code>/tmp</code>,
+outside the repository regardless of <code>TEMP</code> or
+<code>TMP</code>. Allocation follows the stop handlers; removal follows
+the child on completion, timeout, interruption or exceptions. The
+provider's own environment is unchanged. Removal failures are reported
+without failing the run. An existing <code>TMPDIR</code> passes through
+unchanged; Claude gets no added directory.</p></main>
 </div>
 </body>
 </html>

@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -43,6 +44,8 @@ if os.environ.get('OLD_CLI') and '--session-id' in sys.argv:
     print("error: unknown option '--session-id'",file=sys.stderr); sys.exit(1)
 (root/'argv.json').write_text(json.dumps(sys.argv[1:]))
 (root/'stdin.txt').write_text(sys.stdin.read())
+tmpdir=os.environ.get('TMPDIR')
+(root/'tmpdir.json').write_text(json.dumps({'value':tmpdir,'is_dir':bool(tmpdir and pathlib.Path(tmpdir).is_dir())}))
 if os.environ.get('FORK_IGNORE_TERM'):
     descendant = os.fork()
     if descendant == 0:
@@ -102,6 +105,162 @@ else:
         self.assertEqual(result.returncode,code,result.stdout+result.stderr)
         return result
 
+    def sandbox_result(self,reason='SANDBOX_GATE: socket test: Operation not permitted on bind'):
+        return {'status':'NEEDS_HUMAN','tasks_done':2,'tasks_skipped':0,'tasks_needs_human':1,
+                'fixed_review_items':[],'notes':{'needs_human':[{'task_id':'T003','reason':reason}],
+                'skipped':[],'deviations':[]},'prose_notes':'Other tasks are finished'}
+
+    def recorded_tmpdir(self):
+        record=json.loads((self.root/'tmpdir.json').read_text())
+        self.assertTrue(record['is_dir'],'TMPDIR was not a directory during the call')
+        path=Path(record['value'])
+        self.assertEqual(path.parent,Path('/tmp').resolve())
+        self.assertTrue(path.name.startswith('bureau-codex-'))
+        self.assertFalse(path.exists(),'the Codex temporary directory survived the call')
+        return path
+
+    def run_wrapped_provider(self,patch,code=0,**env):
+        # Instrument the actual adapter in a separate process: allocation and
+        # lifecycle failures still run main(), its exit handling and cleanup.
+        source='''import importlib.util, json, os, pathlib, signal, sys
+spec=importlib.util.spec_from_file_location('provider',sys.argv[1])
+p=importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
+del sys.argv[1]
+root=pathlib.Path(os.environ['FAKE_ROOT'])
+allocate=p.tempfile.mkdtemp
+def record_allocation(*args,**kwargs):
+    path=allocate(*args,**kwargs)
+    (root/'allocation.json').write_text(json.dumps({'value':path,'is_dir':pathlib.Path(path).is_dir()}))
+    return path
+p.tempfile.mkdtemp=record_allocation
+original_run=p.run
+def record_environment(*args,**kwargs):
+    before=dict(os.environ)
+    try: return original_run(*args,**kwargs)
+    finally: (root/'parent-env.json').write_text(json.dumps({'unchanged':dict(os.environ)==before}))
+p.run=record_environment
+'''+patch+'\nsys.exit(p.main())\n'
+        result=subprocess.run([sys.executable,'-c',source,str(SCRIPT),*self.command()[2:]],
+                              capture_output=True,text=True,env={**self.env,**env},timeout=12)
+        self.assertEqual(result.returncode,code,result.stdout+result.stderr)
+        self.assertTrue(json.loads((self.root/'parent-env.json').read_text())['unchanged'])
+        return result
+
+    def test_sandbox_gate_only_requires_a_nonempty_array_of_reason_objects(self):
+        good={'reason':'SANDBOX_GATE: denied bind'}
+        cases=[(None,False),([],False),({},False),({'notes':[]},False),
+               ({'notes':{'needs_human':[good]}},True),({'notes':{'needs_human':[good,good]}},True)]
+        for items in ([],None,{},good,'SANDBOX_GATE:',[None],['SANDBOX_GATE:'],[[]],[{}],
+                      [{'reason':None}],[{'reason':42}],[{'reason':[]}],[{'reason':{}}],
+                      [{'reason':''}],[{'reason':'other'}],[good,{'reason':'other'}]):
+            cases.append(({'notes':{'needs_human':items}},False))
+        for value,expected in cases:
+            with self.subTest(value=value): self.assertIs(p.sandbox_gate_only(value),expected)
+
+    def test_environment_blocked_keeps_the_exception_codex_only(self):
+        for runner in ('codex','claude'):
+            for prefix in ('SANDBOX_GATE: ',''):
+                value=self.sandbox_result(prefix+'Operation not permitted on bind')
+                for text in ('Operation not permitted','Permission denied','sandbox denied'):
+                    with self.subTest(runner=runner,prefix=prefix,text=text):
+                        self.assertIs(p.environment_blocked(value,text,runner),runner=='claude' or not prefix)
+                self.assertFalse(p.environment_blocked(value,'code failure',runner))
+                self.assertFalse(p.environment_blocked({**value,'status':'COMPLETE'},'Permission denied',runner))
+        mixed=self.sandbox_result()
+        mixed['notes']['needs_human'].append({'reason':'Permission denied reading a required file'})
+        self.assertTrue(p.environment_blocked(mixed,json.dumps(mixed),'codex'))
+        self.assertFalse(p.environment_blocked(None,'Permission denied','codex'))
+
+    def test_codex_sandbox_result_reaches_shell_but_unprefixed_blocker_exits_24(self):
+        self.env.pop('TMPDIR',None)
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'
+        value=self.sandbox_result()
+        result=self.run_provider('--schema',str(schema),FINAL=json.dumps(value))
+        self.assertEqual(json.loads(result.stdout),value)
+        self.recorded_tmpdir()
+        self.config.write_text('{"agents":{"runner":"codex"},"session":{"cost_tracking":true}}')
+        result=self.run_provider('--schema',str(schema),FINAL=json.dumps(value))
+        self.assertEqual(json.loads(json.loads(result.stdout)['result']),value)
+        self.recorded_tmpdir()
+        result=self.run_provider('--schema',str(schema),FINAL=json.dumps(self.sandbox_result('Operation not permitted on bind')),code=24)
+        self.assertEqual(result.stdout,'')
+        self.assertEqual(self.evidence()[1]['outcome'],'environment')
+        self.recorded_tmpdir()
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        result=self.run_provider('--schema',str(schema),FINAL=json.dumps(value),code=24)
+        self.assertEqual(result.stdout,'')
+        self.assertIsNone(json.loads((self.root/'tmpdir.json').read_text())['value'])
+
+    def test_codex_tmpdir_is_under_tmp_even_when_temp_and_tmp_point_into_repo(self):
+        self.env.pop('TMPDIR',None)
+        for key in ('TEMP','TMP'):
+            path=self.root/key; path.mkdir(); self.env[key]=str(path)
+        self.run_provider()
+        self.recorded_tmpdir()
+
+    def test_existing_tmpdir_is_passed_through_and_kept(self):
+        path=self.root/'explicit tmp'; path.mkdir()
+        self.run_provider(TMPDIR=str(path))
+        self.assertEqual(json.loads((self.root/'tmpdir.json').read_text()),{'value':str(path),'is_dir':True})
+        self.assertTrue(path.is_dir(),'the caller owns an explicit TMPDIR')
+
+    def test_claude_gets_no_added_tmpdir(self):
+        self.env.pop('TMPDIR',None)
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        self.run_provider()
+        self.assertEqual(json.loads((self.root/'tmpdir.json').read_text()),{'value':None,'is_dir':False})
+
+    def test_codex_tmpdir_is_removed_after_timeout_and_provider_errors(self):
+        self.env.pop('TMPDIR',None)
+        for code,env in ((124,{'SLEEP':'10','BUREAU_STAGE_TIMEOUT':'0.1'}),
+                         (22,{'FAIL':'backend failed'}),(22,{'EMPTY':'1'})):
+            with self.subTest(code=code,env=env):
+                self.run_provider(code=code,**env)
+                self.recorded_tmpdir()
+
+    def test_signals_during_allocation_are_handled_and_tmpdir_is_removed(self):
+        self.env.pop('TMPDIR',None)
+        for signum in ('SIGTERM','SIGINT','SIGHUP'):
+            with self.subTest(signal=signum):
+                patch='''def interrupted_allocation(*args,**kwargs):
+    path=record_allocation(*args,**kwargs)
+    os.kill(os.getpid(),getattr(signal,os.environ['ALLOCATION_SIGNAL']))
+    return path
+p.tempfile.mkdtemp=interrupted_allocation
+'''
+                result=self.run_wrapped_provider(patch,code=130,ALLOCATION_SIGNAL=signum,SLEEP='10')
+                self.assertEqual(result.stdout,'')
+                self.assertEqual(self.evidence()[1]['outcome'],'cancelled')
+                record=json.loads((self.root/'allocation.json').read_text())
+                self.assertTrue(record['is_dir'])
+                self.assertFalse(Path(record['value']).exists())
+
+    def test_allocation_is_cleaned_when_popen_raises(self):
+        self.env.pop('TMPDIR',None)
+        result=self.run_wrapped_provider('''original_popen=p.subprocess.Popen
+def fail_popen(command,*args,**kwargs):
+    if command[:2]==['codex','exec']: raise OSError('fixture Popen failure')
+    return original_popen(command,*args,**kwargs)
+p.subprocess.Popen=fail_popen
+''',code=22)
+        self.assertIn('fixture Popen failure',result.stderr)
+        record=json.loads((self.root/'allocation.json').read_text())
+        self.assertTrue(record['is_dir'])
+        self.assertFalse(Path(record['value']).exists())
+
+    def test_failed_tmpdir_removal_is_reported_without_failing_the_run(self):
+        self.env.pop('TMPDIR',None)
+        result=self.run_wrapped_provider('''def fail_remove(path):
+    raise OSError('fixture removal failure')
+p.shutil.rmtree=fail_remove
+''')
+        path=Path(json.loads((self.root/'allocation.json').read_text())['value'])
+        self.addCleanup(shutil.rmtree,path)
+        self.assertTrue(path.is_dir(),'the failed removal was not exercised')
+        self.assertIn('Bureau provider: could not remove '+str(path),result.stderr)
+        self.assertIn('fixture removal failure',result.stderr)
+        self.assertEqual(result.stdout.strip(),'final response')
+
     def test_codex_stdin_large_prompt_and_exact_argv(self):
         self.prompt.write_text('quoted `$(no-command)` '+('large '*250000))
         result=self.run_provider(BUREAU_CODEX_MODEL_IMPLEMENT='model with spaces;echo nope')
@@ -142,13 +301,21 @@ else:
         self.run_provider(EMPTY='1',code=22)
 
     def test_timeout_and_cancellation_kill_process_group(self):
+        self.env.pop('TMPDIR',None)
         self.run_provider(SLEEP='10',BUREAU_STAGE_TIMEOUT='0.1',code=124)
+        self.recorded_tmpdir()
         (self.root/'ready').unlink()
         proc=subprocess.Popen(self.command(),env={**self.env,'SLEEP':'10'},stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-        deadline=time.monotonic()+4
-        while not (self.root/'ready').exists() and time.monotonic()<deadline: time.sleep(.02)
-        proc.terminate(); stdout,stderr=proc.communicate(timeout=8)
-        self.assertEqual(proc.returncode,130,stderr.decode()); self.assertEqual(stdout,b'')
+        try:
+            deadline=time.monotonic()+4
+            while not (self.root/'ready').exists() and time.monotonic()<deadline: time.sleep(.02)
+            self.assertTrue((self.root/'ready').exists(),'fake provider did not start')
+            proc.terminate(); stdout,stderr=proc.communicate(timeout=8)
+            self.assertEqual(proc.returncode,130,stderr.decode()); self.assertEqual(stdout,b'')
+            self.recorded_tmpdir()
+        finally:
+            if proc.poll() is None: proc.kill()
+            proc.communicate()
 
     def test_hangup_stops_the_call_like_sigterm(self):
         # A hang-up reaches the adapter when SIGHUP goes to a stage's process group (the

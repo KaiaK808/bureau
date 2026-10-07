@@ -6,6 +6,16 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Added
+
+- Codex implementation turns can report sandbox-only test blockers with the `SANDBOX_GATE:` reason prefix in a non-empty `notes.needs_human` array. With every reason prefixed, a configured `repo.test_command` and commits beyond `origin/main`, the shell treats the run as COMPLETE before the post-implement hook, then runs the test command once outside the Codex sandbox after the final push, without Bureau secrets. Green hands off to QA or Build Review; red keeps the ticket labelled `needs-human`. Mixed or malformed reasons never promote; hook and squash-range failures keep their existing handling. The shell reader accepts only a single JSON object or the cost envelope holding it, without fenced JSON or partial reads. See the [sandbox gate contract](docs/provider-runtime.md#codex-implementation-sandbox-gate).
+
+### Changed
+
+- A Codex provider call whose child environment has no `TMPDIR` gets a private `bureau-codex-*` directory directly under resolved `/tmp`, independent of `TEMP` and `TMP`. Allocation follows the signal handlers; cleanup follows the child on completion, timeout, interruption and exceptions. Removal failures are reported without failing the call. An existing `TMPDIR` passes through unchanged; Claude prompts, environments, result handling and exit codes retain their previous behaviour.
+
+**Upgrade:** update the source skill and resync the scripts scope as one set (`implement-pipeline.sh`, `bureau-config.sh` and `bureau-provider.py` changed); keep `repo.test_command` configured with the full project gate. No configuration migration is needed. The prefix is the Codex turn's own diagnosis: a green run outside the sandbox protects what the test command covers, and QA and review follow as usual.
+
 ## [3.2.1] - 2026-10-06
 
 Patch release on v3.2.0 that removes internal references without behaviour change. Configuration defaults, environment variable names, runtime logic and test fixture data are unchanged. See the [v3.2.1 release notes](docs/release-notes.md) for the patch and the complete upgrade from v3.1.0.

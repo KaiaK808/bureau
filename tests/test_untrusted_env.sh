@@ -301,10 +301,16 @@ codex_run() {
   printf 'BUREAU_RUNTIME="$(dirname "$0")/bureau-runtime.py"\n' >> "$SCRIPTS_DIR/bureau-config.sh"
   # Control: the v3.0.2 launch of the provider too (before the fix round it inherited everything).
   [ "${2:-}" != control ] || sed -i.bak 's/bureau_without_secrets python3 -I "\$(dirname/python3 "$(dirname/' "$SCRIPTS_DIR/bureau-config.sh"
-  # Control: the v3.0.2 behaviour at every site, the adapter's env= included.
+  # Control: the v3.0.2 behaviour at every site, the adapter's login check and
+  # child environment included (the child gets a copy of everything; run()
+  # builds it as child_env so a Codex child can get its own TMPDIR).
   [ "${2:-}" != control ] || { pr1_passthrough "$SCRIPTS_DIR"
-    sed -i.bak "s/env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)/env=None/" "$SCRIPTS_DIR/bureau-provider.py"
-    [ "$(grep -c 'env=None' "$SCRIPTS_DIR/bureau-provider.py")" = 2 ] || fail "5 control: could not restore the inherited environment in the adapter copy"; }
+    sed -i.bak -e "s/env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)/env=None/" \
+      -e "s/child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)/child_env = dict(os.environ)/" \
+      "$SCRIPTS_DIR/bureau-provider.py"
+    { [ "$(grep -c 'env=None' "$SCRIPTS_DIR/bureau-provider.py")" = 1 ] \
+      && [ "$(grep -c 'child_env = dict(os.environ)' "$SCRIPTS_DIR/bureau-provider.py")" = 1 ]; } \
+      || fail "5 control: could not restore the inherited environment in the adapter copy"; }
   mkdir -p "$PR1_MARKS/agent-bin"
   cat > "$PR1_MARKS/agent-bin/codex" <<EOF
 #!/usr/bin/env python3

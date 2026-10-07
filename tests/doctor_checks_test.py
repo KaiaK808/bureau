@@ -296,7 +296,10 @@ class TestCommandWarningTests(Repo):
     and must equal LOAD_TEXT and GATE_TEXT exactly: a change to those lines fails every test here
     until doctor's reading (stage_env_file, stage_env_value, implement_runner in bureau-doctor.py) is
     checked against it and the copies are updated (a deliberate tripwire). v3.2 (S1b): the stage reads
-    BUREAU_ENV_FILE only, never ./.env."""
+    BUREAU_ENV_FILE only, never ./.env. Since the Codex sandbox gate the completion gate also needs
+    SANDBOX_GATE_PENDING != 1: a run the gate promoted already had a test command, and without one
+    the gate leaves NEEDS_HUMAN in place, so the 24 and doctor's reading are unchanged; the stage
+    snippet sets the flag to 0 as gate part 1 does."""
     WARNING = 'repo.test_command is missing; required for Codex background implementation'
     CONFIG_SH = ROOT / 'templates/scripts/bureau-config.sh'
     IMPLEMENT = (ROOT / 'templates/scripts/implement-pipeline.sh').read_text().splitlines()
@@ -306,7 +309,7 @@ class TestCommandWarningTests(Repo):
         '# BUREAU_ENV_FILE only, never ./.env: in a stage worktree that is a file the branch controls.',
         'if [ -f "$BUREAU_ENV_FILE" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"',
         'else bureau_secret_set LINEAR_API_KEY || { echo "ERROR: Set LINEAR_API_KEY"; exit 1; }; fi'))
-    GATE_FIRST = 'if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then'
+    GATE_FIRST = 'if [ "$STATUS" = "COMPLETE" ] && [ "$SANDBOX_GATE_PENDING" != 1 ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then'
     GATE_TEXT = '\n'.join((
         GATE_FIRST,
         "  TEST_COMMAND=$(bureau_get '.repo.test_command // empty')",
@@ -319,7 +322,7 @@ class TestCommandWarningTests(Repo):
     STAGE = ('cd "$WORKTREE" && [ ! -e .env ] || exit 97\n'
              'source "$CONFIG_SH" >/dev/null 2>&1 || exit 99; SCRIPT_REPO="$REPO"; eval "$LOAD" >/dev/null 2>&1 || exit 98\n'
              'runner=$(resolve_runner_for_stage implement 2>/dev/null) || runner=unresolved\n'
-             'STATUS=COMPLETE; rc=0; ( eval "$GATE" ) >/dev/null 2>&1 || rc=$?; printf "%s %s" "$runner" "$rc"')
+             'STATUS=COMPLETE; SANDBOX_GATE_PENDING=0; rc=0; ( eval "$GATE" ) >/dev/null 2>&1 || rc=$?; printf "%s %s" "$runner" "$rc"')
 
     def setUp(self):
         super().setUp()
