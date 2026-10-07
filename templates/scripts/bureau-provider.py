@@ -208,13 +208,20 @@ def sandbox_gate_only(value):
                and item['reason'].startswith('SANDBOX_GATE:') for item in items)
 
 
-def environment_blocked(value, text, runner):
-    # A NEEDS_HUMAN that names a denied operation ends the stage with 24. A Codex
-    # result whose needs-human list is SANDBOX_GATE only goes on to the shell:
-    # implement-pipeline.sh runs repo.test_command outside the sandbox and that
-    # result decides. A Claude result is read as before.
+def qa_sandbox_gate_only(value):
+    # QA has no needs-human array: coverage_notes carries the sandbox diagnosis.
+    return (isinstance(value, dict) and value.get('status') == 'NEEDS_HUMAN'
+            and isinstance(value.get('coverage_notes'), str)
+            and value['coverage_notes'].startswith('SANDBOX_GATE:'))
+
+
+def environment_blocked(value, text, runner, stage):
+    # A NEEDS_HUMAN that names a denied operation ends the stage with 24. Codex
+    # implement and QA sandbox-only results go on to their shell gates, where
+    # the suite outside the sandbox decides. Claude is read as before.
     if not value or value.get('status') != 'NEEDS_HUMAN': return False
-    if runner == 'codex' and sandbox_gate_only(value): return False
+    if runner == 'codex' and stage == 'implement' and sandbox_gate_only(value): return False
+    if runner == 'codex' and stage == 'qa' and qa_sandbox_gate_only(value): return False
     return bool(re.search(r'operation not permitted|permission denied|sandbox denied', text, re.I))
 
 
@@ -368,7 +375,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
         validate(value, json.loads(schema.read_text()))
         text = json.dumps(value)
     value = structured(text)
-    if environment_blocked(value, text, runner):
+    if environment_blocked(value, text, runner, options['stage']):
         return 24, '', dict(outcome='environment')
     metadata = dict(outcome='complete', provider=runner, usage=usage, total_cost_usd=cost, duration_seconds=time.monotonic()-started)
     if options['cost_tracking']:

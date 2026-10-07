@@ -225,6 +225,13 @@ else
 
   NEGATIVE_CONSTRAINTS_BODY=$(build_negative_constraints)
 
+  # Codex needs a sandbox diagnosis the shell can reconcile with Phase 3.
+  # Claude gets no note: its prompt stays byte for byte as before.
+  if [ "$(resolve_runner_for_stage qa)" = codex ]; then
+    SANDBOX_NOTE="Sandbox: this turn runs inside the Codex sandbox, where binding or listening on a socket, network access and the per-user temp directory can be denied. The test output above comes from the shell outside the sandbox. A test that fails inside the sandbox only for such a reason is not a test failure. Never change, skip or deselect a test to get around the sandbox. If the sandbox is the only thing keeping you from confirming the suite, report status NEEDS_HUMAN with coverage_notes beginning SANDBOX_GATE: and naming the tests and the denied operation. The shell's final run outside the sandbox then decides GREEN or RED. A correctness bug, or a harness that is broken outside the sandbox, stays NEEDS_HUMAN without the prefix."
+    NEGATIVE_CONSTRAINTS_BODY+=$'\n\n'"$SANDBOX_NOTE"
+  fi
+
   QA_RESULT=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-qa.schema.json" "You are the QA agent for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
 
 $SPEC_CONTEXT
@@ -286,12 +293,26 @@ fi
 STATUS=$(parse_claude_json "$QA_RESULT" '.status // empty')
 [ -z "$STATUS" ] && STATUS=$([ "$FINAL_GREEN" = true ] && echo "GREEN" || echo "RED")
 
+# The shell gate after a Codex QA turn. Only an explicit sandbox-only
+# NEEDS_HUMAN lets Phase 3 decide GREEN or RED; other blockers stay held.
+QA_SANDBOX_GATE_LINE=""
+if [ "$(resolve_runner_for_stage qa)" = codex ] && codex_qa_sandbox_gate_only "$QA_RESULT"; then
+  STATUS=$([ "$FINAL_GREEN" = true ] && echo "GREEN" || echo "RED")
+  QA_SANDBOX_GATE_LINE="shell gate outside the Codex sandbox $([ "$FINAL_GREEN" = true ] && echo green || echo red): QA continues as $STATUS"
+  echo "  $QA_SANDBOX_GATE_LINE"
+fi
+
 # Claude's self-reported status and the objective suite result must agree; if
 # they don't, the suite is the oracle.
 if [ "$FINAL_GREEN" = true ] && [ "$STATUS" = "RED" ]; then STATUS="GREEN"; fi
 if [ "$FINAL_GREEN" = false ] && [ "$STATUS" = "GREEN" ]; then STATUS="RED"; fi
 
 SUMMARY=$(parse_claude_json "$QA_RESULT" '.coverage_notes // "no notes"')
+if [ -n "${QA_SANDBOX_GATE_LINE:-}" ]; then
+  SUMMARY="$QA_SANDBOX_GATE_LINE
+
+$SUMMARY"
+fi
 
 # The squash-range check, the same one the implement stage runs before its
 # hand-off: after the push above, so this stage's work is already on origin,
