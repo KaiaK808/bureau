@@ -129,13 +129,14 @@ assert_eq 0 "$(test_runs)" 'missing test command does not promote'
 assert_calls_include 'repo.test_command is empty: NEEDS_HUMAN stays' 'missing-command decision in comment'
 teardown
 
-# No commits beyond origin/main: the spec fixture (untracked after sandbox_init,
-# so the shell's commit step would otherwise commit it) is committed, origin/main
-# and the branch on origin move to that head, and the fake Codex changes nothing.
-# Without the commits floor in part 1 the run would be promoted and the test
-# command would run once (and fail on the missing feature).
+# No commits beyond origin/main: everything setup leaves untracked (the spec
+# fixture and this test's .gitignore, which the shell's commit step would
+# otherwise commit) is committed, origin/main and the branch on origin move to
+# that head, and the fake Codex changes nothing. Without the commits floor in
+# part 1 the run would be promoted and the test command would run once (and
+# fail on the missing feature).
 setup
-git -C "$SANDBOX" add specs
+git -C "$SANDBOX" add -A
 git -C "$SANDBOX" commit -q -m 'spec fixture'
 git -C "$SANDBOX" push -q origin HEAD:main HEAD:test-branch
 export FAKE_CODEX_NO_CHANGE=1
