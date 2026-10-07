@@ -129,6 +129,19 @@ assert_green
 assert_decision_first 'shell gate outside the Codex sandbox green: QA continues as GREEN'
 teardown
 
+# The squash-range check still holds the ticket after the gate decided GREEN:
+# a CI suppressor (the first entry of the marker list) in an earlier commit.
+setup
+printf 'x\n' > "$SANDBOX/earlier.txt"
+git -C "$SANDBOX" add earlier.txt
+git -C "$SANDBOX" commit -qm "TEAM-123: earlier work $(head -n 1 "$REPO_ROOT/templates/scripts/ci-skip-markers.txt")"
+git -C "$SANDBOX" push -q origin HEAD
+run_pipeline qa-pipeline.sh TEAM-123
+assert_halted
+assert_match 'shell gate outside the Codex sandbox green: QA continues as GREEN' "$LAST_STDOUT" 'the gate decided before the squash check'
+assert_eq 2 "$(test_runs)" 'the squash hold does not rerun the suite'
+teardown
+
 # Negative controls use the same cases with one production decision removed.
 setup
 python3 - "$SCRIPTS_DIR/qa-pipeline.sh" <<'PY'

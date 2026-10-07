@@ -218,7 +218,9 @@ def qa_sandbox_gate_only(value):
 def environment_blocked(value, text, runner, stage):
     # A NEEDS_HUMAN that names a denied operation ends the stage with 24. Codex
     # implement and QA sandbox-only results go on to their shell gates, where
-    # the suite outside the sandbox decides. Claude is read as before.
+    # the suite outside the sandbox decides. Claude is read as before. Only the
+    # implement schema has a notes.needs_human list, so that exception is scoped
+    # to implement on purpose; QA carries its diagnosis in coverage_notes.
     if not value or value.get('status') != 'NEEDS_HUMAN': return False
     if runner == 'codex' and stage == 'implement' and sandbox_gate_only(value): return False
     if runner == 'codex' and stage == 'qa' and qa_sandbox_gate_only(value): return False
