@@ -6,19 +6,23 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+## [3.3.0-rc.1] - 2026-10-07
+
+First release candidate for Bureau v3.3.0, published as a GitHub prerelease; v3.2.1 stays the stable release, marked as latest, until v3.3.0 is published. v3.3 is a minor release on v3.2.1 with one pull request ([#60](https://github.com/KaiaK808/bureau/pull/60)): a shell gate lets Codex implement runs blocked only by the sandbox finish when the full project test command passes outside it, and Codex calls without `TMPDIR` get a private directory under `/tmp`. The v3 exit-code contract stays; no exit code is new. Claude runs are unchanged. Acceptance in an installation is the next real Codex implement run and is still pending at tagging. See the [v3.3.0-rc.1 release notes](docs/release-notes.md) for validation and known limitations.
+
 ### Added
 
-- Codex implementation turns can report sandbox-only test blockers with the `SANDBOX_GATE:` reason prefix in a non-empty `notes.needs_human` array. With every reason prefixed, a configured `repo.test_command` and commits beyond `origin/main`, the shell treats the run as COMPLETE before the post-implement hook, then runs the test command once outside the Codex sandbox after the final push, without Bureau secrets. Green hands off to QA or Build Review; red keeps the ticket labelled `needs-human`. Mixed or malformed reasons never promote; hook and squash-range failures keep their existing handling. The shell reader accepts only a single JSON object or the cost envelope holding it, without fenced JSON or partial reads. See the [sandbox gate contract](docs/provider-runtime.md#codex-implementation-sandbox-gate).
+- Codex implementation turns can report sandbox-only test blockers with the `SANDBOX_GATE:` reason prefix in a non-empty `notes.needs_human` array. With every reason prefixed, a configured `repo.test_command` and commits beyond `origin/main`, the shell treats the run as COMPLETE before the post-implement hook, then runs the test command once outside the Codex sandbox after the final push, without Bureau secrets. Green hands off to QA or Build Review; red keeps the ticket labelled `needs-human`. Mixed or malformed reasons never promote; hook and squash-range failures keep their existing handling. The shell reader accepts only a single JSON object or the cost envelope holding it, without fenced JSON or partial reads. See the [sandbox gate contract](docs/provider-runtime.md#codex-implementation-sandbox-gate). ([#60](https://github.com/KaiaK808/bureau/pull/60))
 
 ### Changed
 
-- A Codex provider call whose child environment has no `TMPDIR` gets a private `bureau-codex-*` directory directly under resolved `/tmp`, independent of `TEMP` and `TMP`. Allocation follows the signal handlers; cleanup follows the child on completion, timeout, interruption and exceptions. Removal failures are reported without failing the call. An existing `TMPDIR` passes through unchanged; Claude prompts, environments, result handling and exit codes retain their previous behaviour.
+- A Codex provider call whose child environment has no `TMPDIR` gets a private `bureau-codex-*` directory directly under resolved `/tmp`, independent of `TEMP` and `TMP`. Allocation follows the signal handlers; cleanup follows the child on completion, timeout, interruption and exceptions. Removal failures are reported without failing the call. An existing `TMPDIR` passes through unchanged; Claude prompts, environments, result handling and exit codes retain their previous behaviour. ([#60](https://github.com/KaiaK808/bureau/pull/60))
 
-**Upgrade:** update the source skill and resync the scripts scope as one set (`implement-pipeline.sh`, `bureau-config.sh` and `bureau-provider.py` changed); keep `repo.test_command` configured with the full project gate. No configuration migration is needed. The prefix is the Codex turn's own diagnosis: a green run outside the sandbox protects what the test command covers, and QA and review follow as usual.
+**Upgrade:** from v3.2.1 select tag `v3.3.0-rc.1` and resync the scripts scope as one set (`--resync-scripts`; `implement-pipeline.sh`, `bureau-config.sh` and `bureau-provider.py` changed). No configuration migration is needed. For Codex implement, `repo.test_command` must hold the full project gate. Restart queue loops and supervisors after resync and follow [Upgrade to v3.3](docs/migration.md#upgrade-to-v33). From v3.1.0 or older, go through [Upgrade to v3.2](docs/migration.md#upgrade-to-v32) first. The prefix is the Codex turn's own diagnosis: a green run outside the sandbox protects what the test command covers, and QA and review follow as usual.
 
 ## [3.2.1] - 2026-10-06
 
-Patch release on v3.2.0 that removes internal references without behaviour change. Configuration defaults, environment variable names, runtime logic and test fixture data are unchanged. See the [v3.2.1 release notes](docs/release-notes.md) for the patch and the complete upgrade from v3.1.0.
+Patch release on v3.2.0 that removes internal references without behaviour change. Configuration defaults, environment variable names, runtime logic and test fixture data are unchanged. See the [v3.2.1 release notes](docs/release-notes-v3.2.1.md) for the patch and the complete upgrade from v3.1.0.
 
 ### Changed
 
@@ -487,7 +491,8 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.2.1...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.3.0-rc.1...main
+[3.3.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v3.2.1...v3.3.0-rc.1
 [3.2.1]: https://github.com/KaiaK808/bureau/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/KaiaK808/bureau/compare/v3.1.0...v3.2.0
 [3.2.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v3.1.0...v3.2.0-rc.1
