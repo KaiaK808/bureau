@@ -3783,3 +3783,30 @@ parse_claude_json() {
     {if(in_block)b=b $0 "\n"} END{print saved}')
   [ -n "$block" ] && printf '%s' "$block" | jq -r "$filter" 2>/dev/null || true
 }
+
+# codex_sandbox_gate_only RESULT: a non-empty needs-human array, every entry
+# an object with a string reason beginning with SANDBOX_GATE:. The provider
+# schema-validates and re-serialises Codex results, so the shell needs only one
+# JSON object or the cost envelope holding that object as a result string.
+# No fenced-block fallback: slurp the whole input, require one value and keep
+# jq's failure status so a partial jq output must not count as a safe gate.
+codex_sandbox_gate_only() {
+  local parsed
+  parsed=$(printf '%s' "$1" | jq -ers '
+    if length != 1 or (.[0] | type) != "object" then false
+    else
+      .[0] | if has("result") then
+        if (.result | type) == "string" then .result | fromjson else null end
+      else . end
+      | if type != "object" then false
+        elif (.notes | type) != "object" then false
+        else .notes.needs_human
+          | if type != "array" or length == 0 then false
+            else all(.[]; if type != "object" then false
+              elif (.reason | type) != "string" then false
+              else .reason | startswith("SANDBOX_GATE:") end)
+            end
+        end
+    end' 2>/dev/null) || return 1
+  [ "$parsed" = true ]
+}

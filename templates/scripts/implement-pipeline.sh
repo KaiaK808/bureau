@@ -686,6 +686,16 @@ fi
 
 NEGATIVE_CONSTRAINTS=$(build_negative_constraints)
 
+# A Codex turn runs inside the Codex sandbox (workspace-write), where binding a
+# socket and reaching the network are denied. The note tells Codex to report
+# tests that fail only for that reason with the SANDBOX_GATE: prefix, so the
+# shell gate after the loop can decide (codex_sandbox_gate_only). A Claude run
+# gets no note: its prompt stays as it was, byte for byte.
+if [ "$(resolve_runner_for_stage implement)" = codex ]; then
+  SANDBOX_NOTE="Sandbox: this stage runs inside the Codex sandbox, where binding or listening on a socket, network access and the per-user temp directory can be denied. A test that fails only for such a reason (for example PermissionError: [Errno 1] Operation not permitted on bind or listen) is not a code failure. Never change, skip or deselect a test to get around the sandbox. When such failures are the only thing keeping a task open, finish every other task, then report status NEEDS_HUMAN with one notes.needs_human entry per affected task whose reason begins with SANDBOX_GATE: and names the failing tests and the denied operation. After your turn the shell runs repo.test_command outside the sandbox: if it passes, the stage continues as COMPLETE; if it fails, the ticket halts for a human. Any other needs-human reason must not begin with SANDBOX_GATE:."
+  NEGATIVE_CONSTRAINTS+=$'\n\n'"$SANDBOX_NOTE"
+fi
+
 echo "  Found tasks: $TASKS_FILE"
 
 # ─── retry loop ───────────────────────────────────────────────────────────
@@ -1166,6 +1176,30 @@ if [ "$STATUS" = "COMPLETE" ] && [ "$BRANCH_COMMITS_AHEAD" -eq 0 ]; then
 fi
 fi  # end of `if ! use_goal_loop_enabled` wrapper around iter-loop + post-loop overrides
 
+# The shell gate after a Codex turn, part 1. A Codex NEEDS_HUMAN whose every
+# reason carries the SANDBOX_GATE: prefix rests only on tests the sandbox
+# denies (the note in the prompt above). Such a run counts as COMPLETE from
+# here on, so the post-implement hook and the squash-range check below treat
+# it like any finished run; repo.test_command outside the sandbox decides after
+# the final push (part 2). Needs a test command and commits beyond origin/main,
+# the floor the COMPLETE override above keeps. A Claude run never enters here.
+SANDBOX_GATE_PENDING=0
+if [ "$STATUS" = "NEEDS_HUMAN" ] && [ "$(resolve_runner_for_stage implement)" = codex ] \
+   && codex_sandbox_gate_only "$RESULT"; then
+  GATE_COMMITS_AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+  if [ -z "$(bureau_get '.repo.test_command // empty')" ]; then
+    GATE_LINE="needs-human names only SANDBOX_GATE reasons, but repo.test_command is empty: NEEDS_HUMAN stays"
+  elif ! [[ "$GATE_COMMITS_AHEAD" =~ ^[0-9]+$ ]] || ! [ "$GATE_COMMITS_AHEAD" -gt 0 ] 2>/dev/null; then
+    GATE_LINE="needs-human names only SANDBOX_GATE reasons, but the branch has no commits beyond origin/main: NEEDS_HUMAN stays"
+  else
+    STATUS="COMPLETE"
+    SANDBOX_GATE_PENDING=1
+    GATE_LINE="needs-human names only SANDBOX_GATE reasons: treated as COMPLETE until the shell gate outside the Codex sandbox decides"
+  fi
+  echo "  $GATE_LINE"
+  ITER_LOG+="  $GATE_LINE"$'\n'
+fi
+
 # The squash-range check over the finished state, for both paths, before
 # anything is handed on (check_squash_range in bureau-config.sh). Clean is one
 # extra line. Not clean — a commit message in origin/main..HEAD carries a CI
@@ -1268,7 +1302,27 @@ ${POST_IMPLEMENT_REPORT}
   fi
 fi
 
-if [ "$STATUS" = "COMPLETE" ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then
+# The shell gate after a Codex turn, part 2 (part 1 above the post-implement
+# hook). repo.test_command runs outside the sandbox, without the Bureau
+# secrets, the same way as the COMPLETE check below, over the pushed state.
+# Green, and the stage goes on as COMPLETE (the check below then does not run
+# the suite a second time); red, and the run is NEEDS_HUMAN again, with the
+# result in the summary comment. A status the hook or the squash-range check
+# set in between (POST_IMPLEMENT_FAILED, CI_MARKER) halts as it would anyway.
+if [ "$SANDBOX_GATE_PENDING" = 1 ] && [ "$STATUS" = "COMPLETE" ]; then
+  TEST_COMMAND=$(bureau_get '.repo.test_command // empty')
+  echo "  running repo.test_command outside the Codex sandbox (needs-human named only SANDBOX_GATE reasons)"
+  if [ -n "$TEST_COMMAND" ] && bureau_untrusted_env bash --noprofile --norc -c "$TEST_COMMAND"; then
+    GATE_LINE="shell gate outside the Codex sandbox green: the run continues as COMPLETE"
+  else
+    STATUS="NEEDS_HUMAN"
+    GATE_LINE="shell gate outside the Codex sandbox red: NEEDS_HUMAN stays"
+  fi
+  echo "  $GATE_LINE"
+  ITER_LOG+="  $GATE_LINE"$'\n'
+fi
+
+if [ "$STATUS" = "COMPLETE" ] && [ "$SANDBOX_GATE_PENDING" != 1 ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then
   TEST_COMMAND=$(bureau_get '.repo.test_command // empty')
   [ -n "$TEST_COMMAND" ] || { echo 'Codex completion needs repo.test_command for independent verification.' >&2; exit 24; }
   # Branch code: without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).

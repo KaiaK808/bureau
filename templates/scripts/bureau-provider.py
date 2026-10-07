@@ -197,6 +197,41 @@ def structured(text):
     return None
 
 
+def sandbox_gate_only(value):
+    # Same reading as codex_sandbox_gate_only in bureau-config.sh: at least one
+    # notes.needs_human entry, and every reason a string beginning with
+    # SANDBOX_GATE: (tests the Codex sandbox denies, nothing else).
+    notes = value.get('notes') if isinstance(value, dict) else None
+    items = notes.get('needs_human') if isinstance(notes, dict) else None
+    if not isinstance(items, list) or not items: return False
+    return all(isinstance(item, dict) and isinstance(item.get('reason'), str)
+               and item['reason'].startswith('SANDBOX_GATE:') for item in items)
+
+
+def environment_blocked(value, text, runner):
+    # A NEEDS_HUMAN that names a denied operation ends the stage with 24. A Codex
+    # result whose needs-human list is SANDBOX_GATE only goes on to the shell:
+    # implement-pipeline.sh runs repo.test_command outside the sandbox and that
+    # result decides. A Claude result is read as before.
+    if not value or value.get('status') != 'NEEDS_HUMAN': return False
+    if runner == 'codex' and sandbox_gate_only(value): return False
+    return bool(re.search(r'operation not permitted|permission denied|sandbox denied', text, re.I))
+
+
+def codex_tmpdir(runner, environ, repo):
+    # Without TMPDIR, git on macOS asks for the per-user temp directory, which
+    # the Codex sandbox can deny. Only the child environment gets a directory
+    # of its own; run() allocates after installing stop handlers and removes
+    # it after the child finishes. An explicit resolved /tmp keeps TEMP or TMP
+    # from moving it into the worktree, where a commit could pick it up.
+    if runner != 'codex' or environ.get('TMPDIR'): return None
+    base = Path('/tmp').resolve()
+    if base == Path(repo).resolve() or Path(repo).resolve() in base.parents: return None
+    path = tempfile.mkdtemp(prefix='bureau-codex-', dir=str(base))
+    environ['TMPDIR'] = path
+    return path
+
+
 def validate(value, schema):
     # Small schema validator for the adapter's object/array/scalar contracts.
     kind = schema.get('type')
@@ -258,31 +293,47 @@ def run(options, prompt, system, repo, evidence, schema=None):
     # Left ignored when the run started under nohup, as in the runtime.
     if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN: signal.signal(signal.SIGHUP, stop)
     signal.signal(signal.SIGALRM, lambda signum, frame: kill(signal.SIGKILL))
-    started = time.monotonic()
-    with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
-    with (evidence/'stdout.log').open('wb') as stdout, (evidence/'stderr.log').open('wb') as stderr:
-        child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, start_new_session=True,
-                                 env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner))
-        if interrupted: kill(interrupted)
-        timed_out = False
-        try:
-            child.communicate(prompt.encode(), timeout=options['timeout'])
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            kill(signal.SIGTERM)
-            try: child.communicate(timeout=5)
-            except subprocess.TimeoutExpired: pass
-        finally:
+    tempdir = None
+    try:
+        child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)
+        tempdir = codex_tmpdir(runner, child_env, repo)
+        started = time.monotonic()
+        with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
+        with (evidence/'stdout.log').open('wb') as stdout, (evidence/'stderr.log').open('wb') as stderr:
+            child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, start_new_session=True,
+                                     env=child_env)
+            if interrupted: kill(interrupted)
+            timed_out = False
             try:
-                if timed_out or interrupted:
-                    # The leader can exit while descendants ignore the signal.
-                    # Finish the entire group before returning to the owner.
+                child.communicate(prompt.encode(), timeout=options['timeout'])
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                kill(signal.SIGTERM)
+                try: child.communicate(timeout=5)
+                except subprocess.TimeoutExpired: pass
+            finally:
+                try:
+                    if timed_out or interrupted:
+                        # The leader can exit while descendants ignore the signal.
+                        # Finish the entire group before returning to the owner.
+                        kill(signal.SIGKILL)
+                        child.communicate()
+                finally:
+                    signal.setitimer(signal.ITIMER_REAL, 0)
+            if timed_out:
+                return 124, '', dict(outcome='timeout', duration_seconds=time.monotonic()-started)
+    finally:
+        if tempdir:
+            try:
+                # A failure after Popen must also finish the child before its
+                # temporary directory is removed. Normal exits already waited.
+                if child and child.poll() is None:
                     kill(signal.SIGKILL)
                     child.communicate()
             finally:
                 signal.setitimer(signal.ITIMER_REAL, 0)
-        if timed_out:
-            return 124, '', dict(outcome='timeout', duration_seconds=time.monotonic()-started)
+                try: shutil.rmtree(tempdir)
+                except OSError as exc: note('Bureau provider: could not remove ' + tempdir + ': ' + str(exc))
     if interrupted: return 130, '', dict(outcome='cancelled')
     stderr = (evidence/'stderr.log').read_text(errors='replace')
     stdout = (evidence/'stdout.log').read_text(errors='replace')
@@ -317,7 +368,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
         validate(value, json.loads(schema.read_text()))
         text = json.dumps(value)
     value = structured(text)
-    if value and value.get('status') == 'NEEDS_HUMAN' and re.search(r'operation not permitted|permission denied|sandbox denied', text, re.I):
+    if environment_blocked(value, text, runner):
         return 24, '', dict(outcome='environment')
     metadata = dict(outcome='complete', provider=runner, usage=usage, total_cost_usd=cost, duration_seconds=time.monotonic()-started)
     if options['cost_tracking']:
