@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1a1812cd7dfe3af00705566c3f582749f84f601294edcf972c2e9a473cd84ae0">
+<meta name="bureau-source-sha256" content="3fb6128eeecb3583684f77ea254c0da7f002074b0aad02f66f3d6215b7dbce1f">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -209,7 +209,41 @@ outside the repository regardless of <code>TEMP</code> or
 the child on completion, timeout, interruption or exceptions. The
 provider's own environment is unchanged. Removal failures are reported
 without failing the run. An existing <code>TMPDIR</code> passes through
-unchanged; Claude gets no added directory.</p></main>
+unchanged; Claude gets no added directory.</p>
+<h2 id="codex-qa-sandbox-gate">Codex QA sandbox gate</h2>
+<p>When the QA runner resolves to Codex (including
+<code>BUREAU_RUNNER_QA=codex</code>), its prompt notes that socket
+bind/listen, network access and the per-user temporary directory can be
+denied inside the sandbox. The initial test output in the prompt comes
+from the shell outside it. Never change, skip or deselect a test to
+bypass the sandbox. If the sandbox alone prevents confirmation of the
+suite, report status <code>NEEDS_HUMAN</code> with string
+<code>coverage_notes</code> beginning with <code>SANDBOX_GATE:</code>
+and naming the tests and denied operation. A correctness bug or a
+harness broken outside the sandbox stays NEEDS_HUMAN without the prefix.
+QA uses its existing schema; there is no needs-human array.</p>
+<p>The provider passes a qualifying Codex QA result to the shell even
+when it contains “Operation not permitted”, instead of ending with 24.
+The shell accepts exactly one JSON object or a cost envelope whose
+<code>result</code> string holds exactly one object with status
+<code>NEEDS_HUMAN</code> and the prefixed notes; fenced JSON, trailing
+garbage, multiple values, missing or non-string notes and prefixes
+elsewhere in the notes do not qualify. After publication, the existing
+Phase 3 test run outside the sandbox via
+<code>bureau_untrusted_env bash --noprofile --norc -o pipefail -c</code>
+decides GREEN or RED: green moves to Build Review, red returns to Build,
+neither adds <code>needs-human</code>. No extra test run is added. The
+shell echoes the decision and puts it first in the summary comment; a
+later squash-range failure still sets NEEDS_HUMAN and puts its report
+first. Unprefixed blockers retain their existing handling even with a
+passing suite. Claude prompts and behaviour, other stages and exit codes
+stay unchanged.</p>
+<p>Resync <code>qa-pipeline.sh</code>, <code>bureau-config.sh</code> and
+<code>bureau-provider.py</code> together and restart queue loops and
+supervisors. Keep <code>repo.test_command</code> set to the full project
+gate: the prefix is the agent's diagnosis, and the outside run covers
+only that command's tests. Full-stage harness tests and mutation
+controls run in CI; live Codex QA acceptance remains pending.</p></main>
 </div>
 </body>
 </html>

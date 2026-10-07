@@ -3812,3 +3812,22 @@ codex_sandbox_gate_only() {
     end' 2>/dev/null) || return 1
   [ "$parsed" = true ]
 }
+
+# codex_qa_sandbox_gate_only RESULT: QA's NEEDS_HUMAN with string coverage_notes
+# beginning with SANDBOX_GATE:. The same strict single-object/envelope reading
+# as codex_sandbox_gate_only, below parse_claude_json for the stage harness.
+codex_qa_sandbox_gate_only() {
+  local parsed
+  parsed=$(printf '%s' "$1" | jq -ers '
+    if length != 1 or (.[0] | type) != "object" then false
+    else
+      .[0] | if has("result") then
+        if (.result | type) == "string" then .result | fromjson else null end
+      else . end
+      | if type != "object" then false
+        elif .status != "NEEDS_HUMAN" then false
+        elif (.coverage_notes | type) != "string" then false
+        else .coverage_notes | startswith("SANDBOX_GATE:") end
+    end' 2>/dev/null) || return 1
+  [ "$parsed" = true ]
+}

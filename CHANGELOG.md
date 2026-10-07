@@ -6,6 +6,12 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Added
+
+- Codex QA turns can report sandbox-only test blockers with status `NEEDS_HUMAN` and string `coverage_notes` beginning with `SANDBOX_GATE:`. The provider passes that result to the shell even when it names a denied operation; the existing final test run outside the sandbox decides GREEN (Build Review) or RED (Build), without a `needs-human` label or an extra test run. The decision leads the summary comment. The strict reader accepts one JSON object or the cost envelope holding it; malformed results, fenced JSON and unprefixed blockers never qualify. The squash-range check can still hold the ticket for a human. Claude prompts and behaviour, the QA schema and exit codes stay unchanged. See the [QA sandbox gate contract](docs/provider-runtime.md#codex-qa-sandbox-gate).
+
+**Upgrade:** update the source skill and resync the scripts scope as one set (`--resync-scripts`; `qa-pipeline.sh`, `bureau-config.sh` and `bureau-provider.py` changed), then restart queue loops and supervisors. No configuration or schema migration is needed. Keep `repo.test_command` configured with the full project gate: the prefix is the Codex turn's own diagnosis, and the outside run protects only what that command covers. Full-stage harness tests and mutation controls are CI checks; live Codex QA acceptance remains pending.
+
 ## [3.3.0-rc.1] - 2026-10-07
 
 First release candidate for Bureau v3.3.0, published as a GitHub prerelease; v3.2.1 stays the stable release, marked as latest, until v3.3.0 is published. v3.3 is a minor release on v3.2.1 with one pull request ([#60](https://github.com/KaiaK808/bureau/pull/60)): a shell gate lets Codex implement runs blocked only by the sandbox finish when the full project test command passes outside it, and Codex calls without `TMPDIR` get a private directory under `/tmp`. The v3 exit-code contract stays; no exit code is new. Claude runs are unchanged. Acceptance in an installation is the next real Codex implement run and is still pending at tagging. See the [v3.3.0-rc.1 release notes](docs/release-notes.md) for validation and known limitations.

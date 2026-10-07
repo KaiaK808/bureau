@@ -163,13 +163,58 @@ p.run=record_environment
                 value=self.sandbox_result(prefix+'Operation not permitted on bind')
                 for text in ('Operation not permitted','Permission denied','sandbox denied'):
                     with self.subTest(runner=runner,prefix=prefix,text=text):
-                        self.assertIs(p.environment_blocked(value,text,runner),runner=='claude' or not prefix)
-                self.assertFalse(p.environment_blocked(value,'code failure',runner))
-                self.assertFalse(p.environment_blocked({**value,'status':'COMPLETE'},'Permission denied',runner))
+                        self.assertIs(p.environment_blocked(value,text,runner,'implement'),runner=='claude' or not prefix)
+                self.assertFalse(p.environment_blocked(value,'code failure',runner,'implement'))
+                self.assertFalse(p.environment_blocked({**value,'status':'COMPLETE'},'Permission denied',runner,'implement'))
         mixed=self.sandbox_result()
         mixed['notes']['needs_human'].append({'reason':'Permission denied reading a required file'})
-        self.assertTrue(p.environment_blocked(mixed,json.dumps(mixed),'codex'))
-        self.assertFalse(p.environment_blocked(None,'Permission denied','codex'))
+        self.assertTrue(p.environment_blocked(mixed,json.dumps(mixed),'codex','implement'))
+        self.assertFalse(p.environment_blocked(None,'Permission denied','codex','implement'))
+
+    def test_qa_sandbox_gate_only_requires_needs_human_and_a_string_prefix(self):
+        good={'status':'NEEDS_HUMAN','coverage_notes':'SANDBOX_GATE: denied bind'}
+        cases=[(good,True),(None,False),([],False),({},False),
+               ({'coverage_notes':good['coverage_notes']},False),({'status':'NEEDS_HUMAN'},False)]
+        for status in ('GREEN','RED','',None,42,['NEEDS_HUMAN']):
+            cases.append(({**good,'status':status},False))
+        for notes in (None,42,[],{},False,'','other blocker',' SANDBOX_GATE: bind','other; SANDBOX_GATE: bind'):
+            cases.append(({**good,'coverage_notes':notes},False))
+        for value,expected in cases:
+            with self.subTest(value=value): self.assertIs(p.qa_sandbox_gate_only(value),expected)
+
+    def test_environment_blocked_keeps_the_qa_exception_stage_and_runner_specific(self):
+        for runner in ('codex','claude'):
+            for prefix in ('SANDBOX_GATE: ',''):
+                value={'status':'NEEDS_HUMAN','coverage_notes':prefix+'Operation not permitted on bind'}
+                for text in ('Operation not permitted','Permission denied','sandbox denied'):
+                    with self.subTest(runner=runner,prefix=prefix,text=text):
+                        self.assertIs(p.environment_blocked(value,text,runner,'qa'),runner=='claude' or not prefix)
+                self.assertFalse(p.environment_blocked(value,'code failure',runner,'qa'))
+                self.assertFalse(p.environment_blocked({**value,'status':'GREEN'},'Permission denied',runner,'qa'))
+        qa={'status':'NEEDS_HUMAN','coverage_notes':'SANDBOX_GATE: Permission denied on bind'}
+        for stage in ('implement','spec_review','code_review','copy'):
+            with self.subTest(stage=stage):
+                self.assertTrue(p.environment_blocked(qa,json.dumps(qa),'codex',stage))
+        self.assertTrue(p.environment_blocked(self.sandbox_result(),'Operation not permitted','codex','qa'))
+        self.assertFalse(p.environment_blocked(None,'Permission denied','codex','qa'))
+
+    def test_codex_qa_sandbox_result_reaches_shell_but_unprefixed_blocker_exits_24(self):
+        schema=ROOT/'templates/scripts/bureau-qa.schema.json'
+        value={'status':'NEEDS_HUMAN','tests_added':0,'tests_failing':0,
+               'coverage_notes':'SANDBOX_GATE: socket test: Operation not permitted on bind'}
+        result=self.run_provider('--stage','qa','--schema',str(schema),FINAL=json.dumps(value))
+        self.assertEqual(json.loads(result.stdout),value)
+        self.config.write_text('{"agents":{"runner":"codex"},"session":{"cost_tracking":true}}')
+        result=self.run_provider('--stage','qa','--schema',str(schema),FINAL=json.dumps(value))
+        self.assertEqual(json.loads(json.loads(result.stdout)['result']),value)
+        plain={**value,'coverage_notes':'socket test: Operation not permitted on bind'}
+        result=self.run_provider('--stage','qa','--schema',str(schema),FINAL=json.dumps(plain),code=24)
+        self.assertEqual(result.stdout,'')
+        self.assertEqual(self.evidence()[1]['outcome'],'environment')
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        result=self.run_provider('--stage','qa','--schema',str(schema),FINAL=json.dumps(value),code=24)
+        self.assertEqual(result.stdout,'')
+        self.assertEqual(self.evidence()[1]['outcome'],'environment')
 
     def test_codex_sandbox_result_reaches_shell_but_unprefixed_blocker_exits_24(self):
         self.env.pop('TMPDIR',None)
