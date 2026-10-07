@@ -21,10 +21,10 @@ Codex support is implemented and covered by local fixtures. Before unattended ad
 
 ## Install
 
-Install the stable v3.2.1 source, keep one clone and expose it to the assistants you use:
+Install the stable v3.3.0 source, keep one clone and expose it to the assistants you use:
 
 ```sh
-git clone --branch v3.2.1 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
+git clone --branch v3.3.0 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
 mkdir -p "$HOME/.agents/skills"
 ln -s "$HOME/bureau-init" "$HOME/.agents/skills/bureau-init"
 # Optional Claude Code entry point:
@@ -90,16 +90,16 @@ The [background operations reference](references/operations.md) covers these mod
 
 ## Update and migrate
 
-Select `v3.2.1` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release) and refresh skill discovery. From v3.2.0, a resync is optional because the scripts and interfaces change only in comments, help texts and example values; installers will report those files as updates. From v3.1.0 or older, resync **each adopting repository** following [Upgrade to v3.2](docs/migration.md#upgrade-to-v32) and the earlier notes for your version. In Claude Code, after loading the new source skill:
+Select `v3.3.0` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release) and refresh skill discovery. From v3.2.1, resync the **scripts scope as one set in each adopting repository**, then restart queue loops and supervisors and follow [Upgrade to v3.3](docs/migration.md#upgrade-to-v33). From v3.3.0-rc.2, no resync is needed because the runtime is unchanged; from v3.3.0-rc.1, resync the scripts scope for rc.2's QA changes and restart queue loops and supervisors. There are no file changes beyond what rc.2 had. From v3.1.0 or older, go through [Upgrade to v3.2](docs/migration.md#upgrade-to-v32) and the earlier notes first, including the scripts and interfaces scopes. In Claude Code, after loading the new source skill:
 
 ```text
-/bureau-init --resync-interfaces --resync-scripts --target both
+/bureau-init --resync-scripts --target both
 ```
 
 In a Codex app task, request the same scopes with:
 
 ```text
-$bureau-init --resync-interfaces --resync-scripts --target both
+$bureau-init --resync-scripts --target both
 ```
 
 Use `--target claude` to stay Claude-only. Refresh Spec Kit separately with `--resync-speckit --target both`; the existing active integration stays active unless you request a switch. Repos with installed Claude planning workflows also need `--resync-workflows`; script resync does not update them. `--update` is configuration-only. Updating the source clone alone does not change installed project files.
@@ -108,7 +108,7 @@ Pause dispatch and preserve local work first. Resync previews conflicts; one unr
 
 Version 1 configs remain supported. Optional schema-v2 migration preserves existing values, adds the absent legacy runner default and records `model_compatibility: "v1"` to retain model ownership. Its private backup covers configuration only. Installing Codex interfaces does not switch the background runner.
 
-The [v3.2.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.2.1) and [changelog](CHANGELOG.md) list what changes and what adopters must do. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
+The [v3.3.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.3.0) and [changelog](CHANGELOG.md) list what changes and what adopters must do. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
 
 v3 changes the exit-code contract between stages and their drivers and needs configuration set before the resync; see the [v3.0.0 release notes](docs/release-notes-v3.0.0.md) and [Upgrade to v3](docs/migration.md#upgrade-to-v3). v3.0.1 is a patch on v3.0.0 (the merge stage's exit codes and a reused approval; see its [release notes](docs/release-notes-v3.0.1.md)); v3.0.2 is a patch on v3.0.1 (every stage finds the ticket's own spec directory, and `repo.worktree_links` brings a Python `.venv` back into the stage worktrees; see its [release notes](docs/release-notes-v3.0.2.md)). The previous major release is [v2.0.0](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0).
 
@@ -116,9 +116,9 @@ v3.1.0 is a minor release on v3.0.2 and keeps the v3 exit-code contract; branch 
 
 v3.2.0 is a minor release on v3.1.0 and keeps the v3 exit-code contract; stages keep the `.env` keys unexported, remote git runs without branch hooks, implement retries timeouts and pushes failed work, rework receives the newest review or QA findings, queues move past waiting gates, and a hang-up stops the run. An upgrade from v3.1.0 resyncs the scripts and interfaces scopes together, restarts queue loops and supervisors, and follows [Upgrade to v3.2](docs/migration.md#upgrade-to-v32); Git LFS repositories need `repo.remote_git_runs_hooks: true` before resync. See the [v3.2.0 release notes](docs/release-notes-v3.2.0.md) and those of its candidate, [v3.2.0-rc.1](docs/release-notes-v3.2.0-rc.1.md).
 
-v3.2.1 is the current stable release, marked as latest, a patch on v3.2.0 that removes internal references without behaviour change; see its [release notes](docs/release-notes-v3.2.1.md). From v3.2.0 or v3.2.0-rc.1, select `v3.2.1`; a resync is optional to receive the cleaned comments and help texts (installers report those files as updates). The previous stable release is [v3.2.0](https://github.com/KaiaK808/bureau/releases/tag/v3.2.0).
+v3.2.1 is a patch on v3.2.0 that removes internal references without behaviour change; see its [release notes](docs/release-notes-v3.2.1.md). From v3.2.0 or v3.2.0-rc.1, select `v3.2.1`; a resync is optional to receive the cleaned comments and help texts (installers report those files as updates). v3.2.1 followed [v3.2.0](https://github.com/KaiaK808/bureau/releases/tag/v3.2.0).
 
-A second release candidate, [v3.3.0-rc.2](https://github.com/KaiaK808/bureau/releases/tag/v3.3.0-rc.2), dated 2026-10-07, is published as a prerelease for piloting v3.3.0. It adds one pull request ([#62](https://github.com/KaiaK808/bureau/pull/62)) on top of rc.1's [#60](https://github.com/KaiaK808/bureau/pull/60): a shell gate for Codex QA turns blocked only by tests the sandbox denies, alongside the implement gate and private temporary directory for Codex calls without `TMPDIR`; Claude runs and the v3 exit-code contract are unchanged. From v3.3.0-rc.1 or v3.2.1 select tag `v3.3.0-rc.2`, resync the scripts scope as one set, keep `repo.test_command` configured with the full project gate, restart queue loops and supervisors, and follow [Upgrade to v3.3](docs/migration.md#upgrade-to-v33). See its [release notes](docs/release-notes.md) and those of the earlier candidate, [v3.3.0-rc.1](docs/release-notes-v3.3.0-rc.1.md), which stays published as a prerelease. v3.2.1 stays the stable release marked as latest until v3.3.0 is published.
+v3.3.0, dated 2026-10-07, is the current stable release, marked as latest, a minor release on v3.2.1. It contains shell gates for Codex implement ([#60](https://github.com/KaiaK808/bureau/pull/60)) and QA ([#62](https://github.com/KaiaK808/bureau/pull/62)) turns blocked only by tests the sandbox denies, plus private temporary directories for Codex calls without `TMPDIR`; an installation's first real Codex implement turn passed the outside project gate, ended with exit `0` and handed the ticket on to QA. Claude runs and the v3 exit-code contract are unchanged; live QA acceptance remains pending. From v3.2.1 select tag `v3.3.0`, resync the scripts scope as one set, keep `repo.test_command` configured with the full project gate, restart queue loops and supervisors, and follow [Upgrade to v3.3](docs/migration.md#upgrade-to-v33). See its [release notes](docs/release-notes.md) and those of its candidates, [v3.3.0-rc.2](docs/release-notes-v3.3.0-rc.2.md) and [v3.3.0-rc.1](docs/release-notes-v3.3.0-rc.1.md), which stay published as prereleases; runtime, installer, templates and tests are identical to rc.2. The previous stable release is [v3.2.1](https://github.com/KaiaK808/bureau/releases/tag/v3.2.1).
 
 ## Documentation
 

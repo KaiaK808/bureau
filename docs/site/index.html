@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4246beb38de32c721138f923cd42e3b83915a8abbf0b4cebe0b7816154d816bb">
+<meta name="bureau-source-sha256" content="72e724237288514bb573d7daef90033238b5e80b869301e8b3ee57ef89e2162e">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -69,9 +69,9 @@ unattended adoption, qualify a representative live ticket in your
 repository. See the <a href="codex-acceptance.html">acceptance
 record</a> for verified coverage and remaining live checks.</p>
 <h2 id="install">Install</h2>
-<p>Install the stable v3.2.1 source, keep one clone and expose it to the
+<p>Install the stable v3.3.0 source, keep one clone and expose it to the
 assistants you use:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.2.1 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.3.0 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills&quot;</span></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills/bureau-init&quot;</span></span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optional Claude Code entry point:</span></span>
@@ -233,20 +233,23 @@ controls. <code>agents.max_concurrent_issues: 1</code> prevents Spec
 from admitting another issue while work is in flight; it does not
 replace ownership checks or schedule validation.</p>
 <h2 id="update-and-migrate">Update and migrate</h2>
-<p>Select <code>v3.2.1</code> in the source clone that supplies
+<p>Select <code>v3.3.0</code> in the source clone that supplies
 <code>bureau-init</code> using the <a
 href="migration.html#select-the-source-release">source-update
-instructions</a> and refresh skill discovery. From v3.2.0, a resync is
-optional because the scripts and interfaces change only in comments,
-help texts and example values; installers will report those files as
-updates. From v3.1.0 or older, resync <strong>each adopting
-repository</strong> following <a
+instructions</a> and refresh skill discovery. From v3.2.1, resync the
+<strong>scripts scope as one set in each adopting repository</strong>,
+then restart queue loops and supervisors and follow <a
+href="migration.html#upgrade-to-v33">Upgrade to v3.3</a>. From
+v3.3.0-rc.2, no resync is needed because the runtime is unchanged; from
+v3.3.0-rc.1, resync the scripts scope for rc.2's QA changes and restart
+queue loops and supervisors. There are no file changes beyond what rc.2
+had. From v3.1.0 or older, go through <a
 href="migration.html#upgrade-to-v32">Upgrade to v3.2</a> and the
-earlier notes for your version. In Claude Code, after loading the new
-source skill:</p>
-<pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
+earlier notes first, including the scripts and interfaces scopes. In
+Claude Code, after loading the new source skill:</p>
+<pre class="text"><code>/bureau-init --resync-scripts --target both</code></pre>
 <p>In a Codex app task, request the same scopes with:</p>
-<pre class="text"><code>$bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
+<pre class="text"><code>$bureau-init --resync-scripts --target both</code></pre>
 <p>Use <code>--target claude</code> to stay Claude-only. Refresh Spec
 Kit separately with <code>--resync-speckit --target both</code>; the
 existing active integration stays active unless you request a switch.
@@ -266,7 +269,7 @@ records <code>model_compatibility: "v1"</code> to retain model
 ownership. Its private backup covers configuration only. Installing
 Codex interfaces does not switch the background runner.</p>
 <p>The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">v3.2.1
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0">v3.3.0
 release</a> and <a href="../../CHANGELOG.md">changelog</a> list what changes
 and what adopters must do. v2.0.0 was the first tagged release; earlier
 source installs were untagged. The <a href="releases.html">release
@@ -311,31 +314,32 @@ repositories need <code>repo.remote_git_runs_hooks: true</code> before
 resync. See the <a href="release-notes-v3.2.0.html">v3.2.0 release
 notes</a> and those of its candidate, <a
 href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>.</p>
-<p>v3.2.1 is the current stable release, marked as latest, a patch on
-v3.2.0 that removes internal references without behaviour change; see
-its <a href="release-notes-v3.2.1.html">release notes</a>. From
-v3.2.0 or v3.2.0-rc.1, select <code>v3.2.1</code>; a resync is optional
-to receive the cleaned comments and help texts (installers report those
-files as updates). The previous stable release is <a
+<p>v3.2.1 is a patch on v3.2.0 that removes internal references without
+behaviour change; see its <a href="release-notes-v3.2.1.html">release
+notes</a>. From v3.2.0 or v3.2.0-rc.1, select <code>v3.2.1</code>; a
+resync is optional to receive the cleaned comments and help texts
+(installers report those files as updates). v3.2.1 followed <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">v3.2.0</a>.</p>
-<p>A second release candidate, <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0-rc.2">v3.3.0-rc.2</a>,
-dated 2026-10-07, is published as a prerelease for piloting v3.3.0. It
-adds one pull request (<a
-href="https://github.com/KaiaK808/bureau/pull/62">#62</a>) on top of
-rc.1's <a href="https://github.com/KaiaK808/bureau/pull/60">#60</a>: a
-shell gate for Codex QA turns blocked only by tests the sandbox denies,
-alongside the implement gate and private temporary directory for Codex
-calls without <code>TMPDIR</code>; Claude runs and the v3 exit-code
-contract are unchanged. From v3.3.0-rc.1 or v3.2.1 select tag
-<code>v3.3.0-rc.2</code>, resync the scripts scope as one set, keep
-<code>repo.test_command</code> configured with the full project gate,
-restart queue loops and supervisors, and follow <a
+<p>v3.3.0, dated 2026-10-07, is the current stable release, marked as
+latest, a minor release on v3.2.1. It contains shell gates for Codex
+implement (<a href="https://github.com/KaiaK808/bureau/pull/60">#60</a>)
+and QA (<a href="https://github.com/KaiaK808/bureau/pull/62">#62</a>)
+turns blocked only by tests the sandbox denies, plus private temporary
+directories for Codex calls without <code>TMPDIR</code>; an
+installation's first real Codex implement turn passed the outside
+project gate, ended with exit <code>0</code> and handed the ticket on to
+QA. Claude runs and the v3 exit-code contract are unchanged; live QA
+acceptance remains pending. From v3.2.1 select tag <code>v3.3.0</code>,
+resync the scripts scope as one set, keep <code>repo.test_command</code>
+configured with the full project gate, restart queue loops and
+supervisors, and follow <a
 href="migration.html#upgrade-to-v33">Upgrade to v3.3</a>. See its <a
-href="release-notes.html">release notes</a> and those of the earlier
-candidate, <a href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>,
-which stays published as a prerelease. v3.2.1 stays the stable release
-marked as latest until v3.3.0 is published.</p>
+href="release-notes.html">release notes</a> and those of its
+candidates, <a href="release-notes-v3.3.0-rc.2.html">v3.3.0-rc.2</a>
+and <a href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>, which
+stay published as prereleases; runtime, installer, templates and tests
+are identical to rc.2. The previous stable release is <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">v3.2.1</a>.</p>
 <h2 id="documentation">Documentation</h2>
 <table>
 <thead>
