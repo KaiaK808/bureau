@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="7828ca977ffc20d57ab981ba9b1dd08a0e36477461fc04befbe8abb5bcfa6c57">
+<meta name="bureau-source-sha256" content="f1e3395e4e8bf48eb866789d5fa5b0a494f982d3bf62404aaf15f5d4b28e8fb5">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,31 +24,39 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.3.0-rc.1</strong>, dated
-<strong>2026-10-07</strong>, published as a prerelease candidate for
-v3.3.0; v3.2.1 stays the stable release marked as latest until v3.3.0 is
-published. Its <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0-rc.1">GitHub
+<p>This source tree contains <strong>Bureau v3.3.0-rc.2</strong>, dated
+<strong>2026-10-07</strong>, the second release candidate for v3.3.0,
+published as a prerelease; v3.2.1 stays the stable release marked as
+latest until v3.3.0 is published. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0-rc.2">GitHub
 Release</a> records the exact tagged commit; the <a
 href="../../CHANGELOG.md">changelog</a> and <a
 href="release-notes.html">release notes</a> describe the changes and the
-upgrade. v3.3 is a minor release on v3.2.1 with one pull request (<a
-href="https://github.com/KaiaK808/bureau/pull/60">#60</a>): a shell gate
-for Codex implement turns blocked only by tests the sandbox denies, and
-a private temporary directory for Codex calls without
+upgrade. rc.2 adds one pull request (<a
+href="https://github.com/KaiaK808/bureau/pull/62">#62</a>) on top of
+rc.1's <a href="https://github.com/KaiaK808/bureau/pull/60">#60</a>: a
+shell gate for Codex QA turns blocked only by tests the sandbox denies.
+v3.3 is a minor release on v3.2.1 with the implement gate, the QA gate
+and a private temporary directory for Codex calls without
 <code>TMPDIR</code>; Claude runs and the v3 exit-code contract are
-unchanged. From v3.2.1 select tag <code>v3.3.0-rc.1</code>, resync the
-scripts scope as one set, check the full project gate in
-<code>repo.test_command</code> and restart queue loops and supervisors;
-see <a href="migration.html#upgrade-to-v33">Upgrade to v3.3</a>.</p>
-<p>CI on <code>main</code> at <code>0c2f286</code> (the merge of <a
-href="https://github.com/KaiaK808/bureau/pull/60">#60</a>) is green on
-macOS and Ubuntu, all 104 harness tests passed, and an independent
-review found no blocker. Acceptance is an installation's next real Codex
-implement run, still pending at tagging. Release preparation changes
-documentation only; runtime, installer, templates, tests and CI stay at
-that baseline. The final tagged commit is recorded in the GitHub Release
-body.</p>
+unchanged. From v3.3.0-rc.1 or v3.2.1 select tag
+<code>v3.3.0-rc.2</code>, resync the scripts scope as one set, check the
+full project gate in <code>repo.test_command</code> and restart queue
+loops and supervisors; see <a href="migration.html#upgrade-to-v33">Upgrade
+to v3.3</a>.</p>
+<p>The earlier candidate, <a
+href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>, stays published as
+a prerelease; its notes describe the implement gate and private
+temporary directories.</p>
+<p>CI on <code>main</code> at <code>51f713e</code> (the merge of <a
+href="https://github.com/KaiaK808/bureau/pull/62">#62</a>) is green on
+macOS and Ubuntu, all 105 harness tests passed, and an independent
+review found no blocker. Implement acceptance is an installation's next
+real Codex implement run, still pending at tagging. The QA gate has no
+live run yet because no installation runs QA on Codex. Release
+preparation changes documentation only; runtime, installer, templates,
+tests and CI stay at that baseline. The final tagged commit is recorded
+in the GitHub Release body.</p>
 <p>The current stable release, marked as latest, is <strong>Bureau
 v3.2.1</strong>, dated <strong>2026-10-06</strong>. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">GitHub

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e7bea6daefe1fb6f0bafb3bea7984f663aa696c46435c8daff484849e763c633">
+<meta name="bureau-source-sha256" content="4246beb38de32c721138f923cd42e3b83915a8abbf0b4cebe0b7816154d816bb">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -318,19 +318,24 @@ v3.2.0 or v3.2.0-rc.1, select <code>v3.2.1</code>; a resync is optional
 to receive the cleaned comments and help texts (installers report those
 files as updates). The previous stable release is <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">v3.2.0</a>.</p>
-<p>A release candidate, <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0-rc.1">v3.3.0-rc.1</a>,
+<p>A second release candidate, <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0-rc.2">v3.3.0-rc.2</a>,
 dated 2026-10-07, is published as a prerelease for piloting v3.3.0. It
-keeps the v3 exit-code contract and contains one pull request (<a
-href="https://github.com/KaiaK808/bureau/pull/60">#60</a>): a shell gate
-for Codex implement turns blocked only by tests the sandbox denies, and
-a private temporary directory for Codex calls without
-<code>TMPDIR</code>; Claude runs are unchanged. From v3.2.1 resync the
-scripts scope as one set, keep <code>repo.test_command</code> configured
-with the full project gate, restart queue loops and supervisors, and
-follow <a href="migration.html#upgrade-to-v33">Upgrade to v3.3</a>.
-See its <a href="release-notes.html">release notes</a>. v3.2.1 stays
-the stable release marked as latest until v3.3.0 is published.</p>
+adds one pull request (<a
+href="https://github.com/KaiaK808/bureau/pull/62">#62</a>) on top of
+rc.1's <a href="https://github.com/KaiaK808/bureau/pull/60">#60</a>: a
+shell gate for Codex QA turns blocked only by tests the sandbox denies,
+alongside the implement gate and private temporary directory for Codex
+calls without <code>TMPDIR</code>; Claude runs and the v3 exit-code
+contract are unchanged. From v3.3.0-rc.1 or v3.2.1 select tag
+<code>v3.3.0-rc.2</code>, resync the scripts scope as one set, keep
+<code>repo.test_command</code> configured with the full project gate,
+restart queue loops and supervisors, and follow <a
+href="migration.html#upgrade-to-v33">Upgrade to v3.3</a>. See its <a
+href="release-notes.html">release notes</a> and those of the earlier
+candidate, <a href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>,
+which stays published as a prerelease. v3.2.1 stays the stable release
+marked as latest until v3.3.0 is published.</p>
 <h2 id="documentation">Documentation</h2>
 <table>
 <thead>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="bc7fa0e37acd6f99b918ae39cd47e2da8a52f5bcdb27a183f8c4bcef8d27dac1">
+<meta name="bureau-source-sha256" content="6351ae0661e5cad61b33c454bf4ee4cca2f28920fc35922682b5a7362fe18c8c">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -29,9 +29,11 @@ legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
 the v3.2 release candidate and v3.2.0 to the stable <strong>Bureau
 v3.2.1</strong>. It also covers piloting <a
-href="release-notes.html">v3.3.0-rc.1</a>, the prerelease candidate for
-v3.3.0; v3.2.1 stays the stable release marked as latest. The commands
-below require the selected release's source skill. See the <a
+href="release-notes.html">v3.3.0-rc.2</a>, the second prerelease candidate
+for v3.3.0 (the first candidate: <a
+href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>); v3.2.1 stays the
+stable release marked as latest. The commands below require the selected
+release's source skill. See the <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">v3.2.1
 release</a> and its <a href="release-notes-v3.2.1.html">release notes</a>,
 the previous stable <a
@@ -81,11 +83,11 @@ installed commit.</p>
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
 clean checkout, select the exact release (<code>v3.2.1</code> for the
-stable release, <code>v3.3.0-rc.1</code> for the v3.3 candidate,
+stable release, <code>v3.3.0-rc.2</code> for the v3.3 candidate,
 <code>v3.2.0</code> for the previous stable release,
 <code>v3.1.0</code>, <code>v3.0.2</code>, <code>v3.0.1</code>,
 <code>v3.0.0</code> or <code>v2.0.0</code> for an earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.2.1 <span class="co"># or v3.3.0-rc.1 for the candidate; v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.2.1 <span class="co"># or v3.3.0-rc.2 for the candidate; v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -106,20 +108,30 @@ loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
 <h2 id="upgrade-to-v33">Upgrade to v3.3</h2>
-<p>The release candidate <strong>v3.3.0-rc.1</strong> is a minor release
-on v3.2.1 and keeps the v3 exit-code contract. It contains one pull
-request (<a href="https://github.com/KaiaK808/bureau/pull/60">#60</a>):
-a shell gate for Codex implement turns blocked only by tests the sandbox
-denies, and a private temporary directory for Codex calls without
-<code>TMPDIR</code>. Claude runs are unchanged. See its <a
-href="release-notes.html">release notes</a> for validation and known
-limitations; v3.2.1 stays the stable release marked as latest.</p>
-<p><strong>From v3.2.1:</strong> select tag <code>v3.3.0-rc.1</code> and
+<p>The release candidate <strong>v3.3.0-rc.2</strong> is a minor release
+on v3.2.1 and keeps the v3 exit-code contract. rc.2 adds one pull
+request (<a href="https://github.com/KaiaK808/bureau/pull/62">#62</a>)
+on top of <a href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>: the QA
+gate joins the implement gate and private temporary directory for Codex
+calls without <code>TMPDIR</code> from <a
+href="https://github.com/KaiaK808/bureau/pull/60">#60</a>. Claude runs
+are unchanged. See its <a href="release-notes.html">release notes</a> for
+validation and known limitations; v3.2.1 stays the stable release marked
+as latest.</p>
+<p><strong>From v3.3.0-rc.1:</strong> select tag
+<code>v3.3.0-rc.2</code> and resync the <strong>scripts scope as one
+set</strong> (<code>--resync-scripts</code>);
+<code>qa-pipeline.sh</code>, <code>bureau-config.sh</code> and
+<code>bureau-provider.py</code> changed together. Pause dispatch,
+preserve unfinished work and customized files, and use <a
+href="#preview-and-resolve-asset-conflicts">preview and resolve</a>. No
+configuration, interface or schema migration is needed.</p>
+<p><strong>From v3.2.1:</strong> select tag <code>v3.3.0-rc.2</code> and
 resync the <strong>scripts scope as one set</strong>
 (<code>--resync-scripts</code>); <code>implement-pipeline.sh</code>,
-<code>bureau-config.sh</code> and <code>bureau-provider.py</code>
-changed together. Pause dispatch, preserve unfinished work and
-customized files, and use <a
+<code>qa-pipeline.sh</code>, <code>bureau-config.sh</code> and
+<code>bureau-provider.py</code> changed together. Pause dispatch,
+preserve unfinished work and customized files, and use <a
 href="#preview-and-resolve-asset-conflicts">preview and resolve</a>. No
 configuration migration is needed; <code>/bureau-init --update</code>
 changes configuration only.</p>
@@ -153,6 +165,15 @@ or
 <code>shell gate outside the Codex sandbox red: NEEDS_HUMAN stays</code>;
 a missing command or no commits records why <code>NEEDS_HUMAN</code>
 stays.</p>
+<p><strong>QA operator output:</strong> a qualifying
+<code>SANDBOX_GATE:</code> result puts
+<code>shell gate outside the Codex sandbox green: QA continues as GREEN</code>
+or
+<code>shell gate outside the Codex sandbox red: QA continues as RED</code>
+first in the QA summary comment; the existing final outside run decides
+Build Review or Build, with no extra test run or
+<code>needs-human</code> label, unless the squash-range check then holds
+the ticket and puts its report first.</p>
 <h2 id="upgrade-to-v32">Upgrade to v3.2</h2>
 <p>The stable release <strong>v3.2.1</strong> is a patch on <a
 href="release-notes-v3.2.0.html">v3.2.0</a> that removes internal
