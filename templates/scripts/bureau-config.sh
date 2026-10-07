@@ -3790,6 +3790,8 @@ parse_claude_json() {
 # JSON object or the cost envelope holding that object as a result string.
 # No fenced-block fallback: slurp the whole input, require one value and keep
 # jq's failure status so a partial jq output must not count as a safe gate.
+# Keep it below parse_claude_json: tests/lib/harness.sh copies this file from
+# parse_claude_json to the end for the stage tests.
 codex_sandbox_gate_only() {
   local parsed
   parsed=$(printf '%s' "$1" | jq -ers '

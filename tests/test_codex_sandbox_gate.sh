@@ -42,14 +42,15 @@ EOF
     mkdir "$SANDBOX/fake-bin"
     cat > "$SANDBOX/fake-bin/codex" <<'EOF'
 #!/usr/bin/env python3
-import json, pathlib, sys
+import json, os, pathlib, sys
 if sys.argv[1]=='login': sys.exit(0)
 assert sys.argv[1]=='exec'
 prompt=sys.stdin.read()
 pathlib.Path('logs/prompt.log').write_text(prompt)
-pathlib.Path('feature.py').write_text('def add(a, b):\n    return a + b\n')
-for path in pathlib.Path('specs').glob('*/tasks.md'):
-    path.write_text(path.read_text().replace('[ ]','[X]'))
+if not os.environ.get('FAKE_CODEX_NO_CHANGE'):
+    pathlib.Path('feature.py').write_text('def add(a, b):\n    return a + b\n')
+    for path in pathlib.Path('specs').glob('*/tasks.md'):
+        path.write_text(path.read_text().replace('[ ]','[X]'))
 pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(pathlib.Path('logs/result.json').read_text())
 print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tokens':2}}))
 EOF
@@ -126,6 +127,19 @@ run_implement_pipeline TEAM-123
 assert_halted
 assert_eq 0 "$(test_runs)" 'missing test command does not promote'
 assert_calls_include 'repo.test_command is empty: NEEDS_HUMAN stays' 'missing-command decision in comment'
+teardown
+
+# No commits beyond origin/main: origin/main moves to the branch head and the
+# fake Codex changes nothing. Without the commits floor in part 1 the run would
+# be promoted and the test command would run once (and fail on the missing feature).
+setup
+git -C "$SANDBOX" push -q origin HEAD:main
+export FAKE_CODEX_NO_CHANGE=1
+run_implement_pipeline TEAM-123
+unset FAKE_CODEX_NO_CHANGE
+assert_halted
+assert_eq 0 "$(test_runs)" 'no commits beyond origin/main do not promote'
+assert_calls_include 'no commits beyond origin/main: NEEDS_HUMAN stays' 'no-commit decision in comment'
 teardown
 
 # Negative controls run the identical green case through a mutated stage copy.
