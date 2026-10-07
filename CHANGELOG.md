@@ -6,11 +6,15 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+## [3.3.0-rc.2] - 2026-10-07
+
+Second release candidate for Bureau v3.3.0, published as a GitHub prerelease; v3.2.1 stays the stable release, marked as latest, until v3.3.0 is published. rc.2 adds one pull request ([#62](https://github.com/KaiaK808/bureau/pull/62)) on top of v3.3.0-rc.1: a shell gate for Codex QA turns blocked only by tests the sandbox denies. This addition applies to Codex QA runs only; Claude runs, the QA schema and the v3 exit-code contract are unchanged. See the [v3.3.0-rc.2 release notes](docs/release-notes.md) and those of the first candidate, [v3.3.0-rc.1](docs/release-notes-v3.3.0-rc.1.md), for validation and known limitations.
+
+**Upgrade:** from v3.3.0-rc.1 select tag `v3.3.0-rc.2` and resync the scripts scope as one set (`--resync-scripts`; `qa-pipeline.sh`, `bureau-config.sh` and `bureau-provider.py` changed), then restart queue loops and supervisors. From v3.2.1, the v3.3.0-rc.1 upgrade steps below apply with tag `v3.3.0-rc.2`; see [Upgrade to v3.3](docs/migration.md#upgrade-to-v33). No configuration or schema migration is needed. Keep `repo.test_command` configured with the full project gate: the prefix is the Codex turn's own diagnosis, and the outside run protects only what that command covers.
+
 ### Added
 
-- Codex QA turns can report sandbox-only test blockers with status `NEEDS_HUMAN` and string `coverage_notes` beginning with `SANDBOX_GATE:`. The provider passes that result to the shell even when it names a denied operation; the existing final test run outside the sandbox decides GREEN (Build Review) or RED (Build), without a `needs-human` label or an extra test run. The decision leads the summary comment. The strict reader accepts one JSON object or the cost envelope holding it; malformed results, fenced JSON and unprefixed blockers never qualify. The squash-range check can still hold the ticket for a human. Claude prompts and behaviour, the QA schema and exit codes stay unchanged. See the [QA sandbox gate contract](docs/provider-runtime.md#codex-qa-sandbox-gate).
-
-**Upgrade:** update the source skill and resync the scripts scope as one set (`--resync-scripts`; `qa-pipeline.sh`, `bureau-config.sh` and `bureau-provider.py` changed), then restart queue loops and supervisors. No configuration or schema migration is needed. Keep `repo.test_command` configured with the full project gate: the prefix is the Codex turn's own diagnosis, and the outside run protects only what that command covers. Full-stage harness tests and mutation controls are CI checks; live Codex QA acceptance remains pending.
+- Codex QA turns can report sandbox-only test blockers with status `NEEDS_HUMAN` and string `coverage_notes` beginning with `SANDBOX_GATE:`. The provider passes that result to the shell even when it names a denied operation; the existing final test run outside the sandbox decides GREEN (Build Review) or RED (Build), without a `needs-human` label or an extra test run. The decision leads the summary comment. The strict reader accepts one JSON object or the cost envelope holding it; malformed results, fenced JSON and unprefixed blockers never qualify. The squash-range check can still hold the ticket for a human. Claude prompts and behaviour, the QA schema and exit codes stay unchanged. See the [QA sandbox gate contract](docs/provider-runtime.md#codex-qa-sandbox-gate). ([#62](https://github.com/KaiaK808/bureau/pull/62))
 
 ## [3.3.0-rc.1] - 2026-10-07
 
@@ -497,7 +501,8 @@ The following history predates versioned releases. It does not assign release nu
 
 For changes since the public initial snapshot, `git log --oneline main` is authoritative.
 
-[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.3.0-rc.1...main
+[Unreleased]: https://github.com/KaiaK808/bureau/compare/v3.3.0-rc.2...main
+[3.3.0-rc.2]: https://github.com/KaiaK808/bureau/compare/v3.3.0-rc.1...v3.3.0-rc.2
 [3.3.0-rc.1]: https://github.com/KaiaK808/bureau/compare/v3.2.1...v3.3.0-rc.1
 [3.2.1]: https://github.com/KaiaK808/bureau/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/KaiaK808/bureau/compare/v3.1.0...v3.2.0
