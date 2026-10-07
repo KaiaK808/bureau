@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6347353e86080339067e3ff98c30587bbe108b00b3a68ad964433b9dea217ef0">
+<meta name="bureau-source-sha256" content="bc7fa0e37acd6f99b918ae39cd47e2da8a52f5bcdb27a183f8c4bcef8d27dac1">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -28,11 +28,13 @@ href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
 the v3.2 release candidate and v3.2.0 to the stable <strong>Bureau
-v3.2.1</strong>. The commands below require the selected release's
-source skill. See the <a
+v3.2.1</strong>. It also covers piloting <a
+href="release-notes.html">v3.3.0-rc.1</a>, the prerelease candidate for
+v3.3.0; v3.2.1 stays the stable release marked as latest. The commands
+below require the selected release's source skill. See the <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">v3.2.1
-release</a> and its <a href="release-notes.html">release notes</a>, the
-previous stable <a
+release</a> and its <a href="release-notes-v3.2.1.html">release notes</a>,
+the previous stable <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">v3.2.0
 release</a> and its <a href="release-notes-v3.2.0.html">release notes</a>
 (the candidate: <a href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>),
@@ -53,9 +55,10 @@ the <a href="../../CHANGELOG.md">changelog</a> and the <a
 href="releases.html">release process</a>. A Bureau major version marks
 operational changes (v2.0.0: explicit worker ownership; v3: the
 exit-code contract, see <a href="#upgrade-to-v3">Upgrade to v3</a>); it
-does not require configuration schema v2. v3.1 and v3.2 keep that
-contract; see <a href="#upgrade-to-v31">Upgrade to v3.1</a> and <a
-href="#upgrade-to-v32">Upgrade to v3.2</a>.</p>
+does not require configuration schema v2. v3.1, v3.2 and v3.3 keep that
+contract; see <a href="#upgrade-to-v31">Upgrade to v3.1</a>, <a
+href="#upgrade-to-v32">Upgrade to v3.2</a> and <a
+href="#upgrade-to-v33">Upgrade to v3.3</a>.</p>
 <h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is
@@ -78,10 +81,11 @@ installed commit.</p>
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
 clean checkout, select the exact release (<code>v3.2.1</code> for the
-stable release, <code>v3.2.0</code> for the previous stable release,
+stable release, <code>v3.3.0-rc.1</code> for the v3.3 candidate,
+<code>v3.2.0</code> for the previous stable release,
 <code>v3.1.0</code>, <code>v3.0.2</code>, <code>v3.0.1</code>,
 <code>v3.0.0</code> or <code>v2.0.0</code> for an earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.2.1 <span class="co"># or v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.2.1 <span class="co"># or v3.3.0-rc.1 for the candidate; v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -101,14 +105,62 @@ directory, keep it intact and install a separate official clone from the
 loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
+<h2 id="upgrade-to-v33">Upgrade to v3.3</h2>
+<p>The release candidate <strong>v3.3.0-rc.1</strong> is a minor release
+on v3.2.1 and keeps the v3 exit-code contract. It contains one pull
+request (<a href="https://github.com/KaiaK808/bureau/pull/60">#60</a>):
+a shell gate for Codex implement turns blocked only by tests the sandbox
+denies, and a private temporary directory for Codex calls without
+<code>TMPDIR</code>. Claude runs are unchanged. See its <a
+href="release-notes.html">release notes</a> for validation and known
+limitations; v3.2.1 stays the stable release marked as latest.</p>
+<p><strong>From v3.2.1:</strong> select tag <code>v3.3.0-rc.1</code> and
+resync the <strong>scripts scope as one set</strong>
+(<code>--resync-scripts</code>); <code>implement-pipeline.sh</code>,
+<code>bureau-config.sh</code> and <code>bureau-provider.py</code>
+changed together. Pause dispatch, preserve unfinished work and
+customized files, and use <a
+href="#preview-and-resolve-asset-conflicts">preview and resolve</a>. No
+configuration migration is needed; <code>/bureau-init --update</code>
+changes configuration only.</p>
+<p><strong>From v3.1.0 or older:</strong> go through <a
+href="#upgrade-to-v32">Upgrade to v3.2</a> and its earlier upgrade steps
+first, including both the scripts and interfaces scopes and the
+applicable configuration checks, then follow the v3.3 steps above.</p>
+<p>For Codex implement, check that <code>repo.test_command</code> holds
+the full project gate, including the tests the sandbox can deny. A
+missing command or a branch with no commits beyond
+<code>origin/main</code> keeps <code>NEEDS_HUMAN</code>; a qualifying
+<code>SANDBOX_GATE:</code> result proceeds through the hook and
+squash-range checks, then the command runs once outside the sandbox
+after the final push. Green hands off to QA or Build Review, and red
+keeps the ticket labelled <code>needs-human</code>.</p>
+<p>Restart queue loops and supervisors after the resync so they read the
+new scripts: a loop sources <code>bureau-config.sh</code> once at
+startup, and a stage already running keeps the old scripts because the
+installer replaces files atomically. Run doctor
+(<code>python3 scripts/bureau-doctor.py --mode background</code>) before
+dispatch resumes; acceptance is an installation's next real Codex
+implement run and is still pending at tagging. Rollback selects tag
+<code>v3.2.1</code> again and resyncs the scripts scope as one set (<a
+href="#rollback">rollback</a>); no data migration is needed.</p>
+<p><strong>Operator output:</strong> the implement summary comment
+records
+<code>needs-human names only SANDBOX_GATE reasons: treated as COMPLETE until the shell gate outside the Codex sandbox decides</code>,
+followed by
+<code>shell gate outside the Codex sandbox green: the run continues as COMPLETE</code>
+or
+<code>shell gate outside the Codex sandbox red: NEEDS_HUMAN stays</code>;
+a missing command or no commits records why <code>NEEDS_HUMAN</code>
+stays.</p>
 <h2 id="upgrade-to-v32">Upgrade to v3.2</h2>
 <p>The stable release <strong>v3.2.1</strong> is a patch on <a
 href="release-notes-v3.2.0.html">v3.2.0</a> that removes internal
 references without behaviour change. v3.2.0 is a minor release on v3.1.0
 and keeps the v3 exit-code contract. The <a
-href="release-notes.html">v3.2.1 release notes</a> include the patch, the
-eleven v3.2 pull requests, validation and known limitations; the v3.2.0
-candidate was <a
+href="release-notes-v3.2.1.html">v3.2.1 release notes</a> include the
+patch, the eleven v3.2 pull requests, validation and known limitations;
+the v3.2.0 candidate was <a
 href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>.</p>
 <p><strong>From v3.2.0 or v3.2.0-rc.1:</strong> select tag
 <code>v3.2.1</code>; a resync is optional because the scripts and
