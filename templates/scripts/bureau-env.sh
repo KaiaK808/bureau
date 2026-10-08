@@ -279,10 +279,13 @@ bureau_secret_copy() {
 # happens to contain them. BASH_ENV and ENV go as well: a bash child sources
 # the file BASH_ENV names at startup (a relative name from its working
 # directory, which can be the branch's worktree), and pointed at .env it would
-# read the keys back in. Keep the lists and the 6 here equal to
-# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, COPY_MIN and UNTRUSTED_KEEP in
-# bureau-provider.py; tests/test_untrusted_env.sh compares the implementations
-# and pins both.
+# read the keys back in. Code the branch controls also loses BUREAU_ENV_FILE
+# and BUREAU_CONFIG (_BUREAU_UNTRUSTED_PATHS): no secret, but the absolute path
+# to the operator's .env and .bureau.json; Bureau's own scripts keep reading
+# them (until v3.3.0 the default mode passed them on). Keep the lists and the 6
+# here equal to UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, UNTRUSTED_PATHS, COPY_MIN
+# and UNTRUSTED_KEEP in bureau-provider.py; tests/test_untrusted_env.sh
+# compares the implementations and pins both.
 # Every function below leaves the calling shell alone (the stage keeps its keys
 # for its own Linear, GitHub and Telegram calls), calls env by its absolute path
 # /usr/bin/env (a PATH entry such as node_modules/.bin cannot stand in for it),
@@ -299,8 +302,9 @@ bureau_secret_copy() {
 #   their bash child with --noprofile --norc.
 #   repo.untrusted_env in .bureau.json selects it:
 #     absent, null or "default" — the calling environment minus the seven,
-#       their copies, BASH_ENV and ENV. Everything else stays, so test commands
-#       keep their toolchain variables (cargo, nvm, pyenv, a virtualenv).
+#       their copies, BASH_ENV, ENV, BUREAU_ENV_FILE and BUREAU_CONFIG.
+#       Everything else stays, so test commands keep their toolchain
+#       variables (cargo, nvm, pyenv, a virtualenv).
 #     "clean" — `env -i` with only PATH HOME USER LOGNAME SHELL TMPDIR TEMP
 #       TMP LANG LC_ALL LC_CTYPE TERM TZ CI (those that are exported and carry
 #       no secret's value), plus the NAME=VALUE pairs given before the command
@@ -361,6 +365,8 @@ bureau_secret_copy() {
 # _bureau_env_build <mode> <names> <startup> — sets the array _BUREAU_ENV_ARGV
 # to the options /usr/bin/env needs: mode default|clean, names "seven",
 # "dotenv" or a list of names, startup 1 to remove BASH_ENV and ENV. Silent.
+_BUREAU_UNTRUSTED_PATHS='BUREAU_ENV_FILE BUREAU_CONFIG'
+
 _bureau_env_build() {
   local IFS=$' \t\n'
   local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_name _beb_value _beb_exported
@@ -426,7 +432,7 @@ bureau_untrusted_env() {
     (*x*) set +x; local _bue_trace=1 ;;
     (*) local _bue_trace=0 ;;
   esac
-  local _bue_check=0 _bue_mode
+  local _bue_check=0 _bue_mode _bue_name
   local _bue_assign_re='^[A-Za-z_][A-Za-z0-9_]*='
   local -a _bue_assign
   _bue_assign=()
@@ -454,6 +460,10 @@ bureau_untrusted_env() {
   fi
 
   _bureau_env_build "$_bue_mode" seven 1
+  if [ "$_bue_mode" = default ]; then
+    local IFS=$' \t\n'
+    for _bue_name in $_BUREAU_UNTRUSTED_PATHS; do _BUREAU_ENV_ARGV+=(-u "$_bue_name"); done
+  fi
   if [ "$_bue_trace" = 1 ]; then set -x; fi
   /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bue_assign[@]+"${_bue_assign[@]}"} "$@"
 }

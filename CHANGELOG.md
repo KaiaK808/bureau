@@ -12,9 +12,12 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ### Changed
 
+- Code the branch controls no longer receives `BUREAU_ENV_FILE` and `BUREAU_CONFIG` in the default `repo.untrusted_env` mode: the review build check, the three QA test runs, `repo.post_implement_command`, the Codex completion test, the app `test` action, `upstream-port.sh`'s build and test commands and the agent processes (Claude and Codex, and their login check). These are not secrets but the absolute paths to the operator's `.env` and `.bureau.json`; `"clean"` already dropped them. `bureau_untrusted_env` in `bureau-env.sh` and `untrusted_env` in `bureau-provider.py` stay in parity (`UNTRUSTED_PATHS`, `_BUREAU_UNTRUSTED_PATHS`). Bureau's own scripts, the provider process, and Bureau's git and `gh` processes keep both. None of Bureau's own commands that run branch code needs them; a project test script or hook that read them must now locate its configuration itself. Removing the paths does not hide the main checkout, which `git rev-parse --git-common-dir` names from any worktree; see SECURITY.md.
 - Installations that already set `reasoning_effort` for a Claude stage or for `agents.providers.claude` now get it applied: before, the value was resolved but never passed to Claude, so the effort came from the operator's own Claude settings. A value only Codex knows (`none`, `minimal`, `ultra`) on a Claude stage now ends the call with the configuration error 22 before any provider call, because the Claude CLI only warns about an unknown `--effort` and ignores it.
 
 **Upgrade:** resync the scripts scope (`--resync-scripts`; `bureau-provider.py` changed). Before resyncing, check `.bureau.json` and the environment for a Claude stage whose `reasoning_effort` is `none`, `minimal` or `ultra` (also through `agents.providers.claude` or `BUREAU_REASONING_<STAGE>`) and change it to one of `low`, `medium`, `high`, `xhigh`, `max`, or remove it. Validated with fake CLIs only (`tests/provider_adapter_test.py`); no live Claude run with `--effort` is part of this change.
+
+**Upgrade (environment):** resync the scripts scope (`--resync-scripts`; `bureau-env.sh` and `bureau-provider.py` changed). If `repo.test_command`, `scripts/bureau-test.sh`, `repo.post_implement_command` or `upstream_port` commands read `BUREAU_ENV_FILE` or `BUREAU_CONFIG`, pass what they need explicitly. Validated with fake CLIs (`tests/test_untrusted_env.sh`, `tests/provider_untrusted_env_test.py`).
 
 ## [3.3.0] - 2026-10-07
 

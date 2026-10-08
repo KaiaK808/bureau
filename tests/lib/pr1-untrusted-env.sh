@@ -6,7 +6,9 @@
 #                                probes (the stage reads them; before v3.2 it exported them),
 #                                exports the four GitHub token probes, an empty exported
 #                                API_KEY (the stage copies the Linear key into it), a
-#                                remote URL with a token inside and an operator variable; puts a recording gh in front of the
+#                                remote URL with a token inside and an operator variable,
+#                                and BUREAU_ENV_FILE and BUREAU_CONFIG with the sandbox's
+#                                paths (the real bureau-config.sh exports both); puts a recording gh in front of the
 #                                stub gh and appends recording Linear doubles to the
 #                                sandbox bureau-config.sh.
 #   pr1_dump <name>            — a shell command that appends one "--- run" block with
@@ -14,7 +16,8 @@
 #                                the sequence log (absolute paths: it must work in the
 #                                "clean" environment too).
 #   pr1_check_env <file> <label> <default|clean> [runs] [NAME=VALUE ...]
-#                              — no probe value and no secret name in any run, PATH and
+#                              — no probe value, no secret name and neither BUREAU_ENV_FILE
+#                                nor BUREAU_CONFIG in any run, PATH and
 #                                HOME kept, the operator variable kept (default) or gone
 #                                (clean), each NAME=VALUE present.
 #   pr1_check_bureau_calls <label> [gh|linear ...]
@@ -35,6 +38,8 @@ PR1_GHE=PROBE_gh_enterprise_0006
 PR1_GITHUBE=PROBE_github_enterprise_0007
 PR1_OPERATOR=keep_me_operator_var_0008
 PR1_SECRET_NAMES="LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN API_KEY REMOTE_URL"
+# Not secrets, but the absolute paths to the operator's .env and .bureau.json.
+PR1_PATH_NAMES="BUREAU_ENV_FILE BUREAU_CONFIG"
 PR1_FAILS=${PR1_FAILS:-0}
 
 pr1_fail() { echo "FAIL $*" >&2; PR1_FAILS=$((PR1_FAILS + 1)); }
@@ -57,7 +62,8 @@ EOF
   export GH_TOKEN="$PR1_GH" GITHUB_TOKEN="$PR1_GITHUB" \
     GH_ENTERPRISE_TOKEN="$PR1_GHE" GITHUB_ENTERPRISE_TOKEN="$PR1_GITHUBE" \
     OPERATOR_TOOL_VAR="$PR1_OPERATOR" API_KEY="" \
-    REMOTE_URL="https://x-access-token:$PR1_GITHUB@github.com/owner/repo.git"
+    REMOTE_URL="https://x-access-token:$PR1_GITHUB@github.com/owner/repo.git" \
+    BUREAU_ENV_FILE="$SANDBOX/.env" BUREAU_CONFIG="$SANDBOX/.bureau.json"
   # gh: record the token it was started with, then answer as the harness stub.
   cat > "$PR1_MARKS/bin/gh" <<EOF
 #!/bin/bash
@@ -103,7 +109,7 @@ pr1_check_env() {
       pr1_fail "$label: a Bureau secret reached the command, as $(grep -F -- "$value" "$file" | cut -d= -f1 | sort -u | tr '\n' ' ')"
     fi
   done
-  for name in $PR1_SECRET_NAMES; do
+  for name in $PR1_SECRET_NAMES $PR1_PATH_NAMES; do
     if grep -q "^$name=." "$file"; then pr1_fail "$label: $name is set for the command"; fi
   done
   [ "$(grep -c '^PATH=' "$file" || true)" = "$runs" ] || pr1_fail "$label: PATH did not reach every run"
