@@ -23,11 +23,13 @@
 #   3  false, "true", 1, "yes", {}, null and a .bureau.json jq cannot read (with and without
 #      bureau-config.sh's bureau_get): hooks off
 #   4  bureau-env.sh alone (no bureau_get, no BUREAU_CONFIG, as squash-marker-check.sh): hooks off
-#   5  doctor: a non-boolean value is a warning; true, false and absent are not
+#   5  doctor: reports the mode (remote_git_hooks: on, operator or off); a value that is neither a
+#      JSON boolean nor "operator" is a warning; true, false, "operator" and absent are not
 #   6  doctor: the main checkout uses Git LFS (filter=lfs, in any position, in its .gitattributes, a
 #      committed or untracked assets/.gitattributes, or .git/info/attributes) and the key is not
 #      true — a warning naming the key (also from a linked worktree); none for true, another filter,
-#      a comment line or a name that only starts with lfs
+#      a comment line or a name that only starts with lfs; for "operator" a warning only while the
+#      git common dir's hooks/ has no executable pre-push
 #   7  the two `git ls-remote` of bureau-supervision.py (a stopped review's check, the gate waits of
 #      the pickers) get -c core.hooksPath=/dev/null and the hook event switches of git() too (a git
 #      on PATH records its arguments)
@@ -35,7 +37,15 @@
 #      remote git command line in the Python templates carries NO_HOOKS
 #   9  git 2.54 and later: hooks the configuration defines (hook.<name>.command and .event) run
 #      neither on Bureau's push nor on its fetches, also under a name with `=` and next to a hook
-#      named like the event; true runs them (skipped, with a SKIP line, on an older git)
+#      named like the event, also under "operator"; true runs them (skipped, with a SKIP line, on
+#      an older git)
+#  10  repo.remote_git_runs_hooks: "operator" — the branch supplies hooks through core.hooksPath
+#      (.githooks, tracked) and the operator has hooks in the git common dir's hooks/: Bureau's push
+#      and fetch run only the operator's (with GH_TOKEN), from the main checkout, from a linked
+#      worktree, with a path containing a space and with a git that predates --path-format; true
+#      runs the configured .githooks as before, false and absent run none; outside a repository
+#      the hooks stay off. Negative controls: a copy that counts "operator" as off, and one that
+#      runs every configured hook for it, both fail the same assertion
 # Negative control: against v3.1.0 (9411b3b) 1, 3 and 4 fail ("pre-push ran during Bureau's push,
 # with GH_TOKEN") and 5 and 6 fail (no warning); 7 and 8 fail against the merge of main (a9c754c),
 # whose supervision ls-remote runs without the flag; against 735496e 6 fails for the committed and
@@ -181,17 +191,24 @@ doctor_warnings() {
   if [ -n "${2:-}" ]; then mkdir -p "$(dirname "$d/$file")"; printf '%s\n' "$2" > "$d/$file"; fi
   if [ "${3:-}" = nested ]; then git -C "$d" add assets; git -C "$d" -c user.email=t@t -c user.name=t commit -q -m attributes; fi
   if [ "${3:-}" = worktree ]; then git -C "$d" worktree add -q "$TMP/doctor-wt" -b wt; at="$TMP/doctor-wt"; fi
-  (cd "$at" && python3 "$d/scripts/bureau-doctor.py" --repo "$at") | jq -r '(.warnings // [])[], (.errors // [])[]' | grep 'remote_git_runs_hooks' || true
+  if [ -n "${DOCTOR_SETUP:-}" ]; then eval "$DOCTOR_SETUP"; fi
+  (cd "$at" && python3 "$d/scripts/bureau-doctor.py" --repo "$at") > "$TMP/doctor.json"
+  jq -r '(.warnings // [])[], (.errors // [])[]' "$TMP/doctor.json" | grep 'remote_git_runs_hooks' || true
 }
-for value in true false; do
+doctor_mode() { jq -r '.remote_git_hooks // "missing"' "$TMP/doctor.json"; }
+for pair in true:on false:off '"operator"':operator; do
+  value="${pair%:*}"
   [ -z "$(doctor_warnings "{\"remote_git_runs_hooks\":$value}")" ] || fail "5: doctor warns on $value"
+  [ "$(doctor_mode)" = "${pair##*:}" ] || fail "5: doctor reports the mode $(doctor_mode) for $value, wanted ${pair##*:}"
 done
 [ -z "$(doctor_warnings '{}')" ] || fail "5: doctor warns on an absent key"
-for value in '"true"' 1 '"yes"'; do
+[ "$(doctor_mode)" = off ] || fail "5: doctor reports the mode $(doctor_mode) for an absent key"
+for value in '"true"' 1 '"yes"' '"Operator"'; do
   w=$(doctor_warnings "{\"remote_git_runs_hooks\":$value}")
-  case "$w" in *"is not a JSON boolean"*) ;; *) fail "5: doctor does not warn on $value: ${w:-no warning}" ;; esac
+  case "$w" in *'is not a JSON boolean or "operator"'*) ;; *) fail "5: doctor does not warn on $value: ${w:-no warning}" ;; esac
+  [ "$(doctor_mode)" = off ] || fail "5: doctor reports the mode $(doctor_mode) for $value"
 done
-pr1_pass "5 doctor warns on a value that is not a JSON boolean"
+pr1_pass "5 doctor reports the mode (on, operator, off) and warns on a value that is not a JSON boolean or \"operator\""
 
 # ── 6  doctor: Git LFS needs the hooks ────────────────────────────────────────
 # git lfs uploads its objects in its pre-push hook: with the hooks off, Bureau's push leaves them
@@ -221,7 +238,18 @@ w=$(doctor_warnings '{"remote_git_runs_hooks":true}' "$LFS" nested)
 case "$w" in *"uses Git LFS"*) fail "6: a Git LFS warning for a nested .gitattributes although the key is true" ;; esac
 w=$(doctor_warnings '{}' "# $LFS" info)
 case "$w" in *"uses Git LFS"*) fail "6: a Git LFS warning for a comment in info/attributes" ;; esac
-pr1_pass "6 doctor warns when the main checkout uses Git LFS and the hooks are off"
+# "operator" runs the common dir's hooks/: the LFS pre-push must be there (git lfs install puts it
+# there when core.hooksPath is not set). Without it a warning; with an executable one none.
+w=$(doctor_warnings '{"remote_git_runs_hooks":"operator"}' "$LFS")
+case "$w" in *'"operator" and the main checkout uses Git LFS'*) ;; *) fail "6: no warning for operator without a pre-push hook: ${w:-no warning}" ;; esac
+case "$w" in *"is not true, but"*) fail "6: the off-mode LFS warning for operator" ;; esac
+DOCTOR_SETUP='printf "#!/bin/sh\nexit 0\n" > "$d/.git/hooks/pre-push"; chmod +x "$d/.git/hooks/pre-push"'
+w=$(doctor_warnings '{"remote_git_runs_hooks":"operator"}' "$LFS")
+case "$w" in *"uses Git LFS"*) fail "6: a Git LFS warning for operator with an executable pre-push: $w" ;; esac
+w=$(doctor_warnings '{"remote_git_runs_hooks":"operator"}' "$LFS" worktree)
+case "$w" in *"uses Git LFS"*) fail "6: a Git LFS warning for operator from a linked worktree with an executable pre-push: $w" ;; esac
+DOCTOR_SETUP=''
+pr1_pass "6 doctor warns when the main checkout uses Git LFS and the hooks are off, or on operator without a pre-push hook"
 
 # ── 7  the remote git Bureau's Python starts ──────────────────────────────────
 # bureau-supervision.py runs `git ls-remote` for a stopped review's check (the review stage) and
@@ -356,6 +384,9 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
   hooks9 '{}' /dev/null
   if grep -q '^config-hook' <<< "$(marks)"; then fail "9 GIT_CONFIG=/dev/null: a hook the configuration defines ran during Bureau's push or fetch: $(marks | sort | uniq -c | tr -s ' ' | tr '\n' ';')"; fi
   grep -q '^config-hook reference-transaction gh=no env=no' "$TMP/local9.log" || fail "9: the configured hooks did not run at all (the local commit ran none): $(tr '\n' ';' < "$TMP/local9.log")"
+  # "operator" keeps the per-name switches: the configured hooks stay off as in the default.
+  hooks9 '{"remote_git_runs_hooks":"operator"}'
+  if grep -q '^config-hook' <<< "$(marks)"; then fail "9 operator: a hook the configuration defines ran during Bureau's push or fetch: $(marks | sort | uniq -c | tr -s ' ' | tr '\n' ';')"; fi
   hooks9 '{"remote_git_runs_hooks":true}'
   wanted='pre-push pre-push-eq pre-push-empty reference-transaction'
   if [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 55 ]; then wanted="$wanted post-checkout-template"; fi
@@ -366,6 +397,121 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
 else
   echo "SKIP 9 hooks the configuration defines: needs git 2.54 or later, found $(git9 git --version 2>/dev/null || echo none); set BUREAU_TEST_GIT_DIR to the bin directory of one"
 fi
+
+# ── 10  "operator": only the main checkout's own hooks directory ──────────────
+# The fixture's branch supplies its hooks through core.hooksPath=.githooks (tracked, as husky
+# does); the operator's hooks sit in the git common dir's hooks/, which no commit can write. Both
+# record every run, the operator's as "operator-<hook>". Bureau's push and fetch run from the main
+# checkout and from a linked worktree (where the stages run), with the real bureau-config.sh.
+# operator_hooks <dir> — the operator's pre-push and reference-transaction in <dir>.
+operator_hooks() {
+  local h
+  mkdir -p "$1"
+  for h in pre-push reference-transaction; do
+    cat > "$1/$h" <<EOF
+#!/bin/sh
+refs=\$(cat 2>/dev/null | awk '{ printf "%s,", \$NF }')
+gh=no; [ -z "\${GH_TOKEN:-}" ] || gh=yes
+echo "operator-$h \${1:-} gh=\$gh refs=\$refs" >> '$MARKS'
+exit 0
+EOF
+    chmod +x "$1/$h"
+  done
+}
+# worktree_round <label> — Bureau's push of a new branch and a fetch that updates origin/main, from
+# a linked worktree of $R (a stage worktree).
+worktree_round() {
+  local wt="$TMP/wt-$ROUND"
+  upstream_commit
+  rm -rf "$wt"; git -C "$R" -c core.hooksPath=/dev/null worktree add -q -b "wt-$ROUND" "$wt" main
+  echo w > "$wt/w.txt"; git -C "$wt" add w.txt; git -C "$wt" -c core.hooksPath=/dev/null commit -q -m "wt $ROUND"
+  : > "$MARKS"
+  out=$(cd "$wt" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
+    git push -q origin HEAD; echo "push=$?"; git fetch -q origin; echo "fetch=$?"' _ "$SCRIPTS" 2>&1)
+  case "$out" in *push=0*fetch=0*) ;; *) fail "$1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+  [ "$(git -C "$R.origin" rev-parse "wt-$ROUND" 2>/dev/null)" = "$(git -C "$wt" rev-parse HEAD)" ] || fail "$1: the pushed branch is not on origin"
+}
+# operator_only <label> — the operator's hooks ran on the push (with the token) and on the fetch's
+# remote-tracking update, and no hook of the branch's .githooks did.
+operator_only() {
+  grep -q '^operator-pre-push origin gh=yes' <<< "$(marks)" || fail "$1: the operator's pre-push did not run with the token: $(marks | tr '\n' ';')"
+  grep -q '^operator-reference-transaction .*refs=.*refs/remotes/origin/main' <<< "$(marks)" \
+    || fail "$1: the operator's reference-transaction did not see the fetch: $(marks | tr '\n' ';')"
+  if grep -qv '^operator-' <<< "$(marks)"; then fail "$1: a hook from the branch's core.hooksPath ran: $(grep -v '^operator-' <<< "$(marks)" | sed -n 1p)"; fi
+}
+repo "$R"; config '{"remote_git_runs_hooks":"operator"}'; operator_hooks "$R/.git/hooks"
+remote_round "10 operator"
+operator_only "10 operator"
+grep -q '^pre-commit ' "$TMP/local.log" || fail "10 operator: the local commit no longer ran the branch's pre-commit"
+if grep -q '^operator-' "$TMP/local.log"; then fail "10 operator: a local command ran the operator's hooks instead of the configured ones"; fi
+worktree_round "10 operator worktree"
+operator_only "10 operator worktree"
+# A git older than 2.31 does not know --path-format and prints it back, then a relative common
+# dir; git() then takes the common dir from the git dir's commondir file. A git on PATH that
+# answers like that, from the main checkout and from a worktree.
+mkdir -p "$TMP/oldgit"
+cat > "$TMP/oldgit/git" <<EOF
+#!/bin/bash
+for a in "\$@"; do
+  if [ "\$a" = --path-format=absolute ]; then echo old-git-asked >> '$TMP/oldgit.log'; echo --path-format=absolute; exit 0; fi
+done
+exec '$(type -P git)' "\$@"
+EOF
+chmod +x "$TMP/oldgit/git"; : > "$TMP/oldgit.log"
+PATH_BEFORE_OLDGIT="$PATH"; PATH="$TMP/oldgit:$PATH"
+remote_round "10 operator old git"; operator_only "10 operator old git"
+worktree_round "10 operator old git worktree"; operator_only "10 operator old git worktree"
+PATH="$PATH_BEFORE_OLDGIT"
+grep -q old-git-asked "$TMP/oldgit.log" || fail "10 old git: the wrapper was never asked (the fallback went untested)"
+# A path with a space in it and an absolute core.hooksPath the branch cannot write either: still
+# only the common dir's hooks/.
+R="$TMP/repo with space"; repo "$R"; config '{"remote_git_runs_hooks":"operator"}'; operator_hooks "$R/.git/hooks"
+git -C "$R" config core.hooksPath "$R/.githooks"
+remote_round "10 operator space"
+operator_only "10 operator space"
+R="$TMP/repo"
+# true: the configured core.hooksPath (the branch's .githooks) as before, not the operator's.
+repo "$R"; config '{"remote_git_runs_hooks":true}'; operator_hooks "$R/.git/hooks"
+remote_round "10 true"
+grep -q '^pre-push origin gh=yes' <<< "$(marks)" || fail "10 true: the configured pre-push did not run: $(marks | tr '\n' ';')"
+if grep -q '^operator-' <<< "$(marks)"; then fail "10 true: the operator's hooks ran although core.hooksPath names .githooks"; fi
+# false and absent: none.
+for value in false absent; do
+  repo "$R"; if [ "$value" = absent ]; then config '{}'; else config "{\"remote_git_runs_hooks\":$value}"; fi
+  operator_hooks "$R/.git/hooks"
+  remote_round "10 $value"; hooks_off "10 $value"
+  if grep -q '^operator-' <<< "$(marks)"; then fail "10 $value: the operator's hooks ran"; fi
+done
+# Outside a repository (an ls-remote by URL) "operator" keeps the hooks off and the command works.
+repo "$R"; config '{"remote_git_runs_hooks":"operator"}'; operator_hooks "$R/.git/hooks"; : > "$MARKS"
+out=$(cd "$TMP" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-env.sh"
+  git ls-remote "$2" refs/heads/main >/dev/null; echo "ls-remote=$?"' _ "$SCRIPTS" "$R.origin" 2>&1)
+case "$out" in *ls-remote=0*) ;; *) fail "10 operator outside a repository: ls-remote failed: $out" ;; esac
+# Negative control: the same "operator" case against a copy of the scripts whose mode reader
+# counts "operator" as off, as bureau-env.sh did before this change: the operator's hooks never run.
+mkdir -p "$TMP/before"; cp "$SCRIPTS"/*.sh "$TMP/before/"
+sed -e '/^_bureau_remote_git_hooks_mode() {/,/^}/c\
+_bureau_remote_git_hooks_mode() { printf "off\\n"; }' "$SCRIPTS/bureau-env.sh" > "$TMP/before/bureau-env.sh"
+cmp -s "$SCRIPTS/bureau-env.sh" "$TMP/before/bureau-env.sh" && fail "10 control: the copy is unchanged (the sed found nothing)"
+repo "$R"; config '{"remote_git_runs_hooks":"operator"}'; operator_hooks "$R/.git/hooks"
+SCRIPTS_REAL="$SCRIPTS"; SCRIPTS="$TMP/before"
+remote_round "10 control"
+SCRIPTS="$SCRIPTS_REAL"
+control_fails=$PR1_FAILS
+operator_only "10 control" 2>/dev/null
+if [ "$PR1_FAILS" = "$control_fails" ]; then fail "10 control: operator_only passed against a copy without the operator mode"; else PR1_FAILS=$control_fails; fi
+# A second control: a copy whose "operator" runs every configured hook, as true does (the
+# branch's .githooks): operator_only fails on it too, so it notices a mode that runs them.
+sed -e '/^_bureau_remote_git_hooks_mode() {/,/^}/c\
+_bureau_remote_git_hooks_mode() { printf "on\\n"; }' "$SCRIPTS/bureau-env.sh" > "$TMP/before/bureau-env.sh"
+repo "$R"; config '{"remote_git_runs_hooks":"operator"}'; operator_hooks "$R/.git/hooks"
+SCRIPTS="$TMP/before"
+remote_round "10 control 2"
+SCRIPTS="$SCRIPTS_REAL"
+control_fails=$PR1_FAILS
+operator_only "10 control 2" 2>/dev/null
+if [ "$PR1_FAILS" = "$control_fails" ]; then fail "10 control 2: operator_only passed against a copy that runs the configured hooks"; else PR1_FAILS=$control_fails; fi
+pr1_pass "10 \"operator\" runs only the common dir's hooks (main checkout and worktree), true the configured ones, false and absent none"
 
 if [ "$PR1_FAILS" != 0 ]; then echo "$PR1_FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_remote_git_hooks"

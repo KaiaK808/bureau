@@ -309,7 +309,8 @@ def uses_git_lfs(main):
     (filter=lfs, in any position among the pattern's attributes): its top-level .gitattributes, every
     other .gitattributes in it that git lists (tracked, or untracked and not ignored), and the git
     directory's info/attributes; a comment line does not count. LFS uploads its objects in its
-    pre-push hook, which Bureau's remote git skips unless repo.remote_git_runs_hooks is true (v3.2)."""
+    pre-push hook, which Bureau's remote git skips unless repo.remote_git_runs_hooks is true or
+    "operator" (v3.2)."""
     files = [main / '.gitattributes', main / '.git' / 'info' / 'attributes']
     command = ['git', '-C', str(main), 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.gitattributes']
     try: listed = subprocess.run(command, capture_output=True, env=module('provider').process_env(command)).stdout
@@ -321,6 +322,18 @@ def uses_git_lfs(main):
         if any(re.search(r'(^|\s)filter=lfs(\s|$)', line) for line in text.splitlines() if not line.lstrip().startswith('#')):
             return True
     return False
+
+
+def operator_pre_push(main):
+    """True when the hooks directory "operator" mode runs (hooks/ in the git common dir of the main
+    checkout, as git() in bureau-env.sh resolves it) holds an executable pre-push hook."""
+    command = ['git', '-C', str(main), 'rev-parse', '--git-common-dir']
+    try: proc = subprocess.run(command, capture_output=True, text=True, env=module('provider').process_env(command))
+    except OSError: return False
+    common = proc.stdout.strip()
+    if proc.returncode != 0 or not common: return False
+    hook = (main / common).resolve() / 'hooks' / 'pre-push'
+    return hook.is_file() and os.access(hook, os.X_OK)
 
 
 def main_checkout(repo):
@@ -532,18 +545,23 @@ def diagnose(repo, mode):
     hook = repo_cfg.get('post_implement_command')
     if hook is not None and hook is not False and not isinstance(hook, str):
         errors.append('repo.post_implement_command must be a string; the implement stage would run ' + json.dumps(hook) + ' as a shell command')
-    # v3.2: the git function in bureau-env.sh (_bureau_remote_git_runs_hooks) runs Bureau's push, fetch and
-    # other remote git commands with hooks only for the JSON value true; anything else keeps them off.
+    # v3.2: the git function in bureau-env.sh (_bureau_remote_git_hooks_mode) runs Bureau's push, fetch and
+    # other remote git commands with every hook for the JSON value true ("on"), with only the hooks in the git
+    # common dir's hooks/ for the string "operator", and without hooks for anything else ("off").
     remote_hooks = repo_cfg.get('remote_git_runs_hooks')
-    if remote_hooks is not None and type(remote_hooks) is not bool:
-        warnings.append('repo.remote_git_runs_hooks ' + json.dumps(remote_hooks) + ' is not a JSON boolean; Bureau counts it as false and runs its push, fetch and other remote git commands without the repository\'s hooks: only true runs them')
+    remote_mode = 'on' if remote_hooks is True else 'operator' if remote_hooks == 'operator' else 'off'
+    if remote_hooks is not None and type(remote_hooks) is not bool and remote_hooks != 'operator':
+        warnings.append('repo.remote_git_runs_hooks ' + json.dumps(remote_hooks) + ' is not a JSON boolean or "operator"; Bureau counts it as false and runs its push, fetch and other remote git commands without the repository\'s hooks: only true runs them all, "operator" only those in the main checkout\'s own hooks directory')
     checkout = main_checkout(repo); main = checkout[0]
-    if remote_hooks is not True and main is not None and uses_git_lfs(main):
-        warnings.append('repo.remote_git_runs_hooks is not true, but the main checkout uses Git LFS (filter=lfs in a .gitattributes file or in info/attributes): Bureau pushes without the repository\'s hooks, so the pre-push hook of git lfs does not upload the LFS objects and the remote lacks them; set repo.remote_git_runs_hooks to true')
+    if remote_mode == 'off' and main is not None and uses_git_lfs(main):
+        warnings.append('repo.remote_git_runs_hooks is not true, but the main checkout uses Git LFS (filter=lfs in a .gitattributes file or in info/attributes): Bureau pushes without the repository\'s hooks, so the pre-push hook of git lfs does not upload the LFS objects and the remote lacks them; set repo.remote_git_runs_hooks to true, or to "operator" when git lfs install put its hooks in the main checkout\'s .git/hooks')
+    if remote_mode == 'operator' and main is not None and uses_git_lfs(main) and not operator_pre_push(main):
+        warnings.append('repo.remote_git_runs_hooks is "operator" and the main checkout uses Git LFS, but the git common dir\'s hooks directory has no executable pre-push hook: Bureau runs only that directory\'s hooks, so the LFS objects are not uploaded; run git lfs install in the main checkout without core.hooksPath set, or set repo.remote_git_runs_hooks to true')
     links, link_errors, link_warnings = worktree_links(repo, config, checkout)
     errors.extend(link_errors); warnings.extend(link_warnings)
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),
                 merge_mode=merge, post_implement_command=hook if isinstance(hook, str) and hook.strip() else None,
+                remote_git_hooks=remote_mode,
                 main_checkout=str(main) if main is not None else None, worktree_links=links,
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,
                 template_source=source, drift=drift, errors=errors, warnings=warnings,

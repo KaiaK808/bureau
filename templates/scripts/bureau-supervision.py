@@ -48,7 +48,8 @@ def process_env(command, environ=None):
 # configuration defines (git 2.55). The one command this script runs, ls-remote, updates no ref and
 # fires no hook event in any git version, so the switches change nothing there today, git() adds
 # the per-name switches of git 2.54 only where an event can fire, and repo.remote_git_runs_hooks
-# has nothing to bring back; they keep the rule the same at every remote command Bureau starts.
+# (true or "operator") has nothing to bring back; they keep the rule the same at every remote
+# command Bureau starts.
 HOOK_EVENTS = ('applypatch-msg', 'commit-msg', 'fsmonitor-watchman', 'p4-changelist', 'p4-post-changelist',
                'p4-pre-submit', 'p4-prepare-changelist', 'post-applypatch', 'post-checkout', 'post-commit',
                'post-index-change', 'post-merge', 'post-receive', 'post-rewrite', 'post-update', 'pre-applypatch',
