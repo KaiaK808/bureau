@@ -169,8 +169,10 @@ if [ "$NO_TMUX" = 0 ] \
   WINDOW_NAME="shepherd-$ISSUE"
 
   # Shell-quote each arg so tmux's sh -c re-parsing preserves them exactly.
-  # printf %q is available in bash 3.2 (macOS default).
-  CMD=$(printf '%q ' "$0" "--no-tmux" "${ORIG_ARGS[@]}")
+  # printf %q is available in bash 3.2 (macOS default). The window gets the
+  # tmux server's environment, not this one: bureau_env_handover puts this
+  # start's overrides on the command line and drops those of an earlier start.
+  CMD="$(bureau_env_handover)$(printf '%q ' "$0" "--no-tmux" "${ORIG_ARGS[@]}")"
 
   if tmux has-session -t "$BUREAU_SESSION" 2>/dev/null; then
     tmux new-window -t "$BUREAU_SESSION:" -c "$REPO_DIR" -n "$WINDOW_NAME" "$CMD"

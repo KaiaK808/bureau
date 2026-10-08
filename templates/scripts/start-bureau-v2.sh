@@ -10,7 +10,7 @@ INTERVAL="${1:-$BUREAU_POLL_INTERVAL}"
 BENCH_PANES="${2:-$BUREAU_WORKBENCH_PANES}"
 REPO_SLUG="$(basename "$PWD")"
 SESSION="${BUREAU_SESSION_NAME:-bureau-v2-$REPO_SLUG}"
-export BUREAU_SESSION="$SESSION"
+bureau_env_caller_export BUREAU_SESSION="$SESSION"
 
 if ! command -v tmux &>/dev/null; then
   echo "ERROR: tmux required. Install with: brew install tmux"
@@ -70,7 +70,10 @@ mkdir -p logs
 
 # Window 0: Status dashboard
 tmux new-session -d -s "$SESSION" -n status -x 200 -y 50
-tmux send-keys -t "$SESSION:status" "BUREAU_SESSION=$SESSION ./scripts/bureau-status.sh" Enter
+# Each pane's shell has the tmux server's environment, not this one: the
+# commands below hand this start's overrides over on their command line
+# (bureau_env_handover), BUREAU_SESSION among them.
+tmux send-keys -t "$SESSION:status" "$(bureau_env_handover)./scripts/bureau-status.sh" Enter
 
 WIN_NUM=1
 
@@ -78,7 +81,7 @@ add_agent_window() {
   local name="$1"
   local mode="$2"
   tmux new-window -t "$SESSION" -n "$name"
-  tmux send-keys -t "$SESSION:$name" "./scripts/queue-loop-supervised.sh $mode $INTERVAL" Enter
+  tmux send-keys -t "$SESSION:$name" "$(bureau_env_handover)./scripts/queue-loop-supervised.sh $mode $INTERVAL" Enter
   ((WIN_NUM++))
 }
 
@@ -100,10 +103,10 @@ if [ "$BENCH_PANES" -gt 0 ]; then
   case "$BENCH_RUNNER" in claude|codex) ;; *) echo 'Unknown workbench runner' >&2; exit 22 ;; esac
   command -v "$BENCH_RUNNER" >/dev/null || { echo "Missing $BENCH_RUNNER" >&2; exit 16; }
   tmux new-window -t "$SESSION" -n bench
-  tmux send-keys -t "$SESSION:bench" "$BENCH_RUNNER" Enter
+  tmux send-keys -t "$SESSION:bench" "$(bureau_env_handover)$BENCH_RUNNER" Enter
   for ((p=1; p<BENCH_PANES; p++)); do
     tmux split-window -h -t "$SESSION:bench"
-    tmux send-keys -t "$SESSION:bench.$p" "$BENCH_RUNNER" Enter
+    tmux send-keys -t "$SESSION:bench.$p" "$(bureau_env_handover)$BENCH_RUNNER" Enter
   done
   tmux select-layout -t "$SESSION:bench" even-horizontal
   ((WIN_NUM++))

@@ -30,6 +30,9 @@
 #   bureau_env_caller_export NAME=VALUE …
 #     Exports each NAME and marks it as set by the caller for the runs the
 #     script starts, so their .env load keeps it (see "The caller wins").
+#   bureau_env_handover
+#     Prints the start of the command line of a tmux pane that hands this
+#     run's list and values over (see below).
 #   bureau_env_key_allowed <name>
 #     0 for a name on the key list, 1 otherwise. Silent.
 #   bureau_env_key_secret <name>
@@ -185,9 +188,11 @@ bureau_env_key_secret() {
 # value of the moment. A key on the list that is still set when bureau_load_env
 # runs keeps its value; the file fills every other key. The list never changes
 # during a load, so loading the same .env twice ends with the values of one load.
-# The three secrets are never on the list: .env stays their only source
-# (SECURITY.md), and bureau_exec_runtime removes them before a relaunch on the
-# promise that the relaunched script reads them back from the file.
+# The three secrets are never on the list: a value .env defines replaces the
+# environment's, as before, because bureau_exec_runtime removes them before a
+# relaunch on the promise that the relaunched script reads them back from the
+# file. A secret only the environment holds is left as it is (see
+# bureau_env_key_secret above; SECURITY.md: keep the keys only in .env).
 # A running `set -x` is off while the environment is walked: one traced line per
 # exported variable in every bash that sources this file would flood the log.
 _bureau_env_caller_snapshot() {
@@ -200,6 +205,18 @@ _bureau_env_caller_snapshot() {
     _bureau_env_caller_pid=$$
     _bes_names=$(compgen -e 2>/dev/null || true)
     case $'\n'"$_bes_names"$'\n' in
+      (*$'\n'BUREAU_ENV_HANDOVER$'\n'*)
+        # The first Bureau script in a tmux pane (bureau_env_handover): the list
+        # and the values came on the pane's command line; every other key the
+        # pane inherited from the tmux server or session is left over from an
+        # earlier start and goes.
+        _bes_list=" ${BUREAU_ENV_CALLER:-} "
+        for _bes_name in $_bes_names; do
+          bureau_env_key_allowed "$_bes_name" || continue
+          bureau_env_key_secret "$_bes_name" && continue
+          case "$_bes_list" in (*" $_bes_name "*) ;; (*) unset "$_bes_name" ;; esac
+        done
+        unset BUREAU_ENV_HANDOVER ;;
       (*$'\n'BUREAU_ENV_CALLER$'\n'*) _bes_list=" ${BUREAU_ENV_CALLER:-} " ;;
       (*)
         for _bes_name in $_bes_names; do
@@ -241,6 +258,45 @@ bureau_env_caller_export() {
     esac
   done
   export BUREAU_ENV_CALLER
+}
+
+# bureau_env_handover — prints the start of a command line for a tmux pane
+# (`tmux new-window … "$(bureau_env_handover)<command>"`, or the text of a
+# send-keys): `/usr/bin/env BUREAU_ENV_HANDOVER=1 BUREAU_ENV_CALLER='…'` and
+# NAME='value' for every key on the list that is set, each in single quotes, so
+# spaces, quotes and `=` arrive unchanged in sh, bash, zsh and fish. A pane gets
+# the environment of the tmux server and session, not that of the script that
+# opens it: a server started by an earlier run keeps that run's list and
+# overrides. The handed list replaces them in the pane, and the first Bureau
+# script there drops every other inherited key (_bureau_env_caller_snapshot).
+# The three secrets are never on the list, so never on a command line.
+bureau_env_handover() {
+  case $- in
+    (*x*) set +x; local _beh_trace=1 ;;
+    (*) local _beh_trace=0 ;;
+  esac
+  local IFS=$' \t\n' _beh_name _beh_out
+  _beh_out="/usr/bin/env BUREAU_ENV_HANDOVER=1 BUREAU_ENV_CALLER=$(_bureau_env_sq "${BUREAU_ENV_CALLER:-}")"
+  for _beh_name in ${BUREAU_ENV_CALLER:-}; do
+    bureau_env_key_allowed "$_beh_name" || continue
+    bureau_env_key_secret "$_beh_name" && continue
+    [ -n "${!_beh_name+x}" ] || continue
+    _beh_out="$_beh_out $_beh_name=$(_bureau_env_sq "${!_beh_name}")"
+  done
+  printf '%s ' "$_beh_out"
+  if [ "$_beh_trace" = 1 ]; then set -x; fi
+  return 0
+}
+
+# _bureau_env_sq <text> — <text> in single quotes, a quote inside as '\''.
+_bureau_env_sq() {
+  local _bsq_rest="$1" _bsq_out=""
+  while :; do
+    case "$_bsq_rest" in (*"'"*) ;; (*) break ;; esac
+    _bsq_out="$_bsq_out${_bsq_rest%%"'"*}'\\''"
+    _bsq_rest="${_bsq_rest#*"'"}"
+  done
+  printf "'%s'" "$_bsq_out$_bsq_rest"
 }
 
 bureau_load_env() {

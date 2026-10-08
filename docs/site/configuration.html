@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6ce4118a54af2f80fd7bd49ad2f016942ae6b5dcf753093757ac0a65a609cee5">
+<meta name="bureau-source-sha256" content="2d715878e19174df23fd69bd27219ca9536a1697cdabbfaa116ad74689249fe8">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1111,12 +1111,25 @@ the merge flags of <code>bureau-tick.sh</code>; a plain
 <code>export</code> in a local script loses to <code>.env</code>. The
 three secrets <code>LINEAR_API_KEY</code>,
 <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_ALERT_CHAT_ID</code>
-are never on the list: <code>.env</code> stays their only source and its
-value replaces the environment's, unexported as before. A value left in
-the start environment or in a parent shell therefore wins over
-<code>.env</code>; <code>bureau-doctor.py</code> warns with the names
-(never the values) of the keys whose process value differs from the
-key's last entry in <code>.env</code>.</p>
+are never on the list: a value <code>.env</code> defines replaces the
+environment's and stays unexported, as before, and a secret only the
+environment holds (the file lacks it) stays set and exported, as before;
+keep the keys only in <code>.env</code> (<a
+href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).
+A tmux pane gets the environment of the tmux server and session, not
+that of the script that opens it, and a server keeps the environment of
+the start that created it; the shepherd's tmux wrapper,
+<code>start-agents.sh</code> and <code>start-bureau-v2.sh</code>
+therefore put this start's list and values on the pane's command line
+(<code>bureau_env_handover</code>:
+<code>/usr/bin/env BUREAU_ENV_HANDOVER=1 BUREAU_ENV_CALLER='…' NAME='value' …</code>,
+single-quoted, never a secret), and the first Bureau script in the pane
+drops every other inherited key, so a window sees exactly the overrides
+of the start that opened it. A value left in the start environment or in
+a parent shell therefore wins over <code>.env</code>;
+<code>bureau-doctor.py</code> warns with the names (never the values) of
+the keys whose process value differs from the key's last entry in
+<code>.env</code>.</p>
 <h3 id="runtime-mode">Runtime mode</h3>
 <table>
 <thead>

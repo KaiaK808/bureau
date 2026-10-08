@@ -37,7 +37,9 @@ add_agent() {
   else
     tmux new-window -t "$SESSION" -n "$name"
   fi
-  tmux send-keys -t "$SESSION:$name" "./scripts/queue-loop.sh $mode $INTERVAL" Enter
+  # The pane's shell has the tmux server's environment, not this one: hand this
+  # start's overrides over on the command line (bureau_env_handover).
+  tmux send-keys -t "$SESSION:$name" "$(bureau_env_handover)./scripts/queue-loop.sh $mode $INTERVAL" Enter
   ((WIN_NUM++))
 }
 
