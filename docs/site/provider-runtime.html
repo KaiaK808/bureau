@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3fb6128eeecb3583684f77ea254c0da7f002074b0aad02f66f3d6215b7dbce1f">
+<meta name="bureau-source-sha256" content="a6944f7fec849e76a02887ea067761d62181d844216854895e04c938541c2264">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -52,6 +52,22 @@ chooses its configured default. A Claude default does not leak into a
 Codex stage. Use actual model identifiers available to the account;
 reasoning settings remain subject to the selected provider/model's
 support.</p>
+<p>Reasoning effort precedence: <code>BUREAU_REASONING_STAGE</code>,
+<code>agents.STAGE.reasoning_effort</code>, then
+<code>agents.providers.PROVIDER.reasoning_effort</code> of the selected
+runner. Codex gets the value as <code>-c model_reasoning_effort=…</code>
+and accepts <code>none</code>, <code>minimal</code>, <code>low</code>,
+<code>medium</code>, <code>high</code>, <code>xhigh</code>,
+<code>max</code> and <code>ultra</code>, subject to the model's support.
+Claude gets it as <code>--effort &lt;value&gt;</code>, also behind the
+Headroom wrap, and accepts only <code>low</code>, <code>medium</code>,
+<code>high</code>, <code>xhigh</code> and <code>max</code>; any other
+value on a Claude stage fails as a configuration error (22) before any
+provider call, because the Claude CLI only warns about an unknown effort
+and runs with its own default. A Claude stage without a configured
+effort gets no <code>--effort</code> flag, so its effort comes from the
+operator's Claude settings. <code>--describe</code> reports the resolved
+value as <code>reasoning</code> for both runners.</p>
 <p>That model precedence applies to version 2 configurations. Version 1
 (including configurations without a version) preserves the older rule:
 generic <code>BUREAU_MODEL_*</code>, <code>agents.model</code> and stage
