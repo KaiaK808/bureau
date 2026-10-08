@@ -402,6 +402,12 @@ Current pipelines use `bureau-provider.py`; the old `codex-stage-runner.sh` comm
 
 ## Operational
 
+### A value on the start line is ignored
+
+A setting supplied as `KEY=value ./scripts/shepherd.sh …` or exported in the operator's shell still takes the value from `.env`. The pipeline scripts load the installation's `.env` selected by `BUREAU_ENV_FILE`; for a key the loader accepts, a value in that file overwrites the process environment and the start line. For a key `.env` does not define, the environment value is used. For one run, use a per-stage key absent from `.env`, or change or comment out the corresponding `.env` line for the run and restore it afterwards. See [per-stage overrides](configuration.md#per-stage-model-overrides-env-shortcuts-for-agentsstagemodel) for keys and a worked example.
+
+Doctor's effective-settings report uses JSON and its process environment. It reads only `BUREAU_RUNNER_IMPLEMENT` from the same `.env` for the `repo.test_command` warning, with the file value taking precedence over its environment value.
+
 ### Agents pause and don't restart — session throttle triggered
 
 Inspect the selected provider's usage signal and `session.usage_threshold_pct` (default 80). Claude can use `BUREAU_USAGE_FILE` or its legacy sources; Codex uses `BUREAU_CODEX_USAGE_FILE` or a shared file tagged `"provider":"codex"`. Numeric `updated_epoch` and `reset_epoch` fields use Unix seconds.
