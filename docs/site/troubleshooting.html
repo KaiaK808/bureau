@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2d97272dce6185da950e1dd3eff12e05a84f688ea81be67887e2c8d230c14446">
+<meta name="bureau-source-sha256" content="679213af5fc7ba8653b3dc193f0540cfc61029e76e187c43b4b669a051ca8e9f">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -450,6 +450,21 @@ worker again.</li>
 <li>Nothing is written for a cancelled run, or when the holder is a live
 run: the second run ends with 21 and names the run that is still
 active.</li>
+<li>A preserved worktree that the reset can take over without loss is no
+halt: when a stage with a target branch (every stage but spec) finds its
+worktree unregistered, but it is a linked worktree of this repository
+(not the main checkout),
+<code>git status --porcelain --untracked-files=all</code> is empty
+(ignored files do not count) and its HEAD equals or is behind
+<code>origin/&lt;branch&gt;</code> after a fresh fetch, the reset
+registers it again, prints
+<code>Re-accepted the clean preserved worktree WORKTREE: … HEAD SHA is on origin/BRANCH …</code>
+and goes on. The usual case: an implement pass committed, the stage
+failed, and you pushed the branch by hand. An uncommitted change, an
+untracked file, a commit origin lacks, an unknown branch or an origin
+that cannot be read keep the 21 and the comment. Before, every
+unregistered worktree halted, and the rerun needed
+<code>git worktree remove</code> although nothing could be lost.</li>
 <li>A 21 for another reason writes nothing, as before: the state changed
 during the stage, a stage started outside a disposable worker, a git
 command failed inside the reset, or a stage's own branch check at its
@@ -756,11 +771,14 @@ by Ctrl-C, SIGTERM or a hang-up (see <a href="#how-to-stop-a-run">How to
 stop a run</a>) keeps its leases and its worktree, and the worktree
 loses its disposable-worker registration, so that no later reset erases
 the work. Releasing the run is therefore not enough: a rerun on the same
-worktree stops with 21 ("refusing to reset unregistered worktree"), and
-a spec stage's feature branch that was never pushed stays behind in the
-repository. The interrupt message names the run, the ticket and the
-worktree, and prints the steps once, with the actual run ID, paths and
-branch:</p>
+worktree stops with 21 ("refusing to reset unregistered worktree")
+unless the worktree is clean and every commit of it is on
+<code>origin/&lt;branch&gt;</code> for a stage other than spec (see <a
+href="#exit-21-ownership-conflict--needs-human-and-one-comment">Exit
+21</a>), and a spec stage's feature branch that was never pushed stays
+behind in the repository. The interrupt message names the run, the
+ticket and the worktree, and prints the steps once, with the actual run
+ID, paths and branch:</p>
 <ol type="1">
 <li>Release the run's ownership:
 <code>python3 scripts/bureau-runtime.py release RUN_ID</code>. While a
