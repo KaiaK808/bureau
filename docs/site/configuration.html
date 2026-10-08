@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="481aac8a11b06d1189630a18cabe5382f262464ca0dc4e0a57b18c9c69a2c24f">
+<meta name="bureau-source-sha256" content="31dc094010d63f2a7d0ac18fe34c21b53f1ba25002365c43bce66aa95a51f472">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -894,7 +894,9 @@ the LFS objects in a <code>pre-push</code> hook, and without it Bureau's
 push leaves them off the remote; doctor warns when the main checkout
 uses <code>filter=lfs</code> (in its <code>.gitattributes</code>, a
 <code>.gitattributes</code> further down that git lists, or
-<code>.git/info/attributes</code>) and the key is not <code>true</code>.
+<code>.git/info/attributes</code>) and the key is neither
+<code>true</code> nor <code>"operator"</code> with an executable
+<code>pre-push</code> hook in the main checkout's hooks directory.
 <code>true</code> (the JSON value) runs the hooks again, as v3.1 did,
 including hooks the branch supplies through a
 <code>core.hooksPath</code> that points into the working tree (husky's

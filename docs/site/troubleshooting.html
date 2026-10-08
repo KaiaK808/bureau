@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="feada64d607175119e6bad2bcfc17d706a19056ce66f1bae8d7420090b0d4673">
+<meta name="bureau-source-sha256" content="6d19c7c49b33d07dcaf951b5e5901c0b7906ed9a5adddf14593b833f899b4d2e">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1374,8 +1374,10 @@ checkout's <code>.git/hooks</code>: LFS uploads its objects in the
 point at objects the remote does not have; doctor warns when the main
 checkout uses <code>filter=lfs</code> (in its
 <code>.gitattributes</code>, a <code>.gitattributes</code> further down
-that git lists, or <code>.git/info/attributes</code>) and the key is not
-<code>true</code> (<a href="configuration.html">configuration</a>, <a
+that git lists, or <code>.git/info/attributes</code>) and the key is
+neither <code>true</code> nor <code>"operator"</code> with an executable
+<code>pre-push</code> hook in the main checkout's hooks directory (<a
+href="configuration.html">configuration</a>, <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).
 The string <code>"operator"</code> runs only the main checkout's own
 hooks directory; commands outside a repository keep the hooks off, and

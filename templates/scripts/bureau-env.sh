@@ -623,72 +623,28 @@ _bureau_git_hooks_off() {
 # (--recurse-submodule=on-demand, --recurse-sub=yes, --recu), so any argument
 # from --rec on that is a prefix of one of those names counts, with or
 # without a value, except a value of no; --no-recurse-submodules is allowed.
-# The scan stops at an option delimiter `--`, not a separate option value.
-# For an unknown option, a following `--` might be its value: keep scanning
-# conservatively. (clone is refused before this check: see git().)
+# Every argument is checked, wherever it stands: after another option (whose
+# value it may or may not be: git takes or leaves some values, accepts
+# abbreviated and bundled options, and gains options with every release, so
+# no table of them says reliably which word git reads as an option) and after
+# a `--` (which may itself be an option's value). A remote, refspec, pattern
+# or option value spelled like the option is refused with it: the safe
+# direction, and no Bureau script passes one. (clone is refused before this
+# check: see git().)
 _bureau_git_asks_recursion() {
-  local IFS=$' \t\n'
-  local _bar_sub="$1" _bar_arg _bar_name _bar_long _bar_opt _bar_match
-  local _bar_values="" _bar_flags="" _bar_skip=0 _bar_unknown=0
+  local _bar_sub="$1" _bar_arg _bar_name _bar_long
   shift
   [ "$_bar_sub" = submodule ] && return 0
-  # Separate values, as listed by git push/fetch/pull/ls-remote -h (git 2.50).
-  # --exec of ls-remote aliases --upload-pack; fetch's hidden
-  # --recurse-submodules-default also takes a value. pull accepts neither it
-  # nor --filter on that git, so those stay unknown there. Optional values
-  # (--force-with-lease, --gpg-sign, --rebase, --log, --signed) take no separate word.
-  case "$_bar_sub" in
-    push)
-      _bar_values='-o --push-option --repo --receive-pack --exec'
-      _bar_flags='-v --verbose -q --quiet --all --branches --mirror -d --delete --tags -n --dry-run --porcelain -f --force --force-with-lease --force-if-includes --recurse-submodules --thin -u --set-upstream --progress --prune --verify --follow-tags --signed --atomic -4 --ipv4 -6 --ipv6' ;;
-    fetch|pull)
-      _bar_values='--depth --deepen --shallow-since --shallow-exclude --upload-pack -j --jobs --negotiation-tip --refmap -o --server-option'
-      _bar_flags='-v --verbose -q --quiet --all --set-upstream -a --append -f --force -t --tags -p --prune --recurse-submodules --dry-run -k --keep --progress --unshallow --update-shallow -4 --ipv4 -6 --ipv6 --show-forced-updates'
-      if [ "$_bar_sub" = fetch ]; then
-        _bar_values="$_bar_values --filter --recurse-submodules-default"
-        _bar_flags="$_bar_flags --atomic -m --multiple -n -P --prune-tags --prefetch --porcelain --write-fetch-head -u --update-head-ok --refetch --negotiate-only --auto-maintenance --auto-gc --write-commit-graph --stdin"
-      else
-        _bar_values="$_bar_values -s --strategy -X --strategy-option --cleanup"
-        _bar_flags="$_bar_flags -r --rebase -n --stat --log --signoff --squash --commit --edit --ff --ff-only --verify --verify-signatures --autostash -S --gpg-sign --allow-unrelated-histories"
-      fi ;;
-    ls-remote)
-      _bar_values='--upload-pack --exec -o --server-option --sort'
-      _bar_flags='-q --quiet -t --tags -b --branches -h --heads --refs --get-url --exit-code --symref' ;;
-  esac
   for _bar_arg in "$@"; do
-    if [ "$_bar_arg" = -- ] && [ "$_bar_skip" = 0 ]; then
-      [ "$_bar_unknown" = 1 ] || break
-      _bar_unknown=0; continue
-    fi
-    # Every word before the delimiter is checked, the value of an option too:
-    # the tables above only decide whether a `--` ends the options. An option
-    # whose value git takes or leaves (--jobs), an option missing from the
-    # tables, an abbreviated or bundled one can each make the word after it an
-    # option again. A value that itself reads like the option is refused with
-    # it: the safe direction.
-    case "$_bar_arg" in
-      --rec*)
-        _bar_name="${_bar_arg%%=*}"
-        # a prefix of one of the names: removing it from the name changes the name
-        for _bar_long in --recurse-submodules-default --recursive; do
-          if [ "${_bar_long#"$_bar_name"}" != "$_bar_long" ]; then
-            [ "$_bar_arg" = "$_bar_name=no" ] || return 0
-            break
-          fi
-        done ;;
-    esac
-    if [ "$_bar_skip" = 1 ]; then _bar_skip=0; continue; fi
-    _bar_unknown=0
-    for _bar_opt in $_bar_values; do
-      if [ "$_bar_arg" = "$_bar_opt" ]; then _bar_skip=1; break; fi
+    case "$_bar_arg" in --rec*) ;; *) continue ;; esac
+    _bar_name="${_bar_arg%%=*}"
+    # a prefix of one of the names: removing it from the name changes the name
+    for _bar_long in --recurse-submodules-default --recursive ""; do
+      [ -n "$_bar_long" ] || continue 2
+      [ "${_bar_long#"$_bar_name"}" = "$_bar_long" ] || break
     done
-    [ "$_bar_skip" = 0 ] || continue
-    case "$_bar_arg" in -*) ;; *) continue ;; esac
-    _bar_name="${_bar_arg%%=*}"; _bar_match=0
-    for _bar_opt in $_bar_values $_bar_flags; do
-      if [ "$_bar_name" = "$_bar_opt" ] || [ "$_bar_name" = "--no-${_bar_opt#--}" ]; then _bar_match=1; break; fi
-    done
-    [ "$_bar_match" = 1 ] || _bar_unknown=1
+    if [ "$_bar_arg" = "$_bar_name=no" ]; then continue; fi
+    return 0
   done
   return 1
 }
