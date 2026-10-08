@@ -387,11 +387,23 @@ _bureau_env_build() {
       _bureau_env_carries "$_beb_value" || _BUREAU_ENV_ARGV+=("$_beb_name=$_beb_value")
     done
   else
+    # compgen prints one name per line, and bash 3.2 takes an environment entry
+    # whose name is no shell identifier (`A[$(command)]`) for a variable: such a
+    # name is neither split into words with pathname expansion nor expanded
+    # indirectly, where its subscript would run. It is passed on as it is, as
+    # under a bash that never lists it.
+    local _beb_noglob=0 _beb_name_re='^[A-Za-z_][A-Za-z0-9_]*$'
+    case $- in (*f*) _beb_noglob=1 ;; esac
+    set -f
+    IFS=$'\n'
     for _beb_name in $_beb_exported; do
+      [[ $_beb_name =~ $_beb_name_re ]] || continue
       _beb_value="${!_beb_name:-}"
       [ -n "$_beb_value" ] || continue
       if _bureau_env_carries "$_beb_value"; then _BUREAU_ENV_ARGV+=(-u "$_beb_name"); fi
     done
+    IFS=$' \t\n'
+    [ "$_beb_noglob" = 1 ] || set +f
   fi
   return 0
 }
