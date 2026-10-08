@@ -348,10 +348,11 @@ bureau_secret_copy() {
 #   value true) runs them with hooks again, as v3.1 did, a core.hooksPath into
 #   the branch's tree included; the string "operator" runs only the hooks in
 #   the git common dir's hooks/ (core.hooksPath forced to its absolute path),
-#   which no commit can write. Unless the setting is true, those commands
-#   never recurse into submodules (configured recursion is switched off, a
-#   call that asks for it is refused with 128): a child git there would run
-#   hooks the submodule's own configuration defines. The setting covers hooks
+#   which no commit can write. Unless the setting is true, those commands do
+#   not recurse into submodules (the recursion keys are switched off after
+#   the caller's own options of git, a call whose arguments ask for recursion
+#   is refused with 128): a child git there would run hooks the submodule's
+#   own configuration defines. The setting covers hooks
 #   only: a filter, an fsmonitor or a credential helper the configuration
 #   names still runs (SECURITY.md).
 #
@@ -596,12 +597,44 @@ _bureau_git_hooks_off() {
   return 0
 }
 
+# _bureau_git_asks_recursion <subcommand> [its arguments] — 0 when the call
+# asks git to recurse into submodules itself: `submodule`, or an argument that
+# names --recurse-submodules (also --recurse-submodules-default) or
+# --recursive. git accepts every unique prefix of a long option
+# (--recurse-submodule=on-demand, --recurse-sub=yes, --recu), so any argument
+# from --rec on that is a prefix of one of those names counts, with or
+# without a value; for clone even =no (clone has no "no" value and takes it
+# as a pathspec), elsewhere =no is allowed, as is --no-recurse-submodules.
+# Arguments after a `--` that ends the options do not count; a `--` right
+# after an option without `=` may be that option's value, so the scan goes on.
+_bureau_git_asks_recursion() {
+  local _bar_sub="$1" _bar_arg _bar_name _bar_long _bar_prev=""
+  shift
+  [ "$_bar_sub" = submodule ] && return 0
+  for _bar_arg in "$@"; do
+    if [ "$_bar_arg" = -- ]; then
+      case "$_bar_prev" in -*=*|"") break ;; -*) ;; *) break ;; esac
+    fi
+    _bar_prev="$_bar_arg"
+    case "$_bar_arg" in --rec*) ;; *) continue ;; esac
+    _bar_name="${_bar_arg%%=*}"
+    # a prefix of one of the names: removing it from the name changes the name
+    for _bar_long in --recurse-submodules-default --recursive ""; do
+      [ -n "$_bar_long" ] || continue 2
+      [ "${_bar_long#"$_bar_name"}" = "$_bar_long" ] || break
+    done
+    if [ "$_bar_sub" != clone ] && [ "$_bar_arg" = "$_bar_name=no" ]; then continue; fi
+    return 0
+  done
+  return 1
+}
+
 git() {
   case $- in
     (*x*) set +x; local _bg_trace=1 ;;
     (*) local _bg_trace=0 ;;
   esac
-  local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven _bg_lead=0 _bg_mode _bg_dir _bg_recurse=0
+  local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven _bg_lead=0 _bg_mode _bg_dir
   local -a _bg_hooks _bg_hooks_env _bg_operator
   _bg_hooks=(); _bg_hooks_env=(); _bg_operator=()
   # The subcommand is the first word after git's own options; -C, -c,
@@ -629,29 +662,11 @@ git() {
     # file it includes) are not among those listed below, git 2.54 has no event
     # switch, and on git 2.55 a hook named like an event (hook.pre-push.command,
     # even without .event) turns the event switch into a per-name one; such a
-    # hook would run with the GitHub tokens. So the recursion configuration can
-    # ask for is switched off below, and a call that asks for recursion itself
-    # (`submodule`, --recurse-submodules other than =no, a recursion key among
-    # git's own options) is refused: no Bureau script makes one.
-    _bg_skip=0
-    for _bg_arg in "${@:1:$_bg_lead}"; do
-      if [ "$_bg_skip" = 1 ]; then
-        _bg_skip=0
-        case "$_bg_arg" in *[Rr][Ee][Cc][Uu][Rr][Ss][Ee]*) _bg_recurse=1 ;; esac
-        continue
-      fi
-      case "$_bg_arg" in
-        -c|--config-env) _bg_skip=1 ;;
-        --config-env=*[Rr][Ee][Cc][Uu][Rr][Ss][Ee]*) _bg_recurse=1 ;;
-      esac
-    done
-    for _bg_arg in "${@:$((_bg_lead + 2))}"; do
-      case "$_bg_arg" in
-        --recurse-submodules=no) ;;
-        --recurse-submodules|--recurse-submodules=*) _bg_recurse=1 ;;
-      esac
-    done
-    if [ "$_bg_sub" = submodule ] || [ "$_bg_recurse" = 1 ]; then
+    # hook would run with the GitHub tokens. The recursion configuration can
+    # ask for is switched off below; a call that asks for it in its own
+    # arguments is refused (_bureau_git_asks_recursion): no Bureau script makes
+    # one.
+    if _bureau_git_asks_recursion "$_bg_sub" "${@:$((_bg_lead + 2))}"; then
       echo "bureau git: refused 'git $_bg_sub' with submodule recursion: Bureau's remote git does not recurse into submodules unless repo.remote_git_runs_hooks is true (a hook a submodule's configuration defines would see the GitHub tokens)" >&2
       if [ "$_bg_trace" = 1 ]; then set -x; fi
       return 128
@@ -662,8 +677,11 @@ git() {
        && _bg_dir=$(_bureau_git_operator_hooks_dir "${@:1:$_bg_lead}"); then
       _bg_operator=(--operator "$_bg_dir")
     fi
-    # Placed before the caller's own options; git passes them on to the git
-    # processes it starts itself (a pull's fetch and merge).
+    # Placed AFTER the caller's own options of git, right before the
+    # subcommand: for a key given twice the last command-line value wins, so
+    # no caller -c, --config-env or -c include.path=<file> can turn a hook or
+    # recursion back on. git passes them on to the git processes it starts
+    # itself (a pull's fetch and merge).
     _bureau_git_hooks_off ${_bg_operator[@]+"${_bg_operator[@]}"} "${@:1:$_bg_lead}"
     _bg_hooks=("${_BUREAU_GIT_HOOKS_OFF[@]}")
     # No recursion that configuration asks for (push.recurseSubmodules,
@@ -675,7 +693,8 @@ git() {
     _bg_hooks_env=(${_BUREAU_GIT_HOOKS_ENV[@]+"${_BUREAU_GIT_HOOKS_ENV[@]}"})
   fi
   if [ "$_bg_trace" = 1 ]; then set -x; fi
-  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bg_hooks_env[@]+"${_bg_hooks_env[@]}"} git ${_bg_hooks[@]+"${_bg_hooks[@]}"} "$@"
+  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bg_hooks_env[@]+"${_bg_hooks_env[@]}"} \
+    git "${@:1:$_bg_lead}" ${_bg_hooks[@]+"${_bg_hooks[@]}"} "${@:$((_bg_lead + 1))}"
 }
 
 # _bureau_drop_secrets — unsets the seven, their copies, BASH_ENV and ENV in the

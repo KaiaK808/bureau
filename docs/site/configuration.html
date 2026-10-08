@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="8f9f5833022eaf0a6e3688bca3d1142204c0e3b2612401210914e1707c892df6">
+<meta name="bureau-source-sha256" content="f439405c54538a351441cd3e1c04e2728d8d2c1bd85c183641ea26992ae2e64e">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -899,15 +899,21 @@ operator hooks see the GitHub tokens. Put the hooks Bureau's push needs
 scanner) there; for <code>clone</code> and outside a repository
 <code>"operator"</code> keeps every hook off. With
 <code>"operator"</code> and with the hooks off (every value but
-<code>true</code>) Bureau's push, fetch and pull never recurse into
-submodules (<code>push.recurseSubmodules=no</code>,
-<code>fetch.recurseSubmodules=no</code>,
-<code>submodule.recurse=false</code> on the command line), and a Bureau
-git call that asks for recursion (<code>git submodule</code>,
-<code>--recurse-submodules</code> other than <code>=no</code>) is
-refused with exit 128, because a child git in a submodule would run
-hooks that submodule's configuration defines; Bureau's push then neither
-pushes nor checks submodule commits. Absent, <code>null</code>,
+<code>true</code>) Bureau's own push, fetch and pull do not recurse into
+submodules: <code>push.recurseSubmodules=no</code>,
+<code>fetch.recurseSubmodules=no</code> and
+<code>submodule.recurse=false</code> go on the command line after the
+caller's own options of git, so neither configuration nor a caller's
+<code>-c</code>, <code>--config-env</code> or included file turns
+recursion back on, and a Bureau git call that asks for recursion in its
+arguments (<code>git submodule</code>;
+<code>--recurse-submodules</code>,
+<code>--recurse-submodules-default</code> or <code>--recursive</code>
+under any prefix git accepts, except a value of <code>no</code> outside
+<code>clone</code>) is refused with exit 128, because a child git in a
+submodule would run hooks that submodule's configuration defines;
+Bureau's push then neither pushes nor checks submodule commits
+(SECURITY.md has the exact rule). Absent, <code>null</code>,
 <code>false</code>, any other value and a <code>.bureau.json</code> that
 cannot be read keep them off; doctor reports the mode as
 <code>remote_git_hooks</code> (<code>on</code>, <code>operator</code> or
