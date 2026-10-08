@@ -23,6 +23,7 @@ The re-accept of a clean preserved worktree needs no configuration; a worktree h
 ### Documentation
 
 - Configuration and troubleshooting now state that an allowed key defined in the installation's `.env` overrides the process environment and the start line, while a key absent from `.env` uses the environment value, and explain how to override a value for one run. No behaviour change or resync is required.
+
 ### Security
 
 - An environment entry whose name is no shell identifier no longer runs code in Bureau's secret filter. bash 3.2, the `/bin/bash` of macOS, takes an entry such as `A[$(command)]=x` for a variable; `bureau_without_secrets`, `bureau_untrusted_env` and `bureau_exec_runtime` expanded every exported name to see whether its value carries a key, so the subscript ran as a command in the Bureau shell, which holds the unexported `.env` keys, and could print one. A name with glob characters also went through pathname expansion in the working directory. Such names are now skipped unexpanded and reach the child as they are, as under a bash that never lists them, so a value of such an entry is no longer checked for a key. The characters that make a subscript or a substitution are rejected under every locale; with `nocasematch` set by the caller, a few non-ASCII letters count as letters under some locales, which runs nothing. Well-named variables are filtered as before. To use it, something had to put an entry into the environment a Bureau script starts from, such as a tmux server's environment. No setting or exit-code change.
