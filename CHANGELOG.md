@@ -6,6 +6,16 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Added
+
+- Claude stages get the resolved reasoning effort: when `BUREAU_REASONING_<STAGE>`, `agents.<stage>.reasoning_effort` or `agents.providers.claude.reasoning_effort` (in that precedence) resolves a value for a Claude stage, `bureau-provider.py` passes `--effort <value>` to the `claude` command, also behind the Headroom wrap. Allowed values for Claude are `low`, `medium`, `high`, `xhigh` and `max`. A Claude stage without a configured effort runs with the same argv as before and keeps the CLI's own default. Codex values and behaviour are unchanged; `--describe` still reports the resolved value for both runners.
+
+### Changed
+
+- Installations that already set `reasoning_effort` for a Claude stage or for `agents.providers.claude` now get it applied: before, the value was resolved but never passed to Claude, so the effort came from the operator's own Claude settings. A value only Codex knows (`none`, `minimal`, `ultra`) on a Claude stage now ends the call with the configuration error 22 before any provider call, because the Claude CLI only warns about an unknown `--effort` and ignores it.
+
+**Upgrade:** resync the scripts scope (`--resync-scripts`; `bureau-provider.py` changed). Before resyncing, check `.bureau.json` and the environment for a Claude stage whose `reasoning_effort` is `none`, `minimal` or `ultra` (also through `agents.providers.claude` or `BUREAU_REASONING_<STAGE>`) and change it to one of `low`, `medium`, `high`, `xhigh`, `max`, or remove it. Validated with fake CLIs only (`tests/provider_adapter_test.py`); no live Claude run with `--effort` is part of this change.
+
 ## [3.3.0] - 2026-10-07
 
 Stable release of the 3.3.0 candidates. v3.3 is a minor release on v3.2.1 with two pull requests: the shell gate for Codex implement turns and private temporary directories ([#60](https://github.com/KaiaK808/bureau/pull/60)), and the shell gate for Codex QA turns ([#62](https://github.com/KaiaK808/bureau/pull/62)). The v3 exit-code contract stays; no exit code is new. Claude runs are unchanged. Runtime, installer, templates and tests are identical to v3.3.0-rc.2. The changes since v3.2.1 are recorded in the 3.3.0-rc.2 and 3.3.0-rc.1 sections below, and the [v3.3.0 release notes](docs/release-notes.md) consolidate them.

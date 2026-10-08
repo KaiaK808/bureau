@@ -511,6 +511,85 @@ p.shutil.rmtree=fail_remove
         wrapper.chmod(0o755)
         self.run_provider()
 
+    def claude_argv(self,config,**env):
+        self.config.write_text(json.dumps(config))
+        (self.root/'argv.json').unlink(missing_ok=True)
+        self.run_provider(**env)
+        return json.loads((self.root/'argv.json').read_text())
+
+    def test_claude_gets_the_resolved_effort(self):
+        # Stage, provider and environment, in configuration()'s precedence.
+        stage={'agents':{'runner':'claude','implement':{'reasoning_effort':'xhigh'},
+                         'providers':{'claude':{'reasoning_effort':'low'}}}}
+        provider={'agents':{'runner':'claude','providers':{'claude':{'reasoning_effort':'medium'}}}}
+        for config,env,effort in ((stage,{},'xhigh'),(provider,{},'medium'),
+                                  (stage,{'BUREAU_REASONING_IMPLEMENT':'max'},'max'),
+                                  (provider,{'BUREAU_REASONING_IMPLEMENT':'high'},'high')):
+            with self.subTest(config=config,env=env):
+                argv=self.claude_argv(config,**env)
+                self.assertEqual(argv.count('--effort'),1)
+                self.assertEqual(argv[argv.index('--effort')+1],effort)
+                self.assertEqual(argv[0],'-p')
+                self.assertEqual(p.configuration('implement',config,env)['reasoning'],effort)
+
+    def test_claude_without_effort_runs_as_before(self):
+        argv=self.claude_argv({'agents':{'runner':'claude'}})
+        self.assertNotIn('--effort',argv)
+        # A setting for Codex does not reach Claude.
+        argv=self.claude_argv({'agents':{'runner':'claude','providers':{'codex':{'reasoning_effort':'minimal'}}}})
+        self.assertNotIn('--effort',argv)
+        # Negative control: the same fixture records the flag once it is configured.
+        argv=self.claude_argv({'agents':{'runner':'claude','implement':{'reasoning_effort':'low'}}})
+        self.assertEqual(argv[argv.index('--effort')+1],'low')
+
+    def test_claude_effort_survives_the_headroom_wrap(self):
+        wrapper=self.bin/'headroom'
+        wrapper.write_text('#!/bin/sh\n[ "$1" = wrap ] && [ "$2" = claude ] && [ "$3" = -- ] || exit 99\nshift 3\nexec claude "$@"\n')
+        wrapper.chmod(0o755)
+        plain=self.claude_argv({'agents':{'runner':'claude','implement':{'reasoning_effort':'high'}}})
+        wrapped=self.claude_argv({'agents':{'runner':'claude','headroom_wrap':True,'implement':{'reasoning_effort':'high'}}})
+        self.assertEqual(wrapped[wrapped.index('--effort')+1],'high')
+        # Same argv order with and without the wrap (the session id differs per call).
+        strip=lambda argv:[arg for i,arg in enumerate(argv) if not (i and argv[i-1]=='--session-id')]
+        self.assertEqual(strip(wrapped),strip(plain))
+
+    def test_claude_rejects_an_effort_only_codex_knows(self):
+        (self.bin/'claude').write_text('#!/bin/sh\necho unexpected Claude >&2\nexit 99\n')
+        for effort in ('none','minimal','ultra'):
+            for config,env in (({'agents':{'runner':'claude','implement':{'reasoning_effort':effort}}},{}),
+                               ({'agents':{'runner':'claude','providers':{'claude':{'reasoning_effort':effort}}}},{}),
+                               ({'agents':{'runner':'claude'}},{'BUREAU_REASONING_IMPLEMENT':effort})):
+                with self.subTest(effort=effort,config=config,env=env):
+                    with self.assertRaisesRegex(ValueError,'low, medium, high, xhigh, max'):
+                        p.configuration('implement',config,env)
+                    self.config.write_text(json.dumps(config))
+                    result=self.run_provider(code=22,**env)
+                    self.assertIn('reasoning_effort for runner claude must be one of low, medium, high, xhigh, max',result.stderr)
+                    self.assertNotIn('unexpected Claude',result.stderr)
+                    self.assertFalse((self.root/'argv.json').exists())
+                    self.assertFalse((self.root/'evidence').exists())
+
+    def test_codex_effort_is_unchanged(self):
+        for effort in ('none','minimal','low','medium','high','xhigh','max','ultra'):
+            with self.subTest(effort=effort):
+                self.config.write_text(json.dumps({'agents':{'runner':'codex','implement':{'reasoning_effort':effort}}}))
+                self.run_provider()
+                argv=json.loads((self.root/'argv.json').read_text())
+                self.assertEqual(argv[argv.index('-c')+1],'model_reasoning_effort='+json.dumps(effort))
+                self.assertNotIn('--effort',argv)
+        self.config.write_text(json.dumps({'agents':{'runner':'codex'}}))
+        self.run_provider()
+        self.assertNotIn('-c',json.loads((self.root/'argv.json').read_text()))
+        with self.assertRaises(ValueError): p.configuration('implement',{'agents':{'runner':'codex'}},{'BUREAU_REASONING_IMPLEMENT':'extreme'})
+
+    def test_describe_reports_the_effort_for_both_runners(self):
+        for runner,effort in (('claude','xhigh'),('codex','minimal')):
+            with self.subTest(runner=runner):
+                self.config.write_text(json.dumps({'agents':{'runner':runner,'implement':{'reasoning_effort':effort}}}))
+                result=self.run_provider('--describe')
+                described=json.loads(result.stdout)
+                self.assertEqual((described['runner'],described['reasoning']),(runner,effort))
+
     def test_codex_only_does_not_invoke_claude_auth(self):
         (self.bin/'claude').write_text('#!/bin/sh\necho unexpected Claude >&2\nexit 99\n')
         self.run_provider()

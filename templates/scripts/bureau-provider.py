@@ -15,6 +15,10 @@ import time
 import uuid
 
 
+# The values the Claude CLI's --effort accepts.
+CLAUDE_EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
+
+
 def configuration(stage, config, env):
     if not isinstance(config, dict) or not isinstance(config.get('agents', {}), dict): raise ValueError('configuration must contain an agents object')
     agents = config.get('agents', {})
@@ -55,6 +59,10 @@ def configuration(stage, config, env):
     reasoning = env.get('BUREAU_REASONING_' + upper) or item.get('reasoning_effort') or provider.get('reasoning_effort')
     if reasoning and reasoning not in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'):
         raise ValueError('invalid reasoning_effort')
+    # The Claude CLI only warns about an --effort value it does not know and
+    # runs with its own default, so the values only Codex knows fail here.
+    if runner == 'claude' and reasoning and reasoning not in CLAUDE_EFFORTS:
+        raise ValueError('reasoning_effort for runner claude must be one of ' + ', '.join(CLAUDE_EFFORTS))
     timeout = float(env.get('BUREAU_STAGE_TIMEOUT') or item.get('timeout_seconds') or provider.get('timeout_seconds', 3600))
     if not math.isfinite(timeout) or timeout <= 0 or timeout > 86400: raise ValueError('timeout_seconds must be within (0, 86400]')
     return dict(stage=stage, runner=runner, model=model, sandbox=sandbox, reasoning=reasoning, timeout=timeout,
@@ -279,6 +287,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
             (evidence/'system.txt').write_text(system)
             command += ['--append-system-prompt-file', str(evidence/'system.txt')]
         if schema: command += ['--json-schema', schema.read_text()]
+        if options['reasoning']: command += ['--effort', options['reasoning']]
         if options['headroom']:
             if not shutil.which('headroom'): raise ValueError('headroom executable is missing')
             command = ['headroom', 'wrap', 'claude', '--', *command[1:]]

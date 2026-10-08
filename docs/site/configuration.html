@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="89c3250bf618fed6dd694409e294ede6dee3a09f5d84a2c3396a3ba83e897db0">
+<meta name="bureau-source-sha256" content="c477e12d697290211baf4117954b180df78724c8ba71b90ccc865bb8449e4ab1">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -605,8 +605,15 @@ until explicitly changed</td>
 <tr>
 <td><code>agents.&lt;stage&gt;.reasoning_effort</code></td>
 <td>unset</td>
-<td>Provider/model-supported reasoning value; provider defaults also
-supported</td>
+<td>Reasoning effort for the stage's runner; provider defaults
+(<code>agents.providers.&lt;provider&gt;.reasoning_effort</code>) also
+supported, and <code>BUREAU_REASONING_&lt;STAGE&gt;</code> wins over
+both. Claude gets <code>--effort</code> and accepts <code>low</code>,
+<code>medium</code>, <code>high</code>, <code>xhigh</code>,
+<code>max</code>; Codex gets <code>model_reasoning_effort</code> and
+also accepts <code>none</code>, <code>minimal</code>,
+<code>ultra</code>. Another value fails with 22 before any provider
+call; unset leaves the CLI's own default</td>
 </tr>
 <tr>
 <td><code>agents.&lt;stage&gt;.sandbox</code></td>

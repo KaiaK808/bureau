@@ -90,7 +90,7 @@ Version 1 configurations (including an absent version) and migrated configuratio
 | `agents.providers.<provider>.model` | CLI default | Provider-specific model |
 | `agents.<stage>.model` | inherited | Generic stage model; Claude-only under v1 compatibility, selected runner under v2 semantics |
 | `agents.model_compatibility` | based on schema version | `v1` preserves legacy model meaning; migration retains it until explicitly changed |
-| `agents.<stage>.reasoning_effort` | unset | Provider/model-supported reasoning value; provider defaults also supported |
+| `agents.<stage>.reasoning_effort` | unset | Reasoning effort for the stage's runner; provider defaults (`agents.providers.<provider>.reasoning_effort`) also supported, and `BUREAU_REASONING_<STAGE>` wins over both. Claude gets `--effort` and accepts `low`, `medium`, `high`, `xhigh`, `max`; Codex gets `model_reasoning_effort` and also accepts `none`, `minimal`, `ultra`. Another value fails with 22 before any provider call; unset leaves the CLI's own default |
 | `agents.<stage>.sandbox` | stage-dependent | Codex `read-only` or `workspace-write`; provider defaults also supported |
 | `agents.<stage>.timeout_seconds` | 3600 | Adapter timeout per provider call (900 before v3.1), also configurable by provider (`agents.providers.<provider>.timeout_seconds`); `BUREAU_STAGE_TIMEOUT` in the process environment wins over both. Implement brings its own limits. Doctor warns when an enabled `spec`, `spec_review`, `ux`, `qa` or `code_review` stage gets less than 1800 s per call: their calls often run 15 to 30 minutes and end with `124` when cut off |
 | `agents.workbench_runner` | default runner | Interactive bench provider; zero panes omits it |
