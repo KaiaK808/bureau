@@ -23,7 +23,10 @@
 #     stay shell variables of the reading script, with or without --export, and
 #     lose the export attribute a parent shell gave them (v3.2). Writes nothing
 #     to stdout and never prints a line or a value; the only name it prints is
-#     that of a numeric key it dropped (L13).
+#     that of a numeric key it dropped (L13). A key the caller's environment
+#     holds keeps the caller's value (see "The caller wins" below); the names
+#     of those whose .env value differs are in _BUREAU_ENV_SHADOWED afterwards,
+#     one per line, for doctor.
 #   bureau_env_key_allowed <name>
 #     0 for a name on the key list, 1 otherwise. Silent.
 #   bureau_env_key_secret <name>
@@ -51,8 +54,11 @@
 #     unquoted value loses a whitespace-separated `# comment` — cut on the raw
 #     value, before any trimming — and then its surrounding whitespace
 #   - values stay text: no $-expansion, no command substitution, no escapes
-#   - the last entry wins; a key from the file replaces the environment's
-#     value, and a key missing from the file leaves the environment alone
+#   - the last entry wins; a key missing from the file leaves the environment
+#     alone, and so does a key the caller's environment already holds, set or
+#     set to the empty string ("The caller wins" below): the file only
+#     fills keys that are absent. The three secrets are the exception: the
+#     file's value replaces the environment's, as before
 #   - a running `set -x` is switched off first and restored before returning,
 #     so no value reaches the trace
 #   - allexport (`set -a`, also from an exported SHELLOPTS) is switched off
@@ -157,6 +163,84 @@ bureau_env_key_secret() {
   return 1
 }
 
+# The caller wins. A value the operator puts on the start line for one
+# run (BUREAU_CODEX_MODEL_DEFAULT=<model> bash scripts/shepherd.sh …), or one a
+# parent script sets for the run it starts (queue-loop.sh --dry-run, the
+# shepherd's BUREAU_FORCE_ALL_AGENTS=1), used to be replaced by the .env
+# value: a whole stage ran on the model in .env. A key counts as the caller's
+# when it was in the environment this process got (exported, set or empty) and
+# is still set when bureau_load_env runs. Two things are not the caller's:
+#   - what this process set itself after it started — the defaults
+#     bureau-config.sh exports (BUREAU_STOP_REQUESTED) and the keys an earlier
+#     load in the same process set: loading the same .env twice ends with the
+#     values of one load. The environment is therefore taken once, when this
+#     file is first sourced in the process (_bureau_env_caller_snapshot).
+#   - a key a parent's load took from .env and exported: BUREAU_ENV_FILLED
+#     (exported, one NAME=<cksum of the value> line per key, never the value
+#     itself) records what each load with --export, or over an exported key,
+#     took from the file. A key whose value still matches its line there is
+#     read from .env again, so the stages a long-running queue loop starts
+#     still see an edited .env. A parent that changes the value afterwards
+#     makes it the caller's.
+# The three secrets do not follow the rule: .env stays their only source
+# (SECURITY.md), and bureau_exec_runtime removes them before a relaunch on the
+# promise that the relaunched script reads them back from the file.
+# A running `set -x` is off while the environment is walked: one traced line per
+# exported variable in every bash that sources this file would flood the log.
+_bureau_env_caller_snapshot() {
+  case $- in
+    (*x*) set +x; local _bes_trace=1 ;;
+    (*) local _bes_trace=0 ;;
+  esac
+  local IFS=$' \t\n' _bes_name
+  if [ "${_bureau_env_caller_pid:-}" != "$$" ]; then
+    _bureau_env_caller_pid=$$
+    _BUREAU_ENV_CALLER=$'\n'
+    for _bes_name in $(compgen -e 2>/dev/null || true); do
+      bureau_env_key_allowed "$_bes_name" || continue
+      bureau_env_key_secret "$_bes_name" && continue
+      _BUREAU_ENV_CALLER="$_BUREAU_ENV_CALLER$_bes_name"$'\n'
+    done
+  fi
+  if [ "$_bes_trace" = 1 ]; then set -x; fi
+  return 0
+}
+_bureau_env_caller_snapshot
+
+# _bureau_env_sum <value> — prints the line BUREAU_ENV_FILLED keeps for
+# <value>: cksum's checksum and length, so the value itself never lands in a
+# second exported variable.
+_bureau_env_sum() {
+  local _bsum
+  _bsum=$(printf '%s' "$1" | cksum)
+  printf '%s' "${_bsum// /.}"
+}
+
+# _bureau_env_from_caller <name> — 0 when <name> is in the snapshot, still set
+# and not a value a load took from .env (BUREAU_ENV_FILLED).
+_bureau_env_from_caller() {
+  case "$_BUREAU_ENV_CALLER" in (*$'\n'"$1"$'\n'*) ;; (*) return 1 ;; esac
+  [ -n "${!1+x}" ] || return 1
+  case "${BUREAU_ENV_FILLED:-}" in (*$'\n'"$1="*) ;; (*) return 0 ;; esac
+  case "$BUREAU_ENV_FILLED" in (*$'\n'"$1=$(_bureau_env_sum "${!1}")"$'\n'*) return 1 ;; esac
+  return 0
+}
+
+# _bureau_env_mark <name> [value] — replaces the line of <name> in
+# BUREAU_ENV_FILLED by <name>=<checksum of value>, or removes it without a
+# value; exports the variable.
+_bureau_env_mark() {
+  local _bem_out=$'\n' _bem_line
+  while IFS= read -r _bem_line; do
+    [ -n "$_bem_line" ] || continue
+    case "$_bem_line" in ("$1="*) continue ;; esac
+    _bem_out="$_bem_out$_bem_line"$'\n'
+  done <<< "${BUREAU_ENV_FILLED:-}"
+  if [ "$#" -ge 2 ]; then _bem_out="$_bem_out$1=$(_bureau_env_sum "$2")"$'\n'; fi
+  BUREAU_ENV_FILLED="$_bem_out"
+  export BUREAU_ENV_FILLED
+}
+
 bureau_load_env() {
   # L1: the very first statement turns a running trace off, before any line or
   # value is expanded; every return below restores it.
@@ -185,6 +269,7 @@ bureau_load_env() {
   local _be_tail='^[[:space:]]*(#.*)?$'
   local _be_number='^(0|[1-9][0-9]*)$'
   local _be_line _be_name _be_raw _be_value _be_quote _be_rest _be_inner _be_after
+  _BUREAU_ENV_SHADOWED=""
   while IFS= read -r _be_line || [ -n "$_be_line" ]; do
     _be_line="${_be_line%$'\r'}"
     [[ $_be_line =~ $_be_assign ]] || continue
@@ -223,11 +308,28 @@ bureau_load_env() {
       continue
     fi
 
-    printf -v "$_be_name" '%s' "$_be_value"
     if bureau_env_key_secret "$_be_name"; then
+      printf -v "$_be_name" '%s' "$_be_value"
       export -n "$_be_name"
-    elif [ "$_be_export" = 1 ]; then
+      continue
+    fi
+    # The caller wins: a key the caller's environment holds keeps its value.
+    if _bureau_env_from_caller "$_be_name"; then
+      if [ "${!_be_name}" != "$_be_value" ]; then
+        case $'\n'"$_BUREAU_ENV_SHADOWED" in
+          (*$'\n'"$_be_name"$'\n'*) ;;
+          (*) _BUREAU_ENV_SHADOWED="$_BUREAU_ENV_SHADOWED$_be_name"$'\n' ;;
+        esac
+      fi
+      case "${BUREAU_ENV_FILLED:-}" in (*$'\n'"$_be_name="*) _bureau_env_mark "$_be_name" ;; esac
+      continue
+    fi
+    printf -v "$_be_name" '%s' "$_be_value"
+    if [ "$_be_export" = 1 ]; then
       export "$_be_name"
+      _bureau_env_mark "$_be_name" "$_be_value"
+    else
+      case "$_BUREAU_ENV_CALLER" in (*$'\n'"$_be_name"$'\n'*) _bureau_env_mark "$_be_name" "$_be_value" ;; esac
     fi
   done < "$_be_file"
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c477e12d697290211baf4117954b180df78724c8ba71b90ccc865bb8449e4ab1">
+<meta name="bureau-source-sha256" content="fc1a915ca2a236f2514b6502f04195237b92b860e4d270219e556747b09e3a5b">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -753,9 +753,11 @@ Required for Codex implementation completion and the app tests action.
 <code>bureau-doctor.py</code> warns that it is missing (absent,
 <code>null</code>, <code>false</code> or <code>""</code>, which stop a
 Codex completion with <code>24</code>) only when implement resolves to
-Codex (<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it, from
-the <code>.env</code> the stages read (<code>BUREAU_ENV_FILE</code>)
-before the environment, else <code>agents.implement.runner</code>, else
+Codex (<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it: the
+process environment, else the <code>.env</code> the stages read
+(<code>BUREAU_ENV_FILE</code>), see <a
+href="#process-environment-and-env">Process environment and
+<code>.env</code></a>, else <code>agents.implement.runner</code>, else
 <code>agents.runner</code>), also with <code>agents.implement</code>
 off, since the shepherd runs every stage unless
 <code>--respect-config</code></td>
@@ -1056,6 +1058,37 @@ env <code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code> if set</td>
 </table>
 <hr />
 <h2 id="environment-variables">Environment variables</h2>
+<h3 id="process-environment-and-env">Process environment and
+<code>.env</code></h3>
+<p>Every script reads its keys from one <code>.env</code> file
+(<code>BUREAU_ENV_FILE</code>, parsed by <code>bureau_load_env</code>,
+never sourced). The caller's environment wins over that file: a key on
+the <code>.env</code> key list that the process got from its caller, set
+or set to the empty string, keeps its value, and <code>.env</code> only
+fills the keys that are absent. A value on the start line for one run
+(<code>BUREAU_CODEX_MODEL_DEFAULT=&lt;model&gt; bash scripts/shepherd.sh TEAM-123</code>),
+one exported in the shell that starts Bureau, and one a parent script
+sets for the run it starts (<code>queue-loop.sh --dry-run</code>, the
+shepherd's <code>BUREAU_FORCE_ALL_AGENTS=1</code>) all count; before
+this change the <code>.env</code> value replaced them, so a one-off
+model override ran on the model in <code>.env</code>. What a script sets
+for itself after it started does not count: the defaults
+<code>bureau-config.sh</code> exports, and the keys an earlier load in
+the same process took from <code>.env</code>, so a script that loads the
+same file twice ends with the values of one load. A key a parent loop
+took from <code>.env</code> and passed on (recorded as a checksum, never
+the value, in the exported <code>BUREAU_ENV_FILLED</code>) is read from
+<code>.env</code> again by the stage it starts, so a stage still sees an
+edit made to <code>.env</code> while a queue loop runs; a value the
+parent changed afterwards is the caller's. The three secrets
+<code>LINEAR_API_KEY</code>, <code>TELEGRAM_BOT_TOKEN</code> and
+<code>TELEGRAM_ALERT_CHAT_ID</code> are the exception: <code>.env</code>
+stays their only source and its value replaces the environment's,
+unexported as before. A value left in the start environment or in a
+parent shell therefore wins over <code>.env</code>;
+<code>bureau-doctor.py</code> warns with the names (never the values) of
+the keys whose process value shadows a different <code>.env</code>
+value.</p>
 <h3 id="runtime-mode">Runtime mode</h3>
 <table>
 <thead>
@@ -1423,7 +1456,10 @@ compatibility</td>
 take precedence. Under v1 model compatibility, generic overrides belong
 to Claude and are ignored for Codex. The <code>.bureau.json</code> keys
 are the canonical surface; env vars are useful for one-off experiments
-(<code>BUREAU_MODEL_CODE_REVIEW=claude-haiku-4-5-20251001 ./scripts/queue-loop.sh code-review 5</code>).</p>
+(<code>BUREAU_MODEL_CODE_REVIEW=claude-haiku-4-5-20251001 ./scripts/queue-loop.sh code-review 5</code>);
+such a start-line value wins over the same key in <code>.env</code> (see
+<a href="#process-environment-and-env">Process environment and
+<code>.env</code></a>).</p>
 <h3 id="backend-routing-env-shortcuts-for-agentsstagerunner">Backend
 routing (env shortcuts for
 <code>agents.&lt;stage&gt;.runner</code>)</h3>
@@ -1577,8 +1613,9 @@ where <code>./.env</code> would be a file the branch commits.
 <code>bureau-doctor.py</code> reads only
 <code>BUREAU_RUNNER_IMPLEMENT</code> from it (for the
 <code>repo.test_command</code> warning), from the same file by the same
-rule, also when it runs in a linked worktree; provider
-<code>--describe</code> does not read it</td>
+rule, also when it runs in a linked worktree, and names the keys whose
+value in its own environment shadows a different <code>.env</code>
+value; provider <code>--describe</code> does not read it</td>
 </tr>
 <tr>
 <td><code>BUREAU_ALERT_THROTTLE_FILE</code></td>
