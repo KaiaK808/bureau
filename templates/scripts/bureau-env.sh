@@ -401,11 +401,29 @@ _bureau_env_build() {
       _bureau_env_carries "$_beb_value" || _BUREAU_ENV_ARGV+=("$_beb_name=$_beb_value")
     done
   else
+    # compgen prints one name per line, and bash 3.2 takes an environment entry
+    # whose name is no shell identifier (`A[$(command)]`) for a variable: such a
+    # name is neither split into words with pathname expansion nor expanded
+    # indirectly, where its subscript would run. It is passed on as it is, as
+    # under a bash that never lists it. The check spells every character out:
+    # a range such as A-Z or a class follows the locale's collation, and under
+    # some single-byte locales lets `[`, `$` and `(` through. No new local
+    # either, which would hide an exported variable of that name from the
+    # filter: _beb_startup, whose argument is read for the last time above,
+    # keeps the caller's noglob setting.
+    case $- in (*f*) _beb_startup=noglob ;; (*) _beb_startup=glob ;; esac
+    set -f
+    IFS=$'\n'
     for _beb_name in $_beb_exported; do
+      case "$_beb_name" in
+        (''|[0123456789]*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*) continue ;;
+      esac
       _beb_value="${!_beb_name:-}"
       [ -n "$_beb_value" ] || continue
       if _bureau_env_carries "$_beb_value"; then _BUREAU_ENV_ARGV+=(-u "$_beb_name"); fi
     done
+    IFS=$' \t\n'
+    [ "$_beb_startup" = noglob ] || set +f
   fi
   return 0
 }
