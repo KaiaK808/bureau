@@ -187,6 +187,9 @@ cp "$SCRIPTS/bureau-tick.sh" "$SCRIPTS/bureau-supervision.py" "$T/scripts/"
 git -C "$T" init -q
 cat > "$T/scripts/bureau-config.sh" <<'STUB'
 BUREAU_ENV_FILE=/nonexistent
+# bureau-env.sh's helper, which bureau-tick.sh calls for its merge flags (the stub replaces the
+# whole config, and with it the source of bureau-env.sh).
+bureau_env_caller_export() { export "$@"; }
 bureau_is_paused() { return 1; }
 precondition_linear() { return 0; }
 agent_enabled() { return 0; }

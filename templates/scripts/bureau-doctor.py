@@ -154,9 +154,10 @@ def stage_env_value(config_path, name):
 def stage_env_shadowed(config_path):
     """The keys whose .env value the stages do not see because the process environment holds the key
     with another value (the caller's value wins), as bureau_load_env records them in
-    _BUREAU_ENV_SHADOWED. Names only, never a value; [] when there is no such file or it cannot be read."""
+    _BUREAU_ENV_SHADOWED: compared with the key's last entry in the file, the one the stages would
+    take. Names only, never a value; [] when there is no such file or it cannot be read."""
     out = stage_env_run(config_path, 'printf "%s" "${_BUREAU_ENV_SHADOWED:-}"')
-    return [] if out is None else [name for name in out.split('\n') if name]
+    return [] if out is None else out.split()
 
 
 def stage_env_run(config_path, code, *args):

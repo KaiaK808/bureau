@@ -556,17 +556,23 @@ class TestCommandWarningTests(Repo):
         # included), never a value, and neither a key with the same value nor a secret, for which
         # .env stays the only source.
         config = copy.deepcopy(BASE); self.write_config(config)
-        (self.repo / '.env').write_text('LINEAR_API_KEY=lin_file\nBUREAU_RUNNER_IMPLEMENT=claude\nBUREAU_MODEL_QA=model-same\n'
-                                        'BUREAU_DRY_RUN=0\nBUREAU_CODEX_MODEL_DEFAULT=model-file\n')
+        # BUREAU_MODEL_QA is in the file twice: the last entry, which a stage would take, is compared.
+        (self.repo / '.env').write_text('LINEAR_API_KEY=lin_file\nBUREAU_RUNNER_IMPLEMENT=claude\nBUREAU_MODEL_QA=model-first\n'
+                                        'BUREAU_DRY_RUN=0\nBUREAU_CODEX_MODEL_DEFAULT=model-file\nBUREAU_MODEL_QA=model-same\n'
+                                        'BUREAU_DRY_RUN=1\nBUREAU_DRY_RUN=0\n')
         env = {'LINEAR_API_KEY': 'lin_process', 'BUREAU_RUNNER_IMPLEMENT': 'codex', 'BUREAU_MODEL_QA': 'model-same',
                'BUREAU_DRY_RUN': '', 'BUREAU_CODEX_MODEL_DEFAULT': 'model-start-line'}
         with patch.dict(os.environ, env):
             warnings = self.diagnose(config)['warnings']
         notes = [w for w in warnings if w.startswith('Process environment shadows .env: ')]
         self.assertEqual(len(notes), 1, warnings)
-        self.assertTrue(notes[0].startswith('Process environment shadows .env: BUREAU_RUNNER_IMPLEMENT, BUREAU_DRY_RUN, BUREAU_CODEX_MODEL_DEFAULT set here'), notes[0])
+        self.assertTrue(notes[0].startswith('Process environment shadows .env: BUREAU_RUNNER_IMPLEMENT, BUREAU_CODEX_MODEL_DEFAULT, BUREAU_DRY_RUN set here'), notes[0])
         for value in ('lin_', 'model-', 'codex', 'claude'): self.assertNotIn(value, notes[0])
         for name in ('LINEAR_API_KEY', 'BUREAU_MODEL_QA'): self.assertNotIn(name, notes[0])
+        # The other way round: the environment equals the superseded first entry, not the last one.
+        with patch.dict(os.environ, {'BUREAU_MODEL_QA': 'model-first'}):
+            notes = [w for w in self.diagnose(config)['warnings'] if w.startswith('Process environment shadows .env: ')]
+        self.assertEqual([n.split(':')[1].split(' set here')[0].strip() for n in notes], ['BUREAU_MODEL_QA'], notes)
         # Nothing shadowed: no note; no .env: no note.
         with patch.dict(os.environ, {'BUREAU_MODEL_QA': 'model-same'}):
             self.assertFalse([w for w in self.diagnose(config)['warnings'] if w.startswith('Process environment shadows')])

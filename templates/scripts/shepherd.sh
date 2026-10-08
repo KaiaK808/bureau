@@ -202,7 +202,7 @@ fi
 
 # Force-all by default; --respect-config opts out.
 if [ "$RESPECT_CONFIG" = 0 ]; then
-  export BUREAU_FORCE_ALL_AGENTS=1
+  bureau_env_caller_export BUREAU_FORCE_ALL_AGENTS=1
 fi
 
 # State (human-readable name from get_issue_state) → pipeline script.
@@ -375,7 +375,7 @@ if [ -n "$FROM_STAGE" ]; then
   fi
 fi
 
-[ "$NO_MERGE" = 1 ] && export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
+[ "$NO_MERGE" = 1 ] && bureau_env_caller_export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
 WORKTREE="${WORKTREE_OVERRIDE:-$REPO_DIR/.worktrees/shepherd}"
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
   bureau_exec_runtime python3 -I "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" --no-tmux "${ORIG_ARGS[@]}"
