@@ -7,13 +7,13 @@ source scripts/bureau-config.sh
 [ ! -f "$BUREAU_ENV_FILE" ] || bureau_load_env --export "$BUREAU_ENV_FILE"
 MODE=all
 RESULT_FILE="${BUREAU_TICK_RESULT:-$REPO_DIR/logs/bureau-tick.json}"
-export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
+bureau_env_caller_export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --stage) MODE="$2"; shift 2 ;;
     --result-file) RESULT_FILE="$2"; shift 2 ;;
-    --no-merge) export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1; shift ;;
-    --allow-merge) export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0; shift ;;
+    --no-merge) bureau_env_caller_export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1; shift ;;
+    --allow-merge) bureau_env_caller_export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0; shift ;;
     *) echo "Unknown tick argument $1" >&2; exit 1 ;;
   esac
 done

@@ -404,8 +404,8 @@ class TestCommandWarningTests(Repo):
 
     def test_a_codex_implement_set_in_the_env_file_counts(self):
         # BUREAU_RUNNER_IMPLEMENT is one of the keys the stages load from .env (bureau-env.sh), and a
-        # key the file sets replaces the environment's. Doctor reads it with the stages' own reader;
-        # nothing in the file runs.
+        # key the environment holds, even empty, keeps the environment's value (the caller wins); the file fills
+        # only an absent key. Doctor reads it with the stages' own reader; nothing in the file runs.
         claude = {'runner': 'claude', 'implement': True}
         mark = self.base / 'executed'
         cases = [  # .env text, environment, runner, stops
@@ -414,7 +414,9 @@ class TestCommandWarningTests(Repo):
             ('LINEAR_API_KEY=lin_test\nBUREAU_RUNNER_IMPLEMENT=claude\nBUREAU_RUNNER_IMPLEMENT="codex"\n', {}, 'codex', True),  # the last entry wins
             ('# BUREAU_RUNNER_IMPLEMENT=codex\n', {}, 'claude', False),
             ('BUREAU_RUNNER_IMPLEMENT = codex\n', {}, 'claude', False),                  # not a NAME=VALUE line
-            ('BUREAU_RUNNER_IMPLEMENT=claude\n', {'BUREAU_RUNNER_IMPLEMENT': 'codex'}, 'claude', False),  # the file wins
+            ('BUREAU_RUNNER_IMPLEMENT=claude\n', {'BUREAU_RUNNER_IMPLEMENT': 'codex'}, 'codex', True),   # the environment wins
+            ('BUREAU_RUNNER_IMPLEMENT=codex\n', {'BUREAU_RUNNER_IMPLEMENT': 'claude'}, 'claude', False),
+            ('BUREAU_RUNNER_IMPLEMENT=codex\n', {'BUREAU_RUNNER_IMPLEMENT': ''}, 'claude', False),       # also when empty
             ('LINEAR_API_KEY=lin_test\n', {'BUREAU_RUNNER_IMPLEMENT': 'codex'}, 'codex', True),       # the environment stays
             (f"BUREAU_RUNNER_IMPLEMENT=codex; touch '{mark}'\ntouch '{mark}'\n$(touch '{mark}')\n", {}, 'unresolved', False),
         ]
@@ -495,9 +497,11 @@ class TestCommandWarningTests(Repo):
             self.assertIn('bureau_load_env --export "$BUREAU_ENV_FILE"', block, stage)
 
         def write(codex):  # every source gets its own Linear key; `codex` decides the runner
+            # The environment holds BUREAU_RUNNER_IMPLEMENT only when it says codex: a value there
+            # wins over every file, so it would hide which file a stage reads.
             for name, path in files.items():
                 if path.exists(): path.write_text('LINEAR_API_KEY=lin_' + name + '\nBUREAU_RUNNER_IMPLEMENT=' + ('codex' if codex(name) else 'claude') + '\n')
-            return {'LINEAR_API_KEY': 'lin_env', 'BUREAU_RUNNER_IMPLEMENT': 'codex' if codex('env') else 'claude'}
+            return {'LINEAR_API_KEY': 'lin_env', **({'BUREAU_RUNNER_IMPLEMENT': 'codex'} if codex('env') else {})}
 
         def doctor(place, env):
             before = os.getcwd(); os.chdir(place)
@@ -544,7 +548,37 @@ class TestCommandWarningTests(Repo):
                                     and doctor(place, {**env, **write(lambda other: other == name)})[0]]
                             self.fail('doctor did not read ' + source + ', the source every stage read; it read ' + (', '.join(used) or 'none'))
                         self.assertEqual(note, source != 'env')
-                        self.assertEqual(doctor(place, {**env, **write(lambda name: name != source)}), (False, source != 'env'))
+                        self.assertEqual(doctor(place, {**env, **write(lambda name: name not in (source, 'env'))}), (False, source != 'env'))
+
+    def test_doctor_names_the_keys_the_process_environment_shadows(self):
+        # A key the environment holds keeps its value over .env. Doctor names every key whose
+        # process value differs from the .env value the stages would otherwise take (an empty value
+        # included), never a value, and neither a key with the same value nor a secret, for which
+        # .env stays the only source.
+        config = copy.deepcopy(BASE); self.write_config(config)
+        # BUREAU_MODEL_QA is in the file twice: the last entry, which a stage would take, is compared.
+        (self.repo / '.env').write_text('LINEAR_API_KEY=lin_file\nBUREAU_RUNNER_IMPLEMENT=claude\nBUREAU_MODEL_QA=model-first\n'
+                                        'BUREAU_DRY_RUN=0\nBUREAU_CODEX_MODEL_DEFAULT=model-file\nBUREAU_MODEL_QA=model-same\n'
+                                        'BUREAU_DRY_RUN=1\nBUREAU_DRY_RUN=0\n')
+        env = {'LINEAR_API_KEY': 'lin_process', 'BUREAU_RUNNER_IMPLEMENT': 'codex', 'BUREAU_MODEL_QA': 'model-same',
+               'BUREAU_DRY_RUN': '', 'BUREAU_CODEX_MODEL_DEFAULT': 'model-start-line'}
+        with patch.dict(os.environ, env):
+            warnings = self.diagnose(config)['warnings']
+        notes = [w for w in warnings if w.startswith('Process environment shadows .env: ')]
+        self.assertEqual(len(notes), 1, warnings)
+        self.assertTrue(notes[0].startswith('Process environment shadows .env: BUREAU_RUNNER_IMPLEMENT, BUREAU_CODEX_MODEL_DEFAULT, BUREAU_DRY_RUN set here'), notes[0])
+        for value in ('lin_', 'model-', 'codex', 'claude'): self.assertNotIn(value, notes[0])
+        for name in ('LINEAR_API_KEY', 'BUREAU_MODEL_QA'): self.assertNotIn(name, notes[0])
+        # The other way round: the environment equals the superseded first entry, not the last one.
+        with patch.dict(os.environ, {'BUREAU_MODEL_QA': 'model-first'}):
+            notes = [w for w in self.diagnose(config)['warnings'] if w.startswith('Process environment shadows .env: ')]
+        self.assertEqual([n.split(':')[1].split(' set here')[0].strip() for n in notes], ['BUREAU_MODEL_QA'], notes)
+        # Nothing shadowed: no note; no .env: no note.
+        with patch.dict(os.environ, {'BUREAU_MODEL_QA': 'model-same'}):
+            self.assertFalse([w for w in self.diagnose(config)['warnings'] if w.startswith('Process environment shadows')])
+        (self.repo / '.env').unlink()
+        with patch.dict(os.environ, env):
+            self.assertFalse([w for w in self.diagnose(config)['warnings'] if w.startswith('Process environment shadows')])
 
     def test_an_implement_runner_that_does_not_resolve_is_no_codex(self):
         # Implement off and an unknown runner in the environment: the stage would stop on it,

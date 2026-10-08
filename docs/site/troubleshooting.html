@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="679213af5fc7ba8653b3dc193f0540cfc61029e76e187c43b4b669a051ca8e9f">
+<meta name="bureau-source-sha256" content="0f795e73c85e842f9a5ff994687e39580954f878e20bd7f13b4f639f15f63bc0">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1145,13 +1145,18 @@ the agent reports the work complete, as a check independent of the
 agent, and stops with <code>24</code> when none is set (absent,
 <code>null</code>, <code>false</code> or <code>""</code>). The warning
 appears only when implement resolves to Codex:
-<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it (the value in
-the <code>.env</code> the stages read, <code>BUREAU_ENV_FILE</code> or
-else the one next to <code>.bureau.json</code>, a relative
-<code>BUREAU_ENV_FILE</code> counted from the directory of
-<code>.bureau.json</code>, never a <code>.env</code> of the checkout
-doctor runs in; doctor reads it with the stages' own reader and never
-executes it; else doctor's environment), else
+<code>BUREAU_RUNNER_IMPLEMENT</code> as the stage sees it (doctor's
+environment when it holds the key, also empty, since the caller's value
+wins over <code>.env</code>; else the value in the <code>.env</code> the
+stages read, <code>BUREAU_ENV_FILE</code> or else the one next to
+<code>.bureau.json</code>, a relative <code>BUREAU_ENV_FILE</code>
+counted from the directory of <code>.bureau.json</code>, never a
+<code>.env</code> of the checkout doctor runs in; doctor reads it with
+the stages' own reader and never executes it). Doctor names a key whose
+value in its environment differs from the <code>.env</code> value, so a
+<code>BUREAU_RUNNER_IMPLEMENT=claude</code> in the shell over
+<code>codex</code> in <code>.env</code> resolves Claude, omits this
+warning and reports the shadowing instead, else
 <code>agents.implement.runner</code> when <code>agents.implement</code>
 is an object, else <code>agents.runner</code>. It appears with
 <code>agents.implement</code> off as well, because the shepherd runs

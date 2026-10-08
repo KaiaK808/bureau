@@ -142,21 +142,38 @@ def stage_env_value(config_path, name):
     """<name> as the implement stage sees it once it has loaded .env (implement-pipeline.sh:17-20): the
     stage reads stage_env_file and nothing else, whichever checkout it runs in, and so does doctor. The
     file is read by the stages' own reader, bureau_load_env in bureau-env.sh, run here unchanged: it
-    never executes the file, takes only the keys on its list, and a key the file sets replaces the
-    environment's value while a key it lacks leaves the environment's. Returns the value, or None when
-    neither sets it; the environment's value when there is no such file or it cannot be read."""
+    never executes the file, takes only the keys on its list, and fills only the keys the environment
+    lacks: a key the environment holds, even empty, keeps the environment's value (the caller wins; the three
+    secrets excepted, which doctor does not read). Returns the value, or None when neither sets it;
+    the environment's value when there is no such file or it cannot be read."""
+    out = stage_env_run(config_path, 'n=$3; [ -z "${!n+set}" ] || printf "set:%s" "${!n}"', name)
+    if out is None: return os.environ.get(name)
+    return out[len('set:'):] if out.startswith('set:') else None
+
+
+def stage_env_shadowed(config_path):
+    """The keys whose .env value the stages do not see because the process environment holds the key
+    with another value (the caller's value wins), as bureau_load_env records them in
+    _BUREAU_ENV_SHADOWED: compared with the key's last entry in the file, the one the stages would
+    take. Names only, never a value; [] when there is no such file or it cannot be read."""
+    out = stage_env_run(config_path, 'printf "%s" "${_BUREAU_ENV_SHADOWED:-}"')
+    return [] if out is None else out.split()
+
+
+def stage_env_run(config_path, code, *args):
+    """Runs <code> in a bash that has loaded stage_env_file with the stages' reader (no --export);
+    returns its stdout, or None when there is no such file or the reader fails."""
     env_file = stage_env_file(config_path)
-    if not env_file.is_file(): return os.environ.get(name)
-    script = 'source "$1" || exit 1; bureau_load_env "$2" 2>/dev/null || exit 1; n=$3; [ -z "${!n+set}" ] || printf "set:%s" "${!n}"'
+    if not env_file.is_file(): return None
+    script = 'source "$1" || exit 1; bureau_load_env "$2" 2>/dev/null || exit 1; ' + code
     try:
-        proc = subprocess.run(['bash', '--noprofile', '--norc', '-c', script, 'bureau-doctor', str(SCRIPTS / 'bureau-env.sh'), str(env_file), name],
+        proc = subprocess.run(['bash', '--noprofile', '--norc', '-c', script, 'bureau-doctor', str(SCRIPTS / 'bureau-env.sh'), str(env_file), *args],
                               stdin=subprocess.DEVNULL, capture_output=True,
                               env={key: value for key, value in os.environ.items() if key not in ('BASH_ENV', 'ENV')})
     except OSError:
-        return os.environ.get(name)
-    if proc.returncode != 0: return os.environ.get(name)
-    out = os.fsdecode(proc.stdout)
-    return out[len('set:'):] if out.startswith('set:') else None
+        return None
+    if proc.returncode != 0: return None
+    return os.fsdecode(proc.stdout)
 
 
 def implement_runner(config, provider, env):
@@ -517,7 +534,12 @@ def diagnose(repo, mode):
         warnings.append('Provider timeout below ' + str(LONG_CALL_MIN_SECONDS) + ' s per call: ' + ', '.join(short) + '. Spec, spec review, UX, QA and review calls'
                         ' often run 15 to 30 minutes and end with 124 when cut off; raise agents.<stage>.timeout_seconds or agents.providers.<runner>.timeout_seconds (default 3600)'
                         + ('; BUREAU_STAGE_TIMEOUT in the environment wins over both' if os.environ.get('BUREAU_STAGE_TIMEOUT') else ''))
-    if stage_env_file(path).is_file(): warnings.append('Doctor resolves JSON and process environment only; it does not execute .env (it reads only BUREAU_RUNNER_IMPLEMENT from it, for the repo.test_command warning). Source trusted overrides before running doctor for matching effective settings.')
+    if stage_env_file(path).is_file():
+        warnings.append('Doctor resolves JSON and process environment only; it does not execute .env (it reads only BUREAU_RUNNER_IMPLEMENT from it, for the repo.test_command warning). Source trusted overrides before running doctor for matching effective settings.')
+        shadowed = stage_env_shadowed(path)
+        if shadowed:
+            warnings.append('Process environment shadows .env: ' + ', '.join(shadowed) + ' set here differ from .env, and a stage started from this environment keeps the process value'
+                            ' (a value on the start line or in a parent shell wins over .env); unset them to use the .env values')
     active = runtime.read(repo / '.specify/integration.json', {})
     manifest = runtime.read(repo / '.bureau-install.json', {})
     drift = []

@@ -23,7 +23,19 @@
 #     stay shell variables of the reading script, with or without --export, and
 #     lose the export attribute a parent shell gave them (v3.2). Writes nothing
 #     to stdout and never prints a line or a value; the only name it prints is
-#     that of a numeric key it dropped (L13).
+#     that of a numeric key it dropped (L13). A key the caller set keeps the
+#     caller's value (BUREAU_ENV_CALLER, see "The caller wins" below); the
+#     names of those whose value differs from the key's last entry in the file
+#     are in _BUREAU_ENV_SHADOWED afterwards, separated by spaces, for doctor.
+#   bureau_env_caller_export NAME=VALUE …
+#     Exports each NAME and marks it as set by the caller for the runs the
+#     script starts, so their .env load keeps it (see "The caller wins").
+#   bureau_env_handover
+#     Prints the start of the command line of a tmux pane that hands this
+#     run's list and values over (see below).
+#   bureau_env_tmux_clear [session]
+#     Removes the list, the hand-over flag, the derived keys and the non-secret
+#     keys on the list from the tmux environment (see below).
 #   bureau_env_key_allowed <name>
 #     0 for a name on the key list, 1 otherwise. Silent.
 #   bureau_env_key_secret <name>
@@ -51,8 +63,10 @@
 #     unquoted value loses a whitespace-separated `# comment` — cut on the raw
 #     value, before any trimming — and then its surrounding whitespace
 #   - values stay text: no $-expansion, no command substitution, no escapes
-#   - the last entry wins; a key from the file replaces the environment's
-#     value, and a key missing from the file leaves the environment alone
+#   - the last entry wins; a key missing from the file leaves the environment
+#     alone, and so does a key the caller set, even to the empty string ("The
+#     caller wins" below): the file fills every other key. The three secrets are the exception: the
+#     file's value replaces the environment's, as before
 #   - a running `set -x` is switched off first and restored before returning,
 #     so no value reaches the trace
 #   - allexport (`set -a`, also from an exported SHELLOPTS) is switched off
@@ -90,6 +104,11 @@ set +a
 # with the implement timeouts, on the numeric list too; implement-pipeline.sh
 # also checks it against ^[1-9][0-9]*$ before use.
 bureau_env_key_allowed() {
+  # A plain variable name first: the patterns below end in `*`, which as a glob
+  # also matches `BUREAU_MODEL_A[$(command)]`, and such a name taken from an
+  # inherited BUREAU_ENV_CALLER would run its subscript in ${!name}.
+  local _bka_re='^[A-Za-z_][A-Za-z0-9_]*$'
+  [[ $1 =~ $_bka_re ]] || return 1
   case "$1" in
     LINEAR_API_KEY | TELEGRAM_BOT_TOKEN | TELEGRAM_ALERT_CHAT_ID | \
     BUREAU_MODEL_DEFAULT | BUREAU_CODEX_MODEL_DEFAULT | \
@@ -157,6 +176,212 @@ bureau_env_key_secret() {
   return 1
 }
 
+# The caller wins. A value the operator puts on the start line for one run
+# (BUREAU_CODEX_MODEL_DEFAULT=<model> bash scripts/shepherd.sh …), or one a
+# parent script sets on purpose for the runs it starts (queue-loop.sh
+# --dry-run, the shepherd's BUREAU_FORCE_ALL_AGENTS=1), used to be replaced by
+# the .env value: a whole stage ran on the model in .env.
+#
+# Which keys are the caller's is decided once, at the outermost Bureau script,
+# and handed down: BUREAU_ENV_CALLER (exported, key names only, never a value)
+# lists the keys on the list above that the first Bureau script of a run found
+# exported when it started, set or empty. Every script below it (supervisor,
+# queue loop, worker, stage, a relaunch through the runtime) inherits that list
+# and does not add what it finds exported itself: a copy a parent's load took
+# from .env, or a default a parent exported (BUREAU_STOP_REQUESTED from
+# bureau-config.sh), is read from .env again, so a stop request or a model
+# added to .env while a loop runs reaches the next stage. A parent that sets a
+# key for the runs it starts does so through bureau_env_caller_export, which
+# adds the name to the list whatever the value, also when it equals the .env
+# value of the moment. A key on the list that is still set when bureau_load_env
+# runs keeps its value; the file fills every other key. The list never changes
+# during a load, so loading the same .env twice ends with the values of one load.
+# The three secrets are never on the list: a value .env defines replaces the
+# environment's, as before, because bureau_exec_runtime removes them before a
+# relaunch on the promise that the relaunched script reads them back from the
+# file. A secret only the environment holds is left as it is (see
+# bureau_env_key_secret above; SECURITY.md: keep the keys only in .env).
+# A running `set -x` is off while the environment is walked: one traced line per
+# exported variable in every bash that sources this file would flood the log.
+# The keys Bureau derives from a start's input and exports to the runs below it
+# (bureau-config.sh: BUREAU_CALLER_STOP from BUREAU_STOP_REQUESTED and
+# BUREAU_NO_MERGE). A tmux pane derives them from its own start's input: the
+# hand-over drops an inherited copy, and bureau_env_tmux_clear removes them from
+# the tmux environment.
+_BUREAU_ENV_DERIVED='BUREAU_CALLER_STOP'
+
+# _bureau_env_clean_list <list> — prints " NAME NAME " with only the entries
+# of <list> that are plain names on the key list and no secret, in order. A
+# list that held anything else (an inherited BUREAU_ENV_CALLER is data from the
+# environment, which code from the branch can write) loses those entries, and
+# one line on stderr says so without printing them. No entry is ever expanded:
+# the words are read with globbing off and only compared.
+_bureau_env_clean_list() {
+  local _bcl_out=" " _bcl_dropped=0 _bcl_word
+  local -a _bcl_words
+  _bcl_words=()
+  IFS=$' \t\n' read -r -d '' -a _bcl_words <<< "$1" || true
+  for _bcl_word in ${_bcl_words[@]+"${_bcl_words[@]}"}; do
+    if bureau_env_key_allowed "$_bcl_word" && ! bureau_env_key_secret "$_bcl_word"; then
+      case "$_bcl_out" in (*" $_bcl_word "*) ;; (*) _bcl_out="$_bcl_out$_bcl_word " ;; esac
+    else
+      _bcl_dropped=$((_bcl_dropped + 1))
+    fi
+  done
+  if [ "$_bcl_dropped" -gt 0 ]; then
+    echo "bureau-env: BUREAU_ENV_CALLER: $_bcl_dropped entries that are not keys on the .env key list were ignored" >&2
+  fi
+  printf '%s' "$_bcl_out"
+}
+
+_bureau_env_caller_snapshot() {
+  case $- in
+    (*x*) set +x; local _bes_trace=1 ;;
+    (*) local _bes_trace=0 ;;
+  esac
+  local IFS=$' \t\n' _bes_name _bes_names _bes_list=" "
+  if [ "${_bureau_env_caller_pid:-}" != "$$" ]; then
+    _bureau_env_caller_pid=$$
+    _bes_names=$(compgen -e 2>/dev/null || true)
+    case $'\n'"$_bes_names"$'\n' in
+      (*$'\n'BUREAU_ENV_HANDOVER$'\n'*)
+        # The first Bureau script in a tmux pane (bureau_env_handover): the list
+        # and the values came on the pane's command line; every other key the
+        # pane inherited from the tmux server or session is left over from an
+        # earlier start and goes, and so do the keys Bureau derives from a
+        # start's input (_BUREAU_ENV_DERIVED), which this run derives anew.
+        _bes_list=$(_bureau_env_clean_list "${BUREAU_ENV_CALLER:-}")
+        for _bes_name in $_bes_names; do
+          bureau_env_key_allowed "$_bes_name" || continue
+          bureau_env_key_secret "$_bes_name" && continue
+          case "$_bes_list" in (*" $_bes_name "*) ;; (*) unset "$_bes_name" ;; esac
+        done
+        for _bes_name in $_BUREAU_ENV_DERIVED; do unset "$_bes_name"; done
+        unset BUREAU_ENV_HANDOVER ;;
+      (*$'\n'BUREAU_ENV_CALLER$'\n'*) _bes_list=$(_bureau_env_clean_list "${BUREAU_ENV_CALLER:-}") ;;
+      (*)
+        for _bes_name in $_bes_names; do
+          bureau_env_key_allowed "$_bes_name" || continue
+          bureau_env_key_secret "$_bes_name" && continue
+          _bes_list="$_bes_list$_bes_name "
+        done ;;
+    esac
+    BUREAU_ENV_CALLER="$_bes_list"
+    export BUREAU_ENV_CALLER
+  fi
+  if [ "$_bes_trace" = 1 ]; then set -x; fi
+  return 0
+}
+_bureau_env_caller_snapshot
+
+# _bureau_env_from_caller <name> — 0 when <name> is on BUREAU_ENV_CALLER and
+# still set.
+_bureau_env_from_caller() {
+  case " ${BUREAU_ENV_CALLER:-} " in (*" $1 "*) ;; (*) return 1 ;; esac
+  [ -n "${!1+x}" ]
+}
+
+# bureau_env_caller_export NAME=VALUE … — exports each NAME with VALUE and
+# puts it on BUREAU_ENV_CALLER, so the runs this script starts keep the value
+# over .env. For the keys a script sets on purpose for its children (flags such
+# as --dry-run and --no-merge); a default belongs in a plain export, which .env
+# overrides below. A secret is exported but never put on the list.
+bureau_env_caller_export() {
+  local _bce_arg _bce_name
+  local _bce_re='^[A-Za-z_][A-Za-z0-9_]*$'
+  for _bce_arg in "$@"; do
+    _bce_name="${_bce_arg%%=*}"
+    if ! [[ $_bce_name =~ $_bce_re ]] || [ "$_bce_name" = "$_bce_arg" ]; then
+      echo "bureau_env_caller_export: an argument is not NAME=VALUE; skipped" >&2
+      continue
+    fi
+    printf -v "$_bce_name" '%s' "${_bce_arg#*=}"
+    export "${_bce_name?}"
+    bureau_env_key_allowed "$_bce_name" || continue
+    bureau_env_key_secret "$_bce_name" && continue
+    case " ${BUREAU_ENV_CALLER:-} " in
+      (*" $_bce_name "*) ;;
+      (*) BUREAU_ENV_CALLER=" ${BUREAU_ENV_CALLER# } $_bce_name "; BUREAU_ENV_CALLER="${BUREAU_ENV_CALLER//  / }" ;;
+    esac
+  done
+  export BUREAU_ENV_CALLER
+}
+
+# bureau_env_handover — prints the start of a command line for a tmux pane
+# (`tmux new-window … "$(bureau_env_handover)<command>"`, or the text of a
+# send-keys): `/usr/bin/env BUREAU_ENV_HANDOVER=1 BUREAU_ENV_CALLER='…'` and
+# NAME='value' for every key on the list that is set, each in single quotes, so
+# spaces, quotes and `=` arrive unchanged in sh, bash, zsh and fish. A pane gets
+# the environment of the tmux server and session, not that of the script that
+# opens it: a server started by an earlier run keeps that run's list and
+# overrides. The handed list replaces them in the pane, and the first Bureau
+# script there drops every other inherited key (_bureau_env_caller_snapshot).
+# The three secrets are never on the list, so never on a command line.
+bureau_env_handover() {
+  case $- in
+    (*x*) set +x; local _beh_trace=1 ;;
+    (*) local _beh_trace=0 ;;
+  esac
+  local _beh_name _beh_out _beh_list
+  local -a _beh_names
+  _beh_list=$(_bureau_env_clean_list "${BUREAU_ENV_CALLER:-}" 2>/dev/null)
+  _beh_out="/usr/bin/env BUREAU_ENV_HANDOVER=1 BUREAU_ENV_CALLER=$(_bureau_env_sq "$_beh_list")"
+  # The paths this start resolved, so the pane never takes another start's.
+  for _beh_name in BUREAU_CONFIG BUREAU_ENV_FILE; do
+    [ -z "${!_beh_name:-}" ] || _beh_out="$_beh_out $_beh_name=$(_bureau_env_sq "${!_beh_name}")"
+  done
+  _beh_names=()
+  IFS=$' \t\n' read -r -d '' -a _beh_names <<< "$_beh_list" || true
+  for _beh_name in ${_beh_names[@]+"${_beh_names[@]}"}; do
+    # Checked again: only a plain listed name reaches the indirect expansion.
+    bureau_env_key_allowed "$_beh_name" || continue
+    bureau_env_key_secret "$_beh_name" && continue
+    [ -n "${!_beh_name+x}" ] || continue
+    _beh_out="$_beh_out $_beh_name=$(_bureau_env_sq "${!_beh_name}")"
+  done
+  printf '%s ' "$_beh_out"
+  if [ "$_beh_trace" = 1 ]; then set -x; fi
+  return 0
+}
+
+# bureau_env_tmux_clear [session] — removes BUREAU_ENV_CALLER,
+# BUREAU_ENV_HANDOVER, the derived keys and every non-secret key on the .env
+# key list from the tmux server's global environment and, given a session,
+# from that session's: a pane or window opened there later, also one the
+# operator opens by hand, then inherits none of them, whoever wrote them
+# (an earlier start, or code from a branch that ran `tmux setenv`). Names are
+# checked before use; values are never read. Silent; never fails the caller.
+bureau_env_tmux_clear() {
+  local _btc_scope _btc_line _btc_name _btc_listing
+  local -a _btc_target
+  for _btc_scope in -g ${1:+-t}; do
+    _btc_target=("$_btc_scope"); [ "$_btc_scope" = -g ] || _btc_target=(-t "$1")
+    _btc_listing=$(tmux show-environment "${_btc_target[@]}" 2>/dev/null || true)
+    while IFS= read -r _btc_line; do
+      [ -n "$_btc_line" ] || continue
+      _btc_name="${_btc_line%%=*}"; _btc_name="${_btc_name#-}"
+      case " BUREAU_ENV_CALLER BUREAU_ENV_HANDOVER $_BUREAU_ENV_DERIVED " in
+        (*" $_btc_name "*) ;;
+        (*) bureau_env_key_allowed "$_btc_name" || continue
+            bureau_env_key_secret "$_btc_name" && continue ;;
+      esac
+      tmux set-environment "${_btc_target[@]}" -u "$_btc_name" >/dev/null 2>&1 || true
+    done <<< "$_btc_listing"
+  done
+  return 0
+}
+
+# _bureau_env_sq <text> — <text> in single quotes, a quote inside as '\''.
+_bureau_env_sq() {
+  local _bsq_rest="$1" _bsq_out=""
+  while :; do
+    case "$_bsq_rest" in (*"'"*) ;; (*) break ;; esac
+    _bsq_out="$_bsq_out${_bsq_rest%%"'"*}'\\''"
+    _bsq_rest="${_bsq_rest#*"'"}"
+  done
+  printf "'%s'" "$_bsq_out$_bsq_rest"
+}
+
 bureau_load_env() {
   # L1: the very first statement turns a running trace off, before any line or
   # value is expanded; every return below restores it.
@@ -185,6 +410,7 @@ bureau_load_env() {
   local _be_tail='^[[:space:]]*(#.*)?$'
   local _be_number='^(0|[1-9][0-9]*)$'
   local _be_line _be_name _be_raw _be_value _be_quote _be_rest _be_inner _be_after
+  _BUREAU_ENV_SHADOWED=" "
   while IFS= read -r _be_line || [ -n "$_be_line" ]; do
     _be_line="${_be_line%$'\r'}"
     [[ $_be_line =~ $_be_assign ]] || continue
@@ -223,10 +449,23 @@ bureau_load_env() {
       continue
     fi
 
-    printf -v "$_be_name" '%s' "$_be_value"
     if bureau_env_key_secret "$_be_name"; then
+      printf -v "$_be_name" '%s' "$_be_value"
       export -n "$_be_name"
-    elif [ "$_be_export" = 1 ]; then
+      continue
+    fi
+    # The caller wins: a key on BUREAU_ENV_CALLER keeps its value. The shadow
+    # list for doctor follows the LAST entry of the key in the file, the one a
+    # load without the caller's value would take.
+    if _bureau_env_from_caller "$_be_name"; then
+      _BUREAU_ENV_SHADOWED="${_BUREAU_ENV_SHADOWED// $_be_name / }"
+      if [ "${!_be_name}" != "$_be_value" ]; then
+        _BUREAU_ENV_SHADOWED="$_BUREAU_ENV_SHADOWED$_be_name "
+      fi
+      continue
+    fi
+    printf -v "$_be_name" '%s' "$_be_value"
+    if [ "$_be_export" = 1 ]; then
       export "$_be_name"
     fi
   done < "$_be_file"

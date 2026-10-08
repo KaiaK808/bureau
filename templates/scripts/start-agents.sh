@@ -18,6 +18,9 @@ for stage in spec spec_review ux copy implement qa code_review research; do
 done
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true
+# Nothing an earlier start, or code from a branch, left in the tmux server's
+# environment reaches the panes below or one opened by hand later.
+bureau_env_tmux_clear
 
 echo "Starting Bureau agents..."
 echo "  Team: $BUREAU_TEAM_NAME ($BUREAU_TEAM_KEY)"
@@ -37,7 +40,9 @@ add_agent() {
   else
     tmux new-window -t "$SESSION" -n "$name"
   fi
-  tmux send-keys -t "$SESSION:$name" "./scripts/queue-loop.sh $mode $INTERVAL" Enter
+  # The pane's shell has the tmux server's environment, not this one: hand this
+  # start's overrides over on the command line (bureau_env_handover).
+  tmux send-keys -t "$SESSION:$name" "$(bureau_env_handover)./scripts/queue-loop.sh $mode $INTERVAL" Enter
   ((WIN_NUM++))
 }
 

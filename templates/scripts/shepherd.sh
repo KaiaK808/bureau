@@ -169,10 +169,16 @@ if [ "$NO_TMUX" = 0 ] \
   WINDOW_NAME="shepherd-$ISSUE"
 
   # Shell-quote each arg so tmux's sh -c re-parsing preserves them exactly.
-  # printf %q is available in bash 3.2 (macOS default).
-  CMD=$(printf '%q ' "$0" "--no-tmux" "${ORIG_ARGS[@]}")
+  # printf %q is available in bash 3.2 (macOS default). The window gets the
+  # tmux server's environment, not this one: bureau_env_handover puts this
+  # start's overrides on the command line and drops those of an earlier start.
+  CMD="$(bureau_env_handover)$(printf '%q ' "$0" "--no-tmux" "${ORIG_ARGS[@]}")"
 
+  # Nothing an earlier start, or code from a branch, left in the tmux
+  # environment reaches a window opened later (bureau_env_tmux_clear).
+  bureau_env_tmux_clear
   if tmux has-session -t "$BUREAU_SESSION" 2>/dev/null; then
+    bureau_env_tmux_clear "$BUREAU_SESSION"
     tmux new-window -t "$BUREAU_SESSION:" -c "$REPO_DIR" -n "$WINDOW_NAME" "$CMD"
     TARGET="$BUREAU_SESSION"
   elif tmux has-session -t "bureau-shepherd-$REPO_SLUG" 2>/dev/null; then
@@ -181,6 +187,7 @@ if [ "$NO_TMUX" = 0 ] \
     # session`). Lets multiple shepherds run in parallel when bureau-v2-<slug>
     # isn't around.
     TARGET="bureau-shepherd-$REPO_SLUG"
+    bureau_env_tmux_clear "$TARGET"
     tmux new-window -t "$TARGET:" -c "$REPO_DIR" -n "$WINDOW_NAME" "$CMD"
   else
     TARGET="bureau-shepherd-$REPO_SLUG"
@@ -202,7 +209,7 @@ fi
 
 # Force-all by default; --respect-config opts out.
 if [ "$RESPECT_CONFIG" = 0 ]; then
-  export BUREAU_FORCE_ALL_AGENTS=1
+  bureau_env_caller_export BUREAU_FORCE_ALL_AGENTS=1
 fi
 
 # State (human-readable name from get_issue_state) → pipeline script.
@@ -375,7 +382,7 @@ if [ -n "$FROM_STAGE" ]; then
   fi
 fi
 
-[ "$NO_MERGE" = 1 ] && export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
+[ "$NO_MERGE" = 1 ] && bureau_env_caller_export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
 WORKTREE="${WORKTREE_OVERRIDE:-$REPO_DIR/.worktrees/shepherd}"
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
   bureau_exec_runtime python3 -I "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" --no-tmux "${ORIG_ARGS[@]}"

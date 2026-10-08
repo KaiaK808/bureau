@@ -6,6 +6,9 @@ mkdir -p "$TMP/scripts"
 cp "$ROOT/templates/scripts/bureau-tick.sh" "$ROOT/templates/scripts/bureau-supervision.py" "$TMP/scripts/"
 git -C "$TMP" init -q
 cat > "$TMP/scripts/bureau-config.sh" <<'STUB'
+# bureau-env.sh's helper, which bureau-tick.sh calls for its merge flags (the stub replaces the
+# whole config, and with it the source of bureau-env.sh).
+bureau_env_caller_export() { export "$@"; }
 BUREAU_ENV_FILE=/nonexistent
 bureau_is_paused() { [ "${PAUSED:-0}" = 1 ]; }
 precondition_linear() { return "${AUTH_RC:-0}"; }

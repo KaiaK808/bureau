@@ -27,8 +27,8 @@ bureau_secret_copy --optional API_KEY LINEAR_API_KEY
 POSITIONAL=()
 for arg in "$@"; do
   case "$arg" in
-    --dry-run) export BUREAU_DRY_RUN=1 ;;
-    --no-merge) export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1 ;;
+    --dry-run) bureau_env_caller_export BUREAU_DRY_RUN=1 ;;
+    --no-merge) bureau_env_caller_export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1 ;;
     *) POSITIONAL+=("$arg") ;;
   esac
 done
