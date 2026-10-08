@@ -557,12 +557,10 @@ submodule_fixture() {
   git -C "$R" -c core.hooksPath=/dev/null -c protocol.file.allow=always submodule -q add "$s.origin" sub
   git -C "$R" -c core.hooksPath=/dev/null commit -q -m 'add sub'
   git -C "$R" -c core.hooksPath=/dev/null push -q origin main
-  local m
-  for m in "$R/.git/modules/sub"; do
-    git --git-dir="$m" config protocol.file.allow always
-    git --git-dir="$m" config include.path ../../../sub/hooks.cfg
-    git --git-dir="$m" config user.email t@t; git --git-dir="$m" config user.name t
-  done
+  local m="$R/.git/modules/sub"
+  git --git-dir="$m" config protocol.file.allow always
+  git --git-dir="$m" config include.path ../../../sub/hooks.cfg
+  git --git-dir="$m" config user.email t@t; git --git-dir="$m" config user.name t
   git -C "$R" config protocol.file.allow always
   rm -rf "$R.other"; git -c protocol.file.allow=always clone -q --recurse-submodules "$R.origin" "$R.other" 2>/dev/null
   git -C "$R.other" config user.email t@t; git -C "$R.other" config user.name t
