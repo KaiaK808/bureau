@@ -395,8 +395,8 @@ _bureau_env_build() {
     # a range such as A-Z or a class follows the locale's collation, and under
     # some single-byte locales lets `[`, `$` and `(` through. No new local
     # either, which would hide an exported variable of that name from the
-    # filter: _beb_startup, read for the last time above, keeps the caller's
-    # noglob setting.
+    # filter: _beb_startup, whose argument is read for the last time above,
+    # keeps the caller's noglob setting.
     case $- in (*f*) _beb_startup=noglob ;; (*) _beb_startup=glob ;; esac
     set -f
     IFS=$'\n'
