@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="63ca8966c16a66bff5682d778c3d1761dea5d345fe8a48c6178c78079474b6d1">
+<meta name="bureau-source-sha256" content="feada64d607175119e6bad2bcfc17d706a19056ce66f1bae8d7420090b0d4673">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1295,6 +1295,24 @@ an old unsafe-stage warning remains, then qualify the required
 capabilities; do not disable sandboxing or silently switch
 providers.</p>
 <h2 id="operational">Operational</h2>
+<h3 id="a-value-on-the-start-line-is-ignored">A value on the start line
+is ignored</h3>
+<p>A setting supplied as <code>KEY=value ./scripts/shepherd.sh …</code>
+or exported in the operator's shell still takes the value from
+<code>.env</code>. The pipeline scripts load the installation's
+<code>.env</code> selected by <code>BUREAU_ENV_FILE</code>; for a key
+the loader accepts, a value in that file overwrites the process
+environment and the start line. For a key <code>.env</code> does not
+define, the environment value is used. For one run, use a per-stage key
+absent from <code>.env</code>, or change or comment out the
+corresponding <code>.env</code> line for the run and restore it
+afterwards. See <a
+href="configuration.html#per-stage-model-overrides-env-shortcuts-for-agentsstagemodel">per-stage
+overrides</a> for keys and a worked example.</p>
+<p>Doctor's effective-settings report uses JSON and its process
+environment. It reads only <code>BUREAU_RUNNER_IMPLEMENT</code> from the
+same <code>.env</code> for the <code>repo.test_command</code> warning,
+with the file value taking precedence over its environment value.</p>
 <h3
 id="agents-pause-and-dont-restart--session-throttle-triggered">Agents
 pause and don't restart — session throttle triggered</h3>

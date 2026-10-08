@@ -3,7 +3,11 @@
 Every knob bureau-init exposes — what it controls, where it lives, and what the default is. Two surfaces:
 
 - **`.bureau.json`** — written by `/bureau-init` to the target repo's root. Gitignored. UUIDs + agent toggles.
-- **Environment variables** — runtime-only overrides read by the pipeline scripts. Not persisted; usually set inline (`BUREAU_DRY_RUN=1 ./scripts/queue-loop.sh ...`) or in `.env`.
+- **Environment variables** — runtime settings read by the pipeline scripts, set inline (`BUREAU_DRY_RUN=1 ./scripts/queue-loop.sh ...`), exported in the operator's shell or read from the installation's `.env`.
+
+The pipeline scripts read the installation's `.env` selected by `BUREAU_ENV_FILE` (by default the `.env` next to `.bureau.json`). For a key accepted by the loader and defined in that file, `.env` wins over the process environment, including values exported in the operator's shell or set on the start line. For a key `.env` does not define, the environment value is used. Keys outside the loader's allow-list are ignored in `.env`.
+
+For one run, use a per-stage key that `.env` does not define, or change or comment out the corresponding line in `.env` for that run and restore it afterwards. See the per-stage overrides below for the available keys and an example.
 
 Setup captures the project-specific settings. Verify credentials, installed tools and real tests before running work. Current app tasks use the app-selected model; provider settings below select background CLIs.
 
@@ -224,7 +228,11 @@ Rollback: each layer is independently flippable. If something misbehaves, set th
 | `BUREAU_MODEL_RESEARCH` | research | |
 | `BUREAU_MODEL_UPSTREAM_PORT` | upstream_port | |
 
-These are read by the provider adapter; provider-specific overrides take precedence. Under v1 model compatibility, generic overrides belong to Claude and are ignored for Codex. The `.bureau.json` keys are the canonical surface; env vars are useful for one-off experiments (`BUREAU_MODEL_CODE_REVIEW=claude-haiku-4-5-20251001 ./scripts/queue-loop.sh code-review 5`).
+These are read by the provider adapter; provider-specific overrides take precedence. Under v1 model compatibility, generic overrides belong to Claude and are ignored for Codex. The `.bureau.json` keys are the canonical surface.
+
+Environment variables are useful for one run when `.env` does not define the same key. For a key that `.env` defines and the loader accepts, `.env` wins over the process environment and the start line; for a key `.env` does not define, the environment value is used. Use a key absent from `.env`: `BUREAU_CODEX_MODEL_<STAGE>`, `BUREAU_MODEL_<STAGE>` or `BUREAU_RUNNER_<STAGE>`, with an uppercase stage name such as `IMPLEMENT`. Alternatively, change or comment out the corresponding line in `.env` for the run and restore it afterwards. `BUREAU_REASONING_<STAGE>` also selects effort for one run from the process environment; the `.env` loader does not accept that key.
+
+For example, assume implement uses Codex, has no higher-priority model setting, and `.env` contains `BUREAU_CODEX_MODEL_DEFAULT=a` without a `BUREAU_CODEX_MODEL_IMPLEMENT` line. With the shepherd running inline (`--no-tmux`), `BUREAU_CODEX_MODEL_DEFAULT=b ./scripts/shepherd.sh --no-tmux …` runs implement with `a`; `BUREAU_CODEX_MODEL_IMPLEMENT=b ./scripts/shepherd.sh --no-tmux …` runs it with `b`. The stage key resolves before the default and JSON model settings; `a` and `b` stand for actual model identifiers.
 
 ### Backend routing (env shortcuts for `agents.<stage>.runner`)
 

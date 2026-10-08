@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="24f9a18d06f81a0cbbbab7796803b711532e04686a5b4f05631cd23d714ec374">
+<meta name="bureau-source-sha256" content="481aac8a11b06d1189630a18cabe5382f262464ca0dc4e0a57b18c9c69a2c24f">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -23,11 +23,24 @@ and what the default is. Two surfaces:</p>
 <li><strong><code>.bureau.json</code></strong> — written by
 <code>/bureau-init</code> to the target repo's root. Gitignored. UUIDs +
 agent toggles.</li>
-<li><strong>Environment variables</strong> — runtime-only overrides read
-by the pipeline scripts. Not persisted; usually set inline
-(<code>BUREAU_DRY_RUN=1 ./scripts/queue-loop.sh ...</code>) or in
+<li><strong>Environment variables</strong> — runtime settings read by
+the pipeline scripts, set inline
+(<code>BUREAU_DRY_RUN=1 ./scripts/queue-loop.sh ...</code>), exported in
+the operator's shell or read from the installation's
 <code>.env</code>.</li>
 </ul>
+<p>The pipeline scripts read the installation's <code>.env</code>
+selected by <code>BUREAU_ENV_FILE</code> (by default the
+<code>.env</code> next to <code>.bureau.json</code>). For a key accepted
+by the loader and defined in that file, <code>.env</code> wins over the
+process environment, including values exported in the operator's shell
+or set on the start line. For a key <code>.env</code> does not define,
+the environment value is used. Keys outside the loader's allow-list are
+ignored in <code>.env</code>.</p>
+<p>For one run, use a per-stage key that <code>.env</code> does not
+define, or change or comment out the corresponding line in
+<code>.env</code> for that run and restore it afterwards. See the
+per-stage overrides below for the available keys and an example.</p>
 <p>Setup captures the project-specific settings. Verify credentials,
 installed tools and real tests before running work. Current app tasks
 use the app-selected model; provider settings below select background
@@ -1483,8 +1496,31 @@ compatibility</td>
 <p>These are read by the provider adapter; provider-specific overrides
 take precedence. Under v1 model compatibility, generic overrides belong
 to Claude and are ignored for Codex. The <code>.bureau.json</code> keys
-are the canonical surface; env vars are useful for one-off experiments
-(<code>BUREAU_MODEL_CODE_REVIEW=claude-haiku-4-5-20251001 ./scripts/queue-loop.sh code-review 5</code>).</p>
+are the canonical surface.</p>
+<p>Environment variables are useful for one run when <code>.env</code>
+does not define the same key. For a key that <code>.env</code> defines
+and the loader accepts, <code>.env</code> wins over the process
+environment and the start line; for a key <code>.env</code> does not
+define, the environment value is used. Use a key absent from
+<code>.env</code>: <code>BUREAU_CODEX_MODEL_&lt;STAGE&gt;</code>,
+<code>BUREAU_MODEL_&lt;STAGE&gt;</code> or
+<code>BUREAU_RUNNER_&lt;STAGE&gt;</code>, with an uppercase stage name
+such as <code>IMPLEMENT</code>. Alternatively, change or comment out the
+corresponding line in <code>.env</code> for the run and restore it
+afterwards. <code>BUREAU_REASONING_&lt;STAGE&gt;</code> also selects
+effort for one run from the process environment; the <code>.env</code>
+loader does not accept that key.</p>
+<p>For example, assume implement uses Codex, has no higher-priority
+model setting, and <code>.env</code> contains
+<code>BUREAU_CODEX_MODEL_DEFAULT=a</code> without a
+<code>BUREAU_CODEX_MODEL_IMPLEMENT</code> line. With the shepherd
+running inline (<code>--no-tmux</code>),
+<code>BUREAU_CODEX_MODEL_DEFAULT=b ./scripts/shepherd.sh --no-tmux …</code>
+runs implement with <code>a</code>;
+<code>BUREAU_CODEX_MODEL_IMPLEMENT=b ./scripts/shepherd.sh --no-tmux …</code>
+runs it with <code>b</code>. The stage key resolves before the default
+and JSON model settings; <code>a</code> and <code>b</code> stand for
+actual model identifiers.</p>
 <h3 id="backend-routing-env-shortcuts-for-agentsstagerunner">Backend
 routing (env shortcuts for
 <code>agents.&lt;stage&gt;.runner</code>)</h3>
