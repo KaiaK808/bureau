@@ -731,27 +731,37 @@ sed 's/^\( *\)git "\${@:1:\$_bg_lead}" \${_bg_hooks\[@\]+"\${_bg_hooks\[@\]}"} "
 for c in norec norefuse oldorder; do
   cmp -s "$SCRIPTS/bureau-env.sh" "$TMP/$c/bureau-env.sh" && fail "11 control $c: the copy is unchanged (the sed found nothing)"
 done
-control_hook() {  # <label> — on git 2.54 and later the submodule's configured hook ran with the token
-  if [ "$GIT_NEW" = 1 ]; then grep -q '^sub-config-hook .*gh=yes' <<< "$(marks)" || fail "$1: the submodule's configured hook did not run with the token: $(marks | tr '\n' ';')"; fi
+# control_hook <label> <mode> — the submodule's configured hook ran with the token, where nothing
+# but the missing protection stops it: git 2.54 or later under "operator" (no event switches), and
+# git 2.54 only in the default, whose event switches (git 2.55 and later) keep a hook off for its
+# event on their own, also in a child git and next to a dormant hook named like the event (a known
+# event name stays an event switch there, as CI's git 2.55 shows).
+GIT_EVENT_SWITCH=0
+if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 55 ]; }; then GIT_EVENT_SWITCH=1; fi
+control_hook() {
+  [ "$GIT_NEW" = 1 ] || return 0
+  if [ "$2" = '{}' ] && [ "$GIT_EVENT_SWITCH" = 1 ]; then return 0; fi
+  grep -q '^sub-config-hook .*gh=yes' <<< "$(marks)" || fail "$1: the submodule's configured hook did not run with the token: $(marks | tr '\n' ';')"
 }
 for mode in '{"remote_git_runs_hooks":"operator"}' '{}'; do
   submodule_fixture "$mode" dormant
   SCRIPTS="$TMP/norec"; bureau_git 'git fetch -q origin; git push -q origin HEAD' >/dev/null; SCRIPTS="$SCRIPTS_REAL"
   fetch_recursed || fail "11 control a $mode: the copy's fetch did not recurse (the fixture proves nothing)"
   push_recursed || fail "11 control a $mode: the copy's push did not recurse (the fixture proves nothing)"
-  control_hook "11 control a $mode"
+  control_hook "11 control a $mode" "$mode"
   submodule_fixture "$mode" dormant
   SCRIPTS="$TMP/norefuse"; bureau_git 'git push -q --recurse-submodules=on-demand origin HEAD' >/dev/null; SCRIPTS="$SCRIPTS_REAL"
   push_recursed || fail "11 control b $mode: the copy's explicit on-demand push did not recurse"
-  control_hook "11 control b $mode"
+  control_hook "11 control b $mode" "$mode"
 done
-# (c) and (d) do not depend on the mode: once, in the default.
-mode='{}'
+# (c) and (d) do not depend on the mode: once, under "operator" (no event switches, so the
+# submodule's configured hook can show on git 2.55 too).
+mode='{"remote_git_runs_hooks":"operator"}'
 submodule_fixture "$mode" dormant
 SCRIPTS="$TMP/oldscan"; out=$(bureau_git 'git push -q --recurse-submodule=on-demand origin HEAD'); SCRIPTS="$SCRIPTS_REAL"
 case "$out" in *'bureau git: refused'*) fail "11 control c $mode: the previous scan refused the abbreviation" ;; esac
 push_recursed || fail "11 control c $mode: the abbreviated on-demand push did not recurse under the previous scan"
-control_hook "11 control c $mode"
+control_hook "11 control c $mode" "$mode"
 submodule_fixture "$mode"
 SCRIPTS="$TMP/oldorder"; bureau_git "git -c include.path='$TMP/flags.cfg' push -q origin HEAD" >/dev/null; SCRIPTS="$SCRIPTS_REAL"
 push_recursed || fail "11 control d $mode: a -c include.path file did not bring recursion back with the previous order"
