@@ -59,6 +59,9 @@ if tmux has-session -t bureau 2>/dev/null; then
 fi
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true
+# Nothing an earlier start, or code from a branch, left in the tmux server's
+# environment reaches the panes below or one opened by hand later.
+bureau_env_tmux_clear
 
 echo "Starting Bureau v2..."
 echo "  Team: $BUREAU_TEAM_NAME ($BUREAU_TEAM_KEY)"

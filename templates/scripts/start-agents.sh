@@ -18,6 +18,9 @@ for stage in spec spec_review ux copy implement qa code_review research; do
 done
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true
+# Nothing an earlier start, or code from a branch, left in the tmux server's
+# environment reaches the panes below or one opened by hand later.
+bureau_env_tmux_clear
 
 echo "Starting Bureau agents..."
 echo "  Team: $BUREAU_TEAM_NAME ($BUREAU_TEAM_KEY)"

@@ -174,7 +174,11 @@ if [ "$NO_TMUX" = 0 ] \
   # start's overrides on the command line and drops those of an earlier start.
   CMD="$(bureau_env_handover)$(printf '%q ' "$0" "--no-tmux" "${ORIG_ARGS[@]}")"
 
+  # Nothing an earlier start, or code from a branch, left in the tmux
+  # environment reaches a window opened later (bureau_env_tmux_clear).
+  bureau_env_tmux_clear
   if tmux has-session -t "$BUREAU_SESSION" 2>/dev/null; then
+    bureau_env_tmux_clear "$BUREAU_SESSION"
     tmux new-window -t "$BUREAU_SESSION:" -c "$REPO_DIR" -n "$WINDOW_NAME" "$CMD"
     TARGET="$BUREAU_SESSION"
   elif tmux has-session -t "bureau-shepherd-$REPO_SLUG" 2>/dev/null; then
@@ -183,6 +187,7 @@ if [ "$NO_TMUX" = 0 ] \
     # session`). Lets multiple shepherds run in parallel when bureau-v2-<slug>
     # isn't around.
     TARGET="bureau-shepherd-$REPO_SLUG"
+    bureau_env_tmux_clear "$TARGET"
     tmux new-window -t "$TARGET:" -c "$REPO_DIR" -n "$WINDOW_NAME" "$CMD"
   else
     TARGET="bureau-shepherd-$REPO_SLUG"

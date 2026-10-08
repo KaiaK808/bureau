@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2d715878e19174df23fd69bd27219ca9536a1697cdabbfaa116ad74689249fe8">
+<meta name="bureau-source-sha256" content="0ca325e29504bb90ac32d97611a7d2a2cd3692fa1a86c268d214907e923ef44a">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1124,9 +1124,27 @@ therefore put this start's list and values on the pane's command line
 (<code>bureau_env_handover</code>:
 <code>/usr/bin/env BUREAU_ENV_HANDOVER=1 BUREAU_ENV_CALLER='…' NAME='value' …</code>,
 single-quoted, never a secret), and the first Bureau script in the pane
-drops every other inherited key, so a window sees exactly the overrides
-of the start that opened it. A value left in the start environment or in
-a parent shell therefore wins over <code>.env</code>;
+drops every other inherited allow-listed key and
+<code>BUREAU_CALLER_STOP</code>, which it derives anew from this start's
+flags. A Bureau script in such a pane therefore sees exactly the
+overrides of the start that opened it. An agent in a workbench pane gets
+the handed values too and keeps whatever else it inherited until a
+Bureau script runs in it; since each of these starts first removes
+<code>BUREAU_ENV_CALLER</code>, <code>BUREAU_ENV_HANDOVER</code>,
+<code>BUREAU_CALLER_STOP</code> and every non-secret allow-listed key
+from the tmux server's environment (and from the session's, when the
+shepherd adds a window to an existing session), nothing an earlier start
+or a branch left there reaches a pane opened afterwards, also one opened
+by hand. <code>BUREAU_ENV_CALLER</code> is data from the environment,
+which code from a branch can write: every entry must be a plain variable
+name on the key list and not a secret, or it is dropped without being
+expanded, and one line on stderr says how many were dropped, never what
+they held. At most, a forged list makes allow-listed non-secret keys
+that are already in the same environment win over <code>.env</code> for
+the processes that inherit that environment from the forging process; it
+cannot run a command, read a secret or reach a later start through the
+tmux environment. A value left in the start environment or in a parent
+shell therefore wins over <code>.env</code>;
 <code>bureau-doctor.py</code> warns with the names (never the values) of
 the keys whose process value differs from the key's last entry in
 <code>.env</code>.</p>
