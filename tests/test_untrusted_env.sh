@@ -174,7 +174,7 @@ PY
 for mode in default clean; do
   parity "$ENV_SH" "$PROVIDER" "$mode" || fail "1 parity $mode: shell and provider differ"
   for name in BUREAU_ENV_FILE BUREAU_CONFIG; do
-    if tr '\0' '\n' < "$TMPD/shell.$mode" | grep -q "^$name="; then fail "1 parity $mode: $name reached the command"; fi
+    if grep -q "^$name=" <<< "$(tr '\0' '\n' < "$TMPD/shell.$mode")"; then fail "1 parity $mode: $name reached the command"; fi
   done
 done
 # The two lists name the same two variables, in the same order.
