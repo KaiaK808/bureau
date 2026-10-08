@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="55f1ce6f19b5fd03bf29bdfc225db37752060da81aa383784629ef001ef0f32a">
+<meta name="bureau-source-sha256" content="9cd6b247f729dbb4dd72c8616da38e599c56bb164454556b8c7e699cb67afc63">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -26,7 +26,7 @@ doesn't spam you 30 times an hour.</p>
 <h2 id="exit-code-table">Exit code table</h2>
 <table>
 <thead>
-<tr>
+<tr class="header">
 <th>Exit</th>
 <th>Class</th>
 <th>Meaning</th>
@@ -34,13 +34,13 @@ doesn't spam you 30 times an hour.</p>
 </tr>
 </thead>
 <tbody>
-<tr>
+<tr class="odd">
 <td><code>0</code></td>
 <td>ok</td>
 <td>Pipeline completed successfully</td>
 <td>—</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>2</code></td>
 <td>queue-empty</td>
 <td>No pickable issue in the polled state; from
@@ -57,13 +57,13 @@ run checks the build and the gate again without a model review</td>
 <td>Normal — happens every tick when there's no work. The queue loop
 stays quiet; the shepherd waits for the gate (see below)</td>
 </tr>
-<tr>
+<tr class="odd">
 <td><code>10</code></td>
 <td>linear-down</td>
 <td><code>LINEAR_API_KEY</code> missing or invalid</td>
 <td>Forgot to set it in <code>.env</code>, or the key was revoked</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>11</code></td>
 <td>worktree-dirty</td>
 <td>Uncommitted changes in the worktree; from
@@ -80,14 +80,14 @@ ends with <code>11</code>, routes back to Triage and sets
 <code>needs-human</code>, because a re-run reads the same file. See the
 troubleshooting guide</td>
 </tr>
-<tr>
+<tr class="odd">
 <td><code>12</code></td>
 <td>no-branch</td>
 <td><code>bureau-branch</code> marker missing or points at a
 non-existent branch</td>
 <td>Spec pipeline didn't post a digest, or the branch was deleted</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>13</code></td>
 <td>no-tasks</td>
 <td>No usable spec for the branch: <code>tasks.md</code> missing, no
@@ -103,7 +103,7 @@ stages also set <code>needs-human</code>, and their comment names the
 branch and the specs directory; a matched directory without
 <code>tasks.md</code> still routes back to Spec without the label</td>
 </tr>
-<tr>
+<tr class="odd">
 <td><code>14</code></td>
 <td>build-failed</td>
 <td>Build precondition failed</td>
@@ -111,26 +111,26 @@ branch and the specs directory; a matched directory without
 <code>repo.post_implement_command</code> failed after an implementation
 run</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>15</code></td>
 <td>no-pr</td>
 <td>PR expected but not found</td>
 <td>Implement didn't create one, or it was closed manually</td>
 </tr>
-<tr>
+<tr class="odd">
 <td><code>16</code></td>
 <td>provider-unauth</td>
 <td>Selected CLI missing or not authenticated</td>
 <td>Authenticate the selected Claude/Codex CLI</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>17</code></td>
 <td>rebase-needed</td>
 <td><code>merge_origin_main_or_abort</code> hit a non-trivial
 conflict</td>
 <td>Routed back to a recovery state for human intervention</td>
 </tr>
-<tr>
+<tr class="odd">
 <td><code>18</code></td>
 <td>gh-failed</td>
 <td><code>gh</code> CLI command failed (e.g. <code>gh pr merge</code>
@@ -140,13 +140,13 @@ be read</td>
 <td>API rate limit, missing permissions, branch protection, origin
 rejecting or unreachable</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>19</code></td>
 <td>rebase-rejected</td>
 <td><code>git push --force-with-lease</code> rejected</td>
 <td>Someone else pushed to the same branch concurrently</td>
 </tr>
-<tr>
+<tr class="odd">
 <td><code>20</code></td>
 <td>stopped-before-merge</td>
 <td>Review boundary reached</td>
@@ -155,7 +155,7 @@ Merge under <code>agents.merge_mode: "manual"</code>. The shepherd and
 the queue loop pass a <code>20</code> that <code>--no-merge</code> asked
 for without an alert; any other <code>20</code> alerts</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>21</code></td>
 <td>ownership-conflict</td>
 <td>Ticket, checkout or branch held; stale result</td>
@@ -164,22 +164,26 @@ halt over a ticket or worktree an interrupted run still holds, an
 unregistered or foreign worktree or a branch held by another worktree
 sets <code>needs-human</code> and posts one comment with the way back
 (not for a live holder or a cancelled run); after an interrupted run,
-release it and drop or replace its worktree before a rerun. See the
+release it and drop or replace its worktree before a rerun. No halt: an
+unregistered worktree that a non-spec stage can reset without loss (a
+linked worktree of this repository with no uncommitted or untracked
+changes and a HEAD on the fetched <code>origin/&lt;branch&gt;</code>) is
+registered again with one line on stderr and the run goes on. See the
 troubleshooting guide</td>
 </tr>
-<tr>
+<tr class="odd">
 <td><code>22</code></td>
 <td>provider-or-result-error</td>
 <td>Provider failed or final result invalid</td>
 <td>Inspect provider evidence</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>23</code></td>
 <td>quota-wait</td>
 <td>Selected provider quota reached</td>
 <td>Wait for reset; do not switch providers silently</td>
 </tr>
-<tr>
+<tr class="odd">
 <td><code>24</code></td>
 <td>environment-blocked</td>
 <td>Permissions or required execution capability missing</td>
@@ -198,7 +202,7 @@ stage and every command from the branch (build check, QA runs, Codex
 completion test, app tests) refuse before anything runs; fix the
 value</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>25</code></td>
 <td>needs-human-or-paused</td>
 <td>Halt requiring attention or paused dispatch</td>
@@ -221,13 +225,13 @@ write the <code>needs-human</code> label ends with 25 where it would
 have ended with 0 (a stage that already ends non-zero keeps its code)
 and holds the ticket locally; see the troubleshooting guide.</td>
 </tr>
-<tr>
+<tr class="odd">
 <td><code>26</code></td>
 <td>cancelled-ticket</td>
 <td>Ticket cancelled/duplicate</td>
 <td>Not successful completion</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>27</code></td>
 <td>linear-unusable</td>
 <td>A Linear answer stayed unusable after every retry; the stage (or the
@@ -241,7 +245,7 @@ each at <code>needs-human</code> and a halt comment. Re-shepherd once
 Linear answers. A queue pick that fails with 27 is reported and alerted,
 not read as an empty queue.</td>
 </tr>
-<tr>
+<tr class="odd">
 <td><code>124</code></td>
 <td>timeout</td>
 <td>Provider exceeded time bound. Implement (since v3.2): the last pass
@@ -251,7 +255,7 @@ on to that pass instead</td>
 evidence (<code>session_id</code>, <code>transcript</code> in
 <code>result.json</code>); see the troubleshooting guide</td>
 </tr>
-<tr>
+<tr class="even">
 <td><code>130</code></td>
 <td>cancelled-run</td>
 <td>Process interrupted</td>
