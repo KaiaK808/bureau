@@ -187,6 +187,9 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                 for name in ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'CARGO_ALIAS', 'REMOTE_URL'):
                     self.assertEqual(remote.get(name), {**SECRETS, **ALIASES}[name], name + ' was taken from ' + command[0])
         self.assertEqual(p.git_subcommand(['-C', 'push', 'status']), 'status')
+        # git 2.55's other options with a separate value: the value is no subcommand.
+        self.assertEqual(p.git_subcommand(['--attr-source', 'HEAD', 'push', 'origin']), 'push')
+        self.assertEqual(p.git_subcommand(['--shallow-file', 'x', 'fetch']), 'fetch')
 
     def test_lists_are_pinned(self):
         # Literal sets: widening the clean list (an SSH agent, a cloud key) or shortening the

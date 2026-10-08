@@ -124,7 +124,8 @@ COPY_MIN = 6
 # git subcommands that talk to a remote keep the GitHub token variables their
 # credential helper may read (bureau-env.sh git()); gh keeps them too.
 REMOTE_GIT = ('push', 'fetch', 'pull', 'ls-remote', 'clone', 'remote', 'submodule')
-GIT_VALUE_OPTIONS = ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env')
+GIT_VALUE_OPTIONS = ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env',
+                     '--attr-source', '--shallow-file')
 UNTRUSTED_KEEP = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
                   'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI')
 # Under "clean" the agent CLI also keeps its own login and network settings;

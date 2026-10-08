@@ -42,7 +42,7 @@ def process_env(command, environ=None):
     sub, skip = '', False
     for arg in command[1:]:
         if skip: skip = False
-        elif arg in ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env'): skip = True
+        elif arg in ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env', '--attr-source', '--shallow-file'): skip = True
         elif not arg.startswith('-'): sub = arg; break
     if os.path.basename(command[0]) != 'gh' and sub not in ('push', 'fetch', 'pull', 'ls-remote', 'clone', 'remote', 'submodule'):
         names += ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']

@@ -54,7 +54,10 @@
 #      clone --recursive and clone --recurse-submodules=no) is refused with 128; --recurse-submodule=no,
 #      -c user.name=Recurse, an argument after `--` and a -C path containing the word are not;
 #      recursion or core.hooksPath set through git's own -c, --config-env, -c include.path=<file> or
-#      a -c behind --namespace's value loses to Bureau's options, which come after the caller's. An include and
+#      a -c behind --namespace's value loses to Bureau's options, which come after the caller's.
+#      Every clone and a git option git does not define are refused; --attr-source and
+#      --shallow-file with a separate value still get the overrides; the scan stops at the first
+#      `--` (ls-remote -q -- origin --recurse-submodules runs); true runs an unknown option as before. An include and
 #      an includeIf inside the working tree, GIT_CONFIG_COUNT and GIT_CONFIG_PARAMETERS each set
 #      core.hooksPath to the branch's .githooks (a plain push shows they do): only the operator's
 #      hooks run. Recursion is detected through the objects that reach the submodule, on any git;
@@ -63,7 +66,10 @@
 #      and push in both modes; a copy that lets an explicit recursion through recurses on the
 #      explicit on-demand push; a copy with the previous exact-name scan recurses on the abbreviated
 #      push; a copy with the previous option order lets an included file and the --namespace form
-#      bring back recursion and the branch's hooks; a copy that keeps the configured core.hooksPath
+#      bring back recursion and the branch's hooks; a copy with the previous parse misreads
+#      --attr-source and --shallow-file (recursion, the branch's pre-push, a broken call); a copy
+#      with the previous `--` rule refuses the ls-remote; a copy that lets clone through runs a clone
+#      template's hook next to a dormant hook.post-checkout.command (git 2.54 and later); a copy that keeps the configured core.hooksPath
 #      for "operator" runs the branch's hooks in every include and environment case
 # Negative control: against v3.1.0 (9411b3b) 1, 3 and 4 fail ("pre-push ran during Bureau's push,
 # with GH_TOKEN") and 5 and 6 fail (no warning); 7 and 8 fail against the merge of main (a9c754c),
@@ -85,9 +91,17 @@ PROBES=(LINEAR_API_KEY="$PR1_LINEAR" TELEGRAM_BOT_TOKEN="$PR1_TG_TOKEN" TELEGRAM
 
 # repo <dir> — a repository with a bare origin whose tracked .githooks record every run as one
 # line: "<hook> <arg1> gh=<yes|no> env=<yes|no> refs=<refs on stdin>"; core.hooksPath names it.
+# The first call for a path builds the repositories and keeps a copy under $TMP/cache; later calls
+# for the same path restore that copy (the paths inside stay valid), which saves the git runs.
 repo() {
-  local r="$1" h
-  rm -rf "$r" "$r.origin" "$r.other"; mkdir -p "$r/.githooks"
+  local r="$1" h cache
+  cache="$TMP/cache/$(printf '%s' "$r" | cksum | tr ' ' _)"
+  rm -rf "$r" "$r.origin" "$r.other"
+  if [ -d "$cache" ]; then
+    cp -Rp "$cache/r" "$r"; cp -Rp "$cache/origin" "$r.origin"; cp -Rp "$cache/other" "$r.other"
+    : > "$MARKS"; return 0
+  fi
+  mkdir -p "$r/.githooks"
   git -C "$r" init -q -b main; git -C "$r" config user.email t@t; git -C "$r" config user.name t
   for h in pre-push reference-transaction pre-commit post-checkout post-merge; do
     cat > "$r/.githooks/$h" <<EOF
@@ -106,6 +120,7 @@ EOF
   git -C "$r" fetch -q origin
   git -C "$r" config core.hooksPath .githooks
   git clone -q "$r.origin" "$r.other"; git -C "$r.other" config user.email t@t; git -C "$r.other" config user.name t
+  mkdir -p "$cache"; cp -Rp "$r" "$cache/r"; cp -Rp "$r.origin" "$cache/origin"; cp -Rp "$r.other" "$cache/other"
   : > "$MARKS"
 }
 # upstream_commit — someone else pushes to origin/main, so the next fetch updates a ref.
@@ -129,9 +144,11 @@ marks() { cat "$MARKS" 2>/dev/null; }
 remote_round() {
   upstream_commit
   : > "$MARKS"
-  stage "git checkout -q -b c-$ROUND; echo w > w-$ROUND.txt; git add w-$ROUND.txt; git commit -q -m w-$ROUND" >/dev/null 2>&1
-  cp "$MARKS" "$TMP/local.log"; : > "$MARKS"
-  out=$(stage 'git push -q origin HEAD; echo "push=$?"; git fetch -q origin; echo "fetch=$?"
+  # One stage shell: the local commit (its hook runs go to $TMP/local.log), then Bureau's remote
+  # commands (their hook runs stay in $MARKS).
+  out=$(stage "{ git checkout -q -b c-$ROUND; echo w > w-$ROUND.txt; git add w-$ROUND.txt; git commit -q -m w-$ROUND; } >/dev/null 2>&1
+    cp '$MARKS' '$TMP/local.log'; : > '$MARKS'"'
+    git push -q origin HEAD; echo "push=$?"; git fetch -q origin; echo "fetch=$?"
     git ls-remote origin refs/heads/main >/dev/null; echo "ls-remote=$?"' 2>&1)
   case "$out" in *push=0*fetch=0*ls-remote=0*) ;; *) fail "$1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
   [ "$(git -C "$R" rev-parse origin/main)" = "$(git -C "$R.origin" rev-parse main)" ] || fail "$1: the fetch did not update origin/main"
@@ -385,15 +402,19 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
       (cd / && git -C "$2" fetch -q origin; echo "fetch-C=$?")' _ "$SCRIPTS" "$R" 2>&1)
     case "$out" in *push=0*fetch=0*fetch-C=0*) ;; *) fail "9 $1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
     [ "$(git -C "$R.origin" rev-parse c9 2>/dev/null)" = "$(git -C "$R" rev-parse HEAD)" ] || fail "9 $1: the push did not land"
-    # git 2.55: a clone whose template directory brings a configured post-checkout hook. git()
-    # lists the names before the clone exists, so only the event switch stops this one; git 2.54
-    # has no event switch and runs it (a documented limit; Bureau's stages run no clone).
-    if [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 55 ]; then
-      rm -rf "$TMP/tmpl9" "$TMP/clone9"; mkdir -p "$TMP/tmpl9"
-      printf '[hook "fromtemplate"]\n\tcommand = %s post-checkout-template\n\tevent = post-checkout\n' "$R/tools/scan.sh" > "$TMP/tmpl9/config"
-      out=$(cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
-        git -c init.templateDir="$2" clone -q "$3" "$4"; echo "clone=$?"' _ "$SCRIPTS" "$TMP/tmpl9" "$R.origin" "$TMP/clone9" 2>&1)
+    # A clone whose template directory brings a configured post-checkout hook: git() cannot list
+    # its names before the clone exists, so unless the key is true Bureau's clone is refused (128,
+    # nothing cloned); with true it runs the template's hook (git 2.55 runs hooks on a clone's
+    # checkout from the template configuration).
+    rm -rf "$TMP/tmpl9" "$TMP/clone9"; mkdir -p "$TMP/tmpl9"
+    printf '[hook "fromtemplate"]\n\tcommand = %s post-checkout-template\n\tevent = post-checkout\n' "$R/tools/scan.sh" > "$TMP/tmpl9/config"
+    out=$(cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
+      git -c init.templateDir="$2" clone -q "$3" "$4"; echo "clone=$?"' _ "$SCRIPTS" "$TMP/tmpl9" "$R.origin" "$TMP/clone9" 2>&1)
+    if [ "$1" = '{"remote_git_runs_hooks":true}' ]; then
       case "$out" in *clone=0*) ;; *) fail "9 $1: the clone failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+    else
+      case "$out" in *"bureau git: refused 'git clone'"*clone=128*) ;; *) fail "9 $1: the clone was not refused: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+      [ ! -e "$TMP/clone9" ] || fail "9 $1: a refused clone created its directory"
     fi
   }
   hooks9 '{}'
@@ -564,40 +585,50 @@ bureau_git() {
 # submodule_fixture <repo json> [dormant] — $R as in section 10 plus a populated submodule `sub`
 # whose configuration includes its tracked hooks.cfg; $R.other has it too, to move origin's
 # submodule pointer. Then: origin's pointer moves to UP_SHA (a fetch would recurse on demand),
-# and locally a new submodule commit MINE_SHA, on no remote yet, is committed in a new branch
-# REC_BRANCH (a push would recurse with push.recurseSubmodules=on-demand, which $R sets).
+# and locally a new submodule commit MINE_SHA, on no remote yet, is committed in the branch
+# REC_BRANCH (a push would recurse with push.recurseSubmodules=on-demand, which $R sets). Built
+# once and restored by copy for every case (the paths inside stay valid); the repo json and the
+# dormant hook.pre-push.command are applied after the restore.
+REC_BRANCH=rec-11
 submodule_fixture() {
-  local s="$TMP/sub" m="$R/.git/modules/sub"
-  repo "$R"; config "$1"; operator_hooks "$R/.git/hooks"
-  rm -rf "$s" "$s.origin"; mkdir -p "$s"
-  git -C "$s" init -q -b main; git -C "$s" config user.email t@t; git -C "$s" config user.name t
-  probe_script "$s/probe.sh" sub-config-hook
-  printf '[hook "probe"]\n\tcommand = %s/probe.sh pre-push\n\tevent = pre-push\n[hook "probetx"]\n\tcommand = %s/probe.sh reference-transaction\n\tevent = reference-transaction\n' "$s" "$s" > "$s/hooks.cfg"
+  local s="$TMP/sub" m="$R/.git/modules/sub" c="$TMP/cache11"
+  rm -rf "$R" "$R.origin" "$R.other" "$s" "$s.origin"
+  if [ -d "$c" ]; then
+    cp -Rp "$c/r" "$R"; cp -Rp "$c/origin" "$R.origin"; cp -Rp "$c/other" "$R.other"
+    cp -Rp "$c/sub" "$s"; cp -Rp "$c/sub.origin" "$s.origin"
+  else
+    repo "$R"; operator_hooks "$R/.git/hooks"
+    mkdir -p "$s"
+    git -C "$s" init -q -b main; git -C "$s" config user.email t@t; git -C "$s" config user.name t
+    probe_script "$s/probe.sh" sub-config-hook
+    printf '[hook "probe"]\n\tcommand = %s/probe.sh pre-push\n\tevent = pre-push\n[hook "probetx"]\n\tcommand = %s/probe.sh reference-transaction\n\tevent = reference-transaction\n' "$s" "$s" > "$s/hooks.cfg"
+    git -C "$s" add -A; git -C "$s" commit -q -m sub
+    git init -q --bare "$s.origin"; git -C "$s.origin" symbolic-ref HEAD refs/heads/main
+    git -C "$s" push -q "$s.origin" main
+    git -C "$R" -c core.hooksPath=/dev/null -c protocol.file.allow=always submodule -q add "$s.origin" sub
+    git -C "$R" -c core.hooksPath=/dev/null commit -q -m 'add sub'
+    git -C "$R" -c core.hooksPath=/dev/null push -q origin main
+    git --git-dir="$m" config protocol.file.allow always
+    git --git-dir="$m" config include.path ../../../sub/hooks.cfg
+    git --git-dir="$m" config user.email t@t; git --git-dir="$m" config user.name t
+    git -C "$R" config protocol.file.allow always
+    git -C "$R" config push.recurseSubmodules on-demand
+    rm -rf "$R.other"; git -c protocol.file.allow=always clone -q --recurse-submodules "$R.origin" "$R.other" 2>/dev/null
+    git -C "$R.other" config user.email t@t; git -C "$R.other" config user.name t
+    git -C "$R.other/sub" config user.email t@t; git -C "$R.other/sub" config user.name t
+    (cd "$R.other/sub" && echo up > up.txt && git add up.txt && git -c core.hooksPath=/dev/null commit -q -m up \
+       && git -c core.hooksPath=/dev/null push -q origin HEAD:main) \
+      && (cd "$R.other" && git add sub && git -c core.hooksPath=/dev/null commit -q -m 'move sub' \
+       && git -c core.hooksPath=/dev/null push -q origin HEAD:main) || fail "11 fixture: could not move origin's submodule"
+    git -C "$R" checkout -q -b "$REC_BRANCH"
+    (cd "$R/sub" && git checkout -q -B "$REC_BRANCH" && echo mine > mine.txt && git add mine.txt && git -c core.hooksPath=/dev/null commit -q -m mine)
+    git -C "$R" add sub; git -C "$R" -c core.hooksPath=/dev/null commit -q -m 'local sub'
+    mkdir -p "$c"; cp -Rp "$R" "$c/r"; cp -Rp "$R.origin" "$c/origin"; cp -Rp "$R.other" "$c/other"
+    cp -Rp "$s" "$c/sub"; cp -Rp "$s.origin" "$c/sub.origin"
+  fi
+  UP_SHA=$(git -C "$R.other/sub" rev-parse HEAD); MINE_SHA=$(git -C "$R/sub" rev-parse HEAD)
+  config "$1"
   if [ "${2:-}" = dormant ]; then printf '[hook "pre-push"]\n\tcommand = %s/probe.sh dormant\n' "$s" >> "$s/hooks.cfg"; fi
-  git -C "$s" add -A; git -C "$s" commit -q -m sub
-  git init -q --bare "$s.origin"; git -C "$s.origin" symbolic-ref HEAD refs/heads/main
-  git -C "$s" push -q "$s.origin" main
-  git -C "$R" -c core.hooksPath=/dev/null -c protocol.file.allow=always submodule -q add "$s.origin" sub
-  git -C "$R" -c core.hooksPath=/dev/null commit -q -m 'add sub'
-  git -C "$R" -c core.hooksPath=/dev/null push -q origin main
-  git --git-dir="$m" config protocol.file.allow always
-  git --git-dir="$m" config include.path ../../../sub/hooks.cfg
-  git --git-dir="$m" config user.email t@t; git --git-dir="$m" config user.name t
-  git -C "$R" config protocol.file.allow always
-  git -C "$R" config push.recurseSubmodules on-demand
-  rm -rf "$R.other"; git -c protocol.file.allow=always clone -q --recurse-submodules "$R.origin" "$R.other" 2>/dev/null
-  git -C "$R.other" config user.email t@t; git -C "$R.other" config user.name t
-  git -C "$R.other/sub" config user.email t@t; git -C "$R.other/sub" config user.name t
-  (cd "$R.other/sub" && echo up > up.txt && git add up.txt && git -c core.hooksPath=/dev/null commit -q -m up \
-     && git -c core.hooksPath=/dev/null push -q origin HEAD:main) \
-    && (cd "$R.other" && git add sub && git -c core.hooksPath=/dev/null commit -q -m 'move sub' \
-     && git -c core.hooksPath=/dev/null push -q origin HEAD:main) || fail "11 fixture: could not move origin's submodule"
-  UP_SHA=$(git -C "$R.other/sub" rev-parse HEAD)
-  ROUND=$((ROUND + 1)); REC_BRANCH="rec-$ROUND"
-  git -C "$R" checkout -q -b "$REC_BRANCH"
-  (cd "$R/sub" && git checkout -q -B "$REC_BRANCH" && echo mine > mine.txt && git add mine.txt && git -c core.hooksPath=/dev/null commit -q -m mine)
-  MINE_SHA=$(git -C "$R/sub" rev-parse HEAD)
-  git -C "$R" add sub; git -C "$R" -c core.hooksPath=/dev/null commit -q -m 'local sub'
   : > "$MARKS"
 }
 fetch_recursed() { git -C "$R/sub" cat-file -e "$UP_SHA^{commit}" 2>/dev/null; }
@@ -623,19 +654,29 @@ for mode in '{"remote_git_runs_hooks":"operator"}' '{}'; do
     fi
   done
   # A call that asks for recursion in its own arguments is refused with 128 before git runs,
-  # under every spelling git accepts: the full option, a unique prefix of it, clone's
-  # --recursive, and for clone even =no (clone reads "no" as a pathspec).
+  # under every spelling git accepts: the full option and a unique prefix of it; so are every
+  # clone (the new repository's configuration can define hooks no switch reaches) and a git
+  # option before the subcommand that git.c does not list (where the subcommand is a guess).
   submodule_fixture "$mode"
   rm -rf "$TMP/clone-rec"
-  for call in 'git push -q --recurse-submodules=on-demand origin HEAD' 'git push -q --recurse-submodule=on-demand origin HEAD' \
-              'git fetch -q --recurse-submodules origin' 'git fetch -q --recurse-sub=yes origin' \
-              'git pull -q --recurse-submodule=yes origin main' 'git submodule -q update --remote' \
-              "git clone -q --recursive '$R.origin' '$TMP/clone-rec'" "git clone -q --recurse-submodules=no '$R.origin' '$TMP/clone-rec'"; do
-    : > "$MARKS"
-    out=$(bureau_git "$call; echo \"rc=\$?\"")
-    case "$out" in *'bureau git: refused'*rc=128*) ;; *) fail "11 $mode refuse: '$call' was not refused: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
-    if grep -q . <<< "$(marks)"; then fail "11 $mode refuse: a hook ran for '$call': $(marks | tr '\n' ';')"; fi
+  # One stage shell runs every call (a shell per call costs most of this test's time on macOS);
+  # each call reports its exit status and must be refused.
+  calls=('git push -q --recurse-submodules=on-demand origin HEAD' 'git push -q --recurse-submodule=on-demand origin HEAD'
+         'git fetch -q --recurse-submodules origin' 'git fetch -q --recurse-sub=yes origin'
+         'git pull -q --recurse-submodule=yes origin main' 'git submodule -q update --remote'
+         "git clone -q '$R.origin' '$TMP/clone-rec'" "git clone -q --recursive '$R.origin' '$TMP/clone-rec'"
+         "git clone -q --recurse-submodules=no '$R.origin' '$TMP/clone-rec'" 'git --frobnicate push -q origin HEAD')
+  script=""; i=0
+  for call in "${calls[@]}"; do script="$script $call 2>&1 | sed -n 's/^bureau git: refused.*/refused-msg/p'; echo \"call$i=\${PIPESTATUS[0]}\";"; i=$((i + 1)); done
+  : > "$MARKS"
+  out=$(bureau_git "$script")
+  i=0
+  for call in "${calls[@]}"; do
+    grep -qx "call$i=128" <<< "$out" || fail "11 $mode refuse: '$call' was not refused with 128: $(printf '%s' "$out" | tr '\n' ' ')"
+    i=$((i + 1))
   done
+  [ "$(grep -c '^refused-msg$' <<< "$out")" = "${#calls[@]}" ] || fail "11 $mode refuse: not every refusal said why: $(printf '%s' "$out" | tr '\n' ' ')"
+  if grep -q . <<< "$(marks)"; then fail "11 $mode refuse: a hook ran for a refused call: $(marks | tr '\n' ';')"; fi
   if push_recursed || fetch_recursed; then fail "11 $mode refuse: a refused call reached the submodule"; fi
   [ ! -e "$TMP/clone-rec" ] || fail "11 $mode refuse: a refused clone ran"
   # Not refused: --recurse-submodules=no (also abbreviated), an unrelated configuration value that
@@ -649,7 +690,7 @@ for mode in '{"remote_git_runs_hooks":"operator"}' '{}'; do
   out=$(cd "$R" && git9 env "${PROBES[@]}" RECVAL=yes BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
     git push -q --recurse-submodule=no origin HEAD; echo "push-no=$?"
     git -c user.name=Recurse ls-remote -q origin >/dev/null; echo "user=$?"
-    git ls-remote origin -- --recurse-submodules >/dev/null 2>&1; echo "dashdash=$?"
+    git ls-remote -q -- origin --recurse-submodules >/dev/null 2>&1; echo "dashdash=$?"
     git -C "$2" fetch -q origin; echo "path=$?"
     git -c include.path="$3" fetch -q origin; echo "include-fetch=$?"
     git -c include.path="$3" push -q origin HEAD; echo "include-push=$?"
@@ -703,19 +744,108 @@ for mode in '{"remote_git_runs_hooks":"operator"}' '{}'; do
   SCRIPTS="$TMP/norefuse"; bureau_git 'git push -q --recurse-submodules=on-demand origin HEAD' >/dev/null; SCRIPTS="$SCRIPTS_REAL"
   push_recursed || fail "11 control b $mode: the copy's explicit on-demand push did not recurse"
   control_hook "11 control b $mode"
-  submodule_fixture "$mode" dormant
-  SCRIPTS="$TMP/oldscan"; out=$(bureau_git 'git push -q --recurse-submodule=on-demand origin HEAD'); SCRIPTS="$SCRIPTS_REAL"
-  case "$out" in *'bureau git: refused'*) fail "11 control c $mode: the previous scan refused the abbreviation" ;; esac
-  push_recursed || fail "11 control c $mode: the abbreviated on-demand push did not recurse under the previous scan"
-  control_hook "11 control c $mode"
-  submodule_fixture "$mode"
-  SCRIPTS="$TMP/oldorder"; bureau_git "git -c include.path='$TMP/flags.cfg' push -q origin HEAD" >/dev/null; SCRIPTS="$SCRIPTS_REAL"
-  push_recursed || fail "11 control d $mode: a -c include.path file did not bring recursion back with the previous order"
-  grep -q '^pre-push ' <<< "$(marks)" || fail "11 control d $mode: the branch's .githooks pre-push did not run with the previous order: $(marks | tr '\n' ';')"
-  submodule_fixture "$mode"
-  SCRIPTS="$TMP/oldorder"; bureau_git 'git --namespace -c -c push.recurseSubmodules=on-demand push -q origin HEAD' >/dev/null; SCRIPTS="$SCRIPTS_REAL"
-  push_recursed || fail "11 control d $mode: --namespace -c -c push.recurseSubmodules=on-demand did not recurse with the previous order"
 done
+# (c) and (d) do not depend on the mode: once, in the default.
+mode='{}'
+submodule_fixture "$mode" dormant
+SCRIPTS="$TMP/oldscan"; out=$(bureau_git 'git push -q --recurse-submodule=on-demand origin HEAD'); SCRIPTS="$SCRIPTS_REAL"
+case "$out" in *'bureau git: refused'*) fail "11 control c $mode: the previous scan refused the abbreviation" ;; esac
+push_recursed || fail "11 control c $mode: the abbreviated on-demand push did not recurse under the previous scan"
+control_hook "11 control c $mode"
+submodule_fixture "$mode"
+SCRIPTS="$TMP/oldorder"; bureau_git "git -c include.path='$TMP/flags.cfg' push -q origin HEAD" >/dev/null; SCRIPTS="$SCRIPTS_REAL"
+push_recursed || fail "11 control d $mode: a -c include.path file did not bring recursion back with the previous order"
+grep -q '^pre-push ' <<< "$(marks)" || fail "11 control d $mode: the branch's .githooks pre-push did not run with the previous order: $(marks | tr '\n' ';')"
+submodule_fixture "$mode"
+SCRIPTS="$TMP/oldorder"; bureau_git 'git --namespace -c -c push.recurseSubmodules=on-demand push -q origin HEAD' >/dev/null; SCRIPTS="$SCRIPTS_REAL"
+push_recursed || fail "11 control d $mode: --namespace -c -c push.recurseSubmodules=on-demand did not recurse with the previous order"
+# git's own options that take a separate value (--attr-source, --shallow-file, git 2.55): the
+# value is no subcommand, so the hook and recursion overrides still apply and land after the value.
+# --attr-source needs git 2.40 or later (skipped before).
+ATTR_OK=0; if git9 git --attr-source HEAD version >/dev/null 2>&1; then ATTR_OK=1; fi
+global_round() {  # <label> <repo json> <call> — the call from a stage shell on a fresh fixture
+  submodule_fixture "$2"
+  # a branch named push in both repositories, so `--attr-source push` names a tree there
+  git -C "$R" -c core.hooksPath=/dev/null branch -f push main; git -C "$R.origin" branch -f push main; : > "$MARKS"
+  out=$(bureau_git "$3"' ; echo "rc=$?"')
+  printf '%s' "$out"
+}
+for mode in '{"remote_git_runs_hooks":"operator"}' '{}'; do
+  if [ "$ATTR_OK" = 1 ]; then
+    out=$(global_round "11 $mode attr" "$mode" 'git --attr-source HEAD push -q origin HEAD')
+    case "$out" in *rc=0*) ;; *) fail "11 $mode: git --attr-source HEAD push failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+    if push_recursed; then fail "11 $mode: git --attr-source HEAD push recursed into the submodule"; fi
+    if grep -qvE '^(operator-|$)' <<< "$(marks)"; then fail "11 $mode: a hook outside the operator's directory ran on git --attr-source HEAD push: $(grep -vE '^(operator-|$)' <<< "$(marks)" | sed -n 1p)"; fi
+    out=$(global_round "11 $mode attr2" "$mode" 'git --attr-source push fetch -q origin')
+    case "$out" in *rc=0*) ;; *) fail "11 $mode: git --attr-source push fetch failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+    if fetch_recursed; then fail "11 $mode: git --attr-source push fetch recursed into the submodule"; fi
+  fi
+  out=$(global_round "11 $mode shallow" "$mode" "git --shallow-file '$TMP/no-shallow' fetch -q origin")
+  case "$out" in *rc=0*) ;; *) fail "11 $mode: git --shallow-file <file> fetch failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+  if fetch_recursed; then fail "11 $mode: git --shallow-file <file> fetch recursed into the submodule"; fi
+done
+[ "$ATTR_OK" = 1 ] || echo "SKIP 11 --attr-source: needs git 2.40 or later, found $(git9 git --version 2>/dev/null)"
+# true runs an unknown leading option as before: git itself answers it.
+submodule_fixture '{"remote_git_runs_hooks":true}'
+out=$(bureau_git 'git --frobnicate push -q origin HEAD; echo "rc=$?"')
+case "$out" in *'bureau git: refused'*) fail "11 true: an unknown git option was refused under true" ;; esac
+# More negative controls: (e) a copy with the previous parse (no --attr-source and --shallow-file,
+# any other option skipped) takes the value for the subcommand, leaves the overrides out, and the push and the fetch
+# recurse (and the branch's .githooks pre-push runs); (f) a copy with the previous `--` rule
+# refuses ls-remote -q -- origin --recurse-submodules; (g) a copy that lets clone through clones,
+# and on git 2.54 and later runs the hook a clone template defines next to a dormant
+# hook.post-checkout.command, with the token.
+mkdir -p "$TMP/oldparse" "$TMP/olddash" "$TMP/noclone"
+for c in oldparse olddash noclone; do cp "$SCRIPTS"/*.sh "$TMP/$c/"; done
+sed -e 's/|--attr-source|--shallow-file) _bg_skip=1 ;;$/) _bg_skip=1 ;;/' \
+    -e 's/^\( *\)-\*) _bg_unknown="\${_bg_unknown:-\$_bg_arg}" ;;$/\1-*) ;;/' "$SCRIPTS/bureau-env.sh" > "$TMP/oldparse/bureau-env.sh"
+grep -q '_bg_unknown="\${' "$TMP/oldparse/bureau-env.sh" && fail "11 control oldparse: the unknown-option rule is still in the copy"
+sed 's/^\( *\)if \[ "\$_bg_sub" = clone \]; then$/\1if false; then/' "$SCRIPTS/bureau-env.sh" > "$TMP/noclone/bureau-env.sh"
+cat >> "$TMP/olddash/bureau-env.sh" <<'EOF2'
+_bureau_git_asks_recursion() {
+  local sub="$1" a name long prev=""; shift
+  [ "$sub" = submodule ] && return 0
+  for a in "$@"; do
+    if [ "$a" = -- ]; then case "$prev" in -*=*|"") break ;; -*) ;; *) break ;; esac; fi
+    prev="$a"
+    case "$a" in --rec*) ;; *) continue ;; esac
+    name="${a%%=*}"
+    for long in --recurse-submodules-default --recursive ""; do
+      [ -n "$long" ] || continue 2
+      [ "${long#"$name"}" = "$long" ] || break
+    done
+    [ "$a" = "$name=no" ] && continue
+    return 0
+  done
+  return 1
+}
+EOF2
+for c in oldparse noclone; do
+  cmp -s "$SCRIPTS/bureau-env.sh" "$TMP/$c/bureau-env.sh" && fail "11 control $c: the copy is unchanged (the sed found nothing)"
+done
+mode='{}'
+if [ "$ATTR_OK" = 1 ]; then
+  SCRIPTS="$TMP/oldparse"; global_round "11 control e" "$mode" 'git --attr-source HEAD push -q origin HEAD' >/dev/null; SCRIPTS="$SCRIPTS_REAL"
+  push_recursed || fail "11 control e: with the previous parse git --attr-source HEAD push did not recurse"
+  grep -q '^pre-push ' <<< "$(marks)" || fail "11 control e: with the previous parse the branch's pre-push did not run: $(marks | tr '\n' ';')"
+  SCRIPTS="$TMP/oldparse"; out=$(global_round "11 control e2" "$mode" 'git --attr-source push fetch -q origin'); SCRIPTS="$SCRIPTS_REAL"
+  case "$out" in *rc=0*) fail "11 control e: with the previous parse git --attr-source push fetch did not break" ;; esac
+fi
+SCRIPTS="$TMP/oldparse"; global_round "11 control e3" "$mode" "git --shallow-file '$TMP/no-shallow' fetch -q origin" >/dev/null; SCRIPTS="$SCRIPTS_REAL"
+fetch_recursed || fail "11 control e: with the previous parse git --shallow-file <file> fetch did not recurse"
+submodule_fixture "$mode"
+SCRIPTS="$TMP/olddash"; out=$(bureau_git 'git ls-remote -q -- origin --recurse-submodules >/dev/null; echo "rc=$?"'); SCRIPTS="$SCRIPTS_REAL"
+case "$out" in *'bureau git: refused'*rc=128*) ;; *) fail "11 control f: the previous rule did not refuse ls-remote -q -- origin --recurse-submodules: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+rm -rf "$TMP/tmpl11" "$TMP/clone11"; mkdir -p "$TMP/tmpl11"
+probe_script "$TMP/tmpl11-probe.sh" clone-template-hook
+printf '[hook "late"]\n\tcommand = %s late\n\tevent = post-checkout\n[hook "post-checkout"]\n\tcommand = true\n' "$TMP/tmpl11-probe.sh" > "$TMP/tmpl11/config"
+: > "$MARKS"
+out=$(bureau_git "git -c init.templateDir='$TMP/tmpl11' clone -q '$R.origin' '$TMP/clone11'; echo \"rc=\$?\"")
+case "$out" in *"bureau git: refused 'git clone'"*rc=128*) ;; *) fail "11: Bureau's clone was not refused: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+[ ! -e "$TMP/clone11" ] || fail "11: a refused clone created its directory"
+SCRIPTS="$TMP/noclone"; bureau_git "git -c init.templateDir='$TMP/tmpl11' clone -q '$R.origin' '$TMP/clone11'" >/dev/null; SCRIPTS="$SCRIPTS_REAL"
+[ -d "$TMP/clone11/.git" ] || fail "11 control g: the copy without the clone refusal did not clone"
+if [ "$GIT_NEW" = 1 ]; then grep -q '^clone-template-hook late gh=yes' <<< "$(marks)" || fail "11 control g: the clone template's hook did not run with the token: $(marks | tr '\n' ';')"; fi
 if [ "$GIT_NEW" = 0 ]; then
   echo "SKIP 11 the submodule's configured hook (plain and dormant): needs git 2.54 or later, found $(git9 git --version 2>/dev/null); recursion itself is detected on any git; set BUREAU_TEST_GIT_DIR to the bin directory of one"
 fi

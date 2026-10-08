@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f439405c54538a351441cd3e1c04e2728d8d2c1bd85c183641ea26992ae2e64e">
+<meta name="bureau-source-sha256" content="876181f78ad06b0cb436f21e05cfa54c6a9c1a19f52cf9d6558140270dccbacc">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -909,17 +909,18 @@ recursion back on, and a Bureau git call that asks for recursion in its
 arguments (<code>git submodule</code>;
 <code>--recurse-submodules</code>,
 <code>--recurse-submodules-default</code> or <code>--recursive</code>
-under any prefix git accepts, except a value of <code>no</code> outside
-<code>clone</code>) is refused with exit 128, because a child git in a
-submodule would run hooks that submodule's configuration defines;
-Bureau's push then neither pushes nor checks submodule commits
-(SECURITY.md has the exact rule). Absent, <code>null</code>,
-<code>false</code>, any other value and a <code>.bureau.json</code> that
-cannot be read keep them off; doctor reports the mode as
-<code>remote_git_hooks</code> (<code>on</code>, <code>operator</code> or
-<code>off</code>) and warns on a value that is neither a JSON boolean
-nor <code>"operator"</code>, and, with Git LFS and
-<code>"operator"</code>, when that hooks directory has no executable
+under any prefix git accepts, except a value of <code>no</code>), any
+<code>git clone</code>, and a call with a git option before the
+subcommand that git itself does not define are refused with exit 128,
+because a child git in a submodule would run hooks that submodule's
+configuration defines; Bureau's push then neither pushes nor checks
+submodule commits (SECURITY.md has the exact rule). Absent,
+<code>null</code>, <code>false</code>, any other value and a
+<code>.bureau.json</code> that cannot be read keep them off; doctor
+reports the mode as <code>remote_git_hooks</code> (<code>on</code>,
+<code>operator</code> or <code>off</code>) and warns on a value that is
+neither a JSON boolean nor <code>"operator"</code>, and, with Git LFS
+and <code>"operator"</code>, when that hooks directory has no executable
 <code>pre-push</code>. Local commands (commit, checkout, merge, reset)
 run their hooks either way, without the Bureau secrets. Hooks only: a
 credential helper, a filter or an fsmonitor named in the git

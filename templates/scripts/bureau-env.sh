@@ -352,7 +352,8 @@ bureau_secret_copy() {
 #   not recurse into submodules (the recursion keys are switched off after
 #   the caller's own options of git, a call whose arguments ask for recursion
 #   is refused with 128): a child git there would run hooks the submodule's
-#   own configuration defines. The setting covers hooks
+#   own configuration defines. For the same reason clone is refused, and so is
+#   a call with a git option before the subcommand that git does not define. The setting covers hooks
 #   only: a filter, an fsmonitor or a credential helper the configuration
 #   names still runs (SECURITY.md).
 #
@@ -603,19 +604,15 @@ _bureau_git_hooks_off() {
 # --recursive. git accepts every unique prefix of a long option
 # (--recurse-submodule=on-demand, --recurse-sub=yes, --recu), so any argument
 # from --rec on that is a prefix of one of those names counts, with or
-# without a value; for clone even =no (clone has no "no" value and takes it
-# as a pathspec), elsewhere =no is allowed, as is --no-recurse-submodules.
-# Arguments after a `--` that ends the options do not count; a `--` right
-# after an option without `=` may be that option's value, so the scan goes on.
+# without a value, except a value of no; --no-recurse-submodules is allowed.
+# The scan stops at the first `--`: what follows it is no option. (clone is
+# refused before this check: see git().)
 _bureau_git_asks_recursion() {
-  local _bar_sub="$1" _bar_arg _bar_name _bar_long _bar_prev=""
+  local _bar_sub="$1" _bar_arg _bar_name _bar_long
   shift
   [ "$_bar_sub" = submodule ] && return 0
   for _bar_arg in "$@"; do
-    if [ "$_bar_arg" = -- ]; then
-      case "$_bar_prev" in -*=*|"") break ;; -*) ;; *) break ;; esac
-    fi
-    _bar_prev="$_bar_arg"
+    [ "$_bar_arg" != -- ] || break
     case "$_bar_arg" in --rec*) ;; *) continue ;; esac
     _bar_name="${_bar_arg%%=*}"
     # a prefix of one of the names: removing it from the name changes the name
@@ -623,7 +620,7 @@ _bureau_git_asks_recursion() {
       [ -n "$_bar_long" ] || continue 2
       [ "${_bar_long#"$_bar_name"}" = "$_bar_long" ] || break
     done
-    if [ "$_bar_sub" != clone ] && [ "$_bar_arg" = "$_bar_name=no" ]; then continue; fi
+    if [ "$_bar_arg" = "$_bar_name=no" ]; then continue; fi
     return 0
   done
   return 1
@@ -634,17 +631,24 @@ git() {
     (*x*) set +x; local _bg_trace=1 ;;
     (*) local _bg_trace=0 ;;
   esac
-  local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven _bg_lead=0 _bg_mode _bg_dir
+  local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven _bg_lead=0 _bg_mode _bg_dir _bg_unknown=""
   local -a _bg_hooks _bg_hooks_env _bg_operator
   _bg_hooks=(); _bg_hooks_env=(); _bg_operator=()
   # The subcommand is the first word after git's own options; -C, -c,
-  # --git-dir, --work-tree, --namespace, --super-prefix and --config-env
-  # take the next word as their value.
+  # --git-dir, --work-tree, --namespace, --super-prefix, --config-env,
+  # --attr-source and --shallow-file take the next word as their value (the
+  # options of git.c's handle_options, git 2.55). Any other option git does
+  # not list there is remembered: where the subcommand stands after it is a
+  # guess, so the restricted modes refuse the call below.
   for _bg_arg in "$@"; do
     if [ "$_bg_skip" = 1 ]; then _bg_skip=0; _bg_lead=$((_bg_lead + 1)); continue; fi
     case "$_bg_arg" in
-      -C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env) _bg_skip=1 ;;
-      -*) ;;
+      -C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--attr-source|--shallow-file) _bg_skip=1 ;;
+      -p|--paginate|-P|--no-pager|--no-replace-objects|--no-lazy-fetch|--no-optional-locks|--no-advice|--bare) ;;
+      --literal-pathspecs|--no-literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--icase-pathspecs) ;;
+      --exec-path|--exec-path=*|--html-path|--man-path|--info-path|-v|--version|-h|--help|--list-cmds=*) ;;
+      --git-dir=*|--work-tree=*|--namespace=*|--super-prefix=*|--config-env=*|--attr-source=*|--shallow-file=*) ;;
+      -*) _bg_unknown="${_bg_unknown:-$_bg_arg}" ;;
       *) _bg_sub="$_bg_arg"; break ;;
     esac
     _bg_lead=$((_bg_lead + 1))
@@ -655,6 +659,11 @@ git() {
   _bureau_env_build default "$_bg_names" 1
   _bg_mode=off
   if [ "$_bg_names" = dotenv ]; then _bg_mode=$(_bureau_remote_git_hooks_mode); fi
+  if [ -n "$_bg_unknown" ] && [ "$(_bureau_remote_git_hooks_mode)" != on ]; then
+    echo "bureau git: refused: unknown git option '$_bg_unknown' before the subcommand; Bureau cannot tell which subcommand runs, so it cannot apply its hook and submodule rules (repo.remote_git_runs_hooks is not true)" >&2
+    if [ "$_bg_trace" = 1 ]; then set -x; fi
+    return 128
+  fi
   if [ "$_bg_names" = dotenv ] && [ "$_bg_mode" != on ]; then
     # With the hooks restricted ("off", "operator") Bureau's remote git never
     # recurses into submodules. A child git in a submodule reads that
@@ -665,15 +674,24 @@ git() {
     # hook would run with the GitHub tokens. The recursion configuration can
     # ask for is switched off below; a call that asks for it in its own
     # arguments is refused (_bureau_git_asks_recursion): no Bureau script makes
-    # one.
+    # one. clone is refused outright: the configuration of the repository it
+    # creates (from a template, or what the clone brings along) can define
+    # hooks whose names cannot be listed before the clone exists, and on git
+    # 2.55 a dormant hook named like an event disarms the event switch; no
+    # Bureau script clones.
+    if [ "$_bg_sub" = clone ]; then
+      echo "bureau git: refused 'git clone': Bureau's remote git does not clone unless repo.remote_git_runs_hooks is true (hooks the new repository's configuration defines cannot be switched off beforehand)" >&2
+      if [ "$_bg_trace" = 1 ]; then set -x; fi
+      return 128
+    fi
     if _bureau_git_asks_recursion "$_bg_sub" "${@:$((_bg_lead + 2))}"; then
       echo "bureau git: refused 'git $_bg_sub' with submodule recursion: Bureau's remote git does not recurse into submodules unless repo.remote_git_runs_hooks is true (a hook a submodule's configuration defines would see the GitHub tokens)" >&2
       if [ "$_bg_trace" = 1 ]; then set -x; fi
       return 128
     fi
-    # "operator": the common dir's hooks/ only. A clone gets a repository of
-    # its own, and a command outside a repository has no common dir: hooks off.
-    if [ "$_bg_mode" = operator ] && [ "$_bg_sub" != clone ] \
+    # "operator": the common dir's hooks/ only. A command outside a repository
+    # has no common dir: hooks off.
+    if [ "$_bg_mode" = operator ] \
        && _bg_dir=$(_bureau_git_operator_hooks_dir "${@:1:$_bg_lead}"); then
       _bg_operator=(--operator "$_bg_dir")
     fi
