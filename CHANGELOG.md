@@ -20,6 +20,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 The re-accept of a clean preserved worktree needs no configuration; a worktree halted with 21 before the resync is re-accepted on its next pick once it is clean and pushed (remove `needs-human` first). Validated in the harness only (`tests/test_reaccept_clean_worktree.sh`); no installation has run it yet.
 
+### Documentation
+
+- Configuration and troubleshooting now state that an allowed key defined in the installation's `.env` overrides the process environment and the start line, while a key absent from `.env` uses the environment value, and explain how to override a value for one run. No behaviour change or resync is required.
+
 ## [3.3.0] - 2026-10-07
 
 Stable release of the 3.3.0 candidates. v3.3 is a minor release on v3.2.1 with two pull requests: the shell gate for Codex implement turns and private temporary directories ([#60](https://github.com/KaiaK808/bureau/pull/60)), and the shell gate for Codex QA turns ([#62](https://github.com/KaiaK808/bureau/pull/62)). The v3 exit-code contract stays; no exit code is new. Claude runs are unchanged. Runtime, installer, templates and tests are identical to v3.3.0-rc.2. The changes since v3.2.1 are recorded in the 3.3.0-rc.2 and 3.3.0-rc.1 sections below, and the [v3.3.0 release notes](docs/release-notes.md) consolidate them.
