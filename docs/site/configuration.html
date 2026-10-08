@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d5c2ad49435be2b7c5c05dc9afa9218c8678515f027fe15f1da1a3554324410c">
+<meta name="bureau-source-sha256" content="035e4074bd71ffb672909ea0c96693c94cae71e52765cdbfbbc3580988509ea9">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -875,14 +875,21 @@ names, and keeps the hooks the configuration defines
 (<code>hook.&lt;name&gt;.command</code>) switched off by name; those
 operator hooks see the GitHub tokens. Put the hooks Bureau's push needs
 (the <code>pre-push</code> of <code>git lfs install</code>, a secret
-scanner) there; for <code>clone</code> and outside a repository
-<code>"operator"</code> keeps every hook off. Absent, <code>null</code>,
-<code>false</code>, any other value and a <code>.bureau.json</code> that
-cannot be read keep them off; doctor reports the mode as
-<code>remote_git_hooks</code> (<code>on</code>, <code>operator</code> or
-<code>off</code>) and warns on a value that is neither a JSON boolean
-nor <code>"operator"</code>, and, with Git LFS and
-<code>"operator"</code>, when that hooks directory has no executable
+scanner) there; for <code>clone</code>, <code>submodule</code>, a
+command with <code>--recurse-submodules</code> and outside a repository
+<code>"operator"</code> keeps every hook off, and it runs push, fetch
+and pull without recursing into submodules
+(<code>push.recurseSubmodules=no</code>,
+<code>fetch.recurseSubmodules=no</code>,
+<code>submodule.recurse=false</code> on the command line), because a
+child git in a submodule would run hooks that submodule's configuration
+defines; Bureau's push then neither pushes nor checks submodule commits.
+Absent, <code>null</code>, <code>false</code>, any other value and a
+<code>.bureau.json</code> that cannot be read keep them off; doctor
+reports the mode as <code>remote_git_hooks</code> (<code>on</code>,
+<code>operator</code> or <code>off</code>) and warns on a value that is
+neither a JSON boolean nor <code>"operator"</code>, and, with Git LFS
+and <code>"operator"</code>, when that hooks directory has no executable
 <code>pre-push</code>. Local commands (commit, checkout, merge, reset)
 run their hooks either way, without the Bureau secrets. Hooks only: a
 credential helper, a filter or an fsmonitor named in the git
