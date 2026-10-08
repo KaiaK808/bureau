@@ -701,4 +701,76 @@ class WorktreeLinkTests(Repo):
         self.assertTrue(any('is bare' in w for w in result['warnings']), result['warnings'])
 
 
+class ClaudeConfigDirTests(Repo):
+    """agents.providers.claude.config_dir and BUREAU_CLAUDE_CONFIG_DIR: doctor names the directory
+    each enabled Claude stage uses and asks `claude auth status --json` there, with a fake CLI that
+    is logged in only in a directory holding a file named logged-in."""
+    def setUp(self):
+        super().setUp()
+        bin_dir = self.base / 'bin'; bin_dir.mkdir()
+        self.calls = self.base / 'auth-calls'
+        fake = bin_dir / 'claude'
+        fake.write_text('#!' + sys.executable + '\nimport json, os, pathlib, sys\n'
+                        'assert sys.argv[1:] == ["auth", "status", "--json"], sys.argv\n'
+                        'directory = os.environ.get("CLAUDE_CONFIG_DIR", "")\n'
+                        'with open(' + repr(str(self.calls)) + ', "a") as out: out.write(directory + "\\n")\n'
+                        'print(json.dumps({"loggedIn": bool(directory) and pathlib.Path(directory, "logged-in").exists()}))\n')
+        fake.chmod(0o755)
+        os.environ['PATH'] = str(bin_dir) + os.pathsep + os.environ['PATH']
+        os.environ.pop('BUREAU_CLAUDE_CONFIG_DIR', None)
+        os.environ['CLAUDE_CONFIG_DIR'] = str(self.base / 'operator profile')
+        self.lean = self.base / 'profiles' / 'lean'; self.lean.mkdir(parents=True)
+
+    def called(self):
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def warnings(self, result):
+        return [w for w in result['warnings'] if w.startswith('Claude is not logged in')]
+
+    def test_logged_in_and_not_logged_in_are_reported(self):
+        config = self.config(providers={'claude': {'config_dir': str(self.lean)}}, qa={'enabled': True, 'runner': 'codex'})
+        (self.lean / 'logged-in').write_text('')
+        result = self.diagnose(config)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['claude_config_dirs'], {stage: {'config_dir': str(self.lean), 'configured': True, 'logged_in': True}
+                                                        for stage in ('spec', 'implement', 'code_review')})
+        self.assertEqual(self.warnings(result), [])
+        self.assertEqual(self.called(), [str(self.lean)], 'one check per directory, in that directory')
+        self.assertEqual(result['effective_stages']['implement']['config_dir'], str(self.lean))
+        # Not logged in there: every stage says so and one warning names the directory and the stages.
+        (self.lean / 'logged-in').unlink()
+        result = self.diagnose(config)
+        self.assertTrue(result['ok'], result)
+        for stage in ('spec', 'implement', 'code_review'):
+            self.assertIs(result['claude_config_dirs'][stage]['logged_in'], False)
+            self.assertIn('did not report loggedIn true', result['claude_config_dirs'][stage]['reason'])
+        found = self.warnings(result)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn(str(self.lean) + ' (spec, implement, code_review)', found[0])
+        self.assertIn('CLAUDE_CONFIG_DIR=' + str(self.lean) + ' claude', found[0])
+
+    def test_the_environment_override_wins_and_is_the_directory_checked(self):
+        other = self.base / 'profiles' / 'other'; other.mkdir(); (other / 'logged-in').write_text('')
+        os.environ['BUREAU_CLAUDE_CONFIG_DIR'] = str(other)
+        result = self.diagnose(self.config(providers={'claude': {'config_dir': str(self.lean)}}))
+        self.assertEqual({entry['config_dir'] for entry in result['claude_config_dirs'].values()}, {str(other)})
+        self.assertEqual(self.warnings(result), []); self.assertEqual(self.called(), [str(other)])
+
+    def test_without_a_config_dir_the_inherited_directory_is_named_and_not_checked(self):
+        result = self.diagnose(self.config())
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(sorted(result['claude_config_dirs']), ['code_review', 'implement', 'spec'])
+        for entry in result['claude_config_dirs'].values():
+            self.assertEqual(entry, {'config_dir': str(self.base / 'operator profile'), 'configured': False, 'logged_in': 'not checked'})
+        self.assertEqual(self.called(), []); self.assertEqual(self.warnings(result), [])
+
+    def test_an_invalid_config_dir_is_a_doctor_error(self):
+        for value in ('relative/profile', str(self.base / 'missing'), 42):
+            with self.subTest(value=value):
+                result = self.diagnose(self.config(providers={'claude': {'config_dir': value}}))
+                self.assertFalse(result['ok'])
+                self.assertTrue(any('agents.providers.claude.config_dir' in error for error in result['errors']), result['errors'])
+        self.assertEqual(self.called(), [])
+
+
 if __name__ == '__main__': unittest.main()
