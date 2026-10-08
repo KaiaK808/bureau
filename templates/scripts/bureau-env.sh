@@ -712,16 +712,15 @@ git() {
     # recurses into submodules. A child git in a submodule reads that
     # submodule's own configuration: the hook names defined there (also from a
     # file it includes) are not among those listed below, git 2.54 has no event
-    # switch, and on git 2.55 a hook named like an event (hook.pre-push.command,
-    # even without .event) turns the event switch into a per-name one; such a
-    # hook would run with the GitHub tokens. The recursion configuration can
+    # switch and "operator" sets none, so such a hook would run with the GitHub
+    # tokens; Bureau does not rely on git 2.55's event switches for hooks whose
+    # names it cannot list. The recursion configuration can
     # ask for is switched off below; a call that asks for it in its own
     # arguments is refused (_bureau_git_asks_recursion): no Bureau script makes
     # one. clone is refused outright: the configuration of the repository it
     # creates (from a template, or what the clone brings along) can define
-    # hooks whose names cannot be listed before the clone exists, and on git
-    # 2.55 a dormant hook named like an event disarms the event switch; no
-    # Bureau script clones.
+    # hooks whose names cannot be listed before the clone exists; no Bureau
+    # script clones.
     if [ "$_bg_sub" = clone ]; then
       echo "bureau git: refused 'git clone': Bureau's remote git does not clone unless repo.remote_git_runs_hooks is true (hooks the new repository's configuration defines cannot be switched off beforehand)" >&2
       if [ "$_bg_trace" = 1 ]; then set -x; fi
