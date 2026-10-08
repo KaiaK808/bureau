@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a6944f7fec849e76a02887ea067761d62181d844216854895e04c938541c2264">
+<meta name="bureau-source-sha256" content="90bb0b5422c49f8953cf35247d69310a3ebf53f15b158ab2f0ccf47be7456af8">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -133,7 +133,7 @@ remain under <code>logs/provider-runs/RUN/</code>.
 the call, which outlives a timeout: since v3.2 every Claude call starts
 with a fresh <code>--session-id</code>, and <code>session_id</code>,
 <code>transcript</code>
-(<code>&lt;CLAUDE_CONFIG_DIR or ~/.claude&gt;/projects/&lt;slug&gt;/&lt;session id&gt;.jsonl</code>;
+(<code>&lt;config_dir, else CLAUDE_CONFIG_DIR, else ~/.claude&gt;/projects/&lt;slug&gt;/&lt;session id&gt;.jsonl</code>;
 when Claude placed it elsewhere under <code>projects/</code>, the file
 found there) and <code>transcript_found</code> record it. The slug is
 Claude Code's own project-directory name, reproduced from its 2.1.286
@@ -193,6 +193,39 @@ unpublished result.</p>
 <p>Validation currently uses fake executors and real local Git/test
 commands. Run a representative live ticket in an adopting repository
 before relying on unattended Codex or mixed-provider operation.</p>
+<h2 id="claude-configuration-directory">Claude configuration
+directory</h2>
+<p>A headless Claude stage otherwise runs with the operator's personal
+Claude Code setup: the default configuration directory brings the global
+<code>CLAUDE.md</code>, hooks, plugins and user-scope MCP servers, and
+each of those servers starts extra processes for every stage call. An
+installation can give its Claude stages a lean profile of their own
+instead, with <code>agents.providers.claude.config_dir</code> in
+<code>.bureau.json</code> or <code>BUREAU_CLAUDE_CONFIG_DIR</code> in
+the process environment (the environment wins). Claude Code reads
+settings, instructions, MCP configuration, session history and the login
+from the directory <code>CLAUDE_CONFIG_DIR</code> names (see "Log in
+with multiple accounts" in Claude Code's authentication documentation;
+on macOS the Keychain entry is keyed to that directory too), so the
+profile needs its own login: run
+<code>CLAUDE_CONFIG_DIR=&lt;dir&gt; claude</code> once and log in. The
+value is an absolute path to an existing directory or starts with
+<code>~/</code> (the home directory); anything else is a configuration
+error that ends the call with 22 before any provider call. When set, the
+adapter puts <code>CLAUDE_CONFIG_DIR=&lt;dir&gt;</code> into the
+environment of the <code>claude</code> child (also behind the Headroom
+wrap and under <code>repo.untrusted_env: "clean"</code>) and of its
+<code>claude auth status --json</code> check, and nowhere else; the
+transcript recorded in <code>result.json</code> is looked up there too.
+When unset, the child's environment is exactly what it was before. Codex
+stages ignore both settings. <code>--describe</code> reports the
+resolved directory as <code>config_dir</code> for Claude stages
+(<code>null</code> when unset). Doctor lists the directory of every
+enabled Claude stage under <code>claude_config_dirs</code>; for a
+configured one it runs <code>claude auth status --json</code> there and
+warns when it does not report <code>loggedIn: true</code>, and a stage
+without one shows the inherited directory as
+<code>configured: false</code>, not checked.</p>
 <h2 id="codex-implementation-sandbox-gate">Codex implementation sandbox
 gate</h2>
 <p>A Codex implement turn normally uses <code>workspace-write</code>,

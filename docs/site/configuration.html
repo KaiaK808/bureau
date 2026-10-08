@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d0809478a7b692b1755f16f0faddc165611bc04c91e15052a994497a5f9cffca">
+<meta name="bureau-source-sha256" content="6ce4118a54af2f80fd7bd49ad2f016942ae6b5dcf753093757ac0a65a609cee5">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -614,6 +614,27 @@ both. Claude gets <code>--effort</code> and accepts <code>low</code>,
 also accepts <code>none</code>, <code>minimal</code>,
 <code>ultra</code>. Another value fails with 22 before any provider
 call; unset leaves the CLI's own default</td>
+</tr>
+<tr>
+<td><code>agents.providers.claude.config_dir</code></td>
+<td>unset</td>
+<td>Claude configuration directory for every Claude stage of this
+installation: <code>bureau-provider.py</code> sets
+<code>CLAUDE_CONFIG_DIR</code> to it for the <code>claude</code> child
+and its <code>claude auth status</code> check, nowhere else, so
+settings, <code>CLAUDE.md</code>, hooks, plugins, MCP servers, session
+history and the login come from there. An absolute path to an existing
+directory; a leading <code>~/</code> is the home directory. Anything
+else (a relative path, a missing directory, a non-string) fails with 22
+before any provider call. <code>BUREAU_CLAUDE_CONFIG_DIR</code> in the
+process environment wins over the key under the same rules. Unset (or
+<code>null</code>): the child keeps the environment it had, the
+inherited <code>CLAUDE_CONFIG_DIR</code> or <code>~/.claude</code>.
+Codex ignores it. <code>--describe</code> reports it as
+<code>config_dir</code>; doctor names the directory per Claude stage and
+warns when Claude is not logged in there. See <a
+href="provider-runtime.html#claude-configuration-directory">provider
+runtime</a></td>
 </tr>
 <tr>
 <td><code>agents.&lt;stage&gt;.sandbox</code></td>
@@ -1680,12 +1701,14 @@ generic default JSON only for its owning default runner, provider
 environment default, and the legacy Claude environment default. See <a
 href="provider-runtime.html">provider runtime</a>.</p>
 <p><code>BUREAU_REASONING_STAGE</code>,
-<code>BUREAU_SANDBOX_STAGE</code> and <code>BUREAU_STAGE_TIMEOUT</code>
-override the corresponding provider settings. <code>BUREAU_CONFIG</code>
-selects the explicit configuration file; otherwise the current checkout
-and primary worktree are checked. <code>BUREAU_NO_MERGE=1</code>
-preserves the review boundary in background code review/merge entry
-points.</p>
+<code>BUREAU_SANDBOX_STAGE</code>, <code>BUREAU_STAGE_TIMEOUT</code> and
+<code>BUREAU_CLAUDE_CONFIG_DIR</code> override the corresponding
+provider settings; like the other overrides on this line they are read
+from the process environment, not from <code>.env</code>.
+<code>BUREAU_CONFIG</code> selects the explicit configuration file;
+otherwise the current checkout and primary worktree are checked.
+<code>BUREAU_NO_MERGE=1</code> preserves the review boundary in
+background code review/merge entry points.</p>
 <p><code>BUREAU_CODEX_USAGE_FILE</code> supplies an operator-provided
 Codex signal (<code>pct</code>, <code>reset_epoch</code>,
 <code>updated_epoch</code>). A shared <code>BUREAU_USAGE_FILE</code> is
