@@ -65,9 +65,35 @@ def configuration(stage, config, env):
         raise ValueError('reasoning_effort for runner claude must be one of ' + ', '.join(CLAUDE_EFFORTS))
     timeout = float(env.get('BUREAU_STAGE_TIMEOUT') or item.get('timeout_seconds') or provider.get('timeout_seconds', 3600))
     if not math.isfinite(timeout) or timeout <= 0 or timeout > 86400: raise ValueError('timeout_seconds must be within (0, 86400]')
-    return dict(stage=stage, runner=runner, model=model, sandbox=sandbox, reasoning=reasoning, timeout=timeout,
-                headroom=runner == 'claude' and env.get('BUREAU_HEADROOM_WRAP', str(agents.get('headroom_wrap', False))).lower() in ('1', 'true'),
-                cost_tracking=env.get('BUREAU_COST_TRACKING', str(config.get('session', {}).get('cost_tracking', False))).lower() in ('1', 'true'))
+    options = dict(stage=stage, runner=runner, model=model, sandbox=sandbox, reasoning=reasoning, timeout=timeout,
+                   headroom=runner == 'claude' and env.get('BUREAU_HEADROOM_WRAP', str(agents.get('headroom_wrap', False))).lower() in ('1', 'true'),
+                   cost_tracking=env.get('BUREAU_COST_TRACKING', str(config.get('session', {}).get('cost_tracking', False))).lower() in ('1', 'true'))
+    if runner == 'claude': options['config_dir'] = claude_config_dir(provider, env)
+    return options
+
+
+def claude_config_dir(provider, env):
+    # The Claude configuration directory of this installation's Claude stages:
+    # BUREAU_CLAUDE_CONFIG_DIR, else agents.providers.claude.config_dir, else
+    # None (the child keeps the CLAUDE_CONFIG_DIR it inherits, or the CLI's
+    # ~/.claude). An absolute path to an existing directory; a leading ~/ is
+    # the home directory. Anything else fails before any provider call.
+    value, name = env.get('BUREAU_CLAUDE_CONFIG_DIR'), 'BUREAU_CLAUDE_CONFIG_DIR'
+    if not value: value, name = provider.get('config_dir'), 'agents.providers.claude.config_dir'
+    if value is None: return None
+    if not isinstance(value, str): raise ValueError(name + ' must be a string')
+    if value.startswith('~/'): value = os.path.join(env.get('HOME') or os.path.expanduser('~'), value[2:])
+    if not os.path.isabs(value): raise ValueError(name + ' must be an absolute path or start with ~/ (read: ' + json.dumps(value) + ')')
+    if not os.path.isdir(value): raise ValueError(name + ' is not an existing directory: ' + value)
+    return os.path.normpath(value)
+
+
+def claude_env(environ, options):
+    # The environment of a claude process: CLAUDE_CONFIG_DIR is the configured
+    # directory when there is one; without one the environment is unchanged.
+    if options.get('runner') == 'claude' and options.get('config_dir'):
+        return {**environ, 'CLAUDE_CONFIG_DIR': options['config_dir']}
+    return environ
 
 
 class AuthError(Exception):
@@ -183,7 +209,7 @@ def auth(options):
     # The login check runs in the environment the agent will get, so a
     # "clean" mode that drops the agent's login fails here, with 16.
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20,
-                          env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner))
+                          env=claude_env(untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner), options))
     if proc.returncode != 0: raise AuthError(runner + ' is not authenticated')
     if runner == 'claude':
         try: logged = json.loads(proc.stdout).get('loggedIn') is True
@@ -313,7 +339,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
     signal.signal(signal.SIGALRM, lambda signum, frame: kill(signal.SIGKILL))
     tempdir = None
     try:
-        child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)
+        child_env = claude_env(untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner), options)
         tempdir = codex_tmpdir(runner, child_env, repo)
         started = time.monotonic()
         with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
@@ -398,8 +424,8 @@ def run(options, prompt, system, repo, evidence, schema=None):
 # `claude -p --output-format json` writes stdout.log only when it finishes, so
 # a call that timed out leaves it empty; Claude's transcript is written while it
 # works, at <config dir>/projects/<slug>/<session id>.jsonl. The config dir is
-# CLAUDE_CONFIG_DIR, else ~/.claude; the slug is claude_project_slug of the
-# resolved working directory. Should a Claude version place it elsewhere, a
+# the stage's config_dir, else CLAUDE_CONFIG_DIR, else ~/.claude; the slug is
+# claude_project_slug of the resolved working directory. Should a Claude version place it elsewhere, a
 # search for the session id under projects/ finds it. `codex exec --json`
 # streams its events, the first being thread.started with the thread id; its
 # rollout file is
@@ -515,7 +541,7 @@ def transcript(options, repo, evidence, environ=None):
             missing = dict(session_id=None, transcript=None, transcript_found=False)
             if options.get('session_note'): missing['transcript_note'] = options['session_note'] + '; no session id was set'
             return missing
-        projects = Path(environ.get('CLAUDE_CONFIG_DIR') or home/'.claude')/'projects'
+        projects = Path(claude_env(environ, options).get('CLAUDE_CONFIG_DIR') or home/'.claude')/'projects'
         expected = projects/claude_project_slug(str(repo))/(session + '.jsonl')
         found = _found(expected.parent, expected.name) or _found(projects, '*/' + session + '.jsonl')
         return dict(session_id=session, transcript=str(found or expected), transcript_found=found is not None)

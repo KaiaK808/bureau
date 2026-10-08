@@ -26,8 +26,10 @@ class ProviderTests(unittest.TestCase):
         fake='#!'+sys.executable+'''
 import json, os, pathlib, signal, sys, time
 name=pathlib.Path(sys.argv[0]).name
-root=pathlib.Path(os.environ['FAKE_ROOT'])
+# Under repo.untrusted_env "clean" only CLAUDE_* names reach the CLI.
+root=pathlib.Path(os.environ.get('FAKE_ROOT') or os.environ['CLAUDE_FAKE_ROOT'])
 if sys.argv[1] in ('auth','login'):
+    (root/(name+'-auth-env.json')).write_text(json.dumps(dict(os.environ)))
     if os.environ.get('AUTH_FAIL'): sys.exit(1)
     print(json.dumps({'loggedIn':True})); sys.exit(0)
 # A Claude CLI before --session-id (OLD_CLI): its help does not list the flag and it rejects
@@ -43,6 +45,7 @@ if sys.argv[1]=='--help':
 if os.environ.get('OLD_CLI') and '--session-id' in sys.argv:
     print("error: unknown option '--session-id'",file=sys.stderr); sys.exit(1)
 (root/'argv.json').write_text(json.dumps(sys.argv[1:]))
+(root/(name+'-env.json')).write_text(json.dumps(dict(os.environ)))
 (root/'stdin.txt').write_text(sys.stdin.read())
 tmpdir=os.environ.get('TMPDIR')
 (root/'tmpdir.json').write_text(json.dumps({'value':tmpdir,'is_dir':bool(tmpdir and pathlib.Path(tmpdir).is_dir())}))
@@ -593,6 +596,145 @@ p.shutil.rmtree=fail_remove
     def test_codex_only_does_not_invoke_claude_auth(self):
         (self.bin/'claude').write_text('#!/bin/sh\necho unexpected Claude >&2\nexit 99\n')
         self.run_provider()
+
+    # ── A Claude configuration directory per installation ─────────────────
+    def recorded_env(self,name):
+        return json.loads((self.root/name).read_text())
+
+    def claude_envs(self,config,script=SCRIPT,**env):
+        # The environment of the claude child and of its login check, for one call.
+        self.config.write_text(json.dumps(config))
+        for name in ('claude-env.json','claude-auth-env.json'): (self.root/name).unlink(missing_ok=True)
+        result=subprocess.run([sys.executable,str(script),*self.command()[2:]],capture_output=True,text=True,
+                              env={**self.env,**env},timeout=12)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        return self.recorded_env('claude-env.json'),self.recorded_env('claude-auth-env.json')
+
+    def profile(self,name):
+        path=self.root/'profiles'/name; path.mkdir(parents=True,exist_ok=True)
+        return path
+
+    def test_claude_config_dir_reaches_the_child_and_the_login_check(self):
+        lean,other=self.profile('lean'),self.profile('other')
+        keyed={'agents':{'runner':'claude','providers':{'claude':{'config_dir':str(lean)}}}}
+        home=self.root/'home'; tilde=home/'profiles'/'tilde lean'; tilde.mkdir(parents=True)
+        for config,env,expected in ((keyed,{},lean),
+                                    # The environment override wins over the key.
+                                    (keyed,{'BUREAU_CLAUDE_CONFIG_DIR':str(other)},other),
+                                    ({'agents':{'runner':'claude'}},{'BUREAU_CLAUDE_CONFIG_DIR':str(other)},other),
+                                    # A leading ~/ is the home directory.
+                                    ({'agents':{'runner':'claude','providers':{'claude':{'config_dir':'~/profiles/tilde lean'}}}},{'HOME':str(home)},tilde),
+                                    ({'agents':{'runner':'claude'}},{'HOME':str(home),'BUREAU_CLAUDE_CONFIG_DIR':'~/profiles/tilde lean'},tilde)):
+            with self.subTest(config=config,env=env):
+                child,login=self.claude_envs(config,**env)
+                self.assertEqual(child['CLAUDE_CONFIG_DIR'],str(expected))
+                self.assertEqual(login['CLAUDE_CONFIG_DIR'],str(expected))
+                # Only that variable differs from the environment the child got before.
+                self.assertEqual({k:v for k,v in child.items() if k!='CLAUDE_CONFIG_DIR'},
+                                 {k:v for k,v in p.untrusted_env({**self.env,**env},'default','claude').items() if k!='CLAUDE_CONFIG_DIR'})
+                self.assertEqual(p.configuration('implement',config,{**self.env,**env})['config_dir'],str(expected))
+                # Claude writes its transcript under that directory, and result.json names it there.
+                _,metadata=self.evidence()
+                self.assertTrue(metadata['transcript'].startswith(str(expected/'projects')+os.sep),metadata['transcript'])
+
+    def test_claude_config_dir_also_reaches_a_clean_environment_and_the_headroom_wrap(self):
+        lean=self.profile('lean')
+        wrapper=self.bin/'headroom'
+        wrapper.write_text('#!/bin/sh\n[ "$1" = wrap ] && [ "$2" = claude ] && [ "$3" = -- ] || exit 99\nshift 3\nexec claude "$@"\n')
+        wrapper.chmod(0o755)
+        for config in ({'agents':{'runner':'claude','providers':{'claude':{'config_dir':str(lean)}}},'repo':{'untrusted_env':'clean'}},
+                       {'agents':{'runner':'claude','headroom_wrap':True,'providers':{'claude':{'config_dir':str(lean)}}}}):
+            with self.subTest(config=config):
+                child,login=self.claude_envs(config,CLAUDE_FAKE_ROOT=str(self.root))
+                self.assertEqual((child['CLAUDE_CONFIG_DIR'],login['CLAUDE_CONFIG_DIR']),(str(lean),str(lean)))
+                if 'repo' in config: self.assertNotIn('FAKE_ROOT',child)
+
+    def without_config_dir(self):
+        # The adapter without this change: claude_env leaves the environment as it is.
+        source=SCRIPT.read_text()
+        changed="        return {**environ, 'CLAUDE_CONFIG_DIR': options['config_dir']}\n"
+        self.assertEqual(source.count(changed),1,'the control no longer matches the adapter')
+        control=self.root/'control'/'bureau-provider.py'; control.parent.mkdir(exist_ok=True)
+        control.write_text(source.replace(changed,'        return environ\n'))
+        return control
+
+    def test_claude_without_a_config_dir_gets_the_environment_it_got_before(self):
+        control=self.without_config_dir()
+        config={'agents':{'runner':'claude','providers':{'claude':{'model':'claude-test'}}}}
+        child,login=self.claude_envs(config)
+        before_child,before_login=self.claude_envs(config,script=control)
+        self.assertEqual(child,before_child); self.assertEqual(login,before_login)
+        # The inherited CLAUDE_CONFIG_DIR stays; without one, none is added.
+        self.assertEqual(child['CLAUDE_CONFIG_DIR'],self.env['CLAUDE_CONFIG_DIR'])
+        self.env.pop('CLAUDE_CONFIG_DIR')
+        child,login=self.claude_envs(config)
+        self.assertNotIn('CLAUDE_CONFIG_DIR',child); self.assertNotIn('CLAUDE_CONFIG_DIR',login)
+        self.assertEqual(child,p.untrusted_env({**self.env,'FAKE_ROOT':self.env['FAKE_ROOT']},'default','claude'))
+        # An empty override is no override, as for the other BUREAU_ overrides.
+        child,_=self.claude_envs(config,BUREAU_CLAUDE_CONFIG_DIR='')
+        self.assertNotIn('CLAUDE_CONFIG_DIR',child)
+        self.assertIsNone(p.configuration('implement',config,{})['config_dir'])
+
+    def test_negative_control_the_env_assertion_fails_without_the_change(self):
+        lean=self.profile('lean')
+        config={'agents':{'runner':'claude','providers':{'claude':{'config_dir':str(lean)}}}}
+        child,login=self.claude_envs(config,script=self.without_config_dir())
+        self.assertNotEqual(child.get('CLAUDE_CONFIG_DIR'),str(lean))
+        self.assertNotEqual(login.get('CLAUDE_CONFIG_DIR'),str(lean))
+        with self.assertRaises(AssertionError): self.assertEqual(child['CLAUDE_CONFIG_DIR'],str(lean))
+        child,login=self.claude_envs(config)
+        self.assertEqual((child['CLAUDE_CONFIG_DIR'],login['CLAUDE_CONFIG_DIR']),(str(lean),str(lean)))
+
+    def test_invalid_claude_config_dir_is_a_configuration_error_before_any_call(self):
+        (self.bin/'claude').write_text('#!/bin/sh\necho unexpected Claude >&2\ntouch "$FAKE_ROOT/claude-ran"\nexit 99\n')
+        afile=self.root/'not a directory'; afile.write_text('')
+        home=self.root/'home'; home.mkdir()
+        cases=[(value,{}) for value in ('profiles/lean','./lean','~','~other/lean','',str(self.root/'missing'),str(afile),'~/missing',42,True,[],{})]
+        cases+=[(None,{'BUREAU_CLAUDE_CONFIG_DIR':value}) for value in ('profiles/lean','~',str(self.root/'missing'),str(afile))]
+        # The override is checked even when the key is valid.
+        cases.append((str(self.profile('lean')),{'BUREAU_CLAUDE_CONFIG_DIR':'relative'}))
+        for value,env in cases:
+            with self.subTest(value=value,env=env):
+                provider={} if value is None else {'config_dir':value}
+                config={'agents':{'runner':'claude','providers':{'claude':provider}}}
+                name='BUREAU_CLAUDE_CONFIG_DIR' if env else 'agents.providers.claude.config_dir'
+                with self.assertRaisesRegex(ValueError,name): p.configuration('implement',config,{'HOME':str(home),**env})
+                self.config.write_text(json.dumps(config))
+                for extra in ((),('--check',),('--describe',)):
+                    result=self.run_provider(*extra,code=22,HOME=str(home),**env)
+                    self.assertIn('Bureau provider: '+name,result.stderr)
+                    self.assertNotIn('unexpected Claude',result.stderr)
+                self.assertFalse((self.root/'claude-ran').exists())
+                self.assertFalse((self.root/'argv.json').exists())
+                self.assertFalse((self.root/'evidence').exists())
+
+    def test_codex_is_unaffected_by_the_claude_config_dir(self):
+        (self.bin/'claude').write_text('#!/bin/sh\necho unexpected Claude >&2\nexit 99\n')
+        lean=self.profile('lean')
+        # A TMPDIR of its own, so the per-call Codex temporary directory does not differ between runs.
+        tmp=self.root/'tmp'; tmp.mkdir(); self.env['TMPDIR']=str(tmp)
+        baseline={'agents':{'runner':'codex'}}
+        self.config.write_text(json.dumps(baseline)); self.run_provider()
+        before=self.recorded_env('codex-env.json')
+        for provider,env in (({'config_dir':str(lean)},{}),({'config_dir':'relative'},{}),({'config_dir':42},{}),
+                             ({},{'BUREAU_CLAUDE_CONFIG_DIR':str(lean)}),({},{'BUREAU_CLAUDE_CONFIG_DIR':'relative'})):
+            with self.subTest(provider=provider,env=env):
+                config={'agents':{'runner':'codex','providers':{'claude':provider}}}
+                self.config.write_text(json.dumps(config))
+                self.run_provider(**env)
+                after=self.recorded_env('codex-env.json')
+                self.assertEqual(after.get('CLAUDE_CONFIG_DIR'),self.env['CLAUDE_CONFIG_DIR'])
+                self.assertEqual({k:v for k,v in after.items() if k not in env},{k:v for k,v in before.items() if k not in env})
+                self.assertNotIn('config_dir',json.loads(self.run_provider('--describe',**env).stdout))
+                self.assertNotIn('config_dir',p.configuration('implement',config,env))
+
+    def test_describe_reports_the_claude_config_dir(self):
+        lean,other=self.profile('lean'),self.profile('other')
+        self.config.write_text(json.dumps({'agents':{'runner':'claude','providers':{'claude':{'config_dir':str(lean)+'/'}}}}))
+        self.assertEqual(json.loads(self.run_provider('--describe').stdout)['config_dir'],str(lean))
+        self.assertEqual(json.loads(self.run_provider('--describe',BUREAU_CLAUDE_CONFIG_DIR=str(other)).stdout)['config_dir'],str(other))
+        self.config.write_text(json.dumps({'agents':{'runner':'claude'}}))
+        self.assertIsNone(json.loads(self.run_provider('--describe').stdout)['config_dir'])
 
 
     # ── The provider's own record of a call (v3.2) ─────────────────────────
