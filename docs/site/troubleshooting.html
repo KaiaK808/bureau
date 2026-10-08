@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="679213af5fc7ba8653b3dc193f0540cfc61029e76e187c43b4b669a051ca8e9f">
+<meta name="bureau-source-sha256" content="ed02bfb3c88b963592333a592cdc4810e9c8083034023faad0f25875dbd38d1e">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1331,7 +1331,7 @@ installation on the host runs v3.1; it can then be deleted.</p>
 <h3 id="a-pre-push-hook-no-longer-runs-when-bureau-pushes">A
 <code>pre-push</code> hook no longer runs when Bureau pushes</h3>
 <p>Since v3.2 Bureau's own git commands that talk to a remote (push,
-fetch, pull, ls-remote, clone, remote, submodule) run with
+fetch, pull, ls-remote, remote) run by default with
 <code>-c core.hooksPath=/dev/null</code>: they keep the GitHub token
 variables, and a hook from the branch would see them. A
 <code>pre-push</code> hook (husky, lefthook, the pre-commit framework's
@@ -1357,8 +1357,17 @@ checkout uses <code>filter=lfs</code> (in its
 that git lists, or <code>.git/info/attributes</code>) and the key is not
 <code>true</code> (<a href="configuration.html">configuration</a>, <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).
-Doctor warns when the value is not a JSON boolean; any value other than
-<code>true</code> keeps the hooks off.</p>
+The string <code>"operator"</code> runs only the main checkout's own
+hooks directory; commands outside a repository keep the hooks off, and
+<code>clone</code> is refused with exit 128 before git runs unless the
+key is <code>true</code>. Doctor warns when the value is neither a JSON
+boolean nor <code>"operator"</code>; other values keep the hooks
+off.</p>
+<p>With <code>repo.remote_git_runs_hooks: true</code>, git recurses into
+submodules as configured, and on some git versions a
+<code>reference-transaction</code> hook that reads standard input inside
+a command substitution can block, leaving the push waiting
+indefinitely.</p>
 <h3 id="tracing-a-stage-with-bash--x">Tracing a stage with
 <code>bash -x</code></h3>
 <p>Tracing a stage, a driver or the queue loop

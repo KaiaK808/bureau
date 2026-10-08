@@ -605,23 +605,66 @@ _bureau_git_hooks_off() {
 # (--recurse-submodule=on-demand, --recurse-sub=yes, --recu), so any argument
 # from --rec on that is a prefix of one of those names counts, with or
 # without a value, except a value of no; --no-recurse-submodules is allowed.
-# The scan stops at the first `--`: what follows it is no option. (clone is
-# refused before this check: see git().)
+# The scan stops at an option delimiter `--`, not a separate option value.
+# For an unknown option, a following `--` might be its value: keep scanning
+# conservatively. (clone is refused before this check: see git().)
 _bureau_git_asks_recursion() {
-  local _bar_sub="$1" _bar_arg _bar_name _bar_long
+  local IFS=$' \t\n'
+  local _bar_sub="$1" _bar_arg _bar_name _bar_long _bar_opt _bar_match
+  local _bar_values="" _bar_flags="" _bar_skip=0 _bar_unknown=0
   shift
   [ "$_bar_sub" = submodule ] && return 0
+  # Separate values, as listed by git push/fetch/pull/ls-remote -h (git 2.50).
+  # --exec of ls-remote aliases --upload-pack; fetch's hidden
+  # --recurse-submodules-default also takes a value. pull accepts neither it
+  # nor --filter on that git, so those stay unknown there. Optional values
+  # (--force-with-lease, --gpg-sign, --rebase, --log, --signed) take no separate word.
+  case "$_bar_sub" in
+    push)
+      _bar_values='-o --push-option --repo --receive-pack --exec'
+      _bar_flags='-v --verbose -q --quiet --all --branches --mirror -d --delete --tags -n --dry-run --porcelain -f --force --force-with-lease --force-if-includes --recurse-submodules --thin -u --set-upstream --progress --prune --verify --follow-tags --signed --atomic -4 --ipv4 -6 --ipv6' ;;
+    fetch|pull)
+      _bar_values='--depth --deepen --shallow-since --shallow-exclude --upload-pack -j --jobs --negotiation-tip --refmap -o --server-option'
+      _bar_flags='-v --verbose -q --quiet --all --set-upstream -a --append -f --force -t --tags -p --prune --recurse-submodules --dry-run -k --keep --progress --unshallow --update-shallow -4 --ipv4 -6 --ipv6 --show-forced-updates'
+      if [ "$_bar_sub" = fetch ]; then
+        _bar_values="$_bar_values --filter --recurse-submodules-default"
+        _bar_flags="$_bar_flags --atomic -m --multiple -n -P --prune-tags --prefetch --porcelain --write-fetch-head -u --update-head-ok --refetch --negotiate-only --auto-maintenance --auto-gc --write-commit-graph --stdin"
+      else
+        _bar_values="$_bar_values -s --strategy -X --strategy-option --cleanup"
+        _bar_flags="$_bar_flags -r --rebase -n --stat --log --signoff --squash --commit --edit --ff --ff-only --verify --verify-signatures --autostash -S --gpg-sign --allow-unrelated-histories"
+      fi ;;
+    ls-remote)
+      _bar_values='--upload-pack --exec -o --server-option --sort'
+      _bar_flags='-q --quiet -t --tags -b --branches -h --heads --refs --get-url --exit-code --symref' ;;
+  esac
   for _bar_arg in "$@"; do
-    [ "$_bar_arg" != -- ] || break
-    case "$_bar_arg" in --rec*) ;; *) continue ;; esac
-    _bar_name="${_bar_arg%%=*}"
-    # a prefix of one of the names: removing it from the name changes the name
-    for _bar_long in --recurse-submodules-default --recursive ""; do
-      [ -n "$_bar_long" ] || continue 2
-      [ "${_bar_long#"$_bar_name"}" = "$_bar_long" ] || break
+    if [ "$_bar_skip" = 1 ]; then _bar_skip=0; continue; fi
+    if [ "$_bar_arg" = -- ]; then
+      [ "$_bar_unknown" = 1 ] || break
+      _bar_unknown=0; continue
+    fi
+    _bar_unknown=0
+    case "$_bar_arg" in
+      --rec*)
+        _bar_name="${_bar_arg%%=*}"
+        # a prefix of one of the names: removing it from the name changes the name
+        for _bar_long in --recurse-submodules-default --recursive; do
+          if [ "${_bar_long#"$_bar_name"}" != "$_bar_long" ]; then
+            [ "$_bar_arg" = "$_bar_name=no" ] || return 0
+            break
+          fi
+        done ;;
+    esac
+    for _bar_opt in $_bar_values; do
+      if [ "$_bar_arg" = "$_bar_opt" ]; then _bar_skip=1; break; fi
     done
-    if [ "$_bar_arg" = "$_bar_name=no" ]; then continue; fi
-    return 0
+    [ "$_bar_skip" = 0 ] || continue
+    case "$_bar_arg" in -*) ;; *) continue ;; esac
+    _bar_name="${_bar_arg%%=*}"; _bar_match=0
+    for _bar_opt in $_bar_values $_bar_flags; do
+      if [ "$_bar_name" = "$_bar_opt" ] || [ "$_bar_name" = "--no-${_bar_opt#--}" ]; then _bar_match=1; break; fi
+    done
+    [ "$_bar_match" = 1 ] || _bar_unknown=1
   done
   return 1
 }

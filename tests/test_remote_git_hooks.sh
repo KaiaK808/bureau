@@ -56,8 +56,9 @@
 #      recursion or core.hooksPath set through git's own -c, --config-env, -c include.path=<file> or
 #      a -c behind --namespace's value loses to Bureau's options, which come after the caller's.
 #      Every clone and a git option git does not define are refused; --attr-source and
-#      --shallow-file with a separate value still get the overrides; the scan stops at the first
-#      `--` (ls-remote -q -- origin --recurse-submodules runs); true runs an unknown option as before. An include and
+#      --shallow-file with a separate value still get the overrides; the scan stops at an option
+#      delimiter `--` (ls-remote -q -- origin --recurse-submodules runs), but skips a separate option
+#      value of `--` and keeps scanning after an unknown option; true runs an unknown option as before. An include and
 #      an includeIf inside the working tree, GIT_CONFIG_COUNT and GIT_CONFIG_PARAMETERS each set
 #      core.hooksPath to the branch's .githooks (a plain push shows they do): only the operator's
 #      hooks run. Recursion is detected through the objects that reach the submodule, on any git;
@@ -85,6 +86,29 @@ TMP=$(mktemp -d -t bureau-test.remote-hooks.XXXXXXXX)
 TMP=$(cd "$TMP" && pwd -P)
 trap 'rm -rf "$TMP"' EXIT
 fail() { pr1_fail "$@"; }
+# run_case <label> <command> [arguments] — one stage shell gets at most 60 s.
+# Kill its process group too: git may be waiting for a hook's children. The
+# main test reports the timeout even from a command substitution or a quiet control.
+CASE_PID=$$
+exec 3>&2
+trap 'cat "$TMP/timeouts.log" >&3; exit 1' USR1
+run_case() {
+  local label="$1"; shift
+  perl -e '
+    use POSIX ();
+    my ($label, $log, $test, @cmd) = @ARGV;
+    my $pid = fork(); defined $pid or die "fork: $!";
+    if (!$pid) { POSIX::setpgid(0, 0) == 0 or die "setpgid: $!"; exec @cmd; die "exec: $!"; }
+    $SIG{ALRM} = sub {
+      kill "KILL", -$pid; waitpid($pid, 0);
+      open my $fh, ">>", $log or die "timeout log: $!";
+      print $fh "FAIL $label: stage shell timed out after 60 s\n"; close $fh;
+      kill "USR1", $test; exit 124;
+    };
+    alarm 60; waitpid($pid, 0); my $status = $?; alarm 0;
+    exit(($status & 127) ? 128 + ($status & 127) : $status >> 8);
+  ' "$label" "$TMP/timeouts.log" "$CASE_PID" "$@"
+}
 MARKS="$TMP/hooks.log"
 PROBES=(LINEAR_API_KEY="$PR1_LINEAR" TELEGRAM_BOT_TOKEN="$PR1_TG_TOKEN" TELEGRAM_ALERT_CHAT_ID="$PR1_TG_CHAT"
         GH_TOKEN="$PR1_GH" GITHUB_TOKEN="$PR1_GITHUB" OPERATOR_TOOL_VAR="$PR1_OPERATOR")
@@ -106,7 +130,8 @@ repo() {
   for h in pre-push reference-transaction pre-commit post-checkout post-merge; do
     cat > "$r/.githooks/$h" <<EOF
 #!/bin/sh
-refs=\$(cat 2>/dev/null | awk '{ printf "%s,", \$NF }')
+refs=
+while IFS= read -r line; do refs="\$refs\${line##* },"; done 2>/dev/null
 gh=no; [ -z "\${GH_TOKEN:-}" ] || gh=yes
 dotenv=no; /usr/bin/env | grep -F -e '$PR1_LINEAR' -e '$PR1_TG_TOKEN' -e '$PR1_TG_CHAT' >/dev/null && dotenv=yes
 echo "$h \${1:-} gh=\$gh env=\$dotenv refs=\$refs" >> '$MARKS'
@@ -133,7 +158,7 @@ upstream_commit() {
 # stage <shell code> — a stage shell in the repository: the probes exported, the real
 # bureau-config.sh sourced (bureau_get reads $R/.bureau.json), then the code.
 stage() {
-  (cd "$R" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"; '"$1" _ "$SCRIPTS")
+  (cd "$R" && run_case "stage ($SCRIPTS): $1" env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"; '"$1" _ "$SCRIPTS")
 }
 config() { printf '{"repo":%s}\n' "$1" > "$R/.bureau.json"; }
 marks() { cat "$MARKS" 2>/dev/null; }
@@ -194,7 +219,7 @@ for value in false '"true"' 1 '"yes"' '{}' null; do
 done
 repo "$R"; printf '{"repo": {"remote_git_runs_hooks": true' > "$R/.bureau.json.broken"
 upstream_commit; : > "$MARKS"
-(cd "$R" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json.broken" /bin/bash -c 'source "$1/bureau-env.sh"; git push -q origin HEAD:refs/heads/broken; git fetch -q origin' _ "$SCRIPTS") >/dev/null 2>&1
+(cd "$R" && run_case '3 unreadable' env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json.broken" /bin/bash -c 'source "$1/bureau-env.sh"; git push -q origin HEAD:refs/heads/broken; git fetch -q origin' _ "$SCRIPTS") >/dev/null 2>&1
 [ "$(git -C "$R.origin" rev-parse broken 2>/dev/null)" = "$(git -C "$R" rev-parse HEAD)" ] || fail "3 unreadable: the push did not land"
 hooks_off "3 unreadable .bureau.json"
 # The same in a stage shell whose bureau_get reads a .bureau.json that turned unreadable after
@@ -207,7 +232,7 @@ pr1_pass "3 false, a string, a number, an object, null and an unreadable file ke
 
 # ── 4  bureau-env.sh alone ────────────────────────────────────────────────────
 repo "$R"; upstream_commit; : > "$MARKS"
-(cd "$R" && env -u BUREAU_CONFIG "${PROBES[@]}" /bin/bash -c 'source "$1/bureau-env.sh"; git push -q origin HEAD:refs/heads/alone; git fetch -q origin' _ "$SCRIPTS") >/dev/null 2>&1
+(cd "$R" && run_case '4 bureau-env.sh alone' env -u BUREAU_CONFIG "${PROBES[@]}" /bin/bash -c 'source "$1/bureau-env.sh"; git push -q origin HEAD:refs/heads/alone; git fetch -q origin' _ "$SCRIPTS") >/dev/null 2>&1
 [ "$(git -C "$R.origin" rev-parse alone 2>/dev/null)" = "$(git -C "$R" rev-parse HEAD)" ] || fail "4: the push did not land"
 hooks_off "4 bureau-env.sh alone"
 pr1_pass "4 without bureau-config.sh and BUREAU_CONFIG: hooks off"
@@ -310,7 +335,7 @@ case "$out" in *'"stopped": true'*) ;; *) fail "7 check: the stop was not confir
 # The same switches as git() of bureau-env.sh: no hooks directory, and every hook event git knows
 # switched off for the hooks the configuration defines (git 2.55; ls-remote fires none of them).
 OFF="-c core.hooksPath=/dev/null"
-for event in $(/bin/bash -c 'source "$1/bureau-env.sh"; printf "%s" "$_BUREAU_GIT_HOOK_EVENTS"' _ "$SCRIPTS"); do OFF="$OFF -c hook.$event.enabled=false"; done
+for event in $(run_case '7 event list' /bin/bash -c 'source "$1/bureau-env.sh"; printf "%s" "$_BUREAU_GIT_HOOK_EVENTS"' _ "$SCRIPTS"); do OFF="$OFF -c hook.$event.enabled=false"; done
 case "$OFF" in *hook.pre-push.enabled=false*hook.reference-transaction.enabled=false*) ;; *) fail "7: the event list of bureau-env.sh lacks pre-push or reference-transaction: $OFF" ;; esac
 bare=$(grep 'ls-remote' "$TMP/argv.log" | grep -vF -- "$OFF ls-remote " || true)
 [ -z "$bare" ] || fail "7: Bureau's Python ran a remote git without the hook switches of git(): $(printf '%s' "$bare" | cut -c1-200 | tr '\n' ';')"
@@ -374,7 +399,7 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     mkdir -p "$R/tools"
     printf '%s\n' '#!/bin/sh' 'gh=no; [ -z "${GH_TOKEN:-}" ] || gh=yes' \
       "dotenv=no; /usr/bin/env | grep -F -e '$PR1_LINEAR' -e '$PR1_TG_TOKEN' -e '$PR1_TG_CHAT' >/dev/null && dotenv=yes" \
-      "echo \"config-hook \$1 gh=\$gh env=\$dotenv\" >> '$MARKS'" 'cat >/dev/null' 'exit 0' > "$R/tools/scan.sh"
+      "echo \"config-hook \$1 gh=\$gh env=\$dotenv\" >> '$MARKS'" 'while IFS= read -r line; do :; done 2>/dev/null' 'exit 0' > "$R/tools/scan.sh"
     chmod +x "$R/tools/scan.sh"
     git -C "$R" add tools; git -C "$R" -c core.hooksPath=/dev/null commit -q -m tools
     git9 git -C "$R" config hook.scan.command "$R/tools/scan.sh pre-push"
@@ -390,14 +415,14 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     upstream_commit; : > "$MARKS"
     # A local commit runs the configured hooks (reference-transaction), tokenless; then Bureau's
     # push and fetch from the stage shell, and a fetch with -C from another directory.
-    (cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
+    (cd "$R" && git9 run_case "9 $1 local commit" env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
       git checkout -q -b c9; echo w > w9.txt; git add w9.txt; git commit -q -m w9' _ "$SCRIPTS") >/dev/null 2>&1
     cp "$MARKS" "$TMP/local9.log"; : > "$MARKS"
     # A name with an event and no command makes git refuse to run any hook of the repository; it
     # is switched off like the others, so Bureau's remote commands still run (default only: with
     # the hooks on, git refuses them, as it would without Bureau).
     if [ "$1" = '{}' ]; then git9 git -C "$R" config hook.nocommand.event pre-push; fi
-    out=$(cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" ${2:+GIT_CONFIG="$2"} /bin/bash -c 'source "$1/bureau-config.sh"
+    out=$(cd "$R" && git9 run_case "9 $1 push and fetch" env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" ${2:+GIT_CONFIG="$2"} /bin/bash -c 'source "$1/bureau-config.sh"
       git push -q origin HEAD; echo "push=$?"; git fetch -q origin; echo "fetch=$?"
       (cd / && git -C "$2" fetch -q origin; echo "fetch-C=$?")' _ "$SCRIPTS" "$R" 2>&1)
     case "$out" in *push=0*fetch=0*fetch-C=0*) ;; *) fail "9 $1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
@@ -408,7 +433,7 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     # checkout from the template configuration).
     rm -rf "$TMP/tmpl9" "$TMP/clone9"; mkdir -p "$TMP/tmpl9"
     printf '[hook "fromtemplate"]\n\tcommand = %s post-checkout-template\n\tevent = post-checkout\n' "$R/tools/scan.sh" > "$TMP/tmpl9/config"
-    out=$(cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
+    out=$(cd "$R" && git9 run_case "9 $1 clone" env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
       git -c init.templateDir="$2" clone -q "$3" "$4"; echo "clone=$?"' _ "$SCRIPTS" "$TMP/tmpl9" "$R.origin" "$TMP/clone9" 2>&1)
     if [ "$1" = '{"remote_git_runs_hooks":true}' ]; then
       case "$out" in *clone=0*) ;; *) fail "9 $1: the clone failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
@@ -450,9 +475,10 @@ operator_hooks() {
   for h in pre-push reference-transaction; do
     cat > "$1/$h" <<EOF
 #!/bin/sh
-refs=\$(cat 2>/dev/null | awk '{ printf "%s,", \$NF }')
+refs=
+while IFS= read -r line; do refs="\$refs\${line##* },"; done 2>/dev/null
 gh=no; [ -z "\${GH_TOKEN:-}" ] || gh=yes
-echo "operator-$h \${1:-} gh=\$gh refs=\$refs dir=\$(git rev-parse --absolute-git-dir 2>/dev/null)" >> '$MARKS'
+echo "operator-$h \${1:-} gh=\$gh refs=\$refs dir=\$(git rev-parse --absolute-git-dir </dev/null 2>/dev/null)" >> '$MARKS'
 exit 0
 EOF
     chmod +x "$1/$h"
@@ -466,7 +492,7 @@ worktree_round() {
   rm -rf "$wt"; git -C "$R" -c core.hooksPath=/dev/null worktree add -q -b "wt-$ROUND" "$wt" main
   echo w > "$wt/w.txt"; git -C "$wt" add w.txt; git -C "$wt" -c core.hooksPath=/dev/null commit -q -m "wt $ROUND"
   : > "$MARKS"
-  out=$(cd "$wt" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
+  out=$(cd "$wt" && run_case "$1" env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
     git push -q origin HEAD; echo "push=$?"; git fetch -q origin; echo "fetch=$?"' _ "$SCRIPTS" 2>&1)
   case "$out" in *push=0*fetch=0*) ;; *) fail "$1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
   [ "$(git -C "$R.origin" rev-parse "wt-$ROUND" 2>/dev/null)" = "$(git -C "$wt" rev-parse HEAD)" ] || fail "$1: the pushed branch is not on origin"
@@ -524,7 +550,7 @@ for value in false absent; do
 done
 # Outside a repository (an ls-remote by URL) "operator" keeps the hooks off and the command works.
 repo "$R"; config '{"remote_git_runs_hooks":"operator"}'; operator_hooks "$R/.git/hooks"; : > "$MARKS"
-out=$(cd "$TMP" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-env.sh"
+out=$(cd "$TMP" && run_case '10 operator outside a repository' env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-env.sh"
   git ls-remote "$2" refs/heads/main >/dev/null; echo "ls-remote=$?"' _ "$SCRIPTS" "$R.origin" 2>&1)
 case "$out" in *ls-remote=0*) ;; *) fail "10 operator outside a repository: ls-remote failed: $out" ;; esac
 # Negative control: the same "operator" case against a copy of the scripts whose mode reader
@@ -573,13 +599,13 @@ pr1_pass "10 \"operator\" runs only the common dir's hooks (main checkout and wo
 GIT_NEW=0
 if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 54 ]; }; then GIT_NEW=1; fi
 probe_script() {  # <path> <label> — a branch-supplied hook command that records the token
-  printf '%s\n' '#!/bin/sh' 'gh=no; [ -z "${GH_TOKEN:-}" ] || gh=yes' "echo \"$2 \$1 gh=\$gh\" >> '$MARKS'" 'cat >/dev/null' 'exit 0' > "$1"
+  printf '%s\n' '#!/bin/sh' 'gh=no; [ -z "${GH_TOKEN:-}" ] || gh=yes' "echo \"$2 \$1 gh=\$gh\" >> '$MARKS'" 'while IFS= read -r line; do :; done 2>/dev/null' 'exit 0' > "$1"
   chmod +x "$1"
 }
 # bureau_git <shell code> — a stage shell in $R with the probes, the real bureau-config.sh of
 # $SCRIPTS and the git of BUREAU_TEST_GIT_DIR when set.
 bureau_git() {
-  (cd "$R" && git9 env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
+  (cd "$R" && git9 run_case "11 ($SCRIPTS): $1" env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
     '"$1" _ "$SCRIPTS" 2>&1)
 }
 # submodule_fixture <repo json> [dormant] — $R as in section 10 plus a populated submodule `sub`
@@ -628,7 +654,12 @@ submodule_fixture() {
   fi
   UP_SHA=$(git -C "$R.other/sub" rev-parse HEAD); MINE_SHA=$(git -C "$R/sub" rev-parse HEAD)
   config "$1"
-  if [ "${2:-}" = dormant ]; then printf '[hook "pre-push"]\n\tcommand = %s/probe.sh dormant\n' "$s" >> "$s/hooks.cfg"; fi
+  if [ "${2:-}" = dormant ]; then
+    printf '[hook "pre-push"]\n\tcommand = %s/probe.sh dormant\n' "$s" >> "$R/sub/hooks.cfg"
+    [ "$(git -C "$R/sub" config --get hook.pre-push.command)" = "$s/probe.sh dormant" ] || fail "11 fixture: the submodule's include does not see the dormant hook"
+  else
+    if git -C "$R/sub" config --get hook.pre-push.command >/dev/null; then fail "11 fixture: the plain variant has a dormant hook"; fi
+  fi
   : > "$MARKS"
 }
 fetch_recursed() { git -C "$R/sub" cat-file -e "$UP_SHA^{commit}" 2>/dev/null; }
@@ -662,6 +693,11 @@ for mode in '{"remote_git_runs_hooks":"operator"}' '{}'; do
   # One stage shell runs every call (a shell per call costs most of this test's time on macOS);
   # each call reports its exit status and must be refused.
   calls=('git push -q --recurse-submodules=on-demand origin HEAD' 'git push -q --recurse-submodule=on-demand origin HEAD'
+         'git push -o -- --recurse-submodules=on-demand origin HEAD'
+         'git push --push-option -- --recurse-submodule=on-demand origin HEAD'
+         'git fetch -o -- --recurse-submodules origin' 'git pull -X -- --recurse-submodules origin main'
+         'git ls-remote --upload-pack -- --recurse-submodules origin'
+         'git push --future-option -- --recurse-submodules=on-demand origin HEAD'
          'git fetch -q --recurse-submodules origin' 'git fetch -q --recurse-sub=yes origin'
          'git pull -q --recurse-submodule=yes origin main' 'git submodule -q update --remote'
          "git clone -q '$R.origin' '$TMP/clone-rec'" "git clone -q --recursive '$R.origin' '$TMP/clone-rec'"
@@ -685,10 +721,12 @@ for mode in '{"remote_git_runs_hooks":"operator"}' '{}'; do
   # names, a -c hidden behind --namespace's value) is not refused but loses: Bureau's options come
   # after the caller's, and the last value of a key wins.
   ln -sfn "$R" "$TMP/recursive-link"
+  git -C "$R.origin" config receive.advertisePushOptions true
   printf '[push]\n\trecurseSubmodules = on-demand\n[fetch]\n\trecurseSubmodules = yes\n[submodule]\n\trecurse = true\n[core]\n\thooksPath = %s/.githooks\n' "$R" > "$TMP/flags.cfg"
   : > "$MARKS"
-  out=$(cd "$R" && git9 env "${PROBES[@]}" RECVAL=yes BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
+  out=$(cd "$R" && git9 run_case "11 $mode allowed calls" env "${PROBES[@]}" RECVAL=yes BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
     git push -q --recurse-submodule=no origin HEAD; echo "push-no=$?"
+    git push -q -o neutral-option origin HEAD; echo "push-option=$?"
     git -c user.name=Recurse ls-remote -q origin >/dev/null; echo "user=$?"
     git ls-remote -q -- origin --recurse-submodules >/dev/null 2>&1; echo "dashdash=$?"
     git -C "$2" fetch -q origin; echo "path=$?"
@@ -698,12 +736,20 @@ for mode in '{"remote_git_runs_hooks":"operator"}' '{}'; do
     git --config-env=fetch.recurseSubmodules=RECVAL fetch -q origin; echo "config-env=$?"
     git --namespace -c -c push.recurseSubmodules=on-demand push -q origin HEAD 2>/dev/null; echo "namespace=$?"' \
     _ "$SCRIPTS" "$TMP/recursive-link" "$TMP/flags.cfg" 2>&1)
-  for want in push-no=0 user=0 path=0 include-fetch=0 include-push=0 c=0 config-env=0; do
+  for want in push-no=0 push-option=0 user=0 path=0 include-fetch=0 include-push=0 c=0 config-env=0; do
     case "$out" in *"$want"*) ;; *) fail "11 $mode: expected $want: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
   done
   case "$out" in *'bureau git: refused'*|*dashdash=128*) fail "11 $mode: a call that does not ask for recursion was refused: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
   if push_recursed || fetch_recursed; then fail "11 $mode override: a caller option brought recursion back"; fi
   if grep -qvE '^(operator-|$)' <<< "$(marks)"; then fail "11 $mode override: a hook outside the operator's directory ran: $(grep -vE '^(operator-|$)' <<< "$(marks)" | sed -n 1p)"; fi
+done
+# Optional values do not consume a separate word; a recursion spelling that is
+# itself a required option value does. Check without asking git to run an invalid call.
+out=$(bureau_git '_bureau_git_asks_recursion push --force-with-lease --recurse-submodules=on-demand; echo "lease=$?"
+  _bureau_git_asks_recursion pull --gpg-sign --recurse-submodules=on-demand; echo "sign=$?"
+  _bureau_git_asks_recursion push -o --recurse-submodules=on-demand -- origin HEAD; echo "value=$?"')
+for want in lease=0 sign=0 value=1; do
+  grep -qx "$want" <<< "$out" || fail "11 option values: expected $want: $(printf '%s' "$out" | tr '\n' ' ')"
 done
 # Negative controls, each red against the previous round: (a) a copy without the recursion
 # switches: the default fetch and the configured push recurse in both modes; (b) a copy that lets
@@ -868,7 +914,7 @@ include_round() {
   esac
   git -C "$R" add -A; git -C "$R" -c core.hooksPath=/dev/null commit -q -m tracked
   upstream_commit; : > "$MARKS"
-  out=$(cd "$R" && git9 env "${PROBES[@]}" ${extra[@]+"${extra[@]}"} BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
+  out=$(cd "$R" && git9 run_case "$1 ($SCRIPTS)" env "${PROBES[@]}" ${extra[@]+"${extra[@]}"} BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
     git push -q origin HEAD:refs/heads/inc; echo "push=$?"; git fetch -q origin; echo "fetch=$?"' _ "$SCRIPTS" 2>&1)
   case "$out" in *push=0*fetch=0*) ;; *) fail "$1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
 }

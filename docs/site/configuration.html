@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="876181f78ad06b0cb436f21e05cfa54c6a9c1a19f52cf9d6558140270dccbacc">
+<meta name="bureau-source-sha256" content="24f9a18d06f81a0cbbbab7796803b711532e04686a5b4f05631cd23d714ec374">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -864,9 +864,9 @@ href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>
 <code>push</code>, <code>fetch</code>, <code>pull</code>,
 <code>ls-remote</code>, <code>clone</code>, <code>remote</code>,
 <code>submodule</code>, all of which keep the GitHub token variables for
-the credential helper — run the repository's hooks. Since v3.2 they run
-with <code>-c core.hooksPath=/dev/null</code> and, for the hooks the
-configuration defines (git 2.54 and later),
+the credential helper — run the repository's hooks. Since v3.2 the
+allowed commands run with <code>-c core.hooksPath=/dev/null</code> and,
+for the hooks the configuration defines (git 2.54 and later),
 <code>hook.&lt;event&gt;.enabled=false</code> for every hook event and
 <code>hook.&lt;name&gt;.enabled=false</code> for every configured hook
 name (the <code>git</code> function in
@@ -896,11 +896,10 @@ names, and keeps the hooks the configuration defines
 (<code>hook.&lt;name&gt;.command</code>) switched off by name; those
 operator hooks see the GitHub tokens. Put the hooks Bureau's push needs
 (the <code>pre-push</code> of <code>git lfs install</code>, a secret
-scanner) there; for <code>clone</code> and outside a repository
-<code>"operator"</code> keeps every hook off. With
-<code>"operator"</code> and with the hooks off (every value but
-<code>true</code>) Bureau's own push, fetch and pull do not recurse into
-submodules: <code>push.recurseSubmodules=no</code>,
+scanner) there; outside a repository <code>"operator"</code> keeps every
+hook off. With <code>"operator"</code> and with the hooks off (every
+value but <code>true</code>) Bureau's own push, fetch and pull do not
+recurse into submodules: <code>push.recurseSubmodules=no</code>,
 <code>fetch.recurseSubmodules=no</code> and
 <code>submodule.recurse=false</code> go on the command line after the
 caller's own options of git, so neither configuration nor a caller's
@@ -910,11 +909,11 @@ arguments (<code>git submodule</code>;
 <code>--recurse-submodules</code>,
 <code>--recurse-submodules-default</code> or <code>--recursive</code>
 under any prefix git accepts, except a value of <code>no</code>), any
-<code>git clone</code>, and a call with a git option before the
-subcommand that git itself does not define are refused with exit 128,
-because a child git in a submodule would run hooks that submodule's
-configuration defines; Bureau's push then neither pushes nor checks
-submodule commits (SECURITY.md has the exact rule). Absent,
+<code>git clone</code> (before git runs), and a call with a git option
+before the subcommand that git itself does not define are refused with
+exit 128, because a child git in a submodule would run hooks that
+submodule's configuration defines; Bureau's push then neither pushes nor
+checks submodule commits (SECURITY.md has the exact rule). Absent,
 <code>null</code>, <code>false</code>, any other value and a
 <code>.bureau.json</code> that cannot be read keep them off; doctor
 reports the mode as <code>remote_git_hooks</code> (<code>on</code>,
