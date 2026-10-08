@@ -2478,8 +2478,36 @@ free_branch_from_other_worktrees() {
   fi
 }
 
+# _bureau_reaccept_clean_worktree <wt> <branch> <common> — succeed only when the
+# unregistered <wt> (a worker that lost its registration with unfinished work,
+# bureau-worker.sh) can be reset without losing anything: a linked worktree of
+# this repository (its top level, common dir <common>, not the main checkout),
+# nothing uncommitted or untracked (ignored files do not count; the reset's
+# `clean -fdx` treats them as for any worker), and HEAD equal to or behind the
+# freshly fetched origin/<branch>. An unknown branch, a failed fetch or a
+# missing origin ref fail. Prints why it re-accepts; prints nothing otherwise.
+_bureau_reaccept_clean_worktree() {
+  local wt="$1" branch="$2" common="$3" top wt_common gitdir head
+  [ -n "$branch" ] && [ -d "$wt" ] || return 1
+  top=$(_bureau_physical "$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null)")
+  [ -n "$top" ] && [ "$top" = "$(_bureau_physical "$wt")" ] || return 1
+  wt_common=$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null) || return 1
+  case "$wt_common" in /*) ;; *) wt_common="$wt/$wt_common" ;; esac
+  [ "$(_bureau_physical "$wt_common")" = "$(_bureau_physical "$common")" ] || return 1
+  gitdir=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  [ "$(_bureau_physical "$gitdir")" != "$(_bureau_physical "$common")" ] || return 1
+  [ -z "$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null || echo unreadable)" ] || return 1
+  head=$(git -C "$wt" rev-parse --verify --quiet HEAD) || return 1
+  git -C "$REPO_DIR" fetch origin --prune --quiet 2>/dev/null || return 1
+  git -C "$REPO_DIR" rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null || return 1
+  git -C "$REPO_DIR" merge-base --is-ancestor "$head" "refs/remotes/origin/$branch" 2>/dev/null || return 1
+  echo "Re-accepted the clean preserved worktree $wt: no uncommitted or untracked changes and HEAD ${head:0:12} is on origin/$branch, so the reset loses nothing; registered it as a disposable worker again." >&2
+}
+
 # Only a worker created and registered by Bureau may be reset. Merely residing
 # under .worktrees is not ownership; pre-existing directories are rejected.
+# A clean preserved worktree whose commits are all on origin is the one
+# exception (_bureau_reaccept_clean_worktree).
 reset_worktree() {
   local wt="$1" target_script="$2" target_branch="${3:-}" common registry key ref
   BUREAU_RESET_REFUSAL=""; BUREAU_RESET_REFUSAL_HOLDER=""; BUREAU_RESET_REFUSAL_BRANCH=""
@@ -2495,8 +2523,13 @@ reset_worktree() {
   registry="$common/bureau/workers"
   key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
   if [ -e "$wt" ] && [ ! -f "$registry/$key" ]; then
-    BUREAU_RESET_REFUSAL=unregistered
-    echo "ERROR: refusing to reset unregistered worktree $wt" >&2; return 21
+    if [ "$target_script" != spec-pipeline.sh ] && _bureau_reaccept_clean_worktree "$wt" "$target_branch" "$common"; then
+      mkdir -p "$registry"
+      git -C "$wt" rev-parse --absolute-git-dir > "$registry/$key" || return 21
+    else
+      BUREAU_RESET_REFUSAL=unregistered
+      echo "ERROR: refusing to reset unregistered worktree $wt" >&2; return 21
+    fi
   fi
   if [ -d "$wt" ]; then
     [ "$(git -C "$wt" rev-parse --absolute-git-dir)" = "$(cat "$registry/$key")" ] || { BUREAU_RESET_REFUSAL=identity; echo "ERROR: worker identity changed" >&2; return 21; }
