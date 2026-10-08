@@ -598,7 +598,7 @@ git() {
     (*x*) set +x; local _bg_trace=1 ;;
     (*) local _bg_trace=0 ;;
   esac
-  local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven _bg_lead=0 _bg_mode _bg_dir
+  local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven _bg_lead=0 _bg_mode _bg_dir _bg_recurse=0
   local -a _bg_hooks _bg_hooks_env _bg_operator
   _bg_hooks=(); _bg_hooks_env=(); _bg_operator=()
   # The subcommand is the first word after git's own options; -C, -c,
@@ -622,7 +622,20 @@ git() {
   if [ "$_bg_names" = dotenv ] && [ "$_bg_mode" != on ]; then
     # "operator": the common dir's hooks/ only. A clone gets a repository of
     # its own, and a command outside a repository has no common dir: hooks off.
-    if [ "$_bg_mode" = operator ] && [ "$_bg_sub" != clone ] \
+    # So does every command that asks to recurse into submodules (`submodule`
+    # itself, --recurse-submodules other than =no): git starts a child git in
+    # each submodule, which reads that submodule's own configuration, and
+    # without the event switches a hook defined there (hook.<name>.command,
+    # also from a file the submodule's configuration includes) would run with
+    # the GitHub tokens; its names cannot be listed here beforehand.
+    for _bg_arg in "${@:$((_bg_lead + 2))}"; do
+      case "$_bg_arg" in
+        --recurse-submodules=no) ;;
+        --recurse-submodules|--recurse-submodules=*) _bg_recurse=1 ;;
+      esac
+    done
+    if [ "$_bg_mode" = operator ] && [ "$_bg_sub" != clone ] && [ "$_bg_sub" != submodule ] \
+       && [ "$_bg_recurse" = 0 ] \
        && _bg_dir=$(_bureau_git_operator_hooks_dir "${@:1:$_bg_lead}"); then
       _bg_operator=(--operator "$_bg_dir")
     fi
@@ -630,6 +643,14 @@ git() {
     # processes it starts itself (a pull's fetch and merge, submodules).
     _bureau_git_hooks_off ${_bg_operator[@]+"${_bg_operator[@]}"} "${@:1:$_bg_lead}"
     _bg_hooks=("${_BUREAU_GIT_HOOKS_OFF[@]}")
+    # And under "operator" no recursion that configuration asks for
+    # (push.recurseSubmodules, fetch.recurseSubmodules, whose default
+    # on-demand fetches populated submodules, submodule.recurse): a
+    # command-line -c wins over every configuration file, include and
+    # GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS entry.
+    if [ "${#_bg_operator[@]}" -gt 0 ]; then
+      _bg_hooks+=(-c push.recurseSubmodules=no -c fetch.recurseSubmodules=no -c submodule.recurse=false)
+    fi
     _bg_hooks_env=(${_BUREAU_GIT_HOOKS_ENV[@]+"${_BUREAU_GIT_HOOKS_ENV[@]}"})
   fi
   if [ "$_bg_trace" = 1 ]; then set -x; fi

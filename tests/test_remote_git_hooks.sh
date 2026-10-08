@@ -46,6 +46,16 @@
 #      runs the configured .githooks as before, false and absent run none; outside a repository
 #      the hooks stay off. Negative controls: a copy that counts "operator" as off, and one that
 #      runs every configured hook for it, both fail the same assertion
+#  11  "operator" and recursion: a populated submodule whose configuration includes a tracked file
+#      defining configured pre-push and reference-transaction hooks; Bureau's fetch (on-demand) and
+#      push (push.recurseSubmodules=on-demand) start no child git in it, --recurse-submodules and
+#      `submodule` run with every hook off. An include and an includeIf inside the working tree,
+#      GIT_CONFIG_COUNT and GIT_CONFIG_PARAMETERS each set core.hooksPath to the branch's .githooks
+#      (a plain push shows they do): only the operator's hooks run. Negative controls: a copy
+#      without the recursion switches recurses on fetch and push (the operator's hooks run inside
+#      modules/sub; on git 2.54 and later the submodule's configured hook runs with the token,
+#      skipped with a SKIP line on an older git), and a copy that keeps the configured
+#      core.hooksPath for "operator" runs the branch's hooks in every include and environment case
 # Negative control: against v3.1.0 (9411b3b) 1, 3 and 4 fail ("pre-push ran during Bureau's push,
 # with GH_TOKEN") and 5 and 6 fail (no warning); 7 and 8 fail against the merge of main (a9c754c),
 # whose supervision ls-remote runs without the flag; against 735496e 6 fails for the committed and
@@ -412,7 +422,7 @@ operator_hooks() {
 #!/bin/sh
 refs=\$(cat 2>/dev/null | awk '{ printf "%s,", \$NF }')
 gh=no; [ -z "\${GH_TOKEN:-}" ] || gh=yes
-echo "operator-$h \${1:-} gh=\$gh refs=\$refs" >> '$MARKS'
+echo "operator-$h \${1:-} gh=\$gh refs=\$refs dir=\$(git rev-parse --absolute-git-dir 2>/dev/null)" >> '$MARKS'
 exit 0
 EOF
     chmod +x "$1/$h"
@@ -512,6 +522,149 @@ control_fails=$PR1_FAILS
 operator_only "10 control 2" 2>/dev/null
 if [ "$PR1_FAILS" = "$control_fails" ]; then fail "10 control 2: operator_only passed against a copy that runs the configured hooks"; else PR1_FAILS=$control_fails; fi
 pr1_pass "10 \"operator\" runs only the common dir's hooks (main checkout and worktree), true the configured ones, false and absent none"
+
+# ── 11  "operator": submodule recursion, includes and the configuration environment ──
+# A push with push.recurseSubmodules=on-demand and a fetch (fetch.recurseSubmodules defaults to
+# on-demand) start a child git in each populated submodule. That child reads the submodule's own
+# configuration, here a file tracked in the submodule that its configuration includes, which
+# defines hook.probe.command for pre-push and reference-transaction (git 2.54 and later): names
+# git() cannot list beforehand. "operator" therefore runs Bureau's remote git without that
+# recursion (-c push.recurseSubmodules=no -c fetch.recurseSubmodules=no -c submodule.recurse=false)
+# and with every hook off for `submodule` and --recurse-submodules. On any git the child is
+# visible: core.hooksPath reaches it, so the operator's hooks would run inside the submodule's
+# git dir (modules/sub). Then an include inside the working tree and GIT_CONFIG_COUNT /
+# GIT_CONFIG_PARAMETERS in the environment that set core.hooksPath to the branch's directory:
+# the command-line -c wins over each.
+GIT_NEW=0
+GIT_VERSION=$(git --version | sed -n 's/^git version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')
+if [ -n "$GIT_VERSION" ] && { [ "${GIT_VERSION% *}" -gt 2 ] || [ "${GIT_VERSION#* }" -ge 54 ]; }; then GIT_NEW=1; fi
+probe_script() {  # <path> <label> — a branch-supplied hook command that records the token
+  printf '%s\n' '#!/bin/sh' 'gh=no; [ -z "${GH_TOKEN:-}" ] || gh=yes' "echo \"$2 \$1 gh=\$gh\" >> '$MARKS'" 'cat >/dev/null' 'exit 0' > "$1"
+  chmod +x "$1"
+}
+# submodule_fixture — $R as in section 10 plus a populated submodule `sub` whose configuration
+# includes its tracked hooks.cfg; $R.other has it too, to move origin's submodule pointer.
+submodule_fixture() {
+  local s="$TMP/sub"
+  repo "$R"; config '{"remote_git_runs_hooks":"operator"}'; operator_hooks "$R/.git/hooks"
+  rm -rf "$s" "$s.origin"; mkdir -p "$s"
+  git -C "$s" init -q -b main; git -C "$s" config user.email t@t; git -C "$s" config user.name t
+  probe_script "$s/probe.sh" sub-config-hook
+  printf '[hook "probe"]\n\tcommand = %s/probe.sh pre-push\n\tevent = pre-push\n[hook "probetx"]\n\tcommand = %s/probe.sh reference-transaction\n\tevent = reference-transaction\n' "$s" "$s" > "$s/hooks.cfg"
+  git -C "$s" add -A; git -C "$s" commit -q -m sub
+  git init -q --bare "$s.origin"; git -C "$s.origin" symbolic-ref HEAD refs/heads/main
+  git -C "$s" push -q "$s.origin" main
+  git -C "$R" -c core.hooksPath=/dev/null -c protocol.file.allow=always submodule -q add "$s.origin" sub
+  git -C "$R" -c core.hooksPath=/dev/null commit -q -m 'add sub'
+  git -C "$R" -c core.hooksPath=/dev/null push -q origin main
+  local m
+  for m in "$R/.git/modules/sub"; do
+    git --git-dir="$m" config protocol.file.allow always
+    git --git-dir="$m" config include.path ../../../sub/hooks.cfg
+    git --git-dir="$m" config user.email t@t; git --git-dir="$m" config user.name t
+  done
+  git -C "$R" config protocol.file.allow always
+  rm -rf "$R.other"; git -c protocol.file.allow=always clone -q --recurse-submodules "$R.origin" "$R.other" 2>/dev/null
+  git -C "$R.other" config user.email t@t; git -C "$R.other" config user.name t
+  git -C "$R.other/sub" config user.email t@t; git -C "$R.other/sub" config user.name t
+}
+# recursion_round <label> — origin's submodule pointer moves (the fetch would recurse on demand);
+# locally a new submodule commit that is on no remote yet (the push would recurse with
+# push.recurseSubmodules=on-demand). Then Bureau's fetch and push from a stage shell.
+recursion_round() {
+  (cd "$R.other/sub" && echo up > up.txt && git add up.txt && git -c core.hooksPath=/dev/null commit -q -m up \
+     && git -c core.hooksPath=/dev/null push -q origin HEAD:main) \
+    && (cd "$R.other" && git add sub && git -c core.hooksPath=/dev/null commit -q -m 'move sub' \
+     && git -c core.hooksPath=/dev/null push -q origin HEAD:main) || fail "$1: could not move origin's submodule"
+  git -C "$R" config push.recurseSubmodules on-demand
+  REC_BRANCH="rec-$(printf '%s' "$1" | tr -c 'a-z0-9' '-')"
+  git -C "$R" checkout -q -b "$REC_BRANCH"
+  (cd "$R/sub" && git checkout -q -B "$REC_BRANCH" && echo mine > mine.txt && git add mine.txt && git -c core.hooksPath=/dev/null commit -q -m mine)
+  git -C "$R" add sub; git -C "$R" -c core.hooksPath=/dev/null commit -q -m 'local sub'
+  : > "$MARKS"
+  out=$(cd "$R" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
+    git fetch -q origin; echo "fetch=$?"; git push -q origin HEAD; echo "push=$?"' _ "$SCRIPTS" 2>&1)
+  case "$out" in *fetch=0*push=0*) ;; *) fail "$1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+}
+no_recursion() {  # <label>
+  if grep -q 'dir=.*/modules/' <<< "$(marks)"; then fail "$1: a child git ran in the submodule: $(grep 'dir=.*/modules/' <<< "$(marks)" | sed -n 1p)"; fi
+  if grep -q '^sub-config-hook' <<< "$(marks)"; then fail "$1: the submodule's configured hook ran: $(grep '^sub-config-hook' <<< "$(marks)" | sed -n 1p)"; fi
+  grep -q '^operator-pre-push origin gh=yes .*dir=.*/repo/\.git$' <<< "$(marks)" || fail "$1: the operator's pre-push did not run for the superproject: $(marks | tr '\n' ';')"
+}
+submodule_fixture
+recursion_round "11 operator"
+no_recursion "11 operator"
+[ "$(git -C "$R.origin" rev-parse "$REC_BRANCH" 2>/dev/null)" = "$(git -C "$R" rev-parse HEAD)" ] || fail "11 operator: the superproject's push did not land"
+# `submodule` itself and an explicit --recurse-submodules: no hook at all, the operator's included.
+: > "$MARKS"
+out=$(cd "$R" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
+  git fetch -q --recurse-submodules=yes origin; echo "fetch=$?"; git submodule -q update --remote; echo "submodule=$?"' _ "$SCRIPTS" 2>&1)
+case "$out" in *fetch=0*submodule=0*) ;; *) fail "11 recurse flags: a command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+if grep -q . <<< "$(marks)"; then fail "11 recurse flags: a hook ran during --recurse-submodules or submodule: $(marks | tr '\n' ';')"; fi
+# Negative control: the same round against a copy without the recursion switches; the fetch and
+# the push recurse and the operator's hooks run inside the submodule (and on git 2.54 and later
+# the submodule's configured hook with the token).
+mkdir -p "$TMP/norec"; cp "$SCRIPTS"/*.sh "$TMP/norec/"
+sed 's/^\( *\)_bg_hooks+=(-c push.recurseSubmodules=no.*$/\1:/' "$SCRIPTS/bureau-env.sh" > "$TMP/norec/bureau-env.sh"
+cmp -s "$SCRIPTS/bureau-env.sh" "$TMP/norec/bureau-env.sh" && fail "11 control: the copy is unchanged (the sed found nothing)"
+submodule_fixture
+SCRIPTS="$TMP/norec"; recursion_round "11 control"; SCRIPTS="$SCRIPTS_REAL"
+control_fails=$PR1_FAILS
+no_recursion "11 control" 2>/dev/null
+if [ "$PR1_FAILS" = "$control_fails" ]; then fail "11 control: no_recursion passed against a copy that lets git recurse"; else PR1_FAILS=$control_fails; fi
+grep -q '^operator-reference-transaction .*refs=.*refs/remotes/origin/main,.*dir=.*/modules/sub$' <<< "$(marks)" \
+  || fail "11 control: the copy's fetch did not recurse into the submodule (the fixture proves nothing): $(marks | tr '\n' ';')"
+grep -q '^operator-pre-push .*dir=.*/modules/sub$' <<< "$(marks)" \
+  || fail "11 control: the copy's push did not recurse into the submodule (the fixture proves nothing): $(marks | tr '\n' ';')"
+if [ "$GIT_NEW" = 1 ]; then
+  grep -q '^sub-config-hook .*gh=yes' <<< "$(marks)" || fail "11 control: the submodule's configured hook did not run with the token: $(marks | tr '\n' ';')"
+else
+  echo "SKIP 11 the submodule's configured hook itself: needs git 2.54 or later, found $(git --version); the child git is detected through the operator's hooks instead"
+fi
+
+# An include inside the working tree and the configuration environment, each setting
+# core.hooksPath to the branch's .githooks (and, for git 2.54 and later, a configured pre-push).
+# include_round <label> <what> — what: include, includeif, count, parameters.
+include_round() {
+  repo "$R"; config '{"remote_git_runs_hooks":"operator"}'; operator_hooks "$R/.git/hooks"
+  probe_script "$R/inc-probe.sh" inc-config-hook
+  printf '[core]\n\thooksPath = .githooks\n[hook "inc"]\n\tcommand = %s/inc-probe.sh pre-push\n\tevent = pre-push\n' "$R" > "$R/tracked.cfg"
+  git -C "$R" config --unset core.hooksPath
+  local -a extra=()
+  case "$2" in
+    include) git -C "$R" config include.path ../tracked.cfg ;;
+    includeif) git -C "$R" config 'includeIf.onbranch:**.path' ../tracked.cfg ;;
+    count) extra=(GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$R/.githooks"
+                  GIT_CONFIG_KEY_1=hook.inc.command GIT_CONFIG_VALUE_1="$R/inc-probe.sh pre-push") ;;
+    parameters) extra=(GIT_CONFIG_PARAMETERS="'core.hooksPath'='$R/.githooks' 'hook.inc.command'='$R/inc-probe.sh pre-push' 'hook.inc.event'='pre-push'") ;;
+  esac
+  git -C "$R" add -A; git -C "$R" -c core.hooksPath=/dev/null commit -q -m tracked
+  upstream_commit; : > "$MARKS"
+  out=$(cd "$R" && env "${PROBES[@]}" ${extra[@]+"${extra[@]}"} BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'set -uo pipefail; source "$1/bureau-config.sh"
+    git push -q origin HEAD:refs/heads/inc; echo "push=$?"; git fetch -q origin; echo "fetch=$?"' _ "$SCRIPTS" 2>&1)
+  case "$out" in *push=0*fetch=0*) ;; *) fail "$1: a remote command failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+}
+for what in include includeif count parameters; do
+  include_round "11 $what" "$what"
+  operator_only "11 $what"
+  if grep -q '^inc-config-hook' <<< "$(marks)"; then fail "11 $what: the configured hook from the $what ran"; fi
+  # Without Bureau (a plain git push with the same configuration) the branch's .githooks run:
+  # the fixture does redirect core.hooksPath.
+  : > "$MARKS"
+  case "$what" in
+    count) (cd "$R" && env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$R/.githooks" git push -q origin HEAD:refs/heads/plain) ;;
+    parameters) (cd "$R" && env GIT_CONFIG_PARAMETERS="'core.hooksPath'='$R/.githooks'" git push -q origin HEAD:refs/heads/plain) ;;
+    *) git -C "$R" push -q origin HEAD:refs/heads/plain ;;
+  esac
+  grep -q '^pre-push ' <<< "$(marks)" || fail "11 $what: the fixture does not redirect core.hooksPath (a plain push ran no .githooks hook): $(marks | tr '\n' ';')"
+  # Negative control: a copy whose "operator" leaves core.hooksPath as configured (every
+  # configured hook, as true): the branch's hooks run and operator_only fails.
+  SCRIPTS="$TMP/before"; include_round "11 $what control" "$what"; SCRIPTS="$SCRIPTS_REAL"
+  control_fails=$PR1_FAILS
+  operator_only "11 $what control" 2>/dev/null
+  if [ "$PR1_FAILS" = "$control_fails" ]; then fail "11 $what control: operator_only passed against a copy that keeps the configured core.hooksPath"; else PR1_FAILS=$control_fails; fi
+done
+pr1_pass "11 \"operator\": no recursion into submodules (fetch, push, --recurse-submodules, submodule); an include and GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS cannot redirect core.hooksPath"
 
 if [ "$PR1_FAILS" != 0 ]; then echo "$PR1_FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_remote_git_hooks"
