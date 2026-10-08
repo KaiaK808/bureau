@@ -86,6 +86,19 @@ TMP=$(cd "$TMP" && pwd -P)
 trap 'rm -rf "$TMP"' EXIT
 fail() { pr1_fail "$@"; }
 MARKS="$TMP/hooks.log"
+# No hook may wait for this test's stdin: git can start a hook that has no input of its own with
+# the caller's stdin, which on a CI runner can be a pipe that never closes. The test's own stdin is
+# /dev/null, and every fixture hook reads its input through $READIN, which gives up after 20 s
+# where `timeout` exists and then records the hook in $TMP/stdin-hang.log (checked at the end), so
+# a hook that waits fails this test instead of stalling the job.
+exec </dev/null
+READIN="$TMP/readin"
+printf '%s\n' '#!/bin/sh' \
+  'if command -v timeout >/dev/null 2>&1; then' \
+  '  timeout 20 cat; rc=$?' \
+  "  if [ \"\$rc\" = 124 ]; then echo \"stdin-hang \${1:-hook} dir=\$(git rev-parse --absolute-git-dir 2>/dev/null)\" >> '$TMP/stdin-hang.log'; fi" \
+  '  exit 0' 'fi' 'exec cat' > "$READIN"
+chmod +x "$READIN"
 PROBES=(LINEAR_API_KEY="$PR1_LINEAR" TELEGRAM_BOT_TOKEN="$PR1_TG_TOKEN" TELEGRAM_ALERT_CHAT_ID="$PR1_TG_CHAT"
         GH_TOKEN="$PR1_GH" GITHUB_TOKEN="$PR1_GITHUB" OPERATOR_TOOL_VAR="$PR1_OPERATOR")
 
@@ -106,7 +119,7 @@ repo() {
   for h in pre-push reference-transaction pre-commit post-checkout post-merge; do
     cat > "$r/.githooks/$h" <<EOF
 #!/bin/sh
-refs=\$(cat 2>/dev/null | awk '{ printf "%s,", \$NF }')
+refs=\$('$READIN' $h 2>/dev/null | awk '{ printf "%s,", \$NF }')
 gh=no; [ -z "\${GH_TOKEN:-}" ] || gh=yes
 dotenv=no; /usr/bin/env | grep -F -e '$PR1_LINEAR' -e '$PR1_TG_TOKEN' -e '$PR1_TG_CHAT' >/dev/null && dotenv=yes
 echo "$h \${1:-} gh=\$gh env=\$dotenv refs=\$refs" >> '$MARKS'
@@ -374,7 +387,7 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     mkdir -p "$R/tools"
     printf '%s\n' '#!/bin/sh' 'gh=no; [ -z "${GH_TOKEN:-}" ] || gh=yes' \
       "dotenv=no; /usr/bin/env | grep -F -e '$PR1_LINEAR' -e '$PR1_TG_TOKEN' -e '$PR1_TG_CHAT' >/dev/null && dotenv=yes" \
-      "echo \"config-hook \$1 gh=\$gh env=\$dotenv\" >> '$MARKS'" 'cat >/dev/null' 'exit 0' > "$R/tools/scan.sh"
+      "echo \"config-hook \$1 gh=\$gh env=\$dotenv\" >> '$MARKS'" "'$READIN' scan >/dev/null" 'exit 0' > "$R/tools/scan.sh"
     chmod +x "$R/tools/scan.sh"
     git -C "$R" add tools; git -C "$R" -c core.hooksPath=/dev/null commit -q -m tools
     git9 git -C "$R" config hook.scan.command "$R/tools/scan.sh pre-push"
@@ -450,7 +463,7 @@ operator_hooks() {
   for h in pre-push reference-transaction; do
     cat > "$1/$h" <<EOF
 #!/bin/sh
-refs=\$(cat 2>/dev/null | awk '{ printf "%s,", \$NF }')
+refs=\$('$READIN' $h 2>/dev/null | awk '{ printf "%s,", \$NF }')
 gh=no; [ -z "\${GH_TOKEN:-}" ] || gh=yes
 echo "operator-$h \${1:-} gh=\$gh refs=\$refs dir=\$(git rev-parse --absolute-git-dir 2>/dev/null)" >> '$MARKS'
 exit 0
@@ -573,7 +586,7 @@ pr1_pass "10 \"operator\" runs only the common dir's hooks (main checkout and wo
 GIT_NEW=0
 if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSION#* }" -ge 54 ]; }; then GIT_NEW=1; fi
 probe_script() {  # <path> <label> — a branch-supplied hook command that records the token
-  printf '%s\n' '#!/bin/sh' 'gh=no; [ -z "${GH_TOKEN:-}" ] || gh=yes' "echo \"$2 \$1 gh=\$gh\" >> '$MARKS'" 'cat >/dev/null' 'exit 0' > "$1"
+  printf '%s\n' '#!/bin/sh' 'gh=no; [ -z "${GH_TOKEN:-}" ] || gh=yes' "echo \"$2 \$1 gh=\$gh\" >> '$MARKS'" "'$READIN' probe >/dev/null" 'exit 0' > "$1"
   chmod +x "$1"
 }
 # bureau_git <shell code> — a stage shell in $R with the probes, the real bureau-config.sh of
@@ -904,5 +917,6 @@ for what in include includeif count parameters; do
 done
 pr1_pass "11 off and \"operator\": no recursion into submodules (configured, asked for under any spelling and refused, or set through git's own options and overridden); includes and GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS cannot redirect core.hooksPath"
 
+if [ -s "$TMP/stdin-hang.log" ]; then fail "a hook waited 20 s for stdin that never closed: $(sort -u "$TMP/stdin-hang.log" | tr '\n' ';')"; fi
 if [ "$PR1_FAILS" != 0 ]; then echo "$PR1_FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_remote_git_hooks"
