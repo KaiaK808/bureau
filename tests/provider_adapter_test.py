@@ -652,10 +652,10 @@ p.shutil.rmtree=fail_remove
     def without_config_dir(self):
         # The adapter without this change: claude_env leaves the environment as it is.
         source=SCRIPT.read_text()
-        changed="        return {**environ, 'CLAUDE_CONFIG_DIR': options['config_dir']}\n"
+        changed="        return {**(os.environ if env is None else env), 'CLAUDE_CONFIG_DIR': options['config_dir']}\n"
         self.assertEqual(source.count(changed),1,'the control no longer matches the adapter')
         control=self.root/'control'/'bureau-provider.py'; control.parent.mkdir(exist_ok=True)
-        control.write_text(source.replace(changed,'        return environ\n'))
+        control.write_text(source.replace(changed,'        return env\n'))
         return control
 
     def test_claude_without_a_config_dir_gets_the_environment_it_got_before(self):

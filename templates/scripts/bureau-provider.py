@@ -88,12 +88,13 @@ def claude_config_dir(provider, env):
     return os.path.normpath(value)
 
 
-def claude_env(environ, options):
+def claude_env(options, env):
     # The environment of a claude process: CLAUDE_CONFIG_DIR is the configured
-    # directory when there is one; without one the environment is unchanged.
+    # directory when there is one; without one `env` is returned unchanged
+    # (None, as subprocess takes it, is the adapter's own environment).
     if options.get('runner') == 'claude' and options.get('config_dir'):
-        return {**environ, 'CLAUDE_CONFIG_DIR': options['config_dir']}
-    return environ
+        return {**(os.environ if env is None else env), 'CLAUDE_CONFIG_DIR': options['config_dir']}
+    return env
 
 
 class AuthError(Exception):
@@ -209,7 +210,7 @@ def auth(options):
     # The login check runs in the environment the agent will get, so a
     # "clean" mode that drops the agent's login fails here, with 16.
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20,
-                          env=claude_env(untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner), options))
+                          env=claude_env(options, env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)))
     if proc.returncode != 0: raise AuthError(runner + ' is not authenticated')
     if runner == 'claude':
         try: logged = json.loads(proc.stdout).get('loggedIn') is True
@@ -339,7 +340,8 @@ def run(options, prompt, system, repo, evidence, schema=None):
     signal.signal(signal.SIGALRM, lambda signum, frame: kill(signal.SIGKILL))
     tempdir = None
     try:
-        child_env = claude_env(untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner), options)
+        child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)
+        child_env = claude_env(options, env=child_env)
         tempdir = codex_tmpdir(runner, child_env, repo)
         started = time.monotonic()
         with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
@@ -541,7 +543,7 @@ def transcript(options, repo, evidence, environ=None):
             missing = dict(session_id=None, transcript=None, transcript_found=False)
             if options.get('session_note'): missing['transcript_note'] = options['session_note'] + '; no session id was set'
             return missing
-        projects = Path(claude_env(environ, options).get('CLAUDE_CONFIG_DIR') or home/'.claude')/'projects'
+        projects = Path(claude_env(options, env=environ).get('CLAUDE_CONFIG_DIR') or home/'.claude')/'projects'
         expected = projects/claude_project_slug(str(repo))/(session + '.jsonl')
         found = _found(expected.parent, expected.name) or _found(projects, '*/' + session + '.jsonl')
         return dict(session_id=session, transcript=str(found or expected), transcript_found=found is not None)

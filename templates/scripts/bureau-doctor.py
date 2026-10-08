@@ -453,7 +453,7 @@ def claude_logged_in(provider, options, mode):
     if not shutil.which('claude'): return False, 'claude executable not found on PATH'
     try:
         proc = subprocess.run(['claude', 'auth', 'status', '--json'], capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL,
-                              env=provider.claude_env(provider.untrusted_env(os.environ, mode, 'claude'), options))
+                              env=provider.claude_env(options, env=provider.untrusted_env(os.environ, mode, 'claude')))
     except (OSError, subprocess.SubprocessError) as exc: return False, 'claude auth status failed: ' + str(exc)
     try: logged = proc.returncode == 0 and json.loads(proc.stdout).get('loggedIn') is True
     except (ValueError, AttributeError): logged = False
