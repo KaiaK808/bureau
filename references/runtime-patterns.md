@@ -224,7 +224,7 @@ The whole stage is **best-effort**: a failed research call (non-zero exit, missi
 
 ### Worktree ownership
 
-Background entry points claim issue and checkout ownership through `bureau-runtime.py`, then use `bureau-worker.sh` for a registered disposable checkout. Reset refuses unregistered directories and requires a matching live claim. The worker releases its own branch when finished. A branch held by an app/user checkout causes an ownership conflict, never an automatic detach. App work uses prepare/finish and preserves the current tree.
+Background entry points claim issue and checkout ownership through `bureau-runtime.py`, then use `bureau-worker.sh` for a registered disposable checkout. Reset refuses unregistered directories and requires a matching live claim; the one exception is a preserved linked worktree of this repository that a non-spec stage can reset without loss (no uncommitted or untracked changes, HEAD on the fetched `origin/<branch>`), which it registers again with one line on stderr. The worker releases its own branch when finished. A branch held by an app/user checkout causes an ownership conflict, never an automatic detach. App work uses prepare/finish and preserves the current tree.
 
 ### JSON-block parsing for stage outputs
 
