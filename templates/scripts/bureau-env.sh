@@ -656,12 +656,16 @@ _bureau_git_asks_recursion() {
       _bar_flags='-q --quiet -t --tags -b --branches -h --heads --refs --get-url --exit-code --symref' ;;
   esac
   for _bar_arg in "$@"; do
-    if [ "$_bar_skip" = 1 ]; then _bar_skip=0; continue; fi
-    if [ "$_bar_arg" = -- ]; then
+    if [ "$_bar_arg" = -- ] && [ "$_bar_skip" = 0 ]; then
       [ "$_bar_unknown" = 1 ] || break
       _bar_unknown=0; continue
     fi
-    _bar_unknown=0
+    # Every word before the delimiter is checked, the value of an option too:
+    # the tables above only decide whether a `--` ends the options. An option
+    # whose value git takes or leaves (--jobs), an option missing from the
+    # tables, an abbreviated or bundled one can each make the word after it an
+    # option again. A value that itself reads like the option is refused with
+    # it: the safe direction.
     case "$_bar_arg" in
       --rec*)
         _bar_name="${_bar_arg%%=*}"
@@ -673,6 +677,8 @@ _bureau_git_asks_recursion() {
           fi
         done ;;
     esac
+    if [ "$_bar_skip" = 1 ]; then _bar_skip=0; continue; fi
+    _bar_unknown=0
     for _bar_opt in $_bar_values; do
       if [ "$_bar_arg" = "$_bar_opt" ]; then _bar_skip=1; break; fi
     done

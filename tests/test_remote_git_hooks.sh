@@ -99,6 +99,7 @@ run_case() {
     my ($label, $log, $test, @cmd) = @ARGV;
     my $pid = fork(); defined $pid or die "fork: $!";
     if (!$pid) { POSIX::setpgid(0, 0) == 0 or die "setpgid: $!"; exec @cmd; die "exec: $!"; }
+    $SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub { kill "KILL", -$pid; waitpid($pid, 0); exit 143; };
     $SIG{ALRM} = sub {
       kill "KILL", -$pid; waitpid($pid, 0);
       open my $fh, ">>", $log or die "timeout log: $!";
@@ -707,7 +708,9 @@ for mode in '{"remote_git_runs_hooks":"operator"}' '{}'; do
          'git fetch -q --recurse-submodules origin' 'git fetch -q --recurse-sub=yes origin'
          'git pull -q --recurse-submodule=yes origin main' 'git submodule -q update --remote'
          "git clone -q '$R.origin' '$TMP/clone-rec'" "git clone -q --recursive '$R.origin' '$TMP/clone-rec'"
-         "git clone -q --recurse-submodules=no '$R.origin' '$TMP/clone-rec'" 'git --frobnicate push -q origin HEAD')
+         "git clone -q --recurse-submodules=no '$R.origin' '$TMP/clone-rec'" 'git --frobnicate push -q origin HEAD'
+         'git pull -q --ff-only --jobs --recurse-submodules=on-demand 1' 'git fetch -q --submodule-prefix -o --recurse-submodules=yes origin'
+         'git push -q --push-opt -o --recurse-submodules=on-demand origin HEAD' 'git push -qo -o --recurse-submodules=on-demand origin HEAD')
   script=""; i=0
   for call in "${calls[@]}"; do script="$script $call 2>&1 | sed -n 's/^bureau git: refused.*/refused-msg/p'; echo \"call$i=\${PIPESTATUS[0]}\";"; i=$((i + 1)); done
   : > "$MARKS"
@@ -749,12 +752,14 @@ for mode in '{"remote_git_runs_hooks":"operator"}' '{}'; do
   if push_recursed || fetch_recursed; then fail "11 $mode override: a caller option brought recursion back"; fi
   if grep -qvE '^(operator-|$)' <<< "$(marks)"; then fail "11 $mode override: a hook outside the operator's directory ran: $(grep -vE '^(operator-|$)' <<< "$(marks)" | sed -n 1p)"; fi
 done
-# Optional values do not consume a separate word; a recursion spelling that is
-# itself a required option value does. Check without asking git to run an invalid call.
+# Optional values do not consume a separate word. A recursion spelling that is the value of an
+# option is refused with it: every word before the delimiter is checked, because an option git
+# reads differently than the tables (an optional value, an abbreviation, a bundle, one the tables
+# lack) makes the next word an option again. Check without asking git to run an invalid call.
 out=$(bureau_git '_bureau_git_asks_recursion push --force-with-lease --recurse-submodules=on-demand; echo "lease=$?"
   _bureau_git_asks_recursion pull --gpg-sign --recurse-submodules=on-demand; echo "sign=$?"
   _bureau_git_asks_recursion push -o --recurse-submodules=on-demand -- origin HEAD; echo "value=$?"')
-for want in lease=0 sign=0 value=1; do
+for want in lease=0 sign=0 value=0; do
   grep -qx "$want" <<< "$out" || fail "11 option values: expected $want: $(printf '%s' "$out" | tr '\n' ' ')"
 done
 # Negative controls, each red against the previous round: (a) a copy without the recursion

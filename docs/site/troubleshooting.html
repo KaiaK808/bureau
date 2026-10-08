@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ed02bfb3c88b963592333a592cdc4810e9c8083034023faad0f25875dbd38d1e">
+<meta name="bureau-source-sha256" content="63ca8966c16a66bff5682d778c3d1761dea5d345fe8a48c6178c78079474b6d1">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1349,7 +1349,9 @@ the Bureau secrets. Let CI run what the <code>pre-push</code> hook
 checked, or set <code>repo.remote_git_runs_hooks</code> to
 <code>true</code> (the JSON value) to run the hooks again with the
 GitHub tokens in their environment, as in v3.1. A repository that uses
-Git LFS needs <code>true</code>: LFS uploads its objects in the
+Git LFS needs <code>true</code>, or <code>"operator"</code> with the
+<code>pre-push</code> hook of <code>git lfs install</code> in the main
+checkout's <code>.git/hooks</code>: LFS uploads its objects in the
 <code>pre-push</code> hook, so without it the pull request's LFS files
 point at objects the remote does not have; doctor warns when the main
 checkout uses <code>filter=lfs</code> (in its
