@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="937949a3fa30ddf5c5139386172505baee7ce323a7a44a6f7f4d81f409087116">
+<meta name="bureau-source-sha256" content="8f9f5833022eaf0a6e3688bca3d1142204c0e3b2612401210914e1707c892df6">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -896,21 +896,24 @@ names, and keeps the hooks the configuration defines
 (<code>hook.&lt;name&gt;.command</code>) switched off by name; those
 operator hooks see the GitHub tokens. Put the hooks Bureau's push needs
 (the <code>pre-push</code> of <code>git lfs install</code>, a secret
-scanner) there; for <code>clone</code>, <code>submodule</code>, a
-command with <code>--recurse-submodules</code> and outside a repository
-<code>"operator"</code> keeps every hook off, and it runs push, fetch
-and pull without recursing into submodules
-(<code>push.recurseSubmodules=no</code>,
+scanner) there; for <code>clone</code> and outside a repository
+<code>"operator"</code> keeps every hook off. With
+<code>"operator"</code> and with the hooks off (every value but
+<code>true</code>) Bureau's push, fetch and pull never recurse into
+submodules (<code>push.recurseSubmodules=no</code>,
 <code>fetch.recurseSubmodules=no</code>,
-<code>submodule.recurse=false</code> on the command line), because a
-child git in a submodule would run hooks that submodule's configuration
-defines; Bureau's push then neither pushes nor checks submodule commits.
-Absent, <code>null</code>, <code>false</code>, any other value and a
-<code>.bureau.json</code> that cannot be read keep them off; doctor
-reports the mode as <code>remote_git_hooks</code> (<code>on</code>,
-<code>operator</code> or <code>off</code>) and warns on a value that is
-neither a JSON boolean nor <code>"operator"</code>, and, with Git LFS
-and <code>"operator"</code>, when that hooks directory has no executable
+<code>submodule.recurse=false</code> on the command line), and a Bureau
+git call that asks for recursion (<code>git submodule</code>,
+<code>--recurse-submodules</code> other than <code>=no</code>) is
+refused with exit 128, because a child git in a submodule would run
+hooks that submodule's configuration defines; Bureau's push then neither
+pushes nor checks submodule commits. Absent, <code>null</code>,
+<code>false</code>, any other value and a <code>.bureau.json</code> that
+cannot be read keep them off; doctor reports the mode as
+<code>remote_git_hooks</code> (<code>on</code>, <code>operator</code> or
+<code>off</code>) and warns on a value that is neither a JSON boolean
+nor <code>"operator"</code>, and, with Git LFS and
+<code>"operator"</code>, when that hooks directory has no executable
 <code>pre-push</code>. Local commands (commit, checkout, merge, reset)
 run their hooks either way, without the Bureau secrets. Hooks only: a
 credential helper, a filter or an fsmonitor named in the git

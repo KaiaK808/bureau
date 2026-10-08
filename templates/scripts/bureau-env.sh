@@ -348,9 +348,12 @@ bureau_secret_copy() {
 #   value true) runs them with hooks again, as v3.1 did, a core.hooksPath into
 #   the branch's tree included; the string "operator" runs only the hooks in
 #   the git common dir's hooks/ (core.hooksPath forced to its absolute path),
-#   which no commit can write. The setting covers hooks only: a filter, an
-#   fsmonitor or a credential helper the configuration names still runs
-#   (SECURITY.md).
+#   which no commit can write. Unless the setting is true, those commands
+#   never recurse into submodules (configured recursion is switched off, a
+#   call that asks for it is refused with 128): a child git there would run
+#   hooks the submodule's own configuration defines. The setting covers hooks
+#   only: a filter, an fsmonitor or a credential helper the configuration
+#   names still runs (SECURITY.md).
 #
 # bureau_exec_runtime <command> [argument ...]
 #   Replaces the shell with the runtime wrapper (python3 bureau-runtime.py
@@ -620,37 +623,55 @@ git() {
   _bg_mode=off
   if [ "$_bg_names" = dotenv ]; then _bg_mode=$(_bureau_remote_git_hooks_mode); fi
   if [ "$_bg_names" = dotenv ] && [ "$_bg_mode" != on ]; then
-    # "operator": the common dir's hooks/ only. A clone gets a repository of
-    # its own, and a command outside a repository has no common dir: hooks off.
-    # So does every command that asks to recurse into submodules (`submodule`
-    # itself, --recurse-submodules other than =no): git starts a child git in
-    # each submodule, which reads that submodule's own configuration, and
-    # without the event switches a hook defined there (hook.<name>.command,
-    # also from a file the submodule's configuration includes) would run with
-    # the GitHub tokens; its names cannot be listed here beforehand.
+    # With the hooks restricted ("off", "operator") Bureau's remote git never
+    # recurses into submodules. A child git in a submodule reads that
+    # submodule's own configuration: the hook names defined there (also from a
+    # file it includes) are not among those listed below, git 2.54 has no event
+    # switch, and on git 2.55 a hook named like an event (hook.pre-push.command,
+    # even without .event) turns the event switch into a per-name one; such a
+    # hook would run with the GitHub tokens. So the recursion configuration can
+    # ask for is switched off below, and a call that asks for recursion itself
+    # (`submodule`, --recurse-submodules other than =no, a recursion key among
+    # git's own options) is refused: no Bureau script makes one.
+    _bg_skip=0
+    for _bg_arg in "${@:1:$_bg_lead}"; do
+      if [ "$_bg_skip" = 1 ]; then
+        _bg_skip=0
+        case "$_bg_arg" in *[Rr][Ee][Cc][Uu][Rr][Ss][Ee]*) _bg_recurse=1 ;; esac
+        continue
+      fi
+      case "$_bg_arg" in
+        -c|--config-env) _bg_skip=1 ;;
+        --config-env=*[Rr][Ee][Cc][Uu][Rr][Ss][Ee]*) _bg_recurse=1 ;;
+      esac
+    done
     for _bg_arg in "${@:$((_bg_lead + 2))}"; do
       case "$_bg_arg" in
         --recurse-submodules=no) ;;
         --recurse-submodules|--recurse-submodules=*) _bg_recurse=1 ;;
       esac
     done
-    if [ "$_bg_mode" = operator ] && [ "$_bg_sub" != clone ] && [ "$_bg_sub" != submodule ] \
-       && [ "$_bg_recurse" = 0 ] \
+    if [ "$_bg_sub" = submodule ] || [ "$_bg_recurse" = 1 ]; then
+      echo "bureau git: refused 'git $_bg_sub' with submodule recursion: Bureau's remote git does not recurse into submodules unless repo.remote_git_runs_hooks is true (a hook a submodule's configuration defines would see the GitHub tokens)" >&2
+      if [ "$_bg_trace" = 1 ]; then set -x; fi
+      return 128
+    fi
+    # "operator": the common dir's hooks/ only. A clone gets a repository of
+    # its own, and a command outside a repository has no common dir: hooks off.
+    if [ "$_bg_mode" = operator ] && [ "$_bg_sub" != clone ] \
        && _bg_dir=$(_bureau_git_operator_hooks_dir "${@:1:$_bg_lead}"); then
       _bg_operator=(--operator "$_bg_dir")
     fi
     # Placed before the caller's own options; git passes them on to the git
-    # processes it starts itself (a pull's fetch and merge, submodules).
+    # processes it starts itself (a pull's fetch and merge).
     _bureau_git_hooks_off ${_bg_operator[@]+"${_bg_operator[@]}"} "${@:1:$_bg_lead}"
     _bg_hooks=("${_BUREAU_GIT_HOOKS_OFF[@]}")
-    # And under "operator" no recursion that configuration asks for
-    # (push.recurseSubmodules, fetch.recurseSubmodules, whose default
-    # on-demand fetches populated submodules, submodule.recurse): a
-    # command-line -c wins over every configuration file, include and
-    # GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS entry.
-    if [ "${#_bg_operator[@]}" -gt 0 ]; then
-      _bg_hooks+=(-c push.recurseSubmodules=no -c fetch.recurseSubmodules=no -c submodule.recurse=false)
-    fi
+    # No recursion that configuration asks for (push.recurseSubmodules,
+    # fetch.recurseSubmodules, whose default on-demand fetches populated
+    # submodules, submodule.recurse): a command-line -c wins over every
+    # configuration file, include and GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS
+    # entry.
+    _bg_hooks+=(-c push.recurseSubmodules=no -c fetch.recurseSubmodules=no -c submodule.recurse=false)
     _bg_hooks_env=(${_BUREAU_GIT_HOOKS_ENV[@]+"${_BUREAU_GIT_HOOKS_ENV[@]}"})
   fi
   if [ "$_bg_trace" = 1 ]; then set -x; fi
