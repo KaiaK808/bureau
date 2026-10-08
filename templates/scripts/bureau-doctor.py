@@ -446,6 +446,46 @@ def worktree_links(repo, config, checkout=None):
     return report, errors, warnings
 
 
+def claude_logged_in(provider, options, mode):
+    """`claude auth status --json` in the environment a Claude stage gets (its untrusted_env mode,
+    CLAUDE_CONFIG_DIR from config_dir), as auth() in bureau-provider.py asks it before every call.
+    Returns (logged_in, reason)."""
+    if not shutil.which('claude'): return False, 'claude executable not found on PATH'
+    try:
+        proc = subprocess.run(['claude', 'auth', 'status', '--json'], capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL,
+                              env=provider.claude_env(options, env=provider.untrusted_env(os.environ, mode, 'claude')))
+    except (OSError, subprocess.SubprocessError) as exc: return False, 'claude auth status failed: ' + str(exc)
+    try: logged = proc.returncode == 0 and json.loads(proc.stdout).get('loggedIn') is True
+    except (ValueError, AttributeError): logged = False
+    return logged, None if logged else 'claude auth status --json did not report loggedIn true (exit ' + str(proc.returncode) + ')'
+
+
+def claude_config_dirs(config, effective, provider, warnings):
+    """Per enabled Claude stage, the configuration directory its claude child gets: config_dir
+    (BUREAU_CLAUDE_CONFIG_DIR, else agents.providers.claude.config_dir), with whether Claude is
+    logged in there; without one, the directory the child inherits (CLAUDE_CONFIG_DIR, else
+    ~/.claude), which is the operator's own setup and is not checked here."""
+    try: mode = provider.untrusted_env_mode(config)
+    except provider.UntrustedEnvError: mode = 'default'
+    report, checked = {}, {}
+    for stage, options in effective.items():
+        if options['runner'] != 'claude': continue
+        directory = options.get('config_dir')
+        if not directory:
+            inherited = os.environ.get('CLAUDE_CONFIG_DIR') or os.path.join(os.path.expanduser('~'), '.claude')
+            report[stage] = dict(config_dir=inherited, configured=False, logged_in='not checked'); continue
+        if directory not in checked: checked[directory] = claude_logged_in(provider, options, mode)
+        logged, reason = checked[directory]
+        report[stage] = dict(config_dir=directory, configured=True, logged_in=logged)
+        if not logged: report[stage]['reason'] = reason
+    for directory, (logged, reason) in checked.items():
+        if not logged:
+            stages = ', '.join(stage for stage, entry in report.items() if entry['config_dir'] == directory and entry['configured'])
+            warnings.append('Claude is not logged in in the configuration directory ' + directory + ' (' + stages + '): ' + reason
+                            + '; the stage ends with 16 before any call. Log in with CLAUDE_CONFIG_DIR=' + directory + ' claude')
+    return report
+
+
 def diagnose(repo, mode):
     runtime = module('runtime'); provider = module('provider')
     repo = runtime.root_for(repo); path = runtime.config_for(repo); config = json.loads(path.read_text())
@@ -542,9 +582,10 @@ def diagnose(repo, mode):
         warnings.append('repo.remote_git_runs_hooks is not true, but the main checkout uses Git LFS (filter=lfs in a .gitattributes file or in info/attributes): Bureau pushes without the repository\'s hooks, so the pre-push hook of git lfs does not upload the LFS objects and the remote lacks them; set repo.remote_git_runs_hooks to true')
     links, link_errors, link_warnings = worktree_links(repo, config, checkout)
     errors.extend(link_errors); warnings.extend(link_warnings)
+    claude_dirs = claude_config_dirs(config, effective, provider, warnings)
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),
                 merge_mode=merge, post_implement_command=hook if isinstance(hook, str) and hook.strip() else None,
-                main_checkout=str(main) if main is not None else None, worktree_links=links,
+                main_checkout=str(main) if main is not None else None, worktree_links=links, claude_config_dirs=claude_dirs,
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,
                 template_source=source, drift=drift, errors=errors, warnings=warnings,
                 authentication='not checked', live_model_acceptance='not checked')
