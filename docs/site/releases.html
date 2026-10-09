@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="630d58b6456707542777f88f539e300c48c5074b42764b5e1ef1babf0bc54178">
+<meta name="bureau-source-sha256" content="66561a62fb8ee18c85a4122afafccb63914fcee521cb74545cb1ae232b01c4d1">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,25 +24,68 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.3.0</strong>, dated
-<strong>2026-10-07</strong>, the current stable release, marked as
+<p>This source tree contains <strong>Bureau v3.4.0</strong>, dated
+<strong>2026-10-09</strong>, the current stable release, marked as
 latest. Its <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0">GitHub
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.0">GitHub
 Release</a> records the exact tagged commit; the <a
 href="../../CHANGELOG.md">changelog</a> and <a
 href="release-notes.html">release notes</a> describe the changes and the
-upgrade. v3.3 is a minor release on v3.2.1 with shell gates for Codex
-implement (<a href="https://github.com/KaiaK808/bureau/pull/60">#60</a>)
-and QA (<a href="https://github.com/KaiaK808/bureau/pull/62">#62</a>)
-turns blocked only by tests the sandbox denies, plus private temporary
-directories for Codex calls without <code>TMPDIR</code>; an
-installation's first real Codex implement turn passed the outside
-project gate, ended with exit <code>0</code> and handed the ticket on to
-QA. Claude runs and the v3 exit-code contract are unchanged. From v3.2.1
-select tag <code>v3.3.0</code>, resync the scripts scope as one set,
-check the full project gate in <code>repo.test_command</code> and
-restart queue loops and supervisors; see <a
-href="migration.html#upgrade-to-v33">Upgrade to v3.3</a>.</p>
+upgrade. v3.4 is a minor release on v3.3.0 and keeps the v3 exit-code
+contract. It contains six pull requests: operator hooks without
+submodule recursion and the removal of operator paths from branch code
+(<a href="https://github.com/KaiaK808/bureau/pull/69">#69</a>); Claude
+effort per stage (<a
+href="https://github.com/KaiaK808/bureau/pull/65">#65</a>); the
+re-accept of a clean preserved worktree (<a
+href="https://github.com/KaiaK808/bureau/pull/66">#66</a>); a Claude
+configuration directory and doctor login report (<a
+href="https://github.com/KaiaK808/bureau/pull/67">#67</a>); safe
+handling of malformed environment names (<a
+href="https://github.com/KaiaK808/bureau/pull/70">#70</a>); and
+<code>.env</code> precedence documentation (<a
+href="https://github.com/KaiaK808/bureau/pull/71">#71</a>). From v3.3.0
+select tag <code>v3.4.0</code> and resync the scripts scope as one set;
+no interfaces changed. Before dispatch resumes, check submodules, custom
+commands that read <code>BUREAU_ENV_FILE</code> or
+<code>BUREAU_CONFIG</code>, operator hooks, Claude effort and
+<code>.env</code> precedence, restart queue loops and supervisors and
+run doctor. See <a href="migration.html#upgrade-to-v34">Upgrade to
+v3.4</a>.</p>
+<p>The maintainer's release validation record reports GitHub CI green on
+macOS and Ubuntu for each of the six merged pull requests and for
+<code>main</code> at <code>683ba90</code>, with every pull request
+reviewed before its merge: <a
+href="https://github.com/KaiaK808/bureau/pull/69">#69</a> over eight
+independent rounds and <a
+href="https://github.com/KaiaK808/bureau/pull/70">#70</a> over two. The
+re-accept of a clean preserved worktree and the <code>"operator"</code>
+mode have test-harness validation only; Claude effort and
+configuration-directory checks use fake CLIs. No installation has run
+v3.4.0 before the release. There was no release candidate, and the first
+runs in an installation follow the release. Release preparation changes
+documentation only; runtime, installer, templates, tests and CI stay at
+the <code>683ba90</code> baseline. The final tagged commit is recorded
+in the GitHub Release body.</p>
+<p>The previous stable release is <strong>Bureau v3.3.0</strong>, dated
+<strong>2026-10-07</strong>. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0">GitHub
+Release</a> records the exact tagged commit; the <a
+href="../../CHANGELOG.md">changelog</a> and <a
+href="release-notes-v3.3.0.html">release notes</a> describe the changes
+and the upgrade. v3.3 is a minor release on v3.2.1 with shell gates for
+Codex implement (<a
+href="https://github.com/KaiaK808/bureau/pull/60">#60</a>) and QA (<a
+href="https://github.com/KaiaK808/bureau/pull/62">#62</a>) turns blocked
+only by tests the sandbox denies, plus private temporary directories for
+Codex calls without <code>TMPDIR</code>; an installation's first real
+Codex implement turn passed the outside project gate, ended with exit
+<code>0</code> and handed the ticket on to QA. Claude runs and the v3
+exit-code contract are unchanged. From v3.2.1 select tag
+<code>v3.3.0</code>, resync the scripts scope as one set, check the full
+project gate in <code>repo.test_command</code> and restart queue loops
+and supervisors; see <a href="migration.html#upgrade-to-v33">Upgrade to
+v3.3</a>.</p>
 <p>Its candidates, <a
 href="release-notes-v3.3.0-rc.2.html">v3.3.0-rc.2</a> and <a
 href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>, stay published as
@@ -76,7 +119,7 @@ passed, and an independent review found no blocker. Release preparation
 changes documentation only; runtime, installer, templates, tests and CI
 are identical to <code>v3.3.0-rc.2</code> (<code>a3e0288</code>). The
 final tagged commit is recorded in the GitHub Release body.</p>
-<p>The previous stable release is <strong>Bureau v3.2.1</strong>, dated
+<p>The earlier stable release is <strong>Bureau v3.2.1</strong>, dated
 <strong>2026-10-06</strong>. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">GitHub
 Release</a> identifies the exact tagged commit; the <a

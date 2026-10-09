@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b9806f5a13dc7659b1cc0d582b35f4360019cbff57254dc94ea8ba628b7112bd">
+<meta name="bureau-source-sha256" content="4622345725a82188a8cd3a0ea5e3c73bf73da4ff32f4ee10c509bc7ddf378ac8">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -27,14 +27,17 @@ upgrade installed assets.</p>
 href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
-the v3.2 release candidate, v3.2.0, v3.2.1 and the v3.3 release
-candidates to the stable <strong>Bureau v3.3.0</strong>. The commands
-below require the selected release's source skill. See the <a
+the v3.2 release candidate, v3.2.0, v3.2.1, the v3.3 release candidates
+and v3.3.0 to the stable <strong>Bureau v3.4.0</strong>, marked as
+latest. The commands below require the selected release's source skill.
+See the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.0">v3.4.0
+release</a> and its <a href="release-notes.html">release notes</a>, the
+previous stable <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0">v3.3.0
-release</a> and its <a href="release-notes.html">release notes</a> (the
-candidates: <a href="release-notes-v3.3.0-rc.2.html">v3.3.0-rc.2</a>, <a
-href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>), the previous
-stable <a
+release</a> and its <a href="release-notes-v3.3.0.html">release notes</a>
+(the candidates: <a href="release-notes-v3.3.0-rc.2.html">v3.3.0-rc.2</a>,
+<a href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>), the <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">v3.2.1
 release</a> and its <a href="release-notes-v3.2.1.html">release notes</a>,
 the <a
@@ -58,10 +61,11 @@ the <a href="../../CHANGELOG.md">changelog</a> and the <a
 href="releases.html">release process</a>. A Bureau major version marks
 operational changes (v2.0.0: explicit worker ownership; v3: the
 exit-code contract, see <a href="#upgrade-to-v3">Upgrade to v3</a>); it
-does not require configuration schema v2. v3.1, v3.2 and v3.3 keep that
-contract; see <a href="#upgrade-to-v31">Upgrade to v3.1</a>, <a
-href="#upgrade-to-v32">Upgrade to v3.2</a> and <a
-href="#upgrade-to-v33">Upgrade to v3.3</a>.</p>
+does not require configuration schema v2. v3.1, v3.2, v3.3 and v3.4 keep
+that contract; see <a href="#upgrade-to-v31">Upgrade to v3.1</a>, <a
+href="#upgrade-to-v32">Upgrade to v3.2</a>, <a
+href="#upgrade-to-v33">Upgrade to v3.3</a> and <a
+href="#upgrade-to-v34">Upgrade to v3.4</a>.</p>
 <h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is
@@ -83,12 +87,12 @@ installed commit.</p>
 <p>Confirm that <code>origin</code> identifies the official
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
-clean checkout, select the exact release (<code>v3.3.0</code> for the
-stable release, <code>v3.2.1</code> for the previous stable release,
-<code>v3.2.0</code>, <code>v3.1.0</code>, <code>v3.0.2</code>,
-<code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
-earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.3.0 <span class="co"># or v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+clean checkout, select the exact release (<code>v3.4.0</code> for the
+stable release, <code>v3.3.0</code> for the previous stable release,
+<code>v3.2.1</code>, <code>v3.2.0</code>, <code>v3.1.0</code>,
+<code>v3.0.2</code>, <code>v3.0.1</code>, <code>v3.0.0</code> or
+<code>v2.0.0</code> for an earlier one):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.4.0 <span class="co"># or v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -108,6 +112,124 @@ directory, keep it intact and install a separate official clone from the
 loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
+<h2 id="upgrade-to-v34">Upgrade to v3.4</h2>
+<p>The stable release <strong>v3.4.0</strong> is a minor release on
+v3.3.0 and keeps the v3 exit-code contract. It contains six pull
+requests: operator hooks without submodule recursion and the removal of
+operator paths from branch code (<a
+href="https://github.com/KaiaK808/bureau/pull/69">#69</a>); Claude
+effort per stage (<a
+href="https://github.com/KaiaK808/bureau/pull/65">#65</a>); the
+re-accept of a clean preserved worktree (<a
+href="https://github.com/KaiaK808/bureau/pull/66">#66</a>); a Claude
+configuration directory and doctor login report (<a
+href="https://github.com/KaiaK808/bureau/pull/67">#67</a>); safe
+handling of malformed environment names (<a
+href="https://github.com/KaiaK808/bureau/pull/70">#70</a>); and
+<code>.env</code> precedence documentation (<a
+href="https://github.com/KaiaK808/bureau/pull/71">#71</a>). See its <a
+href="release-notes.html">release notes</a> for validation and known
+limitations. There was no release candidate; the first runs in an
+installation follow the release.</p>
+<p><strong>From v3.3.0:</strong> select tag <code>v3.4.0</code> and
+resync the <strong>scripts scope as one set</strong>
+(<code>--resync-scripts</code>); <code>bureau-config.sh</code>,
+<code>bureau-doctor.py</code>, <code>bureau-env.sh</code>,
+<code>bureau-provider.py</code>, <code>bureau-runtime.py</code> and
+<code>bureau-supervision.py</code> changed together. Pause dispatch,
+preserve unfinished work and customized files, and use <a
+href="#preview-and-resolve-asset-conflicts">preview and resolve</a>. No
+files under <code>templates/</code> outside
+<code>templates/scripts/</code> changed, so no interfaces resync is
+needed. No configuration schema or data migration is needed;
+<code>/bureau-init --update</code> changes configuration only.</p>
+<p><strong>From older versions:</strong> go through <a
+href="#upgrade-to-v33">Upgrade to v3.3</a> and its earlier upgrade
+sections first, including both scopes where required, then follow the
+v3.4 steps above.</p>
+<p>Before dispatch resumes, check:</p>
+<ul>
+<li><strong>Submodules:</strong> with the default and with
+<code>"operator"</code>, Bureau's push, fetch and pull neither push nor
+fetch submodule commits, and the push does not check whether they are on
+the remote. If stages change submodule commits, push those yourself or
+set <code>repo.remote_git_runs_hooks</code> to <code>true</code>, which
+restores every configured hook as well as the previous recursion
+behaviour.</li>
+<li><strong>Project commands:</strong> check
+<code>repo.test_command</code>, <code>scripts/bureau-test.sh</code>,
+<code>repo.post_implement_command</code> and <code>upstream_port</code>
+build/test commands for reads of <code>BUREAU_ENV_FILE</code> or
+<code>BUREAU_CONFIG</code>. Those paths no longer reach branch code or
+the agent by default; make custom commands locate their configuration
+themselves or pass what they need explicitly.</li>
+<li><strong>Operator hooks:</strong> to keep an operator
+<code>pre-push</code>, such as Git LFS or a secret scanner, put an
+executable hook in the main checkout's own hooks directory
+(<code>hooks/</code> in the git common directory, usually
+<code>.git/hooks</code>) and set <code>repo.remote_git_runs_hooks</code>
+to <code>"operator"</code>. A tracked <code>.githooks</code> or
+<code>.husky</code> directory is excluded in that mode. Check doctor's
+<code>remote_git_hooks</code> and any Git LFS warning before the next
+push.</li>
+<li><strong>Claude effort:</strong> an existing
+<code>reasoning_effort</code> for a Claude stage now takes effect. Check
+<code>agents.&lt;stage&gt;.reasoning_effort</code>,
+<code>agents.providers.claude.reasoning_effort</code> and
+<code>BUREAU_REASONING_&lt;STAGE&gt;</code>; use <code>low</code>,
+<code>medium</code>, <code>high</code>, <code>xhigh</code> or
+<code>max</code>, or remove the setting to keep the CLI's default.
+<code>none</code>, <code>minimal</code> and <code>ultra</code> on a
+Claude stage now end the call with configuration error <code>22</code>
+before any provider call.</li>
+<li><strong>Claude configuration directory:</strong> the new setting is
+optional. To use it, create an absolute directory (or use a path
+starting with <code>~/</code>), log in once with
+<code>CLAUDE_CONFIG_DIR=&lt;dir&gt; claude</code>, and set
+<code>agents.providers.claude.config_dir</code> or
+<code>BUREAU_CLAUDE_CONFIG_DIR</code>. The environment variable wins.
+Check doctor's <code>claude_config_dirs</code> login report for every
+enabled Claude stage; an unconfigured inherited directory is reported as
+<code>logged_in: "not checked"</code>.</li>
+<li><strong>Start-line overrides:</strong> for a key the loader accepts
+and <code>.env</code> defines, <code>.env</code> wins over the process
+environment and the start line. A key absent from <code>.env</code> uses
+the environment value. For one run, use a per-stage key absent from
+<code>.env</code>, or change or comment out its <code>.env</code> line
+and restore it afterwards. <code>BUREAU_REASONING_&lt;STAGE&gt;</code>
+is read from the process environment; the <code>.env</code> loader does
+not accept it.</li>
+<li><strong>Preserved worktrees:</strong> the re-accept needs no
+configuration. For a worktree previously halted with <code>21</code>,
+keep unfinished work intact, make the worktree clean and push its
+commits, then remove <code>needs-human</code> before its next pick. The
+spec stage and a worktree with uncommitted changes, untracked files or
+commits origin lacks still refuse with <code>21</code>.</li>
+</ul>
+<p>Restart queue loops and supervisors after resync so they read the new
+scripts: a loop sources <code>bureau-config.sh</code> once at startup,
+and a stage already running keeps the old scripts because the installer
+replaces files atomically. Run doctor
+(<code>python3 scripts/bureau-doctor.py --mode background</code>), check
+<code>remote_git_hooks</code> (<code>on</code>, <code>operator</code>,
+<code>off</code>) and the <code>claude_config_dirs</code> login report
+(<code>config_dir</code>, <code>configured</code>,
+<code>logged_in</code>) for enabled Claude stages, and qualify a
+representative ticket before unattended dispatch resumes. Doctor's
+effective-settings report uses JSON and its process environment; it
+reads only <code>BUREAU_RUNNER_IMPLEMENT</code> from <code>.env</code>
+for the <code>repo.test_command</code> warning. Live acceptance of
+v3.4.0 is pending; see <a
+href="release-notes.html#validation">validation</a>.</p>
+<p><strong>Rollback:</strong> select tag <code>v3.3.0</code> again and
+resync the scripts scope as one set, or restore the private backup (<a
+href="#rollback">rollback</a>); no data migration is needed. Restore
+prior configuration if you enabled new options: v3.3.0 treats
+<code>"operator"</code> as hooks off and ignores the Claude
+<code>config_dir</code> and resolved effort settings. Check the prior
+Git LFS hook arrangement, then restart queue loops and supervisors.
+Rollback cannot undo commits, pushes or Linear/GitHub changes made in
+between.</p>
 <h2 id="upgrade-to-v33">Upgrade to v3.3</h2>
 <p>The stable release <strong>v3.3.0</strong> is a minor release on
 v3.2.1 and keeps the v3 exit-code contract. It collects two pull
@@ -115,8 +237,9 @@ requests: the implement gate and private temporary directory for Codex
 calls without <code>TMPDIR</code> (<a
 href="https://github.com/KaiaK808/bureau/pull/60">#60</a>), and the QA
 gate (<a href="https://github.com/KaiaK808/bureau/pull/62">#62</a>).
-Claude runs are unchanged. See its <a href="release-notes.html">release
-notes</a> for validation and known limitations; its candidates, <a
+Claude runs are unchanged. See its <a
+href="release-notes-v3.3.0.html">release notes</a> for validation and
+known limitations; its candidates, <a
 href="release-notes-v3.3.0-rc.2.html">v3.3.0-rc.2</a> and <a
 href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>, stay published as
 prereleases, and runtime, installer, templates and tests are identical
@@ -161,10 +284,11 @@ installer replaces files atomically. Run doctor
 (<code>python3 scripts/bureau-doctor.py --mode background</code>) and
 qualify a representative ticket before dispatch resumes. The implement
 gate passed a live run in an installation; live QA acceptance remains
-pending (see <a href="release-notes.html#validation">validation</a>).
-Rollback selects tag <code>v3.2.1</code> again and resyncs the scripts
-scope as one set (<a href="#rollback">rollback</a>); no data migration
-is needed.</p>
+pending (see <a
+href="release-notes-v3.3.0.html#validation">validation</a>). Rollback
+selects tag <code>v3.2.1</code> again and resyncs the scripts scope as
+one set (<a href="#rollback">rollback</a>); no data migration is
+needed.</p>
 <p><strong>Operator output:</strong> the implement summary comment
 records
 <code>needs-human names only SANDBOX_GATE reasons: treated as COMPLETE until the shell gate outside the Codex sandbox decides</code>,
