@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e32dfc3eb83318f32e018c8998e1d25406031cd1bf6c5c2a16f24fd85bbff53f">
+<meta name="bureau-source-sha256" content="31dc094010d63f2a7d0ac18fe34c21b53f1ba25002365c43bce66aa95a51f472">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -814,19 +814,24 @@ token variables — <code>LINEAR_API_KEY</code>,
 value, so a very short secret of 6 or 7 characters can also remove an
 unrelated variable that happens to contain it; the stages copy the
 Linear key into <code>API_KEY</code>, and a token also hides in a remote
-URL or an <code>Authorization</code> header), and minus
+URL or an <code>Authorization</code> header), minus
 <code>BASH_ENV</code> and <code>ENV</code>, which would make the bash
-child source a file before the command runs. <code>"clean"</code>: only
-<code>PATH</code>, <code>HOME</code>, <code>USER</code>,
-<code>LOGNAME</code>, <code>SHELL</code>, <code>TMPDIR</code>,
-<code>TEMP</code>, <code>TMP</code>, <code>LANG</code>,
-<code>LC_ALL</code>, <code>LC_CTYPE</code>, <code>TERM</code>,
-<code>TZ</code>, <code>CI</code> (plus <code>BUREAU_ISSUE</code> and
-<code>BUREAU_BRANCH</code> for the hook); an agent also keeps its own
-login and network variables (<code>ANTHROPIC_*</code>,
-<code>CLAUDE_*</code>, <code>HEADROOM_*</code> for Claude,
-<code>OPENAI_*</code>, <code>CODEX_*</code> for Codex, the proxy
-variables, <code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>,
+child source a file before the command runs, and minus
+<code>BUREAU_ENV_FILE</code> and <code>BUREAU_CONFIG</code>, the
+absolute paths to the operator's <code>.env</code> and
+<code>.bureau.json</code> (no secrets; until v3.3.0 the default passed
+them on, and Bureau's own scripts keep reading them).
+<code>"clean"</code>: only <code>PATH</code>, <code>HOME</code>,
+<code>USER</code>, <code>LOGNAME</code>, <code>SHELL</code>,
+<code>TMPDIR</code>, <code>TEMP</code>, <code>TMP</code>,
+<code>LANG</code>, <code>LC_ALL</code>, <code>LC_CTYPE</code>,
+<code>TERM</code>, <code>TZ</code>, <code>CI</code> (plus
+<code>BUREAU_ISSUE</code> and <code>BUREAU_BRANCH</code> for the hook);
+an agent also keeps its own login and network variables
+(<code>ANTHROPIC_*</code>, <code>CLAUDE_*</code>,
+<code>HEADROOM_*</code> for Claude, <code>OPENAI_*</code>,
+<code>CODEX_*</code> for Codex, the proxy variables,
+<code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>,
 <code>NODE_EXTRA_CA_CERTS</code>, <code>XDG_CONFIG_HOME</code>), a test
 command does not. Under <code>clean</code> a test command that needs
 <code>CARGO_HOME</code>, <code>NVM_DIR</code>, <code>VIRTUAL_ENV</code>,
@@ -848,33 +853,33 @@ Telegram calls. Independent of this key: Bureau's own git and
 <code>gh</code> commands, in the shell and from its Python, run without
 the seven (<code>gh</code> and the git commands that talk to a remote
 keep the GitHub token variables; those git commands run without hooks
-unless <code>repo.remote_git_runs_hooks</code> is <code>true</code>),
-the stages and drivers keep the three <code>.env</code> keys as shell
-variables they never export (v3.2), the provider starts without them,
-the runtime wrapper without <code>BASH_ENV</code>, <code>ENV</code> and
-the <code>.env</code> keys the stage reads back, and the stages never
-link a <code>.env*</code> file into a stage worktree — a
-<code>repo.worktree_links</code> entry with a path component starting
-with <code>.env</code> (any case, <code>.envrc</code> too), whose fully
-resolved path in the main checkout passes through such a name
-(<code>alias/key</code> with <code>alias -&gt; .envdir</code>), or which
-is a directory with such a name anywhere below it or that cannot be
-searched completely is skipped with one warning line. Code running as
-the same user can still read files and other processes' environments;
-see <a
+unless <code>repo.remote_git_runs_hooks</code> is <code>true</code> or
+<code>"operator"</code>), the stages and drivers keep the three
+<code>.env</code> keys as shell variables they never export (v3.2), the
+provider starts without them, the runtime wrapper without
+<code>BASH_ENV</code>, <code>ENV</code> and the <code>.env</code> keys
+the stage reads back, and the stages never link a <code>.env*</code>
+file into a stage worktree — a <code>repo.worktree_links</code> entry
+with a path component starting with <code>.env</code> (any case,
+<code>.envrc</code> too), whose fully resolved path in the main checkout
+passes through such a name (<code>alias/key</code> with
+<code>alias -&gt; .envdir</code>), or which is a directory with such a
+name anywhere below it or that cannot be searched completely is skipped
+with one warning line. Code running as the same user can still read
+files and other processes' environments; see <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
 </tr>
 <tr>
 <td><code>repo.remote_git_runs_hooks</code></td>
-<td>bool</td>
+<td>bool or <code>"operator"</code></td>
 <td><code>false</code></td>
 <td>Whether Bureau's own git commands that talk to a remote —
 <code>push</code>, <code>fetch</code>, <code>pull</code>,
 <code>ls-remote</code>, <code>clone</code>, <code>remote</code>,
 <code>submodule</code>, all of which keep the GitHub token variables for
-the credential helper — run the repository's hooks. Since v3.2 they run
-with <code>-c core.hooksPath=/dev/null</code> and, for the hooks the
-configuration defines (git 2.54 and later),
+the credential helper — run the repository's hooks. Since v3.2 the
+allowed commands run with <code>-c core.hooksPath=/dev/null</code> and,
+for the hooks the configuration defines (git 2.54 and later),
 <code>hook.&lt;event&gt;.enabled=false</code> for every hook event and
 <code>hook.&lt;name&gt;.enabled=false</code> for every configured hook
 name (the <code>git</code> function in
@@ -883,21 +888,58 @@ the GitHub tokens, <code>pre-push</code> on a push and
 <code>reference-transaction</code> on every ref update a fetch or a push
 makes. A <code>pre-push</code> hook (lint, tests) therefore no longer
 runs when Bureau pushes; CI runs those checks on the pull request.
-<strong>A repository that uses Git LFS needs <code>true</code></strong>:
-<code>git lfs install</code> uploads the LFS objects in a
-<code>pre-push</code> hook, and without it Bureau's push leaves them off
-the remote; doctor warns when the main checkout uses
-<code>filter=lfs</code> (in its <code>.gitattributes</code>, a
+<strong>A repository that uses Git LFS needs <code>true</code> or
+<code>"operator"</code></strong>: <code>git lfs install</code> uploads
+the LFS objects in a <code>pre-push</code> hook, and without it Bureau's
+push leaves them off the remote; doctor warns when the main checkout
+uses <code>filter=lfs</code> (in its <code>.gitattributes</code>, a
 <code>.gitattributes</code> further down that git lists, or
-<code>.git/info/attributes</code>) and the key is not <code>true</code>.
-<code>true</code> (the JSON value) runs the hooks again, as v3.1 did.
-Absent, <code>null</code>, <code>false</code>, any other value and a
+<code>.git/info/attributes</code>) and the key is neither
+<code>true</code> nor <code>"operator"</code> with an executable
+<code>pre-push</code> hook in the main checkout's hooks directory.
+<code>true</code> (the JSON value) runs the hooks again, as v3.1 did,
+including hooks the branch supplies through a
+<code>core.hooksPath</code> that points into the working tree (husky's
+<code>.husky</code>, a tracked <code>.githooks</code>).
+<code>"operator"</code> (the string) runs only the main checkout's own
+hooks directory, <code>hooks/</code> in the git common dir
+(<code>.git/hooks</code> of the main checkout, also for a stage in a
+linked worktree), which no commit can write: Bureau forces
+<code>core.hooksPath</code> to that directory's absolute path for its
+remote commands, whatever <code>core.hooksPath</code> the configuration
+names, and keeps the hooks the configuration defines
+(<code>hook.&lt;name&gt;.command</code>) switched off by name; those
+operator hooks see the GitHub tokens. Put the hooks Bureau's push needs
+(the <code>pre-push</code> of <code>git lfs install</code>, a secret
+scanner) there; outside a repository <code>"operator"</code> keeps every
+hook off. With <code>"operator"</code> and with the hooks off (every
+value but <code>true</code>) Bureau's own push, fetch and pull do not
+recurse into submodules: <code>push.recurseSubmodules=no</code>,
+<code>fetch.recurseSubmodules=no</code> and
+<code>submodule.recurse=false</code> go on the command line after the
+caller's own options of git, so neither configuration nor a caller's
+<code>-c</code>, <code>--config-env</code> or included file turns
+recursion back on, and a Bureau git call that asks for recursion in its
+arguments (<code>git submodule</code>;
+<code>--recurse-submodules</code>,
+<code>--recurse-submodules-default</code> or <code>--recursive</code>
+under any prefix git accepts, except a value of <code>no</code>), any
+<code>git clone</code> (before git runs), and a call with a git option
+before the subcommand that git itself does not define are refused with
+exit 128, because a child git in a submodule would run hooks that
+submodule's configuration defines; Bureau's push then neither pushes nor
+checks submodule commits (SECURITY.md has the exact rule). Absent,
+<code>null</code>, <code>false</code>, any other value and a
 <code>.bureau.json</code> that cannot be read keep them off; doctor
-warns on a value that is not a JSON boolean. Local commands (commit,
-checkout, merge, reset) run their hooks either way, without the Bureau
-secrets. Hooks only: a credential helper, a filter or an fsmonitor named
-in the git configuration still runs, and <code>gh</code>'s own git calls
-keep their hooks; see <a
+reports the mode as <code>remote_git_hooks</code> (<code>on</code>,
+<code>operator</code> or <code>off</code>) and warns on a value that is
+neither a JSON boolean nor <code>"operator"</code>, and, with Git LFS
+and <code>"operator"</code>, when that hooks directory has no executable
+<code>pre-push</code>. Local commands (commit, checkout, merge, reset)
+run their hooks either way, without the Bureau secrets. Hooks only: a
+credential helper, a filter or an fsmonitor named in the git
+configuration still runs, and <code>gh</code>'s own git calls keep their
+hooks; see <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
 </tr>
 <tr>

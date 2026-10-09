@@ -105,14 +105,18 @@ class AuthError(Exception):
 # tests (Claude with --dangerously-skip-permissions) and loads the branch's own
 # agent settings, so it starts in the environment bureau_untrusted_env in
 # bureau-env.sh gives every other command the branch controls. Keep
-# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP and UNTRUSTED_KEEP equal to the lists
-# there; tests/test_untrusted_env.sh compares the two implementations and
-# tests/provider_untrusted_env_test.py pins these tuples.
+# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, UNTRUSTED_PATHS and UNTRUSTED_KEEP equal
+# to the lists there; tests/test_untrusted_env.sh compares the two
+# implementations and tests/provider_untrusted_env_test.py pins these tuples.
 UNTRUSTED_REMOVE = ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID',
                     'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')
 # A bash started by the agent sources the file BASH_ENV (or, as sh, ENV) names;
 # pointed at .env it would read the keys back in.
 UNTRUSTED_STARTUP = ('BASH_ENV', 'ENV')
+# Where the operator's .env and .bureau.json are: no secret, but the absolute
+# path to the file that holds them. Bureau's own scripts read both; nothing the
+# branch controls needs them (until v3.3.0 the default mode passed them on).
+UNTRUSTED_PATHS = ('BUREAU_ENV_FILE', 'BUREAU_CONFIG')
 # A secret this long counts wherever it appears inside another value; a shorter
 # one only as the whole value (inside matching would take out every variable
 # that happens to contain two or three common characters).
@@ -120,7 +124,8 @@ COPY_MIN = 6
 # git subcommands that talk to a remote keep the GitHub token variables their
 # credential helper may read (bureau-env.sh git()); gh keeps them too.
 REMOTE_GIT = ('push', 'fetch', 'pull', 'ls-remote', 'clone', 'remote', 'submodule')
-GIT_VALUE_OPTIONS = ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env')
+GIT_VALUE_OPTIONS = ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env',
+                     '--attr-source', '--shallow-file')
 UNTRUSTED_KEEP = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
                   'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI')
 # Under "clean" the agent CLI also keeps its own login and network settings;
@@ -186,8 +191,8 @@ def untrusted_env_mode(config):
 
 def untrusted_env(environ, mode, runner=None):
     # The environment for code the branch controls. "default": everything but
-    # the listed secrets, BASH_ENV and ENV, and any variable that carries one
-    # of their values (_carries). "clean": only UNTRUSTED_KEEP, plus, for an
+    # the listed secrets, BASH_ENV and ENV, BUREAU_ENV_FILE and BUREAU_CONFIG,
+    # and any variable that carries one of the secrets' values (_carries). "clean": only UNTRUSTED_KEEP, plus, for an
     # agent, its own login and network variables, again without any value that
     # carries a secret. The caller's environment is never changed.
     carries = _carries(environ, UNTRUSTED_REMOVE)
@@ -197,7 +202,7 @@ def untrusted_env(environ, mode, runner=None):
             return name in UNTRUSTED_KEEP or (runner is not None and (name in AGENT_KEEP or name.startswith(prefixes)))
     elif mode == 'default':
         def keep(name):
-            return name not in UNTRUSTED_REMOVE and name not in UNTRUSTED_STARTUP
+            return name not in UNTRUSTED_REMOVE and name not in UNTRUSTED_STARTUP and name not in UNTRUSTED_PATHS
     else:
         raise UntrustedEnvError('unknown untrusted environment mode')
     return {name: value for name, value in environ.items() if keep(name) and not carries(value)}

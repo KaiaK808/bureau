@@ -279,10 +279,13 @@ bureau_secret_copy() {
 # happens to contain them. BASH_ENV and ENV go as well: a bash child sources
 # the file BASH_ENV names at startup (a relative name from its working
 # directory, which can be the branch's worktree), and pointed at .env it would
-# read the keys back in. Keep the lists and the 6 here equal to
-# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, COPY_MIN and UNTRUSTED_KEEP in
-# bureau-provider.py; tests/test_untrusted_env.sh compares the implementations
-# and pins both.
+# read the keys back in. Code the branch controls also loses BUREAU_ENV_FILE
+# and BUREAU_CONFIG (_BUREAU_UNTRUSTED_PATHS): no secret, but the absolute path
+# to the operator's .env and .bureau.json; Bureau's own scripts keep reading
+# them (until v3.3.0 the default mode passed them on). Keep the lists and the 6
+# here equal to UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, UNTRUSTED_PATHS, COPY_MIN
+# and UNTRUSTED_KEEP in bureau-provider.py; tests/test_untrusted_env.sh
+# compares the implementations and pins both.
 # Every function below leaves the calling shell alone (the stage keeps its keys
 # for its own Linear, GitHub and Telegram calls), calls env by its absolute path
 # /usr/bin/env (a PATH entry such as node_modules/.bin cannot stand in for it),
@@ -299,8 +302,9 @@ bureau_secret_copy() {
 #   their bash child with --noprofile --norc.
 #   repo.untrusted_env in .bureau.json selects it:
 #     absent, null or "default" — the calling environment minus the seven,
-#       their copies, BASH_ENV and ENV. Everything else stays, so test commands
-#       keep their toolchain variables (cargo, nvm, pyenv, a virtualenv).
+#       their copies, BASH_ENV, ENV, BUREAU_ENV_FILE and BUREAU_CONFIG.
+#       Everything else stays, so test commands keep their toolchain
+#       variables (cargo, nvm, pyenv, a virtualenv).
 #     "clean" — `env -i` with only PATH HOME USER LOGNAME SHELL TMPDIR TEMP
 #       TMP LANG LC_ALL LC_CTYPE TERM TZ CI (those that are exported and carry
 #       no secret's value), plus the NAME=VALUE pairs given before the command
@@ -341,9 +345,17 @@ bureau_secret_copy() {
 #   hook during them — pre-push on a push, reference-transaction on every ref
 #   update a fetch or push makes, the hooks of a pull's merge — would see the
 #   GitHub tokens. repo.remote_git_runs_hooks: true in .bureau.json (the JSON
-#   value true, nothing else) runs them with hooks again, as v3.1 did. The
-#   setting covers hooks only: a filter, an fsmonitor or a credential helper
-#   the configuration names still runs (SECURITY.md).
+#   value true) runs them with hooks again, as v3.1 did, a core.hooksPath into
+#   the branch's tree included; the string "operator" runs only the hooks in
+#   the git common dir's hooks/ (core.hooksPath forced to its absolute path),
+#   which no commit can write. Unless the setting is true, those commands do
+#   not recurse into submodules (the recursion keys are switched off after
+#   the caller's own options of git, a call whose arguments ask for recursion
+#   is refused with 128): a child git there would run hooks the submodule's
+#   own configuration defines. For the same reason clone is refused, and so is
+#   a call with a git option before the subcommand that git does not define. The setting covers hooks
+#   only: a filter, an fsmonitor or a credential helper the configuration
+#   names still runs (SECURITY.md).
 #
 # bureau_exec_runtime <command> [argument ...]
 #   Replaces the shell with the runtime wrapper (python3 bureau-runtime.py
@@ -361,6 +373,8 @@ bureau_secret_copy() {
 # _bureau_env_build <mode> <names> <startup> — sets the array _BUREAU_ENV_ARGV
 # to the options /usr/bin/env needs: mode default|clean, names "seven",
 # "dotenv" or a list of names, startup 1 to remove BASH_ENV and ENV. Silent.
+_BUREAU_UNTRUSTED_PATHS='BUREAU_ENV_FILE BUREAU_CONFIG'
+
 _bureau_env_build() {
   local IFS=$' \t\n'
   local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_name _beb_value _beb_exported
@@ -444,7 +458,7 @@ bureau_untrusted_env() {
     (*x*) set +x; local _bue_trace=1 ;;
     (*) local _bue_trace=0 ;;
   esac
-  local _bue_check=0 _bue_mode
+  local _bue_check=0 _bue_mode _bue_name
   local _bue_assign_re='^[A-Za-z_][A-Za-z0-9_]*='
   local -a _bue_assign
   _bue_assign=()
@@ -472,6 +486,10 @@ bureau_untrusted_env() {
   fi
 
   _bureau_env_build "$_bue_mode" seven 1
+  if [ "$_bue_mode" = default ]; then
+    local IFS=$' \t\n'
+    for _bue_name in $_BUREAU_UNTRUSTED_PATHS; do _BUREAU_ENV_ARGV+=(-u "$_bue_name"); done
+  fi
   if [ "$_bue_trace" = 1 ]; then set -x; fi
   /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bue_assign[@]+"${_bue_assign[@]}"} "$@"
 }
@@ -497,30 +515,63 @@ bureau_without_secrets() {
   /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bws_assign[@]+"${_bws_assign[@]}"} "$@"
 }
 
-# _bureau_remote_git_runs_hooks — 0 when repo.remote_git_runs_hooks is the JSON
-# value true, 1 otherwise: absent, null, false, any other value, no
-# BUREAU_CONFIG, or a .bureau.json jq cannot read (the hooks stay off). Read on
-# every call, like repo.untrusted_env; bureau-doctor.py warns on a value that
-# is not a JSON boolean.
-_bureau_remote_git_runs_hooks() {
-  local _brh_filter='if (.repo | type) == "object" and .repo.remote_git_runs_hooks == true then "on" else "off" end' _brh_value
+# _bureau_remote_git_hooks_mode — prints how Bureau's remote git commands treat
+# hooks, from repo.remote_git_runs_hooks: "on" for the JSON value true (every
+# configured hook runs, v3.1), "operator" for the string "operator" (only the
+# hooks directory of the git common dir, which no commit can write), "off" for
+# everything else: absent, null, false, any other value, no BUREAU_CONFIG, or a
+# .bureau.json jq cannot read. Read on every call, like repo.untrusted_env;
+# bureau-doctor.py reports the mode and warns on any other value.
+_bureau_remote_git_hooks_mode() {
+  local _brh_filter='if (.repo | type) == "object" then (.repo.remote_git_runs_hooks | if . == true then "on" elif . == "operator" then "operator" else "off" end) else "off" end' _brh_value=off
   if declare -F bureau_get >/dev/null 2>&1; then
-    _brh_value=$(bureau_get "$_brh_filter" 2>/dev/null) || return 1
+    _brh_value=$(bureau_get "$_brh_filter" 2>/dev/null) || _brh_value=off
   elif [ -n "${BUREAU_CONFIG:-}" ]; then
-    _brh_value=$(jq -r "$_brh_filter" "$BUREAU_CONFIG" 2>/dev/null) || return 1
-  else
-    return 1
+    _brh_value=$(jq -r "$_brh_filter" "$BUREAU_CONFIG" 2>/dev/null) || _brh_value=off
   fi
-  [ "$_brh_value" = on ]
+  case "$_brh_value" in
+    on|operator) printf '%s\n' "$_brh_value" ;;
+    *) printf 'off\n' ;;
+  esac
+}
+
+# _bureau_git_operator_hooks_dir [git's own options of the command] — prints the
+# absolute path of hooks/ in the git common dir of the repository the command
+# runs in (with its own -C and --git-dir), the main checkout's hooks directory
+# also from a linked worktree; returns 1 when git names no common dir (outside
+# a repository). Uses the _BUREAU_ENV_ARGV that _bureau_env_build set. git
+# 2.31 and later answer --path-format=absolute; an older git prints the option
+# back, and the common dir comes from the git dir's commondir file instead.
+_bureau_git_operator_hooks_dir() {
+  local _boh_common _boh_git _boh_rel
+  _boh_common=$(/usr/bin/env "${_BUREAU_ENV_ARGV[@]}" git "$@" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || _boh_common=""
+  case "$_boh_common" in
+    /*) ;;
+    *)
+      _boh_git=$(/usr/bin/env "${_BUREAU_ENV_ARGV[@]}" git "$@" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+      case "$_boh_git" in /*) ;; *) return 1 ;; esac
+      _boh_common="$_boh_git"
+      if [ -f "$_boh_git/commondir" ]; then
+        IFS= read -r _boh_rel < "$_boh_git/commondir" || [ -n "$_boh_rel" ] || return 1
+        case "$_boh_rel" in /*) _boh_common="$_boh_rel" ;; *) _boh_common="$_boh_git/$_boh_rel" ;; esac
+      fi ;;
+  esac
+  _boh_common=$(cd "$_boh_common" 2>/dev/null && pwd -P) || return 1
+  printf '%s/hooks\n' "$_boh_common"
 }
 
 # The hook events git knows (hook-list.h of git 2.55, generated from githooks(5)).
 _BUREAU_GIT_HOOK_EVENTS='applypatch-msg commit-msg fsmonitor-watchman p4-changelist p4-post-changelist p4-pre-submit p4-prepare-changelist post-applypatch post-checkout post-commit post-index-change post-merge post-receive post-rewrite post-update pre-applypatch pre-auto-gc pre-commit pre-merge-commit pre-push pre-rebase pre-receive prepare-commit-msg proc-receive push-to-checkout reference-transaction sendemail-validate update'
 
-# _bureau_git_hooks_off [git's own options of the command] — sets the array
-# _BUREAU_GIT_HOOKS_OFF to the options that run a git command without any hook
-# (v3.2), and _BUREAU_GIT_HOOKS_ENV to the variables they need; uses the
-# _BUREAU_ENV_ARGV that _bureau_env_build set for the command:
+# _bureau_git_hooks_off [--operator <hooks dir>] [git's own options of the
+# command] — sets the array _BUREAU_GIT_HOOKS_OFF to the options that run a git
+# command without any hook (v3.2), and _BUREAU_GIT_HOOKS_ENV to the variables
+# they need; uses the _BUREAU_ENV_ARGV that _bureau_env_build set for the
+# command. With --operator, core.hooksPath names <hooks dir> instead of
+# /dev/null and the event switches are left out (git 2.55 reads
+# hook.<event>.enabled=false as "no hook for this event", the hooks
+# directory's included); the per-name switches stay, so only the hooks in
+# <hooks dir> run:
 #   - -c core.hooksPath=/dev/null: no hook from a hooks directory;
 #   - -c hook.<event>.enabled=false for every event git knows: no hook the
 #     configuration defines (hook.<name>.command and hook.<name>.event, git 2.54
@@ -539,12 +590,15 @@ _BUREAU_GIT_HOOK_EVENTS='applypatch-msg commit-msg fsmonitor-watchman p4-changel
 # git before 2.54 runs no hook from the configuration and ignores the hook.*
 # options.
 _bureau_git_hooks_off() {
-  local _bgo_event _bgo_keys _bgo_key _bgo_name _bgo_seen=$'\n'
-  _BUREAU_GIT_HOOKS_OFF=(-c core.hooksPath=/dev/null)
+  local _bgo_event _bgo_keys _bgo_key _bgo_name _bgo_seen=$'\n' _bgo_dir=""
+  if [ "${1:-}" = --operator ]; then _bgo_dir="$2"; shift 2; fi
+  _BUREAU_GIT_HOOKS_OFF=(-c "core.hooksPath=${_bgo_dir:-/dev/null}")
   _BUREAU_GIT_HOOKS_ENV=()
-  for _bgo_event in $_BUREAU_GIT_HOOK_EVENTS; do
-    _BUREAU_GIT_HOOKS_OFF+=(-c "hook.$_bgo_event.enabled=false")
-  done
+  if [ -z "$_bgo_dir" ]; then
+    for _bgo_event in $_BUREAU_GIT_HOOK_EVENTS; do
+      _BUREAU_GIT_HOOKS_OFF+=(-c "hook.$_bgo_event.enabled=false")
+    done
+  fi
   # Key names only (a configuration key holds no newline); no process substitution, so the file
   # still parses in a bash that runs in POSIX mode.
   _bgo_keys=$(/usr/bin/env -u GIT_CONFIG "${_BUREAU_ENV_ARGV[@]}" git "$@" config --name-only -z --get-regexp '^hook\..*\.(command|event)$' 2>/dev/null | tr '\000' '\n') || true
@@ -562,22 +616,62 @@ _bureau_git_hooks_off() {
   return 0
 }
 
+# _bureau_git_asks_recursion <subcommand> [its arguments] — 0 when the call
+# asks git to recurse into submodules itself: `submodule`, or an argument that
+# names --recurse-submodules (also --recurse-submodules-default) or
+# --recursive. git accepts every unique prefix of a long option
+# (--recurse-submodule=on-demand, --recurse-sub=yes, --recu), so any argument
+# from --rec on that is a prefix of one of those names counts, with or
+# without a value, except a value of no; --no-recurse-submodules is allowed.
+# Every argument is checked, wherever it stands: after another option (whose
+# value it may or may not be: git takes or leaves some values, accepts
+# abbreviated and bundled options, and gains options with every release, so
+# no table of them says reliably which word git reads as an option) and after
+# a `--` (which may itself be an option's value). A remote, refspec, pattern
+# or option value spelled like the option is refused with it: the safe
+# direction, and no Bureau script passes one. (clone is refused before this
+# check: see git().)
+_bureau_git_asks_recursion() {
+  local _bar_sub="$1" _bar_arg _bar_name _bar_long
+  shift
+  [ "$_bar_sub" = submodule ] && return 0
+  for _bar_arg in "$@"; do
+    case "$_bar_arg" in --rec*) ;; *) continue ;; esac
+    _bar_name="${_bar_arg%%=*}"
+    # a prefix of one of the names: removing it from the name changes the name
+    for _bar_long in --recurse-submodules-default --recursive ""; do
+      [ -n "$_bar_long" ] || continue 2
+      [ "${_bar_long#"$_bar_name"}" = "$_bar_long" ] || break
+    done
+    if [ "$_bar_arg" = "$_bar_name=no" ]; then continue; fi
+    return 0
+  done
+  return 1
+}
+
 git() {
   case $- in
     (*x*) set +x; local _bg_trace=1 ;;
     (*) local _bg_trace=0 ;;
   esac
-  local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven _bg_lead=0
-  local -a _bg_hooks _bg_hooks_env
-  _bg_hooks=(); _bg_hooks_env=()
+  local _bg_arg _bg_sub="" _bg_skip=0 _bg_names=seven _bg_lead=0 _bg_mode _bg_dir _bg_unknown=""
+  local -a _bg_hooks _bg_hooks_env _bg_operator
+  _bg_hooks=(); _bg_hooks_env=(); _bg_operator=()
   # The subcommand is the first word after git's own options; -C, -c,
-  # --git-dir, --work-tree, --namespace, --super-prefix and --config-env
-  # take the next word as their value.
+  # --git-dir, --work-tree, --namespace, --super-prefix, --config-env,
+  # --attr-source and --shallow-file take the next word as their value (the
+  # options of git.c's handle_options, git 2.55). Any other option git does
+  # not list there is remembered: where the subcommand stands after it is a
+  # guess, so the restricted modes refuse the call below.
   for _bg_arg in "$@"; do
     if [ "$_bg_skip" = 1 ]; then _bg_skip=0; _bg_lead=$((_bg_lead + 1)); continue; fi
     case "$_bg_arg" in
-      -C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env) _bg_skip=1 ;;
-      -*) ;;
+      -C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--attr-source|--shallow-file) _bg_skip=1 ;;
+      -p|--paginate|-P|--no-pager|--no-replace-objects|--no-lazy-fetch|--no-optional-locks|--no-advice|--bare) ;;
+      --literal-pathspecs|--no-literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--icase-pathspecs) ;;
+      --exec-path|--exec-path=*|--html-path|--man-path|--info-path|-v|--version|-h|--help|--list-cmds=*) ;;
+      --git-dir=*|--work-tree=*|--namespace=*|--super-prefix=*|--config-env=*|--attr-source=*|--shallow-file=*) ;;
+      -*) _bg_unknown="${_bg_unknown:-$_bg_arg}" ;;
       *) _bg_sub="$_bg_arg"; break ;;
     esac
     _bg_lead=$((_bg_lead + 1))
@@ -586,15 +680,61 @@ git() {
     push|fetch|pull|ls-remote|clone|remote|submodule) _bg_names=dotenv ;;
   esac
   _bureau_env_build default "$_bg_names" 1
-  if [ "$_bg_names" = dotenv ] && ! _bureau_remote_git_runs_hooks; then
-    # Placed before the caller's own options; git passes them on to the git
-    # processes it starts itself (a pull's fetch and merge, submodules).
-    _bureau_git_hooks_off "${@:1:$_bg_lead}"
+  _bg_mode=off
+  if [ "$_bg_names" = dotenv ]; then _bg_mode=$(_bureau_remote_git_hooks_mode); fi
+  if [ -n "$_bg_unknown" ] && [ "$(_bureau_remote_git_hooks_mode)" != on ]; then
+    echo "bureau git: refused: unknown git option '$_bg_unknown' before the subcommand; Bureau cannot tell which subcommand runs, so it cannot apply its hook and submodule rules (repo.remote_git_runs_hooks is not true)" >&2
+    if [ "$_bg_trace" = 1 ]; then set -x; fi
+    return 128
+  fi
+  if [ "$_bg_names" = dotenv ] && [ "$_bg_mode" != on ]; then
+    # With the hooks restricted ("off", "operator") Bureau's remote git never
+    # recurses into submodules. A child git in a submodule reads that
+    # submodule's own configuration: the hook names defined there (also from a
+    # file it includes) are not among those listed below, git 2.54 has no event
+    # switch and "operator" sets none, so such a hook would run with the GitHub
+    # tokens; Bureau does not rely on git 2.55's event switches for hooks whose
+    # names it cannot list. The recursion configuration can
+    # ask for is switched off below; a call that asks for it in its own
+    # arguments is refused (_bureau_git_asks_recursion): no Bureau script makes
+    # one. clone is refused outright: the configuration of the repository it
+    # creates (from a template, or what the clone brings along) can define
+    # hooks whose names cannot be listed before the clone exists; no Bureau
+    # script clones.
+    if [ "$_bg_sub" = clone ]; then
+      echo "bureau git: refused 'git clone': Bureau's remote git does not clone unless repo.remote_git_runs_hooks is true (hooks the new repository's configuration defines cannot be switched off beforehand)" >&2
+      if [ "$_bg_trace" = 1 ]; then set -x; fi
+      return 128
+    fi
+    if _bureau_git_asks_recursion "$_bg_sub" "${@:$((_bg_lead + 2))}"; then
+      echo "bureau git: refused 'git $_bg_sub' with submodule recursion: Bureau's remote git does not recurse into submodules unless repo.remote_git_runs_hooks is true (a hook a submodule's configuration defines would see the GitHub tokens)" >&2
+      if [ "$_bg_trace" = 1 ]; then set -x; fi
+      return 128
+    fi
+    # "operator": the common dir's hooks/ only. A command outside a repository
+    # has no common dir: hooks off.
+    if [ "$_bg_mode" = operator ] \
+       && _bg_dir=$(_bureau_git_operator_hooks_dir "${@:1:$_bg_lead}"); then
+      _bg_operator=(--operator "$_bg_dir")
+    fi
+    # Placed AFTER the caller's own options of git, right before the
+    # subcommand: for a key given twice the last command-line value wins, so
+    # no caller -c, --config-env or -c include.path=<file> can turn a hook or
+    # recursion back on. git passes them on to the git processes it starts
+    # itself (a pull's fetch and merge).
+    _bureau_git_hooks_off ${_bg_operator[@]+"${_bg_operator[@]}"} "${@:1:$_bg_lead}"
     _bg_hooks=("${_BUREAU_GIT_HOOKS_OFF[@]}")
+    # No recursion that configuration asks for (push.recurseSubmodules,
+    # fetch.recurseSubmodules, whose default on-demand fetches populated
+    # submodules, submodule.recurse): a command-line -c wins over every
+    # configuration file, include and GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS
+    # entry.
+    _bg_hooks+=(-c push.recurseSubmodules=no -c fetch.recurseSubmodules=no -c submodule.recurse=false)
     _bg_hooks_env=(${_BUREAU_GIT_HOOKS_ENV[@]+"${_BUREAU_GIT_HOOKS_ENV[@]}"})
   fi
   if [ "$_bg_trace" = 1 ]; then set -x; fi
-  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bg_hooks_env[@]+"${_bg_hooks_env[@]}"} git ${_bg_hooks[@]+"${_bg_hooks[@]}"} "$@"
+  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bg_hooks_env[@]+"${_bg_hooks_env[@]}"} \
+    git "${@:1:$_bg_lead}" ${_bg_hooks[@]+"${_bg_hooks[@]}"} "${@:$((_bg_lead + 1))}"
 }
 
 # _bureau_drop_secrets — unsets the seven, their copies, BASH_ENV and ENV in the

@@ -38,6 +38,9 @@ SECRETS = {
 ALIASES = {'API_KEY': SECRETS['LINEAR_API_KEY'], 'CARGO_ALIAS': SECRETS['GH_TOKEN'],
            'REMOTE_URL': 'https://x-access-token:' + SECRETS['GITHUB_TOKEN'] + '@github.com/owner/repo.git'}
 OPERATOR = {'OPERATOR_TOOL_VAR': 'keep_me_operator_var_0008'}
+# No secrets, but the absolute paths to the operator's .env and .bureau.json: Bureau's own
+# scripts read them, the agent gets neither.
+PATHS = {'BUREAU_ENV_FILE': '/operator/checkout/.env', 'BUREAU_CONFIG': '/operator/checkout/.bureau.json'}
 AGENT = {'ANTHROPIC_API_KEY': 'sk-ant-PROBE-agent-login', 'CLAUDE_CODE_OAUTH_TOKEN': 'PROBE_claude_oauth',
          'OPENAI_API_KEY': 'sk-openai-PROBE-agent-login', 'CODEX_HOME': '/tmp/codex-home-probe',
          'HTTPS_PROXY': 'http://proxy.invalid:3128'}
@@ -70,7 +73,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         base = {k: v for k, v in os.environ.items() if not k.startswith(('BUREAU_RUNNER_', 'BUREAU_MODEL_', 'BUREAU_CODEX_MODEL_', 'BUREAU_STAGE_TIMEOUT'))}
         for name in list(base):
             if name in SECRETS or name in AGENT or name.endswith('_PROXY') or name.endswith('_proxy'): base.pop(name)
-        self.env = {**base, **SECRETS, **ALIASES, **OPERATOR, **AGENT, 'BASH_ENV': '/dev/null', 'ENV': '/dev/null',
+        self.env = {**base, **SECRETS, **ALIASES, **OPERATOR, **AGENT, **PATHS, 'BASH_ENV': '/dev/null', 'ENV': '/dev/null',
                     'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
                     'BUREAU_PROVIDER_LOG_DIR': str(self.root / 'evidence')}
 
@@ -106,6 +109,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                         seen = self.seen(runner, phase)
                         self.assert_no_secret(seen, runner + ' ' + phase)
                         self.assertFalse('BASH_ENV' in seen or 'ENV' in seen, runner + ' ' + phase + ' got BASH_ENV or ENV')
+                        for name in PATHS: self.assertFalse(name in seen, runner + ' ' + phase + ' got ' + name)
                         # Everything else stays: the operator's tool variables and the agent login.
                         for name, value in {**OPERATOR, **AGENT}.items():
                             self.assertEqual(seen.get(name), value, runner + ' ' + phase + ' lost ' + name)
@@ -125,6 +129,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                     self.assertEqual(seen.get('HTTPS_PROXY'), AGENT['HTTPS_PROXY'])
                     self.assertFalse('OPERATOR_TOOL_VAR' in seen, 'clean kept an operator variable')
                     self.assertFalse('BUREAU_PROVIDER_LOG_DIR' in seen, 'clean kept a Bureau variable')
+                    for name in PATHS: self.assertFalse(name in seen, 'clean kept ' + name)
                     allowed = set(p.UNTRUSTED_KEEP) | set(p.AGENT_KEEP)
                     stray = [n for n in seen if n not in allowed and not n.startswith(p.AGENT_KEEP_PREFIXES[runner])
                              and not n.startswith('__CF') and n not in ('LC_CTYPE',)]
@@ -182,6 +187,9 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                 for name in ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'CARGO_ALIAS', 'REMOTE_URL'):
                     self.assertEqual(remote.get(name), {**SECRETS, **ALIASES}[name], name + ' was taken from ' + command[0])
         self.assertEqual(p.git_subcommand(['-C', 'push', 'status']), 'status')
+        # git 2.55's other options with a separate value: the value is no subcommand.
+        self.assertEqual(p.git_subcommand(['--attr-source', 'HEAD', 'push', 'origin']), 'push')
+        self.assertEqual(p.git_subcommand(['--shallow-file', 'x', 'fetch']), 'fetch')
 
     def test_lists_are_pinned(self):
         # Literal sets: widening the clean list (an SSH agent, a cloud key) or shortening the
@@ -189,6 +197,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         self.assertEqual(p.UNTRUSTED_REMOVE, ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID',
                                               'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'))
         self.assertEqual(p.UNTRUSTED_STARTUP, ('BASH_ENV', 'ENV'))
+        self.assertEqual(p.UNTRUSTED_PATHS, ('BUREAU_ENV_FILE', 'BUREAU_CONFIG'))
         self.assertEqual(p.UNTRUSTED_KEEP, ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
                                             'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI'))
         self.assertEqual(p.AGENT_KEEP_PREFIXES, {'claude': ('ANTHROPIC_', 'CLAUDE_', 'HEADROOM_'), 'codex': ('OPENAI_', 'CODEX_')})
@@ -206,6 +215,30 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                 reduced = p.untrusted_env(environ, mode, runner)
                 for name in p.UNTRUSTED_REMOVE: self.assertFalse(name in reduced, name + ' was kept')
         self.assertEqual(p.untrusted_env(environ, 'default'), {'PATH': '/bin', 'OTHER': 'v0-and-more'})
+
+    def test_the_operator_paths_go_in_both_modes_and_stay_for_bureau_processes(self):
+        environ = {**PATHS, **OPERATOR, 'PATH': '/bin'}
+        for mode, runner in (('default', None), ('default', 'claude'), ('default', 'codex'), ('clean', 'claude'), ('clean', None)):
+            with self.subTest(mode=mode, runner=runner):
+                reduced = p.untrusted_env(environ, mode, runner)
+                for name in PATHS: self.assertFalse(name in reduced, name + ' was kept')
+        self.assertEqual(p.untrusted_env(environ, 'default'), {**OPERATOR, 'PATH': '/bin'})
+        # Bureau's own git and gh processes are not code the branch controls in this sense: they keep
+        # them, as before (process_env is unchanged).
+        for command in (['git', 'status'], ['git', 'push'], ['gh', 'pr', 'view']):
+            self.assertEqual({n: v for n, v in p.process_env(command, environ).items() if n in PATHS}, PATHS)
+
+    def test_control_a_provider_that_keeps_the_paths_fails_the_path_assertions(self):
+        # The same assertion against a copy of the adapter whose default mode keeps the two paths
+        # (the v3.3.0 behaviour): it must see them, so the assertions above are not vacuous.
+        source = SCRIPT.read_text()
+        kept = source.replace(' and name not in UNTRUSTED_PATHS\n', '\n')
+        self.assertNotEqual(kept, source, 'the control could not remove the UNTRUSTED_PATHS check')
+        copy = self.root / 'bureau-provider-keep.py'; copy.write_text(kept)
+        control_spec = importlib.util.spec_from_file_location('provider_keep', copy)
+        control = importlib.util.module_from_spec(control_spec); control_spec.loader.exec_module(control)
+        reduced = control.untrusted_env({**PATHS, 'PATH': '/bin'}, 'default', 'claude')
+        self.assertEqual({n: v for n, v in reduced.items() if n in PATHS}, PATHS)
 
     def test_control_an_inherited_environment_shows_every_secret(self):
         # The v3.0.2 adapter started the agent with the inherited environment. Same fakes,

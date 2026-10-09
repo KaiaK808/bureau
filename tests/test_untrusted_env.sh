@@ -12,7 +12,8 @@
 #
 #   1  bureau_untrusted_env itself (templates/scripts/bureau-env.sh): default, clean,
 #      invalid values, no command, xtrace, exit status, and the same result as
-#      bureau-provider.py's untrusted_env for the same environment
+#      bureau-provider.py's untrusted_env for the same environment, without BUREAU_ENV_FILE
+#      and BUREAU_CONFIG; a copy of either that keeps them fails (negative control)
 #   2  review build check (code-review-pipeline.sh): default, clean, invalid → 24 before
 #      the command and before any verdict, negative control
 #   3  QA: all three test runs (initial, retry, final), invalid → 24, negative control
@@ -43,8 +44,8 @@ run_helper() {
   env LINEAR_API_KEY="$PR1_LINEAR" TELEGRAM_BOT_TOKEN="$PR1_TG_TOKEN" TELEGRAM_ALERT_CHAT_ID="$PR1_TG_CHAT" \
     GH_TOKEN="$PR1_GH" GITHUB_TOKEN="$PR1_GITHUB" GH_ENTERPRISE_TOKEN="$PR1_GHE" GITHUB_ENTERPRISE_TOKEN="$PR1_GITHUBE" \
     API_KEY="$PR1_LINEAR" CARGO_ALIAS="$PR1_GH" REMOTE_URL="https://x-access-token:$PR1_GITHUB@github.com/owner/repo.git" \
-    OPERATOR_TOOL_VAR="$PR1_OPERATOR" BUREAU_CONFIG="$1" \
-    /bin/bash -c 'set -euo pipefail; source "$1"; '"$2" _ "$ENV_SH"
+    OPERATOR_TOOL_VAR="$PR1_OPERATOR" BUREAU_CONFIG="$1" BUREAU_ENV_FILE="$TMPD/operator.env" \
+    /bin/bash -c 'set -euo pipefail; source "$1"; '"$2" _ "${ENV_SH_UNDER_TEST:-$ENV_SH}"
 }
 H="$TMPD/helper.env"
 rm -f "$H"
@@ -141,16 +142,20 @@ case "$trace" in *'/usr/bin/env -u LINEAR_API_KEY'*) ;; *) fail "1 xtrace: the c
 pr1_pass "1 under set -x the trace names the removed variables, never a value"
 
 # Parity: the shell helper and bureau-provider.py reduce the same environment alike.
-for mode in default clean; do
-  cfg="$DEFAULT_CFG"; [ "$mode" = clean ] && cfg="$CLEAN_CFG"
+# parity <bureau-env.sh> <bureau-provider.py> <mode> — 0 when both give the same environment;
+# the differences go to stderr. The shell's result stays in $TMPD/shell.<mode>.
+parity() {
+  local cfg="$DEFAULT_CFG" mode="$3"
+  [ "$mode" = clean ] && cfg="$CLEAN_CFG"
   env -i PATH="$PATH" HOME="$HOME" LANG=C CI=12345 TZ="UTC$PR1_GH" USER=u \
     LINEAR_API_KEY="$PR1_LINEAR" GH_TOKEN="$PR1_GH" TELEGRAM_ALERT_CHAT_ID=12345 SHORT_COPY=12345 SHORT_INSIDE=x12345 \
     TELEGRAM_BOT_TOKEN=abc123 HEADER6="Authorization: abc123" \
     BASH_ENV=/dev/null ENV=/dev/null SSH_AUTH_SOCK=/tmp/agent.sock \
     API_KEY="$PR1_LINEAR" CARGO_ALIAS="$PR1_GH" OPERATOR_TOOL_VAR="$PR1_OPERATOR" BUREAU_CONFIG="$cfg" \
+    BUREAU_ENV_FILE="$TMPD/operator.env" \
     REMOTE_URL="https://x-access-token:$PR1_GH@github.com/owner/repo.git" LANGUAGE="x${PR1_LINEAR}y" \
-    /bin/bash -c 'source "$1"; bureau_untrusted_env env -0 > "$2"; env -0 > "$3"' _ "$ENV_SH" "$TMPD/shell.$mode" "$TMPD/input.$mode"
-  python3 - "$PROVIDER" "$mode" "$TMPD/shell.$mode" "$TMPD/input.$mode" <<'PY' || fail "1 parity $mode: shell and provider differ"
+    /bin/bash -c 'source "$1"; bureau_untrusted_env env -0 > "$2"; env -0 > "$3"' _ "$1" "$TMPD/shell.$mode" "$TMPD/input.$mode"
+  python3 - "$2" "$mode" "$TMPD/shell.$mode" "$TMPD/input.$mode" <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location('provider', sys.argv[1]); p = importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
 def read(path):
@@ -165,8 +170,40 @@ if shell != python:
     print('python only:', sorted(set(python.items()) - set(shell.items())), file=sys.stderr)
     sys.exit(1)
 PY
+}
+for mode in default clean; do
+  parity "$ENV_SH" "$PROVIDER" "$mode" || fail "1 parity $mode: shell and provider differ"
+  for name in BUREAU_ENV_FILE BUREAU_CONFIG; do
+    if grep -q "^$name=" <<< "$(tr '\0' '\n' < "$TMPD/shell.$mode")"; then fail "1 parity $mode: $name reached the command"; fi
+  done
 done
-pr1_pass "1 the shell helper and bureau-provider.py give the same environment (default and clean)"
+# The two lists name the same two variables, in the same order.
+shell_paths=$(/bin/bash -c 'source "$1"; printf "%s" "$_BUREAU_UNTRUSTED_PATHS"' _ "$ENV_SH")
+python_paths=$(python3 -c 'import importlib.util, sys
+spec = importlib.util.spec_from_file_location("provider", sys.argv[1]); p = importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
+print(" ".join(p.UNTRUSTED_PATHS))' "$PROVIDER")
+[ "$shell_paths" = "BUREAU_ENV_FILE BUREAU_CONFIG" ] || fail "1 paths: the shell list is [$shell_paths]"
+[ "$shell_paths" = "$python_paths" ] || fail "1 paths: shell [$shell_paths] and provider [$python_paths] differ"
+pr1_pass "1 the shell helper and bureau-provider.py give the same environment (default and clean), without BUREAU_ENV_FILE and BUREAU_CONFIG"
+
+# Negative controls: a copy of either side that keeps BUREAU_ENV_FILE and BUREAU_CONFIG in the
+# default mode fails the parity check against the other side, and the shell copy's command
+# fails pr1_check_env; the two copies agree with each other, so only the two names differ.
+mkdir -p "$TMPD/keep"
+sed '/for _bue_name in \$_BUREAU_UNTRUSTED_PATHS/d' "$ENV_SH" > "$TMPD/keep/bureau-env.sh"
+sed 's/ and name not in UNTRUSTED_PATHS$//' "$PROVIDER" > "$TMPD/keep/bureau-provider.py"
+if cmp -s "$ENV_SH" "$TMPD/keep/bureau-env.sh"; then fail "1 control: the shell copy is unchanged (the sed found nothing)"; fi
+if cmp -s "$PROVIDER" "$TMPD/keep/bureau-provider.py"; then fail "1 control: the provider copy is unchanged (the sed found nothing)"; fi
+if parity "$TMPD/keep/bureau-env.sh" "$PROVIDER" default 2>/dev/null; then fail "1 control: a shell copy that keeps the paths passed the parity check"; fi
+if parity "$ENV_SH" "$TMPD/keep/bureau-provider.py" default 2>/dev/null; then fail "1 control: a provider copy that keeps the paths passed the parity check"; fi
+parity "$TMPD/keep/bureau-env.sh" "$TMPD/keep/bureau-provider.py" default || fail "1 control: the two copies differ in more than the paths"
+rm -f "$H"
+ENV_SH_UNDER_TEST="$TMPD/keep/bureau-env.sh" run_helper "$DEFAULT_CFG" "bureau_untrusted_env sh -c '{ echo \"--- run\"; env; } > \"$H\"'" >/dev/null
+control_fails=$PR1_FAILS
+pr1_check_env "$H" "1 control" default 2>/dev/null
+if [ "$PR1_FAILS" = "$control_fails" ]; then fail "1 control: pr1_check_env passed a command that saw BUREAU_ENV_FILE and BUREAU_CONFIG"
+else PR1_FAILS=$control_fails; fi
+pr1_pass "1 control: a copy that keeps BUREAU_ENV_FILE and BUREAU_CONFIG fails the parity and environment checks"
 
 # ── 2  review build check ────────────────────────────────────────────────────
 # review_run <untrusted_env JSON or ''> [control|-] [bashenv]

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3ff7559523434eef5dd412f860b1ed15628ee38ca4ee99151cec9cd37417bf9d">
+<meta name="bureau-source-sha256" content="6d19c7c49b33d07dcaf951b5e5901c0b7906ed9a5adddf14593b833f899b4d2e">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1349,7 +1349,7 @@ installation on the host runs v3.1; it can then be deleted.</p>
 <h3 id="a-pre-push-hook-no-longer-runs-when-bureau-pushes">A
 <code>pre-push</code> hook no longer runs when Bureau pushes</h3>
 <p>Since v3.2 Bureau's own git commands that talk to a remote (push,
-fetch, pull, ls-remote, clone, remote, submodule) run with
+fetch, pull, ls-remote, remote) run by default with
 <code>-c core.hooksPath=/dev/null</code>: they keep the GitHub token
 variables, and a hook from the branch would see them. A
 <code>pre-push</code> hook (husky, lefthook, the pre-commit framework's
@@ -1367,16 +1367,29 @@ the Bureau secrets. Let CI run what the <code>pre-push</code> hook
 checked, or set <code>repo.remote_git_runs_hooks</code> to
 <code>true</code> (the JSON value) to run the hooks again with the
 GitHub tokens in their environment, as in v3.1. A repository that uses
-Git LFS needs <code>true</code>: LFS uploads its objects in the
+Git LFS needs <code>true</code>, or <code>"operator"</code> with the
+<code>pre-push</code> hook of <code>git lfs install</code> in the main
+checkout's <code>.git/hooks</code>: LFS uploads its objects in the
 <code>pre-push</code> hook, so without it the pull request's LFS files
 point at objects the remote does not have; doctor warns when the main
 checkout uses <code>filter=lfs</code> (in its
 <code>.gitattributes</code>, a <code>.gitattributes</code> further down
-that git lists, or <code>.git/info/attributes</code>) and the key is not
-<code>true</code> (<a href="configuration.html">configuration</a>, <a
+that git lists, or <code>.git/info/attributes</code>) and the key is
+neither <code>true</code> nor <code>"operator"</code> with an executable
+<code>pre-push</code> hook in the main checkout's hooks directory (<a
+href="configuration.html">configuration</a>, <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).
-Doctor warns when the value is not a JSON boolean; any value other than
-<code>true</code> keeps the hooks off.</p>
+The string <code>"operator"</code> runs only the main checkout's own
+hooks directory; commands outside a repository keep the hooks off, and
+<code>clone</code> is refused with exit 128 before git runs unless the
+key is <code>true</code>. Doctor warns when the value is neither a JSON
+boolean nor <code>"operator"</code>; other values keep the hooks
+off.</p>
+<p>With <code>repo.remote_git_runs_hooks: true</code>, git recurses into
+submodules as configured, and on some git versions a
+<code>reference-transaction</code> hook that reads standard input inside
+a command substitution can block, leaving the push waiting
+indefinitely.</p>
 <h3 id="tracing-a-stage-with-bash--x">Tracing a stage with
 <code>bash -x</code></h3>
 <p>Tracing a stage, a driver or the queue loop
