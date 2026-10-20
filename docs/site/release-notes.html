@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="94738f1b10974462ea0eb89c47eb7b16a35aa888b7feb70f71f7f9caed42505c">
+<meta name="bureau-source-sha256" content="1d7b643b62383349f1329c4e65f8a63a642ad7fd90230049864ca70311ed945c">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -16,323 +16,99 @@
 <a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
 </nav></aside>
 <main class="bhb-main"><h1
-id="bureau-v340--operator-hooks-without-submodule-recursion-claude-effort-per-stage-and-configuration-directory">Bureau
-v3.4.0 — operator hooks without submodule recursion; Claude effort per
-stage and configuration directory</h1>
-<p><strong>Stable release · 2026-10-09 · source tag
-<code>v3.4.0</code>.</strong> The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.0">GitHub
+id="bureau-v341--herdr-pane-variables-and-provider-result-recovery">Bureau
+v3.4.1 — Herdr pane variables and provider result recovery</h1>
+<p><strong>Stable release · 2026-10-20 · source tag
+<code>v3.4.1</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.1">GitHub
 Release</a> is marked as latest and records the exact tagged commit. The
-previous stable release is <a href="release-notes-v3.3.0.html">v3.3.0</a>,
-with its candidates <a
-href="release-notes-v3.3.0-rc.2.html">v3.3.0-rc.2</a> and <a
-href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>. Earlier releases:
-<a href="release-notes-v3.2.1.html">v3.2.1</a>, <a
-href="release-notes-v3.2.0.html">v3.2.0</a> and its candidate <a
-href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>, <a
-href="release-notes-v3.1.0.html">v3.1.0</a> with its candidates <a
-href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a> and <a
-href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>, <a
-href="release-notes-v3.0.2.html">v3.0.2</a>, <a
-href="release-notes-v3.0.1.html">v3.0.1</a>, <a
-href="release-notes-v3.0.0.html">v3.0.0</a> with its candidates <a
-href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a> and <a
-href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a>, and the previous
-major release <a href="release-notes-v2.0.0.html">v2.0.0</a>.</p>
-<p>v3.4 is a minor release on v3.3.0 with six pull requests. The v3
-exit-code contract stays; no exit code is new. It goes straight from
-v3.3.0 to stable, without a release candidate.</p>
-<h2 id="what-changed-since-v330">What changed since v3.3.0</h2>
-<h3 id="remote-git-and-the-environment-of-branch-code-69">Remote git and
-the environment of branch code (<a
-href="https://github.com/KaiaK808/bureau/pull/69">#69</a>)</h3>
-<p>With the default and with
-<code>repo.remote_git_runs_hooks: "operator"</code>, Bureau's push,
-fetch and pull no longer recurse into submodules. A repository whose
-stages change submodule commits must push those itself or set the key to
-<code>true</code>; Bureau's push neither pushes nor checks those commits
-in the restricted modes. Bureau forces
-<code>push.recurseSubmodules=no</code>,
-<code>fetch.recurseSubmodules=no</code> and
-<code>submodule.recurse=false</code> after the caller's git options, so
-configuration files, includes, environment entries, <code>-c</code> and
-<code>--config-env</code> cannot turn recursion back on. The default
-fetch previously recursed on demand into populated submodules.</p>
-<p>In those modes, calls that ask for recursion, <code>git clone</code>
-and unknown leading git options are refused with <code>128</code> before
-git runs. This includes <code>git submodule</code> and any accepted
-prefix of <code>--recurse-submodules</code>,
-<code>--recurse-submodules-default</code> or <code>--recursive</code>,
-except a value of <code>no</code>; <code>--no-recurse-submodules</code>
-is allowed. Every subcommand argument is checked, including option
-values and words after <code>--</code>. <code>--attr-source</code> and
-<code>--shallow-file</code> now consume their separate value in every
-mode. No Bureau script clones or asks for recursion.</p>
-<p>The new <code>"operator"</code> value runs only the main checkout's
-own hooks directory, <code>hooks/</code> in the git common directory,
-with <code>core.hooksPath</code> forced to its absolute path even from a
-linked worktree. An operator <code>pre-push</code>, such as Git LFS or a
-secret scanner, can run while a tracked <code>.githooks</code> or
-<code>.husky</code> directory stays excluded. Hooks defined in
-configuration stay switched off by name. <code>true</code> keeps every
-configured hook; <code>false</code> or an absent key keeps hooks off.
-Doctor reports <code>remote_git_hooks</code> as <code>on</code>,
-<code>operator</code> or <code>off</code>, accepts
-<code>"operator"</code> without a type warning and warns when Git LFS
-uses that mode without an executable <code>pre-push</code> in the
-operator directory.</p>
-<p>By default the agent's environment no longer carries
-<code>BUREAU_ENV_FILE</code> and <code>BUREAU_CONFIG</code>. The same
-applies to the review build check, the three QA test runs,
-<code>repo.post_implement_command</code>, the Codex completion test, the
-app <code>test</code> action, <code>upstream-port.sh</code> build/test
-commands and the Claude and Codex login checks. <code>"clean"</code>
-already dropped them. Bureau's own scripts, the provider process, git
-and <code>gh</code> keep the paths. Custom project commands that read
-them must locate their configuration themselves or receive what they
-need explicitly. The shell and Python filters stay in parity; see the <a
-href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">security
-boundary</a>.</p>
-<h3 id="claude-effort-per-stage-65">Claude effort per stage (<a
-href="https://github.com/KaiaK808/bureau/pull/65">#65</a>)</h3>
-<p>The resolved effort now reaches Claude as
-<code>--effort &lt;value&gt;</code>, including behind the Headroom wrap.
-Precedence is <code>BUREAU_REASONING_&lt;STAGE&gt;</code>, then
-<code>agents.&lt;stage&gt;.reasoning_effort</code>, then
-<code>agents.providers.claude.reasoning_effort</code>. Claude accepts
-<code>low</code>, <code>medium</code>, <code>high</code>,
-<code>xhigh</code> and <code>max</code>; <code>none</code>,
-<code>minimal</code> and <code>ultra</code> now cause configuration
-error <code>22</code> before any provider call. An existing Claude
-effort setting therefore changes the next run: previously it was
-resolved but never passed, leaving the operator's Claude settings in
-effect. Without a setting the argv stays as before and the CLI keeps its
-own default. Codex effort is unchanged, and <code>--describe</code>
-reports the resolved effort for both runners.</p>
-<h3 id="a-clean-preserved-worktree-can-resume-66">A clean preserved
-worktree can resume (<a
-href="https://github.com/KaiaK808/bureau/pull/66">#66</a>)</h3>
-<p>A stage with a target branch can re-register an unregistered
-preserved worktree and continue when it is a linked worktree of this
-repository at its top level, outside the main checkout, with an empty
-<code>git status --porcelain --untracked-files=all</code> and HEAD equal
-to or behind <code>origin/&lt;branch&gt;</code> after a fresh fetch.
-Ignored files do not count. The single
-<code>Re-accepted the clean preserved worktree …</code> line names the
-head and origin branch. Uncommitted changes, untracked files, commits
-origin lacks, an unknown or missing origin branch and a failed fetch
-retain the refusal, exit <code>21</code>, <code>needs-human</code> and
-the halt comment; spec always refuses. A stage that failed with
-unfinished work still preserves it and drops its disposable
-registration.</p>
-<h3 id="a-claude-configuration-directory-for-an-installation-67">A
-Claude configuration directory for an installation (<a
-href="https://github.com/KaiaK808/bureau/pull/67">#67</a>)</h3>
-<p><code>agents.providers.claude.config_dir</code> or
-<code>BUREAU_CLAUDE_CONFIG_DIR</code> selects the
-<code>CLAUDE_CONFIG_DIR</code> given to the Claude child and its
-<code>claude auth status --json</code> check; the environment variable
-wins. This lets headless stages use a lean profile instead of the
-operator's global instructions, hooks, plugins and user-scope MCP
-servers. The path must be absolute or start with <code>~/</code>, and
-the directory must exist; an invalid setting ends with <code>22</code>
-before any provider call. Unset, this setting leaves the inherited
-Claude directory unchanged. Codex ignores it. <code>--describe</code>
-reports <code>config_dir</code>, and doctor reports
-<code>claude_config_dirs</code> per enabled Claude stage and warns when
-Claude is not logged in in a configured directory. See <a
-href="provider-runtime.html#claude-configuration-directory">Claude
-configuration directory</a>.</p>
-<h3 id="malformed-environment-names-in-the-secret-filter-70">Malformed
-environment names in the secret filter (<a
-href="https://github.com/KaiaK808/bureau/pull/70">#70</a>)</h3>
-<p>An environment entry whose name is no shell identifier no longer runs
-code during secret filtering. On bash 3.2, an indirect expansion of such
-a name could execute its array subscript in the Bureau shell, which
-holds the unexported <code>.env</code> keys; glob characters could also
-expand into filenames. <code>bureau_without_secrets</code>,
-<code>bureau_untrusted_env</code> and <code>bureau_exec_runtime</code>
-now skip those names unexpanded. Characters that make a subscript or
-substitution are rejected under every locale; with the caller's
-<code>nocasematch</code>, some locales still accept a few non-ASCII
-letters, which execute nothing. Well-named variables are filtered as
-before. Exploitation required a malformed entry in the environment that
-starts Bureau, such as a tmux server's environment. No setting or exit
-code changes.</p>
-<h3 id="env-and-the-start-line-71"><code>.env</code> and the start line
-(<a href="https://github.com/KaiaK808/bureau/pull/71">#71</a>)</h3>
-<p>Configuration and troubleshooting now state the existing precedence:
-an allowed key defined in an installation's <code>.env</code> overrides
-the process environment and the start line; a key absent from
-<code>.env</code> uses the environment value. For one run, use a
-per-stage key absent from <code>.env</code>, or change or comment out
-that line and restore it afterwards. This is a documentation correction
-with no behaviour change or resync of its own.</p>
+previous stable release is <a href="release-notes-v3.4.0.html">v3.4.0</a>;
+its notes retain the earlier release history.</p>
+<p>v3.4.1 is a patch release on v3.4.0 with three fixes in one pull
+request, <a href="https://github.com/KaiaK808/bureau/pull/73">#73</a>.
+The v3 exit-code contract stays; no exit code or configuration key is
+new, and no interfaces change. It goes straight to stable without a
+release candidate.</p>
+<h2 id="what-changed-since-v340">What changed since v3.4.0</h2>
+<h3 id="herdr-pane-variables-stay-out-of-child-environments">Herdr pane
+variables stay out of child environments</h3>
+<p>Bureau drops every <code>HERDR_</code> variable from the environments
+it builds for headless agents, their login checks, test commands and
+other child commands, in both <code>repo.untrusted_env</code> modes.
+Herdr is a terminal multiplexer; its pane variables made headless stages
+claim the operator's pane through the SessionStart hook, so Herdr later
+showed or resumed a Bureau stage instead of the operator's session. The
+clean-mode allowlist and exit codes stay the same. Installations that
+start shepherd runs from inside Herdr benefit directly.</p>
+<h3 id="codex-can-recover-from-an-error-notice">Codex can recover from
+an error notice</h3>
+<p>A Codex <code>error</code> event followed by a later
+<code>turn.completed</code> no longer fails the stage with
+<code>22</code>. A later completion recovers preceding error notices,
+and the last completion supplies usage. Successful call metadata records
+the recovered count and first message, truncated to 200 characters. Any
+<code>turn.failed</code> or error without a later completion still
+fails; final-message requirements, schema validation and failing-process
+classification are unchanged.</p>
+<h3 id="claude-structured-results-survive-a-late-wakeup">Claude
+structured results survive a late wakeup</h3>
+<p>Claude stages with tools run with <code>ScheduleWakeup</code>,
+<code>CronCreate</code>, <code>CronDelete</code>,
+<code>RemoteTrigger</code> and <code>Monitor</code> disallowed through
+<code>--disallowedTools</code>, including behind Headroom;
+<code>upstream_summary</code> stays tool-free. This prevents a late
+scheduled wakeup from discarding a completed structured result and
+turning finished work into exit <code>22</code>.</p>
+<p>When a successful Claude envelope lacks an object in
+<code>structured_output</code> and the stage expects a schema, the
+adapter takes the last <code>StructuredOutput</code> call's input from
+that session's stage transcript, validates it as before and records
+<code>structured_source: "transcript"</code> in the call metadata. An
+object in the envelope keeps precedence. An invalid latest transcript
+result still fails; a missing transcript or tool call retains the
+existing handling, including <code>22</code> for a prose-only result.
+Codex arguments, its <code>final.txt</code> path and the schemas are
+unchanged.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p><strong>From v3.3.0:</strong> select tag <code>v3.4.0</code> in the
+<p><strong>From v3.4.0:</strong> select tag <code>v3.4.1</code> in the
 source skill checkout, then resync the <strong>scripts scope as one
-set</strong> (<code>--resync-scripts</code>);
-<code>bureau-config.sh</code>, <code>bureau-doctor.py</code>,
-<code>bureau-env.sh</code>, <code>bureau-provider.py</code>,
-<code>bureau-runtime.py</code> and <code>bureau-supervision.py</code>
-changed together. Pause dispatch, preserve unfinished work and
-customized files, and use <a
-href="migration.html#preview-and-resolve-asset-conflicts">preview and
-resolve</a>. No files under <code>templates/</code> outside
-<code>templates/scripts/</code> changed since v3.3.0, so no interfaces
-resync is needed. No configuration schema or data migration is needed;
-<code>/bureau-init --update</code> changes configuration only.</p>
-<p><strong>From older versions:</strong> go through <a
-href="migration.html#upgrade-to-v33">Upgrade to v3.3</a> and its earlier
-upgrade sections first, including the scripts and interfaces scopes
-where required, then follow the v3.4 steps. The <a
-href="release-notes-v3.3.0.html">previous stable notes</a> retain the v3.3
-candidate upgrade paths.</p>
-<h2 id="what-to-check-before-dispatch-resumes">What to check before
-dispatch resumes</h2>
-<ul>
-<li><strong>Submodules:</strong> with the default and with
-<code>"operator"</code>, Bureau's push, fetch and pull neither push nor
-fetch submodule commits, and the push does not check whether they are on
-the remote. If stages change submodule commits, push those yourself or
-set <code>repo.remote_git_runs_hooks</code> to <code>true</code>, which
-restores every configured hook as well as the previous recursion
-behaviour.</li>
-<li><strong>Project commands:</strong> check
-<code>repo.test_command</code>, <code>scripts/bureau-test.sh</code>,
-<code>repo.post_implement_command</code> and <code>upstream_port</code>
-build/test commands for reads of <code>BUREAU_ENV_FILE</code> or
-<code>BUREAU_CONFIG</code>. Those paths no longer reach branch code or
-the agent by default; make custom commands locate their configuration
-themselves or pass what they need explicitly.</li>
-<li><strong>Operator hooks:</strong> to keep an operator
-<code>pre-push</code>, such as Git LFS or a secret scanner, put an
-executable hook in the main checkout's own hooks directory
-(<code>hooks/</code> in the git common directory, usually
-<code>.git/hooks</code>) and set <code>repo.remote_git_runs_hooks</code>
-to <code>"operator"</code>. A tracked <code>.githooks</code> or
-<code>.husky</code> directory is excluded in that mode. Check doctor's
-<code>remote_git_hooks</code> and any Git LFS warning before the next
-push.</li>
-<li><strong>Claude effort:</strong> an existing
-<code>reasoning_effort</code> for a Claude stage now takes effect. Check
-<code>agents.&lt;stage&gt;.reasoning_effort</code>,
-<code>agents.providers.claude.reasoning_effort</code> and
-<code>BUREAU_REASONING_&lt;STAGE&gt;</code>; use <code>low</code>,
-<code>medium</code>, <code>high</code>, <code>xhigh</code> or
-<code>max</code>, or remove the setting to keep the CLI's default.
-<code>none</code>, <code>minimal</code> and <code>ultra</code> on a
-Claude stage now end the call with configuration error <code>22</code>
-before any provider call.</li>
-<li><strong>Claude configuration directory:</strong> the new setting is
-optional. To use it, create an absolute directory (or use a path
-starting with <code>~/</code>), log in once with
-<code>CLAUDE_CONFIG_DIR=&lt;dir&gt; claude</code>, and set
-<code>agents.providers.claude.config_dir</code> or
-<code>BUREAU_CLAUDE_CONFIG_DIR</code>. The environment variable wins.
-Check doctor's <code>claude_config_dirs</code> login report for every
-enabled Claude stage; an unconfigured inherited directory is reported as
-<code>logged_in: "not checked"</code>.</li>
-<li><strong>Start-line overrides:</strong> for a key the loader accepts
-and <code>.env</code> defines, <code>.env</code> wins over the process
-environment and the start line. A key absent from <code>.env</code> uses
-the environment value. For one run, use a per-stage key absent from
-<code>.env</code>, or change or comment out its <code>.env</code> line
-and restore it afterwards. <code>BUREAU_REASONING_&lt;STAGE&gt;</code>
-is read from the process environment; the <code>.env</code> loader does
-not accept it.</li>
-<li><strong>Preserved worktrees:</strong> the re-accept needs no
-configuration. For a worktree previously halted with <code>21</code>,
-keep unfinished work intact, make the worktree clean and push its
-commits, then remove <code>needs-human</code> before its next pick. The
-spec stage and a worktree with uncommitted changes, untracked files or
-commits origin lacks still refuse with <code>21</code>.</li>
-</ul>
-<p>Restart queue loops and supervisors after resync so they read the new
-scripts: a loop sources <code>bureau-config.sh</code> once at startup,
-and a stage already running keeps the old scripts because the installer
-replaces files atomically. Run doctor
-(<code>python3 scripts/bureau-doctor.py --mode background</code>), check
-<code>remote_git_hooks</code> and the <code>claude_config_dirs</code>
-login report, and qualify a representative ticket before unattended
-dispatch resumes. Doctor's effective-settings report uses JSON and its
-process environment; it reads only <code>BUREAU_RUNNER_IMPLEMENT</code>
-from <code>.env</code> for the <code>repo.test_command</code> warning.
-See <a href="migration.html#upgrade-to-v34">Upgrade to v3.4</a>.</p>
+set</strong> (<code>--resync-scripts</code>) in each adopting repository
+and restart queue loops and supervisors. No other action is required.
+See <a href="migration.html#upgrade-to-v341">Upgrade to v3.4.1</a> and the
+<a href="migration.html#select-the-source-release">source-update
+instructions</a>.</p>
+<p><strong>From earlier versions:</strong> follow <a
+href="migration.html#upgrade-to-v34">Upgrade to v3.4</a> and its earlier
+upgrade sections first, then follow the v3.4.1 steps above.</p>
 <h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
-<p>Dependencies, supported platforms, configuration schemas and the
-manifest version are unchanged. The v3 exit-code contract stays; no data
-migration is needed. Existing Claude effort settings now apply, and the
-default remote-git and branch-code environments change as described
-above.</p>
-<p>To roll back, select tag <code>v3.3.0</code> again in the source
-skill checkout and resync the scripts scope as one set, or restore the
-private backup (<a href="migration.html#rollback">rollback</a>). Restore
-prior configuration if you enabled the new options: v3.3.0 treats
-<code>"operator"</code> as hooks off and ignores the Claude
-<code>config_dir</code> and resolved effort settings. Check the prior
-Git LFS hook arrangement, then restart queue loops and supervisors.
-Rollback cannot undo commits, pushes or Linear/GitHub changes made in
-between.</p>
+<p>The v3 exit-code contract stays; no exit code or configuration key is
+new, and no interfaces change. No configuration or schema migration is
+needed.</p>
+<p>To roll back, select tag <code>v3.4.0</code> in the source skill
+checkout and resync the scripts scope as one set, or restore the private
+backup (<a href="migration.html#rollback">rollback</a>), then restart
+queue loops and supervisors. Rollback cannot undo commits, pushes or
+Linear/GitHub changes made in between.</p>
 <h2 id="validation">Validation</h2>
-<p>GitHub CI is green on macOS and Ubuntu for each of the six merged
-pull requests and for <code>main</code> at <code>683ba90</code>. Each
-pull request was reviewed before its merge; <a
-href="https://github.com/KaiaK808/bureau/pull/69">#69</a> went through
-eight independent review rounds and <a
-href="https://github.com/KaiaK808/bureau/pull/70">#70</a> through two.
-This CI and review history is the maintainer's release record; see <a
-href="releases.html#current-release-status">current release
+<p>The maintainer's release validation record reports new regression
+tests for each fix, each failing on v3.4.0. The full suite (107 tests)
+passed on macOS outside any sandbox on v3.4.0, on each fix and on the
+combined branch. Each fix had one independent Codex review with no
+findings.</p>
+<p>GitHub CI is green on macOS and Ubuntu for <a
+href="https://github.com/KaiaK808/bureau/pull/73">#73</a> at head
+<code>35c176d</code>. It was merged as <code>5b71c1b</code> with an
+identical tree. Release preparation changes documentation only; runtime,
+installer, templates, tests and CI stay at the <code>5b71c1b</code>
+baseline. The final tagged commit is recorded in the GitHub Release
+body. See <a href="releases.html#current-release-status">current release
 status</a>.</p>
-<p>The re-accept of a clean preserved worktree and the
-<code>"operator"</code> mode are validated in the test harness only
-(<code>tests/test_reaccept_clean_worktree.sh</code> and
-<code>tests/test_remote_git_hooks.sh</code>). Claude effort and
-configuration-directory coverage uses fake CLIs
-(<code>tests/provider_adapter_test.py</code>,
-<code>tests/doctor_checks_test.py</code>); no live Claude run with
-<code>--effort</code> or login in a separate directory is part of that
-validation.</p>
-<p>No installation has run v3.4.0 before the release, and there was no
-release candidate. The first runs in an installation follow the release;
-live acceptance is pending.</p>
 <h2 id="known-limitations">Known limitations</h2>
-<ul>
-<li>With the default and with <code>"operator"</code>,
-<code>git clone</code> is refused with <code>128</code> because the new
-repository's configured hooks cannot be listed beforehand; no Bureau
-script clones. In <code>"operator"</code> mode a command outside a
-repository runs with hooks off because there is no common hooks
-directory to select.</li>
-<li>The remote-git switches cover hooks only. Filters, fsmonitor and
-credential helpers still run; a credential helper can see the GitHub
-tokens. Hooks first defined while a command runs, such as through a file
-a pull checks out, are outside the names listed beforehand; Bureau's
-stages run no pull.</li>
-<li>A remote, refspec, pattern or option value spelled like a recursion
-option is refused with <code>128</code> too, even after <code>--</code>.
-A value of <code>no</code> and <code>--no-recurse-submodules</code> are
-allowed. This guards Bureau's own calls and does not sandbox other git
-invocations.</li>
-<li>Under <code>true</code>, a hook that reads stdin inside a command
-substitution can block on some git versions after a push that recurses
-into submodules: git can start the superproject's hook with descriptor 0
-closed, and the substitution then reads its own pipe. The fixture hooks
-read in their own shell to avoid that hang.</li>
-<li>A malformed environment entry skipped by the shell secret filter
-reaches its child unchanged; its value is not checked for a secret.
-Well-named variables remain filtered.</li>
-<li>On git 2.55 a configured hook named like an event can make the
-per-name switch an event switch, so <code>"operator"</code> also
-suppresses the operator hook for that event.</li>
-<li>These controls do not isolate code running as the same Unix user. It
-can still read the operator's files and stored logins, find the main
-checkout through <code>git rev-parse --git-common-dir</code>, or write
-the operator hooks directory and configuration. Removing the paths hides
-only a <code>.env</code> or <code>.bureau.json</code> outside the
-default place. See <a href="../../SECURITY.md">SECURITY.md</a>.</li>
-</ul></main>
+<p>Provider calls are faked in tests. No live Herdr session, live Codex
+503 recovery or live wakeup was reproduced. No installation has run
+v3.4.1 before the release, and there is no release candidate; the first
+installation runs follow the release.</p></main>
 </div>
 </body>
 </html>

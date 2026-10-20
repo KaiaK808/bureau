@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="66561a62fb8ee18c85a4122afafccb63914fcee521cb74545cb1ae232b01c4d1">
+<meta name="bureau-source-sha256" content="3f95a4796f74d225a55e35c3639fce770ca0ac51107f016f0a6c5d8a302f163e">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,17 +24,51 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.4.0</strong>, dated
-<strong>2026-10-09</strong>, the current stable release, marked as
+<p>This source tree contains <strong>Bureau v3.4.1</strong>, dated
+<strong>2026-10-20</strong>, the current stable release, marked as
 latest. Its <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.0">GitHub
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.1">GitHub
 Release</a> records the exact tagged commit; the <a
 href="../../CHANGELOG.md">changelog</a> and <a
 href="release-notes.html">release notes</a> describe the changes and the
-upgrade. v3.4 is a minor release on v3.3.0 and keeps the v3 exit-code
-contract. It contains six pull requests: operator hooks without
-submodule recursion and the removal of operator paths from branch code
-(<a href="https://github.com/KaiaK808/bureau/pull/69">#69</a>); Claude
+upgrade. v3.4.1 is a patch release on v3.4.0 with three fixes in one
+pull request, <a
+href="https://github.com/KaiaK808/bureau/pull/73">#73</a>: dropping
+every <code>HERDR_</code> variable from child environments in both
+<code>repo.untrusted_env</code> modes, accepting Codex error notices
+recovered by a later <code>turn.completed</code>, and protecting Claude
+structured results from scheduled wakeups. The v3 exit-code contract
+stays; no exit code or configuration key is new, and no interfaces
+change. From v3.4.0 select tag <code>v3.4.1</code>, resync the scripts
+scope as one set and restart queue loops and supervisors. No other
+action is required; installations that start shepherd runs from inside
+Herdr benefit directly. From earlier versions follow <a
+href="migration.html#upgrade-to-v34">Upgrade to v3.4</a> first, then <a
+href="migration.html#upgrade-to-v341">Upgrade to v3.4.1</a>.</p>
+<p>The maintainer's release validation record reports new regression
+tests for each fix, each failing on v3.4.0, and the full suite (107
+tests) passing on macOS outside any sandbox on v3.4.0, on each fix and
+on the combined branch. Each fix had one independent Codex review with
+no findings. GitHub CI is green on macOS and Ubuntu for <a
+href="https://github.com/KaiaK808/bureau/pull/73">#73</a> at head
+<code>35c176d</code>, merged as <code>5b71c1b</code> with an identical
+tree. Provider calls are faked in tests; no live Herdr session, live
+Codex 503 recovery or live wakeup was reproduced. No installation has
+run v3.4.1 before the release, and there is no release candidate.
+Release preparation changes documentation only; runtime, installer,
+templates, tests and CI stay at the <code>5b71c1b</code> baseline. The
+final tagged commit is recorded in the GitHub Release body.</p>
+<p>The previous stable release is <strong>Bureau v3.4.0</strong>, dated
+<strong>2026-10-09</strong>. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.0">GitHub
+Release</a> records the exact tagged commit; the <a
+href="../../CHANGELOG.md">changelog</a> and <a
+href="release-notes-v3.4.0.html">release notes</a> describe the changes
+and the upgrade. v3.4 is a minor release on v3.3.0 and keeps the v3
+exit-code contract. It contains six pull requests: operator hooks
+without submodule recursion and the removal of operator paths from
+branch code (<a
+href="https://github.com/KaiaK808/bureau/pull/69">#69</a>); Claude
 effort per stage (<a
 href="https://github.com/KaiaK808/bureau/pull/65">#65</a>); the
 re-accept of a clean preserved worktree (<a
@@ -63,11 +97,11 @@ re-accept of a clean preserved worktree and the <code>"operator"</code>
 mode have test-harness validation only; Claude effort and
 configuration-directory checks use fake CLIs. No installation has run
 v3.4.0 before the release. There was no release candidate, and the first
-runs in an installation follow the release. Release preparation changes
-documentation only; runtime, installer, templates, tests and CI stay at
-the <code>683ba90</code> baseline. The final tagged commit is recorded
-in the GitHub Release body.</p>
-<p>The previous stable release is <strong>Bureau v3.3.0</strong>, dated
+runs in an installation follow the release. Its release preparation
+changed documentation only; runtime, installer, templates, tests and CI
+stayed at the <code>683ba90</code> baseline. The final tagged commit is
+recorded in the GitHub Release body.</p>
+<p>The earlier stable release is <strong>Bureau v3.3.0</strong>, dated
 <strong>2026-10-07</strong>. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0">GitHub
 Release</a> records the exact tagged commit; the <a
