@@ -400,16 +400,27 @@ def run(options, prompt, system, repo, evidence, schema=None):
         elif re.search(r'quota|rate.limit|usage.limit', text, re.I): outcome='quota'; code=23
         elif re.search(r'permission denied|operation not permitted|sandbox', text, re.I): outcome='environment'; code=24
         return code, '', dict(outcome=outcome, provider_exit=child.returncode)
-    usage = {}; cost = None
+    usage = {}; cost = None; recovered_errors = {}
     if runner == 'codex':
         text = final.read_text() if final.exists() else ''
+        pending_error = False
         for line in stdout.splitlines():
             try: event = json.loads(line)
             except ValueError: continue
             if not isinstance(event, dict): continue
-            if event.get('type') == 'turn.completed': usage = event.get('usage', {})
-            if event.get('type') in ('turn.failed', 'error'):
+            # Only a later completion recovers an error notice; turn.failed
+            # remains fatal even when another completion follows it.
+            if event.get('type') == 'turn.failed':
                 return 22, '', dict(outcome='provider-error')
+            if event.get('type') == 'turn.completed':
+                usage = event.get('usage', {})
+                pending_error = False
+            elif event.get('type') == 'error':
+                pending_error = True
+                if not recovered_errors:
+                    recovered_errors = dict(count=0, first_message=str(event.get('message', ''))[:200])
+                recovered_errors['count'] += 1
+        if pending_error: return 22, '', dict(outcome='provider-error')
     else:
         try: envelope = json.loads(stdout)
         except ValueError: raise ValueError('Claude did not return a JSON envelope')
@@ -427,6 +438,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
     if environment_blocked(value, text, runner, options['stage']):
         return 24, '', dict(outcome='environment')
     metadata = dict(outcome='complete', provider=runner, usage=usage, total_cost_usd=cost, duration_seconds=time.monotonic()-started)
+    if recovered_errors: metadata['recovered_errors'] = recovered_errors
     if options['cost_tracking']:
         text = json.dumps(dict(result=text, usage=usage, total_cost_usd=cost, provider=runner))
     return 0, text, metadata

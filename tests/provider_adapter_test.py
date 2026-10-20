@@ -16,6 +16,12 @@ SCRIPT=ROOT/'templates/scripts/bureau-provider.py'
 spec=importlib.util.spec_from_file_location('provider',SCRIPT)
 p=importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
 
+CODEX_RECONNECT_ERRORS = '''{"type":"error","message":"Reconnecting... 1/5 (unexpected status 503 Service Unavailable)"}
+{"type":"error","message":"Reconnecting... 2/5 (unexpected status 503 Service Unavailable)"}
+{"type":"error","message":"Reconnecting... 3/5 (unexpected status 503 Service Unavailable)"}
+'''
+CODEX_COMPLETED = '{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":3}}\n'
+
 
 class ProviderTests(unittest.TestCase):
     def setUp(self):
@@ -76,13 +82,16 @@ if os.environ.get('RECORD_SIGNALS'):
 (root/'ready').touch()
 if os.environ.get('IGNORE_TERM'): signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if os.environ.get('SLEEP'): time.sleep(float(os.environ['SLEEP']))
+if name=='codex' and 'CODEX_STREAM' in os.environ:
+    print(os.environ['CODEX_STREAM'],end='')
 if os.environ.get('FAIL'):
     print(os.environ['FAIL'],file=sys.stderr); sys.exit(1)
 final=os.environ.get('FINAL','final response')
 if name=='codex':
     output=sys.argv[sys.argv.index('-o')+1]
     if not os.environ.get('EMPTY'): pathlib.Path(output).write_text(final)
-    print(json.dumps({'type':'turn.completed','usage':{'input_tokens':12,'output_tokens':3}}))
+    if 'CODEX_STREAM' not in os.environ:
+        print(json.dumps({'type':'turn.completed','usage':{'input_tokens':12,'output_tokens':3}}))
     print('diagnostic APPROVE text should never become the result')
 elif os.environ.get('RAW'):
     print(os.environ['RAW'])
@@ -318,6 +327,88 @@ p.shutil.rmtree=fail_remove
         self.assertEqual(args[-1],'-'); self.assertNotIn('--append-system-prompt',args)
         self.assertEqual(result.stdout.strip(),'final response')
         self.assertNotIn('APPROVE',result.stdout)
+        _,metadata=self.evidence()
+        self.assertNotIn('recovered_errors',metadata)
+
+    def test_codex_events_recover_reconnect_errors(self):
+        stream=CODEX_RECONNECT_ERRORS+CODEX_COMPLETED
+        result=self.run_provider('--stage','code_review',CODEX_STREAM=stream,FINAL='APPROVE')
+        self.assertEqual(result.stdout.strip(),'APPROVE')
+        evidence,metadata=self.evidence()
+        self.assertEqual(metadata['outcome'],'complete')
+        self.assertEqual(metadata['usage'],{'input_tokens':12,'output_tokens':3})
+        self.assertEqual(metadata['recovered_errors'],{'count':3,'first_message':
+                         'Reconnecting... 1/5 (unexpected status 503 Service Unavailable)'})
+        self.assertIn(stream,(evidence/'stdout.log').read_text())
+
+    def test_codex_events_reject_error_without_later_completion(self):
+        stream=CODEX_RECONNECT_ERRORS.splitlines()[0]+'\n'
+        result=self.run_provider(CODEX_STREAM=stream,FINAL='APPROVE',code=22)
+        self.assertEqual(result.stdout,'')
+        self.assertEqual(self.evidence()[1]['outcome'],'provider-error')
+
+    def test_codex_events_reject_error_after_completion(self):
+        result=self.run_provider(CODEX_STREAM=CODEX_COMPLETED+CODEX_RECONNECT_ERRORS,FINAL='APPROVE',code=22)
+        self.assertEqual(result.stdout,'')
+        self.assertEqual(self.evidence()[1]['outcome'],'provider-error')
+
+    def test_codex_events_keep_turn_failed_fatal(self):
+        failed='{"type":"turn.failed","error":{"message":"unexpected status 503 Service Unavailable"}}\n'
+        for stream in (failed,CODEX_COMPLETED+failed,failed+CODEX_COMPLETED,
+                       CODEX_RECONNECT_ERRORS+failed+CODEX_COMPLETED):
+            with self.subTest(stream=stream):
+                result=self.run_provider(CODEX_STREAM=stream,FINAL='APPROVE',code=22)
+                self.assertEqual(result.stdout,'')
+                self.assertEqual(self.evidence()[1]['outcome'],'provider-error')
+
+    def test_codex_events_keep_last_completed_usage(self):
+        stream=(CODEX_RECONNECT_ERRORS+CODEX_COMPLETED+CODEX_RECONNECT_ERRORS
+                +'{"type":"turn.completed","usage":{"input_tokens":97,"output_tokens":11}}\n')
+        result=self.run_provider(CODEX_STREAM=stream,FINAL='APPROVE',BUREAU_COST_TRACKING='true')
+        value=json.loads(result.stdout)
+        self.assertEqual(value['result'],'APPROVE')
+        self.assertEqual(value['usage'],{'input_tokens':97,'output_tokens':11})
+        self.assertIsNone(value['total_cost_usd'])
+        metadata=self.evidence()[1]
+        self.assertEqual(metadata['usage'],value['usage'])
+        self.assertEqual(metadata['recovered_errors']['count'],6)
+
+    def test_codex_events_truncate_recovered_error_message(self):
+        message='Reconnecting... 1/5 (unexpected status 503 Service Unavailable): '+('detail '*80)
+        stream=json.dumps({'type':'error','message':message})+'\n'+CODEX_COMPLETED
+        self.run_provider(CODEX_STREAM=stream)
+        self.assertEqual(self.evidence()[1]['recovered_errors'],{'count':1,'first_message':message[:200]})
+
+    def test_codex_events_still_require_final_message(self):
+        result=self.run_provider(CODEX_STREAM=CODEX_RECONNECT_ERRORS+CODEX_COMPLETED,EMPTY='1',code=22)
+        self.assertEqual(result.stdout,'')
+        metadata=self.evidence()[1]
+        self.assertEqual(metadata['outcome'],'invalid-result')
+        self.assertEqual(metadata['error'],'provider returned no final message')
+
+    def test_codex_events_still_validate_schema(self):
+        schema=ROOT/'templates/scripts/bureau-qa.schema.json'
+        stream=CODEX_RECONNECT_ERRORS+CODEX_COMPLETED
+        value={'status':'GREEN','tests_added':0,'tests_failing':0,'coverage_notes':'ok'}
+        result=self.run_provider('--schema',str(schema),CODEX_STREAM=stream,FINAL=json.dumps(value))
+        self.assertEqual(json.loads(result.stdout),value)
+        for bad in ('not json','{"status":"GREEN"}',json.dumps({**value,'status':'APPROVE'})):
+            with self.subTest(final=bad):
+                result=self.run_provider('--schema',str(schema),CODEX_STREAM=stream,FINAL=bad,code=22)
+                self.assertEqual(result.stdout,'')
+                self.assertEqual(self.evidence()[1]['outcome'],'invalid-result')
+
+    def test_codex_events_keep_process_failure_classification(self):
+        stream=CODEX_RECONNECT_ERRORS+CODEX_COMPLETED
+        for message,code,outcome in (('quota exceeded',23,'quota'),('Permission denied by sandbox',24,'environment'),
+                                     ('backend failed',22,'provider-error'),('Not logged in',16,'auth')):
+            with self.subTest(message=message):
+                result=self.run_provider(CODEX_STREAM=stream,FAIL=message,code=code)
+                self.assertEqual(result.stdout,'')
+                evidence,metadata=self.evidence()
+                self.assertEqual(metadata['outcome'],outcome)
+                self.assertEqual(metadata['provider_exit'],1)
+                self.assertIn(stream,(evidence/'stdout.log').read_text())
 
     def test_invalid_provider_configuration_is_classified(self):
         for config in ({'agents':{'providers':[]}}, {'agents':{'runner':'codex','model':42}},

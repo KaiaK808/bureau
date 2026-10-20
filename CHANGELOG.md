@@ -9,6 +9,7 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 ### Fixed
 
 - Bureau drops every `HERDR_` variable from the environments it builds for headless agents, their login checks, test commands and other child commands, in both `repo.untrusted_env` modes. Herdr's pane variables made headless stages claim the operator's pane through the SessionStart hook, so Herdr later showed or resumed a Bureau stage instead of the operator's session. Nothing else in the environment changes; the clean-mode allowlist and exit codes stay the same. Resync the scripts scope to apply the fix. Validated with fake providers and local environment probes, without a live Herdr session.
+- Codex stages no longer fail with 22 on transient reconnect errors that Codex recovers from, fixing a false code-review failure after all three specialists returned APPROVE. A later `turn.completed` recovers preceding top-level `error` notices, the last completion supplies usage, and successful run metadata records the recovered count and first message (truncated to 200 characters). Any `turn.failed` or error without a later completion still fails; final-message requirements, schema validation, failing-process classification and the exit-code contract are unchanged. **Upgrade:** update the source skill, resync the scripts scope (`--resync-scripts`) and restart queue loops and supervisors; no configuration or schema migration is needed. Validated with recorded event streams through a fake Codex CLI, without a live provider run.
 
 ## [3.4.0] - 2026-10-09
 
