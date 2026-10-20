@@ -105,9 +105,9 @@ class AuthError(Exception):
 # tests (Claude with --dangerously-skip-permissions) and loads the branch's own
 # agent settings, so it starts in the environment bureau_untrusted_env in
 # bureau-env.sh gives every other command the branch controls. Keep
-# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, UNTRUSTED_PATHS and UNTRUSTED_KEEP equal
-# to the lists there; tests/test_untrusted_env.sh compares the two
-# implementations and tests/provider_untrusted_env_test.py pins these tuples.
+# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, UNTRUSTED_PATHS, UNTRUSTED_HOST_PREFIXES
+# and UNTRUSTED_KEEP equal to the lists there; tests/test_untrusted_env.sh
+# compares the two implementations and tests/provider_untrusted_env_test.py pins these tuples.
 UNTRUSTED_REMOVE = ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID',
                     'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')
 # A bash started by the agent sources the file BASH_ENV (or, as sh, ENV) names;
@@ -117,6 +117,8 @@ UNTRUSTED_STARTUP = ('BASH_ENV', 'ENV')
 # path to the file that holds them. Bureau's own scripts read both; nothing the
 # branch controls needs them (until v3.3.0 the default mode passed them on).
 UNTRUSTED_PATHS = ('BUREAU_ENV_FILE', 'BUREAU_CONFIG')
+# A headless child must not claim the operator's terminal-multiplexer pane.
+UNTRUSTED_HOST_PREFIXES = ('HERDR_',)
 # A secret this long counts wherever it appears inside another value; a shorter
 # one only as the whole value (inside matching would take out every variable
 # that happens to contain two or three common characters).
@@ -165,15 +167,16 @@ def process_env(command, environ=None):
     # the git() and gh() functions in bureau-env.sh give the shell's. Hooks,
     # filters, an fsmonitor or a credential helper such a process runs can come
     # from the branch. Always without the .env keys, their copies, BASH_ENV and
-    # ENV; without the GitHub token variables too, except for gh and for git
-    # commands that talk to a remote.
+    # ENV or host pane variables; without the GitHub token variables too,
+    # except for gh and for git commands that talk to a remote.
     environ = os.environ if environ is None else environ
     name = os.path.basename(command[0]) if command else ''
     remote = name == 'gh' or (name == 'git' and git_subcommand(command[1:]) in REMOTE_GIT)
     names = UNTRUSTED_REMOVE[:3] if remote else UNTRUSTED_REMOVE
     carries = _carries(environ, names)
     return {key: value for key, value in environ.items()
-            if key not in names and key not in UNTRUSTED_STARTUP and not carries(value)}
+            if key not in names and key not in UNTRUSTED_STARTUP
+            and not key.startswith(UNTRUSTED_HOST_PREFIXES) and not carries(value)}
 
 
 def untrusted_env_mode(config):
@@ -194,7 +197,8 @@ def untrusted_env(environ, mode, runner=None):
     # the listed secrets, BASH_ENV and ENV, BUREAU_ENV_FILE and BUREAU_CONFIG,
     # and any variable that carries one of the secrets' values (_carries). "clean": only UNTRUSTED_KEEP, plus, for an
     # agent, its own login and network variables, again without any value that
-    # carries a secret. The caller's environment is never changed.
+    # carries a secret. Both modes drop host pane variables, even if an agent
+    # keep prefix overlaps. The caller's environment is never changed.
     carries = _carries(environ, UNTRUSTED_REMOVE)
     if mode == 'clean':
         prefixes = AGENT_KEEP_PREFIXES.get(runner, ())
@@ -205,7 +209,8 @@ def untrusted_env(environ, mode, runner=None):
             return name not in UNTRUSTED_REMOVE and name not in UNTRUSTED_STARTUP and name not in UNTRUSTED_PATHS
     else:
         raise UntrustedEnvError('unknown untrusted environment mode')
-    return {name: value for name, value in environ.items() if keep(name) and not carries(value)}
+    return {name: value for name, value in environ.items()
+            if not name.startswith(UNTRUSTED_HOST_PREFIXES) and keep(name) and not carries(value)}
 
 
 def auth(options):

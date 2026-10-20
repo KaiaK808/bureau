@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'templates/scripts/bureau-provider.py'
@@ -37,7 +38,10 @@ SECRETS = {
 # an unrelated name, REMOTE_URL has one inside. All three must go by value.
 ALIASES = {'API_KEY': SECRETS['LINEAR_API_KEY'], 'CARGO_ALIAS': SECRETS['GH_TOKEN'],
            'REMOTE_URL': 'https://x-access-token:' + SECRETS['GITHUB_TOKEN'] + '@github.com/owner/repo.git'}
-OPERATOR = {'OPERATOR_TOOL_VAR': 'keep_me_operator_var_0008'}
+OPERATOR = {'OPERATOR_TOOL_VAR': 'keep_me_operator_var_0008', 'MY_HERDR_NOTE': 'keep_this_note'}
+HOST = {'HERDR_PANE_ID': 'operator-pane', 'HERDR_SOCKET_PATH': '/tmp/herdr-probe.sock',
+        'HERDR_ENV': 'pane', 'HERDR_BIN_PATH': '/tmp/herdr-probe', 'HERDR_TAB_ID': 'operator-tab',
+        'HERDR_WORKSPACE_ID': 'operator-workspace', 'HERDR_FUTURE_VAR': 'future', 'HERDR_EMPTY': ''}
 # No secrets, but the absolute paths to the operator's .env and .bureau.json: Bureau's own
 # scripts read them, the agent gets neither.
 PATHS = {'BUREAU_ENV_FILE': '/operator/checkout/.env', 'BUREAU_CONFIG': '/operator/checkout/.bureau.json'}
@@ -73,7 +77,8 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         base = {k: v for k, v in os.environ.items() if not k.startswith(('BUREAU_RUNNER_', 'BUREAU_MODEL_', 'BUREAU_CODEX_MODEL_', 'BUREAU_STAGE_TIMEOUT'))}
         for name in list(base):
             if name in SECRETS or name in AGENT or name.endswith('_PROXY') or name.endswith('_proxy'): base.pop(name)
-        self.env = {**base, **SECRETS, **ALIASES, **OPERATOR, **AGENT, **PATHS, 'BASH_ENV': '/dev/null', 'ENV': '/dev/null',
+        self.env = {**base, **SECRETS, **ALIASES, **OPERATOR, **AGENT, **PATHS, **HOST, 'BASH_ENV': '/dev/null', 'ENV': '/dev/null',
+                    'LANG': 'C',
                     'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
                     'BUREAU_PROVIDER_LOG_DIR': str(self.root / 'evidence')}
 
@@ -110,10 +115,12 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                         self.assert_no_secret(seen, runner + ' ' + phase)
                         self.assertFalse('BASH_ENV' in seen or 'ENV' in seen, runner + ' ' + phase + ' got BASH_ENV or ENV')
                         for name in PATHS: self.assertFalse(name in seen, runner + ' ' + phase + ' got ' + name)
+                        for name in HOST: self.assertFalse(name in seen, runner + ' ' + phase + ' got ' + name)
                         # Everything else stays: the operator's tool variables and the agent login.
                         for name, value in {**OPERATOR, **AGENT}.items():
                             self.assertEqual(seen.get(name), value, runner + ' ' + phase + ' lost ' + name)
                         self.assertEqual(seen['PATH'], self.env['PATH'])
+                        self.assertEqual(seen['LANG'], 'C')
 
     def test_clean_keeps_only_the_base_list_and_the_agents_own_login(self):
         own = {'claude': ('ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'), 'codex': ('OPENAI_API_KEY', 'CODEX_HOME')}
@@ -130,11 +137,35 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                     self.assertFalse('OPERATOR_TOOL_VAR' in seen, 'clean kept an operator variable')
                     self.assertFalse('BUREAU_PROVIDER_LOG_DIR' in seen, 'clean kept a Bureau variable')
                     for name in PATHS: self.assertFalse(name in seen, 'clean kept ' + name)
+                    for name in HOST: self.assertFalse(name in seen, 'clean kept ' + name)
                     allowed = set(p.UNTRUSTED_KEEP) | set(p.AGENT_KEEP)
                     stray = [n for n in seen if n not in allowed and not n.startswith(p.AGENT_KEEP_PREFIXES[runner])
                              and not n.startswith('__CF') and n not in ('LC_CTYPE',)]
                     self.assertEqual(stray, [], runner + ' ' + phase + ' got variables outside the clean list')
                     self.assertEqual(seen['PATH'], self.env['PATH'])
+                    self.assertEqual(seen['LANG'], 'C')
+
+    def test_host_prefix_is_removed_in_both_modes_without_changing_other_variables(self):
+        environ = {**HOST, **OPERATOR, 'LANG': 'C', 'PATH': '/bin'}
+        before = dict(environ)
+        for mode in ('default', 'clean'):
+            for runner in (None, 'claude', 'codex'):
+                with self.subTest(mode=mode, runner=runner):
+                    reduced = p.untrusted_env(environ, mode, runner)
+                    expected = {'LANG': 'C', 'PATH': '/bin'}
+                    if mode == 'default': expected.update(OPERATOR)
+                    self.assertEqual(reduced, expected)
+        self.assertEqual(environ, before)
+
+    def test_clean_agent_keep_prefixes_cannot_readmit_host_variables(self):
+        for runner, prefix in (('claude', 'CLAUDE_'), ('codex', 'CODEX_')):
+            with self.subTest(runner=runner):
+                note = prefix + 'MY_HERDR_NOTE'
+                environ = {**HOST, note: 'keep_this_note', 'PATH': '/bin', 'LANG': 'C'}
+                # Even an overlapping agent allowlist must not override the host exclusion.
+                with patch.dict(p.AGENT_KEEP_PREFIXES, {runner: p.AGENT_KEEP_PREFIXES[runner] + ('HERDR_',)}):
+                    self.assertEqual(p.untrusted_env(environ, 'clean', runner),
+                                     {note: 'keep_this_note', 'PATH': '/bin', 'LANG': 'C'})
 
     def test_invalid_mode_refuses_before_any_agent_or_login_check(self):
         for bad in ('cleen', '', True, 1, ['clean'], {'mode': 'clean'}, 'clean\n'):
@@ -175,7 +206,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
     def test_bureau_git_and_gh_processes(self):
         # process_env: the environment bureau-supervision.py, bureau-runtime.py and bureau-doctor.py
         # give the git and gh processes they start (the git() and gh() functions of bureau-env.sh).
-        environ = {**SECRETS, **ALIASES, **OPERATOR, 'BASH_ENV': '/dev/null', 'ENV': '/dev/null', 'PATH': '/bin'}
+        environ = {**SECRETS, **ALIASES, **OPERATOR, **HOST, 'BASH_ENV': '/dev/null', 'ENV': '/dev/null', 'PATH': '/bin'}
         local = p.process_env(['git', '-C', '/repo', '--literal-pathspecs', 'status', '--porcelain'], environ)
         self.assertEqual(local, {**OPERATOR, 'PATH': '/bin'})
         for command in (['git', '-C', '/repo', 'ls-remote', 'origin'], ['git', 'push'], ['git', '-c', 'x=y', 'fetch'],
@@ -184,6 +215,9 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                 remote = p.process_env(command, environ)
                 for name in ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID', 'API_KEY', 'BASH_ENV', 'ENV'):
                     self.assertFalse(name in remote, name + ' reached ' + command[0])
+                for name in HOST: self.assertFalse(name in remote, name + ' reached ' + command[0])
+                for name, value in OPERATOR.items(): self.assertEqual(remote.get(name), value)
+                self.assertEqual(remote.get('PATH'), '/bin')
                 for name in ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'CARGO_ALIAS', 'REMOTE_URL'):
                     self.assertEqual(remote.get(name), {**SECRETS, **ALIASES}[name], name + ' was taken from ' + command[0])
         self.assertEqual(p.git_subcommand(['-C', 'push', 'status']), 'status')
@@ -198,6 +232,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                                               'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'))
         self.assertEqual(p.UNTRUSTED_STARTUP, ('BASH_ENV', 'ENV'))
         self.assertEqual(p.UNTRUSTED_PATHS, ('BUREAU_ENV_FILE', 'BUREAU_CONFIG'))
+        self.assertEqual(p.UNTRUSTED_HOST_PREFIXES, ('HERDR_',))
         self.assertEqual(p.UNTRUSTED_KEEP, ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
                                             'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI'))
         self.assertEqual(p.AGENT_KEEP_PREFIXES, {'claude': ('ANTHROPIC_', 'CLAUDE_', 'HEADROOM_'), 'codex': ('OPENAI_', 'CODEX_')})

@@ -6,6 +6,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Fixed
+
+- Bureau drops every `HERDR_` variable from the environments it builds for headless agents, their login checks, test commands and other child commands, in both `repo.untrusted_env` modes. Herdr's pane variables made headless stages claim the operator's pane through the SessionStart hook, so Herdr later showed or resumed a Bureau stage instead of the operator's session. Nothing else in the environment changes; the clean-mode allowlist and exit codes stay the same. Resync the scripts scope to apply the fix. Validated with fake providers and local environment probes, without a live Herdr session.
+
 ## [3.4.0] - 2026-10-09
 
 v3.4 is a minor release on v3.3.0 with six pull requests: operator hooks without submodule recursion and the removal of operator paths from branch code ([#69](https://github.com/KaiaK808/bureau/pull/69)); resolved Claude effort per stage ([#65](https://github.com/KaiaK808/bureau/pull/65)); the re-accept of a clean preserved worktree ([#66](https://github.com/KaiaK808/bureau/pull/66)); a Claude configuration directory for an installation and its doctor login report ([#67](https://github.com/KaiaK808/bureau/pull/67)); safe handling of malformed environment names in the secret filter ([#70](https://github.com/KaiaK808/bureau/pull/70)); and documentation of `.env` precedence over the start line ([#71](https://github.com/KaiaK808/bureau/pull/71)). The v3 exit-code contract stays; no exit code is new. v3.4.0 goes straight to stable without a release candidate. See the [v3.4.0 release notes](docs/release-notes.md) for validation and known limitations.

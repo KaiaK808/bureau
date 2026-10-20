@@ -283,9 +283,11 @@ bureau_secret_copy() {
 # and BUREAU_CONFIG (_BUREAU_UNTRUSTED_PATHS): no secret, but the absolute path
 # to the operator's .env and .bureau.json; Bureau's own scripts keep reading
 # them (until v3.3.0 the default mode passed them on). Keep the lists and the 6
-# here equal to UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, UNTRUSTED_PATHS, COPY_MIN
-# and UNTRUSTED_KEEP in bureau-provider.py; tests/test_untrusted_env.sh
-# compares the implementations and pins both.
+# here equal to UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, UNTRUSTED_PATHS,
+# UNTRUSTED_HOST_PREFIXES, COPY_MIN and UNTRUSTED_KEEP in bureau-provider.py;
+# tests/test_untrusted_env.sh compares the implementations and pins both.
+# Every child also loses the host pane variables (_BUREAU_UNTRUSTED_HOST_PREFIXES):
+# a headless agent's SessionStart hook must not claim the operator's Herdr pane.
 # Every function below leaves the calling shell alone (the stage keeps its keys
 # for its own Linear, GitHub and Telegram calls), calls env by its absolute path
 # /usr/bin/env (a PATH entry such as node_modules/.bin cannot stand in for it),
@@ -302,13 +304,14 @@ bureau_secret_copy() {
 #   their bash child with --noprofile --norc.
 #   repo.untrusted_env in .bureau.json selects it:
 #     absent, null or "default" — the calling environment minus the seven,
-#       their copies, BASH_ENV, ENV, BUREAU_ENV_FILE and BUREAU_CONFIG.
+#       their copies, BASH_ENV, ENV, BUREAU_ENV_FILE, BUREAU_CONFIG and host pane variables.
 #       Everything else stays, so test commands keep their toolchain
 #       variables (cargo, nvm, pyenv, a virtualenv).
 #     "clean" — `env -i` with only PATH HOME USER LOGNAME SHELL TMPDIR TEMP
 #       TMP LANG LC_ALL LC_CTYPE TERM TZ CI (those that are exported and carry
 #       no secret's value), plus the NAME=VALUE pairs given before the command
 #       (the hook's BUREAU_ISSUE and BUREAU_BRANCH).
+#   Host pane names are also dropped from NAME=VALUE pairs in both wrappers.
 #   Any other value, a .bureau.json jq cannot read, or no command: the command
 #   is not run, a message goes to stderr, and the function EXITS the calling
 #   shell with 24 (environment-blocked), so a stage never judges code it did
@@ -374,6 +377,15 @@ bureau_secret_copy() {
 # to the options /usr/bin/env needs: mode default|clean, names "seven",
 # "dotenv" or a list of names, startup 1 to remove BASH_ENV and ENV. Silent.
 _BUREAU_UNTRUSTED_PATHS='BUREAU_ENV_FILE BUREAU_CONFIG'
+_BUREAU_UNTRUSTED_HOST_PREFIXES='HERDR_'
+
+_bureau_env_host_name() {
+  local IFS=$' \t\n' _beh_prefix
+  for _beh_prefix in $_BUREAU_UNTRUSTED_HOST_PREFIXES; do
+    [ "${1:0:${#_beh_prefix}}" = "$_beh_prefix" ] && return 0
+  done
+  return 1
+}
 
 _bureau_env_build() {
   local IFS=$' \t\n'
@@ -395,6 +407,7 @@ _bureau_env_build() {
   if [ "$_beb_mode" = clean ]; then
     _BUREAU_ENV_ARGV=(-i)
     for _beb_name in PATH HOME USER LOGNAME SHELL TMPDIR TEMP TMP LANG LC_ALL LC_CTYPE TERM TZ CI; do
+      _bureau_env_host_name "$_beb_name" && continue
       case $'\n'"$_beb_exported"$'\n' in (*$'\n'"$_beb_name"$'\n'*) ;; (*) continue ;; esac
       [ -n "${!_beb_name+x}" ] || continue
       _beb_value="${!_beb_name}"
@@ -404,8 +417,9 @@ _bureau_env_build() {
     # compgen prints one name per line, and bash 3.2 takes an environment entry
     # whose name is no shell identifier (`A[$(command)]`) for a variable: such a
     # name is neither split into words with pathname expansion nor expanded
-    # indirectly, where its subscript would run. It is passed on as it is, as
-    # under a bash that never lists it. The check spells every character out:
+    # indirectly, where its subscript would run. Unless it is a host pane name,
+    # it is passed on as it is, as under a bash that never lists it. The check
+    # spells every character out:
     # a range such as A-Z or a class follows the locale's collation, and under
     # some single-byte locales lets `[`, `$` and `(` through. No new local
     # either, which would hide an exported variable of that name from the
@@ -415,6 +429,10 @@ _bureau_env_build() {
     set -f
     IFS=$'\n'
     for _beb_name in $_beb_exported; do
+      if _bureau_env_host_name "$_beb_name"; then
+        _BUREAU_ENV_ARGV+=(-u "$_beb_name")
+        continue
+      fi
       case "$_beb_name" in
         (''|[0123456789]*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*) continue ;;
       esac
@@ -477,7 +495,8 @@ bureau_untrusted_env() {
   fi
 
   while [ "$#" -gt 0 ] && [[ $1 =~ $_bue_assign_re ]]; do
-    _bue_assign+=("$1"); shift
+    _bureau_env_host_name "${1%%=*}" || _bue_assign+=("$1")
+    shift
   done
   if [ "$#" = 0 ]; then
     echo "bureau_untrusted_env: no command given; nothing was run (24, environment-blocked)" >&2
@@ -503,7 +522,8 @@ bureau_without_secrets() {
   local -a _bws_assign
   _bws_assign=()
   while [ "$#" -gt 0 ] && [[ $1 =~ $_bws_assign_re ]]; do
-    _bws_assign+=("$1"); shift
+    _bureau_env_host_name "${1%%=*}" || _bws_assign+=("$1")
+    shift
   done
   if [ "$#" = 0 ]; then
     echo "bureau_without_secrets: no command given; nothing was run (24, environment-blocked)" >&2
