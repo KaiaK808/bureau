@@ -16,6 +16,12 @@ SCRIPT=ROOT/'templates/scripts/bureau-provider.py'
 spec=importlib.util.spec_from_file_location('provider',SCRIPT)
 p=importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
 
+CODEX_RECONNECT_ERRORS = '''{"type":"error","message":"Reconnecting... 1/5 (unexpected status 503 Service Unavailable)"}
+{"type":"error","message":"Reconnecting... 2/5 (unexpected status 503 Service Unavailable)"}
+{"type":"error","message":"Reconnecting... 3/5 (unexpected status 503 Service Unavailable)"}
+'''
+CODEX_COMPLETED = '{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":3}}\n'
+
 
 class ProviderTests(unittest.TestCase):
     def setUp(self):
@@ -65,7 +71,7 @@ if os.environ.get('FORK_IGNORE_TERM'):
 # under TRANSCRIPT_DIR (the test computes that directory); Codex its thread.started event.
 if name=='claude' and os.environ.get('TRANSCRIPT_DIR') and '--session-id' in sys.argv:
     folder=pathlib.Path(os.environ['TRANSCRIPT_DIR']); folder.mkdir(parents=True,exist_ok=True)
-    (folder/(sys.argv[sys.argv.index('--session-id')+1]+'.jsonl')).write_text('{"type":"user"}\\n')
+    (folder/(sys.argv[sys.argv.index('--session-id')+1]+'.jsonl')).write_text(os.environ.get('TRANSCRIPT_CONTENT','{"type":"user"}\\n'))
 if name=='codex' and os.environ.get('THREAD'):
     print(json.dumps({'type':'thread.started','thread_id':os.environ['THREAD']}),flush=True)
 if os.environ.get('RECORD_SIGNALS'):
@@ -76,13 +82,16 @@ if os.environ.get('RECORD_SIGNALS'):
 (root/'ready').touch()
 if os.environ.get('IGNORE_TERM'): signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if os.environ.get('SLEEP'): time.sleep(float(os.environ['SLEEP']))
+if name=='codex' and 'CODEX_STREAM' in os.environ:
+    print(os.environ['CODEX_STREAM'],end='')
 if os.environ.get('FAIL'):
     print(os.environ['FAIL'],file=sys.stderr); sys.exit(1)
 final=os.environ.get('FINAL','final response')
 if name=='codex':
     output=sys.argv[sys.argv.index('-o')+1]
     if not os.environ.get('EMPTY'): pathlib.Path(output).write_text(final)
-    print(json.dumps({'type':'turn.completed','usage':{'input_tokens':12,'output_tokens':3}}))
+    if 'CODEX_STREAM' not in os.environ:
+        print(json.dumps({'type':'turn.completed','usage':{'input_tokens':12,'output_tokens':3}}))
     print('diagnostic APPROVE text should never become the result')
 elif os.environ.get('RAW'):
     print(os.environ['RAW'])
@@ -122,7 +131,7 @@ else:
         self.assertFalse(path.exists(),'the Codex temporary directory survived the call')
         return path
 
-    def run_wrapped_provider(self,patch,code=0,**env):
+    def run_wrapped_provider(self,patch,*extra,code=0,**env):
         # Instrument the actual adapter in a separate process: allocation and
         # lifecycle failures still run main(), its exit handling and cleanup.
         source='''import importlib.util, json, os, pathlib, signal, sys
@@ -143,7 +152,7 @@ def record_environment(*args,**kwargs):
     finally: (root/'parent-env.json').write_text(json.dumps({'unchanged':dict(os.environ)==before}))
 p.run=record_environment
 '''+patch+'\nsys.exit(p.main())\n'
-        result=subprocess.run([sys.executable,'-c',source,str(SCRIPT),*self.command()[2:]],
+        result=subprocess.run([sys.executable,'-c',source,str(SCRIPT),*self.command(*extra)[2:]],
                               capture_output=True,text=True,env={**self.env,**env},timeout=12)
         self.assertEqual(result.returncode,code,result.stdout+result.stderr)
         self.assertTrue(json.loads((self.root/'parent-env.json').read_text())['unchanged'])
@@ -318,6 +327,88 @@ p.shutil.rmtree=fail_remove
         self.assertEqual(args[-1],'-'); self.assertNotIn('--append-system-prompt',args)
         self.assertEqual(result.stdout.strip(),'final response')
         self.assertNotIn('APPROVE',result.stdout)
+        _,metadata=self.evidence()
+        self.assertNotIn('recovered_errors',metadata)
+
+    def test_codex_events_recover_reconnect_errors(self):
+        stream=CODEX_RECONNECT_ERRORS+CODEX_COMPLETED
+        result=self.run_provider('--stage','code_review',CODEX_STREAM=stream,FINAL='APPROVE')
+        self.assertEqual(result.stdout.strip(),'APPROVE')
+        evidence,metadata=self.evidence()
+        self.assertEqual(metadata['outcome'],'complete')
+        self.assertEqual(metadata['usage'],{'input_tokens':12,'output_tokens':3})
+        self.assertEqual(metadata['recovered_errors'],{'count':3,'first_message':
+                         'Reconnecting... 1/5 (unexpected status 503 Service Unavailable)'})
+        self.assertIn(stream,(evidence/'stdout.log').read_text())
+
+    def test_codex_events_reject_error_without_later_completion(self):
+        stream=CODEX_RECONNECT_ERRORS.splitlines()[0]+'\n'
+        result=self.run_provider(CODEX_STREAM=stream,FINAL='APPROVE',code=22)
+        self.assertEqual(result.stdout,'')
+        self.assertEqual(self.evidence()[1]['outcome'],'provider-error')
+
+    def test_codex_events_reject_error_after_completion(self):
+        result=self.run_provider(CODEX_STREAM=CODEX_COMPLETED+CODEX_RECONNECT_ERRORS,FINAL='APPROVE',code=22)
+        self.assertEqual(result.stdout,'')
+        self.assertEqual(self.evidence()[1]['outcome'],'provider-error')
+
+    def test_codex_events_keep_turn_failed_fatal(self):
+        failed='{"type":"turn.failed","error":{"message":"unexpected status 503 Service Unavailable"}}\n'
+        for stream in (failed,CODEX_COMPLETED+failed,failed+CODEX_COMPLETED,
+                       CODEX_RECONNECT_ERRORS+failed+CODEX_COMPLETED):
+            with self.subTest(stream=stream):
+                result=self.run_provider(CODEX_STREAM=stream,FINAL='APPROVE',code=22)
+                self.assertEqual(result.stdout,'')
+                self.assertEqual(self.evidence()[1]['outcome'],'provider-error')
+
+    def test_codex_events_keep_last_completed_usage(self):
+        stream=(CODEX_RECONNECT_ERRORS+CODEX_COMPLETED+CODEX_RECONNECT_ERRORS
+                +'{"type":"turn.completed","usage":{"input_tokens":97,"output_tokens":11}}\n')
+        result=self.run_provider(CODEX_STREAM=stream,FINAL='APPROVE',BUREAU_COST_TRACKING='true')
+        value=json.loads(result.stdout)
+        self.assertEqual(value['result'],'APPROVE')
+        self.assertEqual(value['usage'],{'input_tokens':97,'output_tokens':11})
+        self.assertIsNone(value['total_cost_usd'])
+        metadata=self.evidence()[1]
+        self.assertEqual(metadata['usage'],value['usage'])
+        self.assertEqual(metadata['recovered_errors']['count'],6)
+
+    def test_codex_events_truncate_recovered_error_message(self):
+        message='Reconnecting... 1/5 (unexpected status 503 Service Unavailable): '+('detail '*80)
+        stream=json.dumps({'type':'error','message':message})+'\n'+CODEX_COMPLETED
+        self.run_provider(CODEX_STREAM=stream)
+        self.assertEqual(self.evidence()[1]['recovered_errors'],{'count':1,'first_message':message[:200]})
+
+    def test_codex_events_still_require_final_message(self):
+        result=self.run_provider(CODEX_STREAM=CODEX_RECONNECT_ERRORS+CODEX_COMPLETED,EMPTY='1',code=22)
+        self.assertEqual(result.stdout,'')
+        metadata=self.evidence()[1]
+        self.assertEqual(metadata['outcome'],'invalid-result')
+        self.assertEqual(metadata['error'],'provider returned no final message')
+
+    def test_codex_events_still_validate_schema(self):
+        schema=ROOT/'templates/scripts/bureau-qa.schema.json'
+        stream=CODEX_RECONNECT_ERRORS+CODEX_COMPLETED
+        value={'status':'GREEN','tests_added':0,'tests_failing':0,'coverage_notes':'ok'}
+        result=self.run_provider('--schema',str(schema),CODEX_STREAM=stream,FINAL=json.dumps(value))
+        self.assertEqual(json.loads(result.stdout),value)
+        for bad in ('not json','{"status":"GREEN"}',json.dumps({**value,'status':'APPROVE'})):
+            with self.subTest(final=bad):
+                result=self.run_provider('--schema',str(schema),CODEX_STREAM=stream,FINAL=bad,code=22)
+                self.assertEqual(result.stdout,'')
+                self.assertEqual(self.evidence()[1]['outcome'],'invalid-result')
+
+    def test_codex_events_keep_process_failure_classification(self):
+        stream=CODEX_RECONNECT_ERRORS+CODEX_COMPLETED
+        for message,code,outcome in (('quota exceeded',23,'quota'),('Permission denied by sandbox',24,'environment'),
+                                     ('backend failed',22,'provider-error'),('Not logged in',16,'auth')):
+            with self.subTest(message=message):
+                result=self.run_provider(CODEX_STREAM=stream,FAIL=message,code=code)
+                self.assertEqual(result.stdout,'')
+                evidence,metadata=self.evidence()
+                self.assertEqual(metadata['outcome'],outcome)
+                self.assertEqual(metadata['provider_exit'],1)
+                self.assertIn(stream,(evidence/'stdout.log').read_text())
 
     def test_invalid_provider_configuration_is_classified(self):
         for config in ({'agents':{'providers':[]}}, {'agents':{'runner':'codex','model':42}},
@@ -332,6 +423,90 @@ p.shutil.rmtree=fail_remove
         value=json.loads(result.stdout)
         self.assertEqual(value['provider'],'claude'); self.assertEqual(value['usage']['input_tokens'],12)
         self.assertIn('COMPLETE',value['result'])
+
+    def complete_implement_result(self):
+        return {'status':'COMPLETE','tasks_done':3,'tasks_skipped':0,'tasks_needs_human':0,
+                'fixed_review_items':[],'notes':{'needs_human':[],'skipped':[],'deviations':[]},
+                'prose_notes':'Implementation and gate complete'}
+
+    def structured_transcript_env(self,*values):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        folder=self.claude_projects_dir(self.env['CLAUDE_CONFIG_DIR'])
+        # Claude JSONL: assistant messages contain tool_use blocks, whose input is the result.
+        events=[{'type':'user','message':{'role':'user','content':'Implement the fixture'}}]
+        for index,value in enumerate(values):
+            events.append({'type':'assistant','message':{'role':'assistant','content':[
+                {'type':'tool_use','id':'toolu_'+str(index),'name':'StructuredOutput','input':value}]}})
+        events.append({'type':'assistant','message':{'role':'assistant','content':[
+            {'type':'text','text':'The scheduled wakeup arrived after completion.'}]}})
+        return {'TRANSCRIPT_DIR':str(folder),'TRANSCRIPT_CONTENT':'\n'.join(json.dumps(event) for event in events)+'\n'}
+
+    def test_claude_recovers_the_last_structured_output_from_transcript(self):
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'
+        latest=self.complete_implement_result()
+        earlier={**latest,'status':'PARTIAL','tasks_done':1}
+        env=self.structured_transcript_env(earlier,latest)
+        # Non-object structured_output values need the same fallback as an absent field.
+        for fields in ({},{'structured_output':None},{'structured_output':[]},{'structured_output':'lost'}):
+            with self.subTest(fields=fields):
+                envelope={'result':'All work is already finished.','usage':{'input_tokens':12},'total_cost_usd':0.01,**fields}
+                result=self.run_provider('--schema',str(schema),RAW=json.dumps(envelope),**env)
+                self.assertEqual(json.loads(result.stdout),latest)
+                _,metadata=self.evidence()
+                self.assertEqual((metadata['outcome'],metadata['structured_source']),('complete','transcript'))
+                self.assertTrue(metadata['transcript_found'])
+                self.assertEqual((metadata['usage'],metadata['total_cost_usd']),({'input_tokens':12},0.01))
+
+    def test_claude_validates_the_last_transcript_result_without_using_an_earlier_one(self):
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'
+        earlier=self.complete_implement_result()
+        for latest in ({'status':'COMPLETE'},{**earlier,'status':'UNKNOWN'},
+                       {**earlier,'tasks_done':'three'},{**earlier,'unexpected':True},None,[], 'invalid'):
+            with self.subTest(latest=latest):
+                env=self.structured_transcript_env(earlier,latest)
+                # Even valid JSON in the prose result cannot supersede the last tool call.
+                result=self.run_provider('--schema',str(schema),FINAL=json.dumps(earlier),code=22,**env)
+                self.assertEqual(result.stdout,'')
+                _,metadata=self.evidence()
+                self.assertEqual(metadata['outcome'],'invalid-result')
+
+    def test_claude_without_a_transcript_or_structured_call_still_returns_22(self):
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'
+        env=self.structured_transcript_env()
+        for transcript_env in ({},env):
+            with self.subTest(transcript=bool(transcript_env)):
+                result=self.run_provider('--schema',str(schema),FINAL='All work is already finished.',code=22,**transcript_env)
+                self.assertEqual(result.stdout,'')
+                self.assertIn('result type must be object',result.stderr)
+                _,metadata=self.evidence()
+                self.assertEqual(metadata['transcript_found'],bool(transcript_env))
+
+    def test_claude_structured_envelope_does_not_read_the_transcript(self):
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'
+        value=self.complete_implement_result()
+        env=self.structured_transcript_env(value)
+        patch='''original_open=p.Path.open
+def refuse_transcript_read(path,mode='r',*args,**kwargs):
+    if path.suffix=='.jsonl' and 'r' in mode: raise AssertionError('the envelope must not read its transcript')
+    return original_open(path,mode,*args,**kwargs)
+p.Path.open=refuse_transcript_read
+'''
+        # A dict in the envelope always takes precedence, even when it fails validation.
+        for envelope_value,code in ((value,0),({'status':'COMPLETE'},22)):
+            with self.subTest(envelope_value=envelope_value):
+                result=self.run_wrapped_provider(patch,'--schema',str(schema),code=code,
+                                                 RAW=json.dumps({'structured_output':envelope_value}),**env)
+                if code==0:
+                    self.assertEqual(json.loads(result.stdout),value)
+                    _,metadata=self.evidence()
+                    self.assertNotIn('structured_source',metadata)
+
+    def test_claude_without_a_schema_keeps_the_prose_result(self):
+        env=self.structured_transcript_env(self.complete_implement_result())
+        result=self.run_provider(FINAL='All work is already finished.',**env)
+        self.assertEqual(result.stdout.strip(),'All work is already finished.')
+        _,metadata=self.evidence()
+        self.assertNotIn('structured_source',metadata)
 
     def test_schema_validates_actual_final_and_rejects_invalid(self):
         schema=ROOT/'templates/scripts/bureau-qa.schema.json'
@@ -513,6 +688,26 @@ p.shutil.rmtree=fail_remove
         wrapper.write_text('#!/bin/sh\n[ "$1" = wrap ] && [ "$2" = claude ] && [ "$3" = -- ] || exit 99\nshift 3\nexec claude "$@"\n')
         wrapper.chmod(0o755)
         self.run_provider()
+
+    def test_claude_disallows_deferred_turns_except_for_the_tool_free_summary(self):
+        wrapper=self.bin/'headroom'
+        wrapper.write_text('#!/bin/sh\n[ "$1" = wrap ] && [ "$2" = claude ] && [ "$3" = -- ] || exit 99\nshift 3\nexec claude "$@"\n')
+        wrapper.chmod(0o755)
+        system=self.root/'system.txt'; system.write_text('Fixture system context')
+        for wrapped in (False,True):
+            for stage in ('implement','upstream_summary'):
+                with self.subTest(wrapped=wrapped,stage=stage):
+                    self.config.write_text(json.dumps({'agents':{'runner':'claude','headroom_wrap':wrapped,
+                        'providers':{'claude':{'model':'claude-fixture','reasoning_effort':'high'}}}}))
+                    self.run_provider('--stage',stage,'--system-file',str(system))
+                    argv=json.loads((self.root/'argv.json').read_text())
+                    evidence,metadata=self.evidence()
+                    tools=['--tools',''] if stage=='upstream_summary' else [
+                        '--dangerously-skip-permissions','--disallowedTools',
+                        'ScheduleWakeup,CronCreate,CronDelete,RemoteTrigger,Monitor']
+                    self.assertEqual(argv,['-p','--output-format','json','--session-id',metadata['session_id'],
+                        *tools,'--append-system-prompt-file',str(evidence/'system.txt'),
+                        '--effort','high','--model','claude-fixture'])
 
     def claude_argv(self,config,**env):
         self.config.write_text(json.dumps(config))

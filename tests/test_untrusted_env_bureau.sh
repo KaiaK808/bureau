@@ -377,6 +377,7 @@ for cmd in 'git status' 'git -C . push' 'gh pr view 5'; do
   env -i PATH="$TMP/dumpbin:$PATH" HOME="$HOME" LINEAR_API_KEY="$PR1_LINEAR" TELEGRAM_BOT_TOKEN=abc123 TELEGRAM_ALERT_CHAT_ID=12345 \
     GH_TOKEN="$PR1_GH" API_KEY="$PR1_LINEAR" HEADER="Authorization: abc123" CHAT=12345 CHAT_IN=x12345 URL="https://t:$PR1_GH@h" \
     BASH_ENV=/dev/null OPERATOR_TOOL_VAR="$PR1_OPERATOR" \
+    HERDR_PANE_ID=operator-pane HERDR_SOCKET_PATH=/tmp/herdr-probe.sock HERDR_ENV=pane HERDR_EMPTY= MY_HERDR_NOTE=keep_this_note \
     /bin/bash -c 'source "$1"; env -0 > "$2.input"; '"$cmd" _ "$SCRIPTS/bureau-env.sh" "$TMP/$tool"
   python3 - "$SCRIPTS" "$TMP/$tool.dump" "$TMP/$tool.input" $cmd <<'PY' || fail "F parity '$cmd': the shell and a Python process_env differ"
 import importlib.util, sys
@@ -386,9 +387,18 @@ ignore = {'PWD', 'SHLVL', '_', 'OLDPWD', '__CF_USER_TEXT_ENCODING'}
 shell = {k: v for k, v in read(sys.argv[2]).items() if k not in ignore}
 given = {k: v for k, v in read(sys.argv[3]).items() if k not in ignore}
 failed = False
+if any(name.startswith('HERDR_') for name in shell):
+    failed = True
+    print('Herdr pane variables reached the shell child', file=sys.stderr)
+if shell.get('MY_HERDR_NOTE') != 'keep_this_note' or shell.get('PATH') != given['PATH']:
+    failed = True
+    print('ordinary shell variables changed', file=sys.stderr)
 for name in ('provider', 'supervision', 'runtime'):
     spec = importlib.util.spec_from_file_location(name, Path(sys.argv[1]) / ('bureau-' + name + '.py'))
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    if module.UNTRUSTED_HOST_PREFIXES != ('HERDR_',):
+        failed = True
+        print(name, 'host prefixes differ', file=sys.stderr)
     python = module.process_env(sys.argv[4:], given)
     if shell != python:
         failed = True

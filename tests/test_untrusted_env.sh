@@ -74,6 +74,31 @@ want="CI HOME HOOK_VAR LANG LC_ALL LC_CTYPE LOGNAME PATH SHELL TEMP TERM TMP TMP
 [ "$got" = "$want" ] || fail "1 clean list: got [$got], wanted [$want]"
 pr1_pass "1 default drops the secrets and their copies, clean keeps only its list, the caller keeps its keys"
 
+# Herdr pane identity belongs to the operator's interactive session, never a child.
+# Check inherited and explicit assignments, including an empty and a future host name.
+for cfg in "$DEFAULT_CFG" "$CLEAN_CFG"; do
+  for helper in bureau_untrusted_env bureau_without_secrets; do
+    run_helper "$cfg" "export HERDR_PANE_ID=operator-pane HERDR_SOCKET_PATH=/tmp/herdr-probe.sock HERDR_ENV=pane \
+      HERDR_BIN_PATH=/tmp/herdr-probe HERDR_TAB_ID=operator-tab HERDR_WORKSPACE_ID=operator-workspace \
+      HERDR_FUTURE_VAR=future HERDR_EMPTY= MY_HERDR_NOTE=keep_this_note LANG=C; \
+      $helper /usr/bin/env > '$H'; \
+      [ \"\$HERDR_PANE_ID\" = operator-pane ] && [ \"\$HERDR_ENV\" = pane ] && [ \"\$HERDR_SOCKET_PATH\" = /tmp/herdr-probe.sock ]" \
+      || fail "1 host $helper $cfg: the caller lost its pane variables"
+    if grep -q '^HERDR_' "$H"; then fail "1 host $helper $cfg: inherited Herdr variables reached the child"; fi
+    grep -qx 'LANG=C' "$H" || fail "1 host $helper $cfg: LANG was dropped"
+    grep -qxF "PATH=$PATH" "$H" || fail "1 host $helper $cfg: PATH changed"
+    if [ "$cfg" = "$DEFAULT_CFG" ] || [ "$helper" = bureau_without_secrets ]; then
+      grep -qx 'MY_HERDR_NOTE=keep_this_note' "$H" || fail "1 host $helper: the prefix rule dropped MY_HERDR_NOTE"
+    else
+      if grep -q '^MY_HERDR_NOTE=' "$H"; then fail "1 host clean: the existing allowlist was widened"; fi
+    fi
+    run_helper "$cfg" "$helper HERDR_PANE_ID=explicit-pane HERDR_NEW_PANE=explicit-new MY_HERDR_NOTE=explicit_note /usr/bin/env > '$H'"
+    if grep -q '^HERDR_' "$H"; then fail "1 host $helper $cfg: an explicit assignment readmitted a Herdr variable"; fi
+    grep -qx 'MY_HERDR_NOTE=explicit_note' "$H" || fail "1 host $helper: an ordinary explicit assignment was dropped"
+  done
+done
+pr1_pass "1 Herdr prefixes go in both modes and wrappers; ordinary variables and the caller's pane stay unchanged"
+
 # A secret of 6 characters or more goes wherever it appears inside a value (a 6-character key
 # in a copied Authorization header); a shorter one only as the whole value (inside matching of
 # a 5-character chat id would take out every variable that happens to contain it).
@@ -152,7 +177,8 @@ parity() {
     TELEGRAM_BOT_TOKEN=abc123 HEADER6="Authorization: abc123" \
     BASH_ENV=/dev/null ENV=/dev/null SSH_AUTH_SOCK=/tmp/agent.sock \
     API_KEY="$PR1_LINEAR" CARGO_ALIAS="$PR1_GH" OPERATOR_TOOL_VAR="$PR1_OPERATOR" BUREAU_CONFIG="$cfg" \
-    BUREAU_ENV_FILE="$TMPD/operator.env" \
+    BUREAU_ENV_FILE="$TMPD/operator.env" HERDR_PANE_ID=operator-pane HERDR_SOCKET_PATH=/tmp/herdr-probe.sock HERDR_ENV=pane \
+    HERDR_FUTURE_VAR=future HERDR_EMPTY= MY_HERDR_NOTE=keep_this_note \
     REMOTE_URL="https://x-access-token:$PR1_GH@github.com/owner/repo.git" LANGUAGE="x${PR1_LINEAR}y" \
     /bin/bash -c 'source "$1"; bureau_untrusted_env env -0 > "$2"; env -0 > "$3"' _ "$1" "$TMPD/shell.$mode" "$TMPD/input.$mode"
   python3 - "$2" "$mode" "$TMPD/shell.$mode" "$TMPD/input.$mode" <<'PY'
@@ -173,7 +199,7 @@ PY
 }
 for mode in default clean; do
   parity "$ENV_SH" "$PROVIDER" "$mode" || fail "1 parity $mode: shell and provider differ"
-  for name in BUREAU_ENV_FILE BUREAU_CONFIG; do
+  for name in BUREAU_ENV_FILE BUREAU_CONFIG HERDR_PANE_ID HERDR_SOCKET_PATH HERDR_ENV HERDR_FUTURE_VAR HERDR_EMPTY; do
     if grep -q "^$name=" <<< "$(tr '\0' '\n' < "$TMPD/shell.$mode")"; then fail "1 parity $mode: $name reached the command"; fi
   done
 done
@@ -184,6 +210,12 @@ spec = importlib.util.spec_from_file_location("provider", sys.argv[1]); p = impo
 print(" ".join(p.UNTRUSTED_PATHS))' "$PROVIDER")
 [ "$shell_paths" = "BUREAU_ENV_FILE BUREAU_CONFIG" ] || fail "1 paths: the shell list is [$shell_paths]"
 [ "$shell_paths" = "$python_paths" ] || fail "1 paths: shell [$shell_paths] and provider [$python_paths] differ"
+shell_prefixes=$(/bin/bash -c 'source "$1"; printf "%s" "${_BUREAU_UNTRUSTED_HOST_PREFIXES:-}"' _ "$ENV_SH")
+python_prefixes=$(python3 -c 'import importlib.util, sys
+spec = importlib.util.spec_from_file_location("provider", sys.argv[1]); p = importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
+print(" ".join(p.UNTRUSTED_HOST_PREFIXES))' "$PROVIDER")
+[ "$shell_prefixes" = HERDR_ ] || fail "1 host prefixes: the shell list is [$shell_prefixes]"
+[ "$shell_prefixes" = "$python_prefixes" ] || fail "1 host prefixes: shell [$shell_prefixes] and provider [$python_prefixes] differ"
 pr1_pass "1 the shell helper and bureau-provider.py give the same environment (default and clean), without BUREAU_ENV_FILE and BUREAU_CONFIG"
 
 # Negative controls: a copy of either side that keeps BUREAU_ENV_FILE and BUREAU_CONFIG in the

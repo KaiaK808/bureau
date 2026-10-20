@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="31dc094010d63f2a7d0ac18fe34c21b53f1ba25002365c43bce66aa95a51f472">
+<meta name="bureau-source-sha256" content="70459fe3c9c5740f14e6a30b1d44c6677deb90d155f7a7813cf4d216bdd78086">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -820,18 +820,27 @@ child source a file before the command runs, and minus
 <code>BUREAU_ENV_FILE</code> and <code>BUREAU_CONFIG</code>, the
 absolute paths to the operator's <code>.env</code> and
 <code>.bureau.json</code> (no secrets; until v3.3.0 the default passed
-them on, and Bureau's own scripts keep reading them).
-<code>"clean"</code>: only <code>PATH</code>, <code>HOME</code>,
-<code>USER</code>, <code>LOGNAME</code>, <code>SHELL</code>,
-<code>TMPDIR</code>, <code>TEMP</code>, <code>TMP</code>,
-<code>LANG</code>, <code>LC_ALL</code>, <code>LC_CTYPE</code>,
-<code>TERM</code>, <code>TZ</code>, <code>CI</code> (plus
-<code>BUREAU_ISSUE</code> and <code>BUREAU_BRANCH</code> for the hook);
-an agent also keeps its own login and network variables
-(<code>ANTHROPIC_*</code>, <code>CLAUDE_*</code>,
-<code>HEADROOM_*</code> for Claude, <code>OPENAI_*</code>,
-<code>CODEX_*</code> for Codex, the proxy variables,
-<code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>,
+them on, and Bureau's own scripts keep reading them). Both modes also
+drop every variable whose name starts with <code>HERDR_</code>
+(including <code>HERDR_ENV</code>, <code>HERDR_SOCKET_PATH</code>,
+<code>HERDR_PANE_ID</code>, <code>HERDR_BIN_PATH</code>,
+<code>HERDR_TAB_ID</code> and <code>HERDR_WORKSPACE_ID</code>), so a
+headless agent's SessionStart hook cannot claim the operator's Herdr
+pane. The prefix exclusion also applies to Bureau's own child-command
+environments and cannot be overridden by an agent login prefix or an
+explicit shell-helper assignment. Other environment rules are unchanged:
+<code>MY_HERDR_NOTE</code>, for example, stays in the default mode; the
+clean-mode allowlist still applies. <code>"clean"</code>: only
+<code>PATH</code>, <code>HOME</code>, <code>USER</code>,
+<code>LOGNAME</code>, <code>SHELL</code>, <code>TMPDIR</code>,
+<code>TEMP</code>, <code>TMP</code>, <code>LANG</code>,
+<code>LC_ALL</code>, <code>LC_CTYPE</code>, <code>TERM</code>,
+<code>TZ</code>, <code>CI</code> (plus <code>BUREAU_ISSUE</code> and
+<code>BUREAU_BRANCH</code> for the hook); an agent also keeps its own
+login and network variables (<code>ANTHROPIC_*</code>,
+<code>CLAUDE_*</code>, <code>HEADROOM_*</code> for Claude,
+<code>OPENAI_*</code>, <code>CODEX_*</code> for Codex, the proxy
+variables, <code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>,
 <code>NODE_EXTRA_CA_CERTS</code>, <code>XDG_CONFIG_HOME</code>), a test
 command does not. Under <code>clean</code> a test command that needs
 <code>CARGO_HOME</code>, <code>NVM_DIR</code>, <code>VIRTUAL_ENV</code>,

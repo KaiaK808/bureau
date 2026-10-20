@@ -105,9 +105,9 @@ class AuthError(Exception):
 # tests (Claude with --dangerously-skip-permissions) and loads the branch's own
 # agent settings, so it starts in the environment bureau_untrusted_env in
 # bureau-env.sh gives every other command the branch controls. Keep
-# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, UNTRUSTED_PATHS and UNTRUSTED_KEEP equal
-# to the lists there; tests/test_untrusted_env.sh compares the two
-# implementations and tests/provider_untrusted_env_test.py pins these tuples.
+# UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, UNTRUSTED_PATHS, UNTRUSTED_HOST_PREFIXES
+# and UNTRUSTED_KEEP equal to the lists there; tests/test_untrusted_env.sh
+# compares the two implementations and tests/provider_untrusted_env_test.py pins these tuples.
 UNTRUSTED_REMOVE = ('LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID',
                     'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')
 # A bash started by the agent sources the file BASH_ENV (or, as sh, ENV) names;
@@ -117,6 +117,8 @@ UNTRUSTED_STARTUP = ('BASH_ENV', 'ENV')
 # path to the file that holds them. Bureau's own scripts read both; nothing the
 # branch controls needs them (until v3.3.0 the default mode passed them on).
 UNTRUSTED_PATHS = ('BUREAU_ENV_FILE', 'BUREAU_CONFIG')
+# A headless child must not claim the operator's terminal-multiplexer pane.
+UNTRUSTED_HOST_PREFIXES = ('HERDR_',)
 # A secret this long counts wherever it appears inside another value; a shorter
 # one only as the whole value (inside matching would take out every variable
 # that happens to contain two or three common characters).
@@ -165,15 +167,16 @@ def process_env(command, environ=None):
     # the git() and gh() functions in bureau-env.sh give the shell's. Hooks,
     # filters, an fsmonitor or a credential helper such a process runs can come
     # from the branch. Always without the .env keys, their copies, BASH_ENV and
-    # ENV; without the GitHub token variables too, except for gh and for git
-    # commands that talk to a remote.
+    # ENV or host pane variables; without the GitHub token variables too,
+    # except for gh and for git commands that talk to a remote.
     environ = os.environ if environ is None else environ
     name = os.path.basename(command[0]) if command else ''
     remote = name == 'gh' or (name == 'git' and git_subcommand(command[1:]) in REMOTE_GIT)
     names = UNTRUSTED_REMOVE[:3] if remote else UNTRUSTED_REMOVE
     carries = _carries(environ, names)
     return {key: value for key, value in environ.items()
-            if key not in names and key not in UNTRUSTED_STARTUP and not carries(value)}
+            if key not in names and key not in UNTRUSTED_STARTUP
+            and not key.startswith(UNTRUSTED_HOST_PREFIXES) and not carries(value)}
 
 
 def untrusted_env_mode(config):
@@ -194,7 +197,8 @@ def untrusted_env(environ, mode, runner=None):
     # the listed secrets, BASH_ENV and ENV, BUREAU_ENV_FILE and BUREAU_CONFIG,
     # and any variable that carries one of the secrets' values (_carries). "clean": only UNTRUSTED_KEEP, plus, for an
     # agent, its own login and network variables, again without any value that
-    # carries a secret. The caller's environment is never changed.
+    # carries a secret. Both modes drop host pane variables, even if an agent
+    # keep prefix overlaps. The caller's environment is never changed.
     carries = _carries(environ, UNTRUSTED_REMOVE)
     if mode == 'clean':
         prefixes = AGENT_KEEP_PREFIXES.get(runner, ())
@@ -205,7 +209,8 @@ def untrusted_env(environ, mode, runner=None):
             return name not in UNTRUSTED_REMOVE and name not in UNTRUSTED_STARTUP and name not in UNTRUSTED_PATHS
     else:
         raise UntrustedEnvError('unknown untrusted environment mode')
-    return {name: value for name, value in environ.items() if keep(name) and not carries(value)}
+    return {name: value for name, value in environ.items()
+            if not name.startswith(UNTRUSTED_HOST_PREFIXES) and keep(name) and not carries(value)}
 
 
 def auth(options):
@@ -314,7 +319,9 @@ def run(options, prompt, system, repo, evidence, schema=None):
         # (transcript()); stdout.log gets the JSON envelope only at the end.
         if options.get('session_id'): command += ['--session-id', options['session_id']]
         if options['stage'] == 'upstream_summary': command += ['--tools', '']
-        else: command += ['--dangerously-skip-permissions']
+        else:
+            command += ['--dangerously-skip-permissions', '--disallowedTools',
+                        'ScheduleWakeup,CronCreate,CronDelete,RemoteTrigger,Monitor']
         if system:
             (evidence/'system.txt').write_text(system)
             command += ['--append-system-prompt-file', str(evidence/'system.txt')]
@@ -395,23 +402,37 @@ def run(options, prompt, system, repo, evidence, schema=None):
         elif re.search(r'quota|rate.limit|usage.limit', text, re.I): outcome='quota'; code=23
         elif re.search(r'permission denied|operation not permitted|sandbox', text, re.I): outcome='environment'; code=24
         return code, '', dict(outcome=outcome, provider_exit=child.returncode)
-    usage = {}; cost = None
+    usage = {}; cost = None; recovered_errors = {}; structured_source = None
     if runner == 'codex':
         text = final.read_text() if final.exists() else ''
+        pending_error = False
         for line in stdout.splitlines():
             try: event = json.loads(line)
             except ValueError: continue
             if not isinstance(event, dict): continue
-            if event.get('type') == 'turn.completed': usage = event.get('usage', {})
-            if event.get('type') in ('turn.failed', 'error'):
+            # Only a later completion recovers an error notice; turn.failed
+            # remains fatal even when another completion follows it.
+            if event.get('type') == 'turn.failed':
                 return 22, '', dict(outcome='provider-error')
+            if event.get('type') == 'turn.completed':
+                usage = event.get('usage', {})
+                pending_error = False
+            elif event.get('type') == 'error':
+                pending_error = True
+                if not recovered_errors:
+                    recovered_errors = dict(count=0, first_message=str(event.get('message', ''))[:200])
+                recovered_errors['count'] += 1
+        if pending_error: return 22, '', dict(outcome='provider-error')
     else:
         try: envelope = json.loads(stdout)
         except ValueError: raise ValueError('Claude did not return a JSON envelope')
         if not isinstance(envelope, dict): raise ValueError('Claude envelope must be an object')
         if envelope.get('is_error'): return 22, '', dict(outcome='provider-error')
         value = envelope.get('structured_output')
-        text = json.dumps(value) if isinstance(value, dict) else envelope.get('result', '')
+        if schema and not isinstance(value, dict):
+            found, recovered = claude_transcript_result(options, repo, evidence)
+            if found: value = recovered; structured_source = 'transcript'
+        text = json.dumps(value) if isinstance(value, dict) or structured_source else envelope.get('result', '')
         usage = envelope.get('usage', {}); cost = envelope.get('total_cost_usd')
     if not isinstance(text, str) or not text.strip(): raise ValueError('provider returned no final message')
     if schema:
@@ -422,6 +443,8 @@ def run(options, prompt, system, repo, evidence, schema=None):
     if environment_blocked(value, text, runner, options['stage']):
         return 24, '', dict(outcome='environment')
     metadata = dict(outcome='complete', provider=runner, usage=usage, total_cost_usd=cost, duration_seconds=time.monotonic()-started)
+    if recovered_errors: metadata['recovered_errors'] = recovered_errors
+    if structured_source: metadata['structured_source'] = structured_source
     if options['cost_tracking']:
         text = json.dumps(dict(result=text, usage=usage, total_cost_usd=cost, provider=runner))
     return 0, text, metadata
@@ -567,6 +590,30 @@ def transcript(options, repo, evidence, environ=None):
                     transcript_note='codex reported no thread id (no thread.started event in stdout.log)')
     found = _found(Path(environ.get('CODEX_HOME') or home/'.codex')/'sessions', '*/*/*/rollout-*-' + thread + '.jsonl')
     return dict(session_id=thread, transcript=str(found) if found else None, transcript_found=found is not None)
+
+
+def claude_transcript_result(options, repo, evidence):
+    # A deferred turn can replace the envelope's structured_output with prose.
+    # Claude JSONL stores assistant tool_use blocks in message.content. Keep
+    # the last matching input even if invalid: the schema must reject it,
+    # never silently accept an earlier StructuredOutput instead.
+    record = transcript(options, repo, evidence)
+    if not record['transcript_found']: return False, None
+    found = False; value = None
+    try:
+        with Path(record['transcript']).open(errors='replace') as source:
+            for line in source:
+                try: event = json.loads(line)
+                except ValueError: continue
+                if not isinstance(event, dict) or event.get('type') != 'assistant': continue
+                message = event.get('message')
+                content = message.get('content') if isinstance(message, dict) else None
+                if not isinstance(content, list): continue
+                for block in content:
+                    if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('name') == 'StructuredOutput':
+                        found = True; value = block.get('input')
+    except OSError: return False, None
+    return found, value
 
 
 def note(text):

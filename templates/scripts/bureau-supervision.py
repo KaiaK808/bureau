@@ -15,6 +15,9 @@ import tempfile
 import time
 import uuid
 
+# Keep equal to bureau-provider.py and bureau-env.sh (standalone script).
+UNTRUSTED_HOST_PREFIXES = ('HERDR_',)
+
 def process_env(command, environ=None):
     # Bureau's own git and gh calls run without the Bureau secrets: hooks,
     # filters, an fsmonitor or a credential helper they start can come from the
@@ -22,8 +25,9 @@ def process_env(command, environ=None):
     # and gh() functions in bureau-env.sh (tests/test_untrusted_env_bureau.sh
     # compares them): never the three .env keys, their copies (6 characters or
     # more anywhere inside a value, a shorter one as the whole value), BASH_ENV
-    # or ENV; the GitHub token variables only for gh and for git commands that
-    # talk to a remote. Kept here so this script needs no other file.
+    # or ENV, nor host pane variables; the GitHub token variables only for gh
+    # and for git commands that talk to a remote. Kept here so this script
+    # needs no other file.
     environ = os.environ if environ is None else environ
     names = ['LINEAR_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALERT_CHAT_ID']
     sub, skip = '', False
@@ -37,7 +41,8 @@ def process_env(command, environ=None):
     long_secrets = [value for value in values if len(value) >= 6]
     short_secrets = {value for value in values if 0 < len(value) < 6}
     return {key: value for key, value in environ.items()
-            if key not in names and key not in ('BASH_ENV', 'ENV') and value not in short_secrets
+            if key not in names and key not in ('BASH_ENV', 'ENV')
+            and not key.startswith(UNTRUSTED_HOST_PREFIXES) and value not in short_secrets
             and not any(secret in value for secret in long_secrets)}
 
 
