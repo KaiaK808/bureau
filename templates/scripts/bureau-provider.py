@@ -319,7 +319,9 @@ def run(options, prompt, system, repo, evidence, schema=None):
         # (transcript()); stdout.log gets the JSON envelope only at the end.
         if options.get('session_id'): command += ['--session-id', options['session_id']]
         if options['stage'] == 'upstream_summary': command += ['--tools', '']
-        else: command += ['--dangerously-skip-permissions']
+        else:
+            command += ['--dangerously-skip-permissions', '--disallowedTools',
+                        'ScheduleWakeup,CronCreate,CronDelete,RemoteTrigger,Monitor']
         if system:
             (evidence/'system.txt').write_text(system)
             command += ['--append-system-prompt-file', str(evidence/'system.txt')]
@@ -400,7 +402,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
         elif re.search(r'quota|rate.limit|usage.limit', text, re.I): outcome='quota'; code=23
         elif re.search(r'permission denied|operation not permitted|sandbox', text, re.I): outcome='environment'; code=24
         return code, '', dict(outcome=outcome, provider_exit=child.returncode)
-    usage = {}; cost = None; recovered_errors = {}
+    usage = {}; cost = None; recovered_errors = {}; structured_source = None
     if runner == 'codex':
         text = final.read_text() if final.exists() else ''
         pending_error = False
@@ -427,7 +429,10 @@ def run(options, prompt, system, repo, evidence, schema=None):
         if not isinstance(envelope, dict): raise ValueError('Claude envelope must be an object')
         if envelope.get('is_error'): return 22, '', dict(outcome='provider-error')
         value = envelope.get('structured_output')
-        text = json.dumps(value) if isinstance(value, dict) else envelope.get('result', '')
+        if schema and not isinstance(value, dict):
+            found, recovered = claude_transcript_result(options, repo, evidence)
+            if found: value = recovered; structured_source = 'transcript'
+        text = json.dumps(value) if isinstance(value, dict) or structured_source else envelope.get('result', '')
         usage = envelope.get('usage', {}); cost = envelope.get('total_cost_usd')
     if not isinstance(text, str) or not text.strip(): raise ValueError('provider returned no final message')
     if schema:
@@ -439,6 +444,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
         return 24, '', dict(outcome='environment')
     metadata = dict(outcome='complete', provider=runner, usage=usage, total_cost_usd=cost, duration_seconds=time.monotonic()-started)
     if recovered_errors: metadata['recovered_errors'] = recovered_errors
+    if structured_source: metadata['structured_source'] = structured_source
     if options['cost_tracking']:
         text = json.dumps(dict(result=text, usage=usage, total_cost_usd=cost, provider=runner))
     return 0, text, metadata
@@ -584,6 +590,30 @@ def transcript(options, repo, evidence, environ=None):
                     transcript_note='codex reported no thread id (no thread.started event in stdout.log)')
     found = _found(Path(environ.get('CODEX_HOME') or home/'.codex')/'sessions', '*/*/*/rollout-*-' + thread + '.jsonl')
     return dict(session_id=thread, transcript=str(found) if found else None, transcript_found=found is not None)
+
+
+def claude_transcript_result(options, repo, evidence):
+    # A deferred turn can replace the envelope's structured_output with prose.
+    # Claude JSONL stores assistant tool_use blocks in message.content. Keep
+    # the last matching input even if invalid: the schema must reject it,
+    # never silently accept an earlier StructuredOutput instead.
+    record = transcript(options, repo, evidence)
+    if not record['transcript_found']: return False, None
+    found = False; value = None
+    try:
+        with Path(record['transcript']).open(errors='replace') as source:
+            for line in source:
+                try: event = json.loads(line)
+                except ValueError: continue
+                if not isinstance(event, dict) or event.get('type') != 'assistant': continue
+                message = event.get('message')
+                content = message.get('content') if isinstance(message, dict) else None
+                if not isinstance(content, list): continue
+                for block in content:
+                    if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('name') == 'StructuredOutput':
+                        found = True; value = block.get('input')
+    except OSError: return False, None
+    return found, value
 
 
 def note(text):

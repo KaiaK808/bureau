@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="32a6a2729e33bdde8a3a6c4e0ec345c62fd89c7cc7719a2af83a0495b0f03570">
+<meta name="bureau-source-sha256" content="402e46fa269b5616a8bdf14ca9458c2c54ac5fc3282b452b5f2ddc7e9ffa7065">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -183,13 +183,29 @@ whole session, tool output included; it stays where the CLI wrote it,
 outside <code>logs/</code>. Optional <code>session.cost_tracking</code>
 preserves the legacy usage envelope interface. Unknown dollar cost stays
 unavailable for Codex.</p>
-<p>Claude <code>/goal</code> and Headroom are Claude capabilities. A
-Codex implementation uses the portable bounded loop even when the old
-goal flag is enabled. Interactive bench panes use
-<code>agents.workbench_runner</code> or the default runner; zero panes
-omits the bench. Optional upstream summaries are disabled by default;
-enabling <code>agents.upstream_summary</code> uses a tool-free Claude or
-read-only Codex pass.</p>
+<p>When a successful Claude envelope has no object in
+<code>structured_output</code> and the stage expects a schema, the
+adapter reads that session's transcript and uses the input of its last
+<code>StructuredOutput</code> tool call. The existing schema validation
+applies to that last input; an invalid later call never falls back to an
+earlier valid one. A recovered completion records
+<code>structured_source: "transcript"</code> in
+<code>result.json</code>. An object in the envelope takes precedence
+without reading the transcript. With no transcript or no such call, the
+envelope is handled as before (22 for a prose-only result); calls
+without a schema do not attempt recovery. Codex still reads its final
+message from <code>final.txt</code>.</p>
+<p>Claude <code>/goal</code> and Headroom are Claude capabilities.
+Claude stages with tools pass
+<code>--disallowedTools ScheduleWakeup,CronCreate,CronDelete,RemoteTrigger,Monitor</code>,
+also behind Headroom, so a deferred turn cannot replace the stage's
+final structured result with prose. A Codex implementation uses the
+portable bounded loop even when the old goal flag is enabled.
+Interactive bench panes use <code>agents.workbench_runner</code> or the
+default runner; zero panes omits the bench. Optional upstream summaries
+are disabled by default; enabling <code>agents.upstream_summary</code>
+uses a tool-free Claude (<code>--tools ''</code>, without the deny list)
+or read-only Codex pass.</p>
 <p>A failed worker with uncommitted or unpublished progress loses its
 disposable registration. Its checkout remains available for
 inspection/resume instead of being erased by the next tick. A clean
