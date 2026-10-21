@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
-SPECKIT_VERSION = "0.7.5"
+SPECKIT_VERSION = "1.2.2"
 MANIFEST = ".bureau-install.json"
 # Inherited from a hook or wrapper, these would point every git call at some other repository.
 GIT_REDIRECTS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY")
@@ -303,17 +303,30 @@ def assets(repo, args, manifest, targets):
     return 0
 
 
-def speckit_customizations(repo):
-    """Snapshot local drift: specify --force overwrites native host skills."""
-    hashes = {}
+def speckit_manifests(repo):
+    """Recovered hashes describe observed user bytes, not an unmodified managed base."""
+    records = {}
     directory = destination(repo, ".specify/integrations")
-    for path in directory.glob("*.manifest.json"):
+    for path in sorted(directory.glob("*.manifest.json")):
         destination(repo, str(path.relative_to(repo)))
         record = json.loads(path.read_text())
         if not isinstance(record, dict) or not isinstance(record.get("files"), dict):
             raise ValueError("malformed Spec Kit manifest: " + str(path))
+        recovered = record.get("recovered_files", [])
+        if not isinstance(recovered, list) or any(not isinstance(p, str) for p in recovered):
+            raise ValueError("malformed Spec Kit recovered_files: " + str(path))
+        records[path.name] = record
+    return records
+
+
+def speckit_customizations(repo, records=None):
+    """Snapshot local drift: specify --force overwrites native host skills."""
+    hashes, recovered = {}, set()
+    for record in (speckit_manifests(repo) if records is None else records).values():
         hashes.update(record["files"])
-    candidates = [destination(repo, "CLAUDE.md"), destination(repo, "AGENTS.md")]
+        recovered.update(record.get("recovered_files", []))
+    candidates = [destination(repo, relative) for relative in ("CLAUDE.md", "AGENTS.md", ".specify/.gitignore")]
+    candidates.extend(destination(repo, relative) for relative in sorted(recovered))
     for relative in (".specify/templates", ".specify/scripts", ".specify/memory"):
         candidates.extend(destination(repo, relative).rglob("*"))
     for relative in (".claude/skills", ".agents/skills"):
@@ -325,9 +338,74 @@ def speckit_customizations(repo):
         destination(repo, relative)
         if path.is_file():
             data = path.read_bytes()
-            if relative in ("CLAUDE.md", "AGENTS.md", ".specify/memory/constitution.md") or digest(data) != hashes.get(relative):
+            if (relative in recovered or relative in ("CLAUDE.md", "AGENTS.md", ".specify/memory/constitution.md")
+                    or digest(data) != hashes.get(relative)):
                 keep[path] = data
     return keep
+
+
+def render_speckit_helpers(command):
+    """Render the pinned CLI's pristine helpers outside the adopting repository, even in preview."""
+    with tempfile.TemporaryDirectory(prefix="bureau-speckit-helpers-") as temporary:
+        stage = Path(temporary)
+        rendered = subprocess.run(command, cwd=stage, capture_output=True, text=True, env=git_env())
+        if rendered.returncode:
+            raise ValueError("cannot render pristine Spec Kit helpers: " + (rendered.stderr or rendered.stdout).strip())
+        helpers = {}
+        for path in sorted((stage / ".specify/scripts").rglob("*")):
+            relative = str(path.relative_to(stage))
+            destination(stage, relative)
+            if path.is_file():
+                helpers[relative] = path.read_bytes()
+        if not helpers:
+            raise ValueError("Spec Kit did not render pristine .specify/scripts helpers")
+        return helpers
+
+
+def speckit_sourced_extras(helpers, extras):
+    """Inspect bundled source/dot-source paths without executing any project helper."""
+    if not extras:
+        return []
+    sources = []
+    for caller, data in helpers.items():
+        parent = str(Path(caller).parent)
+        for line in data.decode().splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            for match in re.finditer(r'''(?:^|[;\s])(?:source|\.)\s+(?:"([^"]+)"|'([^']+)'|([^\s;#]+))''', line):
+                reference = next(value for value in match.groups() if value is not None).replace("\\", "/")
+                for variable, value in (("SCRIPT_DIR", parent), ("PSScriptRoot", parent), ("REPO_ROOT", ".")):
+                    reference = reference.replace("${" + variable + "}", value).replace("$" + variable, value)
+                paths = {os.path.normpath(reference), os.path.normpath(parent + "/" + reference)}
+                for extra in extras:
+                    if extra in paths or ("$" in reference and Path(reference).name == Path(extra).name):
+                        sources.append((extra, caller))
+    return sorted(set(sources))
+
+
+def validate_speckit_helpers(repo, helpers, records):
+    """A manifest version can advance while its old helper hashes and modified bytes survive."""
+    hashes = records.get("speckit.manifest.json", {}).get("files", {})
+    recovered = {relative for record in records.values() for relative in record.get("recovered_files", [])}
+    customized, extras = [], []
+    for path in sorted(destination(repo, ".specify/scripts").rglob("*")):
+        relative = str(path.relative_to(repo))
+        destination(repo, relative)
+        if not path.is_file():
+            continue
+        if relative not in helpers:
+            extras.append(relative)
+            continue
+        data = path.read_bytes()
+        if relative in recovered or (data != helpers[relative] and digest(data) != hashes.get(relative)):
+            customized.append(relative)
+    sourced = speckit_sourced_extras(helpers, extras)
+    if customized or sourced:
+        conflicts = customized + [extra + " (sourced by " + caller + ")" for extra, caller in sourced]
+        raise ValueError("customized Spec Kit helpers cannot be mixed with " + SPECKIT_VERSION + ": "
+                         + ", ".join(conflicts) + "; rebase the customization onto the " + SPECKIT_VERSION
+                         + " helpers or remove it before retrying")
+    return extras
 
 
 def git_extension_plan(repo, installed):
@@ -428,14 +506,10 @@ def speckit(repo, args, manifest, targets):
     if active not in installed:
         raise ValueError("choose --active-integration claude|codex for a new dual installation")
     order = [t for t in installed if t != active] + [active]
-    commands = [["specify", "init", "--here", "--integration", t, "--force", "--no-git", "--ignore-agent-tools"] for t in order]
-    preserved = speckit_customizations(repo)
-    extension = git_extension_plan(repo, installed)
-    print(json.dumps({"version": SPECKIT_VERSION, "active_integration": active, "commands": commands,
-                      "extension_registration": [extension] if extension else [],
-                      "preserved": [str(p.relative_to(repo)) for p in preserved]}, indent=2))
-    if not args.apply:
-        return 0
+    # Each init replaces installed_integrations; additional hosts need the install lifecycle.
+    commands = [["specify", "init", "--here", "--integration", order[0], "--force", "--non-interactive", "--ignore-agent-tools"]]
+    commands.extend(["specify", "integration", "install", host] for host in order[1:])
+    commands.append(["specify", "integration", "use", active])
     version = subprocess.run(["specify", "version"], capture_output=True, text=True, check=True)
     if not re.search(r"CLI Version\s+" + re.escape(SPECKIT_VERSION) + r"\b", version.stdout):
         raise ValueError(f"specify-cli {SPECKIT_VERSION} required; install the pinned version before retrying")
@@ -446,6 +520,22 @@ def speckit(repo, args, manifest, targets):
             raise ValueError("Spec Kit target contains symlinks: " + relative)
     for relative in ("AGENTS.md", "CLAUDE.md"):
         destination(repo, relative)
+    records = speckit_manifests(repo)
+    preserved = speckit_customizations(repo, records)
+    helpers = render_speckit_helpers(commands[0])
+    extras = validate_speckit_helpers(repo, helpers, records)
+    # Every accepted pinned helper is safe to replace. Never restore legacy bytes over new callers.
+    for relative in helpers:
+        preserved.pop(repo / relative, None)
+    for relative in extras:
+        preserved[repo / relative] = (repo / relative).read_bytes()
+    extension = git_extension_plan(repo, installed)
+    print(json.dumps({"version": SPECKIT_VERSION, "active_integration": active, "commands": commands,
+                      "extension_registration": [extension] if extension else [],
+                      "extra_helpers_preserved": extras,
+                      "preserved": sorted(str(p.relative_to(repo)) for p in preserved)}, indent=2))
+    if not args.apply:
+        return 0
     extension_names, extension_writes = render_git_extension(repo, extension)
     metadata = [active_file, destination(repo, ".specify/init-options.json")]
     snapshots = {p: p.read_bytes() if p.exists() else None for p in metadata}
@@ -453,7 +543,10 @@ def speckit(repo, args, manifest, targets):
     try:
         for command in commands:
             subprocess.run(command, cwd=repo, check=True)
-        if json.loads(active_file.read_text()).get("integration") != active:
+        state = json.loads(active_file.read_text())
+        if not set(installed).issubset(state.get("installed_integrations", [])):
+            raise ValueError("Spec Kit did not register all requested integrations")
+        if state.get("integration") != active or state.get("default_integration") != active:
             raise ValueError("Spec Kit did not select the requested active integration")
         publish_git_extension(repo, extension_names, extension_writes)
         succeeded = True

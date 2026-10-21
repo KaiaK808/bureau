@@ -6,7 +6,7 @@ There is no application package build or registry publication. Versioned source 
 
 Run `bash tests/run.sh` before committing runtime or installer changes. CI also checks Bash syntax and ShellCheck warnings on the core pipelines. Keep tests dependency-light (Bash 3.2+, Python 3.9+, git, jq; Node 18+ for the shared scheduler); provider and network calls in tests must be faked. Inspect real output parsing instead of replacing it with a more permissive stub.
 
-Spec Kit is installed by its pinned CLI, not vendored. `scripts/bureau_install.py` owns the 0.7.5 pin. Before changing it, initialize a throwaway repository and compare generated assets. Claude skills live in `.claude/skills`, Codex skills in `.agents/skills`; both can be installed while `.specify/integration.json` selects one active integration. Do not assume installing the second host switches the requested active one.
+Spec Kit is installed by its pinned CLI, not vendored. `scripts/bureau_install.py` owns the 1.2.2 pin (`uv tool install specify-cli==1.2.2`). Before changing it, initialize a throwaway repository and compare generated assets. Claude skills live in `.claude/skills`, Codex skills in `.agents/skills`; both can be installed while `.specify/integration.json` selects one active integration. Do not assume installing the second host switches the requested active one.
 
 ### Invariants when editing `templates/scripts/`
 

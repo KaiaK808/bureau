@@ -50,7 +50,7 @@ The sandbox warning should become a capability check, not a permanent claim that
 - Bash syntax checks passed for the scripts and test files covered by CI.
 - The configured ShellCheck invocation passed for its four selected pipeline/config files.
 - Installed Codex CLI: `0.144.1`; its local help confirms stdin prompts, `--output-schema`, `--json`, explicit working directories, and final-message output.
-- Installed Spec Kit: `0.7.5`, matching Bureau's pin.
+- Installed Spec Kit at the historical baseline: `0.7.5`, matching Bureau's pin then. The current pin is `1.2.2` (`uv tool install specify-cli==1.2.2`); the old smoke does not validate it.
 - A temporary-directory spike ran Claude initialization, Codex initialization, then Codex initialization again. Both sets of nine skills remained, both instruction files existed, and a customized constitution survived. The active `.specify/integration.json` became `codex`; coexistence therefore needs an explicit policy for the selected Spec Kit integration.
 - Local stub probes reproduced ignored Codex JSON model selection, bare-JSON parse failure, the missing-Claude auth false pass, and the goal-mode prompt loss.
 
@@ -93,7 +93,7 @@ Linear remains authoritative for workflow state. A small run record supplies res
 - Add target selection and conditional prerequisites: app mode must not require Claude or tmux; background mode checks the selected CLIs.
 - Generate Codex skills for all five Bureau commands with proper `name`/`description` metadata. Replace Claude's `Skill` tool assumptions and literal argument placeholders with instructions appropriate to the host.
 - Generate managed Bureau sections in `AGENTS.md` and `CLAUDE.md` without duplicating or overwriting project guidance.
-- Use the already verified `specify init --here --integration codex --force --no-git --ignore-agent-tools` path for Codex. Preserve the pin, constitution, manifests, and customized files. Explicitly define the active integration when both are installed.
+- For the current 1.2.2 pin, use `specify init --here --integration codex --force --non-interactive --ignore-agent-tools` for Codex initialization; existing installs prefer the [manifest-aware resync](../references/resync.md). Preserve the pin, constitution, manifests, and customized files. Explicitly define the active integration when both are installed. The historical smoke does not verify this updated command.
 - Extend update/resync to cover installed interfaces and newly introduced prompt/schema assets. Preserve custom files and make drift reviewable.
 
 Codex's documented repository skill location is `.agents/skills`; symlinked skill folders are supported. A personal installation can be exposed through `~/.agents/skills`. A distributable plugin can follow later; it is not required for the first app release. [Skills documentation](https://learn.chatgpt.com/docs/build-skills). Project guidance should use `AGENTS.md`. [Instruction discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md).

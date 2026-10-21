@@ -229,14 +229,11 @@ echo "  specify complete"
 
 echo ""
 echo "Phase 1.5: ensure feature branch (speckit v0.7.5+ hook-skip workaround)"
-# Speckit v0.7.5 moved branch creation into a `before_specify` hook
-# (.specify/extensions.yml → speckit.git.feature) that is a SOFT prompt
-# directive, not a script-enforced step. Headless `claude -p` subprocesses
-# driving speckit-specify reliably skip the chained hook invocation and
-# leave the worktree on detached HEAD / main with the spec files as
-# untracked changes. We read .specify/feature.json (which specify DOES
-# populate reliably) and create the branch from the shell. `git checkout -b`
-# carries the untracked spec files onto the new branch.
+# Spec Kit 1.2.2's create-new-feature.sh creates the feature directory and
+# writes .specify/feature.json, but does not create a Git branch. Git-extension
+# hooks may create one, but headless agents can skip prompt-driven hooks.
+# Read the feature pointer and name the branch after its directory when needed;
+# `git checkout -b` carries the untracked spec files onto the new branch.
 #
 # Upstream tracking: github/spec-kit (issue filed 2026-05-15)
 FEATURE_DIR=$(_fj_read)

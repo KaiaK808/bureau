@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9072390dd782bf5a05893eed82ace66ac5f6c9dc1c9aa3c3f5bb0146aec7e32b">
+<meta name="bureau-source-sha256" content="86bd000ea3e0181c8d21b04d2ddfe5431f086fd78768e56897255f912b6edba3">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1040,27 +1040,78 @@ requested.</p>
 it. Spec Kit resync refreshes all discovered installed integrations as
 well as the requested target, so selecting one target does not exclude
 the other host's existing Spec Kit assets. It requires the pinned
-<code>specify-cli</code> 0.7.5. Its customization/constitution
-preservation is separate from Bureau's asset conflict handling.</p>
+<code>specify-cli</code> 1.2.2
+(<code>uv tool install specify-cli==1.2.2</code>). Before upgrading,
+back up <code>.specify/templates</code>, <code>.specify/scripts</code>
+and extension skills under both hosts' skills directories.</p>
+<p>First run the read-only <code>specify integration status</code>: it
+lists the installed hosts and the modified, missing and unchecked
+managed files, including modified helpers on a 0.7.5 install. <strong>Do
+not run <code>specify integration upgrade</code> while any
+<code>.specify/scripts/**</code> helper is reported modified, even with
+<code>--force</code>.</strong> The upgrade can preserve the modified
+helper and advance the shared manifest to 1.2.2, leaving an incompatible
+mix. Back up and resolve helper edits first: rebase onto the pristine
+1.2.2 helpers or remove the modified helpers so they can be replaced.
+The shared version number does not prove compatibility.</p>
+<p>After resolving helpers, prefer
+<code>specify integration upgrade &lt;integration&gt;</code> for each
+installed host. With 0 modified files it needs no <code>--force</code>;
+modified host skills may block it, so review and authorize their
+overwrite before using <code>--force</code>. Then run
+<code>specify extension update</code>, which reinstalls extension
+sources and registered commands and keeps configuration, not arbitrary
+edits. Review and reapply customized extension skills from the backup.
+Run <code>status</code> again and inspect any modified or missing files,
+then run Bureau's doctor; an unmodified upgrade should report 0 modified
+and 0 missing files. These update commands never touch
+<code>.specify/memory/constitution.md</code>; the constitution must
+never be changed.</p>
+<p>See the <a href="../../references/resync.md">Spec Kit resync
+procedure</a> for the forced-init fallback: initialize the first host,
+install further hosts with
+<code>specify integration install &lt;host&gt;</code>, then select the
+active host with <code>specify integration use &lt;active&gt;</code>.
+Repeating <code>init</code> loses prior host registrations. Bureau
+renders pristine 1.2.2 helpers in a temporary directory during
+preview/apply and checks every existing helper by content before any
+Spec Kit call writes the adopting repository. It accepts pristine bytes
+or an unmodified managed file matching the existing shared-manifest
+hash; it refuses customized helpers regardless of the shared version.
+Recovered helpers always count as customized. Rebase onto 1.2.2 or
+remove them before retrying; asset-scoped <code>--overwrite</code>
+cannot bypass this refusal. Extra helpers absent from the pinned set
+stay in place and appear in preview, unless a pinned helper sources
+them, which causes refusal. Customized Markdown templates and host
+skills, including every <code>recovered_files</code> entry regardless of
+hash equality, remain preserved. The checked legacy plan/tasks templates
+work with the new helpers. This preservation policy is separate from
+Bureau's asset conflict handling; see the <a
+href="codex-acceptance.html#spec-kit-installer-evidence">Spec Kit
+acceptance evidence</a> for the operator's 2026-10-21 live verification
+of the pristine render/content guard, including refusal after manual
+manifest advancement. Recovered-file handling and the complete pipeline
+remain outside live qualification.</p>
 <p>For a previously installed Git extension, the resync also installs
 missing native Codex hook skills and records their commands while
 preserving existing skills, hook configuration and other host
 registrations. Core initialization alone did not perform this
 registration in older Bureau candidates. Refresh interfaces too for
 native hook-name mapping and the helper guidance below.</p>
-<p>Retained Spec Kit scripts may use different feature-selection rules
-from newly generated scripts. Before a plan/task helper runs on a
-<code>codex/*</code> or detached checkout, resolve the issue's exact
-approved spec folder and pass both variables:</p>
+<p>Before a plan/task or other existing-feature helper runs on any
+branch, including numeric feature branches, <code>codex/*</code> and
+detached checkouts, resolve the issue's exact approved spec folder and
+always pass both variables:</p>
 <div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
 <p>Replace both example values with the real approved feature and
-configured specs path. Use the same pair for other helpers.
-<code>SPECIFY_FEATURE</code> alone can still follow stale
-<code>feature.json</code> in newer scripts; older retained scripts may
-ignore that file altogether. Resolve duplicate prefixes explicitly and
-preserve the actual issue branch.</p>
+configured specs path. Use the same pair for every helper that consumes
+an existing feature. Fresh worktrees lack the ignored
+<code>feature.json</code>, and 1.2.2 no longer derives the directory
+from the Git branch. <code>SPECIFY_FEATURE</code> alone cannot supply
+that directory or override a stale pointer. Resolve duplicate prefixes
+explicitly and preserve the actual issue branch.</p>
 <p>For an older installation with local changes, append this instruction
 to the resync request:</p>
 <blockquote>
@@ -1080,10 +1131,11 @@ customizations.</p>
 adopting repository</h2>
 <p>Check the <a href="index.html#install">dependencies</a> before
 using the new helper: Python 3.9+, Bash 3.2+, Git 2.26+, jq and curl.
-Spec Kit refresh requires 0.7.5; the shared scheduler needs Node.js 18+.
-Background stages need their selected provider CLIs and GitHub
-operations need <code>gh</code>. Current Codex app tasks do not require
-background provider CLIs or tmux.</p>
+Spec Kit refresh requires 1.2.2
+(<code>uv tool install specify-cli==1.2.2</code>); the shared scheduler
+needs Node.js 18+. Background stages need their selected provider CLIs
+and GitHub operations need <code>gh</code>. Current Codex app tasks do
+not require background provider CLIs or tmux.</p>
 <ol type="1">
 <li>Inspect <code>git status</code>, the current branch and active
 worktrees. Record the installed source revision: doctor reports it as
