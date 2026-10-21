@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="82b8d2232b915cb91954fe8999ca1379b12985c3566a56e179e3e4831dc3d937">
+<meta name="bureau-source-sha256" content="ce44cdee9ca615a1bc198592c35882764a4839b827dcb7ef748f4ca0a14ac959">
 <title>codex-acceptance · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -37,9 +37,11 @@ preservation, active integration ordering</td>
 </tr>
 <tr>
 <td>Actual Spec Kit</td>
-<td>Local 0.7.5 dual-integration smoke; adding Codex to legacy Claude
-without a Bureau manifest preserves the active host, custom constitution
-and native skill</td>
+<td>Pinned 1.2.2 (<code>uv tool install specify-cli==1.2.2</code>): real
+Bureau dual-host installation, clean 0.7.5 upgrade and customized-helper
+refusals before and after manual manifest advancement live-verify the
+pristine render/content guard; measured results below. Recovered-file
+handling remains covered by fake-CLI regressions only</td>
 </tr>
 <tr>
 <td>Current-task stages</td>
@@ -102,6 +104,52 @@ supplied code/test evidence with tools disabled</td>
 </tr>
 </tbody>
 </table>
+<h2 id="spec-kit-installer-evidence">Spec Kit installer evidence</h2>
+<p>Operator-supplied local evidence dated 2026-10-21 (21.10.2026),
+recorded with <code>speckit-upgrade/e2e/live.sh</code> and
+<code>L-*.log</code>, covers four real Bureau installer runs with the
+pinned Spec Kit 1.2.2 CLI:</p>
+<ul>
+<li><strong>A — Empty repository</strong> (<code>L-dual.log</code>),
+<code>speckit --target both --active-integration claude --apply</code>:
+exit 0, Codex and Claude registered, default Claude, 0 modified and 0
+missing managed files.</li>
+<li><strong>B — Unmodified 0.7.5 copy of a real repository</strong>
+(<code>L-clean.log</code>): exit 0, 0 modified and 0 missing managed
+files, constitution bytes unchanged.</li>
+<li><strong>C — Customized 0.7.5 helper</strong>
+(<code>L-mod.log</code>), with one comment appended to
+<code>.specify/scripts/bash/common.sh</code>: refused with exit 1, tree
+unchanged.</li>
+<li><strong>D — The same customization after manual
+<code>specify integration upgrade claude</code></strong>
+(<code>L-manual.log</code>): the shared manifest advanced to 1.2.2 and
+kept the customization; Bureau still refused with exit 1, tree
+unchanged.</li>
+</ul>
+<p>These runs live-verify the pristine helper render/content guard,
+including refusal after manual manifest advancement, and the
+init/install/use lifecycle. Earlier supplied evidence also covers real
+1.2.2 helpers resolving customized 0.7.5 plan/tasks templates and a
+headless specify → plan → tasks run. They do not qualify the complete
+Bureau pipeline.</p>
+<p>Targeted tests run the same render path with a fake
+<code>specify</code> executable, trace its working directory, model an
+advanced shared manifest retaining legacy hashes, and verify refusal
+before any repository-writing CLI call. They also verify recovered
+templates and skills survive forced initialization, and customized
+<code>.specify/.gitignore</code> bytes survive both successful and
+failed apply. Recovered-file handling is not live-qualified. This fix
+round uses targeted checks without network; it does not rerun the
+operator's live fixtures or the full suite.</p>
+<p>For the remaining recovered-file live qualification, use disposable
+copies with recovered helpers, templates and skills. A helper marked
+recovered must cause exit 1 with every conflicting path named and no
+adopting-tree changes in preview or apply. Confirm recovered
+templates/skills retain their exact bytes after apply; intentional
+customizations may then appear modified in status. Do not run
+<code>specify integration upgrade</code> on a copy with modified helpers
+to prepare it: back up and resolve those helpers first.</p>
 <h2 id="live-adoption-and-evidence-boundaries">Live adoption and
 evidence boundaries</h2>
 <p>On 2026-09-07, a maintainer exercised a representative private

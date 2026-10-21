@@ -280,7 +280,7 @@ Env overrides for the `repo.upstream_port.*` config family. Set inline when runn
 | `BUREAU_ALERT_THROTTLE_FILE` | `<git common dir>/bureau/alert-throttle.log` | The log that throttles Telegram alerts (and the merge-conflict comment) to once an hour per key. By default one per repository, shared by its worktrees; only without a git directory `/tmp/bureau-alerts.log`, with the repository path in the key. Set it for tests; see [exit codes](exit-codes.md#telegram-alerts) |
 | `BUREAU_SCRIPT_DIR` | derived from `$0` | Path to the target repo's `scripts/`. Auto-detected in normal use — set only when sourcing helpers from an unusual location |
 
-`BUREAU_HOME` and `BUREAU_SPECKIT_VERSION` are not supported runtime overrides. Use the documented individual paths; the Spec Kit 0.7.5 pin lives in `scripts/bureau_install.py`.
+`BUREAU_HOME` and `BUREAU_SPECKIT_VERSION` are not supported runtime overrides. Use the documented individual paths; the Spec Kit 1.2.2 pin lives in `scripts/bureau_install.py` (install with `uv tool install specify-cli==1.2.2`).
 
 ### Supervisor
 
