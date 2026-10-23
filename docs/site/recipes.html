@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d40594a8fc478c7808f4e19e0a82d1bf3451539c06fd131386769fcf12d72acf">
+<meta name="bureau-source-sha256" content="fdbeb6dad83cd5d22776f0328db53b69c6878d20188239406d1dc01dce0c5444">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -27,9 +27,10 @@ Eliminates cross-issue rebase storms in active repos.</p>
 <div class="sourceCode" id="cb1"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_concurrent_issues&quot;</span><span class="fu">:</span> <span class="dv">1</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_concurrent_issues&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_concurrent_include_merge&quot;</span><span class="fu">:</span> <span class="kw">true</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p><strong>When to use:</strong> repos with &gt; 3 simultaneous feature
 tickets where <code>origin/main</code> advances faster than the pipeline
 can drain. Symptom: every cron tick re-runs
@@ -40,10 +41,12 @@ helps. The cap is a knob, not a default.</p>
 <p>A single stuck issue (e.g. <code>needs-human</code> parking) does
 <em>not</em> deadlock the cap — <code>count_in_flight_issues</code>
 excludes parked issues. Under manual merge mode, Merge is excluded by
-default; set <code>agents.max_concurrent_include_merge: true</code> to
-keep counting it. Auto mode includes Merge. Build Review still counts,
-including an approved <code>--no-merge</code> ticket parked there. A
-full cap names its blockers and returns 28
+default: with cap 1 the next spec can start while earlier tickets wait
+for a manual merge. The explicit
+<code>agents.max_concurrent_include_merge: true</code> above keeps the
+old single-flight behavior. Auto mode includes Merge by default. Build
+Review still counts, including an approved <code>--no-merge</code>
+ticket parked there. A full cap names its blockers and returns 28
 (<code>spec-capacity-wait</code>): the shepherd waits cancellably
 without stuck ticks or human labels, and bounded ticks retain 28 in
 their waiting result.</p>

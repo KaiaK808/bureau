@@ -14,6 +14,10 @@ set -uo pipefail
 case "$*" in
   *speckit-specify/SKILL.md*)
     case "${PR4_SPECIFY_ACTION:-leave}" in
+      observe)
+        dir=$(jq -r .feature_directory .specify/feature.json)
+        cat "$dir/spec.md" > "$SANDBOX/specify-input"
+        git branch --show-current > "$SANDBOX/specify-branch" ;;
       populate)
         dir=$(jq -r .feature_directory .specify/feature.json)
         printf '# ticket spec\n' > "$dir/spec.md"

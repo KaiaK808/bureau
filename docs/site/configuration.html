@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="82a5ca4fedf2d9faa70b4b2e39312a303876992332ddbbb9e25f033059a671e2">
+<meta name="bureau-source-sha256" content="886a0bc2272c9ba0640dc69f29627416aae519858141a5060036088006478228">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -389,11 +389,14 @@ for repos with strong CI</td>
 <td><code>0</code></td>
 <td>Whole numbers 0–1000; invalid values fall back to 0. Repo-wide cap
 on issues in flight. <code>0</code> = unlimited (default).
-<code>1</code> = single-flight (drain end-to-end before next Spec). A
-full cap returns <code>28</code> (<code>spec-capacity-wait</code>) and
-names its holding issues. Counts work: issues from Spec to before Done
-in the configured <code>linear.projects</code>, without children (an
-epic is not work, its sub-issues are), without
+<code>1</code> admits the next Spec when counted work drains; under
+manual mode, tickets waiting in Merge do not count by default. Set
+<code>max_concurrent_include_merge: true</code> to keep the old
+single-flight behavior. A full cap returns <code>28</code>
+(<code>spec-capacity-wait</code>) and names its holding issues. Counts
+work: issues from Spec to before Done in the configured
+<code>linear.projects</code>, without children (an epic is not work, its
+sub-issues are), without
 <code>needs-human</code>/<code>blocked</code>/<code>wip</code>. Merge
 follows <code>max_concurrent_include_merge</code>; Build Review always
 counts, including an approved <code>--no-merge</code> stop there. See <a
@@ -722,17 +725,26 @@ and denied permissions are errors, never automatic fallback to
 Claude.</p>
 <p>Spec numbers are reserved per issue in
 <code>&lt;git common dir&gt;/bureau/spec-numbers.json</code> under a
-sibling <code>.guard</code> lock. The spec stage fetches all origin
-heads before reserving, invokes the pinned 1.2.2 feature helper with
-<code>--number</code>, and checks that the helper did not auto-correct
-it. Retries reuse the number and stable issue-key short name; gaps are
-fine. The helper creates under <code>specs/</code>, so Bureau relocates
-its output for a different <code>repo.specs_dir</code> and persists the
-exact directory for later phases. Existing approved specs resume
-downstream; older issue-directory associations are not imported into
-reservations. Keep the registry across cleanup. Separate clones or hosts
-need their own coordination; the spec admission cap itself is also a
-non-atomic Linear snapshot.</p>
+sibling <code>.guard</code> lock. The spec stage fetches and prunes all
+origin heads using the full wildcard refspec before reserving, invokes
+the pinned 1.2.2 feature helper with <code>--number</code>, and checks
+that the helper did not auto-correct it. Retries reuse the number and
+stable issue-key short name; gaps are fine. After a disposable worker
+reset, the stage checks branch ownership and checks out its reserved
+local/origin branch before creating artifacts or calling specify. Remote
+revisions fast-forward; unpublished local commits are retained;
+divergent history stops with 17. Lock acquisition is bounded to 300
+seconds by default (<code>BUREAU_SPEC_LOCK_TIMEOUT</code> in the process
+environment, whole seconds 1–86400; invalid values warn with the key
+only and use 300). On timeout the stage prints the lock path, exits 124
+and returns the issue to Triage before specify; this does not bound Git
+scanning after acquisition. The helper creates under
+<code>specs/</code>, so Bureau relocates its output for a different
+<code>repo.specs_dir</code> and persists the exact directory for later
+phases. Existing approved specs resume downstream; older issue-directory
+associations are not imported into reservations. Keep the registry
+across cleanup. Separate clones or hosts need their own coordination;
+the spec admission cap itself is also a non-atomic Linear snapshot.</p>
 <h3 id="session"><code>session</code></h3>
 <p>Cost logging is opt-in. Usage throttling uses an operator-provided
 signal for the selected provider; no signal means unknown usage and
@@ -811,11 +823,11 @@ pinned helper's output here and persists the exact feature pointer</td>
 <td><code>repo.base_branch</code></td>
 <td>string</td>
 <td><code>"main"</code></td>
-<td>Origin base whose presence the spec allocator verifies after
-fetching all origin heads; also recognized as the base checkout when
-creating the feature branch. Spec numbering considers every fetched
-origin branch, local branch and worktree. Other stage reset/merge
-policies are unchanged</td>
+<td>Origin ref whose presence the spec allocator verifies after fetching
+all origin heads. Spec numbering considers every fetched origin branch,
+local branch and worktree. Disposable spec workers still reset to
+<code>origin/main</code>; other stage reset/merge policies are
+unchanged</td>
 </tr>
 <tr>
 <td><code>repo.test_command</code></td>
@@ -1300,6 +1312,14 @@ digits is dropped with a warning naming the key, never the value</td>
 would mean "no limit" to curl and is refused like a value that is not
 plain digits: a warning names the key, and <code>.bureau.json</code>,
 then the default applies</td>
+</tr>
+<tr>
+<td><code>BUREAU_SPEC_LOCK_TIMEOUT</code></td>
+<td>Optional, process environment only</td>
+<td>Spec allocator lock acquisition bound in whole seconds 1–86400,
+default 300. Invalid values warn with the key only and use 300. Timeout
+prints the lock path, exits 124 and returns the issue to Triage before
+specify; Git scanning after acquisition is outside this bound</td>
 </tr>
 <tr>
 <td><code>TELEGRAM_BOT_TOKEN</code></td>

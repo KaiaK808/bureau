@@ -7,8 +7,9 @@ trap 'rm -rf "$SB"' EXIT
 mkdir -p "$SB/scripts" "$SB/bin"
 git -C "$SB" init -q -b main
 git -C "$SB" -c user.email=t@bureau -c user.name=test commit -qm init --allow-empty
-cp "$ROOT/templates/scripts/bureau-tick.sh" "$ROOT/templates/scripts/queue-loop.sh" "$ROOT/templates/scripts/bureau-supervision.py" "$SB/scripts/"
+cp "$ROOT/templates/scripts/bureau-tick.sh" "$ROOT/templates/scripts/queue-loop.sh" "$ROOT/templates/scripts/bureau-supervision.py" "$ROOT/templates/scripts/bureau-env.sh" "$SB/scripts/"
 cat > "$SB/scripts/bureau-config.sh" <<'CFG'
+source "$(dirname "${BASH_SOURCE[0]}")/bureau-env.sh"
 BUREAU_ENV_FILE=/dev/null
 BUREAU_POLL_INTERVAL=1
 BUREAU_TEAM_NAME=Test
@@ -55,4 +56,17 @@ grep -q 'class=spec-capacity-wait' "$SB/events"
 [ ! -s "$SB/alerts" ]
 ! grep -q 'error (exit 28\|queue empty' "$SB/queue.out"
 echo 'PASS queue reports waiting, records spec-capacity-wait and sends no alert'
-echo 'OK test_spec_capacity_consumers (4 dispatch checks)'
+python3 - "$ROOT" <<'PY'
+import json, pathlib, subprocess, sys
+text = (pathlib.Path(sys.argv[1]) / 'templates/commands/bureau-learnings.md').read_text()
+query = text.split("jq -sc 'group_by(.issue)", 1)[1].split("' \"$BUREAU_LEARN_TMP/events-window.jsonl\"", 1)[0]
+query = 'group_by(.issue)' + query
+events = [{'event': 'stage_end', 'issue': 'EXP-1', 'class': c}
+          for c in ['spec-capacity-wait'] * 3 + ['ok', 'queue-empty']]
+events.append({'event': 'stage_end', 'issue': 'EXP-2', 'class': 'no-tasks'})
+result = json.loads(subprocess.check_output(['jq', '-sc', query], text=True,
+                    input='\n'.join(json.dumps(event) for event in events)))
+assert len(result) == 1 and result[0]['issue'] == 'EXP-2' and len(result[0]['failures']) == 1, result
+print('PASS actual bureau-learnings jq excludes three capacity waits and retains a real failure')
+PY
+echo 'OK test_spec_capacity_consumers (5 dispatch/filter checks)'

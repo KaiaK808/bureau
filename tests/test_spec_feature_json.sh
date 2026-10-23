@@ -116,4 +116,40 @@ run_pipeline spec-pipeline.sh EXP-910
 [ "$LAST_RC" = 0 ] || fail 'stage origin-tree inspection'
 [ "$(git -C "$SANDBOX" branch --show-current)" = 052-exp-910 ] || fail 'stage duplicated 051'
 echo 'PASS stage fetches every origin head and passes --number 52 to the real helper'
-echo 'OK test_spec_feature_json (10 scenarios; real pinned 1.2.2 helper)'
+teardown
+
+setup
+git -C "$SANDBOX" config remote.origin.fetch '+refs/heads/main:refs/remotes/origin/main'
+git --git-dir="$SANDBOX/.fake-origin.git" update-ref refs/heads/topic "$(git -C "$SANDBOX" rev-parse main)"
+export PR4_SPECIFY_ACTION=leave
+run_pipeline spec-pipeline.sh EXP-910
+[ "$LAST_RC" = 0 ] || fail 'initial narrow-clone topic fetch'
+git -C "$SANDBOX" show-ref --verify --quiet refs/remotes/origin/topic || fail 'topic was not fetched'
+git --git-dir="$SANDBOX/.fake-origin.git" update-ref -d refs/heads/topic
+git --git-dir="$SANDBOX/.fake-origin.git" update-ref refs/heads/topic/child "$(git -C "$SANDBOX" rev-parse main)"
+# The worker's ordinary prune sees only main. The stage must prune its full map.
+git -C "$SANDBOX" fetch -q --prune origin
+git -C "$SANDBOX" show-ref --verify --quiet refs/remotes/origin/topic || fail 'narrow prune removed topic unexpectedly'
+cp "$SCRIPTS_DIR/spec-pipeline.sh" "$SCRIPTS_DIR/spec-pipeline.fixed"
+python3 - "$SCRIPTS_DIR/spec-pipeline.sh" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]); text = p.read_text()
+before = "git fetch --prune --no-tags origin '+refs/heads/*:refs/remotes/origin/*'"
+assert text.count(before) == 1
+p.write_text(text.replace(before, before.replace('--prune ', '')))
+PY
+calls=$(cat "$SANDBOX/fake_claude_counter")
+run_pipeline spec-pipeline.sh EXP-910
+[ "$LAST_RC" = 18 ] || fail 'no-prune control did not block topic/child fetch'
+grep -q "cannot lock ref 'refs/remotes/origin/topic/child'" "$SANDBOX/stderr.log" || fail 'no-prune control failed for another reason'
+[ "$(cat "$SANDBOX/fake_claude_counter")" = "$calls" ] || fail 'failed fetch spent model work'
+echo 'PASS NEGATIVE CONTROL omit full-refspec prune -> stale origin/topic blocks topic/child, exit 18'
+mv "$SCRIPTS_DIR/spec-pipeline.fixed" "$SCRIPTS_DIR/spec-pipeline.sh"
+run_pipeline spec-pipeline.sh EXP-910
+[ "$LAST_RC" = 0 ] || fail 'full-refspec prune did not recover narrow clone'
+! git -C "$SANDBOX" show-ref --verify --quiet refs/remotes/origin/topic || fail 'stale topic remains'
+git -C "$SANDBOX" show-ref --verify --quiet refs/remotes/origin/topic/child || fail 'topic/child not fetched'
+[ "$(git -C "$SANDBOX" config remote.origin.fetch)" = '+refs/heads/main:refs/remotes/origin/main' ] || fail 'narrow clone configuration changed'
+echo 'PASS full-refspec prune fetches topic/child and retains the narrow-clone configuration'
+echo 'OK test_spec_feature_json (11 scenarios; real pinned 1.2.2 helper; prune negative control)'

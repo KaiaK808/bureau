@@ -150,7 +150,7 @@ In active repos with many concurrent feature tickets, branches accumulate diverg
 
 **A. Stage-priority sort in `queue-loop.sh`'s `all` mode.** Fan-out order is *reversed* from state-machine sequence — `merge`/`rebase` first, `spec` last. When multiple stages have pickable issues, attention goes to the ones closest to Done. Drains before refilling. Zero behaviour change for the default deployment (each agent runs in its own tmux window with its own `queue-loop.sh <mode>` — independent, so cross-stage ordering only affects the single-process `all` mode).
 
-**B. `BUREAU_MAX_CONCURRENT_ISSUES` cap.** Repo-wide cap on how many *distinct* issues the bureau works on simultaneously. Default `0` = unlimited (current behaviour). Set to `1` for single-flight mode (drain one issue end-to-end before another enters Spec). Implementation:
+**B. `BUREAU_MAX_CONCURRENT_ISSUES` cap.** Repo-wide cap on how many *distinct* issues the bureau works on simultaneously. Default `0` = unlimited (current behaviour). Set to `1` with `agents.max_concurrent_include_merge: true` for single-flight through merge. With cap 1 and Merge excluded, the next spec can start while earlier tickets wait for a manual merge. Implementation:
 
 - `count_in_flight_issues()` in `bureau-config.sh` queries Linear for issues in any state between Spec (inclusive) and Done (exclusive). Issues with parking labels (`needs-human`, `blocked`, `wip`) are excluded so a stalled issue doesn't deadlock the cap.
 - `spec-pipeline.sh` checks one admission snapshot after the Linear precondition and before provider preflight; exits 28 (`spec-capacity-wait`) at cap, naming holding identifiers and states. The shepherd waits cancellably without stuck ticks or human labels; ticks keep 28 with outcome `waiting`. Merge is excluded by default under manual mode, included under auto, overridable with the boolean `agents.max_concurrent_include_merge`. Build Review always counts, including approved `--no-merge` stops there. Only spec gates — downstream stages keep running on already-in-flight issues, so cap=1 still drains the current ticket.
@@ -161,12 +161,15 @@ Configuration in `.bureau.json`:
 ```json
 {
   "agents": {
-    "max_concurrent_issues": 1
+    "max_concurrent_issues": 1,
+    "max_concurrent_include_merge": true
   }
 }
 ```
 
 The cap is a Linear query, not an atomic cross-repository admission lock. Keep issue/workspace ownership and intentionally separated project scopes; do not treat single-flight configuration as distributed coordination.
+
+Before specify, fetch and prune all origin heads with the full refspec (`git fetch --prune --no-tags origin '+refs/heads/*:refs/remotes/origin/*'`), including in narrow clones. The allocator's per-issue reservation survives worker resets; check branch ownership and resume its local/origin branch before creating artifacts or calling specify. Fast-forward remote revisions without discarding unpublished local commits; diverged history stops with 17. `BUREAU_SPEC_LOCK_TIMEOUT` (process environment, whole seconds 1–86400, default 300) bounds allocator lock acquisition. Timeout prints the lock path, propagates 124 through the stage and returns the issue to Triage before specify. Git scanning inside the acquired lock has no new bound.
 
 ### Fail-loud observability
 

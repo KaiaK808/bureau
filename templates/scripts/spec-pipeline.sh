@@ -185,9 +185,13 @@ if [ "$(resolve_runner_for_stage spec)" = codex ]; then SPECKIT_DIR=.agents/skil
 # Refresh every origin head even in a single-branch clone. The reservation lock
 # covers inspection and persistence; fetch uses Bureau's normal git wrapper.
 SPEC_BASE=$(bureau_get '.repo.base_branch // "main"')
-git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*' || exit 18
+git fetch --prune --no-tags origin '+refs/heads/*:refs/remotes/origin/*' || exit 18
 RESERVATION=$(python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$REPO_DIR" \
-  reserve-spec-number "$ISSUE" --specs-dir "$BUREAU_SPECS_DIR" --base "$SPEC_BASE") || exit 18
+  reserve-spec-number "$ISSUE" --specs-dir "$BUREAU_SPECS_DIR" --base "$SPEC_BASE") || {
+  RESERVATION_RC=$?
+  [ "$RESERVATION_RC" != 124 ] || exit 124
+  exit 18
+}
 SPEC_NUMBER=$(printf '%s' "$RESERVATION" | jq -er '.number')
 FEATURE_HELPER=.specify/scripts/bash/create-new-feature.sh
 if [ ! -f "$FEATURE_HELPER" ]; then
@@ -205,6 +209,25 @@ if ! printf '%s' "$FEATURE_JSON" | jq -e --argjson number "$SPEC_NUMBER" \
 fi
 ALLOCATED_DIR=$(dirname "$(printf '%s' "$FEATURE_JSON" | jq -er '.SPEC_FILE')")
 ALLOCATED_NAME=$(basename "$ALLOCATED_DIR")
+# Workers start detached on origin/main, including retries of a pushed spec
+# returned for rework. Resume the reserved branch BEFORE creating artifacts or
+# invoking specify, using the same held-branch check as downstream stages.
+FEATURE_BRANCH="$ALLOCATED_NAME"
+free_branch_from_other_worktrees "$FEATURE_BRANCH" "$REPO_DIR"
+if git show-ref --verify --quiet "refs/heads/$FEATURE_BRANCH"; then
+  git checkout "$FEATURE_BRANCH" || exit 21
+  if git show-ref --verify --quiet "refs/remotes/origin/$FEATURE_BRANCH"; then
+    # Keep unpublished local commits; also pick up rework pushed by another run.
+    git merge --ff-only "refs/remotes/origin/$FEATURE_BRANCH" || {
+      echo "ERROR: reserved branch $FEATURE_BRANCH cannot fast-forward to origin; resolve its local/remote history before retrying." >&2
+      exit 17
+    }
+  fi
+elif git show-ref --verify --quiet "refs/remotes/origin/$FEATURE_BRANCH"; then
+  git checkout -b "$FEATURE_BRANCH" "refs/remotes/origin/$FEATURE_BRANCH" || exit 21
+else
+  git checkout -b "$FEATURE_BRANCH" || exit 21
+fi
 # 1.2.2 creates under specs/ (no directory option). A dry-run validates the
 # number first. Reuse an existing target without creating/deleting a template
 # elsewhere; for a new custom target, relocate the helper's actual output.
@@ -244,33 +267,21 @@ echo ""
 echo "  specify complete"
 
 echo ""
-echo "Phase 1.5: ensure feature branch (speckit v0.7.5+ hook-skip workaround)"
-# Spec Kit 1.2.2's create-new-feature.sh creates the feature directory and
-# writes .specify/feature.json, but does not create a Git branch. Git-extension
-# hooks may create one, but headless agents can skip prompt-driven hooks.
-# Read the feature pointer and name the branch after its directory when needed;
-# `git checkout -b` carries the untracked spec files onto the new branch.
-#
-# Upstream tracking: github/spec-kit (issue filed 2026-05-15)
+echo "Phase 1.5: verify feature directory and branch"
 FEATURE_DIR=$(jq -er '.feature_directory | select(type == "string" and length > 0)' .specify/feature.json 2>/dev/null) || FEATURE_DIR=""
 if [ -z "$FEATURE_DIR" ] || [ ! -d "$FEATURE_DIR" ] || [ "$(cd "$FEATURE_DIR" && pwd -P)" != "$ALLOCATED_DIR" ]; then
   echo 'ERROR: feature.json no longer names the reserved directory; refusing to plan another feature.' >&2
   exit 11
 fi
-FEATURE_BRANCH=$(basename "$FEATURE_DIR")
 # The spec directory of this run, with the trailing slash the other stages use.
 # Every later step reads this one directory instead of "the newest spec": in a
 # fresh worktree all spec directories have the same age, and installs that
 # reuse one `NNN-` prefix have many candidates.
 SPEC_DIR="${FEATURE_DIR%/}/"
 CUR_BRANCH=$(git branch --show-current)
-if [ -z "$CUR_BRANCH" ] || [ "$CUR_BRANCH" = "$SPEC_BASE" ]; then
-  echo "  Creating branch $FEATURE_BRANCH from current HEAD"
-  git checkout -b "$FEATURE_BRANCH"
-elif [ "$CUR_BRANCH" = "$FEATURE_BRANCH" ]; then
-  echo "  Already on $FEATURE_BRANCH (idempotent — speckit hook fired, or this is a retry)"
-else
-  echo "  WARN: on unexpected branch '$CUR_BRANCH', expected '$FEATURE_BRANCH'. Continuing on current."
+if [ "$CUR_BRANCH" != "$FEATURE_BRANCH" ]; then
+  echo "ERROR: specify left branch '$CUR_BRANCH', expected '$FEATURE_BRANCH'; refusing to plan." >&2
+  exit 11
 fi
 echo "  branch ready: $(git branch --show-current)"
 

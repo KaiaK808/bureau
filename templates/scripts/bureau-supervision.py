@@ -101,6 +101,14 @@ def save(path, value):
             os.unlink(name)
 
 
+def spec_lock_timeout():
+    value = os.environ.get('BUREAU_SPEC_LOCK_TIMEOUT', '300')
+    if re.fullmatch(r'[0-9]{1,10}', value) and 1 <= int(value) <= 86400:
+        return int(value)
+    print('WARNING: invalid BUREAU_SPEC_LOCK_TIMEOUT; using 300 seconds', file=sys.stderr)
+    return 300
+
+
 def reserve_spec_number(repo, root, issue, specs_dir, base):
     """Allocate once per issue across every checkout sharing this Git common dir.
 
@@ -114,7 +122,17 @@ def reserve_spec_number(repo, root, issue, specs_dir, base):
     git(repo, 'rev-parse', '--verify', 'refs/remotes/origin/' + base + '^{commit}')
     root.mkdir(parents=True, exist_ok=True)
     with (root / 'spec-numbers.guard').open('a') as guard:
-        fcntl.flock(guard, fcntl.LOCK_EX)
+        timeout = spec_lock_timeout()
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f'timed out after {timeout}s waiting for spec allocator lock {guard.name}; stop or release its holder before retrying')
+                time.sleep(min(0.1, remaining))
         path = root / 'spec-numbers.json'
         numbers = read(path)
         if any(not re.fullmatch(r'[A-Z][A-Z0-9]*-[0-9]+', key)
@@ -468,6 +486,9 @@ def main():
                 result = {'stopped': True, 'issue': args.issue, 'head': args.head, 'pr': args.pr}
         print(json.dumps(result))
         return 0
+    except TimeoutError as exc:
+        print('bureau supervision: ' + str(exc), file=sys.stderr)
+        return 124
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         print('bureau supervision: ' + str(exc), file=sys.stderr)
         return 1

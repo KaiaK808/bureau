@@ -3,9 +3,17 @@
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 python3 - "$REPO_ROOT" <<'PY'
-import concurrent.futures, hashlib, json, pathlib, subprocess, sys, tempfile, zipfile
+import concurrent.futures, hashlib, json, os, pathlib, runpy, subprocess, sys, tempfile, time, zipfile
 root = pathlib.Path(sys.argv[1])
 script = root / 'templates/scripts/bureau-supervision.py'
+os.environ.pop('BUREAU_SPEC_LOCK_TIMEOUT', None)
+module = runpy.run_path(str(script))
+assert module['spec_lock_timeout']() == 300
+for value, expected in [('00001', 1), ('86400', 86400), ('0', 300), ('86401', 300), ('x', 300), ('9' * 5000, 300)]:
+    os.environ['BUREAU_SPEC_LOCK_TIMEOUT'] = value
+    assert module['spec_lock_timeout']() == expected
+os.environ.pop('BUREAU_SPEC_LOCK_TIMEOUT', None)
+print('PASS allocator lock defaults to 300 s; bounded ASCII settings, decimal zeros and invalid fallback')
 
 with zipfile.ZipFile(root / 'tests/fixtures/speckit-1.2.2.zip') as fixture:
     for name, digest in {
@@ -81,8 +89,9 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.spec-numbers.') as tmp:
     old = tmp / 'no-lock.py'
     begin = text.index('def reserve_spec_number('); end = text.index('\ndef fingerprint(', begin)
     region = text[begin:end]
-    assert region.count('fcntl.flock(guard, fcntl.LOCK_EX)') == 1
-    region = region.replace('fcntl.flock(guard, fcntl.LOCK_EX)', 'pass  # negative control: no lock')
+    lock_call = 'fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)'
+    assert region.count(lock_call) == 1
+    region = region.replace(lock_call, 'pass  # negative control: no lock')
     region = region.replace('        numbers[issue] = number', '''        (root / (issue + '.ready')).touch()
         until = time.monotonic() + 10
         while len(list(root.glob('*.ready'))) < 2:
@@ -101,6 +110,46 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.spec-numbers.') as tmp:
     assert allocate('KEY-110') == 53
     print('PASS restored allocator -> 052/053')
 
+    # A real holder remains alive past the deadline: no reservation is changed.
+    holder_code = '''import fcntl, sys
+with open(sys.argv[1], 'a') as guard:
+    fcntl.flock(guard, fcntl.LOCK_EX)
+    print('locked', flush=True)
+    sys.stdin.read()
+'''
+    guard = registry.with_name('spec-numbers.guard')
+    with subprocess.Popen([sys.executable, '-c', holder_code, str(guard)],
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as holder:
+        try:
+            assert holder.stdout.readline().strip() == 'locked'
+            before = registry.read_bytes()
+            env = dict(os.environ, BUREAU_SPEC_LOCK_TIMEOUT='1')
+            command = [sys.executable, '-I', str(script), '--repo', str(repo), 'reserve-spec-number', 'KEY-113']
+            started = time.monotonic()
+            result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=5)
+            elapsed = time.monotonic() - started
+            assert result.returncode == 124, result
+            assert 'timed out after 1s waiting for spec allocator lock' in result.stderr, result.stderr
+            assert 0.9 <= elapsed < 5, elapsed
+            assert not result.stdout and registry.read_bytes() == before
+            print('PASS held allocator lock -> 124 after 1 s, clear diagnostic, registry unchanged')
+
+            old = tmp / 'blocking-lock.py'
+            assert text.count(lock_call) == 1
+            old.write_text(text.replace(lock_call, 'fcntl.flock(guard, fcntl.LOCK_EX)'))
+            command[2] = str(old)
+            try:
+                subprocess.run(command, env=env, text=True, capture_output=True, timeout=2)
+            except subprocess.TimeoutExpired:
+                print('PASS NEGATIVE CONTROL blocking flock hangs past configured 1 s (killed at 2 s)')
+            else:
+                raise AssertionError('blocking-lock control unexpectedly finished')
+            assert registry.read_bytes() == before
+        finally:
+            holder.communicate()
+    assert allocate('KEY-113') == 54
+    print('PASS allocation proceeds after real holder releases the lock')
+
     # Configured directory/base, timestamp exclusion, >999 and fail-closed records.
     (repo / 'features/999-custom').mkdir(parents=True)
     (repo / 'features/20261023-120000-timestamp').mkdir()
@@ -113,5 +162,5 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.spec-numbers.') as tmp:
     else: raise AssertionError('corrupt reservations failed open')
     assert registry.read_text() == '{broken'
     print('PASS configured base/directory, timestamp exclusion, 1000; corrupt registry refuses unchanged')
-print('OK test_spec_number_alloc (9 scenarios; 2 include negative controls)')
+print('OK test_spec_number_alloc (13 scenarios; 3 include negative controls)')
 PY

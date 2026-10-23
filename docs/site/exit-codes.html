@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="97cb401b945b274fa8e0dda64f54eea0d2016425a37424393702a5754d7eade8">
+<meta name="bureau-source-sha256" content="b59e491899e46a6462f96ce4a4a39b967ee28ca3a675a599bc8e02ff17ca3f21">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -259,12 +259,16 @@ report <code>waiting</code> with process/result exit code 28</td>
 <tr>
 <td><code>124</code></td>
 <td>timeout</td>
-<td>Provider exceeded time bound. Implement (since v3.2): the last pass
-that could run timed out — a timed-out pass with another pass left goes
-on to that pass instead</td>
-<td>Inspect preserved progress and the transcript named in the provider
-evidence (<code>session_id</code>, <code>transcript</code> in
-<code>result.json</code>); see the troubleshooting guide</td>
+<td>Provider exceeded time bound, or spec allocator lock acquisition
+exceeded <code>BUREAU_SPEC_LOCK_TIMEOUT</code> (default 300 s).
+Implement (since v3.2): the last pass that could run timed out — a
+timed-out pass with another pass left goes on to that pass instead</td>
+<td>For a spec lock timeout, inspect the printed lock path and stop or
+release its holder before retrying; the issue returns to Triage without
+specify work. For provider timeouts, inspect preserved progress and the
+transcript named in the provider evidence (<code>session_id</code>,
+<code>transcript</code> in <code>result.json</code>); see the
+troubleshooting guide</td>
 </tr>
 <tr>
 <td><code>130</code></td>
