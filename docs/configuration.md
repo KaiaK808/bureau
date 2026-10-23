@@ -146,6 +146,8 @@ The stage worktrees are reset with `git clean -fdx`, which removes an ignored `.
 | `supervisor.max_crashes` | number | `5` | Whole numbers 1–1000, fallback 5. Consecutive crashes before the supervisor gives up and fires a Telegram alert. Read from env `BUREAU_SUPERVISOR_MAX_CRASHES` if set |
 | `supervisor.stability_window` | number | `3600` | Whole seconds 0–604800, fallback 3600. Seconds of clean runtime before the crash counter resets. Read from env `BUREAU_SUPERVISOR_STABILITY_WINDOW` if set |
 
+The supervisor selects the environment override first, then `.bureau.json`, then the default. Validation follows selection: an empty or invalid override uses the default, even when JSON contains a valid value. The normal `.env` precedence applies before this selection.
+
 ---
 
 ## Environment variables
@@ -183,7 +185,11 @@ The `.env` reader and precedence are unchanged: an accepted file entry replaces 
 
 The usage-signal fields `pct` (integer part, 0–100), `reset_epoch` and `updated_epoch` (whole seconds, 0–9999999999) are checked before shell arithmetic; invalid fields fall back to 0 with a warning naming the field. Fractional percentages keep their existing integer-part comparison. The already bounded shepherd merge wait/poll settings retain their base-10 and upper-cap behavior; their warnings now omit the rejected value.
 
+Implementation results accept `tasks_done` from 0 through 100000 per pass; invalid counts contribute 0. The shared schema states this range in its field description because [Claude rejects numeric `minimum`/`maximum` constraints](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations); the shell enforces it for both providers. Alert-throttle log timestamps are checked before subtraction; a malformed record leaves its event unsuppressed. Counts and timestamps obtained from tools are also checked before shell arithmetic or numeric comparisons.
+
 The shell environment filter reserves its own helper names (listed in `_BUREAU_ENV_INTERNAL_NAMES` in `scripts/bureau-env.sh`), including `IFS` and the `_beb_*`, `_bec_*`, `_beh_*` and wrapper locals in that list. Those exact names are removed from child environments and cannot be reintroduced through wrapper `NAME=VALUE` arguments. Other application variables keep the existing default/clean-mode rules.
+
+Carrier checks read literal NUL-delimited names and values from `/usr/bin/env -0`, so an enclosing function's local variable cannot hide an exported secret carrier. Generic application names such as `rc` are not reserved. A failed environment snapshot stops the command with 24. The curl subshell scrub also refuses with 24 when a malformed host-variable name cannot safely be unset in Bash; the other wrappers remove it literally with `env -u`. The shell helpers support Bash 3.2 and require `/usr/bin/env` with `-0` (as on the supported macOS/Linux CI hosts).
 
 ### Implement-pipeline retry loop
 

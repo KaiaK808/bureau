@@ -29,7 +29,9 @@ FAILS=0
 fail() { echo "FAIL $*" >&2; FAILS=$((FAILS + 1)); }
 
 cut_fn() {  # <bureau-config.sh> <out>
-  sed -n '/^# ── Worktree links (repo.worktree_links)/,/^# ── End of worktree links/p' "$1" > "$2"
+  # Preserve the production dependency, including in the negative control.
+  sed -n '/^bureau_number() {/,/^}/p' "$SCRIPTS/bureau-env.sh" > "$2"
+  sed -n '/^# ── Worktree links (repo.worktree_links)/,/^# ── End of worktree links/p' "$1" >> "$2"
   grep -q '^bureau_link_worktree_paths() {' "$2" || { echo "FAIL bureau_link_worktree_paths not found in $1"; exit 1; }
 }
 cut_fn "$SCRIPTS/bureau-config.sh" "$TMP/fn.sh"

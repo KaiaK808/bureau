@@ -15,7 +15,9 @@ SCRIPTS="$REPO_ROOT/templates/scripts"
 TMP=$(mktemp -d -t bureau-test.deps.XXXXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 
-sed -n '/^restore_worktree_deps() {/,/^}/p' "$SCRIPTS/bureau-config.sh" > "$TMP/fn.sh"
+# Include the real numeric dependency with the extracted production function.
+sed -n '/^bureau_number() {/,/^}/p' "$SCRIPTS/bureau-env.sh" > "$TMP/fn.sh"
+sed -n '/^restore_worktree_deps() {/,/^}/p' "$SCRIPTS/bureau-config.sh" >> "$TMP/fn.sh"
 grep -q 'restore_worktree_deps()' "$TMP/fn.sh" || { echo "FAIL restore_worktree_deps not found in bureau-config.sh"; exit 1; }
 # shellcheck source=/dev/null
 source "$TMP/fn.sh"

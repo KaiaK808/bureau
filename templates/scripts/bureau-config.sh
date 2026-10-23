@@ -1782,6 +1782,11 @@ pr_ci_is_green() {
     ] | length')
   pending_legacy=$(echo "$statuses" | jq '[.[] | select(.state == "pending")] | length')
   failed_legacy=$(echo "$statuses"  | jq '[.[] | select(.state == "failure" or .state == "error")] | length')
+  pending=$(bureau_number ci.pending "$pending" 1 0 9999999999)
+  completed=$(bureau_number ci.completed "$completed" 0 0 9999999999)
+  failed=$(bureau_number ci.failed "$failed" 1 0 9999999999)
+  pending_legacy=$(bureau_number ci.pending_legacy "$pending_legacy" 1 0 9999999999)
+  failed_legacy=$(bureau_number ci.failed_legacy "$failed_legacy" 1 0 9999999999)
 
   if [ "$pending" -gt 0 ] || [ "$pending_legacy" -gt 0 ]; then
     # The longest-queued check run past the queue grace, as "<age>\t<count>\t<name>".
@@ -1797,6 +1802,7 @@ pr_ci_is_green() {
         | if length == 0 then empty else "\(.[0].age)\t\(length)\t\(.[0].name)" end' 2>/dev/null) || queued=""
     if [ -n "$queued" ]; then
       IFS=$'\t' read -r queued_age queued_count queued_name <<< "$queued"
+      queued_count=$(bureau_number ci.queued_count "$queued_count" 1 1 9999999999)
       # The age changes from poll to poll; merge_gate_key (merge-pipeline.sh) leaves it
       # out of the comparison, so a PR gets one comment for it, not one per poll.
       if [ "$queued_count" -gt 1 ]; then queued_count=", $((queued_count - 1)) more check(s) as well"; else queued_count=""; fi
@@ -1824,9 +1830,11 @@ pr_ci_is_green() {
   # the function fall through to "green" with no check at all; it counts as 1 now.
   local min_required
   min_required=$(_merge_gate_number merge_min_required_checks 1) || true
-  local total_completed=$((completed))
+  local total_completed="$completed" completed_legacy
   # Count completed legacy statuses too (any non-pending state counts).
-  total_completed=$((total_completed + $(echo "$statuses" | jq '[.[] | select(.state != "pending")] | length')))
+  completed_legacy=$(echo "$statuses" | jq '[.[] | select(.state != "pending")] | length')
+  completed_legacy=$(bureau_number ci.completed_legacy "$completed_legacy" 0 0 9999999999)
+  total_completed=$((total_completed + completed_legacy))
   if [ "$total_completed" -lt "$min_required" ]; then
     # Past the pending check above, zero completed means nothing at all on the head.
     # Both lists must have been read; a head commit time that cannot be read keeps
@@ -1896,7 +1904,9 @@ _pr_head_commit_age() {
   when=$(gh api "repos/$1/git/commits/$2" --jq '.committer.date' 2>/dev/null) || return 1
   when=$(printf '%s' "$when" | jq -Rr 'fromdateiso8601 | floor' 2>/dev/null) || return 1
   case "$when" in ''|*[!0-9]*) return 1 ;; esac
-  printf '%s' "$(( $(date +%s) - when ))"
+  local now
+  now=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
+  printf '%s' "$(( now - when ))"
 }
 
 # pr_base_is_current <pr-number>
@@ -1972,7 +1982,11 @@ _throttle_should_suppress() {
   # The key goes in through the environment: awk -v would expand backslashes.
   last=$(_THROTTLE_KEY="$key" awk -F'\t' '$1==ENVIRON["_THROTTLE_KEY"]{print $2}' "$_throttle_file" | tail -1)
   [ -z "$last" ] && return 1
-  now=$(date +%s)
+  # A corrupt record must never suppress an alert or reach shell arithmetic.
+  last=$(bureau_number alert.last_epoch "$last" 0 1 9999999999)
+  [ "$last" != 0 ] || return 1
+  now=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
+  window_sec=$(bureau_number alert.window_seconds "$window_sec" 3600 0 604800)
   delta=$((now - last))
   [ "$delta" -lt "$window_sec" ]
 }
@@ -1991,6 +2005,7 @@ _throttle_record() {
   # file behind. Trim is cheap and runs at most once per fired event.
   local lines
   lines=$(wc -l < "$_throttle_file" 2>/dev/null | tr -d ' ' || echo 0)
+  lines=$(bureau_number alert.log_lines "$lines" 0 0 9999999999)
   if [ "${lines:-0}" -gt 1000 ]; then
     tail -n 500 "$_throttle_file" > "${_throttle_file}.tmp" 2>/dev/null \
       && mv "${_throttle_file}.tmp" "$_throttle_file"
@@ -2084,6 +2099,7 @@ _throttle_decide() {
   reset=$(bureau_number usage.reset_epoch "$reset" 0 0 9999999999)
   upd=$(bureau_number usage.updated_epoch "$upd" 0 0 9999999999)
   pct=$(bureau_number usage.pct "${pct%%.*}" 0 0 100)
+  now=$(bureau_number clock.epoch "$now" 0 0 9999999999)
   if [ "${upd:-0}" -gt 0 ] && [ "$((now - upd))" -gt 300 ] && [ "$stale_pause" != "true" ]; then
     echo "proceed"; return 0
   fi
@@ -2121,13 +2137,14 @@ session_throttle_guard() {
     fi
     local pct rest reset upd now decision
     pct="${sig%%|*}"; rest="${sig#*|}"; reset="${rest%%|*}"; upd="${rest##*|}"
-    now=$(date +%s)
+    now=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
     decision=$(_throttle_decide "$pct" "$reset" "$upd" "$threshold" "$stale_pause" "$now")
     case "$decision" in
       proceed) return 0 ;;
       pause\ *)
         [ "${BUREAU_THROTTLE_ONCE:-0}" != 1 ] || return 23
         local sec="${decision#pause }"
+        sec=$(bureau_number usage.pause_seconds "$sec" 300 0 3600)
         echo "[throttle] usage ${pct}% ≥ ${threshold}% — pausing ${sec}s until ~$(_epoch_hm "$((now + sec))")" >&2
         sleep "$sec"
         ;;
@@ -2857,6 +2874,7 @@ restore_worktree_deps() {
   # for a tracked symlink, which ls-files lists without a slash. Case-insensitive
   # because macOS folds NODE_MODULES onto the same path.
   tracked=$(git -C "$wt" ls-files 2>/dev/null | grep -ciE '^node_modules(/|$)' || true)
+  tracked=$(bureau_number worktree.tracked_node_modules "$tracked" 1 0 9999999999)
   if [ "${tracked:-0}" -gt 0 ]; then
     echo "  WARNING: node_modules is tracked in the branch — discarded (not trusted)."
     rm -rf "$wt/node_modules"
@@ -3052,6 +3070,7 @@ print(next((c for c in rel.split(os.sep) if c not in ("", ".", "..") and c.lower
   # `grep -c`, not `grep -q`: -q closes the pipe early and pipefail turns the
   # SIGPIPE of ls-files into a false "not tracked".
   tracked=$(git -C "$wt" --literal-pathspecs ls-files -- "$p" 2>/dev/null | grep -c . || true)
+  tracked=$(bureau_number worktree.tracked_link_paths "$tracked" 1 0 9999999999)
   if [ "${tracked:-0}" -gt 0 ]; then
     echo "  WARNING: worktree link '$p' skipped: the branch tracks that path."; return 0
   fi

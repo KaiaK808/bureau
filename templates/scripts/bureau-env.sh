@@ -404,14 +404,13 @@ bureau_secret_copy() {
 _BUREAU_UNTRUSTED_PATHS='BUREAU_ENV_FILE BUREAU_CONFIG'
 _BUREAU_UNTRUSTED_HOST_PREFIXES='HERDR_'
 
-# These names are private to this library. A local binding can hide an exported
-# secret carrier from compgen/indirect reads, yet Bash can still pass its old
-# exported value to a child. Reserve the names, including nested helpers and
-# wrapper locals, and remove them explicitly even when no carrier was visible.
+# These names are private to this library. Remove them from child environments
+# and explicit wrapper assignments. Carrier detection below reads the real
+# exported environment, so callers need not reserve their own local names.
 # Keep the inventory in test_env_malformed_names.sh in step with new locals.
 _BUREAU_ENV_INTERNAL_NAMES='IFS _BUREAU_ENV_INTERNAL_NAMES _BUREAU_ENV_ARGV _BUREAU_GIT_HOOKS_ENV _BUREAU_GIT_HOOKS_OFF
 _BUREAU_UNTRUSTED_PATHS _BUREAU_UNTRUSTED_HOST_PREFIXES
-_beb_mode _beb_names _beb_startup _beb_name _beb_value _beb_exported _beb_long _beb_short
+_beb_mode _beb_names _beb_startup _beb_name _beb_value _beb_exported _beb_long _beb_short _beb_entry _beb_snapshot
 _bec_secret _beh_prefix _bue_filter _bue_trace _bue_check _bue_mode _bue_name _bue_assign_re _bue_assign
 _bws_trace _bws_assign_re _bws_assign _ber_trace _ber_names _ber_name _bgh_trace
 _bg_trace _bg_arg _bg_sub _bg_skip _bg_names _bg_lead _bg_mode _bg_dir _bg_unknown _bg_hooks _bg_hooks_env _bg_operator
@@ -434,9 +433,9 @@ _bureau_env_host_name() {
 
 _bureau_env_build() {
   local IFS=$' \t\n'
-  local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_name _beb_value _beb_exported
-  local -a _beb_long _beb_short
-  _beb_long=(); _beb_short=(); _BUREAU_ENV_ARGV=()
+  local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_name _beb_value _beb_entry _beb_snapshot
+  local -a _beb_long _beb_short _beb_exported
+  _beb_long=(); _beb_short=(); _beb_exported=(); _BUREAU_ENV_ARGV=()
   case "$_beb_names" in
     seven) _beb_names='LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN' ;;
     dotenv) _beb_names='LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID' ;;
@@ -447,49 +446,73 @@ _bureau_env_build() {
     elif [ -n "$_beb_value" ]; then _beb_short+=("$_beb_value"); fi
     _BUREAU_ENV_ARGV+=(-u "$_beb_name")
   done
+  # Bash 3.2 can retain an old exported value behind an uninitialized caller
+  # local (e.g. run_stage_for's rc). Neither compgen + ${!name} nor export -p
+  # sees what the child actually inherits. Capture literal NUL-delimited
+  # entries from that environment, including newlines in names and values.
+  # Hex framing crosses command substitution without losing NULs/newlines;
+  # printf decodes literal bytes, never shell syntax. Avoid process substitution:
+  # Bash 3.2 rejects its syntax while sourcing this library in POSIX mode.
+  _beb_snapshot=$({ /usr/bin/env -0 && printf '\0'; } | python3 -I -c '
+import sys
+data = sys.stdin.buffer.read()
+if data != b"\0" and not data.endswith(b"\0\0"):
+    sys.exit(24)
+for entry in data.split(b"\0"):
+    if entry:
+        print("".join("\\x%02x" % byte for byte in entry))
+') || {
+    echo 'bureau environment: cannot read exported environment; command was not run (24, environment-blocked)' >&2
+    exit 24
+  }
+  # Also collect exported secret values when a caller shadows a secret name.
+  while IFS= read -r _beb_entry; do
+    [ -n "$_beb_entry" ] || continue
+    printf -v _beb_entry '%b' "$_beb_entry"
+    _beb_exported+=("$_beb_entry")
+    _beb_name="${_beb_entry%%=*}"
+    case " $_beb_names " in
+      (*" $_beb_name "*)
+        _beb_value="${_beb_entry#*=}"
+        if [ "${#_beb_value}" -ge 6 ]; then _beb_long+=("$_beb_value")
+        elif [ -n "$_beb_value" ]; then _beb_short+=("$_beb_value"); fi ;;
+    esac
+  done <<< "$_beb_snapshot"
   if [ "$_beb_startup" = 1 ]; then _BUREAU_ENV_ARGV+=(-u BASH_ENV -u ENV); fi
   for _beb_name in $_BUREAU_ENV_INTERNAL_NAMES; do
     _BUREAU_ENV_ARGV+=(-u "$_beb_name")
   done
-  _beb_exported=$(compgen -e 2>/dev/null || true)
-  if [ "$_beb_mode" = clean ]; then
-    _BUREAU_ENV_ARGV=(-i)
-    for _beb_name in PATH HOME USER LOGNAME SHELL TMPDIR TEMP TMP LANG LC_ALL LC_CTYPE TERM TZ CI; do
+  if [ "$_beb_mode" = clean ]; then _BUREAU_ENV_ARGV=(-i); fi
+  for _beb_entry in ${_beb_exported[@]+"${_beb_exported[@]}"}; do
+    _beb_name="${_beb_entry%%=*}"
+    _beb_value="${_beb_entry#*=}"
+    if [ "$_beb_mode" = clean ]; then
+      case "$_beb_name" in
+        PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_ALL|LC_CTYPE|TERM|TZ|CI) ;;
+        *) continue ;;
+      esac
       _bureau_env_host_name "$_beb_name" && continue
-      case $'\n'"$_beb_exported"$'\n' in (*$'\n'"$_beb_name"$'\n'*) ;; (*) continue ;; esac
-      [ -n "${!_beb_name+x}" ] || continue
-      _beb_value="${!_beb_name}"
-      _bureau_env_carries "$_beb_value" || _BUREAU_ENV_ARGV+=("$_beb_name=$_beb_value")
-    done
-  else
-    # compgen prints one name per line, and bash 3.2 takes an environment entry
-    # whose name is no shell identifier (`A[$(command)]`) for a variable: such a
-    # name is neither split into words with pathname expansion nor expanded
-    # indirectly, where its subscript would run. Unless it is a host pane name,
-    # it is passed on as it is, as under a bash that never lists it. The check
-    # spells every character out:
-    # a range such as A-Z or a class follows the locale's collation, and under
-    # some single-byte locales lets `[`, `$` and `(` through. _beb_startup,
-    # whose argument is read for the last time above, keeps the caller's
-    # noglob setting; every local is also explicitly reserved above.
-    case $- in (*f*) _beb_startup=noglob ;; (*) _beb_startup=glob ;; esac
-    set -f
-    IFS=$'\n'
-    for _beb_name in $_beb_exported; do
+      _bureau_env_carries "$_beb_value" || _BUREAU_ENV_ARGV+=("$_beb_entry")
+    else
+      # Explicit removals above already cover these names.
+      _bureau_env_internal_name "$_beb_name" && continue
+      case " $_beb_names " in (*" $_beb_name "*) continue ;; esac
+      if [ "$_beb_startup" = 1 ]; then
+        case "$_beb_name" in BASH_ENV|ENV) continue ;; esac
+      fi
       if _bureau_env_host_name "$_beb_name"; then
         _BUREAU_ENV_ARGV+=(-u "$_beb_name")
         continue
       fi
+      # Preserve the existing policy for non-identifiers, without ever
+      # interpreting an environment name as a shell variable or array index.
       case "$_beb_name" in
         (''|[0123456789]*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*) continue ;;
       esac
-      _beb_value="${!_beb_name:-}"
       [ -n "$_beb_value" ] || continue
       if _bureau_env_carries "$_beb_value"; then _BUREAU_ENV_ARGV+=(-u "$_beb_name"); fi
-    done
-    IFS=$' \t\n'
-    [ "$_beb_startup" = noglob ] || set +f
-  fi
+    fi
+  done
   return 0
 }
 
@@ -815,7 +838,20 @@ _bureau_drop_secrets() {
   # binding that could hide an exported carrier from unset (Bash 3.2).
   set -- "${_BUREAU_ENV_ARGV[@]}"
   while [ "$#" -ge 2 ]; do
-    unset "$2" 2>/dev/null || true
+    # env -u accepts literal non-identifiers (e.g. malformed HERDR_ names),
+    # but Bash's unset/indirection interprets array subscripts. A shell-only
+    # scrub cannot safely remove such a binding; stop before the curl call.
+    case "$2" in
+      (''|[0123456789]*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*)
+        echo 'bureau environment: cannot safely unset an environment name; request was not run (24, environment-blocked)' >&2
+        exit 24 ;;
+    esac
+    # Unsetting a caller local in Bash 3.2 can expose an older global
+    # binding. Remove that too; a readonly binding must stop the request.
+    while :; do
+      unset "$2" 2>/dev/null || exit 24
+      [ "${!2+x}" = x ] || break
+    done
     shift 2
   done
   return 0

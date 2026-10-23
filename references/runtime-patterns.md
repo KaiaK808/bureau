@@ -108,6 +108,8 @@ Configuration in `.bureau.json`:
 }
 ```
 
+Environment overrides (`BUREAU_SUPERVISOR_MAX_CRASHES`, `BUREAU_SUPERVISOR_STABILITY_WINDOW`) beat those JSON keys, then the defaults apply. After source selection, `bureau_number` accepts ASCII decimal digits only: crash limits 1–1000, stability windows 0–604800 seconds. Invalid selected values use 5/3600 rather than falling through to another source.
+
 Stage slots include `spec`, `spec_review`, `ux`, `copy`, `implement`, `qa`, `code_review`, `merge`, `research` and `upstream_port`. Preserve legacy Claude model ownership; use provider-specific settings for Codex under v1 compatibility. See [background operations](operations.md) for the supported runtime overrides.
 
 Each background invocation starts a separate provider process. Share explicit artifacts and the validated stage result; do not assume conversation or hidden reasoning transfers between providers.

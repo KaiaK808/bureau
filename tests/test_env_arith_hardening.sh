@@ -25,6 +25,10 @@ def check(condition, label):
         print('FAIL ' + label)
 
 def lines(file, pattern):
+    if file == 'queue-loop-supervised.sh' and pattern in ('^MAX_CRASHES=', '^STABILITY_WINDOW='):
+        key = 'BUREAU_SUPERVISOR_' + ('MAX_CRASHES' if pattern == '^MAX_CRASHES=' else 'STABILITY_WINDOW')
+        text = (scripts / file).read_text()
+        return re.search(r'^if \[ "\$\{' + key + r'\+x\}" = x \]; then\n.*?^fi$', text, re.M | re.S).group()
     found = [line for line in (scripts / file).read_text().splitlines()
              if re.search(pattern, line)]
     if not found:
@@ -63,11 +67,13 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.arith.') as directory:
     config = temp / '.bureau.json'
     base = dict(PATH=os.environ['PATH'], HOME=directory, BUREAU_CONFIG=str(config),
                 SENTINEL=str(marker), LC_ALL='C')
+    config.write_text('{}')
+    bootstrap = '_BUREAU_SCRIPTS_DIR=$1\nbureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }\n' + function('_bureau_config_number') + '\n'
 
     def run(code, env=None):
         global sentinels
         marker.unlink(missing_ok=True)
-        result = subprocess.run(['/bin/bash', '-uc', 'source "$1/bureau-env.sh"\na=(0); x=(0)\n' + code,
+        result = subprocess.run(['/bin/bash', '-uc', 'source "$1/bureau-env.sh"\na=(0); x=(0)\n' + bootstrap + code,
                                  '_', str(scripts)], env=dict(base, **(env or {})),
                                 capture_output=True, text=True, timeout=10)
         if marker.exists():
@@ -82,6 +88,9 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.arith.') as directory:
                 ('0', 0 if minimum == 0 else default, minimum != 0),
                 ('-1', default, True), ('010', 10, False),
                 ('99999999999999999999', default, True), ('', default, True),
+                (' ', default, True), (' 10', default, True), ('10 ', default, True),
+                ('\t10', default, True), ('١٠', default, True), ('１０', default, True),
+                ('0x10', default, True), ('1e3', default, True),
                 (str(default), default, False), (str(maximum), maximum, False),
                 (str(maximum + 1), default, True)]
 
@@ -100,6 +109,67 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.arith.') as directory:
         for raw, expected, warn in cases(default, minimum, maximum):
             verify(run(code, {key: raw}), key, raw, expected, warn)
         verify(run(code), key, '<unset>', default, False)
+
+    # A positional interval bypasses the config guard. Removing ONLY the
+    # queue consumer guard must fail these probes at the real multiplication.
+    queue = lines('queue-loop.sh', r'^INTERVAL_(MINUTES|SECONDS)=')
+    for raw, expected, warn in cases(30, 1, 10080):
+        # Empty $2 uses the configured default by the existing ${2:-...} rule.
+        if raw == '': expected, warn = 30, False
+        code = 'BUREAU_POLL_INTERVAL=30; set -- all "$POSITIONAL_INTERVAL"\n' + queue
+        code += '\nprintf "%s" "$INTERVAL_SECONDS"'
+        verify(run(code, {'POSITIONAL_INTERVAL': raw}), 'agents.poll_interval_minutes', raw, expected * 60, warn)
+
+    # Real JSON parser + the production count assignment/bound/accumulation.
+    # A schema-valid unsigned-64 maximum used to make 1 + count wrap to 0.
+    task_code = function('parse_claude_json') + '\nTASKS_DONE_TOTAL=1\n'
+    task_code += lines('implement-pipeline.sh', r'^    TASKS_DONE=\$\(parse_claude_json|^  TASKS_DONE=\$\(bureau_number|^  TASKS_DONE_TOTAL=\$\(\(')
+    task_code += '\nprintf "%s" "$TASKS_DONE_TOTAL"'
+    for raw, expected, warn in [(18446744073709551615, 1, True), (100001, 1, True),
+                                (-1, 1, True), (100000, 100001, False), (10, 11, False)]:
+        verify(run(task_code, {'RESULT': json.dumps({'tasks_done': raw})}), 'tasks_done', raw, expected, warn)
+    schema = json.loads((scripts / 'bureau-implement.schema.json').read_text())
+    task_schema = schema['properties']['tasks_done']
+    # Claude rejects numeric constraint keywords; the shared schema describes
+    # the range and the shell enforces it for both providers and legacy prose.
+    check('0 through 100000' in task_schema.get('description', '') and
+          'minimum' not in task_schema and 'maximum' not in task_schema,
+          'tasks_done schema describes 0..100000 without Claude-unsupported bounds')
+
+    # The actual file reader and decision, not a substitute for awk/tail.
+    throttle_file = temp / 'alert-throttle.log'
+    throttle_code = function('_throttle_where') + '\n' + function('_throttle_should_suppress') + '''
+date() { printf '1800000000'; }
+if _throttle_should_suppress fixture 3600; then printf suppress; else printf allow; fi
+'''
+    for raw, expected, warn in [(raw, 'allow', True) for raw, _, _ in cases(1, 1, 9999999999)
+                                if raw not in ('', '010', '1', '9999999999', '0')]:
+        throttle_file.write_text('fixture\t1800000000\nfixture\t' + str(raw) + '\n')
+        result = run(throttle_code, {'BUREAU_ALERT_THROTTLE_FILE': str(throttle_file)})
+        # An empty record (including a newline-only timestamp) is an absent
+        # timestamp and returns before the warning-producing validator.
+        verify(result, 'alert.last_epoch', raw, expected, bool(str(raw).split('\t')[0].strip('\n')))
+    for raw, expected in [('1800000000', 'suppress'), ('1799990000', 'allow'),
+                          ('1800000100', 'suppress'), ('', 'allow'), ('0', 'allow')]:
+        throttle_file.write_text('fixture\t' + raw + '\n')
+        result = run(throttle_code, {'BUREAU_ALERT_THROTTLE_FILE': str(throttle_file)})
+        check(result.returncode == 0 and result.stdout == expected, 'throttle valid/absent record ' + repr(raw))
+
+    # Supervisor source selection: env beats JSON beats default; an invalid
+    # selected value uses the default rather than falling through to JSON.
+    for variable, path, default, minimum, maximum, pattern, output in [
+        ('BUREAU_SUPERVISOR_MAX_CRASHES', '.supervisor.max_crashes', 5, 1, 1000, '^MAX_CRASHES=', 'MAX_CRASHES'),
+        ('BUREAU_SUPERVISOR_STABILITY_WINDOW', '.supervisor.stability_window', 3600, 0, 604800, '^STABILITY_WINDOW=', 'STABILITY_WINDOW'),
+    ]:
+        field = path.split('.')[-1]
+        code = lines('queue-loop-supervised.sh', pattern) + '\nprintf "%s" "$' + output + '"'
+        for raw, expected, warn in cases(default, minimum, maximum) + [('1\x00', default, True), ('1\n', default, True), (None, default, False)]:
+            config.write_text(json.dumps({'supervisor': {field: raw}}))
+            verify(run(code), path, raw, expected, warn)
+        config.write_text(json.dumps({'supervisor': {field: 17}}))
+        for raw, expected, warn in [('010', 10, False), ('', default, True), ('0x10', default, True)]:
+            verify(run(code, {variable: raw}), variable, raw, expected, warn)
+    config.write_text('{}')
 
     # Core's long valid budgets must survive exactly; they never pass via .env.
     for key, raw in [('BUREAU_IMPL_ITER_TIMEOUT', '5400'), ('BUREAU_IMPL_TOTAL_TIMEOUT', '10800')]:
@@ -155,6 +225,18 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.arith.') as directory:
             section, field = path.strip('.').split('.')
             config.write_text(json.dumps({section: {field: raw}}))
             verify(run(code), path, raw, expected, warn)
+
+    # Internal config variables must not be overwritten after their JSON
+    # check: the real .env allowlist rejects these names, even though they
+    # start with BUREAU_. Verify that boundary rather than assuming all such
+    # names can be set by .env.
+    for path, variable, default, minimum, maximum in (settings[3], settings[4]):
+        config.write_text('{}')
+        code = bootstrap + lines('bureau-config.sh', '^' + variable + '=')
+        code += '\nbureau_load_env --export "$HOME/.env"\n' + config_consumers[variable]
+        for raw, expected, warn in cases(default, minimum, maximum):
+            dotenv.write_text(variable + "='" + raw + "'\n")
+            verify(run(code), path, raw, default, False)
 
     # Polling supplied by an inherited environment overrides config only after
     # validation. Exercise the real merge-gate hold, with external work faked.

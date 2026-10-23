@@ -128,7 +128,7 @@ run_script() {
   # matching stage_end event so /bureau-learnings can surface stage timing.
   local start_epoch=0
   if [ -n "$picked" ]; then
-    start_epoch=$(date +%s)
+    start_epoch=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
     emit_event "event=stage_start" "mode=$MODE" "stage=$script" \
       "issue=$picked" "branch=${target_branch:-}"
   fi
@@ -145,7 +145,9 @@ run_script() {
   local klass
   klass=$(exit_class "$exit_code")
   if [ -n "$picked" ]; then
-    local duration_s=$(( $(date +%s) - start_epoch ))
+    local end_epoch duration_s
+    end_epoch=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
+    duration_s=$(( end_epoch - start_epoch ))
     emit_event "event=stage_end" "mode=$MODE" "stage=$script" \
       "issue=$picked" "branch=${target_branch:-}" \
       "exit_code=$exit_code" "class=$klass" "duration_s=$duration_s"

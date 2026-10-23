@@ -69,10 +69,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if ! [ "$MAX_CONCURRENT" -ge 1 ] 2>/dev/null; then
-  echo "orchestrate: --max-concurrent must be a positive integer (got '$MAX_CONCURRENT')" >&2
+if ! [[ "$MAX_CONCURRENT" =~ ^[0-9]{1,10}$ ]] || ! [ "$MAX_CONCURRENT" -ge 1 ] || ! [ "$MAX_CONCURRENT" -le 1000 ]; then
+  echo "orchestrate: --max-concurrent must be a whole number from 1 to 1000" >&2
   exit 2
 fi
+MAX_CONCURRENT=$(bureau_number BUREAU_MAX_CONCURRENT "$MAX_CONCURRENT" 3 1 1000)
 
 # A "lane" is a comma-joined ticket set that runs serially within itself; lanes
 # run concurrently in --execute mode. In legacy mode every lane is just a serial
@@ -177,7 +178,7 @@ if [ "$EXECUTE" = "1" ]; then
   i=0
   for lane in "${LANES[@]}"; do
     # Throttle: block until a slot frees.
-    while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$MAX_CONCURRENT" ]; do
+    while [ "$(bureau_number orchestrate.running_jobs "$(jobs -rp | wc -l | tr -d ' ')" 1000 0 1000)" -ge "$MAX_CONCURRENT" ]; do
       sleep 2
     done
     wt="$REPO_DIR/.worktrees/shepherd-lane-${i}"

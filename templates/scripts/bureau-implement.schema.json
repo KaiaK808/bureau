@@ -12,7 +12,8 @@
       ]
     },
     "tasks_done": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Number of tasks completed in this pass, from 0 through 100000. The runtime discards negative or larger counts."
     },
     "tasks_skipped": {
       "type": "integer"

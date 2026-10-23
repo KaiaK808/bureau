@@ -39,8 +39,18 @@ SUPERVISOR_LOG="$LOG_DIR/supervisor-${MODE_LABEL}.log"
 QUEUE_LOG="$LOG_DIR/queue-${MODE_LABEL}.log"
 mkdir -p "$LOG_DIR"
 
-MAX_CRASHES=$(bureau_number BUREAU_SUPERVISOR_MAX_CRASHES "${BUREAU_SUPERVISOR_MAX_CRASHES-5}" 5 1 1000)
-STABILITY_WINDOW=$(bureau_number BUREAU_SUPERVISOR_STABILITY_WINDOW "${BUREAU_SUPERVISOR_STABILITY_WINDOW-3600}" 3600 0 604800)
+# Select the source before validation: env (including an empty/invalid value)
+# beats JSON, which beats the default. .env has already resolved env precedence.
+if [ "${BUREAU_SUPERVISOR_MAX_CRASHES+x}" = x ]; then
+  MAX_CRASHES=$(bureau_number BUREAU_SUPERVISOR_MAX_CRASHES "$BUREAU_SUPERVISOR_MAX_CRASHES" 5 1 1000)
+else
+  MAX_CRASHES=$(_bureau_config_number .supervisor.max_crashes 5 1 1000)
+fi
+if [ "${BUREAU_SUPERVISOR_STABILITY_WINDOW+x}" = x ]; then
+  STABILITY_WINDOW=$(bureau_number BUREAU_SUPERVISOR_STABILITY_WINDOW "$BUREAU_SUPERVISOR_STABILITY_WINDOW" 3600 0 604800)
+else
+  STABILITY_WINDOW=$(_bureau_config_number .supervisor.stability_window 3600 0 604800)
+fi
 
 # Backoff schedule indexed by crash count - 1. After all entries are exhausted,
 # the last value (300s = 5min) is reused for any further crashes within the
@@ -73,7 +83,7 @@ log "Supervisor starting: ./scripts/queue-loop.sh $*"
 log "Config: max_crashes=$MAX_CRASHES, stability_window=${STABILITY_WINDOW}s"
 
 while true; do
-  start_ts=$(date +%s)
+  start_ts=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
 
   "$REPO_DIR/scripts/queue-loop.sh" "$@" &
   CHILD_PID=$!
@@ -81,7 +91,7 @@ while true; do
   child_rc=$?
   CHILD_PID=""
 
-  end_ts=$(date +%s)
+  end_ts=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
   duration=$((end_ts - start_ts))
 
   # Stability reset: if the child ran cleanly for STABILITY_WINDOW seconds
