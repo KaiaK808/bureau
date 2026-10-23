@@ -46,6 +46,20 @@ sys.stdout.buffer.write(output)
 sys.stderr.buffer.write(result.stderr)
 sys.exit(7 if fault == 'complete_then_nonzero' else result.returncode)
 ''')
+    source = (scripts / 'bureau-env.sh').read_text()
+    injected = temp / 'injected'
+    missing = temp / 'missing'
+    injected.mkdir()
+    missing.mkdir()
+    invocation = '} | LC_ALL=C "$_BUREAU_ENV_PYTHON" -I -c'
+    assert source.count(invocation) == 1, 'snapshot helper invocation changed'
+    # Inject at the absolute invocation boundary, keeping the actual parser.
+    # A python3 shell function/PATH double must no longer intercept secrets.
+    (injected / 'bureau-env.sh').write_text(source.replace(
+        invocation, '} | LC_ALL=C "$PROBE_PYTHON" "$SNAPSHOT_PROXY" "$SNAPSHOT_FAULT" -I -c'))
+    resolver = 'builtin type -P python3'
+    assert source.count(resolver) == 1, 'trusted interpreter resolver changed'
+    (missing / 'bureau-env.sh').write_text(source.replace(resolver, 'builtin false'))
     (temp / 'operator.env').write_text('LINEAR_API_KEY=' + key + '\n')
     (temp / 'empty-path').mkdir()
     base = dict(PATH=os.environ['PATH'], HOME=directory, LC_ALL='C',
@@ -85,8 +99,9 @@ sys.exit(7 if fault == 'complete_then_nonzero' else result.returncode)
         for name, call in calls.items():
             mode = 'clean' if name == 'untrusted-clean' else 'default'
             setup = 'source "$1/bureau-env.sh"\nbureau_get() { builtin printf "%s" ' + mode + '; }\n'
+            target = scripts
             if fault == 'missing_python':
-                setup += 'PATH="$HOME/empty-path"\n'
+                target = missing
             elif fault == 'pipe_unavailable':
                 # Only descriptors 0..3 may remain: the snapshot cannot obtain
                 # the descriptors for its command-substitution/producer pipe.
@@ -99,7 +114,7 @@ sys.exit(7 if fault == 'complete_then_nonzero' else result.returncode)
                              'decode_write': '[ "$1" = -v ]'}[fault]
                 setup += 'printf() { if ' + condition + '; then return 1; fi; builtin printf "$@"; }\n'
             else:
-                setup += 'python3() { "$PROBE_PYTHON" "$SNAPSHOT_PROXY" "$SNAPSHOT_FAULT" "$@"; }\n'
+                target = injected
             for context, pattern in contexts.items():
                 for errexit in (False, True):
                     command = pattern.format(call=call)
@@ -110,7 +125,7 @@ sys.exit(7 if fault == 'complete_then_nonzero' else result.returncode)
                         command = ('if ' + call + '; then :; else exit $?; fi' if context == 'if'
                                    else call + ' || exit $?')
                     code = setup + ('set -e\n' if errexit else 'set +e\n') + command
-                    result = subprocess.run(['/bin/bash', '-uc', code, '_', str(scripts)],
+                    result = subprocess.run(['/bin/bash', '-uc', code, '_', str(target)],
                                             env=dict(base, SNAPSHOT_FAULT=fault),
                                             capture_output=True, timeout=10)
                     label = f'{fault}/{name}/{context}/errexit={errexit}'

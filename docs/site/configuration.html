@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="18e090feafce5c7efc69931dac8b1113eef5b9f9568b38b762ca4af0ef981ee2">
+<meta name="bureau-source-sha256" content="8184e3e13d6f52b134650aa8162bcb673e2e16a020516b5e24c8481bfbf8a0f1">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1335,19 +1335,46 @@ clean-mode entries. Bash validates the complete decision frame before
 decoding it; local secret values travel on stdin, never command-line
 arguments. Both transports use pipes, without a temporary file or
 here-string.</p>
-<p>Missing <code>python3</code>, producer/helper failures, pipe failures
-and incomplete or malformed snapshot/decision frames stop before the
-wrapped child starts with 24 (<code>environment-blocked</code>). This
-holds for both environment modes and the curl scrub, including
-<code>if</code> and <code>||</code> callers, with or without
-<code>set -e</code>. Failure exits the calling shell; inside a subshell
-it ends only that subshell. The curl subshell scrub also refuses with 24
-when a malformed host-variable name cannot safely be unset in Bash; the
-other wrappers remove it literally with <code>env -u</code>. The shell
-helpers support Bash 3.2 (including POSIX-mode sourcing) and require
-Python 3.9+ and <code>/usr/bin/env</code> with <code>-0</code> (as on
-the supported macOS/Linux CI hosts). Snapshot ingestion does not require
-a writable temporary directory.</p>
+<p>The snapshot interpreter is resolved once when
+<code>bureau-env.sh</code> is sourced, using only the system default
+PATH from <code>/usr/bin/getconf PATH</code>, with Bash's command hash
+cleared in the resolving subshell. It must resolve to an absolute path
+to an executable file. The helper uses that path with <code>-I</code>; a
+caller's PATH, hashed <code>python3</code>, shell function or virtualenv
+cannot replace it and receive the stdin secrets. Install Python 3.9+ on
+that system default PATH; having Python only on a custom shell PATH is
+insufficient. This restriction applies to the snapshot helper; other
+runtime tools retain their existing lookup rules.</p>
+<p>The six-character embedded-secret threshold uses the running Bash's
+character lengths. A multibyte probe measures its effective counting
+behavior without reading shadowable <code>LC_ALL</code>,
+<code>LC_CTYPE</code> or <code>LANG</code> shell variables. Exported
+secret copies reuse Bash's length when their value is visible; hidden
+copies use the real exported locale, checked against that probe. The
+helper starts under <code>C</code> so older system Pythons can
+initialize even with an empty CODESET; the original locale comes from
+the snapshot. It uses UTF-8 character counting when Bash's probe
+establishes it, otherwise libc's own multibyte counting when that agrees
+with Bash, falling back to bytes. Invalid bytes count individually.
+CODESET names are never used as Python codecs, so empty or unrecognized
+names cannot raise <code>LookupError</code>. Thus a five-character UTF-8
+secret such as <code>äääää</code> stays embedded in an otherwise allowed
+value (including <code>TZ</code> in clean mode), even behind
+uninitialized caller-local locale variables. Exact copies are always
+removed.</p>
+<p>No trusted interpreter, producer/helper failures, pipe failures and
+incomplete or malformed snapshot/decision frames stop before the wrapped
+child starts with 24 (<code>environment-blocked</code>). This holds for
+both environment modes and the curl scrub, including <code>if</code> and
+<code>||</code> callers, with or without <code>set -e</code>. Failure
+exits the calling shell; inside a subshell it ends only that subshell.
+The curl subshell scrub also refuses with 24 when a malformed
+host-variable name cannot safely be unset in Bash; the other wrappers
+remove it literally with <code>env -u</code>. The shell helpers support
+Bash 3.2 (including POSIX-mode sourcing) and require Python 3.9+ and
+<code>/usr/bin/env</code> with <code>-0</code> (as on the supported
+macOS/Linux CI hosts). Snapshot ingestion does not require a writable
+temporary directory.</p>
 <h3 id="implement-pipeline-retry-loop">Implement-pipeline retry
 loop</h3>
 <p>Env-only knobs (no <code>.bureau.json</code> equivalent).

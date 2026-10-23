@@ -73,6 +73,23 @@
 # it. Off before anything is defined; bureau_load_env switches it off again.
 set +a
 
+# Resolve the snapshot interpreter at library load, before reading keys or
+# entering branch-controlled directories. Bash 3.2's command -p/-v and type -P
+# can still return a hashed command, so clear the hash in this subshell and
+# search only the system's default PATH. Never use the caller's PATH, Python
+# function, virtualenv or inherited private variable. A missing interpreter
+# blocks snapshots below, not the pure-Bash .env readers.
+_BUREAU_ENV_PYTHON=$(
+  PATH="$(/usr/bin/getconf PATH)" || exit 1
+  builtin hash -r
+  builtin type -P python3
+) || _BUREAU_ENV_PYTHON=''
+case "$_BUREAU_ENV_PYTHON" in
+  /*) if [ ! -f "$_BUREAU_ENV_PYTHON" ] || [ ! -x "$_BUREAU_ENV_PYTHON" ]; then _BUREAU_ENV_PYTHON=''; fi ;;
+  *) _BUREAU_ENV_PYTHON='' ;;
+esac
+export -n _BUREAU_ENV_PYTHON
+
 # The key list: every name with prefix BUREAU_, LINEAR_, TELEGRAM_ or
 # BRAINHUGGERS_ that one of the 16 readers or bureau-config.sh reads and that
 # bureau-config.sh does not set itself when sourced, plus the per-stage names
@@ -408,9 +425,9 @@ _BUREAU_UNTRUSTED_HOST_PREFIXES='HERDR_'
 # and explicit wrapper assignments. Carrier detection below reads the real
 # exported environment, so callers need not reserve their own local names.
 # Keep the inventory in test_env_malformed_names.sh in step with new locals.
-_BUREAU_ENV_INTERNAL_NAMES='IFS _BUREAU_ENV_INTERNAL_NAMES _BUREAU_ENV_ARGV _BUREAU_GIT_HOOKS_ENV _BUREAU_GIT_HOOKS_OFF
+_BUREAU_ENV_INTERNAL_NAMES='IFS _BUREAU_ENV_INTERNAL_NAMES _BUREAU_ENV_ARGV _BUREAU_ENV_PYTHON _BUREAU_GIT_HOOKS_ENV _BUREAU_GIT_HOOKS_OFF
 _BUREAU_UNTRUSTED_PATHS _BUREAU_UNTRUSTED_HOST_PREFIXES
-_beb_mode _beb_names _beb_startup _beb_name _beb_value _beb_exported _beb_long _beb_short _beb_entry _beb_snapshot
+_beb_mode _beb_names _beb_startup _beb_name _beb_value _beb_exported _beb_long _beb_short _beb_entry _beb_snapshot _beb_probe
 _bec_secret _beh_prefix _bue_filter _bue_trace _bue_check _bue_mode _bue_name _bue_assign_re _bue_assign
 _bws_trace _bws_assign_re _bws_assign _ber_trace _ber_names _ber_name _bgh_trace
 _bg_trace _bg_arg _bg_sub _bg_skip _bg_names _bg_lead _bg_mode _bg_dir _bg_unknown _bg_hooks _bg_hooks_env _bg_operator
@@ -434,9 +451,17 @@ _bureau_env_host_name() {
 _bureau_env_build() {
   local IFS=$' \t\n'
   local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_name _beb_value _beb_entry _beb_snapshot _beb_exported
+  # Measure Bash's actual character counting; caller locals can hide LC_ALL,
+  # LC_CTYPE and LANG without changing the locale Bash is still using. The
+  # two-, three- and four-byte UTF-8 probe also distinguishes legacy encodings.
+  local _beb_probe=$'\303\244\342\202\254\360\237\230\200'
   local -a _beb_long
-  _beb_long=(BUREAU_ENV_INPUT_V1 "${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}")
+  _beb_long=(BUREAU_ENV_INPUT_V1 "${#_beb_probe}")
   _BUREAU_ENV_ARGV=()
+  if [ -z "$_BUREAU_ENV_PYTHON" ]; then
+    echo 'bureau environment: no trusted snapshot interpreter; command was not run (24, environment-blocked)' >&2
+    exit 24
+  fi
   case "$_beb_names" in
     seven) _beb_names='LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN' ;;
     dotenv) _beb_names='LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID' ;;
@@ -456,7 +481,8 @@ _bureau_env_build() {
   # Avoid process substitution: Bash 3.2 rejects it when sourced in POSIX mode.
   _beb_snapshot=$({
     printf '%s\0' "${_beb_long[@]}" && /usr/bin/env -0 && printf '\0'
-  } | python3 -I -c '
+  } | LC_ALL=C "$_BUREAU_ENV_PYTHON" -I -c '
+import ctypes
 import locale
 import re
 import sys
@@ -468,8 +494,11 @@ prefixes = [name.encode("ascii") for name in prefixes.split()]
 fields = sys.stdin.buffer.read().split(b"\0")
 if len(fields) < 2 or fields.pop(0) != b"BUREAU_ENV_INPUT_V1":
     sys.exit(24)
-ctype = fields.pop(0).decode("ascii", "surrogateescape")
+if not re.fullmatch(b"[0-9]+", fields[0]):
+    sys.exit(24)
+bash_probe_length = int(fields.pop(0))
 long, short = [], []
+lengths = {}
 
 def secret(value, length):
     if length >= 6:
@@ -477,17 +506,11 @@ def secret(value, length):
     elif value:
         short.append(value)
 
-# Preserve Bash character counts for local secrets, and use its locale for
-# exported secrets hidden by a caller local. Invalid bytes count individually.
-try:
-    locale.setlocale(locale.LC_CTYPE, ctype)
-except locale.Error:
-    locale.setlocale(locale.LC_CTYPE, "C")
-encoding = locale.nl_langinfo(locale.CODESET)
 for name in names:
     if len(fields) < 2 or not re.fullmatch(b"[0-9]+", fields[0]):
         sys.exit(24)
-    secret(fields[1], int(fields[0]))
+    lengths[fields[1]] = int(fields[0])
+    secret(fields[1], lengths[fields[1]])
     del fields[:2]
 if fields == [b"", b""]:
     entries = []
@@ -498,9 +521,49 @@ else:
 if any(not entry or b"=" not in entry for entry in entries):
     sys.exit(24)
 entries = [entry.split(b"=", 1) for entry in entries]
+# Start Python under C: older system Pythons abort before executing any code
+# for an installed locale with an empty CODESET. The producer still snapshots
+# the original exported locale. Use that snapshot, never caller-local locale
+# variables or the helper-only startup override, for hidden secret copies.
+environment = dict(entries)
+ctype = next((environment[name] for name in (b"LC_ALL", b"LC_CTYPE", b"LANG")
+              if environment.get(name)), b"C").decode("ascii", "surrogateescape")
+try:
+    locale.setlocale(locale.LC_CTYPE, ctype)
+except locale.Error:
+    locale.setlocale(locale.LC_CTYPE, "C")
+probe = b"\xc3\xa4\xe2\x82\xac\xf0\x9f\x98\x80"
+# Bash uses libc multibyte counting. Its locale tables can disagree with
+# Python codecs (or report no CODESET at all), so count through libc too.
+# mblen owns its conversion state; this helper is single-threaded, resets
+# before each value and after invalid bytes, and stops at the six-char bound.
+mblen = ctypes.CDLL(None).mblen
+mblen.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+mblen.restype = ctypes.c_int
+
+def libc_length(value, limit=6):
+    data = ctypes.create_string_buffer(value)
+    mblen(None, 0)
+    offset = length = 0
+    while offset < len(value) and length < limit:
+        step = mblen(ctypes.byref(data, offset), len(value) - offset)
+        if step < 1:
+            step = 1
+            mblen(None, 0)
+        offset += step
+        length += 1
+    return length
+
+if bash_probe_length == 3:
+    def exported_length(value):
+        return len(value.decode("utf-8", "surrogateescape"))
+elif libc_length(probe, len(probe)) == bash_probe_length:
+    exported_length = libc_length
+else:
+    exported_length = len
 for name, value in entries:
     if name in names:
-        secret(value, len(value.decode(encoding, "surrogateescape")))
+        secret(value, lengths[value] if value in lengths else exported_length(value))
 
 def carries(value):
     return any(key in value for key in long) or value in short

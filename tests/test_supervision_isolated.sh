@@ -107,19 +107,28 @@ starts=$(grep -rnE 'python3?( +-[A-Za-z]+)* +[^ ]*bureau-supervision\.py' "$SCRI
 [ "$(printf '%s\n' "$starts" | grep -c .)" -ge 8 ] || fail "S: fewer than the eight known starts of bureau-supervision.py: $starts"
 stray=$(printf '%s\n' "$starts" | grep -vE 'python3? +(-[A-Za-z]+ +)*-I ' || true)
 [ -z "$stray" ] || fail "S: bureau-supervision.py started without -I: $stray"
-# Every other start of Python in the scripts too: each `python3` word outside a comment must carry
-# -I among its options. One exception, listed by its text: the operator command quoted in the
-# needs-human comment that bureau_reset_refusal_trace writes, which nothing runs.
+# Every other start of Python too, including the snapshot's captured absolute
+# interpreter: -I must be among its options. The exact builtin type lookup does
+# not start Python. The other non-execution is the operator command quoted in
+# the needs-human comment that bureau_reset_refusal_trace writes.
 all_starts=$(python3 -I - "$SCRIPTS" <<'PY'
 import pathlib, re, sys
 allowed = [('bureau-config.sh', r'Find the run that holds them (\`python3 scripts/bureau-runtime.py status\`)')]
-count, stray = 0, []
+count, captured, stray = 0, 0, []
+commands = [
+    r'(?:^|[^A-Za-z0-9_./-])python3?((?: +-[A-Za-z]+)*)(?= |$)',
+    r'(?:^|[|;&])\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*"\$_BUREAU_ENV_PYTHON"((?: +-[A-Za-z]+)*)(?= |$)',
+]
 for path in sorted(pathlib.Path(sys.argv[1]).glob('*.sh')):
     for number, line in enumerate(path.read_text().splitlines(), 1):
         if line.lstrip().startswith('#') or any(path.name == name and text in line for name, text in allowed): continue
-        for match in re.finditer(r'(?:^|[^A-Za-z0-9_./-])python3?((?: +-[A-Za-z]+)*)(?= |$)', line):
-            count += 1
-            if '-I' not in match.group(1).split(): stray.append(path.name + ':' + str(number) + ': ' + line.strip())
+        if path.name == 'bureau-env.sh' and re.fullmatch(r'\s*builtin type -P python3', line): continue
+        for kind, command in enumerate(commands):
+            for match in re.finditer(command, line):
+                count += 1
+                if kind == 1: captured += 1
+                if '-I' not in match.group(1).split(): stray.append(path.name + ':' + str(number) + ': ' + line.strip())
+if captured != 1: stray.append('expected exactly one captured snapshot interpreter execution, found ' + str(captured))
 print(count); print('\n'.join(stray))
 PY
 )
