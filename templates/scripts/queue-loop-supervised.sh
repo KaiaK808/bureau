@@ -39,8 +39,8 @@ SUPERVISOR_LOG="$LOG_DIR/supervisor-${MODE_LABEL}.log"
 QUEUE_LOG="$LOG_DIR/queue-${MODE_LABEL}.log"
 mkdir -p "$LOG_DIR"
 
-MAX_CRASHES="${BUREAU_SUPERVISOR_MAX_CRASHES:-5}"
-STABILITY_WINDOW="${BUREAU_SUPERVISOR_STABILITY_WINDOW:-3600}"
+MAX_CRASHES=$(bureau_number BUREAU_SUPERVISOR_MAX_CRASHES "${BUREAU_SUPERVISOR_MAX_CRASHES-5}" 5 1 1000)
+STABILITY_WINDOW=$(bureau_number BUREAU_SUPERVISOR_STABILITY_WINDOW "${BUREAU_SUPERVISOR_STABILITY_WINDOW-3600}" 3600 0 604800)
 
 # Backoff schedule indexed by crash count - 1. After all entries are exhausted,
 # the last value (300s = 5min) is reused for any further crashes within the

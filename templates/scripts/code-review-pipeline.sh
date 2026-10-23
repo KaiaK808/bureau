@@ -439,7 +439,8 @@ _sec_critical=$(parse_claude_json "$SECURITY_REVIEW" '.counts.critical')
 # the trailing fenced-json verdict — sits at the END of each review, so keep
 # the tail when one is oversized. Tunable via BUREAU_REVIEW_MERGE_CAP_KB.
 # (Claude reviews are ~5-20KB so this is a no-op for the default runner.)
-_rv_cap=$(( ${BUREAU_REVIEW_MERGE_CAP_KB:-60} * 1024 ))
+_rv_cap=$(bureau_number BUREAU_REVIEW_MERGE_CAP_KB "${BUREAU_REVIEW_MERGE_CAP_KB-60}" 60 1 1024)
+_rv_cap=$((_rv_cap * 1024))
 for _rv in CORRECTNESS_REVIEW SECURITY_REVIEW PERFORMANCE_REVIEW; do
   if [ "$(printf '%s' "${!_rv}" | wc -c)" -gt "$_rv_cap" ]; then
     printf -v "$_rv" '…[%s truncated to last %dKB for merge — full review in %s]…\n%s' \

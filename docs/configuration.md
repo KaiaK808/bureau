@@ -67,11 +67,11 @@ Which pipelines run, how often they poll, how aggressive they are.
 | `agents.code_review` | bool | `true` | Build Review → Done (or Merge if enabled) |
 | `agents.merge` | bool | `false` | Gated merge after code-review APPROVE. Off by default |
 | `agents.rebase` | bool | `false` | Force-pushes to remote — opt-in for that reason |
-| `agents.poll_interval_minutes` | number | `30` | Queue polling interval. Lower (e.g. `5`) for active work, higher for background |
-| `agents.workbench_panes` | number | `2` background / `0` app | Number of interactive provider panes in the tmux workbench; zero omits it |
-| `agents.max_review_cycles` | number | `3` | Code-review re-iterations before the agent gives up and applies `needs-human` |
-| `agents.code_review_sampling_threshold` | number | `500` | Diff line-count above which code-review switches to sampling mode. Tune up for repos with strong CI |
-| `agents.max_concurrent_issues` | number | `0` | Repo-wide cap on issues in flight. `0` = unlimited (default). `1` = single-flight (drain end-to-end before next Spec). Counts work: issues from Spec to before Done in the configured `linear.projects`, without children (an epic is not work, its sub-issues are), without `needs-human`/`blocked`/`wip`. See [recipes](recipes.md#single-flight-pipeline) |
+| `agents.poll_interval_minutes` | number | `30` | Whole minutes 1–10080; invalid values fall back to 30. Queue polling interval. Lower (e.g. `5`) for active work, higher for background |
+| `agents.workbench_panes` | number | `2` background / `0` app | Whole numbers 0–32; invalid values fall back to 2. Number of interactive provider panes in the tmux workbench; zero omits it |
+| `agents.max_review_cycles` | number | `3` | Whole numbers 0–1000; invalid values fall back to 3. Code-review re-iterations before the agent gives up and applies `needs-human` |
+| `agents.code_review_sampling_threshold` | number | `500` | Whole numbers 0–10000000; invalid values fall back to 500. Diff line-count above which code-review switches to sampling mode. Tune up for repos with strong CI |
+| `agents.max_concurrent_issues` | number | `0` | Whole numbers 0–1000; invalid values fall back to 0. Repo-wide cap on issues in flight. `0` = unlimited (default). `1` = single-flight (drain end-to-end before next Spec). Counts work: issues from Spec to before Done in the configured `linear.projects`, without children (an epic is not work, its sub-issues are), without `needs-human`/`blocked`/`wip`. See [recipes](recipes.md#single-flight-pipeline) |
 | `agents.merge_mode` | string | `"auto"` | Who merges an approved PR. `auto`: the pipeline (inline after review, or the gated merge stage when `agents.merge` is on). The inline merge runs the merge stage's full gate, and the review stage ends with its outcome: Done after a merge, `2` with the approval kept for the next run when the gate is not yet decided (while other tickets wait, the queue picks it after them for a while, see `agents.merge_gate_recheck_seconds`), `25` and `needs-human` when it is blocked. `manual`: a human — the merge and rebase agents are off, `merge-pipeline.sh` and `rebase-pipeline.sh` exit `2` before any Linear, gh or git call, the review stage parks an APPROVE in the Merge state, and the shepherd ends its run at Merge with `20`, without an alert. **`manual` needs `linear.teams[0].states.merge`**: without it the review stage refuses at its start with `24` and doctor reports an error. Holds regardless of `agents.merge`, `agents.rebase` and the shepherd's forced stages. Any value but exactly `auto` or `manual` falls closed to `manual` with a warning. See [recipes](recipes.md#merge-by-hand) |
 | `agents.merge_strategy` | string | `"squash"` | One of `squash`, `merge`, `rebase`. Validated at config-load — invalid values fall back to `squash` with a warning |
 | `agents.merge_require_green_ci` | bool | `true` | Bureau-enforced "all check-runs on PR head SHA must be completed + green" gate, independent of GitHub's `mergeStateStatus`. Catches the "no required-checks rule configured" hole where CLEAN passes with red CI. Set false only for repos genuinely without CI (docs-only, prototypes). Only the JSON value `false` switches it off (before v3.1 the gate ignored `false`); any other value, the string `"false"` included, keeps it on with a warning |
@@ -101,7 +101,7 @@ Version 1 configurations (including an absent version) and migrated configuratio
 | `agents.workbench_runner` | default runner | Interactive bench provider; zero panes omits it |
 | `agents.upstream_summary` | false | Optional read-only upstream summary model pass |
 | `session.cost_tracking` | false | Persist available token usage and CLI cost estimates |
-| `session.usage_threshold_pct` | 80 | Pause at/above the available provider usage signal |
+| `session.usage_threshold_pct` | 80 | Whole percentages 0–100, fallback 80. Pause at/above the available provider usage signal |
 | `session.pause_on_stale_data` | false | Honor old usage signals when explicitly selected |
 
 Read [provider runtime](provider-runtime.md) for exact model precedence, sandbox capabilities and structured results. Code review/research default to read-only; spec-review/implementation/QA can write within the permitted workspace. The executor runs actual implementation/QA tests separately. Unknown runners, malformed results and denied permissions are errors, never automatic fallback to Claude.
@@ -113,7 +113,7 @@ Cost logging is opt-in. Usage throttling uses an operator-provided signal for th
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `session.cost_tracking` | bool | `false` | Enables available provider token and estimated-cost records at `${BUREAU_COST_DIR:-~/.bureau/cost}/<issue>.jsonl`. Report via `scripts/bureau-status.sh --cost`; missing cost stays unavailable. Env override: `BUREAU_COST_TRACKING=1` |
-| `session.usage_threshold_pct` | number | `80` | Pauses before a new work unit when the selected provider's reported usage is at or above this percentage. Needs an external signal producer; Claude and Codex signals are separate |
+| `session.usage_threshold_pct` | number | `80` | Whole percentages 0–100; invalid values fall back to 80. Pauses before a new work unit when the selected provider's reported usage is at or above this percentage. Needs an external signal producer; Claude and Codex signals are separate |
 | `session.pause_on_stale_data` | bool | `false` | When true, continue applying the threshold to a signal older than five minutes. False ignores stale signals. Missing signals never cause a pause |
 
 ### `repo`
@@ -143,8 +143,8 @@ The stage worktrees are reset with `git clean -fdx`, which removes an ignored `.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `supervisor.max_crashes` | number | `5` | Consecutive crashes before the supervisor gives up and fires a Telegram alert. Read from env `BUREAU_SUPERVISOR_MAX_CRASHES` if set |
-| `supervisor.stability_window` | number | `3600` | Seconds of clean runtime before the crash counter resets. Read from env `BUREAU_SUPERVISOR_STABILITY_WINDOW` if set |
+| `supervisor.max_crashes` | number | `5` | Whole numbers 1–1000, fallback 5. Consecutive crashes before the supervisor gives up and fires a Telegram alert. Read from env `BUREAU_SUPERVISOR_MAX_CRASHES` if set |
+| `supervisor.stability_window` | number | `3600` | Whole seconds 0–604800, fallback 3600. Seconds of clean runtime before the crash counter resets. Read from env `BUREAU_SUPERVISOR_STABILITY_WINDOW` if set |
 
 ---
 
@@ -160,7 +160,7 @@ The stage worktrees are reset with `git clean -fdx`, which removes an ignored `.
 | `BUREAU_FORCE_ALL_AGENTS=1` | Bypasses `agent_enabled()` — every agent's queue-loop runs regardless of `.bureau.json` toggles. Useful when driving `shepherd.sh` end-to-end against a repo with agents intentionally disabled for cron |
 | `BUREAU_DISABLE_THROTTLE=1` | Skips the usage guard for this process; does not change its threshold or `.bureau.json`. Provider quota errors can still stop work |
 | `BUREAU_STOP_GRACE_SECONDS` | Step, in seconds (1 to 600, default 5), of the time a runtime wrapper gives its child after forwarding Ctrl-C or SIGTERM (a hang-up is forwarded as SIGTERM, since v3.2) before it kills the child's process group. The wrappers of one run nest (shepherd → worker → stage), and each waits one step longer than the one inside it: 4, 3, 2 steps, then 1 from the fourth level on (20, 15, 10, 5 s by default), so an inner wrapper always ends its own child first |
-| `BUREAU_MAX_CONCURRENT` | Default lane cap for `orchestrate.sh` (3 when absent); `--max-concurrent` overrides it. This does not change the separate `agents.max_concurrent_issues` ticket cap |
+| `BUREAU_MAX_CONCURRENT` | Default lane cap for `orchestrate.sh`: whole numbers 1–1000, fallback 3 with a key-only warning when invalid; `--max-concurrent` overrides it. This does not change the separate `agents.max_concurrent_issues` ticket cap |
 
 ### Linear / external services
 
@@ -173,16 +173,28 @@ The stage worktrees are reset with `git clean -fdx`, which removes an ignored `.
 | `TELEGRAM_BOT_TOKEN` | Optional | Telegram bot for failure alerts. No-op when unset |
 | `TELEGRAM_ALERT_CHAT_ID` | Optional | Chat/channel ID for alerts. Must be set alongside the token |
 
+### Numeric runtime settings
+
+The shell consumers validate the numeric settings below after their source has been selected, including values inherited from the process environment. Accepted text contains only ASCII digits, at most ten characters, within the documented range. Leading zeros are decimal (`010` becomes 10). An empty, signed, expression-like, oversized or out-of-range value uses the documented default and emits one warning line naming the key, never the rejected value. An absent setting (or a JSON `null`) silently uses its default. Zero is accepted only where the range includes it, such as disabling workbench panes or the in-flight cap.
+
+The `.env` reader and precedence are unchanged: an accepted file entry replaces the inherited value; a rejected entry leaves it alone. The reader still rejects leading-zero text such as `010` for the keys on its numeric list, so use `10` in `.env`; inherited `010` and digit strings in JSON are normalized at consumption. Valid long budgets such as 5400 seconds per pass and 10800 seconds total retain their meaning. The existing Linear retry/request and merge-gate readers keep their documented source fallback and coercion rules.
+
+`queue-loop.sh` validates its positional polling interval using the same 1–10080 minute range and 30 minute fallback. It exports `BUREAU_QUEUE_POLL_SECONDS` for the merge-gate picker; inherited values of that internal setting accept 1–604800 whole seconds and fall back to 1800 seconds when invalid. Without that override the picker uses `agents.poll_interval_minutes`.
+
+The usage-signal fields `pct` (integer part, 0–100), `reset_epoch` and `updated_epoch` (whole seconds, 0–9999999999) are checked before shell arithmetic; invalid fields fall back to 0 with a warning naming the field. Fractional percentages keep their existing integer-part comparison. The already bounded shepherd merge wait/poll settings retain their base-10 and upper-cap behavior; their warnings now omit the rejected value.
+
+The shell environment filter reserves its own helper names (listed in `_BUREAU_ENV_INTERNAL_NAMES` in `scripts/bureau-env.sh`), including `IFS` and the `_beb_*`, `_bec_*`, `_beh_*` and wrapper locals in that list. Those exact names are removed from child environments and cannot be reintroduced through wrapper `NAME=VALUE` arguments. Other application variables keep the existing default/clean-mode rules.
+
 ### Implement-pipeline retry loop
 
 Env-only knobs (no `.bureau.json` equivalent). `implement-pipeline.sh` invokes the selected provider inside a bounded retry loop and parks the issue with `needs-human` if it doesn't reach `status: COMPLETE` within the budget.
 
 | Var | Default | Notes |
 |---|---|---|
-| `BUREAU_IMPL_MAX_ITER` | `3` | Max provider passes per tick. Each iter parses the JSON status block, runs the squash-range check, pushes commits (see `agents.implement.push_each_iteration`), and decides continue/stop. Since v3.2 a pass that times out counts as one of them (status `TIMEOUT` in the iteration log) and the loop goes on; the stage ends with `124` only when the last allowed pass times out |
-| `BUREAU_IMPL_ITER_TIMEOUT` | `1800` | Per-iteration provider wall-time cap in seconds, limited by the remaining total budget and enforced by the Python adapter for both providers |
-| `BUREAU_IMPL_TOTAL_TIMEOUT` | `5400` | Budget in seconds for the implementation provider loop. Independent executor tests and publication can add time after it; this is not a monetary cap. Since v3.2 it, not one timed-out pass, bounds a stage whose passes time out; a timed-out pass that leaves 60 s or less of it ends the stage with `124`. Setting it to `BUREAU_IMPL_ITER_TIMEOUT` brings back the pre-v3.2 ceiling of one timed-out pass, but also caps a productive multi-pass run at that one pass's time; `BUREAU_IMPL_MAX_ITER=1` is the other trade-off (one pass of any kind) |
-| `BUREAU_POST_IMPLEMENT_TIMEOUT` | `900` | Limit in seconds for `repo.post_implement_command`, never above `BUREAU_IMPL_TOTAL_TIMEOUT`. On timeout the hook's process group is ended and the stage halts with `14` |
+| `BUREAU_IMPL_MAX_ITER` | `3` | Whole numbers 1–1000, fallback 3. Max provider passes per tick. Each iter parses the JSON status block, runs the squash-range check, pushes commits (see `agents.implement.push_each_iteration`), and decides continue/stop. Since v3.2 a pass that times out counts as one of them (status `TIMEOUT` in the iteration log) and the loop goes on; the stage ends with `124` only when the last allowed pass times out |
+| `BUREAU_IMPL_ITER_TIMEOUT` | `1800` | Whole seconds 1–86400, fallback 1800. Per-iteration provider wall-time cap in seconds, limited by the remaining total budget and enforced by the Python adapter for both providers |
+| `BUREAU_IMPL_TOTAL_TIMEOUT` | `5400` | Whole seconds 1–604800, fallback 5400. Budget in seconds for the implementation provider loop. Independent executor tests and publication can add time after it; this is not a monetary cap. Since v3.2 it, not one timed-out pass, bounds a stage whose passes time out; a timed-out pass that leaves 60 s or less of it ends the stage with `124`. Setting it to `BUREAU_IMPL_ITER_TIMEOUT` brings back the pre-v3.2 ceiling of one timed-out pass, but also caps a productive multi-pass run at that one pass's time; `BUREAU_IMPL_MAX_ITER=1` is the other trade-off (one pass of any kind) |
+| `BUREAU_POST_IMPLEMENT_TIMEOUT` | `900` | Whole seconds 1–604800, fallback 900. Limit in seconds for `repo.post_implement_command`, never above `BUREAU_IMPL_TOTAL_TIMEOUT`. On timeout the hook's process group is ended and the stage halts with `14` |
 
 The default provider-loop budget is 90 minutes, and since v3.2 a stage whose passes time out can use all of it: a timed-out pass no longer ends the stage while another pass fits (see [Exit 124](troubleshooting.md#exit-124-timeout--a-provider-pass-hit-its-time-limit)). An unproductive first `PARTIAL` iteration can become `STUCK`; a timed-out pass never does; prior productive iterations and legitimate `COMPLETE` results have separate handling. The executor checks Git evidence and, for Codex completion, the configured project tests. A provider's success text alone cannot complete the stage.
 
@@ -269,7 +281,7 @@ Env overrides for the `repo.upstream_port.*` config family. Set inline when runn
 
 | Var | Default | Notes |
 |---|---|---|
-| `BUREAU_REVIEW_MERGE_CAP_KB` | `60` | Tail-cap (KB) per specialist review before the merger prompt. Prevents ARG_MAX overflow when an individual review runs long (typical for codex-routed stages that emit heavy transcripts) |
+| `BUREAU_REVIEW_MERGE_CAP_KB` | `60` | Whole KB 1–1024, fallback 60. Tail-cap (KB) per specialist review before the merger prompt. Prevents ARG_MAX overflow when an individual review runs long (typical for codex-routed stages that emit heavy transcripts) |
 
 ### Miscellaneous
 
@@ -286,8 +298,8 @@ Env overrides for the `repo.upstream_port.*` config family. Set inline when runn
 
 | Var | Default | Notes |
 |---|---|---|
-| `BUREAU_SUPERVISOR_MAX_CRASHES` | `5` | Override `supervisor.max_crashes` |
-| `BUREAU_SUPERVISOR_STABILITY_WINDOW` | `3600` | Override `supervisor.stability_window` |
+| `BUREAU_SUPERVISOR_MAX_CRASHES` | `5` | Whole numbers 1–1000, fallback 5; environment override for the supervisor crash limit |
+| `BUREAU_SUPERVISOR_STABILITY_WINDOW` | `3600` | Whole seconds 0–604800, fallback 3600; environment override for the supervisor stability window |
 
 ---
 

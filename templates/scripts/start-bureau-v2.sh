@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 source scripts/bureau-config.sh
 
 INTERVAL="${1:-$BUREAU_POLL_INTERVAL}"
-BENCH_PANES="${2:-$BUREAU_WORKBENCH_PANES}"
+BENCH_PANES=$(bureau_number agents.workbench_panes "${2:-$BUREAU_WORKBENCH_PANES}" 2 0 32)
 REPO_SLUG="$(basename "$PWD")"
 SESSION="${BUREAU_SESSION_NAME:-bureau-v2-$REPO_SLUG}"
 export BUREAU_SESSION="$SESSION"

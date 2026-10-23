@@ -1385,7 +1385,7 @@ STALE_EOF
   set +e; BUREAU_SHEPHERD_CONFIRM_SECONDS=abc PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; rc=$?; set -e
   assert_eq "$rc" 0 "confirm wait 'abc': exit" || { cat "$sb/shepherd.err"; return 1; }
   assert_eq "$(cat "$sb/sleeps.log")" 5 "confirm wait 'abc': falls back to 5" || return 1
-  grep -q "BUREAU_SHEPHERD_CONFIRM_SECONDS='abc' is not a whole number" "$sb/shepherd.err" \
+  grep -q "BUREAU_SHEPHERD_CONFIRM_SECONDS is not a whole number" "$sb/shepherd.err" \
     || { echo "FAIL: confirm wait 'abc': no warning"; return 1; }
 
   # The shepherd's own bump from Spec to Triage is confirmed the same way: one
@@ -1686,14 +1686,14 @@ test_merge_gate() {
   sb=$(make_sandbox gate_huge); _make_gate_merge_stub "$sb" pending green
   _run_gate "$sb" BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=99999999999999999999 BUREAU_SHEPHERD_MERGE_POLL_SECONDS=86400
   assert_eq "$GATE_RC" 0 "huge settings: merges" || { tail -5 "$sb/shepherd.out"; return 1; }
-  grep -q "MERGE_WAIT_SECONDS='99999999999999999999' is above 21600" "$sb/shepherd.err" && grep -q "waiting 3600s (0/21600s)" "$sb/shepherd.out" \
+  grep -q "MERGE_WAIT_SECONDS is above 21600" "$sb/shepherd.err" && grep -q "waiting 3600s (0/21600s)" "$sb/shepherd.out" \
     || { echo "FAIL: huge settings were not capped"; cat "$sb/shepherd.err"; grep 'not yet' "$sb/shepherd.out"; return 1; }
 
   # Settings that are not whole numbers fall back with a warning (poll 0 too: a busy loop).
   sb=$(make_sandbox gate_badenv); _make_gate_merge_stub "$sb" pending green
   _run_gate "$sb" BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=soon BUREAU_SHEPHERD_MERGE_POLL_SECONDS=0
   assert_eq "$GATE_RC" 0 "bad settings: still merges" || return 1
-  grep -q "MERGE_WAIT_SECONDS='soon'" "$sb/shepherd.err" && grep -q "MERGE_POLL_SECONDS='0'" "$sb/shepherd.err" \
+  grep -q "MERGE_WAIT_SECONDS is not a whole number" "$sb/shepherd.err" && grep -q "MERGE_POLL_SECONDS is below 1" "$sb/shepherd.err" \
     || { echo "FAIL: bad settings: no warnings"; cat "$sb/shepherd.err"; return 1; }
   grep -q '^60$' "$sb/sleeps.log" || { echo "FAIL: bad settings: the poll did not fall back to 60 s"; return 1; }
 

@@ -264,6 +264,7 @@ pr2_config '.agents.poll_interval_minutes = 1'
 # with no interval argument).
 for row in '15:900' ':1800'; do
   qenv=$(QL="$REPO_ROOT/templates/scripts/queue-loop.sh" ARG="${row%%:*}" BUREAU_POLL_INTERVAL=30 /bin/bash -c '
+    source "$(dirname "$QL")/bureau-env.sh"
     code=$(sed -n "/^INTERVAL_MINUTES=/,/^LOG_DIR=/p" "$QL"); set -- all $ARG; eval "$code"; env' | grep '^BUREAU_QUEUE_POLL_SECONDS=' || true)
   [ "$qenv" = "BUREAU_QUEUE_POLL_SECONDS=${row#*:}" ] || fail "pick: queue-loop.sh ${row%%:*} did not hand on its interval (${row#*:} s): '$qenv'"
 done

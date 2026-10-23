@@ -88,7 +88,7 @@ set +a
 # time limit of one Linear request) on the same terms.
 # BUREAU_POST_IMPLEMENT_TIMEOUT (the limit of repo.post_implement_command) sits
 # with the implement timeouts, on the numeric list too; implement-pipeline.sh
-# also checks it against ^[1-9][0-9]*$ before use.
+# also validates it through bureau_number before use.
 bureau_env_key_allowed() {
   case "$1" in
     LINEAR_API_KEY | TELEGRAM_BOT_TOKEN | TELEGRAM_ALERT_CHAT_ID | \
@@ -136,6 +136,31 @@ bureau_env_key_numeric() {
       ;;
   esac
   return 1
+}
+
+# bureau_number <key> <value> <default> <min> <max> — consumer-side guard,
+# including inherited values that never went through bureau_load_env. Like
+# _bureau_linear_number, check literal digits and length BEFORE numeric tests,
+# then strip leading zeros so no later arithmetic reads an octal number.
+# Callers supply trusted bounds/defaults. Ten digits fit Bash 3.2's integers;
+# the per-key maximum bounds any subsequent multiplication as well.
+bureau_number() {
+  local _ben_key="$1" _ben_value="$2" _ben_default="$3" _ben_min="$4" _ben_max="$5"
+  case "$_ben_value" in
+    ''|*[!0123456789]*) ;;
+    *)
+      if [ "${#_ben_value}" -le 10 ]; then
+        _ben_value="${_ben_value#"${_ben_value%%[!0]*}"}"
+        [ -n "$_ben_value" ] || _ben_value=0
+        if [ "$_ben_value" -ge "$_ben_min" ] && [ "$_ben_value" -le "$_ben_max" ]; then
+          printf '%s' "$_ben_value"
+          return 0
+        fi
+      fi
+      ;;
+  esac
+  printf 'warning: %s ignored: expected digits in the accepted range; using the default\n' "$_ben_key" >&2
+  printf '%s' "$_ben_default"
 }
 
 # The secrets among them (v3.2). An exported variable is in the environment of
@@ -379,6 +404,26 @@ bureau_secret_copy() {
 _BUREAU_UNTRUSTED_PATHS='BUREAU_ENV_FILE BUREAU_CONFIG'
 _BUREAU_UNTRUSTED_HOST_PREFIXES='HERDR_'
 
+# These names are private to this library. A local binding can hide an exported
+# secret carrier from compgen/indirect reads, yet Bash can still pass its old
+# exported value to a child. Reserve the names, including nested helpers and
+# wrapper locals, and remove them explicitly even when no carrier was visible.
+# Keep the inventory in test_env_malformed_names.sh in step with new locals.
+_BUREAU_ENV_INTERNAL_NAMES='IFS _BUREAU_ENV_INTERNAL_NAMES _BUREAU_ENV_ARGV _BUREAU_GIT_HOOKS_ENV _BUREAU_GIT_HOOKS_OFF
+_BUREAU_UNTRUSTED_PATHS _BUREAU_UNTRUSTED_HOST_PREFIXES
+_beb_mode _beb_names _beb_startup _beb_name _beb_value _beb_exported _beb_long _beb_short
+_bec_secret _beh_prefix _bue_filter _bue_trace _bue_check _bue_mode _bue_name _bue_assign_re _bue_assign
+_bws_trace _bws_assign_re _bws_assign _ber_trace _ber_names _ber_name _bgh_trace
+_bg_trace _bg_arg _bg_sub _bg_skip _bg_names _bg_lead _bg_mode _bg_dir _bg_unknown _bg_hooks _bg_hooks_env _bg_operator
+_bds_i _bds_n _brh_filter _brh_value _boh_common _boh_git _boh_rel
+_bgo_event _bgo_keys _bgo_key _bgo_name _bgo_seen _bgo_dir _bar_sub _bar_arg _bar_name _bar_long'
+
+_bureau_env_internal_name() {
+  # No locals: this predicate must not create another shadowed export.
+  case " ${_BUREAU_ENV_INTERNAL_NAMES//$'\n'/ } " in (*" $1 "*) return 0 ;; esac
+  return 1
+}
+
 _bureau_env_host_name() {
   local IFS=$' \t\n' _beh_prefix
   for _beh_prefix in $_BUREAU_UNTRUSTED_HOST_PREFIXES; do
@@ -403,6 +448,9 @@ _bureau_env_build() {
     _BUREAU_ENV_ARGV+=(-u "$_beb_name")
   done
   if [ "$_beb_startup" = 1 ]; then _BUREAU_ENV_ARGV+=(-u BASH_ENV -u ENV); fi
+  for _beb_name in $_BUREAU_ENV_INTERNAL_NAMES; do
+    _BUREAU_ENV_ARGV+=(-u "$_beb_name")
+  done
   _beb_exported=$(compgen -e 2>/dev/null || true)
   if [ "$_beb_mode" = clean ]; then
     _BUREAU_ENV_ARGV=(-i)
@@ -421,10 +469,9 @@ _bureau_env_build() {
     # it is passed on as it is, as under a bash that never lists it. The check
     # spells every character out:
     # a range such as A-Z or a class follows the locale's collation, and under
-    # some single-byte locales lets `[`, `$` and `(` through. No new local
-    # either, which would hide an exported variable of that name from the
-    # filter: _beb_startup, whose argument is read for the last time above,
-    # keeps the caller's noglob setting.
+    # some single-byte locales lets `[`, `$` and `(` through. _beb_startup,
+    # whose argument is read for the last time above, keeps the caller's
+    # noglob setting; every local is also explicitly reserved above.
     case $- in (*f*) _beb_startup=noglob ;; (*) _beb_startup=glob ;; esac
     set -f
     IFS=$'\n'
@@ -495,7 +542,7 @@ bureau_untrusted_env() {
   fi
 
   while [ "$#" -gt 0 ] && [[ $1 =~ $_bue_assign_re ]]; do
-    _bureau_env_host_name "${1%%=*}" || _bue_assign+=("$1")
+    if ! _bureau_env_host_name "${1%%=*}" && ! _bureau_env_internal_name "${1%%=*}"; then _bue_assign+=("$1"); fi
     shift
   done
   if [ "$#" = 0 ]; then
@@ -522,7 +569,7 @@ bureau_without_secrets() {
   local -a _bws_assign
   _bws_assign=()
   while [ "$#" -gt 0 ] && [[ $1 =~ $_bws_assign_re ]]; do
-    _bureau_env_host_name "${1%%=*}" || _bws_assign+=("$1")
+    if ! _bureau_env_host_name "${1%%=*}" && ! _bureau_env_internal_name "${1%%=*}"; then _bws_assign+=("$1"); fi
     shift
   done
   if [ "$#" = 0 ]; then
@@ -763,16 +810,13 @@ git() {
 # without them while a curl defined as a shell function (a test stub) still
 # answers.
 _bureau_drop_secrets() {
-  local _bds_i=0 _bds_n
   _bureau_env_build default seven 1
-  _bds_n=${#_BUREAU_ENV_ARGV[@]}
-  while [ "$_bds_i" -lt "$_bds_n" ]; do
-    if [ "${_BUREAU_ENV_ARGV[$_bds_i]}" = -u ]; then
-      unset "${_BUREAU_ENV_ARGV[$((_bds_i + 1))]}" 2>/dev/null || true
-      _bds_i=$((_bds_i + 2))
-    else
-      _bds_i=$((_bds_i + 1))
-    fi
+  # Positional parameters survive removing the array and create no local
+  # binding that could hide an exported carrier from unset (Bash 3.2).
+  set -- "${_BUREAU_ENV_ARGV[@]}"
+  while [ "$#" -ge 2 ]; do
+    unset "$2" 2>/dev/null || true
+    shift 2
   done
   return 0
 }

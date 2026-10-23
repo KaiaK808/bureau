@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b73643565fa8f54865db17d90072ce7b0064eef4a2364131dba75209441c9298">
+<meta name="bureau-source-sha256" content="845689264d985b06c5bba59ad6fde4f67fdd15fd9284b79c9297d1ba7cce29f4">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -356,37 +356,41 @@ worktree</td>
 <td><code>agents.poll_interval_minutes</code></td>
 <td>number</td>
 <td><code>30</code></td>
-<td>Queue polling interval. Lower (e.g. <code>5</code>) for active work,
-higher for background</td>
+<td>Whole minutes 1–10080; invalid values fall back to 30. Queue polling
+interval. Lower (e.g. <code>5</code>) for active work, higher for
+background</td>
 </tr>
 <tr>
 <td><code>agents.workbench_panes</code></td>
 <td>number</td>
 <td><code>2</code> background / <code>0</code> app</td>
-<td>Number of interactive provider panes in the tmux workbench; zero
-omits it</td>
+<td>Whole numbers 0–32; invalid values fall back to 2. Number of
+interactive provider panes in the tmux workbench; zero omits it</td>
 </tr>
 <tr>
 <td><code>agents.max_review_cycles</code></td>
 <td>number</td>
 <td><code>3</code></td>
-<td>Code-review re-iterations before the agent gives up and applies
+<td>Whole numbers 0–1000; invalid values fall back to 3. Code-review
+re-iterations before the agent gives up and applies
 <code>needs-human</code></td>
 </tr>
 <tr>
 <td><code>agents.code_review_sampling_threshold</code></td>
 <td>number</td>
 <td><code>500</code></td>
-<td>Diff line-count above which code-review switches to sampling mode.
-Tune up for repos with strong CI</td>
+<td>Whole numbers 0–10000000; invalid values fall back to 500. Diff
+line-count above which code-review switches to sampling mode. Tune up
+for repos with strong CI</td>
 </tr>
 <tr>
 <td><code>agents.max_concurrent_issues</code></td>
 <td>number</td>
 <td><code>0</code></td>
-<td>Repo-wide cap on issues in flight. <code>0</code> = unlimited
-(default). <code>1</code> = single-flight (drain end-to-end before next
-Spec). Counts work: issues from Spec to before Done in the configured
+<td>Whole numbers 0–1000; invalid values fall back to 0. Repo-wide cap
+on issues in flight. <code>0</code> = unlimited (default).
+<code>1</code> = single-flight (drain end-to-end before next Spec).
+Counts work: issues from Spec to before Done in the configured
 <code>linear.projects</code>, without children (an epic is not work, its
 sub-issues are), without
 <code>needs-human</code>/<code>blocked</code>/<code>wip</code>. See <a
@@ -686,7 +690,8 @@ per call: their calls often run 15 to 30 minutes and end with
 <tr>
 <td><code>session.usage_threshold_pct</code></td>
 <td>80</td>
-<td>Pause at/above the available provider usage signal</td>
+<td>Whole percentages 0–100, fallback 80. Pause at/above the available
+provider usage signal</td>
 </tr>
 <tr>
 <td><code>session.pause_on_stale_data</code></td>
@@ -730,9 +735,10 @@ stays unavailable. Env override:
 <td><code>session.usage_threshold_pct</code></td>
 <td>number</td>
 <td><code>80</code></td>
-<td>Pauses before a new work unit when the selected provider's reported
-usage is at or above this percentage. Needs an external signal producer;
-Claude and Codex signals are separate</td>
+<td>Whole percentages 0–100; invalid values fall back to 80. Pauses
+before a new work unit when the selected provider's reported usage is at
+or above this percentage. Needs an external signal producer; Claude and
+Codex signals are separate</td>
 </tr>
 <tr>
 <td><code>session.pause_on_stale_data</code></td>
@@ -1126,16 +1132,17 @@ let <code>repo.test_command</code> or
 <td><code>supervisor.max_crashes</code></td>
 <td>number</td>
 <td><code>5</code></td>
-<td>Consecutive crashes before the supervisor gives up and fires a
-Telegram alert. Read from env <code>BUREAU_SUPERVISOR_MAX_CRASHES</code>
-if set</td>
+<td>Whole numbers 1–1000, fallback 5. Consecutive crashes before the
+supervisor gives up and fires a Telegram alert. Read from env
+<code>BUREAU_SUPERVISOR_MAX_CRASHES</code> if set</td>
 </tr>
 <tr>
 <td><code>supervisor.stability_window</code></td>
 <td>number</td>
 <td><code>3600</code></td>
-<td>Seconds of clean runtime before the crash counter resets. Read from
-env <code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code> if set</td>
+<td>Whole seconds 0–604800, fallback 3600. Seconds of clean runtime
+before the crash counter resets. Read from env
+<code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code> if set</td>
 </tr>
 </tbody>
 </table>
@@ -1193,7 +1200,8 @@ wrapper always ends its own child first</td>
 </tr>
 <tr>
 <td><code>BUREAU_MAX_CONCURRENT</code></td>
-<td>Default lane cap for <code>orchestrate.sh</code> (3 when absent);
+<td>Default lane cap for <code>orchestrate.sh</code>: whole numbers
+1–1000, fallback 3 with a key-only warning when invalid;
 <code>--max-concurrent</code> overrides it. This does not change the
 separate <code>agents.max_concurrent_issues</code> ticket cap</td>
 </tr>
@@ -1262,6 +1270,47 @@ then the default applies</td>
 </tr>
 </tbody>
 </table>
+<h3 id="numeric-runtime-settings">Numeric runtime settings</h3>
+<p>The shell consumers validate the numeric settings below after their
+source has been selected, including values inherited from the process
+environment. Accepted text contains only ASCII digits, at most ten
+characters, within the documented range. Leading zeros are decimal
+(<code>010</code> becomes 10). An empty, signed, expression-like,
+oversized or out-of-range value uses the documented default and emits
+one warning line naming the key, never the rejected value. An absent
+setting (or a JSON <code>null</code>) silently uses its default. Zero is
+accepted only where the range includes it, such as disabling workbench
+panes or the in-flight cap.</p>
+<p>The <code>.env</code> reader and precedence are unchanged: an
+accepted file entry replaces the inherited value; a rejected entry
+leaves it alone. The reader still rejects leading-zero text such as
+<code>010</code> for the keys on its numeric list, so use
+<code>10</code> in <code>.env</code>; inherited <code>010</code> and
+digit strings in JSON are normalized at consumption. Valid long budgets
+such as 5400 seconds per pass and 10800 seconds total retain their
+meaning. The existing Linear retry/request and merge-gate readers keep
+their documented source fallback and coercion rules.</p>
+<p><code>queue-loop.sh</code> validates its positional polling interval
+using the same 1–10080 minute range and 30 minute fallback. It exports
+<code>BUREAU_QUEUE_POLL_SECONDS</code> for the merge-gate picker;
+inherited values of that internal setting accept 1–604800 whole seconds
+and fall back to 1800 seconds when invalid. Without that override the
+picker uses <code>agents.poll_interval_minutes</code>.</p>
+<p>The usage-signal fields <code>pct</code> (integer part, 0–100),
+<code>reset_epoch</code> and <code>updated_epoch</code> (whole seconds,
+0–9999999999) are checked before shell arithmetic; invalid fields fall
+back to 0 with a warning naming the field. Fractional percentages keep
+their existing integer-part comparison. The already bounded shepherd
+merge wait/poll settings retain their base-10 and upper-cap behavior;
+their warnings now omit the rejected value.</p>
+<p>The shell environment filter reserves its own helper names (listed in
+<code>_BUREAU_ENV_INTERNAL_NAMES</code> in
+<code>scripts/bureau-env.sh</code>), including <code>IFS</code> and the
+<code>_beb_*</code>, <code>_bec_*</code>, <code>_beh_*</code> and
+wrapper locals in that list. Those exact names are removed from child
+environments and cannot be reintroduced through wrapper
+<code>NAME=VALUE</code> arguments. Other application variables keep the
+existing default/clean-mode rules.</p>
 <h3 id="implement-pipeline-retry-loop">Implement-pipeline retry
 loop</h3>
 <p>Env-only knobs (no <code>.bureau.json</code> equivalent).
@@ -1280,40 +1329,42 @@ if it doesn't reach <code>status: COMPLETE</code> within the budget.</p>
 <tr>
 <td><code>BUREAU_IMPL_MAX_ITER</code></td>
 <td><code>3</code></td>
-<td>Max provider passes per tick. Each iter parses the JSON status
-block, runs the squash-range check, pushes commits (see
-<code>agents.implement.push_each_iteration</code>), and decides
-continue/stop. Since v3.2 a pass that times out counts as one of them
-(status <code>TIMEOUT</code> in the iteration log) and the loop goes on;
-the stage ends with <code>124</code> only when the last allowed pass
-times out</td>
+<td>Whole numbers 1–1000, fallback 3. Max provider passes per tick. Each
+iter parses the JSON status block, runs the squash-range check, pushes
+commits (see <code>agents.implement.push_each_iteration</code>), and
+decides continue/stop. Since v3.2 a pass that times out counts as one of
+them (status <code>TIMEOUT</code> in the iteration log) and the loop
+goes on; the stage ends with <code>124</code> only when the last allowed
+pass times out</td>
 </tr>
 <tr>
 <td><code>BUREAU_IMPL_ITER_TIMEOUT</code></td>
 <td><code>1800</code></td>
-<td>Per-iteration provider wall-time cap in seconds, limited by the
-remaining total budget and enforced by the Python adapter for both
-providers</td>
+<td>Whole seconds 1–86400, fallback 1800. Per-iteration provider
+wall-time cap in seconds, limited by the remaining total budget and
+enforced by the Python adapter for both providers</td>
 </tr>
 <tr>
 <td><code>BUREAU_IMPL_TOTAL_TIMEOUT</code></td>
 <td><code>5400</code></td>
-<td>Budget in seconds for the implementation provider loop. Independent
-executor tests and publication can add time after it; this is not a
-monetary cap. Since v3.2 it, not one timed-out pass, bounds a stage
-whose passes time out; a timed-out pass that leaves 60 s or less of it
-ends the stage with <code>124</code>. Setting it to
-<code>BUREAU_IMPL_ITER_TIMEOUT</code> brings back the pre-v3.2 ceiling
-of one timed-out pass, but also caps a productive multi-pass run at that
-one pass's time; <code>BUREAU_IMPL_MAX_ITER=1</code> is the other
-trade-off (one pass of any kind)</td>
+<td>Whole seconds 1–604800, fallback 5400. Budget in seconds for the
+implementation provider loop. Independent executor tests and publication
+can add time after it; this is not a monetary cap. Since v3.2 it, not
+one timed-out pass, bounds a stage whose passes time out; a timed-out
+pass that leaves 60 s or less of it ends the stage with
+<code>124</code>. Setting it to <code>BUREAU_IMPL_ITER_TIMEOUT</code>
+brings back the pre-v3.2 ceiling of one timed-out pass, but also caps a
+productive multi-pass run at that one pass's time;
+<code>BUREAU_IMPL_MAX_ITER=1</code> is the other trade-off (one pass of
+any kind)</td>
 </tr>
 <tr>
 <td><code>BUREAU_POST_IMPLEMENT_TIMEOUT</code></td>
 <td><code>900</code></td>
-<td>Limit in seconds for <code>repo.post_implement_command</code>, never
-above <code>BUREAU_IMPL_TOTAL_TIMEOUT</code>. On timeout the hook's
-process group is ended and the stage halts with <code>14</code></td>
+<td>Whole seconds 1–604800, fallback 900. Limit in seconds for
+<code>repo.post_implement_command</code>, never above
+<code>BUREAU_IMPL_TOTAL_TIMEOUT</code>. On timeout the hook's process
+group is ended and the stage halts with <code>14</code></td>
 </tr>
 </tbody>
 </table>
@@ -1647,9 +1698,10 @@ repo whose defaults don't match.</p>
 <tr>
 <td><code>BUREAU_REVIEW_MERGE_CAP_KB</code></td>
 <td><code>60</code></td>
-<td>Tail-cap (KB) per specialist review before the merger prompt.
-Prevents ARG_MAX overflow when an individual review runs long (typical
-for codex-routed stages that emit heavy transcripts)</td>
+<td>Whole KB 1–1024, fallback 60. Tail-cap (KB) per specialist review
+before the merger prompt. Prevents ARG_MAX overflow when an individual
+review runs long (typical for codex-routed stages that emit heavy
+transcripts)</td>
 </tr>
 </tbody>
 </table>
@@ -1724,12 +1776,14 @@ the Spec Kit 1.2.2 pin lives in <code>scripts/bureau_install.py</code>
 <tr>
 <td><code>BUREAU_SUPERVISOR_MAX_CRASHES</code></td>
 <td><code>5</code></td>
-<td>Override <code>supervisor.max_crashes</code></td>
+<td>Whole numbers 1–1000, fallback 5; environment override for the
+supervisor crash limit</td>
 </tr>
 <tr>
 <td><code>BUREAU_SUPERVISOR_STABILITY_WINDOW</code></td>
 <td><code>3600</code></td>
-<td>Override <code>supervisor.stability_window</code></td>
+<td>Whole seconds 0–604800, fallback 3600; environment override for the
+supervisor stability window</td>
 </tr>
 </tbody>
 </table>

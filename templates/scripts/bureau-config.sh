@@ -90,6 +90,16 @@ bureau_stage_enter() {
 
 bureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }
 
+# _bureau_config_number <path> <default> <min> <max>. Check the JSON text
+# before shell capture can discard NULs or trailing newlines. Absent/null keeps
+# the default; every other value goes through the same consumer-side guard.
+_bureau_config_number() {
+  local path="$1" default="$2" min="$3" max="$4" raw
+  raw=$(bureau_get "$path | if . == null then \"$default\" else (if type == \"string\" then . else tojson end) end
+    | if (explode | all(. >= 48 and . <= 57)) then . else \"invalid\" end" 2>/dev/null) || raw=invalid
+  bureau_number "$path" "$raw" "$default" "$min" "$max"
+}
+
 # Linear config
 BUREAU_TEAM_KEY=$(bureau_get '.linear.teams[0].key')
 BUREAU_TEAM_ID=$(bureau_get '.linear.teams[0].id')
@@ -124,13 +134,13 @@ BUREAU_LABEL_NEEDS_COPY_NAME=$(bureau_get '.linear.labels.needs_copy.name // emp
 BUREAU_COPY_VOICE_FILE=$(bureau_get '.repo.copy_voice_file // empty')
 
 # Agent config
-BUREAU_POLL_INTERVAL=$(bureau_get '.agents.poll_interval_minutes // 30')
-BUREAU_WORKBENCH_PANES=$(bureau_get '.agents.workbench_panes // 2')
-BUREAU_MAX_REVIEW_CYCLES=$(bureau_get '.agents.max_review_cycles // 3')
+BUREAU_POLL_INTERVAL=$(_bureau_config_number .agents.poll_interval_minutes 30 1 10080)
+BUREAU_WORKBENCH_PANES=$(_bureau_config_number .agents.workbench_panes 2 0 32)
+BUREAU_MAX_REVIEW_CYCLES=$(_bureau_config_number .agents.max_review_cycles 3 0 1000)
 # Code-review diff size at which specialists switch from exhaustive to
 # critical-path sampling. Repos with mature CI / type-safety can review
 # bigger diffs exhaustively; legacy repos cap lower. Configurable per repo.
-BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD=$(bureau_get '.agents.code_review_sampling_threshold // 500')
+BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD=$(_bureau_config_number .agents.code_review_sampling_threshold 500 0 10000000)
 # How merge-pipeline closes the PR. Valid: squash | merge | rebase. Default
 # squash so shipped main never carries the in-development merge commits the
 # pipelines accumulate. Repos that want explicit merge-commit history (or
@@ -167,7 +177,7 @@ bureau_get_agent_model() {
 # Higher values bound parallelism without forbidding it. Only spec-pipeline
 # honours this; downstream stages keep operating on whatever's already in
 # flight so a cap of 1 doesn't deadlock the loop.
-BUREAU_MAX_CONCURRENT_ISSUES=$(bureau_get '.agents.max_concurrent_issues // 0')
+BUREAU_MAX_CONCURRENT_ISSUES=$(_bureau_config_number .agents.max_concurrent_issues 0 0 1000)
 BUREAU_MERGE_STRATEGY=$(bureau_get '.agents.merge_strategy // "squash"')
 case "$BUREAU_MERGE_STRATEGY" in
   squash|merge|rebase) ;;
@@ -2067,6 +2077,13 @@ _session_usage_signal() {
 # Args: pct reset_epoch updated_epoch threshold stale_pause now
 _throttle_decide() {
   local pct="$1" reset="$2" upd="$3" threshold="$4" stale_pause="$5" now="$6"
+  threshold=$(bureau_number session.usage_threshold_pct "$threshold" 80 0 100)
+  # Usage files are external numeric inputs too. Preserve fractional percentages
+  # (the comparison has always used their integer part), but never evaluate a
+  # timestamp or percentage as shell code. Ten decimal digits cover epoch seconds.
+  reset=$(bureau_number usage.reset_epoch "$reset" 0 0 9999999999)
+  upd=$(bureau_number usage.updated_epoch "$upd" 0 0 9999999999)
+  pct=$(bureau_number usage.pct "${pct%%.*}" 0 0 100)
   if [ "${upd:-0}" -gt 0 ] && [ "$((now - upd))" -gt 300 ] && [ "$stale_pause" != "true" ]; then
     echo "proceed"; return 0
   fi
@@ -2086,7 +2103,7 @@ session_throttle_guard() {
   command -v jq >/dev/null 2>&1 || return 0
   local cfg="${BUREAU_CONFIG:-.bureau.json}"
   local threshold stale_pause
-  threshold=$(jq -r '.session.usage_threshold_pct // 80' "$cfg" 2>/dev/null || echo 80)
+  threshold=$(_bureau_config_number .session.usage_threshold_pct 80 0 100)
   stale_pause=$(jq -r '.session.pause_on_stale_data // false' "$cfg" 2>/dev/null || echo false)
 
   local provider
@@ -3538,13 +3555,13 @@ merge_gate_waits() {
     merge)  [ -f "$common/bureau/merge-gate-waits.json" ] || return 0 ;;
     *) return 0 ;;
   esac
-  poll="${BUREAU_QUEUE_POLL_SECONDS:-}"
-  case "$poll" in ''|*[!0-9]*|0) poll=$(bureau_get '.agents.poll_interval_minutes // 30' 2>/dev/null) || poll=30
-    case "$poll" in ''|*[!0-9]*) poll=30 ;; esac
-    poll=$(( 10#$poll * 60 )) ;;
-  esac
-  [ "${#poll}" -le 7 ] || poll=9999999
-  first=$(( 2 * 10#$poll )); [ "$first" -ge 300 ] || first=300
+  if [ "${BUREAU_QUEUE_POLL_SECONDS+x}" = x ]; then
+    poll=$(bureau_number BUREAU_QUEUE_POLL_SECONDS "$BUREAU_QUEUE_POLL_SECONDS" 1800 1 604800)
+  else
+    poll=$(_bureau_config_number .agents.poll_interval_minutes 30 1 10080)
+    poll=$((poll * 60))
+  fi
+  first=$(( 2 * poll )); [ "$first" -ge 300 ] || first=300
   if ! out=$(python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-supervision.py" --repo "$(dirname "${BUREAU_CONFIG:-./x}")" \
       gate-waits --stage "$stage" --first "$first" --cap "$cap" 2>&1); then
     echo "pick: WARN: the merge gate waits could not be read (${out##*$'\n'}); no ticket is held back" >&2

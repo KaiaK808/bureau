@@ -44,6 +44,8 @@
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# The dependency-free environment library also guards inherited numeric knobs.
+source "$(dirname "$0")/bureau-env.sh"
 # Test seam: tests inject a stub shepherd via $SHEPHERD_BIN to exercise the
 # executor's concurrency / ordering / honest-exit without a real pipeline.
 SHEPHERD="${SHEPHERD_BIN:-$REPO_DIR/scripts/shepherd.sh}"
@@ -53,7 +55,7 @@ SCHEDULE_FILE=""
 PASSTHRU=()
 DRY_RUN=0
 EXECUTE=0
-MAX_CONCURRENT="${BUREAU_MAX_CONCURRENT:-3}"
+MAX_CONCURRENT=$(bureau_number BUREAU_MAX_CONCURRENT "${BUREAU_MAX_CONCURRENT-3}" 3 1 1000)
 
 while [ $# -gt 0 ]; do
   case "$1" in

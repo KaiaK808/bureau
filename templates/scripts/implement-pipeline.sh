@@ -30,9 +30,9 @@ bureau_secret_copy API_KEY LINEAR_API_KEY
 # productive. Defaults give ≤90 min worst case before the issue is parked for
 # human review. A pass that times out is one of the MAX_ITER passes (v3.2), so
 # TOTAL_TIMEOUT, not ITER_TIMEOUT, bounds a stage whose passes time out.
-MAX_ITER="${BUREAU_IMPL_MAX_ITER:-3}"
-ITER_TIMEOUT="${BUREAU_IMPL_ITER_TIMEOUT:-1800}"
-TOTAL_TIMEOUT="${BUREAU_IMPL_TOTAL_TIMEOUT:-5400}"
+MAX_ITER=$(bureau_number BUREAU_IMPL_MAX_ITER "${BUREAU_IMPL_MAX_ITER-3}" 3 1 1000)
+ITER_TIMEOUT=$(bureau_number BUREAU_IMPL_ITER_TIMEOUT "${BUREAU_IMPL_ITER_TIMEOUT-1800}" 1800 1 86400)
+TOTAL_TIMEOUT=$(bureau_number BUREAU_IMPL_TOTAL_TIMEOUT "${BUREAU_IMPL_TOTAL_TIMEOUT-5400}" 5400 1 604800)
 
 # The provider adapter enforces per-pass timeouts on both macOS and Linux.
 
@@ -372,8 +372,7 @@ command: ${cmd}"
     echo "  ✗✗ repo.post_implement_command not run: repo.untrusted_env is invalid" >&2
     return 0
   fi
-  limit="${BUREAU_POST_IMPLEMENT_TIMEOUT:-900}"
-  [[ "$limit" =~ ^[1-9][0-9]*$ ]] || limit=900
+  limit=$(bureau_number BUREAU_POST_IMPLEMENT_TIMEOUT "${BUREAU_POST_IMPLEMENT_TIMEOUT-900}" 900 1 604800)
   [ "$limit" -le "$TOTAL_TIMEOUT" ] || limit="$TOTAL_TIMEOUT"
   before=$(git rev-parse HEAD)
   before_status=$(git status --porcelain --untracked-files=all | LC_ALL=C sort)
