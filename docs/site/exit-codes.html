@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9cd6b247f729dbb4dd72c8616da38e599c56bb164454556b8c7e699cb67afc63">
+<meta name="bureau-source-sha256" content="97cb401b945b274fa8e0dda64f54eea0d2016425a37424393702a5754d7eade8">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -26,7 +26,7 @@ doesn't spam you 30 times an hour.</p>
 <h2 id="exit-code-table">Exit code table</h2>
 <table>
 <thead>
-<tr class="header">
+<tr>
 <th>Exit</th>
 <th>Class</th>
 <th>Meaning</th>
@@ -34,13 +34,13 @@ doesn't spam you 30 times an hour.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="odd">
+<tr>
 <td><code>0</code></td>
 <td>ok</td>
 <td>Pipeline completed successfully</td>
 <td>—</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>2</code></td>
 <td>queue-empty</td>
 <td>No pickable issue in the polled state; from
@@ -57,13 +57,13 @@ run checks the build and the gate again without a model review</td>
 <td>Normal — happens every tick when there's no work. The queue loop
 stays quiet; the shepherd waits for the gate (see below)</td>
 </tr>
-<tr class="odd">
+<tr>
 <td><code>10</code></td>
 <td>linear-down</td>
 <td><code>LINEAR_API_KEY</code> missing or invalid</td>
 <td>Forgot to set it in <code>.env</code>, or the key was revoked</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>11</code></td>
 <td>worktree-dirty</td>
 <td>Uncommitted changes in the worktree; from
@@ -80,14 +80,14 @@ ends with <code>11</code>, routes back to Triage and sets
 <code>needs-human</code>, because a re-run reads the same file. See the
 troubleshooting guide</td>
 </tr>
-<tr class="odd">
+<tr>
 <td><code>12</code></td>
 <td>no-branch</td>
 <td><code>bureau-branch</code> marker missing or points at a
 non-existent branch</td>
 <td>Spec pipeline didn't post a digest, or the branch was deleted</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>13</code></td>
 <td>no-tasks</td>
 <td>No usable spec for the branch: <code>tasks.md</code> missing, no
@@ -103,7 +103,7 @@ stages also set <code>needs-human</code>, and their comment names the
 branch and the specs directory; a matched directory without
 <code>tasks.md</code> still routes back to Spec without the label</td>
 </tr>
-<tr class="odd">
+<tr>
 <td><code>14</code></td>
 <td>build-failed</td>
 <td>Build precondition failed</td>
@@ -111,42 +111,43 @@ branch and the specs directory; a matched directory without
 <code>repo.post_implement_command</code> failed after an implementation
 run</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>15</code></td>
 <td>no-pr</td>
 <td>PR expected but not found</td>
 <td>Implement didn't create one, or it was closed manually</td>
 </tr>
-<tr class="odd">
+<tr>
 <td><code>16</code></td>
 <td>provider-unauth</td>
 <td>Selected CLI missing or not authenticated</td>
 <td>Authenticate the selected Claude/Codex CLI</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>17</code></td>
 <td>rebase-needed</td>
 <td><code>merge_origin_main_or_abort</code> hit a non-trivial
 conflict</td>
 <td>Routed back to a recovery state for human intervention</td>
 </tr>
-<tr class="odd">
+<tr>
 <td><code>18</code></td>
 <td>gh-failed</td>
 <td><code>gh</code> CLI command failed (e.g. <code>gh pr merge</code>
 rejected), or the implement stage's final <code>git push</code> failed
 twice while origin (fetched again) lacks commits of the branch or cannot
-be read</td>
+be read; also: the spec stage could not fetch origin, verify its base or
+read/reserve a spec number</td>
 <td>API rate limit, missing permissions, branch protection, origin
 rejecting or unreachable</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>19</code></td>
 <td>rebase-rejected</td>
 <td><code>git push --force-with-lease</code> rejected</td>
 <td>Someone else pushed to the same branch concurrently</td>
 </tr>
-<tr class="odd">
+<tr>
 <td><code>20</code></td>
 <td>stopped-before-merge</td>
 <td>Review boundary reached</td>
@@ -155,7 +156,7 @@ Merge under <code>agents.merge_mode: "manual"</code>. The shepherd and
 the queue loop pass a <code>20</code> that <code>--no-merge</code> asked
 for without an alert; any other <code>20</code> alerts</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>21</code></td>
 <td>ownership-conflict</td>
 <td>Ticket, checkout or branch held; stale result</td>
@@ -171,19 +172,19 @@ changes and a HEAD on the fetched <code>origin/&lt;branch&gt;</code>) is
 registered again with one line on stderr and the run goes on. See the
 troubleshooting guide</td>
 </tr>
-<tr class="odd">
+<tr>
 <td><code>22</code></td>
 <td>provider-or-result-error</td>
 <td>Provider failed or final result invalid</td>
 <td>Inspect provider evidence</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>23</code></td>
 <td>quota-wait</td>
 <td>Selected provider quota reached</td>
 <td>Wait for reset; do not switch providers silently</td>
 </tr>
-<tr class="odd">
+<tr>
 <td><code>24</code></td>
 <td>environment-blocked</td>
 <td>Permissions or required execution capability missing</td>
@@ -202,7 +203,7 @@ stage and every command from the branch (build check, QA runs, Codex
 completion test, app tests) refuse before anything runs; fix the
 value</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>25</code></td>
 <td>needs-human-or-paused</td>
 <td>Halt requiring attention or paused dispatch</td>
@@ -225,13 +226,13 @@ write the <code>needs-human</code> label ends with 25 where it would
 have ended with 0 (a stage that already ends non-zero keeps its code)
 and holds the ticket locally; see the troubleshooting guide.</td>
 </tr>
-<tr class="odd">
+<tr>
 <td><code>26</code></td>
 <td>cancelled-ticket</td>
 <td>Ticket cancelled/duplicate</td>
 <td>Not successful completion</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>27</code></td>
 <td>linear-unusable</td>
 <td>A Linear answer stayed unusable after every retry; the stage (or the
@@ -245,7 +246,17 @@ each at <code>needs-human</code> and a halt comment. Re-shepherd once
 Linear answers. A queue pick that fails with 27 is reported and alerted,
 not read as an empty queue.</td>
 </tr>
-<tr class="odd">
+<tr>
+<td><code>28</code></td>
+<td>spec-capacity-wait</td>
+<td>Spec admission cap is full; holding identifiers and states are
+printed, never descriptions</td>
+<td>Expected wait before picks, mutations or model work. The shepherd
+polls cancellably every 60 s without stuck ticks, labels or alerts.
+Queue workers retry at the next poll without alerting; bounded ticks
+report <code>waiting</code> with process/result exit code 28</td>
+</tr>
+<tr>
 <td><code>124</code></td>
 <td>timeout</td>
 <td>Provider exceeded time bound. Implement (since v3.2): the last pass
@@ -255,7 +266,7 @@ on to that pass instead</td>
 evidence (<code>session_id</code>, <code>transcript</code> in
 <code>result.json</code>); see the troubleshooting guide</td>
 </tr>
-<tr class="even">
+<tr>
 <td><code>130</code></td>
 <td>cancelled-run</td>
 <td>Process interrupted</td>
@@ -263,7 +274,9 @@ evidence (<code>session_id</code>, <code>transcript</code> in
 </tr>
 </tbody>
 </table>
-<p><code>bureau-tick.sh</code> additionally writes a JSON outcome. Quota
+<p><code>bureau-tick.sh</code> additionally writes a JSON outcome.
+Capacity waiting keeps process exit 28 and JSON
+<code>exit_code:28</code>, with <code>outcome:"waiting"</code>. Quota
 waiting returns process exit 0 with result <code>exit_code:23</code> to
 allow the next scheduled tick. A stage exiting 0 with unchanged ticket
 state is <code>waiting</code>; only actual Done is
@@ -275,8 +288,9 @@ not start as though the first had completed.</p>
 unhandled bash error.</p>
 <p><code>shepherd.sh</code> halts with a Telegram alert on every code
 except <code>0</code> and <code>2</code> (carry on) and <code>10</code>
-and <code>16</code> (sleep 60 s, retry); a code added later cannot slip
-through unannounced. <code>27</code> additionally tries
+and <code>16</code> (sleep 60 s, retry), plus <code>28</code> (quiet,
+cancellable capacity wait without stuck ticks); a code added later
+cannot slip through unannounced. <code>27</code> additionally tries
 <code>needs-human</code> and a halt comment once each. The one exception
 is a <code>20</code> that <code>--no-merge</code> asked for: the
 shepherd ends with <code>20</code> without an alert, and
@@ -469,14 +483,19 @@ window.</p>
 <hr />
 <h2 id="single-flight-observability">Single-flight observability</h2>
 <p>When <code>agents.max_concurrent_issues</code> is non-zero,
-<code>spec-pipeline.sh</code> exits <code>2</code> (queue-empty) once
-the cap is hit — even if there's an eligible issue in Triage. This is
-intentional: the cap is enforced <em>before</em> state mutations.</p>
-<p>If you see spec consistently exiting 2 while Triage has eligible
-issues, check:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;in-flight cap reached&quot;</span> logs/queue-spec.log</span></code></pre></div>
-<p>The pipeline logs the actual count vs. cap on every gate
-decision.</p>
+<code>spec-pipeline.sh</code> exits <code>28</code>
+(<code>spec-capacity-wait</code>) at a full cap before picking or
+mutating a ticket or running a model. The log names the holding issue
+identifiers and states. The shepherd polls every 60 seconds,
+cancellably, without accruing stuck ticks, <code>needs-human</code> or
+alerts; the queue waits until its next poll. Bounded ticks report
+<code>waiting</code> and keep 28 in their JSON.</p>
+<p>Under manual merge mode, Merge is excluded by default; auto includes
+it. <code>agents.max_concurrent_include_merge: true</code> retains the
+previous manual-mode behavior. Build Review still counts, including
+approved <code>--no-merge</code> stops there. A failed Linear snapshot
+returns 27, never an empty count.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;Spec gate:&quot;</span> logs/queue-spec.log</span></code></pre></div>
 <hr />
 <h2 id="see-also">See also</h2>
 <ul>

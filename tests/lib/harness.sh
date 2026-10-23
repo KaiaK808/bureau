@@ -73,6 +73,13 @@ EOF
     [ ! -f "$f" ] || cp "$f" "$SCRIPTS_DIR/"
   done
   cp "$LIB_DIR/stub-bureau-config.sh" "$SCRIPTS_DIR/bureau-config.sh"
+  # Exercise the pinned upstream feature helper offline; providers remain faked.
+  python3 - "$REPO_ROOT/tests/fixtures/speckit-1.2.2.zip" "$SANDBOX/.specify" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    for name in ('scripts/bash/common.sh', 'scripts/bash/create-new-feature.sh'):
+        archive.extract(name, sys.argv[2])
+PY
   sed -n '/^parse_claude_json() {/,${p;}' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/parse-result.sh"
   # Helpers that decide, not fetch, run for real: the Linear halt, the squash-range guard
   # the dependency restore (a no-op without package.json) and the review's verdict floor and exit come from the real config, and the script and marker list the guard reads were
@@ -83,6 +90,7 @@ EOF
     -e '/^apply_build_failure() {/,/^}/p' -e '/^decide_review_verdict() {/,/^}/p' \
     -e '/^_review_count() {/,/^}/p' -e '/^_review_shown() {/,/^}/p' -e '/^review_verdict_from_text() {/,/^}/p' \
     -e '/^resolve_verdict_exit() {/,/^}/p' \
+    -e '/^spec_admission_gate() {/,/^}/p' \
     -e '/^# ── Spec directory of a branch/,/^# ── End of spec directory of a branch/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/real-helpers.sh"
   grep -q '^bureau_spec_dir_for_branch() {' "$SCRIPTS_DIR/real-helpers.sh" || { echo "harness: spec-dir matcher not found in bureau-config.sh" >&2; return 1; }

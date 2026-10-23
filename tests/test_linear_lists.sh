@@ -110,7 +110,7 @@ CNT='count_in_flight_issues'
 LEAF='"labels":{"nodes":[]},"children":{"nodes":[]}'
 PARKED='"labels":{"nodes":[{"name":"needs-human"}]},"children":{"nodes":[]}'
 EPIC='"labels":{"nodes":[]},"children":{"nodes":[{"id":"C"}]}'
-count_body() { printf '{"data":{"issues":{"nodes":[%s]}}}' "$1"; }
+count_body() { printf '{"data":{"issues":{"nodes":[%s]}}}' "$1" | jq '.data.issues.nodes |= map(. + {identifier: "EXP-1", state: {name: "Build"}})'; }
 C_LEAF="{$LEAF}"; C_PARKED="{$PARKED}"; C_EPIC="{$EPIC}"
 C_NOLABELS='{"children":{"nodes":[]}}'; C_NOCHILDREN='{"labels":{"nodes":[]}}'; C_CHILDNULL='{"labels":{"nodes":[]},"children":null}'
 C_CHILDEMPTY='{"labels":{"nodes":[]},"children":{}}'; C_LABELSEMPTY='{"labels":{},"children":{"nodes":[]}}'
@@ -127,6 +127,11 @@ for case_ in "no issue list|{\"data\":{\"issues\":{}}}" \
   call "${case_#*|}" "$CNT"
   [ "$RC" = 27 ] || fail "count, ${case_%%|*}: exit $RC, wanted 27"
   [ -z "$OUT" ] || fail "count, ${case_%%|*}: printed a count ($OUT) from a broken answer"
+done
+for key in identifier state; do
+  body=$(count_body "$C_LEAF" | jq --arg key "$key" 'del(.data.issues.nodes[0][$key])')
+  call "$body" "$CNT"
+  [ "$RC" = 27 ] && [ -z "$OUT" ] || fail "count without $key failed open"
 done
 echo "PASS the in-flight count stops with 27 when the answer lacks the issue list, a node's labels or its children"
 
@@ -145,13 +150,13 @@ python3 - "$SB/old/bureau-config.sh" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); t = p.read_text()
 subs = [
-  ("""answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.children.nodes | type) == "array")') || return $?""",
+  ("""answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.children.nodes | type) == "array" and (.identifier | type) == "string" and (.identifier | length) > 0 and (.state.name | type) == "string" and (.state.name | length) > 0)') || return $?""",
    'answer=$(linear_raw "$payload") || return $?'),
   ("""answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.inverseRelations.nodes | type) == "array")') || return $?""",
    'answer=$(linear_raw "$payload") || return $?'),
   ("    [.data.issues.nodes[]\n", "    [(.data.issues.nodes // [])[]\n"),
   ("         ([.labels.nodes[].name]\n", "         ([(.labels.nodes // [])[].name]\n"),
-  ("     | select((.children.nodes | length) == 0)]\n", "     | select(((.children.nodes // []) | length) == 0)]\n"),
+  ("     | select((.children.nodes | length) == 0)\n", "     | select(((.children.nodes // []) | length) == 0)\n"),
   ("    .data.issues.nodes\n    | map(select(.identifier", "    (.data.issues.nodes // [])\n    | map(select(.identifier"),
   ("        ([.labels.nodes[].name] | map(select(. as $n", "        ([(.labels.nodes // [])[].name] | map(select(. as $n"),
   ("        ([.inverseRelations.nodes[]\n", "        ([(.inverseRelations.nodes // [])[]\n"),

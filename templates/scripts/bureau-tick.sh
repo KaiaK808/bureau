@@ -111,7 +111,7 @@ tick_stage() {
         elif [ "$AFTER" != "$BEFORE" ]; then OUTCOME=advanced
         else OUTCOME=waiting; fi
       fi ;;
-    2) OUTCOME=waiting ;;
+    2|28) OUTCOME=waiting ;;
     20) OUTCOME=stopped_for_review ;;
     21|25|26) OUTCOME=blocked ;;
     *) OUTCOME=failed ;;

@@ -341,7 +341,7 @@ case "\$p" in
   *'nodes { id identifier title description state'*)
                                    b='{"data":{"issues":{"nodes":[{"id":"U","identifier":"EXP-1","title":"T","description":null,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[]}}]}}}' ;;
   # Before the id lookup below: the count's query ends in children(first: 1) { nodes { id } }.
-  *'children(first: 1)'*)          b='{"data":{"issues":{"nodes":[{"labels":{"nodes":[]},"children":{"nodes":[]}}]}}}' ;;
+  *'children(first: 1)'*)          b='{"data":{"issues":{"nodes":[{"identifier":"EXP-1","state":{"name":"Build"},"labels":{"nodes":[]},"children":{"nodes":[]}}]}}}' ;;
   *'nodes { id } }'*)              b='{"data":{"issues":{"nodes":[{"id":"U"}]}}}' ;;
   *issueLabels*)                   b='{"data":{"issueLabels":{"nodes":[{"id":"L","team":null}]}}}' ;;
   *issueUpdate*)                   b='{"data":{"issueUpdate":{"success":true}}}' ;;

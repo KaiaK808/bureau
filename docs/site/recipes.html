@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9d7c2215955c1b64e63dba5da96d6759ef5ca14ea9911371eece28091271e529">
+<meta name="bureau-source-sha256" content="d40594a8fc478c7808f4e19e0a82d1bf3451539c06fd131386769fcf12d72acf">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -39,7 +39,14 @@ conflicts pile up.</p>
 helps. The cap is a knob, not a default.</p>
 <p>A single stuck issue (e.g. <code>needs-human</code> parking) does
 <em>not</em> deadlock the cap — <code>count_in_flight_issues</code>
-excludes parked issues.</p>
+excludes parked issues. Under manual merge mode, Merge is excluded by
+default; set <code>agents.max_concurrent_include_merge: true</code> to
+keep counting it. Auto mode includes Merge. Build Review still counts,
+including an approved <code>--no-merge</code> ticket parked there. A
+full cap names its blockers and returns 28
+(<code>spec-capacity-wait</code>): the shepherd waits cancellably
+without stuck ticks or human labels, and bounded ticks retain 28 in
+their waiting result.</p>
 <hr />
 <h2 id="mixed-models-per-stage">Mixed models per stage</h2>
 <p>Use a strong reasoning model for spec, a fast cheap model for

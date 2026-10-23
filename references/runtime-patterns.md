@@ -153,8 +153,8 @@ In active repos with many concurrent feature tickets, branches accumulate diverg
 **B. `BUREAU_MAX_CONCURRENT_ISSUES` cap.** Repo-wide cap on how many *distinct* issues the bureau works on simultaneously. Default `0` = unlimited (current behaviour). Set to `1` for single-flight mode (drain one issue end-to-end before another enters Spec). Implementation:
 
 - `count_in_flight_issues()` in `bureau-config.sh` queries Linear for issues in any state between Spec (inclusive) and Done (exclusive). Issues with parking labels (`needs-human`, `blocked`, `wip`) are excluded so a stalled issue doesn't deadlock the cap.
-- `spec-pipeline.sh` checks the count immediately after preconditions; exits 2 (queue-empty) if at cap. Only spec gates — downstream stages keep running on already-in-flight issues, so cap=1 still drains the current ticket.
-- Fail-open on Linear errors: `count_in_flight_issues` returns "0" on any query failure, so a network blip doesn't block work.
+- `spec-pipeline.sh` checks one admission snapshot after the Linear precondition and before provider preflight; exits 28 (`spec-capacity-wait`) at cap, naming holding identifiers and states. The shepherd waits cancellably without stuck ticks or human labels; ticks keep 28 with outcome `waiting`. Merge is excluded by default under manual mode, included under auto, overridable with the boolean `agents.max_concurrent_include_merge`. Build Review always counts, including approved `--no-merge` stops there. Only spec gates — downstream stages keep running on already-in-flight issues, so cap=1 still drains the current ticket.
+- Failed Linear snapshots are retried, then return 27; admission never treats an unreadable answer as an empty count.
 
 Configuration in `.bureau.json`:
 
@@ -198,6 +198,7 @@ Every pipeline script:
 | 25 | needs-human-or-paused | human attention or dispatch pause |
 | 26 | cancelled-ticket | ticket is cancelled |
 | 27 | linear-unusable | a Linear answer stayed unusable after every retry |
+| 28 | spec-capacity-wait | full spec admission cap; quiet, cancellable wait |
 | 124 | timeout | bounded execution timed out |
 | 130 | cancelled-run | invocation cancelled |
 

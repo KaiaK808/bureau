@@ -14,6 +14,10 @@ set -uo pipefail
 case "$*" in
   *speckit-specify/SKILL.md*)
     case "${PR4_SPECIFY_ACTION:-leave}" in
+      populate)
+        dir=$(jq -r .feature_directory .specify/feature.json)
+        printf '# ticket spec\n' > "$dir/spec.md"
+        printf '# tasks\n- [ ] T001 ticket task\n' > "$dir/tasks.md" ;;
       leave) ;;
       remove) rm -f .specify/feature.json ;;
       write)

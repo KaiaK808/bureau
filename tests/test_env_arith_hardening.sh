@@ -214,6 +214,15 @@ if _throttle_should_suppress fixture 3600; then printf suppress; else printf all
     # Preserve each actual consumer's evaluation: the simple [ builtin rejects
     # expressions without executing them, unlike (( )). Do not manufacture a
     # more dangerous arithmetic site merely to make the control create files.
+    spec_consumer = function('spec_admission_gate')
+    if spec_consumer:
+        # PR 2 moved this consumer into a helper. Run it with a real-shaped empty
+        # capacity snapshot, so this remains an arithmetic guard, without Linear.
+        spec_consumer += '\nspec_admission_snapshot() { printf \'{"count":0,"issues":[]}\'; }\n'
+        spec_consumer += 'spec_admission_gate >/dev/null\nprintf "%s" "$BUREAU_MAX_CONCURRENT_ISSUES"'
+    else:
+        # Keep the optional pristine-main negative control exercising its inline site.
+        spec_consumer = lines('spec-pipeline.sh', r'^if \[ "\$\{BUREAU_MAX_CONCURRENT_ISSUES') + '\n:; fi\nprintf "%s" "$BUREAU_MAX_CONCURRENT_ISSUES"'
     config_consumers = {
         'BUREAU_POLL_INTERVAL': lines('queue-loop.sh', r'^INTERVAL_(MINUTES|SECONDS)=') + '\nprintf "%s" "$INTERVAL_MINUTES"',
         'BUREAU_WORKBENCH_PANES': lines('start-bureau-v2.sh', r'^BENCH_PANES=') + '\n'
@@ -222,8 +231,7 @@ if _throttle_should_suppress fixture 3600; then printf suppress; else printf all
         'BUREAU_MAX_REVIEW_CYCLES': function('_review_count') + '\n_review_count "$BUREAU_MAX_REVIEW_CYCLES" >/dev/null || :\nprintf "%s" "$BUREAU_MAX_REVIEW_CYCLES"',
         'BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD': lines('code-review-pipeline.sh', r'^if \[ "\$\{DIFF_TOTAL')
             + '\n:; fi\nprintf "%s" "$BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD"',
-        'BUREAU_MAX_CONCURRENT_ISSUES': lines('spec-pipeline.sh', r'^if \[ "\$\{BUREAU_MAX_CONCURRENT_ISSUES')
-            + '\n:; fi\nprintf "%s" "$BUREAU_MAX_CONCURRENT_ISSUES"',
+        'BUREAU_MAX_CONCURRENT_ISSUES': spec_consumer,
     }
     for path, variable, default, minimum, maximum in settings:
         code = bootstrap + lines('bureau-config.sh', '^' + variable + '=') + '\n' + config_consumers[variable]

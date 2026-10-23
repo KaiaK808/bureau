@@ -155,6 +155,8 @@ run_script() {
   case "$exit_code" in
     0)  echo "[$TIMESTAMP] $label done." | tee -a "$LOG_FILE" ;;
     2)  echo "[$TIMESTAMP] $label — queue empty." | tee -a "$LOG_FILE" ;;
+    28) CAPACITY_WAIT=true
+        echo "[$TIMESTAMP] $label — waiting for spec capacity." | tee -a "$LOG_FILE" ;;
     *)
         if stop_before_merge_was_asked "$exit_code"; then
           # --no-merge: an approved ticket stopped at the reviewed boundary, as
@@ -183,6 +185,7 @@ run_one() {
 while true; do
   if bureau_is_paused; then sleep 30; continue; fi
   DID_WORK=false
+  CAPACITY_WAIT=false
 
   case "$MODE" in
     spec)
@@ -241,6 +244,8 @@ while true; do
   TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
   if [ "$DID_WORK" = true ]; then
     echo "[$TIMESTAMP] Queues drained. Next check in ${INTERVAL_MINUTES}m." | tee -a "$LOG_FILE"
+  elif [ "$CAPACITY_WAIT" = true ]; then
+    echo "[$TIMESTAMP] Waiting for spec capacity. Next check in ${INTERVAL_MINUTES}m." | tee -a "$LOG_FILE"
   else
     echo "[$TIMESTAMP] All queues empty. Next check in ${INTERVAL_MINUTES}m." | tee -a "$LOG_FILE"
   fi

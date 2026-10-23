@@ -882,7 +882,7 @@ while true; do
     esac
   fi
 
-  # Halt is the default for every code but the four listed in
+  # Halt is the default for every code but the cases listed in
   # shepherd_rc_action; a code added later cannot slip through unannounced.
   ACTION=$(shepherd_rc_action "$RC")
   [ "$ACTION" = halt ] && [ "$RC" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && ACTION=linear-halt
@@ -890,6 +890,12 @@ while true; do
   # (--no-merge) ends the run as requested: no alert, no label.
   if [ "$ACTION" = halt ] && stop_before_merge_was_asked "$RC"; then ACTION=stopped-before-merge; fi
   case "$ACTION" in
+    wait)
+      echo "[shepherd] $CLASS — waiting 60s for spec capacity"
+      LAST_STATE=""
+      STUCK_COUNT=0
+      _shepherd_sleep 60
+      ;;
     ok)
       # Success / queue-empty — re-read state on next iteration, and confirm
       # the stage's move there before starting the next stage.
