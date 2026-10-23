@@ -39,4 +39,18 @@ if grep -qE 'iter [0-9]+:|No work evidence this iteration' <<< "$LAST_STDOUT"; t
   exit 1
 fi
 
+# The goal path has its own TASKS_DONE_TOTAL bound, independent of the normal
+# iteration/timeout TASKS_DONE guards. Keep the real provider result parsing
+# and stage control flow while injecting the unsigned-64 maximum.
+teardown
+sandbox_init "EXP-101" "test-branch"
+sed 's/"tasks_done": 3/"tasks_done": 18446744073709551615/' \
+  "$FIXTURES_DIR/claude_complete.txt" > "$SANDBOX/oversized-goal.txt"
+export FAKE_CLAUDE_FIXTURES="$SANDBOX/oversized-goal.txt"
+export FAKE_CLAUDE_COMMIT_ON_ITERS=1 BUREAU_USE_GOAL_LOOP=1
+run_implement_pipeline
+assert_eq 0 "$LAST_RC" "oversized goal completes with a bounded count"
+assert_match '/goal: status=COMPLETE tasks_done=0 commits=1' "$LAST_STDOUT" "oversized goal count contributes zero"
+assert_eq 1 "$(printf '%s\n' "$LAST_STDERR" | grep -c '^warning: tasks_done ')" "one warning for oversized goal count"
+
 echo "OK test_implement_loop_complete_goal"

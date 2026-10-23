@@ -433,101 +433,136 @@ _bureau_env_host_name() {
 
 _bureau_env_build() {
   local IFS=$' \t\n'
-  local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_name _beb_value _beb_entry _beb_snapshot
-  local -a _beb_long _beb_short _beb_exported
-  _beb_long=(); _beb_short=(); _beb_exported=(); _BUREAU_ENV_ARGV=()
+  local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_name _beb_value _beb_entry _beb_snapshot _beb_exported
+  local -a _beb_long
+  _beb_long=(BUREAU_ENV_INPUT_V1 "${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}")
+  _BUREAU_ENV_ARGV=()
   case "$_beb_names" in
     seven) _beb_names='LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN' ;;
     dotenv) _beb_names='LINEAR_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID' ;;
   esac
   for _beb_name in $_beb_names; do
     _beb_value="${!_beb_name:-}"
-    if [ "${#_beb_value}" -ge 6 ]; then _beb_long+=("$_beb_value")
-    elif [ -n "$_beb_value" ]; then _beb_short+=("$_beb_value"); fi
-    _BUREAU_ENV_ARGV+=(-u "$_beb_name")
+    _beb_long+=("${#_beb_value}" "$_beb_value")
   done
   # Bash 3.2 can retain an old exported value behind an uninitialized caller
   # local (e.g. run_stage_for's rc). Neither compgen + ${!name} nor export -p
-  # sees what the child actually inherits. Capture literal NUL-delimited
-  # entries from that environment, including newlines in names and values.
-  # Hex framing crosses command substitution without losing NULs/newlines;
-  # printf decodes literal bytes, never shell syntax. Avoid process substitution:
-  # Bash 3.2 rejects its syntax while sourcing this library in POSIX mode.
-  _beb_snapshot=$({ /usr/bin/env -0 && printf '\0'; } | python3 -I -c '
+  # sees what the child actually inherits. Send local secret values on stdin
+  # (never argv), followed by env's literal NUL-delimited snapshot. Only a
+  # successful producer writes the final empty record. Python does all work
+  # per exported entry; Bash only handles the resulting removals/clean entries.
+  # Both ends require complete framing AND the helper must exit successfully.
+  # Command substitution uses a pipe, with no here-string or temporary file.
+  # Avoid process substitution: Bash 3.2 rejects it when sourced in POSIX mode.
+  _beb_snapshot=$({
+    printf '%s\0' "${_beb_long[@]}" && /usr/bin/env -0 && printf '\0'
+  } | python3 -I -c '
+import locale
+import re
 import sys
-data = sys.stdin.buffer.read()
-if data != b"\0" and not data.endswith(b"\0\0"):
+
+mode, names, startup, internal, prefixes = sys.argv[1:]
+names = [name.encode("ascii") for name in names.split()]
+internal = [name.encode("ascii") for name in internal.split()]
+prefixes = [name.encode("ascii") for name in prefixes.split()]
+fields = sys.stdin.buffer.read().split(b"\0")
+if len(fields) < 2 or fields.pop(0) != b"BUREAU_ENV_INPUT_V1":
     sys.exit(24)
-for entry in data.split(b"\0"):
-    if entry:
-        print("".join("\\x%02x" % byte for byte in entry))
-') || {
+ctype = fields.pop(0).decode("ascii", "surrogateescape")
+long, short = [], []
+
+def secret(value, length):
+    if length >= 6:
+        long.append(value)
+    elif value:
+        short.append(value)
+
+# Preserve Bash character counts for local secrets, and use its locale for
+# exported secrets hidden by a caller local. Invalid bytes count individually.
+try:
+    locale.setlocale(locale.LC_CTYPE, ctype)
+except locale.Error:
+    locale.setlocale(locale.LC_CTYPE, "C")
+encoding = locale.nl_langinfo(locale.CODESET)
+for name in names:
+    if len(fields) < 2 or not re.fullmatch(b"[0-9]+", fields[0]):
+        sys.exit(24)
+    secret(fields[1], int(fields[0]))
+    del fields[:2]
+if fields == [b"", b""]:
+    entries = []
+elif len(fields) >= 3 and fields[-2:] == [b"", b""]:
+    entries = fields[:-2]
+else:
+    sys.exit(24)
+if any(not entry or b"=" not in entry for entry in entries):
+    sys.exit(24)
+entries = [entry.split(b"=", 1) for entry in entries]
+for name, value in entries:
+    if name in names:
+        secret(value, len(value.decode(encoding, "surrogateescape")))
+
+def carries(value):
+    return any(key in value for key in long) or value in short
+
+if mode == "clean":
+    allowed = b"PATH HOME USER LOGNAME SHELL TMPDIR TEMP TMP LANG LC_ALL LC_CTYPE TERM TZ CI".split()
+    result = [("e", name + b"=" + value) for name, value in entries
+              if name in allowed and not any(name.startswith(p) for p in prefixes) and not carries(value)]
+elif mode == "default":
+    drops = names + ([b"BASH_ENV", b"ENV"] if startup == "1" else []) + internal
+    result = [("u", name) for name in drops]
+    for name, value in entries:
+        if name in drops:
+            continue
+        if any(name.startswith(p) for p in prefixes) or (
+                re.fullmatch(b"[a-zA-Z_][a-zA-Z0-9_]*", name) and value and carries(value)):
+            result.append(("u", name))
+else:
+    sys.exit(24)
+# ASCII-only tokens cannot undergo word splitting inside a name or globbing.
+# Reject NULs and malformed/truncated frames again on the consuming side.
+print("BUREAU_ENV_V1" + "".join(" " + tag + "".join("\\x%02x" % byte for byte in value)
+                                for tag, value in result) + " END")
+' "$_beb_mode" "$_beb_names" "$_beb_startup" "$_BUREAU_ENV_INTERNAL_NAMES" \
+    "$_BUREAU_UNTRUSTED_HOST_PREFIXES" | {
+    # A NUL in helper output must not silently disappear in $(...). Read once
+    # through a pipe with NUL as the delimiter: only EOF (no NUL) is expected.
+    if IFS= read -r -d '' _beb_snapshot; then exit 24
+    else [ "$?" = 1 ] || exit 24; fi
+    printf '%s' "$_beb_snapshot"
+  }
+  # Check every status without changing SHELLOPTS: when it is exported,
+  # enabling pipefail here rebuilds the subshell's export cache and hides
+  # caller-local carriers that the actual child would still inherit.
+  [ "${PIPESTATUS[*]}" = '0 0 0' ] || exit 24) || {
     echo 'bureau environment: cannot read exported environment; command was not run (24, environment-blocked)' >&2
     exit 24
   }
-  # Also collect exported secret values when a caller shadows a secret name.
-  while IFS= read -r _beb_entry; do
-    [ -n "$_beb_entry" ] || continue
-    printf -v _beb_entry '%b' "$_beb_entry"
-    _beb_exported+=("$_beb_entry")
-    _beb_name="${_beb_entry%%=*}"
-    case " $_beb_names " in
-      (*" $_beb_name "*)
-        _beb_value="${_beb_entry#*=}"
-        if [ "${#_beb_value}" -ge 6 ]; then _beb_long+=("$_beb_value")
-        elif [ -n "$_beb_value" ]; then _beb_short+=("$_beb_value"); fi ;;
-    esac
-  done <<< "$_beb_snapshot"
-  if [ "$_beb_startup" = 1 ]; then _BUREAU_ENV_ARGV+=(-u BASH_ENV -u ENV); fi
-  for _beb_name in $_BUREAU_ENV_INTERNAL_NAMES; do
-    _BUREAU_ENV_ARGV+=(-u "$_beb_name")
-  done
+  _beb_exported='^BUREAU_ENV_V1( [ue](\\x(0[1-9a-f]|[1-9a-f][0-9a-f]))+)* END$'
+  if ! [[ $_beb_snapshot =~ $_beb_exported ]]; then
+    echo 'bureau environment: invalid exported environment frame; command was not run (24, environment-blocked)' >&2
+    exit 24
+  fi
   if [ "$_beb_mode" = clean ]; then _BUREAU_ENV_ARGV=(-i); fi
-  for _beb_entry in ${_beb_exported[@]+"${_beb_exported[@]}"}; do
-    _beb_name="${_beb_entry%%=*}"
-    _beb_value="${_beb_entry#*=}"
-    if [ "$_beb_mode" = clean ]; then
-      case "$_beb_name" in
-        PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_ALL|LC_CTYPE|TERM|TZ|CI) ;;
-        *) continue ;;
-      esac
-      _bureau_env_host_name "$_beb_name" && continue
-      _bureau_env_carries "$_beb_value" || _BUREAU_ENV_ARGV+=("$_beb_entry")
-    else
-      # Explicit removals above already cover these names.
-      _bureau_env_internal_name "$_beb_name" && continue
-      case " $_beb_names " in (*" $_beb_name "*) continue ;; esac
-      if [ "$_beb_startup" = 1 ]; then
-        case "$_beb_name" in BASH_ENV|ENV) continue ;; esac
-      fi
-      if _bureau_env_host_name "$_beb_name"; then
-        _BUREAU_ENV_ARGV+=(-u "$_beb_name")
-        continue
-      fi
-      # Preserve the existing policy for non-identifiers, without ever
-      # interpreting an environment name as a shell variable or array index.
-      case "$_beb_name" in
-        (''|[0123456789]*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*) continue ;;
-      esac
-      [ -n "$_beb_value" ] || continue
-      if _bureau_env_carries "$_beb_value"; then _BUREAU_ENV_ARGV+=(-u "$_beb_name"); fi
-    fi
+  for _beb_entry in $_beb_snapshot; do
+    case "$_beb_entry" in BUREAU_ENV_V1|END) continue ;; esac
+    _beb_name="${_beb_entry:0:1}"
+    printf -v _beb_entry '%b' "${_beb_entry:1}" || exit 24
+    case "$_beb_mode:$_beb_name" in
+      default:u)
+        case "$_beb_entry" in ''|*=*) exit 24 ;; esac
+        _BUREAU_ENV_ARGV+=(-u "$_beb_entry") ;;
+      clean:e)
+        case "$_beb_entry" in
+          PATH=*|HOME=*|USER=*|LOGNAME=*|SHELL=*|TMPDIR=*|TEMP=*|TMP=*|LANG=*|LC_ALL=*|LC_CTYPE=*|TERM=*|TZ=*|CI=*) ;;
+          *) exit 24 ;;
+        esac
+        _BUREAU_ENV_ARGV+=("$_beb_entry") ;;
+      *) exit 24 ;;
+    esac
   done
   return 0
-}
-
-# _bureau_env_carries <value> — 0 when <value> carries one of the secrets
-# _bureau_env_build collected (its _beb_long and _beb_short, by bash's dynamic
-# scope): a long one anywhere inside, a short one as the whole value.
-_bureau_env_carries() {
-  local _bec_secret
-  for _bec_secret in ${_beb_long[@]+"${_beb_long[@]}"}; do
-    case "$1" in (*"$_bec_secret"*) return 0 ;; esac
-  done
-  for _bec_secret in ${_beb_short[@]+"${_beb_short[@]}"}; do
-    if [ "$1" = "$_bec_secret" ]; then return 0; fi
-  done
-  return 1
 }
 
 _bureau_untrusted_env_mode() {

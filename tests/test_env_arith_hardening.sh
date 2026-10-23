@@ -128,6 +128,14 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.arith.') as directory:
     for raw, expected, warn in [(18446744073709551615, 1, True), (100001, 1, True),
                                 (-1, 1, True), (100000, 100001, False), (10, 11, False)]:
         verify(run(task_code, {'RESULT': json.dumps({'tasks_done': raw})}), 'tasks_done', raw, expected, warn)
+    # /goal assigns its result directly rather than accumulating TASKS_DONE.
+    # Extract that separate production path: removing only its bound must
+    # fail this assertion even while the ordinary/timeout guards remain.
+    goal_code = function('parse_claude_json') + '\n'
+    goal_code += lines('implement-pipeline.sh', r'^  TASKS_DONE_TOTAL=\$\(parse_claude_json|^  TASKS_DONE_TOTAL=\$\(bureau_number')
+    goal_code += '\nprintf "%s" "$TASKS_DONE_TOTAL"'
+    for raw, expected, warn in [(18446744073709551615, 0, True), (100000, 100000, False)]:
+        verify(run(goal_code, {'RESULT': json.dumps({'tasks_done': raw})}), 'tasks_done', '/goal ' + str(raw), expected, warn)
     schema = json.loads((scripts / 'bureau-implement.schema.json').read_text())
     task_schema = schema['properties']['tasks_done']
     # Claude rejects numeric constraint keywords; the shared schema describes

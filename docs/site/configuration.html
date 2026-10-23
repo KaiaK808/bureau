@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="7f8aad198fe9c2cbc59c3cc1ce19efb896c9e9d082d5654e6640ca1e650f9c95">
+<meta name="bureau-source-sha256" content="18e090feafce5c7efc69931dac8b1113eef5b9f9568b38b762ca4af0ef981ee2">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1329,12 +1329,25 @@ existing default/clean-mode rules.</p>
 <p>Carrier checks read literal NUL-delimited names and values from
 <code>/usr/bin/env -0</code>, so an enclosing function's local variable
 cannot hide an exported secret carrier. Generic application names such
-as <code>rc</code> are not reserved. A failed environment snapshot stops
-the command with 24. The curl subshell scrub also refuses with 24 when a
-malformed host-variable name cannot safely be unset in Bash; the other
-wrappers remove it literally with <code>env -u</code>. The shell helpers
-support Bash 3.2 and require <code>/usr/bin/env</code> with
-<code>-0</code> (as on the supported macOS/Linux CI hosts).</p>
+as <code>rc</code> are not reserved. An isolated Python helper makes the
+per-entry decisions and returns only names to remove, or the allowed
+clean-mode entries. Bash validates the complete decision frame before
+decoding it; local secret values travel on stdin, never command-line
+arguments. Both transports use pipes, without a temporary file or
+here-string.</p>
+<p>Missing <code>python3</code>, producer/helper failures, pipe failures
+and incomplete or malformed snapshot/decision frames stop before the
+wrapped child starts with 24 (<code>environment-blocked</code>). This
+holds for both environment modes and the curl scrub, including
+<code>if</code> and <code>||</code> callers, with or without
+<code>set -e</code>. Failure exits the calling shell; inside a subshell
+it ends only that subshell. The curl subshell scrub also refuses with 24
+when a malformed host-variable name cannot safely be unset in Bash; the
+other wrappers remove it literally with <code>env -u</code>. The shell
+helpers support Bash 3.2 (including POSIX-mode sourcing) and require
+Python 3.9+ and <code>/usr/bin/env</code> with <code>-0</code> (as on
+the supported macOS/Linux CI hosts). Snapshot ingestion does not require
+a writable temporary directory.</p>
 <h3 id="implement-pipeline-retry-loop">Implement-pipeline retry
 loop</h3>
 <p>Env-only knobs (no <code>.bureau.json</code> equivalent).
