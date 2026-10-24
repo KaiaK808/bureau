@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b59e491899e46a6462f96ce4a4a39b967ee28ca3a675a599bc8e02ff17ca3f21">
+<meta name="bureau-source-sha256" content="f978e7752b845d59e1bec070c9dc2e5c34d0bbbd7ae0349adfa72db8829c11b7">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -70,14 +70,11 @@ stays quiet; the shepherd waits for the gate (see below)</td>
 <code>spec-pipeline.sh</code> also: <code>.specify/feature.json</code>
 unusable after speckit-specify</td>
 <td>Manual edits in <code>.worktrees/queue-&lt;mode&gt;/</code> — clean
-up before next tick. Spec stage (v3.1): a missing or malformed
-<code>feature.json</code> ends with <code>11</code> and routes back to
-Triage without a label (a re-run may succeed; before, jq's own
-<code>2</code> or <code>5</code> escaped, and <code>2</code> read as
-"queue empty"); a stale one — not written by the call, naming a
-directory that existed before it and is not the ticket's own by name —
-ends with <code>11</code>, routes back to Triage and sets
-<code>needs-human</code>, because a re-run reads the same file. See the
+up before next tick. The spec stage prepares <code>feature.json</code>
+for the reserved directory before specify; a missing, malformed or
+redirected pointer afterwards ends with <code>11</code> and routes back
+to Triage through ordinary recovery, without a <code>needs-human</code>
+label. A retry prepares the reserved pointer again. See the
 troubleshooting guide</td>
 </tr>
 <tr>

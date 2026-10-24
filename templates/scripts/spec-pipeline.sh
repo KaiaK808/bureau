@@ -201,7 +201,7 @@ fi
 # The issue key is a stable short name, including when its title changes on retry.
 # --allow-existing-branch reuses an exact directory without replacing spec.md.
 FEATURE_ARGS=(--json --number "$SPEC_NUMBER" --short-name "$ISSUE" --allow-existing-branch "$ISSUE_TITLE")
-FEATURE_JSON=$(bash "$FEATURE_HELPER" --dry-run "${FEATURE_ARGS[@]}") || exit 11
+FEATURE_JSON=$(bureau_untrusted_env bash "$FEATURE_HELPER" --dry-run "${FEATURE_ARGS[@]}") || exit 11
 if ! printf '%s' "$FEATURE_JSON" | jq -e --argjson number "$SPEC_NUMBER" \
     '(.FEATURE_NUM | tonumber) == $number and (.SPEC_FILE | type) == "string"' >/dev/null; then
   echo 'ERROR: Spec Kit did not honor the reserved feature number; refusing to specify.' >&2
@@ -233,7 +233,7 @@ fi
 # elsewhere; for a new custom target, relocate the helper's actual output.
 WANTED_DIR="${BUREAU_SPECS_DIR%/}/$ALLOCATED_NAME"
 if [ ! -d "$WANTED_DIR" ]; then
-  CREATED_JSON=$(bash "$FEATURE_HELPER" "${FEATURE_ARGS[@]}") || exit 11
+  CREATED_JSON=$(bureau_untrusted_env bash "$FEATURE_HELPER" "${FEATURE_ARGS[@]}") || exit 11
   if [ "$CREATED_JSON" != "$(printf '%s' "$FEATURE_JSON" | jq -c 'del(.DRY_RUN)')" ]; then
     echo 'ERROR: Spec Kit output changed after its dry-run; refusing to specify.' >&2
     exit 11
