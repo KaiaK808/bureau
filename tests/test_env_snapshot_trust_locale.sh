@@ -14,7 +14,7 @@ import tempfile
 
 scripts = Path(sys.argv[1]).resolve()
 section = sys.argv[2]
-assert section in ('all', 'trust', 'locale', 'empty')
+assert section in ('all', 'trust', 'locale', 'collision', 'empty')
 checks, failures = 0, []
 key = 'lin_api_trusted_snapshot_0123456789'
 
@@ -99,13 +99,25 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.snapshot-trust-locale.') as
         header, _, output = result.stdout.partition(b'\n')
         child = entries(output)
         expected_keep = header.split()[-1:] == [b'1']
+        # A shadowed/empty higher-priority locale binding makes Bash's actual
+        # locale unknowable. The new contract deliberately removes embedded
+        # short secrets too, instead of guessing from a character probe.
+        uncertain = False
+        for name in ('LC_ALL', 'LC_CTYPE', 'LANG'):
+            if name in shadow.split() or (name in env and not env[name]):
+                uncertain = True
+                break
+            if env.get(name):
+                break
+        expected_keep = expected_keep and not uncertain
+        rule = 'strict removal for unknown locale' if uncertain else 'agrees with Bash'
         check(result.returncode == 0 and header.split()[-1:] in ([b'0'], [b'1'])
               and ((b'TZ' in child) == expected_keep)
               and (not expected_keep or child[b'TZ'] == env['TZ'].encode('utf-8', 'surrogateescape')),
-              label + ': TZ agrees with Bash', result)
+              label + ': TZ ' + rule, result)
         if mode == 'default':
             check((b'CARRIER' in child) == expected_keep,
-                  label + ': carrier agrees with Bash', result)
+                  label + ': carrier ' + rule, result)
         check(b'LINEAR_API_KEY' not in child and b'GH_TOKEN' not in child
               and child.get(b'HOME') == directory.encode(), label + ': named secrets removed, child ran', result)
 
@@ -125,7 +137,14 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.snapshot-trust-locale.') as
                                 label = f'{exported}={utf8}/local={shadow}/{len(secret)}/exact={exact}/{mode}/hidden={hidden}'
                                 parity(scripts, dict(env, LINEAR_API_KEY=secret, TZ=carrier, CARRIER=carrier),
                                        shadow, mode, label, hidden)
-            print('CHECKED UTF-8 Bash parity, including exported LC_ALL and all three caller-local names:', utf8)
+            # Normal calls, including hidden secrets, retain the short-secret
+            # exception when the actual locale identity/codeset is known.
+            for mode in ('default', 'clean'):
+                for hidden in (False, True):
+                    parity(scripts, dict(base, LC_ALL=utf8, LINEAR_API_KEY='äääää',
+                                         TZ='prefix-äääää-suffix', CARRIER='prefix-äääää-suffix'),
+                           '', mode, 'known UTF-8/' + mode + '/hidden=' + str(hidden), hidden)
+            print('CHECKED UTF-8 parity and strict unknown-locale removal:', utf8)
 
         # libc and Python codec tables can also disagree on valid legacy
         # multibyte sequences. Keep these installed-locale controls for hidden
@@ -144,12 +163,65 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.snapshot-trust-locale.') as
             for mode in ('default', 'clean'):
                 parity(scripts, dict(base, LC_ALL=name, LINEAR_API_KEY=secret,
                                      TZ=carrier, CARRIER=carrier), 'LC_ALL LC_CTYPE LANG', mode,
-                       'legacy ' + name + '/' + mode, hidden=True)
+                       'legacy unknown ' + name + '/' + mode, hidden=True)
+                parity(scripts, dict(base, LC_ALL=name, LINEAR_API_KEY=secret,
+                                     TZ=carrier, CARRIER=carrier), '', mode,
+                       'legacy same locale ' + name + '/' + mode, hidden=True)
             legacy_seen += 1
         if legacy_seen:
             print('CHECKED legacy multibyte Bash parity:', legacy_seen, 'installed locales')
         else:
             print('SKIP no installed legacy multibyte locales for additional parity controls')
+
+    if section in ('all', 'collision'):
+        available = True
+        for name in ('zh_CN.GB2312', 'ja_JP.SJIS'):
+            try:
+                locale.setlocale(locale.LC_CTYPE, name)
+            except locale.Error:
+                available = False
+        if not available:
+            print('SKIP SJIS/GB2312 collision needs both installed locales')
+        else:
+            calls = {
+                'untrusted-default': 'bureau_untrusted_env /usr/bin/env -0',
+                'untrusted-clean': 'bureau_untrusted_env /usr/bin/env -0',
+                'without': 'bureau_without_secrets /usr/bin/env -0',
+                'curl-scrub': '( _bureau_drop_secrets; /usr/bin/env -0 )',
+            }
+            for effective in ('ja_JP.SJIS', 'zh_CN.GB2312'):
+                same = effective == 'zh_CN.GB2312'
+                for secret in ('äääää', 'abcde'):
+                    for hidden in (False, True):
+                        for wrapper, call in calls.items():
+                            mode = 'clean' if wrapper == 'untrusted-clean' else 'default'
+                            env = {k: v for k, v in base.items()
+                                   if k not in ('LC_ALL', 'LC_CTYPE', 'LANG')}
+                            carrier = 'prefix-' + secret + '-suffix'
+                            env.update(LANG='zh_CN.GB2312', LINEAR_API_KEY=secret,
+                                       CARRIER=carrier, TZ=carrier)
+                            code = ('source "$1/bureau-env.sh"; '
+                                    'bureau_get() { printf "%s" ' + mode + '; }; '
+                                    'LC_ALL=' + effective + '; export -n LC_ALL; '
+                                    '_probe_key=$LINEAR_API_KEY; '
+                                    '_probe=$\'\\303\\244\\342\\202\\254\\360\\237\\230\\200\'; '
+                                    'printf "%s %s\\n" "${#_probe}" "${#_probe_key}"; '
+                                    '/usr/bin/true; '
+                                    '_call() { ' + ('local LINEAR_API_KEY; ' if hidden else '')
+                                    + call + '; }; _call')
+                            result = run(scripts, code, env)
+                            header, _, output = result.stdout.partition(b'\n')
+                            child = entries(output)
+                            label = f'SJIS/GB2312 same={same}/{secret == "abcde"}/hidden={hidden}/{wrapper}'
+                            expected_length = 5 if same or secret == 'abcde' else 10
+                            check(result.returncode == 0 and header == f'6 {expected_length}'.encode(),
+                                  label + ': real Bash collision fixture and child exit', result)
+                            check((b'TZ' in child) == same and
+                                  (mode == 'clean' or (b'CARRIER' in child) == same),
+                                  label + ': same codeset keeps short carriers; mismatch removes all', result)
+                            check(child.get(b'HOME') == directory.encode() and b'LINEAR_API_KEY' not in child,
+                                  label + ': child ran without named secret', result)
+            print('CHECKED colliding six-character probes: effective SJIS vs exported GB2312, plus same-locale controls')
 
     if section in ('all', 'empty'):
         empty_locale = None

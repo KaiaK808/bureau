@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="8184e3e13d6f52b134650aa8162bcb673e2e16a020516b5e24c8481bfbf8a0f1">
+<meta name="bureau-source-sha256" content="695ba2418e35cc7c9b5c8bf930cd125d72845226d3356a2a664716d04a167e25">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -817,24 +817,26 @@ token variables — <code>LINEAR_API_KEY</code>,
 <code>GH_ENTERPRISE_TOKEN</code>, <code>GITHUB_ENTERPRISE_TOKEN</code>
 —, minus any other variable that carries one of their values (a value of
 6 characters or more anywhere inside, a shorter one only as the whole
-value, so a very short secret of 6 or 7 characters can also remove an
-unrelated variable that happens to contain it; the stages copy the
-Linear key into <code>API_KEY</code>, and a token also hides in a remote
-URL or an <code>Authorization</code> header), minus
-<code>BASH_ENV</code> and <code>ENV</code>, which would make the bash
-child source a file before the command runs, and minus
-<code>BUREAU_ENV_FILE</code> and <code>BUREAU_CONFIG</code>, the
-absolute paths to the operator's <code>.env</code> and
-<code>.bureau.json</code> (no secrets; until v3.3.0 the default passed
-them on, and Bureau's own scripts keep reading them). Both modes also
-drop every variable whose name starts with <code>HERDR_</code>
-(including <code>HERDR_ENV</code>, <code>HERDR_SOCKET_PATH</code>,
-<code>HERDR_PANE_ID</code>, <code>HERDR_BIN_PATH</code>,
-<code>HERDR_TAB_ID</code> and <code>HERDR_WORKSPACE_ID</code>), so a
-headless agent's SessionStart hook cannot claim the operator's Herdr
-pane. The prefix exclusion also applies to Bureau's own child-command
-environments and cannot be overridden by an agent login prefix or an
-explicit shell-helper assignment. Other environment rules are unchanged:
+value when the Bash/helper encodings are proven equivalent; unknown or
+different encodings match every nonempty secret anywhere, so a very
+short secret of 6 or 7 characters can also remove an unrelated variable
+that happens to contain it; the stages copy the Linear key into
+<code>API_KEY</code>, and a token also hides in a remote URL or an
+<code>Authorization</code> header), minus <code>BASH_ENV</code> and
+<code>ENV</code>, which would make the bash child source a file before
+the command runs, and minus <code>BUREAU_ENV_FILE</code> and
+<code>BUREAU_CONFIG</code>, the absolute paths to the operator's
+<code>.env</code> and <code>.bureau.json</code> (no secrets; until
+v3.3.0 the default passed them on, and Bureau's own scripts keep reading
+them). Both modes also drop every variable whose name starts with
+<code>HERDR_</code> (including <code>HERDR_ENV</code>,
+<code>HERDR_SOCKET_PATH</code>, <code>HERDR_PANE_ID</code>,
+<code>HERDR_BIN_PATH</code>, <code>HERDR_TAB_ID</code> and
+<code>HERDR_WORKSPACE_ID</code>), so a headless agent's SessionStart
+hook cannot claim the operator's Herdr pane. The prefix exclusion also
+applies to Bureau's own child-command environments and cannot be
+overridden by an agent login prefix or an explicit shell-helper
+assignment. Other environment rules are unchanged:
 <code>MY_HERDR_NOTE</code>, for example, stays in the default mode; the
 clean-mode allowlist still applies. <code>"clean"</code>: only
 <code>PATH</code>, <code>HOME</code>, <code>USER</code>,
@@ -1345,23 +1347,39 @@ cannot replace it and receive the stdin secrets. Install Python 3.9+ on
 that system default PATH; having Python only on a custom shell PATH is
 insufficient. This restriction applies to the snapshot helper; other
 runtime tools retain their existing lookup rules.</p>
-<p>The six-character embedded-secret threshold uses the running Bash's
-character lengths. A multibyte probe measures its effective counting
-behavior without reading shadowable <code>LC_ALL</code>,
-<code>LC_CTYPE</code> or <code>LANG</code> shell variables. Exported
-secret copies reuse Bash's length when their value is visible; hidden
-copies use the real exported locale, checked against that probe. The
-helper starts under <code>C</code> so older system Pythons can
-initialize even with an empty CODESET; the original locale comes from
-the snapshot. It uses UTF-8 character counting when Bash's probe
-establishes it, otherwise libc's own multibyte counting when that agrees
-with Bash, falling back to bytes. Invalid bytes count individually.
-CODESET names are never used as Python codecs, so empty or unrecognized
-names cannot raise <code>LookupError</code>. Thus a five-character UTF-8
-secret such as <code>äääää</code> stays embedded in an otherwise allowed
-value (including <code>TZ</code> in clean mode), even behind
-uninitialized caller-local locale variables. Exact copies are always
-removed.</p>
+<p>The six-character embedded-secret threshold applies only when Bash's
+effective encoding and the helper's encoding are provably the same:
+their resolved nonempty CODESET names or locale identities must match. A
+matching character-probe length is insufficient; SJIS and GB2312 can
+count the same probe identically and a secret differently. Bash's
+highest-priority nonempty <code>LC_ALL</code>, <code>LC_CTYPE</code> or
+<code>LANG</code> binding supplies its locale identity; an empty
+declared binding may hide a still-active outer locale and makes that
+identity unknown. When the identities/codesets differ or cannot be
+established, every nonempty secret is removed anywhere inside another
+variable, regardless of length, for visible and hidden secrets alike.
+This can remove unrelated values containing a short secret, including
+allowed clean-mode variables. Exact copies are always removed.</p>
+<p>With proven equivalence, the existing threshold is unchanged: visible
+secret copies use Bash's measured lengths, hidden exports use the actual
+exported locale and libc multibyte counting (UTF-8 uses
+surrogate-preserving decoding), and invalid bytes count individually.
+Thus a five-character UTF-8 secret such as <code>äääää</code> stays
+embedded in an otherwise allowed value, including clean-mode
+<code>TZ</code>, when the codesets match. The helper starts under
+<code>C</code> so older system Pythons can initialize even with an empty
+CODESET; the original exported locale comes from the snapshot. CODESET
+names are compared as identities, never used as Python codecs, so empty
+or unrecognized names cannot raise <code>LookupError</code>.</p>
+<p>Measured snapshot-filter overhead on macOS is approximately
+<strong>70–80 ms per wrapped call with system Python 3.9</strong>,
+versus <strong>30 ms with Homebrew Python</strong>, across 20–1000
+environment entries in default and clean modes. These are local
+measurements, not a performance guarantee; 100 calls can add roughly 7–8
+seconds with system Python. The snapshot resolver currently follows the
+system default PATH described above; <code>BUREAU_PYTHON</code> does not
+override it. The Homebrew figure is a comparison measurement, not a
+change to the trusted interpreter selection.</p>
 <p>No trusted interpreter, producer/helper failures, pipe failures and
 incomplete or malformed snapshot/decision frames stop before the wrapped
 child starts with 24 (<code>environment-blocked</code>). This holds for

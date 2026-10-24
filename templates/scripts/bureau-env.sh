@@ -427,7 +427,7 @@ _BUREAU_UNTRUSTED_HOST_PREFIXES='HERDR_'
 # Keep the inventory in test_env_malformed_names.sh in step with new locals.
 _BUREAU_ENV_INTERNAL_NAMES='IFS _BUREAU_ENV_INTERNAL_NAMES _BUREAU_ENV_ARGV _BUREAU_ENV_PYTHON _BUREAU_GIT_HOOKS_ENV _BUREAU_GIT_HOOKS_OFF
 _BUREAU_UNTRUSTED_PATHS _BUREAU_UNTRUSTED_HOST_PREFIXES
-_beb_mode _beb_names _beb_startup _beb_name _beb_value _beb_exported _beb_long _beb_short _beb_entry _beb_snapshot _beb_probe
+_beb_mode _beb_names _beb_startup _beb_name _beb_value _beb_exported _beb_long _beb_short _beb_entry _beb_snapshot _beb_locale
 _bec_secret _beh_prefix _bue_filter _bue_trace _bue_check _bue_mode _bue_name _bue_assign_re _bue_assign
 _bws_trace _bws_assign_re _bws_assign _ber_trace _ber_names _ber_name _bgh_trace
 _bg_trace _bg_arg _bg_sub _bg_skip _bg_names _bg_lead _bg_mode _bg_dir _bg_unknown _bg_hooks _bg_hooks_env _bg_operator
@@ -451,12 +451,22 @@ _bureau_env_host_name() {
 _bureau_env_build() {
   local IFS=$' \t\n'
   local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_name _beb_value _beb_entry _beb_snapshot _beb_exported
-  # Measure Bash's actual character counting; caller locals can hide LC_ALL,
-  # LC_CTYPE and LANG without changing the locale Bash is still using. The
-  # two-, three- and four-byte UTF-8 probe also distinguishes legacy encodings.
-  local _beb_probe=$'\303\244\342\202\254\360\237\230\200'
+  # A nonempty locale binding identifies Bash's effective LC_CTYPE. An empty
+  # declared binding may be an uninitialized caller local hiding the locale
+  # Bash still uses, so its identity is unknown. Do not infer equivalence from
+  # character probes: distinct multibyte encodings can count them identically.
+  local _beb_locale=C
+  for _beb_name in LC_ALL LC_CTYPE LANG; do
+    if [ -n "${!_beb_name:-}" ]; then
+      _beb_locale="${!_beb_name}"
+      break
+    elif builtin declare -p "$_beb_name" >/dev/null 2>&1; then
+      _beb_locale=''
+      break
+    fi
+  done
   local -a _beb_long
-  _beb_long=(BUREAU_ENV_INPUT_V1 "${#_beb_probe}")
+  _beb_long=(BUREAU_ENV_INPUT_V1 "$_beb_locale")
   _BUREAU_ENV_ARGV=()
   if [ -z "$_BUREAU_ENV_PYTHON" ]; then
     echo 'bureau environment: no trusted snapshot interpreter; command was not run (24, environment-blocked)' >&2
@@ -494,23 +504,22 @@ prefixes = [name.encode("ascii") for name in prefixes.split()]
 fields = sys.stdin.buffer.read().split(b"\0")
 if len(fields) < 2 or fields.pop(0) != b"BUREAU_ENV_INPUT_V1":
     sys.exit(24)
-if not re.fullmatch(b"[0-9]+", fields[0]):
-    sys.exit(24)
-bash_probe_length = int(fields.pop(0))
+bash_ctype = fields.pop(0).decode("ascii", "surrogateescape")
 long, short = [], []
 lengths = {}
 
 def secret(value, length):
-    if length >= 6:
+    if not value:
+        return
+    if not equivalent or length >= 6:
         long.append(value)
-    elif value:
+    else:
         short.append(value)
 
 for name in names:
     if len(fields) < 2 or not re.fullmatch(b"[0-9]+", fields[0]):
         sys.exit(24)
     lengths[fields[1]] = int(fields[0])
-    secret(fields[1], lengths[fields[1]])
     del fields[:2]
 if fields == [b"", b""]:
     entries = []
@@ -528,11 +537,25 @@ entries = [entry.split(b"=", 1) for entry in entries]
 environment = dict(entries)
 ctype = next((environment[name] for name in (b"LC_ALL", b"LC_CTYPE", b"LANG")
               if environment.get(name)), b"C").decode("ascii", "surrogateescape")
-try:
-    locale.setlocale(locale.LC_CTYPE, ctype)
-except locale.Error:
+def locale_identity(name):
+    if not name:
+        return None
+    try:
+        identity = locale.setlocale(locale.LC_CTYPE, name)
+        return identity, locale.nl_langinfo(locale.CODESET)
+    except (locale.Error, ValueError, UnicodeError):
+        return None
+
+bash_locale = locale_identity(bash_ctype)
+helper_locale = locale_identity(ctype)
+equivalent = bool(bash_locale and helper_locale and (
+    (bash_locale[1] and bash_locale[1] == helper_locale[1])
+    or bash_locale[0] == helper_locale[0]))
+if helper_locale is None:
     locale.setlocale(locale.LC_CTYPE, "C")
-probe = b"\xc3\xa4\xe2\x82\xac\xf0\x9f\x98\x80"
+# Only equal nonempty CODESET names or the same resolved locale establish
+# equivalence. An unknown/mismatched encoding makes EVERY nonempty secret an
+# embedded match, including visible short secrets with known Bash lengths.
 # Bash uses libc multibyte counting. Its locale tables can disagree with
 # Python codecs (or report no CODESET at all), so count through libc too.
 # mblen owns its conversion state; this helper is single-threaded, resets
@@ -554,13 +577,13 @@ def libc_length(value, limit=6):
         length += 1
     return length
 
-if bash_probe_length == 3:
+if helper_locale and helper_locale[1].upper().replace("-", "") == "UTF8":
     def exported_length(value):
         return len(value.decode("utf-8", "surrogateescape"))
-elif libc_length(probe, len(probe)) == bash_probe_length:
-    exported_length = libc_length
 else:
-    exported_length = len
+    exported_length = libc_length
+for value, length in lengths.items():
+    secret(value, length)
 for name, value in entries:
     if name in names:
         secret(value, lengths[value] if value in lengths else exported_length(value))
