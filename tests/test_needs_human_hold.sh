@@ -25,7 +25,7 @@ trap 'rm -rf "$SB"' EXIT
 git -C "$SB" init -q
 HOLD="$SB/.git/bureau/needs-human-held"
 # The picker as it was: the hold lines in pipeline_pick_next taken out again.
-mkdir -p "$SB/old"; cp "$SCRIPTS"/*.sh "$SB/old/"
+mkdir -p "$SB/old"; cp "$SCRIPTS"/*.sh "$SCRIPTS/bureau-runtime.py" "$SCRIPTS/bureau-evidence.py" "$SB/old/"
 python3 - "$SCRIPTS/bureau-config.sh" "$SB/old/bureau-config.sh" <<'PYOLD'
 import re, sys
 s = open(sys.argv[1]).read()
@@ -215,12 +215,14 @@ real ok 'bureau_is_paused && echo PAUSED'
 # An explicit BUREAU_CONFIG outside any git repository falls back to the current directory's
 # repository, with a warning, instead of switching holds and the pause marker off.
 NOGIT=$(mktemp -d -t bureau-test.nogit.XXXXXXXX); cp "$SB/.bureau.json" "$NOGIT/"
+# Keep this fixture outside Git discovery even when TMPDIR lives in the checkout.
+NOGIT_CEILING=$(dirname "$NOGIT")
 touch "$SB/.git/bureau/paused"
-real ok "export BUREAU_CONFIG='$NOGIT/.bureau.json'; bureau_is_paused && echo PAUSED"
+real ok "export GIT_CEILING_DIRECTORIES='$NOGIT_CEILING' BUREAU_CONFIG='$NOGIT/.bureau.json'; bureau_is_paused && echo PAUSED"
 [ "$OUT" = PAUSED ] || fail "config outside git: the pause marker of the current repo was not seen"
 case "$ERR" in *"is not inside a git repository"*) ;; *) fail "config outside git: no warning" ;; esac
 rm -f "$SB/.git/bureau/paused"
-real none "export BUREAU_CONFIG='$NOGIT/.bureau.json'; mark_needs_human EXP-5 qa"
+real none "export GIT_CEILING_DIRECTORIES='$NOGIT_CEILING' BUREAU_CONFIG='$NOGIT/.bureau.json'; mark_needs_human EXP-5 qa"
 [ -f "$HOLD/EXP-5" ] || fail "config outside git: the hold was not written into the current repo"
 rm -f "$HOLD/EXP-5"; rm -rf "$NOGIT"
 

@@ -247,7 +247,7 @@ ALLOCATED_DIR=$(cd "$WANTED_DIR" && pwd -P)
 jq -n --arg dir "$ALLOCATED_DIR" '{feature_directory:$dir}' > .specify/feature.json
 export SPECIFY_FEATURE="$ALLOCATED_NAME" SPECIFY_FEATURE_DIRECTORY="$ALLOCATED_DIR"
 
-"${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-specify/SKILL.md and follow its instructions exactly.
+BUREAU_PROVIDER_PHASE=specify "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-specify/SKILL.md and follow its instructions exactly.
 
 Populate the already allocated feature in $ALLOCATED_DIR.
 The feature helper has already run with --number $SPEC_NUMBER. Do not run create-new-feature again,
@@ -287,14 +287,14 @@ echo "  branch ready: $(git branch --show-current)"
 
 echo ""
 echo "Phase 2/5: plan"
-"${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-plan/SKILL.md and follow its instructions exactly.
+BUREAU_PROVIDER_PHASE=plan "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-plan/SKILL.md and follow its instructions exactly.
 Work on the spec in $SPEC_DIR (and no other directory under $BUREAU_SPECS_DIR/)."
 echo ""
 echo "  plan complete"
 
 echo ""
 echo "Phase 3/5: tasks"
-"${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-tasks/SKILL.md and follow its instructions exactly.
+BUREAU_PROVIDER_PHASE=tasks "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-tasks/SKILL.md and follow its instructions exactly.
 Work on the spec in $SPEC_DIR (and no other directory under $BUREAU_SPECS_DIR/)."
 echo ""
 echo "  tasks complete"
@@ -346,7 +346,7 @@ PREV_DIGEST=$(get_issue_comments "$ISSUE" \
   | jq -r '[.[] | select(.body | test("\\*\\*Spec Artifacts —"))][0].body // ""' 2>/dev/null || echo "")
 SPEC_DIGEST=""
 if [ -n "$SPEC_DIR" ]; then
-  SPEC_DIGEST=$("${CLAUDE[@]}" "Read the spec artifacts in $SPEC_DIR and write a digest for a Linear comment.
+  SPEC_DIGEST=$(BUREAU_PROVIDER_PHASE=digest "${CLAUDE[@]}" "Read the spec artifacts in $SPEC_DIR and write a digest for a Linear comment.
 
 Previous digest on this issue (may be empty if this is the first spec run):
 ---PREV---

@@ -32,6 +32,7 @@ write_result() {
 if bureau_is_paused; then OUTCOME=paused; write_result; exit 0; fi
 case "$MODE" in all|spec|spec_review|ux|copy|implement|qa|code_review|merge|rebase) ;; *) echo 'Unknown stage' >&2; exit 1 ;; esac
 if ! (precondition_linear); then RC=10; OUTCOME=failed; write_result; exit 10; fi
+if declare -F bureau_sweep_waits >/dev/null; then bureau_sweep_waits || true; fi
 # A ticket waiting on its merge gate (merge_gate_waits in bureau-config.sh) does not take
 # the tick while another stage has work (v3.2). With --allow-merge over all stages, a stage
 # whose only pick is such a ticket is passed over (pipeline_pick_next marks that pick), and

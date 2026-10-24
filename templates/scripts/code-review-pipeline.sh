@@ -33,11 +33,13 @@ REVIEW_TMP=$(mktemp -d)
 # both are clean early exits with no specialist output to inspect.
 _review_cleanup() {
   local rc=$?
+  bureau_archive_evidence "$REVIEW_TMP" 'code review specialist outputs and gate reports' || true
   if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
-    rm -rf "$REVIEW_TMP"
+    rm -rf "$REVIEW_TMP" || true
   else
-    echo "code-review failed (exit $rc). Specialist outputs preserved at $REVIEW_TMP" >&2
+    ( echo "code-review failed (exit $rc). Specialist outputs preserved at $REVIEW_TMP" >&2 ) || true
   fi
+  return "$rc"
 }
 trap _review_cleanup EXIT
 
@@ -151,6 +153,7 @@ if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url')
+bureau_evidence evidence-pr --number "$PR_NUMBER" --url "$PR_URL" || true
 echo "  PR: #$PR_NUMBER ($PR_URL)"
 
 PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
@@ -349,7 +352,7 @@ if [ "$_cav" != "off" ]; then
 fi
 
 echo "  Starting correctness review..."
-"${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a CORRECTNESS specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
+BUREAU_PROVIDER_PHASE=correctness "${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a CORRECTNESS specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
 
 $SPEC_CONTEXT
 
@@ -371,7 +374,7 @@ Emit human-readable prose for the PR reviewer, then a SINGLE fenced json block a
 CORRECT_PID=$!
 
 echo "  Starting security review..."
-"${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a SECURITY specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
+BUREAU_PROVIDER_PHASE=security "${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a SECURITY specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
 
 $SPEC_CONTEXT
 
@@ -393,7 +396,7 @@ Emit human-readable prose, then a SINGLE fenced json block:
 SEC_PID=$!
 
 echo "  Starting performance review..."
-"${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a PERFORMANCE specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
+BUREAU_PROVIDER_PHASE=performance "${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a PERFORMANCE specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
 
 $SPEC_CONTEXT
 
@@ -452,7 +455,7 @@ done
 echo ""
 echo "  Merging findings..."
 
-MERGED_RAW=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-review.schema.json" "${CAVEMAN_PREFIX}Merge these three specialist reviews into a single verdict for PR #$PR_NUMBER ($ISSUE — $ISSUE_TITLE).
+MERGED_RAW=$(BUREAU_PROVIDER_PHASE=verdict "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-review.schema.json" "${CAVEMAN_PREFIX}Merge these three specialist reviews into a single verdict for PR #$PR_NUMBER ($ISSUE — $ISSUE_TITLE).
 
 ### Correctness
 $CORRECTNESS_REVIEW
@@ -490,8 +493,9 @@ echo "Phase 2/3: build check"
 # comment, never "Passed", and the verdict stays as the reviewers gave it. The
 # command runs in this worktree under pipefail (as QA's runs do), and the
 # verdict comes from its own exit status, never from a pipe into `tail`. Its full
-# output is REVIEW_TMP/build.log, which survives only when the stage exits
-# non-zero; the last 20 lines are always in the stage output.
+# output is REVIEW_TMP/build.log; run evidence retains only its full-stream
+# digest, size, command ID/digest, exit and HEADs. The last 20 lines are always
+# in the stage output.
 #
 # A reused approval that was recorded while the merge gate was not yet decided
 # (REUSED_GATE_WAIT) carries the build check that passed for exactly this head, this
@@ -523,7 +527,9 @@ elif [ -n "$BUILD_CMD" ]; then
   BUILD_TREE_BEFORE=$(git status --porcelain --untracked-files=all 2>/dev/null | sort || true)
   # PR code: runs without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).
   bureau_untrusted_env --check || exit 24
+  BUILD_EVIDENCE_HEAD=$(git rev-parse HEAD 2>/dev/null) || BUILD_EVIDENCE_HEAD=""
   bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
+  bureau_record_gate "$REVIEW_TMP/build.log" "$BUILD_EVIDENCE_HEAD" "$BUILD_CMD" "$BUILD_RC" review.build || true
   BUILD_LOG_LINES=$(wc -l < "$REVIEW_TMP/build.log" | tr -d ' ')
   BUILD_LOG_LINES=$(bureau_number review.build_log_lines "$BUILD_LOG_LINES" 0 0 9999999999)
   [ "$BUILD_LOG_LINES" -le 20 ] || echo "  Build output: last 20 of $BUILD_LOG_LINES lines"
@@ -642,6 +648,7 @@ case "$VERDICT" in
       echo "  APPROVED — routing to Merge for a manual merge (agents.merge_mode manual)."
       post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual)."
       move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
+      bureau_evidence wait-open "$ISSUE" --key approval --kind decision --reason 'Approved PR awaits manual merge' --actor maintainer --stage code_review --pr "$PR_NUMBER" --generation "$REVIEW_HEAD" || true
       NEXT_STATE="Merge (manual)"
     elif bureau_stop_requested; then
       # Save before the owning worker releases its lease, closing the gap where
@@ -657,6 +664,7 @@ case "$VERDICT" in
     elif agent_enabled "merge" && [ -n "${BUREAU_STATE_MERGE:-}" ]; then
       post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaiting merge gate."
       move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
+      bureau_evidence wait-open "$ISSUE" --key merge-queue --kind dependency --reason 'Approved PR awaits the merge worker' --actor merge-worker --stage merge || true
       NEXT_STATE="Merge"
     else
       # Keep inline completion, but use exactly the same full gate set and JIT

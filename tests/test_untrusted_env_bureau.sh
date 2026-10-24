@@ -298,7 +298,7 @@ repo "$R"
 # F1: the git() helpers of bureau-supervision.py and bureau-runtime.py: `git status` runs the
 # branch's fsmonitor hook (the workspace and checkpoint checks run it in a stage worktree).
 py_git_status() {  # <scripts dir>
-  (cd "$R" && env "${PROBES[@]}" python3 -I - "$1" "$R" <<'PY'
+  (cd "$R" && env "${PROBES[@]}" python3 -I -B - "$1" "$R" <<'PY'
 import importlib.util, sys
 from pathlib import Path
 for name in ('supervision', 'runtime'):

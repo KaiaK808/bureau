@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="402e46fa269b5616a8bdf14ca9458c2c54ac5fc3282b452b5f2ddc7e9ffa7065">
+<meta name="bureau-source-sha256" content="ae1ec85bfc93ef610d4a5bf4bd665fc77c36b19788bc70f3eedd94d9243ca980">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -195,6 +195,38 @@ without reading the transcript. With no transcript or no such call, the
 envelope is handled as before (22 for a prose-only result); calls
 without a schema do not attempt recovery. Codex still reads its final
 message from <code>final.txt</code>.</p>
+<p>Every provider invocation attempts to write a version 1 receipt under
+<code>&lt;git common dir&gt;/bureau/evidence/v1/runs/RUN_ID/receipts/PROVIDER_ATTEMPT_ID.json</code>.
+The metadata-only receipt includes a digest of the validated structured
+result (never its free text), normalized/provider exits,
+issue/stage/phase identity, start/end HEAD, timestamps and pointers to
+the original provider files. Manifest/link/diagnostic failures are
+observational; receipt persistence before forwarding success remains
+mandatory. <code>result.json</code> links it through
+<code>receipt</code>, <code>provider_attempt_id</code> and
+<code>stage_attempt_id</code>. Standalone adapter calls get their own
+evidence run/attempt; a rejected <code>--session-id</code> retry gets
+another provider attempt. Background calls inherit the driver's run and
+stage-attempt identity. A stopped stdout consumer cannot erase an
+already persisted completion.</p>
+<p>If successful output becomes missing or prose-only between
+persistence and forwarding, the adapter reconciles only the exact
+attempt's receipt, reads the original provider result, verifies its full
+digest and schema, and requires matching run, ticket, stage attempt,
+stage/phase, schema hash and current end HEAD. A missing or changed
+original fails recovery. It records
+<code>structured_source: "receipt"</code>. There is no latest-receipt
+scan or fallback to another specialist/ticket/attempt. An invalid
+provider result is still 22 without valid same-attempt evidence
+(Claude's same-session transcript recovery above remains first);
+provider failures, timeout 124 and cancellation 130 cannot be promoted
+by a previous receipt or committed work. A success receipt write failure
+emits no successful output; error receipts are best effort. Original
+<code>logs/provider-runs/</code> and transcript pointers remain
+diagnostic locations; durable receipts and gate digests survive
+disposable-worker cleanup. See <a
+href="stage-protocol.html#versioned-background-evidence">the shared
+evidence schema and retention</a>.</p>
 <p>Claude <code>/goal</code> and Headroom are Claude capabilities.
 Claude stages with tools pass
 <code>--disallowedTools ScheduleWakeup,CronCreate,CronDelete,RemoteTrigger,Monitor</code>,

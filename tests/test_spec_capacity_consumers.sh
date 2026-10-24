@@ -7,7 +7,7 @@ trap 'rm -rf "$SB"' EXIT
 mkdir -p "$SB/scripts" "$SB/bin"
 git -C "$SB" init -q -b main
 git -C "$SB" -c user.email=t@bureau -c user.name=test commit -qm init --allow-empty
-cp "$ROOT/templates/scripts/bureau-tick.sh" "$ROOT/templates/scripts/queue-loop.sh" "$ROOT/templates/scripts/bureau-supervision.py" "$ROOT/templates/scripts/bureau-env.sh" "$SB/scripts/"
+cp "$ROOT/templates/scripts/bureau-tick.sh" "$ROOT/templates/scripts/queue-loop.sh" "$ROOT/templates/scripts/bureau-supervision.py" "$ROOT/templates/scripts/bureau-env.sh" "$ROOT/templates/scripts/bureau-evidence.py" "$SB/scripts/"
 cat > "$SB/scripts/bureau-config.sh" <<'CFG'
 source "$(dirname "${BASH_SOURCE[0]}")/bureau-env.sh"
 BUREAU_ENV_FILE=/dev/null

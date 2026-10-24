@@ -12,7 +12,7 @@ import unittest
 import uuid
 
 ROOT=Path(__file__).resolve().parents[1]
-SCRIPT=ROOT/'templates/scripts/bureau-provider.py'
+SCRIPT=Path(os.environ.get('BUREAU_TEST_PROVIDER_SCRIPT',ROOT/'templates/scripts/bureau-provider.py'))
 spec=importlib.util.spec_from_file_location('provider',SCRIPT)
 p=importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
 
@@ -27,6 +27,10 @@ class ProviderTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(prefix='bureau provider '); self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name); self.bin=self.root/'bin'; self.bin.mkdir()
+        subprocess.run(['git', '-C', str(self.root), 'init', '-q'], check=True)
+        subprocess.run(['git', '-C', str(self.root), 'config', 'maintenance.auto', 'false'], check=True)
+        subprocess.run(['git', '-C', str(self.root), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                        'commit', '-q', '--allow-empty', '-m', 'fixture'], check=True)
         self.config=self.root/'config.json'; self.config.write_text('{"agents":{"runner":"codex"}}')
         self.prompt=self.root/'prompt.txt'; self.prompt.write_text('Review this fixture')
         fake='#!'+sys.executable+'''
@@ -87,6 +91,7 @@ if name=='codex' and 'CODEX_STREAM' in os.environ:
 if os.environ.get('FAIL'):
     print(os.environ['FAIL'],file=sys.stderr); sys.exit(1)
 final=os.environ.get('FINAL','final response')
+if os.environ.get('FINAL_FILE'): final=pathlib.Path(os.environ['FINAL_FILE']).read_text()
 if name=='codex':
     output=sys.argv[sys.argv.index('-o')+1]
     if not os.environ.get('EMPTY'): pathlib.Path(output).write_text(final)
@@ -850,6 +855,7 @@ p.Path.open=refuse_transcript_read
         changed="        return {**(os.environ if env is None else env), 'CLAUDE_CONFIG_DIR': options['config_dir']}\n"
         self.assertEqual(source.count(changed),1,'the control no longer matches the adapter')
         control=self.root/'control'/'bureau-provider.py'; control.parent.mkdir(exist_ok=True)
+        shutil.copy(SCRIPT.with_name('bureau-evidence.py'), control.parent / 'bureau-evidence.py')
         control.write_text(source.replace(changed,'        return env\n'))
         return control
 
@@ -1179,5 +1185,241 @@ p.Path.open=refuse_transcript_read
         self.run_provider()
         self.assertIn('--session-id',json.loads((self.root/'argv.json').read_text()))
         self.assertEqual(sorted(path.name for path in (self.root/'evidence').iterdir() if path.name.startswith('.claude-cli.json.')),[])
+
+    def receipt_schema(self):
+        path=self.root/'receipt.schema.json'
+        path.write_text(json.dumps({'type':'object','required':['status'],
+                                    'properties':{'status':{'enum':['COMPLETE']}}}))
+        return path
+
+    def receipts(self):
+        return [json.loads(path.read_text()) for path in (self.root/'.git/bureau/evidence/v1/runs').glob('*/receipts/*.json')]
+
+    def test_entire_store_contains_only_metadata_and_digests(self):
+        schema=self.receipt_schema()
+        sentinels=['PRIVATE_DESCRIPTION_SENTINEL', 'lin_api_abcdefPRIVATE_TOKEN_SENTINEL',
+                   'ghp_1234567890ABCDEF_PRIVATE_TOKEN_SENTINEL', 'short']
+        payload={'status':'COMPLETE','description':' '.join(sentinels),'summary':' '.join(sentinels)}
+        payload_file=self.root/'private-provider-result.json';payload_file.write_text(json.dumps(payload))
+        self.run_provider('--schema',str(schema),FINAL_FILE=str(payload_file),BUREAU_CURRENT_ISSUE='TEAM-1',
+                          LINEAR_API_KEY=sentinels[1],TELEGRAM_BOT_TOKEN=sentinels[3],
+                          TOKEN_CARRIER='prefix-'+sentinels[1]+'-suffix')
+        receipt=self.receipts()[0]
+        store=p.e.Store(self.root/'.git/bureau'); run=receipt['run_id']; attempt=receipt['stage_attempt_id']
+        source=self.root/'review-artifact.txt'; source.write_text(' '.join(sentinels))
+        command='printf '+json.dumps(' '.join(sentinels))
+        head=p.current_head(self.root)
+        for kind in ('gate','artifact'):
+            store.gate(run,attempt,source,head,head,command,1,kind)
+        # Wait diagnostics and PR URL query strings cannot smuggle text either.
+        store.open_wait('TEAM-1','approval','decision',' '.join(sentinels),' '.join(sentinels))
+        store.set_pr(run,attempt,{'number':12,'url':'https://example.invalid/pull/12?token='+sentinels[1]})
+        files=[path for path in store.root.rglob('*') if path.is_file()]
+        self.assertGreater(len(files),3)
+        for path in files:
+            raw=path.read_bytes()
+            for sentinel in sentinels: self.assertNotIn(sentinel.encode(),raw,'PRIVACY_SENTINEL in '+str(path))
+        self.assertEqual(receipt['result_sha256'],p.e.digest(payload))
+        self.assertIsNone(receipt['structured_result'])
+        self.assertFalse(list(store.root.rglob('*.log')))
+
+    def test_optional_evidence_failures_do_not_stop_provider_or_change_error_exit(self):
+        schema=self.receipt_schema()
+        result=self.run_wrapped_provider('''
+def unavailable(*args,**kwargs): raise OSError('injected optional evidence failure')
+p.e.Store.begin_run=unavailable
+p.e.Store.begin_attempt=unavailable
+p.e.Store.end_attempt=unavailable
+p.e.Store._link_receipt=unavailable
+''','--schema',str(schema),FINAL='{"status":"COMPLETE"}')
+        self.assertEqual(json.loads(result.stdout),{'status':'COMPLETE'})
+        self.assertEqual(len(self.receipts()),1)
+        self.assertEqual(result.stderr.count('bureau evidence: WARN:'),1)
+        result=self.run_wrapped_provider('''
+def unavailable(*args,**kwargs): raise OSError('injected optional evidence failure')
+p.e.Store.begin_run=unavailable
+p.e.Store.begin_attempt=unavailable
+p.e.Store.put_receipt=unavailable
+p.e.Store.end_attempt=unavailable
+''','--schema',str(schema),code=124,SLEEP='2',BUREAU_STAGE_TIMEOUT='.05')
+        self.assertEqual(result.stdout,''); self.assertEqual(result.stderr.count('bureau evidence: WARN:'),1)
+
+    def test_evidence_identity_lookup_failures_preserve_provider_outcomes(self):
+        schema=self.receipt_schema()
+        for when in ('start', 'end', 'store'):
+            for code, env in ((0, {}), (16, {'FAIL':'Not logged in'}), (22, {'FAIL':'provider failure'}),
+                              (23, {'FAIL':'quota exceeded'}), (24, {'FAIL':'Permission denied by sandbox'}),
+                              (124, {'SLEEP':'2', 'BUREAU_STAGE_TIMEOUT':'.05'})):
+                with self.subTest(when=when, code=code):
+                    result=self.run_wrapped_provider('''
+original_head=p.current_head
+head_calls=0
+def unavailable_head(repo):
+    global head_calls
+    head_calls+=1
+    if head_calls == (1 if os.environ['FAIL_WHEN']=='start' else 2):
+        raise OSError('injected evidence HEAD lookup failure')
+    return original_head(repo)
+def unavailable_store(repo): raise OSError('injected evidence store lookup failure')
+if os.environ['FAIL_WHEN']=='store': p.evidence_store=unavailable_store
+else: p.current_head=unavailable_head
+''','--schema',str(schema),code=22 if when=='store' and code==0 else code,
+                        FINAL='{"status":"COMPLETE"}',FAIL_WHEN=when,**env)
+                    self.assertEqual(bool(result.stdout),code==0 and when!='store')
+                    self.assertEqual(result.stderr.count('bureau evidence: WARN:'),1)
+                    if when=='store' and code==0: self.assertIn('completion receipt store unavailable',result.stderr)
+                    if code==124: self.assertIn('Bureau provider outcome: timeout',result.stderr)
+
+    def test_unestablished_capacity_never_forwards_success(self):
+        schema=self.receipt_schema()
+        result=self.run_wrapped_provider('''
+def unavailable(*args,**kwargs): raise RuntimeError('injected pruning failure')
+p.e.Store._prune=unavailable
+''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}')
+        self.assertEqual(result.stdout,'')
+        self.assertEqual(self.receipts(),[])
+
+    def test_receipt_recovery_requires_original_result_with_matching_digest(self):
+        schema=self.receipt_schema()
+        for replacement in ('deleted','{"status":"COMPLETE","different":true}'):
+            result=self.run_wrapped_provider('''
+recorded=p.run
+def unavailable_original(*args,**kwargs):
+    code,text,metadata=recorded(*args,**kwargs)
+    directory=pathlib.Path(json.loads(pathlib.Path(metadata['receipt']).read_text())['provider_logs'])
+    if os.environ['REPLACEMENT']=='deleted': (directory/'final.txt').unlink()
+    else: (directory/'final.txt').write_text(os.environ['REPLACEMENT'])
+    return code,'lost forwarding',metadata
+p.run=unavailable_original
+''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}',REPLACEMENT=replacement)
+            self.assertEqual(result.stdout,''); self.assertIn('no matching completion receipt',result.stderr)
+
+    def test_completion_receipt_is_durable_before_stdout(self):
+        schema=self.receipt_schema()
+        result=self.run_wrapped_provider('''
+emit=print
+def verified_print(value, *args, **kwargs):
+    if isinstance(value,str) and 'COMPLETE' in value:
+        receipts=list((root/'.git/bureau/evidence/v1/runs').glob('*/receipts/*.json'))
+        assert len(receipts)==1, 'result forwarded before receipt'
+        receipt=json.loads(receipts[0].read_text())
+        assert receipt['structured_result'] is None
+        assert receipt['result_sha256']==p.e.digest({'status':'COMPLETE'})
+        assert receipt['normalized_exit']==0
+        (root/'before-stdout').write_text(str(receipts[0]))
+    return emit(value,*args,**kwargs)
+p.print=verified_print
+''','--schema',str(schema),'--phase','iteration-1',FINAL='{"status":"COMPLETE"}',BUREAU_CURRENT_ISSUE='TEAM-1')
+        self.assertEqual(json.loads(result.stdout),{'status':'COMPLETE'})
+        path=Path((self.root/'before-stdout').read_text())
+        receipt=json.loads(path.read_text())
+        self.assertEqual(receipt['schema_version'],1)
+        self.assertEqual(receipt['phase'],'iteration-1')
+        self.assertEqual(receipt['start_head'],receipt['end_head'])
+        self.assertEqual(receipt['provider_exit'],0)
+        self.assertEqual(path.stat().st_mode & 0o777,0o600)
+        self.assertTrue(all(pth.stat().st_mode & 0o777 == 0o700 for pth in path.parents if pth.name in ('v1','receipts','runs')))
+
+    def test_stopped_stdout_consumer_keeps_completion_receipt(self):
+        schema=self.receipt_schema()
+        proc=subprocess.Popen(self.command('--schema',str(schema)),stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                              env={**self.env,'FINAL':'{"status":"COMPLETE"}','SLEEP':'.1'})
+        proc.stdout.close(); proc.stdout=None
+        _,stderr=proc.communicate(timeout=8)
+        self.assertEqual(proc.returncode,0,stderr.decode())
+        receipts=self.receipts(); self.assertEqual(len(receipts),1)
+        self.assertIsNone(receipts[0]['structured_result'])
+        self.assertEqual(receipts[0]['result_sha256'],p.e.digest({'status':'COMPLETE'}))
+        self.assertEqual(receipts[0]['normalized_exit'],0)
+
+    def test_parallel_tickets_keep_distinct_completion_receipts(self):
+        schema=self.receipt_schema()
+        children=[]
+        for issue in ('TEAM-1','TEAM-2'):
+            payload=json.dumps({'status':'COMPLETE','ticket':issue})
+            proc=subprocess.Popen(self.command('--schema',str(schema)),stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                                  env={**self.env,'FINAL':payload,'BUREAU_CURRENT_ISSUE':issue,'SLEEP':'.1'})
+            children.append((issue,proc))
+        for issue,proc in children:
+            out,err=proc.communicate(timeout=8)
+            self.assertEqual(proc.returncode,0,err.decode())
+            self.assertEqual(json.loads(out)['ticket'],issue)
+        receipts=self.receipts(); self.assertEqual(len(receipts),2)
+        self.assertEqual(len({v['run_id'] for v in receipts}),2)
+        self.assertEqual(len({v['provider_attempt_id'] for v in receipts}),2)
+        for receipt in receipts:
+            self.assertIsNone(receipt['structured_result'])
+            self.assertEqual(receipt['result_sha256'],p.e.digest({'status':'COMPLETE','ticket':receipt['issue']}))
+
+    def test_prose_or_missing_forwarded_result_recovers_only_own_receipt(self):
+        schema=self.receipt_schema()
+        for lost,cost in [('',False),('A late wakeup answered in prose',False),('',True),('Late prose',True)]:
+            with self.subTest(lost=lost,cost=cost):
+                result=self.run_wrapped_provider('''
+recorded=p.run
+def lost_result(*args,**kwargs):
+    code,text,metadata=recorded(*args,**kwargs)
+    return code,os.environ['LOST_RESULT'],metadata
+p.run=lost_result
+''','--schema',str(schema),FINAL='{"status":"COMPLETE"}',LOST_RESULT=lost,BUREAU_COST_TRACKING='1' if cost else '0')
+                value=json.loads(result.stdout)
+                if cost:
+                    self.assertEqual(value['provider'],'codex'); value=json.loads(value['result'])
+                self.assertEqual(value,{'status':'COMPLETE'})
+        self.assertEqual(len(self.receipts()),4)
+
+    def test_foreign_receipt_and_stale_head_never_reconcile(self):
+        schema=self.receipt_schema()
+        for field,foreign in [('issue','TEAM-2'),('provider_attempt_id','f'*32),('run_id','a'*32),
+                              ('stage','qa'),('phase','other-reviewer'),('end_head','0'*40)]:
+            with self.subTest(field=field):
+                result=self.run_wrapped_provider('''
+recorded=p.run
+def foreign_receipt(*args,**kwargs):
+    code,text,metadata=recorded(*args,**kwargs)
+    path=pathlib.Path(metadata['receipt']); value=json.loads(path.read_text())
+    value[os.environ['FOREIGN_FIELD']]=os.environ['FOREIGN_VALUE']
+    p.e.atomic(path,value)
+    return code,'late prose',metadata
+p.run=foreign_receipt
+''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}',BUREAU_CURRENT_ISSUE='TEAM-1',
+                    FOREIGN_FIELD=field,FOREIGN_VALUE=foreign)
+                self.assertEqual(result.stdout,'')
+                self.assertIn('no matching completion receipt',result.stderr)
+
+    def test_foreign_attempt_in_another_path_is_never_used(self):
+        schema=self.receipt_schema()
+        self.run_wrapped_provider('''
+recorded=p.run
+def moved_receipt(*args,**kwargs):
+    code,text,metadata=recorded(*args,**kwargs)
+    path=pathlib.Path(metadata['receipt']); value=json.loads(path.read_text())
+    value['provider_attempt_id']='f'*32; value['issue']='TEAM-2'
+    p.e.atomic(path.with_name('f'*32+'.json'),value); path.unlink()
+    return code,'late prose',metadata
+p.run=moved_receipt
+''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}',BUREAU_CURRENT_ISSUE='TEAM-1')
+
+    def test_receipt_write_failure_never_forwards_success(self):
+        schema=self.receipt_schema()
+        result=self.run_wrapped_provider('''
+def denied(*args,**kwargs): raise OSError('receipt disk failure')
+p.e.Store.put_receipt=denied
+''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}')
+        self.assertEqual(result.stdout,''); self.assertIn('receipt disk failure',result.stderr)
+
+    def test_commits_and_prior_receipts_do_not_turn_timeout_or_provider_error_into_success(self):
+        schema=self.receipt_schema()
+        self.run_provider('--schema',str(schema),FINAL='{"status":"COMPLETE"}')
+        before=p.current_head(self.root)
+        # Work can be committed before a provider fails; the outcome is still an error.
+        subprocess.run(['git','-C',str(self.root),'-c','user.name=Test','-c','user.email=test@example.invalid',
+                        'commit','-q','--allow-empty','-m','work completed'],check=True)
+        self.assertNotEqual(before,p.current_head(self.root))
+        for code,env in [(124,{'SLEEP':'2','BUREAU_STAGE_TIMEOUT':'.05'}),(22,{'FAIL':'provider failed'})]:
+            result=self.run_provider('--schema',str(schema),code=code,**env)
+            self.assertEqual(result.stdout,'')
+            receipt=max(self.receipts(),key=lambda v:v['started_at'])
+            self.assertEqual(receipt['normalized_exit'],code); self.assertIsNone(receipt['structured_result'])
 
 if __name__=='__main__': unittest.main()

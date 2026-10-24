@@ -35,6 +35,7 @@ cat > "$SANDBOX/.bureau.json" <<'EOF'
 EOF
 
 cd "$SANDBOX"
+git init -q
 # shellcheck disable=SC1091
 source "$REPO_ROOT/templates/scripts/bureau-config.sh"
 

@@ -13,6 +13,7 @@ assertions below cannot pass on a fixture that never carried one.
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -70,6 +71,8 @@ class UntrustedEnvProviderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau untrusted env '); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name); self.bin = self.root / 'bin'; self.bin.mkdir()
+        subprocess.run(['git', '-C', str(self.root), 'init', '-q'], check=True)
+        subprocess.run(['git', '-C', str(self.root), 'config', 'maintenance.auto', 'false'], check=True)
         for name in ('claude', 'codex'):
             path = self.bin / name; path.write_text(FAKE); path.chmod(0o755)
         self.config = self.root / 'config.json'
@@ -270,6 +273,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         kept = source.replace(' and name not in UNTRUSTED_PATHS\n', '\n')
         self.assertNotEqual(kept, source, 'the control could not remove the UNTRUSTED_PATHS check')
         copy = self.root / 'bureau-provider-keep.py'; copy.write_text(kept)
+        shutil.copy(SCRIPT.with_name('bureau-evidence.py'), self.root / 'bureau-evidence.py')
         control_spec = importlib.util.spec_from_file_location('provider_keep', copy)
         control = importlib.util.module_from_spec(control_spec); control_spec.loader.exec_module(control)
         reduced = control.untrusted_env({**PATHS, 'PATH': '/bin'}, 'default', 'claude')

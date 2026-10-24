@@ -73,7 +73,7 @@ else:
 print(json.dumps({'data': data}))
 PY
 # GitHub: the open PR #7 against main (the --no-merge review boundary check asks for it).
-printf '#!/bin/sh\ncase "$*" in "pr view 7 --json state,baseRefName") echo %s ;; *) exit 9 ;; esac\n' \
+printf '#!/bin/sh\ncase "$*" in "pr view 7 --json state,baseRefName,mergedAt") echo %s ;; *) exit 9 ;; esac\n' \
   "'{\"state\":\"OPEN\",\"baseRefName\":\"main\"}'" > "$SB/bin/gh"
 chmod +x "$SB/bin/curl" "$SB/bin/gh"
 

@@ -91,6 +91,7 @@ BUREAU_MODEL_DEFAULT=""
 BUREAU_MODEL_IMPLEMENT=""
 
 # ── Helpers ──────────────────────────────────────────────────────────────
+BUREAU_RUNTIME="$(dirname "${BASH_SOURCE[0]}")/bureau-runtime.py"
 
 claude_cmd_for_stage() {
   echo "${FAKE_CLAUDE_BIN:?FAKE_CLAUDE_BIN must be set by harness}"

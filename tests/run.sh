@@ -5,6 +5,7 @@
 # Spec admission/number allocation coverage is registered by discovery below:
 # test_in_flight_count.sh, test_shepherd.sh, test_spec_number_alloc.sh,
 # test_spec_feature_json.sh and test_spec_capacity_consumers.sh.
+# Evidence/receipt/wait mutation controls: test_evidence_negative_controls.sh.
 set -uo pipefail
 
 cd "$(dirname "$0")"
