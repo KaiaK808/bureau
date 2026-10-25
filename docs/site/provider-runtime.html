@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="bfe8a6b1ea0f924ad705fa7e163bdb9dbea25297ee32d3052c4a965875958ec5">
+<meta name="bureau-source-sha256" content="eeff68dd51d08c9be83b3ff9487a6fa96a915cfb8e42127e38d26cfd59af4871">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -200,15 +200,24 @@ message from <code>final.txt</code>.</p>
 The metadata-only receipt includes a digest of the validated structured
 result (never its free text), normalized/provider exits,
 issue/stage/phase identity, start/end HEAD, timestamps and pointers to
-the original provider files. Manifest/link/diagnostic failures are
-observational; receipt persistence before forwarding success remains
-mandatory. <code>result.json</code> links it through
-<code>receipt</code>, <code>provider_attempt_id</code> and
-<code>stage_attempt_id</code>. Standalone adapter calls get their own
-evidence run/attempt; a rejected <code>--session-id</code> retry gets
-another provider attempt. Background calls inherit the driver's run and
-stage-attempt identity. A stopped stdout consumer cannot erase an
-already persisted completion.</p>
+the original provider files. Code review additionally records
+<code>review_inputs</code> with <code>head</code>, <code>base</code> and
+<code>validation_head</code> commit IDs pinned by the pipeline after its
+local validation merge. Older receipts without this optional metadata
+remain readable; acceptance briefs cannot correlate their unpublished
+merge HEADs. Manifest/link/diagnostic failures are observational;
+receipt persistence before forwarding success remains mandatory.
+<code>result.json</code> links it through <code>receipt</code>,
+<code>provider_attempt_id</code> and <code>stage_attempt_id</code>.
+Standalone adapter calls get their own evidence run/attempt; a rejected
+<code>--session-id</code> retry gets another provider attempt.
+Background calls inherit the driver's run and stage-attempt identity. A
+stopped stdout consumer cannot erase an already persisted completion.
+Advisory <code>insights.jsonl</code> observations are the store's
+bounded free-text exception, subject to a best-effort pre-persistence
+content filter; see <a
+href="stage-protocol.html#advisory-stage-insights">stage insights and
+privacy</a>.</p>
 <p>If successful output becomes missing or prose-only between
 persistence and forwarding, the adapter reconciles only the exact
 attempt's receipt, reads the original provider result, verifies its full

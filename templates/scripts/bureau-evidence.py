@@ -33,6 +33,29 @@ BASES = frozenset(('observed-resume', 'observed-stage-resume', 'observed-review-
                    'observed-cleared-hold', 'observed-terminal-transition', 'observed-pr-merge',
                    'authoritative-pr-merge', 'authoritative-linear-completion', 'observed-superseded'))
 _warned = False
+MAX_INSIGHTS = 3
+MAX_INSIGHT_LENGTH = 280
+UNSAFE_INSIGHT = re.compile(
+    r'\b[\w.-]*(?:token|key|secret|password|auth|cookie|session)[\w.-]*[\"\x27]?\s*[=:]\s*\S+'
+    r'|\b(?:ghp_|gho_|github_pat_|sk-|lin_api_|xox|AKIA)[\w-]*'
+    r'|-----BEGIN [^-\r\n]+-----'
+    r'|[A-Za-z0-9+/_-]{32,}={0,2}'
+    r'|\b[a-z][a-z0-9+.-]*://[^\s/]+@'
+    r'|/(?:Users|home|root)/[^\s]+'
+    r'|[a-z]:[\\/](?:Users|Documents and Settings)[\\/]', re.I)
+# Scan split runs separately: a short benign run must not consume a following
+# credential assignment before UNSAFE_INSIGHT can inspect it.
+SPLIT_OPAQUE_INSIGHT = re.compile(r'(?:[A-Za-z0-9+/_-]{8,}[\s\"\x27]+)+[A-Za-z0-9+/_-]{8,}={0,2}')
+LOG_INSIGHT = re.compile(
+    r'\b(?:TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL|Traceback|stderr)\b|\bexit\s+code\b'
+    r'|\bFile [\"\x27][^\"\x27]+[\"\x27], line \d+'
+    r'|\bat\s+\S+\s+\([^\r\n)]+:\d+(?::\d+)?\)'
+    r'|^\s*at\s+\S+:\d+(?::\d+)?\b'
+    r'|^\s*(?:[\[{]|[$>+]\s|(?:PASS|FAIL)\b'
+    r'|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}'
+    r'|\d{2}:\d{2}:\d{2}\b|(?:npm|yarn|pnpm)\s+(?:ERR|WARN|error|run)\b'
+    r'|Traceback\b|File ".*", line \d+|total \d+\b|[d-][rwx-]{9}\s'
+    r'|(?:ok|not ok) \d+\b|\d+ (?:passed|failed|errors?|warnings?)\b)', re.I)
 
 
 class CapacityError(OSError):
@@ -56,6 +79,30 @@ def observe(call, *args, **kwargs):
     except Exception:
         warn()
         return None
+
+
+def normalize_insights(value):
+    """Optional observations must never turn an otherwise valid result red."""
+    if not isinstance(value, dict) or 'insights' not in value: return value
+    items = value['insights']
+    if (not isinstance(items, list) or len(items) > MAX_INSIGHTS or
+            any(not isinstance(s, str) or not s.strip() or len(s.splitlines()) != 1 or len(s) > MAX_INSIGHT_LENGTH or
+                any(ord(c) < 32 or ord(c) == 127 for c in s) for s in items)):
+        try: os.write(2, b'bureau insights: WARN: malformed optional insights dropped\n')
+        except OSError: pass
+        return {k: v for k, v in value.items() if k != 'insights'}
+    safe = [s.strip() for s in items if not unsafe_insight(s) and not LOG_INSIGHT.search(s)
+            and not (os.environ.get('HOME', '').startswith('/') and os.environ['HOME'].rstrip('/') + '/' in s)]
+    if len(safe) != len(items):
+        try: os.write(2, b'bureau insights: WARN: unsafe optional observations dropped (best-effort filter)\n')
+        except OSError: pass
+    return {**value, 'insights': list(dict.fromkeys(safe))}
+
+
+def unsafe_insight(text):
+    return bool(UNSAFE_INSIGHT.search(text)) or any(
+        len(re.sub(r'[^A-Za-z0-9+/_-]', '', match[0])) >= 32
+        for match in SPLIT_OPAQUE_INSIGHT.finditer(text))
 
 
 def read(path, default=None):
@@ -99,11 +146,15 @@ def private_dir(path):
 
 
 def atomic(path, value):
+    atomic_bytes(path, encoded(value))
+
+
+def atomic_bytes(path, payload):
     private_dir(path.parent)
     temp = path.with_name('.' + path.name + '.' + uuid.uuid4().hex + '.tmp')
     try:
         with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as out:
-            out.write(encoded(value)); out.flush(); os.fsync(out.fileno())
+            out.write(payload); out.flush(); os.fsync(out.fileno())
         os.replace(temp, path)
         fd = os.open(path.parent, os.O_RDONLY)
         try: os.fsync(fd)
@@ -293,7 +344,7 @@ class Store:
             if not isinstance(value, dict) or value.get('schema_version') != VERSION:
                 raise ValueError('invalid evidence record')
             if kind != 'ticket' and value.get('record_type') != kind: raise ValueError('invalid record type')
-            if kind in ('manifest', 'wait', 'ticket') and value.get('issue') is not None: ticket(value['issue'])
+            if kind in ('manifest', 'wait', 'ticket', 'acceptance') and value.get('issue') is not None: ticket(value['issue'])
             if kind == 'manifest':
                 manifest_shape(value)
                 identifier(value['run_id'])
@@ -320,6 +371,15 @@ class Store:
                 shape(value, 'schema_version issue first_observed_at terminal_observed_at last_observed_at')
                 times(value, 'first_observed_at last_observed_at terminal_observed_at')
                 if any(type(value[k]) not in (int, float) for k in ('first_observed_at', 'last_observed_at')): raise ValueError('invalid ticket time')
+            elif kind == 'acceptance':
+                shape(value, 'schema_version record_type issue pr head created_at body body_sha256 ticket pull_request')
+                times(value, 'created_at')
+                if type(value['created_at']) not in (int, float) or not pr_number(value['pr']) or not head(value['head']):
+                    raise ValueError('invalid acceptance identity')
+                if any(value[k] not in ('pending', 'delivered') for k in ('ticket', 'pull_request')):
+                    raise ValueError('invalid acceptance delivery')
+                if not isinstance(value['body'], str) or text_digest(value['body']) != value['body_sha256']:
+                    raise ValueError('invalid acceptance digest')
             return value
         except (ValueError, KeyError, TypeError, AttributeError):
             if quarantine: self._quarantine(path)
@@ -371,6 +431,12 @@ class Store:
             if value['issue'] not in active_issues:
                 if now - value['last_observed_at'] > RETENTION_SECONDS: path.unlink(missing_ok=True)
                 else: candidates.append((value['last_observed_at'], path))
+        for path, value in self._records('acceptance/*.json', 'acceptance'):
+            if path == writing: continue
+            if value.get('issue') not in active_issues:
+                if now - value['created_at'] > RETENTION_SECONDS: path.unlink(missing_ok=True)
+                elif value.get('ticket') == value.get('pull_request') == 'delivered':
+                    candidates.append((value['created_at'], path))
         candidates += [(p.stat().st_mtime, p) for p in (self.root / 'quarantine').glob('*.json')]
         # Checkpoints are optional, including when another ticket's record is
         # pruned before the real provider starts. Only a success receipt is mandatory.
@@ -499,12 +565,39 @@ class Store:
         value.update(start_head=head(receipt.get('start_head')), end_head=head(receipt.get('end_head')))
         attempts = observe(lambda: [execution_metadata(a) for a in receipt.get('gate_attempts', [])])
         if attempts: value['gate_attempts'] = attempts
+        inputs = receipt.get('review_inputs')
+        if value['stage'] == 'code_review' and isinstance(inputs, dict):
+            value['review_inputs'] = {key: head(inputs.get(key)) for key in ('head', 'base', 'validation_head')}
         with self.guard():
             path = self.receipt_path(value['run_id'], value['provider_attempt_id'])
             self._write(path, value)
         # The receipt does not depend on the optional manifest existing or linking.
         observe(self._link_receipt, value, path)
+        observe(self.collect_insights, receipt)
         return path
+
+    def collect_insights(self, receipt):
+        """The sole free-text exception: bounded, advisory stage observations."""
+        result = normalize_insights(receipt.get('structured_result') or receipt.get('insights_result'))
+        items = result.get('insights', []) if isinstance(result, dict) else []
+        if not items or receipt.get('normalized_exit') != 0 or receipt.get('stage') not in ('implement', 'qa', 'code_review'):
+            return
+        issue = ticket(receipt['issue']) if receipt.get('issue') else None
+        run = identifier(receipt['run_id']); attempt = identifier(receipt['provider_attempt_id'])
+        stage_attempt = identifier(receipt['stage_attempt_id'])
+        path = self.root / 'insights.jsonl'
+        with self.guard():
+            rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+            if any(r['provider_attempt_id'] == attempt for r in rows): return
+            now = self.clock()
+            rows = [r for r in rows if now - r['timestamp'] <= RETENTION_SECONDS]
+            rows += [dict(schema_version=VERSION, issue=issue, stage=receipt['stage'], run_id=run,
+                          stage_attempt_id=stage_attempt, provider_attempt_id=attempt,
+                          timestamp=now, observation=s) for s in items]
+            rows = rows[-2048:]
+            payload = ''.join(json.dumps(r, ensure_ascii=True, separators=(',', ':')) + '\n' for r in rows).encode()
+            self._prune(len(payload), 1, run, path)
+            atomic_bytes(path, payload)
 
     def _link_receipt(self, receipt, path):
         with self.guard():

@@ -66,6 +66,14 @@
           "msg"
         ]
       }
+    },
+    "insights": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "maxLength": 280
+      }
     }
   },
   "required": [

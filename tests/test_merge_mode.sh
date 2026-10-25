@@ -101,9 +101,15 @@ Review checked.
 ```
 EOF
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/approve.txt"
+  export FAKE_CLAUDE_PROMPT_LOG="$SANDBOX/review-prompts.log"
   export BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
   export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0
   unset BUREAU_CALLER_STOP
+}
+assert_acceptance_brief() {
+  assert_file_contains '<!-- bureau-acceptance: pr=99 head=' "$SANDBOX/briefs-ticket.log" 'manual boundary ticket brief missing'
+  assert_file_contains '<!-- bureau-acceptance: pr=99 head=' "$SANDBOX/briefs-pr.log" 'manual boundary PR brief missing'
+  assert_file_contains 'Final verdict: APPROVE; REVIEW_HEAD=' "$SANDBOX/briefs-pr.log" 'review metadata in brief'
 }
 claude_runs() { cat "$SANDBOX/fake_claude_counter" 2>/dev/null || echo 0; }
 entered_merge() { grep -q 'Merge Pipeline:' <<< "$LAST_STDOUT" || grep -q $'pr\tmerge' "$SANDBOX/gh_calls.log" 2>/dev/null; }
@@ -117,11 +123,15 @@ run_pipeline code-review-pipeline.sh EXP-701
 assert_eq 0 "$LAST_RC" "manual + Merge state: review ends cleanly"
 assert_calls_include $'move_issue\tEXP-701\tstate-merge' "manual + Merge state: parked in Merge"
 assert_calls_include 'awaits a manual merge' "manual + Merge state: says a human merges"
+assert_acceptance_brief
+assert_file_contains 'Optional insights: normally use an empty array' "$SANDBOX/review-prompts.log" 'final review insight prompt'
 if entered_merge; then echo "FAIL: manual + Merge state entered the merge" >&2; exit 1; fi
 # Also with the merge agent on (merge_mode wins over agents.merge).
 export BUREAU_STUB_AGENT_ENABLED=merge
 run_pipeline code-review-pipeline.sh EXP-701
 assert_calls_include 'awaits a manual merge' "manual wins over agents.merge"
+assert_eq 1 "$(grep -c '<!-- bureau-acceptance:' "$SANDBOX/briefs-pr.log")" 'same PR/head delivered to PR once'
+assert_eq 1 "$(grep -c '<!-- bureau-acceptance:' "$SANDBOX/briefs-ticket.log")" 'same PR/head delivered to ticket once'
 teardown
 
 # 3b. manual under a requested stop (--no-merge) still parks in Merge: moving is not
@@ -132,9 +142,46 @@ set_mode '"manual"'
 run_pipeline code-review-pipeline.sh EXP-701
 assert_eq 0 "$LAST_RC" "manual + --no-merge: parked, not stopped"
 assert_calls_include $'move_issue\tEXP-701\tstate-merge' "manual + --no-merge: parked in Merge"
+assert_acceptance_brief
 if entered_merge; then echo "FAIL: manual + --no-merge entered the merge" >&2; exit 1; fi
 export BUREAU_NO_MERGE=0
 teardown
+
+# Both publication failures preserve the normal manual-review exit. A later
+# review delivers only the pending destination; a new HEAD gets a new marker.
+for destination in ticket pr; do
+  approve_sandbox
+  export BUREAU_STUB_STATE_MERGE=state-merge BUREAU_STUB_AGENT_ENABLED=''
+  set_mode '"manual"'
+  if [ "$destination" = ticket ]; then export BUREAU_STUB_BRIEF_TICKET_FAIL=1
+  else export GH_STUB_BRIEF_FAIL=1; fi
+  run_pipeline code-review-pipeline.sh EXP-701
+  assert_eq 0 "$LAST_RC" 'publication failure preserves manual exit'
+  python3 - "$SANDBOX" "$destination" <<'PY'
+import json, pathlib, sys
+record=json.loads(next(pathlib.Path(sys.argv[1], '.git/bureau/evidence/v1/acceptance').glob('*.json')).read_text())
+failed='ticket' if sys.argv[2]=='ticket' else 'pull_request'
+assert record[failed]=='pending'
+assert record['pull_request' if failed=='ticket' else 'ticket']=='delivered'
+PY
+  unset BUREAU_STUB_BRIEF_TICKET_FAIL GH_STUB_BRIEF_FAIL
+  run_pipeline code-review-pipeline.sh EXP-701
+  assert_eq 0 "$LAST_RC" 'retry preserves manual exit'
+  assert_acceptance_brief
+  for file in briefs-ticket.log briefs-pr.log; do
+    assert_eq 1 "$(grep -c '<!-- bureau-acceptance:' "$SANDBOX/$file")" 'retry sends only the missing destination'
+  done
+  printf 'new head\n' >> "$SANDBOX/change.txt"
+  git -C "$SANDBOX" add change.txt
+  git -C "$SANDBOX" commit -qm 'new acceptance HEAD'
+  git -C "$SANDBOX" push -q origin test-branch
+  run_pipeline code-review-pipeline.sh EXP-701
+  assert_eq 0 "$LAST_RC" 'new HEAD still stops at manual boundary'
+  for file in briefs-ticket.log briefs-pr.log; do
+    assert_eq 2 "$(grep -c '<!-- bureau-acceptance:' "$SANDBOX/$file")" 'changed HEAD gets a new brief'
+  done
+  teardown
+done
 
 # 3c. manual without a Merge state: the stage refuses at its start with 24 and a reason
 #     naming the key — no helper call (Linear), no paid review, no gh call, no record.

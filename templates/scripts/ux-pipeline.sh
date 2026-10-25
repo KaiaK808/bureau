@@ -213,7 +213,7 @@ echo ""
 echo "Phase 2/2: push + route"
 
 DESIGN_STATUS=$(parse_claude_json "$UX_RESULT" '.design_status // "COMPLETE"')
-DESIGN_SUMMARY=$(parse_claude_json "$UX_RESULT" '.summary // ""')
+DESIGN_SUMMARY=$(bureau_comment_projection "$(parse_claude_json "$UX_RESULT" '.summary // ""')")
 
 git add -A
 git commit -m "$ISSUE: design artifacts" -m "Bureau-Generated: true" --allow-empty || true

@@ -788,6 +788,7 @@ while true; do
   if [ "$NO_MERGE" = 1 ] && [ "$STATE" = "Merge" ]; then
     echo "[shepherd] reached Merge — halting per --no-merge"
     post_comment "$ISSUE" "🐑 Shepherd halted at Merge per \`--no-merge\`. Merge manually when ready." || true
+    bureau_acceptance_brief "$ISSUE" "$(_shepherd_branch 2>/dev/null || true)" || true
     exit 20
   fi
   # agents.merge_mode = manual: the same boundary, set by the repo instead of
@@ -795,6 +796,7 @@ while true; do
   if bureau_merge_is_manual && [ "$STATE" = "Merge" ]; then
     echo "[shepherd] reached Merge — halting, agents.merge_mode is manual (a human merges)"
     post_comment "$ISSUE" "🐑 Shepherd halted at Merge: \`agents.merge_mode\` is manual, so a human merges the PR." || true
+    bureau_acceptance_brief "$ISSUE" "$(_shepherd_branch 2>/dev/null || true)" || true
     exit 20
   fi
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b00f1fbe7970108f6b42ce7bf3aee8c76003c9e538da69ba8efe4078e7a9f368">
+<meta name="bureau-source-sha256" content="15c1bf3c4629a17348ce7a98ca9878f27738b3b73fdac464d62b3d593f704ac9">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1606,6 +1606,34 @@ only when requested and the upgrade is coherent. See the <a
 href="codex-acceptance.html">acceptance record</a> for what has and has
 not been exercised.</p>
 <h2 id="rollback">Rollback</h2>
+<p>For acceptance briefs and stage insights, preview and resync both the
+<code>scripts</code> and <code>interfaces</code> scopes from the updated
+source, resolving local prompt/command conflicts before applying, then
+restart background drivers. Include <code>bureau-acceptance.py</code>,
+<code>bureau-evidence.py</code>, <code>bureau-provider.py</code>, all
+three result schemas and boundary pipelines as one set. Existing merge
+modes, exit codes and app records remain compatible; no new
+configuration keys or history backfill. Legacy results without
+<code>insights</code> remain valid, while strict provider output uses
+<code>insights: []</code>. <code>bureau-learnings</code> now drafts
+optional <code>BUREAU-BACKLOG.proposed.md</code> candidates from the
+shared Git store's <code>evidence/v1/insights.jsonl</code>; observations
+are advisory free text and must exclude secrets/logs. Keep the shared
+evidence store when retrying a pending ticket/PR delivery so successful
+destinations remain deduplicated. See <a
+href="stage-protocol.html#acceptance-briefs-at-human-merge-boundaries">stage
+protocol</a> for storage, privacy and remote delivery limits;
+representative live adopter validation remains pending.</p>
+<p>Resync <code>bureau-config.sh</code> and all comment-producing
+pipelines together for local-only insights: admitted observations stay
+local and never enter GitHub/Linear comments or the acceptance brief.
+Inspect/remove already published pre-fix comments and previously stored
+unsafe insights; resync does not scrub history. Quoted credential names,
+split opaque tokens and additional log/stack/prompt shapes are now
+filtered with advisory warnings. This remains best-effort, may drop
+benign observations and adds no stage failure or configuration
+migration; validation uses fake transports and both real provider
+adapters with fake CLIs.</p>
 <p>Stop new dispatch and inspect active owners before restoring
 anything. Preserve work created since the upgrade. Restore the recorded
 previous source commit/tag in a clean source checkout; for example,

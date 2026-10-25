@@ -168,7 +168,7 @@ After the marker, write a concise markdown body with inline doc URLs. No preambl
 $RESEARCH_RAW
 --- End research ---
 "
-    if post_comment "$ISSUE" "$RESEARCH_RAW"; then
+    if post_comment "$ISSUE" "$(bureau_comment_projection "$RESEARCH_RAW")"; then
       remove_issue_label "$ISSUE" "needs-research" || true
       echo "  research complete; label stripped"
     else
@@ -493,7 +493,7 @@ else
   DIGEST_BODY="<!-- bureau-branch: $BRANCH -->
 **Spec Artifacts — $ISSUE**
 
-$SPEC_DIGEST
+$(bureau_comment_projection "$SPEC_DIGEST")
 
 ---
 *Spec branch \`$BRANCH\` pushed. Ready for review.*"
