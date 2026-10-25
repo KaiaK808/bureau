@@ -183,3 +183,24 @@ ROUND8_VALID = {
     'unrelated_control': '# Feature\x01\n'+GOVERNANCE,
 }
 ROUND8_PROVIDER_INVALID = {name: ROUND8_INVALID[name] for name in ('html_hidden_div', "normalized_'&#8203;'")}
+
+ROUND9_INVALID = {
+    'parenthesized_tbd': GOVERNANCE.split('Rationale:')[0]+'Rationale: (TBD)\n',
+    'bracketed_todo': GOVERNANCE.split('Rationale:')[0]+'Rationale: [TODO]\n',
+    'emphasized_na': GOVERNANCE.split('Rationale:')[0]+'Rationale: *n/a*\n',
+    'quoted_tbd': GOVERNANCE.split('Rationale:')[0]+'Rationale: "tbd"\n',
+    'nested_wrapped_tbd': GOVERNANCE.split('Rationale:')[0]+'Rationale: ([“*TBD*”])?!\n',
+    'inline_quote_tbd': GOVERNANCE.split('Rationale:')[0]+'Rationale: > TBD\n',
+    'quoted_tbd_continuation': GOVERNANCE.split('Rationale:')[0]+'Rationale:\n> TBD\n',
+    'quoted_prose_continuation': GOVERNANCE.replace('Rationale: ', 'Rationale:\n> '),
+    'indented_code_then_governance': '    print("example")\n\n'+GOVERNANCE,
+    'tabbed_code_then_governance': '\tprint("example")\n\n'+GOVERNANCE,
+    'mixed_indent_code_after_blank': '# Feature\n\n \tprint("example")\n\n'+GOVERNANCE,
+}
+ROUND9_PROVIDER_INVALID = {name: ROUND9_INVALID[name] for name in (
+    'parenthesized_tbd', 'bracketed_todo', 'quoted_tbd_continuation', 'indented_code_then_governance')}
+ROUND9_VALID = {
+    'yaml_then_real_section': ROUND8_VALID['yaml_then_real_section'],
+    'governance_before_indented_code': GOVERNANCE+'\n    print("example")\n',
+    'quoted_then_real_continuation': GOVERNANCE.replace('Rationale: ', 'Rationale:\n> TBD\n'),
+}

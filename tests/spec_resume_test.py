@@ -13,7 +13,7 @@ import unittest
 import git_maintenance
 from governance_cases import (FENCED_GOVERNANCE, GOVERNANCE_FIRST,
                               COMMENT_HIDDEN_GOVERNANCE, COLUMN_ZERO_GOVERNANCE,
-                              ROUND8_INVALID, ROUND8_VALID)
+                              ROUND8_INVALID, ROUND8_VALID, ROUND9_INVALID, ROUND9_VALID)
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_TEST_SPEC_SCRIPTS', ROOT / 'templates/scripts'))
@@ -23,6 +23,18 @@ VALID = '# Feature\n\n## Governance and security\nDecision: not required\nRation
 
 
 class GovernanceTests(unittest.TestCase):
+    def test_wrapped_placeholders_and_indented_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'spec.md'
+            for name, body in ROUND9_INVALID.items():
+                with self.subTest(case=name):
+                    path.write_text(body)
+                    self.assertIsNotNone(r.s.governance_error(path))
+            for name, body in ROUND9_VALID.items():
+                with self.subTest(case=name, valid=True):
+                    path.write_text(body)
+                    self.assertIsNone(r.s.governance_error(path))
+
     def test_round8_honest_mistakes_and_valid_documents(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'spec.md'
@@ -37,7 +49,7 @@ class GovernanceTests(unittest.TestCase):
 
     def test_governance_prompt_contract(self):
         contract = ('In spec.md, place ## Governance and security with Decision: and Rationale: lines at column 0, '
-                    'before any code block, HTML block or front matter, in plain text.')
+                    'in plain text, before any code block or HTML block; a leading YAML front matter block is allowed.')
         for relative in ('templates/scripts/spec-pipeline.sh', 'templates/scripts/spec-review-pipeline.sh', 'templates/scripts/bureau-stage.md',
                          'templates/commands/linear-to-spec.md', 'templates/instructions/workflow.md'):
             with self.subTest(path=relative):

@@ -330,7 +330,7 @@ if ! printf '%s' "$SPEC_CHECKPOINTS" | jq -e 'index("specify") != null' >/dev/nu
 BUREAU_PROVIDER_PHASE=specify "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-specify/SKILL.md and follow its instructions exactly.
 
 No measurements, probes, benchmarks or full test-gate runs in specify or plan. Use existing evidence and document unknowns for implementation/QA.
-In spec.md, place ## Governance and security with Decision: and Rationale: lines at column 0, before any code block, HTML block or front matter, in plain text.
+In spec.md, place ## Governance and security with Decision: and Rationale: lines at column 0, in plain text, before any code block or HTML block; a leading YAML front matter block is allowed.
 Use Decision: required or Decision: not required and explain applicability in Rationale:; a justified not required is valid, while empty text, TBD, placeholders and unexplained N/A fail review.
 
 Populate the already allocated feature in $ALLOCATED_DIR.

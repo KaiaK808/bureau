@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="eef6642598cab3ca8faa9cfc6ff14a316193b4525c3c55a83c24300f43d2823f">
+<meta name="bureau-source-sha256" content="b00f1fbe7970108f6b42ce7bf3aee8c76003c9e538da69ba8efe4078e7a9f368">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -102,8 +102,9 @@ external exit-code change. These changes are locally qualified with fake
 services/providers; live adopting-installation qualification remains
 outstanding.</p>
 <p>In spec.md, place <code>## Governance and security</code> with
-<code>Decision:</code> and <code>Rationale:</code> lines at column 0,
-before any code block, HTML block or front matter, in plain text.</p>
+<code>Decision:</code> and <code>Rationale:</code> lines at column 0, in
+plain text, before any code block or HTML block; a leading YAML front
+matter block is allowed.</p>
 <p>The governance check catches common authoring mistakes using the
 following rules. It splits only LF and CRLF lines; other C0 controls
 (U+0000–U+001F except tab) and C1 controls (U+007F–U+009F) in the
@@ -122,32 +123,38 @@ whitespace and any mix of list markers (<code>-</code>, <code>*</code>,
 <code>+</code>, or digits followed by <code>.</code> or <code>)</code>)
 and blockquote markers (<code>&gt;</code>), three or more backticks or
 tildes end the scan, with no opener/closer matching or indentation
-bound. Marker whitespace is optional. The first line starting after
-optional spaces/tabs with <code>&lt;</code> followed by an ASCII letter,
-<code>!</code> or <code>/</code> is also a permanent cutoff, including a
-leading HTML comment. A leading YAML <code>---</code> block is ignored
-through its closing <code>---</code>; the validator can resume after
-that metadata, but an unclosed block contributes nothing. Other HTML
-comments are masked through <code>--&gt;</code> or end of document,
-preserving physical lines and columns; their contents cannot supply
-fields or fence cutoffs. Governance after an earlier closed code or HTML
-block does not qualify.</p>
+bound. Marker whitespace is optional. Every nonblank line indented by
+four or more spaces or a tab (including spaces followed by a tab) is
+also a cutoff; this conservative rule includes list continuations. The
+first line starting after optional spaces/tabs with <code>&lt;</code>
+followed by an ASCII letter, <code>!</code> or <code>/</code> is also a
+permanent cutoff, including a leading HTML comment. A leading YAML
+<code>---</code> block is ignored through its closing <code>---</code>;
+the validator can resume after that metadata, but an unclosed block
+contributes nothing. Other HTML comments are masked through
+<code>--&gt;</code> or end of document, preserving physical lines and
+columns; their contents cannot supply fields or fence cutoffs.
+Governance after an earlier closed code or HTML block does not
+qualify.</p>
 <p>Decision/rationale labels must start at column 0 without container
 prefixes. Values that start with a backtick code span, including values
 consisting entirely of a code span, are invalid. Rationale continuation
 lines may have zero to three spaces of indentation, but not four or more
-spaces or a leading tab (including spaces followed by a tab). A
-rationale must contain at least one letter or digit after normalization,
-and cannot be solely a placeholder, deferral or decision restatement.
-The same placeholder check applies to present Access/Logging/Retention
-fields. Examples rejected after normalization include TBD, TODO, N/A, a
-dash and an ellipsis, including fullwidth, entity-encoded or zero-width
-variants. Existing column-0 inline decision/explanation sentences and
-German or mixed <code>Entscheidung:</code>/<code>Begründung:</code>
-labels remain accepted. A justified <code>not required</code> or N/A is
-valid; there is no punctuation, verb or word-count requirement. Ordinary
-words such as “pending” or “wird definiert durch” inside a real
-explanation remain valid.</p>
+spaces or a leading tab (including spaces followed by a tab).
+Blockquoted continuation lines do not supply rationale text. The
+placeholder check removes brackets, parentheses, quotes, blockquote and
+emphasis markers and surrounding punctuation. A rationale must contain
+at least one letter or digit after normalization, and cannot be solely a
+placeholder, deferral or decision restatement. The same placeholder
+check applies to present Access/Logging/Retention fields. Examples
+rejected after normalization include TBD, TODO, N/A, a dash and an
+ellipsis, including fullwidth, entity-encoded or zero-width variants.
+Existing column-0 inline decision/explanation sentences and German or
+mixed <code>Entscheidung:</code>/<code>Begründung:</code> labels remain
+accepted. A justified <code>not required</code> or N/A is valid; there
+is no punctuation, verb or word-count requirement. Ordinary words such
+as “pending” or “wird definiert durch” inside a real explanation remain
+valid.</p>
 <p><strong>Known limits (governance check):</strong> the check targets
 honest mistakes by the spec agent; it is not a security boundary against
 deliberate obfuscation. Deliberate evasion, for example link reference

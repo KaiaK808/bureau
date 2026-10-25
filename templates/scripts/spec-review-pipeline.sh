@@ -127,7 +127,7 @@ REVIEW_RESULT=$("${CLAUDE[@]}" "You are the spec reviewer for $ISSUE ($ISSUE_TIT
 $SPEC_CONTEXT
 
 Artifacts live under $SPEC_DIR (spec.md, plan.md, tasks.md, research.md if present).
-In spec.md, place ## Governance and security with Decision: and Rationale: lines at column 0, before any code block, HTML block or front matter, in plain text.
+In spec.md, place ## Governance and security with Decision: and Rationale: lines at column 0, in plain text, before any code block or HTML block; a leading YAML front matter block is allowed.
 Require an explicit Decision: required/not required and a Rationale: explaining applicability (German labels/decisions are valid too). Justified not required is valid. The shared validator catches common authoring and placeholder/deferral mistakes, including bare restatements of the decision. You must judge substantive adequacy and whether the section is real: reject circular reasoning, vague assertions and explanations that do not justify applicability or address the relevant access, logging and retention risks. Passing the validator does not establish adequacy. Return review_status FAIL for missing or inadequate governance and name the concrete gaps in remaining_issues and summary, even when the deterministic check passes. Do not invent the decision or rationale for the author.
 
 Do this, in order:

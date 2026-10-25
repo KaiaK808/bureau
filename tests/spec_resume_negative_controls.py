@@ -26,6 +26,15 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     spec = root/'bureau-spec.py'; original = spec.read_text()
     env = {'BUREAU_TEST_SPEC_SCRIPTS': str(root)}
 
+    anchor = next(line for line in original.splitlines() if 'line.translate(str.maketrans' in line)
+    assert original.count(anchor) == 1
+    assert '[]' in anchor
+    spec.write_text(original.replace(anchor, anchor.replace('[]', '')))
+    rejected('spec_resume_test.py', 'GovernanceTests.test_wrapped_placeholders_and_indented_code',
+             env, 'AssertionError: unexpectedly None')
+    print('PASS round9 control: removing bracket stripping fails the placeholder regression')
+    spec.write_text(original)
+
     start = original.index('def _governance_controls(value):')
     end = original.index('\n\ndef _only_governance_placeholder', start)
     broken = original[:start] + 'def _governance_controls(value):\n    return False\n' + original[end:]

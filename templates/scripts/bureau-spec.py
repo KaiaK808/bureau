@@ -49,8 +49,8 @@ def _only_governance_placeholder(value):
         line = re.sub(r'^(?:[-+]\s+|\d+[.)]\s+)?(?:\[[ xX]\]\s*)?', '', line)
         line = line.strip().rstrip('.!?;:').strip()
         if re.fullmatch(r'\{\{.*?\}\}|[\[<](?:insert|fill|provide|explain|rationale)\b[^\]>]*[\]>]', line, re.I): continue
-        if len(line) >= 2 and (line[0], line[-1]) in (('[', ']'), ('<', '>')):
-            line = line[1:-1].strip()
+        line = line.translate(str.maketrans('', '', "[](){}<>\"'“”‘’«»*_"))
+        line = line.strip(' \t.,!?;:/\\|+=~-–—…')
         if re.fullmatch(r'(?:(?:Access|Logging|Retention)\s*:\s*)*(?:Access|Logging|Retention)', line, re.I): continue
         if not line or re.fullmatch(DECISIONS + r'|none|keine|entfällt|offen|[-–—]+', line, re.I): continue
         # A suffix describes when/where the deferred answer will be supplied.
@@ -86,6 +86,9 @@ def governance_error(path):
         if front_matter:
             if index and raw_lines[index].strip() == '---': front_matter = False
             continue
+        if line.strip() and re.match(r'^(?: {4}| *\t)', line):
+            placement_hint = '; move the Governance and security section above the first code block'
+            break
         if re.match(r'^[ \t]*<(?:[A-Za-z!]|/)', _normalize_governance(raw_lines[index])):
             placement_hint = '; move the Governance and security section above the first HTML block'
             break
@@ -119,6 +122,7 @@ def governance_error(path):
     fields = {}; current = None
     for raw in body.split('\n'):
         line = re.sub(r'[*_]', '', _normalize_governance(raw))
+        if current == 'rationale' and line.lstrip().startswith('>'): continue
         if current == 'rationale' and line.strip() and re.match(r'^(?: {4}| *\t)', raw):
             return 'Governance and security: rationale continuation must not be indented code' + placement_hint
         field = re.match(r'^[ \t]*(?:(?:[-+]|\d+[.)]|>)[ \t]*)*(?:\[[ xX]\][ \t]+)?(Decision|Entscheidung|Rationale|Begründung|Access|Logging|Retention)[ \t]*:[ \t]*(.*)$', line, re.I)

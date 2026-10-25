@@ -48,7 +48,7 @@ If it does not, tell the user to run `/speckit-constitution` first and **stop**.
 
 ### 3. Run speckit-specify
 
-During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and record unknowns for implementation/QA. In spec.md, place `## Governance and security` with `Decision:` and `Rationale:` lines at column 0, before any code block, HTML block or front matter, in plain text. Use `Decision: required` or `Decision: not required` and explain applicability. A justified not required is valid; empty headings, placeholders, TBD and unexplained N/A fail app completion and background spec review. Preserve customized Spec Kit templates and the constitution.
+During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and record unknowns for implementation/QA. In spec.md, place `## Governance and security` with `Decision:` and `Rationale:` lines at column 0, in plain text, before any code block or HTML block; a leading YAML front matter block is allowed. Use `Decision: required` or `Decision: not required` and explain applicability. A justified not required is valid; empty headings, placeholders, TBD and unexplained N/A fail app completion and background spec review. Preserve customized Spec Kit templates and the constitution.
 
 Invoke `/speckit-specify` via the Skill tool, passing the compiled requirements
 as the argument. Format it as:
