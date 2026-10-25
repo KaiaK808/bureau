@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -200,6 +201,29 @@ def rerun_shape(value):
             raise ValueError('mismatched rerun completion')
 
 
+def publication_shape(value):
+    shape(value, 'provider_attempt_id stage_attempt_id pre_head head parent_head bureau_generated recorded_at')
+    for key in ('provider_attempt_id', 'stage_attempt_id'): identifier(value[key])
+    if (not head(value['pre_head']) or not head(value['head']) or value['pre_head'] == value['head']
+            or value['parent_head'] != value['pre_head'] or value['bureau_generated'] is not True):
+        raise ValueError('invalid executor publication')
+    times(value, 'recorded_at')
+    if value['recorded_at'] is None: raise ValueError('missing publication time')
+
+
+def verify_publication(repo, before, after):
+    """Read Git metadata transiently; never retain the commit message."""
+    if not head(before) or not head(after) or before == after: return False
+    def git(*args):
+        return subprocess.check_output(['git', '--no-replace-objects', '-C', str(repo), *args],
+                                       text=True, stderr=subprocess.DEVNULL).strip()
+    try:
+        return (git('rev-parse', '--verify', 'HEAD') == after
+                and git('rev-list', '--parents', '-n', '1', after).split() == [after, before]
+                and git('log', '-1', '--format=%(trailers:key=Bureau-Generated,valueonly)', after) == 'true')
+    except (OSError, ValueError, subprocess.SubprocessError): return False
+
+
 def manifest_shape(value):
     shape(value, 'schema_version record_type run_id issue workspace started_at ended_at start_head final_head normalized_exit pr attempts')
     if not isinstance(value['attempts'], list): raise ValueError('invalid attempts')
@@ -207,7 +231,12 @@ def manifest_shape(value):
         if 'gate_reruns' in attempt:
             if not isinstance(attempt['gate_reruns'], list): raise ValueError('invalid gate reservations')
             for rerun in attempt['gate_reruns']: rerun_shape(rerun)
-        shape({k:v for k,v in attempt.items() if k != 'gate_reruns'}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
+        if 'publications' in attempt:
+            if not isinstance(attempt['publications'], list): raise ValueError('invalid publications')
+            for publication in attempt['publications']:
+                publication_shape(publication)
+                if publication['stage_attempt_id'] != attempt['attempt_id']: raise ValueError('foreign publication')
+        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
         identifier(attempt['attempt_id'])
         if attempt['parent_attempt_id'] is not None: identifier(attempt['parent_attempt_id'])
         times(attempt, 'started_at ended_at')
@@ -525,15 +554,67 @@ class Store:
             return True
         except (ValueError, KeyError, TypeError): return False
 
-    def match_gate_receipt(self, identity, stage, checked_head, result):
+    def record_publication(self, identity, stage, repo, before, after):
+        # Only the executor calls this after its own successful git commit.
+        # Verification and metadata publication share the evidence lock.
+        with self.guard():
+            receipt = read(self.receipt_path(identity['run_id'], identity['provider_attempt_id']), {})
+            keys = ('run_id', 'provider_attempt_id', 'stage_attempt_id', 'issue', 'stage', 'phase', 'schema_sha256')
+            if (stage not in ('implement', 'qa') or receipt.get('provider') != 'codex'
+                    or receipt.get('schema_version') != VERSION or receipt.get('record_type') != 'receipt'
+                    or any(receipt.get(k) != identity.get(k) for k in keys) or receipt.get('stage') != stage
+                    or receipt.get('start_head') != before or receipt.get('end_head') != before
+                    or not verify_publication(repo, before, after)):
+                raise ValueError('unverified executor publication')
+            value = self._manifest(identity['run_id'])
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == identity['stage_attempt_id'])
+            if (value['issue'] != identity['issue'] or attempt['stage'] != stage
+                    or Path(attempt['workspace']).resolve() != Path(repo).resolve()):
+                raise ValueError('publication belongs to another stage')
+            record = dict(provider_attempt_id=identity['provider_attempt_id'], stage_attempt_id=identity['stage_attempt_id'],
+                          pre_head=before, head=after, parent_head=before, bureau_generated=True, recorded_at=self.clock())
+            publication_shape(record)
+            publications = attempt.setdefault('publications', [])
+            if any(p['provider_attempt_id'] == identity['provider_attempt_id'] for p in publications):
+                raise ValueError('provider attempt already published')
+            publications.append(record); self._save_manifest(value)
+            return record
+
+    def _publication_matches(self, identity, stage, repo, before, after, receipt):
+        if repo is None: return False
+        with self.guard():
+            value = self._manifest(identity['run_id'])
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == identity['stage_attempt_id'])
+            if (value['issue'] != identity['issue'] or attempt['stage'] != stage
+                    or Path(attempt['workspace']).resolve() != Path(repo).resolve()): return False
+            matches = [p for p in attempt.get('publications', [])
+                       if p['provider_attempt_id'] == identity['provider_attempt_id']]
+            return (len(matches) == 1 and matches[0]['stage_attempt_id'] == identity['stage_attempt_id']
+                    and matches[0]['pre_head'] == before and matches[0]['head'] == after
+                    and type(receipt.get('ended_at')) in (int, float)
+                    and receipt['ended_at'] <= matches[0]['recorded_at'] <= self.clock()
+                    and verify_publication(repo, before, after))
+
+    def match_gate_receipt(self, identity, stage, checked_head, result, repo=None):
         # Reconcile digests/identities, never retained logs or result prose.
         value = read(self.receipt_path(identity['run_id'], identity['provider_attempt_id']), {})
         keys = ('run_id', 'provider_attempt_id', 'stage_attempt_id', 'issue', 'stage', 'phase', 'schema_sha256')
         if (value.get('schema_version') != VERSION or value.get('record_type') != 'receipt' or value.get('provider') != 'codex'
                 or any(value.get(k) != identity.get(k) for k in keys)
                 or value.get('stage') != stage or value.get('normalized_exit') != 0 or value.get('provider_exit') != 0
-                or not checked_head or value.get('start_head') != checked_head or value.get('end_head') != checked_head
+                or not head(checked_head) or not head(value.get('start_head')) or value.get('start_head') != value.get('end_head')
                 or value.get('result_sha256') != digest(result)): return None
+        receipt_head = value['end_head']
+        if checked_head == receipt_head:
+            # A known publication binds this attempt to B even if someone
+            # rewinds HEAD to A; only an unpublished attempt uses equality.
+            with self.guard():
+                manifest = self._load(self.manifest_path(identity['run_id']), 'manifest')
+                if manifest and any(p['provider_attempt_id'] == identity['provider_attempt_id']
+                                    for a in manifest['attempts'] if a['attempt_id'] == identity['stage_attempt_id']
+                                    for p in a.get('publications', [])): return None
+        if checked_head != receipt_head and not self._publication_matches(identity, stage, repo, receipt_head, checked_head, value):
+            return None
         return value
 
     def reserve_gate_rerun(self, run, attempt_id, checked_head, command, gate_id, sources):

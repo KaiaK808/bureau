@@ -214,19 +214,20 @@ def blockers(value, stage, configured):
     return None
 
 
-def plan(store, value, stage, configured, head, context=None):
+def plan(store, value, stage, configured, head, context=None, repo=None):
     held = blockers(value, stage, configured)
     if held is None or not head or not configured: return dict(eligible=False, reason='non-gate blocker or missing command')
     result = dict(eligible=True, head=head, stage=stage, source=held['source'], commands=held['commands'],
                   result=value, context=context)
     if not isinstance(context, dict): return dict(eligible=False, reason='missing machine evidence')
-    receipt = store.match_gate_receipt(context, stage, head, value)
+    receipt = store.match_gate_receipt(context, stage, head, value, repo)
     if receipt is None: return dict(eligible=False, reason='missing, mismatched or stale receipt')
+    execution_head = receipt['end_head']
     attempts = []
     for command in held['commands']:
         matches = [a for a in receipt.get('gate_attempts', []) if a.get('source') == 'codex.command_execution' and a.get('environment') == 'sandbox'
                    and a.get('command_sha256') == digest(command) and a.get('gate_id') == digest(command)
-                   and a.get('head') == head and a.get('end_head') == head
+                   and a.get('head') == execution_head and a.get('end_head') == execution_head
                    and (a.get('abort') in ('timeout', 'kill') or type(a.get('normalized_exit')) is int and a['normalized_exit'] != 0)
                    and store.valid_execution(a)]
         if not matches: return dict(eligible=False, reason='no failed current-HEAD execution for configured gate')

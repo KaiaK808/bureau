@@ -772,7 +772,7 @@ if private:
     print('Refusing to commit staged private Bureau files; inspect and unstage them before retrying.', file=sys.stderr)
     sys.exit(24)
 PY_STAGED
-  local paths
+  local paths publication_before publication_after
   paths=$(mktemp)
   bureau_without_secrets python3 -I - "$paths" <<'PY_PATHS'
 import subprocess, sys
@@ -785,7 +785,18 @@ PY_PATHS
     GIT_LITERAL_PATHSPECS=1 git add -A --pathspec-from-file="$paths" --pathspec-file-nul
   fi
   rm -f "$paths"
-  git diff --cached --quiet || git commit -m "$2: Bureau $1 changes" -m "Bureau-Generated: true"
+  if ! git diff --cached --quiet; then
+    publication_before=$(git rev-parse HEAD)
+    git commit -m "$2: Bureau $1 changes" -m "Bureau-Generated: true" || return $?
+    publication_after=$(git rev-parse HEAD)
+    # Optional gate recovery accepts only this executor's verified one-hop
+    # publication, linked to the exact provider/stage attempt in its context.
+    if [ -n "${3:-}" ] && [ "$(resolve_runner_for_stage "$1")" = codex ]; then
+      bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
+        --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action publish --gate-context "$3" \
+        --publication-before "$publication_before" --publication-after "$publication_after" >/dev/null || true
+    fi
+  fi
 }
 
 # Build the model invocation for a stage. Default backend is `claude -p`;

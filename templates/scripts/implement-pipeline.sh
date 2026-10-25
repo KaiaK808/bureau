@@ -1038,7 +1038,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
   RESULT=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-implement.schema.json" --gate-context "$IMPLEMENT_GATE_CONTEXT" "$PROMPT")
   CLAUDE_EXIT=$?
   set -e
-  commit_codex_changes implement "$ISSUE"
+  commit_codex_changes implement "$ISSUE" "$IMPLEMENT_GATE_CONTEXT"
   # 124 (the pass hit its time limit) goes on below like any pass; every other
   # non-zero exit ends the stage with its code, after pushing every commit
   # origin lacks — this pass's own included (push_if_ahead). The lines on

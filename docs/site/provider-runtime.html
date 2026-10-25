@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="44610ed90f98cf68111c079e4e6b8a432c72c608b9b79e69fabe4a9aca31a0c9">
+<meta name="bureau-source-sha256" content="bfe8a6b1ea0f924ad705fa7e163bdb9dbea25297ee32d3052c4a965875958ec5">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -309,18 +309,23 @@ and <code>bash</code>; relative/agent-owned shells, arbitrary flags,
 missing/duplicate/reordered/ambiguous events and agent tool requests are
 not execution proof.</p>
 <p>The planner requires a matching metadata-only completion receipt,
-canonical result digest, configured-command digest, failed/aborted
-execution and unchanged current HEAD. The prefix alone grants no
-eligibility. It reserves at most one outside rerun per gate/HEAD/stage
-attempt, including incomplete runs, then revalidates immediately before
-running system Bash with pipefail, secret filtering and the stage
-timeout. Green clears only those gate holds; unknown commands, stale
-HEAD, missing evidence and product/security/human holds stay blocked,
-even with contradictory COMPLETE/GREEN. With commits beyond origin/main,
-implement still runs the post-implement hook and squash-range check
-before this gate. Red/abort restores NEEDS_HUMAN and includes a normal
-stage-log pointer; hook failure remains 14. Merge authorization is
-unchanged.</p>
+canonical result digest, configured-command digest and failed/aborted
+execution at HEAD A, with current HEAD still A when unpublished or
+exactly B after an explicit executor publication recorded under the
+evidence lock for the same provider/stage attempt (allowlisted IDs,
+HEADs, sole-parent verification, <code>Bureau-Generated: true</code>
+trailer flag and timestamp), reverified for exactly one hop with the
+outside rerun/reservation at B, including QA's final run. The prefix
+alone grants no eligibility. It reserves at most one outside rerun per
+gate/HEAD/stage attempt, including incomplete runs, then revalidates
+immediately before running system Bash with pipefail, secret filtering
+and the stage timeout. Green clears only those gate holds; unknown
+commands, stale HEAD, missing evidence and product/security/human holds
+stay blocked, even with contradictory COMPLETE/GREEN. With commits
+beyond origin/main, implement still runs the post-implement hook and
+squash-range check before this gate. Red/abort restores NEEDS_HUMAN and
+includes a normal stage-log pointer; hook failure remains 14. Merge
+authorization is unchanged.</p>
 <p>The shared evidence store contains only allowlisted execution
 identities/measurements and digests: no raw command, output,
 ticket/result prose or copied log. Outside logs live under

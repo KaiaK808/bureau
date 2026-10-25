@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1d40b8fd9474b7f1d3cb426e22a0740b12c0a3cb8d3832581fa556ef064afab2">
+<meta name="bureau-source-sha256" content="433ea642c30b0dd48af29ab72ba1d113a97c697110fa42bd433f69fd8266e618">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -355,11 +355,16 @@ Counts/skipped work must agree for implement. A failed command alone
 cannot establish that independent blockers are gone.</p>
 <p>Eligibility requires an exact receipt match for run, provider
 attempt, stage attempt, issue, stage/phase, schema and canonical result
-digest; provider and normalized exits must be zero. Receipt start/end
-HEAD and execution start/end HEAD must equal current HEAD. Each
-referenced gate needs a nonzero exit or timeout/kill from the actual
-Codex execution stream. A live started/completed item is matched to
-exactly one rollout <code>exec_command_begin</code> /
+digest; provider and normalized exits must be zero. Without publication,
+receipt/execution start/end HEADs must equal current HEAD A; otherwise
+recovery requires the same provider/stage attempt's lock-recorded,
+allowlisted publication (attempt IDs, pre-commit A, commit B, sole
+parent A, verified <code>Bureau-Generated: true</code> trailer flag and
+timestamp), reverified against Git with current HEAD exactly B for one
+hop, and the outside rerun/reservation uses B, including QA's final run.
+Each referenced gate needs a nonzero exit or timeout/kill from the
+actual Codex execution stream. A live started/completed item is matched
+to exactly one rollout <code>exec_command_begin</code> /
 <code>exec_command_end</code> pair with the same call ID, begin before
 end, matching command/exit/output digest and repository-root cwd.
 Missing, duplicate, ambiguous, reused or reordered pairs fail closed.

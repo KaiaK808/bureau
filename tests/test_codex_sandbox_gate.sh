@@ -24,7 +24,7 @@ fake-bin/
 fake_claude_counter
 EOF
   jq -n --arg runner "$runner" --arg hook "$hook" \
-    --arg test "printf 'run\\n' >> logs/test-runs; python3 -c 'from feature import add; assert add(2, 3) == 5' || exit 1; exit $test_exit" \
+    --arg test "printf 'run\\n' >> logs/test-runs; git rev-parse HEAD >> logs/test-heads; python3 -c 'from feature import add; assert add(2, 3) == 5' || exit 1; exit $test_exit" \
     '{agents:{runner:$runner},repo:{test_command:$test,post_implement_command:$hook}}' > "$BUREAU_CONFIG"
   # Mixed reasons without a provider error phrase reach the shell's decision.
   # A mixed result containing "Operation not permitted" retains exit 24;
@@ -36,11 +36,9 @@ EOF
     skipped:[],deviations:[]},prose_notes:"Other work is finished"}' > "$FAKE_CLAUDE_FIXTURES"
   if [ "$runner" = codex ]; then
     export CODEX_HOME="$SANDBOX/logs/codex-home" FAKE_GATE_MODE=abort
-    printf 'def add(a, b):\n    return a + b\n' > "$SANDBOX/feature.py"
-    sed 's/\[ \]/[X]/g' "$SANDBOX/specs/001-test-branch/tasks.md" > "$SANDBOX/logs/tasks"
-    cp "$SANDBOX/logs/tasks" "$SANDBOX/specs/001-test-branch/tasks.md"
+    printf 'def add(a, b):\n    return a - b\n' > "$SANDBOX/feature.py"
     git -C "$SANDBOX" add .gitignore specs feature.py
-    git -C "$SANDBOX" commit -qm 'test: implemented fixture' -m 'Bureau-Generated: true'
+    git -C "$SANDBOX" commit -qm 'test: genuine edits start from an unfinished feature' -m 'Bureau-Generated: true'
     git -C "$SANDBOX" push -q origin HEAD
     # The same real adapter entry and commit helper as test_codex_implement_pipeline.sh.
     sed -n '/^run_stage_for() {/,/^# Build the model invocation/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/bureau-config.sh"
@@ -89,7 +87,7 @@ assert_halted() {
 
 machine_setup() {
   setup codex 0 "${2:-0}"
-  export FAKE_GATE_MODE="${1:-abort}" FAKE_CODEX_NO_CHANGE=1
+  export FAKE_GATE_MODE="${1:-abort}"
   jq --arg cmd "$(jq -r '.repo.test_command' "$BUREAU_CONFIG")" \
     '.notes.needs_human[0] |= (.reason="unprefixed gate aborted" | .kind="gate" | .command=$cmd)' \
     "$FAKE_CLAUDE_FIXTURES" > "$SANDBOX/logs/typed.json"
@@ -98,9 +96,14 @@ machine_setup() {
 
 machine_teardown() { unset FAKE_GATE_MODE FAKE_CODEX_NO_CHANGE; teardown; }
 
+assert_publication() {
+  python3 "$REPO_ROOT/tests/lib/assert_gate_publication.py" "$SANDBOX" implement
+}
+
 setup
 run_implement_pipeline TEAM-123
 assert_handoff_once
+assert_publication
 assert_file_contains 'SANDBOX_GATE:' "$SANDBOX/logs/prompt.log" 'Codex sandbox prompt'
 assert_calls_include 'shell gate outside the Codex sandbox green' 'decision in summary comment'
 assert_file_contains '^def add' "$SANDBOX/feature.py" 'fake Codex left a code change'
@@ -113,6 +116,7 @@ assert_eq 0 "$LAST_RC" 'red sandbox gate keeps the existing labelled NEEDS_HUMAN
 assert_halted
 assert_eq 1 "$(test_runs)" 'red gate tests ran once'
 assert_calls_include 'shell gate outside the Codex sandbox red' 'red decision in summary comment'
+assert_publication
 teardown
 
 setup codex 1
@@ -174,6 +178,7 @@ for mode in abort kill red; do
   machine_setup "$mode"
   run_implement_pipeline TEAM-123
   assert_handoff_once
+  assert_publication
   assert_calls_include 'outside gate logs:.*logs/outside-gates/' 'durable outside log attached'
   python3 - "$SANDBOX" "$mode" <<'PY'
 import hashlib, json, pathlib, sys
@@ -200,6 +205,26 @@ run_implement_pipeline TEAM-123
 assert_halted
 assert_eq 1 "$(test_runs)" 'outside red reruns once'
 assert_calls_include 'outside gate logs:.*logs/outside-gates/' 'outside red retains durable log'
+assert_publication
+machine_teardown
+
+# Removing ONLY the publication link breaks the same genuine-edit handoff.
+machine_setup red
+python3 - "$SCRIPTS_DIR/bureau-evidence.py" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); text=p.read_text()
+anchor="        receipt_head = value['end_head']\n"
+assert text.count(anchor)==1
+p.write_text(text.replace(anchor, anchor+"        if checked_head != receipt_head: return None\n"))
+PY
+run_implement_pipeline TEAM-123
+if assert_handoff_once > "$SANDBOX/logs/control.log" 2>&1; then
+  echo 'FAIL: dropping the publication link passed the genuine-edit assertion' >&2; exit 1
+fi
+assert_halted
+assert_eq 0 "$(test_runs)" 'no publication link prevents implement recovery'
+echo 'PASS negative control: dropping the publication link fails genuine-edit implement handoff'
 machine_teardown
 
 for mode in stale unknown missing_cwd borrowed_cwd duplicate_begin duplicate_end reordered ambiguous wrong_end agent_bash relative_bash env_agent_bash mixed; do

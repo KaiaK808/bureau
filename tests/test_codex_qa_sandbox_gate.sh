@@ -22,9 +22,9 @@ logs/
 fake-bin/
 fake_claude_counter
 EOF
-  jq -n --arg runner "$runner" --arg test "printf 'run\\n' >> logs/test-runs; exit $test_exit" \
+  jq -n --arg runner "$runner" --arg test "printf 'run\\n' >> logs/test-runs; git rev-parse HEAD >> logs/test-heads; exit $test_exit" \
     '{agents:{runner:$runner},repo:{test_command:$test}}' > "$BUREAU_CONFIG"
-  jq -n --arg notes "$notes" '{status:"NEEDS_HUMAN",tests_added:0,tests_failing:0,coverage_notes:$notes}' > "$FAKE_CLAUDE_FIXTURES"
+  jq -n --arg notes "$notes" '{status:"NEEDS_HUMAN",tests_added:1,tests_failing:0,coverage_notes:$notes}' > "$FAKE_CLAUDE_FIXTURES"
   # A committed tasks.md keeps the green Phase 1 case on the coverage path.
   git -C "$SANDBOX" add .gitignore specs
   git -C "$SANDBOX" commit -qm 'test: baseline with task coverage to check'
@@ -47,6 +47,9 @@ prompt=sys.stdin.read()
 assert 'Do not run git commit or git push.' in prompt
 assert '--output-schema' in sys.argv
 pathlib.Path('logs/prompt.log').write_text(prompt)
+if not os.environ.get('FAKE_CODEX_NO_CHANGE'):
+    pathlib.Path('tests').mkdir(exist_ok=True)
+    pathlib.Path('tests/test_added.py').write_text('import unittest\nclass Added(unittest.TestCase):\n    def test_add(self): self.assertEqual(2 + 3, 5)\n')
 if os.environ.get('FAKE_GATE_MODE'):
     runpy.run_path('fake-bin/gate_events.py')['emit']()
 pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(pathlib.Path('logs/result.json').read_text())
@@ -100,6 +103,10 @@ machine_setup() {
 
 machine_teardown() { unset FAKE_GATE_MODE; teardown; }
 
+assert_publication() {
+  python3 "$REPO_ROOT/tests/lib/assert_gate_publication.py" "$SANDBOX" qa
+}
+
 assert_decision_first() {
   assert_match "$1" "$LAST_STDOUT" 'decision echoed'
   assert_calls_include "$1" 'decision in Linear comment'
@@ -115,6 +122,7 @@ PY
 setup
 run_pipeline qa-pipeline.sh TEAM-123
 assert_green
+assert_publication
 assert_file_contains 'Sandbox: this turn runs inside the Codex sandbox' "$SANDBOX/logs/prompt.log" 'Codex sandbox note'
 assert_file_contains 'coverage_notes beginning SANDBOX_GATE:' "$SANDBOX/logs/prompt.log" 'QA result contract'
 assert_decision_first 'shell gate outside the Codex sandbox green: QA continues as GREEN'
@@ -129,6 +137,7 @@ assert_calls_exclude 'move_issue.*state-build-review' 'red QA does not hand off'
 assert_calls_exclude 'add_issue_label.*needs-human' 'red QA has no human label'
 assert_eq 3 "$(test_runs)" 'both initial attempts and the final run fail outside'
 assert_decision_first 'shell gate outside the Codex sandbox red: QA continues as RED'
+assert_publication
 teardown
 
 setup codex 0 'A correctness bug needs a product decision'
@@ -172,6 +181,7 @@ for mode in abort kill red; do
   machine_setup "$mode"
   run_pipeline qa-pipeline.sh TEAM-123
   assert_green
+  assert_publication
   assert_calls_include 'shell gate outside the Codex sandbox green' 'unprefixed machine gate decides'
   assert_file_contains 'Outside gate log:.*logs/outside-gates/' "$(qa_log_path)" 'outside log attached'
   machine_teardown
@@ -184,6 +194,27 @@ assert_calls_include 'move_issue.*state-build$' 'outside red stays blocked from 
 assert_calls_exclude 'move_issue.*state-build-review' 'outside red never hands off'
 assert_eq 3 "$(test_runs)" 'red QA has two initial runs and one final rerun'
 assert_file_contains 'Outside gate log:.*logs/outside-gates/' "$(qa_log_path)" 'outside red log attached'
+assert_publication
+machine_teardown
+
+# The normal final outside run still passes at B without a link, but cannot
+# clear the hold taken at A. The genuine-edit green assertion must reject it.
+machine_setup red
+python3 - "$SCRIPTS_DIR/bureau-evidence.py" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); text=p.read_text()
+anchor="        receipt_head = value['end_head']\n"
+assert text.count(anchor)==1
+p.write_text(text.replace(anchor, anchor+"        if checked_head != receipt_head: return None\n"))
+PY
+run_pipeline qa-pipeline.sh TEAM-123
+if assert_green > "$SANDBOX/logs/control.log" 2>&1; then
+  echo 'FAIL: dropping the publication link passed the genuine-edit QA assertion' >&2; exit 1
+fi
+assert_halted
+assert_eq 2 "$(test_runs)" 'no publication link retains only normal QA runs'
+echo 'PASS negative control: dropping the publication link fails genuine-edit QA handoff'
 machine_teardown
 
 for mode in stale unknown missing_cwd borrowed_cwd duplicate_begin duplicate_end reordered ambiguous wrong_end agent_bash relative_bash env_agent_bash mixed; do

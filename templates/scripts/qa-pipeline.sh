@@ -272,7 +272,7 @@ fi
 # The executor publishes tracked edits and newly created tests, including when
 # Codex intentionally leaves all Git writes to us. A failed push must not route
 # the issue onward with tests that exist only in this disposable checkout.
-commit_stage_changes qa "$ISSUE"
+commit_stage_changes qa "$ISSUE" "$QA_GATE_CONTEXT"
 if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
   echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
 else

@@ -828,11 +828,11 @@ def gate_action(args, config, options, repo):
     configured = g.commands(config, repo, args.stage)
     if args.gate_action == 'command': return configured[0] if configured else ''
     store = evidence_store(repo); head = current_head(repo)
-    raw = json.load(sys.stdin)
+    raw = {} if args.gate_action == 'publish' else json.load(sys.stdin)
     if not isinstance(raw, dict):
         return json.dumps(dict(eligible=False, green=False, logs=[], reason='gate input must be one object'))
     context = raw.get('context') if args.gate_action == 'run' and isinstance(raw, dict) else None
-    if args.gate_action == 'plan':
+    if args.gate_action in ('plan', 'publish'):
         value = json.loads(raw['result']) if isinstance(raw, dict) and isinstance(raw.get('result'), str) else raw
         if args.gate_context and Path(args.gate_context).is_file() and Path(args.gate_context).stat().st_size:
             context = json.loads(Path(args.gate_context).read_text())
@@ -846,8 +846,11 @@ def gate_action(args, config, options, repo):
             if owner and raw.get(key) != owner: foreign = True
     if foreign:
         return json.dumps(dict(eligible=False, green=False, logs=[], reason='gate evidence belongs to another current stage'))
+    if args.gate_action == 'publish':
+        store.record_publication(context, args.stage, repo, args.publication_before, args.publication_after)
+        return json.dumps(dict(recorded=True))
     if args.gate_action == 'plan':
-        plan = g.plan(store, value, args.stage, configured, head, context)
+        plan = g.plan(store, value, args.stage, configured, head, context, repo)
         if plan['eligible']:
             # Even the compatibility prefix uses the same durable reservation.
             run_id = (context or {}).get('run_id') or os.environ.get('BUREAU_RUN_ID') or uuid.uuid4().hex
@@ -858,7 +861,7 @@ def gate_action(args, config, options, repo):
             plan.update(run_id=run_id, stage_attempt_id=attempt)
         return json.dumps(plan)
     # Re-check original evidence, config and HEAD immediately before running.
-    fresh = g.plan(store, raw.get('result'), args.stage, configured, head, raw.get('context'))
+    fresh = g.plan(store, raw.get('result'), args.stage, configured, head, raw.get('context'), repo)
     if not fresh['eligible'] or raw.get('head') != head or raw.get('commands') != fresh.get('commands'):
         return json.dumps(dict(eligible=False, green=False, reason='gate evidence changed before outside execution', logs=[]))
     run_id, owner = raw['run_id'], raw['stage_attempt_id']
@@ -911,7 +914,8 @@ def main():
     parser.add_argument('--config', default=os.environ.get('BUREAU_CONFIG', '.bureau.json'))
     parser.add_argument('--prompt-file'); parser.add_argument('--system-file'); parser.add_argument('--schema')
     parser.add_argument('--gate-context')
-    parser.add_argument('--gate-action', choices=('command', 'plan', 'run'))
+    parser.add_argument('--gate-action', choices=('command', 'plan', 'run', 'publish'))
+    parser.add_argument('--publication-before'); parser.add_argument('--publication-after')
     parser.add_argument('--check', action='store_true'); parser.add_argument('--describe', action='store_true')
     args = parser.parse_args(); evidence = None; options = {}
     try:
