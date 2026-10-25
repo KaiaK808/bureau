@@ -274,6 +274,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         self.assertNotEqual(kept, source, 'the control could not remove the UNTRUSTED_PATHS check')
         copy = self.root / 'bureau-provider-keep.py'; copy.write_text(kept)
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), self.root / 'bureau-evidence.py')
+        shutil.copy(SCRIPT.with_name('bureau-gates.py'), self.root / 'bureau-gates.py')
         control_spec = importlib.util.spec_from_file_location('provider_keep', copy)
         control = importlib.util.module_from_spec(control_spec); control_spec.loader.exec_module(control)
         reduced = control.untrusted_env({**PATHS, 'PATH': '/bin'}, 'default', 'claude')

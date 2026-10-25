@@ -18,6 +18,19 @@
     },
     "coverage_notes": {
       "type": "string"
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {"type": "string", "enum": ["gate", "product", "security", "human"]},
+          "command": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "required": ["kind", "command", "reason"]
+      }
     }
   },
   "required": [

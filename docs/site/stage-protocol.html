@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c487e794004cadbfd426c98fa0e96b13c9a85dfc54784763c5d681ed127673e5">
+<meta name="bureau-source-sha256" content="1d40b8fd9474b7f1d3cb426e22a0740b12c0a3cb8d3832581fa556ef064afab2">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -341,6 +341,73 @@ old unregistered workers explicitly before reuse. Tests use fake
 providers/services and real local Git, including timeout/reset and
 mutation controls. Live provider and adopting-installation qualification
 remains outstanding.</p>
+<h2 id="sandbox-only-gate-recovery">Sandbox-only gate recovery</h2>
+<p><code>bureau-gates.py</code> reconciles implement/QA holds against
+the exact configured command (<code>repo.test_command</code>, or QA's
+deterministic fallback). A typed implement
+<code>notes.needs_human</code> entry uses <code>kind: gate</code> and
+the exact <code>command</code>; QA uses an exhaustive
+<code>blockers</code> array with those fields plus <code>reason</code>.
+Independent holds use <code>product</code>, <code>security</code> or
+<code>human</code>. Typed fields take precedence over
+<code>SANDBOX_GATE:</code>; both forms require the same machine proof.
+Counts/skipped work must agree for implement. A failed command alone
+cannot establish that independent blockers are gone.</p>
+<p>Eligibility requires an exact receipt match for run, provider
+attempt, stage attempt, issue, stage/phase, schema and canonical result
+digest; provider and normalized exits must be zero. Receipt start/end
+HEAD and execution start/end HEAD must equal current HEAD. Each
+referenced gate needs a nonzero exit or timeout/kill from the actual
+Codex execution stream. A live started/completed item is matched to
+exactly one rollout <code>exec_command_begin</code> /
+<code>exec_command_end</code> pair with the same call ID, begin before
+end, matching command/exit/output digest and repository-root cwd.
+Missing, duplicate, ambiguous, reused or reordered pairs fail closed.
+Agent tool requests and explanations supply no execution proof. Only an
+exact configured command or one absolute resolved <code>/bin/bash</code>
+or <code>/bin/sh</code> wrapper with exactly
+<code>-c</code>/<code>-lc</code> plus command qualifies.
+<code>/usr/bin/env PATH=/usr/bin:/bin bash -c …</code> also qualifies
+with a system-only PATH; relative/agent-owned shells and inherited env
+PATH do not.</p>
+<p>The shell rechecks receipt/configuration/HEAD, then atomically
+reserves one outside execution per
+<code>(stage attempt, gate ID, HEAD)</code> before spawning.
+Reservations contain command identities as digests; an
+interrupted/incomplete reservation never permits another execution. The
+outside command runs in the repository through system Bash with
+pipefail, the existing secret filtering and stage timeout, with
+process-group termination on timeout/cancellation. Its original output
+is <code>logs/outside-gates/ATTEMPT_ID.log</code>; metadata records the
+pointer, full-stream digest/size, exit/abort and duration.
+Reconciliation reads digests and gate IDs, never retained log bytes or
+full structured results. Removing provider log originals does not remove
+this gate proof; this differs from completion-output recovery, which
+still needs its original result.</p>
+<p>Outside green clears exactly the qualifying gate holds. Implement
+still requires commits beyond origin/main and its hook/squash-range
+checks; outside red/abort keeps NEEDS_HUMAN with the stage-log pointer.
+QA reuses its final outside run, reading that log into its normal QA
+log: green may hand off, red follows its rework route, and other holds
+stay NEEDS_HUMAN. A declared hold also survives a contradictory
+COMPLETE/GREEN. Evidence failures prevent recovery without inventing
+success; they remain observational for existing provider outcomes.
+Cancellation 130 is captured immediately after the runner returns and
+survives subsequent evidence read/write/validation failures. A local
+green result grants no merge permission; CI/current-base and manual
+merge boundaries remain in force.</p>
+<p>Adoption requires resyncing scripts/schemas together and restarting
+drivers after comparing local drift. Old prefix-only claims without
+execution proof now stay blocked. Metadata-only receipts remain
+compatible; no raw history is imported. Known limits above/below still
+apply: this is local, best-effort coordination and not tamper-proof
+attestation against a malicious repository/CLI or external edits. Gate
+recovery does not infer an environmental cause from text: it verifies a
+failed configured gate and proves the current outside outcome.
+Qualification uses fake providers and real local Git; live CLI-event
+compatibility and adopter acceptance remain outstanding. PR 7 insights
+are a separate local artifact and are not part of this evidence model or
+this change.</p>
 <h2 id="configuration-and-merge-boundaries">Configuration and merge
 boundaries</h2>
 <p><code>BUREAU_CONFIG</code> is an explicit path and is honored even
@@ -453,6 +520,19 @@ pointers. <code>structured_result</code> is always null;
 or null when absent.</td>
 </tr>
 <tr>
+<td>Sandbox execution in receipt <code>gate_attempts</code></td>
+<td>Gate/execution IDs, configured role and command SHA-256, start/end
+HEAD, exit/abort kind, duration, observed-output SHA-256/size,
+source/environment, call-ID SHA-256 and null stage-log pointer. No
+command/output/result text.</td>
+</tr>
+<tr>
+<td>Outside reservation in attempt <code>gate_reruns</code></td>
+<td>Reservation ID, HEAD, command/gate digests, source execution IDs,
+start time and optional metadata-only completion (exit/abort, HEADs,
+duration, stream digest/size, normal stage-log pointer).</td>
+</tr>
+<tr>
 <td>Manifest: <code>runs/RUN_ID/manifest.json</code></td>
 <td>Run/issue identity, workspace pointer, start/end times, start/final
 HEAD, normalized exit, PR number, attempts.</td>
@@ -503,9 +583,11 @@ may contain private content and may disappear independently.</p>
 <p>Receipt reconciliation requires the exact run, provider attempt,
 stage attempt, ticket, stage, phase, schema and current HEAD, and both
 exits must be zero. It reads the original provider result through its
-pointer, checks the full result digest and validates the schema again. A
-missing or changed original fails recovery; no free-text result is
-reconstructed from metadata, a prior receipt or Git history.</p>
+pointer, checks the full canonical result digest and validates the
+schema again. Codex originals use the same declared optional-null
+normalization as normal wire-result forwarding. A missing or changed
+original fails recovery; no free-text result is reconstructed from
+metadata, a prior receipt or Git history.</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py status <span class="at">--run</span> RUN_ID</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits <span class="at">--issue</span> TEAM-123</span></code></pre></div>

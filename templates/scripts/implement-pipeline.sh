@@ -702,6 +702,7 @@ NEGATIVE_CONSTRAINTS=$(build_negative_constraints)
 # gets no note: its prompt stays as it was, byte for byte.
 if [ "$(resolve_runner_for_stage implement)" = codex ]; then
   SANDBOX_NOTE="Sandbox: this stage runs inside the Codex sandbox, where binding or listening on a socket, network access and the per-user temp directory can be denied. A test that fails only for such a reason (for example PermissionError: [Errno 1] Operation not permitted on bind or listen) is not a code failure. Never change, skip or deselect a test to get around the sandbox. When such failures are the only thing keeping a task open, finish every other task, then report status NEEDS_HUMAN with one notes.needs_human entry per affected task whose reason begins with SANDBOX_GATE: and names the failing tests and the denied operation. After your turn the shell runs repo.test_command outside the sandbox: if it passes, the stage continues as COMPLETE; if it fails, the ticket halts for a human. Any other needs-human reason must not begin with SANDBOX_GATE:."
+  SANDBOX_NOTE+=" For a failed or aborted configured gate, report each affected notes.needs_human entry with kind gate and command equal to the exact configured repo.test_command; reason is free text, with no required prefix. Include every independent blocker with kind product, security or human and an empty command. Only actual Codex command executions at the current HEAD qualify; a reference alone is no evidence. Do not label a product, security or decision blocker as a gate. Run the configured command unchanged from the repository root."
   NEGATIVE_CONSTRAINTS+=$'\n\n'"$SANDBOX_NOTE"
 fi
 
@@ -783,7 +784,10 @@ push_iteration() {
 # after the hook must not publish what the hook did to HEAD. On a stop the push
 # runs in the stage's process group, bounded by the runtime's stop grace.
 EXIT_PUSH_ARMED=1
+IMPLEMENT_GATE_TMP=$(mktemp -d)
+IMPLEMENT_GATE_CONTEXT="$IMPLEMENT_GATE_TMP/context.json"
 _push_on_exit() {
+  rm -rf "$IMPLEMENT_GATE_TMP"
   [ "$EXIT_PUSH_ARMED" = 1 ] || return 0
   push_if_ahead "the stage ends before its end-of-run push" "${HEAD_BEFORE_HOOK:-HEAD}"
 }
@@ -1030,7 +1034,8 @@ At the end of your work, emit a single fenced json block so the shell can summar
 \`\`\`"
 
   set +e
-  RESULT=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-implement.schema.json" "$PROMPT")
+  : > "$IMPLEMENT_GATE_CONTEXT"
+  RESULT=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-implement.schema.json" --gate-context "$IMPLEMENT_GATE_CONTEXT" "$PROMPT")
   CLAUDE_EXIT=$?
   set -e
   commit_codex_changes implement "$ISSUE"
@@ -1190,26 +1195,37 @@ if [ "$STATUS" = "COMPLETE" ] && [ "$BRANCH_COMMITS_AHEAD" -eq 0 ]; then
 fi
 fi  # end of `if ! use_goal_loop_enabled` wrapper around iter-loop + post-loop overrides
 
-# The shell gate after a Codex turn, part 1. A Codex NEEDS_HUMAN whose every
-# reason carries the SANDBOX_GATE: prefix rests only on tests the sandbox
-# denies (the note in the prompt above). Such a run counts as COMPLETE from
+# The shell gate after a Codex turn, part 1. Machine-linked gate blockers and
+# the compatibility prefix enter one reconciliation. Such a run counts as COMPLETE from
 # here on, so the post-implement hook and the squash-range check below treat
 # it like any finished run; repo.test_command outside the sandbox decides after
 # the final push (part 2). Needs a test command and commits beyond origin/main,
 # the floor the COMPLETE override above keeps. A Claude run never enters here.
 SANDBOX_GATE_PENDING=0
+IMPLEMENT_GATE_PLAN='{}'
+# A claimed COMPLETE cannot erase an explicit hold in the same result.
+if [ "$STATUS" = COMPLETE ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then
+  DECLARED_HOLDS=$(parse_claude_json "$RESULT" '.notes.needs_human // [] | length')
+  if [[ "$DECLARED_HOLDS" =~ ^[0-9]+$ ]] && [ "$DECLARED_HOLDS" -gt 0 ]; then STATUS=NEEDS_HUMAN; fi
+fi
 if [ "$STATUS" = "NEEDS_HUMAN" ] && [ "$(resolve_runner_for_stage implement)" = codex ] \
-   && codex_sandbox_gate_only "$RESULT"; then
+   && IMPLEMENT_GATE_PLAN=$(codex_gate_plan implement "$RESULT" "$IMPLEMENT_GATE_CONTEXT") \
+   && [ "$(printf '%s' "$IMPLEMENT_GATE_PLAN" | jq -r '.eligible')" = true ]; then
   GATE_COMMITS_AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
   if [ -z "$(bureau_get '.repo.test_command // empty')" ]; then
-    GATE_LINE="needs-human names only SANDBOX_GATE reasons, but repo.test_command is empty: NEEDS_HUMAN stays"
+    GATE_LINE="gate-only blockers, but repo.test_command is empty: NEEDS_HUMAN stays"
   elif ! [[ "$GATE_COMMITS_AHEAD" =~ ^[0-9]+$ ]] || ! [ "$GATE_COMMITS_AHEAD" -gt 0 ] 2>/dev/null; then
-    GATE_LINE="needs-human names only SANDBOX_GATE reasons, but the branch has no commits beyond origin/main: NEEDS_HUMAN stays"
+    GATE_LINE="gate-only blockers, but the branch has no commits beyond origin/main: NEEDS_HUMAN stays"
   else
     STATUS="COMPLETE"
     SANDBOX_GATE_PENDING=1
-    GATE_LINE="needs-human names only SANDBOX_GATE reasons: treated as COMPLETE until the shell gate outside the Codex sandbox decides"
+    GATE_LINE="verified gate-only blockers: treated as COMPLETE until the shell gate outside the Codex sandbox decides"
   fi
+  echo "  $GATE_LINE"
+  ITER_LOG+="  $GATE_LINE"$'\n'
+elif [ "$STATUS" = "NEEDS_HUMAN" ] && [ "$(resolve_runner_for_stage implement)" = codex ] \
+     && codex_sandbox_gate_only "$RESULT" && [ -z "$(bureau_get '.repo.test_command // empty')" ]; then
+  GATE_LINE="gate-only blockers, but repo.test_command is empty: NEEDS_HUMAN stays"
   echo "  $GATE_LINE"
   ITER_LOG+="  $GATE_LINE"$'\n'
 fi
@@ -1324,9 +1340,12 @@ fi
 # result in the summary comment. A status the hook or the squash-range check
 # set in between (POST_IMPLEMENT_FAILED, CI_MARKER) halts as it would anyway.
 if [ "$SANDBOX_GATE_PENDING" = 1 ] && [ "$STATUS" = "COMPLETE" ]; then
-  TEST_COMMAND=$(bureau_get '.repo.test_command // empty')
-  echo "  running repo.test_command outside the Codex sandbox (needs-human named only SANDBOX_GATE reasons)"
-  if [ -n "$TEST_COMMAND" ] && bureau_untrusted_env bash --noprofile --norc -c "$TEST_COMMAND"; then
+  echo "  running repo.test_command outside the Codex sandbox (verified gate-only blockers)"
+  OUTSIDE_RC=0
+  OUTSIDE_GATE=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" codex_gate_run implement "$IMPLEMENT_GATE_PLAN") || OUTSIDE_RC=$?
+  [ "$OUTSIDE_RC" != 130 ] || exit 130
+  [ "$OUTSIDE_RC" = 0 ] || OUTSIDE_GATE='{"green":false,"logs":[]}'
+  if [ "$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green')" = true ]; then
     GATE_LINE="shell gate outside the Codex sandbox green: the run continues as COMPLETE"
   else
     STATUS="NEEDS_HUMAN"
@@ -1334,6 +1353,8 @@ if [ "$SANDBOX_GATE_PENDING" = 1 ] && [ "$STATUS" = "COMPLETE" ]; then
   fi
   echo "  $GATE_LINE"
   ITER_LOG+="  $GATE_LINE"$'\n'
+  GATE_LOGS=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.logs[]?')
+  ITER_LOG+="  outside gate logs: ${GATE_LOGS:-unavailable}"$'\n'
 fi
 
 if [ "$STATUS" = "COMPLETE" ] && [ "$SANDBOX_GATE_PENDING" != 1 ] && [ "$(resolve_runner_for_stage implement)" = codex ]; then

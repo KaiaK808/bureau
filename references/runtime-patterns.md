@@ -313,7 +313,7 @@ Loop invariants:
 
 Terminal status routing:
 
-For Codex implement turns only, a NEEDS_HUMAN result whose non-empty `notes.needs_human` array carries only `SANDBOX_GATE:` reasons can become COMPLETE before the post-implement hook when a test command and commits beyond `origin/main` exist. The configured tests run once after the final push outside the Codex sandbox; red restores NEEDS_HUMAN, and an intervening hook or squash-range failure still halts. The strict result reader and full contract are in [Background providers](../docs/provider-runtime.md#codex-implementation-sandbox-gate).
+For Codex implement turns only, typed gate-only NEEDS_HUMAN holds or legacy `SANDBOX_GATE:` reasons enter the same machine-evidence reconciliation: matching result/command digests, one execution-bound cwd, current HEAD and a failed/aborted configured command are mandatory. One reserved outside rerun per gate/HEAD/stage attempt can clear exactly those holds. Other blockers and missing/stale proof stay blocked. Commit, hook, squash-range and merge gates remain in force; outside logs stay in normal stage logs and only metadata/digests enter evidence. See [Background providers](../docs/provider-runtime.md#codex-implementation-sandbox-gate).
 
 | Status | PR | needs-human label | State move | escalations.log |
 |---|---|---|---|---|

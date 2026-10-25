@@ -6,6 +6,7 @@ BASE_PATH="$PATH"
 
 setup() {
   local runner="${1:-codex}" mixed="${2:-0}" test_exit="${3:-0}" hook="${4:-}"
+  unset FAKE_GATE_MODE
   export PATH="$BASE_PATH"
   sandbox_init TEAM-123 test-branch
   export BUREAU_CONFIG="$SANDBOX/.bureau.json" BUREAU_STUB_RUNNER="$runner" BUREAU_RUNNER_IMPLEMENT="$runner"
@@ -34,15 +35,23 @@ EOF
        + if $mixed == 1 then [{task_id:"T002",reason:"A required product decision is missing"}] else [] end),
     skipped:[],deviations:[]},prose_notes:"Other work is finished"}' > "$FAKE_CLAUDE_FIXTURES"
   if [ "$runner" = codex ]; then
+    export CODEX_HOME="$SANDBOX/logs/codex-home" FAKE_GATE_MODE=abort
+    printf 'def add(a, b):\n    return a + b\n' > "$SANDBOX/feature.py"
+    sed 's/\[ \]/[X]/g' "$SANDBOX/specs/001-test-branch/tasks.md" > "$SANDBOX/logs/tasks"
+    cp "$SANDBOX/logs/tasks" "$SANDBOX/specs/001-test-branch/tasks.md"
+    git -C "$SANDBOX" add .gitignore specs feature.py
+    git -C "$SANDBOX" commit -qm 'test: implemented fixture' -m 'Bureau-Generated: true'
+    git -C "$SANDBOX" push -q origin HEAD
     # The same real adapter entry and commit helper as test_codex_implement_pipeline.sh.
     sed -n '/^run_stage_for() {/,/^# Build the model invocation/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/bureau-config.sh"
     cat >> "$SCRIPTS_DIR/bureau-config.sh" <<'EOF'
 BUREAU_RUNTIME="$(dirname "$0")/bureau-runtime.py"
 EOF
     mkdir "$SANDBOX/fake-bin"
+    cp "$REPO_ROOT/tests/lib/codex_gate_events.py" "$SANDBOX/fake-bin/gate_events.py"
     cat > "$SANDBOX/fake-bin/codex" <<'EOF'
 #!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, runpy, sys
 if sys.argv[1]=='login': sys.exit(0)
 assert sys.argv[1]=='exec'
 prompt=sys.stdin.read()
@@ -51,6 +60,8 @@ if not os.environ.get('FAKE_CODEX_NO_CHANGE'):
     pathlib.Path('feature.py').write_text('def add(a, b):\n    return a + b\n')
     for path in pathlib.Path('specs').glob('*/tasks.md'):
         path.write_text(path.read_text().replace('[ ]','[X]'))
+if os.environ.get('FAKE_GATE_MODE'):
+    runpy.run_path('fake-bin/gate_events.py')['emit']()
 pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(pathlib.Path('logs/result.json').read_text())
 print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tokens':2}}))
 EOF
@@ -75,6 +86,17 @@ assert_halted() {
   assert_calls_exclude 'move_issue' 'no hand-off' || return 1
   assert_match 'NEEDS_HUMAN|POST_IMPLEMENT_FAILED' "$LAST_STDOUT" 'halt status' || return 1
 }
+
+machine_setup() {
+  setup codex 0 "${2:-0}"
+  export FAKE_GATE_MODE="${1:-abort}" FAKE_CODEX_NO_CHANGE=1
+  jq --arg cmd "$(jq -r '.repo.test_command' "$BUREAU_CONFIG")" \
+    '.notes.needs_human[0] |= (.reason="unprefixed gate aborted" | .kind="gate" | .command=$cmd)' \
+    "$FAKE_CLAUDE_FIXTURES" > "$SANDBOX/logs/typed.json"
+  mv "$SANDBOX/logs/typed.json" "$FAKE_CLAUDE_FIXTURES"
+}
+
+machine_teardown() { unset FAKE_GATE_MODE FAKE_CODEX_NO_CHANGE; teardown; }
 
 setup
 run_implement_pipeline TEAM-123
@@ -137,7 +159,7 @@ teardown
 # fail on the missing feature).
 setup
 git -C "$SANDBOX" add -A
-git -C "$SANDBOX" commit -q -m 'spec fixture'
+git -C "$SANDBOX" commit -q --allow-empty -m 'spec fixture'
 git -C "$SANDBOX" push -q origin HEAD:main HEAD:test-branch
 export FAKE_CODEX_NO_CHANGE=1
 run_implement_pipeline TEAM-123
@@ -145,6 +167,96 @@ unset FAKE_CODEX_NO_CHANGE
 assert_halted
 assert_eq 0 "$(test_runs)" 'no commits beyond origin/main do not promote'
 assert_calls_include 'no commits beyond origin/main: NEEDS_HUMAN stays' 'no-commit decision in comment'
+teardown
+
+# Unprefixed machine execution evidence is sufficient: timeout, kill and red.
+for mode in abort kill red; do
+  machine_setup "$mode"
+  run_implement_pipeline TEAM-123
+  assert_handoff_once
+  assert_calls_include 'outside gate logs:.*logs/outside-gates/' 'durable outside log attached'
+  python3 - "$SANDBOX" "$mode" <<'PY'
+import hashlib, json, pathlib, sys
+root=pathlib.Path(sys.argv[1]); receipt=json.loads(next((root/'.git/bureau/evidence/v1').glob('runs/*/receipts/*.json')).read_text())
+gate=receipt['gate_attempts'][0]
+assert gate['source']=='codex.command_execution' and gate['command_sha256']==gate['gate_id']
+assert gate['attempt_id'] and gate['gate_id'] and gate['head']==gate['end_head']
+assert gate['normalized_exit']==(124 if sys.argv[2]=='abort' else 137 if sys.argv[2]=='kill' else 1)
+assert gate['abort']==('timeout' if sys.argv[2]=='abort' else 'kill' if sys.argv[2]=='kill' else None)
+assert len(gate['sha256']) == 64 and gate['bytes'] > 0
+assert receipt['structured_result'] is None and len(receipt['result_sha256']) == 64
+assert gate['stage_log'] is None
+for file in (root/'.git/bureau/evidence/v1').rglob('*'):
+    if file.is_file():
+        raw=file.read_bytes()
+        assert b'machine gate' not in raw and b'from feature import add' not in raw
+
+PY
+  machine_teardown
+done
+
+machine_setup red 1
+run_implement_pipeline TEAM-123
+assert_halted
+assert_eq 1 "$(test_runs)" 'outside red reruns once'
+assert_calls_include 'outside gate logs:.*logs/outside-gates/' 'outside red retains durable log'
+machine_teardown
+
+for mode in stale unknown missing_cwd borrowed_cwd duplicate_begin duplicate_end reordered ambiguous wrong_end agent_bash relative_bash env_agent_bash mixed; do
+  machine_setup "$mode"
+  if [ "$mode" = mixed ]; then
+    jq '.notes.needs_human += [{task_id:"T004",reason:"Product decision remains",kind:"product",command:""}] | .tasks_needs_human=2' \
+      "$FAKE_CLAUDE_FIXTURES" > "$SANDBOX/logs/mixed.json"
+    mv "$SANDBOX/logs/mixed.json" "$FAKE_CLAUDE_FIXTURES"
+  fi
+  run_implement_pipeline TEAM-123
+  assert_halted
+  assert_eq 0 "$(test_runs)" "$mode cannot authorize an outside rerun"
+  machine_teardown
+done
+
+# Negative control: remove ONLY the machine bridge. The unprefixed permission
+# result now reproduces the incident's provider stop (24), not a handoff.
+machine_setup red
+jq '.status="COMPLETE" | .notes.needs_human += [{task_id:"T004",reason:"Product decision remains",kind:"product",command:""}] | .tasks_needs_human=2' \
+  "$FAKE_CLAUDE_FIXTURES" > "$SANDBOX/logs/contradictory.json"
+mv "$SANDBOX/logs/contradictory.json" "$FAKE_CLAUDE_FIXTURES"
+run_implement_pipeline TEAM-123
+assert_halted
+assert_eq 0 "$(test_runs)" 'a claimed COMPLETE cannot erase an explicit product hold'
+machine_teardown
+
+machine_setup abort
+jq '.notes.needs_human[0].reason="Operation not permitted; gate aborted"' "$FAKE_CLAUDE_FIXTURES" > "$SANDBOX/logs/permission.json"
+mv "$SANDBOX/logs/permission.json" "$FAKE_CLAUDE_FIXTURES"
+python3 - "$SCRIPTS_DIR/bureau-provider.py" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); text=p.read_text(); start=text.index('    machine_gate = (observer')
+end=text.index('    if not machine_gate and environment_blocked',start)
+p.write_text(text[:start]+'    machine_gate = False\n'+text[end:])
+PY
+run_implement_pipeline TEAM-123
+assert_eq 24 "$LAST_RC" 'negative control: missing bridge reproduces old stop'
+if assert_handoff_once > "$SANDBOX/logs/control.log" 2>&1; then
+  echo 'FAIL: no-bridge mutation passed handoff assertion' >&2; exit 1
+fi
+assert_eq 0 "$(test_runs)" 'no bridge never reaches outside gate'
+echo 'PASS negative control: removing machine bridge reproduces exit 24 and fails assert_handoff_once'
+machine_teardown
+
+# The prefix is syntax, never failed-execution proof by itself.
+setup
+unset FAKE_GATE_MODE
+run_implement_pipeline TEAM-123
+assert_halted
+assert_eq 0 "$(test_runs)" 'prefix without proof never spawns outside'
+teardown
+
+setup
+export FAKE_GATE_MODE=stale
+run_implement_pipeline TEAM-123
+assert_halted
 teardown
 
 # Negative controls run the identical green case through a mutated stage copy.

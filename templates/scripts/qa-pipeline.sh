@@ -110,25 +110,7 @@ TASKS_FILE=""
 detect_test_cmd() {
   local configured
   configured=$(bureau_get '.repo.test_command // empty')
-  if [ -n "$configured" ]; then printf '%s' "$configured"; return; fi
-  if [ -f "scripts/bureau-test.sh" ]; then
-    echo "bash scripts/bureau-test.sh"; return
-  fi
-  if [ -f "package.json" ] && jq -e '.scripts.test' package.json >/dev/null 2>&1; then
-    # Prefer a dedicated CI variant when present (avoids watch mode, etc).
-    if jq -e '.scripts["test:ci"]' package.json >/dev/null 2>&1; then
-      echo "npm run test:ci --silent"
-    else
-      echo "npm test --silent"
-    fi
-    return
-  fi
-  if [ -f "Cargo.toml" ]; then echo "cargo test --quiet"; return; fi
-  if [ -f "pyproject.toml" ] || [ -f "pytest.ini" ] || [ -f "setup.cfg" ]; then
-    echo "pytest -q"; return
-  fi
-  if [ -f "go.mod" ]; then echo "go test ./..."; return; fi
-  echo ""
+  printf '%s' "$configured" | bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-gates.py"
 }
 
 TEST_CMD=$(detect_test_cmd)
@@ -153,6 +135,7 @@ QA_LOG_TS=$(date -u +%Y-%m-%dT%H-%M-%S)
 QA_LOG_PATH="logs/qa-$ISSUE-$QA_LOG_TS.log"
 
 QA_TMP=$(mktemp -d)
+QA_GATE_CONTEXT="$QA_TMP/gate-context.json"
 _qa_cleanup() {
   local rc=$?
   if [ -f "${QA_LOG_PATH:-}" ]; then bureau_archive_evidence_dir_log || true; fi
@@ -247,10 +230,11 @@ else
   # Claude gets no note: its prompt stays byte for byte as before.
   if [ "$(resolve_runner_for_stage qa)" = codex ]; then
     SANDBOX_NOTE="Sandbox: this turn runs inside the Codex sandbox, where binding or listening on a socket, network access and the per-user temp directory can be denied. The test output above comes from the shell outside the sandbox. A test that fails inside the sandbox only for such a reason is not a test failure. Never change, skip or deselect a test to get around the sandbox. If the sandbox is the only thing keeping you from confirming the suite, report status NEEDS_HUMAN with coverage_notes beginning SANDBOX_GATE: and naming the tests and the denied operation. The shell's final run outside the sandbox then decides GREEN or RED. A correctness bug, or a harness that is broken outside the sandbox, stays NEEDS_HUMAN without the prefix."
+    SANDBOX_NOTE+=" For a failed or aborted configured gate, you may instead report an exhaustive blockers array, each object with kind gate, command equal to the exact test command above and a free-text reason; coverage_notes needs no prefix. Include every independent blocker with kind product, security or human and an empty command. Only actual Codex command executions at the current HEAD qualify; a reference alone is no evidence. Run the configured command unchanged from the repository root. Never label product, security or decision blockers as gates."
     NEGATIVE_CONSTRAINTS_BODY+=$'\n\n'"$SANDBOX_NOTE"
   fi
 
-  QA_RESULT=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-qa.schema.json" "You are the QA agent for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
+  QA_RESULT=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-qa.schema.json" --gate-context "$QA_GATE_CONTEXT" "You are the QA agent for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
 
 $SPEC_CONTEXT
 
@@ -297,7 +281,28 @@ fi
 
 echo ""
 echo "Phase 3/3: final test run + route"
-if qa_run_gate "$QA_TMP/test2.log"; then
+QA_GATE_PLAN='{}'
+QA_GATE_RECONCILE=false
+if [ "$(resolve_runner_for_stage qa)" = codex ] \
+   && QA_GATE_PLAN=$(codex_gate_plan qa "$QA_RESULT" "$QA_GATE_CONTEXT") \
+   && [ "$(printf '%s' "$QA_GATE_PLAN" | jq -r '.eligible')" = true ]; then
+  OUTSIDE_RC=0
+  OUTSIDE_GATE=$(codex_gate_run qa "$QA_GATE_PLAN") || OUTSIDE_RC=$?
+  [ "$OUTSIDE_RC" != 130 ] || exit 130
+  [ "$OUTSIDE_RC" = 0 ] || OUTSIDE_GATE='{"green":false,"logs":[]}'
+  QA_GATE_RECONCILE=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.eligible // false')
+  FINAL_GREEN=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green // false')
+  : > "$QA_TMP/test2.log"
+  while IFS= read -r gate_log; do
+    [ -n "$gate_log" ] || continue
+    printf 'Outside gate log: %s\n' "$gate_log" >> "$QA_TMP/test2.log"
+    if ! cat "$gate_log" >> "$QA_TMP/test2.log"; then
+      printf 'Outside gate log unavailable: %s\n' "$gate_log" >> "$QA_TMP/test2.log"
+      FINAL_GREEN=false
+      QA_GATE_RECONCILE=false
+    fi
+  done < <(printf '%s' "$OUTSIDE_GATE" | jq -r '.logs[]?')
+elif qa_run_gate "$QA_TMP/test2.log"; then
   FINAL_GREEN=true
 else
   FINAL_GREEN=false
@@ -311,18 +316,23 @@ fi
 STATUS=$(parse_claude_json "$QA_RESULT" '.status // empty')
 [ -z "$STATUS" ] && STATUS=$([ "$FINAL_GREEN" = true ] && echo "GREEN" || echo "RED")
 
-# The shell gate after a Codex QA turn. Only an explicit sandbox-only
-# NEEDS_HUMAN lets Phase 3 decide GREEN or RED; other blockers stay held.
+# The shell gate after a Codex QA turn. Only reconciled gate-only blockers let
+# Phase 3 decide GREEN or RED; other blockers stay held.
 QA_SANDBOX_GATE_LINE=""
-if [ "$(resolve_runner_for_stage qa)" = codex ] && codex_qa_sandbox_gate_only "$QA_RESULT"; then
+if [ "$QA_GATE_RECONCILE" = true ]; then
   STATUS=$([ "$FINAL_GREEN" = true ] && echo "GREEN" || echo "RED")
   QA_SANDBOX_GATE_LINE="shell gate outside the Codex sandbox $([ "$FINAL_GREEN" = true ] && echo green || echo red): QA continues as $STATUS"
   echo "  $QA_SANDBOX_GATE_LINE"
 fi
+# Even a claimed GREEN cannot discard declared blockers without reconciliation.
+if [ "$QA_GATE_RECONCILE" != true ] && [ "$(resolve_runner_for_stage qa)" = codex ]; then
+  DECLARED_HOLDS=$(parse_claude_json "$QA_RESULT" '.blockers // [] | length')
+  if [[ "$DECLARED_HOLDS" =~ ^[0-9]+$ ]] && [ "$DECLARED_HOLDS" -gt 0 ]; then STATUS=NEEDS_HUMAN; fi
+fi
 
 # Claude's self-reported status and the objective suite result must agree; if
 # they don't, the suite is the oracle.
-if [ "$FINAL_GREEN" = true ] && [ "$STATUS" = "RED" ]; then STATUS="GREEN"; fi
+if [ "$FINAL_GREEN" = true ] && [ "$STATUS" = "RED" ] && [ "$(resolve_runner_for_stage qa)" != codex ]; then STATUS="GREEN"; fi
 if [ "$FINAL_GREEN" = false ] && [ "$STATUS" = "GREEN" ]; then STATUS="RED"; fi
 
 SUMMARY=$(parse_claude_json "$QA_RESULT" '.coverage_notes // "no notes"')
