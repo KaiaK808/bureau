@@ -82,7 +82,7 @@ _worker_cleanup() {
       echo "Preserved stopped review checkpoint in $WORKTREE; future work uses another checkout." >&2
     else
       if [ "$rc" = 130 ]; then bureau_preserve_note "$WORKTREE" "$ISSUE" interrupted || true
-      else bureau_preserve_note "$WORKTREE" "$ISSUE" unfinished || true; fi
+      else bureau_preserve_note "$WORKTREE" "$ISSUE" unfinished "$rc" || true; fi
       echo "Preserved unfinished work in $WORKTREE; disposable registration removed. Inspect/resume before reuse." >&2
     fi
     return

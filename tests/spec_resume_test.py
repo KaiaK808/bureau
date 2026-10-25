@@ -399,6 +399,26 @@ run_stage_for() {
         self.assertNotIn('partial phase edits', (self.wt/'specs/001-team-1/tasks.md').read_text())
 
 
+    def test_registered_spec_failure_note_does_not_bypass_checkpoint_reset(self):
+        self.worker('tasks', expect=124)
+        commit = self.checkpoint()['phases']['plan']['commit']
+        key = hashlib.sha256(str(self.wt).encode()).hexdigest()
+        owned = self.repo / '.git/bureau'
+        self.assertTrue((owned/'workers'/key).is_file())
+        note = owned/'preserved'/(key+'.json')
+        note.parent.mkdir(exist_ok=True)
+        note.write_text(json.dumps({'workspace':str(self.wt), 'branch':'001-team-1',
+                                    'issue':'TEAM-1', 'reason':'unfinished', 'exit_code':22}))
+        leftover = self.wt/'unfinished-spec-edit.txt'
+        leftover.write_text('discard this edit through the normal spec reset')
+        self.write('calls', '')
+        proc = self.worker()
+        self.assertIn('Resetting spec worker to committed checkpoint ' + commit, proc.stdout)
+        self.assertEqual(self.calls(), ['tasks', 'digest'])
+        self.assertFalse(leftover.exists())
+        self.assertFalse(note.exists())
+
+
     def test_ticket_and_review_feedback_changes_invalidate_completed_prefix(self):
         for field in ('title', 'description', 'feedback'):
             with self.subTest(field=field):

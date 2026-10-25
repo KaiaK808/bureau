@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b7efdafe5613c1a2e002ade5cfee3e1622135b1bb25500f7590fb9a8f668f206">
+<meta name="bureau-source-sha256" content="c7c5b78920b2b5989135a3638125c6540c7836f9389db0c07a21f39f66ec55c7">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -433,21 +433,33 @@ worker again.</li>
 <li>Nothing is written for a cancelled run, or when the holder is a live
 run: the second run ends with 21 and names the run that is still
 active.</li>
-<li>A preserved worktree that the reset can take over without loss is no
-halt: when a stage with a target branch (every stage but spec) finds its
-worktree unregistered, but it is a linked worktree of this repository
-(not the main checkout),
-<code>git status --porcelain --untracked-files=all</code> is empty
-(ignored files do not count) and its HEAD equals or is behind
-<code>origin/&lt;branch&gt;</code> after a fresh fetch, the reset
-registers it again, prints
-<code>Re-accepted the clean preserved worktree WORKTREE: … HEAD SHA is on origin/BRANCH …</code>
-and goes on. The usual case: an implement pass committed, the stage
-failed, and you pushed the branch by hand. An uncommitted change, an
-untracked file, a commit origin lacks, an unknown branch or an origin
-that cannot be read keep the 21 and the comment. Before, every
-unregistered worktree halted, and the rerun needed
-<code>git worktree remove</code> although nothing could be lost.</li>
+<li>A preserved worktree that preparation can take over without loss is
+no halt: for a target branch (every stage but spec), the existing rule
+requires an explicit former-worker failure note and re-registers a
+linked worktree of this repository whose status is clean and whose HEAD
+equals or is behind the freshly fetched
+<code>origin/&lt;branch&gt;</code>. Implement additionally retains a
+HEAD ahead only by verified clean merges of the resolved base (valid
+configured <code>repo.base_branch</code>, else symbolic
+<code>origin/HEAD</code>, else <code>main</code>), after a recorded
+ordinary failure 22/23 of this issue in this workspace. An unresolvable
+selected base disables that merge-only acceptance. It excludes the
+base's ordinary commits, verifies both parents and each clean merge
+tree, and skips both resetting checkouts. Reuse the <strong>same
+worktree path</strong>; a new path still finds its branch held. See the
+<a
+href="stage-protocol.html#implement-retries-with-clean-base-merges">exact
+acceptance rule</a>. Tracked/untracked dirt, ordinary own commits,
+conflict resolutions, extra changes, missing
+<code>merge-tree --write-tree</code>, unreadable refs/fetches or changed
+evidence still produce 21 without discarding work. Ignored files do not
+count as dirt.</li>
+<li>A failing implement stage still pushes a merge-only state (one CI
+run), as before. If that push is refused, a later tick can re-accept the
+retained clean base merge under the rule above. Iteration/end-of-run,
+timeout, <code>/goal</code>, EXIT-trap and signal pushes keep their
+existing behavior. Old preservation records without a recorded exit code
+do not authorize merge-only reuse; reconcile them explicitly.</li>
 <li>A 21 for another reason writes nothing, as before: the state changed
 during the stage, a stage started outside a disposable worker, a git
 command failed inside the reset, or a stage's own branch check at its
@@ -752,16 +764,15 @@ cancelled ticket; none is Done.</p>
 <p><strong>After an interrupted run (exit 130).</strong> A run stopped
 by Ctrl-C, SIGTERM or a hang-up (see <a href="#how-to-stop-a-run">How to
 stop a run</a>) keeps its leases and its worktree, and the worktree
-loses its disposable-worker registration, so that no later reset erases
-the work. Releasing the run is therefore not enough: a rerun on the same
-worktree stops with 21 ("refusing to reset unregistered worktree")
-unless the worktree is clean and every commit of it is on
-<code>origin/&lt;branch&gt;</code> for a stage other than spec (see <a
+loses its disposable-worker registration regardless of cleanliness. The
+automatic merge-only reuse for ordinary failures 22/23 does not apply.
+Release only after inspecting and stopping surviving writers. Releasing
+does not restore registration: reconcile the checkout explicitly (the
+existing clean/on-origin non-spec rule may then apply; see <a
 href="#exit-21-ownership-conflict--needs-human-and-one-comment">Exit
-21</a>), and a spec stage's feature branch that was never pushed stays
-behind in the repository. The interrupt message names the run, the
-ticket and the worktree, and prints the steps once, with the actual run
-ID, paths and branch:</p>
+21</a>). A spec feature branch that was never pushed stays behind in the
+repository. The interrupt message names the run, ticket and worktree,
+and prints the steps once, with the actual run ID, paths and branch:</p>
 <ol type="1">
 <li>Release the run's ownership:
 <code>python3 scripts/bureau-runtime.py release RUN_ID</code>. While a
