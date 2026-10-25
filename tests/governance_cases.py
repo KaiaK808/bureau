@@ -212,7 +212,7 @@ ROUND10_PLACEHOLDERS = {
         *('To be '+verb for verb in ('completed', 'added', 'written', 'provided', 'confirmed', 'clarified', 'updated', 'done')),
         *('Will be '+verb+' later' for verb in ('added', 'provided', 'completed', 'documented')),
         'Noch zu ergänzen', 'Wird ergänzt', 'Wird nachgetragen',
-        *('['+verb+' applicability]' for verb in ('Describe', 'Add', 'Enter', 'State', 'Write', 'List', 'Explain', 'Insert', 'Fill', 'Provide', 'Justify', 'Summarize', 'Specify', 'Beschreiben', 'Einfügen', 'Ergänzen')),
+        *('['+verb+' applicability]' for verb in ('Describe', 'Explain', 'Insert', 'Fill', 'Provide', 'Justify', 'Summarize', 'Specify', 'Beschreiben', 'Einfügen', 'Ergänzen')),
         '<Begründung einfügen>',
         *('TBD'+separator+'N/A' for separator in (' / ', '/', ', ', ' | ', '; ', ' or ', ' and ', ' oder ', ' und ')),
         'To be completed\n[Describe applicability]\nTBD / N/A',
@@ -238,4 +238,6 @@ ROUND10_VALID = {
     'bracketed_write_prose': GOVERNANCE.split('Rationale:')[0]+'Rationale: [Write access is restricted to administrators]\n',
     'bracketed_list_prose': GOVERNANCE.split('Rationale:')[0]+'Rationale: [List entries contain no personal data]\n',
     'bracketed_add_prose': GOVERNANCE.split('Rationale:')[0]+'Rationale: [Add-on modules only read public data]\n',
+    'short_bracketed_write_prose': GOVERNANCE.split('Rationale:')[0]+'Rationale: [Write operations fail]\n',
+    'short_bracketed_list_prose': GOVERNANCE.split('Rationale:')[0]+'Rationale: [List entries expire]\n',
 }

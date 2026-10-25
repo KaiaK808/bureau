@@ -49,9 +49,8 @@ def _only_governance_placeholder(value):
         line = re.sub(r'^(?:[-+]\s+|\d+[.)]\s+)?(?:\[[ xX]\]\s*)?', '', line)
         line = line.strip().rstrip('.!?;:').strip()
         if re.fullmatch(r'\{\{.*?\}\}|[\[<](?:describe|explain|insert|fill|provide|justify|summarize|specify|rationale|(?:Begründung\s+)?(?:beschreiben|einfügen|ergänzen))\b[^\]>]*[\]>]', line, re.I): continue
-        # Add/enter/state/write/list also start honest prose ("[Write access is
-        # restricted ...]"): only a short instruction of one or two words counts.
-        if re.fullmatch(r'[\[<](?:add|enter|state|write|list)(?:\s+(?!(?:is|are|was|were|has|have|only|no|not|contains?)\b)[\w-]+){1,2}\s*[\]>]', line, re.I): continue
+        # Add/enter/state/write/list are left out on purpose: they also start
+        # honest prose ("[Write operations fail]"). Spec review owns the rest.
         # Split common template alternatives, preserving N/A as one token.
         parts = re.split(r'[/,|;]|\s+(?:or|and|oder|und)\s+', re.sub(r'\bn/a\b', 'not applicable', line, flags=re.I), flags=re.I)
         if len(parts) > 1:

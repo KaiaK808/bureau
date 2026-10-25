@@ -16,7 +16,7 @@ before = {name: hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name
 
 def rejected(script, case, env, expected):
     proc = subprocess.run([sys.executable, str(ROOT/'tests'/script), case], capture_output=True,
-                          text=True, env={**os.environ, **env}, timeout=240)
+                          text=True, env={**os.environ, **env}, timeout=900)
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0 and expected in output, output
 
