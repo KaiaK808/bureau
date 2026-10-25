@@ -26,6 +26,22 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     spec = root/'bureau-spec.py'; original = spec.read_text()
     env = {'BUREAU_TEST_SPEC_SCRIPTS': str(root)}
 
+    anchor = "        cutoff_line = re.sub(r'^(?:> ?)+', '', line)\n        cutoff_raw = re.sub(r'^(?:> ?)+', '', raw_lines[index])"
+    assert original.count(anchor) == 1
+    spec.write_text(original.replace(anchor, '        cutoff_line = line\n        cutoff_raw = raw_lines[index]'))
+    rejected('spec_resume_test.py', 'GovernanceTests.test_quoted_code_and_html_cutoffs',
+             env, 'AssertionError:')
+    print('PASS final follow-up control: disabling blockquote stripping fails quoted code/HTML cutoff regressions')
+    spec.write_text(original)
+
+    anchor = '        if len(parts) > 1:'
+    assert original.count(anchor) == 1
+    spec.write_text(original.replace(anchor, '        if False:  # Broken: disable composite placeholder recognition'))
+    rejected('spec_resume_test.py', 'GovernanceTests.test_common_template_placeholders',
+             env, 'AssertionError: unexpectedly None')
+    print('PASS final follow-up control: disabling the composite rule fails placeholder regressions')
+    spec.write_text(original)
+
     anchor = next(line for line in original.splitlines() if 'line.translate(str.maketrans' in line)
     assert original.count(anchor) == 1
     assert '[]' in anchor
@@ -212,4 +228,4 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     pipeline.write_text(pipeline_original)
 
 assert before == {name: hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
-print('Results: 20 mutation controls detected (26 guard runs); source hashes unchanged')
+print('Results: 22 mutation controls detected (27 guard runs); source hashes unchanged')

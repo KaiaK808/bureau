@@ -19,7 +19,8 @@ from unittest.mock import patch
 import git_maintenance
 from governance_cases import (FENCED_GOVERNANCE, GOVERNANCE_FIRST,
                               COMMENT_HIDDEN_GOVERNANCE, COLUMN_ZERO_GOVERNANCE,
-                              ROUND8_PROVIDER_INVALID, ROUND9_PROVIDER_INVALID, ROUND9_VALID)
+                              ROUND8_PROVIDER_INVALID, ROUND9_PROVIDER_INVALID, ROUND9_VALID,
+                              ROUND10_PROVIDER_INVALID, ROUND10_VALID)
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = Path(os.environ.get('BUREAU_TEST_RUNTIME_SCRIPT',ROOT / 'templates/scripts/bureau-runtime.py'))
@@ -588,7 +589,7 @@ class RuntimeTests(unittest.TestCase):
         for stage,state,target in (('spec','s1','s2'),('spec_review','s2','s3')):
             self.state=state; self.moves=[]; self.comments=[]; run=self.prepare(stage)
             try:
-                for name,body in {**FENCED_GOVERNANCE, **COMMENT_HIDDEN_GOVERNANCE, **COLUMN_ZERO_GOVERNANCE, **ROUND8_PROVIDER_INVALID, **ROUND9_PROVIDER_INVALID}.items():
+                for name,body in {**FENCED_GOVERNANCE, **COMMENT_HIDDEN_GOVERNANCE, **COLUMN_ZERO_GOVERNANCE, **ROUND8_PROVIDER_INVALID, **ROUND9_PROVIDER_INVALID, **ROUND10_PROVIDER_INVALID}.items():
                     with self.subTest(stage=stage,case=name):
                         (specdir/'spec.md').write_text(body)
                         args=adapter_result(run)
@@ -602,7 +603,7 @@ class RuntimeTests(unittest.TestCase):
             finally:
                 self.store.release(run['run_id'])
             # Governance before code completes through the same real adapter.
-            for name, body in {**GOVERNANCE_FIRST, **ROUND9_VALID}.items():
+            for name, body in {**GOVERNANCE_FIRST, **ROUND9_VALID, **ROUND10_VALID}.items():
                 with self.subTest(stage=stage,case=name,valid=True):
                     self.state=state; self.moves=[]; self.comments=[]; run=self.prepare(stage)
                     try:

@@ -204,3 +204,35 @@ ROUND9_VALID = {
     'governance_before_indented_code': GOVERNANCE+'\n    print("example")\n',
     'quoted_then_real_continuation': GOVERNANCE.replace('Rationale: ', 'Rationale:\n> TBD\n'),
 }
+
+# Final narrow follow-up: common template wording and quoted code/HTML cutoffs.
+ROUND10_PLACEHOLDERS = {
+    value: GOVERNANCE.split('Rationale:')[0]+'Rationale: '+value+'\n'
+    for value in (
+        *('To be '+verb for verb in ('completed', 'added', 'written', 'provided', 'confirmed', 'clarified', 'updated', 'done')),
+        *('Will be '+verb+' later' for verb in ('added', 'provided', 'completed', 'documented')),
+        'Noch zu ergänzen', 'Wird ergänzt', 'Wird nachgetragen',
+        *('['+verb+' applicability]' for verb in ('Describe', 'Add', 'Enter', 'State', 'Write', 'List', 'Explain', 'Insert', 'Fill', 'Provide', 'Justify', 'Summarize', 'Specify', 'Beschreiben', 'Einfügen', 'Ergänzen')),
+        '<Begründung einfügen>',
+        *('TBD'+separator+'N/A' for separator in (' / ', '/', ', ', ' | ', '; ', ' or ', ' and ', ' oder ', ' und ')),
+        'To be completed\n[Describe applicability]\nTBD / N/A',
+    )
+}
+ROUND10_QUOTED_BLOCKS = {
+    'quoted_indented_code': ('code', '>     print("example")\n\n'+GOVERNANCE),
+    'nested_quoted_indented_code': ('code', '> >     print("example")\n\n'+GOVERNANCE),
+    'quoted_html': ('HTML', '> <div>\n> example\n> </div>\n\n'+GOVERNANCE),
+    'nested_quoted_html': ('HTML', '>> <div>\n\n'+GOVERNANCE),
+}
+ROUND10_PROVIDER_INVALID = {
+    'template_deferral': ROUND10_PLACEHOLDERS['To be completed'],
+    'quoted_indented_code': ROUND10_QUOTED_BLOCKS['quoted_indented_code'][1],
+    'quoted_html': ROUND10_QUOTED_BLOCKS['quoted_html'][1],
+}
+ROUND10_VALID = {
+    'real_slash_parts': GOVERNANCE.split('Rationale:')[0]+'Rationale: Encrypted at rest / access limited to the ops team\n',
+    'placeholder_and_real_part': GOVERNANCE.split('Rationale:')[0]+'Rationale: TBD later / access limited to the ops team\n',
+    'real_part_and_placeholder': GOVERNANCE.split('Rationale:')[0]+'Rationale: Encrypted at rest / N/A\n',
+    'quoted_prose_before_governance': '> Plain quoted prose.\n> > Nested quoted prose.\n\n'+GOVERNANCE,
+    'front_matter_then_governance': ROUND8_VALID['yaml_then_real_section'],
+}

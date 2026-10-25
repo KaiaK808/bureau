@@ -13,7 +13,8 @@ import unittest
 import git_maintenance
 from governance_cases import (FENCED_GOVERNANCE, GOVERNANCE_FIRST,
                               COMMENT_HIDDEN_GOVERNANCE, COLUMN_ZERO_GOVERNANCE,
-                              ROUND8_INVALID, ROUND8_VALID, ROUND9_INVALID, ROUND9_VALID)
+                              ROUND8_INVALID, ROUND8_VALID, ROUND9_INVALID, ROUND9_VALID,
+                              ROUND10_PLACEHOLDERS, ROUND10_QUOTED_BLOCKS, ROUND10_VALID)
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_TEST_SPEC_SCRIPTS', ROOT / 'templates/scripts'))
@@ -23,6 +24,27 @@ VALID = '# Feature\n\n## Governance and security\nDecision: not required\nRation
 
 
 class GovernanceTests(unittest.TestCase):
+    def test_common_template_placeholders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'spec.md'
+            for name, body in ROUND10_PLACEHOLDERS.items():
+                with self.subTest(case=name):
+                    path.write_text(body)
+                    self.assertIsNotNone(r.s.governance_error(path))
+            for name, body in ROUND10_VALID.items():
+                with self.subTest(case=name, valid=True):
+                    path.write_text(body)
+                    self.assertIsNone(r.s.governance_error(path))
+
+    def test_quoted_code_and_html_cutoffs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'spec.md'
+            for name, (kind, body) in ROUND10_QUOTED_BLOCKS.items():
+                with self.subTest(case=name):
+                    path.write_text(body)
+                    self.assertIn('move the Governance and security section above the first '+kind+' block',
+                                  r.s.governance_error(path) or '')
+
     def test_wrapped_placeholders_and_indented_code(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'spec.md'

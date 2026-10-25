@@ -48,7 +48,12 @@ def _only_governance_placeholder(value):
     for line in lines:
         line = re.sub(r'^(?:[-+]\s+|\d+[.)]\s+)?(?:\[[ xX]\]\s*)?', '', line)
         line = line.strip().rstrip('.!?;:').strip()
-        if re.fullmatch(r'\{\{.*?\}\}|[\[<](?:insert|fill|provide|explain|rationale)\b[^\]>]*[\]>]', line, re.I): continue
+        if re.fullmatch(r'\{\{.*?\}\}|[\[<](?:describe|add|enter|state|write|list|explain|insert|fill|provide|justify|summarize|specify|rationale|(?:Begründung\s+)?(?:beschreiben|einfügen|ergänzen))\b[^\]>]*[\]>]', line, re.I): continue
+        # Split common template alternatives, preserving N/A as one token.
+        parts = re.split(r'[/,|;]|\s+(?:or|and|oder|und)\s+', re.sub(r'\bn/a\b', 'not applicable', line, flags=re.I), flags=re.I)
+        if len(parts) > 1:
+            if all(_only_governance_placeholder(part) for part in parts): continue
+            return False
         line = line.translate(str.maketrans('', '', "[](){}<>\"'“”‘’«»*_"))
         line = line.strip(' \t.,!?;:/\\|+=~-–—…')
         if re.fullmatch(r'(?:(?:Access|Logging|Retention)\s*:\s*)*(?:Access|Logging|Retention)', line, re.I): continue
@@ -61,9 +66,9 @@ def _only_governance_placeholder(value):
         # "Pending events are logged ..." describes behavior. Only a bare
         # pending marker or an explicit review/approval deferral qualifies.
         pending = r'pending(?:\s+(?:(?:a|an|the|final|further|security|privacy|legal|compliance|technical|human|team|architecture)\s+)*(?:review|approval|decision|assessment|confirmation|input|discussion|sign-off|release|implementation)(?:\s+(?:from|by|on|of|for|with)\b[^.!?\n]*)?)?'
-        if re.fullmatch(english + r'(?:' + pending + r'|to[\s-]+follow|to[\s-]+be[\s-]+(?:defined|decided|determined|filled))' + later, line, re.I): continue
+        if re.fullmatch(english + r'(?:' + pending + r'|to[\s-]+follow|to[\s-]+be[\s-]+(?:defined|decided|determined|filled|completed|added|written|provided|confirmed|clarified|updated|done)|will[\s-]+be[\s-]+(?:added|provided|completed|documented))' + later, line, re.I): continue
         german = r'(?:(?:die|der|das)\s+)?(?:(?:Begründung|Erklärung|Entscheidung|Bewertung|Details)\s+)?'
-        if re.fullmatch(german + r'(?:folgt|folgen|wird nachgereicht|wird (?:noch )?(?:geklärt|definiert|entschieden)|noch offen|noch zu klären|noch zu definieren)' + later, line, re.I): continue
+        if re.fullmatch(german + r'(?:folgt|folgen|wird nachgereicht|wird (?:noch )?(?:geklärt|definiert|entschieden)|noch offen|noch zu klären|noch zu definieren|noch zu ergänzen|wird ergänzt|wird nachgetragen)' + later, line, re.I): continue
         return False
     return True
 
@@ -86,10 +91,12 @@ def governance_error(path):
         if front_matter:
             if index and raw_lines[index].strip() == '---': front_matter = False
             continue
-        if line.strip() and re.match(r'^(?: {4}| *\t)', line):
+        cutoff_line = re.sub(r'^(?:> ?)+', '', line)
+        cutoff_raw = re.sub(r'^(?:> ?)+', '', raw_lines[index])
+        if cutoff_line.strip() and re.match(r'^(?: {4}| *\t)', cutoff_line):
             placement_hint = '; move the Governance and security section above the first code block'
             break
-        if re.match(r'^[ \t]*<(?:[A-Za-z!]|/)', _normalize_governance(raw_lines[index])):
+        if re.match(r'^[ \t]*<(?:[A-Za-z!]|/)', _normalize_governance(cutoff_raw)):
             placement_hint = '; move the Governance and security section above the first HTML block'
             break
         if re.match(r'^\s*(?:(?:[-*+]|\d+[.)]|>)\s*)*(?:`{3,}|~{3,})', line):
