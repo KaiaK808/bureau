@@ -235,4 +235,7 @@ ROUND10_VALID = {
     'real_part_and_placeholder': GOVERNANCE.split('Rationale:')[0]+'Rationale: Encrypted at rest / N/A\n',
     'quoted_prose_before_governance': '> Plain quoted prose.\n> > Nested quoted prose.\n\n'+GOVERNANCE,
     'front_matter_then_governance': ROUND8_VALID['yaml_then_real_section'],
+    'bracketed_write_prose': GOVERNANCE.split('Rationale:')[0]+'Rationale: [Write access is restricted to administrators]\n',
+    'bracketed_list_prose': GOVERNANCE.split('Rationale:')[0]+'Rationale: [List entries contain no personal data]\n',
+    'bracketed_add_prose': GOVERNANCE.split('Rationale:')[0]+'Rationale: [Add-on modules only read public data]\n',
 }
