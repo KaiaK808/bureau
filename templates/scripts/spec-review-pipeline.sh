@@ -108,6 +108,8 @@ if [ -z "$SPEC_DIR" ]; then
   exit 13
 fi
 if [ ! -f "${SPEC_DIR}tasks.md" ]; then
+  bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" invalidate "$ISSUE" tasks --reason missing-tasks \
+    || echo 'WARN: checkpoint invalidation unavailable; missing tasks still require re-work.' >&2
   echo "  ERROR: No spec artifacts found"
   post_comment "$ISSUE" "❌ Spec review aborted — no tasks.md found on branch \`$BRANCH\`. Moving back to Spec for re-work."
   move_issue "$ISSUE" "$BUREAU_STATE_SPEC"
@@ -125,6 +127,8 @@ REVIEW_RESULT=$("${CLAUDE[@]}" "You are the spec reviewer for $ISSUE ($ISSUE_TIT
 $SPEC_CONTEXT
 
 Artifacts live under $SPEC_DIR (spec.md, plan.md, tasks.md, research.md if present).
+In spec.md, place ## Governance and security with Decision: and Rationale: lines at column 0, before any code block, HTML block or front matter, in plain text.
+Require an explicit Decision: required/not required and a Rationale: explaining applicability (German labels/decisions are valid too). Justified not required is valid. The shared validator catches common authoring and placeholder/deferral mistakes, including bare restatements of the decision. You must judge substantive adequacy and whether the section is real: reject circular reasoning, vague assertions and explanations that do not justify applicability or address the relevant access, logging and retention risks. Passing the validator does not establish adequacy. Return review_status FAIL for missing or inadequate governance and name the concrete gaps in remaining_issues and summary, even when the deterministic check passes. Do not invent the decision or rationale for the author.
 
 Do this, in order:
 1. Read the artifacts. Compare tasks.md file paths against the real repo tree (ls, grep, etc).
@@ -160,6 +164,11 @@ UI_NEEDED_RAW=$(parse_claude_json "$REVIEW_RESULT" '.ui_work_needed // empty')
 if [ -z "$REVIEW_STATUS" ]; then
   REVIEW_STATUS="FAIL"
 fi
+# The model cannot waive the document contract. Check after its allowed edits.
+GOVERNANCE_ERROR=""
+if ! GOVERNANCE_ERROR=$(bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" validate "${SPEC_DIR}spec.md" 2>&1); then
+  REVIEW_STATUS="FAIL"
+fi
 
 # Normalise ui_work_needed. Downstream `case` expects YES/NO strings.
 case "$UI_NEEDED_RAW" in
@@ -175,8 +184,13 @@ else
 fi
 
 REVIEW_SUMMARY=$(parse_claude_json "$REVIEW_RESULT" '.summary // "no summary"')
+if [ -n "$GOVERNANCE_ERROR" ]; then REVIEW_SUMMARY="$REVIEW_SUMMARY
+
+$GOVERNANCE_ERROR"; fi
 
 if [ "$REVIEW_STATUS" = "FAIL" ]; then
+  bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" invalidate "$ISSUE" specify --reason spec-review-failed \
+    || echo 'WARN: checkpoint invalidation unavailable; FAIL feedback still requires fresh specify.' >&2
   echo "  Spec review FAILED — moving back to Spec"
   post_comment "$ISSUE" "❌ Spec review: **FAIL**
 

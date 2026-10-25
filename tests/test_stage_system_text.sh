@@ -67,6 +67,7 @@ chmod +x "$SB/bin/claude" "$SB/bin/codex"
 RULE_START='If a path in your worktree (such as .venv) is a symlink that points outside the worktree'
 RULE_KEEP='never delete, recreate or --clear it, and do not install into it unless the ticket asks'
 RULE_USUAL='If it is missing or not a symlink, handle it as usual.'
+RULE_SPEC='During specify and plan: no measurements, probes, benchmarks or full test-gate runs.'
 
 for runner in claude codex; do
   write_config "$runner"
@@ -76,7 +77,7 @@ for runner in claude codex; do
     source '$SCRIPTS/bureau-config.sh'
     run_stage_for implement 'implement the tasks'" </dev/null >/dev/null 2>&1) || true
   [ -s "$SB/received" ] || fail "$runner: the stub never received the stage's text"
-  for part in "$RULE_START" "$RULE_KEEP" "$RULE_USUAL"; do
+  for part in "$RULE_START" "$RULE_KEEP" "$RULE_USUAL" "$RULE_SPEC"; do
     grep -qF -- "$part" "$SB/received" || fail "$runner: the system text lacks [$part]"
   done
   echo "PASS $runner receives the linked-path rule in the stage's system text"

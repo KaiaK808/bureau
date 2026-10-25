@@ -19,6 +19,12 @@ cat > "$SANDBOX/.bureau.json" <<'EOF'
 EOF
 mkdir -p "$SANDBOX/tests" "$SANDBOX/fake-bin"
 echo '# Test directory' > "$SANDBOX/tests/.keep"
+cat > "$SANDBOX/specs/001-test-branch/spec.md" <<'EOF'
+# Publication fixture
+## Governance and security
+Decision: not required
+Rationale: This local publication fixture handles no credentials or personal data.
+EOF
 git -C "$SANDBOX" add .gitignore specs tests
 git -C "$SANDBOX" commit -qm 'test: baseline with spec and test directory'
 git -C "$SANDBOX" push -q origin HEAD

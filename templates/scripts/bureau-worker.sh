@@ -58,6 +58,13 @@ _worker_cleanup() {
   if [ -n "$branch" ]; then
     ahead=$(git -C "$WORKTREE" rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 1)
   fi
+  # Spec retries discard every unfinished edit through the ordinary registered
+  # reset. Local phase commits live in the shared Git store and survive it.
+  # Interrupted runs still keep leases and require explicit recovery.
+  if [ "$PIPELINE" = spec-pipeline.sh ] && [ "$rc" != 130 ]; then
+    git -C "$WORKTREE" checkout --detach --quiet 2>/dev/null || true
+    return
+  fi
   if [ "$rc" != 0 ] && { [ -n "$(git -C "$WORKTREE" status --porcelain)" ] || [ "$ahead" != 0 ]; }; then
     common=$(git -C "$REPO_DIR" rev-parse --git-common-dir)
     case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac

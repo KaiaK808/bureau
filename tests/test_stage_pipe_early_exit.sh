@@ -78,6 +78,9 @@ NEW_SPEC="  if grep -q '<!-- bureau-research:' <<< \"\$RESEARCH_RAW\"; then"
 OLD_SPEC="  if printf '%s' \"\$RESEARCH_RAW\" | grep -q '<!-- bureau-research:'; then"
 spec_run() {  # <ignore|default> [old]
   sandbox_init EXP-100 test-branch
+  # Spec admission reserves a new feature; start like a fresh spec worker.
+  # An attached unrelated branch now stops before specify by design.
+  git -C "$SANDBOX" checkout -q --detach
   [ -z "${2:-}" ] || put_back "$SCRIPTS_DIR/spec-pipeline.sh" "$NEW_SPEC" "$OLD_SPEC"
   export BUREAU_STUB_ISSUE_STATE=Triage BUREAU_STUB_LABELS='["needs-research","lane-2"]' BUREAU_STUB_AGENT_ENABLED=research
   export FAKE_CLAUDE_BIN=research_double RESEARCH_FILE="$T/research" FILLER_FILE="$FIXTURES_DIR/claude_filler.txt"

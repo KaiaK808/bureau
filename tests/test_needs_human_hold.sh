@@ -25,7 +25,7 @@ trap 'rm -rf "$SB"' EXIT
 git -C "$SB" init -q
 HOLD="$SB/.git/bureau/needs-human-held"
 # The picker as it was: the hold lines in pipeline_pick_next taken out again.
-mkdir -p "$SB/old"; cp "$SCRIPTS"/*.sh "$SCRIPTS/bureau-runtime.py" "$SCRIPTS/bureau-evidence.py" "$SB/old/"
+mkdir -p "$SB/old"; cp "$SCRIPTS"/*.sh "$SCRIPTS/bureau-runtime.py" "$SCRIPTS/bureau-evidence.py" "$SCRIPTS/bureau-spec.py" "$SB/old/"
 python3 - "$SCRIPTS/bureau-config.sh" "$SB/old/bureau-config.sh" <<'PYOLD'
 import re, sys
 s = open(sys.argv[1]).read()

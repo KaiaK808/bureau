@@ -293,6 +293,29 @@ class Store:
                 if now - value['last_observed_at'] > RETENTION_SECONDS: path.unlink(missing_ok=True)
                 else: candidates.append((value['last_observed_at'], path))
         candidates += [(p.stat().st_mtime, p) for p in (self.root / 'quarantine').glob('*.json')]
+        # Checkpoints are optional, including when another ticket's record is
+        # pruned before the real provider starts. Only a success receipt is mandatory.
+        try: paths = list((self.root / 'spec-checkpoints').glob('*.json'))
+        except OSError:
+            warn()
+            paths = []
+        for path in paths:
+            if path == writing: continue
+            try:
+                value = read(path)
+                if not isinstance(value, dict) or not isinstance(value.get('updated_at'), (int, float)) or not isinstance(value.get('issue'), str): continue
+                if now - value['updated_at'] > RETENTION_SECONDS and value['issue'] not in active_issues:
+                    path.unlink()
+            except (OSError, ValueError, TypeError):
+                warn()
+                issue = observe(ticket, path.stem)
+                if issue is None: continue
+                observe(os.write, 2, ('bureau evidence: WARN: checkpoint reuse disabled for ' + issue + '\n').encode())
+                try:
+                    atomic(self.root.parent.parent / 'spec-checkpoints-disabled' / (issue + '.json'),
+                           dict(issue=issue, reuse_disabled=True))
+                except (OSError, ValueError, TypeError):
+                    observe(os.write, 2, ('bureau evidence: WARN: checkpoint opt-out unavailable for ' + issue + '\n').encode())
         files = [p for p in self.root.rglob('*') if p.is_file() and p.name != 'guard']
         size = sum(p.stat().st_size for p in files); count = len(files)
         for _, path in sorted(candidates, key=lambda item: (item[0], str(item[1]))):

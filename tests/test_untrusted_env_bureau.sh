@@ -301,6 +301,7 @@ py_git_status() {  # <scripts dir>
   (cd "$R" && env "${PROBES[@]}" python3 -I -B - "$1" "$R" <<'PY'
 import importlib.util, sys
 from pathlib import Path
+sys.dont_write_bytecode = True  # -I ignores PYTHONDONTWRITEBYTECODE in the fixture.
 for name in ('supervision', 'runtime'):
     spec = importlib.util.spec_from_file_location(name, Path(sys.argv[1]) / ('bureau-' + name + '.py'))
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
@@ -382,6 +383,7 @@ for cmd in 'git status' 'git -C . push' 'gh pr view 5'; do
   python3 - "$SCRIPTS" "$TMP/$tool.dump" "$TMP/$tool.input" $cmd <<'PY' || fail "F parity '$cmd': the shell and a Python process_env differ"
 import importlib.util, sys
 from pathlib import Path
+sys.dont_write_bytecode = True
 def read(path): return dict(item.split('=', 1) for item in open(path, 'rb').read().decode().split('\0') if item)
 ignore = {'PWD', 'SHLVL', '_', 'OLDPWD', '__CF_USER_TEXT_ENCODING'}
 shell = {k: v for k, v in read(sys.argv[2]).items() if k not in ignore}

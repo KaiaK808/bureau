@@ -22,6 +22,9 @@ sys.dont_write_bytecode = True
 _evidence_spec = importlib.util.spec_from_file_location('bureau_evidence', SCRIPTS / 'bureau-evidence.py')
 e = importlib.util.module_from_spec(_evidence_spec)
 _evidence_spec.loader.exec_module(e)
+_spec_spec = importlib.util.spec_from_file_location('bureau_spec', SCRIPTS / 'bureau-spec.py')
+s = importlib.util.module_from_spec(_spec_spec)
+_spec_spec.loader.exec_module(s)
 # Keep equal to bureau-provider.py and bureau-env.sh (standalone script).
 UNTRUSTED_HOST_PREFIXES = ('HERDR_',)
 STAGES = {
@@ -221,6 +224,9 @@ class Store:
         # Reused live group IDs conservatively prevent release. Never signal
         # a stored ID here: it may now belong to an unrelated process.
         groups = set(read(self.process_path(run), {}).get('groups', []))
+        self.assert_groups_stopped(groups)
+
+    def assert_groups_stopped(self, groups):
         live = set()
         for group in groups:
             try: os.killpg(group, 0)
@@ -477,6 +483,39 @@ def stage_context(repo, stage, issue, run, config):
                 protocol=str(SCRIPTS / 'bureau-stage.md'))
 
 
+def feature_directory(repo, record):
+    """Bind spec results to the prepared ticket, never a supplied artifact."""
+    specs = repo / record['specs_dir']
+    if specs.is_symlink() or repo not in specs.resolve().parents:
+        raise ValueError('specs_dir must be inside the prepared workspace')
+    branch = record.get('canonical_branch')
+    if branch:
+        prepared = record.get('feature_directory')
+        if prepared:
+            path = Path(prepared)
+        else:
+            relative = shell(repo, 'bureau_spec_dir_for_branch', branch).strip()
+            if not relative: raise ValueError('prepared issue canonical feature directory is missing or ambiguous')
+            path = repo / relative
+    else:
+        branch = record['branch']
+        if not re.fullmatch(r'[0-9]+-' + re.escape(record['issue'].lower()), branch or ''):
+            branch = git(repo, 'branch', '--show-current')
+        if not re.fullmatch(r'[0-9]+-' + re.escape(record['issue'].lower()), branch or ''):
+            raise ValueError('spec completion requires the prepared issue canonical feature branch')
+        # A newly created app feature must also honor an existing reservation.
+        numbers = read(common_for(repo) / 'bureau/spec-numbers.json', {})
+        if record['issue'] in numbers and int(branch.split('-', 1)[0]) != numbers[record['issue']]:
+            raise ValueError('spec branch differs from the prepared issue reservation')
+        path = specs / branch
+    if path.is_symlink() or path.resolve().parent != specs.resolve():
+        raise ValueError('canonical feature directory must be an unlinked direct child of specs_dir')
+    prepared = record.get('feature_directory')
+    if prepared and path.resolve() != Path(prepared):
+        raise Conflict('Canonical feature directory changed since prepare')
+    return path.resolve()
+
+
 def prepare(repo, args, store):
     config = read(config_for(repo))
     snapshot = issue_snapshot(repo, args.issue)
@@ -495,10 +534,14 @@ def prepare(repo, args, store):
     try:
         # A checkout adopted by an app task ceases to be a disposable worker.
         key = hashlib.sha256(str(repo).encode()).hexdigest()
-        (store.root / 'workers' / key).unlink(missing_ok=True)
+        with store.guard():
+            (store.root / 'workers' / key).unlink(missing_ok=True)
+            (store.root / 'preserved' / (key + '.json')).unlink(missing_ok=True)
         context = stage_context(repo, args.stage, snapshot, run, config)
         context.update(canonical_branch=canonical, status='prepared', allow_merge=args.allow_merge, owner=args.owner,
                        config_hash=hashlib.sha256(config_for(repo).read_bytes()).hexdigest())
+        if args.stage in ('spec', 'spec_review') and (canonical or re.fullmatch(r'[0-9]+-' + re.escape(args.issue.lower()), branch)):
+            context['feature_directory'] = str(feature_directory(repo, context))
         save(store.root / 'runs' / (run + '.json'), context)
     except BaseException:
         store.release(run)
@@ -532,6 +575,15 @@ def validate_result(repo, record, result):
         folders = {(repo / p).resolve().parent for p in artifacts if Path(p).name in ('spec.md','plan.md','tasks.md')}
         if len(folders) != 1 or specs not in next(iter(folders)).parents:
             raise ValueError('spec artifacts must share one feature folder inside specs_dir')
+    if record['stage'] in ('spec', 'spec_review'):
+        spec_files = [repo / p for p in artifacts if Path(p).name == 'spec.md']
+        if len(spec_files) != 1:
+            raise ValueError('spec/spec_review completion requires one spec.md artifact')
+        expected = feature_directory(repo, record)
+        if spec_files[0].is_symlink() or spec_files[0].resolve() != expected / 'spec.md':
+            raise ValueError('spec.md must belong to the prepared issue canonical feature directory: ' + str(expected))
+        error = s.governance_error(spec_files[0])
+        if error: raise ValueError(error)
     if record['stage'] in ('implement', 'qa'):
         tests = result.get('tests')
         if not isinstance(tests, list) or not tests or any(
@@ -653,6 +705,7 @@ def execute(repo, args, store):
     stage = pipeline.removesuffix('-pipeline.sh').replace('-', '_')
     phase = 'worker' if entry == 'bureau-worker.sh' else ('stage' if entry.endswith('-pipeline.sh') else 'driver')
     attempt = None
+    evidence_disabled = os.environ.get('BUREAU_SPEC_CHECKPOINTS_DISABLED', '')
 
     def signal_child(signum):
         if child is not None:
@@ -680,9 +733,13 @@ def execute(repo, args, store):
     if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN:
         signal.signal(signal.SIGHUP, stop)
     try:
-        e.observe(evidence.begin_run, run, args.issue, repo, evidence_head(repo))
+        begun = e.observe(evidence.begin_run, run, args.issue, repo, evidence_head(repo))
         attempt = e.observe(evidence.begin_attempt, run, args.issue, stage, phase, workspace,
                             evidence_head(workspace), os.environ.get('BUREAU_STAGE_ATTEMPT_ID'))
+        if begun is None or attempt is None:
+            evidence_disabled = '1'
+            if stage == 'spec' and args.issue:
+                e.observe(s.disable_reuse, repo, args.issue)
         # Provider identity remains usable even when the optional manifest is unavailable.
         attempt = attempt or uuid.uuid4().hex
         try:
@@ -700,7 +757,8 @@ def execute(repo, args, store):
         if interrupted:
             code = 130; return code
         child = store.spawn(run, command, repo, env={**os.environ, 'BUREAU_RUN_ID': run, 'BUREAU_RUN_DEPTH': str(depth + 1), 'BUREAU_ACTIVE_ENTRY': args.entry or '',
-                 'BUREAU_STAGE_ATTEMPT_ID': attempt, 'BUREAU_CURRENT_ISSUE': args.issue, 'BUREAU_CONFIG': str(config_for(repo))})
+                 'BUREAU_STAGE_ATTEMPT_ID': attempt or '', 'BUREAU_CURRENT_ISSUE': args.issue, 'BUREAU_CONFIG': str(config_for(repo)),
+                 'BUREAU_SPEC_CHECKPOINTS_DISABLED': evidence_disabled})
         if interrupted: signal_child(interrupted)
         while True:
             try:

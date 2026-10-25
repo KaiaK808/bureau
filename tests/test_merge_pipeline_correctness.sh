@@ -849,7 +849,7 @@ make_shepherd_merge_sandbox() {  # <name> — the merge sandbox plus the shepher
   jq '.agents.rebase = true' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
   cp "$REPO_ROOT/templates/scripts/shepherd.sh" "$REPO_ROOT/templates/scripts/bureau-worker.sh" \
      "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-supervision.py" \
-     "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$sb/scripts/"
+     "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$REPO_ROOT/templates/scripts/bureau-spec.py" "$sb/scripts/"
   git -C "$sb" init -q && git -C "$sb" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   echo Merge > "$sb/stub_data/ticket_state"
   cat >> "$sb/scripts/bureau-config.sh" <<'SHEP_EOF'
