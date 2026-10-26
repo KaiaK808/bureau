@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="85c4c97ec7c0bfc819f625a2af7a814c5fddffe8e2a1750af794be3bb6bd1ecd">
+<meta name="bureau-source-sha256" content="f59d91daa494cba175af5fb49fd06596d0b7a56d275edd222d9822782d91c017">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -256,6 +256,20 @@ Queue workers retry at the next poll without alerting; bounded ticks
 report <code>waiting</code> with process/result exit code 28</td>
 </tr>
 <tr>
+<td><code>29</code></td>
+<td>file-overlap-wait</td>
+<td>Build admission overlaps reserved/in-progress ticket scopes or open
+Bureau PR diffs; output names holders and intersecting paths or unknown
+scope</td>
+<td>Opt-in <code>agents.file_overlap_gate</code>. Quiet cancellable
+admission wait: no alert, human label, paid pass or stuck increment.
+Tick process/result exit 29 with <code>outcome:"waiting"</code>; queue
+skips waiters within the poll and retries them next poll, shepherd stage
+loop every 60 s. Guarded manual moves and shepherd
+<code>--from-stage build</code> return 29 directly. Successful readiness
+is retained. Service/ownership failures keep their own codes.</td>
+</tr>
+<tr>
 <td><code>124</code></td>
 <td>timeout</td>
 <td>Provider exceeded time bound, or spec allocator lock acquisition
@@ -293,38 +307,46 @@ state is <code>waiting</code>; only actual Done is
 <code>completed</code>. Shepherd and schedule execution return nonzero
 for review/human/cancellation boundaries so the next serial ticket does
 not start as though the first had completed.</p>
+<p>File overlap waiting (<code>29</code>) has the same quiet consumer
+treatment as capacity waiting (<code>28</code>), including the shepherd
+exception and bounded tick JSON described below. Reservations and the
+migration rules are documented in <a
+href="stage-protocol.html#file-overlap-admission">file admission</a>.</p>
 <p>Exit codes outside this table (e.g. <code>1</code>) classify as
 <code>error-1</code> — usually a bug in the pipeline script or an
 unhandled bash error.</p>
 <p><code>shepherd.sh</code> halts with a Telegram alert on every code
 except <code>0</code> and <code>2</code> (carry on) and <code>10</code>
-and <code>16</code> (sleep 60 s, retry), plus <code>28</code> (quiet,
-cancellable capacity wait without stuck ticks); a code added later
-cannot slip through unannounced. <code>27</code> additionally tries
-<code>needs-human</code> and a halt comment once each. The one exception
-is a <code>20</code> that <code>--no-merge</code> asked for: the
-shepherd ends with <code>20</code> without an alert, and
-<code>queue-loop.sh</code> logs it without one. Under
-<code>agents.merge_mode: "manual"</code>, <code>merge-pipeline.sh</code>
-and <code>rebase-pipeline.sh</code> refuse with <code>2</code>, and the
-shepherd's own stop at Merge is a <code>20</code> without an alert. The
-shepherd's own reads follow the same rule: when reading the ticket's
-state, labels or branch gives up with <code>27</code>, it halts the same
-way and names the read; any other failed read halts with <code>1</code>
-and <code>needs-human</code>. A failed read never counts as "no state",
-"no label" or "no branch". The shepherd's own moves
+and <code>16</code> (sleep 60 s, retry), plus <code>28</code> and
+<code>29</code> (quiet, cancellable admission waits without stuck
+ticks); a code added later cannot slip through unannounced.
+<code>27</code> additionally tries <code>needs-human</code> and a halt
+comment once each. The one exception is a <code>20</code> that
+<code>--no-merge</code> asked for: the shepherd ends with
+<code>20</code> without an alert, and <code>queue-loop.sh</code> logs it
+without one. Under <code>agents.merge_mode: "manual"</code>,
+<code>merge-pipeline.sh</code> and <code>rebase-pipeline.sh</code>
+refuse with <code>2</code>, and the shepherd's own stop at Merge is a
+<code>20</code> without an alert. The shepherd's own reads follow the
+same rule: when reading the ticket's state, labels or branch gives up
+with <code>27</code>, it halts the same way and names the read; any
+other failed read halts with <code>1</code> and
+<code>needs-human</code>. A failed read never counts as "no state", "no
+label" or "no branch". The shepherd's own moves
 (<code>--from-stage</code>, and the bump from Spec to Triage) follow the
-same rule. Its start check runs before it claims the ticket: a failure
-there ends with <code>10</code> and an alert naming the fault class, and
-writes nothing to the ticket. Ctrl-C, SIGTERM or a hang-up (closing the
-terminal or the tmux session, since v3.2; the runtime forwards it as
-SIGTERM) during a read, a move, a wait or a stage ends the run as a
-cancelled run (<code>130</code>) that writes nothing to Linear but the
-release of <code>shepherd-focused</code> (one attempt); the shepherd's
-own waits are cut short at once. The runtime in front of the shepherd
-counts its <code>130</code> as a stop also when the signal went to an
-inner process group only (since v3.2): it keeps the run's leases
-interrupted and prints the resume steps (<a
+same rule, except an overlap refusal (29) returns quietly to the caller
+without a halt comment, human label or alert. Its start check runs
+before it claims the ticket: a failure there ends with <code>10</code>
+and an alert naming the fault class, and writes nothing to the ticket.
+Ctrl-C, SIGTERM or a hang-up (closing the terminal or the tmux session,
+since v3.2; the runtime forwards it as SIGTERM) during a read, a move, a
+wait or a stage ends the run as a cancelled run (<code>130</code>) that
+writes nothing to Linear but the release of
+<code>shepherd-focused</code> (one attempt); the shepherd's own waits
+are cut short at once. The runtime in front of the shepherd counts its
+<code>130</code> as a stop also when the signal went to an inner process
+group only (since v3.2): it keeps the run's leases interrupted and
+prints the resume steps (<a
 href="troubleshooting.html#how-to-stop-a-run">How to stop a run</a>). A
 SIGTERM sent to the shepherd alone takes effect when the command in
 flight returns: the usage-throttle wait before a stage and the retry

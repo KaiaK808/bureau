@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="56130b87fc1d6ac9a1cd317a447f5e43f2324153c8d262a7f8d1ccae9626053e">
+<meta name="bureau-source-sha256" content="c18ffbcb604ccd92d49500adcff9bea7ddf2084893aad4057e80ff88a73c43a5">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -432,6 +432,26 @@ sub-issues are), without
 follows <code>max_concurrent_include_merge</code>; Build Review always
 counts, including an approved <code>--no-merge</code> stop there. See <a
 href="recipes.html#single-flight-pipeline">recipes</a></td>
+</tr>
+<tr>
+<td><code>agents.file_overlap_gate</code></td>
+<td>boolean</td>
+<td><code>false</code></td>
+<td>Opt-in authoritative file admission before Build and before
+implementation/Copy/QA writers. Exact paths and directory prefixes
+conflict; root <code>.</code> and unknown scope conflict
+repository-wide. Bare root dotfiles are included. Pending task
+expansions leave granted reservations unchanged until admitted. Waits
+return <code>29</code> with ticket/PR holders, including guarded manual
+moves and shepherd restarts, without alerts, human labels or paid review
+rounds. Queue polls skip waiting candidates for the rest of that poll,
+then retry at normal priority next poll. Includes generated docs and
+changelogs; state holders use existing <code>linear.projects</code>,
+while reservations and PRs retain their footprints across projects.
+Absent/false preserves legacy advisory crosscheck extraction and
+matching. See <a href="stage-protocol.html#file-overlap-admission">file
+admission</a> for migration, durable reservations and compatibility
+limits. Required by the planned continuous dispatcher.</td>
 </tr>
 <tr>
 <td><code>agents.max_concurrent_include_merge</code></td>
@@ -1192,11 +1212,11 @@ Env override: <code>BUREAU_UPSTREAM_PORT_TEST</code></td>
 <td><code>repo.path_prefix_strip</code></td>
 <td>string</td>
 <td><code>""</code></td>
-<td>Prefix stripped by <code>crosscheck-specs.sh</code> when comparing
-planned spec paths against in-flight PR file paths. Useful when specs
-reference paths with a repo-name prefix
-(<code>brainhuggers-bureau/</code>, <code>packages/foo/</code>). Env
-override: <code>BUREAU_PATH_PREFIX_STRIP</code></td>
+<td>Literal prefix stripped once by the shared path extractor for
+advisory crosschecks and file admission. Useful when specs reference
+paths with a repo-name prefix (<code>brainhuggers-bureau/</code>,
+<code>packages/foo/</code>). Env override:
+<code>BUREAU_PATH_PREFIX_STRIP</code></td>
 </tr>
 </tbody>
 </table>

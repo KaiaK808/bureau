@@ -38,13 +38,22 @@ source "$(dirname "$0")/bureau-config.sh"
 # BUREAU_ENV_FILE only, never ./.env: a stage runs this in its worktree, where that is the branch's file.
 if [ -f "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}" ]; then bureau_load_env --export "${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"; fi
 
+OVERLAP_GATE=$(bureau_get '(.agents // {}) | if has("file_overlap_gate") then .file_overlap_gate else false end | tojson')
+
 extract_paths() {
-  local file="$1"
-  grep -oE '`[^`]*`' "$file" 2>/dev/null \
-    | sed 's/`//g' \
-    | grep -E '(src/|experiments/|scripts/|specs/|design-tokens/|public/|\.tsx?$|\.jsx?$|\.css$|\.json$)' \
-    | grep -vE '^\$|^#|npm |docker |git ' \
-    | sort -u || true
+  if [ "$OVERLAP_GATE" != true ]; then
+    # Keep the advisory extractor byte-for-byte compatible when not opted in.
+    local file="$1"
+    grep -oE '`[^`]*`' "$file" 2>/dev/null \
+      | sed 's/`//g' \
+      | grep -E '(src/|experiments/|scripts/|specs/|design-tokens/|public/|\.tsx?$|\.jsx?$|\.css$|\.json$)' \
+      | grep -vE '^\$|^#|npm |docker |git ' \
+      | sort -u || true
+    return 0
+  fi
+  local prefix
+  prefix="${BUREAU_PATH_PREFIX_STRIP:-$(bureau_get '.repo.path_prefix_strip // empty')}"
+  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-paths.py" "$1" --repo "$PWD" --prefix "$prefix" --lines
 }
 
 # ── Planned paths — read before the PR list, so every outcome can count them ──
@@ -85,7 +94,8 @@ while [ "$t" -lt "$n_tasks" ]; do
     t=$((t + 1))
     continue
   fi
-  planned=$(extract_paths "${TASK_FILES[$t]}")
+  if planned=$(extract_paths "${TASK_FILES[$t]}"); then :
+  else planned=""; planned_error="Unknown planned scope: ${TASK_FILES[$t]}"; fi
   TASK_PATHS[$t]="$planned"
   if [ -n "$planned" ]; then
     planned_count=$(printf '%s\n' "$planned" | wc -l | tr -d ' ')
@@ -154,7 +164,7 @@ while [ "$i" -lt "$n_prs" ]; do
   i=$((i + 1))
 done
 
-# ── Planned paths against changed files — the matching itself is unchanged;
+# ── Planned paths against changed files — exact/path-prefix semantics;
 #    it walks the record index of every PR that could be read ────────────────
 CONFLICTS_FOUND=0
 REPORT=""
@@ -184,24 +194,16 @@ while [ "$t" -lt "$n_tasks" ]; do
     matched_files=""
     while IFS= read -r planned; do
       [ -z "$planned" ] && continue
-      # Strip the universal `./` plus any repo-specific path prefix configured
-      # in .repo.path_prefix_strip (env override: BUREAU_PATH_PREFIX_STRIP).
-      # Useful when specs reference paths with a repo-dir prefix that doesn't
-      # appear in PR file lists — e.g. brainhuggers-cli's `brainhuggers-bureau/`.
-      # Default empty → no extra stripping. Resolved per-iteration, as before.
-      _prefix="${BUREAU_PATH_PREFIX_STRIP:-$(jq -r '.repo.path_prefix_strip // empty' "${BUREAU_CONFIG:-.bureau.json}" 2>/dev/null)}"
-      # Both cuts are parameter expansion, and the prefix is quoted inside it:
-      # it is removed as literal text, never read as a pattern, and an empty
-      # prefix removes nothing. The prefix used to go unquoted into a sed
-      # program (`sed -e "s|^${_prefix}||"`), where a value of the form
-      # `|<command>; #|e;s|` runs <command> under GNU sed's `e` flag, which
-      # every Linux runner has. No external program sees the value now, so
-      # nothing here needs escaping.
-      clean_planned="${planned#./}"
-      clean_planned="${clean_planned#"$_prefix"}"
+      clean_planned="$planned"
+      if [ "$OVERLAP_GATE" != true ]; then
+        _prefix="${BUREAU_PATH_PREFIX_STRIP:-$(jq -r '.repo.path_prefix_strip // empty' "${BUREAU_CONFIG:-.bureau.json}" 2>/dev/null)}"
+        clean_planned="${planned#./}"
+        clean_planned="${clean_planned#"$_prefix"}"
+      fi
       while IFS= read -r pr_file; do
         [ -z "$pr_file" ] && continue
-        if [[ "$pr_file" == *"$clean_planned"* ]] || [[ "$clean_planned" == *"$pr_file"* ]]; then
+        if { [ "$OVERLAP_GATE" = true ] && { [ "$clean_planned" = . ] || [[ "$pr_file" = "$clean_planned" ]] || [[ "$pr_file" = "$clean_planned/"* ]] || [[ "$clean_planned" = "$pr_file/"* ]]; }; } \
+          || { [ "$OVERLAP_GATE" != true ] && { [[ "$pr_file" == *"$clean_planned"* ]] || [[ "$clean_planned" == *"$pr_file"* ]]; }; }; then
           matched_files="${matched_files}${NL}    - ${pr_file}"
         fi
       done <<< "$pr_files"

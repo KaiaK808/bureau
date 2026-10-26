@@ -1815,6 +1815,28 @@ test_spec_capacity_wait() {
   echo 'PASS NEGATIVE CONTROL old cap exit 2 -> rc 13 and needs-human; shipped scripts restored'
 }
 
+test_file_overlap_wait() {
+  local sb rc
+  sb=$(_capacity_sandbox overlap_wait 1)
+  cat > "$sb/scripts/spec-pipeline.sh" <<'OVERLAP'
+#!/bin/bash
+echo spec-pipeline.sh >> "$INVOCATIONS_LOG"
+echo 'File overlap gate: EXP-1638 waits; EXP-1621: docs/site/'
+exit 29
+OVERLAP
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-1638; rc=$?; set -e
+  assert_eq "$rc" 0 'overlap: four waits reach Done without stuck ticks' || return 1
+  assert_eq "$(grep -c 'exit=29 (file-overlap-wait)' "$sb/shepherd.out")" 4 'overlap: four quiet waits' || return 1
+  ! grep -q needs-human "$sb/labels.log" || return 1
+  [ ! -s "$sb/labels.log.alerts" ] || return 1
+  printf '#!/bin/bash\nkill -TERM "$PPID"\n' > "$sb/bin/sleep"
+  echo s1 > "$sb/state.txt"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-1638; rc=$?; set -e
+  assert_eq "$rc" 130 'overlap: wait cancels with 130' || return 1
+  [ ! -s "$sb/labels.log.alerts" ] || return 1
+  echo 'PASS file overlap: four quiet waits, no stuck/label/alert, cancellable'
+}
+
 # ── Run all scenarios ──────────────────────────────────────────────
 FAILS=0
 for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linear_unusable_halts test_block_halts \
@@ -1822,7 +1844,7 @@ for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linea
                 test_dry_run_read_unusable test_read_failure_other_code test_branch_read_unusable_halts \
                 test_interrupted_read_is_cancelled test_merge_mode_manual test_review_stop_quiet \
                 test_start_check_failure test_move_failure_halts test_signal_during_wait_and_stage \
-                test_move_confirmed_before_next_stage test_no_state_is_bounded test_relative_worktree test_merge_gate test_spec_capacity_wait; do
+                test_move_confirmed_before_next_stage test_no_state_is_bounded test_relative_worktree test_merge_gate test_spec_capacity_wait test_file_overlap_wait; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

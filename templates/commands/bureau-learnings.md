@@ -90,12 +90,12 @@ If the windowed file is empty, treat it as the "no events" case from step 1.
 ### 3. Identify failed issues (for failure-mode clustering)
 
 A failure for our purposes is any `stage_end` event where `class` is not in
-`["ok", "queue-empty", "spec-capacity-wait"]`. Group by `issue`:
+`["ok", "queue-empty", "spec-capacity-wait", "file-overlap-wait"]`. Group by `issue`:
 
 ```bash
 jq -sc 'group_by(.issue) | map({
   issue: .[0].issue,
-  failures: [.[] | select(.event=="stage_end" and (.class | IN("ok","queue-empty","spec-capacity-wait") | not))]
+  failures: [.[] | select(.event=="stage_end" and (.class | IN("ok","queue-empty","spec-capacity-wait","file-overlap-wait") | not))]
 }) | map(select(.failures | length > 0))' "$BUREAU_LEARN_TMP/events-window.jsonl" > "$BUREAU_LEARN_TMP/failed-issues.json"
 ```
 

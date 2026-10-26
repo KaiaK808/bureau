@@ -39,6 +39,22 @@ class Conflict(Exception):
     pass
 
 
+class AdmissionStop(Exception):
+    def __init__(self, code):
+        self.code = code
+
+
+def overlap(repo, action, issue, branch, *args, run=None):
+    config = read(config_for(repo))
+    if config.get('agents', {}).get('file_overlap_gate', False) is False:
+        return
+    try:
+        shell(repo, 'bureau_overlap', action, issue, branch, *args,
+              environ={**os.environ, 'BUREAU_RUN_ID': run} if run else None)
+    except subprocess.CalledProcessError as exc:
+        raise AdmissionStop(exc.returncode) from exc
+
+
 def process_env(command, environ=None):
     # Bureau's own git and gh calls run without the Bureau secrets: hooks,
     # filters, an fsmonitor or a credential helper they start can come from the
@@ -425,7 +441,7 @@ def report_conflict(repo, store, args, exc):
         print('bureau: could not leave the halt on ' + issue + ' (' + str(error) + ')', file=sys.stderr)
 
 
-def shell(repo, function, *args, timeout=None):
+def shell(repo, function, *args, timeout=None, environ=None):
     # Fixed helper names and positional arguments; never interpolate issue prose into shell code.
     # .env is read like every stage reads it (bureau_load_env in bureau-env.sh): parsed, never run
     # as shell code, the three secrets kept as unexported shell variables for the helper's own
@@ -437,9 +453,9 @@ shift
 '''
     helper = ['bash', '-e', '-c', script, 'bureau', str(SCRIPTS), function, *args]
     if timeout is None:
-        return subprocess.check_output(helper, cwd=repo, text=True).strip()
+        return subprocess.check_output(helper, cwd=repo, text=True, env=environ).strip()
     child = subprocess.Popen(helper, cwd=repo, text=True, stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+                             stderr=subprocess.DEVNULL, start_new_session=True, env=environ)
     try:
         output, _ = child.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -529,6 +545,8 @@ def prepare(repo, args, store):
         raise Conflict('Attach the canonical issue branch before preparing: ' + canonical)
     if args.stage != 'spec' and (not branch or branch in ('main', 'master')):
         raise Conflict('Attach the issue branch before preparing this stage')
+    if args.stage in ('implement', 'copy', 'qa'):
+        overlap(repo, 'admit', args.issue, branch, '--local')
     run = uuid.uuid4().hex
     store.claim(args.issue, repo, run, args.owner)
     try:
@@ -651,6 +669,10 @@ def finish(repo, args, store):
         raise Conflict('Checkout branch changed since prepare')
     if result['outcome'] == 'complete' and (not branch or branch in ('main', 'master')):
         raise Conflict('Create or resume the issue branch before finishing a stage')
+    if result['outcome'] == 'complete' and record['stage'] == 'spec':
+        overlap(repo, 'record', record['issue'], branch, str(feature_directory(repo, record) / 'tasks.md'), run=args.run)
+    if target in ('build', 'copy', 'qa') and target_id != current['state']['id']:
+        overlap(repo, 'admit', record['issue'], branch, '--local', run=args.run)
     record.update(pending_hash=digest, target_state=target_id)
     save(path, record)
     marker = '<!-- bureau-run: ' + args.run + ' -->'
@@ -664,7 +686,14 @@ def finish(repo, args, store):
             body += '\nVERDICT: ' + result['verdict']
         shell(repo, 'post_comment', record['issue'], body)
     if target_id != current['state']['id']:
-        shell(repo, 'move_issue', record['issue'], target_id)
+        if config.get('agents', {}).get('file_overlap_gate', False) is not False:
+            try:
+                shell(repo, 'move_issue', record['issue'], target_id,
+                      environ={**os.environ, 'BUREAU_RUN_ID': args.run})
+            except subprocess.CalledProcessError as exc:
+                raise AdmissionStop(exc.returncode) from exc
+        else:
+            shell(repo, 'move_issue', record['issue'], target_id)
     record.update(status='finished', result_hash=digest, result=result)
     save(path, record)
     store.release(args.run)
@@ -742,6 +771,23 @@ def execute(repo, args, store):
                 e.observe(s.disable_reuse, repo, args.issue)
         # Provider identity remains usable even when the optional manifest is unavailable.
         attempt = attempt or uuid.uuid4().hex
+        # Admission precedes ownership/reset so legacy unstarted Build tickets
+        # cannot manufacture mutual writer holds merely by being picked.
+        overlap_enabled = read(config_for(repo)).get('agents', {}).get('file_overlap_gate', False)
+        if overlap_enabled is not False and args.issue:
+            preflight = stage in ('implement', 'copy', 'qa')
+            if entry == 'shepherd.sh':
+                preflight = issue_snapshot(repo, args.issue)['state']['id'] == read(config_for(repo))['linear']['teams'][0]['states'].get('build')
+            if preflight:
+                branch = shell(repo, 'get_issue_branch', args.issue)
+                try:
+                    overlap(repo, 'admit', args.issue, branch, run=run)
+                except AdmissionStop as exc:
+                    if entry != 'shepherd.sh' or exc.code != 29:
+                        code = exc.code
+                        return code
+                    # A known queued driver may poll without becoming a file
+                    # holder. Its workers still gate before ownership/reset.
         try:
             resources = store.claim(args.issue, workspace, run, 'background', os.getpid())
         except Conflict as exc:
@@ -990,6 +1036,8 @@ def main():
                         os.chmod(target, 0o600); out.write((source / name).read_bytes())
             print(json.dumps({'workspace': str(repo), 'config': str(config_for(repo))}))
         return 0
+    except AdmissionStop as exc:
+        return exc.code
     except Conflict as exc:
         print('bureau conflict: ' + str(exc), file=sys.stderr); return 21
     except (ValueError, OSError, subprocess.CalledProcessError, KeyError) as exc:

@@ -29,8 +29,8 @@ else bureau_secret_set LINEAR_API_KEY || { echo "ERROR: Set LINEAR_API_KEY"; exi
 CLAUDE=(run_stage_for code_review)
 bureau_secret_copy API_KEY LINEAR_API_KEY
 REVIEW_TMP=$(mktemp -d)
-# Preserve REVIEW_TMP only on real failures. 0 = success, 2 = queue-empty —
-# both are clean early exits with no specialist output to inspect.
+# Preserve REVIEW_TMP only on real failures. Success, queue-empty and overlap
+# admission waits are clean exits; a wait before review has no specialist output.
 _review_cleanup() {
   local rc=$?
   # Also collect a failed/partial round's receipts. Unknown decisions and
@@ -39,7 +39,7 @@ _review_cleanup() {
     bureau_review_evidence --provider-verdict "${PROVIDER_VERDICT:-}" --final-verdict "${VERDICT:-}" || true
   fi
   bureau_archive_evidence "$REVIEW_TMP" 'code review specialist outputs and gate reports' || true
-  if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
+  if [ "$rc" = 0 ] || [ "$rc" = 2 ] || [ "$rc" = 29 ]; then
     rm -rf "$REVIEW_TMP" || true
   else
     ( echo "code-review failed (exit $rc). Specialist outputs preserved at $REVIEW_TMP" >&2 ) || true
@@ -160,6 +160,10 @@ if bureau_stop_requested; then
     exit 20
   fi
 fi
+
+# Admission polling precedes the paid round reservation/specialists. Requested
+# approval stops above still win; a wait cannot consume another PR 8 round.
+bureau_overlap_admit "$ISSUE" "$BRANCH"
 
 PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
 if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then

@@ -85,6 +85,9 @@ else
   exit 12
 fi
 
+if bureau_overlap_resume "$ISSUE" "$BRANCH" ux; then exit 0
+else OVERLAP_RC=$?; [ "$OVERLAP_RC" = 2 ] || exit "$OVERLAP_RC"; fi
+
 # Same base-selection reasoning as implement/qa/code-review: design.md is committed
 # and pushed; the PR diff is computed against origin/main, so a stale base
 # pollutes the design-review with phantom-revert hunks.
@@ -245,6 +248,8 @@ $DESIGN_SUMMARY"
     NEXT_STATE_LABEL="Spec Review (rework)"
     ;;
   COMPLETE|*)
+    bureau_overlap_ready "$ISSUE" "$BRANCH" ux
+    bureau_overlap_admit "$ISSUE" "$BRANCH" --local
     post_comment "$ISSUE" "🎨 Design phase complete. Design artifacts committed to \`$BRANCH\`. Ready for implementation."
     move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
     NEXT_STATE_LABEL="Build"

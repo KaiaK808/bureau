@@ -69,6 +69,35 @@ bureau_stop_requested() {
 }
 BUREAU_RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-runtime.py"
 
+# File overlap admission. Scopes and readiness are authoritative and
+# shared across worktrees; evidence is only an observational mirror.
+bureau_overlap() {
+  [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  local enabled
+  enabled=$(bureau_get '(.agents // {}) | if has("file_overlap_gate") then .file_overlap_gate else false end | tojson') || return 24
+  case "$enabled" in
+    false) [ "$1" != ready-check ] || return 2; return 0 ;;
+    true) ;;
+    *) echo 'ERROR: agents.file_overlap_gate must be a boolean' >&2; return 24 ;;
+  esac
+  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-admission.py" --repo "$PWD" "$@" )
+}
+bureau_overlap_record() { bureau_overlap record "$1" "$2" "$3"; }
+bureau_overlap_admit() { bureau_overlap admit "$@"; }
+bureau_overlap_ready() { bureau_overlap ready "$1" "$2" "$3"; }
+bureau_overlap_resume() {
+  local rc
+  if bureau_overlap ready-check "$1" "$2" "$3"; then
+    bureau_overlap_admit "$1" "$2" --local || return $?
+    move_issue "$1" "$BUREAU_STATE_BUILD" || return $?
+    return 0
+  else
+    rc=$?
+    [ "$rc" = 2 ] || return "$rc"
+    return 2
+  fi
+}
+
 # Evidence is observational. A log failure is visible but never changes stage
 # authorization, routing or the existing exit protocol. Provider receipts are
 # stricter: the adapter never forwards a completion it could not persist.
@@ -1147,6 +1176,13 @@ move_issue() {
       echo "ERROR: $ref state changed during this stage; refusing stale transition" >&2
       return 21
     fi
+  fi
+  # All Build routes, including QA/review rework and --from-stage, share the
+  # admission boundary. The stage's explicit check also preserves readiness.
+  if [ "$state_id" = "${BUREAU_STATE_BUILD:-}" ] && [ "$(bureau_get '(.agents // {}) | if has("file_overlap_gate") then .file_overlap_gate else false end | tojson')" != false ]; then
+    local overlap_branch
+    overlap_branch=$(get_issue_branch "$ref") || return $?
+    bureau_overlap_admit "$ref" "$overlap_branch" --continuation || return $?
   fi
   local uuid
   uuid=$(_resolve_issue_uuid "$ref") || return $?
@@ -2394,6 +2430,7 @@ session_throttle_guard() {
 # Usage: alert_telegram <issue> <pipeline> <exit_code> <message> [log_tail]
 alert_telegram() {
   local issue="$1" pipeline="$2" exit_code="$3" message="$4" log_tail="${5:-}"
+  [ "$exit_code" != 29 ] || return 0
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
     echo "[DRY_RUN] alert_telegram $issue $pipeline exit=$exit_code: $message" >&2
     return 0
@@ -3765,13 +3802,13 @@ resolve_verdict_exit() {
 # an alert — so every code added later (22 to 26 here) halted silently. Now
 # halt is the default and only the exceptions are listed:
 #   ok    0 success · 2 queue-empty
-#   wait  28 spec-capacity-wait (quiet and cancellable)
+#   wait  28 spec-capacity-wait · 29 file-overlap-wait (quiet and cancellable)
 #   retry 10 linear-down · 16 provider-unauth (transient, throttled retry)
 # Everything else halts with an alert, unknown codes included.
 shepherd_rc_action() {
   case "${1:-}" in
     0|2)   echo "ok" ;;
-    28)    echo "wait" ;;
+    28|29) echo "wait" ;;
     10|16) echo "retry" ;;
     *)     echo "halt" ;;
   esac
@@ -3800,6 +3837,7 @@ exit_class() {
     26)  echo "cancelled-ticket" ;;
     27)  echo "linear-unusable" ;;
     28)  echo "spec-capacity-wait" ;;
+    29)  echo "file-overlap-wait" ;;
     124) echo "timeout" ;;
     130) echo "cancelled-run" ;;
     *)   echo "error-$1" ;;
