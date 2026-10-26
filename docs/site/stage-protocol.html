@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d1774c76a7d0d950aee3850ce90b1036dfe28afa09f30dee056999ea6c5b1858">
+<meta name="bureau-source-sha256" content="9290f52f0604a7ac08db3bac46ae444d893bd58ac07998e4cbbdffd553de7235">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -221,9 +221,14 @@ including <code>bureau-paths.py</code> and
 <code>bureau-admission.py</code>. Restart every writer/driver; mixed
 old/new writers and separate clones or hosts do not share this gate. The
 default remains disabled. The future continuous dispatcher must require
-this flag rather than implement another gate. PR 9 withdrawal is not in
-this base: this gate preserves execution leases and cannot certify safe
-withdrawal for an older writer.</p>
+this flag rather than implement another gate. Admission uses PR 9's
+strict configured-ID checkpoint and the worker's shared run latch before
+granting or returning a wait, including preflight before execution
+ownership. Done returns 0, cancellation/duplicate 26 and other
+configured inactive or unknown states 25. These withdrawals take
+precedence over exit 29. The calling shell consumes the stop before any
+Build mutation, including Done's exit 0. An older writer without these
+checkpoints cannot certify safe withdrawal.</p>
 <p>After successful tasks generation or checkpoint resume, the spec
 stage records the ticket, canonical branch, committed tasks identity,
 SHA-256 and normalized paths in
@@ -289,13 +294,16 @@ polling from buying another review round. Task changes refresh
 <code>reservations</code>. Other tickets compare against granted scopes
 only. A requested expansion checks the union of the grant and current
 inventory; only successful admission replaces the grant, so a wait never
-expands or shrinks the holder's reservation. Terminal tickets release
-only after execution ownership is absent; an open PR still holds its
-diff. Reservations already expanded by an older runtime are preserved;
-reconcile such a reservation explicitly after checking unfinished work.
-Do not delete the store to clear a wait while work may still exist.
-Reconcile stale leases/preserved work through the ownership protocol
-first.</p>
+expands or shrinks the holder's reservation. All states PR 9 classifies
+as withdrawn release their reservations only after cooperative cleanup
+has finished and execution ownership is absent, including configured
+inactive states whose service type is nonterminal. Holding state IDs
+excluded by <code>agents.ticket_active_states</code> are not re-elected
+after release. An open PR still holds its diff. Reservations already
+expanded by an older runtime are preserved; reconcile such a reservation
+explicitly after checking unfinished work. Do not delete the store to
+clear a wait while work may still exist. Reconcile stale
+leases/preserved work through the ownership protocol first.</p>
 <p>Conflicts return <code>29</code> (<code>file-overlap-wait</code>)
 with holder identifiers and intersecting paths or the unknown reason.
 Evidence mirrors a stable <code>file-overlap</code> resource wait;

@@ -48,11 +48,25 @@ def overlap(repo, action, issue, branch, *args, run=None):
     config = read(config_for(repo))
     if config.get('agents', {}).get('file_overlap_gate', False) is False:
         return
+    environ = None
+    if run:
+        environ = {**os.environ, 'BUREAU_RUN_ID': run,
+                   'BUREAU_TICKET_CONTROL_DIR': str(common_for(repo) / 'bureau' / 'ticket-control' / run)}
     try:
         shell(repo, 'bureau_overlap', action, issue, branch, *args,
-              environ={**os.environ, 'BUREAU_RUN_ID': run} if run else None)
+              environ=environ)
+        if action == 'admit':
+            ticket_checkpoint(repo, issue, environ=environ)
     except subprocess.CalledProcessError as exc:
         raise AdmissionStop(exc.returncode) from exc
+
+
+def ticket_checkpoint(repo, issue, snapshot=None, environ=None):
+    """Use PR 9's strict checkpoint/latch, preserving Done's cooperative exit 0."""
+    authorized = shell(repo, 'bureau_ticket_authorize', issue, 'strict',
+                       json.dumps(snapshot) if snapshot is not None else '', environ=environ)
+    if authorized != 'authorized':
+        raise AdmissionStop(0)
 
 
 def process_env(command, environ=None):

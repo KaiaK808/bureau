@@ -319,16 +319,24 @@ class Admission:
             return 'writer ownership could not be established'
 
     def admit(self, issue, branch, local=False, continuation=False):
+        def checkpoint(snapshot=None):
+            try:
+                r.ticket_checkpoint(self.repo, issue, snapshot)
+            except r.AdmissionStop as exc:
+                raise Stop(exc.code, 'Candidate withdrawn: ' + issue) from exc
+
+        # Withdrawal wins over admission, branch errors and overlap waits. Use
+        # the same run latch as the eventual worker, before ownership/reset.
+        checkpoint()
         with self.guard() as state:
             snapshot = issues(self.repo, self.config)
             if issue not in snapshot:
                 raise Stop(27, 'Candidate missing from complete Linear snapshot')
+            current = snapshot[issue]
+            checkpoint(current)
             canonical = branches(self.repo, snapshot)
             if not branch or canonical[issue] != branch:
                 raise Stop(12, 'Candidate canonical branch missing or changed')
-            current = snapshot[issue]
-            if current['state']['type'] in ('completed', 'canceled'):
-                raise Stop(26, 'Candidate is terminal: ' + issue)
             label_rows = connection(self.repo, LABELS, dict(id=current['id']), lambda v: v['issue']['labels'])
             if any(not isinstance(v, dict) or not isinstance(v.get('name'), str) for v in label_rows):
                 raise Stop(27, 'Candidate labels snapshot incomplete')
@@ -351,29 +359,36 @@ class Admission:
             if continuation and rework and same_scope and own.get('phase') == 'admitted':
                 # A rework route retains an existing admission. The next writer
                 # still performs the full PR/holder check before it can start.
+                checkpoint()
                 self.save(state)
                 print('File overlap gate: retained rework reservation ' + issue)
                 return
             holders = []
             projects = self.config['linear'].get('projects') or []
+            classes = {}
             for name, item in snapshot.items():
                 reservation = state['reservations'].get(name)
                 project = item.get('project')
                 project = project.get('id') if isinstance(project, dict) else None
                 if projects and project not in projects and name != issue and not reservation and 'issue:' + name not in leases:
                     continue
-                terminal = item['state']['type'] in ('completed', 'canceled')
-                if terminal and 'issue:' + name not in leases:
+                state_id = item['state']['id']
+                if state_id not in classes:
+                    classes[state_id] = r.shell(self.repo, 'bureau_ticket_state_class', state_id)
+                withdrawn = classes[state_id] != 'active'
+                if withdrawn and 'issue:' + name not in leases:
                     state['reservations'].pop(name, None)
                     state['migration'].pop(name, None)
                     state['waiters'].pop(name, None)
-                    reservation = None
-                terminal_writer = terminal and 'issue:' + name in leases
-                if item['state']['id'] not in holding and not reservation and not terminal_writer:
+                    # A configured holding state can itself be inactive. Do
+                    # not immediately re-elect a reservation just released.
+                    continue
+                withdrawn_writer = withdrawn and 'issue:' + name in leases
+                if state_id not in holding and not reservation and not withdrawn_writer:
                     continue
                 scope = candidate if name == issue else self.scope(canonical[name])
                 self.refresh(state, name, scope)
-                if not reservation and (not terminal or terminal_writer):
+                if not reservation:
                     election_leases = {k: v for k, v in leases.items() if k != 'issue:' + issue
                                        and not (k == 'issue:' + name and v.get('run_id') == state['waiters'].get(name))}
                     proof = self.writer_proof(name, scope, election_leases)
@@ -411,10 +426,14 @@ class Admission:
             # and writers. An earlier admission cannot waive a new conflict.
             conflicts = [dict(v, overlap=p.intersection(effective['paths'], v['paths'])) for v in holders
                          if p.intersection(effective['paths'], v['paths'])]
-            if issues(self.repo, self.config) != snapshot:
+            latest = issues(self.repo, self.config)
+            if issue in latest:
+                checkpoint(latest[issue])
+            if latest != snapshot:
                 raise Stop(27, 'Linear snapshot changed during admission; retry')
             if sorted(map(pull_identity, pulls(self.repo))) != sorted(map(pull_identity, listed)):
                 raise Stop(18, 'Open PR snapshot changed during admission; retry')
+            checkpoint()
             if conflicts:
                 if state['migration'].get(issue) == 'queued' and issue not in state['reservations'] and os.environ.get('BUREAU_RUN_ID'):
                     # A newly launched shepherd may own the ticket while only

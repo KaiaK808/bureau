@@ -29,6 +29,11 @@ if Path(sys.argv[0]).name == 'gh':
     endpoint = args[-1]
     prs = data.get('prs', [])
     if '?state=open' in endpoint:
+        withdrawal = data.pop('withdraw_on_pull', None)
+        if withdrawal:
+            row = next(i for i in data['issues'] if i['identifier'] == withdrawal['issue'])
+            row['state'] = withdrawal['state']
+            path.write_text(json.dumps(data))
         size = data.get('pr_page_size', 100)
         print(json.dumps([prs[i:i+size] for i in range(0, len(prs), size)] or [[]]))
     else:
@@ -64,6 +69,11 @@ elif 'issueUpdate' in q:
 elif 'viewer' in q:
     result = dict(data=dict(viewer=dict(id='test')))
 elif 'issues(' in q:
+    withdrawal = data.pop('withdraw_on_branch_lookup', None) if 'branchName' in q else None
+    if withdrawal:
+        row = next(i for i in items if i['identifier'] == withdrawal['issue'])
+        row['state'] = withdrawal['state']
+        path.write_text(json.dumps(data))
     number = re.search(r'number:\s*\{\s*eq:\s*(\d+)', q)
     rows = [i for i in items if not number or i['identifier'].endswith('-'+number[1])]
     state = re.search(r'state:\s*\{\s*id:\s*\{\s*eq:\s*"([^"]+)"', q)
@@ -103,7 +113,7 @@ class Fixture(unittest.TestCase):
             file = self.repo / name; file.parent.mkdir(parents=True, exist_ok=True); file.write_text('base\n')
         (self.repo / '.gitignore').write_text('.bureau.json\n.env\nlogs/\n')
         self.commit('base'); self.base = self.g('rev-parse', 'HEAD'); self.g('push', '-q', 'origin', 'main')
-        states = {k:k for k in ('triage','spec','spec_review','design','copy','build','qa','build_review','merge','done')}
+        states = {k:k for k in ('triage','spec','spec_review','design','copy','build','qa','build_review','merge','done','cancelled','duplicate','backlog')}
         self.config = dict(linear=dict(teams=[dict(key='EXP', id='t', name='Test', states=states)], labels=dict(lane2=dict(id='l1',name='lane-2'),needs_human=dict(id='l2',name='needs-human'),needs_ux=dict(id='l3',name='needs-ux'),ai_implementable=dict(id='l4',name='ai-implementable'))), repo=dict(specs_dir='specs',base_branch='main'),agents=dict(file_overlap_gate=True))
         self.cfg = self.repo / '.bureau.json'; self.cfg.write_text(json.dumps(self.config))
         (self.repo / '.env').write_text('LINEAR_API_KEY=fixture-only\n')
@@ -111,7 +121,7 @@ class Fixture(unittest.TestCase):
             file = self.bin / binary; file.write_text(SERVICE); file.chmod(0o755)
         self.state = self.root / 'service.json'; self.data = dict(issues=[],prs=[]); self.save()
         self.env = {**os.environ, 'PATH':str(self.bin)+os.pathsep+os.environ['PATH'], 'BUREAU_CONFIG':str(self.cfg), 'BUREAU_TEST_STATE':str(self.state), 'BUREAU_LINEAR_RETRIES':'0', 'PYTHONDONTWRITEBYTECODE':'1', 'TMPDIR':str(self.root), 'BUREAU_EVIDENCE_DISABLED':'1'}
-        for key in ('BUREAU_RUN_ID','BUREAU_CURRENT_ISSUE','BUREAU_ACTIVE_ENTRY','BUREAU_STAGE_ATTEMPT_ID','BUREAU_DRY_RUN'):
+        for key in ('BUREAU_RUN_ID','BUREAU_CURRENT_ISSUE','BUREAU_ACTIVE_ENTRY','BUREAU_STAGE_ATTEMPT_ID','BUREAU_DRY_RUN','BUREAU_TICKET_CONTROL_DIR'):
             self.env.pop(key, None)
 
     def stop_children(self):
@@ -167,6 +177,150 @@ class Fixture(unittest.TestCase):
 
     def store(self): return json.loads((self.repo/'.git/bureau/admission/v1.json').read_text())
 
+    def withdrawal_config(self):
+        # Display names and service types deliberately disagree with the IDs.
+        states = self.config['linear']['teams'][0]['states']
+        states.update({key:'configured-'+key for key in
+                       (*states, 'backlog', 'cancelled', 'duplicate')})
+        self.cfg.write_text(json.dumps(self.config))
+        for row in self.data['issues']:
+            row['state'] = dict(id=states[row['state']['id']], name='Done', type='started')
+        self.save()
+        return states
+
+    def test_restack_withdrawn_worker_preflight_overrides_overlap_and_evidence(self):
+        a=self.ticket(1,['pkg/a.py'],state='build'); b=self.ticket(2,['pkg/a.py'])
+        states=self.withdrawal_config(); self.expect(0,self.cli('admit',b))
+        entry=self.root/'implement-pipeline.sh'; marker=self.root/'WRITER_STARTED'
+        entry.write_text('#!/bin/bash\nprintf started > "$1"\n')
+        env={**self.env,'BUREAU_EVIDENCE_DISABLED':'0'}
+        for key,code in [('backlog',25),('done',0),('cancelled',26),('duplicate',26),('copy',25)]:
+            with self.subTest(state=key):
+                if key=='copy':
+                    self.config['agents']['ticket_active_states']=['build','spec_review']
+                    self.cfg.write_text(json.dumps(self.config))
+                self.data['issues'][0]['state']['id']=states[key]; self.save()
+                result=self.invoke([sys.executable,'-I',str(SCRIPTS/'bureau-runtime.py'),'--repo',str(self.repo),
+                                    'exec','--issue',a[0],'--entry',str(entry),'--','bash',str(entry),str(marker)],env=env)
+                self.expect(code,result); self.assertFalse(marker.exists())
+                self.assertNotIn(a[0],self.store()['reservations'])
+                common=self.repo/'.git/bureau'
+                self.assertTrue(list((common/'ticket-control').glob('*/stop-'+str(code))))
+                self.assertFalse(json.loads((common/'leases.json').read_text()))
+                manifests=[json.loads(p.read_text()) for p in (common/'evidence').rglob('manifest.json')]
+                attempts=[a for manifest in manifests for a in manifest['attempts']]
+                self.assertTrue(any(p.get('normalized_exit')==code for p in attempts),attempts)
+                self.assertFalse(any(p.get('normalized_exit')==29 for p in attempts),attempts)
+
+    def test_restack_withdrawal_during_admission_beats_grant_and_wait(self):
+        a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/a.py'])
+        states=self.withdrawal_config()
+        for has_holder in (False,True):
+            if has_holder: self.expect(0,self.cli('admit',b))
+            for key,code in [('backlog',25),('done',0),('cancelled',26)]:
+                with self.subTest(holder=has_holder,state=key):
+                    control=self.root/('during-'+str(has_holder)+'-'+key)
+                    self.env['BUREAU_TICKET_CONTROL_DIR']=str(control)
+                    self.data['issues'][0]['state']['id']=states['spec_review']
+                    self.data['withdraw_on_pull']=dict(issue=a[0],state=dict(id=states[key],name='Build',type='started'))
+                    self.save(); self.expect(code,self.cli('admit',a))
+                    self.assertTrue((control/('stop-'+str(code))).exists())
+                    if (self.repo/'.git/bureau/admission/v1.json').exists():
+                        self.assertNotIn(a[0],self.store()['reservations'])
+                    self.data=json.loads(self.state.read_text())
+            self.env.pop('BUREAU_TICKET_CONTROL_DIR')
+
+    def test_restack_latched_withdrawal_wins_after_ticket_returns_active(self):
+        a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/a.py'])
+        states=self.withdrawal_config(); self.expect(0,self.cli('admit',b))
+        for key,code in [('backlog',25),('done',0),('cancelled',26)]:
+            with self.subTest(state=key):
+                control=self.root/('latched-'+key); self.env['BUREAU_TICKET_CONTROL_DIR']=str(control)
+                self.data['issues'][0]['state']['id']=states[key]; self.save()
+                result=self.invoke(['bash','-ec','source "$1"; bureau_ticket_checkpoint "$2" strict; echo UNEXPECTED',
+                                    'checkpoint',str(SCRIPTS/'bureau-config.sh'),a[0]],cwd=self.repo)
+                self.expect(code,result); self.assertNotIn('UNEXPECTED',result.stdout)
+                self.assertTrue((control/('stop-'+str(code))).exists())
+                self.data['issues'][0]['state']['id']=states['build']; self.save()
+                self.expect(code,self.cli('admit',a))
+                self.assertNotIn(a[0],self.store()['reservations'])
+
+    def test_restack_build_move_consumes_withdrawal_after_its_state_guard(self):
+        a=self.ticket(1,['pkg/a.py']); states=self.withdrawal_config()
+        for key,code in [('backlog',25),('done',0),('cancelled',26)]:
+            with self.subTest(state=key):
+                self.data['issues'][0]['state']['id']=states['spec_review']
+                self.data['withdraw_on_branch_lookup']=dict(issue=a[0],state=dict(id=states[key],name='Build',type='started'))
+                self.save()
+                env={**self.env,'BUREAU_CURRENT_ISSUE':a[0],'BUREAU_EXPECTED_STATE_ID':states['spec_review'],
+                     'BUREAU_TICKET_CONTROL_DIR':str(self.root/('move-'+key))}
+                result=self.invoke(['bash','-ec','source "$1"; move_issue "$2" "$BUREAU_STATE_BUILD"; echo UNEXPECTED',
+                                    'move',str(SCRIPTS/'bureau-config.sh'),a[0]],env=env,cwd=self.repo)
+                self.expect(code,result); self.assertNotIn('UNEXPECTED',result.stdout)
+                self.data=json.loads(self.state.read_text())
+                self.assertEqual(states[key],self.data['issues'][0]['state']['id'])
+                self.assertNotIn('issueUpdate',self.state.with_suffix('.calls').read_text())
+
+    def test_restack_withdrawn_reservation_waits_for_cooperative_stop_and_lease_release(self):
+        a=self.ticket(1,['pkg/a.py'],state='build'); b=self.ticket(2,['pkg/a.py'])
+        states=self.withdrawal_config(); self.expect(0,self.cli('admit',a))
+        entry=self.root/'implement-pipeline.sh'
+        entry.write_text('''#!/bin/bash
+set -euo pipefail
+source "$1/bureau-config.sh"
+trap 'touch "$BUREAU_TEST_STOP/cleanup-started"; while [ ! -f "$BUREAU_TEST_STOP/allow-stop" ]; do sleep .03; done; touch "$BUREAU_TEST_STOP/cleanup-finished"' EXIT
+touch "$BUREAU_TEST_STOP/writer-started"
+while [ ! -f "$BUREAU_TEST_STOP/withdrawn" ]; do sleep .03; done
+bureau_ticket_checkpoint "$BUREAU_CURRENT_ISSUE" strict
+touch "$BUREAU_TEST_STOP/UNEXPECTED"
+''')
+        env={**self.env,'BUREAU_TEST_STOP':str(self.root)}
+        child=subprocess.Popen([sys.executable,'-I',str(SCRIPTS/'bureau-runtime.py'),'--repo',str(self.repo),
+                                'exec','--issue',a[0],'--entry',str(entry),'--','bash',str(entry),str(SCRIPTS)],
+                               env=env,cwd=self.repo,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+        self.children.append(child)
+        def wait_for(name):
+            deadline=time.monotonic()+20
+            while not (self.root/name).exists() and time.monotonic()<deadline and child.poll() is None:
+                time.sleep(.03)
+            self.assertTrue((self.root/name).exists(),name)
+        try:
+            wait_for('writer-started')
+            self.data['issues'][0]['state']['id']=states['backlog']; self.save(); (self.root/'withdrawn').touch()
+            wait_for('cleanup-started')
+            self.assertFalse((self.root/'cleanup-finished').exists())
+            self.assertIn('issue:'+a[0],json.loads((self.repo/'.git/bureau/leases.json').read_text()))
+            self.expect(29,self.cli('admit',b)); self.assertIn(a[0],self.store()['reservations'])
+        finally:
+            (self.root/'allow-stop').touch()
+            out,err=child.communicate(timeout=20)
+        self.expect(25,subprocess.CompletedProcess(child.args,child.returncode,out,err))
+        self.assertTrue((self.root/'cleanup-finished').exists()); self.assertFalse((self.root/'UNEXPECTED').exists())
+        self.assertEqual({},json.loads((self.repo/'.git/bureau/leases.json').read_text()))
+        for _ in range(2): self.expect(0,self.cli('admit',b))
+        self.assertNotIn(a[0],self.store()['reservations'])
+
+    def test_restack_configured_inactive_holding_state_releases_without_reelection(self):
+        a=self.ticket(1,['pkg/a.py'],state='copy'); b=self.ticket(2,['pkg/a.py'])
+        states=self.withdrawal_config(); self.expect(0,self.cli('admit',a))
+        self.config['agents']['ticket_active_states']=['spec_review','build']
+        self.cfg.write_text(json.dumps(self.config))
+        self.env['BUREAU_TICKET_CONTROL_DIR']=str(self.root/'inactive-copy')
+        self.expect(25,self.invoke(['bash','-ec','source "$1"; bureau_ticket_checkpoint "$2" strict',
+                                  'checkpoint',str(SCRIPTS/'bureau-config.sh'),a[0]],cwd=self.repo))
+        self.env.pop('BUREAU_TICKET_CONTROL_DIR')
+        self.expect(0,self.cli('admit',b))
+        self.assertNotIn(a[0],self.store()['reservations'])
+        self.assertEqual(states['copy'],self.data['issues'][0]['state']['id'])
+
+    def test_restack_active_configured_ids_ignore_terminal_service_types(self):
+        a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/a.py'])
+        self.withdrawal_config()
+        self.data['issues'][0]['state']['type']='completed'
+        self.data['issues'][1]['state']['type']='canceled'; self.save()
+        self.expect(0,self.cli('admit',a)); self.expect(29,self.cli('admit',b))
+        self.assertIn(a[0],self.store()['reservations'])
+
     def change_tasks(self, ticket, paths):
         self.g('checkout','-q',ticket[1]); file = self.repo/self.config['repo']['specs_dir']/ticket[1]/'tasks.md'
         file.write_text('- [ ] Update '+' and '.join('`'+p+'`' for p in paths)+'\n'); self.commit('changed tasks'); self.g('push','-q','origin',ticket[1]); self.g('checkout','-q','main')
@@ -219,7 +373,7 @@ class Fixture(unittest.TestCase):
         store=self.store()
         self.assertEqual(store['inventories'][a[0]]['paths'],['pkg/a.py','pkg/b.py'])
         self.assertEqual(store['reservations'][a[0]]['paths'],['pkg/a.py'])
-        self.data['issues'][1]['state']['type']='completed'; self.save()
+        self.data['issues'][1]['state'].update(id='done',type='completed'); self.save()
         self.expect(0,self.cli('admit',a))
         self.assertEqual(self.store()['reservations'][a[0]]['paths'],['pkg/a.py','pkg/b.py'])
 
@@ -384,7 +538,7 @@ class Fixture(unittest.TestCase):
     def test_cancellation_releases_after_execution_ownership_stops_but_pr_holds(self):
         a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/a.py'])
         self.expect(0,self.cli('admit',a)); self.pull(a,change='pkg/a.py')
-        self.data['issues'][0]['state']['type']='canceled'; self.save()
+        self.data['issues'][0]['state'].update(id='cancelled',type='canceled'); self.save()
         lease=self.repo/'.git/bureau/leases.json'; lease.write_text(json.dumps({'issue:EXP-1':dict(run_id='a'*32,owner='app')}))
         self.expect(29,self.cli('admit',b)); self.assertIn('EXP-1',self.store()['reservations'])
         lease.write_text('{}'); self.assertIn('PR #1',self.expect(29,self.cli('admit',b)).stderr)
@@ -395,7 +549,7 @@ class Fixture(unittest.TestCase):
         a=self.ticket(1,['pkg/a.py'],state='build'); b=self.ticket(2,['pkg/a.py'],state='build')
         self.expect(0,self.cli('admit',b)); self.expect(29,self.cli('admit',a))
         self.assertEqual(self.store()['migration'],{'EXP-1':'queued','EXP-2':'queued'})
-        self.data['issues'][1]['state']['type']='completed'; self.save(); self.expect(0,self.cli('admit',a))
+        self.data['issues'][1]['state'].update(id='done',type='completed'); self.save(); self.expect(0,self.cli('admit',a))
 
     def test_existing_build_unknown_scopes_queue_without_mutual_wait(self):
         a=self.ticket(1,[],state='build'); b=self.ticket(2,[],state='build')
@@ -416,7 +570,7 @@ class Fixture(unittest.TestCase):
     def test_existing_build_source_writer_and_unknown_owner_are_holders(self):
         a=self.ticket(1,['pkg/a.py'],state='build'); b=self.ticket(2,['pkg/a.py'],state='build'); self.pull(a,change='pkg/a.py'); self.data['prs']=[]; self.save()
         self.expect(29,self.cli('admit',b)); self.assertEqual(self.store()['migration']['EXP-1'],'holder')
-        self.data['issues'][0]['state']['type']='completed'; self.save()
+        self.data['issues'][0]['state'].update(id='done',type='completed'); self.save()
         lease=self.repo/'.git/bureau/leases.json'; lease.write_text(json.dumps({'issue:EXP-1':dict(run_id='a'*32,owner='app')}))
         self.expect(29,self.cli('admit',b))
 
@@ -428,7 +582,7 @@ class Fixture(unittest.TestCase):
                 self.pull(a,change='pkg/a.py'); self.data['prs']=[]; self.save()
                 b=self.ticket(len(self.data['issues'])+1,['pkg/a.py'])
                 self.expect(29,self.cli('admit',b))
-                for row in self.data['issues']: row['state']['type']='completed'
+                for row in self.data['issues']: row['state'].update(id='done',type='completed')
                 self.save()
 
     def test_readiness_survives_wait_and_invalidates_on_tasks_or_ticket_edit(self):
@@ -482,7 +636,7 @@ class Fixture(unittest.TestCase):
         result=self.root/'result.json'; result.write_text(json.dumps(dict(run_id=run,stage='spec_review',outcome='complete',summary='ready',head=a[2],artifacts=['specs/'+a[1]+'/spec.md'])))
         for _ in range(2): self.expect(29,self.invoke(command+['finish',run,'--result',str(result)]))
         self.assertEqual(json.loads((self.repo/'.git/bureau/runs'/(run+'.json')).read_text())['status'],'prepared')
-        self.data['issues'][1]['state']['type']='completed'; self.save()
+        self.data['issues'][1]['state'].update(id='done',type='completed'); self.save()
         self.expect(0,self.invoke(command+['finish',run,'--result',str(result)]))
         self.assertEqual(json.loads(self.state.read_text())['issues'][0]['state']['id'],'build')
 
@@ -508,7 +662,7 @@ class Fixture(unittest.TestCase):
         command=['bash',str(scripts/'spec-review-pipeline.sh'),a[0]]
         for _ in range(2): self.expect(29,self.invoke(command,env=env,cwd=self.repo))
         self.assertEqual(paid.read_text().splitlines(),['paid'])
-        self.data['issues'][1]['state']['type']='completed'; self.save()
+        self.data['issues'][1]['state'].update(id='done',type='completed'); self.save()
         self.expect(0,self.invoke(command,env=env,cwd=self.repo)); self.assertEqual(paid.read_text().splitlines(),['paid'])
         self.assertEqual(json.loads(self.state.read_text())['issues'][0]['state']['id'],'build')
 
@@ -586,12 +740,12 @@ echo "poll=$rc"
             self.assertIn('poll=0',result.stdout,result.stdout+result.stderr)
         self.assertEqual(attempts.read_text().splitlines(),['EXP-1 29','EXP-2 0']*2)
         self.assertFalse(alerts.exists())
-        self.data['issues'][0]['state']['type']='completed'; self.save()
+        self.data['issues'][0]['state'].update(id='done',type='completed'); self.save()
         self.expect(0,self.invoke(['/bin/bash',str(driver),str(scripts)],env=env,cwd=self.repo))
         self.assertEqual(attempts.read_text().splitlines()[-1],'EXP-1 0')
         # All-wait poll returns 29 after one attempt per candidate, never loops.
         self.ticket(4,['pkg/b.py'],state='build_review')
-        self.data['issues'][0]['state']['type']='started'; self.save()
+        self.data['issues'][0]['state'].update(id='merge',type='started'); self.save()
         attempts.write_text('')
         result=self.expect(0,self.invoke(['/bin/bash',str(driver),str(scripts)],env=env,cwd=self.repo))
         self.assertIn('poll=29',result.stdout)

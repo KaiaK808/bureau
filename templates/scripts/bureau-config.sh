@@ -80,7 +80,12 @@ bureau_overlap() {
     true) ;;
     *) echo 'ERROR: agents.file_overlap_gate must be a boolean' >&2; return 24 ;;
   esac
-  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-admission.py" --repo "$PWD" "$@" )
+  local overlap_rc=0
+  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-admission.py" --repo "$PWD" "$@" ) || overlap_rc=$?
+  # Admission runs in a child. Consume its withdrawal in THIS shell, including
+  # Done's successful exit, before a caller can continue into a Build mutation.
+  if [ "$1" = admit ]; then bureau_ticket_checkpoint "$2" strict; fi
+  return "$overlap_rc"
 }
 bureau_overlap_record() { bureau_overlap record "$1" "$2" "$3"; }
 bureau_overlap_admit() { bureau_overlap admit "$@"; }
@@ -201,6 +206,25 @@ bureau_ticket_stopped() {
   return 1
 }
 
+# Shared configured-ID classifier for checkpoints and admission cleanup. This
+# has no latch or state mutation: classifying a holder must not stop its caller.
+bureau_ticket_state_class() {
+  jq -er --arg id "$1" '
+    .linear.teams[0].states as $s |
+    (.agents.ticket_active_states | if . == null then
+      (["triage","spec","spec_review","design","copy","build","qa","build_review","merge"] |
+       map(select($s[.] | type == "string" and length > 0))) else . end) as $keys |
+    if ($keys | type) != "array" then error("ticket_active_states must be an array")
+    elif any($keys[]; type != "string") then error("ticket_active_states must contain state keys")
+    elif any($keys[]; $s[.] | type != "string" or length == 0) then error("ticket_active_states has an unconfigured key")
+    elif $s.done == $id then "0"
+    elif any(["cancelled","canceled","duplicate"][]; $s[.] == $id) then "26"
+    elif any($keys[]; $s[.] == $id) then "active"
+    else "25" end' "$BUREAU_CONFIG" || {
+      echo 'ERROR: invalid agents.ticket_active_states configuration' >&2; return 24;
+    }
+}
+
 # bureau_ticket_checkpoint ISSUE [additional|strict|latched] [already-read snapshot]
 # This exits the calling shell on withdrawal, even Done (0). Call again in the
 # parent after command substitutions/best-effort calls, and join parallel passes
@@ -247,20 +271,7 @@ bureau_ticket_checkpoint() {
     return 0
   fi
   BUREAU_TICKET_STATE_ID="$id"
-  code=$(jq -er --arg id "$id" '
-    .linear.teams[0].states as $s |
-    (.agents.ticket_active_states | if . == null then
-      (["triage","spec","spec_review","design","copy","build","qa","build_review","merge"] |
-       map(select($s[.] | type == "string" and length > 0))) else . end) as $keys |
-    if ($keys | type) != "array" then error("ticket_active_states must be an array")
-    elif any($keys[]; type != "string") then error("ticket_active_states must contain state keys")
-    elif any($keys[]; $s[.] | type != "string" or length == 0) then error("ticket_active_states has an unconfigured key")
-    elif $s.done == $id then "0"
-    elif any(["cancelled","canceled","duplicate"][]; $s[.] == $id) then "26"
-    elif any($keys[]; $s[.] == $id) then "active"
-    else "25" end' "$BUREAU_CONFIG") || {
-      echo 'ERROR: invalid agents.ticket_active_states configuration' >&2; exit 24;
-    }
+  code=$(bureau_ticket_state_class "$id") || exit $?
   [ "$code" != active ] || return 0
   # A stage's own successful Done transition may finish its bookkeeping. An
   # externally observed Done never receives this process-local authorization.
@@ -273,6 +284,13 @@ bureau_ticket_checkpoint() {
   fi
   echo "bureau ticket checkpoint: $issue left the active workflow (state ID $id); cooperative stop, exit $code" >&2
   exit "$code"
+}
+
+# A subprocess must distinguish active from an externally observed Done: both
+# have exit 0, but only a checkpoint that returns may acknowledge authorization.
+bureau_ticket_authorize() {
+  bureau_ticket_checkpoint "$@"
+  printf authorized
 }
 
 # Re-enter after claiming the issue and checkout. The Python parent owns cleanup,
