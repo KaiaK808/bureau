@@ -82,6 +82,8 @@ Code review instead reads the PR's actual `baseRefName` and matching head branch
 
 Before posting or routing, review rechecks the PR identity/target and both authoritative remote tips. Changed or unavailable inputs preserve the review output and stop execution. A saved review boundary includes the base branch name and both remote SHAs, not the unpublished local merge commit alone. Retargeting or advancing either remote input reopens the boundary; older records without a base name retain their original `main` interpretation. `spec-review-pipeline.sh` does not perform this validation merge.
 
+Approval reuse additionally requires the saved policy version, severity floor, cycle allowance and total-round limit to match the current review policy. A policy change or a legacy approval without policy metadata requires a fresh review once the requested stop is cleared; an active stop remains stopped. Gate polls use the same policy binding. Required fixes can be deferred only through exact nonblank finding-message matches; see [review convergence](../docs/stage-protocol.md#review-convergence) for round-marker ownership and the remaining verdict protections.
+
 On a merge conflict, implementation, QA and code review return 17; the caller owns state/label routing. These local checks do not replace the independent CI/base gates at merge time.
 
 ### Per-stage model override

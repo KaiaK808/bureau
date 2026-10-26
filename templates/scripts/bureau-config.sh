@@ -3427,7 +3427,8 @@ apply_build_failure() {
 }
 
 # review_convergence <merger result> <BUG|MINOR>: decide only from validated fields.
-# A positive, consistent findings list can discharge REQUEST_CHANGES. An empty
+# A consistent deferred findings list can discharge REQUEST_CHANGES only when
+# every required fix exactly matches a nonblank deferred finding message. An empty
 # list cannot explain it. BLOCK, CRITICAL, security and acceptance always survive.
 # The original provider object is never rewritten (including its receipt digest).
 review_convergence() {
@@ -3453,6 +3454,9 @@ review_convergence() {
     elif .security_issues > 0 or (.missing_acceptance | length) > 0 then "REQUEST_CHANGES"
     elif any(.findings[]; .class == "BUG" or (.class == "MINOR" and $floor == "MINOR")) then "REQUEST_CHANGES"
     elif $floor != "BUG" and $floor != "MINOR" then "BLOCK"
+    elif ([.findings[] | select(.class == "SKIP" or (.class == "MINOR" and $floor == "BUG")) | .msg]) as $deferred
+      | any(.fixes_needed[]; . as $fix | (test("\\S") and any($deferred[]; . == $fix)) | not)
+      then "REQUEST_CHANGES"
     elif .verdict == "REQUEST_CHANGES" and (.findings | length) == 0 then "REQUEST_CHANGES"
     else "APPROVE" end' 2>/dev/null) || verdict=BLOCK
   printf '%s\n' "${verdict:-BLOCK}"
@@ -3461,16 +3465,35 @@ review_convergence() {
 # review_counts reads the structured round markers first. Unmarked historical
 # Changes Requested comments retain their old meaning. Never rename that header:
 # implement also uses it to fetch feedback. Repeated markers (approval/gate reuse)
-# count once. Malformed history fails closed through the caller's exit 27.
+# count once. Only Bureau review headers with a terminal, unquoted metadata line
+# qualify; prose examples and fenced/quoted markers are ignored. Malformed Bureau
+# metadata still fails closed through the caller's exit 27.
 review_counts() {
   jq -ce '
+    # Track Markdown fences (including longer/nested-looking fence examples).
+    # Quoted and indented markers never match the column-zero metadata line.
+    def prose_lines:
+      reduce .[] as $line ({fence: "", width: 0, lines: []};
+        ($line | [capture("^ {0,3}(?<fence>`{3,}|~{3,})(?<tail>.*)$")]) as $m
+        | if .fence != "" then
+            if ($m | length) > 0 and ($m[0].fence[0:1] == .fence)
+                and ($m[0].fence | length) >= .width and ($m[0].tail | test("^ *$"))
+            then .fence = "" | .width = 0 else . end
+          elif ($m | length) > 0 then .fence = $m[0].fence[0:1] | .width = ($m[0].fence | length)
+          else .lines += [$line] end) | .lines;
     if type != "array" or any(.[]; (.body | type) != "string") then error("comments") else . end
     | [ .[] | .body as $body
-        | if ($body | contains("<!-- bureau-review-round:")) then
-            ($body | split("\n") | map(select(length > 0)) | last
+        | ($body | split("\n")) as $lines
+        | ($lines[0] | test("^(🔄 |## )?Code Review.*Changes Requested")) as $legacy
+        | ($legacy or ($lines[0] | test("^(Code review round [1-9][0-9]* started\\.$|[✅⏳🛑🚫] Code review \\*\\*(APPROVED|BLOCKED)\\*\\*)"))) as $owned
+        | ($lines | prose_lines | map(select(test("\\S"))) | last // "") as $last
+        # Text after a closed comment makes it an inline example, even below a
+        # Bureau header. An incomplete standalone metadata line still fails closed.
+        | if $owned and ($last | startswith("<!-- bureau-review-round:") and (test("-->\\s*\\S") | not)) then
+            ($last
               | [capture("^<!-- bureau-review-round: round=(?<round>[1-9][0-9]{0,5})(?: verdict=(?<verdict>APPROVE|REQUEST_CHANGES|BLOCK))? -->$")]) as $m
             | if ($m | length) != 1 then error("round marker") else $m[0] | .round |= tonumber end
-          elif ($body | test("Code Review.*Changes Requested")) then {legacy: true}
+          elif $legacy then {legacy: true}
           else empty end ]
     | ([.[] | select(.legacy)] | length) as $legacy
     | {cycles: ($legacy + ([.[] | select(.verdict == "REQUEST_CHANGES") | .round] | unique | length)),

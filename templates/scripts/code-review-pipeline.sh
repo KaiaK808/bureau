@@ -282,7 +282,7 @@ fi
 # A review that stopped before merge (`--no-merge`, BUREAU_STOP_REQUESTED) recorded its
 # APPROVE with the inputs it judged. Run again without a stop on exactly those inputs —
 # the same PR and base branch, the same head and base commits, the same ticket text and
-# state — that approval is reused instead of paying the three specialists and the merger
+# state and severity/round policy — that approval is reused instead of paying the three specialists and the merger
 # again. `bureau-supervision.py reuse` removes the record whether it matches or not, so an
 # approval is used at most once and never for inputs it did not see; any doubt (no record,
 # a record without a recorded verdict, an unreadable file) means the full review. The
@@ -303,11 +303,14 @@ fi
 REUSED_APPROVAL=0
 REUSED_GATE_WAIT=0
 REUSED_GATE_WAITS=0
+# Version the decision policy as well as its configured severity and both caps.
+# Older records have no policy and require a fresh review; gate polls use the same key.
+REVIEW_POLICY="v1:$BUREAU_REVIEW_MIN_SEVERITY:$BUREAU_MAX_REVIEW_CYCLES:$BUREAU_MAX_REVIEW_ROUNDS"
 STAGE_EXIT=""   # set when an APPROVE's inline merge did not go through (2 or 25)
 if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
   if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
       --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" \
-      --base-ref "$PR_BASE_REF" --pr "$PR_NUMBER"); then
+      --base-ref "$PR_BASE_REF" --pr "$PR_NUMBER" --review-policy "$REVIEW_POLICY"); then
     if [ "$(printf '%s' "$REUSE" | jq -r '.reuse' 2>/dev/null)" = true ]; then
       REUSED_APPROVAL=1
       REUSED_AT=$(printf '%s' "$REUSE" | jq -r '.stopped_at | floor | todate' 2>/dev/null) || REUSED_AT=""
@@ -506,6 +509,7 @@ Verdict rules:
 
 Defer MINOR findings below the configured severity floor; SKIP never requests changes. Hypothetical edge cases are not defects.
 Report bugs as the exact number of BUG-class entries in findings. Keep security_issues and missing_acceptance explicit even when zero or empty; do not omit unresolved acceptance work from them.
+Each fixes_needed entry must repeat its corresponding finding message verbatim. A required fix without an exact deferred/SKIP match keeps REQUEST_CHANGES; unrelated deferred findings cannot discharge it.
 
 Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
 
@@ -719,7 +723,7 @@ $REVIEW_ROUND_MARKER"
       if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
         printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
           --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
-          --verdict APPROVE >/dev/null
+          --verdict APPROVE --review-policy "$REVIEW_POLICY" >/dev/null
       fi
       post_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested.
 $REVIEW_ROUND_MARKER"
@@ -773,7 +777,7 @@ $REVIEW_ROUND_MARKER"
             || GATE_WAIT_ARGS+=(--build-check passed "--build-command=$BUILD_CMD" "--build-key=$BUILD_KEY")
           if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
               --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
-              --verdict APPROVE "${GATE_WAIT_ARGS[@]}" >/dev/null; then
+              --verdict APPROVE --review-policy "$REVIEW_POLICY" "${GATE_WAIT_ARGS[@]}" >/dev/null; then
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
           fi
           if [ "$REUSED_GATE_WAIT" != 1 ]; then
@@ -797,7 +801,7 @@ $REVIEW_ROUND_MARKER" || true
           # an edited ticket means a new review.
           if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
               --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
-              --verdict APPROVE >/dev/null; then
+              --verdict APPROVE --review-policy "$REVIEW_POLICY" >/dev/null; then
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
           fi
           if mark_needs_human "$ISSUE" code-review; then

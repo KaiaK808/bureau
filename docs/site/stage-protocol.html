@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="548cf51477e0caf6a8c2fc7030b0e62ecb9aed0b4d492b185f510e2a89e92523">
+<meta name="bureau-source-sha256" content="22a2233b3ea427d36baa5253aa2537734f35f57cb950f2b11576cd8f01c47b05">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -353,7 +353,11 @@ a bug count inconsistent with the BUG findings block. Security findings
 and missing acceptance keep work unresolved. BUG findings always require
 rework; MINOR findings require it at the MINOR floor. A nonempty list
 containing only deferred MINOR/SKIP findings may turn REQUEST_CHANGES
-into APPROVE. An empty findings list never discharges REQUEST_CHANGES,
+into APPROVE only when every <code>fixes_needed</code> entry exactly
+matches a nonblank message of a finding deferred below the current floor
+or classified SKIP. An unmatched, blank or uncertain required fix keeps
+REQUEST_CHANGES; matching uses neither substrings nor inferred
+equivalence. An empty findings list never discharges REQUEST_CHANGES,
 and a fixes-needed list without findings blocks. The existing
 independent security count/specialist floor, build fold and cycle cap
 run after this rule. PR 6 recovery is confined to implement/QA and
@@ -365,16 +369,24 @@ work at round N ends BLOCK/25; genuine approval may finish at N. Before
 paid calls, a fresh stage attempt reserves
 <code>&lt;!-- bureau-review-round: round=N --&gt;</code> in a Linear
 comment; a reservation failure stops before those calls. Final comments
-add <code>verdict=VERDICT</code> to that marker. The stage reads these
-structured markers, counts each round once (including failed/interrupted
-attempts with only a reservation), and uses unmarked
-<code>Code Review.*Changes Requested</code> comments only for legacy
+add <code>verdict=VERDICT</code> to that marker. Only comments starting
+with Bureau's reservation or review header supply structured round
+metadata, on a terminal standalone line outside fenced or quoted text.
+Ordinary mentions, inline examples and quoted markers are ignored;
+malformed Bureau metadata still stops with Linear-unusable exit 27. The
+stage counts each round once (including failed/interrupted attempts with
+only a reservation), and uses unmarked
+<code>Code Review.*Changes Requested</code> headers only for legacy
 history. Preserve the exact
 <code>🔄 Code Review: **Changes Requested** (cycle …)</code> header:
 implementation still retrieves feedback through it. Reused approval and
-merge-gate polling retain the completed round and add no provider usage.
-Provider failures retain their existing exits; an unresolved decision in
-the next round sees the consumed number.</p>
+merge-gate polling retain the completed round and add no provider usage
+only while the recorded policy version, severity floor, cycle allowance
+and total-round limit match. Missing legacy policy or any policy change
+requires a fresh review, including a stricter severity floor; a
+still-requested stop remains stopped. Provider failures retain their
+existing exits; an unresolved decision in the next round sees the
+consumed number.</p>
 <p>Each fresh stage attempt records one <code>review_round</code> in its
 evidence manifest. Four existing provider phases
 (<code>correctness</code>, <code>security</code>,

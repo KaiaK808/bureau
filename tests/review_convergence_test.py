@@ -15,7 +15,7 @@ import supervision_pipeline_test as fixture
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'templates/scripts'
 REVIEW = Path(os.environ.get('BUREAU_TEST_REVIEW_SCRIPT', SCRIPTS / 'code-review-pipeline.sh'))
-CONFIG = SCRIPTS / 'bureau-config.sh'
+CONFIG = Path(os.environ.get('BUREAU_TEST_REVIEW_CONFIG', SCRIPTS / 'bureau-config.sh'))
 
 
 def function(path, name):
@@ -77,6 +77,28 @@ class DecisionTests(unittest.TestCase):
             value = result(); value.pop(field)
             with self.subTest(missing=field): self.assertEqual(self.converge(value), 'BLOCK')
 
+    def test_every_required_fix_must_match_a_deferred_finding(self):
+        minor = finding('MINOR', 'Rename the local variable')
+        skipped = finding('SKIP', 'Keep the pinned parser (SPEC.md section 2)')
+        for fixes in (['CRITICAL: save the replacement before deleting the original'],
+                      [minor['msg'], 'Restore missing error handling'],
+                      ['Rename the local variable and prevent data loss'], [''], ['   ']):
+            with self.subTest(fixes=fixes):
+                self.assertEqual(self.converge(result(findings=[minor, skipped], fixes_needed=fixes)),
+                                 'REQUEST_CHANGES')
+
+    def test_exact_required_fixes_can_be_deferred_but_uncertain_matches_cannot(self):
+        minor = finding('MINOR', 'Rename the local variable')
+        skipped = finding('SKIP', 'Keep the pinned parser (SPEC.md section 2)')
+        value = result(findings=[minor, skipped], fixes_needed=[minor['msg'], skipped['msg']])
+        self.assertEqual(self.converge(value), 'APPROVE')
+        self.assertEqual(self.converge(value, 'MINOR'), 'REQUEST_CHANGES')
+        self.assertEqual(self.converge(result(findings=[skipped], fixes_needed=[skipped['msg']]), 'MINOR'), 'APPROVE')
+        self.assertEqual(self.converge(result(findings=[minor], fixes_needed=['rename the local variable'])),
+                         'REQUEST_CHANGES')
+        self.assertEqual(self.converge(result('APPROVE', [minor], fixes_needed=['Unexplained required fix'])),
+                         'REQUEST_CHANGES')
+
     def test_configuration_defaults_derived_limit_and_invalid_floor(self):
         assignments = '\n'.join(line for line in CONFIG.read_text().splitlines() if re.match(
             r'^BUREAU_(MAX_REVIEW_CYCLES|MAX_REVIEW_ROUNDS|REVIEW_MIN_SEVERITY)=', line))
@@ -137,18 +159,84 @@ class CountsTests(unittest.TestCase):
         self.assertEqual(self.counts([header]), dict(cycles=1, rounds=1))
 
     def test_structured_rounds_take_priority_and_reuse_is_not_a_round(self):
-        marker = lambda n, v: f'<!-- bureau-review-round: round={n} verdict={v} -->'
+        marker = lambda n, v: f'✅ Code review **APPROVED**.\n<!-- bureau-review-round: round={n} verdict={v} -->'
         legacy = '🔄 Code Review: **Changes Requested** (cycle 0/3)'
         self.assertEqual(self.counts([legacy, marker(2, 'APPROVE'), marker(2, 'APPROVE')]), dict(cycles=1, rounds=2))
         self.assertEqual(self.counts([legacy, marker(2, 'APPROVE'), marker(2, 'REQUEST_CHANGES'), marker(3, 'BLOCK')]),
                          dict(cycles=2, rounds=3))
         self.assertEqual(self.counts([marker(7, 'REQUEST_CHANGES')]), dict(cycles=1, rounds=7))
-        self.assertEqual(self.counts(['<!-- bureau-review-round: round=3 -->', marker(3, 'APPROVE')]), dict(cycles=0, rounds=3))
+        self.assertEqual(self.counts(['Code review round 3 started.\n<!-- bureau-review-round: round=3 -->', marker(3, 'APPROVE')]), dict(cycles=0, rounds=3))
         # Quoted previous markers in review prose cannot recycle the terminal
         # marker's round number or count that quotation as another rework cycle.
         self.assertEqual(self.counts([marker(1, 'REQUEST_CHANGES') + '\nQuoted old marker above.\n' + marker(3, 'APPROVE')]),
                          dict(cycles=0, rounds=3))
-        with self.assertRaises(AssertionError): self.counts(['<!-- bureau-review-round: round=oops -->'])
+        with self.assertRaises(AssertionError):
+            self.counts(['Code review round 3 started.\n<!-- bureau-review-round: round=oops -->'])
+
+    def test_marker_mentions_and_quotations_are_not_bureau_metadata(self):
+        marker = '<!-- bureau-review-round: round=99 verdict=REQUEST_CHANGES -->'
+        examples = [
+            'Please preserve <!-- bureau-review-round: round=N --> in the scripts.',
+            marker + '\nFixed; please retry.', marker,
+            '> ✅ Code review **APPROVED**.\n> ' + marker + '\nFixed; please retry.',
+            '```\nCode review round 99 started.\n' + marker + '\n```',
+            'Code review round 1 started.\nPlease preserve <!-- bureau-review-round: round=N -->.',
+            'Code review round 1 started.\n> ' + marker,
+            'Code review round 1 started.\n```html\n' + marker + '\n```',
+            'Code review round 1 started.\n~~~html\n' + marker + '\n~~~',
+            'Code review round 1 started.\n````\n```\n' + marker,
+            'Code review round 1 started.\n    ' + marker,
+        ]
+        valid = 'Code review round 2 started.\n<!-- bureau-review-round: round=2 -->'
+        legacy = '🔄 Code Review: **Changes Requested** (cycle 0/3)'
+        for body in examples:
+            with self.subTest(body=body):
+                self.assertEqual(self.counts([legacy, body, valid]), dict(cycles=1, rounds=2))
+
+    def test_all_bureau_review_headers_keep_the_terminal_round(self):
+        headers = ['✅ Code review **APPROVED**. Stopped before merge as requested.',
+                   '⏳ Code review **APPROVED**. PR #1 is not merged yet.',
+                   '🛑 Code review **APPROVED**, but the merge gate is blocked.',
+                   '🚫 Code review **BLOCKED** — needs human review.',
+                   '🔄 Code Review: **Changes Requested** (cycle 0/3)',
+                   '## Code Review — Changes Requested']
+        marker = '<!-- bureau-review-round: round=3 verdict=REQUEST_CHANGES -->'
+        for header in headers:
+            with self.subTest(header=header):
+                self.assertEqual(self.counts([header + '\n```html\n' + marker + '\n```\n' + marker]),
+                                 dict(cycles=1, rounds=3))
+
+    def test_inline_marker_examples_after_bureau_headers_do_not_halt_reviews(self):
+        for suffix in (' in the scripts.', ' — quoted example', ' `example`'):
+            body = 'Code review round 1 started.\n<!-- bureau-review-round: round=N -->' + suffix
+            with self.subTest(suffix=suffix):
+                self.assertEqual(self.counts([body]), dict(cycles=0, rounds=0))
+
+
+class ApprovalPolicyTests(unittest.TestCase):
+    def test_policy_matches_for_stops_and_gate_waits_and_legacy_fails_closed(self):
+        spec = importlib.util.spec_from_file_location('policy_supervision', SCRIPTS / 'bureau-supervision.py')
+        supervision = importlib.util.module_from_spec(spec); spec.loader.exec_module(supervision)
+        detail = dict(identifier='T-1', title='Task', description='Required work', labels=[])
+        policy = 'v1:BUG:3:4'
+        with tempfile.TemporaryDirectory(prefix='bureau-pr8-policy-') as scratch:
+            root = Path(scratch)
+            record = dict(verdict='APPROVE', branch='001-task', state='Build Review', head='a'*40,
+                          base='b'*40, base_ref='main', pr=1, ticket_hash=supervision.fingerprint(detail, 'T-1'),
+                          review_policy=policy, stopped_at=100)
+            for gate_wait in (False, True):
+                for saved, current, expected in ((policy, policy, True), (policy, 'v1:MINOR:3:4', False),
+                        (policy, 'v1:BUG:0:4', False), (policy, 'v1:BUG:3:1', False),
+                        (policy, 'v2:BUG:3:4', False), (None, policy, False), (None, None, False)):
+                    with self.subTest(gate_wait=gate_wait, saved=saved, current=current):
+                        value = {**record, 'merge_gate_wait':gate_wait}
+                        if saved is None: value.pop('review_policy')
+                        else: value['review_policy'] = saved
+                        supervision.save(root / 'review-stops.json', {'T-1':value})
+                        reuse = supervision.reuse(root, 'T-1', '001-task', 'Build Review', 'a'*40, 'b'*40,
+                                                  'main', 1, json.dumps(detail), current)
+                        self.assertEqual(reuse['reuse'], expected)
+                        self.assertNotIn('T-1', supervision.read(root / 'review-stops.json'))
 
 
 class UsageTests(unittest.TestCase):
@@ -220,6 +308,7 @@ class ReviewRoundPipelineTests(unittest.TestCase):
         source = Path(self.temp.name)
         shutil.copytree(SCRIPTS, source / 'templates/scripts')
         shutil.copy(REVIEW, source / 'templates/scripts/code-review-pipeline.sh')
+        shutil.copy(CONFIG, source / 'templates/scripts/bureau-config.sh')
         codex = fixture.CODEX.replace(
             "pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))",
             """if 'Merge these three specialist reviews' in prompt and os.environ.get('FAIL_MERGER') == '1':
@@ -298,6 +387,50 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
         self.assertEqual(len(self.fixture.models()), calls)
         comments = json.loads(self.fixture.linear.read_text())['T-1']['comments']['nodes']
         self.assertEqual(sum('started.\n<!-- bureau-review-round:' in c['body'] for c in comments), 1)
+
+    def test_stricter_severity_does_not_reuse_a_deferred_minor_approval(self):
+        self.review(result())
+        calls = len(self.fixture.models())
+        self.config['agents']['review_min_severity'] = 'MINOR'
+        self.review(result(), code=0, BUREAU_NO_MERGE='0', BUREAU_STOP_REQUESTED='0')
+        self.assertEqual(len(self.fixture.models()), calls + 4)
+        self.assertEqual(sorted(r['number'] for r in self.rounds()), [1, 2])
+        self.assertEqual(next(r['final_verdict'] for r in self.rounds() if r['number'] == 2), 'REQUEST_CHANGES')
+
+    def test_changed_round_limit_does_not_reuse_approval(self):
+        self.review(result())
+        self.config['agents']['max_review_rounds'] = 1
+        self.review(result(findings=[finding('BUG')]), code=25, BUREAU_NO_MERGE='0', BUREAU_STOP_REQUESTED='0')
+        self.assertEqual(sorted(r['number'] for r in self.rounds()), [1, 2])
+
+    def test_changed_cycle_limit_does_not_reuse_approval(self):
+        self.review(result())
+        self.config['agents']['max_review_cycles'] = 0
+        self.review(result(findings=[finding('BUG')]), code=25, BUREAU_NO_MERGE='0', BUREAU_STOP_REQUESTED='0')
+        self.assertEqual(sorted(r['number'] for r in self.rounds()), [1, 2])
+
+    def test_unmatched_required_fix_stays_in_rework(self):
+        self.review(result(fixes_needed=['CRITICAL: save the replacement before deleting the original']), code=0)
+        self.assertEqual(self.rounds()[0]['final_verdict'], 'REQUEST_CHANGES')
+
+    def test_ordinary_marker_mention_does_not_stop_a_paid_review(self):
+        items = json.loads(self.fixture.linear.read_text())
+        items['T-1']['comments']['nodes'].append(dict(
+            body='Please preserve <!-- bureau-review-round: round=N --> in the scripts.',
+            createdAt='2026-09-09T01:00:00Z'))
+        self.fixture.linear.write_text(json.dumps(items))
+        self.review(result())
+        self.assertEqual(self.rounds()[0]['number'], 1)
+
+    def test_malformed_bureau_metadata_stops_before_provider_calls(self):
+        items = json.loads(self.fixture.linear.read_text())
+        items['T-1']['comments']['nodes'].append(dict(
+            body='Code review round 1 started.\n<!-- bureau-review-round: round=oops -->',
+            createdAt='2026-09-09T01:00:00Z'))
+        self.fixture.linear.write_text(json.dumps(items))
+        self.review(result(), code=27)
+        self.assertEqual(self.fixture.models(), [])
+        self.assertEqual(self.rounds(), [])
 
     def test_unknown_usage_and_stricter_minor_floor(self):
         self.config['agents']['review_min_severity'] = 'MINOR'
