@@ -227,18 +227,21 @@ class Transaction:
         # Use this installed runtime's PR 9 helper, never branch code or a
         # second state classifier. Secrets are read only in the trusted shell.
         # Done exits that shell 0 without the acknowledgment: still a stop.
+        # A claimed transaction needs a successful refresh before repair work;
+        # the stage's additional-refresh failure policy cannot authorize it.
         command = ['/bin/bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
                    'source "$1"; '
                    'if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env "$BUREAU_ENV_FILE"; fi; '
                    'bureau_secret_copy --optional API_KEY LINEAR_API_KEY; '
-                   'bureau_ticket_checkpoint "$2"; printf authorized',
+                   'if [ -n "${BUREAU_TICKET_CONTROL_DIR:-}" ]; then '
+                   'bureau_ticket_checkpoint "$2" strict; fi; printf authorized',
                    'bureau-conflicts-checkpoint', str(Path(__file__).with_name('bureau-config.sh')), self.issue]
         if self.run(command, trusted=True) != b'authorized':
             raise Declined('ticket withdrawn before resolution command')
 
     def run(self, command, *, trusted=False):
         """Executor-owned command outside the provider sandbox, with its env policy."""
-        env = (provider.process_env(command) if trusted else
+        env = (os.environ.copy() if trusted else
                provider.untrusted_env(os.environ, provider.untrusted_env_mode(self.config)))
         self.child = subprocess.Popen(command, cwd=self.repo, env=env, stdin=subprocess.DEVNULL,
                                       stdout=subprocess.PIPE if trusted else None, start_new_session=True)

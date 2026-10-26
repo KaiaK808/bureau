@@ -9,7 +9,7 @@ import sys
 import time
 import unittest
 
-from ticket_kill_switch_test import GIT, ROOT, STATES, WithdrawalFixture
+from ticket_kill_switch_test import CURL, GIT, ROOT, STATES, WithdrawalFixture
 
 
 STEP = r'''
@@ -19,6 +19,7 @@ step = sys.argv[1]
 with (root/'events').open('a') as f:
     f.write(json.dumps(dict(kind='resolution-step', step=step))+'\n')
 control = json.loads((root/'control').read_text())
+assert not any(name in os.environ for name in ('LINEAR_API_KEY', 'API_KEY'))
 if step == 'dependencies': pathlib.Path('node_modules').mkdir()
 elif step.startswith('generator-'): pathlib.Path(step+'.txt').write_text('resolved\n')
 if control.get('withdraw_at_step') == step:
@@ -36,6 +37,14 @@ if point and control.get('withdraw_at_git') == point:
     (root/'state').write_text(control['target'])
 '''
 
+CHECK_AUTHORIZATION = r'''
+if config.strip() not in ('header = "Authorization: fixture-key"',
+                           'header = "Authorization: fixture-environment-only-key"'):
+    print('{"errors":[{"message":"Unauthenticated"}]}',end='')
+    if '-w' in args: print(args[args.index('-w')+1].replace('%{http_code}','401').replace(r'\n','\n'),end='')
+    sys.exit(0)
+'''
+
 
 class ConflictWithdrawal(WithdrawalFixture):
     def setUp(self):
@@ -44,6 +53,7 @@ class ConflictWithdrawal(WithdrawalFixture):
         shutil.rmtree(self.repo/'scripts'); shutil.copytree(scripts, self.repo/'scripts')
         wrapper = GIT.replace("os.execv(os.environ['PR9_REAL_GIT']", GIT_WITH_WITHDRAWAL+"\nos.execv(os.environ['PR9_REAL_GIT']")
         (self.bin/'git').write_text(wrapper)
+        (self.bin/'curl').write_text(CURL.replace('payload=json.loads',CHECK_AUTHORIZATION+'\npayload=json.loads'))
         npm = self.bin/'npm'
         npm.write_text('#!'+sys.executable+'\n'+STEP.replace('step = sys.argv[1]', "step = 'dependencies'"))
         npm.chmod(0o755)
@@ -129,6 +139,37 @@ class ConflictWithdrawal(WithdrawalFixture):
                 self.assertEqual(code,result.returncode,result.stdout+'\n'+result.stderr)
                 self.assertEqual(['dependencies','generator-1'],self.steps())
                 self.assert_stopped(result,key,code,['dependencies','generator-1'])
+
+    def test_environment_only_key_stops_after_generator_one(self):
+        (self.repo/'.env').unlink()
+        self.env.update(LINEAR_API_KEY='fixture-environment-only-key')
+        self.env.pop('API_KEY',None)
+        for key,code in [('done',0),('backlog',25),('cancelled',26)]:
+            with self.subTest(state=key):
+                self.start_case('environment-'+key,withdraw_at_step='generator-1',target=STATES[key])
+                self.assert_stopped(self.worker(),key,code,['dependencies','generator-1'])
+
+    def test_unauthenticated_checkpoint_declines_repair(self):
+        (self.repo/'.env').unlink()
+        for name in ('LINEAR_API_KEY','API_KEY'): self.env.pop(name,None)
+        self.env['BUREAU_TICKET_CONTROL_DIR']=str(self.root/'checkpoint-control')
+        self.git('checkout','-q',self.branch)
+        result=self.run_cmd('bash','-euo','pipefail','-c','''source scripts/bureau-config.sh
+_throttle_should_suppress() { return 0; }
+merge_origin_main_or_abort EXP-9 Test || exit 17
+''')
+        self.assertEqual(17,result.returncode,result.stdout+'\n'+result.stderr)
+        self.assertEqual([],self.steps(),self.events())
+        self.assert_no_publication(self.events())
+        self.assertIn('Conflict resolution declined:',result.stderr)
+        self.assertEqual(self.issue_head,self.git('rev-parse','HEAD'))
+        self.assertEqual('',self.git('status','--porcelain'))
+        self.assertEqual('',self.git('ls-files','-u'))
+        self.assertFalse((self.repo/'.git/MERGE_HEAD').exists())
+        for name in ('generator-1.txt','generator-2.txt'):
+            self.assertEqual('ours\n',(self.repo/name).read_text())
+        self.assertFalse((self.repo/'node_modules').exists())
+        self.assertFalse((self.repo/'.nm.tmp').exists())
 
     def test_active_failed_generator_remains_17_with_needs_human(self):
         for throttled in (False,True):
