@@ -81,6 +81,38 @@ def observe(call, *args, **kwargs):
         return None
 
 
+USAGE_FIELDS = ('input_tokens', 'output_tokens', 'cached_input_tokens', 'cache_creation_input_tokens', 'total_cost_usd')
+REVIEW_PHASES = frozenset(('correctness', 'security', 'performance', 'verdict'))
+
+
+def usage_metadata(metadata):
+    """Numeric allowlist; absent, invalid and unreported measurements stay null."""
+    usage = metadata.get('usage')
+    usage = usage if isinstance(usage, dict) else {}
+    values = {key: usage.get(key) for key in USAGE_FIELDS}
+    values['cached_input_tokens'] = usage.get('cached_input_tokens', usage.get('cache_read_input_tokens'))
+    values['cache_creation_input_tokens'] = usage.get('cache_creation_input_tokens')
+    values['total_cost_usd'] = metadata.get('total_cost_usd', usage.get('total_cost_usd'))
+    return {key: value if (type(value) in ((int, float) if key == 'total_cost_usd' else (int,))
+                          and 0 <= value <= 10**15 and math.isfinite(value)) else None for key, value in values.items()}
+
+
+def review_round_shape(value):
+    shape(value, 'number min_severity provider_verdict final_verdict provider_attempt_ids calls usage')
+    if type(value['number']) is not int or not 1 <= value['number'] <= 999999: raise ValueError('invalid review round')
+    if value['min_severity'] not in ('BUG', 'MINOR'): raise ValueError('invalid review floor')
+    if any(value[k] not in (None, 'APPROVE', 'REQUEST_CHANGES', 'BLOCK') for k in ('provider_verdict', 'final_verdict')):
+        raise ValueError('invalid review decision')
+    ids = value['provider_attempt_ids']
+    if not isinstance(ids, list) or len(ids) != len(set(ids)): raise ValueError('invalid review calls')
+    for item in ids: identifier(item)
+    if type(value['calls']) is not int or value['calls'] != len(ids): raise ValueError('invalid review call count')
+    shape(value['usage'], ' '.join(USAGE_FIELDS))
+    for key, item in value['usage'].items():
+        if item is not None and (type(item) not in ((int, float) if key == 'total_cost_usd' else (int,))
+                                 or not math.isfinite(item) or item < 0): raise ValueError('invalid review usage')
+
+
 def normalize_insights(value):
     """Optional observations must never turn an otherwise valid result red."""
     if not isinstance(value, dict) or 'insights' not in value: return value
@@ -287,7 +319,10 @@ def manifest_shape(value):
             for publication in attempt['publications']:
                 publication_shape(publication)
                 if publication['stage_attempt_id'] != attempt['attempt_id']: raise ValueError('foreign publication')
-        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
+        if 'review_round' in attempt:
+            if attempt['stage'] != 'code_review': raise ValueError('foreign review round')
+            review_round_shape(attempt['review_round'])
+        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications', 'review_round')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
         identifier(attempt['attempt_id'])
         if attempt['parent_attempt_id'] is not None: identifier(attempt['parent_attempt_id'])
         times(attempt, 'started_at ended_at')
@@ -568,6 +603,7 @@ class Store:
         inputs = receipt.get('review_inputs')
         if value['stage'] == 'code_review' and isinstance(inputs, dict):
             value['review_inputs'] = {key: head(inputs.get(key)) for key in ('head', 'base', 'validation_head')}
+        value['usage'] = usage_metadata(receipt)
         with self.guard():
             path = self.receipt_path(value['run_id'], value['provider_attempt_id'])
             self._write(path, value)
@@ -607,6 +643,40 @@ class Store:
             relative = str(path.relative_to(self.root))
             if relative not in attempt['receipts']: attempt['receipts'].append(relative)
             self._save_manifest(value)
+
+    def review_round(self, run, stage_attempt, number, min_severity, provider_verdict=None, final_verdict=None):
+        """One round per stage attempt, with deduplicated provider-call measurements.
+
+        A partial set of phases or any unknown measurement makes that aggregate
+        unknown. Retries have distinct provider attempt IDs and are counted once.
+        Neither approval reuse nor gate polling calls this collector.
+        """
+        with self.guard():
+            value = self._manifest(run)
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == identifier(stage_attempt))
+            if attempt['stage'] != 'code_review': raise ValueError('not a review stage')
+            prior = attempt.get('review_round')
+            if prior and (prior['number'] != number or prior['min_severity'] != min_severity):
+                raise ValueError('review round already assigned')
+            calls = {}
+            for relative in attempt['receipts']:
+                receipt = read(self.root / relative, {})
+                if (receipt.get('run_id') == run and receipt.get('stage_attempt_id') == stage_attempt
+                        and receipt.get('issue') == value['issue'] and receipt.get('stage') == 'code_review'
+                        and receipt.get('phase') in REVIEW_PHASES and receipt.get('record_type') == 'receipt'
+                        and receipt.get('schema_version') == VERSION):
+                    call_id = identifier(receipt['provider_attempt_id'])
+                    if self.receipt_path(run, call_id) == self.root / relative: calls[call_id] = receipt
+            complete = {r['phase'] for r in calls.values()} == REVIEW_PHASES
+            measurements = [usage_metadata(r) for r in calls.values()]
+            usage = {key: sum(r[key] for r in measurements) if complete and all(r[key] is not None for r in measurements)
+                     else None for key in USAGE_FIELDS}
+            record = dict(number=number, min_severity=min_severity, provider_verdict=provider_verdict,
+                          final_verdict=final_verdict, provider_attempt_ids=sorted(calls), calls=len(calls), usage=usage)
+            review_round_shape(record)
+            attempt['review_round'] = record
+            self._save_manifest(value)
+            return record
 
     def reconcile(self, identity, current_head, schema, validate, load_result):
         path = self.receipt_path(identity['run_id'], identity['provider_attempt_id'])
@@ -873,3 +943,26 @@ class Store:
                                resolution_times_unknown=sum(v['state'] == 'resolved' and v['resolved_at'] is None for v in values),
                                open_waits=[v for v in values if v['state'] == 'open']))
         return dict(schema_version=VERSION, measurement='observed intervals; unknown ends use first observation (upper bound)', tickets=result)
+
+
+def review_round_main():
+    """Observational shell bridge; successful provider receipts remain mandatory."""
+    import argparse
+    parser = argparse.ArgumentParser(description='Record metadata for the current review round')
+    parser.add_argument('--repo', type=Path, required=True)
+    parser.add_argument('--round', type=int, required=True)
+    parser.add_argument('--min-severity', choices=('BUG', 'MINOR'), required=True)
+    parser.add_argument('--provider-verdict')
+    parser.add_argument('--final-verdict')
+    args = parser.parse_args()
+    run = os.environ.get('BUREAU_RUN_ID'); attempt = os.environ.get('BUREAU_STAGE_ATTEMPT_ID')
+    if not run or not attempt: return
+    common = subprocess.check_output(['git', '-C', str(args.repo), 'rev-parse', '--git-common-dir'], text=True).strip()
+    Store((args.repo / common).resolve() / 'bureau').review_round(
+        run, attempt, args.round, args.min_severity,
+        args.provider_verdict if args.provider_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None,
+        args.final_verdict if args.final_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None)
+
+
+if __name__ == '__main__':
+    observe(review_round_main)

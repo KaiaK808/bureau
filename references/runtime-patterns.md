@@ -325,6 +325,14 @@ For Codex implement turns only, typed gate-only NEEDS_HUMAN holds or legacy `SAN
 
 PRs open as `--draft` during intermediate iterations so QA and code-review don't trigger on half-done work; flipped to ready via `gh pr ready` only on COMPLETE.
 
+### Deterministic review convergence
+
+Run `review_convergence` over the original merger result before `decide_review_verdict` applies security, build and the legacy cycle cap. `agents.review_min_severity` defaults to BUG; MINOR is stricter. Validate the fields and finding classes; never discharge BLOCK, CRITICAL, security/acceptance blockers or malformed/contradictory results. A nonempty list of deferred MINOR/SKIP findings can discharge REQUEST_CHANGES; an empty list cannot. Keep the provider object/digest unchanged and record the final shell decision separately. Render deferred/SKIP lists only from `bureau_comment_projection`, preserving local insight exclusion.
+
+Keep `max_review_cycles` as the previous rework allowance. Apply the additional `max_review_rounds` total limit (default cycles + 1) after the existing cap: unresolved round N blocks with 25, while genuine approval may finish. `review_counts` prefers structured round/verdict markers and counts duplicate markers once; unmarked history falls back to `Code Review.*Changes Requested`. Do not rename that header, which the implementer also matches. Reserve a fresh round number in Linear before paid calls (a marker without a verdict); final comments add its verdict. A failed/interrupted attempt consumes the number without inventing a verdict or changing provider-error exits. Approval reuse and gate polling skip the reservation and add neither a round nor tokens.
+
+`bureau_review_evidence` records the stage attempt's round and decision metadata. Sum the four phases' numeric receipt measurements by provider attempt ID, never by parsing prose or cost envelopes, and never charge a duplicate link twice. Missing phases/measurements yield null for the affected aggregate. Keep receipt persistence and PR 6's implement/QA-only sandbox recovery independent: outside green cannot clear a review BLOCK. These are background-stage rules; app prepare/finish does not gain a new autonomous review loop.
+
 ### Escalation log: `log_escalation` helper
 
 Every `needs-human` escalation appends one tab-separated line to `logs/escalations.log` AND fires a JSONL `emit_event "event=escalation"` to `logs/events.jsonl`. Two sinks: the TSV file is regex-matchable for operator monitors (`tail -F | grep`), the JSONL firehose stays queryable by `/bureau-learnings`.

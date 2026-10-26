@@ -130,7 +130,7 @@ echo "PASS qa checks against the ticket's spec"
 
 # 6 — code review: the specialists' grounding.
 setup 'Build Review'
-printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
+printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
 export FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt" GH_STUB_EXISTING_PR=99 BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=0
 run_pipeline code-review-pipeline.sh EXP-900; set +e
 rm -rf "$(printf '%s\n' "$LAST_STDERR" | sed -n 's/^code-review failed .*preserved at //p')"

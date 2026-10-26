@@ -82,7 +82,7 @@ PY
             ;;
     esac
   done
-  printf 'Review checked.\n```json\n{"verdict":"%s","bugs":0,"security_issues":0,"findings":[],"summary":"fixture"}\n```\n' \
+  printf 'Review checked.\n```json\n{"verdict":"%s","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"fixture"}\n```\n' \
     "$verdict" > "$SANDBOX/verdict.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt"
   export BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99

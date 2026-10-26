@@ -97,7 +97,7 @@ approve_sandbox() {
   cat > "$SANDBOX/approve.txt" <<'EOF'
 Review checked.
 ```json
-{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"summary":"Checks passed"}
+{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"Checks passed"}
 ```
 EOF
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/approve.txt"

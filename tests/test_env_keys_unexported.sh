@@ -96,7 +96,7 @@ stage_run() {
   printf '# spec\n' > "$SANDBOX/specs/001-test-branch/spec.md"
   git -C "$SANDBOX" add specs; git -C "$SANDBOX" commit -q -m 'fixture spec'; git -C "$SANDBOX" push -q origin test-branch
   printf '```json\n{"status":"GREEN","tests_added":0,"tests_failing":0,"coverage_notes":"fixture"}\n```\n' > "$SANDBOX/qa.txt"
-  printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
+  printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
   case "$label" in
     qa) jq -n '{repo: {test_command: "true"}}' > "$SANDBOX/.bureau.json" ;;
     copy) printf 'BUREAU_LABEL_NEEDS_COPY_NAME=needs-copy\n' >> "$SCRIPTS_DIR/bureau-config.sh" ;;

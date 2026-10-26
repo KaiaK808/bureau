@@ -137,7 +137,8 @@ for body in bodies:
 if form not in ('missing', 'malformed', 'projector-failure') and stage != 'implement':
     assert any('PUBLIC_STAGE_SUMMARY' in b for b in bodies), 'public stage summary was lost'
 if stage == 'review' and form != 'malformed':
-    assert any('**Verdict**: ' + verdict in p['body'] for p in pr), 'review routing changed'
+    expected = 'BLOCK' if form in ('missing', 'nested') else verdict
+    assert any('**Verdict**: ' + expected in p['body'] for p in pr), 'review routing changed'
 if stage == 'qa' and form != 'malformed':
     header = {'GREEN':'QA **PASSED**', 'RED':'tests failing', 'NEEDS_HUMAN':'flagged for human review'}[verdict]
     assert any(header in p['variables']['body'] for p in linear), 'QA routing changed'
@@ -180,7 +181,7 @@ for stage in ${PR7_STAGES:-review qa implement}; do
       # A malformed result fails closed to BLOCK in review; the other stages
       # keep their pre-existing objective/default decisions.
       expected_rc=0
-      if [ "$stage" = review ] && { [ "$verdict" = BLOCK ] || [ "$form" = malformed ]; }; then expected_rc=25; fi
+      if [ "$stage" = review ] && { [ "$verdict" = BLOCK ] || [ "$form" = malformed ] || [ "$form" = missing ] || [ "$form" = nested ]; }; then expected_rc=25; fi
       assert_eq "$expected_rc" "$LAST_RC" "$stage/$verdict/$form exit: $LAST_STDERR"
       assert_transport_privacy "$stage" "$verdict" "$form"
     done
