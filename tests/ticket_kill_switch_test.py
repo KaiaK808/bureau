@@ -77,14 +77,23 @@ if os.environ.get('PR9_PROCESS_AUDIT'):
 with (root/'events').open('a') as f: f.write(json.dumps(dict(kind='pass',phase=phase))+'\n')
 control=json.loads((root/'control').read_text()); target=control.get('target')
 if phase in ('correctness','security','performance'):
+    if phase!='correctness':
+        # A sibling can now be cancelled before the old artificial delay ends.
+        # Capture the real lease while the writer is still alive, including
+        # on cooperative shutdown, rather than requiring it to finish its work.
+        def record_lease():
+            common=root/'repo with spaces'/'.git'
+            (root/('leases-at-'+phase)).write_text((common/'bureau/leases.json').read_text())
+        def stop_specialist(signum,frame):
+            record_lease(); sys.exit(128+signum)
+        signal.signal(signal.SIGTERM,stop_specialist)
     (root/('started-'+phase)).touch()
     if target:
         deadline=time.monotonic()+10
         while len(list(root.glob('started-*')))!=3 and time.monotonic()<deadline: time.sleep(.01)
     if phase!='correctness':
         time.sleep(.2)
-        common=subprocess.check_output(['git','rev-parse','--git-common-dir'],text=True).strip()
-        (root/('leases-at-'+phase)).write_text((pathlib.Path(common)/'bureau/leases.json').read_text())
+        record_lease()
     result=dict(specialist=phase,counts=dict(critical=0,bug=0,minor=0,skip=0),findings=[],summary='clean')
 elif phase=='verdict':
     result=dict(verdict='APPROVE',bugs=0,security_issues=0,missing_acceptance=[],fixes_needed=[],
@@ -416,9 +425,9 @@ exit 130
         self.assert_withdrawn(self.worker(),25,STATES['backlog'])
         self.git('-C',str(self.wt),'checkout','--detach','-q')
         config=self.repo/'scripts/bureau-config.sh'; source=config.read_text()
-        needle='  bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"\n  return "$rc"\n}'
+        needle='  [ "$rc" != 130 ] || exit 130\n  bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"\n'
         self.assertEqual(1,source.count(needle))
-        config.write_text(source.replace(needle,'  return "$rc"\n}',1))
+        config.write_text(source.replace(needle,'  [ "$rc" != 130 ] || exit 130\n',1))
         self.state('build'); (self.root/'events').write_text(''); self.wt=self.repo/'.worktrees/mutant'
         (self.root/'fail-reads').unlink(missing_ok=True); (self.root/'provider-done').unlink(missing_ok=True)
         result=self.worker()

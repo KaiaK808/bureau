@@ -217,7 +217,7 @@ PIPELINE_EOF
   cp "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$REPO_ROOT/templates/scripts/bureau-spec.py" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-worker.sh" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-acceptance.py" "$REPO_ROOT/templates/scripts/bureau-provider.py" \
-    "$REPO_ROOT/templates/scripts/bureau-gates.py" "$sb/scripts/"
+    "$REPO_ROOT/templates/scripts/bureau-gates.py" "$REPO_ROOT/templates/scripts/bureau-activity.py" "$sb/scripts/"
   sed -n '/^bureau_acceptance_brief() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
   cat >> "$sb/scripts/bureau-config.sh" <<'ACCEPTANCE'
 _BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

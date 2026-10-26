@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9290f52f0604a7ac08db3bac46ae444d893bd58ac07998e4cbbdffd553de7235">
+<meta name="bureau-source-sha256" content="43beb421f859cc09d380113dfaec168ee14c7f4aa49e5030ba07481efc7e344a">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1067,6 +1067,29 @@ without retaining any source bytes. Provider prompt/output/transcript
 files remain in their existing locations, outside this store and its
 retention policy; the store only points at them. Those original files
 may contain private content and may disappear independently.</p>
+<p>Provider timeout receipts add optional <code>timeout_kind</code>,
+allowlisted to <code>silence</code> or <code>wall-clock</code>; old
+receipts remain readable. Silence has normalized exit <code>25</code>,
+hard timeout <code>124</code>, and cancellation <code>130</code> carries
+no timeout kind. Interrupted calls provide no structured result; review
+cleanup collects their existing attempt identities without inventing a
+verdict or unreported usage. The single stdout reader preserves original
+bytes and gate-event order while feeding activity tracking. Only
+complete recognized JSONL progress resets the monotonic silence clock;
+partial lines, stderr, transport pings and duplicate lifecycle events do
+not. A longer child window requires an active tool command matched to a
+live owned process, measured from the same last useful event. Ownership
+combines birth identity, observed ancestry and a per-call inherited
+marker, including detached sessions; process arguments and markers are
+transient and never copied into receipts. Linux adopts/reaps orphaned
+descendants; macOS waits for launchd to reap detached orphans.
+Descendants that clear the marker and detach before observation are
+outside that identification guarantee. Review requests sibling
+cancellation through a private file and joins every specialist before
+the withdrawal checkpoint, hold, round accounting or verdict merge.
+Acknowledged sibling stops cannot turn a withdrawal into cancellation;
+an independent signal still wins. Outside-gate evidence and conflict
+resolution retain their existing contracts.</p>
 <p>Receipt reconciliation requires the exact run, provider attempt,
 stage attempt, ticket, stage, phase, schema and current HEAD, and both
 exits must be zero. It reads the original provider result through its

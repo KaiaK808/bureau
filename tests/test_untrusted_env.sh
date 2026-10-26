@@ -226,6 +226,7 @@ sed '/for _bue_name in \$_BUREAU_UNTRUSTED_PATHS/d' "$ENV_SH" > "$TMPD/keep/bure
 sed 's/ and name not in UNTRUSTED_PATHS$//' "$PROVIDER" > "$TMPD/keep/bureau-provider.py"
 cp "$(dirname "$PROVIDER")/bureau-evidence.py" "$TMPD/keep/"
 cp "$(dirname "$PROVIDER")/bureau-gates.py" "$TMPD/keep/"
+cp "$(dirname "$PROVIDER")/bureau-activity.py" "$TMPD/keep/"
 if cmp -s "$ENV_SH" "$TMPD/keep/bureau-env.sh"; then fail "1 control: the shell copy is unchanged (the sed found nothing)"; fi
 if cmp -s "$PROVIDER" "$TMPD/keep/bureau-provider.py"; then fail "1 control: the provider copy is unchanged (the sed found nothing)"; fi
 if parity "$TMPD/keep/bureau-env.sh" "$PROVIDER" default 2>/dev/null; then fail "1 control: a shell copy that keeps the paths passed the parity check"; fi

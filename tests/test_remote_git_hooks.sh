@@ -252,7 +252,7 @@ pr1_pass "4 without bureau-config.sh and BUREAU_CONFIG: hooks off"
 # "worktree" doctor runs in a linked worktree of the repository whose own checkout has none of them.
 doctor_warnings() {
   local d="$TMP/doctor" at="$TMP/doctor" file=.gitattributes
-  rm -rf "$d" "$TMP/doctor-wt"; mkdir -p "$d/scripts"; cp "$SCRIPTS"/bureau-doctor.py "$SCRIPTS"/bureau-runtime.py "$SCRIPTS"/bureau-provider.py "$SCRIPTS"/bureau-evidence.py "$SCRIPTS"/bureau-gates.py "$SCRIPTS"/bureau-spec.py "$SCRIPTS"/bureau-stage.md "$d/scripts/"
+  rm -rf "$d" "$TMP/doctor-wt"; mkdir -p "$d/scripts"; cp "$SCRIPTS"/bureau-doctor.py "$SCRIPTS"/bureau-runtime.py "$SCRIPTS"/bureau-provider.py "$SCRIPTS"/bureau-activity.py "$SCRIPTS"/bureau-evidence.py "$SCRIPTS"/bureau-gates.py "$SCRIPTS"/bureau-spec.py "$SCRIPTS"/bureau-stage.md "$d/scripts/"
   git -C "$d" init -q -b main; git -C "$d" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
   jq -n --argjson repo "$1" '{version: 2, linear: {teams: [{id: "t", key: "EXP", states: {build: "s"}}]}, agents: {}, repo: $repo}' > "$d/.bureau.json"
   case "${3:-}" in nested|untracked) file=assets/.gitattributes ;; info) file=.git/info/attributes ;; esac

@@ -100,6 +100,8 @@ run_stage_for <stage> [--append-system-prompt CONTEXT] PROMPT
 
 Pipelines use quoted Bash arrays around `run_stage_for`, which passes file/stdin prompts to `bureau-provider.py`. The adapter selects Claude/Codex, resolves models per provider, validates final output, and preserves separate diagnostic evidence. `claude_cmd_for_stage` remains a legacy compatibility helper; do not execute its command string. See [provider runtime](../docs/provider-runtime.md) for exact precedence and permission behavior.
 
+With `agents.<stage>.silence_timeout_seconds > 0`, `bureau-activity.py` observes useful events alongside the existing gate reader; the hard timeout remains independent. The child window requires a live owned process matching an active tool command, not the provider leader or an unfinished item. Detached ownership uses a per-call inherited marker plus sampled ancestry and birth identity; clearing the marker and detaching before sampling escapes identification. Stop and drain owned writers before returning `25` with `timeout_kind: silence`; `run_stage_for` consumes withdrawal before recording the human hold. Review passes a private cancellation file, polls all specialists under Bash 3.2 and joins siblings before its checkpoint and partial-round accounting. Only independent signals propagate `130`; acknowledged sibling shutdown preserves the originating stop. Do not convert silence into implementation's retryable wall-clock `124`, feed it into a verdict merger, or reuse a gate from an interrupted attempt. Outside commands keep their own timeouts.
+
 Configuration in `.bureau.json`:
 
 ```json

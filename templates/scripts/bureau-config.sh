@@ -893,13 +893,34 @@ run_stage_for() {
   local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
   [ -n "$schema" ] && args+=(--schema "$schema")
   [ -n "$gate_context" ] && args+=(--gate-context "$gate_context")
+  [ -z "${BUREAU_PROVIDER_CANCEL_FILE:-}" ] || args+=(--cancel-file "$BUREAU_PROVIDER_CANCEL_FILE")
   # The provider needs none of the Bureau secrets: it starts without them, so
   # the agent's parent process does not hold them either (bureau-env.sh).
   if bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" "${args[@]}"; then rc=0; else rc=$?; fi
   rm -rf "$temp"
   [ "$rc" != 130 ] || exit 130
   bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
+  if [ "$rc" = 25 ]; then
+    # Parallel reviewers let their parent stop/join the siblings and consume
+    # withdrawal first. No provider process performs Linear mutations.
+    case "${BUREAU_PROVIDER_PHASE:-}" in
+      correctness|security|performance) ;;
+      *) bureau_silence_hold "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" "$stage" ;;
+    esac
+  fi
   return "$rc"
+}
+
+# Silence is a human hold, never another implementation pass or quiet wait.
+bureau_silence_hold() {
+  [ -n "$1" ] || return 0
+  bureau_ticket_checkpoint "$1"
+  local hold_rc=0
+  # The existing helper persists a local picker hold before exiting 27 when
+  # Linear is unusable. Keep that hold and the originating silence exit 25.
+  ( mark_needs_human "$1" "$2" 25 resource 'Provider silence watchdog expired; inspect provider evidence before resuming' operator ) || hold_rc=$?
+  [ "$hold_rc" != 130 ] || exit 130
+  bureau_ticket_checkpoint "$1" latched
 }
 
 precondition_runner() {
