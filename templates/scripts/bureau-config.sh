@@ -2578,6 +2578,7 @@ merge_origin_main_or_abort() {
   else
     git fetch origin --quiet || true
   fi
+  bureau_ticket_checkpoint "$issue"
   if git merge-base --is-ancestor "$base_ref" HEAD 2>/dev/null; then
     echo "  Branch is up to date with $base_ref."
     return 0
@@ -2587,10 +2588,14 @@ merge_origin_main_or_abort() {
   # Configured repair restores dependencies from the merged manifests before
   # generators/checks, using restore_worktree_deps from this runtime copy.
   # This executor transaction grants neither review approval nor a reusable gate.
-  if ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
-      --repo "$PWD" --config "$BUREAU_CONFIG" --base "$base_ref" ); then
-    return 0
-  fi
+  local merge_rc=0
+  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
+      --repo "$PWD" --config "$BUREAU_CONFIG" --base "$base_ref" --issue "$issue" ) || merge_rc=$?
+  # The transaction has reaped its command and rolled back before returning a
+  # withdrawal. Consume its shared latch (including Done's 0) in THIS shell;
+  # a failed command also needs a fresh read even when the comment is throttled.
+  bureau_ticket_checkpoint "$issue"
+  [ "$merge_rc" != 0 ] || return 0
   echo "  ERROR: merge of $base_ref has conflicts. Aborting $stage_label."
   # Throttle the conflict comment to once per hour per issue. Without this,
   # an issue parked at needs-human (implement) re-runs the helper every tick
@@ -2603,6 +2608,7 @@ merge_origin_main_or_abort() {
     _throttle_record "$throttle_key"
     post_comment "$issue" "❌ $stage_label pipeline cannot proceed — branch has conflicts with \`$base_ref\`. Resolve them and re-run."
   fi
+  bureau_ticket_checkpoint "$issue"
   return 1
 }
 

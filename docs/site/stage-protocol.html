@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f77fc66e3d53fe045aa0e75f31fb08878703d45b9ae98062eeca4f6b4a537015">
+<meta name="bureau-source-sha256" content="44abf256db03975c4238112161523c70ccd3540bb93d72fcad18f223de2253f6">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -415,6 +415,21 @@ including add/add), rust/Cargo.lock (theirs) and queue-log deletion
 remain available without opt-in or a check. All other source conflicts
 must have a configured deterministic strategy or the entire merge
 aborts.</p>
+<p>PR 9's trusted <code>bureau_ticket_checkpoint</code> runs after fetch
+before the transaction, before dependency preparation, before each
+generator, before the test command and before the repaired merge commit.
+The transaction invokes the helper from its own runtime copy with the
+run's existing shared latch; it does not classify states itself. Done's
+checkpoint exit 0 without an authorization acknowledgment is a stop. A
+running command finishes its current step, under the existing
+1,800-second bound, before the next checkpoint. Confirmed withdrawal
+rolls back the transaction to its clean starting state and reaps
+commands before returning to the parent shell. The parent consumes the
+latch before any conflict comment, needs-human label or exit-17 routing,
+independently of comment throttling; a failed command also triggers a
+fresh checkpoint. Done/inactive/cancelled retain PR 9's exits 0/25/26
+and ownership cleanup. Additional refresh failures retain PR 9's
+warn-once, already-authorized-work policy.</p>
 <p>Configured append-only paths require three regular, same-mode Git
 blobs. Each side must retain every base line in order: only insertion
 diff operations qualify. Empty/binary/unterminated inputs and inserted
@@ -478,12 +493,11 @@ worker can be reused. An unpublished conflict-repaired merge is
 preserved unregistered and fails the existing conservative
 clean-merge-only reuse predicate with 21; it requires inspection rather
 than reset. Overlap admission must continue counting generated/changelog
-paths as overlaps. This add-on does not include PR 9 withdrawal
-checkpoints; when restacked, its checks must precede generator/check
-execution and publication. App prepare/finish and rebase fallback are
-unchanged. Upgrade by comparing installed drift, resyncing scripts as a
-set and restarting drivers; local fake-provider/Git qualification does
-not establish live adopter support.</p>
+paths as overlaps. Active unresolved conflicts retain exit 17 and their
+existing state/needs-human routing. App prepare/finish and rebase
+fallback are unchanged. Upgrade by comparing installed drift, resyncing
+scripts as a set and restarting drivers; local fake-provider/Git
+qualification does not establish live adopter support.</p>
 <h2 id="review-convergence">Review convergence</h2>
 <p>The background review stage validates the merger's decision fields
 and findings before applying <code>agents.review_min_severity</code>

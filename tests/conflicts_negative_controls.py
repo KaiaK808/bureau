@@ -12,6 +12,37 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NegativeControls(unittest.TestCase):
+    def check_withdrawal_failure(self, scripts, case, failures):
+        result = subprocess.run([sys.executable, str(ROOT / 'tests/conflicts_withdrawal_test.py'),
+                                 'ConflictWithdrawal.' + case],
+                                env={**os.environ, 'BUREAU_CONFLICT_TEST_SCRIPTS': str(scripts),
+                                     'PYTHONDONTWRITEBYTECODE': '1'}, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f'FAILED (failures={failures})', result.stderr, result.stdout + result.stderr)
+        self.assertNotIn('\nERROR: test_', result.stderr)
+        return result.stderr
+
+    @unittest.skipUnless(os.environ.get('BUREAU_CONFLICT_WITHDRAWAL_BASELINE'), 'explicit pre-integration ref required')
+    def test_pre_integration_bypasses_withdrawal(self):
+        with tempfile.TemporaryDirectory(prefix='bureau-conflicts-withdrawal-base-') as directory:
+            root = Path(directory); archive = root / 'base.tar'
+            baseline = os.environ['BUREAU_CONFLICT_WITHDRAWAL_BASELINE']
+            with archive.open('wb') as output:
+                subprocess.run(['git', '-C', str(ROOT), 'archive', baseline, 'templates/scripts'], stdout=output, check=True)
+            with tarfile.open(archive) as files: files.extractall(root)
+            for case in ('test_withdrawal_before_transaction', 'test_throttled_failed_generator_respects_withdrawal'):
+                self.check_withdrawal_failure(root / 'templates/scripts', case, 3)
+            print('PASS pre-integration control: fetch and throttled-failure withdrawal assertions fail on ' + baseline)
+
+    def test_bypass_command_checkpoints_breaks_rollback_and_step_boundary(self):
+        with tempfile.TemporaryDirectory(prefix='bureau-conflicts-withdrawal-mutation-') as directory:
+            scripts = Path(directory) / 'scripts'; shutil.copytree(ROOT / 'templates/scripts', scripts)
+            path = scripts / 'bureau-conflicts.py'; source = path.read_text()
+            self.assertEqual(source.count('self.checkpoint()'), 4)
+            path.write_text(source.replace('self.checkpoint()', 'None  # private mutation: no command checkpoint'))
+            self.check_withdrawal_failure(scripts, 'test_withdrawal_before_dependencies_and_between_commands', 15)
+            print('PASS command-boundary control: removing transaction checkpoints starts later steps or commits withdrawn work')
+
     def check_failure(self, scripts, cases):
         result = subprocess.run([sys.executable, str(ROOT / 'tests/conflicts_test.py'),
                                  *['ConflictTests.' + name for name in cases]],

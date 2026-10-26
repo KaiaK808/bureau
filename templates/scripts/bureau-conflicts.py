@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Owned merge transaction: legacy rules, checked insertions and regeneration.
 
-No provider, Linear, approval or publication authority lives here. Return 1 to
-the existing merge hook on refusal; its callers retain their exit-17 routing.
+No provider, approval or publication authority lives here. The trusted shell
+checkpoint latches ticket withdrawal; rollback precedes the parent's stop/exit.
+Other refusals retain the existing merge hook's exit-17 routing.
 """
 import argparse
 import difflib
@@ -204,9 +205,10 @@ def insertion_only(base, side):
 
 
 class Transaction:
-    def __init__(self, repo, config, base, config_path):
+    def __init__(self, repo, config, base, config_path, issue=''):
         self.repo, self.config, self.base = repo, config, base
         self.config_path = config_path
+        self.issue = issue
         self.git_env = provider.process_env(['git'])
         self.git_env['GIT_LITERAL_PATHSPECS'] = '1'
         self.child = None
@@ -220,13 +222,30 @@ class Transaction:
         return (self.git('rev-parse', 'HEAD').stdout, self.git('rev-parse', '--verify', 'MERGE_HEAD').stdout,
                 self.git('symbolic-ref', '-q', 'HEAD', check=False).stdout, self.git('ls-files', '--stage', '-z').stdout)
 
-    def run(self, command):
+    def checkpoint(self):
+        if not self.issue: return
+        # Use this installed runtime's PR 9 helper, never branch code or a
+        # second state classifier. Secrets are read only in the trusted shell.
+        # Done exits that shell 0 without the acknowledgment: still a stop.
+        command = ['/bin/bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
+                   'source "$1"; '
+                   'if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env "$BUREAU_ENV_FILE"; fi; '
+                   'bureau_secret_copy --optional API_KEY LINEAR_API_KEY; '
+                   'bureau_ticket_checkpoint "$2"; printf authorized',
+                   'bureau-conflicts-checkpoint', str(Path(__file__).with_name('bureau-config.sh')), self.issue]
+        if self.run(command, trusted=True) != b'authorized':
+            raise Declined('ticket withdrawn before resolution command')
+
+    def run(self, command, *, trusted=False):
         """Executor-owned command outside the provider sandbox, with its env policy."""
-        env = provider.untrusted_env(os.environ, provider.untrusted_env_mode(self.config))
-        self.child = subprocess.Popen(command, cwd=self.repo, env=env, stdin=subprocess.DEVNULL, start_new_session=True)
+        env = (provider.process_env(command) if trusted else
+               provider.untrusted_env(os.environ, provider.untrusted_env_mode(self.config)))
+        self.child = subprocess.Popen(command, cwd=self.repo, env=env, stdin=subprocess.DEVNULL,
+                                      stdout=subprocess.PIPE if trusted else None, start_new_session=True)
         try:
-            code = self.child.wait(timeout=1800)
-            if code: raise Declined('configured command failed')
+            output, _ = self.child.communicate(timeout=1800)
+            if self.child.returncode: raise Declined('configured command failed')
+            return output
         except subprocess.TimeoutExpired:
             raise Declined('configured command exceeded 1800 seconds')
         finally:
@@ -312,6 +331,7 @@ class Transaction:
             # against the merged files before ANY generator or check runs.
             identity = self.identity()
             unstaged = self.git('diff', '--name-only', '-z').stdout
+            self.checkpoint()
             self.run(['/bin/bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
                       'BUREAU_CONFIG="$2"; BUREAU_ENV_FILE=/dev/null; source "$1"; restore_worktree_deps "$PWD"',
                       'bureau-conflicts', str(Path(__file__).with_name('bureau-config.sh')), str(self.config_path)])
@@ -319,6 +339,7 @@ class Transaction:
                 raise Declined('dependency preparation changed the checked tree or Git state')
             for rule in generated:
                 before, identity = inventory(self.repo), self.identity()
+                self.checkpoint()
                 self.run(rule['command'])
                 after = inventory(self.repo)
                 if self.identity() != identity: raise Declined('generator changed Git state')
@@ -346,6 +367,7 @@ class Transaction:
                 raise Declined('resolved tree contains conflict markers')
         if configured:
             before, identity = inventory(self.repo), self.identity()
+            self.checkpoint()
             self.run(['/bin/bash', '--noprofile', '--norc', '-o', 'pipefail', '-c', check])
             tracked = {os.fsdecode(p) for p in self.git('ls-files', '-z').stdout.split(b'\0') if p}
             if self.identity() != identity or changed(before, inventory(self.repo)) & tracked or self.git('diff', '--name-only').stdout:
@@ -354,6 +376,7 @@ class Transaction:
             # nonignored untracked output cannot enter the accepted transaction.
             if self.git('ls-files', '--others', '--exclude-standard', '-z').stdout:
                 raise Declined('validation left untracked output')
+        self.checkpoint()
         checked_tree = self.git('write-tree').stdout
         self.git('-c', 'core.editor=true', 'commit', '--no-edit')
         parents = self.git('rev-list', '--parents', '-1', 'HEAD').stdout.decode().split()[1:]
@@ -418,11 +441,12 @@ def main():
     parser.add_argument('--repo', required=True, type=Path)
     parser.add_argument('--config', required=True, type=Path)
     parser.add_argument('--base', required=True)
+    parser.add_argument('--issue', default='')
     args = parser.parse_args()
     def stop(signum, frame): raise Declined('merge transaction interrupted')
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sig, stop)
     try:
-        return Transaction(args.repo.resolve(), json.loads(args.config.read_text()), args.base, args.config.resolve()).merge()
+        return Transaction(args.repo.resolve(), json.loads(args.config.read_text()), args.base, args.config.resolve(), args.issue).merge()
     except (Declined, OSError, ValueError, provider.UntrustedEnvError) as exc:
         # Do not copy command text, paths or child stderr into control messages.
         print('  Conflict resolution declined: ' + str(exc) if isinstance(exc, Declined) else '  Conflict resolution unavailable.', file=sys.stderr)
