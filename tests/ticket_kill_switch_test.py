@@ -228,6 +228,13 @@ class Withdrawal(unittest.TestCase):
     def assert_released(self): self.assertEqual({},json.loads((self.common/'bureau/leases.json').read_text()))
     def assert_no_publication(self,events):
         self.assertFalse([e for e in events if e['kind'] in ('push','gh-publication','comment')],events)
+    def assert_only_review_reservation(self):
+        events=self.events()
+        first_pass=next(i for i,e in enumerate(events) if e['kind']=='pass')
+        # PR 8 reserves the round before specialists can withdraw the ticket.
+        self.assertEqual([dict(kind='comment',body='Code review round 1 started.\n<!-- bureau-review-round: round=1 -->')],
+                         [e for e in events[:first_pass] if e['kind'] in ('push','gh-publication','comment')],events)
+        self.assert_no_publication(events[first_pass:])
     def assert_no_providers(self):
         live=[]
         for pid in set((self.root/'pids').read_text().splitlines()):
@@ -677,7 +684,7 @@ print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=1,output_tok
             leases=json.loads((self.root/('leases-at-'+phase)).read_text())
             self.assertIn('issue:EXP-9',leases); self.assertIn('workspace:'+str(self.wt.resolve()),leases)
         self.assert_released()
-        self.assertFalse([e for e in self.events() if e['kind'] in ('push','gh-publication','comment')])
+        self.assert_only_review_reservation()
 
     def test_parallel_signal_wins_over_later_withdrawal(self):
         self.state('build_review'); self.control(target=STATES['backlog'],signal_phase='correctness')
@@ -687,7 +694,7 @@ print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=1,output_tok
             self.assertIn('issue:EXP-9',json.loads((self.root/('leases-at-'+phase)).read_text()))
         leases=json.loads((self.common/'bureau/leases.json').read_text())
         self.assertTrue(leases); self.assertTrue(all(lease['interrupted'] for lease in leases.values()))
-        self.assertFalse([e for e in self.events() if e['kind'] in ('push','gh-publication','comment')])
+        self.assert_only_review_reservation()
 
 
 if __name__=='__main__': unittest.main(verbosity=2)
