@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="063e172f3e4d1488fb90c206271579bcc65030fafa22343b3fdb087a72fd1b3d">
+<meta name="bureau-source-sha256" content="f77fc66e3d53fe045aa0e75f31fb08878703d45b9ae98062eeca4f6b4a537015">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -402,6 +402,88 @@ old unregistered workers explicitly before reuse. Tests use fake
 providers/services and real local Git, including timeout/reset and
 mutation controls. Live provider and adopting-installation qualification
 remains outstanding.</p>
+<h2 id="deterministic-conflict-resolution">Deterministic conflict
+resolution</h2>
+<p><code>merge_origin_main_or_abort</code> delegates its owned merge
+transaction to <code>bureau-conflicts.py</code>. The existing
+fetch/default <code>origin/main</code> and immutable third-argument base
+contracts remain. A clean checkout is required before the merge; an
+existing merge or local tracked/index/nonignored untracked work is
+preserved and refused. A clean Git merge needs no configured check.
+Legacy feature.json (ours), CLAUDE.md/.gitignore (three-way union,
+including add/add), rust/Cargo.lock (theirs) and queue-log deletion
+remain available without opt-in or a check. All other source conflicts
+must have a configured deterministic strategy or the entire merge
+aborts.</p>
+<p>Configured append-only paths require three regular, same-mode Git
+blobs. Each side must retain every base line in order: only insertion
+diff operations qualify. Empty/binary/unterminated inputs and inserted
+nonblank lines that repeat a base anchor decline conservatively. If
+concurrent insertions share any nonblank inserted line, including a new
+heading or context, resolution also declines: a union can retain both
+side sequences while moving entries under the wrong heading. New
+ATX/Setext Markdown headings in either insertion also decline, even
+without shared inserted lines, because they can capture entries from the
+other side under a different parent section. A real
+<code>git merge-file --union</code> follows that verification, and its
+result must retain both side sequences. Insertions under Unreleased are
+supported. Replacements and deletions cannot be authorized by labeling a
+path append-only.</p>
+<p>Only after all source conflicts resolve does the transaction call the
+runtime's existing <code>restore_worktree_deps</code> against the merged
+manifests. Its npm clone/install and manifest-stamp rules remain; other
+project types retain the helper's existing behavior. Failed dependency
+preparation declines resolution before any generator or check runs.
+Configured generators then run, in order, over the merged sources. Each
+must leave Git state unchanged and change only its declared regular
+output files, including nonconflicted outputs; newly needed parent
+directories are permitted. Output ownership cannot overlap another
+generator or an append-only path. Regenerated outputs are staged, the
+index must have no unmerged entries, and changed files must have no
+conflict-marker lines. The explicit <code>repo.test_command</code> must
+contain more than whitespace/comments and then runs outside the provider
+sandbox under the existing credential-stripped environment policy. It
+cannot rewrite the checked tracked tree/index or leave nonignored
+untracked files. Green validation permits the local merge commit only;
+it creates no approval, sandbox-gate receipt or reusable green gate. PR
+8's BLOCK, security floors and review-round limits remain
+independent.</p>
+<p>When configured repair is enabled, the transaction privately
+snapshots checkout files, modes and symlinks, including ignored files,
+without following directory symlinks or copying root <code>.git</code>.
+Snapshot space/time scales with the checkout, including ignored
+dependencies; provide writable external temporary storage. Refusal,
+command failure, red/missing check or interruption aborts the merge,
+restores the original HEAD and saved checkout, removes command-created
+checkout files and verifies restoration. Rollback compares entries with
+the saved snapshot and changes only modified paths and parent
+permissions required to restore them; unchanged ignored files and
+directories stay untouched. It restores access to generator-restricted
+directories as needed, treats unreadable files as needing restoration
+and restores saved directory modes after Git resets. Filesystem errors
+are isolated per path so other restores continue; an incomplete
+restoration declines explicitly. Cleanup errors cannot bypass
+restoration of the saved index and the reset attempt. A command has a
+fixed 1,800-second limit; its process group is killed and its leader
+reaped before rollback or acceptance. Commands are trusted operator
+configuration, not a filesystem/process sandbox: detached daemons,
+writes through external symlinks, external directories and unrelated Git
+refs are outside this rollback contract. Concurrent external writers are
+unsupported; callers must already own the checkout. No new public exit:
+the hook returns failure and existing callers route exit 17, with the
+existing throttled Linear conflict comment.</p>
+<p>Normal stage publication/preservation rules still apply after repair.
+If a later provider fails and the ordinary push succeeds, the on-origin
+worker can be reused. An unpublished conflict-repaired merge is
+preserved unregistered and fails the existing conservative
+clean-merge-only reuse predicate with 21; it requires inspection rather
+than reset. Overlap admission must continue counting generated/changelog
+paths as overlaps. This add-on does not include PR 9 withdrawal
+checkpoints; when restacked, its checks must precede generator/check
+execution and publication. App prepare/finish and rebase fallback are
+unchanged. Upgrade by comparing installed drift, resyncing scripts as a
+set and restarting drivers; local fake-provider/Git qualification does
+not establish live adopter support.</p>
 <h2 id="review-convergence">Review convergence</h2>
 <p>The background review stage validates the merger's decision fields
 and findings before applying <code>agents.review_min_severity</code>

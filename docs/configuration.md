@@ -143,6 +143,28 @@ Cost logging is opt-in. Usage throttling uses an operator-provided signal for th
 | `repo.upstream_port.work_dir` | string | `"${SCRIPT_DIR}/../rust"` | Working directory for build + test commands. Env override: `BUREAU_UPSTREAM_PORT_WORK_DIR` |
 | `repo.path_prefix_strip` | string | `""` | Prefix stripped by `crosscheck-specs.sh` when comparing planned spec paths against in-flight PR file paths. Useful when specs reference paths with a repo-name prefix (`brainhuggers-bureau/`, `packages/foo/`). Env override: `BUREAU_PATH_PREFIX_STRIP` |
 
+#### Deterministic conflict resolution
+
+`repo.conflict_resolution.generated` defaults to `[]`. Each entry requires `globs` (nonempty array of repository-relative output patterns) and `command` (nonempty argument array, executed directly from the checkout root). Patterns are root-anchored: `*`, `?` and character classes match one path component; `**` spans zero or more components. `repo.conflict_resolution.append_only_paths` defaults to `[]` and contains exact repository-relative filenames, including root files such as `CHANGELOG.md`. Absolute paths, traversal and overlapping strategies are refused. No configuration migration is required; existing installations retain the legacy rules.
+
+For Bureau's generated manual, cover **every** output of the renderer, which requires Pandoc:
+
+```json
+{
+  "repo": {
+    "test_command": "bash tests/run.sh",
+    "conflict_resolution": {
+      "generated": [
+        {"globs": ["docs/site/*.html"], "command": ["python3", "scripts/render_docs.py"]}
+      ],
+      "append_only_paths": ["CHANGELOG.md"]
+    }
+  }
+}
+```
+
+A configured repair requires an explicit `repo.test_command` containing a command; whitespace-only or comment-only strings decline, and there is no inferred fallback. Append-only means verified insertions anywhere, including under Unreleased. Rewrites, deletions, binary input, missing base/side blobs, mode changes, unterminated input and ambiguous repeated nonblank base anchors decline. Concurrent insertions sharing any nonblank inserted line also decline, including identical new headings or context: preserving side sequences alone cannot prove section associations. New ATX/Setext Markdown headings in either insertion also decline, since they could capture entries from the other side. After source conflicts resolve, `restore_worktree_deps` prepares npm dependencies against the merged manifests before any generator or check; preparation failure declines the repair. All configured generators then run in declaration order, each limited to its own full output set. Generator or check failure, unavailable commands (including Pandoc), undeclared edits or remaining conflict markers restore the saved clean checkout and use existing conflict exit 17. Rollback restores only paths changed since the snapshot and grants directory/parent access only when needed. Unchanged ignored content and modes stay untouched. A filesystem failure on one path does not stop other restores or the saved-index/Git reset attempt; incomplete restoration declines explicitly. Saved directory modes are restored after the reset. Commands run outside the provider sandbox under `repo.untrusted_env`, with a fixed 1,800-second limit per command. Checks must leave the tracked tree/index unchanged and create no nonignored untracked files; ignored test caches are permitted. See [the transaction contract](stage-protocol.md#deterministic-conflict-resolution) for rollback and ownership limits.
+
 #### Python repositories
 
 The stage worktrees are reset with `git clean -fdx`, which removes an ignored `.venv`. First commit the resynced scripts to `main`, so that the stage protocol the agents read in their worktree (`scripts/bureau-stage.md`) carries the rule for linked paths; then set `"repo": {"worktree_links": [".venv"]}` so every stage worktree gets a link to the main checkout's virtualenv, and make sure `.gitignore` lists `.venv` (not only `.venv/`); `bureau-doctor.py` shows whether it does. With an editable install (`pip install -e .`), the linked virtualenv's `.pth` file points at the **main checkout's** `src/`, not at the worktree's, so Python in a worktree imports the main checkout's code unless the worktree comes first on the path: run tests as `PYTHONPATH=src .venv/bin/python -m pytest` (or set it in `repo.test_command` or `scripts/bureau-test.sh`), and say so in the project instructions the agents read. The linked virtualenv is the main checkout's own: what an agent installs, recreates or deletes there happens to yours, and pull-request code that QA or the review build check runs uses it too. If that is not acceptable for a repository, leave the virtualenv out of `worktree_links` and let `repo.test_command` or `scripts/bureau-test.sh` create what the tests need.

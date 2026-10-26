@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2f5be928255d435d1828f59ff5bb332262f9aac8e8a0d898297551894be3d0c1">
+<meta name="bureau-source-sha256" content="56130b87fc1d6ac9a1cd317a447f5e43f2324153c8d262a7f8d1ccae9626053e">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1200,6 +1200,63 @@ override: <code>BUREAU_PATH_PREFIX_STRIP</code></td>
 </tr>
 </tbody>
 </table>
+<h4 id="deterministic-conflict-resolution">Deterministic conflict
+resolution</h4>
+<p><code>repo.conflict_resolution.generated</code> defaults to
+<code>[]</code>. Each entry requires <code>globs</code> (nonempty array
+of repository-relative output patterns) and <code>command</code>
+(nonempty argument array, executed directly from the checkout root).
+Patterns are root-anchored: <code>*</code>, <code>?</code> and character
+classes match one path component; <code>**</code> spans zero or more
+components. <code>repo.conflict_resolution.append_only_paths</code>
+defaults to <code>[]</code> and contains exact repository-relative
+filenames, including root files such as <code>CHANGELOG.md</code>.
+Absolute paths, traversal and overlapping strategies are refused. No
+configuration migration is required; existing installations retain the
+legacy rules.</p>
+<p>For Bureau's generated manual, cover <strong>every</strong> output of
+the renderer, which requires Pandoc:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>A configured repair requires an explicit
+<code>repo.test_command</code> containing a command; whitespace-only or
+comment-only strings decline, and there is no inferred fallback.
+Append-only means verified insertions anywhere, including under
+Unreleased. Rewrites, deletions, binary input, missing base/side blobs,
+mode changes, unterminated input and ambiguous repeated nonblank base
+anchors decline. Concurrent insertions sharing any nonblank inserted
+line also decline, including identical new headings or context:
+preserving side sequences alone cannot prove section associations. New
+ATX/Setext Markdown headings in either insertion also decline, since
+they could capture entries from the other side. After source conflicts
+resolve, <code>restore_worktree_deps</code> prepares npm dependencies
+against the merged manifests before any generator or check; preparation
+failure declines the repair. All configured generators then run in
+declaration order, each limited to its own full output set. Generator or
+check failure, unavailable commands (including Pandoc), undeclared edits
+or remaining conflict markers restore the saved clean checkout and use
+existing conflict exit 17. Rollback restores only paths changed since
+the snapshot and grants directory/parent access only when needed.
+Unchanged ignored content and modes stay untouched. A filesystem failure
+on one path does not stop other restores or the saved-index/Git reset
+attempt; incomplete restoration declines explicitly. Saved directory
+modes are restored after the reset. Commands run outside the provider
+sandbox under <code>repo.untrusted_env</code>, with a fixed 1,800-second
+limit per command. Checks must leave the tracked tree/index unchanged
+and create no nonignored untracked files; ignored test caches are
+permitted. See <a
+href="stage-protocol.html#deterministic-conflict-resolution">the
+transaction contract</a> for rollback and ownership limits.</p>
 <h4 id="python-repositories">Python repositories</h4>
 <p>The stage worktrees are reset with <code>git clean -fdx</code>, which
 removes an ignored <code>.venv</code>. First commit the resynced scripts
