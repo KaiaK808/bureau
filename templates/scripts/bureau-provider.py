@@ -634,9 +634,16 @@ def _run(options, prompt, system, repo, evidence, schema=None):
                             if observer: observer.error = 'execution stream did not close'
             if interrupted: return 130, '', dict(outcome='cancelled', provider_exit=child.returncode)
             if timed_out:
+                if timeout_kind == 'silence' and options.get('cancel_file') and options.get('phase') in ('correctness', 'security', 'performance'):
+                    # A specialist shell can also return 25 for withdrawal.
+                    # Give its parent evidence of an actual watchdog failure.
+                    e.observe(e.atomic, Path(options['cancel_file'] + '.' + options['phase'] + '.silence'), dict(timeout_kind='silence'))
                 return (25 if timeout_kind == 'silence' else 124), '', dict(outcome='timeout', timeout_kind=timeout_kind,
                             provider_exit=child.returncode, duration_seconds=time.monotonic()-started)
-            if stream_error: raise OSError('provider execution stream unavailable')
+            # Without the watchdog this remains observational gate evidence;
+            # an inherited pipe cannot invalidate a successful final result.
+            if stream_error and options.get('silence_timeout_seconds'):
+                raise OSError('provider execution stream unavailable')
     finally:
         # Exceptional reader/inspection/spawn paths must also finish all owned
         # writers before the receipt or the trusted shell can report a stop.

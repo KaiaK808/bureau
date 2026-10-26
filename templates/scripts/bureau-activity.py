@@ -26,6 +26,7 @@ class Activity:
         self.clock = clock
         self.last = clock()
         self.tools = {}
+        self.background = set()
         self.seen = {}
         self.lock = threading.Lock()
 
@@ -79,8 +80,15 @@ class Activity:
                                 inputs = block.get('input')
                                 if block.get('name') == 'Bash' and isinstance(inputs, dict) and isinstance(inputs.get('command'), str):
                                     self.tools[block['id']] = inputs['command']
+                                    if inputs.get('run_in_background') is True:
+                                        self.background.add(block['id'])
                             elif typ == 'tool_result' and isinstance(block.get('tool_use_id'), str):
-                                useful = True; self.tools.pop(block['tool_use_id'], None)
+                                useful = True
+                                # The initial async result hands back a task ID;
+                                # TaskOutput can await it while Bash still runs.
+                                # Only the associated process exit ends its allowance.
+                                if block['tool_use_id'] not in self.background:
+                                    self.tools.pop(block['tool_use_id'], None)
                 elif kind == 'stream_event':
                     inner = event.get('event')
                     delta = inner.get('delta') if isinstance(inner, dict) and inner.get('type') == 'content_block_delta' else None
@@ -94,34 +102,56 @@ class Activity:
 
     def expired(self, processes):
         with self.lock:
-            # A provider, wrapper or unfinished item cannot borrow the tool
-            # allowance. A live owned process must match an active tool command.
-            extended = any(processes.tool_alive(command) for command in self.tools.values())
+            # Bind once to birth identities, then follow exec and descendants.
+            # Sample every tool, including those after an already-live tool.
+            extended = False
+            for key, command in list(self.tools.items()):
+                if processes.tool_alive(command, key): extended = True
+                elif key in self.background and processes.tool_finished(key):
+                    self.tools.pop(key); self.background.discard(key)
             window = self.child_seconds if extended else self.seconds
             return self.seconds > 0 and self.clock() - self.last >= window
 
 
 def command_matches(command, argv):
+    """Seed a tool identity, including a shell that exec'd before our first scan.
+
+    This is not a recurring liveness test. Peel only invocation prefixes whose
+    resulting executable/arguments are known; never accept an arbitrary owned
+    child merely because a tool event is pending.
+    """
     try:
         wanted = shlex.split(command)
         if not wanted or not argv: return False
-        # Provider events can themselves contain an absolute shell wrapper.
-        if len(wanted) == 3 and os.path.basename(wanted[0]) in ('bash', 'sh', 'zsh') and wanted[1] in ('-c', '-lc'):
-            command = wanted[2]; wanted = shlex.split(command)
-        for index, arg in enumerate(argv[:-1]):
-            if arg in ('-c', '-lc') and os.path.basename(argv[0]) in ('bash', 'sh', 'zsh'):
-                return argv[index + 1] == command
-        executable = (os.path.realpath(argv[0]) == os.path.realpath(wanted[0]) if os.path.isabs(wanted[0])
-                      else os.path.basename(argv[0]) == wanted[0])
-        # Framework Python on macOS rewrites argv[0] from the bin/python3
-        # launcher to Python.app/.../Python. An exact script/-c/-m + argv
-        # match still identifies this tool, not the provider's Python CLI.
-        if (not executable and sys.platform == 'darwin' and len(wanted) > 1
-                and (os.path.isabs(wanted[1]) or wanted[1] in ('-c', '-m')) and argv[1:] == wanted[1:]
-                and all(re.fullmatch(r'python(?:[0-9]+(?:\.[0-9]+)*)?', os.path.basename(x).lower()) for x in (wanted[0], argv[0]))):
-            executable = True
-        return executable and argv[1:] == wanted[1:]
+        while wanted:
+            if argv_matches(wanted, argv): return True
+            for index, arg in enumerate(argv[:-1]):
+                if arg in ('-c', '-lc') and os.path.basename(argv[0]) in ('bash', 'sh', 'zsh') and argv[index + 1] == command:
+                    return True
+            if len(wanted) == 3 and os.path.basename(wanted[0]) in ('bash', 'sh', 'zsh') and wanted[1] in ('-c', '-lc'):
+                command = wanted[2]; wanted = shlex.split(command)
+            elif re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*=', wanted[0]): wanted = wanted[1:]
+            elif wanted[0] in ('env', '/usr/bin/env', '/bin/env'):
+                wanted = wanted[1:]
+                if wanted[:1] == ['--']: wanted = wanted[1:]
+            elif wanted[0] == 'cd' and len(wanted) > 3 and wanted[2] == '&&': wanted = wanted[3:]
+            elif wanted[:2] == ['cd', '--'] and len(wanted) > 4 and wanted[3] == '&&': wanted = wanted[4:]
+            else: return False
+        return False
     except ValueError: return False
+
+
+def argv_matches(wanted, argv):
+    executable = (os.path.realpath(argv[0]) == os.path.realpath(wanted[0]) if os.path.isabs(wanted[0])
+                  else os.path.basename(argv[0]) == wanted[0])
+    # Framework Python on macOS rewrites argv[0] from the bin/python3
+    # launcher to Python.app/.../Python. An exact script/-c/-m + argv
+    # match still identifies this tool, not the provider's Python CLI.
+    if (not executable and sys.platform == 'darwin' and len(wanted) > 1
+            and (os.path.isabs(wanted[1]) or wanted[1] in ('-c', '-m')) and argv[1:] == wanted[1:]
+            and all(re.fullmatch(r'python(?:[0-9]+(?:\.[0-9]+)*)?', os.path.basename(x).lower()) for x in (wanted[0], argv[0]))):
+        executable = True
+    return executable and argv[1:] == wanted[1:]
 
 
 class _BsdInfo(ctypes.Structure):
@@ -193,6 +223,7 @@ class OwnedProcesses:
         self.token = uuid.uuid4().hex
         self.marker = (OWNER_ENV + '=' + self.token).encode()
         self.owned = {}; self.current = {}; self.root = None
+        self.tool_processes = {}
         # Processes predating this random marker cannot carry it. Cache birth
         # identities, never PIDs alone, to avoid rereading every user's process
         # environment on each tick of a long provider call.
@@ -225,9 +256,28 @@ class OwnedProcesses:
         for pid, row in owned.items(): self.owned[pid] = row[1]
         self.current = owned
 
-    def tool_alive(self, command):
-        return any(pid != self.root and not row[2] and command_matches(command, self.table.args_env(pid)[0])
-                   for pid, row in self.current.items())
+    def tool_alive(self, command, key):
+        if key not in self.tool_processes:
+            matched = {pid:row[1] for pid,row in self.current.items()
+                       if pid != self.root and not row[2] and command_matches(command, self.table.args_env(pid)[0])}
+            if not matched: return False  # the tool may not have spawned yet
+            self.tool_processes[key] = matched
+        identities = self.tool_processes[key]
+        family = {pid:row[1] for pid,row in self.current.items() if identities.get(pid) == row[1]}
+        changed = True
+        while changed:
+            changed = False
+            for pid, row in self.current.items():
+                # A known zombie still proves ancestry while its child lives.
+                if pid not in family and row[0] in family:
+                    family[pid] = row[1]; changed = True
+        identities.update(family)
+        return any(not self.current[pid][2] for pid in family)
+
+    def tool_finished(self, key):
+        # Once bound, a new matching command cannot revive an exited tool.
+        return key in self.tool_processes and not any(
+            self.tool_processes[key].get(pid) == row[1] and not row[2] for pid,row in self.current.items())
 
     def signal(self, signum):
         rows = self.table.snapshot()

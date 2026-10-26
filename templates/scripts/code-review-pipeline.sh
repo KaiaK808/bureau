@@ -73,18 +73,13 @@ _review_join_specialists() {
         codes[$i]="$rc"; remaining=$((remaining - 1))
         if [ "$rc" = 130 ] && [ ! -f "$REVIEW_TMP/cancel-specialists.${phases[$i]}" ]; then
           REVIEW_STOP_RC=130; : > "$REVIEW_TMP/cancel-specialists"
-        elif [ "$rc" = 25 ] && [ "$REVIEW_STOP_RC" = 0 ]; then
+        elif [ "$rc" = 25 ] && [ -f "$REVIEW_TMP/cancel-specialists.${phases[$i]}.silence" ] && [ "$REVIEW_STOP_RC" = 0 ]; then
           REVIEW_STOP_RC=25; : > "$REVIEW_TMP/cancel-specialists"
         fi
       fi
     done
-    # A trusted withdrawal can be observed in any captured specialist shell.
-    # Its checkpoint wins after every writer has stopped, including Done (0).
-    if [ -n "${BUREAU_TICKET_CONTROL_DIR:-}" ]; then
-      for rc in 0 25 26; do
-        [ ! -f "$BUREAU_TICKET_CONTROL_DIR/stop-$rc" ] || : > "$REVIEW_TMP/cancel-specialists"
-      done
-    fi
+    # Withdrawal waits for every current call, including inactive's exit 25.
+    # Only a watchdog failure or independent cancellation stops siblings.
     [ "$remaining" = 0 ] || sleep .1
   done
   CORRECT_RC="${codes[0]}"; SEC_RC="${codes[1]}"; PERF_RC="${codes[2]}"

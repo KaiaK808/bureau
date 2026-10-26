@@ -332,7 +332,7 @@ class ActivityRules(unittest.TestCase):
     def test_fixed_monotonic_window_and_child_exit(self):
         now=[0]
         activity=p.a.Activity('codex',3,8,clock=lambda:now[0])
-        processes=type('Processes',(),{'alive':False,'tool_alive':lambda self,cmd:self.alive})()
+        processes=type('Processes',(),{'alive':False,'tool_alive':lambda self,cmd,key:self.alive})()
         activity.line('{"type":"item.started","item":{"id":"t","type":"command_execution","command":"sleep 10"}}')
         now[0]=4
         self.assertTrue(activity.expired(processes),'unfinished item alone got an allowance')
