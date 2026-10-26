@@ -32,6 +32,7 @@ class CommentProjectionTests(unittest.TestCase):
         self.helpers = '\n'.join(function(config, name) for name in
                                  ('bureau_comment_projection', 'parse_claude_json', 'post_comment'))
         self.helpers += '''
+bureau_ticket_checkpoint() { :; }
 bureau_cap_comment() { printf '%s' "$1"; }
 _resolve_issue_uuid() { echo fixture-id; }
 linear_raw() { printf '%s' "$1" > "$PAYLOAD"; echo '{"data":{"commentCreate":{"success":true}}}'; }

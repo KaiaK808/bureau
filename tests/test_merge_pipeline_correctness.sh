@@ -80,6 +80,11 @@ EOF
 # ── TEST OVERRIDES ─────────────────────────────────────────────────
 precondition_linear()      { echo precondition_linear >> "$STUB_DIR/linear.log"; return 0; }
 bureau_stage_enter()       { :; } # ownership covered by runtime tests
+bureau_issue_snapshot() {
+  local state_id=s7
+  [ "$(cat "$STUB_DIR/ticket_state" 2>/dev/null)" != Done ] || state_id=s8
+  jq -nc --arg issue "$1" --arg id "$state_id" '{identifier:$issue,state:{id:$id}}'
+}
 precondition_claude_auth() { return 0; }
 post_comment()             { echo "post_comment $1 :: $2" >> "$STUB_DIR/comments_posted.log"; }
 move_issue()               { echo "move_issue $1 -> $2"   >> "$STUB_DIR/state_changes.log"; }
@@ -948,6 +953,7 @@ test_gate_codes_in_queue_loop() {
     rm -f "$q/alerts" "$q/log"
     Q="$q" STUB_RC="$rc" /bin/bash -c '
       source "$Q/queue.sh"
+      bureau_ticket_checkpoint() { :; } # only queue exit/alert handling is under test
       REPO_DIR="$Q"; LOG_FILE="$Q/log"; MODE=merge
       preselect_issue() { echo EXP-9; }
       get_issue_branch() { echo feat/x; }

@@ -103,12 +103,15 @@ bureau_record_gate() {
 # reader. No merge/state/exit decision is derived from the brief.
 bureau_acceptance_brief() {
   [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
-  local issue="$1" branch="$2" spec_dir
+  local issue="$1" branch="$2" spec_dir brief_rc=0
+  bureau_ticket_checkpoint "$issue"
   shift 2
   spec_dir=$(bureau_spec_dir_for_branch "$branch" 2>/dev/null) || spec_dir=""
   ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-acceptance.py" --repo "$PWD" \
       --issue "$issue" --branch "$branch" --spec "${spec_dir:+$spec_dir/spec.md}" \
-      --config-script "$_BUREAU_SCRIPTS_DIR/bureau-config.sh" --publish "$@" ) || true
+      --config-script "$_BUREAU_SCRIPTS_DIR/bureau-config.sh" --publish "$@" ) || brief_rc=$?
+  [ "$brief_rc" != 130 ] || exit 130
+  bureau_ticket_checkpoint "$issue" latched
   return 0
 }
 
@@ -157,13 +160,99 @@ bureau_sweep_waits() {
   bureau_evidence observe-open --rotation "$turn" || true
 }
 
+# A cooperative withdrawal is latched per run, including across captured and
+# parallel provider calls. The runtime supplies this path outside the worktree.
+# Never inherit process-local authorization from an operator's environment.
+unset _BUREAU_TICKET_OWN_DONE _BUREAU_TICKET_STOPPED _BUREAU_TICKET_WARNED
+bureau_ticket_stopped() {
+  [ "${_BUREAU_TICKET_STOPPED:-0}" = 1 ] && return 0
+  local dir="${BUREAU_TICKET_CONTROL_DIR:-}" code
+  [ -n "$dir" ] || return 1
+  for code in 26 25 0; do [ ! -f "$dir/stop-$code" ] || return 0; done
+  return 1
+}
+
+# bureau_ticket_checkpoint ISSUE [additional|strict|latched] [already-read snapshot]
+# This exits the calling shell on withdrawal, even Done (0). Call again in the
+# parent after command substitutions/best-effort calls, and join parallel passes
+# before that parent checkpoint. No signals or ticket mutations on this path.
+# Only an ADDITIONAL refresh may fail open; entry/mutation/ownership guards keep
+# their existing strict reads. Classification uses configured IDs exclusively.
+bureau_ticket_checkpoint() {
+  local issue="${1:-}" mode="${2:-additional}" snapshot="${3:-}" id code rc=0
+  local dir="${BUREAU_TICKET_CONTROL_DIR:-}"
+  [ -n "$issue" ] && [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  # Additional observations belong to a claimed background run. Standalone
+  # Linear helpers (including app prepare/finish) retain their own reads and
+  # retry budget; they must not acquire another fetch through this helper.
+  [ -n "$dir" ] || [ "$mode" = strict ] || return 0
+  if [ -n "$dir" ]; then
+    for code in 26 25 0; do
+      if [ -f "$dir/stop-$code" ]; then _BUREAU_TICKET_STOPPED=1; exit "$code"; fi
+    done
+  fi
+  [ "$mode" != latched ] || return 0
+  if [ -z "$snapshot" ]; then
+    if [ "$mode" = strict ]; then
+      snapshot=$(bureau_issue_snapshot "$issue") || rc=$?
+    else
+      # A failed observation cannot overwrite a caller's strict-read fault or
+      # change its retry mode. Both overrides live only in this capture.
+      snapshot=$(_BUREAU_LINEAR_SINGLE_ATTEMPT=1 _BUREAU_LINEAR_FAULT_FILE='' bureau_issue_snapshot "$issue" 2>/dev/null) || rc=$?
+    fi
+  fi
+  id=$(printf '%s' "$snapshot" | jq -er --arg issue "$issue" \
+    'select(.identifier == $issue) | .state.id | select(type == "string" and length > 0)' 2>/dev/null) || {
+    [ "$rc" != 0 ] || rc=10
+  }
+  if [ "$rc" != 0 ]; then
+    [ "$rc" != 130 ] || exit 130
+    if [ "$mode" = strict ]; then exit "$rc"; fi
+    if [ "${_BUREAU_TICKET_WARNED:-0}" != 1 ]; then
+      _BUREAU_TICKET_WARNED=1
+      # mkdir is the once-per-run arbiter for parallel/captured calls.
+      if [ -z "$dir" ] || { mkdir -p "$dir" && mkdir "$dir/warned" 2>/dev/null; }; then
+        ( echo 'bureau ticket checkpoint: WARN: additional state refresh failed; already authorized work continues' >&2 ) || true
+      fi
+    fi
+    return 0
+  fi
+  BUREAU_TICKET_STATE_ID="$id"
+  code=$(jq -er --arg id "$id" '
+    .linear.teams[0].states as $s |
+    (.agents.ticket_active_states | if . == null then
+      (["triage","spec","spec_review","design","copy","build","qa","build_review","merge"] |
+       map(select($s[.] | type == "string" and length > 0))) else . end) as $keys |
+    if ($keys | type) != "array" then error("ticket_active_states must be an array")
+    elif any($keys[]; type != "string") then error("ticket_active_states must contain state keys")
+    elif any($keys[]; $s[.] | type != "string" or length == 0) then error("ticket_active_states has an unconfigured key")
+    elif $s.done == $id then "0"
+    elif any(["cancelled","canceled","duplicate"][]; $s[.] == $id) then "26"
+    elif any($keys[]; $s[.] == $id) then "active"
+    else "25" end' "$BUREAU_CONFIG") || {
+      echo 'ERROR: invalid agents.ticket_active_states configuration' >&2; exit 24;
+    }
+  [ "$code" != active ] || return 0
+  # A stage's own successful Done transition may finish its bookkeeping. An
+  # externally observed Done never receives this process-local authorization.
+  if [ "$code" = 0 ] && [ "${_BUREAU_TICKET_OWN_DONE:-}" = "$id" ]; then return 0; fi
+  _BUREAU_TICKET_STOPPED=1
+  if [ -n "$dir" ]; then
+    mkdir -p "$dir" && : > "$dir/stop-$code" || {
+      echo 'ERROR: cannot latch ticket withdrawal; refusing further work' >&2; exit 21;
+    }
+  fi
+  echo "bureau ticket checkpoint: $issue left the active workflow (state ID $id); cooperative stop, exit $code" >&2
+  exit "$code"
+}
+
 # Re-enter after claiming the issue and checkout. The Python parent owns cleanup,
 # leaving each pipeline's EXIT traps intact. Nested stages reuse the driver's run.
 bureau_stage_enter() {
   local issue="$1"; shift
   if [ "${BUREAU_ACTIVE_ENTRY:-}" = "$0" ]; then
-    BUREAU_EXPECTED_STATE_ID=$(bureau_issue_snapshot "$issue" | jq -r '.state.id // empty')
-    [ -n "$BUREAU_EXPECTED_STATE_ID" ] || { echo "ERROR: missing entry state" >&2; exit 10; }
+    bureau_ticket_checkpoint "$issue" strict
+    BUREAU_EXPECTED_STATE_ID="$BUREAU_TICKET_STATE_ID"
     return 0
   fi
   if [ "${BUREAU_WORKSPACE_MODE:-current}" != disposable ] && [ "$(basename "$0")" != merge-pipeline.sh ]; then
@@ -739,6 +828,7 @@ run_stage_for() {
     esac
   done
   [ "$#" = 1 ] || { echo 'run_stage_for requires one prompt' >&2; return 22; }
+  bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
   temp=$(mktemp -d)
   printf '%s' "$1" > "$temp/prompt"
   # The CI rule (v3.2, scope O7) sits in the system text, not only in
@@ -760,6 +850,8 @@ run_stage_for() {
   # the agent's parent process does not hold them either (bureau-env.sh).
   if bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" "${args[@]}"; then rc=0; else rc=$?; fi
   rm -rf "$temp"
+  [ "$rc" != 130 ] || exit 130
+  bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
   return "$rc"
 }
 
@@ -1049,6 +1141,7 @@ move_issue() {
   if [ -n "${BUREAU_EXPECTED_STATE_ID:-}" ] && [ "$ref" = "${BUREAU_CURRENT_ISSUE:-}" ]; then
     local current_snapshot current_state
     current_snapshot=$(bureau_issue_snapshot "$ref") || return $?
+    bureau_ticket_checkpoint "$ref" strict "$current_snapshot"
     current_state=$(printf '%s' "$current_snapshot" | jq -r '.state.id // empty')
     if [ "$current_state" != "$BUREAU_EXPECTED_STATE_ID" ]; then
       echo "ERROR: $ref state changed during this stage; refusing stale transition" >&2
@@ -1077,6 +1170,7 @@ move_issue() {
     BUREAU_EXPECTED_STATE_ID="$state_id"
   fi
   if [ "$state_id" = "${BUREAU_STATE_DONE:-_unset_}" ]; then
+    _BUREAU_TICKET_OWN_DONE="$state_id"
     bureau_evidence wait-resolve "$ref" --terminal --basis observed-terminal-transition || true
   fi
 }
@@ -1141,6 +1235,7 @@ sys.stdout.buffer.write(head + note(len(data) - len(head) - len(tail)) + tail)
 # Usage: post_comment <issue-id-or-key> <body>
 post_comment() {
   local ref="$1" body="$2" capped
+  bureau_ticket_checkpoint "$ref"
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
     echo "[DRY_RUN] post_comment $ref ($(printf '%s' "$body" | head -c 80 | tr '\n' ' ')...)" >&2
     return 0
@@ -1347,6 +1442,7 @@ $out"
 #
 # Usage: comment_on_branch_pr <branch> <text>
 comment_on_branch_pr() {
+  bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
   local branch="$1" text="$2" pr out rc
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
     echo "[DRY_RUN] comment_on_branch_pr $branch ($(printf '%s' "$text" | head -c 80 | tr '\n' ' ')...)" >&2
@@ -1488,17 +1584,25 @@ bureau_wait_snapshot() {
 }
 
 # Canonical names for existing stage guards, resolved from configured UUIDs.
+# In a background run the mandatory read is also a withdrawal observation.
+# Classify this successful snapshot without another refresh. Capturing callers
+# must consume the shared latch before routing, including Done's exit 0.
 get_issue_state() {
   local snapshot id key
   snapshot=$(bureau_issue_snapshot "$1") || return $?
   id=$(printf '%s' "$snapshot" | jq -r '.state.id // empty')
+  [ -n "$id" ] || return 0
   key=$(jq -r --arg id "$id" '.linear.teams[0].states | to_entries[] | select(.value == $id and $id != "") | .key' "$BUREAU_CONFIG" | sed -n 1p)
   case "$key" in
     triage) echo Triage ;; spec) echo Spec ;; spec_review) echo 'Spec Review' ;;
     design) echo Design ;; copy) echo Copy ;; build) echo Build ;; qa) echo QA ;;
     build_review) echo 'Build Review' ;; merge) echo Merge ;; done) echo Done ;;
-    *) printf '%s' "$snapshot" | jq -r '.state.name // empty' ;;
+    cancelled|canceled) echo Cancelled ;; duplicate) echo Duplicate ;;
+    *) printf 'State ID %s\n' "$id" ;;
   esac
+  if [ -n "${BUREAU_TICKET_CONTROL_DIR:-}" ]; then
+    bureau_ticket_checkpoint "$1" strict "$snapshot"
+  fi
 }
 
 # _resolve_label_id <label-name> <issue-ref> — the UUID of the label <name> that
@@ -4352,6 +4456,7 @@ codex_gate_plan() {
 }
 
 codex_gate_run() {
+  bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
   printf '%s' "$2" | bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
     --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action run
 }

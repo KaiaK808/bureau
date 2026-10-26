@@ -103,6 +103,9 @@ refresh_review_context() {
 # the run walked on to QA). Installation A's HEAD:"$BRANCH" fixes that only while
 # the branch already exists on origin: for a new one git cannot tell that the
 # name is meant as a branch and refuses ("not a full refname").
+# Ordinary callers checkpoint before publication. This low-level helper also
+# serves failure/EXIT preservation pushes, which must send already made commits
+# even after withdrawal or a signal, without another authorization read.
 push_branch_loud() {
   local label="$1" mode="${2:-}" rev="${3:-HEAD}" push_out rc
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
@@ -447,6 +450,7 @@ open_or_update_pr_draft() {
   if [ -n "$existing" ]; then
     gh pr view "$existing" --json url --jq '.url'
   else
+    bureau_ticket_checkpoint "$ISSUE"
     gh pr create --draft \
       --title "$issue: $title" \
       --body "## Summary
@@ -472,11 +476,13 @@ open_or_update_pr_ready() {
     # `gh pr ready` is a no-op if the PR is already ready; both are exit 0.
     # A real non-zero exit (transient API error, missing permission, deleted
     # PR) must surface so a human can finish the flip — FR-007.
+    bureau_ticket_checkpoint "$ISSUE"
     if ! gh pr ready "$existing" >/dev/null 2>&1; then
       echo "  WARN: failed to mark PR #$existing as ready-for-review; please flip manually" >&2
     fi
     gh pr view "$existing" --json url --jq '.url'
   else
+    bureau_ticket_checkpoint "$ISSUE"
     gh pr create \
       --title "$issue: $title" \
       --body "## Summary
@@ -541,6 +547,7 @@ fi
 bureau_stage_enter "$ISSUE" "$@"
 
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
+bureau_ticket_checkpoint "$ISSUE" latched
 if [ "$ACTUAL_STATE" != "Build" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Build'. Skipping."
   exit 2
@@ -762,6 +769,7 @@ fi
 # end-of-run push carries it, or on an earlier way out push_if_ahead.
 HEAD_BEFORE_HOOK=""
 push_iteration() {
+  bureau_ticket_checkpoint "$ISSUE"
   if [ -n "$OPEN_PR_AT_START" ]; then
     echo "  push deferred ($1): PR #$OPEN_PR_AT_START is open, the end-of-run push carries the work"
   else
@@ -789,9 +797,13 @@ EXIT_PUSH_ARMED=1
 IMPLEMENT_GATE_TMP=$(mktemp -d)
 IMPLEMENT_GATE_CONTEXT="$IMPLEMENT_GATE_TMP/context.json"
 _push_on_exit() {
+  local rc=$?
   rm -rf "$IMPLEMENT_GATE_TMP"
-  [ "$EXIT_PUSH_ARMED" = 1 ] || return 0
-  push_if_ahead "the stage ends before its end-of-run push" "${HEAD_BEFORE_HOOK:-HEAD}"
+  [ "$EXIT_PUSH_ARMED" = 1 ] || return "$rc"
+  # Preserve commits already made, including on withdrawal or a signal. This
+  # best-effort push must not refresh the ticket or replace the stage's exit.
+  ( push_if_ahead "the stage ends before its end-of-run push" "${HEAD_BEFORE_HOOK:-HEAD}" ) || true
+  return "$rc"
 }
 trap _push_on_exit EXIT
 
@@ -870,6 +882,8 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   RESULT=$(BUREAU_STAGE_TIMEOUT="$TOTAL_TIMEOUT" "${CLAUDE[@]}" --append-system-prompt "$IMPL_SYSTEM" "/goal $GOAL_CONDITION")
   CLAUDE_EXIT=$?
   set -e
+  [ "$CLAUDE_EXIT" != 130 ] || exit 130
+  bureau_ticket_checkpoint "$ISSUE" latched
   [ "$CLAUDE_EXIT" = 0 ] || exit "$CLAUDE_EXIT"
 
   record_stage_cost "$RESULT" "$ISSUE" "implement"
@@ -1046,6 +1060,11 @@ At the end of your work, emit a single fenced json block so the shell can summar
   RESULT=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-implement.schema.json" --gate-context "$IMPLEMENT_GATE_CONTEXT" "$PROMPT")
   CLAUDE_EXIT=$?
   set -e
+  if [ "$CLAUDE_EXIT" = 130 ]; then
+    push_if_ahead "provider exit 130"
+    exit 130
+  fi
+  bureau_ticket_checkpoint "$ISSUE" latched
   commit_codex_changes implement "$ISSUE" "$IMPLEMENT_GATE_CONTEXT"
   # 124 (the pass hit its time limit) goes on below like any pass; every other
   # non-zero exit ends the stage with its code, after pushing every commit
@@ -1285,6 +1304,7 @@ AHEAD_OF_ORIGIN=$(bureau_number git.ahead_of_origin "${AHEAD_READ:-1}" 1 0 99999
 if [ "$POST_IMPLEMENT_HEAD_REWRITTEN" = 1 ]; then
   push_if_ahead "the run's commits, without the hook's rewrite" "$HEAD_BEFORE_HOOK"
 fi
+bureau_ticket_checkpoint "$ISSUE"
 EXIT_PUSH_ARMED=0
 # A failed push here is retried once after a short wait. If it still fails,
 # the branch is fetched from origin (a rejected push does not update
@@ -1352,6 +1372,7 @@ if [ "$SANDBOX_GATE_PENDING" = 1 ] && [ "$STATUS" = "COMPLETE" ]; then
   OUTSIDE_RC=0
   OUTSIDE_GATE=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" codex_gate_run implement "$IMPLEMENT_GATE_PLAN") || OUTSIDE_RC=$?
   [ "$OUTSIDE_RC" != 130 ] || exit 130
+  bureau_ticket_checkpoint "$ISSUE"
   [ "$OUTSIDE_RC" = 0 ] || OUTSIDE_GATE='{"green":false,"logs":[]}'
   if [ "$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green')" = true ]; then
     GATE_LINE="shell gate outside the Codex sandbox green: the run continues as COMPLETE"
@@ -1388,6 +1409,7 @@ case "$STATUS" in
     fi
 
     PR_URL=$(open_or_update_pr_ready "$ISSUE" "$ISSUE_TITLE")
+    bureau_ticket_checkpoint "$ISSUE" latched
     bureau_record_pr_url "$PR_URL" || true
     post_comment "$ISSUE" "$(bureau_comment_projection "$(build_summary_comment COMPLETE "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")")"
     move_issue "$ISSUE" "$NEXT_STATE_ID"
@@ -1405,9 +1427,11 @@ case "$STATUS" in
     # on the PR, once the PR is sure to exist.
     if [ "$STATUS" = "PARTIAL" ] && [ "$COMMITS_TOTAL" -gt 0 ]; then
       PR_URL=$(open_or_update_pr_ready "$ISSUE" "$ISSUE_TITLE")
+      bureau_ticket_checkpoint "$ISSUE" latched
       bureau_record_pr_url "$PR_URL" || true
     else
       PR_URL=$(open_or_update_pr_draft "$ISSUE" "$ISSUE_TITLE")
+      bureau_ticket_checkpoint "$ISSUE" latched
       bureau_record_pr_url "$PR_URL" || true
     fi
     if [ "$STATUS" = "CI_MARKER" ]; then

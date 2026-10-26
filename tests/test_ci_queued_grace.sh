@@ -236,6 +236,7 @@ poll() {
     preselect_issue() { echo "$ISSUE"; }
     get_issue_branch() { echo test-branch; }
     emit_event() { :; }
+    bureau_ticket_checkpoint() { :; } # Real withdrawal: test_ticket_kill_switch.sh.
     bureau_merge_is_manual() { return 1; }
     stop_before_merge_was_asked() { return 1; }
     run_script merge-pipeline.sh "Merge" "$Q/wt"' ) > /dev/null 2>&1 || true

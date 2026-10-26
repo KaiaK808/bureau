@@ -150,6 +150,7 @@ fi
 echo "  Rebasing $BRANCH onto origin/main..."
 if git rebase origin/main; then
   echo "  Rebase succeeded — force-pushing with lease."
+  bureau_ticket_checkpoint "$ISSUE"
   if git push --force-with-lease origin "HEAD:$BRANCH"; then
     post_comment "$ISSUE" "🔄 Rebased \`$BRANCH\` onto \`main\` and force-pushed (\`--force-with-lease\`). Routing back to Build Review for re-check."
     move_issue "$ISSUE" "$BUREAU_STATE_BUILD_REVIEW"

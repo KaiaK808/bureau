@@ -15,6 +15,8 @@ BUREAU_POLL_INTERVAL=1
 BUREAU_TEAM_NAME=Test
 BUREAU_TEAM_KEY=EXP
 bureau_load_env() { :; }
+# Withdrawal uses the real transport in test_ticket_kill_switch.sh.
+bureau_ticket_checkpoint() { :; }
 bureau_is_paused() { return 1; }
 precondition_linear() { :; }
 agent_enabled() { [ "$1" = spec ]; }

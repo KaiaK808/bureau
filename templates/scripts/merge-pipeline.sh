@@ -545,6 +545,7 @@ $BLOCKER_LINES"
   if [ -n "$LAST_BOT_BODY" ] && [ "$CURRENT_KEY" = "$LAST_KEY" ]; then
     echo "  Blockers unchanged since last bot comment — skipping post."
   else
+    bureau_ticket_checkpoint "$ISSUE"
     gh pr comment "$PR_NUMBER" --body "$NEW_BODY" || true
     echo "  Posted blocker comment."
   fi
@@ -635,9 +636,11 @@ _merge_pr() {
       _subject=$(sanitize_ci_markers "$_title")
       _mbody=$(build_merge_body "$_title" "$_body" && printf x) || return 1
       _mbody=${_mbody%x}
+      bureau_ticket_checkpoint "$ISSUE"
       gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" --subject "$_subject" --body "$_mbody"
       ;;
     *)
+      bureau_ticket_checkpoint "$ISSUE"
       gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD"
       ;;
   esac

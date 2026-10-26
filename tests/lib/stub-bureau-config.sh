@@ -259,3 +259,7 @@ bureau_get() {
 # .agents.merge_mode through bureau_get above, so it comes last.
 # shellcheck source=/dev/null
 source "$_BUREAU_SCRIPTS_DIR/merge-policy.sh"
+
+# Withdrawal is exercised with real Linear transport in test_ticket_kill_switch.sh.
+bureau_ticket_checkpoint() { :; }
+bureau_ticket_stopped() { return 1; }

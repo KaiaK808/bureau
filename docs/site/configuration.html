@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3f3d7da589cc0948f157924425e863d279c6a3ab46fb8cce2220951d70eb7ab9">
+<meta name="bureau-source-sha256" content="2f5be928255d435d1828f59ff5bb332262f9aac8e8a0d898297551894be3d0c1">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -146,6 +146,14 @@ state machine entirely</td>
 <td>optional</td>
 <td>Required if <code>agents.merge: true</code> (gated merge stage
 between Build Review and Done)</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.cancelled</code>,
+<code>.canceled</code>, <code>.duplicate</code></td>
+<td>UUID</td>
+<td>optional</td>
+<td>Ticket withdrawal checkpoints recognize these configured terminal
+IDs as exit 26. Unconfigured inactive IDs still stop, with 25</td>
 </tr>
 <tr>
 <td><code>linear.labels.lane2.id</code></td>
@@ -324,9 +332,10 @@ pushes the commit the command started from, when origin lacks it, never
 the rewritten HEAD, and confirms it the same way. These pushes run in
 the stage's own process group, which the runtime stops on an interrupt
 and kills when its stop grace ends, so a push that hangs on a remote
-cannot hold a stop longer than that grace. A process killed outright
-(SIGKILL, a host crash) pushes nothing, and its commits stay in the
-worktree</td>
+cannot hold a stop longer than that grace. Confirmed ticket withdrawal
+suppresses these pushes and preserves local work. A process killed
+outright (SIGKILL, a host crash) pushes nothing, and its commits stay in
+the worktree</td>
 </tr>
 <tr>
 <td><code>agents.qa</code></td>
@@ -583,6 +592,26 @@ base, command, <code>repo.untrusted_env</code> and
 <code>0</code> switches the holds off (the ticket is picked on every
 poll, as before v3.2). Read by the same rule as
 <code>merge_min_required_checks</code> (default <code>3600</code>)</td>
+</tr>
+<tr>
+<td><code>agents.ticket_active_states</code></td>
+<td>array of state keys</td>
+<td>configured active workflow states</td>
+<td>Background ticket withdrawal boundary. Absent/null includes
+configured <code>triage</code>, <code>spec</code>,
+<code>spec_review</code>, <code>design</code>, <code>copy</code>,
+<code>build</code>, <code>qa</code>, <code>build_review</code>,
+<code>merge</code>. An explicit list replaces that set, e.g.
+<code>["build", "qa", "build_review", "merge"]</code>; <code>[]</code>
+stops all tickets. Keys resolve through
+<code>linear.teams[0].states</code> and must have nonempty string IDs;
+invalid lists or unknown keys stop with 24. State display names never
+authorize work. Configured <code>done</code> always stops with 0;
+<code>cancelled</code>, <code>canceled</code>, <code>duplicate</code>
+stop with 26; other IDs outside the set stop with 25. This controls
+cooperative background checkpoints, not the app prepare/finish protocol.
+Resync scripts and restart drivers after reconciling installation
+drift.</td>
 </tr>
 <tr>
 <td><code>agents.model</code></td>

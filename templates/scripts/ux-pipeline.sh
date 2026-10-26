@@ -39,6 +39,7 @@ fi
 bureau_stage_enter "$ISSUE" "$@"
 
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
+bureau_ticket_checkpoint "$ISSUE" latched
 if [ "$ACTUAL_STATE" != "Design" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Design'. Skipping."
   exit 2
@@ -204,6 +205,7 @@ At the end, emit a fenced json block. \`components_net_new\` MUST include prop s
   \"summary\": \"\"
 }
 \`\`\`")
+bureau_ticket_checkpoint "$ISSUE" latched
 echo "$UX_RESULT"
 
 echo ""
@@ -220,6 +222,7 @@ git commit -m "$ISSUE: design artifacts" -m "Bureau-Generated: true" --allow-emp
 if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
   echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
 else
+  bureau_ticket_checkpoint "$ISSUE"
   git push origin HEAD
 fi
 
