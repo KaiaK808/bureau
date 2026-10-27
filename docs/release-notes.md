@@ -150,7 +150,7 @@ To roll back, stop every driver, select tag `v3.4.1` in the source skill checkou
 
 The maintainer's release validation record reports each PR reviewed by Codex before push. CI was judged at the top of the stack: [#93](https://github.com/KaiaK808/bureau/pull/93) at head `9842550` is green on all 10 shards (four `ubuntu-latest`, six `macos-latest`). `main` at `56d4170` equals that tested tree plus #83's 15-file ADR change (14 Markdown files and `tests/test_adrs.sh`). The full suite also ran locally on macOS, 151/151 at `950a5d9`, before the sharding commit. An Ubuntu 24.04 container run matched PR 1's container baseline. Provider calls are faked in tests. No installation has run v3.5.0 before the release, and there is no release candidate. Release preparation changes documentation only.
 
-<!-- main CI result pending -->
+GitHub CI on `main` at `56d4170` is green on all 10 shards ([run 40573763078](https://github.com/KaiaK808/bureau/actions/runs/40573763078)), the first CI run that includes `tests/test_adrs.sh`.
 
 See [current release status](releases.md#current-release-status). The pending main-branch CI result remains for the maintainer to record.
 
