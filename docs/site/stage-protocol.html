@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d4d87f3b804c9298fbcf08834e5a1c1350ae76435d973a16f8bf77a281b235bc">
+<meta name="bureau-source-sha256" content="78e38cbdb3836c69a5372381060d65cb4393f7c0a00ad11521e5ba0fa020628b">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -110,7 +110,248 @@ as safe.</p>
 <p><code>status</code> is read-only. Shepherd's dry run describes a
 requested <code>--from-stage</code> without executing it and does not
 authenticate a model, claim an issue, or invoke a stage. Use these
-inspection paths before starting work.</p></main>
+inspection paths before starting work.</p>
+<h2 id="versioned-background-evidence">Versioned background
+evidence</h2>
+<p><code>bureau-evidence.py</code> owns a metadata-only evidence model
+(<code>schema_version: 1</code>) under
+<code>&lt;git common dir&gt;/bureau/evidence/v1/</code>, shared by
+linked worktrees. Background <code>exec</code> attempts to record a run
+and each nested worker/stage before preparation. Nested execution
+retains the outer run ID and gives every attempt a unique ID and parent
+ID. Parallel specialist calls have separate provider attempt IDs and
+phases (<code>correctness</code>, <code>security</code>,
+<code>performance</code>, <code>verdict</code>). App prepare/finish
+records retain their existing format and location.</p>
+<p>Evidence is observational. Manifest/attempt, gate, PR pointer, wait
+and retention exceptions are caught at best-effort boundaries in startup
+and finalization; the tested failures preserve stage authorization,
+routing and ordinary exits. Python's optional warnings use unbuffered fd
+2 writes and swallow write errors, leaving nothing to flush again at
+shutdown. Bash evidence and review-cleanup diagnostics run in protected
+subshells: a closed stderr reader can terminate that write with SIGPIPE
+without terminating the stage. Merge capture also protects the
+redirection itself, including diagnostics Bash emits when the
+destination cannot be opened. Closed-reader shell/routing and Python
+finalization fixtures cover exits 0, 14, 25 and 124, including
+unopenable merge capture in the production <code>|| true</code> context.
+Invalid records from any ticket are isolated individually: when removal
+succeeds, quarantine retains only size, SHA-256 and observation time,
+with no copy of the bad bytes. Unreadable records are skipped. Python
+and the common Bash evidence wrapper cap warnings at once per process;
+merge capture and review cleanup have their own protected diagnostics.
+ENOSPC, permission errors and lock contention leave work running.
+Evidence locks wait at most 250 ms. <code>waits</code> itself is
+read-only and skips invalid records without quarantining them.</p>
+<p>The sole mandatory evidence write is a receipt before forwarding a
+successful provider result. If that persistence fails, including when
+the protected store has no capacity for it, the adapter follows its
+existing error path and forwards no success. A receipt does not require
+a manifest or manifest link to succeed. Error/timeout/cancellation
+receipts, manifest links, pruning and provider diagnostic metadata are
+best effort; their failure preserves the original outcome.</p>
+<p>Updates use an OS file lock and atomic replacement; JSON writes fsync
+the file and containing directory. New directories use 0700 and files
+0600. This is local coordination, not a cross-host lock or tamper-proof
+audit trail.</p>
+<p><strong>Known limits:</strong> The tested failures do not cover every
+way storage or a process can fail. Abrupt termination, power loss, a
+filesystem that does not honor syncs, or unusual I/O errors while the
+interpreter shuts down may still lose evidence or change an exit.
+External edits and separate hosts are outside the store's lock. Sweep
+bounds require the documented clock, readable tickets and dispatcher
+cadence; stalled dispatchers, changing ticket sets and other restart
+patterns have no such bound. When selection switches between persisted
+order and fallback rotation, the rotation can start out of phase, so
+covering every ticket can take one sweep more than N (seen with six
+tickets at the default 30-minute cadence: seven sweeps).</p>
+<h3 id="privacy-contract">Privacy contract</h3>
+<p>The shared store retains allowlisted identity/measurement fields and
+digests only. It contains no raw logs, excerpts, command text, ticket
+descriptions, specialist prose, review comments or structured-result
+free text. There is no excerpt option. Shell helpers still run through
+<code>bureau_without_secrets</code>, with Bureau-owned secrets and their
+carriers removed; because no source text is retained, privacy does not
+depend on finding every token pattern. Arbitrary phase/cause/actor/PR
+URL text cannot become a diagnostic text channel: phases and causes
+outside the vocabulary are digested, reasons are digested, actors use
+the supported vocabulary, and PR metadata keeps only the number.</p>
+<table>
+<thead>
+<tr>
+<th>Record</th>
+<th>Fields (version 1)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Receipt:
+<code>runs/RUN_ID/receipts/PROVIDER_ATTEMPT_ID.json</code></td>
+<td><code>schema_version</code>, <code>record_type</code>,
+run/provider/stage attempt IDs, issue, stage, phase, provider, schema
+SHA-256, normalized/provider exits, outcome, start/end HEAD, start/end
+times, original <code>provider_logs</code> and <code>transcript</code>
+pointers. <code>structured_result</code> is always null;
+<code>result_sha256</code> is the SHA-256 of canonical structured JSON,
+or null when absent.</td>
+</tr>
+<tr>
+<td>Manifest: <code>runs/RUN_ID/manifest.json</code></td>
+<td>Run/issue identity, workspace pointer, start/end times, start/final
+HEAD, normalized exit, PR number, attempts.</td>
+</tr>
+<tr>
+<td>Attempt in manifest</td>
+<td>Attempt/parent IDs, stage/phase, workspace pointer, start/end times
+and HEADs, normalized exit, relative receipt paths, gate metadata and PR
+number. Worker HEAD can be null before creation. The run's final HEAD
+follows its last completed worker/stage.</td>
+</tr>
+<tr>
+<td>Gate/artifact metadata in attempt</td>
+<td><code>kind</code>, checked <code>head</code>, <code>end_head</code>,
+<code>command_id</code>, command SHA-256, normalized exit, recorded
+time, full-stream byte count and SHA-256. IDs name the configured role
+(<code>repo.test_command</code>, <code>review.build</code>,
+<code>qa.test</code>, <code>review.artifact</code>,
+<code>qa.summary</code>, or <code>configured-command</code>); command
+text and filenames are not copied. Artifacts have null HEAD/exit and
+imply no gate pass.</td>
+</tr>
+<tr>
+<td>Wait: <code>waits/WAIT_ID.json</code></td>
+<td>Wait/issue/run IDs, cause key, kind, reason SHA-256, responsible
+actor, stage, exit, PR number and boundary generation when known, state,
+first reached/last observed/last checked times, resolved time,
+resolution observation time/basis and reached/resolved events.</td>
+</tr>
+<tr>
+<td>Ticket: <code>tickets/ISSUE.json</code></td>
+<td>Issue identity, first/last observation and terminal observation
+time.</td>
+</tr>
+<tr>
+<td>Quarantine digest</td>
+<td>Record type, observation time, original size and SHA-256 only.</td>
+</tr>
+</tbody>
+</table>
+<p>Timestamps are UTC Unix seconds. Missing HEADs and unknown event
+times are null, never inferred from commits. Gate streams and review
+artifacts are hashed before temporary directories/worktrees are cleaned,
+without retaining any source bytes. Provider prompt/output/transcript
+files remain in their existing locations, outside this store and its
+retention policy; the store only points at them. Those original files
+may contain private content and may disappear independently.</p>
+<p>Receipt reconciliation requires the exact run, provider attempt,
+stage attempt, ticket, stage, phase, schema and current HEAD, and both
+exits must be zero. It reads the original provider result through its
+pointer, checks the full result digest and validates the schema again. A
+missing or changed original fails recovery; no free-text result is
+reconstructed from metadata, a prior receipt or Git history.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py status <span class="at">--run</span> RUN_ID</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits <span class="at">--issue</span> TEAM-123</span></code></pre></div>
+<p><code>status --run</code> reads an app record when present, otherwise
+the background manifest. <code>waits</code> makes no service calls.
+Waiting seconds/share count overlapping intervals once over the retained
+local observation period, clipped to 30 days. Unknown ends use the first
+observation that the wait cleared: these are observed upper bounds, not
+exact historical lead-time metrics.</p>
+<h3 id="waiting-lifecycle-and-observation">Waiting lifecycle and
+observation</h3>
+<p>Wait keys identify a cause independently of the run.
+<code>mark_needs_human</code> opens a typed wait before attempting
+publication, including failed publication/local holds. Exit 20 opens an
+approval decision; 21 opens an ownership/resource wait. Manual Merge
+records the approved PR and generation; automatic Merge opens a
+dependency wait for its worker. Gate waits belong to CI/gate owners or
+the repository maintainer. Supported kinds are decision, dependency,
+compliance, resource and technical; an exit code alone does not identify
+every cause.</p>
+<p>Repeated refusals retain the wait ID, first reached time and reached
+event. Acquiring a lease does not resolve a preparation refusal:
+ownership closes only after successful stage/worker execution. Approval
+PR observations close only their matching boundary generation, after
+<code>resume(expected=record)</code> actually removes that boundary.
+Replacing a generation resolves its predecessor as an observed
+supersession; a stale PR cannot close the replacement or unrelated
+waits. An authoritative timestamp before the wait (or in the future) is
+rejected, leaving the wait open.</p>
+<p>Each bounded tick and continuous queue iteration attempts up to four
+distinct tickets with open waits, even with manual merge and disabled
+merge/rebase agents. Only an attempted read advances its persisted
+cursor, including failures/timeouts; selection leaves unvisited cursors
+unchanged. Each attempted ticket updates its matching waits
+independently: a refused larger record does not stop a smaller writable
+cursor from advancing. Selection reserves room for the next timestamp's
+full encoding, then writes and reads back the oldest cursor unchanged to
+check persistence. When that succeeds, oldest persisted cursors take
+priority across fresh processes; rotation never overrides them. If the
+cursor cannot round-trip, a retained Python store uses in-memory attempt
+order and shell dispatchers pass their in-memory sweep count into each
+fresh Python invocation. Fresh shell ticks seed that fallback from the
+current time divided by the configured
+<code>agents.poll_interval_minutes</code> in seconds, so polls at that
+cadence advance one turn, including ordinary 30-minute polls. For a
+stable set of N readable open-wait tickets, an advancing clock and at
+least one read started per sweep, persisted cursors cover every ticket
+within N sweeps while selection stays on persisted order (see Known
+limits for the switch to fallback rotation); refused writes retain the
+same bound in a continuous dispatcher or fresh ticks at the configured
+cadence. Arbitrary restarts or other external polling cadences have no
+cross-process fallback bound. The pass has a shared 10-second network
+budget and performs no state, label or PR mutation and no provider work.
+A terminal Linear snapshot resolves only waits captured for that
+observation. For a PR-linked approval, a matching merged PR can close
+that approval even while the ticket remains at Merge. Concurrent
+boundary replacement is checked again after the remote read.</p>
+<p>Without authoritative history, <code>resolved_at</code> and the
+resolved event's <code>at</code> remain null; only observation times are
+recorded. Linear <code>completedAt</code>/<code>canceledAt</code>, when
+supplied by its terminal snapshot, or GitHub <code>mergedAt</code> can
+supply an exact end. An unrelated old PR merge never establishes that a
+newer ticket wait ended. Clearing a hold after publishing its label does
+not itself resolve the human wait.</p>
+<h3 id="retention-and-global-limits">Retention and global limits</h3>
+<p>On writes, evictable completed runs expire after 30 days or 128
+completed runs. Resolved waits and inactive ticket observations expire
+after 30 days. Global storage additionally has a <strong>16 MiB total
+byte cap and 4,096 file cap</strong>, covering manifests, receipts,
+waits, ticket records, quarantine digests and atomic staging leftovers
+(the empty lock file is excluded). A manifest includes its attempt/gate
+entries in this byte budget. Before allocation, a write reserves its
+full temporary size and one additional file slot, including
+unchanged/shrinking replacements. Failed cleanup attempts to discard the
+temporary payload; an undeletable <code>.tmp</code> remains an
+uncommitted file within that reservation and is never read as a record.
+Pruning retries its removal and also recognizes legacy staging names.
+Under capacity pressure, the oldest completed data is removed first;
+deleting a run removes its manifest and receipts together. Resolved
+waits, inactive observations and quarantine digests are also eligible by
+age.</p>
+<p>Active/interrupted runs, open waits, and runs referenced by open
+waits are never evicted. When protected data leaves no staging capacity,
+optional writes (even unchanged replacements) skip with a warning; a
+success receipt that cannot fit fails persistence and prevents success
+forwarding. Any housekeeping exception, including an undeletable staging
+leftover, also leaves capacity unconfirmed: optional writes skip and a
+mandatory success receipt fails closed. These reservations prevent
+writes from taking an in-budget store over its cap; an already oversized
+store containing protected or undeletable files still requires operator
+inspection. Provider originals are outside this cap; this is not a disk
+quota on provider transcripts. Waiting shares describe the retained
+observation window, not discarded history.</p>
+<p><strong>Upgrade:</strong> resync all scripts together, including
+<code>bureau-evidence.py</code>, and restart background drivers. No
+configuration migration or history backfill is required; app records
+stay compatible. This unreleased metadata-only contract replaces PR 3's
+earlier raw-copy format. Before using it with a pre-fix evidence store,
+remove the old <code>&lt;git common dir&gt;/bureau/evidence/v1/</code>
+store after inspecting any active work: previously copied private bytes
+are not made safe by an upgrade, and no raw history is migrated. Fixture
+qualification uses fake services/providers and local Git, not a live
+adopter rollout.</p></main>
 </div>
 </body>
 </html>

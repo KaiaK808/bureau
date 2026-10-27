@@ -1,8 +1,10 @@
 """Real bounded ticks/stages/ownership/picker; only external services are faked."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -14,11 +16,24 @@ import git_maintenance
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+def datetime_from_epoch(value):
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(value,timezone.utc).isoformat().replace('+00:00','Z')
+
+
+def load_script(name, path):
+    spec=importlib.util.spec_from_file_location(name,path)
+    module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    return module
+
 CURL = r'''
 import json, os, pathlib, re, sys
 path = pathlib.Path(os.environ['LINEAR_FIXTURE'])
 items = json.loads(path.read_text())
 payload = json.loads(sys.argv[sys.argv.index('-d') + 1]); query = payload['query']; variables = payload.get('variables', {})
+if 'completedAt canceledAt' in query and os.environ.get('WAIT_QUERY_LOG'):
+    with open(os.environ['WAIT_QUERY_LOG'],'a') as out: out.write(query+'\n')
 if 'viewer' in query:
     result = {'viewer': {'id': 'viewer'}}
 elif 'issueLabels' in query:
@@ -49,7 +64,9 @@ import json, os, pathlib, subprocess, sys
 args = sys.argv[1:]
 with open(os.environ['GH_LOG'],'a') as out: out.write(json.dumps(args)+'\n')
 if args[:2] == ['pr', 'list']:
-    branch = args[args.index('--head')+1]; print(int(branch.split('-')[0]))
+    branch = args[args.index('--head')+1]; number=int(branch.split('-')[0])
+    if args[args.index('--json')+1]=='number,url': print(json.dumps({'number':number,'url':f'https://example.invalid/pull/{number}'}))
+    else: print(number)
 elif args[:2] == ['pr', 'view']:
     number = int(args[2]); fields = args[args.index('--json')+1]
     metadata = {'state':'OPEN','baseRefName':os.environ.get('PR_BASE_REF','main'),'headRefName':f'{number:03d}-task'}
@@ -59,7 +76,7 @@ elif args[:2] == ['pr', 'view']:
         else:
             if os.environ.get('FAIL_GH_HEAD') == '1': sys.exit(1)
             print(json.dumps({'state':'OPEN'}))
-    elif fields in ('baseRefName,headRefName','state,baseRefName','state,baseRefName,headRefName'):
+    elif fields in ('baseRefName,headRefName','state,baseRefName,mergedAt','state,baseRefName,headRefName','state,mergedAt'):
         if os.environ.get('FAIL_GH_HEAD') == '1': sys.exit(1)
         print(json.dumps({key:metadata[key] for key in fields.split(',') if key in metadata}))
     elif fields == 'url': print(f'https://example.invalid/pull/{number}')
@@ -138,6 +155,8 @@ class SupervisionPipelineTests(unittest.TestCase):
         (self.repo/'.gitignore').write_text('.bureau.json\n.env\nlogs/\n.worktrees/\n__pycache__/\n')
         (self.repo/'tests').mkdir(); (self.repo/'tests/test_smoke.py').write_text('import unittest\nclass Smoke(unittest.TestCase):\n    def test_ok(self): self.assertEqual(2 + 3, 5)\n')
         shutil.copytree(ROOT/'templates/scripts',self.repo/'scripts',ignore=shutil.ignore_patterns('__pycache__'))
+        if os.environ.get('BUREAU_TEST_TICK_SCRIPT'):
+            shutil.copy(os.environ['BUREAU_TEST_TICK_SCRIPT'],self.repo/'scripts/bureau-tick.sh')
         self.git('add','.'); self.git('commit','-qm','test: fixture main')
         self.origin = root/'origin.git'; subprocess.run(['git','init','-q','--bare',str(self.origin)],check=True)
         subprocess.run(['git','--git-dir',str(self.origin),*git_maintenance.OFF_CONFIG],check=True)  # for receive-pack behind a push
@@ -304,6 +323,170 @@ class SupervisionPipelineTests(unittest.TestCase):
         count=len(self.models());failed=self.run_tick(18,{'FAIL_GH_HEAD':'1'});self.assertEqual(failed['outcome'],'failed');self.assertEqual(len(self.models()),count)
         self.assertNotIn(['pr','merge'],[json.loads(line)[:2] for line in self.gh_log.read_text().splitlines()])
         self.assertEqual(json.loads((self.repo/'.git/bureau/leases.json').read_text()),{})
+        manifests=[json.loads(p.read_text()) for p in (self.repo/'.git/bureau/evidence/v1/runs').glob('*/manifest.json')]
+        self.assertTrue(manifests)
+        reviews=[a for m in manifests for a in m['attempts'] if a['stage']=='code_review' and a['phase']=='stage' and a['receipts']]
+        self.assertTrue(reviews)
+        evidence=self.repo/'.git/bureau/evidence/v1'
+        for review in reviews:
+            phases={json.loads((evidence/path).read_text())['phase'] for path in review['receipts']}
+            self.assertEqual(phases,{'correctness','security','performance','verdict'})
+            gates=[g for g in review['gates'] if g['kind']=='gate']
+            self.assertEqual(len(gates),1)
+            self.assertNotIn('path',gates[0]); self.assertTrue(gates[0]['sha256'])
+            self.assertEqual(gates[0]['normalized_exit'],0)
+            self.assertTrue(gates[0]['head'])
+            self.assertGreater(review['pr']['number'],0); self.assertNotIn('url',review['pr'])
+            # The worker has already detached/released and REVIEW_TMP is gone.
+            self.assertTrue(any(g['kind']=='artifact' for g in review['gates']))
+        qas=[a for m in manifests for a in m['attempts'] if a['stage']=='qa' and a['phase']=='stage']
+        self.assertEqual(len(qas),1)
+        qa=qas[0]
+        self.assertEqual(qa['pr']['number'],3)
+        self.assertEqual(len([g for g in qa['gates'] if g['kind']=='gate']),2)
+        self.assertTrue(any(g['kind']=='artifact' and g['command_id']=='qa.summary' for g in qa['gates']))
+        shutil.rmtree(Path(qa['workspace'])/'logs',ignore_errors=True)
+        self.assertTrue(all(g['sha256'] and 'path' not in g for g in qa['gates']))
+
+    def test_manual_merge_observation_resolves_approval_with_authoritative_time(self):
+        sup=load_script('supervision_waits',ROOT/'templates/scripts/bureau-supervision.py')
+        common=self.repo/'.git/bureau'; now=[200.0]
+        evidence=sup.e.Store(common,clock=lambda:now[0])
+        evidence.open_wait('T-1','approval','decision','Review approved','maintainer',code=20,generation_id='a'*32)
+        detail={'identifier':'T-1','title':'Task','description':'Original','labels':[]}
+        head=self.git('rev-parse','HEAD')
+        sup.save(common/'review-stops.json',{'T-1':dict(branch='001-task',state='Build Review',head=head,base=head,
+                  pr=1,revision='a'*32,ticket_hash=sup.fingerprint(detail,'T-1'))})
+        now[0]=300
+        with patch.object(sup.e,'Store',return_value=evidence), patch.object(sup.subprocess,'check_output',
+                   return_value=json.dumps({'state':'MERGED','mergedAt':'1970-01-01T00:04:10Z'})):
+            result=sup.check(self.repo,common,'T-1','001-task','Build Review',detail)
+        self.assertFalse(result['stopped'])
+        wait=next(evidence.root.joinpath('waits').glob('*.json'))
+        value=json.loads(wait.read_text())
+        self.assertEqual(value['resolved_at'],250)
+        self.assertEqual(value['resolution_observed_at'],300)
+        self.assertEqual(evidence.waits('T-1')['tickets'][0]['waiting_seconds'],50)
+
+    def test_stale_pr_observation_cannot_resolve_replacement_boundary(self):
+        sup=load_script('stale_supervision',Path(os.environ.get('BUREAU_TEST_SUPERVISION_SCRIPT',ROOT/'templates/scripts/bureau-supervision.py')))
+        common=self.repo/'.git/bureau'; now=[100.0]; evidence=sup.e.Store(common,clock=lambda:now[0])
+        detail={'identifier':'T-1','title':'Task','description':'Original','labels':[]}
+        head=self.git('rev-parse','HEAD')
+        old=dict(branch='001-task',state='Build Review',head=head,base=head,pr=1,revision='a'*32,
+                 ticket_hash=sup.fingerprint(detail,'T-1'))
+        evidence.open_wait('T-1','approval','decision','Approved','maintainer',generation_id='a'*32,pr=1)
+        sup.save(common/'review-stops.json',{'T-1':old})
+        new=dict(old,revision='b'*32,pr=2)
+        def racing_observation(*args,**kwargs):
+            now[0]=150
+            sup.save(common/'review-stops.json',{'T-1':new})
+            evidence.open_wait('T-1','approval','decision','Approved newer PR','maintainer',generation_id='b'*32,pr=2)
+            now[0]=200
+            return json.dumps({'state':'MERGED','mergedAt':'1970-01-01T00:02:00Z'})
+        with patch.object(sup.e,'Store',return_value=evidence),patch.object(sup.subprocess,'check_output',side_effect=racing_observation):
+            sup.check(self.repo,common,'T-1','001-task','Build Review',detail)
+        current=evidence.open_waits()
+        self.assertEqual(len(current),1,'stale PR observation resolved a newer wait')
+        self.assertEqual(current[0]['generation'],'b'*32)
+        self.assertEqual(current[0]['reached_at'],150)
+        self.assertEqual(sup.read(common/'review-stops.json')['T-1'],new)
+        period=json.loads((evidence.root/'tickets/T-1.json').read_text())
+        self.assertIsNone(period['terminal_observed_at'])
+
+    def test_matching_pr_observation_only_resolves_its_own_wait_generation(self):
+        sup=load_script('scoped_supervision',ROOT/'templates/scripts/bureau-supervision.py')
+        common=self.repo/'.git/bureau'; now=[100.0]; evidence=sup.e.Store(common,clock=lambda:now[0])
+        detail={'identifier':'T-1','title':'Task','description':'Original','labels':[]}; head=self.git('rev-parse','HEAD')
+        record=dict(branch='001-task',state='Build Review',head=head,base=head,pr=1,revision='a'*32,ticket_hash=sup.fingerprint(detail,'T-1'))
+        evidence.open_wait('T-1','approval','decision','Approved','maintainer',generation_id='a'*32,pr=1)
+        sup.save(common/'review-stops.json',{'T-1':record})
+        now[0]=150; evidence.open_wait('T-1','ownership','resource','Reconcile','workspace-owner')
+        now[0]=200
+        with patch.object(sup.e,'Store',return_value=evidence),patch.object(sup.subprocess,'check_output',return_value=json.dumps({'state':'MERGED','mergedAt':'1970-01-01T00:02:00Z'})):
+            sup.check(self.repo,common,'T-1','001-task','Build Review',detail)
+        self.assertEqual([v['key'] for v in evidence.open_waits()],['ownership'])
+        self.assertIsNone(json.loads((evidence.root/'tickets/T-1.json').read_text())['terminal_observed_at'])
+
+    def test_bounded_wait_sweep_closes_operator_completion_in_both_adopter_profiles(self):
+        import time
+        sup=load_script('sweep_evidence',ROOT/'templates/scripts/bureau-supervision.py')
+        for profile,cap in (('ATV',2),('core',1)):
+            with self.subTest(profile=profile):
+                common=self.repo/'.git/bureau'
+                shutil.rmtree(common/'evidence',ignore_errors=True)
+                now=time.time(); evidence=sup.e.Store(common,clock=lambda:now-100)
+                config=json.loads((self.repo/'.bureau.json').read_text())
+                config['agents'].update({s:False for s in ('merge','rebase','code_review','qa','implement','copy','ux','spec_review','spec')})
+                config['agents'].update(merge_mode='manual',max_concurrent_issues=cap)
+                (self.repo/'.bureau.json').write_text(json.dumps(config))
+                items={}
+                for n in range(1,7):
+                    evidence.clock=lambda n=n:now-100+n
+                    evidence.open_wait(f'T-{n}','approval' if n==2 else 'ownership',
+                                       'decision' if n==2 else 'resource','Operator work','maintainer',
+                                       generation_id='a'*32 if n==2 else None,pr=2 if n==2 else None)
+                    items[f'T-{n}']=dict(self.items['T-1'],identifier=f'T-{n}',id=f'issue-{n}',
+                                        state={'id':'merge' if n in (2,4) else 'done','name':'Merge' if n in (2,4) else 'Done'})
+                items['T-3']['completedAt']=datetime_from_epoch(now-20)
+                self.linear.write_text(json.dumps(items)); before=self.linear.read_bytes()
+                log=self.root/(profile+'-observations')
+                extra={'WAIT_QUERY_LOG':str(log),'PR_REFS_JSON':json.dumps({'state':'MERGED','mergedAt':datetime_from_epoch(now-10)}),
+                       'BUREAU_NO_MERGE':'1','BUREAU_STOP_REQUESTED':'1'}
+                result=self.run_tick(0,extra)
+                self.assertEqual(result['outcome'],'waiting'); self.assertEqual(self.models(),[])
+                self.assertTrue(log.exists(),'wait sweep did not run')
+                self.assertEqual(len(log.read_text().splitlines()),4,'wait sweep exceeded its per-tick ticket bound')
+                checked={'T-'+re.search(r'number: \{ eq: (\d+)',query).group(1) for query in log.read_text().splitlines()}
+                self.assertEqual(len(checked),4,'wait sweep repeated a ticket')
+                records={v['issue']:v for v in (json.loads(p.read_text()) for p in (evidence.root/'waits').glob('*.json'))}
+                self.assertEqual({i for i,v in records.items() if v['state']=='open'},(set(items)-checked)|{'T-4'})
+                self.run_tick(0,extra)
+                self.assertEqual([v['issue'] for v in evidence.open_waits()],['T-4'])
+                records={v['issue']:v for v in (json.loads(p.read_text()) for p in (evidence.root/'waits').glob('*.json'))}
+                self.assertIsNone(records['T-1']['resolved_at'])
+                self.assertAlmostEqual(records['T-2']['resolved_at'],now-10,places=4)
+                self.assertAlmostEqual(records['T-3']['resolved_at'],now-20,places=4)
+                self.assertLessEqual(len(log.read_text().splitlines()),8)
+                self.assertEqual(self.linear.read_bytes(),before,'wait observation mutated Linear')
+                calls=[json.loads(line) for line in self.gh_log.read_text().splitlines()]
+                self.assertTrue(all(call[:2]==['pr','view'] for call in calls))
+
+    def test_real_manual_review_digests_private_artifacts_and_sweeps_done_ticket(self):
+        sup=load_script('private_review_evidence',ROOT/'templates/scripts/bureau-supervision.py')
+        sentinel='PRIVATE_REVIEW_DESCRIPTION_SENTINEL'
+        self.set_merge_mode('manual',merge=False,rebase=False)
+        # The fake provider quotes this into specialist/review artifacts; the
+        # configured build also emits it. The whole shared store is scanned.
+        binary=self.root/'bin/codex'; code=binary.read_text()
+        code=code.replace("'summary':'Fixture review passed'", "'summary':"+repr(sentinel))
+        code=code.replace("'comment':'## Specialist Summaries\\nFixture review passed.'", "'comment':"+repr(sentinel))
+        binary.write_text(code)
+        config=json.loads((self.repo/'.bureau.json').read_text());config['repo']['test_command']='printf '+sentinel
+        (self.repo/'.bureau.json').write_text(json.dumps(config))
+        result=self.run_tick(0); self.assertEqual(result['issue'],'T-1')
+        evidence=sup.e.Store(self.repo/'.git/bureau'); wait=next(v for v in evidence.open_waits() if v['issue']=='T-1')
+        self.assertEqual(wait['pr'],1); self.assertTrue(wait['generation'])
+        for path in evidence.root.rglob('*'):
+            if path.is_file(): self.assertNotIn(sentinel.encode(),path.read_bytes(),'PRIVACY_SENTINEL in '+str(path))
+        self.assertTrue(any(sentinel.encode() in p.read_bytes() for p in (self.repo/'logs/provider-runs').rglob('*') if p.is_file()),'fixture did not actually emit private result text')
+        items=json.loads(self.linear.read_text());items['T-1']['state']={'id':'done','name':'Done'};self.linear.write_text(json.dumps(items))
+        config['agents'].update(code_review=False,qa=False);(self.repo/'.bureau.json').write_text(json.dumps(config))
+        self.run_tick(0)
+        self.assertFalse(any(v['issue']=='T-1' for v in evidence.open_waits()),'manual Done ticket was never observed')
+
+    def test_terminal_observation_without_history_keeps_resolution_time_unknown(self):
+        runtime=self.repo/'scripts/bureau-runtime.py'
+        sup=load_script('supervision_unknown',ROOT/'templates/scripts/bureau-supervision.py')
+        evidence=sup.e.Store(self.repo/'.git/bureau')
+        wait=evidence.open_wait('T-1','approval','decision','Awaiting manual merge','maintainer',code=20)
+        snapshot=dict(self.items['T-1'],state={'id':'done','name':'Done'})
+        result=subprocess.run([sys.executable,str(runtime),'--repo',str(self.repo),'observe','T-1'],
+                              input=json.dumps(snapshot),capture_output=True,text=True,env=self.env)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        value=json.loads((evidence.root/'waits'/ (wait['wait_id']+'.json')).read_text())
+        self.assertEqual(value['state'],'resolved'); self.assertIsNone(value['resolved_at'])
+        self.assertIsNone(value['events'][-1]['at']); self.assertIsNotNone(value['events'][-1]['observed_at'])
 
     # ── agents.merge_mode ────────────────────────────────────────────────
     def set_merge_mode(self, mode, merge_state=True, **agents):
@@ -373,5 +556,75 @@ class SupervisionPipelineTests(unittest.TestCase):
         subprocess.run(['bash','scripts/bureau-tick.sh','--allow-merge'],cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=90)
         self.assertEqual(json.loads((self.repo/'logs/bureau-tick.json').read_text())['stage'],'merge')
 
+
+class WaitingRegisterTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix='bureau waits '); self.addCleanup(self.temp.cleanup)
+        self.module=load_script('waiting_evidence',Path(os.environ.get('BUREAU_TEST_EVIDENCE_SCRIPT',
+                                         ROOT/'templates/scripts/bureau-evidence.py')))
+        self.now=80.0
+        self.store=self.module.Store(Path(self.temp.name)/'bureau',clock=lambda:self.now)
+        self.store.begin_run('a'*32,'T-1','worker','1'*40)
+
+    def wait(self,issue='T-1',key='approval',kind='decision',code=20):
+        return self.store.open_wait(issue,key,kind,'A concrete reason','maintainer',code=code)
+
+    def records(self):
+        return [json.loads(p.read_text()) for p in (self.store.root/'waits').glob('*.json')]
+
+    def test_repeated_stops_preserve_first_reached_across_restart(self):
+        self.now=100; first=self.wait()
+        self.now=130; second=self.wait()
+        self.store=self.module.Store(Path(self.temp.name)/'bureau',clock=lambda:self.now)
+        self.now=160; third=self.wait()
+        self.assertEqual(first['wait_id'],second['wait_id']); self.assertEqual(first['wait_id'],third['wait_id'])
+        self.assertEqual(third['reached_at'],100)
+        self.assertEqual(third['events'],[{'event':'reached','at':100,'run_id':None}])
+        self.assertEqual(third['last_observed_at'],160)
+        self.now=180; self.store.resolve_waits('T-1',['approval'])
+        result=self.store.waits('T-1')['tickets'][0]
+        self.assertEqual(result['waiting_seconds'],80)
+        self.assertAlmostEqual(result['waiting_share'],.8)
+        self.assertEqual(result['open_waits'],[])
+        self.assertIsNone(self.records()[0]['resolved_at'])
+
+    def test_overlapping_waits_count_the_union_and_keep_tickets_separate(self):
+        self.now=100; self.wait()
+        self.now=120; self.wait(key='ci',kind='dependency',code=2)
+        self.wait(issue='T-2',key='ownership',kind='resource',code=21)
+        self.now=150; self.store.resolve_waits('T-1',['approval'])
+        self.now=180; self.store.resolve_waits('T-1',['ci'],resolved_at=170,basis='authoritative-gate-event')
+        result=self.store.waits()
+        first,second=result['tickets']
+        self.assertEqual(first['waiting_seconds'],70); self.assertAlmostEqual(first['waiting_share'],.7)
+        self.assertEqual(first['resolution_times_unknown'],1)
+        self.assertEqual(len(second['open_waits']),1)
+        self.assertEqual(second['open_waits'][0]['responsible_actor'],'maintainer')
+        self.assertEqual(second['open_waits'][0]['kind'],'resource')
+
+    def test_unknown_or_impossible_resolution_time_is_never_invented(self):
+        self.now=100; self.wait(key='policy',kind='compliance',code=25)
+        self.now=200; self.store.resolve_waits('T-1',['policy'],resolved_at=50,terminal=True)
+        value=self.records()[0]
+        self.assertEqual(value['state'],'open','stale resolution timestamp closed wait'); self.assertIsNone(value['resolved_at'])
+        self.assertIsNone(value['resolution_observed_at']); self.assertEqual(len(value['events']),1)
+        self.now=300; self.assertEqual(self.store.waits('T-1')['tickets'][0]['waiting_seconds'],200)
+        self.store.resolve_waits('T-1',['policy'],terminal=True)
+        self.assertIsNone(self.records()[0]['resolved_at'])
+        self.assertEqual(self.records()[0]['resolution_observed_at'],300)
+
+    def test_merge_wait_ticks_keep_evidence_reached_and_existing_backoff_clock(self):
+        sup=load_script('merge_wait_ticks',ROOT/'templates/scripts/bureau-supervision.py')
+        common=Path(self.temp.name)/'bureau'
+        with patch.object(sup.e,'Store',return_value=self.store),patch.object(sup.time,'time',side_effect=lambda:self.now):
+            self.now=100; sup.merge_wait(common,'T-1','branch','1'*40,'not-yet')
+            self.now=150; sup.merge_wait(common,'T-1','branch','1'*40,'not-yet')
+            self.assertEqual(self.records()[0]['reached_at'],100)
+            # stopped_at still drives the original scheduling/backoff behaviour.
+            scheduling=json.loads((common/'merge-gate-waits.json').read_text())['T-1']
+            self.assertEqual(scheduling['stopped_at'],150); self.assertEqual(scheduling['gate_waits'],2)
+            self.now=200; sup.merge_wait(common,'T-1',clear=True)
+        self.assertEqual(self.records()[0]['state'],'resolved')
+        self.assertIsNone(self.records()[0]['resolved_at'])
 
 if __name__=='__main__': unittest.main()

@@ -184,6 +184,7 @@ run_one() {
 
 while true; do
   if bureau_is_paused; then sleep 30; continue; fi
+  if declare -F bureau_sweep_waits >/dev/null; then bureau_sweep_waits || true; fi
   DID_WORK=false
   CAPACITY_WAIT=false
 

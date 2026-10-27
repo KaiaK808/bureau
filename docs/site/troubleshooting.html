@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4a78b1cfad4b6cc2e4ca3a6de40d15f4b1bcb7af0a2b33fe869ea0c730870ec2">
+<meta name="bureau-source-sha256" content="b7efdafe5613c1a2e002ade5cfee3e1622135b1bb25500f7590fb9a8f668f206">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1233,10 +1233,13 @@ project's real check so a red build can reach the verdict. When it is
 set, it wins over the shim and over <code>npm run build</code>; a red
 command (a failure anywhere in a pipe counts, as in QA) turns an APPROVE
 into REQUEST_CHANGES and never softens a BLOCK. The last 20 lines of the
-check are in the stage output. The full output, <code>build.log</code>
-in the review's temporary directory, is kept only when the stage exits
-non-zero; a red check under APPROVE ends in REQUEST_CHANGES with exit 0,
-and the directory is removed.</p>
+check are in the stage output. <code>build.log</code> in the review's
+temporary directory survives only a non-zero stage exit; a red check
+under APPROVE ends in REQUEST_CHANGES with exit 0 and removes that
+directory. Background runs retain only the full-stream SHA-256 and size,
+command ID and command digest, exit and checked/end HEADs in the <a
+href="stage-protocol.html#versioned-background-evidence">shared run
+evidence</a>, independently of temporary/worktree cleanup.</p>
 <p>The check runs in the review worktree. Files it leaves or changes are
 named on stderr, split in two. New files git does not ignore (test
 reports, coverage, bytecode) belong in <code>.gitignore</code>. Tracked

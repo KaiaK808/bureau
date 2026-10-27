@@ -69,6 +69,81 @@ bureau_stop_requested() {
 }
 BUREAU_RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-runtime.py"
 
+# Evidence is observational. A log failure is visible but never changes stage
+# authorization, routing or the existing exit protocol. Provider receipts are
+# stricter: the adapter never forwards a completion it could not persist.
+bureau_evidence() {
+  [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  local evidence_repo="$PWD" configured_repo evidence_warning
+  if configured_repo=$(git rev-parse --show-toplevel 2>/dev/null); then
+    evidence_repo="$configured_repo"
+  elif [ -n "${BUREAU_CONFIG:-}" ] && configured_repo=$(git -C "$(dirname "$BUREAU_CONFIG")" rev-parse --show-toplevel 2>/dev/null); then
+    evidence_repo="$configured_repo"
+  fi
+  evidence_warning=$(bureau_without_secrets python3 -I "$BUREAU_RUNTIME" --repo "$evidence_repo" "$@" 2>&1 >/dev/null) \
+    || evidence_warning=unavailable
+  if [ -n "$evidence_warning" ] && [ "${_BUREAU_EVIDENCE_WARNED:-0}" != 1 ]; then
+    _BUREAU_EVIDENCE_WARNED=1
+    # Contain SIGPIPE as well as write errors; || true alone cannot protect
+    # this stage's shell when stderr's reader has gone away.
+    ( echo 'bureau evidence: WARN: optional evidence unavailable or invalid; work continues' >&2 ) || true
+  fi
+  return 0
+}
+
+bureau_record_gate() {
+  [ -n "${BUREAU_RUN_ID:-}" ] && [ -n "${BUREAU_STAGE_ATTEMPT_ID:-}" ] || return 0
+  local end_head
+  end_head=$(git rev-parse HEAD 2>/dev/null) || end_head=""
+  bureau_evidence evidence-gate --path "$1" --head "$2" --end-head "$end_head" \
+    --command "$3" --command-id "${5:-repo.test_command}" --exit-code "$4" || true
+}
+
+bureau_archive_evidence() {
+  [ -n "${BUREAU_RUN_ID:-}" ] && [ -n "${BUREAU_STAGE_ATTEMPT_ID:-}" ] || return 0
+  local file
+  for file in "$1"/*; do
+    [ -f "$file" ] && [ ! -L "$file" ] || continue
+    bureau_evidence evidence-gate --kind artifact --path "$file" --head '' --end-head '' --command "$2" --command-id review.artifact || true
+  done
+}
+
+bureau_record_pr_url() {
+  if [[ "${1##*/}" =~ ^[0-9]+$ ]]; then
+    bureau_evidence evidence-pr --number "${1##*/}" --url "$1" || true
+  fi
+}
+
+bureau_record_branch_pr() {
+  [ -n "${BUREAU_RUN_ID:-}" ] && [ -n "${BUREAU_STAGE_ATTEMPT_ID:-}" ] || return 0
+  local record number url
+  record=$(gh pr list --head "$1" --json number,url --jq '.[0]' 2>/dev/null) || return 0
+  number=$(printf '%s' "$record" | jq -r 'select(type == "object") | .number // empty' 2>/dev/null) || return 0
+  [[ "$number" =~ ^[0-9]+$ ]] || return 0
+  url=$(printf '%s' "$record" | jq -r '.url // empty' 2>/dev/null) || return 0
+  bureau_evidence evidence-pr --number "$number" --url "$url" || true
+}
+
+bureau_observe_waits() {
+  local common
+  common=$(bureau_common_dir 2>/dev/null) || return 0
+  [ -d "$common/bureau/evidence/v1/waits" ] || return 0
+  printf '%s' "$2" | bureau_evidence observe "$1" || true
+}
+
+# Process-local dispatcher state, never inherited from the caller environment.
+_BUREAU_WAIT_SWEEP_TURN=$(date +%s 2>/dev/null) || _BUREAU_WAIT_SWEEP_TURN=0
+_BUREAU_WAIT_SWEEP_TURN=$(bureau_number evidence.sweep_epoch "$_BUREAU_WAIT_SWEEP_TURN" 0 0 9999999999 2>/dev/null)
+export -n _BUREAU_WAIT_SWEEP_TURN
+bureau_sweep_waits() {
+  local common
+  common=$(bureau_common_dir 2>/dev/null) || return 0
+  [ -d "$common/bureau/evidence/v1/waits" ] || return 0
+  local turn="${_BUREAU_WAIT_SWEEP_TURN:-0}"
+  _BUREAU_WAIT_SWEEP_TURN=$((turn + 1))
+  bureau_evidence observe-open --rotation "$turn" || true
+}
+
 # Re-enter after claiming the issue and checkout. The Python parent owns cleanup,
 # leaving each pipeline's EXIT traps intact. Nested stages reuse the driver's run.
 bureau_stage_enter() {
@@ -135,6 +210,10 @@ BUREAU_COPY_VOICE_FILE=$(bureau_get '.repo.copy_voice_file // empty')
 
 # Agent config
 BUREAU_POLL_INTERVAL=$(_bureau_config_number .agents.poll_interval_minutes 30 1 10080)
+# Seed fresh tick processes in poll-sized buckets: one configured periodic
+# tick advances one turn, rather than aliasing N tickets every N*10 seconds.
+# Persisted cursors take priority; this turn is only the refused-write fallback.
+_BUREAU_WAIT_SWEEP_TURN=$((_BUREAU_WAIT_SWEEP_TURN / (60 * BUREAU_POLL_INTERVAL)))
 BUREAU_WORKBENCH_PANES=$(_bureau_config_number .agents.workbench_panes 2 0 32)
 BUREAU_MAX_REVIEW_CYCLES=$(_bureau_config_number .agents.max_review_cycles 3 0 1000)
 # Code-review diff size at which specialists switch from exhaustive to
@@ -969,6 +1048,9 @@ move_issue() {
   if [ -n "${BUREAU_EXPECTED_STATE_ID:-}" ] && [ "$ref" = "${BUREAU_CURRENT_ISSUE:-}" ]; then
     BUREAU_EXPECTED_STATE_ID="$state_id"
   fi
+  if [ "$state_id" = "${BUREAU_STATE_DONE:-_unset_}" ]; then
+    bureau_evidence wait-resolve "$ref" --terminal --basis observed-terminal-transition || true
+  fi
 }
 
 
@@ -1363,8 +1445,18 @@ bureau_issue_snapshot() {
   local ref="$1" team_key="${1%%-*}" number="${1##*-}"
   local answer
   answer=$(linear_issue_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id identifier title description state { id name } labels { nodes { name } } } } }" "$_BUREAU_SHAPE_ISSUE_STATE") || return $?
-  printf '%s' "$answer" \
-    | jq '.data.issues.nodes[0] // {}'
+  local snapshot
+  snapshot=$(printf '%s' "$answer" | jq '.data.issues.nodes[0] // {}') || return $?
+  bureau_observe_waits "$ref" "$snapshot" || true
+  printf '%s\n' "$snapshot"
+}
+
+# Minimal observation for the bounded wait sweep: no ticket prose and no
+# recursive observation. Completion times are authoritative only when present.
+bureau_wait_snapshot() {
+  local ref="$1" team_key="${1%%-*}" number="${1##*-}" answer
+  answer=$(linear_issue_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { id identifier completedAt canceledAt state { id name } labels { nodes { name } } } } }" "$_BUREAU_SHAPE_ISSUE_STATE") || return $?
+  printf '%s' "$answer" | jq '.data.issues.nodes[0] // {}'
 }
 
 # Canonical names for existing stage guards, resolved from configured UUIDs.
@@ -1592,6 +1684,8 @@ bureau_human_hold() {
 
 mark_needs_human() {
   local issue="$1" stage="$2" stage_exit="${3:-25}" rc=0 dir="" held_at=""
+  bureau_evidence wait-open "$issue" --key "needs-human:$stage" --stage "$stage" --exit-code "$stage_exit" \
+    --kind "${4:-decision}" --reason "${5:-$stage requires human attention}" --actor "${6:-maintainer}" || true
   add_issue_label "$issue" "needs-human" || rc=$?
   if [ "$rc" = 0 ]; then
     if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && dir=$(_needs_human_hold_dir); then
@@ -2313,6 +2407,8 @@ log_escalation() {
 
   emit_event "event=escalation" "stage=$pipeline" "issue=$issue" \
     "cycle=$cycle" "reason=$reason_clean" "pr=${pr:-0}" "branch=${branch:--}"
+  bureau_evidence wait-open "$issue" --key "needs-human:$pipeline" --stage "$pipeline" --kind decision \
+    --reason "$reason" --actor maintainer || true
   return 0
 }
 

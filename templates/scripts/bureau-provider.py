@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Provider adapter: bounded subprocess, stdin prompts, separate evidence and results."""
 import argparse
+import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -13,6 +15,11 @@ import sys
 import tempfile
 import time
 import uuid
+
+sys.dont_write_bytecode = True
+_evidence_spec = importlib.util.spec_from_file_location('bureau_evidence', Path(__file__).resolve().with_name('bureau-evidence.py'))
+e = importlib.util.module_from_spec(_evidence_spec)
+_evidence_spec.loader.exec_module(e)
 
 
 # The values the Claude CLI's --effort accepts.
@@ -304,7 +311,103 @@ def validate(value, schema):
         for v in value: validate(v, schema.get('items', {}))
 
 
+def evidence_store(repo):
+    command = ['git', '-C', str(repo), 'rev-parse', '--git-common-dir']
+    common = subprocess.check_output(command, text=True, env=process_env(command)).strip()
+    return e.Store((repo / common).resolve() / 'bureau')
+
+
+def current_head(repo):
+    command = ['git', '-C', str(repo), 'rev-parse', '--verify', 'HEAD']
+    result = subprocess.run(command, text=True, capture_output=True, env=process_env(command))
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
 def run(options, prompt, system, repo, evidence, schema=None):
+    """Persist the attempt's normalized outcome before handing anything to main."""
+    options.pop('_provider_exit', None)
+    options.pop('_receipt_metadata', None)
+    store = e.observe(evidence_store, repo)
+    run_id = options.setdefault('evidence_run_id', os.environ.get('BUREAU_RUN_ID') or uuid.uuid4().hex)
+    issue = os.environ.get('BUREAU_CURRENT_ISSUE') or None
+    start = e.observe(current_head, repo); started = time.time()
+    if store is not None: e.observe(store.begin_run, run_id, issue, repo, start)
+    stage_attempt = os.environ.get('BUREAU_STAGE_ATTEMPT_ID')
+    standalone = not stage_attempt
+    phase = options.get('phase') or options['stage']
+    if standalone and store is not None:
+        stage_attempt = e.observe(store.begin_attempt, run_id, issue, options['stage'], phase, repo, start) or uuid.uuid4().hex
+    stage_attempt = stage_attempt or uuid.uuid4().hex
+    attempt = uuid.uuid4().hex
+    identity = dict(run_id=run_id, provider_attempt_id=attempt, stage_attempt_id=stage_attempt,
+                    issue=issue, stage=e.tag(options['stage']), phase=e.tag(phase),
+                    schema_sha256=hashlib.sha256(schema.read_bytes()).hexdigest() if schema else None)
+    error = None
+    try:
+        code, text, metadata = _run(options, prompt, system, repo, evidence, schema)
+    except (OSError, ValueError, TypeError, UntrustedEnvError, subprocess.SubprocessError) as exc:
+        error = exc
+        code, text = (24 if isinstance(exc, (PermissionError, UntrustedEnvError)) else 22), ''
+        metadata = dict(outcome='invalid-result', error=str(exc))
+    end = e.observe(current_head, repo)
+    result_text = json.loads(text)['result'] if code == 0 and metadata.get('cost_envelope') else text
+    result = structured(result_text) if code == 0 and schema else None
+    if result is not None: validate(result, json.loads(schema.read_text()))
+    receipt = dict(schema_version=e.VERSION, record_type='receipt', **identity,
+                   provider=options['runner'], provider_exit=metadata.get('provider_exit', options.get('_provider_exit')),
+                   normalized_exit=code, outcome=metadata['outcome'], structured_result=result,
+                   result_absence=None if result is not None else ('no-schema' if code == 0 else metadata['outcome']),
+                   start_head=start, end_head=end, started_at=started, ended_at=time.time(),
+                   provider_logs=str(evidence), transcript=(e.observe(transcript, options, repo, evidence) or {}).get('transcript'))
+    # _run reports the actual child exit; no inferred success from commits.
+    if code == 0: receipt['provider_exit'] = 0
+    if code == 0:
+        if store is None: raise OSError('completion receipt store unavailable')
+        path = store.put_receipt(receipt)
+    else:
+        path = e.observe(store.put_receipt, receipt) if store is not None else None
+    if standalone and store is not None: e.observe(store.end_attempt, run_id, stage_attempt, code, end, outer=not os.environ.get('BUREAU_RUN_ID'))
+    metadata.update(identity, receipt=str(path) if path else None)
+    options['_receipt_metadata'] = dict(metadata)
+    if error: raise error
+    return code, text, metadata
+
+
+def receipt_result(receipt):
+    # Recovery reads the original provider output, then the receipt checks its
+    # full structured-result digest. No result prose is copied into the store.
+    directory = Path(receipt['provider_logs'])
+    try:
+        if receipt['provider'] == 'codex': return structured((directory / 'final.txt').read_text())
+        envelope = json.loads((directory / 'stdout.log').read_text())
+        value = envelope.get('structured_output')
+        if isinstance(value, dict): return value
+        if receipt.get('transcript'):
+            found, value = transcript_result(Path(receipt['transcript']))
+            if found: return value
+        return structured(envelope.get('result', ''))
+    except (OSError, ValueError, TypeError, AttributeError): return None
+
+
+def completion_text(code, text, metadata, repo, schema):
+    """Only this successful attempt can recover a lost forwarding result."""
+    if code != 0 or schema is None: return text
+    contract = json.loads(schema.read_text())
+    try:
+        candidate = json.loads(text)['result'] if metadata.get('cost_envelope') else text
+        validate(structured(candidate), contract)
+        return text
+    except (ValueError, TypeError, KeyError):
+        result = evidence_store(repo).reconcile(metadata, current_head(repo), contract, validate, receipt_result)
+        if result is None: raise ValueError('no matching completion receipt for this attempt and HEAD')
+        metadata['structured_source'] = 'receipt'
+        recovered = json.dumps(result)
+        if metadata.get('cost_envelope'):
+            recovered = json.dumps(dict(result=recovered, usage=metadata.get('usage', {}), total_cost_usd=metadata.get('total_cost_usd'), provider=metadata.get('provider')))
+        return recovered
+
+
+def _run(options, prompt, system, repo, evidence, schema=None):
     runner = options['runner']
     final = evidence / 'final.txt'
     if runner == 'codex':
@@ -379,7 +482,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
                 finally:
                     signal.setitimer(signal.ITIMER_REAL, 0)
             if timed_out:
-                return 124, '', dict(outcome='timeout', duration_seconds=time.monotonic()-started)
+                return 124, '', dict(outcome='timeout', provider_exit=child.returncode, duration_seconds=time.monotonic()-started)
     finally:
         if tempdir:
             try:
@@ -392,7 +495,8 @@ def run(options, prompt, system, repo, evidence, schema=None):
                 signal.setitimer(signal.ITIMER_REAL, 0)
                 try: shutil.rmtree(tempdir)
                 except OSError as exc: note('Bureau provider: could not remove ' + tempdir + ': ' + str(exc))
-    if interrupted: return 130, '', dict(outcome='cancelled')
+    options['_provider_exit'] = child.returncode
+    if interrupted: return 130, '', dict(outcome='cancelled', provider_exit=child.returncode)
     stderr = (evidence/'stderr.log').read_text(errors='replace')
     stdout = (evidence/'stdout.log').read_text(errors='replace')
     if child.returncode:
@@ -413,7 +517,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
             # Only a later completion recovers an error notice; turn.failed
             # remains fatal even when another completion follows it.
             if event.get('type') == 'turn.failed':
-                return 22, '', dict(outcome='provider-error')
+                return 22, '', dict(outcome='provider-error', provider_exit=child.returncode)
             if event.get('type') == 'turn.completed':
                 usage = event.get('usage', {})
                 pending_error = False
@@ -422,12 +526,12 @@ def run(options, prompt, system, repo, evidence, schema=None):
                 if not recovered_errors:
                     recovered_errors = dict(count=0, first_message=str(event.get('message', ''))[:200])
                 recovered_errors['count'] += 1
-        if pending_error: return 22, '', dict(outcome='provider-error')
+        if pending_error: return 22, '', dict(outcome='provider-error', provider_exit=child.returncode)
     else:
         try: envelope = json.loads(stdout)
         except ValueError: raise ValueError('Claude did not return a JSON envelope')
         if not isinstance(envelope, dict): raise ValueError('Claude envelope must be an object')
-        if envelope.get('is_error'): return 22, '', dict(outcome='provider-error')
+        if envelope.get('is_error'): return 22, '', dict(outcome='provider-error', provider_exit=child.returncode)
         value = envelope.get('structured_output')
         if schema and not isinstance(value, dict):
             found, recovered = claude_transcript_result(options, repo, evidence)
@@ -441,11 +545,12 @@ def run(options, prompt, system, repo, evidence, schema=None):
         text = json.dumps(value)
     value = structured(text)
     if environment_blocked(value, text, runner, options['stage']):
-        return 24, '', dict(outcome='environment')
-    metadata = dict(outcome='complete', provider=runner, usage=usage, total_cost_usd=cost, duration_seconds=time.monotonic()-started)
+        return 24, '', dict(outcome='environment', provider_exit=child.returncode)
+    metadata = dict(outcome='complete', provider=runner, provider_exit=child.returncode, usage=usage, total_cost_usd=cost, duration_seconds=time.monotonic()-started)
     if recovered_errors: metadata['recovered_errors'] = recovered_errors
     if structured_source: metadata['structured_source'] = structured_source
     if options['cost_tracking']:
+        metadata['cost_envelope'] = True
         text = json.dumps(dict(result=text, usage=usage, total_cost_usd=cost, provider=runner))
     return 0, text, metadata
 
@@ -599,9 +704,13 @@ def claude_transcript_result(options, repo, evidence):
     # never silently accept an earlier StructuredOutput instead.
     record = transcript(options, repo, evidence)
     if not record['transcript_found']: return False, None
+    return transcript_result(Path(record['transcript']))
+
+
+def transcript_result(path):
     found = False; value = None
     try:
-        with Path(record['transcript']).open(errors='replace') as source:
+        with path.open(errors='replace') as source:
             for line in source:
                 try: event = json.loads(line)
                 except ValueError: continue
@@ -630,6 +739,7 @@ def note(text):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stage', required=True); parser.add_argument('--repo', default='.')
+    parser.add_argument('--phase')
     parser.add_argument('--config', default=os.environ.get('BUREAU_CONFIG', '.bureau.json'))
     parser.add_argument('--prompt-file'); parser.add_argument('--system-file'); parser.add_argument('--schema')
     parser.add_argument('--check', action='store_true'); parser.add_argument('--describe', action='store_true')
@@ -637,6 +747,7 @@ def main():
     try:
         config_path=Path(args.config).resolve(); config=json.loads(config_path.read_text())
         options=configuration(args.stage, config, os.environ)
+        options['phase'] = args.phase or os.environ.get('BUREAU_PROVIDER_PHASE') or args.stage
         if args.describe: print(json.dumps(options)); return 0
         options['untrusted_env']=untrusted_env_mode(config)
         auth(options)
@@ -645,7 +756,7 @@ def main():
         prompt=sys.stdin.read() if args.prompt_file=='-' else Path(args.prompt_file).read_text()
         system=Path(args.system_file).read_text() if args.system_file else ''
         repo=Path(args.repo).resolve()
-        base=Path(os.environ.get('BUREAU_PROVIDER_LOG_DIR',str(config_path.parent/'logs/provider-runs')))
+        base=Path(os.environ.get('BUREAU_PROVIDER_LOG_DIR',str(config_path.parent/'logs/provider-runs'))).absolute()
         evidence=base/uuid.uuid4().hex; evidence.mkdir(parents=True,mode=0o700)
         schema=Path(args.schema).resolve() if args.schema else None
         if options['runner']=='claude':
@@ -665,24 +776,28 @@ def main():
             options['session_note']="the claude CLI rejected --session-id (unknown option), and the call ran again without it"
             code,text,metadata=run(options,prompt,system,repo,evidence,schema)
             metadata['session_id_rejected']=True
-        metadata.update(run_id=os.environ.get('BUREAU_RUN_ID'), issue=os.environ.get('BUREAU_CURRENT_ISSUE'),
-                        estimated_cost_usd=metadata.get('total_cost_usd'), actual_billed_cost_usd=None,
+        text = completion_text(code, text, metadata, repo, schema)
+        metadata.update(estimated_cost_usd=metadata.get('total_cost_usd'), actual_billed_cost_usd=None,
                         account_used_percent=None, stage=args.stage, provider=options['runner'], model=options['model'], evidence=str(evidence))
-        metadata.update(transcript(options,repo,evidence))
-        (evidence/'result.json').write_text(json.dumps(metadata,indent=2)+'\n')
+        metadata.update(e.observe(transcript,options,repo,evidence) or dict(transcript=None))
+        e.observe(e.atomic,evidence/'result.json', metadata)
         note('Bureau provider evidence: '+str(evidence))
         if metadata['transcript']: note('Bureau provider transcript: '+metadata['transcript'])
-        if code==0: print(text)
+        if code==0:
+            try: print(text, flush=True)
+            except BrokenPipeError:
+                # The completion receipt is durable even if its consumer stopped.
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                os.dup2(devnull, 1); os.close(devnull)
         else: note('Bureau provider outcome: '+metadata['outcome'])
         return code
     except AuthError as exc: print(str(exc),file=sys.stderr); return 16
     except (PermissionError, UntrustedEnvError) as exc: print(str(exc),file=sys.stderr); return 24
     except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
         if evidence:
-            failed={'outcome':'invalid-result','error':str(exc)}
-            try: failed.update(transcript(options,repo,evidence))
-            except OSError: pass
-            (evidence/'result.json').write_text(json.dumps(failed))
+            failed={**options.get('_receipt_metadata', {}), 'outcome':'invalid-result','error':str(exc)}
+            failed.update(e.observe(transcript,options,repo,evidence) or {})
+            e.observe(e.atomic,evidence/'result.json', failed)
         print('Bureau provider: '+str(exc),file=sys.stderr); return 22
 
 

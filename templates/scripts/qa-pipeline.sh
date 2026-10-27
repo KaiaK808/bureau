@@ -72,6 +72,7 @@ if [ -z "$BRANCH" ] || [[ "$BRANCH" == *" "* ]]; then
   exit 12
 fi
 echo "  Branch: $BRANCH"
+bureau_record_branch_pr "$BRANCH" || true
 
 git fetch origin
 free_branch_from_other_worktrees "$BRANCH" "$(pwd)"
@@ -145,7 +146,8 @@ bureau_untrusted_env --check || exit 24
 # Persisted per-QA-run log. The Linear comment surfaces a path pointer
 # (rather than truncated stdout) so the operator can `tail -200` the full
 # pane buffer when deciding flake-vs-real. Lives under logs/ alongside
-# escalations.log; survives until the next worktree reset.
+# escalations.log until a worktree reset. Run evidence retains only full-stream
+# digests, sizes and command IDs/digests outside resets, without a log copy.
 mkdir -p logs
 QA_LOG_TS=$(date -u +%Y-%m-%dT%H-%M-%S)
 QA_LOG_PATH="logs/qa-$ISSUE-$QA_LOG_TS.log"
@@ -153,15 +155,31 @@ QA_LOG_PATH="logs/qa-$ISSUE-$QA_LOG_TS.log"
 QA_TMP=$(mktemp -d)
 _qa_cleanup() {
   local rc=$?
+  if [ -f "${QA_LOG_PATH:-}" ]; then bureau_archive_evidence_dir_log || true; fi
   # The full log is already in $QA_LOG_PATH when a needs-human arm ends with 25
   # because its label could not be written; nothing to keep there either.
-  if [ "$rc" = 0 ] || [ "$rc" = 2 ] || [ "${NEEDS_HUMAN_UNMARKED:-0}" = 1 ]; then rm -rf "$QA_TMP"; fi
+  if [ "$rc" = 0 ] || [ "$rc" = 2 ] || [ "${NEEDS_HUMAN_UNMARKED:-0}" = 1 ]; then rm -rf "$QA_TMP" || true; fi
+  return "$rc"
 }
 trap _qa_cleanup EXIT
 
+bureau_archive_evidence_dir_log() {
+  [ -n "${BUREAU_RUN_ID:-}" ] && [ -n "${BUREAU_STAGE_ATTEMPT_ID:-}" ] || return 0
+  bureau_evidence evidence-gate --kind artifact --path "$QA_LOG_PATH" --head '' \
+    --end-head '' --command 'QA summary; gate results recorded separately' --command-id qa.summary || true
+}
+
+qa_run_gate() {
+  local head rc=0
+  head=$(git rev-parse HEAD 2>/dev/null) || head=""
+  bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$TEST_CMD" > "$1" 2>&1 || rc=$?
+  bureau_record_gate "$1" "$head" "$TEST_CMD" "$rc" qa.test || true
+  return "$rc"
+}
+
 echo ""
 echo "Phase 1/3: initial test run (no Claude call)"
-if bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$TEST_CMD" > "$QA_TMP/test1.log" 2>&1; then
+if qa_run_gate "$QA_TMP/test1.log"; then
   echo "  Initial test run: PASSED"
   GREEN_ON_FIRST_TRY=true
   { echo "=== Phase 1/3: initial test run (PASSED) ==="; cat "$QA_TMP/test1.log"; } > "$QA_LOG_PATH"
@@ -176,7 +194,7 @@ else
   # real bugs that should land in needs-human. An installation parked on a
   # `running 0 tests` / `target failed` flake that passed cleanly on rerun.
   sleep 5
-  if bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$TEST_CMD" > "$QA_TMP/test1.retry.log" 2>&1; then
+  if qa_run_gate "$QA_TMP/test1.retry.log"; then
     echo "  Retry passed. First run was a flake."
     {
       echo "=== Phase 1/3: initial test run (FLAKE — exit $RC) ==="
@@ -279,7 +297,7 @@ fi
 
 echo ""
 echo "Phase 3/3: final test run + route"
-if bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$TEST_CMD" > "$QA_TMP/test2.log" 2>&1; then
+if qa_run_gate "$QA_TMP/test2.log"; then
   FINAL_GREEN=true
 else
   FINAL_GREEN=false

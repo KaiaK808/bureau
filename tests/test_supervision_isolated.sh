@@ -192,7 +192,7 @@ pass "2 control: without -I the branch's module runs at both records"
 # ── 3  bounded tick: check, workspace ─────────────────────────────────────────
 teardown || true
 T="$TMP/tick"; mkdir -p "$T/scripts"
-cp "$SCRIPTS/bureau-tick.sh" "$SCRIPTS/bureau-supervision.py" "$T/scripts/"
+cp "$SCRIPTS/bureau-tick.sh" "$SCRIPTS/bureau-supervision.py" "$SCRIPTS/bureau-evidence.py" "$T/scripts/"
 git -C "$T" init -q
 cat > "$T/scripts/bureau-config.sh" <<'STUB'
 BUREAU_ENV_FILE=/nonexistent

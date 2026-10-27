@@ -41,6 +41,7 @@ VERDICT_RC=$(jq -n --arg c "$(printf '%b' "$COMMENT")" '{verdict:"REQUEST_CHANGE
 
 # ── 1. the provider enforces the schema ────────────────────────────────────
 mkdir -p "$P/bin" "$P/repo"
+git -C "$P/repo" init -q
 cat > "$P/bin/claude" <<'EOF'
 #!/bin/bash
 if [ "${1:-}" = auth ]; then echo '{"loggedIn":true}'; exit 0; fi

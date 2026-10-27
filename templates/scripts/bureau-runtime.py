@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Local Bureau ownership and resumable stage protocol (no model subprocesses)."""
 import argparse
+from datetime import datetime
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -16,6 +18,10 @@ import time
 import uuid
 
 SCRIPTS = Path(__file__).resolve().parent
+sys.dont_write_bytecode = True
+_evidence_spec = importlib.util.spec_from_file_location('bureau_evidence', SCRIPTS / 'bureau-evidence.py')
+e = importlib.util.module_from_spec(_evidence_spec)
+_evidence_spec.loader.exec_module(e)
 # Keep equal to bureau-provider.py and bureau-env.sh (standalone script).
 UNTRUSTED_HOST_PREFIXES = ('HERDR_',)
 STAGES = {
@@ -256,6 +262,10 @@ def quiet_git(repo, *args):
     return subprocess.check_output(command, text=True, env=process_env(command), stderr=subprocess.DEVNULL).strip()
 
 
+def evidence_head(repo):
+    return e.observe(quiet_git, repo, 'rev-parse', '--verify', 'HEAD')
+
+
 def branch_state(workspace):
     """(branch, pushed, own) of a checkout: whether origin has the branch, and
     how many of its commits are not there (not on origin/<branch> when pushed,
@@ -409,7 +419,7 @@ def report_conflict(repo, store, args, exc):
         print('bureau: could not leave the halt on ' + issue + ' (' + str(error) + ')', file=sys.stderr)
 
 
-def shell(repo, function, *args):
+def shell(repo, function, *args, timeout=None):
     # Fixed helper names and positional arguments; never interpolate issue prose into shell code.
     # .env is read like every stage reads it (bureau_load_env in bureau-env.sh): parsed, never run
     # as shell code, the three secrets kept as unexported shell variables for the helper's own
@@ -419,7 +429,20 @@ if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env --export "$BUREAU_ENV_FIL
 shift
 "$@"
 '''
-    return subprocess.check_output(['bash', '-e', '-c', script, 'bureau', str(SCRIPTS), function, *args], cwd=repo, text=True).strip()
+    helper = ['bash', '-e', '-c', script, 'bureau', str(SCRIPTS), function, *args]
+    if timeout is None:
+        return subprocess.check_output(helper, cwd=repo, text=True).strip()
+    child = subprocess.Popen(helper, cwd=repo, text=True, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        output, _ = child.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try: os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+        child.communicate()
+        raise
+    if child.returncode: raise subprocess.CalledProcessError(child.returncode, helper)
+    return output.strip()
 
 
 def issue_snapshot(repo, issue):
@@ -623,7 +646,13 @@ def execute(repo, args, store):
     child = None
     interrupted = None
     resources = []
-    code = None
+    code = 1
+    evidence = e.Store(store.root)
+    entry = Path(args.entry or command[0]).name
+    pipeline = next((Path(part).name for part in command if part.endswith('-pipeline.sh')), entry)
+    stage = pipeline.removesuffix('-pipeline.sh').replace('-', '_')
+    phase = 'worker' if entry == 'bureau-worker.sh' else ('stage' if entry.endswith('-pipeline.sh') else 'driver')
+    attempt = None
 
     def signal_child(signum):
         if child is not None:
@@ -651,30 +680,41 @@ def execute(repo, args, store):
     if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN:
         signal.signal(signal.SIGHUP, stop)
     try:
+        e.observe(evidence.begin_run, run, args.issue, repo, evidence_head(repo))
+        attempt = e.observe(evidence.begin_attempt, run, args.issue, stage, phase, workspace,
+                            evidence_head(workspace), os.environ.get('BUREAU_STAGE_ATTEMPT_ID'))
+        # Provider identity remains usable even when the optional manifest is unavailable.
+        attempt = attempt or uuid.uuid4().hex
         try:
             resources = store.claim(args.issue, workspace, run, 'background', os.getpid())
         except Conflict as exc:
             # A cancelled run writes nothing, not even the halt of a conflict.
-            if interrupted: return 130
+            if interrupted:
+                code = 130; return code
             print('bureau conflict: ' + str(exc), file=sys.stderr)
             try:
                 report_conflict(repo, store, args, exc)
             except Exception as error:  # the exit code is the protocol; the halt is help
                 print('bureau: could not report the conflict (' + repr(error) + ')', file=sys.stderr)
-            return 21
-        if interrupted: return 130
+            code = 21; return code
+        if interrupted:
+            code = 130; return code
         child = store.spawn(run, command, repo, env={**os.environ, 'BUREAU_RUN_ID': run, 'BUREAU_RUN_DEPTH': str(depth + 1), 'BUREAU_ACTIVE_ENTRY': args.entry or '',
-                 'BUREAU_CURRENT_ISSUE': args.issue, 'BUREAU_CONFIG': str(config_for(repo))})
+                 'BUREAU_STAGE_ATTEMPT_ID': attempt, 'BUREAU_CURRENT_ISSUE': args.issue, 'BUREAU_CONFIG': str(config_for(repo))})
         if interrupted: signal_child(interrupted)
         while True:
             try:
                 code = child.wait(timeout=.2)
-                return 130 if interrupted else code
+                if interrupted: code = 130
+                return code
             except subprocess.TimeoutExpired:
                 if interrupted:
                     try: child.wait(timeout=stop_grace(depth))
                     except subprocess.TimeoutExpired: signal_child(signal.SIGKILL); child.wait()
-                    return 130
+                    code = 130; return code
+    except Conflict:
+        code = 21
+        raise
     finally:
         # A child that ends with 130 was stopped (Ctrl-C, SIGTERM or a hang-up)
         # even when this wrapper got no signal: a stop sent to an inner process
@@ -684,7 +724,93 @@ def execute(repo, args, store):
         # interrupt, and a shepherd that ended before the stage it ran (a stage
         # with a slow EXIT trap, or no stage at all during the shepherd's own
         # waits) released them while the stage still ran.
-        store.finish_execution(run, resources, interrupted or code == 130, repo, report=bool(resources) or not inherited)
+        try:
+            normalized = 130 if interrupted else (128 - code if code < 0 else code)
+            head = evidence_head(workspace)
+            if attempt:
+                e.observe(evidence.end_attempt, run, attempt, normalized, head, outer=not inherited)
+            if normalized in (20, 21):
+                e.observe(evidence.open_wait, args.issue, 'approval' if normalized == 20 else 'ownership',
+                                   'decision' if normalized == 20 else 'resource',
+                                   'Approved work awaits merge authorization' if normalized == 20 else 'Issue or workspace ownership requires reconciliation',
+                                   'maintainer' if normalized == 20 else 'workspace-owner', stage, normalized, run)
+            elif normalized == 0 and phase in ('stage', 'worker'):
+                # Actual stage execution is an observed resume, unlike an idle tick.
+                e.observe(evidence.resolve_waits, args.issue, keys=['ownership'], basis='observed-stage-resume')
+        except (OSError, ValueError, KeyError, StopIteration) as exc:
+            e.warn()
+        finally:
+            store.finish_execution(run, resources, interrupted or code == 130, repo, report=bool(resources) or not inherited)
+
+
+def observation_time(value):
+    if not value: return None
+    try: return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    except (ValueError, TypeError, AttributeError): return None
+
+
+def observe_issue(repo, store, evidence, issue, snapshot, records=None):
+    config = read(config_for(repo)); state = snapshot.get('state', {})
+    labels = snapshot.get('labels', {}).get('nodes')
+    if snapshot.get('identifier') != issue or not state.get('id') or not isinstance(labels, list) or any(not isinstance(v, dict) or not isinstance(v.get('name'), str) for v in labels):
+        raise ValueError('unreadable issue observation')
+    records = evidence.open_waits() if records is None else records
+    ids = [v['wait_id'] for v in records if v['issue'] == issue]
+    states = config.get('linear', {}).get('teams', [{}])[0].get('states', {})
+    terminal = state['id'] in [states[k] for k in ('done', 'cancelled', 'canceled', 'duplicate') if states.get(k)] or state.get('name') in ('Done', 'Cancelled', 'Canceled', 'Duplicate')
+    human = config.get('linear', {}).get('labels', {}).get('needs_human', {}).get('name', 'needs-human')
+    held = (store.root / 'needs-human-held' / issue).exists()
+    if terminal:
+        exact = observation_time(snapshot.get('completedAt') or snapshot.get('canceledAt'))
+        evidence.resolve_waits(issue, basis='authoritative-linear-completion' if exact is not None else 'observed-terminal-transition',
+                               resolved_at=exact, terminal=True, wait_ids=ids)
+    elif not held and not {human, 'needs-human', 'blocked', 'wip'}.intersection(v['name'] for v in labels):
+        keys = [v['key'] for v in records if v['issue'] == issue and v['key'].startswith('needs-human:')]
+        evidence.resolve_waits(issue, keys, 'observed-cleared-hold', wait_ids=ids)
+
+
+def sweep_open_waits(repo, store, evidence, limit=4, seconds=10, rotation=None):
+    """Read-only service observation, bounded independently of enabled stages."""
+    batch = evidence.observation_batch(limit, rotation)
+    deadline = time.monotonic() + seconds
+    for issue, records in batch:
+        if time.monotonic() >= deadline: break
+        try:
+            try:
+                raw = shell(repo, 'bureau_wait_snapshot', issue, timeout=max(.01, deadline - time.monotonic()))
+            finally:
+                # Failed/timed-out reads count as attempts. Unvisited cursors
+                # stay untouched; dispatcher rotation is the write-refusal fallback.
+                e.observe(evidence.observation_attempted, issue, [v['wait_id'] for v in records])
+            snapshot = json.loads(raw)
+            observe_issue(repo, store, evidence, issue, snapshot, records)
+            # Manual Merge has no review-stop boundary. Its wait itself carries
+            # the approved PR/generation; never guess a PR from a ticket title.
+            record = max((v for v in records if v.get('pr')), key=lambda v: v['reached_at'], default=None)
+            if record is None or time.monotonic() >= deadline: continue
+            spec = importlib.util.spec_from_file_location('bureau_wait_supervision', SCRIPTS / 'bureau-supervision.py')
+            supervision = importlib.util.module_from_spec(spec); spec.loader.exec_module(supervision)
+            boundary = read(store.root / 'review-stops.json', {}).get(issue)
+            if boundary and supervision.boundary_generation(boundary) != record.get('generation'): continue
+            command = ['gh', 'pr', 'view', str(record['pr']), '--json', 'state,mergedAt']
+            raw = subprocess.check_output(command, cwd=repo, text=True, timeout=max(.01, deadline - time.monotonic()), env=process_env(command))
+            current = json.loads(raw)
+            if current.get('state') != 'MERGED': continue
+            exact = observation_time(current.get('mergedAt'))
+            if boundary:
+                # resume's compare-and-remove must win before any PR resolution.
+                supervision.resume(store.root, issue, expected=boundary,
+                                   basis='authoritative-pr-merge' if exact is not None else 'observed-pr-merge',
+                                   resolved_at=exact, terminal=True, lock_timeout=.25)
+            else:
+                # Recheck the boundary under its lock after the remote read too.
+                with supervision.locked(store.root, timeout=.25) as path:
+                    if supervision.read(path).get(issue) is not None: continue
+                    evidence.resolve_waits(issue, basis='authoritative-pr-merge' if exact is not None else 'observed-pr-merge',
+                                           resolved_at=exact, terminal=True, generation_id=record.get('generation'),
+                                           wait_ids=[record['wait_id']])
+        except Exception:
+            e.warn()
 
 
 def main():
@@ -693,6 +819,24 @@ def main():
     sub = parser.add_subparsers(dest='action', required=True)
     status = sub.add_parser('status')
     status.add_argument('--run')
+    waits = sub.add_parser('waits'); waits.add_argument('--issue')
+    opened = sub.add_parser('wait-open'); opened.add_argument('issue'); opened.add_argument('--key', required=True)
+    opened.add_argument('--kind', choices=e.KINDS, required=True); opened.add_argument('--reason', required=True)
+    opened.add_argument('--actor', required=True); opened.add_argument('--stage'); opened.add_argument('--exit-code', type=int)
+    opened.add_argument('--generation'); opened.add_argument('--pr', type=int)
+    resolved = sub.add_parser('wait-resolve'); resolved.add_argument('issue'); resolved.add_argument('--key', action='append')
+    resolved.add_argument('--basis', default='observed-resume'); resolved.add_argument('--resolved-at', type=float)
+    resolved.add_argument('--merged-at')
+    resolved.add_argument('--terminal', action='store_true')
+    observed = sub.add_parser('observe'); observed.add_argument('issue')
+    sweep = sub.add_parser('observe-open')
+    sweep.add_argument('--rotation', type=int)
+    gate = sub.add_parser('evidence-gate'); gate.add_argument('--path', required=True)
+    gate.add_argument('--head', required=True); gate.add_argument('--end-head', required=True)
+    gate.add_argument('--command', required=True); gate.add_argument('--exit-code', type=int)
+    gate.add_argument('--command-id', choices=sorted(e.COMMAND_IDS), default='configured-command')
+    gate.add_argument('--kind', default='gate')
+    pr = sub.add_parser('evidence-pr'); pr.add_argument('--number', type=int, required=True); pr.add_argument('--url')
     resume = sub.add_parser('resume'); resume.add_argument('run')
     claim = sub.add_parser('prepare')
     claim.add_argument('issue'); claim.add_argument('stage', choices=STAGES)
@@ -712,7 +856,31 @@ def main():
         parser.error('issue must be an identifier such as TEAM-123')
     try:
         repo = root_for(Path(args.repo).resolve()); store = Store(repo)
-        if args.action in ('pause', 'unpause'):
+        evidence = e.Store(store.root)
+        if args.action == 'waits':
+            print(json.dumps(evidence.waits(args.issue), indent=2))
+        elif args.action == 'wait-open':
+            wait_generation = e.digest(dict(pr=args.pr, boundary=args.generation)) if args.pr and args.generation else args.generation
+            e.observe(evidence.open_wait, args.issue, args.key, args.kind, args.reason, args.actor, args.stage,
+                      args.exit_code, os.environ.get('BUREAU_RUN_ID'), wait_generation, args.pr)
+        elif args.action == 'wait-resolve':
+            if args.merged_at:
+                try: args.resolved_at = datetime.fromisoformat(args.merged_at.replace('Z', '+00:00')).timestamp()
+                except (ValueError, TypeError): pass
+            e.observe(evidence.resolve_waits, args.issue, args.key, args.basis, args.resolved_at, args.terminal)
+        elif args.action == 'observe':
+            e.observe(lambda: observe_issue(repo, store, evidence, args.issue, json.load(sys.stdin)))
+        elif args.action == 'observe-open':
+            e.observe(sweep_open_waits, repo, store, evidence, rotation=args.rotation)
+        elif args.action in ('evidence-gate', 'evidence-pr'):
+            run = os.environ.get('BUREAU_RUN_ID'); attempt = os.environ.get('BUREAU_STAGE_ATTEMPT_ID')
+            if run and attempt:
+                if args.action == 'evidence-pr':
+                    e.observe(evidence.set_pr, run, attempt, dict(number=args.number))
+                else:
+                    e.observe(evidence.gate, run, attempt, args.path, args.head or None, args.end_head or None,
+                              args.command, args.exit_code, args.kind, command_id=args.command_id)
+        elif args.action in ('pause', 'unpause'):
             with store.guard():
                 marker = store.root / 'paused'
                 if args.action == 'pause': marker.touch()
@@ -720,7 +888,8 @@ def main():
             print(json.dumps({'paused': marker.exists()}))
         elif args.action == 'status':
             if args.run:
-                print(json.dumps(read(store.root / 'runs' / (args.run + '.json')), indent=2))
+                record = read(store.root / 'runs' / (args.run + '.json'))
+                print(json.dumps(record if record is not None else read(evidence.manifest_path(args.run)), indent=2))
             else:
                 print(json.dumps({'workspace': str(repo), 'config': str(config_for(repo)),
                     'paused': (store.root / 'paused').exists(), 'leases': read(store.leases, {}),
@@ -765,6 +934,8 @@ def main():
     except Conflict as exc:
         print('bureau conflict: ' + str(exc), file=sys.stderr); return 21
     except (ValueError, OSError, subprocess.CalledProcessError, KeyError) as exc:
+        if args.action in ('wait-open', 'wait-resolve', 'observe', 'observe-open', 'evidence-gate', 'evidence-pr'):
+            e.warn(); return 0
         print('bureau: ' + str(exc), file=sys.stderr); return 1
 
 

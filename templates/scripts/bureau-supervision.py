@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Persist review boundaries and spec reservations shared by Git worktrees."""
 import argparse
+from datetime import datetime
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -14,6 +16,15 @@ import sys
 import tempfile
 import time
 import uuid
+
+sys.dont_write_bytecode = True
+_evidence_spec = importlib.util.spec_from_file_location('bureau_evidence', Path(__file__).resolve().with_name('bureau-evidence.py'))
+e = importlib.util.module_from_spec(_evidence_spec)
+_evidence_spec.loader.exec_module(e)
+
+
+def wait_evidence(root, method, *args, **kwargs):
+    return e.observe(lambda: getattr(e.Store(root), method)(*args, **kwargs))
 
 # Keep equal to bureau-provider.py and bureau-env.sh (standalone script).
 UNTRUSTED_HOST_PREFIXES = ('HERDR_',)
@@ -82,10 +93,20 @@ def read(path):
 
 
 @contextmanager
-def locked(root):
+def locked(root, timeout=None):
     root.mkdir(parents=True, exist_ok=True)
     with (root / 'review-stops.guard').open('a') as guard:
-        fcntl.flock(guard, fcntl.LOCK_EX)
+        if timeout is None:
+            fcntl.flock(guard, fcntl.LOCK_EX)
+        else:
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline: raise TimeoutError('review boundary lock unavailable')
+                    time.sleep(.01)
         yield root / 'review-stops.json'
 
 
@@ -190,15 +211,25 @@ def fingerprint(detail, issue):
     return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
 
 
-def resume(root, issue, expected=None):
-    with locked(root) as path:
+def boundary_generation(record):
+    return record.get('revision') or e.digest(record)
+
+
+def resume(root, issue, expected=None, basis='observed-resume', resolved_at=None, terminal=False, lock_timeout=None):
+    with locked(root, timeout=lock_timeout) as path:
         stops = read(path)
         if expected is not None and stops.get(issue) != expected:
             return False
-        removed = stops.pop(issue, None) is not None
+        record = stops.pop(issue, None)
+        removed = record is not None
         if removed:
             save(path, stops)
-        return removed
+        # Keep boundary replacement and its evidence resolution serialized. An
+        # older observation must not resolve a wait opened by a newer review.
+        if removed:
+            wait_evidence(root, 'resolve_waits', issue, ['approval', 'merge-gate'], basis, resolved_at,
+                          terminal, generation_id=boundary_generation(record))
+    return removed
 
 
 def check(repo, root, issue, branch, state, detail):
@@ -207,15 +238,20 @@ def check(repo, root, issue, branch, state, detail):
         return {'stopped': False}
     same = (record['branch'] == branch and record['state'] == state
             and record['ticket_hash'] == fingerprint(detail, issue))
+    terminal = False; merged_at = None
     if same:
         # Query the PR itself so a push, closure, or merge can invalidate the
         # stopped boundary without changing or resetting any local checkout.
-        command = ['gh', 'pr', 'view', str(record['pr']), '--json', 'state,baseRefName']
+        command = ['gh', 'pr', 'view', str(record['pr']), '--json', 'state,baseRefName,mergedAt']
         raw = subprocess.check_output(command, cwd=repo, text=True, timeout=30, env=process_env(command))
         current = json.loads(raw)
         if not isinstance(current, dict) or current.get('state') not in ('OPEN', 'CLOSED', 'MERGED'):
             raise ValueError('GitHub did not return the PR state')
         same = current['state'] == 'OPEN'
+        terminal = current['state'] == 'MERGED'
+        if terminal and current.get('mergedAt'):
+            try: merged_at = datetime.fromisoformat(current['mergedAt'].replace('Z', '+00:00')).timestamp()
+            except (ValueError, TypeError): pass
         if same:
             base_ref = current.get('baseRefName')
             if (not isinstance(base_ref, str) or not base_ref or base_ref.startswith('-')
@@ -235,7 +271,11 @@ def check(repo, root, issue, branch, state, detail):
                 raise ValueError('The current remote base is unavailable')
             same = tips.get('refs/heads/' + branch) == record['head'] and tips['refs/heads/' + base_ref] == record['base']
     if not same:
-        resume(root, issue, record)
+        removed = resume(root, issue, record,
+               basis=('authoritative-pr-merge' if merged_at is not None else 'observed-pr-merge') if terminal else 'observed-approval-invalidated',
+               resolved_at=merged_at, terminal=terminal)
+        if not removed:
+            return {'stopped': True, 'issue': issue, 'head': record['head'], 'pr': record['pr']}
     return {'stopped': same, 'issue': issue, 'head': record['head'], 'pr': record['pr']}
 
 
@@ -275,6 +315,9 @@ def reuse(root, issue, branch, state, head, base, base_ref, pr, raw_detail):
                 (key for key, value in wanted if record.get(key) != value), None)
         del stops[issue]
         save(path, stops)
+    if not record.get('merge_gate_wait'):
+        wait_evidence(root, 'resolve_waits', issue, ['approval'], 'observed-review-resume',
+                      generation_id=boundary_generation(record))
     if mismatch:
         prefix = '' if ticket_hash is None else 'recorded approval does not match: '
         return {'reuse': False, 'reason': prefix + mismatch}
@@ -350,6 +393,7 @@ def merge_wait(root, issue, branch=None, head=None, outcome=None, clear=False):
             removed = marks.pop(issue, None) is not None
             if removed:
                 save(path, marks)
+            wait_evidence(root, 'resolve_waits', issue, ['merge-gate'], 'observed-merge-wait-cleared')
             return {'issue': issue, 'cleared': removed}
         prior = marks.get(issue)
         waits = 1
@@ -358,6 +402,10 @@ def merge_wait(root, issue, branch=None, head=None, outcome=None, clear=False):
             waits = prior['gate_waits'] + 1
         marks[issue] = {'branch': branch, 'head': head, 'outcome': outcome, 'stopped_at': time.time(), 'gate_waits': waits}
         save(path, marks)
+    wait_evidence(root, 'open_wait', issue, 'merge-gate', 'dependency' if outcome == 'not-yet' else 'technical',
+                  'Merge gate is not yet decided' if outcome == 'not-yet' else 'Merge gate is blocked',
+                  'ci-or-gate-owner' if outcome == 'not-yet' else 'repository-maintainer', 'merge', 2 if outcome == 'not-yet' else 25,
+                  os.environ.get('BUREAU_RUN_ID'))
     return {'issue': issue, 'head': head, 'gate_waits': waits}
 
 
@@ -483,6 +531,12 @@ def main():
                         record['build_key'] = args.build_key
                 with locked(root) as path:
                     stops = read(path); stops[args.issue] = record; save(path, stops)
+                wait_evidence(root, 'open_wait', args.issue, 'merge-gate' if args.merge_gate_wait else 'approval',
+                              'dependency' if args.merge_gate_wait else 'decision',
+                              'Merge gate is not yet decided' if args.merge_gate_wait else 'Approved work awaits merge authorization',
+                              'ci-or-gate-owner' if args.merge_gate_wait else 'maintainer', 'code_review',
+                              2 if args.merge_gate_wait else 20, os.environ.get('BUREAU_RUN_ID'),
+                              generation_id=record['revision'], pr=args.pr)
                 result = {'stopped': True, 'issue': args.issue, 'head': args.head, 'pr': args.pr}
         print(json.dumps(result))
         return 0

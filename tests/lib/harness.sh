@@ -97,6 +97,10 @@ PY
   # A needs-human label that cannot be written is held locally; the hold helpers run for real
   # on top of the stub's add_issue_label and alert_telegram.
   sed -n '/^# ── needs-human hold/,/^# ── End of needs-human hold/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
+  sed -n -e '/^bureau_evidence() {/,/^}/p' -e '/^bureau_record_gate() {/,/^}/p' \
+    -e '/^bureau_archive_evidence() {/,/^}/p' -e '/^bureau_observe_waits() {/,/^}/p' -e '/^bureau_record_pr_url() {/,/^}/p' \
+    -e '/^bureau_record_branch_pr() {/,/^}/p' \
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
   grep -q '^mark_needs_human() {' "$SCRIPTS_DIR/real-helpers.sh" || { echo "harness: needs-human hold block not found in bureau-config.sh" >&2; return 1; }
   sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/stop-boundary.sh"
   # The merge policy (agents.merge_mode and the predicates built on it) runs for real

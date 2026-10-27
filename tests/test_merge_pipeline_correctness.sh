@@ -658,6 +658,24 @@ set_pr_field() {  # <sb> <jq assignment>
   jq "$2" "$1/stub_data/pr_view.json" > "$1/stub_data/pr_view.json.tmp" && mv "$1/stub_data/pr_view.json.tmp" "$1/stub_data/pr_view.json"
 }
 
+test_gate_evidence_failure() {
+  local sb fault
+  for fault in capture cleanup sink; do
+    sb=$(make_sandbox "gate_evidence_$fault"); populate_happy_fixtures "$sb"
+    echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
+    case "$fault" in
+      capture) echo 'mktemp() { printf "%s\n" "$STUB_DIR"; }' >> "$sb/scripts/bureau-config.sh" ;;
+      cleanup) echo 'rm() { return 1; }' >> "$sb/scripts/bureau-config.sh" ;;
+      sink) echo 'bureau_evidence() { return 1; }' >> "$sb/scripts/bureau-config.sh" ;;
+    esac
+    GATE_ENV='BUREAU_RUN_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa BUREAU_STAGE_ATTEMPT_ID=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    run_gate "$sb"
+    GATE_ENV=''
+    gate_case "$sb" "evidence-$fault" 25 blocked 'ci' || return 1
+    [ ! -s "$sb/stub_data/state_changes.log" ] || { echo 'FAIL optional evidence changed blocked routing' >&2; return 1; }
+  done
+}
+
 test_gate_outcome() {
   local sb
   # Checks still running (GitHub shows UNSTABLE meanwhile): not yet.
@@ -830,7 +848,8 @@ make_shepherd_merge_sandbox() {  # <name> — the merge sandbox plus the shepher
   local sb; sb=$(make_sandbox "$1"); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="DIRTY"'
   jq '.agents.rebase = true' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
   cp "$REPO_ROOT/templates/scripts/shepherd.sh" "$REPO_ROOT/templates/scripts/bureau-worker.sh" \
-     "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-supervision.py" "$sb/scripts/"
+     "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-supervision.py" \
+     "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$sb/scripts/"
   git -C "$sb" init -q && git -C "$sb" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   echo Merge > "$sb/stub_data/ticket_state"
   cat >> "$sb/scripts/bureau-config.sh" <<'SHEP_EOF'
@@ -948,7 +967,7 @@ test_gate_codes_in_queue_loop() {
 
 # ── Run all ───────────────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_outcome test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop; do
+for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_evidence_failure test_gate_outcome test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

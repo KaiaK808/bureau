@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="886a0bc2272c9ba0640dc69f29627416aae519858141a5060036088006478228">
+<meta name="bureau-source-sha256" content="ca50f7a797d02a9d09a66611f50d5c7bcec705984edde6b9560ea976544c8c7d">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1901,6 +1901,57 @@ location</td>
 not supported runtime overrides. Use the documented individual paths;
 the Spec Kit 1.2.2 pin lives in <code>scripts/bureau_install.py</code>
 (install with <code>uv tool install specify-cli==1.2.2</code>).</p>
+<h3 id="evidence-storage-and-retention">Evidence storage and
+retention</h3>
+<p>Evidence is automatic and needs no <code>.bureau.json</code> key or
+configuration-version change.
+<code>&lt;git common dir&gt;/bureau/evidence/v1/</code> holds private
+(directories 0700, files 0600) metadata-only receipts, background
+manifests, gate digests and waits. It retains no log bytes, excerpts,
+command text, ticket descriptions or structured-result prose. Original
+provider files/transcripts remain pointers outside the store; receipt
+recovery needs the unchanged original and its matching digest. Linked
+worktrees share the locked store; separate clones/hosts do not.</p>
+<p>Completed runs expire after 128 evictable runs or 30 days, deleting
+each manifest with its receipts. Resolved waits and inactive ticket
+observations expire after 30 days. A global 16 MiB/4,096 file budget
+includes atomic staging and abandoned temporary files and evicts oldest
+completed data first; active/interrupted runs, open waits and runs
+referenced by open waits are protected. Replacements reserve their full
+new size and one additional file slot, so even unchanged/shrinking
+optional updates can be refused. Optional write/housekeeping exceptions
+warn/skip; a success receipt that cannot fit prevents success
+forwarding. An already oversized store with protected or undeletable
+files requires operator inspection. Each tick/queue iteration attempts
+up to four open-wait tickets within a shared 10-second network budget,
+including manual-mode repositories with merge/rebase disabled. Persisted
+oldest-first cursors take priority when an unchanged cursor can be
+written and read back with enough staging room for the next timestamp.
+Only refused persistence selects in-memory rotation; fresh shell ticks
+seed it in configured poll-interval buckets. For a stable set of N
+readable tickets, an advancing clock and at least one read started per
+sweep, all are attempted within N sweeps with writable cursors; the
+refused-write fallback has the same bound in a retained dispatcher or
+independent ticks at the configured cadence (default 30 minutes). Other
+restart/cadence patterns have no cross-process fallback bound; see <a
+href="stage-protocol.html#versioned-background-evidence">stage
+protocol</a>. Exact end times require Linear completion history or PR
+<code>mergedAt</code>; other resolutions retain null event times.</p>
+<p>Resync all scripts together and restart drivers. A pre-fix PR 3 store
+can contain raw private copies: inspect active work and remove that old
+evidence store before using the metadata-only contract; resync does not
+scrub historical bytes. Do not delete evidence as a way to release
+ownership or authorize merging.</p>
+<p><code>python3 scripts/bureau-runtime.py waits [--issue TEAM-123]</code>
+prints the open causes and observed waiting share, counting overlapping
+waits once. Measurements cover the locally observed, retained period (at
+most 30 days); unknown exact resolution times stay null and
+first-observed ends yield an upper bound.
+<code>status --run RUN_ID</code> also reads background manifests. Resync
+scripts as a set, including <code>bureau-evidence.py</code>, then
+restart background drivers; no historical backfill. See <a
+href="stage-protocol.html#versioned-background-evidence">stage
+protocol</a> for the record schemas and wait lifecycle.</p>
 <h3 id="supervisor-1">Supervisor</h3>
 <table>
 <thead>

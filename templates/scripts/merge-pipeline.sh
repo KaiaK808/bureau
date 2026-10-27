@@ -180,6 +180,8 @@ if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ]; then
       echo "  [dry-run] would post recovery comment and move $ISSUE to Done."
       exit 0
     fi
+    bureau_evidence evidence-pr --number "$MERGED_PR" || true
+    bureau_evidence wait-resolve "$ISSUE" --terminal --basis authoritative-pr-merge --merged-at "$MERGED_AT" || true
     post_comment "$ISSUE" "✅ PR #$MERGED_PR was merged at $MERGED_AT (commit \`$MERGED_SHA\`) outside the merge-pipeline. Bumping to Done — no further action needed."
     move_issue "$ISSUE" "$BUREAU_STATE_DONE"
     exit 0
@@ -193,6 +195,10 @@ PR_DATA=$(gh pr view "$PR_NUMBER" --json state,mergeStateStatus,labels,url,headR
 PR_STATE=$(echo "$PR_DATA" | jq -r '.state')
 MERGE_STATE=$(echo "$PR_DATA" | jq -r '.mergeStateStatus')
 PR_URL=$(echo "$PR_DATA" | jq -r '.url')
+if [ "$DRY_RUN" != true ]; then
+  bureau_evidence evidence-pr --number "$PR_NUMBER" --url "$PR_URL" || true
+  bureau_evidence wait-resolve "$ISSUE" --key merge-queue --basis observed-merge-stage-resume || true
+fi
 echo "  PR: #$PR_NUMBER ($PR_URL)"
 echo "  State: $PR_STATE / mergeStateStatus: $MERGE_STATE"
 
@@ -432,9 +438,31 @@ pr_head_sha() {
   printf '%s' "$sha"
 }
 
+# Retain both existing gate evaluations, bound to the PR HEAD they checked.
+# Observational only: their routing and the just-in-time merge gate stay intact.
+merge_record_gate() {
+  [ "$DRY_RUN" != true ] && [ -n "${BUREAU_RUN_ID:-}" ] && [ -n "${BUREAU_STAGE_ATTEMPT_ID:-}" ] || return 0
+  local file rc=0 kind=gate
+  file=$(mktemp) || { ( echo 'bureau: WARN: merge evidence log unavailable' >&2 ) || true; return 0; }
+  # Bash can itself emit a redirection error. Contain its SIGPIPE as well as
+  # printf's when the optional capture fails with a closed stderr reader.
+  if ! ( printf '%s\n' "${2:-all gates PASS}" > "$file" ); then
+    rm -f "$file" || true
+    return 0
+  fi
+  if [ -n "$2" ]; then
+    if [ "$(printf '%s\n' "$2" | merge_gate_outcome)" = not-yet ]; then rc=2; else rc=25; fi
+  fi
+  [[ "$1" =~ ^[0-9a-f]{40,64}$ ]] || kind=artifact
+  bureau_evidence evidence-gate --kind "$kind" --path "$file" --head "$1" --end-head "$1" \
+    --command "evaluate_merge_gates $PR_NUMBER $1" --exit-code "$rc" || true
+  rm -f "$file" || true
+}
+
 # Initial gate evaluation (renders report, may post blocker comment).
 GATE_HEAD=$(pr_head_sha "$PR_NUMBER")
 GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$GATE_HEAD" || true)
+merge_record_gate "$GATE_HEAD" "$GATE_OUT" || true
 echo ""
 echo "  ── Gate report ──"
 if [ -z "$GATE_OUT" ]; then
@@ -568,6 +596,7 @@ fi
 MERGE_HEAD=$(pr_head_sha "$PR_NUMBER")
 GATE_HEAD="$MERGE_HEAD"
 JIT_GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$MERGE_HEAD" || true)
+merge_record_gate "$MERGE_HEAD" "$JIT_GATE_OUT" || true
 if [ -n "$JIT_GATE_OUT" ]; then
   echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"
   printf '    %s\n' "$JIT_GATE_OUT"

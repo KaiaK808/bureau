@@ -1349,6 +1349,7 @@ case "$STATUS" in
     fi
 
     PR_URL=$(open_or_update_pr_ready "$ISSUE" "$ISSUE_TITLE")
+    bureau_record_pr_url "$PR_URL" || true
     post_comment "$ISSUE" "$(build_summary_comment COMPLETE "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")"
     move_issue "$ISSUE" "$NEXT_STATE_ID"
     echo "  Moved $ISSUE to $NEXT_STATE_LABEL"
@@ -1365,8 +1366,10 @@ case "$STATUS" in
     # on the PR, once the PR is sure to exist.
     if [ "$STATUS" = "PARTIAL" ] && [ "$COMMITS_TOTAL" -gt 0 ]; then
       PR_URL=$(open_or_update_pr_ready "$ISSUE" "$ISSUE_TITLE")
+      bureau_record_pr_url "$PR_URL" || true
     else
       PR_URL=$(open_or_update_pr_draft "$ISSUE" "$ISSUE_TITLE")
+      bureau_record_pr_url "$PR_URL" || true
     fi
     if [ "$STATUS" = "CI_MARKER" ]; then
       comment_on_branch_pr "$BRANCH" "$SQUASH_REPORT"

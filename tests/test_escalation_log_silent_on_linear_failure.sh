@@ -32,5 +32,13 @@ fi
 # Operator should still see the failure on stderr so it isn't silent, and the ticket is held.
 assert_match "could not add 'needs-human' to EXP-104" "$LAST_STDERR" "failure surfaced to stderr"
 [ -f "$SANDBOX/.git/bureau/needs-human-held/EXP-104" ] || { echo "FAIL: no local hold for EXP-104" >&2; exit 1; }
+python3 - "$SANDBOX/.git/bureau/evidence/v1" <<'PY'
+import json, pathlib, sys
+waits=[json.loads(p.read_text()) for p in (pathlib.Path(sys.argv[1])/'waits').glob('*.json')]
+assert len(waits)==1, waits
+assert waits[0]['issue']=='EXP-104' and waits[0]['state']=='open', waits
+assert waits[0]['kind']=='decision' and waits[0]['responsible_actor']=='maintainer', waits
+assert waits[0]['resolved_at'] is None, waits
+PY
 
 echo "OK test_escalation_log_silent_on_linear_failure"

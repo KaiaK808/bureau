@@ -77,6 +77,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.spec-numbers.') as tmp:
     registry.unlink()
     old = tmp / 'no-origin.py'
     text = script.read_text()
+    shutil.copy(script.with_name('bureau-evidence.py'), tmp / 'bureau-evidence.py')
     before = "'refs/remotes/origin/', 'refs/heads/'"
     assert text.count(before) == 1
     old.write_text(text.replace(before, "'refs/heads/'"))
@@ -135,8 +136,9 @@ with open(sys.argv[1], 'a') as guard:
             print('PASS held allocator lock -> 124 after 1 s, clear diagnostic, registry unchanged')
 
             old = tmp / 'blocking-lock.py'
-            assert text.count(lock_call) == 1
-            old.write_text(text.replace(lock_call, 'fcntl.flock(guard, fcntl.LOCK_EX)'))
+            begin = text.index('def reserve_spec_number('); end = text.index('\ndef fingerprint(', begin)
+            assert text[begin:end].count(lock_call) == 1
+            old.write_text(text[:begin] + text[begin:end].replace(lock_call, 'fcntl.flock(guard, fcntl.LOCK_EX)') + text[end:])
             command[2] = str(old)
             try:
                 subprocess.run(command, env=env, text=True, capture_output=True, timeout=2)
