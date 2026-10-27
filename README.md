@@ -21,7 +21,7 @@ Codex support is implemented and covered by local fixtures. Before unattended ad
 
 ## Install
 
-Install the v3.5.0 source after publication (release date 2026-10-28; prepared 2026-10-27), keep one clone and expose it to the assistants you use:
+Install the v3.5.0 source (release date 2026-10-28; prepared 2026-10-27), keep one clone and expose it to the assistants you use:
 
 ```sh
 git clone --branch v3.5.0 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
@@ -92,7 +92,7 @@ The [background operations reference](references/operations.md) covers these mod
 
 ## Update and migrate
 
-Select `v3.5.0` after publication in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release) and refresh skill discovery. From v3.4.1, stop every driver, preserve unfinished work and customized assets, install/resync Spec Kit 1.2.2, then resync the **scripts and interfaces scopes together in each adopting repository**. Review changed defaults for manual-Merge capacity, review severity/rounds, ticket withdrawal, evidence, lessons and launcher dispatch; a launcher requires explicit overlap opt-in. Follow [Upgrade to v3.5](docs/migration.md#upgrade-to-v35), restart all drivers together and qualify a representative ticket. From earlier versions follow [Upgrade to v3.4.1](docs/migration.md#upgrade-to-v341) and its earlier sections first. In Claude Code, after loading the new source skill:
+Select tag `v3.5.0` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release) and refresh skill discovery. From v3.4.1, stop every driver, preserve unfinished work and customized assets, install/resync Spec Kit 1.2.2, then resync the **scripts and interfaces scopes together in each adopting repository**. Review changed defaults for manual-Merge capacity, review severity/rounds, ticket withdrawal, evidence, lessons and launcher dispatch; a launcher requires explicit overlap opt-in. Follow [Upgrade to v3.5](docs/migration.md#upgrade-to-v35), restart all drivers together and qualify a representative ticket. From earlier versions follow [Upgrade to v3.4.1](docs/migration.md#upgrade-to-v341) and its earlier sections first. In Claude Code, after loading the new source skill:
 
 ```text
 /bureau-init --resync-interfaces --resync-scripts --target both
@@ -110,7 +110,7 @@ Pause dispatch and preserve local work first. Resync previews conflicts; one unr
 
 Version 1 configs remain supported. Optional schema-v2 migration preserves existing values, adds the absent legacy runner default and records `model_compatibility: "v1"` to retain model ownership. Its private backup covers configuration only. Installing Codex interfaces does not switch the background runner.
 
-The planned [v3.5.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.0) and [changelog](CHANGELOG.md) list what changes and what adopters must do. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
+The [v3.5.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.0) and [changelog](CHANGELOG.md) list what changes and what adopters must do. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
 
 v3 changes the exit-code contract between stages and their drivers and needs configuration set before the resync; see the [v3.0.0 release notes](docs/release-notes-v3.0.0.md) and [Upgrade to v3](docs/migration.md#upgrade-to-v3). v3.0.1 is a patch on v3.0.0 (the merge stage's exit codes and a reused approval; see its [release notes](docs/release-notes-v3.0.1.md)); v3.0.2 is a patch on v3.0.1 (every stage finds the ticket's own spec directory, and `repo.worktree_links` brings a Python `.venv` back into the stage worktrees; see its [release notes](docs/release-notes-v3.0.2.md)). The previous major release is [v2.0.0](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0).
 

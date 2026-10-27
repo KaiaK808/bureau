@@ -1,6 +1,6 @@
 # Bureau v3.5.0 — coordinated dispatch, evidence and bounded recovery
 
-**Stable release · 2026-10-28 · source tag `v3.5.0` · prepared 2026-10-27.** The planned [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.0) will record the exact tagged commit and be marked as latest. Tagging and publication remain separate maintainer operations. The previous stable release is [v3.4.1](release-notes-v3.4.1.md); its notes retain the earlier release history.
+**Stable release · 2026-10-28 · source tag `v3.5.0` · prepared 2026-10-27.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.0) is marked as latest and records the exact tagged commit. Tagging and publication remain separate maintainer operations. The previous stable release is [v3.4.1](release-notes-v3.4.1.md); its notes retain the earlier release history.
 
 v3.5.0 is a minor release on v3.4.1. It collects [#76–#93](https://github.com/KaiaK808/bureau/compare/v3.4.1...56d4170) and the Spec Kit 1.2.2 upgrade in [#75](https://github.com/KaiaK808/bureau/pull/75). The v3 exit vocabulary gains `28` and `29`; scripts and interfaces must be resynced together. It goes straight to stable without a release candidate.
 
@@ -132,7 +132,7 @@ Records are created as needed. There is no historical backfill. Provider origina
 
 ## Upgrade an existing installation
 
-**From v3.4.1:** stop all shepherds, pollers, dispatchers and supervisors, preserve unfinished work, and compare installed script drift before replacing anything. Select tag `v3.5.0` after publication in the source skill checkout and refresh skill discovery. Install/resync pinned Spec Kit 1.2.2 after resolving customized helpers, preserving the constitution and active integration. Resync the **scripts and interfaces scopes as one set** (`--resync-interfaces --resync-scripts`) in each adopting repository, resolving customization conflicts through [preview and resolve](migration.md#preview-and-resolve-asset-conflicts). `--update` changes configuration only. See [Upgrade to v3.5](migration.md#upgrade-to-v35).
+**From v3.4.1:** stop all shepherds, pollers, dispatchers and supervisors, preserve unfinished work, and compare installed script drift before replacing anything. Select tag `v3.5.0` in the source skill checkout and refresh skill discovery. Install/resync pinned Spec Kit 1.2.2 after resolving customized helpers, preserving the constitution and active integration. Resync the **scripts and interfaces scopes as one set** (`--resync-interfaces --resync-scripts`) in each adopting repository, resolving customization conflicts through [preview and resolve](migration.md#preview-and-resolve-asset-conflicts). `--update` changes configuration only. See [Upgrade to v3.5](migration.md#upgrade-to-v35).
 
 Before restart, choose the manual-Merge counting policy and review severity floor, check active/cancellation state IDs and numeric settings, add/move governance in existing specs, and retain the shared number/checkpoint/admission/dispatch/repair records. Launcher users must explicitly enable overlap after every writer is updated. Silence and both configurable conflict strategies stay opt-in; do not enable them merely by copying an example. Restart drivers together, run doctor and qualify a representative ticket before unattended dispatch.
 

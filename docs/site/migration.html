@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="8a8f38ff835c29894bec4200e092ed6e4bec90ac882e11257a76660df7533d78">
+<meta name="bureau-source-sha256" content="137a8776fce339fd1c1ba07946c5b419b7f527cf2e8e63ba8512b5b37032c74a">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -30,7 +30,7 @@ candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
 the v3.2 release candidate, v3.2.0, v3.2.1, the v3.3 release candidates,
 v3.3.0, v3.4.0 and v3.4.1 to <strong>Bureau v3.5.0</strong>, dated
 2026-10-28 (prepared 2026-10-27). The commands below require the
-selected release's source skill. See the planned <a
+selected release's source skill. See the <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">v3.5.0
 release</a> and its <a href="release-notes.html">release notes</a>, the
 previous stable <a
@@ -96,13 +96,13 @@ installed commit.</p>
 <p>Confirm that <code>origin</code> identifies the official
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
-clean checkout, select the exact release (<code>v3.5.0</code> after
-publication for this release, <code>v3.4.1</code> for the previous
-stable release, <code>v3.4.0</code>, <code>v3.3.0</code>,
-<code>v3.2.1</code>, <code>v3.2.0</code>, <code>v3.1.0</code>,
-<code>v3.0.2</code>, <code>v3.0.1</code>, <code>v3.0.0</code> or
-<code>v2.0.0</code> for an earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.5.0 <span class="co"># after publication; or v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+clean checkout, select the exact release (<code>v3.5.0</code> for this
+release, <code>v3.4.1</code> for the previous stable release,
+<code>v3.4.0</code>, <code>v3.3.0</code>, <code>v3.2.1</code>,
+<code>v3.2.0</code>, <code>v3.1.0</code>, <code>v3.0.2</code>,
+<code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
+earlier one):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.5.0 <span class="co"># or v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -130,11 +130,11 @@ setting, file/state location and changed default. New exits 28/29 extend
 the v3 vocabulary. No configuration schema migration is needed. There is
 no release candidate, and no installation has run v3.5.0 before
 release.</p>
-<p><strong>From v3.4.1:</strong> select tag <code>v3.5.0</code> after
-publication using <a href="#select-the-source-release">the source-update
-steps</a>, and refresh skill discovery. <strong>From earlier
-versions:</strong> follow <a href="#upgrade-to-v341">Upgrade to
-v3.4.1</a> and its earlier sections first, then the steps below.</p>
+<p><strong>From v3.4.1:</strong> select tag <code>v3.5.0</code> using <a
+href="#select-the-source-release">the source-update steps</a>, and
+refresh skill discovery. <strong>From earlier versions:</strong> follow
+<a href="#upgrade-to-v341">Upgrade to v3.4.1</a> and its earlier
+sections first, then the steps below.</p>
 <p><strong>Stop all shepherds, queue loops, dispatchers and supervisors
 before resyncing.</strong> Inspect ownership and preserve unfinished
 work, local commits, customized scripts/interfaces, Spec Kit assets and
@@ -349,12 +349,12 @@ is no punctuation, verb or word-count requirement. Ordinary words such
 as “pending” or “wird definiert durch” inside a real explanation remain
 valid.</p>
 <p><strong>Known limits (governance check):</strong> the check targets
-honest mistakes by the spec agent; it is not a security boundary against
-deliberate obfuscation. Deliberate evasion, for example link reference
-titles, empty link labels or unusual Markdown or HTML constructs, is not
-guaranteed to be caught. Spec review remains responsible for judging
-whether the section is real and adequate, including applicability,
-circular or vague explanations and access/logging/retention risks.</p>
+honest mistakes by the spec agent; deliberate obfuscation can bypass it.
+Deliberate evasion, for example link reference titles, empty link labels
+or unusual Markdown or HTML constructs, is not guaranteed to be caught.
+Spec review remains responsible for judging whether the section is real
+and adequate, including applicability, circular or vague explanations
+and access/logging/retention risks.</p>
 <p>Add or move the section before review or app completion; a detected
 error uses the existing spec-review FAIL/rework route or leaves app
 completion prepared for repair. The no-measurement rule for specify/plan

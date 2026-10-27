@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="859cfbea7ad10777ffff6875b2a139591fd1ce29c305a839ccf4aaf0062dfe71">
+<meta name="bureau-source-sha256" content="5ab6b3887b76a986732e62269e3a0ad6038c81dbceae75c9f6647cadcc1e02dd">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -69,9 +69,8 @@ unattended adoption, qualify a representative live ticket in your
 repository. See the <a href="codex-acceptance.html">acceptance
 record</a> for verified coverage and remaining live checks.</p>
 <h2 id="install">Install</h2>
-<p>Install the v3.5.0 source after publication (release date 2026-10-28;
-prepared 2026-10-27), keep one clone and expose it to the assistants you
-use:</p>
+<p>Install the v3.5.0 source (release date 2026-10-28; prepared
+2026-10-27), keep one clone and expose it to the assistants you use:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.5.0 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills&quot;</span></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills/bureau-init&quot;</span></span>
@@ -248,8 +247,8 @@ work in flight. Manual Merge is excluded by default; set
 single-flight behavior. Build Review always counts. Ownership and
 schedule validation remain required.</p>
 <h2 id="update-and-migrate">Update and migrate</h2>
-<p>Select <code>v3.5.0</code> after publication in the source clone that
-supplies <code>bureau-init</code> using the <a
+<p>Select tag <code>v3.5.0</code> in the source clone that supplies
+<code>bureau-init</code> using the <a
 href="migration.html#select-the-source-release">source-update
 instructions</a> and refresh skill discovery. From v3.4.1, stop every
 driver, preserve unfinished work and customized assets, install/resync
@@ -284,7 +283,7 @@ preserves existing values, adds the absent legacy runner default and
 records <code>model_compatibility: "v1"</code> to retain model
 ownership. Its private backup covers configuration only. Installing
 Codex interfaces does not switch the background runner.</p>
-<p>The planned <a
+<p>The <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">v3.5.0
 release</a> and <a href="../../CHANGELOG.md">changelog</a> list what changes
 and what adopters must do. v2.0.0 was the first tagged release; earlier
