@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4a9ce83fee5c3d3f62c3841c410452ea462bb3e42111e6244d94bcdf346df095">
+<meta name="bureau-source-sha256" content="329fa4cb999d78ab172aac6c19bf6f1de9d04c5820ae733be1d80eeca35d774d">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -333,9 +333,10 @@ the rewritten HEAD, and confirms it the same way. These pushes run in
 the stage's own process group, which the runtime stops on an interrupt
 and kills when its stop grace ends, so a push that hangs on a remote
 cannot hold a stop longer than that grace. Confirmed ticket withdrawal
-suppresses these pushes and preserves local work. A process killed
-outright (SIGKILL, a host crash) pushes nothing, and its commits stay in
-the worktree</td>
+still permits these best-effort preservation pushes of commits already
+made; ordinary PR publication remains guarded and a failed preservation
+push leaves work local. A process killed outright (SIGKILL, a host
+crash) pushes nothing, and its commits stay in the worktree</td>
 </tr>
 <tr>
 <td><code>agents.qa</code></td>
@@ -685,8 +686,9 @@ through the compatibility-aware Models group in
 </table>
 <p>Stage settings apply to <code>spec</code>, <code>spec_review</code>,
 <code>ux</code>, <code>copy</code>, <code>implement</code>,
-<code>qa</code>, <code>code_review</code>, <code>merge</code> and
-<code>rebase</code>. Provider helpers also accept <code>research</code>,
+<code>qa</code>, <code>code_review</code>, <code>merge</code>,
+<code>rebase</code> and the opt-in <code>conflict_resolver</code>.
+Provider helpers also accept <code>research</code>,
 <code>upstream_port</code> and <code>upstream_summary</code> when
 invoked by their callers. Legacy string switches are preserved by
 migration; prefer booleans or objects for new settings.</p>
@@ -881,7 +883,10 @@ does not bound Git scanning after acquisition. The helper creates under
 phases. Existing approved specs resume downstream; older issue-directory
 associations are not imported into reservations. Keep the registry
 across cleanup. Separate clones or hosts need their own coordination;
-the spec admission cap itself is also a non-atomic Linear snapshot.</p>
+the early cap check uses a Linear snapshot, while the common-directory
+spec-admission lock serializes the authoritative reservation and Spec
+move for every updated driver, including pending moves absent from
+lagging snapshots.</p>
 <h3 id="advisory-lesson-budgets">Advisory lesson budgets</h3>
 <p><code>agents.lessons_budget_bytes</code> is an optional object with
 <code>spec</code>, <code>implement</code>, <code>qa</code> and
@@ -1449,6 +1454,17 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb2-1"><a href="
 <span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
 <span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
 <span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>All conflict-stage environment overrides are optional and unset by
+default: <code>BUREAU_RUNNER_CONFLICT_RESOLVER</code>,
+<code>BUREAU_MODEL_CONFLICT_RESOLVER</code>,
+<code>BUREAU_CODEX_MODEL_CONFLICT_RESOLVER</code>,
+<code>BUREAU_CLAUDE_MODEL_CONFLICT_RESOLVER</code>,
+<code>BUREAU_SANDBOX_CONFLICT_RESOLVER</code> and
+<code>BUREAU_REASONING_CONFLICT_RESOLVER</code>. The existing
+<code>.env</code> reader accepts the runner, generic-model and
+Codex-model families; the Claude-model, sandbox and reasoning forms are
+read only from the process environment. Existing provider/model
+compatibility and precedence still apply.</p>
 <p>The allowance is shared by merge/rebase, stages, restarts and
 worktrees in the same clone, keyed by ticket and immutable fetched base
 SHA. Reservations are fsynced under
@@ -1948,6 +1964,11 @@ compatibility</td>
 <tr>
 <td><code>BUREAU_MODEL_MERGE</code></td>
 <td>merge</td>
+<td></td>
+</tr>
+<tr>
+<td><code>BUREAU_MODEL_CONFLICT_RESOLVER</code></td>
+<td>conflict_resolver (opt-in)</td>
 <td></td>
 </tr>
 <tr>

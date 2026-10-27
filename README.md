@@ -13,18 +13,18 @@ Bureau connects Linear tickets, Spec Kit artifacts, implementation, QA and revie
 | Codex app task | Current task, using its selected model and tools | `$bureau TEAM-123 through review` |
 | Claude interactive | Current Claude Code session | `/linear-to-spec TEAM-123`, `/linear-implement TEAM-123` |
 | Bounded background tick | Configured provider CLI in a claimed disposable worktree | `bash scripts/bureau-tick.sh --no-merge` |
-| Continuous background pipeline | Configured provider CLIs, supervised shell loops/tmux | `bash scripts/start-bureau-v2.sh` |
+| Continuous background pipeline | Configured provider CLIs, supervised dispatcher/tmux | `bash scripts/start-bureau-v2.sh` |
 
-App work preserves the current checkout. Background workers claim both the ticket and their own disposable checkout. Held branches and unfinished work are preserved for reconciliation. App review and bounded ticks stop before merge by default; continuous legacy pipelines can merge after approval and the full CI/base gate. Use `--no-merge` when supervising through review only.
+App work preserves the current checkout. Background workers claim both the ticket and their own disposable checkout. Held branches and unfinished work are preserved for reconciliation. App review and bounded ticks stop before merge by default; continuous background pipelines can merge after approval and the full CI/base gate. Use `--no-merge` when supervising through review only.
 
 Codex support is implemented and covered by local fixtures. Before unattended adoption, qualify a representative live ticket in your repository. See the [acceptance record](docs/codex-acceptance.md) for verified coverage and remaining live checks.
 
 ## Install
 
-Install the stable v3.4.1 source, keep one clone and expose it to the assistants you use:
+Install the v3.5.0 source after publication (release date 2026-10-28; prepared 2026-10-27), keep one clone and expose it to the assistants you use:
 
 ```sh
-git clone --branch v3.4.1 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
+git clone --branch v3.5.0 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
 mkdir -p "$HOME/.agents/skills"
 ln -s "$HOME/bureau-init" "$HOME/.agents/skills/bureau-init"
 # Optional Claude Code entry point:
@@ -42,7 +42,7 @@ Installed assets include `.specify/` and the selected hosts' skills/instructions
 
 | Dependency | Needed for |
 |---|---|
-| Python 3.9+, Bash 3.2+, Git 2.26+, jq, curl | Installation and shared runtime |
+| Python 3.9+, Bash 3.2+, Git 2.26+, jq, curl | Installation and shared runtime; the shell filter needs Python on the system default PATH and `/usr/bin/env -0`. Merge-only worker reuse needs Git 2.38+ |
 | `specify-cli` 1.2.2 (`uv tool install specify-cli==1.2.2`) | Spec Kit initialization/resync |
 | Linear account and `LINEAR_API_KEY` in ignored `.env` | Shared ticket reads/transitions; interactive tools can assist discovery |
 | GitHub CLI (`gh`) | Background PR creation and merge operations |
@@ -77,6 +77,8 @@ python3 scripts/bureau-runtime.py unpause
 
 `logs/bureau-tick.json` distinguishes waiting, advancement, actual Done, review boundaries and failures. Provider evidence is under `logs/provider-runs/`. Missing account usage or dollar cost is unavailable, not zero. The [supervision guide](templates/skills/bureau/references/supervision.md) covers quiet change notifications, native app scheduling when requested, and shared conflict scheduling. Installation does not start recurring automation.
 
+The tmux launchers now run one continuous dispatcher with two lanes by default. It requires explicit `agents.file_overlap_gate: true`, including with one lane or dry-run; otherwise startup returns 24. Update all writers together before enabling it. `agents.parallel_lanes` controls process lanes separately from the ticket cap; standalone shepherds, ticks, batch and upstream-port remain available. See [continuous dispatch](docs/stage-protocol.md#continuous-ticket-dispatch).
+
 The existing single-ticket, batch and upstream-port modes remain available:
 
 | Operation | Entry point |
@@ -86,14 +88,14 @@ The existing single-ticket, batch and upstream-port modes remain available:
 | Execute that reviewed schedule | Repeat without `--dry-run`; a review stop halts its serial lane |
 | Port a selected upstream change | `bash scripts/upstream-port.sh --sha COMMIT` or `--pr NUMBER`, after configuring that repository's upstream and build/test commands |
 
-The [background operations reference](references/operations.md) covers these modes, the installed driver/helper inventory, single-flight limits, multiple repositories and the scope of dry-run controls. `agents.max_concurrent_issues: 1` prevents Spec from admitting another issue while work is in flight; it does not replace ownership checks or schedule validation.
+The [background operations reference](references/operations.md) covers these modes, the installed driver/helper inventory, single-flight limits, multiple repositories and the scope of dry-run controls. `agents.max_concurrent_issues: 1` limits counted work in flight. Manual Merge is excluded by default; set `agents.max_concurrent_include_merge: true` to keep full single-flight behavior. Build Review always counts. Ownership and schedule validation remain required.
 
 ## Update and migrate
 
-Select `v3.4.1` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release) and refresh skill discovery. From v3.4.0, resync the **scripts scope as one set in each adopting repository**, then restart queue loops and supervisors and follow [Upgrade to v3.4.1](docs/migration.md#upgrade-to-v341). No other action is required; no configuration key is new, no interfaces change and the v3 exit-code contract stays. From earlier versions, follow [Upgrade to v3.4](docs/migration.md#upgrade-to-v34) and its earlier upgrade sections first. In Claude Code, after loading the new source skill:
+Select `v3.5.0` after publication in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release) and refresh skill discovery. From v3.4.1, stop every driver, preserve unfinished work and customized assets, install/resync Spec Kit 1.2.2, then resync the **scripts and interfaces scopes together in each adopting repository**. Review changed defaults for manual-Merge capacity, review severity/rounds, ticket withdrawal, evidence, lessons and launcher dispatch; a launcher requires explicit overlap opt-in. Follow [Upgrade to v3.5](docs/migration.md#upgrade-to-v35), restart all drivers together and qualify a representative ticket. From earlier versions follow [Upgrade to v3.4.1](docs/migration.md#upgrade-to-v341) and its earlier sections first. In Claude Code, after loading the new source skill:
 
 ```text
-/bureau-init --resync-scripts --target both
+/bureau-init --resync-interfaces --resync-scripts --target both
 ```
 
 In a Codex app task, request the same scopes with:
@@ -108,7 +110,7 @@ Pause dispatch and preserve local work first. Resync previews conflicts; one unr
 
 Version 1 configs remain supported. Optional schema-v2 migration preserves existing values, adds the absent legacy runner default and records `model_compatibility: "v1"` to retain model ownership. Its private backup covers configuration only. Installing Codex interfaces does not switch the background runner.
 
-The [v3.4.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.4.1) and [changelog](CHANGELOG.md) list what changes and what adopters must do. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
+The planned [v3.5.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.0) and [changelog](CHANGELOG.md) list what changes and what adopters must do. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
 
 v3 changes the exit-code contract between stages and their drivers and needs configuration set before the resync; see the [v3.0.0 release notes](docs/release-notes-v3.0.0.md) and [Upgrade to v3](docs/migration.md#upgrade-to-v3). v3.0.1 is a patch on v3.0.0 (the merge stage's exit codes and a reused approval; see its [release notes](docs/release-notes-v3.0.1.md)); v3.0.2 is a patch on v3.0.1 (every stage finds the ticket's own spec directory, and `repo.worktree_links` brings a Python `.venv` back into the stage worktrees; see its [release notes](docs/release-notes-v3.0.2.md)). The previous major release is [v2.0.0](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0).
 
@@ -120,9 +122,11 @@ v3.2.1 is a patch on v3.2.0 that removes internal references without behaviour c
 
 v3.3.0, dated 2026-10-07, is an earlier stable release, a minor release on v3.2.1. It contains shell gates for Codex implement ([#60](https://github.com/KaiaK808/bureau/pull/60)) and QA ([#62](https://github.com/KaiaK808/bureau/pull/62)) turns blocked only by tests the sandbox denies, plus private temporary directories for Codex calls without `TMPDIR`; an installation's first real Codex implement turn passed the outside project gate, ended with exit `0` and handed the ticket on to QA. Claude runs and the v3 exit-code contract are unchanged; live QA acceptance remains pending. From v3.2.1 select tag `v3.3.0`, resync the scripts scope as one set, keep `repo.test_command` configured with the full project gate, restart queue loops and supervisors, and follow [Upgrade to v3.3](docs/migration.md#upgrade-to-v33). See its [release notes](docs/release-notes-v3.3.0.md) and those of its candidates, [v3.3.0-rc.2](docs/release-notes-v3.3.0-rc.2.md) and [v3.3.0-rc.1](docs/release-notes-v3.3.0-rc.1.md), which stay published as prereleases; runtime, installer, templates and tests are identical to rc.2. v3.3.0 followed [v3.2.1](https://github.com/KaiaK808/bureau/releases/tag/v3.2.1).
 
-v3.4.0, dated 2026-10-09, is the previous stable release, a minor release on v3.3.0. It adds operator hooks without submodule recursion ([#69](https://github.com/KaiaK808/bureau/pull/69)), applies Claude effort per stage ([#65](https://github.com/KaiaK808/bureau/pull/65)), re-accepts a clean preserved worktree ([#66](https://github.com/KaiaK808/bureau/pull/66)), selects a Claude configuration directory with a doctor login report ([#67](https://github.com/KaiaK808/bureau/pull/67)), skips malformed environment names safely ([#70](https://github.com/KaiaK808/bureau/pull/70)) and documents `.env` precedence ([#71](https://github.com/KaiaK808/bureau/pull/71)). The v3 exit-code contract stays. From v3.3.0 select tag `v3.4.0`, resync the scripts scope as one set and follow [Upgrade to v3.4](docs/migration.md#upgrade-to-v34). There was no release candidate; live acceptance follows the release. See the [release notes](docs/release-notes-v3.4.0.md); v3.4.0 followed [v3.3.0](https://github.com/KaiaK808/bureau/releases/tag/v3.3.0).
+v3.4.0, dated 2026-10-09, is an earlier stable release, a minor release on v3.3.0. It adds operator hooks without submodule recursion ([#69](https://github.com/KaiaK808/bureau/pull/69)), applies Claude effort per stage ([#65](https://github.com/KaiaK808/bureau/pull/65)), re-accepts a clean preserved worktree ([#66](https://github.com/KaiaK808/bureau/pull/66)), selects a Claude configuration directory with a doctor login report ([#67](https://github.com/KaiaK808/bureau/pull/67)), skips malformed environment names safely ([#70](https://github.com/KaiaK808/bureau/pull/70)) and documents `.env` precedence ([#71](https://github.com/KaiaK808/bureau/pull/71)). The v3 exit-code contract stays. From v3.3.0 select tag `v3.4.0`, resync the scripts scope as one set and follow [Upgrade to v3.4](docs/migration.md#upgrade-to-v34). There was no release candidate; live acceptance follows the release. See the [release notes](docs/release-notes-v3.4.0.md); v3.4.0 followed [v3.3.0](https://github.com/KaiaK808/bureau/releases/tag/v3.3.0).
 
-v3.4.1, dated 2026-10-20, is the current stable release, marked as latest, a patch release on v3.4.0. It contains three fixes in [#73](https://github.com/KaiaK808/bureau/pull/73): dropping every `HERDR_` variable from child environments, accepting Codex error notices recovered by a later completed turn, and protecting Claude structured results from scheduled wakeups. No exit code or configuration key is new, no interfaces change and the v3 exit-code contract stays. From v3.4.0 select tag `v3.4.1`, resync the scripts scope as one set and restart queue loops and supervisors; see [Upgrade to v3.4.1](docs/migration.md#upgrade-to-v341). Installations that start shepherd runs from inside Herdr benefit directly. There is no release candidate and no installation has run v3.4.1 before the release; provider calls are faked in tests, and no live Herdr session, Codex 503 recovery or wakeup was reproduced. See the [release notes](docs/release-notes.md); the previous stable release is [v3.4.0](https://github.com/KaiaK808/bureau/releases/tag/v3.4.0).
+v3.4.1, dated 2026-10-20, is the previous stable release, a patch release on v3.4.0. It contains three fixes in [#73](https://github.com/KaiaK808/bureau/pull/73): dropping every `HERDR_` variable from child environments, accepting Codex error notices recovered by a later completed turn, and protecting Claude structured results from scheduled wakeups. No exit code or configuration key is new, no interfaces change and the v3 exit-code contract stays. From v3.4.0 select tag `v3.4.1`, resync the scripts scope as one set and restart queue loops and supervisors; see [Upgrade to v3.4.1](docs/migration.md#upgrade-to-v341). Installations that start shepherd runs from inside Herdr benefit directly. There is no release candidate and no installation has run v3.4.1 before the release; provider calls are faked in tests, and no live Herdr session, Codex 503 recovery or wakeup was reproduced. See the [release notes](docs/release-notes-v3.4.1.md); v3.4.1 followed [v3.4.0](https://github.com/KaiaK808/bureau/releases/tag/v3.4.0).
+
+v3.5.0, dated 2026-10-28 (prepared 2026-10-27), is the current release preparation, a minor release on v3.4.1. It adds quiet exits 28/29, shared completion/wait evidence, committed spec checkpoints and governance checks, stricter sandbox-gate proof, review convergence, cooperative ticket withdrawal, file admission, continuous dispatch and bounded learning. Spec Kit is pinned to 1.2.2. Configurable conflict repair and silence detection stay opt-in; launchers require overlap enabled. Each PR was reviewed by Codex before push; stack-top #93 at `9842550` is green on all ten CI shards. No installation has run v3.5.0 before the release and there is no release candidate; see [release notes](docs/release-notes.md) for all defaults, state locations, the validation record and pending main CI. Publication remains a separate maintainer operation.
 
 ## Documentation
 

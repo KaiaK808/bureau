@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="261b0732d7ad01be169aeae63e2a9e10b59097cb7feaacd7146b7a41068e06ad">
+<meta name="bureau-source-sha256" content="4a97d43672a2ab28a72997aa8acf650234d3062849617d42c6249eca4f5aa3b2">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1527,11 +1527,12 @@ observation window, not discarded history.</p>
 <p><strong>Upgrade:</strong> resync all scripts together, including
 <code>bureau-evidence.py</code>, and restart background drivers. No
 configuration migration or history backfill is required; app records
-stay compatible. This unreleased metadata-only contract replaces PR 3's
-earlier raw-copy format. Before using it with a pre-fix evidence store,
-remove the old <code>&lt;git common dir&gt;/bureau/evidence/v1/</code>
-store after inspecting any active work: previously copied private bytes
-are not made safe by an upgrade, and no raw history is migrated. Fixture
+stay compatible. This metadata-only contract replaces the earlier
+development raw-copy format. Before using it with a pre-fix evidence
+store, remove the old
+<code>&lt;git common dir&gt;/bureau/evidence/v1/</code> store after
+inspecting any active work: previously copied private bytes are not made
+safe by an upgrade, and no raw history is migrated. Fixture
 qualification uses fake services/providers and local Git, not a live
 adopter rollout.</p></main>
 </div>

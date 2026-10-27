@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3f95a4796f74d225a55e35c3639fce770ca0ac51107f016f0a6c5d8a302f163e">
+<meta name="bureau-source-sha256" content="79101fa794afb5e4fdcffe5567b876c500ac5e5f8eb3d330177da6016a9509c4">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,15 +24,47 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.4.1</strong>, dated
-<strong>2026-10-20</strong>, the current stable release, marked as
-latest. Its <a
+<p>This source tree prepares <strong>Bureau v3.5.0</strong>, dated
+<strong>2026-10-28</strong>, as the current stable release; prepared
+2026-10-27. Its planned <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">GitHub
+Release</a> will record the exact tagged commit and be marked as latest.
+Tagging and publication remain separate maintainer operations. The <a
+href="../../CHANGELOG.md">changelog</a> and <a
+href="release-notes.html">release notes</a> cover PRs #76–#93 and the Spec
+Kit 1.2.2 upgrade in #75. New exits 28/29 require coordinated consumers.
+Default changes include manual-Merge capacity counting, review
+severity/round policy, ticket withdrawal, completion evidence, bounded
+lessons and continuous launcher dispatch; the dispatcher requires
+explicit overlap opt-in. Configurable conflict repair and provider
+silence remain opt-in. From v3.4.1, stop every driver, preserve
+unfinished work and customized assets, select tag <code>v3.5.0</code>
+after publication, install/resync Spec Kit 1.2.2, resync scripts and
+interfaces together and restart only after the checks in <a
+href="migration.html#upgrade-to-v35">Upgrade to v3.5</a>.</p>
+<p>The maintainer's release validation record reports each PR reviewed
+by Codex before push. CI was judged at the top of the stack: <a
+href="https://github.com/KaiaK808/bureau/pull/93">#93</a> at head
+<code>9842550</code> is green on all 10 shards (four
+<code>ubuntu-latest</code>, six <code>macos-latest</code>).
+<code>main</code> at <code>56d4170</code> equals that tested tree plus
+#83's 15-file ADR change (14 Markdown files and
+<code>tests/test_adrs.sh</code>). The full suite also ran locally on
+macOS, 151/151 at <code>950a5d9</code>, before the sharding commit. An
+Ubuntu 24.04 container run matched PR 1's container baseline. Provider
+calls are faked in tests. No installation has run v3.5.0 before the
+release, and there is no release candidate. Release preparation changes
+documentation only.</p>
+<!-- main CI result pending -->
+
+<p>The previous stable release is <strong>Bureau v3.4.1</strong>, dated
+<strong>2026-10-20</strong>. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.1">GitHub
 Release</a> records the exact tagged commit; the <a
 href="../../CHANGELOG.md">changelog</a> and <a
-href="release-notes.html">release notes</a> describe the changes and the
-upgrade. v3.4.1 is a patch release on v3.4.0 with three fixes in one
-pull request, <a
+href="release-notes-v3.4.1.html">release notes</a> describe the changes
+and the upgrade. v3.4.1 is a patch release on v3.4.0 with three fixes in
+one pull request, <a
 href="https://github.com/KaiaK808/bureau/pull/73">#73</a>: dropping
 every <code>HERDR_</code> variable from child environments in both
 <code>repo.untrusted_env</code> modes, accepting Codex error notices
@@ -54,11 +86,11 @@ href="https://github.com/KaiaK808/bureau/pull/73">#73</a> at head
 <code>35c176d</code>, merged as <code>5b71c1b</code> with an identical
 tree. Provider calls are faked in tests; no live Herdr session, live
 Codex 503 recovery or live wakeup was reproduced. No installation has
-run v3.4.1 before the release, and there is no release candidate.
-Release preparation changes documentation only; runtime, installer,
-templates, tests and CI stay at the <code>5b71c1b</code> baseline. The
+run v3.4.1 before the release, and there is no release candidate. Its
+release preparation changed documentation only; runtime, installer,
+templates, tests and CI stayed at the <code>5b71c1b</code> baseline. The
 final tagged commit is recorded in the GitHub Release body.</p>
-<p>The previous stable release is <strong>Bureau v3.4.0</strong>, dated
+<p>An earlier stable release is <strong>Bureau v3.4.0</strong>, dated
 <strong>2026-10-09</strong>. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.0">GitHub
 Release</a> records the exact tagged commit; the <a
