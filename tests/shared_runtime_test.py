@@ -17,6 +17,10 @@ import unittest
 from unittest.mock import patch
 
 import git_maintenance
+from governance_cases import (FENCED_GOVERNANCE, GOVERNANCE_FIRST,
+                              COMMENT_HIDDEN_GOVERNANCE, COLUMN_ZERO_GOVERNANCE,
+                              ROUND8_PROVIDER_INVALID, ROUND9_PROVIDER_INVALID, ROUND9_VALID,
+                              ROUND10_PROVIDER_INVALID, ROUND10_VALID)
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = Path(os.environ.get('BUREAU_TEST_RUNTIME_SCRIPT',ROOT / 'templates/scripts/bureau-runtime.py'))
@@ -37,6 +41,7 @@ class RuntimeTests(unittest.TestCase):
         self.state = 's3'; self.comments = []; self.moves = []; self.labels = []; self.label_adds = []
         self.addCleanup(patch.stopall)
         patch.dict(os.environ, {'BUREAU_CONFIG':str(self.repo / '.bureau.json')}).start()
+        self.real_shell = r.shell
         patch.object(r, 'shell', self.shell).start()
 
     def make_repo(self, repo):
@@ -69,6 +74,7 @@ class RuntimeTests(unittest.TestCase):
         if function == 'bureau_issue_snapshot':
             return json.dumps({'id':'uuid','identifier':'TEAM-1','title':'Test','state':{'id':self.state,'name':'Custom state'}, 'labels':{'nodes':[{'name':name} for name in self.labels]}})
         if function == 'get_issue_comments': return json.dumps(self.comments)
+        if function == 'bureau_spec_dir_for_branch': return self.real_shell(repo, function, *args)
         if function == 'post_comment': self.comments.append({'body':args[1]}); return ''
         if function == 'add_issue_label': self.labels.append(args[1]); self.label_adds.append(args[1]); return ''
         if function == 'move_issue': self.state=args[1]; self.moves.append(args[1]); return ''
@@ -311,11 +317,13 @@ class RuntimeTests(unittest.TestCase):
 
     def test_app_ticket_flows_through_review_without_provider_processes(self):
         self.state='s1'
-        specdir=self.repo/'specs/001-issue'; specdir.mkdir(parents=True)
+        r.git(self.repo,'switch','-q','-c','001-team-1')
+        specdir=self.repo/'specs/001-team-1'; specdir.mkdir(parents=True)
         artifacts=[]
         for name in ('spec.md','plan.md','tasks.md'):
             file=specdir/name; file.write_text('# Fixture addition feature\n')
             artifacts.append(str(file.relative_to(self.repo)))
+        (specdir/'spec.md').write_text('# Feature\n## Governance and security\nDecision: not required\nRationale: The local arithmetic fixture processes no credentials or personal data.\n')
         run=self.prepare('spec'); self.finish(self.result(run,artifacts=artifacts,tests=[]))
         self.assertEqual(self.state,'s2')
         run=self.prepare('spec_review'); self.finish(self.result(run,artifacts=artifacts,tests=[]))
@@ -487,8 +495,12 @@ class RuntimeTests(unittest.TestCase):
         self.config['linear']['teams'][0]['states'].update(design='s8',copy='s9')
         self.config['linear']['labels']={'needs_ux':{'name':'requires-design'},'needs_copy':{'name':'requires-copy'}}
         r.save(self.repo/'.bureau.json',self.config)
+        r.git(self.repo,'switch','-q','-c','001-team-1')
+        specdir=self.repo/'specs/001-team-1'; specdir.mkdir(parents=True)
+        (specdir/'spec.md').write_text('## Governance and security\nDecision: not required\nRationale: This copy fixture handles no credentials or personal data.\n')
+        artifacts=['specs/001-team-1/spec.md']
         self.state='s2'; run=self.prepare('spec_review'); self.labels=['requires-design']
-        args=self.result(run)
+        args=self.result(run,artifacts=artifacts)
         original=self.shell
         def fail_move(repo,function,*values):
             if function=='move_issue': raise OSError('Linear unavailable')
@@ -498,7 +510,140 @@ class RuntimeTests(unittest.TestCase):
         self.finish(args)
         self.assertEqual(self.state,'s8')
         self.state='s2'; self.labels=[]; run=self.prepare('spec_review'); self.labels=['requires-copy']
-        self.finish(self.result(run)); self.assertEqual(self.state,'s9')
+        self.finish(self.result(run,artifacts=artifacts)); self.assertEqual(self.state,'s9')
+
+    def test_app_spec_and_review_completion_reject_invalid_governance_even_with_pass(self):
+        r.git(self.repo,'switch','-q','-c','001-team-1')
+        specdir=self.repo/'specs/001-team-1'; specdir.mkdir(parents=True)
+        artifacts=['specs/001-team-1/'+name for name in ('spec.md','plan.md','tasks.md')]
+        for name in ('plan.md','tasks.md'): (specdir/name).write_text('# fixture\n')
+        for stage, state in (('spec','s1'),('spec_review','s2')):
+            self.state=state; run=self.prepare(stage)
+            for body in ('# Missing\n','## Governance and security\n','## Governance and security\nTBD\n',
+                         '## Governance and security\nDecision: N/A\nRationale: N/A\n'):
+                (specdir/'spec.md').write_text(body)
+                with self.subTest(stage=stage,body=body),self.assertRaises(ValueError):
+                    self.finish(self.result(run,artifacts=artifacts,summary='Model PASS'))
+            self.assertEqual(self.moves,[])
+            (specdir/'spec.md').write_text('## Governance and security\nDecision: not required\nRationale: This documentation fixture handles no credentials or personal data.\n')
+            self.finish(self.result(run,artifacts=artifacts))
+            self.moves=[]
+
+    def test_app_spec_and_review_completion_reject_fenced_governance(self):
+        r.git(self.repo,'switch','-q','-c','001-team-1')
+        specdir=self.repo/'specs/001-team-1'; specdir.mkdir(parents=True)
+        artifacts=['specs/001-team-1/'+name for name in ('spec.md','plan.md','tasks.md')]
+        valid='## Governance and security\nDecision: not required\nRationale: This documentation fixture handles no credentials or personal data.\n'
+        for name in ('plan.md','tasks.md'): (specdir/name).write_text('# fixture\n')
+        cases=(
+            '````md\n```\n'+valid+'````\n',
+            '```md\n``` trailing text\n'+valid+'```\n',
+            '~~~~md\n~~~\n'+valid+'~~~~\n',
+            '~~~md\n~~~ trailing text\n'+valid+'~~~\n',
+            '   ````md\n   ```\n'+valid+'   ````\n',
+            '   ~~~~md\n   ~~~\n'+valid+'   ~~~~\n',
+        )
+        for stage,state in (('spec','s1'),('spec_review','s2')):
+            with self.subTest(stage=stage):
+                self.state=state; run=self.prepare(stage)
+                for body in cases:
+                    (specdir/'spec.md').write_text(body)
+                    with self.subTest(body=body),self.assertRaisesRegex(ValueError,'Governance and security'):
+                        self.finish(self.result(run,artifacts=artifacts,summary='Model PASS'))
+                    self.assertEqual(self.moves,[])
+                    self.assertEqual(self.comments,[])
+                (specdir/'spec.md').write_text(valid+'   ````md\nexample\n   `````\t\n')
+                self.finish(self.result(run,artifacts=artifacts))
+            self.moves=[]; self.comments=[]
+
+    def test_real_provider_pass_obeys_governance_placement(self):
+        r.git(self.repo,'switch','-q','-c','001-team-1')
+        specdir=self.repo/'specs/001-team-1'; specdir.mkdir(parents=True)
+        artifacts=['specs/001-team-1/'+name for name in ('spec.md','plan.md','tasks.md')]
+        for name in ('plan.md','tasks.md'): (specdir/name).write_text('# fixture\n')
+        # The fake CLI supplies PASS; the shipped adapter parses its envelope,
+        # persists a completion receipt and forwards the actual app result.
+        binary=Path(self.temp.name)/'bin'; binary.mkdir()
+        cli=binary/'claude'
+        cli.write_text('#!'+sys.executable+'\nimport json, os, sys\nfrom pathlib import Path\n'
+                       'if sys.argv[1:2]==["auth"]: print(json.dumps({"loggedIn":True}))\n'
+                       'elif sys.argv[1:2]==["--help"]: print("fixture CLI")\n'
+                       'else: print(json.dumps({"result":Path(os.environ["GOVERNANCE_RESULT"]).read_text()}))\n')
+        cli.chmod(0o755)
+        prompt=Path(self.temp.name)/'prompt.txt'; prompt.write_text('Return the completed stage result: Model PASS')
+        payload=Path(self.temp.name)/'provider-result.json'
+        provider=SCRIPT.with_name('bureau-provider.py')
+        env={key:value for key,value in os.environ.items() if not key.startswith('BUREAU_')}
+        env.update(PATH=str(binary)+os.pathsep+os.environ['PATH'],GOVERNANCE_RESULT=str(payload),
+                   BUREAU_PROVIDER_LOG_DIR=str(Path(self.temp.name)/'provider-evidence'))
+        def adapter_result(run):
+            args=self.result(run,artifacts=artifacts,summary='Model PASS')
+            payload.write_text(Path(args.result).read_text())
+            proc=subprocess.run([sys.executable,str(provider),'--stage',run['stage'],
+                                 '--config',str(self.repo/'.bureau.json'),'--repo',str(self.repo),
+                                 '--prompt-file',str(prompt)],env=env,capture_output=True,text=True,timeout=15)
+            self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+            self.assertEqual(json.loads(proc.stdout)['summary'],'Model PASS')
+            Path(args.result).write_text(proc.stdout)
+            return args
+        for stage,state,target in (('spec','s1','s2'),('spec_review','s2','s3')):
+            self.state=state; self.moves=[]; self.comments=[]; run=self.prepare(stage)
+            try:
+                for name,body in {**FENCED_GOVERNANCE, **COMMENT_HIDDEN_GOVERNANCE, **COLUMN_ZERO_GOVERNANCE, **ROUND8_PROVIDER_INVALID, **ROUND9_PROVIDER_INVALID, **ROUND10_PROVIDER_INVALID}.items():
+                    with self.subTest(stage=stage,case=name):
+                        (specdir/'spec.md').write_text(body)
+                        args=adapter_result(run)
+                        with self.assertRaisesRegex(ValueError,'Governance and security') as error: self.finish(args)
+                        if name in FENCED_GOVERNANCE:
+                            self.assertIn('move the Governance and security section above the first code block',str(error.exception))
+                        self.assertEqual(self.moves,[]); self.assertEqual(self.comments,[])
+                        self.assertEqual(self.state,state)
+                        self.assertEqual(r.read(self.store.root/'runs'/(run['run_id']+'.json'))['status'],'prepared')
+                        self.store.assert_owner('TEAM-1',self.repo,run['run_id'])
+            finally:
+                self.store.release(run['run_id'])
+            # Governance before code completes through the same real adapter.
+            for name, body in {**GOVERNANCE_FIRST, **ROUND9_VALID, **ROUND10_VALID}.items():
+                with self.subTest(stage=stage,case=name,valid=True):
+                    self.state=state; self.moves=[]; self.comments=[]; run=self.prepare(stage)
+                    try:
+                        (specdir/'spec.md').write_text(body)
+                        self.finish(adapter_result(run))
+                        self.assertEqual(self.moves,[target]); self.assertEqual(self.state,target)
+                    finally:
+                        self.store.release(run['run_id'])
+                    self.moves=[]; self.comments=[]
+
+    def test_app_completion_uses_shared_canonical_directory_resolver(self):
+        r.git(self.repo,'switch','-q','-c','codex/001-team-1')
+        self.comments=[{'body':'<!-- bureau-branch: codex/001-team-1 -->'}]
+        folder=self.repo/'specs/001-team-1'; folder.mkdir(parents=True)
+        (folder/'spec.md').write_text('## Governance and security\nDecision: not required\nRationale: This change handles no credentials.\n')
+        self.state='s2'; run=self.prepare('spec_review')
+        self.assertEqual(run['feature_directory'],str(folder))
+        self.finish(self.result(run,artifacts=['specs/001-team-1/spec.md']))
+        self.assertEqual(self.moves,['s3'])
+
+    def test_app_completion_rejects_another_tickets_valid_spec(self):
+        r.git(self.repo,'switch','-q','-c','001-team-1')
+        self.comments=[{'body':'<!-- bureau-branch: 001-team-1 -->'}]
+        for name, body in (('001-team-1', '# Missing governance\n'),
+                           ('999-other-ticket', '## Governance and security\nDecision: not required\nRationale: This change handles no credentials.\n')):
+            folder=self.repo/'specs'/name; folder.mkdir(parents=True)
+            for artifact in ('spec.md','plan.md','tasks.md'): (folder/artifact).write_text(body)
+        foreign=['specs/999-other-ticket/'+name for name in ('spec.md','plan.md','tasks.md')]
+        for stage, state in (('spec','s1'),('spec_review','s2')):
+            self.state=state; self.comments=[{'body':'<!-- bureau-branch: 001-team-1 -->'}]; self.moves=[]
+            run=self.prepare(stage)
+            try:
+                with self.subTest(stage=stage):
+                    self.assertEqual(run['feature_directory'], str(self.repo/'specs/001-team-1'))
+                    with self.assertRaisesRegex(ValueError, 'canonical feature directory'):
+                        self.finish(self.result(run,artifacts=foreign,summary='Model PASS'))
+                    self.assertEqual(self.moves,[]); self.assertEqual(len(self.comments),1)
+                    self.assertEqual(r.read(self.store.root/'runs'/(run['run_id']+'.json'))['status'], 'prepared')
+            finally:
+                self.store.release(run['run_id'])
 
     def test_changed_retry_cannot_contradict_published_comment(self):
         self.state='s5'; run=self.prepare('code_review'); args=self.result(run,verdict='REQUEST_CHANGES',summary='Fix the missing authorization check')
@@ -1139,7 +1284,7 @@ s.end_attempt(run,a,0,sys.argv[5])
 
     def test_isolated_entrypoints_do_not_write_bytecode_into_installed_scripts(self):
         installed=self.repo.parent/'installed scripts'; installed.mkdir()
-        for name in ('runtime','provider','supervision','evidence'):
+        for name in ('runtime','provider','supervision','evidence','spec'):
             shutil.copy(ROOT/'templates/scripts'/('bureau-'+name+'.py'),installed)
         before={p.name:p.read_bytes() for p in installed.iterdir()}
         for name,args in [('runtime',['--repo',str(self.repo),'status']),('supervision',['--repo',str(self.repo),'status']),

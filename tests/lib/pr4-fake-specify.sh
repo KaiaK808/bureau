@@ -22,7 +22,9 @@ case "$*" in
         dir=$(jq -r .feature_directory .specify/feature.json)
         printf '# ticket spec\n' > "$dir/spec.md"
         printf '# tasks\n- [ ] T001 ticket task\n' > "$dir/tasks.md" ;;
-      leave) ;;
+      leave)
+        dir=$(jq -r .feature_directory .specify/feature.json)
+        [ -s "$dir/spec.md" ] || printf '# fixture spec\n' > "$dir/spec.md" ;;
       remove) rm -f .specify/feature.json ;;
       write)
         mkdir -p .specify "${PR4_SPECIFY_DIR:?}"
@@ -36,5 +38,9 @@ case "$*" in
         git checkout -q -- .specify/feature.json ;;
       *) echo "pr4-fake-specify: unknown PR4_SPECIFY_ACTION '$PR4_SPECIFY_ACTION'" >&2; exit 97 ;;
     esac ;;
+esac
+case "$*" in
+  *speckit-plan/SKILL.md*) dir=$(jq -r .feature_directory .specify/feature.json); printf '# plan\n' > "$dir/plan.md" ;;
+  *speckit-tasks/SKILL.md*) dir=$(jq -r .feature_directory .specify/feature.json); printf '# tasks\n- [ ] T001 ticket task\n' > "$dir/tasks.md" ;;
 esac
 exec "$(dirname "$0")/fake_claude.sh" "$@"

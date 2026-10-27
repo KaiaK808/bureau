@@ -12,6 +12,10 @@ cleanup() {
 trap cleanup EXIT
 fail() { echo "FAIL $* (rc=${LAST_RC:-})" >&2; printf '%s\n' "${LAST_STDERR:-}" "${LAST_STDOUT:-}" | tail -20 >&2; exit 1; }
 setup_worker() {
+  # These PR3 regressions exercise fresh rework and reserved-branch restoration.
+  # Committed checkpoint reuse is covered by test_spec_resume.sh; opt out here
+  # so the existing origin/base reset and provider-input assertions stay real.
+  export BUREAU_SPEC_CHECKPOINTS_DISABLED=1
   sandbox_init EXP-910 001-test-branch
   SEED="$SANDBOX"; WORKER="$SEED/.worktrees/spec"
   git -C "$SEED" checkout -q main
@@ -21,9 +25,11 @@ setup_worker() {
   git -C "$SEED" add specs .specify/scripts .gitignore
   git -C "$SEED" commit -qm 'worker fixture with pinned helper'
   git -C "$SEED" push -q origin main
+  printf '{"repo":{"base_branch":"main"}}\n' > "$SEED/.bureau.json"
   # Exercise production branch ownership and reset functions, including the
   # real runtime assert-owner; only optional worktree links are absent here.
-  sed -n -e '/^free_branch_from_other_worktrees() {/,/^}/p' \
+  sed -n -e '/^bureau_get() {.*}$/p' \
+    -e '/^free_branch_from_other_worktrees() {/,/^}/p' \
     -e '/^reset_worktree() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SEED/reset-helpers.sh"
   sed -n '/^free_branch_from_other_worktrees() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/bureau-config.sh"
   export SANDBOX="$WORKER" BUREAU_STUB_ISSUE_STATE=Triage
@@ -47,7 +53,7 @@ PY
   (
     cd "$SEED"
     source "$SEED/reset-helpers.sh"
-    REPO_DIR="$SEED"; BUREAU_RUNTIME="$SCRIPTS_DIR/bureau-runtime.py"
+    REPO_DIR="$SEED"; BUREAU_RUNTIME="$SCRIPTS_DIR/bureau-runtime.py"; BUREAU_CONFIG="$SEED/.bureau.json"
     BUREAU_RUN_ID="$run"; BUREAU_CURRENT_ISSUE=EXP-910; BUREAU_WORKSPACE_MODE=disposable
     bureau_link_worktree_paths() { :; }
     reset_worktree "$WORKER" spec-pipeline.sh
@@ -101,8 +107,8 @@ for mode in local local-only local-ahead remote remote-rework fresh-worker diver
 from pathlib import Path
 import sys
 p = Path(sys.argv[1]); text = p.read_text()
-start = text.index('# Workers start detached on origin/main')
-end = text.index('# 1.2.2 creates under specs/', start)
+start = text.index('# Resolve branch ownership BEFORE')
+end = text.index('if [ ! -d "$WANTED_DIR" ]; then', start)
 text = text[:start] + 'FEATURE_BRANCH="$ALLOCATED_NAME"\n' + text[end:]
 text = text.replace('CUR_BRANCH=$(git branch --show-current)', 'git checkout -b "$FEATURE_BRANCH"\nCUR_BRANCH=$(git branch --show-current)')
 p.write_text(text)
@@ -116,11 +122,11 @@ PY
   fi
   run_pipeline spec-pipeline.sh EXP-910
   if [ "$mode" = diverged ]; then
-    [ "$LAST_RC" = 17 ] || fail 'diverged reserved branch did not stop'
+    [ "$LAST_RC" = 25 ] || fail 'diverged reserved branch did not stop for human reconciliation'
     [ ! -f "$WORKER/fake_claude_counter" ] || fail 'diverged branch spent a provider call'
     [ "$(git -C "$WORKER" show HEAD:specs/004-exp-910/spec.md)" = '# unpublished local revisions' ] || fail 'divergence discarded local work'
     [ "$(git -C "$WORKER" show origin/004-exp-910:specs/004-exp-910/spec.md)" = '# pushed review revisions' ] || fail 'divergence discarded remote work'
-    echo 'PASS diverged reserved branch -> 17 before specify, local and remote revisions both retained'
+    echo 'PASS diverged reserved branch -> 25 before specify, local and remote revisions both retained'
     cleanup; SEED=""
     continue
   fi

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ca50f7a797d02a9d09a66611f50d5c7bcec705984edde6b9560ea976544c8c7d">
+<meta name="bureau-source-sha256" content="24e854a9a60ca451090a30aedcea27cfd0f78db14b09931f5cc4838952fffbd2">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -733,12 +733,12 @@ stable issue-key short name; gaps are fine. After a disposable worker
 reset, the stage checks branch ownership and checks out its reserved
 local/origin branch before creating artifacts or calling specify. Remote
 revisions fast-forward; unpublished local commits are retained;
-divergent history stops with 17. Lock acquisition is bounded to 300
-seconds by default (<code>BUREAU_SPEC_LOCK_TIMEOUT</code> in the process
-environment, whole seconds 1–86400; invalid values warn with the key
-only and use 300). On timeout the stage prints the lock path, exits 124
-and returns the issue to Triage before specify; this does not bound Git
-scanning after acquisition. The helper creates under
+divergent history halts with 25 and needs-human. Lock acquisition is
+bounded to 300 seconds by default (<code>BUREAU_SPEC_LOCK_TIMEOUT</code>
+in the process environment, whole seconds 1–86400; invalid values warn
+with the key only and use 300). On timeout the stage prints the lock
+path, exits 124 and returns the issue to Triage before specify; this
+does not bound Git scanning after acquisition. The helper creates under
 <code>specs/</code>, so Bureau relocates its output for a different
 <code>repo.specs_dir</code> and persists the exact directory for later
 phases. Existing approved specs resume downstream; older issue-directory
@@ -825,9 +825,9 @@ pinned helper's output here and persists the exact feature pointer</td>
 <td><code>"main"</code></td>
 <td>Origin ref whose presence the spec allocator verifies after fetching
 all origin heads. Spec numbering considers every fetched origin branch,
-local branch and worktree. Disposable spec workers still reset to
-<code>origin/main</code>; other stage reset/merge policies are
-unchanged</td>
+local branch and worktree. Disposable spec workers reset to a verified
+committed phase checkpoint or the configured origin base branch; other
+stage reset/merge policies are unchanged</td>
 </tr>
 <tr>
 <td><code>repo.test_command</code></td>

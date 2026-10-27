@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b08b6d7c35a9826bc71d0629d8a5982558676f5a18588e013d001c71ca5e77a3">
+<meta name="bureau-source-sha256" content="b00f1fbe7970108f6b42ce7bf3aee8c76003c9e538da69ba8efe4078e7a9f368">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -70,6 +70,105 @@ href="#upgrade-to-v32">Upgrade to v3.2</a>, <a
 href="#upgrade-to-v33">Upgrade to v3.3</a>, <a
 href="#upgrade-to-v34">Upgrade to v3.4</a> and <a
 href="#upgrade-to-v341">Upgrade to v3.4.1</a>.</p>
+<h2 id="pending-spec-resume-and-governance-adoption">Pending spec resume
+and governance adoption</h2>
+<p>Unreleased: resync the whole scripts scope, including
+<code>bureau-spec.py</code>, <code>bureau-evidence.py</code>,
+<code>bureau-provider.py</code>, <code>bureau-runtime.py</code>,
+<code>bureau-worker.sh</code>, <code>bureau-config.sh</code> and both
+spec pipelines; refresh interfaces for commands/managed instructions,
+reconcile local drift and restart drivers. Spec resume now uses
+committed phase checkpoints only (<code>schema_version: 1</code>,
+<code>checkpoint_version: 2</code>). Each successful specify/plan/tasks
+phase commits its reserved feature directory locally; the existing final
+stage push is unchanged. Workers reset/clean normally to a verified
+checkpoint reachable on the reserved local or origin branch. All
+uncommitted leftovers are discarded. Changed inputs require fresh
+specify, and failed spec review still invalidates from specify. Earlier
+checkpoint records are ignored; old unregistered workers require
+explicit inspection/recovery. Commits and checkpoint evidence must both
+be present for reuse; separate clones/hosts need the commit transferred
+explicitly. Fresh retries fast-forward stale local feature branches to
+the fetched origin tip; true divergence halts before specify/plan/tasks
+with exit 25 and a needs-human reason. Reconcile both histories before
+removing that hold; Bureau never force-pushes. Checkpoint I/O errors
+disable reuse and allow an ordinarily authorized fresh run; read/prune
+failures are isolated to the affected ticket and cannot change a valid
+provider exit. Review FAIL and missing-tasks routing survive
+invalidation failures. Spec and spec_review completion share the
+governance check described below; an earlier closed code or HTML block
+no longer permits later governance. No configuration migration or
+external exit-code change. These changes are locally qualified with fake
+services/providers; live adopting-installation qualification remains
+outstanding.</p>
+<p>In spec.md, place <code>## Governance and security</code> with
+<code>Decision:</code> and <code>Rationale:</code> lines at column 0, in
+plain text, before any code block or HTML block; a leading YAML front
+matter block is allowed.</p>
+<p>The governance check catches common authoring mistakes using the
+following rules. It splits only LF and CRLF lines; other C0 controls
+(U+0000–U+001F except tab) and C1 controls (U+007F–U+009F) in the
+governance heading, decision or rationale are invalid. Content checks
+decode HTML entities, normalize Unicode NFKC and remove format
+characters (category Cf, including zero-width characters). Markdown
+heading syntax still requires a column-0 ATX heading with one to six
+ASCII <code>#</code> characters followed by an ASCII space;
+normalization does not turn a nonbreaking space after the hashes into
+valid syntax. A same-level or higher ATX heading ends the section, as
+does a setext underline (<code>---</code> or <code>===</code>, including
+longer runs) immediately after a text line; that preceding text cannot
+supply a field or rationale.</p>
+<p>The first fence-like line is a permanent cutoff: after optional
+whitespace and any mix of list markers (<code>-</code>, <code>*</code>,
+<code>+</code>, or digits followed by <code>.</code> or <code>)</code>)
+and blockquote markers (<code>&gt;</code>), three or more backticks or
+tildes end the scan, with no opener/closer matching or indentation
+bound. Marker whitespace is optional. Every nonblank line indented by
+four or more spaces or a tab (including spaces followed by a tab) is
+also a cutoff; this conservative rule includes list continuations. The
+first line starting after optional spaces/tabs with <code>&lt;</code>
+followed by an ASCII letter, <code>!</code> or <code>/</code> is also a
+permanent cutoff, including a leading HTML comment. A leading YAML
+<code>---</code> block is ignored through its closing <code>---</code>;
+the validator can resume after that metadata, but an unclosed block
+contributes nothing. Other HTML comments are masked through
+<code>--&gt;</code> or end of document, preserving physical lines and
+columns; their contents cannot supply fields or fence cutoffs.
+Governance after an earlier closed code or HTML block does not
+qualify.</p>
+<p>Decision/rationale labels must start at column 0 without container
+prefixes. Values that start with a backtick code span, including values
+consisting entirely of a code span, are invalid. Rationale continuation
+lines may have zero to three spaces of indentation, but not four or more
+spaces or a leading tab (including spaces followed by a tab).
+Blockquoted continuation lines do not supply rationale text. The
+placeholder check removes brackets, parentheses, quotes, blockquote and
+emphasis markers and surrounding punctuation. A rationale must contain
+at least one letter or digit after normalization, and cannot be solely a
+placeholder, deferral or decision restatement. The same placeholder
+check applies to present Access/Logging/Retention fields. Examples
+rejected after normalization include TBD, TODO, N/A, a dash and an
+ellipsis, including fullwidth, entity-encoded or zero-width variants.
+Existing column-0 inline decision/explanation sentences and German or
+mixed <code>Entscheidung:</code>/<code>Begründung:</code> labels remain
+accepted. A justified <code>not required</code> or N/A is valid; there
+is no punctuation, verb or word-count requirement. Ordinary words such
+as “pending” or “wird definiert durch” inside a real explanation remain
+valid.</p>
+<p><strong>Known limits (governance check):</strong> the check targets
+honest mistakes by the spec agent; it is not a security boundary against
+deliberate obfuscation. Deliberate evasion, for example link reference
+titles, empty link labels or unusual Markdown or HTML constructs, is not
+guaranteed to be caught. Spec review remains responsible for judging
+whether the section is real and adequate, including applicability,
+circular or vague explanations and access/logging/retention risks.</p>
+<p>Add or move the section before review or app completion; a detected
+error uses the existing spec-review FAIL/rework route or leaves app
+completion prepared for repair. The no-measurement rule for specify/plan
+is unchanged. Preserve customized <code>.specify/templates</code>, the
+constitution and pinned Spec Kit 1.2.2 helpers. See <a
+href="stage-protocol.html#spec-phase-resume-and-governance">spec resume
+and governance</a> for checkpoint schema and validation limits.</p>
 <h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is
@@ -152,11 +251,12 @@ across retries and cleanup. Reservations are shared only by worktrees of
 that Git directory; separate clones/hosts require their own
 coordination, and older issue-to-directory associations are not
 imported. Reserved branches resume before specify after a worker reset,
-preserving existing artifacts; divergent local/origin history stops with
-17. <code>repo.base_branch</code> identifies the origin ref the
-allocator verifies, while disposable spec resets still use
-<code>origin/main</code>. Allocation lock acquisition defaults to a
-300-second bound; set <code>BUREAU_SPEC_LOCK_TIMEOUT</code> in the
+preserving existing artifacts; divergent local/origin history halts with
+25 and needs-human. <code>repo.base_branch</code> identifies the origin
+ref the allocator verifies, while fresh disposable spec resets use that
+configured origin base, while eligible retries reset to the last
+verified phase checkpoint commit. Allocation lock acquisition defaults
+to a 300-second bound; set <code>BUREAU_SPEC_LOCK_TIMEOUT</code> in the
 process environment (whole seconds 1–86400) to change it. A lock
 acquisition timeout prints the lock path, exits 124 and routes the issue
 back to Triage before specify. Git scanning after acquisition has no new

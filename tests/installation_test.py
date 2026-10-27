@@ -490,9 +490,12 @@ if in_repo and os.environ.get("TEST_FAIL_TARGET") == target: sys.exit(7)
         env = self.fake_specify()
         helper, template = self.legacy_specify_helpers()
         self.write(template, "custom legacy template\n")
+        spec_template = '.specify/templates/spec-template.md'
+        self.write(spec_template, '# Custom specification layout\nKeep this template verbatim.\n')
         self.run_install("speckit", "--apply", env=env)
         self.assertEqual((self.repo / helper).read_text(), "# 1.2.2 helper\n")
         self.assertEqual((self.repo / template).read_text(), "custom legacy template\n")
+        self.assertEqual((self.repo / spec_template).read_text(), '# Custom specification layout\nKeep this template verbatim.\n')
         self.assert_integrations(("claude",), "claude")
 
     def test_current_customized_helpers_are_refused(self):

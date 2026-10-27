@@ -79,7 +79,7 @@ _spec_recovery() {
     *)  klass="speckit-failed" ;;
   esac
   echo "RECOVERY: spec-pipeline failed (exit $rc / $klass). Routing $ISSUE back to Triage." >&2
-  post_comment "$ISSUE" "❌ Spec pipeline failed (\`$klass\`, exit \`$rc\`). Routing back to Triage for a fresh attempt." || true
+  post_comment "$ISSUE" "❌ Spec pipeline failed (\`$klass\`, exit \`$rc\`). Routing back to Triage; matching completed phase checkpoints can resume." || true
   move_issue "$ISSUE" "$BUREAU_STATE_TRIAGE" || true
   alert_telegram "$ISSUE" "spec-pipeline" "$rc" "Spec phase crashed after Triage→Spec move ($klass)" || true
 }
@@ -108,7 +108,18 @@ echo "  $ISSUE: $ISSUE_TITLE"
 # degrades to today's behavior on failure. The label is stripped only
 # after a successful Linear comment post, so a crashed research run can
 # be retried by re-applying the label.
+SPEC_COMMENTS=$(get_issue_comments "$ISSUE")
+# Reuse the latest substantive digest when the publication stripped its label.
+# Publication itself is not feedback; the digest is still a specify input.
+RESEARCH_RAW=$(printf '%s' "$SPEC_COMMENTS" | jq -r '[.[] | .body // "" | select(contains("<!-- bureau-research:"))][0] // ""')
 RESEARCH_CONTEXT=""
+if [ -n "$RESEARCH_RAW" ]; then
+  RESEARCH_CONTEXT="
+--- API research (auto-generated; treat as authoritative for API shapes) ---
+$RESEARCH_RAW
+--- End research ---
+"
+fi
 if agent_enabled research \
    && printf '%s' "$ISSUE_DETAIL" | jq -e '.labels | index("needs-research")' >/dev/null 2>&1; then
   echo ""
@@ -209,29 +220,54 @@ if ! printf '%s' "$FEATURE_JSON" | jq -e --argjson number "$SPEC_NUMBER" \
 fi
 ALLOCATED_DIR=$(dirname "$(printf '%s' "$FEATURE_JSON" | jq -er '.SPEC_FILE')")
 ALLOCATED_NAME=$(basename "$ALLOCATED_DIR")
-# Workers start detached on origin/main, including retries of a pushed spec
-# returned for rework. Resume the reserved branch BEFORE creating artifacts or
-# invoking specify, using the same held-branch check as downstream stages.
-FEATURE_BRANCH="$ALLOCATED_NAME"
-free_branch_from_other_worktrees "$FEATURE_BRANCH" "$REPO_DIR"
-if git show-ref --verify --quiet "refs/heads/$FEATURE_BRANCH"; then
-  git checkout "$FEATURE_BRANCH" || exit 21
-  if git show-ref --verify --quiet "refs/remotes/origin/$FEATURE_BRANCH"; then
-    # Keep unpublished local commits; also pick up rework pushed by another run.
-    git merge --ff-only "refs/remotes/origin/$FEATURE_BRANCH" || {
-      echo "ERROR: reserved branch $FEATURE_BRANCH cannot fast-forward to origin; resolve its local/remote history before retrying." >&2
-      exit 17
-    }
-  fi
-elif git show-ref --verify --quiet "refs/remotes/origin/$FEATURE_BRANCH"; then
-  git checkout -b "$FEATURE_BRANCH" "refs/remotes/origin/$FEATURE_BRANCH" || exit 21
-else
-  git checkout -b "$FEATURE_BRANCH" || exit 21
-fi
 # 1.2.2 creates under specs/ (no directory option). A dry-run validates the
 # number first. Reuse an existing target without creating/deleting a template
 # elsewhere; for a new custom target, relocate the helper's actual output.
 WANTED_DIR="${BUREAU_SPECS_DIR%/}/$ALLOCATED_NAME"
+# Resolve branch ownership BEFORE specify/plan/tasks or checkpoint reuse. A
+# changed reservation must not write new artifacts onto the old feature branch.
+FEATURE_BRANCH="$ALLOCATED_NAME"
+CUR_BRANCH=$(git branch --show-current)
+if [ -z "$CUR_BRANCH" ] || [ "$CUR_BRANCH" = "$SPEC_BASE" ]; then
+  if git show-ref --verify --quiet "refs/heads/$FEATURE_BRANCH"; then
+    free_branch_from_other_worktrees "$FEATURE_BRANCH" "$REPO_DIR" || {
+      FEATURE_OWNERSHIP_RC=$?
+      # The worker's reset trap is already cleared. Keep this late refusal on
+      # the same needs-human/local-hold path so Triage recovery cannot loop.
+      BUREAU_RESET_REFUSAL_WORKTREE="$REPO_DIR"
+      bureau_reset_refusal_trace "$ISSUE" spec || true
+      exit "$FEATURE_OWNERSHIP_RC"
+    }
+    git checkout "$FEATURE_BRANCH"
+  elif git show-ref --verify --quiet "refs/remotes/origin/$FEATURE_BRANCH"; then
+    git checkout -b "$FEATURE_BRANCH" --track "origin/$FEATURE_BRANCH"
+  else
+    echo "  Creating branch $FEATURE_BRANCH from current HEAD"
+    git checkout -b "$FEATURE_BRANCH"
+  fi
+elif [ "$CUR_BRANCH" = "$FEATURE_BRANCH" ]; then
+  echo "  Already on $FEATURE_BRANCH (idempotent — speckit hook fired, or this is a retry)"
+else
+  echo "ERROR: on branch '$CUR_BRANCH', but the reservation requires '$FEATURE_BRANCH'. Reconcile the reservation/branch through ownership recovery before retrying; no spec phase was run." >&2
+  exit 11
+fi
+# A rejected checkpoint means fresh phases, not permission to rebuild on stale
+# local history. Keep published commits and refuse genuine divergence once,
+# before specify/plan/tasks. Local-only completed commits can stay ahead.
+FEATURE_REMOTE="refs/remotes/origin/$FEATURE_BRANCH"
+if git show-ref --verify --quiet "$FEATURE_REMOTE"; then
+  if git merge-base --is-ancestor HEAD "$FEATURE_REMOTE"; then
+    git merge --ff-only "$FEATURE_REMOTE" || exit 18
+  elif ! git merge-base --is-ancestor "$FEATURE_REMOTE" HEAD; then
+    FEATURE_CONFLICT="Local branch $FEATURE_BRANCH and fetched origin/$FEATURE_BRANCH have diverged. A maintainer must reconcile both histories before retrying; no spec phase was run and Bureau will not force-push."
+    echo "ERROR: needs-human: $FEATURE_CONFLICT" >&2
+    post_comment "$ISSUE" "🛑 Spec needs human attention: $FEATURE_CONFLICT" || true
+    mark_needs_human "$ISSUE" spec 25 technical "$FEATURE_CONFLICT" maintainer || true
+    exit 25
+  fi
+fi
+echo "  branch ready: $(git branch --show-current)"
+
 if [ ! -d "$WANTED_DIR" ]; then
   CREATED_JSON=$(bureau_untrusted_env bash "$FEATURE_HELPER" "${FEATURE_ARGS[@]}") || exit 11
   if [ "$CREATED_JSON" != "$(printf '%s' "$FEATURE_JSON" | jq -c 'del(.DRY_RUN)')" ]; then
@@ -247,7 +283,55 @@ ALLOCATED_DIR=$(cd "$WANTED_DIR" && pwd -P)
 jq -n --arg dir "$ALLOCATED_DIR" '{feature_directory:$dir}' > .specify/feature.json
 export SPECIFY_FEATURE="$ALLOCATED_NAME" SPECIFY_FEATURE_DIRECTORY="$ALLOCATED_DIR"
 
+# Ticket text and review/human feedback are inputs. Generated digests, recovery
+# comments and research publication are bookkeeping, not new ticket decisions.
+SPEC_COMMENTS=$(get_issue_comments "$ISSUE")
+# Stream all three inputs: research and its published comment can exceed the
+# host's argv limit. JSON cannot contain a literal NUL, so separators are safe.
+SPEC_INPUT=$(printf '%s\0%s\0%s' "$ISSUE_DETAIL" "$SPEC_COMMENTS" "$RESEARCH_CONTEXT" | jq -Rs '
+  split("\u0000") as $inputs |
+  ($inputs[0] | fromjson) as $detail | ($inputs[1] | fromjson) as $comments |
+  $inputs[2] as $research |
+  {ticket: ($detail | {title, description, project: (.project | {name, description})}),
+   research: $research,
+   feedback: [$comments[] | .body // "" |
+     select((contains("<!-- bureau-research:") or test("^(<!-- bureau-branch:|❌ Spec pipeline|✅ Spec review)")) | not)]}')
+SPEC_FEEDBACK=$(printf '%s' "$SPEC_INPUT" | jq -r '.feedback | join("\n\n")')
+SPEC_CHECKPOINTS='[]'
+if [ "${BUREAU_SPEC_CHECKPOINTS_DISABLED:-0}" != 1 ] && SPEC_CHECKPOINTS=$(printf '%s' "$SPEC_INPUT" | bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" \
+  --repo "$REPO_DIR" begin "$ISSUE" --specs-dir "$BUREAU_SPECS_DIR" --directory "$ALLOCATED_DIR" --number "$SPEC_NUMBER"); then
+  :
+else
+  checkpoint_rc=$?
+  if [ "${BUREAU_SPEC_CHECKPOINTS_DISABLED:-0}" != 1 ] && [ "$checkpoint_rc" != 2 ]; then exit 24; fi
+  echo 'WARN: spec checkpoints unavailable; running all phases without reuse.' >&2
+  SPEC_CHECKPOINTS='[]'
+  export BUREAU_SPEC_CHECKPOINTS_DISABLED=1
+fi
+_spec_checkpoint_complete() {
+  local checkpoint_rc phase_commit
+  # Commit even when optional checkpoint storage is unavailable. Only this
+  # reserved feature directory is included; provider-staged unrelated files stay out.
+  phase_commit=$(bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" commit-phase "$ISSUE" "$1" \
+    --specs-dir "$BUREAU_SPECS_DIR" --directory "$ALLOCATED_DIR") || return 24
+  [ "${BUREAU_SPEC_CHECKPOINTS_DISABLED:-0}" != 1 ] || return 0
+  if bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" complete "$ISSUE" "$1" --commit "$phase_commit"; then
+    return 0
+  else
+    checkpoint_rc=$?
+    [ "$checkpoint_rc" = 2 ] || return 24
+    echo 'WARN: spec checkpoint write failed; checkpoint reuse disabled.' >&2
+    SPEC_CHECKPOINTS='[]'
+    export BUREAU_SPEC_CHECKPOINTS_DISABLED=1
+  fi
+}
+
+if ! printf '%s' "$SPEC_CHECKPOINTS" | jq -e 'index("specify") != null' >/dev/null; then
 BUREAU_PROVIDER_PHASE=specify "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-specify/SKILL.md and follow its instructions exactly.
+
+No measurements, probes, benchmarks or full test-gate runs in specify or plan. Use existing evidence and document unknowns for implementation/QA.
+In spec.md, place ## Governance and security with Decision: and Rationale: lines at column 0, in plain text, before any code block or HTML block; a leading YAML front matter block is allowed.
+Use Decision: required or Decision: not required and explain applicability in Rationale:; a justified not required is valid, while empty text, TBD, placeholders and unexplained N/A fail review.
 
 Populate the already allocated feature in $ALLOCATED_DIR.
 The feature helper has already run with --number $SPEC_NUMBER. Do not run create-new-feature again,
@@ -260,14 +344,21 @@ Feature name: $ISSUE_TITLE
 Source: Linear issue $ISSUE
 $PROJECT_CONTEXT
 $ISSUE_DESC
+--- Review and human feedback ---
+$SPEC_FEEDBACK
 $RESEARCH_CONTEXT
 $LESSONS_CONTEXT"
+else
+  echo "  Resuming: specify checkpoint matches inputs and artifact hashes"
+fi
 
 echo ""
 echo "  specify complete"
 
 echo ""
-echo "Phase 1.5: verify feature directory and branch"
+echo "Phase 1.5: validate the reserved feature pointer"
+# The branch was acquired before specify. An agent must not replace the pointer
+# with a different ticket directory while populating the reserved feature.
 FEATURE_DIR=$(jq -er '.feature_directory | select(type == "string" and length > 0)' .specify/feature.json 2>/dev/null) || FEATURE_DIR=""
 if [ -z "$FEATURE_DIR" ] || [ ! -d "$FEATURE_DIR" ] || [ "$(cd "$FEATURE_DIR" && pwd -P)" != "$ALLOCATED_DIR" ]; then
   echo 'ERROR: feature.json no longer names the reserved directory; refusing to plan another feature.' >&2
@@ -283,19 +374,36 @@ if [ "$CUR_BRANCH" != "$FEATURE_BRANCH" ]; then
   echo "ERROR: specify left branch '$CUR_BRANCH', expected '$FEATURE_BRANCH'; refusing to plan." >&2
   exit 11
 fi
-echo "  branch ready: $(git branch --show-current)"
+if ! printf '%s' "$SPEC_CHECKPOINTS" | jq -e 'index("specify") != null' >/dev/null; then
+  _spec_checkpoint_complete specify
+fi
 
 echo ""
 echo "Phase 2/5: plan"
+if ! printf '%s' "$SPEC_CHECKPOINTS" | jq -e 'index("plan") != null' >/dev/null; then
 BUREAU_PROVIDER_PHASE=plan "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-plan/SKILL.md and follow its instructions exactly.
+No measurements, probes, benchmarks or full test-gate runs in specify or plan. Use existing evidence and document unknowns for implementation/QA.
+Review and human feedback:
+$SPEC_FEEDBACK
 Work on the spec in $SPEC_DIR (and no other directory under $BUREAU_SPECS_DIR/)."
+  _spec_checkpoint_complete plan
+else
+  echo "  Resuming: plan checkpoint matches inputs and artifact hashes"
+fi
 echo ""
 echo "  plan complete"
 
 echo ""
 echo "Phase 3/5: tasks"
+if ! printf '%s' "$SPEC_CHECKPOINTS" | jq -e 'index("tasks") != null' >/dev/null; then
 BUREAU_PROVIDER_PHASE=tasks "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-tasks/SKILL.md and follow its instructions exactly.
+Review and human feedback:
+$SPEC_FEEDBACK
 Work on the spec in $SPEC_DIR (and no other directory under $BUREAU_SPECS_DIR/)."
+  _spec_checkpoint_complete tasks
+else
+  echo "  Resuming: tasks checkpoint matches inputs and artifact hashes"
+fi
 echo ""
 echo "  tasks complete"
 
@@ -324,7 +432,7 @@ fi
 git add -A
 # Trailer makes the commit recognizable to branch_is_bureau_only without
 # relying on the subject-line regex fallback.
-git commit --allow-empty 2>/dev/null \
+git commit 2>/dev/null \
   -m "$ISSUE: spec artifacts" \
   -m "Bureau-Generated: true" \
   || true

@@ -9,7 +9,7 @@ import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPTS=ROOT/'templates/scripts'
-names=('bureau-provider.py','bureau-runtime.py','bureau-evidence.py','bureau-supervision.py','bureau-tick.sh',
+names=('bureau-provider.py','bureau-runtime.py','bureau-evidence.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
        'merge-pipeline.sh','bureau-config.sh','bureau-env.sh','code-review-pipeline.sh')
 before={name:hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
 
@@ -78,9 +78,9 @@ with tempfile.TemporaryDirectory(prefix='bureau evidence controls ') as scratch:
     evidence.write_text(original_evidence)
 
     runtime=root/'bureau-runtime.py'; original_runtime=runtime.read_text()
-    anchor='        e.observe(evidence.begin_run, run, args.issue, repo, evidence_head(repo))'
+    anchor='        begun = e.observe(evidence.begin_run, run, args.issue, repo, evidence_head(repo))'
     assert original_runtime.count(anchor)==1
-    runtime.write_text(original_runtime.replace(anchor,'        evidence.begin_run(run, args.issue, repo, evidence_head(repo))'))
+    runtime.write_text(original_runtime.replace(anchor,'        begun = evidence.begin_run(run, args.issue, repo, evidence_head(repo))'))
     rejected('shared_runtime_test.py',['RuntimeTests.test_enospc_manifest_attempt_gate_wait_and_pruning_are_observational'],
              {'BUREAU_TEST_RUNTIME_SCRIPT':str(runtime)},'injected full device')
     print('PASS fix 2 control: mandatory manifest startup stops the stage on ENOSPC')

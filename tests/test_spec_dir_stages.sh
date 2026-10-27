@@ -77,6 +77,10 @@ export FAKE_CLAUDE_BIN="$LIB_DIR/pr4-fake-specify.sh" PR4_SPECIFY_ACTION=populat
 export BUREAU_STUB_LABELS='["lane-2"]'
 mkdir -p "$SANDBOX/.specify"
 printf '{"feature_directory":"specs/001-test-branch"}\n' > "$SANDBOX/.specify/feature.json"
+# A fresh spec reservation starts detached, as a disposable spec worker does.
+# Continuing on the old 001-* branch is now deliberately rejected (finding 4);
+# this test exercises directory routing for the newly reserved 002-* feature.
+git -C "$SANDBOX" checkout -q --detach
 run_pipeline spec-pipeline.sh EXP-900; set +e
 check_prompts spec
 grep -qE "^crosscheck_open_prs	EXP-900	.*${OWN}tasks.md$" "$SANDBOX/calls.log" \

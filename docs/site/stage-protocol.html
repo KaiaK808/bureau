@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="78e38cbdb3836c69a5372381060d65cb4393f7c0a00ad11521e5ba0fa020628b">
+<meta name="bureau-source-sha256" content="d43240bf417d6b3d02b2e35a0251273c37f1a77a26d30e7810cdb0766e9275fe">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -44,11 +44,15 @@ an existing canonical branch before preparing. Finish requires a
 matching run/stage, live ownership, current result HEAD, unchanged
 configuration and unchanged issue state. The branch and canonical marker
 must still agree; review additionally requires the prepared HEAD.
-Complete spec work needs spec/plan/tasks artifacts in one feature folder
-under specs_dir; implementation/QA need successful test evidence.
-Partial/blocked results retain the current Linear state and save their
-explanation. Blocked outcomes and BLOCK reviews also apply the
-configured needs-human label before releasing ownership; every
+Complete spec work needs spec/plan/tasks artifacts in the prepared
+issue’s canonical feature folder under specs_dir; spec-review must
+validate that same feature’s spec.md. Prepare binds an existing
+canonical branch/directory; a newly created app feature must match its
+issue key and any number reservation. A valid spec from another ticket
+cannot complete the run; implementation/QA need successful test
+evidence. Partial/blocked results retain the current Linear state and
+save their explanation. Blocked outcomes and BLOCK reviews also apply
+the configured needs-human label before releasing ownership; every
 background queue excludes that label. A label failure keeps the run
 pending for retry. Resolve the blocker and explicitly remove its label
 before resuming background processing. Completion posts the canonical
@@ -75,15 +79,197 @@ for app recovery or explicitly retire it before creating another
 disposable worker. The interrupt message prints these steps with the run
 ID, the worktree and its unpushed local branch; a background rerun that
 meets the held claim or the unregistered worktree stops with 21 (except
-a worktree a non-spec stage can reset without loss: clean, and HEAD on
-the fetched <code>origin/&lt;branch&gt;</code>, which the reset
-registers again) and leaves <code>needs-human</code> and one comment
-with the same steps on the ticket. Process inspection failures and
-reused live group IDs fail closed; do not kill a process solely because
-an old record mentions its ID. After a machine crash, inspect the old
-run before releasing it; app leases have no implicit expiry. This is
-local coordination, not a distributed lock or an atomic Linear
-compare-and-swap across hosts.</p>
+a checkout with an explicit former-worker failure note that a non-spec
+stage can reset without loss: clean, and HEAD on the fetched
+<code>origin/&lt;branch&gt;</code>, which the reset registers again) and
+leaves <code>needs-human</code> and one comment with the same steps on
+the ticket. Process inspection failures and reused live group IDs fail
+closed; do not kill a process solely because an old record mentions its
+ID. After a machine crash, inspect the old run before releasing it; app
+leases have no implicit expiry. This is local coordination, not a
+distributed lock or an atomic Linear compare-and-swap across hosts.</p>
+<h2 id="spec-phase-resume-and-governance">Spec phase resume and
+governance</h2>
+<p>Specify and plan must run no measurements, probes, benchmarks or full
+test-gate runs. Use existing evidence and leave unknowns for
+implementation/QA. Bureau supplies this rule and the governance
+requirement through prompts, managed instructions and commands; it
+preserves customized <code>.specify/templates</code>, the constitution
+and Spec Kit 1.2.2 helpers.</p>
+<p>Every spec requires a section headed
+<code>Governance and security</code>, containing an explicit decision
+and rationale explaining applicability. Bureau prompts use
+<code>Decision:</code> and <code>Rationale:</code> fields; an existing
+explicit sentence such as "Not required because this changes only static
+documentation" also qualifies. For example:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode md"><code class="sourceCode markdown"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">## Governance and security</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>Decision: not required</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>Rationale: This documentation change processes no credentials or personal data.</span></code></pre></div>
+<p>In spec.md, place <code>## Governance and security</code> with
+<code>Decision:</code> and <code>Rationale:</code> lines at column 0, in
+plain text, before any code block or HTML block; a leading YAML front
+matter block is allowed.</p>
+<p>The governance check catches common authoring mistakes using the
+following rules. It splits only LF and CRLF lines; other C0 controls
+(U+0000–U+001F except tab) and C1 controls (U+007F–U+009F) in the
+governance heading, decision or rationale are invalid. Content checks
+decode HTML entities, normalize Unicode NFKC and remove format
+characters (category Cf, including zero-width characters). Markdown
+heading syntax still requires a column-0 ATX heading with one to six
+ASCII <code>#</code> characters followed by an ASCII space;
+normalization does not turn a nonbreaking space after the hashes into
+valid syntax. A same-level or higher ATX heading ends the section, as
+does a setext underline (<code>---</code> or <code>===</code>, including
+longer runs) immediately after a text line; that preceding text cannot
+supply a field or rationale.</p>
+<p>The first fence-like line is a permanent cutoff: after optional
+whitespace and any mix of list markers (<code>-</code>, <code>*</code>,
+<code>+</code>, or digits followed by <code>.</code> or <code>)</code>)
+and blockquote markers (<code>&gt;</code>), three or more backticks or
+tildes end the scan, with no opener/closer matching or indentation
+bound. Marker whitespace is optional. Every nonblank line indented by
+four or more spaces or a tab (including spaces followed by a tab) is
+also a cutoff; this conservative rule includes list continuations. The
+first line starting after optional spaces/tabs with <code>&lt;</code>
+followed by an ASCII letter, <code>!</code> or <code>/</code> is also a
+permanent cutoff, including a leading HTML comment. A leading YAML
+<code>---</code> block is ignored through its closing <code>---</code>;
+the validator can resume after that metadata, but an unclosed block
+contributes nothing. Other HTML comments are masked through
+<code>--&gt;</code> or end of document, preserving physical lines and
+columns; their contents cannot supply fields or fence cutoffs.
+Governance after an earlier closed code or HTML block does not
+qualify.</p>
+<p>Decision/rationale labels must start at column 0 without container
+prefixes. Values that start with a backtick code span, including values
+consisting entirely of a code span, are invalid. Rationale continuation
+lines may have zero to three spaces of indentation, but not four or more
+spaces or a leading tab (including spaces followed by a tab).
+Blockquoted continuation lines do not supply rationale text. The
+placeholder check removes brackets, parentheses, quotes, blockquote and
+emphasis markers and surrounding punctuation. A rationale must contain
+at least one letter or digit after normalization, and cannot be solely a
+placeholder, deferral or decision restatement. The same placeholder
+check applies to present Access/Logging/Retention fields. Examples
+rejected after normalization include TBD, TODO, N/A, a dash and an
+ellipsis, including fullwidth, entity-encoded or zero-width variants.
+Existing column-0 inline decision/explanation sentences and German or
+mixed <code>Entscheidung:</code>/<code>Begründung:</code> labels remain
+accepted. A justified <code>not required</code> or N/A is valid; there
+is no punctuation, verb or word-count requirement. Ordinary words such
+as “pending” or “wird definiert durch” inside a real explanation remain
+valid.</p>
+<p><strong>Known limits (governance check):</strong> the check targets
+honest mistakes by the spec agent; it is not a security boundary against
+deliberate obfuscation. Deliberate evasion, for example link reference
+titles, empty link labels or unusual Markdown or HTML constructs, is not
+guaranteed to be caught. Spec review remains responsible for judging
+whether the section is real and adequate, including applicability,
+circular or vague explanations and access/logging/retention risks.
+Placeholder recognition covers common template wording; other
+placeholder phrasing and further Markdown container constructs are left
+to spec review.</p>
+<p>Background spec review applies the shared check after permitted edits
+and forces <code>REVIEW_STATUS=FAIL</code> on a detected error; a model
+FAIL uses the same comment and route to Spec. Either failure invalidates
+from specify, so governance repair cannot resume at plan/tasks. App spec
+and spec_review completion require the prepared issue's spec.md and
+apply the same check before posting or moving; a detected error leaves
+the run prepared for repair. Passing this check does not replace
+substantive spec review. Existing specs may need this section added or
+moved before code blocks or HTML blocks.</p>
+<p>Successful specify, plan and tasks phases each make one local commit
+of the reserved feature directory on its feature branch, named
+<code>ISSUE: spec PHASE checkpoint</code> with the
+<code>Bureau-Generated: true</code> trailer. Only completed phases
+receive checkpoints. The normal end-of-stage commit of remaining
+changes, single push, crosscheck, digest and routing still run; no
+per-phase pushes are added. Local commits and branch refs live in the
+shared Git directory and survive disposable-worker resets. Recovery on
+another clone/host still needs the commit to be available there;
+checkpoint metadata alone is insufficient.</p>
+<p>Checkpoints share the evidence store, lock and atomic writer:
+<code>&lt;git common dir&gt;/bureau/evidence/v1/spec-checkpoints/ISSUE.json</code>.
+The evidence envelope stays <code>schema_version: 1</code>; spec records
+require <code>checkpoint_version: 2</code> and
+<code>record_type: spec_checkpoint</code>. A record contains
+<code>issue</code>, repository-relative <code>specs_dir</code> and
+<code>spec_directory</code>, reserved <code>branch</code> and
+<code>number</code>, <code>run_id</code>, <code>stage_attempt_id</code>,
+<code>input_sha256</code>, <code>updated_at</code> and
+<code>phases</code>. Each <code>phases.specify|plan|tasks</code>
+contains <code>commit</code> (full Git object ID),
+<code>completed_at</code>, source run/attempt, <code>input_sha256</code>
+and <code>artifacts</code> (feature-directory-relative path to SHA-256
+map). Each artifact map covers the complete committed feature directory
+at that phase, so successful plan/tasks edits to earlier artifacts are
+included. Each phase requires its main artifact (spec.md, plan.md or
+tasks.md) to be nonempty. Fingerprints cover ticket
+title/description/project context, ordered review/human comment text and
+substantive research injected into specify. The latest published
+research stays input after its label is removed; publication, generated
+branch/digest, recovery and passed-review comments are bookkeeping.</p>
+<p>The worker first obtains ordinary issue/workspace ownership and
+verifies disposable registration. It fetches origin, selects the last
+contiguous checkpoint reachable from the reserved local or origin
+branch, then checks out that branch at the recorded commit using the
+normal forced checkout, hard reset and <code>clean -fdx</code>.
+Uncommitted, staged, untracked and ignored leftovers are discarded.
+Hashes are recomputed from committed Git blobs, using the complete
+artifact snapshot recorded for each phase; file existence and a recorded
+commit ID alone cannot qualify a phase. A checkpoint never grants reset
+permission to an unregistered or user checkout. App preparation removes
+disposable registration and any former-worker failure note. Interrupted
+runs retain their existing explicit ownership recovery requirement. App
+stages use prepare/finish without disposable resets or automatic
+background phase checkpoints.</p>
+<p>The spec stage revalidates the current input fingerprint and
+committed artifact maps before skipping a prefix. A plan timeout resumes
+at plan from the specify commit; a tasks timeout resumes at tasks from
+the plan commit. Changed inputs or failed spec review invalidate from
+specify. A missing, unreachable or tampered checkpoint truncates the
+valid prefix; no valid prefix means a fresh pass through all phases on
+the reserved branch. Published branch history is never rewound; a remote
+tip beyond the last phase checkpoint requires a fresh pass. Before
+specify/plan/tasks, the stage fast-forwards a stale local feature branch
+to the fetched origin tip, or creates a missing local branch at that
+tip. A local branch already ahead retains its commits. True divergence
+exits 25 before specify/plan/tasks, publishes a needs-human reason and
+requires a maintainer to reconcile both histories; the recovery trap
+returns the ticket to Triage and the needs-human label/hold excludes
+automatic picks. Bureau never force-pushes. The final stage commit is
+omitted when phase commits already include all changes. Changed
+reservations start fresh on their newly reserved branch. Incomplete
+phase edits never survive a retry. Checkpoints expire after 30 inactive
+days on evidence creation unless the issue has an active run;
+completed-run rotation is independent.</p>
+<p>Checkpoint and observational evidence I/O failures warn and disable
+reuse for a fresh run under ordinary ownership/reset rules. Optional
+checkpoint reads and retention pruning are isolated per ticket,
+including during the real provider adapter's evidence initialization
+with reuse disabled. An unreadable or unprunable ticket record warns and
+marks only that ticket for fresh checkpoints; unrelated tickets and the
+provider's valid exit are unaffected. Directory enumeration and opt-out
+write failures also warn without aborting the provider. A separate
+durable opt-out at
+<code>&lt;git common dir&gt;/bureau/spec-checkpoints-disabled/ISSUE.json</code>
+prevents an old checkpoint from qualifying after a failed write or
+prune/read failure when the opt-out can be persisted; a successful fresh
+checkpoint initialization clears it. Commits still run when optional
+checkpoint storage is unavailable. Failed-review invalidation remains
+best-effort: FAIL publication and routing to Spec still run, and
+feedback changes the next fingerprint. Missing-tasks recovery still
+comments and moves to Spec with exit 13 even if invalidation fails.
+Provider completion receipts retain their separate persistence
+requirement before success is forwarded.</p>
+<p>Adoption: resync scripts together, refresh interfaces for
+commands/instructions, reconcile local drift and restart drivers. No new
+configuration key, external exit code or Spec Kit change. Pre-v2 spec
+checkpoints are ignored with no inference/backfill from files; inspect
+old unregistered workers explicitly before reuse. Tests use fake
+providers/services and real local Git, including timeout/reset and
+mutation controls. Live provider and adopting-installation qualification
+remains outstanding.</p>
 <h2 id="configuration-and-merge-boundaries">Configuration and merge
 boundaries</h2>
 <p><code>BUREAU_CONFIG</code> is an explicit path and is honored even
@@ -249,9 +435,9 @@ exits must be zero. It reads the original provider result through its
 pointer, checks the full result digest and validates the schema again. A
 missing or changed original fails recovery; no free-text result is
 reconstructed from metadata, a prior receipt or Git history.</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py status <span class="at">--run</span> RUN_ID</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits <span class="at">--issue</span> TEAM-123</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py status <span class="at">--run</span> RUN_ID</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits <span class="at">--issue</span> TEAM-123</span></code></pre></div>
 <p><code>status --run</code> reads an app record when present, otherwise
 the background manifest. <code>waits</code> makes no service calls.
 Waiting seconds/share count overlapping intervals once over the retained
@@ -318,10 +504,10 @@ not itself resolve the human wait.</p>
 completed runs. Resolved waits and inactive ticket observations expire
 after 30 days. Global storage additionally has a <strong>16 MiB total
 byte cap and 4,096 file cap</strong>, covering manifests, receipts,
-waits, ticket records, quarantine digests and atomic staging leftovers
-(the empty lock file is excluded). A manifest includes its attempt/gate
-entries in this byte budget. Before allocation, a write reserves its
-full temporary size and one additional file slot, including
+waits, ticket records, spec checkpoints, quarantine digests and atomic
+staging leftovers (the empty lock file is excluded). A manifest includes
+its attempt/gate entries in this byte budget. Before allocation, a write
+reserves its full temporary size and one additional file slot, including
 unchanged/shrinking replacements. Failed cleanup attempts to discard the
 temporary payload; an undeletable <code>.tmp</code> remains an
 uncommitted file within that reservation and is never read as a record.

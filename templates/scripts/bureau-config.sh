@@ -736,7 +736,7 @@ run_stage_for() {
   # stages leave commits and pushes to the Bureau shell. And it says that CI
   # does not decide the reported status, so an agent kept from waiting does not
   # report NEEDS_HUMAN instead.
-  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system"
+  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and document unknowns for implementation/QA. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system"
   local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
   [ -n "$schema" ] && args+=(--schema "$schema")
   # The provider needs none of the Bureau secrets: it starts without them, so
@@ -2653,10 +2653,15 @@ free_branch_from_other_worktrees() {
 # freshly fetched origin/<branch>. An unknown branch, a failed fetch or a
 # missing origin ref fail. Prints why it re-accepts; prints nothing otherwise.
 _bureau_reaccept_clean_worktree() {
-  local wt="$1" branch="$2" common="$3" top wt_common gitdir head
+  local wt="$1" branch="$2" common="$3" top wt_common gitdir head key reason
   [ -n "$branch" ] && [ -d "$wt" ] || return 1
   top=$(_bureau_physical "$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null)")
   [ -n "$top" ] && [ "$top" = "$(_bureau_physical "$wt")" ] || return 1
+  # Only a former worker with an explicit failure note may be reaccepted.
+  # App adoption removes this note along with disposable registration.
+  key=$(printf '%s' "$top" | shasum -a 256 | cut -d' ' -f1)
+  reason=$(jq -er '.reason' "$common/bureau/preserved/$key.json" 2>/dev/null) || return 1
+  case "$reason" in unfinished|interrupted|review-checkpoint) ;; *) return 1 ;; esac
   wt_common=$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null) || return 1
   case "$wt_common" in /*) ;; *) wt_common="$wt/$wt_common" ;; esac
   [ "$(_bureau_physical "$wt_common")" = "$(_bureau_physical "$common")" ] || return 1
@@ -2672,10 +2677,9 @@ _bureau_reaccept_clean_worktree() {
 
 # Only a worker created and registered by Bureau may be reset. Merely residing
 # under .worktrees is not ownership; pre-existing directories are rejected.
-# A clean preserved worktree whose commits are all on origin is the one
-# exception (_bureau_reaccept_clean_worktree).
+# A clean preserved non-spec worker can be reaccepted without loss.
 reset_worktree() {
-  local wt="$1" target_script="$2" target_branch="${3:-}" common registry key ref
+  local wt="$1" target_script="$2" target_branch="${3:-}" common registry key ref checkpoint
   BUREAU_RESET_REFUSAL=""; BUREAU_RESET_REFUSAL_HOLDER=""; BUREAU_RESET_REFUSAL_BRANCH=""
   [ "${BUREAU_WORKSPACE_MODE:-current}" = disposable ] || { echo "ERROR: reset requires disposable worker mode" >&2; return 21; }
   [ -n "${BUREAU_RUN_ID:-}" ] || { echo "ERROR: reset requires an ownership claim" >&2; return 21; }
@@ -2702,7 +2706,26 @@ reset_worktree() {
   fi
   git -C "$REPO_DIR" fetch origin --prune --quiet || return 18
   ref=origin/main
-  if [ "$target_script" != spec-pipeline.sh ]; then
+  if [ "$target_script" = spec-pipeline.sh ]; then
+    target_branch=""
+    ref="origin/$(bureau_get '.repo.base_branch // "main"')"
+    checkpoint=null
+    if [ "${BUREAU_SPEC_CHECKPOINTS_DISABLED:-0}" != 1 ]; then
+      if ! checkpoint=$(bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-spec.py" --repo "$REPO_DIR" reset-target "$BUREAU_CURRENT_ISSUE" --specs-dir "$BUREAU_SPECS_DIR"); then
+        echo 'WARN: spec checkpoint unavailable; using a fresh reset.' >&2
+        export BUREAU_SPEC_FORCE_FRESH=1 BUREAU_SPEC_CHECKPOINTS_DISABLED=1
+        checkpoint=null
+      fi
+    fi
+    if [ "$checkpoint" != null ]; then
+      target_branch=$(printf '%s' "$checkpoint" | jq -er '.branch') || return 21
+      ref=$(printf '%s' "$checkpoint" | jq -er '.commit') || return 21
+      free_branch_from_other_worktrees "$target_branch" "$wt" || return $?
+      echo "Resetting spec worker to committed checkpoint $ref ($target_branch)"
+    else
+      export BUREAU_SPEC_FORCE_FRESH=1
+    fi
+  else
     [ -n "$target_branch" ] || return 12
     ref="origin/$target_branch"
     git -C "$REPO_DIR" rev-parse --verify "$ref" >/dev/null || return 12
@@ -2716,7 +2739,7 @@ reset_worktree() {
   git -C "$wt" checkout --detach --force "$ref" --quiet || return 21
   git -C "$wt" reset --hard "$ref" --quiet || return 21
   git -C "$wt" clean -fdx --quiet || return 21
-  if [ "$target_script" != spec-pipeline.sh ]; then
+  if [ -n "$target_branch" ]; then
     git -C "$wt" checkout -B "$target_branch" "$ref" --quiet || return 21
   fi
   # A registered, reset worker: whatever preserved it before and any halt left

@@ -44,6 +44,17 @@ echo "$n" > "$counter_file"
 [ -n "${FAKE_CLAUDE_PROMPT_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_CLAUDE_PROMPT_LOG"
 [ -z "${FAKE_CLAUDE_PROMPT_DIR:-}" ] || printf '%s\n' "$*" > "$FAKE_CLAUDE_PROMPT_DIR/prompt-$n.txt"
 
+# Successful spec phases leave their actual required artifact, as a provider
+# following Spec Kit would. Pointer-corruption fixtures retain their own edits.
+if [ -z "${PR4_SPECIFY_ACTION:-}" ] && [ -f .specify/feature.json ]; then
+  case "${BUREAU_PROVIDER_PHASE:-}" in
+    specify|plan|tasks)
+      dir=$(jq -r .feature_directory .specify/feature.json)
+      name="$BUREAU_PROVIDER_PHASE"; [ "$name" != specify ] || name=spec
+      [ -s "$dir/$name.md" ] || printf '# fixture %s\n' "$name" > "$dir/$name.md" ;;
+  esac
+fi
+
 # in_iters <n> <colon-separated list>: whether call n is on the list.
 in_iters() {
   local item items

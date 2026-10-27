@@ -163,6 +163,101 @@ p.run=record_environment
         self.assertTrue(json.loads((self.root/'parent-env.json').read_text())['unchanged'])
         return result
 
+    def checkpoint_records(self, expired=False):
+        store=p.e.Store(self.root/'.git/bureau')
+        disabled=store.root.parent.parent/'spec-checkpoints-disabled'
+        if disabled.exists(): shutil.rmtree(disabled)
+        records={}
+        for issue in ('TEAM-1','TEAM-2','TEAM-3'):
+            path=store.root/'spec-checkpoints'/(issue+'.json')
+            p.e.atomic(path,dict(issue=issue,updated_at=time.time()-(31*86400 if expired else 0)))
+            records[issue]=path
+        return store,disabled,records
+
+    def test_optional_checkpoint_read_failures_do_not_abort_provider(self):
+        for error in ('OSError','PermissionError'):
+            for issue in ('TEAM-1','TEAM-2'):
+                for reuse_disabled in ('0','1'):
+                    with self.subTest(error=error,issue=issue,reuse_disabled=reuse_disabled):
+                        store,disabled,records=self.checkpoint_records()
+                        healthy={key:path.read_bytes() for key,path in records.items() if key != issue}
+                        result=self.run_wrapped_provider('''read=p.e.read
+def checkpoint_read(path,*args,**kwargs):
+    if path.parent.name=='spec-checkpoints' and path.stem==os.environ['FAULT_TICKET']:
+        raise getattr(__import__('builtins'),os.environ['FAULT_ERROR'])('fixture checkpoint read failure')
+    return read(path,*args,**kwargs)
+p.e.read=checkpoint_read
+''',BUREAU_CURRENT_ISSUE='TEAM-1',BUREAU_SPEC_CHECKPOINTS_DISABLED=reuse_disabled,
+                            FAULT_TICKET=issue,FAULT_ERROR=error)
+                        self.assertEqual(result.stdout.strip(),'final response')
+                        self.assertTrue((self.root/'argv.json').is_file(),'provider never ran')
+                        self.assertIn('checkpoint reuse disabled for '+issue,result.stderr)
+                        self.assertEqual([path.name for path in disabled.iterdir()],[issue+'.json'])
+                        self.assertEqual(json.loads((disabled/(issue+'.json')).read_text()),dict(issue=issue,reuse_disabled=True))
+                        self.assertEqual(healthy,{key:records[key].read_bytes() for key in healthy})
+                        self.assertEqual(self.receipts()[-1]['normalized_exit'],0)
+
+    def test_optional_checkpoint_prune_failures_do_not_abort_provider(self):
+        for error in ('OSError','PermissionError'):
+            with self.subTest(error=error):
+                store,disabled,records=self.checkpoint_records(expired=True)
+                result=self.run_wrapped_provider('''unlink=pathlib.Path.unlink
+def checkpoint_unlink(path,*args,**kwargs):
+    if path.parent.name=='spec-checkpoints' and path.stem=='TEAM-2':
+        raise getattr(__import__('builtins'),os.environ['FAULT_ERROR'])('fixture checkpoint prune failure')
+    return unlink(path,*args,**kwargs)
+pathlib.Path.unlink=checkpoint_unlink
+''',BUREAU_CURRENT_ISSUE='TEAM-1',FAULT_ERROR=error)
+                self.assertEqual(result.stdout.strip(),'final response')
+                self.assertIn('checkpoint reuse disabled for TEAM-2',result.stderr)
+                self.assertEqual([path.name for path in disabled.iterdir()],['TEAM-2.json'])
+                self.assertTrue(records['TEAM-2'].exists())
+                self.assertFalse(records['TEAM-3'].exists(),'a bad ticket stopped unrelated pruning')
+
+    def test_optional_checkpoint_failure_with_closed_stderr_keeps_success(self):
+        store,disabled,records=self.checkpoint_records()
+        result=self.run_wrapped_provider('''read=p.e.read
+def checkpoint_read(path,*args,**kwargs):
+    if path.parent.name=='spec-checkpoints' and path.stem=='TEAM-2':
+        raise PermissionError('private checkpoint diagnostic must not be printed')
+    return read(path,*args,**kwargs)
+p.e.read=checkpoint_read
+reader,writer=os.pipe(); os.close(reader)
+os.dup2(writer,2); os.close(writer)
+''',BUREAU_CURRENT_ISSUE='TEAM-1')
+        self.assertEqual(result.stdout.strip(),'final response')
+        self.assertEqual([path.name for path in disabled.iterdir()],['TEAM-2.json'])
+        self.assertEqual(self.receipts()[-1]['normalized_exit'],0)
+
+    def test_optional_checkpoint_scan_and_opt_out_failures_do_not_abort_provider(self):
+        for operation in ('scan','opt-out','malformed'):
+            with self.subTest(operation=operation):
+                store,disabled,records=self.checkpoint_records()
+                if operation=='malformed': records['TEAM-2'].write_text('{broken')
+                result=self.run_wrapped_provider('''glob=pathlib.Path.glob
+read=p.e.read
+atomic=p.e.atomic
+def checkpoint_glob(path,*args,**kwargs):
+    if path.name=='spec-checkpoints' and os.environ['FAULT_OPERATION']=='scan':
+        raise PermissionError('fixture checkpoint scan failure')
+    return glob(path,*args,**kwargs)
+def checkpoint_read(path,*args,**kwargs):
+    if path.parent.name=='spec-checkpoints' and path.stem=='TEAM-2' and os.environ['FAULT_OPERATION']=='opt-out':
+        raise OSError('fixture checkpoint read failure')
+    return read(path,*args,**kwargs)
+def checkpoint_atomic(path,*args,**kwargs):
+    if path.parent.name=='spec-checkpoints-disabled': raise PermissionError('fixture checkpoint opt-out failure')
+    return atomic(path,*args,**kwargs)
+pathlib.Path.glob=checkpoint_glob
+p.e.read=checkpoint_read
+if os.environ['FAULT_OPERATION']=='opt-out': p.e.atomic=checkpoint_atomic
+''',BUREAU_CURRENT_ISSUE='TEAM-1',FAULT_OPERATION=operation)
+                self.assertEqual(result.stdout.strip(),'final response')
+                self.assertIn('WARN:',result.stderr)
+                self.assertFalse((disabled/'TEAM-1.json').exists(),'unrelated failure disabled the current ticket')
+                if operation=='malformed': self.assertTrue((disabled/'TEAM-2.json').exists())
+                if operation=='opt-out': self.assertIn('checkpoint opt-out unavailable for TEAM-2',result.stderr)
+
     def test_sandbox_gate_only_requires_a_nonempty_array_of_reason_objects(self):
         good={'reason':'SANDBOX_GATE: denied bind'}
         cases=[(None,False),([],False),({},False),({'notes':[]},False),
