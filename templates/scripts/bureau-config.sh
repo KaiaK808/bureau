@@ -229,6 +229,8 @@ BUREAU_POLL_INTERVAL=$(_bureau_config_number .agents.poll_interval_minutes 30 1 
 _BUREAU_WAIT_SWEEP_TURN=$((_BUREAU_WAIT_SWEEP_TURN / (60 * BUREAU_POLL_INTERVAL)))
 BUREAU_WORKBENCH_PANES=$(_bureau_config_number .agents.workbench_panes 2 0 32)
 BUREAU_MAX_REVIEW_CYCLES=$(_bureau_config_number .agents.max_review_cycles 3 0 1000)
+BUREAU_MAX_REVIEW_ROUNDS=$(_bureau_config_number .agents.max_review_rounds "$((BUREAU_MAX_REVIEW_CYCLES + 1))" 1 1001)
+BUREAU_REVIEW_MIN_SEVERITY=$(bureau_get '.agents.review_min_severity | if . == null then "BUG" elif . == "BUG" or . == "MINOR" then . else "MINOR" end')
 # Code-review diff size at which specialists switch from exhaustive to
 # critical-path sampling. Repos with mature CI / type-safety can review
 # bigger diffs exhaustively; legacy repos cap lower. Configurable per repo.
@@ -3424,7 +3426,89 @@ apply_build_failure() {
   esac
 }
 
-# decide_review_verdict <verdict> <security_issues> <security_critical> <build_ok> <cycles> <max_cycles>
+# review_convergence <merger result> <BUG|MINOR>: decide only from validated fields.
+# A consistent deferred findings list can discharge REQUEST_CHANGES only when
+# every required fix exactly matches a nonblank deferred finding message. An empty
+# list cannot explain it. BLOCK, CRITICAL, security and acceptance always survive.
+# The original provider object is never rewritten (including its receipt digest).
+review_convergence() {
+  local result verdict
+  result=$(parse_claude_json "$1" '.')
+  verdict=$(printf '%s' "$result" | jq -r --arg floor "$2" '
+    def count: type == "number" and . >= 0 and . <= 999999999 and . == floor;
+    def strings: type == "array" and all(.[]; type == "string");
+    if type != "object" then "BLOCK"
+    elif .verdict == "BLOCK" then "BLOCK"
+    elif ((.verdict == "APPROVE" or .verdict == "REQUEST_CHANGES")
+          and (.bugs | count) and (.security_issues | count)
+          and (.missing_acceptance | strings) and (.fixes_needed | strings)
+          and (.summary | type == "string") and (.comment | type == "string")
+          and (.findings | type == "array" and all(.[];
+            type == "object" and (.file | type == "string") and (.line | count)
+            and (.msg | type == "string") and
+            (.class == "CRITICAL" or .class == "BUG" or .class == "MINOR" or .class == "SKIP")))) | not
+      then "BLOCK"
+    elif any(.findings[]; .class == "CRITICAL") then "BLOCK"
+    elif .bugs != ([.findings[] | select(.class == "BUG")] | length) then "BLOCK"
+    elif (.findings | length) == 0 and (.fixes_needed | length) > 0 then "BLOCK"
+    elif .security_issues > 0 or (.missing_acceptance | length) > 0 then "REQUEST_CHANGES"
+    elif any(.findings[]; .class == "BUG" or (.class == "MINOR" and $floor == "MINOR")) then "REQUEST_CHANGES"
+    elif $floor != "BUG" and $floor != "MINOR" then "BLOCK"
+    elif ([.findings[] | select(.class == "SKIP" or (.class == "MINOR" and $floor == "BUG")) | .msg]) as $deferred
+      | any(.fixes_needed[]; . as $fix | (test("\\S") and any($deferred[]; . == $fix)) | not)
+      then "REQUEST_CHANGES"
+    elif .verdict == "REQUEST_CHANGES" and (.findings | length) == 0 then "REQUEST_CHANGES"
+    else "APPROVE" end' 2>/dev/null) || verdict=BLOCK
+  printf '%s\n' "${verdict:-BLOCK}"
+}
+
+# review_counts reads the structured round markers first. Unmarked historical
+# Changes Requested comments retain their old meaning. Never rename that header:
+# implement also uses it to fetch feedback. Repeated markers (approval/gate reuse)
+# count once. Only Bureau review headers with a terminal, unquoted metadata line
+# qualify; prose examples and fenced/quoted markers are ignored. Malformed Bureau
+# metadata still fails closed through the caller's exit 27.
+review_counts() {
+  jq -ce '
+    # Track Markdown fences (including longer/nested-looking fence examples).
+    # Quoted and indented markers never match the column-zero metadata line.
+    def prose_lines:
+      reduce .[] as $line ({fence: "", width: 0, lines: []};
+        ($line | [capture("^ {0,3}(?<fence>`{3,}|~{3,})(?<tail>.*)$")]) as $m
+        | if .fence != "" then
+            if ($m | length) > 0 and ($m[0].fence[0:1] == .fence)
+                and ($m[0].fence | length) >= .width and ($m[0].tail | test("^ *$"))
+            then .fence = "" | .width = 0 else . end
+          elif ($m | length) > 0 then .fence = $m[0].fence[0:1] | .width = ($m[0].fence | length)
+          else .lines += [$line] end) | .lines;
+    if type != "array" or any(.[]; (.body | type) != "string") then error("comments") else . end
+    | [ .[] | .body as $body
+        | ($body | split("\n")) as $lines
+        | ($lines[0] | test("^(🔄 |## )?Code Review.*Changes Requested")) as $legacy
+        | ($legacy or ($lines[0] | test("^(Code review round [1-9][0-9]* started\\.$|[✅⏳🛑🚫] Code review \\*\\*(APPROVED|BLOCKED)\\*\\*)"))) as $owned
+        | ($lines | prose_lines | map(select(test("\\S"))) | last // "") as $last
+        # Text after a closed comment makes it an inline example, even below a
+        # Bureau header. An incomplete standalone metadata line still fails closed.
+        | if $owned and ($last | startswith("<!-- bureau-review-round:") and (test("-->\\s*\\S") | not)) then
+            ($last
+              | [capture("^<!-- bureau-review-round: round=(?<round>[1-9][0-9]{0,5})(?: verdict=(?<verdict>APPROVE|REQUEST_CHANGES|BLOCK))? -->$")]) as $m
+            | if ($m | length) != 1 then error("round marker") else $m[0] | .round |= tonumber end
+          elif $legacy then {legacy: true}
+          else empty end ]
+    | ([.[] | select(.legacy)] | length) as $legacy
+    | {cycles: ($legacy + ([.[] | select(.verdict == "REQUEST_CHANGES") | .round] | unique | length)),
+       rounds: ([ $legacy, (.[] | select(.round) | .round) ] | max)}'
+}
+
+# Optional metadata only; a failed sink cannot change a verdict or stage exit.
+bureau_review_evidence() {
+  [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  ( bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" \
+      --round "$REVIEW_ROUND" --min-severity "$BUREAU_REVIEW_MIN_SEVERITY" "$@" ) || true
+  return 0
+}
+
+# decide_review_verdict <verdict> <security_issues> <security_critical> <build_ok> <cycles> <max_cycles> [round max_rounds]
 #   → the final verdict on the first line, then one line per rule that changed or
 #     qualified it. At most one line carries a reason: the rule that turned the verdict
 #     into BLOCK (every escalating rule runs only while the verdict is not BLOCK yet), so a
@@ -3457,6 +3541,7 @@ apply_build_failure() {
 decide_review_verdict() {
   local verdict="${1:-}" sec="${2:-}" crit="${3:-}" build_ok="${4:-}" cycles="${5:-}" max="${6:-}"
   local notes="" sep=$'\037' before sec_count="" crit_count cycles_count max_count reason
+  local round="${7:-}" max_rounds="${8:-}" round_count rounds_limit
 
   case "$verdict" in
     APPROVE|REQUEST_CHANGES|BLOCK) ;;
@@ -3514,6 +3599,17 @@ decide_review_verdict() {
         notes+="cycle-cap${sep}REQUEST_CHANGES exceeded max_review_cycles=${max_count}${sep}**ESCALATED:** ${cycles_count} review cycles (max ${max_count}). Needs human intervention."$'\n'
       fi
       verdict="BLOCK"
+    fi
+  fi
+
+  if [ "$verdict" = REQUEST_CHANGES ] && [ "$#" -ge 7 ]; then
+    if ! round_count=$(_review_count "$round") || ! rounds_limit=$(_review_count "$max_rounds") \
+       || [ "$round_count" -lt 1 ] || [ "$rounds_limit" -lt 1 ]; then
+      notes+="round-cap${sep}review round count unreadable${sep}**ESCALATED:** total review rounds could not be bounded. Needs human intervention."$'\n'
+      verdict=BLOCK
+    elif [ "$round_count" -ge "$rounds_limit" ]; then
+      notes+="round-cap${sep}unresolved work at max_review_rounds=${rounds_limit}${sep}**ESCALATED:** review round ${round_count} (max ${rounds_limit}) still has unresolved work. Needs human intervention."$'\n'
+      verdict=BLOCK
     fi
   fi
 

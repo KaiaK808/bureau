@@ -27,7 +27,7 @@ run_review() {
   git -C "$SANDBOX" commit -q -m 'fixture change'
   git -C "$SANDBOX" push -q origin test-branch
   jq -n --arg c "i=1; while [ \$i -le $1 ]; do echo \"build line \$i\"; i=\$((i + 1)); done" '{repo: {test_command: $c}}' > "$SANDBOX/.bureau.json"
-  printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
+  printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt"
   export BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
   export BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED=''

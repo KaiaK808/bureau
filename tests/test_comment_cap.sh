@@ -41,7 +41,7 @@ line = "- `src/ä.py:12` — Grüße 😀 der Fehler liegt hier, 42 € Schaden.
 body = "<!-- bureau-branch: feat/cap-test -->\n🔄 Code Review: **Changes Requested** (cycle 1/3)\n\n"
 while len(body.encode()) < n:
     body += line
-body += "\n```json\n" + json.dumps({"verdict": "REQUEST_CHANGES", "bugs": 1, "security_issues": 0}) + "\n```"
+body += "\n```json\n" + json.dumps({"verdict": "REQUEST_CHANGES", "bugs": 1, "security_issues": 0, "missing_acceptance": [], "fixes_needed": ["Fix the real bug"], "summary": "One bug", "comment": "Review checked.", "findings": [{"file": "src/ä.py", "line": 12, "class": "BUG", "msg": "A real bug"}]}) + "\n```"
 open(path, "w").write(body)
 PY
 }
@@ -193,7 +193,7 @@ review_long() {  # [nocap]
   git -C "$SANDBOX" add change.txt && git -C "$SANDBOX" commit -q -m 'fixture change' && git -C "$SANDBOX" push -q origin test-branch
   printf 'Specialist prose.\n```json\n{"specialist":"x","counts":{"critical":0,"bug":0,"minor":0,"skip":0},"findings":[],"summary":""}\n```\n' > "$SANDBOX/specialist.txt"
   make_long 150000 "$T/merger-comment"
-  jq -n --rawfile c "$T/merger-comment" '{verdict:"REQUEST_CHANGES",bugs:1,security_issues:0,missing_acceptance:[],fixes_needed:["x"],summary:"s",comment:$c,findings:[]}' > "$SANDBOX/merger.txt"
+  jq -n --rawfile c "$T/merger-comment" '{verdict:"REQUEST_CHANGES",bugs:1,security_issues:0,missing_acceptance:[],fixes_needed:["x"],summary:"s",comment:$c,findings:[{file:"src/ä.py",line:12,class:"BUG",msg:"A real bug"}]}' > "$SANDBOX/merger.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/specialist.txt" FAKE_CLAUDE_MERGE_FIXTURE="$SANDBOX/merger.txt"
   export BUREAU_STUB_ISSUE_STATE='Build Review' BUREAU_STUB_STATE_MERGE=state-merge BUREAU_STUB_AGENT_ENABLED=merge
   export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0

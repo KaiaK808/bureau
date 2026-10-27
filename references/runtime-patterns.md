@@ -82,6 +82,8 @@ Code review instead reads the PR's actual `baseRefName` and matching head branch
 
 Before posting or routing, review rechecks the PR identity/target and both authoritative remote tips. Changed or unavailable inputs preserve the review output and stop execution. A saved review boundary includes the base branch name and both remote SHAs, not the unpublished local merge commit alone. Retargeting or advancing either remote input reopens the boundary; older records without a base name retain their original `main` interpretation. `spec-review-pipeline.sh` does not perform this validation merge.
 
+Approval reuse additionally requires the saved policy version, severity floor, cycle allowance and total-round limit to match the current review policy. A policy change or a legacy approval without policy metadata requires a fresh review once the requested stop is cleared; an active stop remains stopped. Gate polls use the same policy binding. Required fixes can be deferred only through exact nonblank finding-message matches; see [review convergence](../docs/stage-protocol.md#review-convergence) for round-marker ownership and the remaining verdict protections.
+
 On a merge conflict, implementation, QA and code review return 17; the caller owns state/label routing. These local checks do not replace the independent CI/base gates at merge time.
 
 ### Per-stage model override
@@ -324,6 +326,14 @@ For Codex implement turns only, typed gate-only NEEDS_HUMAN holds or legacy `SAN
 | `CI_MARKER` (squash-range check not clean; overrides every other status) | draft, report posted on the PR | yes | none (stays in Build) | yes |
 
 PRs open as `--draft` during intermediate iterations so QA and code-review don't trigger on half-done work; flipped to ready via `gh pr ready` only on COMPLETE.
+
+### Deterministic review convergence
+
+Run `review_convergence` over the original merger result before `decide_review_verdict` applies security, build and the legacy cycle cap. `agents.review_min_severity` defaults to BUG; MINOR is stricter. Validate the fields and finding classes; never discharge BLOCK, CRITICAL, security/acceptance blockers or malformed/contradictory results. A nonempty list of deferred MINOR/SKIP findings can discharge REQUEST_CHANGES; an empty list cannot. Keep the provider object/digest unchanged and record the final shell decision separately. Render deferred/SKIP lists only from `bureau_comment_projection`, preserving local insight exclusion.
+
+Keep `max_review_cycles` as the previous rework allowance. Apply the additional `max_review_rounds` total limit (default cycles + 1) after the existing cap: unresolved round N blocks with 25, while genuine approval may finish. `review_counts` prefers structured round/verdict markers and counts duplicate markers once; unmarked history falls back to `Code Review.*Changes Requested`. Do not rename that header, which the implementer also matches. Reserve a fresh round number in Linear before paid calls (a marker without a verdict); final comments add its verdict. A failed/interrupted attempt consumes the number without inventing a verdict or changing provider-error exits. Approval reuse and gate polling skip the reservation and add neither a round nor tokens.
+
+`bureau_review_evidence` records the stage attempt's round and decision metadata. Sum the four phases' numeric receipt measurements by provider attempt ID, never by parsing prose or cost envelopes, and never charge a duplicate link twice. Missing phases/measurements yield null for the affected aggregate. Keep receipt persistence and PR 6's implement/QA-only sandbox recovery independent: outside green cannot clear a review BLOCK. These are background-stage rules; app prepare/finish does not gain a new autonomous review loop.
 
 ### Escalation log: `log_escalation` helper
 

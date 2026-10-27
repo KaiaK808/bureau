@@ -88,6 +88,7 @@ PY
     -e '/^check_squash_range() {/,/^}/p' -e '/^comment_on_branch_pr() {/,/^}/p' \
     -e '/^restore_worktree_deps() {/,/^}/p' \
     -e '/^apply_build_failure() {/,/^}/p' -e '/^decide_review_verdict() {/,/^}/p' \
+    -e '/^review_convergence() {/,/^}/p' -e '/^review_counts() {/,/^}/p' -e '/^bureau_review_evidence() {/,/^}/p' \
     -e '/^_review_count() {/,/^}/p' -e '/^_review_shown() {/,/^}/p' -e '/^review_verdict_from_text() {/,/^}/p' \
     -e '/^resolve_verdict_exit() {/,/^}/p' \
     -e '/^spec_admission_gate() {/,/^}/p' \

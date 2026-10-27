@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="978a87723e9e931e28136bb20a9755f51f59c356009aaea4c244b4e7e7b7c462">
+<meta name="bureau-source-sha256" content="22a2233b3ea427d36baa5253aa2537734f35f57cb950f2b11576cd8f01c47b05">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -344,6 +344,73 @@ old unregistered workers explicitly before reuse. Tests use fake
 providers/services and real local Git, including timeout/reset and
 mutation controls. Live provider and adopting-installation qualification
 remains outstanding.</p>
+<h2 id="review-convergence">Review convergence</h2>
+<p>The background review stage validates the merger's decision fields
+and findings before applying <code>agents.review_min_severity</code>
+(<code>BUG</code> by default, <code>MINOR</code> for stricter review).
+BLOCK stays BLOCK; any CRITICAL finding blocks. Invalid types/counts or
+a bug count inconsistent with the BUG findings block. Security findings
+and missing acceptance keep work unresolved. BUG findings always require
+rework; MINOR findings require it at the MINOR floor. A nonempty list
+containing only deferred MINOR/SKIP findings may turn REQUEST_CHANGES
+into APPROVE only when every <code>fixes_needed</code> entry exactly
+matches a nonblank message of a finding deferred below the current floor
+or classified SKIP. An unmatched, blank or uncertain required fix keeps
+REQUEST_CHANGES; matching uses neither substrings nor inferred
+equivalence. An empty findings list never discharges REQUEST_CHANGES,
+and a fixes-needed list without findings blocks. The existing
+independent security count/specialist floor, build fold and cycle cap
+run after this rule. PR 6 recovery is confined to implement/QA and
+cannot clear a review BLOCK.</p>
+<p><code>agents.max_review_cycles</code> keeps its previous Changes
+Requested allowance (default 3). <code>agents.max_review_rounds</code>
+bounds total rounds, defaulting to that allowance plus one. Unresolved
+work at round N ends BLOCK/25; genuine approval may finish at N. Before
+paid calls, a fresh stage attempt reserves
+<code>&lt;!-- bureau-review-round: round=N --&gt;</code> in a Linear
+comment; a reservation failure stops before those calls. Final comments
+add <code>verdict=VERDICT</code> to that marker. Only comments starting
+with Bureau's reservation or review header supply structured round
+metadata, on a terminal standalone line outside fenced or quoted text.
+Ordinary mentions, inline examples and quoted markers are ignored;
+malformed Bureau metadata still stops with Linear-unusable exit 27. The
+stage counts each round once (including failed/interrupted attempts with
+only a reservation), and uses unmarked
+<code>Code Review.*Changes Requested</code> headers only for legacy
+history. Preserve the exact
+<code>🔄 Code Review: **Changes Requested** (cycle …)</code> header:
+implementation still retrieves feedback through it. Reused approval and
+merge-gate polling retain the completed round and add no provider usage
+only while the recorded policy version, severity floor, cycle allowance
+and total-round limit match. Missing legacy policy or any policy change
+requires a fresh review, including a stricter severity floor; a
+still-requested stop remains stopped. Provider failures retain their
+existing exits; an unresolved decision in the next round sees the
+consumed number.</p>
+<p>Each fresh stage attempt records one <code>review_round</code> in its
+evidence manifest. Four existing provider phases
+(<code>correctness</code>, <code>security</code>,
+<code>performance</code>, <code>verdict</code>) contribute numeric usage
+through their run/stage/provider attempt identities. Duplicate receipt
+links count once; distinct retry identities count once each. Every
+metric sums only when all four phases and every measurement are
+available; otherwise it is null. Input/output/cache tokens and CLI cost
+estimates are numbers; absent usage/cost is never zero. Numeric
+receipt/round evidence uses the existing observational store,
+independent of the existing <code>session.cost_tracking</code> switch
+for per-issue cost logs; no additional switch or provider call is added.
+Approval reuse creates no round record or tokens. Evidence failures warn
+without changing routing; provider-success receipts retain their
+existing durability requirement.</p>
+<p>The provider-result object and digest remain unchanged. Evidence
+records <code>provider_verdict</code> separately from the final shell
+verdict. The existing PR review comment appends “Deferred below
+threshold” and SKIP lists after <code>bureau_comment_projection</code>
+has excluded insights; normal comment size limits still apply. PR 7's
+acceptance brief continues to distinguish provider verdict from
+invocation verdict. Old evidence needs no backfill. Resync scripts
+together after comparing installation drift, then restart drivers; live
+provider/adopter qualification remains outstanding.</p>
 <h2 id="sandbox-only-gate-recovery">Sandbox-only gate recovery</h2>
 <p><code>bureau-gates.py</code> reconciles implement/QA holds against
 the exact configured command (<code>repo.test_command</code>, or QA's
@@ -651,6 +718,23 @@ only the number.</p>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td>Receipt <code>usage</code></td>
+<td>Numeric/null <code>input_tokens</code>, <code>output_tokens</code>,
+<code>cached_input_tokens</code>,
+<code>cache_creation_input_tokens</code>, <code>total_cost_usd</code>.
+Provider-native cache-read tokens use <code>cached_input_tokens</code>;
+missing/invalid values remain null.</td>
+</tr>
+<tr>
+<td>Review attempt <code>review_round</code></td>
+<td>One-based <code>number</code>, <code>min_severity</code>, nullable
+<code>provider_verdict</code> and <code>final_verdict</code>,
+deduplicated <code>provider_attempt_ids</code>, numeric
+<code>calls</code>, and aggregate <code>usage</code>. Partial/failed
+rounds keep unknown decisions and measurements null; cleanup collects
+available receipts without replacing the stage exit.</td>
+</tr>
 <tr>
 <td>Receipt:
 <code>runs/RUN_ID/receipts/PROVIDER_ATTEMPT_ID.json</code></td>

@@ -389,7 +389,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
                    result_absence=None if result is not None else ('no-schema' if code == 0 else metadata['outcome']),
                    start_head=start, end_head=end, started_at=started, ended_at=time.time(),
                    provider_logs=str(evidence), transcript=(e.observe(transcript, options, repo, evidence) or {}).get('transcript'),
-                   gate_attempts=gate_attempts)
+                   gate_attempts=gate_attempts, usage=metadata.get('usage'), total_cost_usd=metadata.get('total_cost_usd'))
     if options['stage'] == 'code_review':
         receipt['review_inputs'] = dict(head=os.environ.get('BUREAU_REVIEW_INPUT_HEAD'),
                                       base=os.environ.get('BUREAU_REVIEW_INPUT_BASE'),

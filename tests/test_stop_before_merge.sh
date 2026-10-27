@@ -11,7 +11,7 @@ git -C "$SANDBOX" push -q origin test-branch
 cat > "$SANDBOX/approve.txt" <<'EOF'
 Review checked.
 ```json
-{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"summary":"Checks passed"}
+{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"Checks passed"}
 ```
 EOF
 export FAKE_CLAUDE_FIXTURES="$SANDBOX/approve.txt"
@@ -61,7 +61,7 @@ for destination in ticket pr; do
   git -C "$SANDBOX" add change.txt
   git -C "$SANDBOX" commit -qm 'fixture change'
   git -C "$SANDBOX" push -q origin test-branch
-  printf '%s\n' '{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"summary":"Checks passed"}' > "$SANDBOX/approve.txt"
+  printf '%s\n' '{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"Checks passed"}' > "$SANDBOX/approve.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/approve.txt" FAKE_CLAUDE_LOG="$SANDBOX/model-calls.log"
   if [ "$destination" = ticket ]; then export BUREAU_STUB_BRIEF_TICKET_FAIL=1
   else export GH_STUB_BRIEF_FAIL=1; fi

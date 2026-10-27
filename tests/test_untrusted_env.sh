@@ -257,7 +257,7 @@ review_run() {
   jq -n --arg c "$(pr1_dump review)$canary" --argjson u "${1:-null}" \
     '{repo: ({test_command: $c} + (if $u == null then {} else {untrusted_env: $u} end))}' > "$SANDBOX/.bureau.json"
   [ "${2:-}" != control ] || pr1_passthrough "$SCRIPTS_DIR"
-  printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
+  printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt" BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
   export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=0 BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED=''
   run_pipeline code-review-pipeline.sh EXP-801 </dev/null; set +e  # run_pipeline leaves errexit on

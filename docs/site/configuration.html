@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0350fff19cf47ad167572e0e02446e439c4b6381dcc5c7afc6d0c02fadaf807e">
+<meta name="bureau-source-sha256" content="3f3d7da589cc0948f157924425e863d279c6a3ab46fb8cce2220951d70eb7ab9">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -371,9 +371,31 @@ interactive provider panes in the tmux workbench; zero omits it</td>
 <td><code>agents.max_review_cycles</code></td>
 <td>number</td>
 <td><code>3</code></td>
-<td>Whole numbers 0–1000; invalid values fall back to 3. Code-review
-re-iterations before the agent gives up and applies
-<code>needs-human</code></td>
+<td>Whole numbers 0–1000; invalid values fall back to 3. Previous
+Changes Requested rounds allowed before unresolved work becomes
+BLOCK/exit 25. The default permits three rework rounds and escalates
+unresolved review four; genuine approval may finish</td>
+</tr>
+<tr>
+<td><code>agents.max_review_rounds</code></td>
+<td>number</td>
+<td><code>max_review_cycles + 1</code></td>
+<td>Optional total-round limit, 1–1001; invalid values use the derived
+default. Unresolved work at round N becomes BLOCK/exit 25; genuine
+approval at N may finish. Both limits apply. Structured round markers
+take precedence over historical header counting. Approval reuse and
+merge-gate polling consume no new round</td>
+</tr>
+<tr>
+<td><code>agents.review_min_severity</code></td>
+<td>string</td>
+<td><code>BUG</code></td>
+<td><code>BUG</code> defers MINOR and SKIP findings; stricter
+<code>MINOR</code> requires rework for MINOR too. Invalid values use
+MINOR. Validated findings decide before security/build/cap rules; BLOCK,
+CRITICAL, security/acceptance blockers and malformed or contradictory
+results cannot be promoted. Deferred/SKIP findings remain in the
+projected PR comment</td>
 </tr>
 <tr>
 <td><code>agents.code_review_sampling_threshold</code></td>

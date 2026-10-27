@@ -52,6 +52,12 @@ def main(path, name):
         if src.count(NEW_FALLBACK) != 1:
             raise ValueError('fallback call not found')
         src = src.replace(NEW_FALLBACK, OLD_FALLBACK, 1)
+        # Reproduce the historical pipeline, which also lacked the v3.5
+        # structured-result check that would independently reject this answer.
+        convergence = 'VERDICT=$(review_convergence "$MERGED_RAW" "$BUREAU_REVIEW_MIN_SEVERITY")'
+        if src.count(convergence) != 1:
+            raise ValueError('convergence call not found')
+        src = src.replace(convergence, 'VERDICT="$PROVIDER_VERDICT"', 1)
     else:
         raise ValueError('unknown control ' + name)
     open(path, 'w').write(src)

@@ -148,7 +148,7 @@ pr2_merged && fail '3b: merged on an answer without a verdict'
 echo 'PASS 3b an answer without a verdict is BLOCK, whatever its comment says'
 
 # ── 4. a long findings list ────────────────────────────────────────────────
-MANY=$(printf '%s' "$VERDICT_RC" | jq -c '.findings = [range(1500) | {file: "src/a.py", line: ., class: "MINOR", msg: ("x" * 40)}]')
+MANY=$(printf '%s' "$VERDICT_RC" | jq -c '.findings = [range(1500) | {file: "src/a.py", line: ., class: (if . == 0 then "BUG" else "MINOR" end), msg: ("x" * 40)}]')
 run_review "$MANY" '' '🔄 Code Review: **Changes Requested**'
 [ "$LAST_RC" = 0 ] || fail "4: ended $LAST_RC"
 [ "$(printf '%s' "$PR_BODY" | LC_ALL=C wc -c | tr -d ' ')" -le 60000 ] || fail '4: the PR comment is over the limit'

@@ -193,7 +193,7 @@ run_case() {
   # merged verdict and as the security specialist's own counts.
   jq -n --arg v "$verdict" --arg s "$sec" --argjson c "$crit" \
     '{verdict:$v, bugs:0, security_issues:(if $s == "-" then null else ($s|tonumber) end),
-      counts:{critical:$c}, findings:[], summary:"fixture"} | if .security_issues == null then del(.security_issues) else . end' \
+      counts:{critical:$c}, findings:[], missing_acceptance:[], fixes_needed:[], comment:"Review checked.", summary:"fixture"} | if .security_issues == null then del(.security_issues) else . end' \
     > "$SANDBOX/verdict.json"
   { printf 'Review.\n```json\n'; cat "$SANDBOX/verdict.json"; printf '```\n'; } > "$SANDBOX/verdict.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt"
@@ -251,7 +251,7 @@ echo "PASS a CRITICAL security finding needs a human (the old floor sent it into
 # CRITICAL — and the other way round.
 role_case() {  # $1 = merger's critical count, $2 = specialist's critical count
   run_case REQUEST_CHANGES 2 0 green 0 hold
-  printf 'Merged.\n```json\n{"verdict":"REQUEST_CHANGES","bugs":0,"security_issues":2,"counts":{"critical":%s},"summary":"m"}\n```\n' "$1" > "$SANDBOX/merge.txt"
+  printf 'Merged.\n```json\n{"verdict":"REQUEST_CHANGES","bugs":0,"security_issues":2,"counts":{"critical":%s},"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","findings":[],"summary":"m"}\n```\n' "$1" > "$SANDBOX/merge.txt"
   printf 'Security.\n```json\n{"specialist":"security","counts":{"critical":%s,"bug":2,"minor":0,"skip":0},"findings":[],"summary":"s"}\n```\n' "$2" > "$SANDBOX/security.txt"
   FAKE_CLAUDE_MERGE_FIXTURE="$SANDBOX/merge.txt" FAKE_CLAUDE_SECURITY_FIXTURE="$SANDBOX/security.txt" \
     run_pipeline code-review-pipeline.sh EXP-702 </dev/null
@@ -300,7 +300,7 @@ import json, sys
 text = 'x' * 70000 + '\n```json\n' + json.dumps({"specialist": "security", "counts": {"critical": 2, "bug": 0, "minor": 0, "skip": 0}, "findings": [], "summary": "s"}) + '\n```\n'
 open(sys.argv[1], 'w').write(json.dumps({"result": text, "usage": {}, "total_cost_usd": 0.1, "provider": "codex"}))
 PY
-  printf 'Merged.\n```json\n{"verdict":"REQUEST_CHANGES","bugs":0,"security_issues":2,"missing_acceptance":[],"fixes_needed":[],"summary":"m"}\n```\n' > "$SANDBOX/merge.txt"
+  printf 'Merged.\n```json\n{"verdict":"REQUEST_CHANGES","bugs":0,"security_issues":2,"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","findings":[],"summary":"m"}\n```\n' > "$SANDBOX/merge.txt"
   FAKE_CLAUDE_MERGE_FIXTURE="$SANDBOX/merge.txt" FAKE_CLAUDE_SECURITY_FIXTURE="$SANDBOX/security.txt" \
     run_pipeline code-review-pipeline.sh EXP-702 </dev/null
   POSTED=$(cat "$SANDBOX/gh_calls.log" 2>/dev/null || true)

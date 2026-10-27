@@ -279,12 +279,12 @@ def check(repo, root, issue, branch, state, detail):
     return {'stopped': same, 'issue': issue, 'head': record['head'], 'pr': record['pr']}
 
 
-def reuse(root, issue, branch, state, head, base, base_ref, pr, raw_detail):
+def reuse(root, issue, branch, state, head, base, base_ref, pr, raw_detail, review_policy=None):
     """Consume a recorded approval for exactly these review inputs.
 
     A review that stopped before merge recorded its inputs. When the stage runs
     again without a stop, an approval of the same head and base, for the same PR
-    and base branch, the same ticket text and state, is still the answer a new
+    and base branch, the same ticket text, state and review policy, is still the answer a new
     paid review would start from. Any difference, a record without a recorded
     APPROVE (written before verdicts were recorded), or a malformed record means
     a normal review; the record is removed either way, so it is used at most once
@@ -310,9 +310,12 @@ def reuse(root, issue, branch, state, head, base, base_ref, pr, raw_detail):
             ticket_hash, mismatch = None, 'ticket detail unreadable (' + str(exc) + ')'
         else:
             wanted = (('verdict', 'APPROVE'), ('branch', branch), ('state', state), ('head', head),
-                      ('base', base), ('base_ref', base_ref), ('pr', pr), ('ticket_hash', ticket_hash))
+                      ('base', base), ('base_ref', base_ref), ('pr', pr), ('ticket_hash', ticket_hash),
+                      ('review_policy', review_policy))
             mismatch = 'record is not an object' if not isinstance(record, dict) else next(
                 (key for key, value in wanted if record.get(key) != value), None)
+            if not review_policy:
+                mismatch = 'review_policy'
         del stops[issue]
         save(path, stops)
     if not record.get('merge_gate_wait'):
@@ -467,6 +470,9 @@ def main():
             command.add_argument('--head', required=True); command.add_argument('--base', required=True)
             command.add_argument('--base-ref', required=action == 'reuse', default='main')
             command.add_argument('--pr', type=int, required=True)
+            # v1:<severity floor>:<max cycles>:<max total rounds>. Missing legacy
+            # policy can preserve a stop boundary, but cannot authorize reuse.
+            command.add_argument('--review-policy')
         if action == 'stop':
             command.add_argument('--reviewed-head', required=True)
             # The review's verdict; only an APPROVE can be reused (see reuse()).
@@ -506,7 +512,7 @@ def main():
             # reuse() reads the ticket detail itself, under the lock, so an unreadable
             # detail still removes the recorded approval.
             result = reuse(root, args.issue, args.branch, args.state, args.head, args.base,
-                           args.base_ref, args.pr, sys.stdin.read())
+                           args.base_ref, args.pr, sys.stdin.read(), args.review_policy)
         else:
             detail = json.load(sys.stdin)
             ticket_hash = fingerprint(detail, args.issue)
@@ -522,6 +528,8 @@ def main():
                               ticket_hash=ticket_hash, stopped_at=time.time(), revision=uuid.uuid4().hex)
                 if args.verdict:
                     record['verdict'] = args.verdict
+                if args.review_policy:
+                    record['review_policy'] = args.review_policy
                 if args.merge_gate_wait:
                     record['merge_gate_wait'] = True
                     record['gate_waits'] = args.gate_waits if args.gate_waits and args.gate_waits >= 1 else 1

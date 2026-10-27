@@ -33,6 +33,11 @@ REVIEW_TMP=$(mktemp -d)
 # both are clean early exits with no specialist output to inspect.
 _review_cleanup() {
   local rc=$?
+  # Also collect a failed/partial round's receipts. Unknown decisions and
+  # measurements remain null; this cannot replace the stage's original exit.
+  if [ "${REVIEW_ROUND_STARTED:-0}" = 1 ]; then
+    bureau_review_evidence --provider-verdict "${PROVIDER_VERDICT:-}" --final-verdict "${VERDICT:-}" || true
+  fi
   bureau_archive_evidence "$REVIEW_TMP" 'code review specialist outputs and gate reports' || true
   if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
     rm -rf "$REVIEW_TMP" || true
@@ -58,13 +63,18 @@ trap _review_cleanup EXIT
 review_text_from_merger() {
   local text projected
   projected=$(bureau_comment_projection "$1")
-  if text=$(printf '%s' "$projected" | jq -r '
+  if text=$(printf '%s' "$projected" | jq -r --arg floor "${BUREAU_REVIEW_MIN_SEVERITY:-BUG}" '
+      def section($title; $items):
+        if ($items | length) == 0 then "" else
+          "\n\n### " + $title + "\n" + ($items | map("- `" + .file + ":" + (.line | tostring) + "` — " + .msg) | join("\n")) end;
       (if type == "object" and (.result | type) == "string" then (.result | fromjson?) else . end)
       | select(type == "object" and (.comment | type) == "string" and (.verdict | type) == "string")
       | (del(.comment, .insights)) as $v
       | (if ($v | tojson | length) > 16000
          then ($v | del(.findings)) + {findings_omitted: ($v.findings | length? // 0)} else $v end) as $v
-      | .comment + "\n\n```json\n" + ($v | tojson) + "\n```"' 2>/dev/null) && [ -n "$text" ]; then
+      | .comment + "\n\n```json\n" + ($v | tojson) + "\n```"
+        + section("Deferred below threshold (" + $floor + ")"; [.findings[]? | select(.class == "MINOR" and $floor == "BUG")])
+        + section("SKIP findings"; [.findings[]? | select(.class == "SKIP")])' 2>/dev/null) && [ -n "$text" ]; then
     printf '%s' "$text"
   else
     printf '%s' "$projected"
@@ -257,13 +267,14 @@ if [ "$_comments_rc" != 0 ]; then
   echo "  ERROR: could not read the comments of $ISSUE to count review cycles (exit $_comments_rc)." >&2
   case "$_comments_rc" in 10|"$BUREAU_EXIT_LINEAR_UNUSABLE") exit "$_comments_rc" ;; *) exit "$BUREAU_EXIT_LINEAR_UNUSABLE" ;; esac
 fi
-REVIEW_CYCLE_COUNT=$(printf '%s' "$_review_comments" \
-  | jq '[.[] | select(.body | test("Code Review.*Changes Requested"))] | length' 2>/dev/null) || REVIEW_CYCLE_COUNT=""
+_review_counts=$(printf '%s' "$_review_comments" | review_counts 2>/dev/null) || _review_counts=""
+REVIEW_CYCLE_COUNT=$(printf '%s' "$_review_counts" | jq -r .cycles) || REVIEW_CYCLE_COUNT=""
+REVIEW_COMPLETED_ROUNDS=$(printf '%s' "$_review_counts" | jq -r .rounds) || REVIEW_COMPLETED_ROUNDS=""
 if ! [[ "$REVIEW_CYCLE_COUNT" =~ ^[0-9]+$ ]]; then
   echo "  ERROR: the comments of $ISSUE did not give a review cycle count." >&2
   exit "$BUREAU_EXIT_LINEAR_UNUSABLE"
 fi
-CYCLE_NOTE="This is review cycle $((REVIEW_CYCLE_COUNT + 1)) for this issue."
+CYCLE_NOTE="This is review round $((${REVIEW_COMPLETED_ROUNDS:-$REVIEW_CYCLE_COUNT} + 1)) for this issue (previous changes-requested cycles: $REVIEW_CYCLE_COUNT)."
 if [ "${REVIEW_CYCLE_COUNT:-0}" -gt 0 ]; then
   CYCLE_NOTE+=$'\nDeclined findings from earlier cycles are pinned — do NOT resurface them unless the underlying code has materially changed. Cite the prior cycle if you do re-raise.'
 fi
@@ -271,7 +282,7 @@ fi
 # A review that stopped before merge (`--no-merge`, BUREAU_STOP_REQUESTED) recorded its
 # APPROVE with the inputs it judged. Run again without a stop on exactly those inputs —
 # the same PR and base branch, the same head and base commits, the same ticket text and
-# state — that approval is reused instead of paying the three specialists and the merger
+# state and severity/round policy — that approval is reused instead of paying the three specialists and the merger
 # again. `bureau-supervision.py reuse` removes the record whether it matches or not, so an
 # approval is used at most once and never for inputs it did not see; any doubt (no record,
 # a record without a recorded verdict, an unreadable file) means the full review. The
@@ -292,11 +303,14 @@ fi
 REUSED_APPROVAL=0
 REUSED_GATE_WAIT=0
 REUSED_GATE_WAITS=0
+# Version the decision policy as well as its configured severity and both caps.
+# Older records have no policy and require a fresh review; gate polls use the same key.
+REVIEW_POLICY="v1:$BUREAU_REVIEW_MIN_SEVERITY:$BUREAU_MAX_REVIEW_CYCLES:$BUREAU_MAX_REVIEW_ROUNDS"
 STAGE_EXIT=""   # set when an APPROVE's inline merge did not go through (2 or 25)
 if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
   if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
       --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" \
-      --base-ref "$PR_BASE_REF" --pr "$PR_NUMBER"); then
+      --base-ref "$PR_BASE_REF" --pr "$PR_NUMBER" --review-policy "$REVIEW_POLICY"); then
     if [ "$(printf '%s' "$REUSE" | jq -r '.reuse' 2>/dev/null)" = true ]; then
       REUSED_APPROVAL=1
       REUSED_AT=$(printf '%s' "$REUSE" | jq -r '.stopped_at | floor | todate' 2>/dev/null) || REUSED_AT=""
@@ -322,6 +336,9 @@ if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
 fi
 
 if [ "$REUSED_APPROVAL" = 1 ]; then
+  # Reusing approval (including a gate poll) consumes neither a round nor usage.
+  REVIEW_ROUND="${REVIEW_COMPLETED_ROUNDS:-$REVIEW_CYCLE_COUNT}"
+  [ "$REVIEW_ROUND" -gt 0 ] || REVIEW_ROUND=1
   # The merger's answer the recorded approval stands for. The recorded APPROVE came out
   # of decide_review_verdict, so the merger's security count was a readable 0 (a missing,
   # unreadable or positive count ends REQUEST_CHANGES or BLOCK) and the specialist's
@@ -335,6 +352,14 @@ if [ "$REUSED_APPROVAL" = 1 ]; then
   MERGED_RAW="$MERGED_REVIEW"
   _sec_critical=0
 else
+REVIEW_ROUND=$((${REVIEW_COMPLETED_ROUNDS:-$REVIEW_CYCLE_COUNT} + 1))
+# Reserve the number before paid calls. A provider failure or lost final-comment
+# acknowledgment must not let a later stage attempt reuse this round number.
+# A failed reservation stops before spending tokens; approval reuse skips it.
+post_comment "$ISSUE" "Code review round $REVIEW_ROUND started.
+<!-- bureau-review-round: round=$REVIEW_ROUND -->"
+REVIEW_ROUND_STARTED=1
+bureau_review_evidence || true
 # The paid review below keeps its original indentation: the prompts are multi-line
 # strings, and indenting them would change what the models read.
 
@@ -478,11 +503,13 @@ $SECURITY_REVIEW
 $PERFORMANCE_REVIEW
 
 Verdict rules:
-- APPROVE: no CRITICAL and no BUG across all three specialists.
-- REQUEST_CHANGES: at least one BUG that isn't a style nit. MINOR findings alone do NOT warrant changes.
-- BLOCK: any CRITICAL security finding, OR the findings require human judgment (ambiguous acceptance criteria, architectural disagreement).
+- APPROVE: no CRITICAL, no finding at or above the configured severity floor, and no security or missing-acceptance blockers across all three specialists.
+- REQUEST_CHANGES: at least one BUG; also MINOR findings when the configured severity floor is MINOR. Configured floor: $BUREAU_REVIEW_MIN_SEVERITY.
+- BLOCK: any CRITICAL finding, OR the findings require human judgment (ambiguous acceptance criteria, architectural disagreement).
 
-Do NOT request changes for MINOR findings, style preferences, or hypothetical edge cases.
+Defer MINOR findings below the configured severity floor; SKIP never requests changes. Hypothetical edge cases are not defects.
+Report bugs as the exact number of BUG-class entries in findings. Keep security_issues and missing_acceptance explicit even when zero or empty; do not omit unresolved acceptance work from them.
+Each fixes_needed entry must repeat its corresponding finding message verbatim. A required fix without an exact deferred/SKIP match keeps REQUEST_CHANGES; unrelated deferred findings cannot discharge it.
 
 Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
 
@@ -585,6 +612,23 @@ if [ -z "$VERDICT" ]; then
   VERDICT=$(review_verdict_from_text "$MERGED_REVIEW")
 fi
 VERDICT="${VERDICT:-BLOCK}"
+PROVIDER_VERDICT="$VERDICT"
+_sec_issues=$(parse_claude_json "$MERGED_RAW" '.security_issues')
+if [ "$REUSED_APPROVAL" != 1 ]; then
+  # Leave unreadable verdicts/counts to their existing named, fail-closed rules.
+  # Convergence must not hide the reason those rules log for the operator.
+  case "$VERDICT" in
+    APPROVE|REQUEST_CHANGES|BLOCK)
+      if _review_count "$_sec_issues" >/dev/null; then
+        VERDICT=$(review_convergence "$MERGED_RAW" "$BUREAU_REVIEW_MIN_SEVERITY")
+      fi ;;
+  esac
+fi
+if [ "$VERDICT" != "$PROVIDER_VERDICT" ]; then
+  MERGED_REVIEW="$MERGED_REVIEW
+
+**Convergence**: validated findings at floor $BUREAU_REVIEW_MIN_SEVERITY changed provider $PROVIDER_VERDICT to $VERDICT before security/build/cap rules."
+fi
 
 # The verdict rules run as one ordered decision in bureau-config.sh
 # (`decide_review_verdict`): verdict check, security count, the security
@@ -595,8 +639,7 @@ MAX_REVIEW_CYCLES="$BUREAU_MAX_REVIEW_CYCLES"
 # REVIEW_CYCLE_COUNT was computed at Phase 1 so specialists could reference
 # it; reuse here for the loop-breaker check.
 echo "  Review cycles: ${REVIEW_CYCLE_COUNT:-0}"
-_sec_issues=$(parse_claude_json "$MERGED_RAW" '.security_issues')
-_decision=$(decide_review_verdict "$VERDICT" "$_sec_issues" "$_sec_critical" "$BUILD_OK" "$REVIEW_CYCLE_COUNT" "$MAX_REVIEW_CYCLES")
+_decision=$(decide_review_verdict "$VERDICT" "$_sec_issues" "$_sec_critical" "$BUILD_OK" "$REVIEW_CYCLE_COUNT" "$MAX_REVIEW_CYCLES" "$REVIEW_ROUND" "$BUREAU_MAX_REVIEW_ROUNDS")
 # The first line, by parameter expansion: `printf … | head -n 1` could end the stage
 # here (set -e, pipefail) with a broken pipe after the paid review.
 VERDICT="${_decision%%$'\n'*}"
@@ -609,6 +652,15 @@ while IFS=$'\037' read -r _rule _reason _text; do
 
 $_text"
 done <<< "$(printf '%s\n' "$_decision" | tail -n +2)"
+
+REVIEW_ROUND_MARKER="<!-- bureau-review-round: round=$REVIEW_ROUND verdict=$VERDICT -->"
+MERGED_REVIEW="$MERGED_REVIEW
+
+**Review round**: $REVIEW_ROUND/$BUREAU_MAX_REVIEW_ROUNDS · **Severity floor**: $BUREAU_REVIEW_MIN_SEVERITY
+$REVIEW_ROUND_MARKER"
+if [ "$REUSED_APPROVAL" != 1 ]; then
+  bureau_review_evidence --provider-verdict "$PROVIDER_VERDICT" --final-verdict "$VERDICT" || true
+fi
 
 # A provider can take long enough for the PR to be retargeted or either remote
 # branch to advance. Preserve its evidence without publishing a stale verdict.
@@ -659,7 +711,8 @@ case "$VERDICT" in
       # when there is no Merge state); merge-pipeline.sh refuses there. Moving
       # is not merging, so this holds under a requested stop too.
       echo "  APPROVED — routing to Merge for a manual merge (agents.merge_mode manual)."
-      post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual)."
+      post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual).
+$REVIEW_ROUND_MARKER"
       move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
       bureau_evidence wait-open "$ISSUE" --key approval --kind decision --reason 'Approved PR awaits manual merge' --actor maintainer --stage code_review --pr "$PR_NUMBER" --generation "$REVIEW_HEAD" || true
       bureau_acceptance_brief "$ISSUE" "$BRANCH" --pr "$PR_NUMBER" --head "$REVIEW_HEAD" --url "$PR_URL" --base "$REVIEW_BASE" --verdict "$VERDICT" --review-head "$REVIEW_HEAD" || true
@@ -670,14 +723,16 @@ case "$VERDICT" in
       if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
         printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
           --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
-          --verdict APPROVE >/dev/null
+          --verdict APPROVE --review-policy "$REVIEW_POLICY" >/dev/null
       fi
-      post_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested."
+      post_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested.
+$REVIEW_ROUND_MARKER"
       bureau_acceptance_brief "$ISSUE" "$BRANCH" --pr "$PR_NUMBER" --head "$REVIEW_HEAD" --url "$PR_URL" --base "$REVIEW_BASE" --verdict "$VERDICT" --review-head "$REVIEW_HEAD" || true
       echo "Review complete; stopped before merge."
       exit 20
     elif agent_enabled "merge" && [ -n "${BUREAU_STATE_MERGE:-}" ]; then
-      post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaiting merge gate."
+      post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaiting merge gate.
+$REVIEW_ROUND_MARKER"
       move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
       bureau_evidence wait-open "$ISSUE" --key merge-queue --kind dependency --reason 'Approved PR awaits the merge worker' --actor merge-worker --stage merge || true
       NEXT_STATE="Merge"
@@ -722,7 +777,7 @@ case "$VERDICT" in
             || GATE_WAIT_ARGS+=(--build-check passed "--build-command=$BUILD_CMD" "--build-key=$BUILD_KEY")
           if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
               --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
-              --verdict APPROVE "${GATE_WAIT_ARGS[@]}" >/dev/null; then
+              --verdict APPROVE --review-policy "$REVIEW_POLICY" "${GATE_WAIT_ARGS[@]}" >/dev/null; then
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
           fi
           if [ "$REUSED_GATE_WAIT" != 1 ]; then
@@ -730,7 +785,8 @@ case "$VERDICT" in
 
 ${GATE_LINES:-- (the merge stage left no gate lines)}
 
-The approval is recorded for head \`$REVIEW_HEAD\`; the queue checks the gate again without a new model review, and without the build check while the head and the base are unchanged. While other Build Review tickets wait, it reviews them first for a while that grows as the gate stays undecided (at most \`agents.merge_gate_recheck_seconds\`); a push ends that wait." || true
+The approval is recorded for head \`$REVIEW_HEAD\`; the queue checks the gate again without a new model review, and without the build check while the head and the base are unchanged. While other Build Review tickets wait, it reviews them first for a while that grows as the gate stays undecided (at most \`agents.merge_gate_recheck_seconds\`); a push ends that wait.
+$REVIEW_ROUND_MARKER" || true
           fi
           _review_release_worktree
           NEXT_STATE="Build Review (merge gate not yet decided; the next run tries again)"
@@ -745,7 +801,7 @@ The approval is recorded for head \`$REVIEW_HEAD\`; the queue checks the gate ag
           # an edited ticket means a new review.
           if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
               --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
-              --verdict APPROVE >/dev/null; then
+              --verdict APPROVE --review-policy "$REVIEW_POLICY" >/dev/null; then
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
           fi
           if mark_needs_human "$ISSUE" code-review; then
@@ -756,7 +812,8 @@ The approval is recorded for head \`$REVIEW_HEAD\`; the queue checks the gate ag
 
 ${GATE_LINES:-- (the merge stage left no gate lines)}
 
-Clear the blocker and remove needs-human. The approval is recorded for head \`$REVIEW_HEAD\`: the next run checks the build and the gate again without a new model review, unless the PR, its base or the ticket changed."
+Clear the blocker and remove needs-human. The approval is recorded for head \`$REVIEW_HEAD\`: the next run checks the build and the gate again without a new model review, unless the PR, its base or the ticket changed.
+$REVIEW_ROUND_MARKER"
           _review_release_worktree
           NEXT_STATE="Build Review (needs-human: merge gate blocked)"
           STAGE_EXIT=25
