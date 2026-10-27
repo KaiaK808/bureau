@@ -20,17 +20,29 @@ permissions:
 
 jobs:
   shell:
+    name: ${{ matrix.os }} (shard ${{ matrix.shard }}/${{ matrix.total }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - { os: ubuntu-latest, shard: 1, total: 4 }
+          - { os: ubuntu-latest, shard: 2, total: 4 }
+          - { os: ubuntu-latest, shard: 3, total: 4 }
+          - { os: ubuntu-latest, shard: 4, total: 4 }
+          - { os: macos-latest, shard: 1, total: 6 }
+          - { os: macos-latest, shard: 2, total: 6 }
+          - { os: macos-latest, shard: 3, total: 6 }
+          - { os: macos-latest, shard: 4, total: 6 }
+          - { os: macos-latest, shard: 5, total: 6 }
+          - { os: macos-latest, shard: 6, total: 6 }
     runs-on: ${{ matrix.os }}
     env:
       BUREAU_REQUIRE_LOCAL_SERVER: '1'
+      BUREAU_TEST_SHARD: ${{ matrix.shard }}/${{ matrix.total }}
     defaults:
       run:
         shell: /bin/bash --noprofile --norc -eo pipefail {0}
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0   # pinned by SHA per supply-chain hygiene; Dependabot will open bump PRs
 
@@ -47,6 +59,7 @@ jobs:
           node --version
 
       - name: Bash syntax check
+        if: matrix.shard == 1
         run: |
           for f in templates/scripts/*.sh tests/run.sh tests/lib/*.sh tests/test_*.sh; do
             [ -f "$f" ] || continue
@@ -54,6 +67,7 @@ jobs:
           done
 
       - name: shellcheck pipeline scripts
+        if: matrix.shard == 1
         # Severity bumped to `warning` — info/style notes (SC2001 sed→parameter
         # expansion, SC2015 A&&B||C, SC2016 jq variables in single quotes) are
         # mostly false positives for our patterns. Real correctness issues

@@ -449,6 +449,18 @@ _bureau_env_host_name() {
 }
 
 _bureau_env_build() {
+  # Capture before $(...): Bash 5.2 clears errexit there and refreshes an
+  # exported SHELLOPTS, rebuilding the export cache even if errexit was off.
+  # That can hide an unassigned caller local's inherited value from the
+  # snapshot while the real child still receives it. Process substitution
+  # leaves that cache intact. Its final empty record proves producer success.
+  # Bash 3.2 rejects process substitution in POSIX mode; retain its existing
+  # snapshot path there. Keep the syntax inside a literal eval for that parser.
+  if [ "$#" = 3 ] && { [ "${BASH_VERSINFO[0]}" -gt 3 ] || ! shopt -oq posix; }; then
+    if eval '_bureau_env_build "$@" snapshot 3< <(/usr/bin/env -0 && printf "\0")'; then return 0; fi
+    echo 'bureau environment: cannot open exported environment snapshot; command was not run (24, environment-blocked)' >&2
+    exit 24
+  fi
   local IFS=$' \t\n'
   local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_name _beb_value _beb_entry _beb_snapshot _beb_exported
   # A nonempty locale binding identifies Bash's effective LC_CTYPE. An empty
@@ -488,9 +500,13 @@ _bureau_env_build() {
   # per exported entry; Bash only handles the resulting removals/clean entries.
   # Both ends require complete framing AND the helper must exit successfully.
   # Command substitution uses a pipe, with no here-string or temporary file.
-  # Avoid process substitution: Bash 3.2 rejects it when sourced in POSIX mode.
+  # The Bash 3.2 POSIX fallback captures inline; other shells read the pipe
+  # opened above, before command substitution can change the export cache.
   _beb_snapshot=$({
-    printf '%s\0' "${_beb_long[@]}" && /usr/bin/env -0 && printf '\0'
+    printf '%s\0' "${_beb_long[@]}" && {
+      if [ "${4:-}" = snapshot ]; then /bin/cat <&3
+      else /usr/bin/env -0 && printf '\0'; fi
+    }
   } | LC_ALL=C "$_BUREAU_ENV_PYTHON" -I -c '
 import ctypes
 import locale
@@ -618,9 +634,8 @@ print("BUREAU_ENV_V1" + "".join(" " + tag + "".join("\\x%02x" % byte for byte in
     else [ "$?" = 1 ] || exit 24; fi
     printf '%s' "$_beb_snapshot"
   }
-  # Check every status without changing SHELLOPTS: when it is exported,
-  # enabling pipefail here rebuilds the subshell's export cache and hides
-  # caller-local carriers that the actual child would still inherit.
+  # Check every status without changing SHELLOPTS: the Bash 3.2 POSIX
+  # fallback still depends on the subshell's original export cache.
   [ "${PIPESTATUS[*]}" = '0 0 0' ] || exit 24) || {
     echo 'bureau environment: cannot read exported environment; command was not run (24, environment-blocked)' >&2
     exit 24

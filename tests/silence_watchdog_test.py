@@ -57,7 +57,7 @@ elif mode=='unfinished': tool('sleep 10')
 (root/'ready').touch()
 duration=float(os.environ.get('SILENCE_DURATION','3'))
 started=time.monotonic(); i=0
-while time.monotonic()-started<duration:
+while time.monotonic()-started<duration or (mode=='productive' and i<10):
     if mode in ('active','productive'): progress(i)
     elif mode=='noise':
         print('malformed JSON',flush=True); emit(dict(type='ping')); print('stderr chatter',file=sys.stderr,flush=True)

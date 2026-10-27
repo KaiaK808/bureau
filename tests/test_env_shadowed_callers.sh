@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.shadowed-callers.') as dire
     (temp / 'bin').mkdir()
     for name in ('git', 'gh'):
         command = temp / 'bin' / name
-        command.write_text('#!/bin/sh\nexec /usr/bin/env\n')
+        command.write_text('#!/bin/sh\nexec /usr/bin/env -0\n')
         command.chmod(0o755)
     base = dict(PATH=str(temp / 'bin') + ':' + os.environ['PATH'], HOME=directory,
                 BUREAU_ENV_FILE=str(temp / 'operator.env'), INNOCENT='stays',
@@ -125,6 +125,51 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.shadowed-callers.') as dire
             failures.append(mode + ': multiline shadowed LANG leaked')
         if mode == 'default' and 'ORDINARY=line one\nline two' not in result.stdout:
             failures.append('multiline innocent value changed')
+
+    # Model the command-substitution export-cache rebuild on Bash 3.2 too.
+    # Bash 5.2 refreshes exported SHELLOPTS when entering $(...), even without
+    # errexit; changing pipefail inside the producer causes the same mismatch
+    # here. Compare real child environments, never ${!name} or export -p.
+    modeled = temp / 'cache-rebuild'
+    modeled.mkdir()
+    source = (scripts / 'bureau-env.sh').read_text()
+    anchor = '_beb_snapshot=$({\n'
+    assert source.count(anchor) == 1, 'snapshot boundary changed'
+    (modeled / 'bureau-env.sh').write_text(source.replace(anchor, anchor + '    set -o pipefail\n'))
+    local_names = sorted(set().union(*(functions[caller][2] for caller in callers & functions.keys())))
+    internal = set(re.search(r"^_BUREAU_ENV_INTERNAL_NAMES='(.*?)'", source, re.M | re.S)[1].split())
+    modeled_checks = 0
+    for options in (None, 'braceexpand:hashall:interactive-comments', 'allexport:braceexpand:hashall:interactive-comments'):
+        for secret in (False, True):
+            for call in calls:
+                env = dict(base, **{name: 'prefix-' + key + '-suffix' if secret else 'ordinary-' + name
+                                    for name in local_names if name not in internal})
+                if options:
+                    env['SHELLOPTS'] = options
+                # exec itself rebuilds Bash 3.2's environment. Match the
+                # runtime wrapper's launch shape in its unfiltered control.
+                raw_call = '(exec /usr/bin/env -0)' if call.startswith('bureau_exec_runtime ') else '/usr/bin/env -0'
+                code = ('source "$1/bureau-env.sh"; shift; LINEAR_API_KEY="' + key + '"; '
+                        '/usr/bin/true; _probe() { local "$@"; '
+                        'printf "RAW\\0"; ' + raw_call + '; printf "FILTERED\\0"; '
+                        + call.replace('/usr/bin/env', '/usr/bin/env -0') + '; }; _probe "$@"')
+                result = subprocess.run(['/bin/bash', '-uc', code, '_', str(modeled), *local_names],
+                                        env=env, capture_output=True, timeout=15)
+                raw, separator, filtered = result.stdout.partition(b'FILTERED\0')
+                before = dict(entry.split(b'=', 1) for entry in raw.removeprefix(b'RAW\0').split(b'\0') if b'=' in entry)
+                after = dict(entry.split(b'=', 1) for entry in filtered.split(b'\0') if b'=' in entry)
+                modeled_checks += 1
+                label = f'cache rebuild: secret={secret}/{call}/SHELLOPTS={options}'
+                if result.returncode or not separator or b'INNOCENT=stays' not in filtered or key.encode() in filtered + result.stderr:
+                    failures.append(label)
+                if not call.startswith('bureau_exec_runtime ') and before.get(b'args') != env['args'].encode():
+                    failures.append(label + ': unfiltered child did not inherit args')
+                if not secret:
+                    for name in local_names:
+                        value = ('ordinary-' + name).encode()
+                        if before.get(name.encode()) == value and name not in internal and after.get(name.encode()) != value:
+                            failures.append(label + ': innocent ' + name + ' lost')
+    print(f'{modeled_checks} deterministic child-environment cache-rebuild probes across {len(local_names)} caller-local names')
 
 print(f'{count} caller-local/filter combinations plus 21 actual run_stage_for, ordinary rc and multiline probes; {len(failures)} failed')
 for failure in failures:

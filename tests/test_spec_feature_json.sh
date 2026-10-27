@@ -142,7 +142,8 @@ PY
 calls=$(cat "$SANDBOX/fake_claude_counter")
 run_pipeline spec-pipeline.sh EXP-910
 [ "$LAST_RC" = 18 ] || fail 'no-prune control did not block topic/child fetch'
-grep -q "cannot lock ref 'refs/remotes/origin/topic/child'" "$SANDBOX/stderr.log" || fail 'no-prune control failed for another reason'
+# Older git says "cannot lock ref"; git 2.56 on the CI runners says "unable to update local ref" on the fetch line.
+grep -Eq "cannot lock ref 'refs/remotes/origin/topic/child'|topic/child +-> origin/topic/child +\(unable to update local ref\)" "$SANDBOX/stderr.log" || fail 'no-prune control failed for another reason'
 [ "$(cat "$SANDBOX/fake_claude_counter")" = "$calls" ] || fail 'failed fetch spent model work'
 echo 'PASS NEGATIVE CONTROL omit full-refspec prune -> stale origin/topic blocks topic/child, exit 18'
 mv "$SCRIPTS_DIR/spec-pipeline.fixed" "$SCRIPTS_DIR/spec-pipeline.sh"
