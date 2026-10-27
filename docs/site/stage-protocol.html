@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="44abf256db03975c4238112161523c70ccd3540bb93d72fcad18f223de2253f6">
+<meta name="bureau-source-sha256" content="9290f52f0604a7ac08db3bac46ae444d893bd58ac07998e4cbbdffd553de7235">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -214,6 +214,112 @@ failure from the tree. Resolve a pre-existing <code>needs-human</code>
 hold deliberately before retrying. Qualification uses fake
 providers/services and real local Git, two worker ticks and negative
 controls; no live installation or CI execution is claimed.</p>
+<h2 id="file-overlap-admission">File-overlap admission</h2>
+<p>Enable <code>agents.file_overlap_gate: true</code> only after
+comparing installation drift and resyncing all scripts together,
+including <code>bureau-paths.py</code> and
+<code>bureau-admission.py</code>. Restart every writer/driver; mixed
+old/new writers and separate clones or hosts do not share this gate. The
+default remains disabled. The future continuous dispatcher must require
+this flag rather than implement another gate. Admission uses PR 9's
+strict configured-ID checkpoint and the worker's shared run latch before
+granting or returning a wait, including preflight before execution
+ownership. Done returns 0, cancellation/duplicate 26 and other
+configured inactive or unknown states 25. These withdrawals take
+precedence over exit 29. The calling shell consumes the stop before any
+Build mutation, including Done's exit 0. An older writer without these
+checkpoints cannot certify safe withdrawal.</p>
+<p>After successful tasks generation or checkpoint resume, the spec
+stage records the ticket, canonical branch, committed tasks identity,
+SHA-256 and normalized paths in
+<code>&lt;git common dir&gt;/bureau/admission/v1.json</code>. App spec
+completion does the same. The extractor supports root and extensionless
+files, including bare dotfiles and standalone root references in
+mixed-path tasks, arbitrary language layouts and directory scopes. The
+root scope <code>.</code> overlaps every path; unresolved root spellings
+become unknown. Globs expand against the committed Git tree; unresolved
+globs, missing/ambiguous inventories, traversal and ambiguous
+extensionless references become unknown. Unknown scope overlaps the
+entire repository and can be admitted exclusively. The literal
+<code>repo.path_prefix_strip</code> applies once. Generated
+documentation and CHANGELOG paths remain ordinary conflicts even when
+another resolver can regenerate them. The advisory spec crosscheck uses
+this extractor and exact/directory matching only while the gate is
+enabled; absent/false retains the legacy extractor, literal prefix
+stripping and substring matching.</p>
+<p>One repository-shared file lock covers complete paginated Linear
+snapshots (including canonical-branch comments), open PR snapshots,
+reconciliation and atomic scope reservation. Build, Build Review, Merge
+and configured QA/Copy work hold their scopes. State holders follow
+existing <code>linear.projects</code> (empty means the whole team);
+reservations, active ownership and open Bureau PRs retain their
+footprints across project changes. Open Bureau PRs remain holders when
+their tickets are parked, human-held or terminal; canonical/recorded
+branches, numbered spec branches, explicit Bureau bodies and the legacy
+Claude-generated tasks-spec/draft body identify them. PR diffs use
+immutable base/head commits, both sides of renames and a pinned identity
+recheck. An unreadable service snapshot or diff is an error (27/18),
+never an empty holder set. The candidate's own ticket and
+same-repository branch PR are excluded; a fork PR with the same branch
+name still holds its diff. Live services are not a cross-service
+transaction: changes by humans or old writers after the checked snapshot
+remain outside local serialization.</p>
+<p>Admission persists a reservation before the Build transition. Every
+Build route, including QA/review rework and shepherd
+<code>--from-stage</code>, passes the shared guard. Background
+implementation/Copy/QA preflight runs before ownership/reset, then
+implementation rechecks its merged tasks before writing. Review checks
+before reserving a paid round, after respecting a requested approval
+stop. App <code>prepare</code> for writing stages gates the current
+checkout without resets; app <code>finish</code> gates Build/Copy/QA
+transitions and retains a prepared result on a wait so it can be
+submitted again. Background Spec Review/UX/Copy store a successful
+readiness result bound to branch HEAD, task digest, ticket snapshot,
+stage and configuration. Repeated waits retry admission without another
+creative pass. Changed tasks, branch, ticket or configuration invalidate
+readiness. Review admission polling consumes no PR 8 round, approval or
+gate receipt.</p>
+<p>Migration runs under the admission lock. Existing Build/Copy tickets
+become queued only after proving a readable spec-only branch, no
+execution lease/preserved work and no dirty attached checkout. State
+alone never elects them. The first queued contender to reserve wins;
+other queued tickets are not holders against it, avoiding mutual
+waiting. Existing source changes, downstream work and unknown writer
+ownership remain holders. Reservations have no TTL and are outside
+prunable evidence. A rework route with an existing admitted footprint
+retains that reservation; the next worker still checks every holder/PR
+before any paid pass or write. This continuation prevents admission
+polling from buying another review round. Task changes refresh
+<code>inventories</code>, separately from the granted scopes in
+<code>reservations</code>. Other tickets compare against granted scopes
+only. A requested expansion checks the union of the grant and current
+inventory; only successful admission replaces the grant, so a wait never
+expands or shrinks the holder's reservation. All states PR 9 classifies
+as withdrawn release their reservations only after cooperative cleanup
+has finished and execution ownership is absent, including configured
+inactive states whose service type is nonterminal. Holding state IDs
+excluded by <code>agents.ticket_active_states</code> are not re-elected
+after release. An open PR still holds its diff. Reservations already
+expanded by an older runtime are preserved; reconcile such a reservation
+explicitly after checking unfinished work. Do not delete the store to
+clear a wait while work may still exist. Reconcile stale
+leases/preserved work through the ownership protocol first.</p>
+<p>Conflicts return <code>29</code> (<code>file-overlap-wait</code>)
+with holder identifiers and intersecting paths or the unknown reason.
+Evidence mirrors a stable <code>file-overlap</code> resource wait;
+losing/pruning evidence cannot grant admission. Within each queue poll,
+a stage skips candidates that just returned 29 and tries the next
+candidate, allowing disjoint work through. The skip list clears for the
+next poll, restoring each waiter's priority; exhausting only waiting
+candidates returns 29. Tick reports waiting, and the shepherd's stage
+loop waits cancellably without stuck counts. A guarded
+<code>move_issue</code> call, including shepherd
+<code>--from-stage build</code>, returns 29 to its caller without a
+failure comment, human label or alert. Failure summaries exclude this
+class. No alert, human label or model call is added for admission
+polling. Other ownership/service errors retain their existing codes.
+Qualification uses real local Git and fake providers/services; no live
+installation or full Codex background qualification is implied.</p>
 <h2 id="spec-phase-resume-and-governance">Spec phase resume and
 governance</h2>
 <p>Specify and plan must run no measurements, probes, benchmarks or full

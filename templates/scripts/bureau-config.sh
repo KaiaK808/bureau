@@ -69,6 +69,40 @@ bureau_stop_requested() {
 }
 BUREAU_RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-runtime.py"
 
+# File overlap admission. Scopes and readiness are authoritative and
+# shared across worktrees; evidence is only an observational mirror.
+bureau_overlap() {
+  [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  local enabled
+  enabled=$(bureau_get '(.agents // {}) | if has("file_overlap_gate") then .file_overlap_gate else false end | tojson') || return 24
+  case "$enabled" in
+    false) [ "$1" != ready-check ] || return 2; return 0 ;;
+    true) ;;
+    *) echo 'ERROR: agents.file_overlap_gate must be a boolean' >&2; return 24 ;;
+  esac
+  local overlap_rc=0
+  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-admission.py" --repo "$PWD" "$@" ) || overlap_rc=$?
+  # Admission runs in a child. Consume its withdrawal in THIS shell, including
+  # Done's successful exit, before a caller can continue into a Build mutation.
+  if [ "$1" = admit ]; then bureau_ticket_checkpoint "$2" strict; fi
+  return "$overlap_rc"
+}
+bureau_overlap_record() { bureau_overlap record "$1" "$2" "$3"; }
+bureau_overlap_admit() { bureau_overlap admit "$@"; }
+bureau_overlap_ready() { bureau_overlap ready "$1" "$2" "$3"; }
+bureau_overlap_resume() {
+  local rc
+  if bureau_overlap ready-check "$1" "$2" "$3"; then
+    bureau_overlap_admit "$1" "$2" --local || return $?
+    move_issue "$1" "$BUREAU_STATE_BUILD" || return $?
+    return 0
+  else
+    rc=$?
+    [ "$rc" = 2 ] || return "$rc"
+    return 2
+  fi
+}
+
 # Evidence is observational. A log failure is visible but never changes stage
 # authorization, routing or the existing exit protocol. Provider receipts are
 # stricter: the adapter never forwards a completion it could not persist.
@@ -172,6 +206,25 @@ bureau_ticket_stopped() {
   return 1
 }
 
+# Shared configured-ID classifier for checkpoints and admission cleanup. This
+# has no latch or state mutation: classifying a holder must not stop its caller.
+bureau_ticket_state_class() {
+  jq -er --arg id "$1" '
+    .linear.teams[0].states as $s |
+    (.agents.ticket_active_states | if . == null then
+      (["triage","spec","spec_review","design","copy","build","qa","build_review","merge"] |
+       map(select($s[.] | type == "string" and length > 0))) else . end) as $keys |
+    if ($keys | type) != "array" then error("ticket_active_states must be an array")
+    elif any($keys[]; type != "string") then error("ticket_active_states must contain state keys")
+    elif any($keys[]; $s[.] | type != "string" or length == 0) then error("ticket_active_states has an unconfigured key")
+    elif $s.done == $id then "0"
+    elif any(["cancelled","canceled","duplicate"][]; $s[.] == $id) then "26"
+    elif any($keys[]; $s[.] == $id) then "active"
+    else "25" end' "$BUREAU_CONFIG" || {
+      echo 'ERROR: invalid agents.ticket_active_states configuration' >&2; return 24;
+    }
+}
+
 # bureau_ticket_checkpoint ISSUE [additional|strict|latched] [already-read snapshot]
 # This exits the calling shell on withdrawal, even Done (0). Call again in the
 # parent after command substitutions/best-effort calls, and join parallel passes
@@ -218,20 +271,7 @@ bureau_ticket_checkpoint() {
     return 0
   fi
   BUREAU_TICKET_STATE_ID="$id"
-  code=$(jq -er --arg id "$id" '
-    .linear.teams[0].states as $s |
-    (.agents.ticket_active_states | if . == null then
-      (["triage","spec","spec_review","design","copy","build","qa","build_review","merge"] |
-       map(select($s[.] | type == "string" and length > 0))) else . end) as $keys |
-    if ($keys | type) != "array" then error("ticket_active_states must be an array")
-    elif any($keys[]; type != "string") then error("ticket_active_states must contain state keys")
-    elif any($keys[]; $s[.] | type != "string" or length == 0) then error("ticket_active_states has an unconfigured key")
-    elif $s.done == $id then "0"
-    elif any(["cancelled","canceled","duplicate"][]; $s[.] == $id) then "26"
-    elif any($keys[]; $s[.] == $id) then "active"
-    else "25" end' "$BUREAU_CONFIG") || {
-      echo 'ERROR: invalid agents.ticket_active_states configuration' >&2; exit 24;
-    }
+  code=$(bureau_ticket_state_class "$id") || exit $?
   [ "$code" != active ] || return 0
   # A stage's own successful Done transition may finish its bookkeeping. An
   # externally observed Done never receives this process-local authorization.
@@ -244,6 +284,13 @@ bureau_ticket_checkpoint() {
   fi
   echo "bureau ticket checkpoint: $issue left the active workflow (state ID $id); cooperative stop, exit $code" >&2
   exit "$code"
+}
+
+# A subprocess must distinguish active from an externally observed Done: both
+# have exit 0, but only a checkpoint that returns may acknowledge authorization.
+bureau_ticket_authorize() {
+  bureau_ticket_checkpoint "$@"
+  printf authorized
 }
 
 # Re-enter after claiming the issue and checkout. The Python parent owns cleanup,
@@ -1147,6 +1194,13 @@ move_issue() {
       echo "ERROR: $ref state changed during this stage; refusing stale transition" >&2
       return 21
     fi
+  fi
+  # All Build routes, including QA/review rework and --from-stage, share the
+  # admission boundary. The stage's explicit check also preserves readiness.
+  if [ "$state_id" = "${BUREAU_STATE_BUILD:-}" ] && [ "$(bureau_get '(.agents // {}) | if has("file_overlap_gate") then .file_overlap_gate else false end | tojson')" != false ]; then
+    local overlap_branch
+    overlap_branch=$(get_issue_branch "$ref") || return $?
+    bureau_overlap_admit "$ref" "$overlap_branch" --continuation || return $?
   fi
   local uuid
   uuid=$(_resolve_issue_uuid "$ref") || return $?
@@ -2394,6 +2448,7 @@ session_throttle_guard() {
 # Usage: alert_telegram <issue> <pipeline> <exit_code> <message> [log_tail]
 alert_telegram() {
   local issue="$1" pipeline="$2" exit_code="$3" message="$4" log_tail="${5:-}"
+  [ "$exit_code" != 29 ] || return 0
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
     echo "[DRY_RUN] alert_telegram $issue $pipeline exit=$exit_code: $message" >&2
     return 0
@@ -3765,13 +3820,13 @@ resolve_verdict_exit() {
 # an alert — so every code added later (22 to 26 here) halted silently. Now
 # halt is the default and only the exceptions are listed:
 #   ok    0 success · 2 queue-empty
-#   wait  28 spec-capacity-wait (quiet and cancellable)
+#   wait  28 spec-capacity-wait · 29 file-overlap-wait (quiet and cancellable)
 #   retry 10 linear-down · 16 provider-unauth (transient, throttled retry)
 # Everything else halts with an alert, unknown codes included.
 shepherd_rc_action() {
   case "${1:-}" in
     0|2)   echo "ok" ;;
-    28)    echo "wait" ;;
+    28|29) echo "wait" ;;
     10|16) echo "retry" ;;
     *)     echo "halt" ;;
   esac
@@ -3800,6 +3855,7 @@ exit_class() {
     26)  echo "cancelled-ticket" ;;
     27)  echo "linear-unusable" ;;
     28)  echo "spec-capacity-wait" ;;
+    29)  echo "file-overlap-wait" ;;
     124) echo "timeout" ;;
     130) echo "cancelled-run" ;;
     *)   echo "error-$1" ;;

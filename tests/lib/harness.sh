@@ -95,6 +95,9 @@ PY
     -e '/^# ── Spec directory of a branch/,/^# ── End of spec directory of a branch/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/real-helpers.sh"
   grep -q '^bureau_spec_dir_for_branch() {' "$SCRIPTS_DIR/real-helpers.sh" || { echo "harness: spec-dir matcher not found in bureau-config.sh" >&2; return 1; }
+  sed -n '/^# File overlap admission\./,/^# Evidence is observational/{ /^# Evidence is observational/d; p; }' \
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
+  grep -q '^bureau_overlap_admit() {' "$SCRIPTS_DIR/real-helpers.sh" || { echo "harness: file-overlap helper block not found in bureau-config.sh" >&2; return 1; }
   # A needs-human label that cannot be written is held locally; the hold helpers run for real
   # on top of the stub's add_issue_label and alert_telegram.
   sed -n '/^# ── needs-human hold/,/^# ── End of needs-human hold/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"

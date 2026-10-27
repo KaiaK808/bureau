@@ -453,6 +453,9 @@ else
   echo "  Pushed branch: $BRANCH"
 fi
 
+# Also runs after checkpoint resume; committed task identity controls refresh.
+bureau_overlap_record "$ISSUE" "$BRANCH" "${SPEC_DIR}tasks.md"
+
 # The spec directory for this issue is $SPEC_DIR, read from .specify/feature.json above.
 
 # Build a digest from the spec artifacts (creative work — Claude).

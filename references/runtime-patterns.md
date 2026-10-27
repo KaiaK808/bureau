@@ -206,6 +206,9 @@ Every pipeline script:
 | 26 | cancelled-ticket | ticket is cancelled |
 | 27 | linear-unusable | a Linear answer stayed unusable after every retry |
 | 28 | spec-capacity-wait | full spec admission cap; quiet, cancellable wait |
+| 29 | file-overlap-wait | reserved ticket/PR paths overlap; quiet admission wait, no paid pass or stuck increment |
+
+`agents.file_overlap_gate` uses `bureau-paths.py` and the locked common-Git `bureau-admission.py` store before Build and before worker execution. PR 9's strict configured-ID checkpoint and shared run latch take precedence over both grants and overlap waits; callers consume the withdrawal, including Done's exit 0, before a Build mutation. Withdrawn reservations remain held through cooperative cleanup until execution ownership is gone; open PRs still hold their diff. Unknown scope is repository-wide; waiting Build tickets are elected from verified non-writing branches, never from state alone. Rework retains its granted reservation while pending task expansions stay in the inventory until admitted; other tickets compare against granted scopes only. Implementation/QA/Copy/review preflight rechecks holders before paid work. Evidence mirrors the wait without owning it. With the gate enabled, advisory `crosscheck-specs.sh` shares exact/directory path extraction and reports unknown scope as incomplete (4). Absent/false preserves the legacy extractor and substring matching; either mode remains an advisory warning.
 | 124 | timeout | bounded execution timed out |
 | 130 | cancelled-run | invocation cancelled |
 

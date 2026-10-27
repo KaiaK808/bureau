@@ -626,6 +626,10 @@ if ! merge_origin_main_or_abort "$ISSUE" "Implement"; then
   exit 17
 fi
 
+# Preflight reserved before worker ownership/reset. Recheck the merged tasks
+# before implementation (also for rework); a merge may have changed scope.
+bureau_overlap_admit "$ISSUE" "$BRANCH" --local
+
 # After the checkout AND the merge of origin/main — both can change the
 # manifests. Idempotent: does nothing when node_modules already matches. A
 # failure here is infrastructure (registry, disk), not the PR: stop with 24

@@ -85,6 +85,10 @@ else
   exit 12
 fi
 
+# A successful readiness decision waiting for admission buys no second review.
+if bureau_overlap_resume "$ISSUE" "$BRANCH" spec_review; then exit 0
+else OVERLAP_RC=$?; [ "$OVERLAP_RC" = 2 ] || exit "$OVERLAP_RC"; fi
+
 echo "→ Locating spec artifacts..."
 # No "newest directory" fallback: in a fresh worktree every directory has the
 # same age, so it picked another ticket's spec. No match aborts below.
@@ -220,6 +224,8 @@ $REVIEW_SUMMARY"
   echo "  Spec review PASSED — routing to Design"
   NEXT_STATE="Design"
 else
+  bureau_overlap_ready "$ISSUE" "$BRANCH" spec_review
+  bureau_overlap_admit "$ISSUE" "$BRANCH" --local
   post_comment "$ISSUE" "✅ Spec review **PASSED**. Ready for implementation.
 
 $REVIEW_SUMMARY"

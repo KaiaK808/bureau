@@ -491,13 +491,18 @@ _shepherd_read_failed() {
 # _shepherd_move_failed <state> <exit-code> — the shepherd's own move of the
 # ticket to <state> (--from-stage, or the Spec → Triage bump) failed.
 # Called bare under `set -e`, a failed move used to end the shepherd with the
-# move's code before any halt handling: no alert, no label, no comment. The
-# same three ways out as a failed read: a signal only the move saw → cancelled
-# (130, nothing written); 27 → the Linear halt; any other code → halt with 1,
+# move's code before any halt handling: no alert, no label, no comment.
+# A signal only the move saw → cancelled (130, nothing written);
+# 29 → quiet admission wait returned to the caller; 27 → the Linear halt;
+# any other code → halt with 1,
 # needs-human and a comment — the ticket may or may not have moved, and the
 # next stage must not start on a guess.
 _shepherd_move_failed() {
   local target="$1" rc="$2"
+  if [ "$rc" = 29 ]; then
+    echo "[shepherd] waiting for file overlap holders before moving $ISSUE to $target (exit 29)" >&2
+    exit 29
+  fi
   if [ "$rc" -gt 128 ]; then
     echo "[shepherd] interrupted while moving $ISSUE to $target (exit $rc) — cancelled, nothing written" >&2
     exit 130
@@ -914,7 +919,7 @@ while true; do
   if [ "$ACTION" = halt ] && stop_before_merge_was_asked "$RC"; then ACTION=stopped-before-merge; fi
   case "$ACTION" in
     wait)
-      echo "[shepherd] $CLASS — waiting 60s for spec capacity"
+      echo "[shepherd] $CLASS — waiting 60s for admission"
       LAST_STATE=""
       STUCK_COUNT=0
       _shepherd_sleep 60

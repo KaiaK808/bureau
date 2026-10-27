@@ -87,6 +87,9 @@ else
   exit 12
 fi
 
+if bureau_overlap_resume "$ISSUE" "$BRANCH" copy; then exit 0
+else OVERLAP_RC=$?; [ "$OVERLAP_RC" = 2 ] || exit "$OVERLAP_RC"; fi
+
 # Same base-selection reasoning as implement/qa/code-review: copy commits land in
 # user-facing strings and are pushed. The PR diff is computed against
 # origin/main, so a stale base pollutes review.
@@ -160,6 +163,8 @@ fi
 echo ""
 echo "Phase 2/2: route to Build"
 
+bureau_overlap_ready "$ISSUE" "$BRANCH" copy
+bureau_overlap_admit "$ISSUE" "$BRANCH" --local
 post_comment "$ISSUE" "✍️ Copy pass complete on \`$BRANCH\`. Moving to Build."
 move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
 

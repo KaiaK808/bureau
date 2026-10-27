@@ -74,7 +74,7 @@ echo ""
 # rationale. queue-loop.sh and each pipeline both go through the same
 # registry, so adding/changing an agent only touches one place.
 preselect_issue() {
-  pipeline_pick_next "$1"
+  pipeline_pick_next "$1" "${OVERLAP_SKIP:-}"
 }
 
 run_script() {
@@ -157,6 +157,9 @@ run_script() {
     2)  echo "[$TIMESTAMP] $label — queue empty." | tee -a "$LOG_FILE" ;;
     28) CAPACITY_WAIT=true
         echo "[$TIMESTAMP] $label — waiting for spec capacity." | tee -a "$LOG_FILE" ;;
+    29) OVERLAP_WAIT=true
+        OVERLAP_SKIPPED_ISSUE="$picked"
+        echo "[$TIMESTAMP] $label — waiting for file overlap holders." | tee -a "$LOG_FILE" ;;
     *)
         if stop_before_merge_was_asked "$exit_code"; then
           # --no-merge: an approved ticket stopped at the reviewed boundary, as
@@ -179,7 +182,22 @@ run_one() {
   local script="$1"
   local label="$2"
   local wt="$3"
-  run_script "$script" "$label" "$wt"
+  # A waiting first candidate must not hide disjoint work in this stage.
+  # The skip list is local to this poll/stage, so every waiter regains its
+  # normal priority on the next poll, including after its holder clears.
+  local OVERLAP_SKIP="" OVERLAP_SKIPPED_ISSUE="" rc=0
+  while true; do
+    OVERLAP_SKIPPED_ISSUE=""
+    rc=0
+    run_script "$script" "$label" "$wt" || rc=$?
+    if [ "$rc" = 29 ] && [ -n "$OVERLAP_SKIPPED_ISSUE" ]; then
+      OVERLAP_SKIP="${OVERLAP_SKIP:+$OVERLAP_SKIP,}$OVERLAP_SKIPPED_ISSUE"
+      continue
+    fi
+    # Exhausting candidates after waits is still waiting, not an empty queue.
+    if [ "$rc" = 2 ] && [ -n "$OVERLAP_SKIP" ]; then return 29; fi
+    return "$rc"
+  done
 }
 
 while true; do
@@ -187,6 +205,7 @@ while true; do
   if declare -F bureau_sweep_waits >/dev/null; then bureau_sweep_waits || true; fi
   DID_WORK=false
   CAPACITY_WAIT=false
+  OVERLAP_WAIT=false
 
   case "$MODE" in
     spec)
@@ -247,6 +266,8 @@ while true; do
     echo "[$TIMESTAMP] Queues drained. Next check in ${INTERVAL_MINUTES}m." | tee -a "$LOG_FILE"
   elif [ "$CAPACITY_WAIT" = true ]; then
     echo "[$TIMESTAMP] Waiting for spec capacity. Next check in ${INTERVAL_MINUTES}m." | tee -a "$LOG_FILE"
+  elif [ "$OVERLAP_WAIT" = true ]; then
+    echo "[$TIMESTAMP] Waiting for file overlap holders. Next check in ${INTERVAL_MINUTES}m." | tee -a "$LOG_FILE"
   else
     echo "[$TIMESTAMP] All queues empty. Next check in ${INTERVAL_MINUTES}m." | tee -a "$LOG_FILE"
   fi
