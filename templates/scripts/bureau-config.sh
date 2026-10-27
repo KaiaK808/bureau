@@ -99,6 +99,19 @@ bureau_record_gate() {
     --command "$3" --command-id "${5:-repo.test_command}" --exit-code "$4" || true
 }
 
+# Human boundary publication is observational, including a closed diagnostic
+# reader. No merge/state/exit decision is derived from the brief.
+bureau_acceptance_brief() {
+  [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  local issue="$1" branch="$2" spec_dir
+  shift 2
+  spec_dir=$(bureau_spec_dir_for_branch "$branch" 2>/dev/null) || spec_dir=""
+  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-acceptance.py" --repo "$PWD" \
+      --issue "$issue" --branch "$branch" --spec "${spec_dir:+$spec_dir/spec.md}" \
+      --config-script "$_BUREAU_SCRIPTS_DIR/bureau-config.sh" --publish "$@" ) || true
+  return 0
+}
+
 bureau_archive_evidence() {
   [ -n "${BUREAU_RUN_ID:-}" ] && [ -n "${BUREAU_STAGE_ATTEMPT_ID:-}" ] || return 0
   local file
@@ -4124,6 +4137,9 @@ EOF
 #   Returns empty string on parse failure — caller decides the fallback.
 parse_claude_json() {
   local raw="$1" filter="$2" text block
+  # Parsed fields also feed comment fallbacks. Strip nested insight fields in
+  # jq, keeping status/verdict parsing independent of the text projector.
+  filter="walk(if type == \"object\" then del(.insights) else . end) | ($filter)"
   text=$(printf '%s' "$raw" | jq -r 'if type=="object" and (.result | type)=="string" then .result else empty end' 2>/dev/null || true)
   [ -n "$text" ] || text="$raw"
   if printf '%s' "$text" | jq -e 'type == "object"' >/dev/null 2>&1; then
@@ -4135,6 +4151,51 @@ parse_claude_json() {
     /^```[[:space:]]*$/ {if(in_block){saved=b; in_block=0}; next}
     {if(in_block)b=b $0 "\n"} END{print saved}')
   [ -n "$block" ] && printf '%s' "$block" | jq -r "$filter" 2>/dev/null || true
+}
+
+# bureau_comment_projection: provider insights belong only in local evidence.
+# Project before formatting/capping, including legacy JSON, cost envelopes and
+# fenced output. An unreadable structured result or failed projector must never
+# fall back to the raw result. Plain legacy prose keeps its existing contract.
+bureau_comment_projection() {
+  local projected
+  projected=$(printf '%s' "$1" | python3 -I -c '
+import json, re, sys
+omitted = "[Structured result omitted: comment projection unavailable.]"
+insight_key = re.compile(r"(?i)\b[\x22\x27]?insights[\x22\x27]?\s*[:=]")
+fences = re.compile(r"(?ms)^```json[^\S\n]*\n(.*?)^```[^\S\n]*$")
+
+def scrub(value):
+    if isinstance(value, dict):
+        return {k: project(v) if k == "result" and isinstance(v, str) else scrub(v)
+                for k, v in value.items() if k != "insights"}
+    if isinstance(value, list):
+        return [scrub(v) for v in value]
+    if isinstance(value, str) and insight_key.search(value):
+        return project(value)
+    return value
+
+def project(text):
+    try:
+        return json.dumps(scrub(json.loads(text)), ensure_ascii=True)
+    except (ValueError, TypeError):
+        pass
+    def fence(match):
+        try:
+            return "```json\n" + json.dumps(scrub(json.loads(match[1])), ensure_ascii=True) + "\n```"
+        except (ValueError, TypeError):
+            return omitted
+    projected = fences.sub(fence, text)
+    # Includes malformed/unclosed JSON and insight assignments outside fences.
+    remainder = fences.sub("", projected)
+    if (insight_key.search(remainder) or remainder.lstrip().startswith(("{", "["))
+            or re.search(r"(?im)^\s*```json\b", remainder)):
+        return omitted
+    return projected
+
+sys.stdout.write(project(sys.stdin.read()))
+' 2>/dev/null) || projected='[Structured result omitted: comment projection unavailable.]'
+  printf '%s' "$projected"
 }
 
 # codex_sandbox_gate_only RESULT: a non-empty needs-human array, every entry

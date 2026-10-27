@@ -1,4 +1,5 @@
 import importlib.util
+import atexit
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,16 @@ import uuid
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPT=Path(os.environ.get('BUREAU_TEST_PROVIDER_SCRIPT',ROOT/'templates/scripts/bureau-provider.py'))
+# A constrained validation run can namespace the adapter's otherwise fixed
+# /tmp directory name. Only this allocation prefix changes in the private copy.
+CODEX_TMP_PREFIX = os.environ.get('BUREAU_TEST_CODEX_TMP_PREFIX', 'bureau-codex-')
+if CODEX_TMP_PREFIX != 'bureau-codex-':
+    isolated = tempfile.TemporaryDirectory(prefix='bureau-pr7-provider-source-')
+    atexit.register(isolated.cleanup)
+    shutil.copy(SCRIPT.with_name('bureau-evidence.py'), isolated.name)
+    shutil.copy(SCRIPT.with_name('bureau-gates.py'), isolated.name)
+    source = SCRIPT.read_text().replace("prefix='bureau-codex-'", 'prefix=' + repr(CODEX_TMP_PREFIX))
+    SCRIPT = Path(isolated.name) / SCRIPT.name; SCRIPT.write_text(source)
 spec=importlib.util.spec_from_file_location('provider',SCRIPT)
 p=importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
 
@@ -26,7 +37,7 @@ CODEX_COMPLETED = '{"type":"turn.completed","usage":{"input_tokens":12,"output_t
 class ProviderTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(prefix='bureau provider '); self.addCleanup(self.temp.cleanup)
-        self.root=Path(self.temp.name); self.bin=self.root/'bin'; self.bin.mkdir()
+        self.root=Path(self.temp.name).resolve(); self.bin=self.root/'bin'; self.bin.mkdir()
         subprocess.run(['git', '-C', str(self.root), 'init', '-q'], check=True)
         subprocess.run(['git', '-C', str(self.root), 'config', 'maintenance.auto', 'false'], check=True)
         subprocess.run(['git', '-C', str(self.root), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
@@ -146,7 +157,7 @@ else:
         self.assertTrue(record['is_dir'],'TMPDIR was not a directory during the call')
         path=Path(record['value'])
         self.assertEqual(path.parent,Path('/tmp').resolve())
-        self.assertTrue(path.name.startswith('bureau-codex-'))
+        self.assertTrue(path.name.startswith(CODEX_TMP_PREFIX))
         self.assertFalse(path.exists(),'the Codex temporary directory survived the call')
         return path
 
@@ -429,6 +440,7 @@ p.run=lose_forward
         value=self.sandbox_result()
         result=self.run_provider('--schema',str(schema),FINAL=json.dumps(value))
         self.assertEqual(json.loads(result.stdout),value)
+
         self.recorded_tmpdir()
         self.config.write_text('{"agents":{"runner":"codex"},"session":{"cost_tracking":true}}')
         result=self.run_provider('--schema',str(schema),FINAL=json.dumps(value))
@@ -470,6 +482,58 @@ p.run=lose_forward
         self.assertFalse(self.gate_action('plan',plain,context=context)['eligible'])
         self.assertFalse(self.gate_action('run',plan)['green'])
         self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['run'])
+
+    def test_insights_compose_with_strict_gate_schema_and_recovery(self):
+        values = [('implement', 'implement', self.sandbox_result('SANDBOX_GATE: configured test failed')),
+                  ('qa', 'qa', dict(status='NEEDS_HUMAN', tests_added=0, tests_failing=0,
+                                   coverage_notes='SANDBOX_GATE: denied bind')),
+                  ('code_review', 'review', dict(verdict='APPROVE', bugs=0, security_issues=0,
+                       missing_acceptance=[], fixes_needed=[], summary='', comment='', findings=[]))]
+        lose_forward = '''forward=p.run
+def lose_forward(*args,**kwargs):
+    code,text,metadata=forward(*args,**kwargs)
+    return code,'lost forwarding',metadata
+p.run=lose_forward
+'''
+        for runner in ('codex', 'claude'):
+            self.config.write_text(json.dumps({'agents':{'runner':runner}}))
+            for stage, name, base in values:
+                schema = ROOT/f'templates/scripts/bureau-{name}.schema.json'
+                for form in ('absent', 'null', 'present', 'typed'):
+                    if form == 'typed' and stage == 'code_review': continue
+                    wire = json.loads(json.dumps(base))
+                    if runner == 'codex' and stage == 'implement':
+                        wire['notes']['needs_human'][0].update(kind=None, command=None)
+                    if runner == 'codex' and stage == 'qa': wire['blockers'] = None
+                    expected = json.loads(json.dumps(base))
+                    if form == 'null': wire['insights'] = None
+                    if form in ('present', 'typed'):
+                        wire['insights'] = expected['insights'] = ['A narrow runner cap required splitting a test pass.']
+                    if form == 'typed':
+                        if stage == 'implement':
+                            for value in (wire, expected):
+                                value['notes']['needs_human'][0].update(kind='gate', command='echo configured gate')
+                        else:
+                            wire['blockers'] = expected['blockers'] = [dict(kind='gate', command='echo configured gate', reason='gate hold')]
+                    with self.subTest(runner=runner, stage=stage, form=form):
+                        args = ('--stage', stage, '--schema', str(schema))
+                        result = self.run_provider(*args, FINAL=json.dumps(wire), ASSERT_STRICT_SCHEMA='1')
+                        self.assertEqual(json.loads(result.stdout), expected)
+                        argv = json.loads((self.root/'argv.json').read_text())
+                        strict = (json.loads(Path(argv[argv.index('--output-schema')+1]).read_text())
+                                  if runner == 'codex' else json.loads(argv[argv.index('--json-schema')+1]))
+                        self.assertIn('insights', strict['required'])
+                        field = strict['properties']['insights']
+                        if runner == 'codex':
+                            self.assertIn({'type':'null'}, field['anyOf'])
+                            field = next(item for item in field['anyOf'] if item.get('type') == 'array')
+                        self.assertEqual(field['maxItems'], 3)
+                        self.assertEqual(field['items']['maxLength'], 280)
+                        receipt = json.loads(Path(self.evidence()[1]['receipt']).read_text())
+                        self.assertEqual(receipt['result_sha256'], p.e.digest(expected))
+                        recovered = self.run_wrapped_provider(lose_forward, *args, FINAL=json.dumps(wire), ASSERT_STRICT_SCHEMA='1')
+                        self.assertEqual(json.loads(recovered.stdout), expected)
+                        self.assertEqual(self.evidence()[1]['structured_source'], 'receipt')
 
     def gate_action(self,action,value,context=None,expected_code=0,**env):
         extra=['--gate-action',action]
@@ -905,9 +969,87 @@ p.Path.open=refuse_transcript_read
         value={'status':'GREEN','tests_added':0,'tests_failing':0,'coverage_notes':'ok'}
         result=self.run_provider('--schema',str(schema),FINAL=json.dumps(value))
         self.assertEqual(json.loads(result.stdout),value)
+        for observations in ([], ['The runner cap required splitting a test pass.']):
+            enriched = {**value, 'insights': observations}
+            result = self.run_provider('--stage', 'qa', '--schema', str(schema), FINAL=json.dumps(enriched), BUREAU_CURRENT_ISSUE='TEAM-12')
+            self.assertEqual(json.loads(result.stdout), enriched)
+            argv = json.loads((self.root/'argv.json').read_text())
+            strict = json.loads(Path(argv[argv.index('--output-schema')+1]).read_text())
+            self.assertIn('insights', strict['required'])
+        # A Codex optional null is a valid wire omission; other malformed
+        # observations still warn and drop without failing the stage.
+        result = self.run_provider('--schema', str(schema), FINAL=json.dumps({**value, 'insights':None}))
+        self.assertEqual(json.loads(result.stdout), value)
+        for malformed in (True, 'wrong', {}, [42], ['x'*281], ['x']*4, ['line\nbreak']):
+            result = self.run_provider('--schema', str(schema), FINAL=json.dumps({**value, 'insights':malformed}))
+            self.assertEqual(json.loads(result.stdout), value)
+            self.assertIn('malformed optional insights dropped', result.stderr)
+        rows = [json.loads(line) for line in (self.root/'.git/bureau/evidence/v1/insights.jsonl').read_text().splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['issue'], 'TEAM-12')
         for bad in ('not json','{"status":"GREEN"}',json.dumps({**value,'status':'APPROVE'})):
             result=self.run_provider('--schema',str(schema),FINAL=bad,code=22)
             self.assertEqual(result.stdout,'')
+
+    def test_insights_content_filter_preserves_provider_success(self):
+        schema = ROOT/'templates/scripts/bureau-qa.schema.json'
+        value = dict(status='GREEN', tests_added=0, tests_failing=0, coverage_notes='ok')
+        safe = 'The runner cap required splitting a test pass.'
+        canaries = (
+            'LINEAR_API_KEY=private-canary', 'ghp_private-canary', '/Users/private-canary/project', '[INFO] private-canary output',
+            '"linear_api_key" = "x"', "'password': 'x'", '"password":"x"', "'password' = 'x'",
+            '{"linear_api_key": "x"}', 'Config used "session-cookie" : "x"',
+            'abcdefgh password=x',
+            'aBcD1234eFgH5678 iJkL9012mNoP3456',
+            '"aBcD1234" "eFgH5678" "iJkL9012" "mNoP3456"',
+            "'aBcD1234eFgH5678' 'iJkL9012mNoP3456'",
+            'abcdefghijklmnop qrstuvwxyzabcdef', '"ABCDEFGHIJKLMNOP" "QRSTUVWXYZABCDEF"',
+            '"INFO: CANARY_OUTPUT"', 'Tool returned INFO: CANARY_OUTPUT',
+            'Tool returned WARN CANARY_OUTPUT', 'Tool returned ERROR: CANARY_OUTPUT',
+            'Tool returned DEBUG CANARY_OUTPUT', 'Tool returned TRACE: CANARY_OUTPUT',
+            'Tool returned WARNING: CANARY_OUTPUT', 'Tool returned FATAL CANARY_OUTPUT',
+            'Tool returned Traceback (most recent call last)', 'Tool returned stderr CANARY_OUTPUT',
+            'Tool returned exit code 1', 'File "worker.py", line 7, in collect',
+            'Tool returned File "worker.py", line 7, in collect',
+            'at collect (src/worker.js:12:4)', 'at src/worker.js:12:4',
+            '$ echo CANARY_OUTPUT', '> echo CANARY_OUTPUT', '  $ echo CANARY_OUTPUT',
+        )
+        for runner in ('codex', 'claude'):
+            for canary in canaries:
+                with self.subTest(runner=runner, canary=canary):
+                    result = self.run_provider('--stage', 'qa', '--schema', str(schema), BUREAU_RUNNER_QA=runner,
+                                               FINAL=json.dumps({**value, 'insights':[canary, safe]}))
+                    self.assertEqual(json.loads(result.stdout), {**value, 'insights':[safe]})
+                    self.assertIn('unsafe optional observations dropped', result.stderr)
+                    self.assertNotIn(canary, result.stderr)
+        rows = [json.loads(line) for line in (self.root/'.git/bureau/evidence/v1/insights.jsonl').read_text().splitlines()]
+        self.assertEqual(len(rows), 2 * len(canaries))
+        self.assertEqual({r['observation'] for r in rows}, {safe})
+        receipts = list((self.root/'.git/bureau/evidence/v1/runs').glob('*/receipts/*.json'))
+        self.assertEqual(len(receipts), 2 * len(canaries))
+        for receipt in receipts:
+            self.assertEqual(json.loads(receipt.read_text())['normalized_exit'], 0)
+
+    def test_insights_preserve_prose_skip_and_all_strict_stage_contracts(self):
+        for text in ('SKIP', 'Review prose only.'):
+            self.assertEqual(self.run_provider(FINAL=text).stdout.strip(), text)
+        path = self.root/'.git/bureau/evidence/v1/insights.jsonl'
+        self.assertFalse(path.exists())
+        goal = {'status':'COMPLETE','insights':['The runner cap required a second goal turn.']}
+        self.run_provider(FINAL='Goal complete.\n```json\n'+json.dumps(goal)+'\n```', BUREAU_CURRENT_ISSUE='TEAM-12')
+        self.assertEqual(json.loads(path.read_text())['observation'], goal['insights'][0])
+        for stage, name, value in (
+                ('implement', 'implement', {**self.complete_implement_result(), 'insights':[]}),
+                ('qa', 'qa', dict(status='GREEN',tests_added=0,tests_failing=0,coverage_notes='',insights=[])),
+                ('code_review', 'review', dict(verdict='APPROVE',bugs=0,security_issues=0,missing_acceptance=[],fixes_needed=[],summary='',comment='',findings=[],insights=[]))):
+            schema = ROOT/f'templates/scripts/bureau-{name}.schema.json'
+            for runner in ('codex', 'claude'):
+                self.config.write_text(json.dumps({'agents':{'runner':runner}}))
+                result = self.run_provider('--stage',stage,'--schema',str(schema),FINAL=json.dumps(value))
+                self.assertEqual(json.loads(result.stdout), value)
+                argv=json.loads((self.root/'argv.json').read_text())
+                strict=json.loads(argv[argv.index('--json-schema')+1]) if runner=='claude' else json.loads(Path(argv[argv.index('--output-schema')+1]).read_text())
+                self.assertIn('insights',strict['required'])
 
     def test_auth_provider_errors_environment_and_empty_output(self):
         self.run_provider(AUTH_FAIL='1',code=16)

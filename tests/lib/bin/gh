@@ -17,6 +17,15 @@ calls_log="${GH_STUB_CALLS:-${SANDBOX:-/tmp}/gh_calls.log}"
 if [ "${1:-}" = "pr" ]; then
   shift
   case "${1:-}" in
+    comment)
+      if [[ " $* " == *' --body-file - '* ]]; then
+        body=$(cat)
+        if [[ "$body" == '<!-- bureau-acceptance:'* ]]; then
+          [ "${GH_STUB_BRIEF_FAIL:-0}" != 1 ] || exit 1
+          printf '%s\n' "$body" >> "$SANDBOX/briefs-pr.log"
+        fi
+      fi
+      ;;
     list)
       if [ -n "${GH_STUB_EXISTING_PR:-}" ]; then
         echo "${GH_STUB_EXISTING_PR}"
@@ -28,6 +37,11 @@ if [ "${1:-}" = "pr" ]; then
       # gh pr view <num> --json url --jq '.url'
       num="${2:-99}"
       case " $* " in
+        *' --json comments '*) echo '{"comments":[]}' ;;
+        *' --json number,headRefOid,baseRefOid,url '*)
+          jq -n --argjson number "${GH_STUB_EXISTING_PR:-99}" --arg head "$(git rev-parse HEAD)" \
+            --arg base "$(git rev-parse origin/main)" \
+            '{number:$number,headRefOid:$head,baseRefOid:$base,url:("https://github.com/test/repo/pull/"+($number|tostring))}' ;;
         *' --json baseRefName,headRefName '*)
           jq -n --arg head "${BUREAU_STUB_BRANCH:-test-branch}" '{baseRefName:"main",headRefName:$head}' ;;
         *' --json state,baseRefName '*) echo '{"state":"OPEN","baseRefName":"main"}' ;;

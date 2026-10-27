@@ -43,7 +43,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/stop-boundary.sh"
 
 _calls_log="${SANDBOX:?SANDBOX must be set by harness}/calls.log"
-: > "$_calls_log"
+if [ "$0" != bureau-acceptance-delivery ]; then : > "$_calls_log"; fi
 
 _record() {
   local IFS=$'\t'
@@ -193,7 +193,13 @@ branch_is_bureau_only() {
   return "${BUREAU_STUB_BUREAU_ONLY_RC:-0}"
 }
 
-post_comment() { _record "post_comment" "$1" "$2"; return 0; }
+post_comment() {
+  if [[ "$2" == '<!-- bureau-acceptance:'* ]]; then
+    [ "${BUREAU_STUB_BRIEF_TICKET_FAIL:-0}" != 1 ] || return 1
+    printf '%s\n' "$2" >> "$SANDBOX/briefs-ticket.log"
+  fi
+  _record "post_comment" "$1" "$2"; return 0
+}
 alert_telegram() { _record "alert_telegram" "$@"; return 0; }
 # Real halt_if_linear_unusable (with its exit code), check_squash_range and
 # comment_on_branch_pr, cut from the real config by the harness; the squash guard finds

@@ -745,7 +745,7 @@ ${DIFF_HEAD}"
   # Summary is optional and tool-free in Claude, read-only in Codex.
   CLAUDE_OUT="$(BUREAU_STAGE_TIMEOUT=30 run_stage_for upstream_summary "$CLAUDE_PROMPT" 2>/dev/null || true)"
   if [ -n "$CLAUDE_OUT" ]; then
-    PR_BODY="${CLAUDE_OUT}
+    PR_BODY="$(bureau_comment_projection "$CLAUDE_OUT")
 
 Upstream link: ${UPSTREAM_LINK}${LLM_NOTE}"
   else

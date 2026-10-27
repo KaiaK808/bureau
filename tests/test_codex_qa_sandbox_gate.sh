@@ -125,6 +125,7 @@ assert_green
 assert_publication
 assert_file_contains 'Sandbox: this turn runs inside the Codex sandbox' "$SANDBOX/logs/prompt.log" 'Codex sandbox note'
 assert_file_contains 'coverage_notes beginning SANDBOX_GATE:' "$SANDBOX/logs/prompt.log" 'QA result contract'
+assert_file_contains 'Optional insights: normally use an empty array' "$SANDBOX/logs/prompt.log" 'QA insight prompt'
 assert_decision_first 'shell gate outside the Codex sandbox green: QA continues as GREEN'
 teardown
 

@@ -46,26 +46,28 @@ trap _review_cleanup EXIT
 # review_text_from_merger <merger output>: the text the PR comment and the ticket get.
 # The merger answers with the object of bureau-review.schema.json, whose "comment" is
 # its markdown for humans (summaries, findings with file:line, fixes needed): that
-# comment, then the rest of the object as a fenced JSON verdict. A verdict block over
+# comment, then the public object as a fenced JSON verdict. Local insights are
+# removed before every projection, including the legacy/raw fallback. A verdict block over
 # 16 KB drops its findings list and says how many it held (the comment names them),
 # so the block always survives the comment size cap. An answer without a verdict or
-# without a comment string (an older schema, a fixture) is printed unchanged: the
+# without a comment string (an older schema, a fixture) uses the safe projection: the
 # comment's lines never reach the text-verdict fallback, which reads line starts and
 # finds none inside a JSON string. A cost-tracking envelope is unwrapped as
 # parse_claude_json does. Decides nothing: the verdict is read from the merger's
 # answer itself.
 review_text_from_merger() {
-  local text
-  if text=$(printf '%s' "$1" | jq -r '
+  local text projected
+  projected=$(bureau_comment_projection "$1")
+  if text=$(printf '%s' "$projected" | jq -r '
       (if type == "object" and (.result | type) == "string" then (.result | fromjson?) else . end)
       | select(type == "object" and (.comment | type) == "string" and (.verdict | type) == "string")
-      | (del(.comment)) as $v
+      | (del(.comment, .insights)) as $v
       | (if ($v | tojson | length) > 16000
          then ($v | del(.findings)) + {findings_omitted: ($v.findings | length? // 0)} else $v end) as $v
       | .comment + "\n\n```json\n" + ($v | tojson) + "\n```"' 2>/dev/null) && [ -n "$text" ]; then
     printf '%s' "$text"
   else
-    printf '%s' "$1"
+    printf '%s' "$projected"
   fi
 }
 
@@ -140,6 +142,10 @@ if bureau_stop_requested; then
     --branch "$BRANCH" --state "$ACTUAL_STATE") || exit 18
   if [ "$(printf '%s' "$REVIEW_STOP" | jq -r .stopped)" = true ]; then
     echo "Review already approved at the unchanged head; still stopped before merge."
+    # The frozen PR/HEAD ledger retries only missing destinations. Keep the
+    # saved approval boundary and exit 20 even when publication remains pending.
+    bureau_acceptance_brief "$ISSUE" "$BRANCH" --pr "$(printf '%s' "$REVIEW_STOP" | jq -r .pr)" \
+      --head "$(printf '%s' "$REVIEW_STOP" | jq -r .head)" --verdict APPROVE || true
     exit 20
   fi
 fi
@@ -196,6 +202,11 @@ if ! merge_origin_main_or_abort "$ISSUE" "Code Review" "$REVIEW_BASE"; then
   move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
   exit 17
 fi
+# Pin the inputs and the actual local validation result into provider receipts.
+# These are evidence only; the remote PR remains at REVIEW_HEAD.
+export BUREAU_REVIEW_INPUT_HEAD="$REVIEW_HEAD" BUREAU_REVIEW_INPUT_BASE="$REVIEW_BASE"
+BUREAU_REVIEW_VALIDATION_HEAD=$(git rev-parse HEAD) || exit 18
+export BUREAU_REVIEW_VALIDATION_HEAD
 
 # After the checkout AND the merge of origin/main — both can change the
 # manifests. Idempotent: does nothing when node_modules already matches. A
@@ -473,10 +484,12 @@ Verdict rules:
 
 Do NOT request changes for MINOR findings, style preferences, or hypothetical edge cases.
 
+Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
+
 Answer with ONE JSON object (the schema is enforced). \"comment\" is the human-readable PR comment in markdown: Specialist Summaries, All Findings grouped by class with file:line for each, Fixes Needed. The implementer reworks from this comment, so name every CRITICAL and BUG finding with its file:line. \"findings\" lists the CRITICAL and BUG findings and the MINOR ones worth reading as {file, line, class, msg} (line 0 when a finding has no single line; class CRITICAL, BUG, MINOR or SKIP). The verdict fields decide; the comment explains them:
 
 \`\`\`json
-{\"verdict\":\"APPROVE|REQUEST_CHANGES|BLOCK\",\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"\",\"comment\":\"## Specialist Summaries\\n…\",\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\"}]}
+{\"verdict\":\"APPROVE|REQUEST_CHANGES|BLOCK\",\"insights\":[],\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"\",\"comment\":\"## Specialist Summaries\\n…\",\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\"}]}
 \`\`\`" 2>"$REVIEW_TMP/merge.stderr")
 MERGED_REVIEW=$(review_text_from_merger "$MERGED_RAW")
 fi
@@ -649,6 +662,7 @@ case "$VERDICT" in
       post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual)."
       move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
       bureau_evidence wait-open "$ISSUE" --key approval --kind decision --reason 'Approved PR awaits manual merge' --actor maintainer --stage code_review --pr "$PR_NUMBER" --generation "$REVIEW_HEAD" || true
+      bureau_acceptance_brief "$ISSUE" "$BRANCH" --pr "$PR_NUMBER" --head "$REVIEW_HEAD" --url "$PR_URL" --base "$REVIEW_BASE" --verdict "$VERDICT" --review-head "$REVIEW_HEAD" || true
       NEXT_STATE="Merge (manual)"
     elif bureau_stop_requested; then
       # Save before the owning worker releases its lease, closing the gap where
@@ -659,6 +673,7 @@ case "$VERDICT" in
           --verdict APPROVE >/dev/null
       fi
       post_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested."
+      bureau_acceptance_brief "$ISSUE" "$BRANCH" --pr "$PR_NUMBER" --head "$REVIEW_HEAD" --url "$PR_URL" --base "$REVIEW_BASE" --verdict "$VERDICT" --review-head "$REVIEW_HEAD" || true
       echo "Review complete; stopped before merge."
       exit 20
     elif agent_enabled "merge" && [ -n "${BUREAU_STATE_MERGE:-}" ]; then

@@ -187,6 +187,14 @@ REVIEW_SUMMARY=$(parse_claude_json "$REVIEW_RESULT" '.summary // "no summary"')
 if [ -n "$GOVERNANCE_ERROR" ]; then REVIEW_SUMMARY="$REVIEW_SUMMARY
 
 $GOVERNANCE_ERROR"; fi
+REVIEW_SUMMARY=$(bureau_comment_projection "$REVIEW_SUMMARY")
+# An unreadable model summary can suppress the whole projection. The validator's
+# trusted failure reason must still reach the human and the next spec attempt.
+if [ -n "$GOVERNANCE_ERROR" ] && [[ "$REVIEW_SUMMARY" != *"$GOVERNANCE_ERROR"* ]]; then
+  REVIEW_SUMMARY="$REVIEW_SUMMARY
+
+$GOVERNANCE_ERROR"
+fi
 
 if [ "$REVIEW_STATUS" = "FAIL" ]; then
   bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" invalidate "$ISSUE" specify --reason spec-review-failed \

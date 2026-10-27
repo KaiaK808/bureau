@@ -212,6 +212,26 @@ PIPELINE_EOF
   cp "$REPO_ROOT/templates/scripts/bureau-env.sh" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$REPO_ROOT/templates/scripts/bureau-spec.py" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-worker.sh" "$sb/scripts/"
+  cp "$REPO_ROOT/templates/scripts/bureau-acceptance.py" "$REPO_ROOT/templates/scripts/bureau-provider.py" \
+    "$REPO_ROOT/templates/scripts/bureau-gates.py" "$sb/scripts/"
+  sed -n '/^bureau_acceptance_brief() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
+  cat >> "$sb/scripts/bureau-config.sh" <<'ACCEPTANCE'
+_BUREAU_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bureau_spec_dir_for_branch() { return 1; }
+get_issue_comments() { echo '[]'; }
+post_comment() { printf '%s\n' "$2" >> "$STATE_FILE.comments"; }
+ACCEPTANCE
+  mkdir -p "$sb/bin"
+  cat > "$sb/bin/gh" <<'GH'
+#!/bin/bash
+if [ "${2:-}" = view ]; then
+  if [[ " $* " == *' --json comments '* ]]; then echo '{"comments":[]}'; exit 0; fi
+  printf '{"number":99,"headRefOid":"%s","url":"https://github.com/test/repo/pull/99"}\n' "$(git rev-parse HEAD 2>/dev/null)"
+elif [ "${2:-}" = comment ]; then
+  cat >> "$(dirname "$0")/../briefs-pr.log"
+fi
+GH
+  chmod +x "$sb/bin/gh"
   cat >> "$sb/scripts/bureau-config.sh" <<'RUNTIME'
 BUREAU_RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-runtime.py"
 RUNTIME
@@ -254,7 +274,7 @@ run_shepherd() {
   # scenario that kills the shepherd leaves nothing in the user's $TMPDIR.
   mkdir -p "$sb/tmp"
   ( cd "$sb" \
-    && TMPDIR="$sb/tmp" \
+    && PATH="$sb/bin:$PATH" TMPDIR="$sb/tmp" \
        STATE_FILE="$sb/state.txt" \
        INVOCATIONS_LOG="$sb/invocations.log" \
        LABEL_LOG="$sb/labels.log" \
@@ -899,10 +919,17 @@ REC_EOF
 test_merge_mode_manual() {
   local sb; sb=$(make_sandbox manual)
   _set_mode "$sb" '"manual"'; _record_alerts "$sb"
+  git -C "$sb" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m fixture
   echo "s1" > "$sb/state.txt"
   local rc=0
   run_shepherd "$sb" EXP-7 || rc=$?
   assert_eq "$rc" "20" "manual: the run ends before merge" || return 1
+  grep -q '<!-- bureau-acceptance:' "$sb/state.txt.comments" || { echo 'FAIL: shepherd ticket brief missing'; return 1; }
+  grep -q '<!-- bureau-acceptance:' "$sb/briefs-pr.log" || { echo 'FAIL: shepherd PR brief missing'; return 1; }
+  # Start again already at Merge: no review invocation, no duplicate brief.
+  rc=0; run_shepherd "$sb" EXP-7 || rc=$?
+  assert_eq "$rc" "20" 'already-in-Merge keeps stop code' || return 1
+  assert_eq "$(grep -c '<!-- bureau-acceptance:' "$sb/briefs-pr.log")" 1 'already-in-Merge PR delivered once' || return 1
   if grep -q merge-pipeline.sh "$sb/invocations.log"; then
     echo "FAIL: manual: merge-pipeline.sh was invoked" >&2; return 1
   fi

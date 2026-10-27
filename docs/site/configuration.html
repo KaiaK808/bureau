@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ea51d14b092d5721456de6aae69c135c92a0aec696b029d44f9a52151f6310a8">
+<meta name="bureau-source-sha256" content="0350fff19cf47ad167572e0e02446e439c4b6381dcc5c7afc6d0c02fadaf807e">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1909,6 +1909,20 @@ the Spec Kit 1.2.2 pin lives in <code>scripts/bureau_install.py</code>
 (install with <code>uv tool install specify-cli==1.2.2</code>).</p>
 <h3 id="evidence-storage-and-retention">Evidence storage and
 retention</h3>
+<p>Acceptance briefs and advisory insights add no configuration keys.
+Existing manual merge/stop settings trigger brief delivery;
+<code>evidence/v1/acceptance/NUMBER-HEAD.json</code> tracks
+pending/delivered ticket and PR destinations independently. Optional
+stage observations go to repository-shared
+<code>evidence/v1/insights.jsonl</code> (at most three single-line
+strings of 280 characters per provider attempt, 2,048 rows/30 days on
+collection). That advisory file is the explicit free-text exception to
+metadata-only evidence; it is never applied automatically. Both share
+the existing global evidence budget. Resync scripts and interfaces
+together, then restart drivers; see the <a
+href="stage-protocol.html#acceptance-briefs-at-human-merge-boundaries">acceptance
+and insights protocol</a> for privacy, retention and delivery
+limits.</p>
 <p>Evidence is automatic and needs no <code>.bureau.json</code> key or
 configuration-version change.
 <code>&lt;git common dir&gt;/bureau/evidence/v1/</code> holds private

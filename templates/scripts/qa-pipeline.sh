@@ -261,10 +261,12 @@ Role-specific NEVER:
 
 $NEGATIVE_CONSTRAINTS_BODY
 
+Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
+
 Emit a fenced json block at the very end:
 
 \`\`\`json
-{\"status\":\"GREEN|RED|NEEDS_HUMAN\",\"tests_added\":0,\"tests_failing\":0,\"coverage_notes\":\"\"}
+{\"status\":\"GREEN|RED|NEEDS_HUMAN\",\"tests_added\":0,\"tests_failing\":0,\"coverage_notes\":\"\",\"insights\":[]}
 \`\`\`")
   echo "$QA_RESULT"
 fi
@@ -335,7 +337,8 @@ fi
 if [ "$FINAL_GREEN" = true ] && [ "$STATUS" = "RED" ] && [ "$(resolve_runner_for_stage qa)" != codex ]; then STATUS="GREEN"; fi
 if [ "$FINAL_GREEN" = false ] && [ "$STATUS" = "GREEN" ]; then STATUS="RED"; fi
 
-SUMMARY=$(parse_claude_json "$QA_RESULT" '.coverage_notes // "no notes"')
+# Comment-only projection; its failure must not change the status/routing above.
+SUMMARY=$(bureau_comment_projection "$(parse_claude_json "$QA_RESULT" '.coverage_notes // "no notes"')")
 if [ -n "${QA_SANDBOX_GATE_LINE:-}" ]; then
   SUMMARY="$QA_SANDBOX_GATE_LINE
 

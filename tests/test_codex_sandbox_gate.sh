@@ -105,6 +105,7 @@ run_implement_pipeline TEAM-123
 assert_handoff_once
 assert_publication
 assert_file_contains 'SANDBOX_GATE:' "$SANDBOX/logs/prompt.log" 'Codex sandbox prompt'
+assert_file_contains 'Optional insights: normally use an empty array' "$SANDBOX/logs/prompt.log" 'implement insight prompt'
 assert_calls_include 'shell gate outside the Codex sandbox green' 'decision in summary comment'
 assert_file_contains '^def add' "$SANDBOX/feature.py" 'fake Codex left a code change'
 assert_match 'Bureau-Generated: true' "$(git -C "$SANDBOX" log --format=%B -1)" 'shell committed the changes'

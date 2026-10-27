@@ -492,6 +492,8 @@ Generated with [Claude Code](https://claude.com/claude-code)"
 # build_summary_comment: format the consolidated Linear comment posted at the
 # end of the pipeline, regardless of terminal status. Takes status, total
 # tasks done across iterations, per-iteration log, and PR URL.
+# Provider fields enter this summary through parse_claude_json; the final body
+# also receives comment-only projection without changing status or routing.
 build_summary_comment() {
   local status="$1" total_tasks="$2" iter_log="$3" pr_url="$4"
   local header
@@ -841,6 +843,8 @@ Stop conditions — halt and report status NEEDS_HUMAN when:
 - A task can't be implemented without breaking an existing test.
 $NEGATIVE_CONSTRAINTS
 
+Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
+
 End every turn with a fenced JSON status block — Haiku reads it to decide if the goal is met:
 \`\`\`json
 {
@@ -848,6 +852,7 @@ End every turn with a fenced JSON status block — Haiku reads it to decide if t
   \"tasks_done\": 0,
   \"tasks_skipped\": 0,
   \"tasks_needs_human\": 0,
+  \"insights\": [],
   \"fixed_review_items\": [],
   \"notes\": {
     \"needs_human\": [{\"task_id\": \"\", \"reason\": \"\"}],
@@ -1015,6 +1020,8 @@ Stop conditions — do NOT guess; halt and report status NEEDS_HUMAN when:
 
 $NEGATIVE_CONSTRAINTS
 
+Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
+
 At the end of your work, emit a single fenced json block so the shell can summarise. Structured fields (needs_human / skipped / deviations) are auditable; \`prose_notes\` is for things that fit none of those buckets. \`fixed_review_items\` MUST list the specific fix-item IDs you addressed in this run (empty array if no review feedback was present).
 
 \`\`\`json
@@ -1023,6 +1030,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
   \"tasks_done\": 0,
   \"tasks_skipped\": 0,
   \"tasks_needs_human\": 0,
+  \"insights\": [],
   \"fixed_review_items\": [],
   \"notes\": {
     \"needs_human\": [{\"task_id\": \"\", \"reason\": \"\"}],
@@ -1381,7 +1389,7 @@ case "$STATUS" in
 
     PR_URL=$(open_or_update_pr_ready "$ISSUE" "$ISSUE_TITLE")
     bureau_record_pr_url "$PR_URL" || true
-    post_comment "$ISSUE" "$(build_summary_comment COMPLETE "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")"
+    post_comment "$ISSUE" "$(bureau_comment_projection "$(build_summary_comment COMPLETE "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")")"
     move_issue "$ISSUE" "$NEXT_STATE_ID"
     echo "  Moved $ISSUE to $NEXT_STATE_LABEL"
     ;;
@@ -1413,7 +1421,7 @@ case "$STATUS" in
     else
       NEEDS_HUMAN_UNMARKED=1
     fi
-    post_comment "$ISSUE" "$(build_summary_comment "$STATUS" "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")"
+    post_comment "$ISSUE" "$(bureau_comment_projection "$(build_summary_comment "$STATUS" "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")")"
     NEXT_STATE_LABEL="Build (needs-human)"
     ;;
 esac

@@ -108,6 +108,14 @@
     },
     "prose_notes": {
       "type": "string"
+    },
+    "insights": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "maxLength": 280
+      }
     }
   },
   "required": [

@@ -313,7 +313,23 @@ def validate(value, schema):
         for k, v in value.items():
             if k in props: validate(v, props[k])
     if isinstance(value, list):
+        if len(value) > schema.get('maxItems', len(value)): raise ValueError('result array too long')
         for v in value: validate(v, schema.get('items', {}))
+    if isinstance(value, str) and len(value) > schema.get('maxLength', len(value)):
+        raise ValueError('result string too long')
+
+
+def provider_schema(schema, evidence):
+    # Claude's insight contract requires an array. Codex uses g.codex_schema
+    # instead, making every optional field required/nullable recursively.
+    # Local validation keeps insights optional for legacy results and recovery.
+    contract = json.loads(schema.read_text())
+    if 'insights' not in contract.get('properties', {}): return schema
+    contract['required'] = list(dict.fromkeys(contract.get('required', []) + ['insights']))
+    path = evidence / 'provider-schema.json'
+    path.write_text(json.dumps(contract))
+    path.chmod(0o600)
+    return path
 
 
 def evidence_store(repo):
@@ -369,10 +385,15 @@ def run(options, prompt, system, repo, evidence, schema=None):
     receipt = dict(schema_version=e.VERSION, record_type='receipt', **identity,
                    provider=options['runner'], provider_exit=metadata.get('provider_exit', options.get('_provider_exit')),
                    normalized_exit=code, outcome=metadata['outcome'], structured_result=result,
+                   insights_result=e.normalize_insights(structured(result_text)) if code == 0 and not schema else None,
                    result_absence=None if result is not None else ('no-schema' if code == 0 else metadata['outcome']),
                    start_head=start, end_head=end, started_at=started, ended_at=time.time(),
                    provider_logs=str(evidence), transcript=(e.observe(transcript, options, repo, evidence) or {}).get('transcript'),
                    gate_attempts=gate_attempts)
+    if options['stage'] == 'code_review':
+        receipt['review_inputs'] = dict(head=os.environ.get('BUREAU_REVIEW_INPUT_HEAD'),
+                                      base=os.environ.get('BUREAU_REVIEW_INPUT_BASE'),
+                                      validation_head=os.environ.get('BUREAU_REVIEW_VALIDATION_HEAD'))
     # _run reports the actual child exit; no inferred success from commits.
     if code == 0: receipt['provider_exit'] = 0
     if code == 0:
@@ -389,19 +410,22 @@ def run(options, prompt, system, repo, evidence, schema=None):
     return code, text, metadata
 
 
-def receipt_result(receipt):
+def receipt_result(receipt, contract=None):
     # Recovery reads the original provider output, then the receipt checks its
     # full structured-result digest. No result prose is copied into the store.
     directory = Path(receipt['provider_logs'])
     try:
-        if receipt['provider'] == 'codex': return structured((directory / 'final.txt').read_text())
+        if receipt['provider'] == 'codex':
+            value = structured((directory / 'final.txt').read_text())
+            if contract is not None: value = g.canonical_result(value, contract)
+            return e.normalize_insights(value)
         envelope = json.loads((directory / 'stdout.log').read_text())
         value = envelope.get('structured_output')
-        if isinstance(value, dict): return value
+        if isinstance(value, dict): return e.normalize_insights(value)
         if receipt.get('transcript'):
             found, value = transcript_result(Path(receipt['transcript']))
-            if found: return value
-        return structured(envelope.get('result', ''))
+            if found: return e.normalize_insights(value)
+        return e.normalize_insights(structured(envelope.get('result', '')))
     except (OSError, ValueError, TypeError, AttributeError): return None
 
 
@@ -415,10 +439,9 @@ def completion_text(code, text, metadata, repo, schema):
         return text
     except (ValueError, TypeError, KeyError):
         def load_result(receipt):
-            original = receipt_result(receipt)
             # The original Codex file uses the nullable wire schema; receipts
             # hash the canonical result with declared optional nulls omitted.
-            return g.canonical_result(original, contract) if receipt.get('provider') == 'codex' else original
+            return receipt_result(receipt, contract)
         result = evidence_store(repo).reconcile(metadata, current_head(repo), contract, validate, load_result)
         if result is None: raise ValueError('no matching completion receipt for this attempt and HEAD')
         metadata['structured_source'] = 'receipt'
@@ -457,7 +480,7 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         if system:
             (evidence/'system.txt').write_text(system)
             command += ['--append-system-prompt-file', str(evidence/'system.txt')]
-        if schema: command += ['--json-schema', schema.read_text()]
+        if schema: command += ['--json-schema', provider_schema(schema, evidence).read_text()]
         if options['reasoning']: command += ['--effort', options['reasoning']]
         if options['headroom']:
             if not shutil.which('headroom'): raise ValueError('headroom executable is missing')
@@ -591,6 +614,7 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     if schema:
         value = structured(text)
         if runner == 'codex': value = g.canonical_result(value, json.loads(schema.read_text()))
+        value = e.normalize_insights(value)
         validate(value, json.loads(schema.read_text()))
         text = json.dumps(value)
     value = structured(text)

@@ -57,6 +57,7 @@ class InstallationTests(unittest.TestCase):
                 self.run_install("assets", "--target", target)
                 self.assertEqual(self.snapshot(), {})
                 self.run_install("assets", "--target", target, "--apply")
+                self.run_install("assets", "--target", target, "--scope", "scripts", "--apply")
                 files = self.snapshot()
                 self.assertEqual((self.repo / "AGENTS.md").exists(), target != "claude")
                 self.assertEqual((self.repo / "CLAUDE.md").exists(), target != "codex")
@@ -68,6 +69,18 @@ class InstallationTests(unittest.TestCase):
                     self.assertIn("description:", content)
                     self.assertNotIn("$ARGUMENTS", content)
                     self.assertNotIn("Skill tool", content)
+                self.assertEqual((self.repo/'scripts/bureau-acceptance.py').read_bytes(),
+                                 (ROOT/'templates/scripts/bureau-acceptance.py').read_bytes())
+                for stage in ('implement', 'qa', 'review'):
+                    schema=json.loads((self.repo/f'scripts/bureau-{stage}.schema.json').read_text())
+                    self.assertIn('insights', schema['properties'])
+                    self.assertNotIn('insights', schema['required'])
+                if target != 'claude':
+                    learning=(self.repo/'.agents/skills/bureau-learnings/SKILL.md').read_text()
+                    self.assertIn('insights.jsonl', learning)
+                    self.assertIn('no automatic tickets', learning)
+                if target != 'codex':
+                    self.assertIn('insights.jsonl', (self.repo/'.claude/commands/bureau-learnings.md').read_text())
                 self.run_install("assets", "--apply")
                 self.assertEqual(files, self.snapshot())
 
