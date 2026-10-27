@@ -22,6 +22,7 @@ if CODEX_TMP_PREFIX != 'bureau-codex-':
     atexit.register(isolated.cleanup)
     shutil.copy(SCRIPT.with_name('bureau-evidence.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-gates.py'), isolated.name)
+    shutil.copy(SCRIPT.with_name('bureau-activity.py'), isolated.name)
     source = SCRIPT.read_text().replace("prefix='bureau-codex-'", 'prefix=' + repr(CODEX_TMP_PREFIX))
     SCRIPT = Path(isolated.name) / SCRIPT.name; SCRIPT.write_text(source)
 spec=importlib.util.spec_from_file_location('provider',SCRIPT)
@@ -1386,6 +1387,7 @@ p.Path.open=refuse_transcript_read
         control=self.root/'control'/'bureau-provider.py'; control.parent.mkdir(exist_ok=True)
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), control.parent / 'bureau-evidence.py')
         shutil.copy(SCRIPT.with_name('bureau-gates.py'), control.parent / 'bureau-gates.py')
+        shutil.copy(SCRIPT.with_name('bureau-activity.py'), control.parent / 'bureau-activity.py')
         control.write_text(source.replace(changed,'        return env\n'))
         return control
 

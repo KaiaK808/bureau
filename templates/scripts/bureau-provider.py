@@ -24,6 +24,9 @@ _evidence_spec.loader.exec_module(e)
 _gate_spec = importlib.util.spec_from_file_location('bureau_gates', Path(__file__).resolve().with_name('bureau-gates.py'))
 g = importlib.util.module_from_spec(_gate_spec)
 _gate_spec.loader.exec_module(g)
+_activity_spec = importlib.util.spec_from_file_location('bureau_activity', Path(__file__).resolve().with_name('bureau-activity.py'))
+a = importlib.util.module_from_spec(_activity_spec)
+_activity_spec.loader.exec_module(a)
 
 
 # The values the Claude CLI's --effort accepts.
@@ -76,7 +79,16 @@ def configuration(stage, config, env):
         raise ValueError('reasoning_effort for runner claude must be one of ' + ', '.join(CLAUDE_EFFORTS))
     timeout = float(env.get('BUREAU_STAGE_TIMEOUT') or item.get('timeout_seconds') or provider.get('timeout_seconds', 3600))
     if not math.isfinite(timeout) or timeout <= 0 or timeout > 86400: raise ValueError('timeout_seconds must be within (0, 86400]')
+    def silence_setting(name, default):
+        value = item.get(name, provider.get(name, default))
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 86400:
+            raise ValueError(name + ' must be a finite number within [0, 86400]')
+        return value
+    silence = silence_setting('silence_timeout_seconds', 0)
+    silence_child = silence_setting('silence_child_timeout_seconds', silence)
+    if silence_child < silence: raise ValueError('silence_child_timeout_seconds must not be shorter than silence_timeout_seconds')
     options = dict(stage=stage, runner=runner, model=model, sandbox=sandbox, reasoning=reasoning, timeout=timeout,
+                   silence_timeout_seconds=silence, silence_child_timeout_seconds=silence_child,
                    headroom=runner == 'claude' and env.get('BUREAU_HEADROOM_WRAP', str(agents.get('headroom_wrap', False))).lower() in ('1', 'true'),
                    cost_tracking=env.get('BUREAU_COST_TRACKING', str(config.get('session', {}).get('cost_tracking', False))).lower() in ('1', 'true'))
     if runner == 'claude': options['config_dir'] = claude_config_dir(provider, env)
@@ -348,6 +360,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
     """Persist the attempt's normalized outcome before handing anything to main."""
     options.pop('_provider_exit', None)
     options.pop('_receipt_metadata', None)
+    options.pop('_provider_cancelled', None)
     store = e.observe(evidence_store, repo)
     run_id = options.setdefault('evidence_run_id', os.environ.get('BUREAU_RUN_ID') or uuid.uuid4().hex)
     issue = os.environ.get('BUREAU_CURRENT_ISSUE') or None
@@ -372,9 +385,12 @@ def run(options, prompt, system, repo, evidence, schema=None):
     try:
         code, text, metadata = _run(options, prompt, system, repo, evidence, schema)
     except (OSError, ValueError, TypeError, UntrustedEnvError, subprocess.SubprocessError) as exc:
-        error = exc
-        code, text = (24 if isinstance(exc, (PermissionError, UntrustedEnvError)) else 22), ''
-        metadata = dict(outcome='invalid-result', error=str(exc))
+        if options.get('_provider_cancelled'):
+            code, text, metadata = 130, '', dict(outcome='cancelled')
+        else:
+            error = exc
+            code, text = (24 if isinstance(exc, (PermissionError, UntrustedEnvError)) else 22), ''
+            metadata = dict(outcome='invalid-result', error=str(exc))
     end = e.observe(current_head, repo)
     gate_attempts = []
     if observer and not observer.error:
@@ -390,6 +406,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
                    start_head=start, end_head=end, started_at=started, ended_at=time.time(),
                    provider_logs=str(evidence), transcript=(e.observe(transcript, options, repo, evidence) or {}).get('transcript'),
                    gate_attempts=gate_attempts, usage=metadata.get('usage'), total_cost_usd=metadata.get('total_cost_usd'))
+    receipt['timeout_kind'] = metadata.get('timeout_kind')
     if options['stage'] == 'code_review':
         receipt['review_inputs'] = dict(head=os.environ.get('BUREAU_REVIEW_INPUT_HEAD'),
                                       base=os.environ.get('BUREAU_REVIEW_INPUT_BASE'),
@@ -410,6 +427,20 @@ def run(options, prompt, system, repo, evidence, schema=None):
     return code, text, metadata
 
 
+def claude_envelope(stdout):
+    """One terminal result contract for legacy JSON, streaming and recovery."""
+    try: envelope = json.loads(stdout)
+    except ValueError:
+        envelope = None
+        for line in stdout.splitlines():
+            try: event = json.loads(line)
+            except ValueError: continue
+            if isinstance(event, dict) and event.get('type') == 'result': envelope = event
+    if not isinstance(envelope, dict): raise ValueError('Claude did not return a JSON envelope')
+    if envelope.get('type') not in (None, 'result'): raise ValueError('Claude returned no terminal result envelope')
+    return envelope
+
+
 def receipt_result(receipt, contract=None):
     # Recovery reads the original provider output, then the receipt checks its
     # full structured-result digest. No result prose is copied into the store.
@@ -419,7 +450,7 @@ def receipt_result(receipt, contract=None):
             value = structured((directory / 'final.txt').read_text())
             if contract is not None: value = g.canonical_result(value, contract)
             return e.normalize_insights(value)
-        envelope = json.loads((directory / 'stdout.log').read_text())
+        envelope = claude_envelope((directory / 'stdout.log').read_text())
         value = envelope.get('structured_output')
         if isinstance(value, dict): return e.normalize_insights(value)
         if receipt.get('transcript'):
@@ -469,7 +500,8 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         # Codex edits files; Git metadata writes remain the shell executor's job.
         prompt = system + '\n\n' + prompt + '\n\nDo not run git commit or git push. Leave changes for the Bureau shell executor. Mark completed tasks truthfully. If tests are denied by the environment, report the permission blocker separately from code failures.'
     else:
-        command = ['claude', '-p', '--output-format', 'json']
+        command = ['claude', '-p', '--output-format', 'stream-json' if options.get('silence_timeout_seconds') else 'json']
+        if options.get('silence_timeout_seconds'): command += ['--verbose', '--include-partial-messages']
         # The session id names the transcript Claude writes while it works
         # (transcript()); stdout.log gets the JSON envelope only at the end.
         if options.get('session_id'): command += ['--session-id', options['session_id']]
@@ -489,8 +521,11 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     if runner == 'codex': command.append('-')
     interrupted = None
     child = None
+    owned = None
     def kill(signum):
-        if child:
+        if child and owned:
+            owned.scan(); owned.signal(signum)
+        elif child:
             try: os.killpg(child.pid, signum)
             except ProcessLookupError: pass
     def stop(signum, frame):
@@ -499,8 +534,9 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         # group gets SIGTERM: it runs in a session of its own, without the
         # terminal, where a hang-up can be ignored (bureau-runtime.py execute).
         if signum == signal.SIGHUP: signum = signal.SIGTERM
-        interrupted = signum; kill(signum)
+        interrupted = signum; options['_provider_cancelled'] = True; kill(signum)
         signal.setitimer(signal.ITIMER_REAL, 5)
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM)}
     signal.signal(signal.SIGTERM, stop); signal.signal(signal.SIGINT, stop)
     # Left ignored when the run started under nohup, as in the runtime.
     if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN: signal.signal(signal.SIGHUP, stop)
@@ -510,52 +546,113 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)
         child_env = claude_env(options, env=child_env)
         tempdir = codex_tmpdir(runner, child_env, repo)
+        if options.get('silence_timeout_seconds') or options.get('cancel_file'):
+            owned = a.OwnedProcesses()
+            child_env[a.OWNER_ENV] = owned.token
+        child_env.pop('BUREAU_PROVIDER_CANCEL_FILE', None)
+        activity = a.Activity(runner, options.get('silence_timeout_seconds', 0), options.get('silence_child_timeout_seconds', 0))
         started = time.monotonic()
         with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
         with (evidence/'stdout.log').open('wb') as stdout, (evidence/'stderr.log').open('wb') as stderr:
             observer = options.get('_gate_observer')
-            child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE if observer else stdout, stderr=stderr, start_new_session=True,
+            child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE if observer or owned else stdout, stderr=stderr, start_new_session=True,
                                      env=child_env)
+            if owned: owned.attach(child.pid)
             reader = None
-            if observer:
+            stream_error = []
+            if observer or owned:
                 pipe = child.stdout
                 # communicate owns stdin and waiting; this reader alone owns
                 # stdout, preserving the actual JSONL and sampling execution HEADs.
                 child.stdout = None
                 def read_events():
-                    try:
-                        for line in pipe:
-                            stdout.write(line); stdout.flush()
+                    pending = b''
+                    def fanout(line):
+                        if observer:
                             try: observer.line(line.decode(errors='replace'))
                             except Exception: observer.error = 'execution evidence unavailable'
-                    except (OSError, ValueError, TypeError) as exc: observer.error = str(exc)
+                        if owned: activity.line(line)
+                    try:
+                        while True:
+                            chunk = os.read(pipe.fileno(), 65536)
+                            if not chunk: break
+                            stdout.write(chunk); stdout.flush()
+                            pending += chunk
+                            while b'\n' in pending:
+                                line, pending = pending.split(b'\n', 1)
+                                fanout(line)
+                        if pending: fanout(pending)
+                    except (OSError, ValueError, TypeError) as exc:
+                        stream_error.append(str(exc))
+                        if observer: observer.error = 'execution stream unavailable'
                     finally: pipe.close()
                 reader = threading.Thread(target=read_events, daemon=True)
                 reader.start()
             if interrupted: kill(interrupted)
             timed_out = False
+            timeout_kind = None
             try:
-                child.communicate(prompt.encode(), timeout=options['timeout'])
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                kill(signal.SIGTERM)
-                try: child.communicate(timeout=5)
-                except subprocess.TimeoutExpired: pass
+                input_bytes = prompt.encode()
+                while True:
+                    try:
+                        child.communicate(input_bytes, timeout=min(.1, options['timeout']) if owned else options['timeout'])
+                        break
+                    except subprocess.TimeoutExpired:
+                        input_bytes = None
+                        if not interrupted and options.get('cancel_file') and Path(options['cancel_file']).exists():
+                            # Let the review parent distinguish its own sibling
+                            # shutdown from an independent signal (which wins).
+                            if options.get('phase') in ('correctness', 'security', 'performance'):
+                                e.observe(e.atomic, Path(options['cancel_file'] + '.' + options['phase']), dict(cancelled=True))
+                            stop(signal.SIGTERM, None)
+                        if interrupted: break
+                        if time.monotonic() - started >= options['timeout']:
+                            timed_out = True; timeout_kind = 'wall-clock'; break
+                        if owned:
+                            owned.scan()
+                            if activity.expired(owned):
+                                timed_out = True; timeout_kind = 'silence'; break
             finally:
                 try:
                     if timed_out or interrupted:
                         # The leader can exit while descendants ignore the signal.
                         # Finish the entire group before returning to the owner.
+                        kill(signal.SIGTERM)
+                        if owned:
+                            owned.scan(); owned.signal(signal.SIGTERM)
+                        try: child.communicate(timeout=.3 if owned else 5)
+                        except subprocess.TimeoutExpired: pass
                         kill(signal.SIGKILL)
                         child.communicate()
+                    if owned: owned.drain()
                 finally:
                     signal.setitimer(signal.ITIMER_REAL, 0)
                     if reader:
                         reader.join(timeout=5)
-                        if reader.is_alive(): observer.error = 'execution stream did not close'
+                        if reader.is_alive():
+                            stream_error.append('execution stream did not close')
+                            if observer: observer.error = 'execution stream did not close'
+            if interrupted: return 130, '', dict(outcome='cancelled', provider_exit=child.returncode)
             if timed_out:
-                return 124, '', dict(outcome='timeout', provider_exit=child.returncode, duration_seconds=time.monotonic()-started)
+                if timeout_kind == 'silence' and options.get('cancel_file') and options.get('phase') in ('correctness', 'security', 'performance'):
+                    # A specialist shell can also return 25 for withdrawal.
+                    # Give its parent evidence of an actual watchdog failure.
+                    e.observe(e.atomic, Path(options['cancel_file'] + '.' + options['phase'] + '.silence'), dict(timeout_kind='silence'))
+                return (25 if timeout_kind == 'silence' else 124), '', dict(outcome='timeout', timeout_kind=timeout_kind,
+                            provider_exit=child.returncode, duration_seconds=time.monotonic()-started)
+            # Without the watchdog this remains observational gate evidence;
+            # an inherited pipe cannot invalidate a successful final result.
+            if stream_error and options.get('silence_timeout_seconds'):
+                raise OSError('provider execution stream unavailable')
     finally:
+        # Exceptional reader/inspection/spawn paths must also finish all owned
+        # writers before the receipt or the trusted shell can report a stop.
+        if child and child.poll() is None:
+            kill(signal.SIGKILL)
+            child.communicate()
+        if owned: owned.drain()
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        for sig, handler in previous.items(): signal.signal(sig, handler)
         if tempdir:
             try:
                 # A failure after Popen must also finish the child before its
@@ -600,9 +697,7 @@ def _run(options, prompt, system, repo, evidence, schema=None):
                 recovered_errors['count'] += 1
         if pending_error: return 22, '', dict(outcome='provider-error', provider_exit=child.returncode)
     else:
-        try: envelope = json.loads(stdout)
-        except ValueError: raise ValueError('Claude did not return a JSON envelope')
-        if not isinstance(envelope, dict): raise ValueError('Claude envelope must be an object')
+        envelope = claude_envelope(stdout)
         if envelope.get('is_error'): return 22, '', dict(outcome='provider-error', provider_exit=child.returncode)
         value = envelope.get('structured_output')
         if schema and not isinstance(value, dict):
@@ -938,6 +1033,7 @@ def main():
     parser.add_argument('--config', default=os.environ.get('BUREAU_CONFIG', '.bureau.json'))
     parser.add_argument('--prompt-file'); parser.add_argument('--system-file'); parser.add_argument('--schema')
     parser.add_argument('--gate-context')
+    parser.add_argument('--cancel-file')
     parser.add_argument('--gate-action', choices=('command', 'plan', 'run', 'publish'))
     parser.add_argument('--publication-before'); parser.add_argument('--publication-after')
     parser.add_argument('--check', action='store_true'); parser.add_argument('--describe', action='store_true')
@@ -946,6 +1042,7 @@ def main():
         config_path=Path(args.config).resolve(); config=json.loads(config_path.read_text())
         options=configuration(args.stage, config, os.environ)
         options['phase'] = args.phase or os.environ.get('BUREAU_PROVIDER_PHASE') or args.stage
+        options['cancel_file'] = args.cancel_file
         if args.describe: print(json.dumps(options)); return 0
         options['untrusted_env']=untrusted_env_mode(config)
         repo=Path(args.repo).resolve()
@@ -969,7 +1066,7 @@ def main():
             supported,options['session_note']=claude_takes_session_id(base/'.claude-cli.json',options['untrusted_env'])
             if supported: options['session_id']=str(uuid.uuid4())
         code,text,metadata=run(options,prompt,system,repo,evidence,schema)
-        if options.get('session_id') and code not in (0,124,130) and claude_rejected_session_id(evidence):
+        if options.get('session_id') and code not in (0,25,124,130) and claude_rejected_session_id(evidence):
             # A "yes" gone stale: the CLI behind an unchanged path (a wrapper, a
             # shim) no longer takes the flag. The call failed while parsing its
             # arguments, so nothing was paid: remember "no", keep the refused

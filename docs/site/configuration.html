@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c18ffbcb604ccd92d49500adcff9bea7ddf2084893aad4057e80ff88a73c43a5">
+<meta name="bureau-source-sha256" content="169cfc69414ed96571314cc52c2a02001ea44262bd7a89ebb73f0077be045682">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -760,6 +760,29 @@ per call: their calls often run 15 to 30 minutes and end with
 <code>124</code> when cut off</td>
 </tr>
 <tr>
+<td><code>agents.&lt;stage&gt;.silence_timeout_seconds</code></td>
+<td><code>0</code> (off)</td>
+<td>Maximum seconds without a useful provider event, measured with a
+monotonic clock. Stage value overrides
+<code>agents.providers.&lt;provider&gt;.silence_timeout_seconds</code>,
+then <code>0</code>. Finite JSON number in <code>[0, 86400]</code>;
+explicit <code>0</code> disables an inherited default. Invalid values
+fail with 22 before a provider call. Silence exits 25 and holds the
+ticket for a human after withdrawal checks</td>
+</tr>
+<tr>
+<td><code>agents.&lt;stage&gt;.silence_child_timeout_seconds</code></td>
+<td>normal silence window</td>
+<td>Optional longer silence window while an identified owned tool child
+is alive. Stage value overrides
+<code>agents.providers.&lt;provider&gt;.silence_child_timeout_seconds</code>,
+then the effective normal window. Finite JSON number in
+<code>[0, 86400]</code>, no shorter than the normal window. Measured
+from the last useful event; child liveness never slides the deadline.
+CLI liveness, unrelated descendants and unfinished tool items alone
+grant no extension</td>
+</tr>
+<tr>
 <td><code>agents.workbench_runner</code></td>
 <td>default runner</td>
 <td>Interactive bench provider; zero panes omits it</td>
@@ -794,6 +817,20 @@ write within the permitted workspace. The executor runs actual
 implementation/QA tests separately. Unknown runners, malformed results
 and denied permissions are errors, never automatic fallback to
 Claude.</p>
+<p>Silence settings apply per creative provider call, alongside the
+existing hard timeout and implementation bounds; outside-gate commands
+retain their own wall-clock handling. Claude uses
+<code>--output-format stream-json --verbose --include-partial-messages</code>
+only with a nonzero silence window; unsupported CLI flags fail without
+falling back to an unobservable call. Native ownership inspection uses
+macOS libproc or Linux procfs and orphan adoption. A per-call inherited
+marker tracks detached descendants; a process that both clears that
+marker and detaches before observation cannot be identified. Review
+cancellation uses the same ownership cleanup even with silence disabled.
+Compare installation drift, resync all scripts including
+<code>bureau-activity.py</code>, and restart drivers before opting in.
+Qualification uses local fakes; test your installed provider CLI before
+production use.</p>
 <p>Spec numbers are reserved per issue in
 <code>&lt;git common dir&gt;/bureau/spec-numbers.json</code> under a
 sibling <code>.guard</code> lock. The spec stage fetches and prunes all

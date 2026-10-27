@@ -33,6 +33,7 @@ REVIEW_TMP=$(mktemp -d)
 # admission waits are clean exits; a wait before review has no specialist output.
 _review_cleanup() {
   local rc=$?
+  _review_stop_specialists
   # Also collect a failed/partial round's receipts. Unknown decisions and
   # measurements remain null; this cannot replace the stage's original exit.
   if [ "${REVIEW_ROUND_STARTED:-0}" = 1 ]; then
@@ -47,6 +48,43 @@ _review_cleanup() {
   return "$rc"
 }
 trap _review_cleanup EXIT
+
+_review_stop_specialists() {
+  [ "${REVIEW_SPECIALISTS_JOINED:-0}" != 1 ] || return 0
+  [ -n "${CORRECT_PID:-}${SEC_PID:-}${PERF_PID:-}" ] || return 0
+  : > "$REVIEW_TMP/cancel-specialists"
+  local pid
+  for pid in "${CORRECT_PID:-}" "${SEC_PID:-}" "${PERF_PID:-}"; do
+    [ -z "$pid" ] || wait "$pid" 2>/dev/null || true
+  done
+  REVIEW_SPECIALISTS_JOINED=1
+}
+
+# Bash 3.2 has no wait -n. Poll all three leaders instead of blocking on the
+# first one: a silent security/performance pass must stop productive siblings.
+_review_join_specialists() {
+  local pids=("$CORRECT_PID" "$SEC_PID" "$PERF_PID") codes=('' '' '') phases=(correctness security performance) i remaining=3 rc
+  REVIEW_STOP_RC=0
+  while [ "$remaining" -gt 0 ]; do
+    for i in 0 1 2; do
+      [ -z "${codes[$i]}" ] || continue
+      if ! kill -0 "${pids[$i]}" 2>/dev/null; then
+        rc=0; wait "${pids[$i]}" 2>/dev/null || rc=$?
+        codes[$i]="$rc"; remaining=$((remaining - 1))
+        if [ "$rc" = 130 ] && [ ! -f "$REVIEW_TMP/cancel-specialists.${phases[$i]}" ]; then
+          REVIEW_STOP_RC=130; : > "$REVIEW_TMP/cancel-specialists"
+        elif [ "$rc" = 25 ] && [ -f "$REVIEW_TMP/cancel-specialists.${phases[$i]}.silence" ] && [ "$REVIEW_STOP_RC" = 0 ]; then
+          REVIEW_STOP_RC=25; : > "$REVIEW_TMP/cancel-specialists"
+        fi
+      fi
+    done
+    # Withdrawal waits for every current call, including inactive's exit 25.
+    # Only a watchdog failure or independent cancellation stops siblings.
+    [ "$remaining" = 0 ] || sleep .1
+  done
+  CORRECT_RC="${codes[0]}"; SEC_RC="${codes[1]}"; PERF_RC="${codes[2]}"
+  REVIEW_SPECIALISTS_JOINED=1
+}
 
 # review_text_from_merger <merger output>: the text the PR comment and the ticket get.
 # The merger answers with the object of bureau-review.schema.json, whose "comment" is
@@ -393,7 +431,8 @@ if [ "$_cav" != "off" ]; then
 fi
 
 echo "  Starting correctness review..."
-BUREAU_PROVIDER_PHASE=correctness "${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a CORRECTNESS specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
+trap 'exit 130' INT TERM HUP
+BUREAU_PROVIDER_PHASE=correctness BUREAU_PROVIDER_CANCEL_FILE="$REVIEW_TMP/cancel-specialists" "${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a CORRECTNESS specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
 
 $SPEC_CONTEXT
 
@@ -415,7 +454,7 @@ Emit human-readable prose for the PR reviewer, then a SINGLE fenced json block a
 CORRECT_PID=$!
 
 echo "  Starting security review..."
-BUREAU_PROVIDER_PHASE=security "${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a SECURITY specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
+BUREAU_PROVIDER_PHASE=security BUREAU_PROVIDER_CANCEL_FILE="$REVIEW_TMP/cancel-specialists" "${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a SECURITY specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
 
 $SPEC_CONTEXT
 
@@ -437,7 +476,7 @@ Emit human-readable prose, then a SINGLE fenced json block:
 SEC_PID=$!
 
 echo "  Starting performance review..."
-BUREAU_PROVIDER_PHASE=performance "${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a PERFORMANCE specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
+BUREAU_PROVIDER_PHASE=performance BUREAU_PROVIDER_CANCEL_FILE="$REVIEW_TMP/cancel-specialists" "${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a PERFORMANCE specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
 
 $SPEC_CONTEXT
 
@@ -463,14 +502,15 @@ PERF_PID=$!
 echo "  Waiting for specialists..."
 # A withdrawn specialist can end before its siblings. Drain every writer before
 # the parent checkpoint exits and the worker releases/preserves the checkout.
-CORRECT_RC=0; wait $CORRECT_PID 2>/dev/null || CORRECT_RC=$?; echo "    Correctness: done"
-SEC_RC=0; wait $SEC_PID 2>/dev/null || SEC_RC=$?; echo "    Security: done"
-PERF_RC=0; wait $PERF_PID 2>/dev/null || PERF_RC=$?; echo "    Performance: done"
+_review_join_specialists
+echo "    Correctness, security, performance: joined"
 # A later withdrawal must not overwrite an earlier signal cancellation.
-for REVIEW_PASS_RC in "$CORRECT_RC" "$SEC_RC" "$PERF_RC"; do
-  [ "$REVIEW_PASS_RC" != 130 ] || exit 130
-done
+[ "$REVIEW_STOP_RC" != 130 ] || exit 130
 bureau_ticket_checkpoint "$ISSUE" latched
+if [ "$REVIEW_STOP_RC" = 25 ]; then
+  bureau_silence_hold "$ISSUE" code_review
+  exit 25
+fi
 for REVIEW_PASS_RC in "$CORRECT_RC" "$SEC_RC" "$PERF_RC"; do
   [ "$REVIEW_PASS_RC" = 0 ] || exit "$REVIEW_PASS_RC"
 done

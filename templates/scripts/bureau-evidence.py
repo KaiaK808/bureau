@@ -598,6 +598,10 @@ class Store:
             if value[key] is not None and (not isinstance(value[key], str) or not Path(value[key]).is_absolute()):
                 raise ValueError('receipt needs an absolute provider pointer')
         value.update(start_head=head(receipt.get('start_head')), end_head=head(receipt.get('end_head')))
+        # Additive metadata only; legacy receipts have no timeout_kind. Never
+        # infer silence from an interrupted review or an absent result/usage.
+        if receipt.get('timeout_kind') in ('silence', 'wall-clock'):
+            value['timeout_kind'] = receipt['timeout_kind']
         attempts = observe(lambda: [execution_metadata(a) for a in receipt.get('gate_attempts', [])])
         if attempts: value['gate_attempts'] = attempts
         inputs = receipt.get('review_inputs')

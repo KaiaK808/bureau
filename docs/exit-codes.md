@@ -37,6 +37,10 @@ This page is the complete table + how the alerter behaves.
 
 Successful mandatory background state reads use the same configured-ID withdrawal protocol as additional checkpoints: Done 0, cancelled/duplicate 26, other inactive IDs 25, never the stage-mismatch exit 2. The observation is latched before routing, so later refresh failures cannot replace it with an error or a needs-human escalation. A failed mandatory read itself retains its existing strict error handling.
 
+Provider silence also uses `25` (`needs-human-or-paused`), with `outcome: timeout` and `timeout_kind: silence` in the provider result metadata and receipt. Owned writers are stopped and drained before reporting; the trusted shell checks withdrawal before adding the human hold, so Done/cancelled/inactive checkpoints keep `0`/`26`/`25` without a new escalation. Implementation starts no further pass on silence. Review cancels and joins sibling specialists, records the interrupted paid round with unknown verdict/usage left null, and starts no verdict merger. Independent signal cancellation remains `130`; sibling cancellation acknowledgments do not replace the originating silence stop. Provider hard timeouts remain `124` with `timeout_kind: wall-clock`; outside-gate handling and quiet overlap waiting (`29`) are unchanged.
+
+If the silence escalation cannot write the human label, the existing local picker hold is retained and the stage still exits `25`, including when Linear is unusable. The parent consumes any withdrawal latched during that attempt before reporting the silence hold.
+
 `bureau-tick.sh` additionally writes a JSON outcome. Capacity waiting keeps process exit 28 and JSON `exit_code:28`, with `outcome:"waiting"`. Quota waiting returns process exit 0 with result `exit_code:23` to allow the next scheduled tick. A stage exiting 0 with unchanged ticket state is `waiting`; only actual Done is `completed`. Shepherd and schedule execution return nonzero for review/human/cancellation boundaries so the next serial ticket does not start as though the first had completed.
 
 

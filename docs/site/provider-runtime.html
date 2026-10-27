@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="eeff68dd51d08c9be83b3ff9487a6fa96a915cfb8e42127e38d26cfd59af4871">
+<meta name="bureau-source-sha256" content="95e71d3125d3856c1d9bda01c8def567ff8c686b5d1d78d59743066b9ac576e6">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -124,6 +124,34 @@ existing iteration/total bounds through
 one pass of the loop, and the stage ends with 124 only when no pass is
 left (<a
 href="troubleshooting.html#exit-124-timeout--a-provider-pass-hit-its-time-limit">troubleshooting</a>).</p>
+<p>Opt-in <code>agents.STAGE.silence_timeout_seconds</code> (default
+<code>0</code>, off) stops a call without useful provider activity with
+<code>25</code> and <code>timeout_kind: silence</code>, independently of
+wall-clock <code>124</code> and cancellation <code>130</code>. Optional
+<code>silence_child_timeout_seconds</code> grants an identified live
+tool process a longer window measured from the last useful event.
+Initial association handles shell wrappers, environment prefixes and
+<code>cd … &amp;&amp;</code>; process birth identities and observed
+descendants then retain that association across exec. A background Bash
+task keeps its association after its initial result and while
+<code>TaskOutput</code> awaits it, until the child finishes. Provider
+liveness and an unfinished tool event alone grant no extra time. With
+the watchdog off, a successful validated result stays successful even
+when a background child holds stdout past the reader join; reader
+failures still invalidate execution evidence for gate recovery.</p>
+<p>Parallel review lets every current provider call finish on ordinary
+ticket withdrawal, with silence enabled or disabled. Sibling
+cancellation requires an actual silence failure or explicit
+cancellation. Review joins all writers before consuming the shared
+withdrawal latch and recording its partial paid round. Silence and
+cancellation drain identified owned descendants; process inspection
+supports macOS libproc and Linux procfs/subreaper, with inherited
+ownership markers or ancestry sampled before detachment required to
+identify detached children. Resync all runtime scripts together,
+including <code>bureau-activity.py</code>, and restart drivers before
+enabling the watchdog. Local qualification uses fake providers and
+services; live CLI compatibility remains a separate adopting-repository
+check.</p>
 <p>For Codex calls whose process exits successfully, a top-level
 <code>error</code> event is a recovered notice only when a later
 <code>turn.completed</code> follows it. An unrecovered

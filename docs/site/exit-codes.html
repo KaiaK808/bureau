@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f59d91daa494cba175af5fb49fd06596d0b7a56d275edd222d9822782d91c017">
+<meta name="bureau-source-sha256" content="f07ff165b7547c8946d742d7a4ab0a7c41ff37a4063ed2c2b4eb5b71134cd11a">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -298,6 +298,25 @@ exit 2. The observation is latched before routing, so later refresh
 failures cannot replace it with an error or a needs-human escalation. A
 failed mandatory read itself retains its existing strict error
 handling.</p>
+<p>Provider silence also uses <code>25</code>
+(<code>needs-human-or-paused</code>), with <code>outcome: timeout</code>
+and <code>timeout_kind: silence</code> in the provider result metadata
+and receipt. Owned writers are stopped and drained before reporting; the
+trusted shell checks withdrawal before adding the human hold, so
+Done/cancelled/inactive checkpoints keep
+<code>0</code>/<code>26</code>/<code>25</code> without a new escalation.
+Implementation starts no further pass on silence. Review cancels and
+joins sibling specialists, records the interrupted paid round with
+unknown verdict/usage left null, and starts no verdict merger.
+Independent signal cancellation remains <code>130</code>; sibling
+cancellation acknowledgments do not replace the originating silence
+stop. Provider hard timeouts remain <code>124</code> with
+<code>timeout_kind: wall-clock</code>; outside-gate handling and quiet
+overlap waiting (<code>29</code>) are unchanged.</p>
+<p>If the silence escalation cannot write the human label, the existing
+local picker hold is retained and the stage still exits <code>25</code>,
+including when Linear is unusable. The parent consumes any withdrawal
+latched during that attempt before reporting the silence hold.</p>
 <p><code>bureau-tick.sh</code> additionally writes a JSON outcome.
 Capacity waiting keeps process exit 28 and JSON
 <code>exit_code:28</code>, with <code>outcome:"waiting"</code>. Quota
