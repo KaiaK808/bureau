@@ -2,7 +2,9 @@
 # Exercise complete tick and queue dispatchers with an overlap-waiting worker.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SB=$(mktemp -d /private/tmp/bureau-1748-consumers.XXXXXXXX)
+TMP_ROOT=/private/tmp
+[ -d "$TMP_ROOT" ] || TMP_ROOT="${TMPDIR:-/tmp}"
+SB=$(mktemp -d "$TMP_ROOT/bureau-1748-consumers.XXXXXXXX")
 trap 'rm -rf "$SB"' EXIT
 mkdir -p "$SB/scripts" "$SB/bin"
 git -C "$SB" init -q -b main

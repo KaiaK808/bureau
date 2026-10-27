@@ -8,7 +8,7 @@ import tempfile
 sys.dont_write_bytecode = True
 from file_overlap_test import Fixture, SCRIPTS
 
-with tempfile.TemporaryDirectory(prefix='bureau-1748-negative-', dir='/private/tmp') as scratch:
+with tempfile.TemporaryDirectory(prefix='bureau-1748-negative-', dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as scratch:
     scripts = Path(scratch) / 'scripts'
     shutil.copytree(SCRIPTS, scripts)
     path = scripts / 'bureau-admission.py'

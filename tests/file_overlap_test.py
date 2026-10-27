@@ -100,7 +100,7 @@ def load(file):
 
 class Fixture(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='bureau-1748-test-', dir='/private/tmp')
+        self.temp = tempfile.TemporaryDirectory(prefix='bureau-1748-test-', dir='/private/tmp' if Path('/private/tmp').is_dir() else None)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name); self.repo = self.root / 'repo'; self.repo.mkdir()
         self.remote = self.root / 'origin.git'; self.bin = self.root / 'bin'; self.bin.mkdir()
