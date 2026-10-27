@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f3fb534fb5a38ac99e6494fd50f2857e4c0af563d078fcdfe290c8dacef2efa1">
+<meta name="bureau-source-sha256" content="4a9ce83fee5c3d3f62c3841c410452ea462bb3e42111e6244d94bcdf346df095">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -520,15 +520,17 @@ head SHA, plus legacy commit statuses, independently of GitHub's
 <code>mergeStateStatus</code>. Check runs must be completed without
 failure; skipped and neutral runs are allowed and contribute zero to
 <code>merge_min_required_checks</code>. Newest means latest readable
-<code>started_at</code>, then highest <code>id</code>; if any timestamp
-in a name/app group is unreadable, that group uses IDs alone. Pending,
-queue-grace and failure decisions use these newest runs. Legacy statuses
-already carry GitHub's latest result per context. Catches the "no
-required-checks rule configured" hole where CLEAN passes with red CI.
-Set false only for repos genuinely without CI (docs-only, prototypes).
-Only the JSON value <code>false</code> switches it off (before v3.1 the
-gate ignored <code>false</code>); any other value, the string
-<code>"false"</code> included, keeps it on with a warning</td>
+<code>started_at</code>, then highest <code>id</code>. Readable times
+use <code>YYYY-MM-DDTHH:MM:SS[.digits]</code> with <code>Z</code> or a
+numeric <code>±HH:MM</code> offset, preserving every fractional digit;
+if any timestamp in a name/app group is unreadable, that group uses IDs
+alone. Pending, queue-grace and failure decisions use these newest runs.
+Legacy statuses already carry GitHub's latest result per context.
+Catches the "no required-checks rule configured" hole where CLEAN passes
+with red CI. Set false only for repos genuinely without CI (docs-only,
+prototypes). Only the JSON value <code>false</code> switches it off
+(before v3.1 the gate ignored <code>false</code>); any other value, the
+string <code>"false"</code> included, keeps it on with a warning</td>
 </tr>
 <tr>
 <td><code>agents.merge_require_up_to_date</code></td>

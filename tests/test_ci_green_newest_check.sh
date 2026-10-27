@@ -148,6 +148,42 @@ mv "$T/changed.json" "$T/checks.json"
 gate
 check 'equal started_at uses highest numeric id' line_is 'ci: failing check(s) on HEAD_SHA: ci'
 
+# Newer failures have lower ids, so losing any timestamp precision lets them pass.
+while IFS='|' read -r label newer older; do
+  reset_case
+  runs "[{\"name\":\"ci\",\"app\":{\"id\":1},\"id\":10,\"started_at\":\"$newer\",\"status\":\"completed\",\"conclusion\":\"failure\"},
+         {\"name\":\"ci\",\"app\":{\"id\":1},\"id\":20,\"started_at\":\"$older\",\"status\":\"completed\",\"conclusion\":\"success\"}]"
+  gate
+  check "$label" line_is 'ci: failing check(s) on HEAD_SHA: ci'
+done <<'TIMESTAMPS'
+newer fractional failure supersedes older whole-second success|2026-01-02T00:00:00.123Z|2026-01-01T00:00:00Z
+fractional second supersedes whole second with opposing ids|2026-01-02T00:00:00.123Z|2026-01-02T00:00:00Z
+larger fraction supersedes smaller fraction with opposing ids|2026-01-02T00:00:00.5Z|2026-01-02T00:00:00.123Z
+fractional ordering preserves digits beyond floating-point precision|2026-01-02T00:00:00.0000000000000000002Z|2026-01-02T00:00:00.0000000000000000001Z
+numeric zero offset preserves fractional ordering|2026-01-02T00:00:00.123+00:00|2026-01-02T00:00:00Z
+positive numeric offset orders by UTC time|2026-01-02T00:00:00.123Z|2026-01-02T02:00:00+02:00
+negative numeric offset orders by UTC time|2026-01-01T22:00:00.123-02:00|2026-01-02T00:00:00Z
+TIMESTAMPS
+
+# Equivalent fractional forms still defer to the highest id.
+reset_case
+runs '[{"name":"ci","app":{"id":1},"id":10,"started_at":"2026-01-02T00:00:00.123000Z","status":"completed","conclusion":"failure"},
+       {"name":"ci","app":{"id":1},"id":20,"started_at":"2026-01-02T00:00:00.123Z","status":"completed","conclusion":"success"}]'
+gate
+check 'equal fractions with trailing zeros use highest id' green
+jq '.check_runs[0].started_at = "2026-01-02T00:00:00.000Z" | .check_runs[1].started_at = "2026-01-02T00:00:00Z"' \
+  "$T/checks.json" > "$T/changed.json"
+mv "$T/changed.json" "$T/checks.json"
+gate
+check 'zero fraction ties with whole second and uses highest id' green
+
+reset_case
+runs '[{"name":"ci","app":{"id":1},"id":10,"started_at":"2026-01-02T00:00:00.123Z","status":"completed","conclusion":"failure"},
+       {"name":"ci","app":{"id":1},"id":20,"started_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"},
+       {"name":"ci","app":{"id":1},"id":5,"started_at":"garbage","status":"completed","conclusion":"failure"}]'
+gate
+check 'one garbage timestamp makes the entire group use ids alone' green
+
 for at in null '"unreadable"'; do
   reset_case
   runs "[{\"name\":\"ci\",\"id\":10,\"started_at\":$at,\"status\":\"completed\",\"conclusion\":\"success\"},

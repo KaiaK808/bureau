@@ -2040,9 +2040,11 @@ _bureau_gh_owner_repo() {
 # Returns 0 if the newest check runs and legacy status contexts on the PR's
 # CURRENT head SHA have finished without failure and meet the success minimum.
 # Check runs are grouped by name and app.id across all pages. Within each group,
-# the latest started_at wins, with the highest id breaking ties. If any started_at
-# in a group is unreadable, ids alone order that group. Legacy statuses already
-# carry GitHub's latest result per context and are handled separately.
+# the latest started_at wins, with the highest id breaking ties. Readable times
+# use YYYY-MM-DDTHH:MM:SS[.digits] with Z or a numeric ±HH:MM offset; fractional
+# digits are compared exactly. If any started_at in a group is unreadable, ids
+# alone order that group. Legacy statuses already carry GitHub's latest result
+# per context and are handled separately.
 # Returns 1 with a stderr diagnostic for pending, in-progress, or failing checks.
 #
 # Independent of `mergeStateStatus`. Only newest check runs with conclusion
@@ -2090,9 +2092,24 @@ pr_ci_is_green() {
   }
   raw_check_count=$(printf '%s' "$checks" | jq 'length')
   checks=$(printf '%s' "$checks" | jq '
+    def started_at_key:
+      if type != "string" then null
+      else try (
+        (capture("\\A(?<second>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]+))?(?<zone>Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])\\z") // {})
+        | (.second + "Z" | fromdateiso8601) as $second
+        | if ($second | todateiso8601) != (.second + "Z") then null
+          else
+            (if .zone == "Z" then 0
+             else ((.zone[1:3] | tonumber) * 3600 + (.zone[4:6] | tonumber) * 60)
+               * (if .zone[0:1] == "+" then 1 else -1 end)
+             end) as $offset
+            # Keep fractions as digit strings: epoch floats lose small differences.
+            # Removing trailing zeros makes equivalent fractions tie for id ordering.
+            | [($second - $offset), (.fraction // "" | sub("0+\\z"; ""))]
+          end
+      ) catch null end;
     group_by([.name, .app.id])
-    | map(map({run: ., at: (.started_at
-        | if type == "string" then (try fromdateiso8601 catch null) else null end)})
+    | map(map({run: ., at: (.started_at | started_at_key)})
       | if any(.at == null) then max_by(.run.id)
         else max_by([.at, .run.id]) end
       | .run)') || {
