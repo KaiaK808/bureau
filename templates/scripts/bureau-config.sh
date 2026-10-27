@@ -4392,24 +4392,20 @@ build_spec_context() {
   printf '%s' "$ctx"
 }
 
-# build_lessons_context: read LESSONS.md from cwd (the worktree root) and wrap
-# it for inclusion in a stage prompt. Returns empty string when the file is
-# absent OR contains only whitespace — so consumers can splice it
-# unconditionally without producing an empty "## Learned patterns" section.
-#
-# /bureau-learnings writes the draft; the human curates and commits. Only the
-# committed file ever reaches a pipeline prompt, because worktrees reset to
-# origin/<branch> before every pick.
-#
-# Usage: lessons=$(build_lessons_context)
+# build_lessons_context <stage> [spec-directory] [local-diff-range]: bounded,
+# path-relevant advisory LESSONS.md; no writes or remote Git. An omitted range
+# uses origin/<repo.base_branch, default main>...HEAD. Review pins its PR range.
+# Default: 8192 UTF-8 bytes INCLUDING the unchanged wrapper/truncation marker;
+# agents.lessons_budget_bytes.<stage> overrides it (0 disables). Optional
+# context failures must never replace a ticket checkpoint or stage exit.
 build_lessons_context() {
-  local file="LESSONS.md"
-  [ ! -f "$file" ] && return 0
-  # Whitespace-only check: tr -d, then test empty.
-  local trimmed
-  trimmed=$(tr -d '[:space:]' < "$file" 2>/dev/null || true)
-  [ -z "$trimmed" ] && return 0
-  printf '## Learned patterns\n\nThe following are human-curated lessons from prior bureau runs. Treat as advisory, not binding — they reflect patterns observed across multiple past issues and may not all apply here. Use them to inform judgment; do not cite them as pinned decisions.\n\n%s' "$(cat "$file")"
+  [ -f LESSONS.md ] || return 0
+  local args=(--stage "${1:-spec}" --spec-dir "${2:-}" --config "$BUREAU_CONFIG")
+  [ "$#" -lt 3 ] || args+=(--diff "$3")
+  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-lessons.py" "${args[@]}" || {
+    ( echo 'bureau lessons: WARN: optional lesson helper unavailable; continuing without lessons' >&2 ) || true
+  }
+  return 0
 }
 
 # build_negative_constraints: shared "Do NOT" block injected into prompts that

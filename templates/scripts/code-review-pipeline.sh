@@ -300,8 +300,8 @@ SPEC_CONTEXT="SCOPE DISCIPLINE — READ BEFORE FLAGGING:"
 [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/tasks.md" ]    && SPEC_CONTEXT+=$'\n- '"$SPEC_DIR"$'tasks.md — per-task breakdown.'
 SPEC_CONTEXT+=$'\n\nA finding that contradicts a pinned decision in any of the above is NOT a bug — classify it SKIP and cite the source in the finding ("skipped: SPEC.md §Stack pins Go 1.22"). Do NOT repeat a SKIP across review cycles — if a prior triage comment on this ticket already declined or deferred a finding, do not resurface it. Pinned decisions win over general best-practice; the user has already weighed the tradeoff.\n\nClassify: CRITICAL (security / data loss / silent corruption) / BUG (real defect, not a spec disagreement) / MINOR (style, micro-opt, defensible nit) / SKIP (contradicts a pinned decision — include citation).'
 
-# logs→memory: include human-curated LESSONS.md if present. Empty when absent.
-LESSONS_CONTEXT=$(build_lessons_context)
+# All specialists share the bounded selection for the immutable PR inputs.
+LESSONS_CONTEXT=$(build_lessons_context code_review "$SPEC_DIR" "$REVIEW_DIFF")
 
 echo ""
 echo "Phase 1/3: multi-specialist review (3 passes in parallel)"

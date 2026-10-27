@@ -437,11 +437,13 @@ Mine the pipeline's own runs for recurring failure modes and review-feedback pat
 
 3. **You curate.** Read `LESSONS.proposed.md`, incorporate accepted findings into the existing `LESSONS.md`, preserve prior lessons, then review and commit that diff. Anything you dismiss will be re-proposed by future runs if the pattern persists — that's a feature, not a bug.
 
-4. **Pipelines read it back, advisory only.** `bureau-config.sh::build_lessons_context` reads `LESSONS.md` from cwd (the worktree root) and wraps it with a "Treat as advisory, not binding" preamble. The result is injected into:
+4. **Pipelines read it back, advisory only.** `bureau-config.sh::build_lessons_context` reads `LESSONS.md` from cwd (the worktree root), selects task/diff path matches plus untagged general lessons, drops expired entries and retains the "Treat as advisory, not binding" preamble. The complete block defaults to 8192 UTF-8 bytes per stage, retaining whole entries in deterministic order and skipping entries that do not fit, followed by the truncation marker; see [lesson budgets](configuration.md#advisory-lesson-budgets) and the [optional entry format](stage-protocol.md#bounded-advisory-lessons). The result is injected into:
    - `spec-pipeline.sh` Phase 1 (`speckit-specify`) — where decisions are first shaped.
+   - `implement-pipeline.sh` — both the iteration and `/goal` prompts.
+   - `qa-pipeline.sh` — the coverage/repair prompt when a provider pass is needed.
    - `code-review-pipeline.sh` — into all three specialist prompts (correctness, security, performance).
 
-   Other stages (`ux`, `copy`, `qa`, `merge`, `rebase`) deliberately do **not** include it. If the file is absent or whitespace-only, injection is a no-op — pipelines run unchanged.
+   Other background stages (`spec_review`, `ux`, `copy`, `merge`, `rebase`) have no injected lesson block. If the file is absent or whitespace-only, injection is a no-op; existing free-form files remain one bounded general set.
 
 ### Why human-in-the-loop (not auto-applied)
 

@@ -60,6 +60,8 @@ Ticket withdrawal checkpoints classify configured IDs, never display names. A co
 
 The continuous dispatcher adds no numeric exit. Lanes yield on 28/29 (quiet admission waits), 23 (one-shot usage throttle), 10/16 (transient retry) and merge-gate 2, with deadlines in `bureau/dispatch-skips.json`. Other 25 outcomes, including silence escalation without a label, remain held across restart; a repository pause defers instead. Terminal 0/26, intentional handoff 20 and unknown failures stay skipped until reconciliation; unknown failures also alert and attempt a human hold. `--respect-config` uses 20 for a disabled stage. Owned base refresh uses 20 plus gate-report `refreshed`/`base_refresh` metadata to continue to fresh Build Review, never to report merge success. Dispatcher/poller lock conflicts return 21, invalid dispatcher configuration returns 24, and interrupted dispatcher/supervisor shutdown returns 130 after cleanup. Standalone shepherd retains its cancellable admission and merge waits.
 
+Optional `build_lessons_context` selection and `agents.lessons_budget_bytes` add no exit code. Expired or invalid entries, unavailable local diff/context and invalid or undersized budgets can warn while the stage continues. Lessons remain advisory: ticket checkpoint exits `0`/`25`/`26`, quiet overlap `29`, silence `25` with `timeout_kind: silence`, review floors/rounds and dispatcher lane outcomes retain their existing meaning.
+
 ## Telegram alerts
 
 `alert_telegram` (in `bureau-config.sh`) sends a message when:

@@ -1288,11 +1288,12 @@ s.end_attempt(run,a,0,sys.argv[5])
 
     def test_isolated_entrypoints_do_not_write_bytecode_into_installed_scripts(self):
         installed=self.repo.parent/'installed scripts'; installed.mkdir()
-        for name in ('runtime','provider','supervision','evidence','spec','gates','activity'):
+        for name in ('runtime','provider','supervision','evidence','spec','gates','activity','lessons'):
             shutil.copy(ROOT/'templates/scripts'/('bureau-'+name+'.py'),installed)
         shutil.copy(ROOT/'templates/scripts/bureau-insights.sh', installed)
         before={p.name:p.read_bytes() for p in installed.iterdir()}
         for name,args in [('runtime',['--repo',str(self.repo),'status']),('supervision',['--repo',str(self.repo),'status']),
+                          ('lessons',['--config',str(self.repo/'.bureau.json'),'--stage','implement']),
                           ('provider',['--stage','implement','--config',str(self.repo/'.bureau.json'),'--describe'])]:
             result=subprocess.run([sys.executable,'-I',str(installed/('bureau-'+name+'.py')),*args],
                                   capture_output=True,text=True,env=os.environ)

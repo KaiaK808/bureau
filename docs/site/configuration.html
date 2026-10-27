@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="89b8dce98650c72f009206673581629cb31b59e4436c58a7db06beeb873a37dd">
+<meta name="bureau-source-sha256" content="edc9587b91a2b9c4f31832bb46b422780e9b9e4d5f8fc168a20fd9027376267e">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -868,6 +868,30 @@ phases. Existing approved specs resume downstream; older issue-directory
 associations are not imported into reservations. Keep the registry
 across cleanup. Separate clones or hosts need their own coordination;
 the spec admission cap itself is also a non-atomic Linear snapshot.</p>
+<h3 id="advisory-lesson-budgets">Advisory lesson budgets</h3>
+<p><code>agents.lessons_budget_bytes</code> is an optional object with
+<code>spec</code>, <code>implement</code>, <code>qa</code> and
+<code>code_review</code> integer keys. Each defaults to <strong>8192
+UTF-8 bytes</strong>, including the existing advisory wrapper,
+separators and truncation marker; each review specialist receives the
+same bounded context. Values 0–1048576 are accepted, <code>0</code>
+disables injection for that stage, and invalid values warn and fall back
+to 8192. For example:
+<code>"lessons_budget_bytes": {"implement": 12288, "qa": 4096, "code_review": 4096}</code>
+inside <code>agents</code>. On overflow, keep whole entries in
+deterministic order, skipping entries that do not fit and continuing to
+later entries, followed by the truncation marker; entries are never
+sliced. A single oversized entry is dropped, leaving the wrapper and
+marker if no entry fits. A budget too small for the complete wrapper and
+marker omits overflowing context with a warning. These are byte limits,
+not token estimates.</p>
+<p>Curate <code>LESSONS.md</code> using the <a
+href="stage-protocol.html#bounded-advisory-lessons">entry format and
+selection rules</a>. Existing free-form files remain one untagged
+general lesson set, now subject to the same budget. Upgrade by resyncing
+the complete scripts scope, including <code>bureau-lessons.py</code> and
+its callers, and restarting drivers; <code>--update</code> alone does
+not install the helper. No lesson-file migration is required.</p>
 <h3 id="session"><code>session</code></h3>
 <p>Cost logging is opt-in. Usage throttling uses an operator-provided
 signal for the selected provider; no signal means unknown usage and

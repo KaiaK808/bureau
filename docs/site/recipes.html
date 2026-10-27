@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="fdbeb6dad83cd5d22776f0328db53b69c6878d20188239406d1dc01dce0c5444">
+<meta name="bureau-source-sha256" content="1af4e88bdc766a8382fbf180d4acc01a5a104fd9b057ab641abde18c352045c6">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -528,20 +528,30 @@ and commit that diff. Anything you dismiss will be re-proposed by future
 runs if the pattern persists — that's a feature, not a bug.</p></li>
 <li><p><strong>Pipelines read it back, advisory only.</strong>
 <code>bureau-config.sh::build_lessons_context</code> reads
-<code>LESSONS.md</code> from cwd (the worktree root) and wraps it with a
-"Treat as advisory, not binding" preamble. The result is injected
-into:</p>
+<code>LESSONS.md</code> from cwd (the worktree root), selects task/diff
+path matches plus untagged general lessons, drops expired entries and
+retains the "Treat as advisory, not binding" preamble. The complete
+block defaults to 8192 UTF-8 bytes per stage, retaining whole entries in
+deterministic order and skipping entries that do not fit, followed by
+the truncation marker; see <a
+href="configuration.html#advisory-lesson-budgets">lesson budgets</a> and
+the <a href="stage-protocol.html#bounded-advisory-lessons">optional entry
+format</a>. The result is injected into:</p>
 <ul>
 <li><code>spec-pipeline.sh</code> Phase 1 (<code>speckit-specify</code>)
 — where decisions are first shaped.</li>
+<li><code>implement-pipeline.sh</code> — both the iteration and
+<code>/goal</code> prompts.</li>
+<li><code>qa-pipeline.sh</code> — the coverage/repair prompt when a
+provider pass is needed.</li>
 <li><code>code-review-pipeline.sh</code> — into all three specialist
 prompts (correctness, security, performance).</li>
 </ul>
-<p>Other stages (<code>ux</code>, <code>copy</code>, <code>qa</code>,
-<code>merge</code>, <code>rebase</code>) deliberately do
-<strong>not</strong> include it. If the file is absent or
-whitespace-only, injection is a no-op — pipelines run
-unchanged.</p></li>
+<p>Other background stages (<code>spec_review</code>, <code>ux</code>,
+<code>copy</code>, <code>merge</code>, <code>rebase</code>) have no
+injected lesson block. If the file is absent or whitespace-only,
+injection is a no-op; existing free-form files remain one bounded
+general set.</p></li>
 </ol>
 <h3 id="why-human-in-the-loop-not-auto-applied">Why human-in-the-loop
 (not auto-applied)</h3>

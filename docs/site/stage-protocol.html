@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e5ae17da1cc896e88ae47abec5e155f0d5a4a7aa3a7916fc6534c71ac0e13376">
+<meta name="bureau-source-sha256" content="261b0732d7ad01be169aeae63e2a9e10b59097cb7feaacd7146b7a41068e06ad">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -820,6 +820,87 @@ acceptance brief continues to distinguish provider verdict from
 invocation verdict. Old evidence needs no backfill. Resync scripts
 together after comparing installation drift, then restart drivers; live
 provider/adopter qualification remains outstanding.</p>
+<h2 id="bounded-advisory-lessons">Bounded advisory lessons</h2>
+<p><code>build_lessons_context STAGE [SPEC_DIRECTORY] [LOCAL_DIFF_RANGE]</code>
+reads <code>LESSONS.md</code> without writing it. Spec, both
+implementation paths (iteration and <code>/goal</code>), QA
+coverage/repair and all three review specialists receive bounded
+context. Spec reads after branch reconciliation, using the allocated
+ticket directory on retries; a fresh spec without tasks can still
+receive general lessons. Review uses its immutable, fetched PR base/head
+range, including PRs targeting a branch other than <code>main</code>.
+Other callers use the local branch diff against
+<code>origin/&lt;repo.base_branch&gt;</code> (default
+<code>main</code>); the helper never fetches. Missing tasks contribute
+no paths; an unreadable local diff warns and leaves task/general
+selection in place. This is advice, never admission scope or authority
+to change a gate.</p>
+<p>Optional entries begin with a column-zero HTML comment containing a
+JSON object, followed by Markdown advice up to the next entry
+marker:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co">&lt;!-- bureau-lesson {&quot;paths&quot;:[&quot;src/api/**&quot;,&quot;tests/test_api.py&quot;],&quot;tags&quot;:[&quot;http&quot;],&quot;owner&quot;:&quot;API team&quot;,&quot;expires&quot;:&quot;2027-01-31&quot;,&quot;evidence&quot;:&quot;https://example.invalid/pull/42&quot;} --&gt;</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="fu">## Preserve retry idempotency</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>Check the retry key before repeating a write.</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="co">&lt;!-- bureau-lesson {} --&gt;</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>Prefer the repository&#39;s existing test command.</span></code></pre></div>
+<p>Every metadata field is optional. <code>paths</code>,
+<code>globs</code> and <code>tags</code> are arrays of nonempty strings;
+<code>globs</code> is an alias combined with <code>paths</code>;
+<code>owner</code>, <code>expires</code> and <code>evidence</code> are
+strings. Paths are repository-relative literals, directory prefixes or
+case-sensitive shell globs (<code>*</code>, <code>?</code>,
+<code>[abc]</code>); <code>*</code> may span <code>/</code>, and
+<code>**/</code> also matches zero directories. A root <code>.</code>
+matches every scope. Absolute paths and <code>..</code> are invalid.
+Task paths come from inline code, Markdown destinations and bare
+file/path references, including planned new files; root names such as
+<code>Makefile</code> can be written in inline code. Lesson and
+task/diff scopes match by exact equality before glob interpretation,
+including bracketed filenames. A task/diff scope with no glob characters
+and no trailing slash is a concrete file matched as a whole path,
+regardless of filesystem existence. Scopes with a trailing slash or glob
+characters use component-wise overlap: <code>**</code> spans zero or
+more components, uncertain pairs of wildcard components overlap, and
+differing literal components do not. Thus <code>src/**/*.py</code>
+overlaps <code>src/api/**</code> and <code>src/api/</code>, but does not
+match <code>src/api/client.ts</code>; <code>src/web/**</code> overlaps
+neither API scope. PR diffs include both old and new rename paths and
+preserve spaces. Selection uses the union of task paths and local diff
+paths. Each task/diff name is validated separately; a rejected name is
+skipped without discarding valid siblings or treating the local diff as
+unavailable.</p>
+<p>A path-matching entry is selected regardless of descriptive tags. An
+entry without paths or tags is general and always eligible; a tag-only
+entry has no matching path and is omitted. Tags, owner and evidence do
+not grant stage authority or trigger link retrieval. Expiry is an
+inclusive <code>YYYY-MM-DD</code> UTC date: an entry is dropped only
+after that date, with one warning line containing the total expired
+count per context build. Invalid metadata omits the affected entry with
+one aggregate warning. Markers inside fenced examples are ordinary
+prose. Text before the first marker is one general set; files without
+markers preserve their entire free-form body as one general set. Absent,
+empty or whitespace-only files produce no section.</p>
+<p>Ordering is deterministic: matching entries first, general sets
+second, preserving file order within each tier. Metadata comments are
+removed from the prompt. The entire context has a default limit of
+<strong>8192 UTF-8 bytes per stage</strong>, configurable with
+<code>agents.lessons_budget_bytes</code> as described in <a
+href="configuration.html#advisory-lesson-budgets">configuration</a>.
+Overflow reserves room for the full existing advisory wrapper and
+<code>[Lessons truncated to the stage byte budget.]</code>, then keeps
+whole entries in that deterministic order, skipping each entry that does
+not fit and continuing to later entries. Entries are never sliced; a
+single oversized entry is dropped, leaving the wrapper and marker if no
+entry fits. A budget too small for the wrapper and marker omits
+overflowing context with a warning. Zero disables injection. Optional
+context failures warn and omit context; they never change checkpoint
+exits, withdrawal handling, review-round accounting, severity floors,
+quiet overlap waits, silence stops or dispatcher lane outcomes. App
+<code>prepare</code> still supplies file paths; this prompt budget
+applies to these background pipeline callers, not to arbitrary manual
+reads of <code>LESSONS.md</code>.</p>
 <h2 id="sandbox-only-gate-recovery">Sandbox-only gate recovery</h2>
 <p><code>bureau-gates.py</code> reconciles implement/QA holds against
 the exact configured command (<code>repo.test_command</code>, or QA's
@@ -1350,9 +1431,9 @@ schema again. Codex originals use the same declared optional-null
 normalization as normal wire-result forwarding. A missing or changed
 original fails recovery; no free-text result is reconstructed from
 metadata, a prior receipt or Git history.</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py status <span class="at">--run</span> RUN_ID</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits <span class="at">--issue</span> TEAM-123</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py status <span class="at">--run</span> RUN_ID</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py waits <span class="at">--issue</span> TEAM-123</span></code></pre></div>
 <p><code>status --run</code> reads an app record when present, otherwise
 the background manifest. <code>waits</code> makes no service calls.
 Waiting seconds/share count overlapping intervals once over the retained
