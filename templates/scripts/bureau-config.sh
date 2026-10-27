@@ -2578,51 +2578,25 @@ merge_origin_main_or_abort() {
   else
     git fetch origin --quiet || true
   fi
+  bureau_ticket_checkpoint "$issue"
   if git merge-base --is-ancestor "$base_ref" HEAD 2>/dev/null; then
     echo "  Branch is up to date with $base_ref."
     return 0
   fi
   echo "  Branch is behind $base_ref — merging $base_ref..."
-  if git merge --no-ff --no-edit "$base_ref"; then
-    return 0
-  fi
-  # Trivial-conflict auto-resolver. Legacy bureau branches predate the
-  # `.gitattributes` merge drivers (`merge=ours` for `.specify/feature.json`,
-  # `merge=union` for `CLAUDE.md`), so they hit the same conflicts every cycle
-  # even though the resolutions are mechanical. Apply the same rules in-line:
-  #   - .specify/feature.json    → keep ours (branch's feature_directory)
-  #   - CLAUDE.md                → strip conflict markers (union)
-  #   - .gitignore               → strip conflict markers (union)
-  #   - rust/Cargo.lock          → take theirs (regenerated on next build)
-  #   - logs/queue-*.log         → git rm (runtime artifacts that shouldn't be tracked)
-  # If, after applying these rules, no unmerged paths remain, complete the
-  # merge and return 0. Otherwise abort and fall through to the conflict-comment
-  # path below — preserving the existing throttled-comment behavior for real
-  # source-code conflicts.
-  local conflict_files
-  conflict_files=$(git diff --name-only --diff-filter=U 2>/dev/null)
-  if [ -n "$conflict_files" ]; then
-    local trivial_only=true
-    while IFS= read -r f; do
-      [ -z "$f" ] && continue
-      case "$f" in
-        .specify/feature.json) git checkout --ours "$f" 2>/dev/null && git add "$f" ;;
-        CLAUDE.md|.gitignore)
-          sed -i.bak "/^<<<<<<< HEAD$/d; /^=======$/d; /^>>>>>>> ${base_ref//\//\\/}$/d" "$f" 2>/dev/null \
-            && rm -f "$f.bak" && git add "$f" ;;
-        rust/Cargo.lock) git checkout --theirs "$f" 2>/dev/null && git add "$f" ;;
-        logs/queue-*.log) git rm "$f" >/dev/null 2>&1 ;;
-        *) trivial_only=false ;;
-      esac
-    done <<<"$conflict_files"
-    if $trivial_only && [ -z "$(git diff --name-only --diff-filter=U 2>/dev/null)" ]; then
-      git -c core.editor=true commit --no-edit >/dev/null 2>&1
-      echo "  Auto-resolved trivial conflicts (feature.json/CLAUDE.md/.gitignore/Cargo.lock/logs)."
-      return 0
-    fi
-  fi
+  # bureau-conflicts.py owns merge, legacy rules, configured repair and rollback.
+  # Configured repair restores dependencies from the merged manifests before
+  # generators/checks, using restore_worktree_deps from this runtime copy.
+  # This executor transaction grants neither review approval nor a reusable gate.
+  local merge_rc=0
+  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
+      --repo "$PWD" --config "$BUREAU_CONFIG" --base "$base_ref" --issue "$issue" ) || merge_rc=$?
+  # The transaction has reaped its command and rolled back before returning a
+  # withdrawal. Consume its shared latch (including Done's 0) in THIS shell;
+  # a failed command also needs a fresh read even when the comment is throttled.
+  bureau_ticket_checkpoint "$issue"
+  [ "$merge_rc" != 0 ] || return 0
   echo "  ERROR: merge of $base_ref has conflicts. Aborting $stage_label."
-  git merge --abort 2>/dev/null || true
   # Throttle the conflict comment to once per hour per issue. Without this,
   # an issue parked at needs-human (implement) re-runs the helper every tick
   # and Linear gets a comment-storm. The merge still aborts and returns 1
@@ -2634,6 +2608,7 @@ merge_origin_main_or_abort() {
     _throttle_record "$throttle_key"
     post_comment "$issue" "❌ $stage_label pipeline cannot proceed — branch has conflicts with \`$base_ref\`. Resolve them and re-run."
   fi
+  bureau_ticket_checkpoint "$issue"
   return 1
 }
 

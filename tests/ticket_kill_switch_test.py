@@ -166,7 +166,7 @@ os.execv(os.environ['PR9_REAL_GIT'],[os.environ['PR9_REAL_GIT'],*a])
 '''
 
 
-class Withdrawal(unittest.TestCase):
+class WithdrawalFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-pr9-fixture-')
         self.addCleanup(self.temp.cleanup)
@@ -258,6 +258,8 @@ class Withdrawal(unittest.TestCase):
         self.assertTrue((self.common/'bureau/preserved'/(key+'.json')).exists())
         self.assertTrue(self.git('-C',str(self.wt),'status','--porcelain'))
 
+
+class Withdrawal(WithdrawalFixture):
     def test_provider_withdrawal_matrix(self):
         # Same fixture reset between cases; each new run owns a fresh worker.
         for index,(key,code) in enumerate([('backlog',25),('cancelled',26),('duplicate',26),('done',0),('unknown-id',25)]):
