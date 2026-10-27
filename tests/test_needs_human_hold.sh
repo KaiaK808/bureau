@@ -258,19 +258,31 @@ expect() {  # $1 = label, $2 = rc wanted, $3 = hold wanted (yes|no)
   if [ "$3" = yes ]; then [ -f "$AHOLD" ] || fail "$1: no hold"; else [ ! -e "$AHOLD" ] || fail "$1: unexpected hold"; fi
 }
 
-REBASE=$(cut "$(cat "$SCRIPTS/rebase-pipeline.sh")" 'Rebase produced conflicts — aborting' '^fi$' | sed '$d')
-case "$REBASE" in *needs[-_]human*) ;; *) fail "the rebase conflict arm is not where it was" ;; esac
-arm "$REBASE" 0;  expect "rebase conflict, label written" 0 no
-arm "$REBASE" 1;  expect "rebase conflict, label failed" 25 yes
-arm "$REBASE" 27; expect "rebase conflict, Linear unusable" 27 yes
+# Select the resolver result case by structure, then drive its conflict fallback.
+REBASE=$(cut "$(cat "$SCRIPTS/rebase-pipeline.sh")" '^case "[$]REBASE_RC" in$' '^esac$')
+case "$REBASE" in *needs[-_]human*) ;; *) fail "the rebase resolver result case is missing" ;; esac
+for comment_rc in 0 1; do
+  for label_rc in 0 1 27; do
+    hold_wanted=yes; [ "$label_rc" != 0 ] || hold_wanted=no
+    arm "post_comment() { _record post_comment \"\$@\"; return $comment_rc; }
+REBASE_RC=17
+$REBASE" "$label_rc"
+    expect "rebase conflict, label exit $label_rc, comment exit $comment_rc" 17 "$hold_wanted"
+    grep -q '^post_comment	EXP-300	' "$SANDBOX/calls.log" || fail "rebase conflict: advisory comment was not attempted"
+    grep -q '^add_issue_label	EXP-300	needs-human$' "$SANDBOX/calls.log" || fail "rebase conflict: needs-human label was not attempted"
+  done
+done
 OLD_REBASE='  post_comment "$ISSUE" "Rebase produced conflicts. Needs human resolution."
   add_issue_label "$ISSUE" "needs-human" \
     || echo "  WARN: failed to add needs-human label to $ISSUE; will retry on next tick" >&2
   exit 0'
-arm "$OLD_REBASE" 1;  [ "$ARM_RC" = 0 ] || fail "negative control: old rebase arm with a failed label ended $ARM_RC, expected 0"
-arm "$OLD_REBASE" 27; [ "$ARM_RC" = 0 ] || fail "negative control: old rebase arm swallowed 27 → expected 0, got $ARM_RC"
+for label_rc in 0 1 27; do
+  arm "$OLD_REBASE" "$label_rc"
+  expect "negative control: old rebase arm, label exit $label_rc" 0 no
+done
+echo "PASS rebase conflict fallback: 6 label/comment outcomes keep exit 17 and the required hold; 3 old-arm controls return 0 without a hold"
 
-LEASE=$(cut "$(cat "$SCRIPTS/rebase-pipeline.sh")" 'Force-push rejected' '^    exit 19$')
+LEASE=$(cut "$(cat "$SCRIPTS/rebase-pipeline.sh")" 'pinned force-with-lease was rejected' '^  exit 19$')
 case "$LEASE" in *needs[-_]human*) ;; *) fail "the rebase lease arm is not where it was" ;; esac
 arm "$LEASE" 1;  expect "rebase lease rejected, label failed" 19 yes
 arm "$LEASE" 27; expect "rebase lease rejected, Linear unusable" 27 yes
@@ -300,10 +312,37 @@ esac" 1; expect "code-review BLOCK, label failed (the stage's 25 comes from the 
 grep -q '^log_escalation' "$SANDBOX/calls.log" && fail "code-review: escalation logged although the label failed"
 grep -q '^post_comment	EXP-300' "$SANDBOX/calls.log" || fail "code-review: the BLOCK comment must still go out"
 
-IMPL=$(cut "$(cat "$SCRIPTS/implement-pipeline.sh")" '^if ! merge_origin_main_or_abort' '^fi$')
-case "$IMPL" in *needs[-_]human*) ;; *) fail "the implement conflict arm is not where it was" ;; esac
-arm "$IMPL" 1;  expect "implement conflict, label failed" 17 yes
-arm "$IMPL" 27; expect "implement conflict, Linear unusable" 27 yes
+# Implement now propagates the merge helper's result; the helper owns the hold.
+IMPL=$(cut "$(cat "$SCRIPTS/implement-pipeline.sh")" '^MERGE_RC=0$' '^[[] "[$]MERGE_RC" = 0 []] [|][|] exit "[$]MERGE_RC"$')
+case "$IMPL" in *merge_origin_main_or_abort*) ;; *) fail "the implement merge result check is missing" ;; esac
+MERGE_HELPER=$(cut "$(cat "$SCRIPTS/bureau-config.sh")" '^merge_origin_main_or_abort[(][)] [{]$' '^}$')
+case "$MERGE_HELPER" in *mark_needs_human*) ;; *) fail "the merge helper's conflict hold is missing" ;; esac
+# Make origin/main genuinely ahead so the real helper reaches its transaction.
+cp "$SB/.bureau.json" "$SANDBOX/.bureau.json"
+git -C "$SANDBOX" checkout -q main
+git -C "$SANDBOX" commit -q --allow-empty -m 'unmerged main'
+git -C "$SANDBOX" push -q origin main
+git -C "$SANDBOX" checkout -q test-branch
+for label_rc in 0 1 27; do
+  hold_wanted=yes; [ "$label_rc" != 0 ] || hold_wanted=no
+  arm "BUREAU_CONFIG='$SANDBOX/.bureau.json'
+$MERGE_HELPER
+bureau_exec_runtime() { _record bureau_exec_runtime \"\$@\"; return 17; }
+_throttle_should_suppress() { return 1; }
+_throttle_record() { :; }
+$IMPL" "$label_rc"
+  expect "implement conflict, label exit $label_rc" 17 "$hold_wanted"
+  grep -q '^bureau_exec_runtime\t' "$SANDBOX/calls.log" || fail "implement conflict: resolver transaction was not attempted"
+  grep -q '^add_issue_label\tEXP-300\tneeds-human$' "$SANDBOX/calls.log" || fail "implement conflict: needs-human label was not attempted"
+done
+# An unusable resolver read is propagated before any conflict-label attempt.
+arm "BUREAU_CONFIG='$SANDBOX/.bureau.json'
+$MERGE_HELPER
+bureau_exec_runtime() { return 27; }
+$IMPL" 0
+expect "implement resolver, Linear unusable" 27 no
+grep -q '^add_issue_label\t' "$SANDBOX/calls.log" && fail "implement resolver: a 27 attempted a conflict label"
+echo "PASS implement propagates the real merge helper: 3 conflict label outcomes keep exit 17 and the required hold; resolver exit 27 propagates without labelling"
 
 tail_from() {  # $1 = script, $2 = routing case line: from the flag's init (or the case) to the end
   local start

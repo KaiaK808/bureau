@@ -177,7 +177,7 @@ if git push "--force-with-lease=refs/heads/$BRANCH:$REBASE_REMOTE" origin "HEAD:
   move_issue "$ISSUE" "$BUREAU_STATE_BUILD_REVIEW"
 else
   post_comment "$ISSUE" "❌ Rebase succeeded locally but the pinned force-with-lease was rejected. Needs human."
-  ( mark_needs_human "$ISSUE" rebase 19 ) || true
+  mark_needs_human "$ISSUE" rebase 19 || true
   exit 19
 fi
 
