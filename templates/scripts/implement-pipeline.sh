@@ -618,13 +618,9 @@ fi
 # overlapping files — Claude shouldn't try to resolve that. Issue is already in
 # Build, so label needs-human and exit; the picker excludes needs-human, so the
 # issue stays out of the queue until a human rebases.
-if ! merge_origin_main_or_abort "$ISSUE" "Implement"; then
-  # If labelling fails, mark_needs_human holds the ticket locally so the
-  # picker skips it and retries the label; Linear unusable ends with 27.
-  # Otherwise exit 17 either way so the alert classifies as rebase-needed.
-  mark_needs_human "$ISSUE" implement 17 || true
-  exit 17
-fi
+MERGE_RC=0
+merge_origin_main_or_abort "$ISSUE" "Implement" || MERGE_RC=$?
+[ "$MERGE_RC" = 0 ] || exit "$MERGE_RC"
 
 # Preflight reserved before worker ownership/reset. Recheck the merged tasks
 # before implementation (also for rework); a merge may have changed scope.

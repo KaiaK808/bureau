@@ -19,7 +19,7 @@ This page is the complete table + how the alerter behaves.
 | `14` | build-failed | Build precondition failed | Test suite red, type-check failed, lint errors, `repo.post_implement_command` failed after an implementation run |
 | `15` | no-pr | PR expected but not found | Implement didn't create one, or it was closed manually |
 | `16` | provider-unauth | Selected CLI missing or not authenticated | Authenticate the selected Claude/Codex CLI |
-| `17` | rebase-needed | `merge_origin_main_or_abort` hit a non-trivial conflict | Routed back to a recovery state for human intervention |
+| `17` | rebase-needed | Owned merge or rebase conflict repair declined, failed validation or exhausted its durable allowance | Entire operation rolled back to the original branch; needs-human label or durable local hold |
 | `18` | gh-failed | `gh` CLI command failed (e.g. `gh pr merge` rejected), or the implement stage's final `git push` failed twice while origin (fetched again) lacks commits of the branch or cannot be read; also: the spec stage could not fetch origin, verify its base or read/reserve a spec number | API rate limit, missing permissions, branch protection, origin rejecting or unreachable |
 | `19` | rebase-rejected | `git push --force-with-lease` rejected | Someone else pushed to the same branch concurrently |
 | `20` | stopped-before-merge | Review boundary or intentional stage handoff | Expected with `--no-merge`, from shepherd at manual Merge, and for a disabled stage under `--respect-config`. Those handoffs are quiet. Dispatcher base refresh uses `refreshed` metadata to require fresh review; it never reports merge success. Other stage-result 20 exits can alert in standalone shepherd |
@@ -120,3 +120,5 @@ grep "Spec gate:" logs/queue-spec.log
 
 - [Configuration](configuration.md) — every config knob
 - [Troubleshooting](troubleshooting.md) — what to do when an alert fires
+
+Model conflict repair is opt-in (`agents.conflict_resolver`). Both unresolved merge and rebase conflicts end with human hold plus 17; the rebase conflict branch formerly returned 0 after labeling or 25 after label failure. Withdrawal wins after rollback: Done 0, cancellation 26 and inactive 25. Provider silence remains 25 with `timeout_kind: silence`, authentication/read/ownership failures keep their codes, and interrupted work remains 130. Rebase publication rejection is still 19, using a lease pinned to the fetched remote SHA. Implement never force-pushes. Admission 29 and owned Merge refresh 20 retain their existing meanings.

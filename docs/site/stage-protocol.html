@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="84da5af0e7f8fa8b2a9e6b379b443c46d364d9a0feb3ff93636ba15257e60ed7">
+<meta name="bureau-source-sha256" content="55338231b79078c0fdcd52ac3207ccf12b70819105e4c6b4c69ac837ed54dd71">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -615,9 +615,9 @@ existing merge or local tracked/index/nonignored untracked work is
 preserved and refused. A clean Git merge needs no configured check.
 Legacy feature.json (ours), CLAUDE.md/.gitignore (three-way union,
 including add/add), rust/Cargo.lock (theirs) and queue-log deletion
-remain available without opt-in or a check. All other source conflicts
-must have a configured deterministic strategy or the entire merge
-aborts.</p>
+remain available without opt-in or a check. Other source conflicts
+require a configured deterministic strategy or the opt-in model
+transaction below; otherwise the entire merge aborts.</p>
 <p>PR 9's trusted <code>bureau_ticket_checkpoint</code> runs after fetch
 before the transaction, before dependency preparation, before each
 generator, before the test command and before the repaired merge commit.
@@ -687,20 +687,72 @@ reaped before rollback or acceptance. Commands are trusted operator
 configuration, not a filesystem/process sandbox: detached daemons,
 writes through external symlinks, external directories and unrelated Git
 refs are outside this rollback contract. Concurrent external writers are
-unsupported; callers must already own the checkout. No new public exit:
-the hook returns failure and existing callers route exit 17, with the
-existing throttled Linear conflict comment.</p>
+unsupported; callers must already own the checkout. The hook returns 17
+for unresolved conflicts, with a human hold and the existing throttled
+Linear conflict comment; callers preserve control exits.</p>
 <p>Normal stage publication/preservation rules still apply after repair.
 If a later provider fails and the ordinary push succeeds, the on-origin
 worker can be reused. An unpublished conflict-repaired merge is
 preserved unregistered and fails the existing conservative
 clean-merge-only reuse predicate with 21; it requires inspection rather
 than reset. Overlap admission must continue counting generated/changelog
-paths as overlaps. Active unresolved conflicts retain exit 17 and their
-existing state/needs-human routing. App prepare/finish and rebase
-fallback are unchanged. Upgrade by comparing installed drift, resyncing
-scripts as a set and restarting drivers; local fake-provider/Git
-qualification does not establish live adopter support.</p>
+paths as overlaps. Active unresolved conflicts retain exit 17 and a
+human hold. App prepare/finish retains its existing protocol; model
+repair and rebase fallback follow the transaction below. Upgrade by
+comparing installed drift, resyncing scripts as a set and restarting
+drivers; local fake-provider/Git qualification does not establish live
+adopter support.</p>
+<h2 id="model-conflict-resolution">Model conflict resolution</h2>
+<p><code>bureau-conflicts.py</code> extends the owned deterministic
+transaction when <code>agents.conflict_resolver.enabled</code> is true.
+It first applies mechanical rules, then offers only the remaining
+regular text three-way source conflicts to
+<code>run_stage_for conflict_resolver</code>, before dependency
+restoration and generated-output regeneration. Add/delete, binary,
+symlink and mode conflicts decline. Configured append-only validation is
+never weakened by model repair. Both the original local tip and fetched
+remote divergence must pass <code>branch_is_bureau_only</code> against
+the immutable base; the remote tip must also be an ancestor of the local
+tip. The helper retains its remote-default interface and accepts
+explicit tip/base arguments. Human local commits cannot hide behind a
+Bureau-only remote.</p>
+<p>A durable reservation outside prunable evidence precedes every
+provider call. The executor snapshots files including ignored paths,
+verifies Git/index identity, and permits regular same-mode edits only
+within the offered conflict set. It rejects model staging, leftover
+markers and any other checkout edit. The model cannot authorize
+continuation, staging, checks, commits or publication; helpers may
+report but cannot write. Attempt/base/head/operation/provider, a
+touched-path digest and check outcome are recorded in the durable ledger
+and projected evidence receipts. Evidence availability never decides the
+allowance.</p>
+<p>Merge repair validates the resulting staged tree externally before
+committing it. Rebase repair continues the entire rebase, consuming the
+same ticket/base allowance for later conflicted commits; only after all
+commits finish does it regenerate final outputs and run the external
+check. Missing/red checks, invalid file/index changes, provider
+errors/timeouts, exhausted budgets and persistence failures abort the
+entire operation and restore the original branch, HEAD, index and
+checkout. The parent applies a human hold and returns 17.
+Authentication/ownership/read failures preserve their protocol codes. PR
+9 withdrawal checkpoints run before spending, after provider/check
+completion and before continuation/commit/publication;
+Done/cancelled/inactive keep 0/26/25 after rollback. Provider silence
+retains exit 25 and <code>timeout_kind: silence</code>; signals retain
+130. Exit 29 admission waits remain separate and quiet, and overlap
+reservations remain held through repair.</p>
+<p>A successful semantic merge during review is pushed normally and
+re-pins <code>REVIEW_HEAD</code>/<code>REVIEW_DIFF</code> before
+specialist context, approval reuse and receipts. An old-head approval
+cannot cover the new source. Other writer stages publish through their
+ordinary normal-push flow. Rebase publication alone uses
+<code>--force-with-lease=refs/heads/&lt;branch&gt;:&lt;fetched-sha&gt;</code>;
+a lost lease retains exit 19. Successful rebase and owned Merge base
+refresh return changed work to fresh Build Review; refresh keeps its
+exit-20 handoff. Green repair never changes security/BLOCK floors,
+review-round accounting or strict merge gates. No implement force-push
+is introduced. The existing snapshot, external-write and
+concurrent-writer limits still apply.</p>
 <h2 id="review-convergence">Review convergence</h2>
 <p>The background review stage validates the merger's decision fields
 and findings before applying <code>agents.review_min_severity</code>

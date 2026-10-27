@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d9ac2bd1db6945a5f941104afaec9f5ab022463f55e9f0dd015b0b36822cde07">
+<meta name="bureau-source-sha256" content="1f4738f85cc47d07b334e557075a54fa1a7a3b548cb8a6731a5626424ee5f01a">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -124,9 +124,10 @@ run</td>
 <tr>
 <td><code>17</code></td>
 <td>rebase-needed</td>
-<td><code>merge_origin_main_or_abort</code> hit a non-trivial
-conflict</td>
-<td>Routed back to a recovery state for human intervention</td>
+<td>Owned merge or rebase conflict repair declined, failed validation or
+exhausted its durable allowance</td>
+<td>Entire operation rolled back to the original branch; needs-human
+label or durable local hold</td>
 </tr>
 <tr>
 <td><code>18</code></td>
@@ -583,7 +584,18 @@ returns 27, never an empty count.</p>
 knob</li>
 <li><a href="troubleshooting.html">Troubleshooting</a> — what to do when
 an alert fires</li>
-</ul></main>
+</ul>
+<p>Model conflict repair is opt-in
+(<code>agents.conflict_resolver</code>). Both unresolved merge and
+rebase conflicts end with human hold plus 17; the rebase conflict branch
+formerly returned 0 after labeling or 25 after label failure. Withdrawal
+wins after rollback: Done 0, cancellation 26 and inactive 25. Provider
+silence remains 25 with <code>timeout_kind: silence</code>,
+authentication/read/ownership failures keep their codes, and interrupted
+work remains 130. Rebase publication rejection is still 19, using a
+lease pinned to the fetched remote SHA. Implement never force-pushes.
+Admission 29 and owned Merge refresh 20 retain their existing
+meanings.</p></main>
 </div>
 </body>
 </html>

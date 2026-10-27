@@ -186,6 +186,28 @@ The supervisor selects the environment override first, then `.bureau.json`, then
 
 ---
 
+### Model conflict resolver
+
+`agents.conflict_resolver` is an optional object. Absent or `enabled: false` disables provider repair; it does not disable existing deterministic strategies. Set `enabled: true`, `max_attempts: 1` (only integer 1 or 2), and an explicit nonblank, non-comment `repo.test_command`. Existing per-stage `runner`, `model`, `sandbox`, `reasoning_effort`, `timeout_seconds` and silence-watchdog options apply through `run_stage_for conflict_resolver`; there is no separate provider integration. Invalid resolver configuration fails closed.
+
+```json
+{
+  "agents": {
+    "conflict_resolver": {
+      "enabled": false,
+      "max_attempts": 1,
+      "runner": "codex",
+      "timeout_seconds": 600
+    }
+  },
+  "repo": { "test_command": "python3 -m unittest discover -s tests" }
+}
+```
+
+The allowance is shared by merge/rebase, stages, restarts and worktrees in the same clone, keyed by ticket and immutable fetched base SHA. Reservations are fsynced under `<git common dir>/bureau/conflict-resolver/` before a provider call. Changing HEAD, pruning evidence or recreating a worker cannot replenish them. Separate clones/hosts are not coordinated. Keep this directory when cleaning evidence; budget corruption or write failure declines repair. A failed attempt consumes its slot; a second rebase conflict needs a second slot. Supply external writable snapshot storage, sized for the entire checkout including ignored dependencies. Provider logs live in the common Git directory. Tests run outside the provider sandbox with Bureau credentials stripped and a 1,800-second bound; green tests grant no approval or reusable gate.
+
+**Upgrade:** compare installed drift, resync all scripts together and restart drivers before opting in. Unresolved rebase conflicts now hold for a human and exit 17 instead of the former 0/25 fallback. Only the rebase stage force-pushes, with the fetched issue SHA in its lease. Qualification uses fake providers/services and real local Git; live provider and adopter behavior still need qualification.
+
 ## Environment variables
 
 ### Runtime mode

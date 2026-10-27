@@ -38,7 +38,7 @@ class NegativeControls(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='bureau-conflicts-withdrawal-mutation-') as directory:
             scripts = Path(directory) / 'scripts'; shutil.copytree(ROOT / 'templates/scripts', scripts)
             path = scripts / 'bureau-conflicts.py'; source = path.read_text()
-            self.assertEqual(source.count('self.checkpoint()'), 4)
+            self.assertEqual(source.count('self.checkpoint()'), 10)
             path.write_text(source.replace('self.checkpoint()', 'None  # private mutation: no command checkpoint'))
             self.check_withdrawal_failure(scripts, 'test_withdrawal_before_dependencies_and_between_commands', 15)
             print('PASS command-boundary control: removing transaction checkpoints starts later steps or commits withdrawn work')
@@ -81,11 +81,11 @@ class NegativeControls(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='bureau-conflicts-mutation-') as directory:
             scripts = Path(directory) / 'scripts'; shutil.copytree(ROOT / 'templates/scripts', scripts)
             path = scripts / 'bureau-conflicts.py'; source = path.read_text()
-            anchor = "                self.run(rule['command'])"
+            anchor = "            self.run(rule['command'])"
             self.assertEqual(source.count(anchor), 1)
-            path.write_text(source.replace(anchor, '                pass  # private negative control: bypass regeneration'))
+            path.write_text(source.replace(anchor, '            pass  # private negative control: bypass regeneration'))
             output = self.check_failure(scripts, ['test_generated_only'])
-            self.assertIn('configured command failed', output)
+            self.assertIn('external conflict validation failed', output)
             print('PASS negative control: bypassing regeneration leaves invalid old output; the successful-resolution assertion fails')
 
 

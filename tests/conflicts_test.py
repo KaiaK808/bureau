@@ -89,6 +89,7 @@ assert all(Path(name).read_text() == expected for name in ('docs/site/page.html'
         self.config.write_text(json.dumps(self.settings))
         script = '''set -euo pipefail
 source "$1/bureau-config.sh"
+add_issue_label() { :; }
 post_comment() { printf '%s\\n' "$2" >> "$FAKE_LINEAR_COMMENTS"; }
 _throttle_should_suppress() { return 1; }
 _throttle_record() { :; }

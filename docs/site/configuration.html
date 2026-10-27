@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="722c9054a1f1b8ac75441bcd74fc96d93a50a62157b04c1efd587568f24fe89d">
+<meta name="bureau-source-sha256" content="ca020ee8fbe4b634171845ec17dbcf25c33f5fa7cb955fb5de9d61f50217752d">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1388,6 +1388,48 @@ selection: an empty or invalid override uses the default, even when JSON
 contains a valid value. The normal <code>.env</code> precedence applies
 before this selection.</p>
 <hr />
+<h3 id="model-conflict-resolver">Model conflict resolver</h3>
+<p><code>agents.conflict_resolver</code> is an optional object. Absent
+or <code>enabled: false</code> disables provider repair; it does not
+disable existing deterministic strategies. Set
+<code>enabled: true</code>, <code>max_attempts: 1</code> (only integer 1
+or 2), and an explicit nonblank, non-comment
+<code>repo.test_command</code>. Existing per-stage <code>runner</code>,
+<code>model</code>, <code>sandbox</code>, <code>reasoning_effort</code>,
+<code>timeout_seconds</code> and silence-watchdog options apply through
+<code>run_stage_for conflict_resolver</code>; there is no separate
+provider integration. Invalid resolver configuration fails closed.</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>The allowance is shared by merge/rebase, stages, restarts and
+worktrees in the same clone, keyed by ticket and immutable fetched base
+SHA. Reservations are fsynced under
+<code>&lt;git common dir&gt;/bureau/conflict-resolver/</code> before a
+provider call. Changing HEAD, pruning evidence or recreating a worker
+cannot replenish them. Separate clones/hosts are not coordinated. Keep
+this directory when cleaning evidence; budget corruption or write
+failure declines repair. A failed attempt consumes its slot; a second
+rebase conflict needs a second slot. Supply external writable snapshot
+storage, sized for the entire checkout including ignored dependencies.
+Provider logs live in the common Git directory. Tests run outside the
+provider sandbox with Bureau credentials stripped and a 1,800-second
+bound; green tests grant no approval or reusable gate.</p>
+<p><strong>Upgrade:</strong> compare installed drift, resync all scripts
+together and restart drivers before opting in. Unresolved rebase
+conflicts now hold for a human and exit 17 instead of the former 0/25
+fallback. Only the rebase stage force-pushes, with the fetched issue SHA
+in its lease. Qualification uses fake providers/services and real local
+Git; live provider and adopter behavior still need qualification.</p>
 <h2 id="environment-variables">Environment variables</h2>
 <h3 id="runtime-mode">Runtime mode</h3>
 <table>

@@ -21,7 +21,7 @@ MAX_BYTES = 16 * 1024 * 1024
 MAX_RECORDS = 4096  # All files except the lock, including atomic staging leftovers.
 LOCK_TIMEOUT_SECONDS = .25
 KINDS = ('decision', 'dependency', 'compliance', 'resource', 'technical')
-TAGS = frozenset(('spec', 'spec_review', 'ux', 'copy', 'implement', 'qa', 'code_review',
+TAGS = frozenset(('spec', 'spec_review', 'ux', 'copy', 'implement', 'qa', 'code_review', 'conflict_resolver', 'validation',
                   'merge', 'rebase', 'research', 'upstream_summary', 'specify', 'plan', 'tasks',
                   'correctness', 'security', 'performance', 'verdict', 'worker', 'stage', 'driver'))
 ACTORS = frozenset(('maintainer', 'workspace-owner', 'ci-or-gate-owner', 'repository-maintainer',
@@ -607,6 +607,16 @@ class Store:
         inputs = receipt.get('review_inputs')
         if value['stage'] == 'code_review' and isinstance(inputs, dict):
             value['review_inputs'] = {key: head(inputs.get(key)) for key in ('head', 'base', 'validation_head')}
+        conflict = receipt.get('conflict_resolution')
+        if value['stage'] == 'conflict_resolver' and isinstance(conflict, dict):
+            if (type(conflict.get('attempt')) is int and 1 <= conflict['attempt'] <= 2
+                    and head(conflict.get('base')) and head(conflict.get('head'))
+                    and conflict.get('operation') in ('merge', 'rebase')
+                    and conflict.get('provider') in ('claude', 'codex')
+                    and re.fullmatch(r'[a-f0-9]{64}', conflict.get('touched_path_digest', ''))
+                    and conflict.get('check_outcome') in ('pending', 'passed', 'failed')):
+                value['conflict_resolution'] = {key: conflict[key] for key in
+                    ('attempt', 'base', 'head', 'operation', 'provider', 'touched_path_digest', 'check_outcome')}
         value['usage'] = usage_metadata(receipt)
         with self.guard():
             path = self.receipt_path(value['run_id'], value['provider_attempt_id'])
