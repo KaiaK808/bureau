@@ -31,7 +31,7 @@ paths = json.loads(re.search(r'source conflicts: (\[[^\n]+\])',prompt)[1])
 for name in paths:
     p=pathlib.Path(name)
     if c.get('mode') != 'false' and not (c.get('mode') == 'false-source' and name == 'source.txt'):
-        p.write_text('bad\n' if c.get('mode') == 'red' else '<<<<<<< leftover\n' if c.get('mode') == 'markers' else 'resolved\n')
+        p.write_text('bad\n' if c.get('mode') == 'red' else '<<<<<<< leftover\n' if c.get('mode') == 'markers' else c.get('resolved_text','resolved\n'))
     if c.get('mode') == 'chmod': p.chmod(0o755)
 if c.get('mode') == 'outside': pathlib.Path('unrelated.txt').write_text('unauthorized\n')
 if c.get('mode') == 'ignored': pathlib.Path('ignored.txt').write_text('unauthorized\n')
@@ -221,6 +221,29 @@ class ModelConflictTests(unittest.TestCase):
         self.refused()
         self.assertEqual(self.calls(),['provider'])
         self.assertEqual(self.records()[0]['outcome'],'failed')
+
+    def test_configured_markers_allow_six_character_setext_heading(self):
+        heading='Summary\n======\n'
+        resolved=heading+'Both intended changes retained.\n'
+        (self.repo/'notes.md').write_text(heading+'base\n')
+        (self.repo/'.gitattributes').write_text('notes.md conflict-marker-size=5\n')
+        self.commit('heading foundation'); self.git('branch','-f','feature','main')
+        for branch,side in [('feature','ours'),('main','theirs')]:
+            self.git('checkout','-q',branch); (self.repo/'notes.md').write_text(heading+side+'\n')
+            self.commit(side)
+            if branch=='feature':
+                self.git('push','-q','origin','feature')
+                self.head=self.remote=self.git('rev-parse','HEAD')
+            else: self.base=self.git('rev-parse','HEAD')
+        self.git('checkout','-q','feature'); self.control['resolved_text']=resolved
+        self.settings['repo']['test_command']=shlex.join([sys.executable,'-c',
+            "from pathlib import Path; assert Path('notes.md').read_text() == "+repr(resolved)])
+        self.assertEqual(self.invoke(),0,self.result.stdout+self.result.stderr)
+        self.assertEqual((self.repo/'notes.md').read_text(),resolved)
+        self.assertEqual(self.git('rev-list','--parents','-1','HEAD').split()[1:],[self.head,self.base])
+        self.assertEqual(self.git('status','--porcelain'),'')
+        self.assertEqual(self.calls(),['provider'])
+        self.assertEqual(self.records()[0]['check_outcome'],'passed')
 
     def test_out_of_scope_tracked_edit_is_rejected(self):
         self.diverge(); self.control['mode']='outside'; self.refused(); self.assertEqual(len(self.records()),1)

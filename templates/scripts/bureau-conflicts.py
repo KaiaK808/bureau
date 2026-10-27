@@ -609,7 +609,8 @@ class Transaction:
         # Invalid/nonpositive sizes use seven. Standard markers and sizes
         # >= seven are already covered by the default detector.
         if len(digits) != 1 or not b'1' <= digits <= b'6': return MARKERS
-        return re.compile(MARKERS.pattern.replace(b'{7,}', b'{' + digits + b',}'), re.M)
+        exact = MARKERS.pattern.replace(b'{7,}', b'{' + digits + b'}')
+        return re.compile(MARKERS.pattern + b'|' + exact, re.M)
 
     def reject_markers(self, paths):
         for name in paths:
