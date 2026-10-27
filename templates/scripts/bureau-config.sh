@@ -2684,13 +2684,14 @@ merge_origin_main_or_abort() {
   result_file=$(mktemp) || return 24
   ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
       --repo "$PWD" --config "$BUREAU_CONFIG" --base "$base_ref" --issue "$issue" --result-file "$result_file" ) || merge_rc=$?
+  local transaction_rc="$merge_rc"
   # The transaction has reaped its command and rolled back before returning a
   # withdrawal. Consume its shared latch (including Done's 0) in THIS shell;
   # a failed command also needs a fresh read even when the comment is throttled.
   if [ "$merge_rc" = 0 ] && [ "$(jq -r '.semantic // false' "$result_file" 2>/dev/null)" = true ]; then
     BUREAU_CONFLICT_REPAIRED_HEAD=$(git rev-parse HEAD) || merge_rc=18
   fi
-  bureau_conflict_failure_signal "$merge_rc" "$result_file"
+  bureau_conflict_failure_signal "$transaction_rc" "$result_file"
   rm -f "$result_file"
   bureau_ticket_checkpoint "$issue"
   case "$merge_rc" in
