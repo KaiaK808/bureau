@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f07ff165b7547c8946d742d7a4ab0a7c41ff37a4063ed2c2b4eb5b71134cd11a">
+<meta name="bureau-source-sha256" content="d9ac2bd1db6945a5f941104afaec9f5ab022463f55e9f0dd015b0b36822cde07">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -148,11 +148,13 @@ rejecting or unreachable</td>
 <tr>
 <td><code>20</code></td>
 <td>stopped-before-merge</td>
-<td>Review boundary reached</td>
-<td>Expected with <code>--no-merge</code>, and from the shepherd at
-Merge under <code>agents.merge_mode: "manual"</code>. The shepherd and
-the queue loop pass a <code>20</code> that <code>--no-merge</code> asked
-for without an alert; any other <code>20</code> alerts</td>
+<td>Review boundary or intentional stage handoff</td>
+<td>Expected with <code>--no-merge</code>, from shepherd at manual
+Merge, and for a disabled stage under <code>--respect-config</code>.
+Those handoffs are quiet. Dispatcher base refresh uses
+<code>refreshed</code> metadata to require fresh review; it never
+reports merge success. Other stage-result 20 exits can alert in
+standalone shepherd</td>
 </tr>
 <tr>
 <td><code>21</code></td>
@@ -467,6 +469,21 @@ already authorized unit to continue. Mandatory initial dispatch,
 mutation and ownership reads keep their strict behavior. Shepherd's
 existing mandatory iteration reads also remain strict; only its extra
 checkpoint refresh can fail open.</p>
+<p>The continuous dispatcher adds no numeric exit. Lanes yield on 28/29
+(quiet admission waits), 23 (one-shot usage throttle), 10/16 (transient
+retry) and merge-gate 2, with deadlines in
+<code>bureau/dispatch-skips.json</code>. Other 25 outcomes, including
+silence escalation without a label, remain held across restart; a
+repository pause defers instead. Terminal 0/26, intentional handoff 20
+and unknown failures stay skipped until reconciliation; unknown failures
+also alert and attempt a human hold. <code>--respect-config</code> uses
+20 for a disabled stage. Owned base refresh uses 20 plus gate-report
+<code>refreshed</code>/<code>base_refresh</code> metadata to continue to
+fresh Build Review, never to report merge success. Dispatcher/poller
+lock conflicts return 21, invalid dispatcher configuration returns 24,
+and interrupted dispatcher/supervisor shutdown returns 130 after
+cleanup. Standalone shepherd retains its cancellable admission and merge
+waits.</p>
 <h2 id="telegram-alerts">Telegram alerts</h2>
 <p><code>alert_telegram</code> (in <code>bureau-config.sh</code>) sends
 a message when:</p>

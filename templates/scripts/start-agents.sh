@@ -37,16 +37,12 @@ add_agent() {
   else
     tmux new-window -t "$SESSION" -n "$name"
   fi
-  tmux send-keys -t "$SESSION:$name" "./scripts/queue-loop.sh $mode $INTERVAL" Enter
-  ((WIN_NUM++))
+  tmux send-keys -t "$SESSION:$name" "./scripts/queue-loop-supervised.sh $mode $INTERVAL" Enter
+  WIN_NUM=$((WIN_NUM + 1))
 }
 
-agent_enabled "spec" && add_agent "spec" "spec"
-agent_enabled "spec_review" && add_agent "spec-review" "spec-review"
-agent_enabled "ux" && add_agent "ux" "ux"
-agent_enabled "implement" && add_agent "build" "implement"
-
-agent_enabled "code_review" && add_agent "review" "code-review"
+# One dispatcher replaces the independent stage loops.
+add_agent "dispatch" "dispatch"
 
 if [ "$FIRST" = true ]; then
   echo "No agents enabled in .bureau.json"

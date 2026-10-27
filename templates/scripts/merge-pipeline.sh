@@ -459,10 +459,58 @@ merge_record_gate() {
   rm -f "$file" || true
 }
 
+# A dispatcher-held PR cannot use the independent queue rebaser. Merge forward
+# in this owned worker, publish normally, and require a fresh review instead.
+# At most two refreshes per lane; review round accounting is never reset.
+refresh_owned_merge_base() {
+  local gates="$1" row data remote_head base_ref base_head before refresh_rc=0
+  [ "${BUREAU_DISPATCH_LANE:-0}" = 1 ] && [ "${BUREAU_HELD_BY_SHEPHERD:-0}" = 1 ] \
+    && [ "$DRY_RUN" != true ] || return 0
+  [ "$(bureau_number merge.refreshes "${BUREAU_LANE_BASE_REFRESHES:-0}" 2 0 2)" -lt 2 ] || return 0
+  case "$gates" in *"base_current: base: PR "*|*"mergeStateStatus=DIRTY "*) ;; *) return 0 ;; esac
+  # Existing security/review/hold/thread failures win over recovery work.
+  while IFS= read -r row; do
+    case "$row" in base_current:*|merge_state:*|ci_green:*|'') ;; *) return 0 ;; esac
+  done <<< "$gates"
+  bureau_ticket_checkpoint "$ISSUE" strict
+  data=$(gh pr view "$PR_NUMBER" --json state,headRefOid,headRefName,baseRefName) || return 0
+  [ "$(printf '%s' "$data" | jq -r '.state')" = OPEN ] || return 0
+  [ "$(printf '%s' "$data" | jq -r '.headRefName')" = "$BRANCH" ] || return 0
+  remote_head=$(printf '%s' "$data" | jq -er '.headRefOid') || return 0
+  base_ref=$(printf '%s' "$data" | jq -er '.baseRefName') || return 0
+  git check-ref-format "refs/heads/$base_ref" >/dev/null 2>&1 || return 0
+  [ -z "$(git status --porcelain)" ] || return 0
+  git fetch origin --quiet || exit 18
+  [ "$(git rev-parse "refs/remotes/origin/$BRANCH")" = "$remote_head" ] \
+    || merge_gate_exit not-yet 'head_read: the PR branch changed before base refresh'
+  git merge-base --is-ancestor "$remote_head" HEAD || return 0
+  base_head=$(git rev-parse "refs/remotes/origin/$base_ref^{commit}") || return 0
+  git merge-base --is-ancestor "$base_head" "$remote_head" && return 0
+  before=$(git rev-parse HEAD)
+  merge_origin_main_or_abort "$ISSUE" 'Merge base refresh' "$base_head" || refresh_rc=$?
+  [ "$refresh_rc" != 130 ] || exit 130
+  bureau_ticket_checkpoint "$ISSUE" strict
+  if [ "$refresh_rc" != 0 ]; then
+    mark_needs_human "$ISSUE" merge 17 || true
+    exit 17
+  fi
+  bureau_ticket_checkpoint "$ISSUE" strict
+  git push origin "HEAD:refs/heads/$BRANCH" || exit 18
+  bureau_ticket_checkpoint "$ISSUE" strict
+  move_issue "$ISSUE" "$BUREAU_STATE_BUILD_REVIEW"
+  post_comment "$ISSUE" "Merged the current PR base into the branch with a normal push. Nothing was merged to the base; the changed head requires fresh Build Review."
+  if [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ]; then
+    printf 'refreshed\nbase_refresh: %s -> %s (base %s)\n' "$before" "$(git rev-parse HEAD)" "$base_head" > "$BUREAU_MERGE_GATE_REPORT"
+  fi
+  echo '  Base refreshed — fresh Build Review required (exit 20).'
+  exit 20
+}
+
 # Initial gate evaluation (renders report, may post blocker comment).
 GATE_HEAD=$(pr_head_sha "$PR_NUMBER")
 GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$GATE_HEAD" || true)
 merge_record_gate "$GATE_HEAD" "$GATE_OUT" || true
+refresh_owned_merge_base "$GATE_OUT"
 echo ""
 echo "  ── Gate report ──"
 if [ -z "$GATE_OUT" ]; then
@@ -598,6 +646,7 @@ MERGE_HEAD=$(pr_head_sha "$PR_NUMBER")
 GATE_HEAD="$MERGE_HEAD"
 JIT_GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$MERGE_HEAD" || true)
 merge_record_gate "$MERGE_HEAD" "$JIT_GATE_OUT" || true
+refresh_owned_merge_base "$JIT_GATE_OUT"
 if [ -n "$JIT_GATE_OUT" ]; then
   echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"
   printf '    %s\n' "$JIT_GATE_OUT"

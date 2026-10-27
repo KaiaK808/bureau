@@ -447,7 +447,7 @@ open_or_update_pr_draft() {
   fi
   local existing
   existing=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
-  if [ -n "$existing" ]; then
+  if [ -n "$existing" ] && [ "$existing" != null ]; then
     gh pr view "$existing" --json url --jq '.url'
   else
     bureau_ticket_checkpoint "$ISSUE"
@@ -472,7 +472,7 @@ open_or_update_pr_ready() {
   fi
   local existing
   existing=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
-  if [ -n "$existing" ]; then
+  if [ -n "$existing" ] && [ "$existing" != null ]; then
     # `gh pr ready` is a no-op if the PR is already ready; both are exit 0.
     # A real non-zero exit (transient API error, missing permission, deleted
     # PR) must surface so a human can finish the flip — FR-007.

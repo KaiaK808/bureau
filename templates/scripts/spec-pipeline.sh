@@ -21,7 +21,8 @@ precondition_linear
 # single-flight / bounded-parallelism gate. When
 # BUREAU_MAX_CONCURRENT_ISSUES is non-zero, refuse to pick new Triage work
 # until existing in-flight issues drain below the cap. Spec is the only
-# stage that admits new work into the pipeline — gating here is sufficient.
+# stage that admits new work into the pipeline. This is an advisory early check;
+# move_issue serializes the authoritative Spec reservation and move below.
 # Downstream stages (spec-review, ux, copy, implement, qa, code-review,
 # rebase, merge) keep operating on whatever's already in-flight, so a cap
 # of 1 still drains the current issue without deadlock.

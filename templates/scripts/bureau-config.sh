@@ -364,6 +364,9 @@ BUREAU_POLL_INTERVAL=$(_bureau_config_number .agents.poll_interval_minutes 30 1 
 # Persisted cursors take priority; this turn is only the refused-write fallback.
 _BUREAU_WAIT_SWEEP_TURN=$((_BUREAU_WAIT_SWEEP_TURN / (60 * BUREAU_POLL_INTERVAL)))
 BUREAU_WORKBENCH_PANES=$(_bureau_config_number .agents.workbench_panes 2 0 32)
+# Process lanes, distinct from the in-flight ticket cap below. Batch orchestration
+# and the continuous dispatcher share this setting; CLI/env compatibility wins.
+BUREAU_PARALLEL_LANES=$(_bureau_config_number .agents.parallel_lanes 2 1 1000)
 BUREAU_MAX_REVIEW_CYCLES=$(_bureau_config_number .agents.max_review_cycles 3 0 1000)
 BUREAU_MAX_REVIEW_ROUNDS=$(_bureau_config_number .agents.max_review_rounds "$((BUREAU_MAX_REVIEW_CYCLES + 1))" 1 1001)
 BUREAU_REVIEW_MIN_SEVERITY=$(bureau_get '.agents.review_min_severity | if . == null then "BUG" elif . == "BUG" or . == "MINOR" then . else "MINOR" end')
@@ -1165,7 +1168,7 @@ agent_enabled() {
   # no dispatcher (queue loop, bounded tick, tmux windows) spends a tick on a
   # stage that would only refuse.
   case "${1:-}" in merge|rebase) if bureau_merge_is_manual; then return 1; fi ;; esac
-  [ "${BUREAU_FORCE_ALL_AGENTS:-0}" = "1" ] && return 0
+  if [ "${BUREAU_FORCE_ALL_AGENTS:-0}" = "1" ] && [ "${BUREAU_RESPECT_CONFIG:-0}" != 1 ]; then return 0; fi
   local val
   val=$(jq -r --arg stage "$1" '.agents[$stage] | if type == "object" then
       if has("enabled") then .enabled else true end else . // false end' "$BUREAU_CONFIG")
@@ -1204,6 +1207,19 @@ move_issue() {
   local ref="$1" state_id="$2"
   if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
     echo "[DRY_RUN] move_issue $ref → $state_id" >&2
+    return 0
+  fi
+  # Spec admission is one common-directory transaction, for every driver.
+  # The earlier spec_admission_gate is advisory; parallel starts must reserve
+  # the last slot and move under one lock, including delayed Linear snapshots.
+  if [ "$state_id" = "${BUREAU_STATE_SPEC:-_unset_}" ] && [ "${BUREAU_MAX_CONCURRENT_ISSUES:-0}" -gt 0 ] \
+     && [ "${BUREAU_SPEC_ADMISSION_LOCKED:-0}" != 1 ]; then
+    local admission_rc=0
+    ( BUREAU_EXPECTED_STATE_ID="${BUREAU_EXPECTED_STATE_ID:-}" bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-dispatch.py" --repo "$PWD" spec-start "$ref" ) || admission_rc=$?
+    [ "$admission_rc" != 130 ] || exit 130
+    bureau_ticket_checkpoint "$ref" strict
+    [ "$admission_rc" = 0 ] || return "$admission_rc"
+    if [ "$ref" = "${BUREAU_CURRENT_ISSUE:-}" ] && [ -n "${BUREAU_EXPECTED_STATE_ID:-}" ]; then BUREAU_EXPECTED_STATE_ID="$state_id"; fi
     return 0
   fi
   if [ -n "${BUREAU_EXPECTED_STATE_ID:-}" ] && [ "$ref" = "${BUREAU_CURRENT_ISSUE:-}" ]; then
