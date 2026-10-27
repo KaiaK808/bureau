@@ -639,7 +639,7 @@ CONFIRM_TRIES=3
 CONFIRM_SECONDS="${BUREAU_SHEPHERD_CONFIRM_SECONDS:-5}"
 case "$CONFIRM_SECONDS" in
   '' | *[!0-9]*)
-    echo "[shepherd] WARN: BUREAU_SHEPHERD_CONFIRM_SECONDS='$CONFIRM_SECONDS' is not a whole number of seconds — using 5" >&2
+    echo "[shepherd] WARN: BUREAU_SHEPHERD_CONFIRM_SECONDS is not a whole number of seconds — using 5" >&2
     CONFIRM_SECONDS=5 ;;
 esac
 _shepherd_unconfirmed() {
@@ -664,14 +664,14 @@ _shepherd_seconds() {
   raw="${!name:-}"
   [ -n "$raw" ] || { echo "$default"; return; }
   case "$raw" in
-    *[!0-9]*) echo "[shepherd] WARN: $name='$raw' is not a whole number of seconds — using $default" >&2; echo "$default"; return ;;
+    *[!0123456789]*) echo "[shepherd] WARN: $name is not a whole number of seconds — using $default" >&2; echo "$default"; return ;;
   esac
   digits="${raw#"${raw%%[!0]*}"}"; digits="${digits:-0}"
   if [ "${#digits}" -gt 6 ] || [ "$((10#$digits))" -gt "$max" ]; then
-    echo "[shepherd] WARN: $name='$raw' is above $max seconds — using $max" >&2; echo "$max"; return
+    echo "[shepherd] WARN: $name is above $max seconds — using $max" >&2; echo "$max"; return
   fi
   if [ "$((10#$digits))" -lt "$min" ]; then
-    echo "[shepherd] WARN: $name='$raw' is below $min seconds — using $default" >&2; echo "$default"; return
+    echo "[shepherd] WARN: $name is below $min seconds — using $default" >&2; echo "$default"; return
   fi
   echo "$((10#$digits))"
 }

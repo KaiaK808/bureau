@@ -90,6 +90,16 @@ bureau_stage_enter() {
 
 bureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }
 
+# _bureau_config_number <path> <default> <min> <max>. Check the JSON text
+# before shell capture can discard NULs or trailing newlines. Absent/null keeps
+# the default; every other value goes through the same consumer-side guard.
+_bureau_config_number() {
+  local path="$1" default="$2" min="$3" max="$4" raw
+  raw=$(bureau_get "$path | if . == null then \"$default\" else (if type == \"string\" then . else tojson end) end
+    | if (explode | all(. >= 48 and . <= 57)) then . else \"invalid\" end" 2>/dev/null) || raw=invalid
+  bureau_number "$path" "$raw" "$default" "$min" "$max"
+}
+
 # Linear config
 BUREAU_TEAM_KEY=$(bureau_get '.linear.teams[0].key')
 BUREAU_TEAM_ID=$(bureau_get '.linear.teams[0].id')
@@ -124,13 +134,13 @@ BUREAU_LABEL_NEEDS_COPY_NAME=$(bureau_get '.linear.labels.needs_copy.name // emp
 BUREAU_COPY_VOICE_FILE=$(bureau_get '.repo.copy_voice_file // empty')
 
 # Agent config
-BUREAU_POLL_INTERVAL=$(bureau_get '.agents.poll_interval_minutes // 30')
-BUREAU_WORKBENCH_PANES=$(bureau_get '.agents.workbench_panes // 2')
-BUREAU_MAX_REVIEW_CYCLES=$(bureau_get '.agents.max_review_cycles // 3')
+BUREAU_POLL_INTERVAL=$(_bureau_config_number .agents.poll_interval_minutes 30 1 10080)
+BUREAU_WORKBENCH_PANES=$(_bureau_config_number .agents.workbench_panes 2 0 32)
+BUREAU_MAX_REVIEW_CYCLES=$(_bureau_config_number .agents.max_review_cycles 3 0 1000)
 # Code-review diff size at which specialists switch from exhaustive to
 # critical-path sampling. Repos with mature CI / type-safety can review
 # bigger diffs exhaustively; legacy repos cap lower. Configurable per repo.
-BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD=$(bureau_get '.agents.code_review_sampling_threshold // 500')
+BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD=$(_bureau_config_number .agents.code_review_sampling_threshold 500 0 10000000)
 # How merge-pipeline closes the PR. Valid: squash | merge | rebase. Default
 # squash so shipped main never carries the in-development merge commits the
 # pipelines accumulate. Repos that want explicit merge-commit history (or
@@ -167,7 +177,7 @@ bureau_get_agent_model() {
 # Higher values bound parallelism without forbidding it. Only spec-pipeline
 # honours this; downstream stages keep operating on whatever's already in
 # flight so a cap of 1 doesn't deadlock the loop.
-BUREAU_MAX_CONCURRENT_ISSUES=$(bureau_get '.agents.max_concurrent_issues // 0')
+BUREAU_MAX_CONCURRENT_ISSUES=$(_bureau_config_number .agents.max_concurrent_issues 0 0 1000)
 BUREAU_MERGE_STRATEGY=$(bureau_get '.agents.merge_strategy // "squash"')
 case "$BUREAU_MERGE_STRATEGY" in
   squash|merge|rebase) ;;
@@ -1772,6 +1782,11 @@ pr_ci_is_green() {
     ] | length')
   pending_legacy=$(echo "$statuses" | jq '[.[] | select(.state == "pending")] | length')
   failed_legacy=$(echo "$statuses"  | jq '[.[] | select(.state == "failure" or .state == "error")] | length')
+  pending=$(bureau_number ci.pending "$pending" 1 0 9999999999)
+  completed=$(bureau_number ci.completed "$completed" 0 0 9999999999)
+  failed=$(bureau_number ci.failed "$failed" 1 0 9999999999)
+  pending_legacy=$(bureau_number ci.pending_legacy "$pending_legacy" 1 0 9999999999)
+  failed_legacy=$(bureau_number ci.failed_legacy "$failed_legacy" 1 0 9999999999)
 
   if [ "$pending" -gt 0 ] || [ "$pending_legacy" -gt 0 ]; then
     # The longest-queued check run past the queue grace, as "<age>\t<count>\t<name>".
@@ -1787,6 +1802,7 @@ pr_ci_is_green() {
         | if length == 0 then empty else "\(.[0].age)\t\(length)\t\(.[0].name)" end' 2>/dev/null) || queued=""
     if [ -n "$queued" ]; then
       IFS=$'\t' read -r queued_age queued_count queued_name <<< "$queued"
+      queued_count=$(bureau_number ci.queued_count "$queued_count" 1 1 9999999999)
       # The age changes from poll to poll; merge_gate_key (merge-pipeline.sh) leaves it
       # out of the comparison, so a PR gets one comment for it, not one per poll.
       if [ "$queued_count" -gt 1 ]; then queued_count=", $((queued_count - 1)) more check(s) as well"; else queued_count=""; fi
@@ -1814,9 +1830,11 @@ pr_ci_is_green() {
   # the function fall through to "green" with no check at all; it counts as 1 now.
   local min_required
   min_required=$(_merge_gate_number merge_min_required_checks 1) || true
-  local total_completed=$((completed))
+  local total_completed="$completed" completed_legacy
   # Count completed legacy statuses too (any non-pending state counts).
-  total_completed=$((total_completed + $(echo "$statuses" | jq '[.[] | select(.state != "pending")] | length')))
+  completed_legacy=$(echo "$statuses" | jq '[.[] | select(.state != "pending")] | length')
+  completed_legacy=$(bureau_number ci.completed_legacy "$completed_legacy" 0 0 9999999999)
+  total_completed=$((total_completed + completed_legacy))
   if [ "$total_completed" -lt "$min_required" ]; then
     # Past the pending check above, zero completed means nothing at all on the head.
     # Both lists must have been read; a head commit time that cannot be read keeps
@@ -1886,7 +1904,9 @@ _pr_head_commit_age() {
   when=$(gh api "repos/$1/git/commits/$2" --jq '.committer.date' 2>/dev/null) || return 1
   when=$(printf '%s' "$when" | jq -Rr 'fromdateiso8601 | floor' 2>/dev/null) || return 1
   case "$when" in ''|*[!0-9]*) return 1 ;; esac
-  printf '%s' "$(( $(date +%s) - when ))"
+  local now
+  now=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
+  printf '%s' "$(( now - when ))"
 }
 
 # pr_base_is_current <pr-number>
@@ -1962,7 +1982,11 @@ _throttle_should_suppress() {
   # The key goes in through the environment: awk -v would expand backslashes.
   last=$(_THROTTLE_KEY="$key" awk -F'\t' '$1==ENVIRON["_THROTTLE_KEY"]{print $2}' "$_throttle_file" | tail -1)
   [ -z "$last" ] && return 1
-  now=$(date +%s)
+  # A corrupt record must never suppress an alert or reach shell arithmetic.
+  last=$(bureau_number alert.last_epoch "$last" 0 1 9999999999)
+  [ "$last" != 0 ] || return 1
+  now=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
+  window_sec=$(bureau_number alert.window_seconds "$window_sec" 3600 0 604800)
   delta=$((now - last))
   [ "$delta" -lt "$window_sec" ]
 }
@@ -1981,6 +2005,7 @@ _throttle_record() {
   # file behind. Trim is cheap and runs at most once per fired event.
   local lines
   lines=$(wc -l < "$_throttle_file" 2>/dev/null | tr -d ' ' || echo 0)
+  lines=$(bureau_number alert.log_lines "$lines" 0 0 9999999999)
   if [ "${lines:-0}" -gt 1000 ]; then
     tail -n 500 "$_throttle_file" > "${_throttle_file}.tmp" 2>/dev/null \
       && mv "${_throttle_file}.tmp" "$_throttle_file"
@@ -2067,6 +2092,14 @@ _session_usage_signal() {
 # Args: pct reset_epoch updated_epoch threshold stale_pause now
 _throttle_decide() {
   local pct="$1" reset="$2" upd="$3" threshold="$4" stale_pause="$5" now="$6"
+  threshold=$(bureau_number session.usage_threshold_pct "$threshold" 80 0 100)
+  # Usage files are external numeric inputs too. Preserve fractional percentages
+  # (the comparison has always used their integer part), but never evaluate a
+  # timestamp or percentage as shell code. Ten decimal digits cover epoch seconds.
+  reset=$(bureau_number usage.reset_epoch "$reset" 0 0 9999999999)
+  upd=$(bureau_number usage.updated_epoch "$upd" 0 0 9999999999)
+  pct=$(bureau_number usage.pct "${pct%%.*}" 0 0 100)
+  now=$(bureau_number clock.epoch "$now" 0 0 9999999999)
   if [ "${upd:-0}" -gt 0 ] && [ "$((now - upd))" -gt 300 ] && [ "$stale_pause" != "true" ]; then
     echo "proceed"; return 0
   fi
@@ -2086,7 +2119,7 @@ session_throttle_guard() {
   command -v jq >/dev/null 2>&1 || return 0
   local cfg="${BUREAU_CONFIG:-.bureau.json}"
   local threshold stale_pause
-  threshold=$(jq -r '.session.usage_threshold_pct // 80' "$cfg" 2>/dev/null || echo 80)
+  threshold=$(_bureau_config_number .session.usage_threshold_pct 80 0 100)
   stale_pause=$(jq -r '.session.pause_on_stale_data // false' "$cfg" 2>/dev/null || echo false)
 
   local provider
@@ -2104,13 +2137,14 @@ session_throttle_guard() {
     fi
     local pct rest reset upd now decision
     pct="${sig%%|*}"; rest="${sig#*|}"; reset="${rest%%|*}"; upd="${rest##*|}"
-    now=$(date +%s)
+    now=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
     decision=$(_throttle_decide "$pct" "$reset" "$upd" "$threshold" "$stale_pause" "$now")
     case "$decision" in
       proceed) return 0 ;;
       pause\ *)
         [ "${BUREAU_THROTTLE_ONCE:-0}" != 1 ] || return 23
         local sec="${decision#pause }"
+        sec=$(bureau_number usage.pause_seconds "$sec" 300 0 3600)
         echo "[throttle] usage ${pct}% ≥ ${threshold}% — pausing ${sec}s until ~$(_epoch_hm "$((now + sec))")" >&2
         sleep "$sec"
         ;;
@@ -2840,6 +2874,7 @@ restore_worktree_deps() {
   # for a tracked symlink, which ls-files lists without a slash. Case-insensitive
   # because macOS folds NODE_MODULES onto the same path.
   tracked=$(git -C "$wt" ls-files 2>/dev/null | grep -ciE '^node_modules(/|$)' || true)
+  tracked=$(bureau_number worktree.tracked_node_modules "$tracked" 1 0 9999999999)
   if [ "${tracked:-0}" -gt 0 ]; then
     echo "  WARNING: node_modules is tracked in the branch — discarded (not trusted)."
     rm -rf "$wt/node_modules"
@@ -3035,6 +3070,7 @@ print(next((c for c in rel.split(os.sep) if c not in ("", ".", "..") and c.lower
   # `grep -c`, not `grep -q`: -q closes the pipe early and pipefail turns the
   # SIGPIPE of ls-files into a false "not tracked".
   tracked=$(git -C "$wt" --literal-pathspecs ls-files -- "$p" 2>/dev/null | grep -c . || true)
+  tracked=$(bureau_number worktree.tracked_link_paths "$tracked" 1 0 9999999999)
   if [ "${tracked:-0}" -gt 0 ]; then
     echo "  WARNING: worktree link '$p' skipped: the branch tracks that path."; return 0
   fi
@@ -3538,13 +3574,13 @@ merge_gate_waits() {
     merge)  [ -f "$common/bureau/merge-gate-waits.json" ] || return 0 ;;
     *) return 0 ;;
   esac
-  poll="${BUREAU_QUEUE_POLL_SECONDS:-}"
-  case "$poll" in ''|*[!0-9]*|0) poll=$(bureau_get '.agents.poll_interval_minutes // 30' 2>/dev/null) || poll=30
-    case "$poll" in ''|*[!0-9]*) poll=30 ;; esac
-    poll=$(( 10#$poll * 60 )) ;;
-  esac
-  [ "${#poll}" -le 7 ] || poll=9999999
-  first=$(( 2 * 10#$poll )); [ "$first" -ge 300 ] || first=300
+  if [ "${BUREAU_QUEUE_POLL_SECONDS+x}" = x ]; then
+    poll=$(bureau_number BUREAU_QUEUE_POLL_SECONDS "$BUREAU_QUEUE_POLL_SECONDS" 1800 1 604800)
+  else
+    poll=$(_bureau_config_number .agents.poll_interval_minutes 30 1 10080)
+    poll=$((poll * 60))
+  fi
+  first=$(( 2 * poll )); [ "$first" -ge 300 ] || first=300
   if ! out=$(python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-supervision.py" --repo "$(dirname "${BUREAU_CONFIG:-./x}")" \
       gate-waits --stage "$stage" --first "$first" --cap "$cap" 2>&1); then
     echo "pick: WARN: the merge gate waits could not be read (${out##*$'\n'}); no ticket is held back" >&2

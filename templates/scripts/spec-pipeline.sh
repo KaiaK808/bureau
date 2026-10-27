@@ -28,6 +28,7 @@ precondition_runner spec
 # of 1 still drains the current issue without deadlock.
 if [ "${BUREAU_MAX_CONCURRENT_ISSUES:-0}" -gt 0 ]; then
   in_flight=$(count_in_flight_issues)
+  in_flight=$(bureau_number spec.in_flight "$in_flight" 1000 0 9999999999)
   if [ "${in_flight:-0}" -ge "$BUREAU_MAX_CONCURRENT_ISSUES" ]; then
     echo "Spec gate: $in_flight in-flight issue(s), cap is $BUREAU_MAX_CONCURRENT_ISSUES. Holding off on new Triage picks."
     exit 2

@@ -223,6 +223,7 @@ show_effective_config() {
       if [ -n "$tokens_by_model" ]; then
         while IFS='|' read -r model tokens; do
           [ -z "$model" ] && continue
+          tokens=$(bureau_number status.tokens "$tokens" 0 0 9999999999)
           local human
           if [ "$tokens" -ge 1000000 ] 2>/dev/null; then
             human=$(awk -v t="$tokens" 'BEGIN{printf "%.1fM", t/1000000}')
@@ -348,6 +349,7 @@ while true; do
 
   if tmux list-panes -t "$SESSION:bench" 2>/dev/null | sed -n 1,2p | while read -r pane; do true; done; then
     PANE_COUNT=$(tmux list-panes -t "$SESSION:bench" 2>/dev/null | wc -l | tr -d ' ')
+    PANE_COUNT=$(bureau_number status.pane_count "$PANE_COUNT" 0 0 1000000)
     for p in $(seq 0 $((PANE_COUNT - 1))); do
       pane_cmd=$(tmux display-message -t "$SESSION:bench.$p" -p '#{pane_current_command}' 2>/dev/null || echo "---")
       pane_pid=$(tmux display-message -t "$SESSION:bench.$p" -p '#{pane_pid}' 2>/dev/null || echo "---")

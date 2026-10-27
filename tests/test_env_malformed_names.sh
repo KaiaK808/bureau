@@ -27,7 +27,7 @@
 # Where the running bash does not import such names at all, A and C hold trivially and say so.
 set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPTS="$REPO_ROOT/templates/scripts"
+SCRIPTS="${1:-$REPO_ROOT/templates/scripts}"
 TMP=$(mktemp -d -t bureau-test.malformed-names.XXXXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 FAILS=0
@@ -115,6 +115,56 @@ E_FAILS_AFTER=$FAILS
 run 'bureau_without_secrets /usr/bin/env'
 for name in _beb_noglob _beb_name_re; do
   if grep -q "^$name=" "$TMP/out"; then bad "F the exported variable $name carrying the key reached the child"; else ok "F the exported variable $name carrying the key is removed"; fi
+done
+
+# Every local in the filter/wrappers, including nested helpers, is reserved.
+# Check the source inventory so adding or renaming a local cannot move the hole.
+# Use the maintained inventory even when the optional target is a pristine
+# snapshot without the reservation yet: the negative control must inject the
+# same carriers, rather than silently exercising an empty set of names.
+internal_names=$(/bin/bash -c 'source "$1/bureau-env.sh"; printf "%s\n" "$_BUREAU_ENV_INTERNAL_NAMES"' _ "$REPO_ROOT/templates/scripts")
+if [ -z "$internal_names" ]; then bad "F no reserved internal names"; fi
+if python3 - "$SCRIPTS/bureau-env.sh" "$internal_names" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read().split('_bureau_env_host_name() {', 1)[1]
+names = set()
+for line in text.splitlines():
+    if re.search(r'\blocal\b', line):
+        names.update(re.findall(r'\b(?:_[a-z]+_[A-Za-z0-9_]+|IFS)\b', line.split('local', 1)[1].split(';', 1)[0]))
+missing = names - set(sys.argv[2].split())
+if missing:
+    print('Unreserved filter locals: ' + ', '.join(sorted(missing)), file=sys.stderr)
+    sys.exit(1)
+PY
+then ok "F every filter/wrapper local is reserved"; else bad "F filter-local inventory incomplete"; fi
+
+collision_env=()
+for name in $internal_names; do collision_env+=("$name=prefix-$KEY-suffix"); done
+printf 'LINEAR_API_KEY=%s\n' "$KEY" > "$TMP/collision.env"
+mkdir -p "$TMP/collision-bin"
+for name in git gh; do
+  printf '#!/bin/sh\nexec /usr/bin/env\n' > "$TMP/collision-bin/$name"
+  chmod +x "$TMP/collision-bin/$name"
+done
+for call in 'bureau_without_secrets /usr/bin/env' \
+            'bureau_untrusted_env /usr/bin/env' \
+            'bureau_untrusted_env _beb_mode=blocked _bec_secret=blocked /usr/bin/env' \
+            'bureau_without_secrets _beb_mode=blocked _bec_secret=blocked /usr/bin/env' \
+            'bureau_exec_runtime /usr/bin/env' \
+            '( _bureau_drop_secrets; /usr/bin/env )' \
+            'git status' 'gh api'; do
+  /usr/bin/env -i PATH="$TMP/collision-bin:/usr/bin:/bin" HOME="$TMP" INNOCENT=stays \
+    ENV_FIXTURE="$TMP/collision.env" "${collision_env[@]}" \
+    /bin/bash -uc 'source "$1/bureau-env.sh"; LINEAR_API_KEY="$2"; BUREAU_ENV_FILE=$ENV_FIXTURE; '"$call" \
+    _ "$SCRIPTS" "$KEY" > "$TMP/out" 2> "$TMP/err"
+  rc=$?
+  [ "$rc" = 0 ] || bad "F $call: wrapped command failed ($rc)"
+  for name in $internal_names; do
+    if grep -q "^$name=" "$TMP/out"; then bad "F $call: reserved $name reached the child"
+    else ok "F $call: reserved $name removed"; fi
+  done
+  if grep -q -F "$KEY" "$TMP/out" "$TMP/err"; then bad "F $call: secret carrier leaked"; fi
+  if ! grep -q -x INNOCENT=stays "$TMP/out"; then bad "F $call: ordinary application variable lost"; fi
 done
 
 if [ "$FAILS" != 0 ]; then echo "$FAILS check(s) failed" >&2; exit 1; fi

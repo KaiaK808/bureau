@@ -36,6 +36,7 @@ if [ "${#POSITIONAL[@]}" -gt 0 ]; then set -- "${POSITIONAL[@]}"; else set --; f
 
 MODE="${1:-all}"
 INTERVAL_MINUTES="${2:-$BUREAU_POLL_INTERVAL}"
+INTERVAL_MINUTES=$(bureau_number agents.poll_interval_minutes "$INTERVAL_MINUTES" 30 1 10080)
 INTERVAL_SECONDS=$((INTERVAL_MINUTES * 60))
 # The picker's hold on a ticket waiting on its merge gate starts at two of this loop's
 # intervals (merge_gate_waits in bureau-config.sh), not the configured one.
@@ -127,7 +128,7 @@ run_script() {
   # matching stage_end event so /bureau-learnings can surface stage timing.
   local start_epoch=0
   if [ -n "$picked" ]; then
-    start_epoch=$(date +%s)
+    start_epoch=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
     emit_event "event=stage_start" "mode=$MODE" "stage=$script" \
       "issue=$picked" "branch=${target_branch:-}"
   fi
@@ -144,7 +145,9 @@ run_script() {
   local klass
   klass=$(exit_class "$exit_code")
   if [ -n "$picked" ]; then
-    local duration_s=$(( $(date +%s) - start_epoch ))
+    local end_epoch duration_s
+    end_epoch=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
+    duration_s=$(( end_epoch - start_epoch ))
     emit_event "event=stage_end" "mode=$MODE" "stage=$script" \
       "issue=$picked" "branch=${target_branch:-}" \
       "exit_code=$exit_code" "class=$klass" "duration_s=$duration_s"

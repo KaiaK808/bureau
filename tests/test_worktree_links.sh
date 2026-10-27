@@ -16,7 +16,9 @@ TMP=$(mktemp -d -t bureau-test.links.XXXXXXXX)
 TMP=$(cd "$TMP" && pwd -P)
 trap 'rm -rf "$TMP"' EXIT
 
-sed -n '/^# ── Worktree links (repo.worktree_links)/,/^# ── End of worktree links/p' "$SCRIPTS/bureau-config.sh" > "$TMP/fn.sh"
+# Include the real numeric dependency in parent and child-shell probes.
+sed -n '/^bureau_number() {/,/^}/p' "$SCRIPTS/bureau-env.sh" > "$TMP/fn.sh"
+sed -n '/^# ── Worktree links (repo.worktree_links)/,/^# ── End of worktree links/p' "$SCRIPTS/bureau-config.sh" >> "$TMP/fn.sh"
 grep -q '^bureau_link_worktree_paths() {' "$TMP/fn.sh" || { echo "FAIL bureau_link_worktree_paths not found in bureau-config.sh"; exit 1; }
 # shellcheck source=/dev/null
 source "$TMP/fn.sh"

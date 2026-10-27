@@ -2,6 +2,8 @@
 
 The executable templates are authoritative; installation copies them instead of generating scripts from examples. Background stages load `bureau-config.sh`, preserve any caller stop boundary while loading trusted environment settings, run applicable Linear/provider preconditions and enter the issue/workspace ownership protocol before creative work. Use `run_stage_for` through quoted Bash arrays, as the current pipeline does; never construct or execute a provider command string. App stages use prepare/finish in the current checkout instead of worker resets.
 
+Environment snapshots use the absolute Python interpreter resolved at `bureau-env.sh` load from `/usr/bin/getconf PATH`, with the command hash cleared in the resolving subshell. Do not replace that invocation with a PATH lookup: unexported keys travel to the helper on stdin. Missing trusted Python or a failed snapshot exits with 24 before the child runs. The short-secret exception requires matching actual CODESET names or resolved locale identities; a matching character-probe length is insufficient. Unknown effective Bash locales (including empty declared locale bindings) or different encodings match every nonempty secret anywhere as bytes, regardless of length. Proven equivalence retains Bash's visible-secret lengths and libc/UTF-8 counting for hidden exports; CODESET names are never used as Python codecs. See [configuration](../docs/configuration.md#numeric-runtime-settings) for dependencies and filtering rules.
+
 **Queue picking: use `pipeline_pick_next`, not `claude -p`.** Every pipeline script that chooses the next issue from a state queue MUST call `pipeline_pick_next` from `bureau-config.sh`, which dispatches to `pick_issue` via the central registry. Do NOT generate the legacy pattern of spawning `$CLAUDE "You are a queue picker..."` — that pattern is unreliable in cron because headless Claude subprocesses can't complete OAuth for remote MCPs, and Linear's MCP OAuth tokens expire after ~1 hour. The first cron tick works, every subsequent tick fails silently with "No qualifying issues found."
 
 Canonical picker block for each pipeline:
@@ -107,6 +109,8 @@ Configuration in `.bureau.json`:
   }
 }
 ```
+
+Environment overrides (`BUREAU_SUPERVISOR_MAX_CRASHES`, `BUREAU_SUPERVISOR_STABILITY_WINDOW`) beat those JSON keys, then the defaults apply. After source selection, `bureau_number` accepts ASCII decimal digits only: crash limits 1–1000, stability windows 0–604800 seconds. Invalid selected values use 5/3600 rather than falling through to another source.
 
 Stage slots include `spec`, `spec_review`, `ux`, `copy`, `implement`, `qa`, `code_review`, `merge`, `research` and `upstream_port`. Preserve legacy Claude model ownership; use provider-specific settings for Codex under v1 compatibility. See [background operations](operations.md) for the supported runtime overrides.
 

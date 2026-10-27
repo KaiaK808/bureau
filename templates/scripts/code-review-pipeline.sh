@@ -205,6 +205,7 @@ FILES_COUNT=$(echo "$FILES_CHANGED" | grep -c . || true)
 # shortstat: " 3 files changed, 42 insertions(+), 7 deletions(-)"
 DIFF_SHORTSTAT=$(git diff --shortstat "$REVIEW_DIFF" -- | sed 's/^[[:space:]]*//') || exit 18
 DIFF_TOTAL=$(echo "$DIFF_SHORTSTAT" | grep -oE '[0-9]+[[:space:]]*insertion|[0-9]+[[:space:]]*deletion' | awk '{s+=$1} END{print s+0}')
+DIFF_TOTAL=$(bureau_number review.diff_total "$DIFF_TOTAL" 10000000 0 9999999999)
 DIFF_STATS="${DIFF_SHORTSTAT:-no diff} (~${DIFF_TOTAL:-0} line changes)"
 echo "  Files changed: $FILES_COUNT | $DIFF_STATS"
 
@@ -439,9 +440,10 @@ _sec_critical=$(parse_claude_json "$SECURITY_REVIEW" '.counts.critical')
 # the trailing fenced-json verdict — sits at the END of each review, so keep
 # the tail when one is oversized. Tunable via BUREAU_REVIEW_MERGE_CAP_KB.
 # (Claude reviews are ~5-20KB so this is a no-op for the default runner.)
-_rv_cap=$(( ${BUREAU_REVIEW_MERGE_CAP_KB:-60} * 1024 ))
+_rv_cap=$(bureau_number BUREAU_REVIEW_MERGE_CAP_KB "${BUREAU_REVIEW_MERGE_CAP_KB-60}" 60 1 1024)
+_rv_cap=$((_rv_cap * 1024))
 for _rv in CORRECTNESS_REVIEW SECURITY_REVIEW PERFORMANCE_REVIEW; do
-  if [ "$(printf '%s' "${!_rv}" | wc -c)" -gt "$_rv_cap" ]; then
+  if [ "$(bureau_number review.result_bytes "$(printf '%s' "${!_rv}" | wc -c | tr -d ' ')" 0 0 9999999999)" -gt "$_rv_cap" ]; then
     printf -v "$_rv" '…[%s truncated to last %dKB for merge — full review in %s]…\n%s' \
       "$_rv" "$(( _rv_cap/1024 ))" "$REVIEW_TMP" "$(printf '%s' "${!_rv}" | tail -c "$_rv_cap")"
   fi
@@ -522,7 +524,9 @@ elif [ -n "$BUILD_CMD" ]; then
   # PR code: runs without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).
   bureau_untrusted_env --check || exit 24
   bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
-  BUILD_LOG_LINES=$(wc -l < "$REVIEW_TMP/build.log" | tr -d ' '); [ "$BUILD_LOG_LINES" -le 20 ] || echo "  Build output: last 20 of $BUILD_LOG_LINES lines"
+  BUILD_LOG_LINES=$(wc -l < "$REVIEW_TMP/build.log" | tr -d ' ')
+  BUILD_LOG_LINES=$(bureau_number review.build_log_lines "$BUILD_LOG_LINES" 0 0 9999999999)
+  [ "$BUILD_LOG_LINES" -le 20 ] || echo "  Build output: last 20 of $BUILD_LOG_LINES lines"
   tail -20 "$REVIEW_TMP/build.log"
   # A dirty worktree makes the worker keep a stopped or failed review's worktree
   # as unfinished work (bureau-worker.sh). A warning only: it never changes the

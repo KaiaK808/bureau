@@ -30,9 +30,9 @@ bureau_secret_copy API_KEY LINEAR_API_KEY
 # productive. Defaults give ≤90 min worst case before the issue is parked for
 # human review. A pass that times out is one of the MAX_ITER passes (v3.2), so
 # TOTAL_TIMEOUT, not ITER_TIMEOUT, bounds a stage whose passes time out.
-MAX_ITER="${BUREAU_IMPL_MAX_ITER:-3}"
-ITER_TIMEOUT="${BUREAU_IMPL_ITER_TIMEOUT:-1800}"
-TOTAL_TIMEOUT="${BUREAU_IMPL_TOTAL_TIMEOUT:-5400}"
+MAX_ITER=$(bureau_number BUREAU_IMPL_MAX_ITER "${BUREAU_IMPL_MAX_ITER-3}" 3 1 1000)
+ITER_TIMEOUT=$(bureau_number BUREAU_IMPL_ITER_TIMEOUT "${BUREAU_IMPL_ITER_TIMEOUT-1800}" 1800 1 86400)
+TOTAL_TIMEOUT=$(bureau_number BUREAU_IMPL_TOTAL_TIMEOUT "${BUREAU_IMPL_TOTAL_TIMEOUT-5400}" 5400 1 604800)
 
 # The provider adapter enforces per-pass timeouts on both macOS and Linux.
 
@@ -372,8 +372,7 @@ command: ${cmd}"
     echo "  ✗✗ repo.post_implement_command not run: repo.untrusted_env is invalid" >&2
     return 0
   fi
-  limit="${BUREAU_POST_IMPLEMENT_TIMEOUT:-900}"
-  [[ "$limit" =~ ^[1-9][0-9]*$ ]] || limit=900
+  limit=$(bureau_number BUREAU_POST_IMPLEMENT_TIMEOUT "${BUREAU_POST_IMPLEMENT_TIMEOUT-900}" 900 1 604800)
   [ "$limit" -le "$TOTAL_TIMEOUT" ] || limit="$TOTAL_TIMEOUT"
   before=$(git rev-parse HEAD)
   before_status=$(git status --porcelain --untracked-files=all | LC_ALL=C sort)
@@ -699,7 +698,7 @@ fi
 echo "  Found tasks: $TASKS_FILE"
 
 # ─── retry loop ───────────────────────────────────────────────────────────
-START_TS=$(date +%s)
+START_TS=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
 RESULT=""
 STATUS=""
 TASKS_DONE_TOTAL=0
@@ -859,9 +858,10 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   STATUS=$(parse_claude_json "$RESULT" '.status // "PARTIAL"')
   [ -z "$STATUS" ] && STATUS="PARTIAL"
   TASKS_DONE_TOTAL=$(parse_claude_json "$RESULT" '.tasks_done // 0')
-  [[ "$TASKS_DONE_TOTAL" =~ ^[0-9]+$ ]] || TASKS_DONE_TOTAL=0
+  TASKS_DONE_TOTAL=$(bureau_number tasks_done "$TASKS_DONE_TOTAL" 0 0 100000)
   HEAD_AFTER_RUN=$(git rev-parse HEAD)
   COMMITS_TOTAL=$(git rev-list --count "$HEAD_BEFORE_RUN..$HEAD_AFTER_RUN" 2>/dev/null || echo 0)
+  COMMITS_TOTAL=$(bureau_number git.commits_total "$COMMITS_TOTAL" 0 0 9999999999)
 
   ITER_LOG="  /goal: status=$STATUS tasks_done=$TASKS_DONE_TOTAL commits=$COMMITS_TOTAL"
   [ "$CLAUDE_EXIT" = 124 ] && ITER_LOG+=" (timed out at TOTAL_TIMEOUT=${TOTAL_TIMEOUT}s)"
@@ -874,6 +874,7 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   # carries via the post-loop branch check). Haiku is good but not
   # infallible; verify against the actual branch state.
   BRANCH_COMMITS_AHEAD=$(git rev-list --count "origin/main..HEAD" 2>/dev/null || echo 0)
+  BRANCH_COMMITS_AHEAD=$(bureau_number git.branch_commits_ahead "$BRANCH_COMMITS_AHEAD" 0 0 9999999999)
   if [ "$STATUS" = "COMPLETE" ] && [ "$BRANCH_COMMITS_AHEAD" -eq 0 ]; then
     echo "  WARN: /goal reported COMPLETE but branch has no commits beyond origin/main — overriding to STUCK."
     STATUS="STUCK"
@@ -898,7 +899,7 @@ fi
 checked_task_count() {
   local n
   n=$(grep -cE '^[[:space:]]*[-*][[:space:]]+\[[xX]\]' "$TASKS_FILE" 2>/dev/null) || true
-  printf '%s' "${n:-0}"
+  bureau_number tasks.checked "${n:-0}" 0 0 100000
 }
 
 # end_timed_out <pass> <why no pass is left>: the end after a pass that timed
@@ -913,7 +914,8 @@ end_timed_out() {
 
 if ! use_goal_loop_enabled; then
 for (( i=1; i<=MAX_ITER; i++ )); do
-  ELAPSED=$(( $(date +%s) - START_TS ))
+  NOW_TS=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
+  ELAPSED=$(( NOW_TS - START_TS ))
   REMAINING=$(( TOTAL_TIMEOUT - ELAPSED ))
   if [ "$REMAINING" -le 60 ]; then
     # STATUS still holds the previous pass's: one that timed out ends the stage
@@ -1050,6 +1052,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
   # check_squash_range are the two guards against a marker from any source.
   HEAD_AFTER=$(git rev-parse HEAD)
   COMMITS_THIS_ITER=$(git rev-list --count "$HEAD_BEFORE..$HEAD_AFTER" 2>/dev/null || echo 0)
+  COMMITS_THIS_ITER=$(bureau_number git.commits_this_iteration "$COMMITS_THIS_ITER" 0 0 9999999999)
 
   if [ "$CLAUDE_EXIT" = 124 ]; then
     # A pass that timed out returned nothing to parse. TIMEOUT is the shell's
@@ -1063,8 +1066,8 @@ At the end of your work, emit a single fenced json block so the shell can summar
     STATUS=$(parse_claude_json "$RESULT" '.status // "PARTIAL"')
     [ -z "$STATUS" ] && STATUS="PARTIAL"
     TASKS_DONE=$(parse_claude_json "$RESULT" '.tasks_done // 0')
-    [[ "$TASKS_DONE" =~ ^[0-9]+$ ]] || TASKS_DONE=0
   fi
+  TASKS_DONE=$(bureau_number tasks_done "$TASKS_DONE" 0 0 100000)
   FIXED_REVIEW=$(parse_claude_json "$RESULT" '.fixed_review_items // [] | length')
   [[ "$FIXED_REVIEW" =~ ^[0-9]+$ ]] || FIXED_REVIEW=0
   TASKS_DONE_TOTAL=$(( TASKS_DONE_TOTAL + TASKS_DONE ))
@@ -1170,6 +1173,7 @@ fi
 # instead of this-tick state lets that path through while still parking
 # a truly empty branch claimed as COMPLETE.
 BRANCH_COMMITS_AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+BRANCH_COMMITS_AHEAD=$(bureau_number git.branch_commits_ahead "$BRANCH_COMMITS_AHEAD" 0 0 9999999999)
 if [ "$STATUS" = "COMPLETE" ] && [ "$BRANCH_COMMITS_AHEAD" -eq 0 ]; then
   echo "  WARN: terminal status=COMPLETE but branch has no commits beyond origin/main — overriding to STUCK."
   STATUS="STUCK"
@@ -1237,7 +1241,7 @@ echo "Phase 2/2: terminal status=$STATUS (after $i iter(s))"
 # COMMITS_TOTAL nor the iter log). An unreadable comparison counts as ahead.
 # A push that goes through says so (push_confirmed), with this count.
 AHEAD_READ=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null) || AHEAD_READ=""
-AHEAD_OF_ORIGIN=${AHEAD_READ:-1}
+AHEAD_OF_ORIGIN=$(bureau_number git.ahead_of_origin "${AHEAD_READ:-1}" 1 0 9999999999)
 # A hook that moved HEAD off the commit it started from gets no push below.
 # When origin then lacks the run's own commits (pushes deferred, or a
 # per-iteration push that failed), push the commit the hook started from, which

@@ -88,7 +88,9 @@ while [ "$t" -lt "$n_tasks" ]; do
   planned=$(extract_paths "${TASK_FILES[$t]}")
   TASK_PATHS[$t]="$planned"
   if [ -n "$planned" ]; then
-    n_paths=$((n_paths + $(printf '%s\n' "$planned" | wc -l)))
+    planned_count=$(printf '%s\n' "$planned" | wc -l | tr -d ' ')
+    planned_count=$(bureau_number crosscheck.planned_count "$planned_count" 0 0 9999999999)
+    n_paths=$((n_paths + planned_count))
   fi
   t=$((t + 1))
 done

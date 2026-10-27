@@ -189,6 +189,7 @@ Begin."
 
   local prompt_chars estimated_tokens
   prompt_chars=$(printf '%s' "$prompt" | wc -c | tr -d ' ')
+  prompt_chars=$(bureau_number upstream.prompt_chars "$prompt_chars" 0 0 9999999999)
   estimated_tokens=$((prompt_chars / 4))
   local conflict_count
   conflict_count=$(printf '%s\n' "$conflicts" | wc -l | tr -d ' ')
