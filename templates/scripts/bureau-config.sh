@@ -1988,11 +1988,12 @@ needs_human_holds_flush() {
 # Caller is responsible for `git fetch origin` beforehand — keeping the fetch
 # out lets callers batch it with their own fetches.
 #
-# Usage: if branch_is_bureau_only "$BRANCH"; then …; fi
+# Optional tip/base arguments inspect actual pinned local divergence too.
+# Usage: if branch_is_bureau_only "$BRANCH" ["$TIP" "$BASE"]; then …; fi
 branch_is_bureau_only() {
   local branch="$1"
   local human_commits
-  human_commits=$(_bureau_human_commits "$branch") || return 1
+  human_commits=$(_bureau_human_commits "$branch" "${2:-origin/$branch}" "${3:-origin/main}") || return 1
   [ -z "$human_commits" ]
 }
 
@@ -2002,11 +2003,11 @@ branch_is_bureau_only() {
 # print when the predicate fails). Keeping the awk in one place ensures the
 # refusal message lists exactly the commits the predicate considered human.
 _bureau_human_commits() {
-  local branch="$1"
+  local branch="$1" tip="${2:-origin/$1}" base="${3:-origin/main}"
   # tolower() rather than gawk-only IGNORECASE so the helper works under BSD
   # awk (macOS) and gawk (Linux CI) alike.
   local commits
-  commits=$(git log "origin/main..origin/$branch" \
+  commits=$(git log "$base..$tip" \
     --format='%H|%P|%s|%(trailers:key=Co-authored-by,valueonly,separator=,)|%(trailers:key=Bureau-Generated,valueonly,separator=,)' 2>/dev/null) || return 1
   printf '%s\n' "$commits" | awk -F'|' '
         {
@@ -2646,10 +2647,9 @@ log_escalation() {
 # rebases before final merge.
 #
 # Returns 0 if the branch is already up to date with origin/main, or the merge
-# succeeded. Returns 1 on conflict — the merge is aborted and a comment is
-# posted to the issue. The caller decides routing on conflict, since the
-# desired next state varies (qa/code-review → Build; implement is already in
-# Build → caller labels needs-human and stays).
+# succeeded. Returns 17 on conflict — the merge is aborted, held and a comment is
+# posted to the issue. The ticket stays held in its current state; control
+# outcomes (withdrawal, silence, ownership and authentication) remain distinct.
 #
 # Caller must already be checked out on the branch. By default the helper fetches origin
 # itself so its contract is self-contained — earlier callers relied on
@@ -2659,16 +2659,16 @@ log_escalation() {
 # SHA for the PR's actual base. That immutable input is never refetched here.
 #
 # Usage:
-#   if ! merge_origin_main_or_abort "$ISSUE" "QA"; then
-#     move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
-#     exit 17
-#   fi
+#   merge_rc=0
+#   merge_origin_main_or_abort "$ISSUE" "QA" || merge_rc=$?
+#   [ "$merge_rc" = 0 ] || exit "$merge_rc"
 merge_origin_main_or_abort() {
   local issue="$1" stage_label="$2" base_ref="${3:-origin/main}"
+  BUREAU_CONFLICT_REPAIRED_HEAD=""
   if [ "$#" -ge 3 ]; then
-    [[ "$base_ref" =~ ^[0-9a-f]{40,64}$ ]] && git cat-file -e "$base_ref^{commit}" || return 1
+    [[ "$base_ref" =~ ^[0-9a-f]{40,64}$ ]] && git cat-file -e "$base_ref^{commit}" || return 18
   else
-    git fetch origin --quiet || true
+    git fetch origin --quiet || return 18
   fi
   bureau_ticket_checkpoint "$issue"
   if git merge-base --is-ancestor "$base_ref" HEAD 2>/dev/null; then
@@ -2680,18 +2680,26 @@ merge_origin_main_or_abort() {
   # Configured repair restores dependencies from the merged manifests before
   # generators/checks, using restore_worktree_deps from this runtime copy.
   # This executor transaction grants neither review approval nor a reusable gate.
-  local merge_rc=0
+  local merge_rc=0 result_file
+  result_file=$(mktemp) || return 24
   ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
-      --repo "$PWD" --config "$BUREAU_CONFIG" --base "$base_ref" --issue "$issue" ) || merge_rc=$?
+      --repo "$PWD" --config "$BUREAU_CONFIG" --base "$base_ref" --issue "$issue" --result-file "$result_file" ) || merge_rc=$?
   # The transaction has reaped its command and rolled back before returning a
   # withdrawal. Consume its shared latch (including Done's 0) in THIS shell;
   # a failed command also needs a fresh read even when the comment is throttled.
+  if [ "$merge_rc" = 0 ] && [ "$(jq -r '.semantic // false' "$result_file" 2>/dev/null)" = true ]; then
+    BUREAU_CONFLICT_REPAIRED_HEAD=$(git rev-parse HEAD) || merge_rc=18
+  fi
+  rm -f "$result_file"
   bureau_ticket_checkpoint "$issue"
-  [ "$merge_rc" != 0 ] || return 0
+  case "$merge_rc" in
+    0) return 0 ;;
+    10|16|21|25|26|27|130) return "$merge_rc" ;;
+  esac
   echo "  ERROR: merge of $base_ref has conflicts. Aborting $stage_label."
   # Throttle the conflict comment to once per hour per issue. Without this,
   # an issue parked at needs-human (implement) re-runs the helper every tick
-  # and Linear gets a comment-storm. The merge still aborts and returns 1
+  # and Linear gets a comment-storm. The merge still aborts and returns 17
   # either way — only the user-facing comment is suppressed.
   local throttle_key="merge-conflict|$issue"
   if _throttle_should_suppress "$throttle_key" 3600; then
@@ -2701,7 +2709,8 @@ merge_origin_main_or_abort() {
     post_comment "$issue" "❌ $stage_label pipeline cannot proceed — branch has conflicts with \`$base_ref\`. Resolve them and re-run."
   fi
   bureau_ticket_checkpoint "$issue"
-  return 1
+  ( mark_needs_human "$issue" conflict_resolver 17 ) || true
+  return 17
 }
 
 # count issues currently in-flight between Spec (inclusive) and Done

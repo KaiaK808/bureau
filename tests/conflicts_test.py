@@ -89,6 +89,7 @@ assert all(Path(name).read_text() == expected for name in ('docs/site/page.html'
         self.config.write_text(json.dumps(self.settings))
         script = '''set -euo pipefail
 source "$1/bureau-config.sh"
+add_issue_label() { :; }
 post_comment() { printf '%s\\n' "$2" >> "$FAKE_LINEAR_COMMENTS"; }
 _throttle_should_suppress() { return 1; }
 _throttle_record() { :; }
@@ -131,6 +132,25 @@ _throttle_record() { :; }
         self.diverge(); self.success()
         self.assertIn('first=ours', (self.repo / 'docs/site/page.html').read_text())
         self.assertIn('last=theirs', (self.repo / 'docs/site/page.html').read_text())
+
+    def test_disabled_resolver_allows_six_character_setext_heading(self):
+        heading = 'Summary\n======\n'
+        resolved = heading + 'Both intended changes retained.\n'
+        self.write('notes.md', heading + 'base\n')
+        self.write('.gitattributes', 'notes.md conflict-marker-size=5\n')
+        self.commit('heading foundation'); self.git('branch', '-f', 'feature', 'main')
+        for branch, side in [('feature', 'ours'), ('main', 'theirs')]:
+            self.git('checkout', '-q', branch); self.write('notes.md', heading + side + '\n')
+            self.commit(side)
+        self.base = self.git('rev-parse', 'main')
+        self.git('checkout', '-q', 'feature'); self.head = self.git('rev-parse', 'HEAD')
+        self.settings['agents'] = {'conflict_resolver': {'enabled': False}}
+        self.settings['repo'] = {'test_command': shlex.join([sys.executable, '-c',
+            "from pathlib import Path; assert Path('notes.md').read_text() == " + repr(resolved)]),
+            'conflict_resolution': {'generated': [{'globs': ['notes.md'], 'command': [sys.executable, '-c',
+                "from pathlib import Path; Path('notes.md').write_text(" + repr(resolved) + ")"]}]}}
+        self.success(pinned=True)
+        self.assertEqual((self.repo / 'notes.md').read_text(), resolved)
 
     def test_append_only_under_unreleased(self):
         self.diverge(generated=False, append=True)

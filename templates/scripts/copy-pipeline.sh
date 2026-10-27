@@ -93,10 +93,9 @@ else OVERLAP_RC=$?; [ "$OVERLAP_RC" = 2 ] || exit "$OVERLAP_RC"; fi
 # Same base-selection reasoning as implement/qa/code-review: copy commits land in
 # user-facing strings and are pushed. The PR diff is computed against
 # origin/main, so a stale base pollutes review.
-if ! merge_origin_main_or_abort "$ISSUE" "Copy"; then
-  move_issue "$ISSUE" "$BUREAU_STATE_SPEC_REVIEW"
-  exit 17
-fi
+MERGE_RC=0
+merge_origin_main_or_abort "$ISSUE" "Copy" || MERGE_RC=$?
+[ "$MERGE_RC" = 0 ] || exit "$MERGE_RC"
 
 SPEC_DIR=$(bureau_spec_dir_for_branch "$BRANCH")
 SPEC_CONTEXT=$(build_spec_context "$SPEC_DIR")

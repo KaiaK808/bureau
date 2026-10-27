@@ -88,10 +88,9 @@ else
   exit 12
 fi
 
-if ! merge_origin_main_or_abort "$ISSUE" "QA"; then
-  move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
-  exit 17
-fi
+MERGE_RC=0
+merge_origin_main_or_abort "$ISSUE" "QA" || MERGE_RC=$?
+[ "$MERGE_RC" = 0 ] || exit "$MERGE_RC"
 
 # After the checkout AND the merge of origin/main — both can change the
 # manifests. Idempotent: does nothing when node_modules already matches. A

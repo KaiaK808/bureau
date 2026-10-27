@@ -117,8 +117,11 @@ fi
 # Bureau-only divergence check — single source of truth lives in
 # bureau-config.sh:branch_is_bureau_only. merge-pipeline.sh uses the same
 # helper to decide whether to label `rebase-needed` on DIRTY PRs.
-git -C "$REPO_DIR" fetch origin --quiet
-if ! branch_is_bureau_only "$BRANCH"; then
+git -C "$REPO_DIR" fetch origin --quiet || exit 18
+REBASE_BASE=$(git rev-parse --verify "origin/main^{commit}") || exit 18
+REBASE_REMOTE=$(git rev-parse --verify "refs/remotes/origin/$BRANCH^{commit}") || exit 18
+if ! branch_is_bureau_only "$BRANCH" "$REBASE_REMOTE" "$REBASE_BASE" \
+   || ! branch_is_bureau_only "$BRANCH" HEAD "$REBASE_BASE"; then
   HUMAN_COMMITS=$(cd "$REPO_DIR" && _bureau_human_commits "$BRANCH")
   echo "  Human commits in divergence — refusing to rebase:"
   echo "$HUMAN_COMMITS" | sed 's/^/    /'
@@ -147,28 +150,35 @@ if [ "$CUR" != "$BRANCH" ]; then
   exit 12
 fi
 
-echo "  Rebasing $BRANCH onto origin/main..."
-if git rebase origin/main; then
-  echo "  Rebase succeeded — force-pushing with lease."
-  bureau_ticket_checkpoint "$ISSUE"
-  if git push --force-with-lease origin "HEAD:$BRANCH"; then
-    post_comment "$ISSUE" "🔄 Rebased \`$BRANCH\` onto \`main\` and force-pushed (\`--force-with-lease\`). Routing back to Build Review for re-check."
-    move_issue "$ISSUE" "$BUREAU_STATE_BUILD_REVIEW"
-    echo "  Pushed. Issue moved back to Build Review."
-  else
-    echo "  Force-push rejected (lease lost — branch moved underneath us)."
-    post_comment "$ISSUE" "❌ Rebase succeeded locally but \`--force-with-lease\` was rejected: \`$BRANCH\` moved on origin between fetch and push. Needs human."
-    mark_needs_human "$ISSUE" rebase 19 || true
-    exit 19
-  fi
+echo "  Rebasing $BRANCH onto pinned origin/main..."
+bureau_ticket_checkpoint "$ISSUE" strict
+REBASE_RC=0
+( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
+    --repo "$PWD" --config "$BUREAU_CONFIG" --base "$REBASE_BASE" --issue "$ISSUE" --operation rebase ) || REBASE_RC=$?
+bureau_ticket_checkpoint "$ISSUE" strict
+case "$REBASE_RC" in
+  0) ;;
+  10|16|21|25|26|27|130) exit "$REBASE_RC" ;;
+  *)
+    # Advisory publication cannot bypass the hold or replace exit 17. Consume
+    # any withdrawal latched inside either best-effort subshell in this parent.
+    ( post_comment "$ISSUE" "🛑 Rebase conflict resolution failed or was unavailable on \`$BRANCH\`. The entire rebase was aborted; needs human resolution." ) || true
+    bureau_ticket_checkpoint "$ISSUE"
+    ( mark_needs_human "$ISSUE" rebase 17 ) || true
+    bureau_ticket_checkpoint "$ISSUE" latched
+    exit 17 ;;
+esac
+
+echo "  Rebase succeeded — force-pushing with the fetched lease."
+bureau_ticket_checkpoint "$ISSUE" strict
+if git push "--force-with-lease=refs/heads/$BRANCH:$REBASE_REMOTE" origin "HEAD:refs/heads/$BRANCH"; then
+  bureau_ticket_checkpoint "$ISSUE" strict
+  post_comment "$ISSUE" "🔄 Rebased \`$BRANCH\` onto \`main\` and pushed with the pinned lease. Routing back to Build Review for a fresh review."
+  move_issue "$ISSUE" "$BUREAU_STATE_BUILD_REVIEW"
 else
-  echo "  Rebase produced conflicts — aborting."
-  git rebase --abort 2>/dev/null || true
-  post_comment "$ISSUE" "🛑 Rebase produced conflicts on \`$BRANCH\` against \`main\`. Needs human resolution."
-  # Ends with 0 only when the label is on the ticket: without it a driver would
-  # read success and the queue would pick the ticket again.
-  if mark_needs_human "$ISSUE" rebase; then exit 0; fi
-  exit 25
+  post_comment "$ISSUE" "❌ Rebase succeeded locally but the pinned force-with-lease was rejected. Needs human."
+  mark_needs_human "$ISSUE" rebase 19 || true
+  exit 19
 fi
 
 echo ""

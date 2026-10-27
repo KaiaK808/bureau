@@ -936,7 +936,8 @@ def outside_gate(options, repo, command, log):
             elif code < 0 or code == 130: abort = 'kill'
         return code, abort
     finally:
-        if child and child.poll() is None:
+        if child:
+            # A successful check may leave background writers in its group.
             try: os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError: pass
             child.wait()

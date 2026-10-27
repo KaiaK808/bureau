@@ -91,10 +91,9 @@ else OVERLAP_RC=$?; [ "$OVERLAP_RC" = 2 ] || exit "$OVERLAP_RC"; fi
 # Same base-selection reasoning as implement/qa/code-review: design.md is committed
 # and pushed; the PR diff is computed against origin/main, so a stale base
 # pollutes the design-review with phantom-revert hunks.
-if ! merge_origin_main_or_abort "$ISSUE" "UX/Design"; then
-  move_issue "$ISSUE" "$BUREAU_STATE_SPEC_REVIEW"
-  exit 17
-fi
+MERGE_RC=0
+merge_origin_main_or_abort "$ISSUE" "UX/Design" || MERGE_RC=$?
+[ "$MERGE_RC" = 0 ] || exit "$MERGE_RC"
 
 echo "→ Locating spec artifacts..."
 # No "newest directory" fallback: in a fresh worktree every directory has the

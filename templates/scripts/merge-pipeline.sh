@@ -488,10 +488,10 @@ refresh_owned_merge_base() {
   git merge-base --is-ancestor "$base_head" "$remote_head" && return 0
   before=$(git rev-parse HEAD)
   merge_origin_main_or_abort "$ISSUE" 'Merge base refresh' "$base_head" || refresh_rc=$?
-  [ "$refresh_rc" != 130 ] || exit 130
+  case "$refresh_rc" in 10|16|18|21|25|26|27|130) exit "$refresh_rc" ;; esac
   bureau_ticket_checkpoint "$ISSUE" strict
   if [ "$refresh_rc" != 0 ]; then
-    mark_needs_human "$ISSUE" merge 17 || true
+    ( mark_needs_human "$ISSUE" merge 17 ) || true
     exit 17
   fi
   bureau_ticket_checkpoint "$ISSUE" strict

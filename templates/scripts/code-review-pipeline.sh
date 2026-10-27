@@ -251,9 +251,17 @@ git checkout -B "$BRANCH" "$REVIEW_HEAD"
 
 # Review may merge its target locally for the build check. The durable boundary
 # tracks the two fetched remote inputs, not that unpublished local merge SHA.
-if ! merge_origin_main_or_abort "$ISSUE" "Code Review" "$REVIEW_BASE"; then
-  move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
-  exit 17
+MERGE_RC=0
+merge_origin_main_or_abort "$ISSUE" "Code Review" "$REVIEW_BASE" || MERGE_RC=$?
+[ "$MERGE_RC" = 0 ] || exit "$MERGE_RC"
+# Semantic resolution authors new source. Publish normally, then re-pin
+# before diff context, reuse and specialists; an old approval cannot cover it.
+if [ -n "${BUREAU_CONFLICT_REPAIRED_HEAD:-}" ]; then
+  bureau_ticket_checkpoint "$ISSUE" strict
+  git push origin "HEAD:refs/heads/$BRANCH" || exit 18
+  bureau_ticket_checkpoint "$ISSUE" strict
+  REVIEW_HEAD="$BUREAU_CONFLICT_REPAIRED_HEAD"
+  REVIEW_DIFF="$REVIEW_BASE...$REVIEW_HEAD"
 fi
 # Pin the inputs and the actual local validation result into provider receipts.
 # These are evidence only; the remote PR remains at REVIEW_HEAD.
