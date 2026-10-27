@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ca020ee8fbe4b634171845ec17dbcf25c33f5fa7cb955fb5de9d61f50217752d">
+<meta name="bureau-source-sha256" content="89b8dce98650c72f009206673581629cb31b59e4436c58a7db06beeb873a37dd">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -2148,6 +2148,20 @@ together, then restart drivers; see the <a
 href="stage-protocol.html#acceptance-briefs-at-human-merge-boundaries">acceptance
 and insights protocol</a> for privacy, retention and delivery
 limits.</p>
+<p>Failure insights and review dispositions also need no configuration
+key. The shell classifier <code>bureau-insights.sh</code> consumes
+runtime exits, provider metadata and trusted review/gate signals; model
+prose cannot choose a cause. All background stages can contribute
+filtered insights, including failed and held calls. Metadata-only
+<code>stage-outcomes.jsonl</code> and local
+<code>review-dispositions.jsonl</code> share the insight store's lock,
+private permissions, atomic capacity checks and per-ledger
+2,048-row/30-day collection retention. A disposition has only its
+provenance, status, severity and filtered repository-relative path;
+applied/declined are advisory self-reports, not proof of a fix. Resync
+scripts and interfaces together and restart drivers; no backfill occurs.
+See <a href="stage-protocol.html#failure-learning-records">failure
+learning records</a>.</p>
 <p>Evidence is automatic and needs no <code>.bureau.json</code> key or
 configuration-version change.
 <code>&lt;git common dir&gt;/bureau/evidence/v1/</code> holds private

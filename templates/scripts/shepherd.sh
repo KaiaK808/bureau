@@ -878,6 +878,8 @@ while true; do
   # The wait budget belongs to the gate of one stage: it runs on while that stage runs
   # again, and starts at 0 for any other stage (MERGE_WAIT_FOR is set by the wait below).
   if [ "$PIPELINE" != "$MERGE_WAIT_FOR" ]; then MERGE_WAITED=0; MERGE_WAIT_FOR=""; fi
+  STAGE_STARTED=$(date +%s 2>/dev/null) || STAGE_STARTED=0
+  ( emit_event "event=stage_start" "mode=shepherd" "stage=$PIPELINE" "issue=$ISSUE" ) || true
   set +e
   : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
   : > "$MERGE_GATE_FILE" 2>/dev/null || true
@@ -887,6 +889,9 @@ while true; do
       bash "$SCRIPT_REPO/scripts/bureau-worker.sh" "$ISSUE" "$PIPELINE" "$WORKTREE" "${BRANCH:-}" )
   RC=$?
   set -e
+  STAGE_ENDED=$(date +%s 2>/dev/null) || STAGE_ENDED=0
+  ( emit_event "event=stage_end" "mode=shepherd" "stage=$PIPELINE" "issue=$ISSUE" \
+      "exit_code=$RC" "class=$(exit_class "$RC")" "duration_s=$((STAGE_ENDED - STAGE_STARTED))" ) || true
   # A worker interrupted independently of this shepherd still takes the
   # existing cancelled-run log/alert path. No refresh may replace its 130.
   if [ "$RC" = 130 ]; then

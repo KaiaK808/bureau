@@ -3688,6 +3688,13 @@ bureau_review_evidence() {
   return 0
 }
 
+# A trusted shell rule, never model prose, marks a cap or a red shell gate.
+bureau_outcome_signal() {
+  [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  ( bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" --signal "$1" ) || true
+  return 0
+}
+
 # decide_review_verdict <verdict> <security_issues> <security_critical> <build_ok> <cycles> <max_cycles> [round max_rounds]
 #   → the final verdict on the first line, then one line per rule that changed or
 #     qualified it. At most one line carries a reason: the rule that turned the verdict
@@ -4416,7 +4423,7 @@ parse_claude_json() {
   local raw="$1" filter="$2" text block
   # Parsed fields also feed comment fallbacks. Strip nested insight fields in
   # jq, keeping status/verdict parsing independent of the text projector.
-  filter="walk(if type == \"object\" then del(.insights) else . end) | ($filter)"
+  filter="walk(if type == \"object\" then del(.insights, .review_dispositions) else . end) | ($filter)"
   text=$(printf '%s' "$raw" | jq -r 'if type=="object" and (.result | type)=="string" then .result else empty end' 2>/dev/null || true)
   [ -n "$text" ] || text="$raw"
   if printf '%s' "$text" | jq -e 'type == "object"' >/dev/null 2>&1; then
@@ -4439,13 +4446,13 @@ bureau_comment_projection() {
   projected=$(printf '%s' "$1" | python3 -I -c '
 import json, re, sys
 omitted = "[Structured result omitted: comment projection unavailable.]"
-insight_key = re.compile(r"(?i)\b[\x22\x27]?insights[\x22\x27]?\s*[:=]")
+insight_key = re.compile(r"(?i)\b[\x22\x27]?(?:insights|review_dispositions)[\x22\x27]?\s*[:=]")
 fences = re.compile(r"(?ms)^```json[^\S\n]*\n(.*?)^```[^\S\n]*$")
 
 def scrub(value):
     if isinstance(value, dict):
         return {k: project(v) if k == "result" and isinstance(v, str) else scrub(v)
-                for k, v in value.items() if k != "insights"}
+                for k, v in value.items() if k not in ("insights", "review_dispositions")}
     if isinstance(value, list):
         return [scrub(v) for v in value]
     if isinstance(value, str) and insight_key.search(value):

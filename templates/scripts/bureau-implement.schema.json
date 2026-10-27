@@ -109,6 +109,20 @@
     "prose_notes": {
       "type": "string"
     },
+    "review_dispositions": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {"type": "string", "enum": ["applied", "declined"]},
+          "severity": {"type": "string", "enum": ["CRITICAL", "BUG", "MINOR", "SKIP"]},
+          "path": {"type": "string", "maxLength": 280}
+        },
+        "required": ["disposition", "severity", "path"]
+      }
+    },
     "insights": {
       "type": "array",
       "maxItems": 3,

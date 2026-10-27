@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="55338231b79078c0fdcd52ac3207ccf12b70819105e4c6b4c69ac837ed54dd71">
+<meta name="bureau-source-sha256" content="a0bee4af3bf6b7013395df528209679a3a328b9f635420102c3d15707b1534a1">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1103,6 +1103,98 @@ patterns have no such bound. When selection switches between persisted
 order and fallback rotation, the rotation can start out of phase, so
 covering every ticket can take one sweep more than N (seen with six
 tickets at the default 30-minute cadence: seven sweeps).</p>
+<h3 id="failure-learning-records">Failure learning records</h3>
+<p><code>bureau-insights.sh</code> owns
+<code>bureau_insight_cause</code>, separate from
+<code>exit_class</code>: exactly one of <code>timeout</code>,
+<code>gate_red</code>, <code>review_capped</code>,
+<code>ownership</code>, <code>provider_error</code>, <code>quota</code>,
+<code>human_hold</code>, <code>other</code>. Inputs are runtime exits,
+trusted provider outcome/timeout metadata and shell-only signals. Model
+<code>cause_class</code>, status prose, findings and insight sentences
+never select a cause. Exit 124 and exit 25 with provider
+<code>timeout_kind: silence</code> mean <code>timeout</code>; 11/21 mean
+<code>ownership</code>, 16/22 mean <code>provider_error</code>, 23 means
+<code>quota</code>, 14 means <code>gate_red</code>, and 20/25 otherwise
+mean <code>human_hold</code>. Provider metadata explains a stage failure
+only when its stage and exit match the finalized stage; recency alone
+cannot select a fatal cause. Ignored best-effort phases, recovered calls
+and earlier red gates cannot explain a later unrelated hold; explicit
+shell signals take precedence over historical gate records. Trusted
+review cap rules select <code>review_capped</code>; Implement and UX
+signal <code>human_hold</code> for NEEDS_HUMAN, and review's red build
+signals <code>gate_red</code> when its final verdict is REQUEST_CHANGES,
+including their historical exit 0 paths. Unexplained exits use
+<code>other</code>. Exits 2/26/28/29/130 remain <code>other</code>, with
+their original routing/quiet/cancellation meaning. A latched ticket
+withdrawal takes precedence over earlier failures: Done/cancelled remain
+0/26 and <code>other</code>, an inactive-state 25 is
+<code>human_hold</code>.</p>
+<p><code>collect_insights</code> accepts bounded, filtered observations
+from any stage and any provider exit. Rows keep their existing
+provenance and observation fields and add provider-call
+<code>normalized_exit</code> and <code>cause_class</code>; legacy rows
+without these fields remain readable. Join by run/stage attempt to the
+final shell outcome below: a successful provider call can still precede
+a stage gate failure or hold. A failed CLI's final advisory observations
+may be read from its local originals solely for filtered capture; they
+never become a structured success, recovery result or forwarded stdout.
+An interrupted provider need not return insight text.
+<code>collect_stage_outcome</code> therefore appends one metadata-only
+<code>stage-outcomes.jsonl</code> row per finalized stage attempt (or
+worker refusal before its own nested stage exists), even with no
+provider/result. It retains schema/version, issue, stage, phase,
+run/stage attempt IDs, null provider ID, timestamp, normalized exit,
+cause class and optional allowlisted timeout kind. Drivers are not
+stages; only a worker wrapping its own stage is suppressed. A review
+invoking inline merge retains its own outcome alongside the merge
+outcome so observations still join by stage-attempt ID. These
+observational writes never run another provider or change a stage's
+exit, checkpoint or dispatcher outcome. App prepare/finish keeps its
+existing contract; abrupt kills and evidence failures can leave no
+outcome.</p>
+<p><code>review-dispositions.jsonl</code> retains at most 32 records per
+provider attempt: provenance/timestamp plus <code>disposition</code>,
+<code>severity</code>, <code>path</code> only. Implement's optional
+<code>review_dispositions</code> array supplies
+<code>applied</code>/<code>declined</code>; these are model
+self-reports, never verified fixes or pinned decisions. The review
+collector derives <code>skip</code> from validated SKIP findings and
+<code>deferred</code> from MINOR findings only at the trusted BUG
+severity floor. The existing finding class is the recorded severity
+(<code>CRITICAL</code>, <code>BUG</code>, <code>MINOR</code>,
+<code>SKIP</code>); SKIP does not claim an unknown underlying severity.
+Paths must be bounded, filtered repository-relative paths without
+traversal, controls or home paths. Invalid optional implementation
+arrays drop with a content-free warning; finding messages, reasons, line
+numbers and citations are never copied. At the MINOR floor no MINOR
+finding is recorded as deferred. No review round or severity decision
+reads these records.</p>
+<p>All three learning ledgers use the same evidence lock, 0700/0600
+permissions, atomic replacement and global 16 MiB/4,096-file budget.
+Each deduplicates retained provider attempts (stage outcomes use stage
+attempt IDs), expires rows older than 30 days on its next collection and
+keeps the latest 2,048 rows. There is no historical backfill.
+<code>review_dispositions</code>, like <code>insights</code>, is
+recursively removed before comment/acceptance projections, including
+envelopes, fences and malformed fallbacks. Neither ledger is published
+to Linear or GitHub. The best-effort insight privacy filter and its
+known limits also apply to disposition paths.</p>
+<p>Shepherd emits <code>stage_start</code>/<code>stage_end</code> events
+around each actual worker invocation, including nonzero/held exits,
+before the next withdrawal checkpoint. Outcome fields match the queue
+(<code>stage</code>, <code>issue</code>, <code>exit_code</code>,
+<code>class</code>, <code>duration_s</code>), with
+<code>mode: shepherd</code>; repeated gate polling represents repeated
+invocations. Event/storage failures are observational. No outcome is
+invented for a stage never invoked. <code>bureau-learnings</code> may
+read the local ledgers as advisory evidence and still requires human
+triage before rule or ticket changes.</p>
+<p><strong>Upgrade:</strong> compare installed drift, resync scripts
+(including <code>bureau-insights.sh</code>) and interfaces together,
+then restart drivers. No configuration change. Real local Git and fake
+service/provider fixtures qualify this contract; live adopter/provider
+rollout remains unverified.</p>
 <h3 id="privacy-contract">Privacy contract</h3>
 <p>Receipts, manifests and waits retain allowlisted identity/measurement
 fields, digests and local provider pointers. They contain no raw logs,

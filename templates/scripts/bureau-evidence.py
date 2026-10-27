@@ -35,6 +35,11 @@ BASES = frozenset(('observed-resume', 'observed-stage-resume', 'observed-review-
 _warned = False
 MAX_INSIGHTS = 3
 MAX_INSIGHT_LENGTH = 280
+MAX_DISPOSITIONS = 32
+CAUSE_CLASSES = frozenset(('timeout', 'gate_red', 'review_capped', 'ownership', 'provider_error',
+                           'quota', 'human_hold', 'other'))
+STAGES = frozenset(('spec', 'spec_review', 'ux', 'copy', 'implement', 'qa', 'code_review', 'merge', 'rebase',
+                    'research', 'upstream_summary'))
 UNSAFE_INSIGHT = re.compile(
     r'\b[\w.-]*(?:token|key|secret|password|auth|cookie|session)[\w.-]*[\"\x27]?\s*[=:]\s*\S+'
     r'|\b(?:ghp_|gho_|github_pat_|sk-|lin_api_|xox|AKIA)[\w-]*'
@@ -113,8 +118,39 @@ def review_round_shape(value):
                                  or not math.isfinite(item) or item < 0): raise ValueError('invalid review usage')
 
 
+def disposition_path(value):
+    """Bounded repository-relative metadata, with the same best-effort privacy filter."""
+    return (isinstance(value, str) and 0 < len(value) <= MAX_INSIGHT_LENGTH
+            and re.fullmatch(r'[A-Za-z0-9_.@+ /-]+', value) is not None
+            and value == value.strip() and not value.startswith(('/', '~', '-'))
+            and all(part not in ('', '.', '..') for part in value.split('/'))
+            and not unsafe_insight(value) and not LOG_INSIGHT.search(value))
+
+
+def normalize_dispositions(value):
+    if not isinstance(value, dict) or 'review_dispositions' not in value: return value
+    items = value['review_dispositions']
+    if (not isinstance(items, list) or len(items) > MAX_DISPOSITIONS or any(
+            not isinstance(r, dict) or set(r) != {'disposition', 'severity', 'path'}
+            or r['disposition'] not in ('applied', 'declined') or r['severity'] not in ('CRITICAL', 'BUG', 'MINOR', 'SKIP')
+            or not disposition_path(r['path']) for r in items)):
+        warn()
+        return {k: v for k, v in value.items() if k != 'review_dispositions'}
+    return value
+
+
+def insight_cause(code, outcome=None, timeout_kind=None, signal=None, withdrawn=False):
+    """The shell owns the mapping; inputs here are runtime metadata, never result fields."""
+    cause = subprocess.check_output(['/bin/bash', str(Path(__file__).with_name('bureau-insights.sh')),
+                                     str(code), outcome or '', timeout_kind or '', signal or '',
+                                     '1' if withdrawn else '0'], text=True, timeout=2).strip()
+    if cause not in CAUSE_CLASSES: raise ValueError('invalid insight cause')
+    return cause
+
+
 def normalize_insights(value):
     """Optional observations must never turn an otherwise valid result red."""
+    value = normalize_dispositions(value)
     if not isinstance(value, dict) or 'insights' not in value: return value
     items = value['insights']
     if (not isinstance(items, list) or len(items) > MAX_INSIGHTS or
@@ -322,7 +358,11 @@ def manifest_shape(value):
         if 'review_round' in attempt:
             if attempt['stage'] != 'code_review': raise ValueError('foreign review round')
             review_round_shape(attempt['review_round'])
-        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications', 'review_round')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
+        if 'outcome_signals' in attempt:
+            if (not isinstance(attempt['outcome_signals'], list)
+                    or any(s not in ('review_capped', 'gate_red', 'human_hold') for s in attempt['outcome_signals'])):
+                raise ValueError('invalid outcome signals')
+        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications', 'review_round', 'outcome_signals')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
         identifier(attempt['attempt_id'])
         if attempt['parent_attempt_id'] is not None: identifier(attempt['parent_attempt_id'])
         times(attempt, 'started_at ended_at')
@@ -571,6 +611,7 @@ class Store:
                 final = max(children, key=lambda a: a['ended_at'] or 0)['final_head'] if children else head(final_head)
                 value.update(ended_at=self.clock(), normalized_exit=code, final_head=final)
             self._save_manifest(value)
+        observe(self.collect_stage_outcome, value, attempt)
 
     def receipt_path(self, run, attempt):
         return self.manifest_path(run).parent / 'receipts' / (identifier(attempt) + '.json')
@@ -624,30 +665,96 @@ class Store:
         # The receipt does not depend on the optional manifest existing or linking.
         observe(self._link_receipt, value, path)
         observe(self.collect_insights, receipt)
+        observe(self.collect_dispositions, receipt)
         return path
 
     def collect_insights(self, receipt):
         """The sole free-text exception: bounded, advisory stage observations."""
         result = normalize_insights(receipt.get('structured_result') or receipt.get('insights_result'))
         items = result.get('insights', []) if isinstance(result, dict) else []
-        if not items or receipt.get('normalized_exit') != 0 or receipt.get('stage') not in ('implement', 'qa', 'code_review'):
+        if not items or receipt.get('stage') not in STAGES:
             return
         issue = ticket(receipt['issue']) if receipt.get('issue') else None
         run = identifier(receipt['run_id']); attempt = identifier(receipt['provider_attempt_id'])
         stage_attempt = identifier(receipt['stage_attempt_id'])
-        path = self.root / 'insights.jsonl'
+        cause = insight_cause(receipt.get('normalized_exit'), receipt.get('outcome'), receipt.get('timeout_kind'))
+        rows = [dict(schema_version=VERSION, issue=issue, stage=receipt['stage'], run_id=run,
+                     stage_attempt_id=stage_attempt, provider_attempt_id=attempt,
+                     timestamp=self.clock(), observation=s, normalized_exit=receipt.get('normalized_exit'),
+                     cause_class=cause) for s in items]
+        self._append_learning('insights.jsonl', rows, ('provider_attempt_id',), run)
+
+    def _append_learning(self, name, incoming, identity, run):
+        """All learning ledgers share PR 7's lock, atomic budget and bounded retention."""
+        if not incoming: return
+        path = self.root / name
         with self.guard():
             rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
-            if any(r['provider_attempt_id'] == attempt for r in rows): return
             now = self.clock()
             rows = [r for r in rows if now - r['timestamp'] <= RETENTION_SECONDS]
-            rows += [dict(schema_version=VERSION, issue=issue, stage=receipt['stage'], run_id=run,
-                          stage_attempt_id=stage_attempt, provider_attempt_id=attempt,
-                          timestamp=now, observation=s) for s in items]
+            if not any(all(r.get(k) == incoming[0].get(k) for k in identity) for r in rows): rows += incoming
             rows = rows[-2048:]
             payload = ''.join(json.dumps(r, ensure_ascii=True, separators=(',', ':')) + '\n' for r in rows).encode()
             self._prune(len(payload), 1, run, path)
             atomic_bytes(path, payload)
+
+    def outcome_signal(self, run, stage_attempt, signal):
+        if signal not in ('review_capped', 'gate_red', 'human_hold'): raise ValueError('invalid outcome signal')
+        with self.guard():
+            value = self._manifest(run)
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == identifier(stage_attempt))
+            if signal == 'review_capped' and attempt['stage'] != 'code_review': raise ValueError('not a review stage')
+            attempt['outcome_signals'] = sorted(set(attempt.get('outcome_signals', [])) | {signal})
+            self._save_manifest(value)
+
+    def collect_stage_outcome(self, manifest, attempt):
+        # Drivers are not stages. Only a worker around its own stage is a
+        # duplicate; a stage invoking another stage keeps its own outcome.
+        if attempt['stage'] not in STAGES: return
+        if attempt['phase'] == 'worker' and any(a['parent_attempt_id'] == attempt['attempt_id']
+                and a['stage'] == attempt['stage'] and a['phase'] == 'stage' for a in manifest['attempts']): return
+        code = attempt['normalized_exit']; run = manifest['run_id']
+        receipts = [read(self.root / p, {}) for p in attempt['receipts']]
+        # Recency is not a fatal decision: ignored phases (such as pre-spec
+        # research) and recovered failures cannot explain an unrelated stop.
+        # Parallel silence still matches its own 25 after sibling cancellation.
+        failed = [r for r in receipts if code != 0 and r.get('stage') == attempt['stage']
+                  and r.get('normalized_exit') == code]
+        timeout = 'silence' if any(r.get('timeout_kind') == 'silence' and r.get('normalized_exit') == 25 for r in failed) else None
+        outcome = next((s for s in ('quota', 'provider-error', 'invalid-result') if any(r.get('outcome') == s for r in failed)), None)
+        signals = attempt.get('outcome_signals', [])
+        gates = [g for g in attempt['gates'] if g.get('kind') == 'gate']
+        red = code != 0 and gates and gates[-1].get('normalized_exit') not in (None, 0)
+        signal = next((s for s in ('review_capped', 'gate_red', 'human_hold') if s in signals), 'gate_red' if red else None)
+        control = self.root.parent.parent / 'ticket-control' / run
+        withdrawn = any((control / ('stop-' + str(c))).exists() for c in (0, 25, 26))
+        cause = insight_cause(code, outcome, timeout, signal, withdrawn)
+        row = dict(schema_version=VERSION, record_type='stage_outcome', issue=manifest['issue'], stage=attempt['stage'],
+                   run_id=run, stage_attempt_id=attempt['attempt_id'], provider_attempt_id=None,
+                   phase=attempt['phase'], timestamp=self.clock(), normalized_exit=code, cause_class=cause)
+        if code == 124: row['timeout_kind'] = 'wall-clock'
+        elif cause == 'timeout' and timeout: row['timeout_kind'] = timeout
+        self._append_learning('stage-outcomes.jsonl', [row], ('stage_attempt_id',), run)
+
+    def collect_dispositions(self, receipt):
+        result = normalize_dispositions(receipt.get('structured_result') or receipt.get('insights_result'))
+        if not isinstance(result, dict): return
+        items = []
+        if receipt.get('stage') == 'implement': items = result.get('review_dispositions', [])
+        if receipt.get('stage') == 'code_review' and receipt.get('phase') == 'verdict' and receipt.get('normalized_exit') == 0:
+            for finding in result.get('findings', []):
+                severity = finding.get('class') if isinstance(finding, dict) else None
+                disposition = 'skip' if severity == 'SKIP' else ('deferred' if severity == 'MINOR' and receipt.get('review_min_severity') == 'BUG' else None)
+                if disposition and disposition_path(finding.get('file')):
+                    items.append(dict(disposition=disposition, severity=severity, path=finding['file']))
+        items = list({(r['disposition'], r['severity'], r['path']): r for r in items}.values())[:MAX_DISPOSITIONS]
+        if not items: return
+        issue = ticket(receipt['issue']) if receipt.get('issue') else None
+        run = identifier(receipt['run_id']); provider = identifier(receipt['provider_attempt_id'])
+        attempt = identifier(receipt['stage_attempt_id'])
+        rows = [dict(schema_version=VERSION, record_type='review_disposition', issue=issue, stage=receipt['stage'],
+                     run_id=run, stage_attempt_id=attempt, provider_attempt_id=provider, timestamp=self.clock(), **item) for item in items]
+        self._append_learning('review-dispositions.jsonl', rows, ('provider_attempt_id',), run)
 
     def _link_receipt(self, receipt, path):
         with self.guard():
@@ -964,15 +1071,20 @@ def review_round_main():
     import argparse
     parser = argparse.ArgumentParser(description='Record metadata for the current review round')
     parser.add_argument('--repo', type=Path, required=True)
-    parser.add_argument('--round', type=int, required=True)
-    parser.add_argument('--min-severity', choices=('BUG', 'MINOR'), required=True)
+    parser.add_argument('--round', type=int)
+    parser.add_argument('--min-severity', choices=('BUG', 'MINOR'))
+    parser.add_argument('--signal', choices=('review_capped', 'gate_red', 'human_hold'))
     parser.add_argument('--provider-verdict')
     parser.add_argument('--final-verdict')
     args = parser.parse_args()
     run = os.environ.get('BUREAU_RUN_ID'); attempt = os.environ.get('BUREAU_STAGE_ATTEMPT_ID')
     if not run or not attempt: return
     common = subprocess.check_output(['git', '-C', str(args.repo), 'rev-parse', '--git-common-dir'], text=True).strip()
-    Store((args.repo / common).resolve() / 'bureau').review_round(
+    store = Store((args.repo / common).resolve() / 'bureau')
+    if args.signal:
+        store.outcome_signal(run, attempt, args.signal)
+        return
+    store.review_round(
         run, attempt, args.round, args.min_severity,
         args.provider_verdict if args.provider_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None,
         args.final_verdict if args.final_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None)
