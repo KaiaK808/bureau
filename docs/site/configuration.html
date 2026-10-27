@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="24e854a9a60ca451090a30aedcea27cfd0f78db14b09931f5cc4838952fffbd2">
+<meta name="bureau-source-sha256" content="ea51d14b092d5721456de6aae69c135c92a0aec696b029d44f9a52151f6310a8">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -826,8 +826,14 @@ pinned helper's output here and persists the exact feature pointer</td>
 <td>Origin ref whose presence the spec allocator verifies after fetching
 all origin heads. Spec numbering considers every fetched origin branch,
 local branch and worktree. Disposable spec workers reset to a verified
-committed phase checkpoint or the configured origin base branch; other
-stage reset/merge policies are unchanged</td>
+committed phase checkpoint or the configured origin base branch. For
+merge-only implement worker reuse, a nonempty valid branch name selects
+<code>origin/&lt;base_branch&gt;</code>; absent/invalid values use the
+symbolic <code>refs/remotes/origin/HEAD</code>, then
+<code>origin/main</code>. An unresolvable selected base disables the
+merge-only rule. Existing on-origin reuse needs no base. Spec workers
+still reset to committed checkpoints; other stage reset/merge policies
+are unchanged</td>
 </tr>
 <tr>
 <td><code>repo.test_command</code></td>

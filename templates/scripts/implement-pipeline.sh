@@ -588,7 +588,17 @@ fi
 
 # Release the branch from any other worktree before attaching here.
 free_branch_from_other_worktrees "$BRANCH" "$(pwd)"
-if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+if [ -n "${BUREAU_RETAINED_MERGE_HEAD:-}" ]; then
+  # Worker re-acceptance retained a clean base merge. Revalidate instead of
+  # checkout -B: even if another writer moved HEAD, never fall back to a reset.
+  REUSE_COMMON=$(bureau_common_dir)
+  if ! _bureau_worktree_reuse_state "$REPO_DIR" "$BRANCH" "$REUSE_COMMON" "$BUREAU_RETAINED_MERGE_HEAD" ||
+    { [ "$BUREAU_REUSE_KIND" != base-merges ] && [ "$BUREAU_REUSE_HEAD" != "$BUREAU_REUSE_ISSUE_HEAD" ]; }; then
+    echo 'ERROR: retained implement worktree changed; leaving HEAD and files untouched.' >&2
+    exit 21
+  fi
+  echo "  Retaining verified base-merge HEAD ${BUREAU_RETAINED_MERGE_HEAD:0:12} on $BRANCH."
+elif git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
   git checkout -B "$BRANCH" "origin/$BRANCH"
 else
   git checkout "$BRANCH"

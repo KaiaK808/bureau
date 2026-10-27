@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d43240bf417d6b3d02b2e35a0251273c37f1a77a26d30e7810cdb0766e9275fe">
+<meta name="bureau-source-sha256" content="c487e794004cadbfd426c98fa0e96b13c9a85dfc54784763c5d681ed127673e5">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -78,16 +78,87 @@ run explicitly. The preserved checkout remains unregistered: adopt it
 for app recovery or explicitly retire it before creating another
 disposable worker. The interrupt message prints these steps with the run
 ID, the worktree and its unpushed local branch; a background rerun that
-meets the held claim or the unregistered worktree stops with 21 (except
-a checkout with an explicit former-worker failure note that a non-spec
-stage can reset without loss: clean, and HEAD on the fetched
-<code>origin/&lt;branch&gt;</code>, which the reset registers again) and
-leaves <code>needs-human</code> and one comment with the same steps on
-the ticket. Process inspection failures and reused live group IDs fail
-closed; do not kill a process solely because an old record mentions its
-ID. After a machine crash, inspect the old run before releasing it; app
-leases have no implicit expiry. This is local coordination, not a
-distributed lock or an atomic Linear compare-and-swap across hosts.</p>
+meets the held claim stops with 21. An unregistered checkout also stops
+with 21 unless it meets a documented re-acceptance rule. Ownership
+refusals leave <code>needs-human</code> and one recovery comment; a live
+holder is only reported locally. Process inspection failures and reused
+live group IDs fail closed; do not kill a process solely because an old
+record mentions its ID. After a machine crash, inspect the old run
+before releasing it; app leases have no implicit expiry. This is local
+coordination, not a distributed lock or an atomic Linear
+compare-and-swap across hosts.</p>
+<h2 id="implement-retries-with-clean-base-merges">Implement retries with
+clean base merges</h2>
+<p>The existing re-acceptance rule still requires an explicit
+former-worker failure note and permits a clean linked non-spec worker
+whose HEAD equals or is behind the freshly fetched
+<code>origin/&lt;branch&gt;</code>, independently of base resolution;
+the remote need not have <code>main</code>. Implement also re-accepts a
+preserved worker ahead <strong>only</strong> by verified clean merges of
+the resolved base. It retains HEAD through worker preparation and
+implement startup, bypassing both resetting checkouts and
+<code>clean</code>. It never rolls back a merge. The same worktree path
+must be reused; a different path does not free a branch held by the
+preserved checkout.</p>
+<p>The merge-only rule requires the same repository's linked worktree
+(never the primary checkout), the requested local issue branch, no
+tracked or untracked changes, no in-progress merge, and readable fetched
+refs. Ignored files do not count as dirt and remain in this retained
+path. After fetching, choose
+<code>origin/&lt;repo.base_branch&gt;</code> when the configured value
+is a nonempty syntactically valid branch name, otherwise the symbolic
+target of <code>refs/remotes/origin/HEAD</code>, otherwise
+<code>origin/main</code>. Pin that selected base ref and its commit
+consistently through classification and rechecks. A selected ref that
+does not resolve to a commit disables merge-only acceptance; do not
+silently substitute another base. This resolution applies to the
+merge-only rule; other stages' reset/merge policies keep their existing
+behavior.</p>
+<p>Pin HEAD and origin's issue tip alongside the base; require origin's
+issue tip to be an ancestor of HEAD. Inspect exactly
+<code>git rev-list &lt;issue-tip&gt;..&lt;HEAD&gt; --not &lt;base-tip&gt;</code>.
+The nonempty result must contain only two-parent merges. Every first
+parent is the issue tip or another merge in this result, so the
+first-parent chain anchors at the issue tip; every second parent is an
+ancestor of the pinned base. For each merge,
+<code>git merge-tree --write-tree &lt;first-parent&gt; &lt;second-parent&gt;</code>
+must succeed and return exactly the committed result tree. Ordinary base
+commits are excluded; ordinary own commits, unrelated/reversed/octopus
+merges, conflict resolutions and extra changes fail. Missing merge-tree
+support (Git before 2.38), fetch/ref errors and changed HEAD/refs/status
+fail closed. Revalidation never resets a newly arrived writer
+commit.</p>
+<p>Automatic merge-only re-acceptance is limited to implement workers
+whose preservation record names this issue, branch and workspace with
+<code>reason: unfinished</code> and <code>exit_code: 22</code> or
+<code>23</code>. Worker cleanup adds the exit code to the existing
+<code>&lt;git common dir&gt;/bureau/preserved/&lt;workspace-key&gt;.json</code>
+record. Retained preparation keeps that record and revalidates even
+after registration was restored: a preparation failure cannot turn
+registration into permission to reset retained work. Existing
+registration identity checks still run before re-acceptance. Spec
+workers retain disposable registration after ordinary failures and
+reset/clean to verified committed phase checkpoints or the configured
+origin base; they never retain unfinished phase edits through this rule.
+Other stages and legacy/unknown failure records do not gain merge-only
+permission. Ordinary failures release leases; an interruption
+(<code>130</code>) still removes registration and keeps the leases
+regardless of cleanliness. Timeout (<code>124</code>), signals and
+interrupted records do not enter this new resume path and require the
+existing recovery procedure.</p>
+<p>A failing implement stage still pushes a merge-only state (one CI
+run), as before. Provider failures, timeouts, <code>/goal</code>,
+EXIT-trap and signal pushes retain their existing behavior. When the
+ordinary failure push is refused, cleanup preserves the local merge and
+the next tick can re-accept it under the rule above.</p>
+<p>Adoption: resync the scripts scope as one set (including config,
+worker and implement), reconcile local drift and restart drivers. No
+schema migration or exit-code change. Existing merge-only records
+without an exit code need explicit recovery; do not infer a previous
+failure from the tree. Resolve a pre-existing <code>needs-human</code>
+hold deliberately before retrying. Qualification uses fake
+providers/services and real local Git, two worker ticks and negative
+controls; no live installation or CI execution is claimed.</p>
 <h2 id="spec-phase-resume-and-governance">Spec phase resume and
 governance</h2>
 <p>Specify and plan must run no measurements, probes, benchmarks or full

@@ -2644,16 +2644,36 @@ free_branch_from_other_worktrees() {
   fi
 }
 
-# _bureau_reaccept_clean_worktree <wt> <branch> <common> — succeed only when the
-# unregistered <wt> (a worker that lost its registration with unfinished work,
-# bureau-worker.sh) can be reset without losing anything: a linked worktree of
-# this repository (its top level, common dir <common>, not the main checkout),
-# nothing uncommitted or untracked (ignored files do not count; the reset's
-# `clean -fdx` treats them as for any worker), and HEAD equal to or behind the
-# freshly fetched origin/<branch>. An unknown branch, a failed fetch or a
-# missing origin ref fail. Prints why it re-accepts; prints nothing otherwise.
-_bureau_reaccept_clean_worktree() {
-  local wt="$1" branch="$2" common="$3" top wt_common gitdir head key reason
+# Resolve the merge-only base after fetching. A syntactically valid configured
+# branch wins; otherwise use origin's symbolic default, then main. A chosen
+# but missing ref fails closed at resolution, never silently changes the base.
+_bureau_reuse_base_ref() {
+  local wt="$1" configured valid default_ref
+  configured=$(bureau_get '.repo.base_branch | select(type == "string") | select(test("[[:space:]]") | not)') || return 1
+  valid=$(git -C "$wt" check-ref-format --branch "$configured" 2>/dev/null) || valid=""
+  if [ -n "$configured" ] && [ "$valid" = "$configured" ]; then
+    printf 'refs/remotes/origin/%s\n' "$configured"
+  elif default_ref=$(git -C "$wt" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null); then
+    case "$default_ref" in refs/remotes/origin/*) ;; *) return 1 ;; esac
+    git check-ref-format "$default_ref" >/dev/null 2>&1 || return 1
+    printf '%s\n' "$default_ref"
+  else
+    [ "$?" = 1 ] || return 1
+    printf 'refs/remotes/origin/main\n'
+  fi
+}
+
+# _bureau_worktree_reuse_state <wt> <branch> <common> [expected-head]
+# Read-only worktree predicate for re-acceptance. Fetch remote refs; only
+# merge-only reuse needs a resolved base. Fetch/merge-tree may
+# write Git metadata/objects, never HEAD, the index or worktree files.
+# Sets BUREAU_REUSE_KIND/HEAD/ISSUE_HEAD/BASE_HEAD/BASE_REF on success. Unknown evidence
+# fails closed, including Git without merge-tree --write-tree (Git 2.38+).
+_bureau_worktree_reuse_state() {
+  local wt="$1" branch="$2" common="$3" expected="${4:-}" top wt_common gitdir
+  local head issue_head base_head="" base_ref="" commits commit parents merged tree kind key reason
+  BUREAU_REUSE_KIND=""; BUREAU_REUSE_HEAD=""
+  BUREAU_REUSE_ISSUE_HEAD=""; BUREAU_REUSE_BASE_HEAD=""; BUREAU_REUSE_BASE_REF=""
   [ -n "$branch" ] && [ -d "$wt" ] || return 1
   top=$(_bureau_physical "$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null)")
   [ -n "$top" ] && [ "$top" = "$(_bureau_physical "$wt")" ] || return 1
@@ -2669,17 +2689,89 @@ _bureau_reaccept_clean_worktree() {
   [ "$(_bureau_physical "$gitdir")" != "$(_bureau_physical "$common")" ] || return 1
   [ -z "$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null || echo unreadable)" ] || return 1
   head=$(git -C "$wt" rev-parse --verify --quiet HEAD) || return 1
+  [ -z "$expected" ] || [ "$head" = "$expected" ] || return 1
   git -C "$REPO_DIR" fetch origin --prune --quiet 2>/dev/null || return 1
-  git -C "$REPO_DIR" rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null || return 1
-  git -C "$REPO_DIR" merge-base --is-ancestor "$head" "refs/remotes/origin/$branch" 2>/dev/null || return 1
-  echo "Re-accepted the clean preserved worktree $wt: no uncommitted or untracked changes and HEAD ${head:0:12} is on origin/$branch, so the reset loses nothing; registered it as a disposable worker again." >&2
+  issue_head=$(git -C "$wt" rev-parse --verify --quiet "refs/remotes/origin/$branch^{commit}") || return 1
+  if git -C "$wt" merge-base --is-ancestor "$head" "$issue_head" 2>/dev/null; then
+    kind=on-origin
+  else
+    kind="base-merges"
+    base_ref=$(_bureau_reuse_base_ref "$wt") || return 1
+    base_head=$(git -C "$wt" rev-parse --verify --quiet "$base_ref^{commit}") || return 1
+    [ "$(git -C "$wt" branch --show-current)" = "$branch" ] || return 1
+    git -C "$wt" rev-parse --verify --quiet MERGE_HEAD >/dev/null && return 1
+    git -C "$wt" merge-base --is-ancestor "$issue_head" "$head" 2>/dev/null || return 1
+    # The base's ordinary (including squash) commits are not our own changes.
+    commits=$(git -C "$wt" rev-list "$issue_head..$head" --not "$base_head") || return 1
+    [ -n "$commits" ] || return 1
+    for commit in $commits; do
+      parents=$(git -C "$wt" rev-list --parents -n 1 "$commit") || return 1
+      # Exactly two parents, with the first-parent chain anchored at origin's
+      # issue tip and every second parent on the pinned base. No octopus,
+      # reversed-parent merge, unrelated merge or ordinary local commit.
+      local parent_row=()
+      read -r -a parent_row <<< "$parents"
+      [ "${#parent_row[@]}" = 3 ] || return 1
+      if [ "${parent_row[1]}" != "$issue_head" ]; then
+        case $'\n'"$commits"$'\n' in *$'\n'"${parent_row[1]}"$'\n'*) ;; *) return 1 ;; esac
+      fi
+      git -C "$wt" merge-base --is-ancestor "${parent_row[2]}" "$base_head" 2>/dev/null || return 1
+      merged=$(git -C "$wt" merge-tree --write-tree "${parent_row[1]}" "${parent_row[2]}" 2>/dev/null) || return 1
+      tree=$(git -C "$wt" rev-parse --verify "$commit^{tree}") || return 1
+      [ "$merged" = "$tree" ] || return 1
+    done
+  fi
+  _bureau_reuse_unchanged "$wt" "$branch" "$head" "$issue_head" "$base_head" "$base_ref" || return 1
+  BUREAU_REUSE_KIND="$kind"; BUREAU_REUSE_HEAD="$head"
+  BUREAU_REUSE_ISSUE_HEAD="$issue_head"; BUREAU_REUSE_BASE_HEAD="$base_head"
+  BUREAU_REUSE_BASE_REF="$base_ref"
+}
+
+# Recheck the pinned evidence after classification, without ever rolling back
+# a writer's new commit. Callers that retain HEAD must fail rather than reset.
+_bureau_reuse_unchanged() {
+  local wt="$1" branch="$2" head="$3" issue_head="$4" base_head="$5" base_ref="${6:-}" expected observed
+  local refs=(HEAD "refs/remotes/origin/$branch")
+  expected=$(printf '%s\n' "$head" "$issue_head")
+  if [ -n "$base_head" ]; then
+    [ -n "$base_ref" ] || return 1
+    refs+=("$base_ref")
+    expected="$expected"$'\n'"$base_head"
+  fi
+  # One ref snapshot on either side of status, including HEAD. This also
+  # leaves the established on-origin case independent of any base ref.
+  observed=$(git -C "$wt" rev-parse "${refs[@]}" 2>/dev/null) || return 1
+  [ "$observed" = "$expected" ] || return 1
+  [ -z "$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null || echo unreadable)" ] || return 1
+  observed=$(git -C "$wt" rev-parse "${refs[@]}" 2>/dev/null) || return 1
+  [ "$observed" = "$expected" ]
+}
+
+# The established on-origin case can reset without loss. The new merge-only
+# case is an implement retry after an ordinary failure (22/23), and must retain
+# HEAD through both worker preparation and the stage's checkout. Interruptions
+# and unknown/legacy failure records require explicit recovery for this case.
+_bureau_reaccept_clean_worktree() {
+  local wt="$1" branch="$2" common="$3" stage="${4:-implement-pipeline.sh}" key
+  _bureau_worktree_reuse_state "$wt" "$branch" "$common" || return 1
+  if [ "$BUREAU_REUSE_KIND" = base-merges ]; then
+    [ "$stage" = implement-pipeline.sh ] || return 1
+    key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
+    jq -e --arg ws "$wt" --arg branch "$branch" --arg issue "${BUREAU_CURRENT_ISSUE:-}" \
+      '.workspace == $ws and .branch == $branch and .issue == $issue and .reason == "unfinished" and (.exit_code == 22 or .exit_code == 23)' \
+      "$common/bureau/preserved/$key.json" >/dev/null 2>&1 || return 1
+    echo "Re-accepted the clean preserved worktree $wt: HEAD ${BUREAU_REUSE_HEAD:0:12} is ahead only by verified clean merges of ${BUREAU_REUSE_BASE_REF#refs/remotes/}; retaining HEAD without reset or clean." >&2
+  else
+    echo "Re-accepted the clean preserved worktree $wt: no uncommitted or untracked changes and HEAD ${BUREAU_REUSE_HEAD:0:12} is on origin/$branch, so the reset loses nothing; registered it as a disposable worker again." >&2
+  fi
 }
 
 # Only a worker created and registered by Bureau may be reset. Merely residing
 # under .worktrees is not ownership; pre-existing directories are rejected.
 # A clean preserved non-spec worker can be reaccepted without loss.
 reset_worktree() {
-  local wt="$1" target_script="$2" target_branch="${3:-}" common registry key ref checkpoint
+  local wt="$1" target_script="$2" target_branch="${3:-}" common registry key ref checkpoint retain_head=""
+  export BUREAU_RETAINED_MERGE_HEAD=""
   BUREAU_RESET_REFUSAL=""; BUREAU_RESET_REFUSAL_HOLDER=""; BUREAU_RESET_REFUSAL_BRANCH=""
   [ "${BUREAU_WORKSPACE_MODE:-current}" = disposable ] || { echo "ERROR: reset requires disposable worker mode" >&2; return 21; }
   [ -n "${BUREAU_RUN_ID:-}" ] || { echo "ERROR: reset requires an ownership claim" >&2; return 21; }
@@ -2692,8 +2784,16 @@ reset_worktree() {
   case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
   registry="$common/bureau/workers"
   key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
-  if [ -e "$wt" ] && [ ! -f "$registry/$key" ]; then
-    if [ "$target_script" != spec-pipeline.sh ] && _bureau_reaccept_clean_worktree "$wt" "$target_branch" "$common"; then
+  if [ -d "$wt" ] && [ -f "$registry/$key" ]; then
+    [ "$(git -C "$wt" rev-parse --absolute-git-dir)" = "$(cat "$registry/$key")" ] || { BUREAU_RESET_REFUSAL=identity; echo "ERROR: worker identity changed" >&2; return 21; }
+  fi
+  # A retained worker stays subject to re-acceptance even if preparation died
+  # after restoring registration but before the worker installed its cleanup.
+  # Registered spec workers always reset to their committed phase checkpoint;
+  # failure notes never authorize retaining their unfinished working tree.
+  if [ -e "$wt" ] && { [ ! -f "$registry/$key" ] || { [ "$target_script" != spec-pipeline.sh ] && [ -f "$common/bureau/preserved/$key.json" ]; }; }; then
+    if [ "$target_script" != spec-pipeline.sh ] && _bureau_reaccept_clean_worktree "$wt" "$target_branch" "$common" "$target_script"; then
+      [ "$BUREAU_REUSE_KIND" != base-merges ] || retain_head="$BUREAU_REUSE_HEAD"
       mkdir -p "$registry"
       git -C "$wt" rev-parse --absolute-git-dir > "$registry/$key" || return 21
     else
@@ -2701,8 +2801,20 @@ reset_worktree() {
       echo "ERROR: refusing to reset unregistered worktree $wt" >&2; return 21
     fi
   fi
-  if [ -d "$wt" ]; then
-    [ "$(git -C "$wt" rev-parse --absolute-git-dir)" = "$(cat "$registry/$key")" ] || { BUREAU_RESET_REFUSAL=identity; echo "ERROR: worker identity changed" >&2; return 21; }
+  if [ -n "$retain_head" ]; then
+    free_branch_from_other_worktrees "$target_branch" "$wt" || return $?
+    if ! _bureau_reuse_unchanged "$wt" "$target_branch" "$retain_head" "$BUREAU_REUSE_ISSUE_HEAD" "$BUREAU_REUSE_BASE_HEAD" "$BUREAU_REUSE_BASE_REF"; then
+      rm -f "$registry/$key"
+      BUREAU_RESET_REFUSAL=unregistered
+      echo "ERROR: preserved worktree changed during re-acceptance; leaving it untouched" >&2
+      return 21
+    fi
+    export BUREAU_RETAINED_MERGE_HEAD="$retain_head"
+    # Keep the failure proof until normal completion/reset settles it. Mere
+    # registration must never authorize resetting this retained HEAD later.
+    rm -f "$common/bureau/ownership-halts/"*".$key" 2>/dev/null || true
+    bureau_link_worktree_paths "$wt"
+    return 0
   fi
   git -C "$REPO_DIR" fetch origin --prune --quiet || return 18
   ref=origin/main
@@ -2757,21 +2869,22 @@ reset_worktree() {
 # with its local hold when the label cannot be written) and posts one comment
 # that names the worktree and the way back. A cancelled run writes nothing.
 
-# bureau_preserve_note <worktree> <issue> <reason> — record why <worktree> lost
+# bureau_preserve_note <worktree> <issue> <reason> [exit-code] — record why <worktree> lost
 # its disposable-worker registration (reason: interrupted, unfinished,
 # review-checkpoint): the run, the ticket, its branch. reset_worktree's refusal
-# reads it to name the owner; a reset that registers the worktree again removes
-# it. bureau-runtime.py writes the same record for an interrupted run.
+# reads it to name the owner. An ordinary reset removes it; retained merge-only
+# preparation keeps it so registration alone cannot authorize a later reset.
+# bureau-runtime.py writes the same record for an interrupted run.
 bureau_preserve_note() {
-  local wt="$1" issue="$2" reason="$3" common key dir branch
+  local wt="$1" issue="$2" reason="$3" code="${4:-null}" common key dir branch
   wt=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt") || return 1
   common=$(bureau_common_dir) || return 1
   key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
   dir="$common/bureau/preserved"
   branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
   mkdir -p "$dir" || return 1
-  jq -n --arg run "${BUREAU_RUN_ID:-}" --arg issue "$issue" --arg ws "$wt" --arg branch "$branch" --arg reason "$reason" \
-    '{run_id: $run, issue: $issue, workspace: $ws, branch: $branch, reason: $reason}' > "$dir/.$key.$$" \
+  jq -n --arg run "${BUREAU_RUN_ID:-}" --arg issue "$issue" --arg ws "$wt" --arg branch "$branch" --arg reason "$reason" --argjson code "$code" \
+    '{run_id: $run, issue: $issue, workspace: $ws, branch: $branch, reason: $reason, exit_code: $code}' > "$dir/.$key.$$" \
     && mv -f "$dir/.$key.$$" "$dir/$key.json"
 }
 

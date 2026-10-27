@@ -139,9 +139,50 @@ echo "PASS 6 the spec stage, without a target branch: 21 as before"
 preserved
 git -C "$IWT" push -q origin feat/exp-7
 f="$REPO/scripts/bureau-config.sh"
-sed -i.bak 's/&& _bureau_reaccept_clean_worktree "\$wt" "\$target_branch" "\$common"; then/\&\& false; then/' "$f"; rm -f "$f.bak"
+sed -i.bak 's/&& _bureau_reaccept_clean_worktree "\$wt" "\$target_branch" "\$common" "\$target_script"; then/\&\& false; then/' "$f"; rm -f "$f.bak"
 grep -q '_bureau_reaccept_clean_worktree "\$wt"' "$f" && fail "control: the re-accept call is still in the copy"
 impl
 [ "$RC" = 21 ] || fail "control: without the re-accept the clean case ended $RC, wanted 21"
 grep -qF "refusing to reset unregistered worktree $IWT" <<< "$ERR" || fail "control: not the reset's refusal"
 echo "PASS control: without the re-accept the clean case ends 21"
+
+# The established on-origin case must not acquire the merge-only rule's base
+# dependency. Use the same worker/probe as case 1 so no implementation-stage
+# main-merge policy masks acceptance.
+no_main_case() {
+  local origin expected_head
+  preserved
+  git -C "$IWT" push -q origin feat/exp-7
+  expected_head=$(git -C "$IWT" rev-parse HEAD)
+  origin=$(git -C "$REPO" remote get-url origin)
+  git -C "$REPO" push -q origin main:trunk
+  git -C "$origin" symbolic-ref HEAD refs/heads/trunk
+  git -C "$REPO" push -q origin --delete main
+  jq '.repo.base_branch = "missing-base"' \
+    "$REPO/.bureau.json" > "$SB/config"
+  cp "$SB/config" "$REPO/.bureau.json"
+  if [ "${1:-}" = common-main ]; then
+    python3 - "$REPO/scripts/bureau-config.sh" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]); text = p.read_text()
+old = '  if git -C "$wt" merge-base --is-ancestor "$head" "$issue_head" 2>/dev/null; then'
+assert text.count(old) == 1
+guard = '  git -C "$wt" rev-parse --verify --quiet "refs/remotes/origin/main^{commit}" >/dev/null || return 1\n'
+p.write_text(text.replace(old, guard + old, 1))
+PY
+  fi
+  impl
+  [ "$RC" = 0 ] || fail "no-main: expected re-acceptance exit 0, got $RC"
+  [ "$(cat "$SB/finished.log")" = "EXP-7 $expected_head" ] || fail 'no-main: stage did not see pushed HEAD'
+  grep -q 'is on origin/feat/exp-7' <<< "$ERR" || fail 'no-main: no on-origin re-acceptance'
+  if git -C "$REPO" rev-parse --verify refs/remotes/origin/main >/dev/null 2>&1; then fail 'no-main: fixture still has origin/main'; fi
+}
+
+no_main_case
+echo 'PASS no-main: HEAD on origin/<branch> re-accepted with unresolved configured base'
+if (no_main_case common-main) > "$SB/common-main-control.log" 2>&1; then
+  fail 'NEGATIVE CONTROL origin/main in common path did not fail the no-main assertion'
+fi
+grep -q 'no-main: expected re-acceptance exit 0, got 21' "$SB/common-main-control.log" || fail 'common-main control failed for a different reason'
+echo 'PASS NEGATIVE CONTROL origin/main in common path: same no-main test FAILS (expected exit 0, got 21)'
