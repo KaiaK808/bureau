@@ -203,6 +203,10 @@ fi
 # Force-all by default; --respect-config opts out.
 if [ "$RESPECT_CONFIG" = 0 ]; then
   export BUREAU_FORCE_ALL_AGENTS=1
+  unset BUREAU_RESPECT_CONFIG
+else
+  export BUREAU_RESPECT_CONFIG=1
+  unset BUREAU_FORCE_ALL_AGENTS
 fi
 
 # State (human-readable name from get_issue_state) → pipeline script.
@@ -732,7 +736,10 @@ echo "  Tmux: $([ -n "${TMUX:-}" ] && echo "attached" || echo "inline")"
 echo "═══════════════════════════════════════"
 
 while true; do
-  if bureau_is_paused; then echo "[shepherd] paused"; exit 25; fi
+  if bureau_is_paused; then
+    [ -z "${BUREAU_DISPATCH_READY_FILE:-}" ] || : > "${BUREAU_DISPATCH_READY_FILE}.paused"
+    echo "[shepherd] paused"; exit 25
+  fi
   STATE=$(_shepherd_state) || _shepherd_read_failed state $?
   bureau_ticket_checkpoint "$ISSUE" latched
   if [ -z "$STATE" ]; then
@@ -835,6 +842,7 @@ while true; do
   # Auto-bump Spec → Triage (spec-pipeline guards on Triage entry). It moves the
   # ticket back, so a Spec read right after the spec stage was confirmed above.
   if [ "$STATE" = "Spec" ]; then
+    if [ "$RESPECT_CONFIG" = 1 ] && ! agent_enabled spec; then exit 20; fi
     echo "[shepherd] auto-bump Spec → Triage (spec-pipeline only accepts Triage entry)"
     : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
     _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" move_issue "$ISSUE" "$BUREAU_STATE_TRIAGE" \
@@ -848,6 +856,15 @@ while true; do
     echo "[shepherd] no pipeline known for state '$STATE' — labeling needs-human and exiting"
     add_issue_label "$ISSUE" "needs-human" || true
     exit 1
+  fi
+
+  # Respect configuration at dispatch, not just at source time. A disabled
+  # stage is an intentional handoff, never an unchanged-state/stuck loop.
+  STAGE="${PIPELINE%-pipeline.sh}"
+  STAGE="$(printf '%s' "$STAGE" | tr '-' '_')"
+  if [ "$RESPECT_CONFIG" = 1 ] && ! agent_enabled "$STAGE"; then
+    echo "[shepherd] $STAGE is disabled — handing off (exit 20)"
+    exit 20
   fi
 
   BRANCH=$(_shepherd_branch) || _shepherd_read_failed branch $?
@@ -882,6 +899,16 @@ while true; do
   bureau_ticket_checkpoint "$ISSUE"
   CLASS=$(exit_class "$RC")
   echo "[shepherd] $PIPELINE exit=$RC ($CLASS)"
+  if [ "${BUREAU_DISPATCH_LANE:-0}" = 1 ] && [ "$RC" = 23 ]; then exit 23; fi
+
+  # A merge-forward changed the PR head and routed it to fresh Build Review.
+  # This is a handoff, never merge success and never an approval of that head.
+  if [ "$RC" = 20 ] && [ "$(head -n 1 "$MERGE_GATE_FILE" 2>/dev/null || true)" = refreshed ]; then
+    BUREAU_LANE_BASE_REFRESHES=$(bureau_number merge.refreshes "${BUREAU_LANE_BASE_REFRESHES:-0}" 2 0 2)
+    export BUREAU_LANE_BASE_REFRESHES=$((BUREAU_LANE_BASE_REFRESHES + 1))
+    LAST_STATE=""; STUCK_COUNT=0
+    continue
+  fi
 
   # The merge stage's gate (see MERGE_WAIT_SECONDS above). Only its own report
   # counts: a 2 or 25 without one takes the general handling below. The review
@@ -895,6 +922,7 @@ while true; do
     [ "$PIPELINE" = merge-pipeline.sh ] || [ "$GATE_OUTCOME" = not-yet ] || GATE_OUTCOME=""
     case "$RC:$GATE_OUTCOME" in
       2:not-yet)
+        if [ "${BUREAU_DISPATCH_LANE:-0}" = 1 ]; then exit 2; fi
         [ "$MERGE_WAITED" -ge "$MERGE_WAIT_SECONDS" ] \
           && _shepherd_merge_blocked "was still not eligible after ${MERGE_WAITED}s"
         echo "[shepherd] merge gate not yet eligible — waiting ${MERGE_POLL_SECONDS}s (${MERGE_WAITED}/${MERGE_WAIT_SECONDS}s): $(sed -n 2p "$MERGE_GATE_FILE")"
@@ -919,6 +947,7 @@ while true; do
   if [ "$ACTION" = halt ] && stop_before_merge_was_asked "$RC"; then ACTION=stopped-before-merge; fi
   case "$ACTION" in
     wait)
+      if [ "${BUREAU_DISPATCH_LANE:-0}" = 1 ]; then exit "$RC"; fi
       echo "[shepherd] $CLASS — waiting 60s for admission"
       LAST_STATE=""
       STUCK_COUNT=0
@@ -931,6 +960,7 @@ while true; do
       case "$RC:$PIPELINE" in 0:spec-pipeline.sh) MOVED_VIA="Spec" ;; esac
       ;;
     retry)
+      if [ "${BUREAU_DISPATCH_LANE:-0}" = 1 ]; then exit "$RC"; fi
       # Transient: linear-down / provider-unauth. Throttled re-attempt.
       echo "[shepherd] $CLASS — sleeping 60s and retrying"
       _shepherd_sleep 60

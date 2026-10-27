@@ -25,7 +25,7 @@
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$REPO_DIR"
+cd "$REPO_DIR" || exit 24
 source "$(dirname "$0")/bureau-config.sh"
 
 # Load .env so alert_telegram has TELEGRAM_BOT_TOKEN + TELEGRAM_ALERT_CHAT_ID.
@@ -60,24 +60,39 @@ BACKOFFS=(10 30 60 300 300)
 CRASH_COUNT=0
 LAST_CRASH_TS=0
 CHILD_PID=""
+LAUNCHING=0
+STOP_REQUESTED=0
+WAITING_FOR_LOCK=0
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$SUPERVISOR_LOG"
 }
 
 cleanup() {
+  trap '' INT TERM HUP
   log "Supervisor: shutting down (signal received)"
   if [ -n "$CHILD_PID" ] && kill -0 "$CHILD_PID" 2>/dev/null; then
     kill -TERM "$CHILD_PID" 2>/dev/null || true
+    if [ "$MODE_LABEL" = dispatch ]; then
+      # The dispatcher joins nested runtime cleanup before releasing its lock.
+      wait "$CHILD_PID" 2>/dev/null || true
+      exit 130
+    fi
     # Give the child a moment to clean up before we exit; don't block forever.
     for _ in 1 2 3 4 5; do
       kill -0 "$CHILD_PID" 2>/dev/null || break
       sleep 1
     done
   fi
+  [ "$MODE_LABEL" != dispatch ] || exit 130
   exit 0
 }
-trap cleanup INT TERM HUP
+request_stop() {
+  STOP_REQUESTED=1
+  # A trap between fork and $! assignment must not lose the new child.
+  [ "$LAUNCHING" = 1 ] || cleanup
+}
+trap request_stop INT TERM HUP
 
 log "Supervisor starting: ./scripts/queue-loop.sh $*"
 log "Config: max_crashes=$MAX_CRASHES, stability_window=${STABILITY_WINDOW}s"
@@ -85,11 +100,34 @@ log "Config: max_crashes=$MAX_CRASHES, stability_window=${STABILITY_WINDOW}s"
 while true; do
   start_ts=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
 
-  "$REPO_DIR/scripts/queue-loop.sh" "$@" &
+  LAUNCHING=1
+  if [ "$WAITING_FOR_LOCK" = 1 ]; then
+    python3 -I "$REPO_DIR/scripts/bureau-dispatch.py" --repo "$REPO_DIR" wait >>"$QUEUE_LOG" 2>&1 &
+  elif [ "$MODE_LABEL" = dispatch ]; then
+    "$REPO_DIR/scripts/queue-loop.sh" "$@" >>"$QUEUE_LOG" 2>&1 &
+  else
+    "$REPO_DIR/scripts/queue-loop.sh" "$@" &
+  fi
   CHILD_PID=$!
+  LAUNCHING=0
+  [ "$STOP_REQUESTED" != 1 ] || cleanup
   wait "$CHILD_PID"
   child_rc=$?
   CHILD_PID=""
+  if [ "$WAITING_FOR_LOCK" = 1 ] && [ "$child_rc" = 0 ]; then
+    WAITING_FOR_LOCK=0
+    continue
+  fi
+  case "$MODE_LABEL:$child_rc" in
+    dispatch:0|dispatch:130) exit "$child_rc" ;;
+    dispatch:21)
+      # A surviving lane inherits dispatch.lock after its parent dies. This
+      # is a resource wait, however long it lasts, not another crashed parent.
+      log "Supervisor: waiting for dispatch lock; crash budget unchanged"
+      WAITING_FOR_LOCK=1
+      continue
+      ;;
+  esac
 
   end_ts=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
   duration=$((end_ts - start_ts))

@@ -748,6 +748,8 @@ def execute(repo, args, store):
     stage = pipeline.removesuffix('-pipeline.sh').replace('-', '_')
     phase = 'worker' if entry == 'bureau-worker.sh' else ('stage' if entry.endswith('-pipeline.sh') else 'driver')
     attempt = None
+    dispatch_path = None
+    dispatch_record = None
     evidence_disabled = os.environ.get('BUREAU_SPEC_CHECKPOINTS_DISABLED', '')
 
     def signal_child(signum):
@@ -776,6 +778,17 @@ def execute(repo, args, store):
     if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN:
         signal.signal(signal.SIGHUP, stop)
     try:
+        # Only the outer dispatcher lane owns this journal. Nested workers and
+        # stages share the environment but cannot publish a terminal lane result.
+        launch = os.environ.get('BUREAU_DISPATCH_ATTEMPT_ID')
+        if not inherited and os.environ.get('BUREAU_DISPATCH_LANE') == '1' and launch:
+            if not re.fullmatch(r'[a-f0-9]{32}', launch): raise ValueError('invalid dispatch attempt')
+            dispatch_path = store.root / 'dispatch-lanes' / (launch + '.json')
+            record = read(dispatch_path)
+            if not record or record.get('attempt') != launch or record.get('issue') != args.issue or record.get('workspace') != str(workspace):
+                raise ValueError('dispatch launch identity does not match this lane')
+            dispatch_record = dict(record, run_id=run)
+            save(dispatch_path, dispatch_record)
         begun = e.observe(evidence.begin_run, run, args.issue, repo, evidence_head(repo))
         attempt = e.observe(evidence.begin_attempt, run, args.issue, stage, phase, workspace,
                             evidence_head(workspace), os.environ.get('BUREAU_STAGE_ATTEMPT_ID'))
@@ -797,7 +810,7 @@ def execute(repo, args, store):
                 try:
                     overlap(repo, 'admit', args.issue, branch, run=run)
                 except AdmissionStop as exc:
-                    if entry != 'shepherd.sh' or exc.code != 29:
+                    if entry != 'shepherd.sh' or exc.code != 29 or os.environ.get('BUREAU_DISPATCH_LANE') == '1':
                         code = exc.code
                         return code
                     # A known queued driver may poll without becoming a file
@@ -821,6 +834,17 @@ def execute(repo, args, store):
                  'BUREAU_SPEC_CHECKPOINTS_DISABLED': evidence_disabled,
                  'BUREAU_TICKET_CONTROL_DIR': str(store.root / 'ticket-control' / run)})
         if interrupted: signal_child(interrupted)
+        # A continuous dispatcher waits for the first real stage to settle its
+        # startup admission before taking another queue snapshot. This marker
+        # belongs to this launch only; it carries no process ID or authority.
+        ready = os.environ.get('BUREAU_DISPATCH_READY_FILE')
+        if ready and phase == 'stage' and not interrupted:
+            try: Path(ready).touch()
+            except OSError:
+                # This child already owns its lease. A failed observational
+                # marker must never release it while the child can still write.
+                try: os.write(2, b'bureau: WARN: dispatch startup marker unavailable; retaining serialized startup\n')
+                except OSError: pass
         while True:
             try:
                 code = child.wait(timeout=.2)
@@ -831,6 +855,9 @@ def execute(repo, args, store):
                     try: child.wait(timeout=stop_grace(depth))
                     except subprocess.TimeoutExpired: signal_child(signal.SIGKILL); child.wait()
                     code = 130; return code
+    except AdmissionStop as exc:
+        code = exc.code
+        raise
     except Conflict:
         code = 21
         raise
@@ -860,6 +887,13 @@ def execute(repo, args, store):
             e.warn()
         finally:
             store.finish_execution(run, resources, interrupted or code == 130, repo, report=bool(resources) or not inherited)
+            if dispatch_record is not None:
+                ready = os.environ.get('BUREAU_DISPATCH_READY_FILE')
+                dispatch_record.update(code=130 if interrupted or code < 0 else code,
+                                       paused=bool(code == 25 and ready and Path(ready + '.paused').exists()))
+                # This coordination record is mandatory, outside prunable
+                # evidence, and written before the inherited dispatch FD closes.
+                save(dispatch_path, dispatch_record)
 
 
 def observation_time(value):

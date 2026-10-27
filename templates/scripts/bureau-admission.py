@@ -33,6 +33,10 @@ class Stop(Exception):
         self.code = code
 
 
+class SnapshotMoved(Stop):
+    """A complete, usable snapshot changed while admission was checking it."""
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
@@ -430,9 +434,9 @@ class Admission:
             if issue in latest:
                 checkpoint(latest[issue])
             if latest != snapshot:
-                raise Stop(27, 'Linear snapshot changed during admission; retry')
+                raise SnapshotMoved(27, 'Linear snapshot changed during admission; retry')
             if sorted(map(pull_identity, pulls(self.repo))) != sorted(map(pull_identity, listed)):
-                raise Stop(18, 'Open PR snapshot changed during admission; retry')
+                raise SnapshotMoved(18, 'Open PR snapshot changed during admission; retry')
             checkpoint()
             if conflicts:
                 if state['migration'].get(issue) == 'queued' and issue not in state['reservations'] and os.environ.get('BUREAU_RUN_ID'):
@@ -498,7 +502,16 @@ def main():
                 admission.refresh(state, args.issue, admission.scope(args.branch, True, tasks))
                 admission.save(state)
         elif args.action == 'admit':
-            admission.admit(args.issue, args.branch, args.local, args.continuation)
+            # Another lane may finish while this one is collecting snapshots.
+            # Retry only this typed race, never a transport/shape/ownership
+            # failure. Every attempt reruns the same locked gate and checkpoint.
+            tries = 3 if os.environ.get('BUREAU_DISPATCH_LANE') == '1' else 1
+            for attempt in range(tries):
+                try:
+                    admission.admit(args.issue, args.branch, args.local, args.continuation)
+                    break
+                except SnapshotMoved:
+                    if attempt + 1 == tries: raise
         else:
             return admission.ready(args.issue, args.branch, args.stage, args.action == 'ready')
         return 0

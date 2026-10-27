@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="169cfc69414ed96571314cc52c2a02001ea44262bd7a89ebb73f0077be045682">
+<meta name="bureau-source-sha256" content="722c9054a1f1b8ac75441bcd74fc96d93a50a62157b04c1efd587568f24fe89d">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -370,6 +370,19 @@ interval. Lower (e.g. <code>5</code>) for active work, higher for
 background</td>
 </tr>
 <tr>
+<td><code>agents.parallel_lanes</code></td>
+<td>number</td>
+<td><code>2</code> dispatch / <code>3</code> batch</td>
+<td>Whole numbers 1–1000. An explicit non-null value sets the
+process-lane cap for both continuous dispatch and
+<code>orchestrate.sh --execute</code>; invalid configured values warn
+and fall back to 2 for both. When absent or null, dispatch defaults to 2
+and batch orchestration keeps its legacy default of 3. Precedence:
+<code>--max-concurrent</code>, then <code>BUREAU_MAX_CONCURRENT</code>,
+then this setting, then the consumer's default. Separate from the
+in-flight ticket cap.</td>
+</tr>
+<tr>
 <td><code>agents.workbench_panes</code></td>
 <td>number</td>
 <td><code>2</code> background / <code>0</code> app</td>
@@ -451,7 +464,9 @@ while reservations and PRs retain their footprints across projects.
 Absent/false preserves legacy advisory crosscheck extraction and
 matching. See <a href="stage-protocol.html#file-overlap-admission">file
 admission</a> for migration, durable reservations and compatibility
-limits. Required by the planned continuous dispatcher.</td>
+limits. Continuous dispatch requires the explicit boolean
+<code>true</code>, including one lane and dry-run; otherwise startup
+exits 24 before selection.</td>
 </tr>
 <tr>
 <td><code>agents.max_concurrent_include_merge</code></td>
@@ -1426,9 +1441,12 @@ wrapper always ends its own child first</td>
 </tr>
 <tr>
 <td><code>BUREAU_MAX_CONCURRENT</code></td>
-<td>Default lane cap for <code>orchestrate.sh</code>: whole numbers
-1–1000, fallback 3 with a key-only warning when invalid;
-<code>--max-concurrent</code> overrides it. This does not change the
+<td>Overrides <code>agents.parallel_lanes</code> for continuous dispatch
+and <code>orchestrate.sh --execute</code>; <code>--max-concurrent</code>
+takes precedence. Whole numbers 1–1000. Invalid values fall back to 3
+with a key-only warning in <code>orchestrate.sh</code>; dispatch refuses
+invalid overrides. With no override and the key absent or null, batch
+defaults to 3 and dispatch defaults to 2. This does not change the
 separate <code>agents.max_concurrent_issues</code> ticket cap</td>
 </tr>
 </tbody>

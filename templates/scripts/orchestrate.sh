@@ -15,14 +15,14 @@
 #       and run it SERIALLY (legacy default — parallelSafe flattened to chains).
 #   scripts/orchestrate.sh --execute --schedule path/to/schedule.json
 #       The d&a EXECUTOR: run lanes CONCURRENTLY in per-ticket worktrees,
-#       capped at --max-concurrent (default 3). Each serialChain is one lane
+#       capped at agents.parallel_lanes when set (otherwise 3). Each serialChain is one lane
 #       (serial within); each parallelSafe ticket is its own lane.
 #
 # Flags:
 #   --execute          Concurrent lane execution (per-ticket worktrees). Without
 #                      it, behaviour is the legacy serial path (unchanged).
-#   --max-concurrent N Lane concurrency cap in --execute mode (default 3, or
-#                      $BUREAU_MAX_CONCURRENT).
+#   --max-concurrent N Compatibility override of agents.parallel_lanes, ahead
+#                      of $BUREAU_MAX_CONCURRENT; otherwise the batch default is 3.
 #   --no-merge         pass through to shepherd (halt before Merge)
 #   --dry-run          print the plan + the shepherd commands; mutate nothing
 #
@@ -46,6 +46,9 @@ set -uo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # The dependency-free environment library also guards inherited numeric knobs.
 source "$(dirname "$0")/bureau-env.sh"
+if [ -f "${BUREAU_CONFIG:-$REPO_DIR/.bureau.json}" ]; then
+  source "$(dirname "$0")/bureau-config.sh"
+fi
 # Test seam: tests inject a stub shepherd via $SHEPHERD_BIN to exercise the
 # executor's concurrency / ordering / honest-exit without a real pipeline.
 SHEPHERD="${SHEPHERD_BIN:-$REPO_DIR/scripts/shepherd.sh}"
@@ -55,7 +58,13 @@ SCHEDULE_FILE=""
 PASSTHRU=()
 DRY_RUN=0
 EXECUTE=0
-MAX_CONCURRENT=$(bureau_number BUREAU_MAX_CONCURRENT "${BUREAU_MAX_CONCURRENT-3}" 3 1 1000)
+# The shared reader defaults to 2 for dispatch; keep the legacy batch default
+# unless the configuration explicitly supplies a non-null lane cap.
+MAX_CONCURRENT=3
+if declare -F bureau_get >/dev/null && [ "$(bureau_get '.agents.parallel_lanes != null')" = true ]; then
+  MAX_CONCURRENT="$BUREAU_PARALLEL_LANES"
+fi
+MAX_CONCURRENT=$(bureau_number BUREAU_MAX_CONCURRENT "${BUREAU_MAX_CONCURRENT-$MAX_CONCURRENT}" 3 1 1000)
 
 while [ $# -gt 0 ]; do
   case "$1" in

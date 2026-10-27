@@ -82,16 +82,8 @@ add_agent_window() {
   ((WIN_NUM++))
 }
 
-agent_enabled "spec" && add_agent_window "spec" "spec"
-agent_enabled "spec_review" && add_agent_window "spec-review" "spec-review"
-agent_enabled "ux" && add_agent_window "ux" "ux"
-agent_enabled "copy" && add_agent_window "copy" "copy"
-agent_enabled "implement" && add_agent_window "build" "implement"
-agent_enabled "qa" && add_agent_window "qa" "qa"
-
-agent_enabled "code_review" && add_agent_window "review" "code-review"
-agent_enabled "rebase" && add_agent_window "rebase" "rebase"
-agent_enabled "merge" && add_agent_window "merge" "merge"
+# One pool owns the lane cap; never start per-stage pollers alongside it.
+add_agent_window "dispatch" "dispatch"
 
 # Workbench window
 BENCH_WIN=$WIN_NUM
@@ -115,15 +107,7 @@ tmux new-window -t "$SESSION" -n overview
 
 # Collect enabled agent log names for the overview panes
 OVERVIEW_AGENTS=()
-agent_enabled "spec" && OVERVIEW_AGENTS+=("spec")
-agent_enabled "spec_review" && OVERVIEW_AGENTS+=("spec-review")
-agent_enabled "ux" && OVERVIEW_AGENTS+=("ux")
-agent_enabled "copy" && OVERVIEW_AGENTS+=("copy")
-agent_enabled "implement" && OVERVIEW_AGENTS+=("implement")
-agent_enabled "qa" && OVERVIEW_AGENTS+=("qa")
-agent_enabled "code_review" && OVERVIEW_AGENTS+=("code-review")
-agent_enabled "rebase" && OVERVIEW_AGENTS+=("rebase")
-agent_enabled "merge" && OVERVIEW_AGENTS+=("merge")
+OVERVIEW_AGENTS+=("dispatch")
 
 # First pane: first agent log
 # tail -F (capital) follows by NAME and retries on missing/rotated, so the
