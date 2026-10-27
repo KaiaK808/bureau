@@ -236,6 +236,7 @@ case "$DESIGN_STATUS" in
     post_comment "$ISSUE" "🚫 UX flagged for human review.
 
 $DESIGN_SUMMARY"
+    bureau_outcome_signal human_hold || true
     NEXT_STATE_LABEL="Design (needs-human)"
     ;;
   INCOMPLETE)

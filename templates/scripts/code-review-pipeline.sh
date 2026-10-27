@@ -7,6 +7,7 @@ unset CLAUDECODE 2>/dev/null || true
 REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
+export BUREAU_REVIEW_MIN_SEVERITY
 
 # agents.merge_mode = manual needs a Merge state: an approved ticket is parked
 # there for the human who merges. Without one there is nowhere to put it, so
@@ -710,6 +711,10 @@ VERDICT="${_decision%%$'\n'*}"
 ESCALATION_REASON=""
 while IFS=$'\037' read -r _rule _reason _text; do
   [ -n "$_rule" ] || continue
+  case "$_rule" in
+    cycle-cap|round-cap) bureau_outcome_signal review_capped || true ;;
+    build) if [ "$VERDICT" = REQUEST_CHANGES ]; then bureau_outcome_signal gate_red || true; fi ;;
+  esac
   echo "  Verdict rule $_rule: $_text"
   [ -z "$_reason" ] || ESCALATION_REASON="$_reason"   # at most one rule carries a reason
   MERGED_REVIEW="$MERGED_REVIEW

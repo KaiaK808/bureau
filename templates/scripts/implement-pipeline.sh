@@ -855,6 +855,8 @@ Stop conditions — halt and report status NEEDS_HUMAN when:
 - A task can't be implemented without breaking an existing test.
 $NEGATIVE_CONSTRAINTS
 
+Optional local review_dispositions: normally []; report applied or declined review findings as {disposition, severity, path} only (at most 32). Use CRITICAL, BUG, MINOR or SKIP and a repository-relative path; no finding prose or reasons. These are advisory self-reports and never authorize skipping a fix.
+
 Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
 
 End every turn with a fenced JSON status block — Haiku reads it to decide if the goal is met:
@@ -866,6 +868,7 @@ End every turn with a fenced JSON status block — Haiku reads it to decide if t
   \"tasks_needs_human\": 0,
   \"insights\": [],
   \"fixed_review_items\": [],
+  \"review_dispositions\": [],
   \"notes\": {
     \"needs_human\": [{\"task_id\": \"\", \"reason\": \"\"}],
     \"skipped\":     [{\"task_id\": \"\", \"reason\": \"\"}],
@@ -1034,6 +1037,8 @@ Stop conditions — do NOT guess; halt and report status NEEDS_HUMAN when:
 
 $NEGATIVE_CONSTRAINTS
 
+Optional local review_dispositions: normally []; report applied or declined review findings as {disposition, severity, path} only (at most 32). Use CRITICAL, BUG, MINOR or SKIP and a repository-relative path; no finding prose or reasons. These are advisory self-reports and never authorize skipping a fix.
+
 Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
 
 At the end of your work, emit a single fenced json block so the shell can summarise. Structured fields (needs_human / skipped / deviations) are auditable; \`prose_notes\` is for things that fit none of those buckets. \`fixed_review_items\` MUST list the specific fix-item IDs you addressed in this run (empty array if no review feedback was present).
@@ -1046,6 +1051,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
   \"tasks_needs_human\": 0,
   \"insights\": [],
   \"fixed_review_items\": [],
+  \"review_dispositions\": [],
   \"notes\": {
     \"needs_human\": [{\"task_id\": \"\", \"reason\": \"\"}],
     \"skipped\":     [{\"task_id\": \"\", \"reason\": \"\"}],
@@ -1446,6 +1452,7 @@ case "$STATUS" in
       NEEDS_HUMAN_UNMARKED=1
     fi
     post_comment "$ISSUE" "$(bureau_comment_projection "$(build_summary_comment "$STATUS" "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")")"
+    if [ "$STATUS" = NEEDS_HUMAN ]; then bureau_outcome_signal human_hold || true; fi
     NEXT_STATE_LABEL="Build (needs-human)"
     ;;
 esac

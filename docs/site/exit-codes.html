@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1f4738f85cc47d07b334e557075a54fa1a7a3b548cb8a6731a5626424ee5f01a">
+<meta name="bureau-source-sha256" content="3a524e83633c93c2aff96369904717439895e9ee793da8e6dfb37edc0afe0ea2">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -595,7 +595,23 @@ authentication/read/ownership failures keep their codes, and interrupted
 work remains 130. Rebase publication rejection is still 19, using a
 lease pinned to the fetched remote SHA. Implement never force-pushes.
 Admission 29 and owned Merge refresh 20 retain their existing
-meanings.</p></main>
+meanings.</p>
+<h2 id="local-learning-cause-classes">Local learning cause classes</h2>
+<p>Learning metadata uses <code>bureau_insight_cause</code> in
+<code>bureau-insights.sh</code>, independently of the exit vocabulary
+above. It records <code>timeout</code>, <code>gate_red</code>,
+<code>review_capped</code>, <code>ownership</code>,
+<code>provider_error</code>, <code>quota</code>, <code>human_hold</code>
+or <code>other</code> from trusted exits/provider metadata/shell
+signals, never model prose. This changes no exit, alert class,
+dispatcher lane outcome or routing. Silence retains 25 with
+<code>timeout_kind: silence</code>; wall-clock timeout retains 124.
+Latched withdrawal 0/25/26 wins over earlier provider failures; quiet
+overlap exit 29 stays distinct and quiet (<code>other</code> cause). See
+<a href="stage-protocol.html#failure-learning-records">failure learning
+records</a> for the exact mapping, local-only ledgers and retention.
+Resync all scripts including <code>bureau-insights.sh</code> and restart
+drivers; no configuration or backfill.</p></main>
 </div>
 </body>
 </html>

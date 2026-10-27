@@ -383,6 +383,7 @@ Full QA log: \`$QA_LOG_PATH\`"
     NEXT_STATE="Build Review"
     ;;
   NEEDS_HUMAN)
+    if [ "${FINAL_GREEN:-}" = false ]; then bureau_outcome_signal gate_red || true; else bureau_outcome_signal human_hold || true; fi
     echo "  QA: NEEDS_HUMAN — flagging and leaving in QA"
     if mark_needs_human "$ISSUE" qa; then
       log_escalation "$ISSUE" "qa" 0 "$QA_ESCALATION_REASON" 0 "$BRANCH"
@@ -397,6 +398,7 @@ Full QA log: \`$QA_LOG_PATH\`"
     NEXT_STATE="QA (needs-human)"
     ;;
   RED|*)
+    if [ "${FINAL_GREEN:-}" = false ]; then bureau_outcome_signal gate_red || true; fi
     echo "  QA: RED — moving back to Build"
     post_comment "$ISSUE" "🔄 QA: tests failing — routing back to Build.
 

@@ -1290,6 +1290,7 @@ s.end_attempt(run,a,0,sys.argv[5])
         installed=self.repo.parent/'installed scripts'; installed.mkdir()
         for name in ('runtime','provider','supervision','evidence','spec','gates','activity'):
             shutil.copy(ROOT/'templates/scripts'/('bureau-'+name+'.py'),installed)
+        shutil.copy(ROOT/'templates/scripts/bureau-insights.sh', installed)
         before={p.name:p.read_bytes() for p in installed.iterdir()}
         for name,args in [('runtime',['--repo',str(self.repo),'status']),('supervision',['--repo',str(self.repo),'status']),
                           ('provider',['--stage','implement','--config',str(self.repo/'.bureau.json'),'--describe'])]:

@@ -23,6 +23,7 @@ if CODEX_TMP_PREFIX != 'bureau-codex-':
     shutil.copy(SCRIPT.with_name('bureau-evidence.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-gates.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-activity.py'), isolated.name)
+    shutil.copy(SCRIPT.with_name('bureau-insights.sh'), isolated.name)
     source = SCRIPT.read_text().replace("prefix='bureau-codex-'", 'prefix=' + repr(CODEX_TMP_PREFIX))
     SCRIPT = Path(isolated.name) / SCRIPT.name; SCRIPT.write_text(source)
 spec=importlib.util.spec_from_file_location('provider',SCRIPT)

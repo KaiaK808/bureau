@@ -26,6 +26,8 @@
 #      presence check, a Linear request, a Telegram alert, curl doubled) and the nine stages of B
 #      export no key and print none in their trace, and the Linear request and the alert still
 #      reach curl with the key and the token
+#   E  a captured trace larger than Linux's per-environment-string limit stays in the test
+#      shell, including under allexport, and the next external command can run
 # The drivers (shepherd, worker, runtime) run for real in tests/test_env_keys_drivers.sh.
 # Negative control: against v3.1.0 (9411b3b) A fails on every "exported" check and B on every
 # stage ("a process the script started carries a .env key: … jq LINEAR_API_KEY …"); against
@@ -84,6 +86,15 @@ if grep -q '^API_KEY=' <<< "$out"; then c1_fail "A API_KEY: the stage's copy of 
 
 # ── B  the nine stages ────────────────────────────────────────────────────────
 B_FAILS_BEFORE=$C1_FAILS
+# The harness exports its captures. A traced implement prompt can push LAST_STDERR past
+# Linux's 32-page environment-string limit (128 KiB with 4 KiB pages), so the next exec fails
+# with E2BIG before the trace assertion can read a saved capture.
+# Keep the operator's SHELLOPTS for the stage; only un-export the test's returned captures.
+c1_run_pipeline() {
+  run_pipeline "$@"
+  export -n LAST_STDOUT LAST_STDERR LAST_RC
+}
+
 # stage_run <label> <Linear state> <script> [args …] — the real stage in a fresh harness sandbox
 # with the probe .env, the operator's API_KEY exported (empty, as tests/lib/pr1-untrusted-env.sh
 # does), the probes on PATH and the ticket in <Linear state>, set up so the stage gets past its
@@ -116,7 +127,7 @@ stage_run() {
     [ "$label" != merge ] || export BUREAU_NO_MERGE=0
     # D: the shell that starts the stage has these options on and exports SHELLOPTS.
     if [ -n "${C1_SHELLOPTS:-}" ]; then for opt in $C1_SHELLOPTS; do set -o "$opt"; done; export SHELLOPTS; fi
-    run_pipeline "$script" "$@" </dev/null
+    c1_run_pipeline "$script" "$@" </dev/null
     { set +x; } 2>/dev/null
     printf '%s\n' "$LAST_RC" > "$SANDBOX/.c1/rc"
     cp "$SANDBOX/stderr.log" "$SANDBOX/.c1/stage.err"
@@ -242,6 +253,28 @@ stage_run merge Merge merge-pipeline.sh EXP-321
 stage_run rebase Merge rebase-pipeline.sh
 C1_SHELLOPTS="" C1_LABEL=""
 [ "$C1_FAILS" = "$D_FAILS_BEFORE" ] && echo "PASS D with allexport or xtrace from the operator's shell no key is exported or traced, and Linear and Telegram still get them"
+
+# ── E  oversized captures are shell state, never a child environment entry ─────
+sandbox_init
+cat > "$SCRIPTS_DIR/c1-large-trace.sh" <<'EOF'
+#!/bin/bash
+printf '%0160000d\n' 0 >&2
+echo capture-complete
+EOF
+if (
+  set -a
+  export SHELLOPTS
+  c1_run_pipeline c1-large-trace.sh
+  set +a
+  [ "$LAST_RC" = 0 ] && [ "${#LAST_STDERR}" -ge 160000 ] || exit 1
+  /usr/bin/env > "$TMP/capture.env" || exit 1
+  ! grep -qE '^LAST_(STDOUT|STDERR|RC)=' "$TMP/capture.env"
+); then
+  echo "PASS E a 160 KB trace is captured under allexport without exporting it or blocking the next process"
+else
+  c1_fail "E: captured stage output was exported or the next process could not start"
+fi
+teardown
 
 if [ "$C1_FAILS" != 0 ]; then echo "$C1_FAILS check(s) failed" >&2; exit 1; fi
 echo "OK test_env_keys_unexported"

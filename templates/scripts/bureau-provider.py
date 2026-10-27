@@ -408,9 +408,13 @@ def run(options, prompt, system, repo, evidence, schema=None):
                    gate_attempts=gate_attempts, usage=metadata.get('usage'), total_cost_usd=metadata.get('total_cost_usd'))
     receipt['timeout_kind'] = metadata.get('timeout_kind')
     if options['stage'] == 'code_review':
+        receipt['review_min_severity'] = os.environ.get('BUREAU_REVIEW_MIN_SEVERITY')
         receipt['review_inputs'] = dict(head=os.environ.get('BUREAU_REVIEW_INPUT_HEAD'),
                                       base=os.environ.get('BUREAU_REVIEW_INPUT_BASE'),
                                       validation_head=os.environ.get('BUREAU_REVIEW_VALIDATION_HEAD'))
+    # A failed CLI may still have a final advisory observation. Read originals
+    # only for optional local capture; never validate/forward/recover a success.
+    if code != 0: receipt['insights_result'] = e.observe(receipt_result, receipt)
     # _run reports the actual child exit; no inferred success from commits.
     if code == 0: receipt['provider_exit'] = 0
     if code == 0:
