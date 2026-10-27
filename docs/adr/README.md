@@ -1,0 +1,24 @@
+# Bureau architecture decisions
+
+These records derive Bureau's observed architecture at commit 1282b9d on 2026-10-26, with origin/main at 9f1152c. The v3.5 stack, PRs #76–#82, is open and unmerged at this snapshot. Released rules are accepted (derived); proposed records describe the checked-out stack and do not imply release, merge or fresh maintainer approval. The Date field records this derivation, not an invented historical decision meeting.
+
+Options considered reconstruct alternatives from the present implementation and documented incidents; they are not minutes of a historical debate. Rationale identifies inference where needed. Sources are repository paths with physical line numbers at this snapshot or local Git commit IDs; source counts count unique entries in each Sources field. Evidence names existing rule checks, not tests newly run for every ADR. Open points preserve disagreements and gaps without resolving them. Re-derive affected records when code, releases or the stack change.
+
+| Number | Title | Status | Scope |
+|---|---|---|---|
+| [0001](0001-isolated-stage-execution.md) | Isolated stages with a shared provider and exit protocol | accepted (derived) | Separate provider calls, protected workspaces and shared outcomes. |
+| [0002](0002-explicit-merge-authority.md) | Explicit human merge authority and one automated merge gate | accepted (derived) | Manual authority and gated, head-pinned automation. |
+| [0003](0003-metadata-only-evidence.md) | Metadata-only evidence with mandatory success receipts | proposed (v3.5, PR #78) | Private bounded evidence and exact-attempt recovery. |
+| [0004](0004-spec-checkpoints-and-governance.md) | Committed spec checkpoints and an explicit governance boundary | proposed (v3.5, PR #79) | Verified phase resume, conservative cutoffs and review-owned adequacy. |
+| [0005](0005-machine-proven-outside-gates.md) | Machine-proven outside gates with a single publication hop | proposed (v3.5, PR #81) | Machine proof, one executor commit and one reserved outside run. |
+| [0006](0006-single-codex-wire-schema.md) | One Codex wire projection over canonical result schemas | proposed (v3.5, PR #81) | Shared optional/nullable projection for gates and insights. |
+| [0007](0007-spec-admission-and-numbering.md) | Explicit spec capacity waits and shared number reservations | proposed (v3.5, PR #77) | Mode-dependent admission, exit 28 and local number uniqueness. |
+| [0008](0008-preserved-merge-only-workers.md) | Reuse preserved implement workers only for proven clean base merges | proposed (v3.5, PR #80) | Narrow retained-worker exception with exact merge-tree verification. |
+| [0009](0009-untrusted-environment-filtering.md) | Literal environment filtering and validated shell arithmetic | proposed (v3.5, PR #76) | Trusted exported snapshots, carrier removal and numeric guards. |
+| [0010](0010-bounded-conflict-resolution.md) | Five fixed conflict rules and explicit escalation | accepted (derived) | Bounded mechanical resolution and stage-specific human recovery. |
+| [0011](0011-independent-provider-review.md) | Independent review with optional Codex review of Claude builds | accepted (derived) | Independent specialist calls and deterministic verdict floors. |
+| [0012](0012-human-boundary-briefs-and-local-insights.md) | Metadata briefs at human boundaries and local advisory insights | proposed (v3.5, PR #82) | Projected handoffs and a bounded local prose exception. |
+
+Use [0000-template.md](0000-template.md) for a new record and retain the section order. Every Decision paragraph needs a source listed in Sources. Evidence must name existing repository tests or CI checks and describe actual coverage. Write one physical line per paragraph; do not copy private names, addresses or ticket quotations. The explicitly required Decided by field is the maintainer attribution.
+
+Run bash tests/test_adrs.sh and bash tests/test_docs.sh. tests/run.sh discovers the ADR check by its existing test_*.sh glob. The ADR check validates structure, source/evidence paths, the index and generic privacy patterns. Set BUREAU_ADR_DENYLIST to an existing UTF-8 file outside this repository for an additional case-insensitive literal scan, one private name per nonblank line; lines starting with # are comments. Never commit that file or its contents. When the variable is unset the additional scan reports SKIP; a set but invalid path fails, and failures identify an entry number without echoing its text. These checks do not establish semantic accuracy or complete confidentiality.
