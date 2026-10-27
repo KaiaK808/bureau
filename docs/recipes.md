@@ -11,7 +11,8 @@ Process exactly one issue end-to-end before another enters Spec. Eliminates cros
 ```json
 {
   "agents": {
-    "max_concurrent_issues": 1
+    "max_concurrent_issues": 1,
+    "max_concurrent_include_merge": true
   }
 }
 ```
@@ -20,7 +21,7 @@ Process exactly one issue end-to-end before another enters Spec. Eliminates cros
 
 **When not to:** small repos where parallelism actually helps. The cap is a knob, not a default.
 
-A single stuck issue (e.g. `needs-human` parking) does *not* deadlock the cap — `count_in_flight_issues` excludes parked issues.
+A single stuck issue (e.g. `needs-human` parking) does *not* deadlock the cap — `count_in_flight_issues` excludes parked issues. Under manual merge mode, Merge is excluded by default: with cap 1 the next spec can start while earlier tickets wait for a manual merge. The explicit `agents.max_concurrent_include_merge: true` above keeps the old single-flight behavior. Auto mode includes Merge by default. Build Review still counts, including an approved `--no-merge` ticket parked there. A full cap names its blockers and returns 28 (`spec-capacity-wait`): the shepherd waits cancellably without stuck ticks or human labels, and bounded ticks retain 28 in their waiting result.
 
 ---
 

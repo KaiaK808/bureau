@@ -17,7 +17,6 @@ CLAUDE=(run_stage_for spec)
 bureau_secret_copy API_KEY LINEAR_API_KEY
 
 precondition_linear
-precondition_runner spec
 
 # single-flight / bounded-parallelism gate. When
 # BUREAU_MAX_CONCURRENT_ISSUES is non-zero, refuse to pick new Triage work
@@ -26,14 +25,8 @@ precondition_runner spec
 # Downstream stages (spec-review, ux, copy, implement, qa, code-review,
 # rebase, merge) keep operating on whatever's already in-flight, so a cap
 # of 1 still drains the current issue without deadlock.
-if [ "${BUREAU_MAX_CONCURRENT_ISSUES:-0}" -gt 0 ]; then
-  in_flight=$(count_in_flight_issues)
-  in_flight=$(bureau_number spec.in_flight "$in_flight" 1000 0 9999999999)
-  if [ "${in_flight:-0}" -ge "$BUREAU_MAX_CONCURRENT_ISSUES" ]; then
-    echo "Spec gate: $in_flight in-flight issue(s), cap is $BUREAU_MAX_CONCURRENT_ISSUES. Holding off on new Triage picks."
-    exit 2
-  fi
-fi
+spec_admission_gate
+precondition_runner spec
 
 # Step 0: Pick or resolve issue
 if [ -n "${1:-}" ]; then
@@ -189,32 +182,77 @@ LESSONS_CONTEXT=$(build_lessons_context)
 SPECKIT_DIR=.claude/skills
 if [ "$(resolve_runner_for_stage spec)" = codex ]; then SPECKIT_DIR=.agents/skills; fi
 
-# .specify/feature.json before specify, so that Phase 1.5 can tell a file this
-# run wrote from one it left behind: the file's checksum, whether the directory
-# it names exists already, and the branch checked out now (a disposable spec
-# worker starts detached on origin/main, so usually none). Only the content
-# counts: a stale value written back during the call (by an agent's rewrite or a
-# `git checkout` of the file) must not pass as new.
-# _fj_read prints feature_directory, or nothing when the file is missing or is
-# not valid JSON (jq's own status, 2 or 5, would end the stage under set -e, and
-# 2 reads as "queue empty" to both drivers).
-_fj_read() {
-  local out
-  if out=$(jq -r '.feature_directory // empty' .specify/feature.json 2>/dev/null); then
-    printf '%s' "$out"
-  fi
-  return 0
+# Refresh every origin head even in a single-branch clone. The reservation lock
+# covers inspection and persistence; fetch uses Bureau's normal git wrapper.
+SPEC_BASE=$(bureau_get '.repo.base_branch // "main"')
+git fetch --prune --no-tags origin '+refs/heads/*:refs/remotes/origin/*' || exit 18
+RESERVATION=$(python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$REPO_DIR" \
+  reserve-spec-number "$ISSUE" --specs-dir "$BUREAU_SPECS_DIR" --base "$SPEC_BASE") || {
+  RESERVATION_RC=$?
+  [ "$RESERVATION_RC" != 124 ] || exit 124
+  exit 18
 }
-FJ_SUM_BEFORE=""
-FJ_DIR_EXISTED=""
-if [ -f .specify/feature.json ]; then
-  FJ_SUM_BEFORE=$(cksum < .specify/feature.json)
-  FJ_DIR_BEFORE=$(_fj_read)
-  if [ -n "$FJ_DIR_BEFORE" ] && [ -d "$FJ_DIR_BEFORE" ]; then FJ_DIR_EXISTED=1; fi
+SPEC_NUMBER=$(printf '%s' "$RESERVATION" | jq -er '.number')
+FEATURE_HELPER=.specify/scripts/bash/create-new-feature.sh
+if [ ! -f "$FEATURE_HELPER" ]; then
+  echo 'ERROR: pinned Spec Kit feature helper is missing; resync Spec Kit 1.2.2.' >&2
+  exit 24
 fi
-FJ_BRANCH_BEFORE=$(git branch --show-current 2>/dev/null || true)
+# The issue key is a stable short name, including when its title changes on retry.
+# --allow-existing-branch reuses an exact directory without replacing spec.md.
+FEATURE_ARGS=(--json --number "$SPEC_NUMBER" --short-name "$ISSUE" --allow-existing-branch "$ISSUE_TITLE")
+FEATURE_JSON=$(bureau_untrusted_env bash "$FEATURE_HELPER" --dry-run "${FEATURE_ARGS[@]}") || exit 11
+if ! printf '%s' "$FEATURE_JSON" | jq -e --argjson number "$SPEC_NUMBER" \
+    '(.FEATURE_NUM | tonumber) == $number and (.SPEC_FILE | type) == "string"' >/dev/null; then
+  echo 'ERROR: Spec Kit did not honor the reserved feature number; refusing to specify.' >&2
+  exit 11
+fi
+ALLOCATED_DIR=$(dirname "$(printf '%s' "$FEATURE_JSON" | jq -er '.SPEC_FILE')")
+ALLOCATED_NAME=$(basename "$ALLOCATED_DIR")
+# Workers start detached on origin/main, including retries of a pushed spec
+# returned for rework. Resume the reserved branch BEFORE creating artifacts or
+# invoking specify, using the same held-branch check as downstream stages.
+FEATURE_BRANCH="$ALLOCATED_NAME"
+free_branch_from_other_worktrees "$FEATURE_BRANCH" "$REPO_DIR"
+if git show-ref --verify --quiet "refs/heads/$FEATURE_BRANCH"; then
+  git checkout "$FEATURE_BRANCH" || exit 21
+  if git show-ref --verify --quiet "refs/remotes/origin/$FEATURE_BRANCH"; then
+    # Keep unpublished local commits; also pick up rework pushed by another run.
+    git merge --ff-only "refs/remotes/origin/$FEATURE_BRANCH" || {
+      echo "ERROR: reserved branch $FEATURE_BRANCH cannot fast-forward to origin; resolve its local/remote history before retrying." >&2
+      exit 17
+    }
+  fi
+elif git show-ref --verify --quiet "refs/remotes/origin/$FEATURE_BRANCH"; then
+  git checkout -b "$FEATURE_BRANCH" "refs/remotes/origin/$FEATURE_BRANCH" || exit 21
+else
+  git checkout -b "$FEATURE_BRANCH" || exit 21
+fi
+# 1.2.2 creates under specs/ (no directory option). A dry-run validates the
+# number first. Reuse an existing target without creating/deleting a template
+# elsewhere; for a new custom target, relocate the helper's actual output.
+WANTED_DIR="${BUREAU_SPECS_DIR%/}/$ALLOCATED_NAME"
+if [ ! -d "$WANTED_DIR" ]; then
+  CREATED_JSON=$(bureau_untrusted_env bash "$FEATURE_HELPER" "${FEATURE_ARGS[@]}") || exit 11
+  if [ "$CREATED_JSON" != "$(printf '%s' "$FEATURE_JSON" | jq -c 'del(.DRY_RUN)')" ]; then
+    echo 'ERROR: Spec Kit output changed after its dry-run; refusing to specify.' >&2
+    exit 11
+  fi
+  mkdir -p "$BUREAU_SPECS_DIR"
+  if [ "$(cd "$(dirname "$ALLOCATED_DIR")" && pwd -P)/$ALLOCATED_NAME" != "$(cd "$BUREAU_SPECS_DIR" && pwd -P)/$ALLOCATED_NAME" ]; then
+    mv "$ALLOCATED_DIR" "$WANTED_DIR"
+  fi
+fi
+ALLOCATED_DIR=$(cd "$WANTED_DIR" && pwd -P)
+jq -n --arg dir "$ALLOCATED_DIR" '{feature_directory:$dir}' > .specify/feature.json
+export SPECIFY_FEATURE="$ALLOCATED_NAME" SPECIFY_FEATURE_DIRECTORY="$ALLOCATED_DIR"
 
 "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-specify/SKILL.md and follow its instructions exactly.
+
+Populate the already allocated feature in $ALLOCATED_DIR.
+The feature helper has already run with --number $SPEC_NUMBER. Do not run create-new-feature again,
+do not allocate another number, and do not change .specify/feature.json.
+Use SPECIFY_FEATURE=$ALLOCATED_NAME and SPECIFY_FEATURE_DIRECTORY=$ALLOCATED_DIR for helpers.
 
 Use this as input:
 
@@ -229,78 +267,21 @@ echo ""
 echo "  specify complete"
 
 echo ""
-echo "Phase 1.5: ensure feature branch (speckit v0.7.5+ hook-skip workaround)"
-# Spec Kit 1.2.2's create-new-feature.sh creates the feature directory and
-# writes .specify/feature.json, but does not create a Git branch. Git-extension
-# hooks may create one, but headless agents can skip prompt-driven hooks.
-# Read the feature pointer and name the branch after its directory when needed;
-# `git checkout -b` carries the untracked spec files onto the new branch.
-#
-# Upstream tracking: github/spec-kit (issue filed 2026-05-15)
-FEATURE_DIR=$(_fj_read)
-if [ -z "$FEATURE_DIR" ] || [ ! -d "$FEATURE_DIR" ]; then
-  trap - EXIT
-  echo "ERROR: .specify/feature.json missing or feature_directory invalid — specify did not complete cleanly."
-  post_comment "$ISSUE" "❌ Spec pipeline aborted — .specify/feature.json absent or invalid after speckit-specify. Routing back to Triage." || true
-  move_issue "$ISSUE" "$BUREAU_STATE_TRIAGE" || true
-  alert_telegram "$ISSUE" "spec-pipeline" "11" "feature.json missing after specify" || true
+echo "Phase 1.5: verify feature directory and branch"
+FEATURE_DIR=$(jq -er '.feature_directory | select(type == "string" and length > 0)' .specify/feature.json 2>/dev/null) || FEATURE_DIR=""
+if [ -z "$FEATURE_DIR" ] || [ ! -d "$FEATURE_DIR" ] || [ "$(cd "$FEATURE_DIR" && pwd -P)" != "$ALLOCATED_DIR" ]; then
+  echo 'ERROR: feature.json no longer names the reserved directory; refusing to plan another feature.' >&2
   exit 11
 fi
-# A stale feature.json: the file holds byte for byte what it held before the
-# call, the directory it names existed before the call, and that directory is
-# not this ticket's own. Own means the spec directory named exactly like the
-# last segment of the branch checked out before the call (a checkout already on
-# the ticket's branch) or of the ticket's newest bureau-branch marker: this stage
-# names the branch, and so the marker, after its directory. No fuzzy match: on a
-# re-spec the worker starts on origin/main, where the ticket's own directory (on
-# its unmerged branch) is missing and the marker would fit a sibling. Linear's
-# generated branch name does not count either. Such
-# a file is usually the last value merged to main (the file is tracked and kept
-# per branch), and plan and tasks would overwrite another ticket's spec. A re-run
-# reads the same file, so a human decides (needs-human); when the directory is
-# the ticket's after all, posting its marker releases it. A changed file is
-# trusted: specify wrote it in this run.
-# _fj_named_by <branch>: 0 when FEATURE_DIR is $BUREAU_SPECS_DIR/<last segment>.
-_fj_named_by() {
-  local want="${BUREAU_SPECS_DIR%/}/${1##*/}"
-  [ -d "$want" ] && [ "$(cd "$want" && pwd -P)" = "$FJ_WANT" ]
-}
-if [ -n "$FJ_DIR_EXISTED" ] && [ "$(cksum < .specify/feature.json)" = "$FJ_SUM_BEFORE" ]; then
-  FJ_OWN=""
-  FJ_WANT=$(cd "$FEATURE_DIR" && pwd -P)
-  if [ -n "$FJ_BRANCH_BEFORE" ] && _fj_named_by "$FJ_BRANCH_BEFORE"; then
-    FJ_OWN=1
-  fi
-  if [ -z "$FJ_OWN" ]; then
-    # A failed read ends the stage with its code through the recovery trap; it
-    # never counts as "no marker". A comment with an empty body has no first line.
-    FJ_MARKER=$(get_issue_comments "$ISSUE" | jq -r '[.[] | (.body // "") | split("\n")[0] // "" | select(test("^<!-- bureau-branch: [^ ]+ -->[[:space:]]*$"))][0] // "" | sub("^<!-- bureau-branch: "; "") | sub(" -->[[:space:]]*$"; "")')
-    if [ -n "$FJ_MARKER" ] && _fj_named_by "$FJ_MARKER"; then FJ_OWN=1; fi
-  fi
-  if [ -z "$FJ_OWN" ]; then
-    trap - EXIT
-    echo "ERROR: .specify/feature.json is stale — unchanged by speckit-specify, it still names $FEATURE_DIR, which existed before this run and is not $ISSUE's spec directory."
-    post_comment "$ISSUE" "❌ Spec pipeline aborted — \`.specify/feature.json\` is unchanged after speckit-specify and still names \`$FEATURE_DIR\`, a spec directory that existed before this run and is not this ticket's by name. Plan and tasks would have written into another ticket's spec, and a re-run reads the same file. Find out why speckit-specify did not record the new feature (a \`feature.json\` tracked on \`main\` keeps the last merged value); if that directory is this ticket's after all, post its marker (troubleshooting: exit 11). Then remove \`needs-human\`. Routing back to Triage." || true
-    move_issue "$ISSUE" "$BUREAU_STATE_TRIAGE" || true
-    mark_needs_human "$ISSUE" spec 11 || true
-    alert_telegram "$ISSUE" "spec-pipeline" "11" "stale feature.json after specify" || true
-    exit 11
-  fi
-fi
-FEATURE_BRANCH=$(basename "$FEATURE_DIR")
 # The spec directory of this run, with the trailing slash the other stages use.
 # Every later step reads this one directory instead of "the newest spec": in a
 # fresh worktree all spec directories have the same age, and installs that
 # reuse one `NNN-` prefix have many candidates.
 SPEC_DIR="${FEATURE_DIR%/}/"
 CUR_BRANCH=$(git branch --show-current)
-if [ -z "$CUR_BRANCH" ] || [ "$CUR_BRANCH" = "main" ]; then
-  echo "  Creating branch $FEATURE_BRANCH from current HEAD"
-  git checkout -b "$FEATURE_BRANCH"
-elif [ "$CUR_BRANCH" = "$FEATURE_BRANCH" ]; then
-  echo "  Already on $FEATURE_BRANCH (idempotent — speckit hook fired, or this is a retry)"
-else
-  echo "  WARN: on unexpected branch '$CUR_BRANCH', expected '$FEATURE_BRANCH'. Continuing on current."
+if [ "$CUR_BRANCH" != "$FEATURE_BRANCH" ]; then
+  echo "ERROR: specify left branch '$CUR_BRANCH', expected '$FEATURE_BRANCH'; refusing to plan." >&2
+  exit 11
 fi
 echo "  branch ready: $(git branch --show-current)"
 

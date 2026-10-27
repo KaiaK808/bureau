@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="86bd000ea3e0181c8d21b04d2ddfe5431f086fd78768e56897255f912b6edba3">
+<meta name="bureau-source-sha256" content="b08b6d7c35a9826bc71d0629d8a5982558676f5a18588e013d001c71ca5e77a3">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -116,6 +116,52 @@ directory, keep it intact and install a separate official clone from the
 loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
+<h2 id="upgrade-to-v35-unreleased">Upgrade to v3.5 (unreleased)</h2>
+<p>These instructions cover the unreleased spec admission/numbering
+changes on top of v3.4.1; they do not select a published v3.5 release.
+Update the source skill to the reviewed revision that contains these
+changes. Follow the earlier upgrade sections first when upgrading from
+before v3.4.1.</p>
+<p><strong>Stop all shepherds, queue loops and dispatchers before
+resyncing scripts.</strong> Preserve unfinished work and customized
+files, install/resync Spec Kit 1.2.2, then resync the complete scripts
+scope as one set (<code>--resync-scripts</code>) in each adopting
+repository. Resync interfaces for the <code>bureau-learnings</code>
+capacity-wait filter. Restart all shepherds, queue loops and dispatchers
+only after the coordinated resync is complete. Updating scripts on disk
+does not replace the case statements already loaded by a running
+shell.</p>
+<p><strong>Mixed resync is incompatible.</strong> A v3.4.1 shepherd
+meeting a v3.5 spec stage alerts and exits on 28 instead of waiting. In
+the other direction, an old exit-2 spec stage with a new shepherd can
+still give 13 plus <code>needs-human</code>. The updated scripts
+together treat a full cap as <code>28</code>
+(<code>spec-capacity-wait</code>), with a cancellable wait and no
+escalation.</p>
+<p><strong>Manual merge mode changes throughput.</strong> Merge is
+excluded from <code>agents.max_concurrent_issues</code> by default under
+<code>agents.merge_mode: "manual"</code>. With cap 1, the next spec can
+start while earlier tickets wait for a manual merge. Set
+<code>agents.max_concurrent_include_merge: true</code> before resyncing
+to keep the old single-flight behavior. Auto mode still includes Merge
+by default, and Build Review always counts. The allocator prevents
+number collisions; it does not coordinate dependencies on unmerged
+work.</p>
+<p>Keep <code>&lt;git common dir&gt;/bureau/spec-numbers.json</code>
+across retries and cleanup. Reservations are shared only by worktrees of
+that Git directory; separate clones/hosts require their own
+coordination, and older issue-to-directory associations are not
+imported. Reserved branches resume before specify after a worker reset,
+preserving existing artifacts; divergent local/origin history stops with
+17. <code>repo.base_branch</code> identifies the origin ref the
+allocator verifies, while disposable spec resets still use
+<code>origin/main</code>. Allocation lock acquisition defaults to a
+300-second bound; set <code>BUREAU_SPEC_LOCK_TIMEOUT</code> in the
+process environment (whole seconds 1–86400) to change it. A lock
+acquisition timeout prints the lock path, exits 124 and routes the issue
+back to Triage before specify. Git scanning after acquisition has no new
+timeout. See <a href="configuration.html">configuration</a> and the <a
+href="../../CHANGELOG.md">changelog</a> for validation limits.</p>
 <h2 id="upgrade-to-v341">Upgrade to v3.4.1</h2>
 <p>The stable release <strong>v3.4.1</strong> is a patch release on
 v3.4.0 with three fixes in <a

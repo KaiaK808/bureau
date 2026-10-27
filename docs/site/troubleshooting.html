@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6d19c7c49b33d07dcaf951b5e5901c0b7906ed9a5adddf14593b833f899b4d2e">
+<meta name="bureau-source-sha256" content="4a78b1cfad4b6cc2e4ca3a6de40d15f4b1bcb7af0a2b33fe869ea0c730870ec2">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -233,50 +233,33 @@ disposable by clearing files. Do not reset, clean, forcibly remove or
 detach another task's checkout. See <a
 href="stage-protocol.html">ownership and resume</a>.</p>
 <p><strong>From the spec stage: <code>.specify/feature.json</code> after
-speckit-specify.</strong> The spec stage reads the feature directory
-from <code>.specify/feature.json</code> once speckit-specify has run,
-and ends with <code>11</code> when it cannot use it:</p>
-<ul>
-<li><em>Missing or malformed</em> (no file, not valid JSON, no
-<code>feature_directory</code>, or a directory that does not exist): the
-comment says "absent or invalid", the ticket goes back to Triage without
-a label, and the next pick tries again. v3.0.2 ended here with jq's own
-status instead (<code>2</code> for a missing file, <code>5</code> for
-invalid JSON), and <code>2</code> reads as "queue empty": the queue took
-the ticket again on the next tick and paid another specify run.</li>
-<li><em>Stale</em> (v3.1): the file holds byte for byte what it held
-before the call (compared by checksum; a stale value written back during
-the call, by an agent rewriting the file or by <code>git checkout</code>
-of it, counts as unchanged), the directory it names existed before the
-call, and that directory is not the ticket's own. The ticket's own
-directory is the one in the specs directory named exactly like the last
-segment of the ticket's newest <code>bureau-branch</code> marker (the
-spec stage names the branch, and so the marker, after its directory), or
-of the branch checked out before the call (a disposable spec worker
-starts detached, so in the queue only the marker counts). Nothing is
-matched loosely here: on a re-spec the worker starts on
-<code>origin/main</code>, where the ticket's own directory, still on its
-unmerged spec branch, is missing, and a loose match on the marker would
-take a sibling (<code>003-auth-sso</code> fits <code>002-auth</code>).
-Linear's generated branch name does not count. Plan and tasks would have
-written into another ticket's spec, so the stage stops before them,
-routes back to Triage, sets <code>needs-human</code> and alerts. A
-re-run reads the same file, so removing the label alone repeats the
-hold. The usual cause: the file is tracked and <code>main</code> holds
-the last merged feature's value, and speckit-specify did not record the
-new feature (its branch hook was skipped, or the run failed early).
-Check the spec run's output and
-<code>git log -1 -- .specify/feature.json</code> on <code>main</code>,
-and make speckit-specify write the file (or run the spec by hand). If
-the named directory is this ticket's after all (a spec made by hand, or
-a marker that got lost, and speckit-specify recorded the same value
-again), the stage cannot tell it from a stale file by name and holds it
-the same way: post a comment on the ticket whose first line is
-<code>&lt;!-- bureau-branch: &lt;directory name&gt; --&gt;</code> for
-that directory, so the next run counts it as the ticket's, then remove
-<code>needs-human</code>. A file whose content speckit-specify changed
-is trusted, even when it names an older directory.</li>
-</ul>
+speckit-specify.</strong> Bureau reserves the feature number and runs
+the pinned 1.2.2 helper before specify, then tells the model to populate
+that exact directory without allocating again. A missing, malformed or
+redirected feature pointer after specify stops with 11 before plan/tasks
+and routes the ticket back to Triage. This also rejects a provider
+restoring main's stale pointer or choosing another existing directory.
+Correct the provider/helper behavior, then retry: the reservation is
+retained and existing <code>spec.md</code> content is preserved. A
+missing pinned helper stops before specify with 24; resync Spec Kit
+1.2.2. A fetch, base-ref or reservation read failure stops with 18. If
+the helper auto-corrects the reserved number, Bureau stops with 11
+before model work: inspect the reservation and conflicting directories
+rather than deleting another ticket's work. Earlier approved specs
+should resume downstream; the allocator does not import pre-upgrade
+issue-directory associations.</p>
+<h3 id="exit-28-spec-capacity-wait--no-spec-slot-yet">Exit 28
+(spec-capacity-wait) — no spec slot yet</h3>
+<p>The log lists the holding identifiers and states, without
+descriptions. The shepherd retries cancellably every 60 seconds without
+stuck ticks, labels or alerts; bounded ticks say <code>waiting</code>
+with <code>exit_code:28</code>. Under manual merge mode Merge no longer
+holds a slot by default; set
+<code>agents.max_concurrent_include_merge: true</code> to keep the
+previous behavior. Auto mode counts Merge. Build Review still holds a
+slot even after an approved <code>--no-merge</code> stop there. Move the
+approved ticket through the chosen manual workflow; this change never
+excludes all Build Review work.</p>
 <h3 id="exit-12-no-branch--bureau-branch-marker-missing">Exit 12
 (no-branch) — <code>bureau-branch:</code> marker missing</h3>
 <p>Downstream stages resolve the branch via a

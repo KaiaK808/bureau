@@ -569,6 +569,9 @@ def diagnose(repo, mode):
     if merge == 'manual' and not config['linear']['teams'][0].get('states', {}).get('merge'):
         errors.append('agents.merge_mode is manual but linear.teams[0].states.merge is not set: code review refuses with 24; configure the Merge state or set merge_mode to auto')
     require_ci = gate_switch(config['agents'], 'merge_require_green_ci', warnings)
+    include_merge = config['agents'].get('max_concurrent_include_merge')
+    if include_merge is not None and type(include_merge) is not bool:
+        warnings.append('agents.max_concurrent_include_merge is not a JSON boolean; the spec cap uses the merge_mode default (' + ('excluded' if merge == 'manual' else 'included') + ')')
     gate_switch(config['agents'], 'merge_require_up_to_date', warnings)
     minimum = gate_number(config['agents'], 'merge_min_required_checks', 1, warnings)
     gate_number(config['agents'], 'merge_ci_start_grace_seconds', 1800, warnings)

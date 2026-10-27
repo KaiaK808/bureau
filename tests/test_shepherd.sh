@@ -1721,6 +1721,65 @@ test_merge_gate() {
   return 0
 }
 
+# Spec capacity is a wait, not an unchanged-state failure. Use the real gate
+# and real stage entry, with only the Linear snapshot faked.
+_capacity_sandbox() {
+  local sb; sb=$(make_sandbox "$1")
+  _record_writes "$sb"
+  cp "$REPO_ROOT/templates/scripts/spec-pipeline.sh" "$sb/scripts/"
+  sed -n -e '/^spec_admission_gate() {/,/^}/p' -e '/^exit_class() {/,/^}/p' \
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
+  cat >> "$sb/scripts/bureau-config.sh" <<EOF
+BUREAU_MAX_CONCURRENT_ISSUES=$2
+precondition_runner() { echo paid >> "\$LABEL_LOG.paid"; exit 22; }
+spec_admission_snapshot() {
+  echo spec-pipeline.sh >> "\$INVOCATIONS_LOG"
+  jq -n --argjson cap "$2" '{issues: ([{identifier:"EXP-1621",state:"Merge"},{identifier:"EXP-1637",state:"Build Review"}] | .[:\$cap])} | . + {count:(.issues|length)}'
+}
+EOF
+  mkdir -p "$sb/bin"
+  cat > "$sb/bin/sleep" <<EOF
+#!/bin/bash
+printf '%s\n' "\$1" >> "$sb/sleeps.log"
+[ "\$(wc -l < "$sb/sleeps.log")" -lt 4 ] || echo s8 > "$sb/state.txt"
+exit 0
+EOF
+  chmod +x "$sb/bin/sleep"
+  echo s1 > "$sb/state.txt"
+  echo "$sb"
+}
+
+test_spec_capacity_wait() {
+  local cap sb rc
+  for cap in 1 2; do
+    sb=$(_capacity_sandbox "capacity$cap" "$cap")
+    set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-1638; rc=$?; set -e
+    assert_eq "$rc" 0 "capacity $cap: exits at Done" || { cat "$sb/shepherd.out" "$sb/shepherd.err"; return 1; }
+    assert_eq "$(wc -l < "$sb/invocations.log" | tr -d ' ')" 4 "capacity $cap: four full-cap ticks" || return 1
+    assert_eq "$(grep -c 'exit=28 (spec-capacity-wait)' "$sb/shepherd.out")" 4 "capacity $cap: named wait protocol" || return 1
+    grep -q 'EXP-1621 — Merge' "$sb/shepherd.out" || return 1
+    if [ "$cap" = 2 ]; then grep -q 'EXP-1637 — Build Review' "$sb/shepherd.out" || return 1; fi
+    if grep -q needs-human "$sb/labels.log" || [ -s "$sb/labels.log.alerts" ] || [ -s "$sb/labels.log.paid" ]; then
+      echo 'FAIL capacity wait labeled, alerted or reached provider preflight'; return 1
+    fi
+  done
+  echo 'PASS cap 1/2: four repeated waits each, no needs-human/alert/provider preflight'
+
+  sb=$(_capacity_sandbox capacity_cancel 1)
+  printf '#!/bin/bash\nkill -TERM "$PPID"\n' > "$sb/bin/sleep"
+  set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-1638; rc=$?; set -e
+  assert_eq "$rc" 130 'capacity wait is cancellable' || return 1
+  [ ! -s "$sb/labels.log.alerts" ] || return 1
+
+  sb=$(_capacity_sandbox capacity_old 1)
+  _record_sleeps "$sb" 15
+  _mutate "$sb/scripts/spec-pipeline.sh" $'\nspec_admission_gate\n' $'\nspec_admission_gate || exit 2\n' || return 1
+  set +e; BUREAU_SHEPHERD_CONFIRM_SECONDS=0 PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-1638; rc=$?; set -e
+  assert_eq "$rc" 13 'negative control: old exit-2 handling gets stuck' || return 1
+  grep -q needs-human "$sb/labels.log" || { echo 'FAIL negative control: no needs-human'; return 1; }
+  echo 'PASS NEGATIVE CONTROL old cap exit 2 -> rc 13 and needs-human; shipped scripts restored'
+}
+
 # ── Run all scenarios ──────────────────────────────────────────────
 FAILS=0
 for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linear_unusable_halts test_block_halts \
@@ -1728,7 +1787,7 @@ for scenario in test_happy_path test_no_merge test_dry_run test_stuck test_linea
                 test_dry_run_read_unusable test_read_failure_other_code test_branch_read_unusable_halts \
                 test_interrupted_read_is_cancelled test_merge_mode_manual test_review_stop_quiet \
                 test_start_check_failure test_move_failure_halts test_signal_during_wait_and_stage \
-                test_move_confirmed_before_next_stage test_no_state_is_bounded test_relative_worktree test_merge_gate; do
+                test_move_confirmed_before_next_stage test_no_state_is_bounded test_relative_worktree test_merge_gate test_spec_capacity_wait; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

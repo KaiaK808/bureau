@@ -2424,23 +2424,36 @@ merge_origin_main_or_abort() {
 # them, and without the project filter the cap counted other projects'
 # tickets (16 foreign ones held every spec stage in installation A).
 #
-# Output: integer count on stdout. A Linear answer that stays unusable returns
+# Snapshot: {issues: [{identifier, state}], count}; count_in_flight_issues
+# keeps the integer-only interface. A Linear answer that stays unusable returns
 # $BUREAU_EXIT_LINEAR_UNUSABLE instead of "0": the count used to fail open, so
 # the cap let new work in exactly while Linear was failing. (installation A keeps
 # it fail-open; the retry ladder bridges short outages here.)
-count_in_flight_issues() {
+# One snapshot supplies both the count and the blocker report; never query twice
+# for a single admission decision. Merge follows the repository's merge policy.
+spec_admission_snapshot() {
   # Build a comma-separated list of in-flight state UUIDs. Optional states
   # (qa, copy, merge) are only included when configured.
-  local state_ids=""
+  local state_ids="" include_merge
+  include_merge=$(bureau_get '.agents.max_concurrent_include_merge | if . == null then "default" elif type == "boolean" then tostring else "invalid" end') || return $?
+  if [ "$include_merge" = invalid ]; then
+    echo 'WARN: agents.max_concurrent_include_merge is not a JSON boolean; using the merge_mode default' >&2
+    include_merge=default
+  fi
+  if [ "$include_merge" = default ]; then
+    if bureau_merge_is_manual; then include_merge=false; else include_merge=true; fi
+  fi
   for sid in "$BUREAU_STATE_SPEC" "$BUREAU_STATE_SPEC_REVIEW" \
              "$BUREAU_STATE_DESIGN" "$BUREAU_STATE_BUILD" \
              "$BUREAU_STATE_BUILD_REVIEW" \
-             "${BUREAU_STATE_QA:-}" "${BUREAU_STATE_COPY:-}" \
-             "${BUREAU_STATE_MERGE:-}"; do
+             "${BUREAU_STATE_QA:-}" "${BUREAU_STATE_COPY:-}"; do
     [ -n "$sid" ] && state_ids+="\"$sid\","
   done
+  if [ "$include_merge" = true ] && [ -n "${BUREAU_STATE_MERGE:-}" ]; then
+    state_ids+="\"$BUREAU_STATE_MERGE\","
+  fi
   state_ids="${state_ids%,}"  # strip trailing comma
-  [ -z "$state_ids" ] && { echo "0"; return 0; }
+  [ -z "$state_ids" ] && { echo '{"issues":[],"count":0}'; return 0; }
 
   local project_clause="" projects_gql
   if [ -n "${BUREAU_PROJECTS:-}" ]; then
@@ -2454,7 +2467,7 @@ count_in_flight_issues() {
 
   # `children(first: 1)`: the rule only asks WHETHER an issue has children.
   local query
-  query=$(printf '{ issues(filter: { team: { key: { eq: "%s" } }, state: { id: { in: [%s] } }%s }, first: 250) { nodes { labels { nodes { name } } children(first: 1) { nodes { id } } } } }' \
+  query=$(printf '{ issues(filter: { team: { key: { eq: "%s" } }, state: { id: { in: [%s] } }%s }, first: 250) { nodes { identifier state { name } labels { nodes { name } } children(first: 1) { nodes { id } } } } }' \
     "$BUREAU_TEAM_KEY" "$state_ids" "$project_clause")
 
   local payload
@@ -2468,7 +2481,9 @@ count_in_flight_issues() {
   # ticket as work, a missing issue list as "0 in flight". Such an answer is
   # unusable like any other: retried, then 27.
   local answer human
-  answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.children.nodes | type) == "array")') || return $?
+  answer=$(linear_raw "$payload" "$_BUREAU_SHAPE_ISSUE_LABELS"' and all(.data.issues.nodes[]; (.children.nodes | type) == "array" and (.identifier | type) == "string" and (.identifier | length) > 0 and (.state.name | type) == "string" and (.state.name | length) > 0)') || return $?
+  # Missing blocker identities/states are unusable too, rather than an empty
+  # report. Keep this check in linear_raw so the usual retry ladder applies.
   human=$(bureau_get '.linear.labels.needs_human.name // "needs-human"') || return $?
   printf '%s' "$answer" \
   | jq --arg human "$human" '
@@ -2478,9 +2493,30 @@ count_in_flight_issues() {
           | map(select(. == "needs-human" or . == $human or . == "blocked" or . == "wip"))
           | length) == 0
        )
-     | select((.children.nodes | length) == 0)]
-    | length
+     | select((.children.nodes | length) == 0)
+     | {identifier, state: .state.name}]
+    | {issues: ., count: length}
   '
+}
+
+count_in_flight_issues() {
+  local snapshot
+  snapshot=$(spec_admission_snapshot) || return $?
+  printf '%s' "$snapshot" | jq '.count'
+}
+
+# Returns the wait protocol before any pick, state mutation or model call.
+spec_admission_gate() {
+  [ "${BUREAU_MAX_CONCURRENT_ISSUES:-0}" -gt 0 ] || return 0
+  local snapshot in_flight
+  snapshot=$(spec_admission_snapshot) || return $?
+  in_flight=$(printf '%s' "$snapshot" | jq '.count') || return $?
+  in_flight=$(bureau_number spec.in_flight "$in_flight" 1000 0 9999999999)
+  if [ "$in_flight" -ge "$BUREAU_MAX_CONCURRENT_ISSUES" ]; then
+    echo "Spec gate: $in_flight in-flight issue(s), cap is $BUREAU_MAX_CONCURRENT_ISSUES. Waiting for capacity."
+    printf '%s' "$snapshot" | jq -r '.issues[] | "  \(.identifier) — \(.state)"'
+    return 28
+  fi
 }
 
 # Why the last reset_worktree refused its worktree over ownership (v3.1.0-rc.2):
@@ -3288,7 +3324,7 @@ resolve_verdict_exit() {
   esac
 }
 
-# shepherd_rc_action <exit-code> → ok | retry | halt — how shepherd.sh answers a
+# shepherd_rc_action <exit-code> → ok | wait | retry | halt — how shepherd.sh answers a
 # stage's exit code, as a pure table.
 #
 # Carried over from an installation. The shepherd used to list its halt codes one
@@ -3296,11 +3332,13 @@ resolve_verdict_exit() {
 # an alert — so every code added later (22 to 26 here) halted silently. Now
 # halt is the default and only the exceptions are listed:
 #   ok    0 success · 2 queue-empty
+#   wait  28 spec-capacity-wait (quiet and cancellable)
 #   retry 10 linear-down · 16 provider-unauth (transient, throttled retry)
 # Everything else halts with an alert, unknown codes included.
 shepherd_rc_action() {
   case "${1:-}" in
     0|2)   echo "ok" ;;
+    28)    echo "wait" ;;
     10|16) echo "retry" ;;
     *)     echo "halt" ;;
   esac
@@ -3328,6 +3366,7 @@ exit_class() {
     25)  echo "needs-human-or-paused" ;;
     26)  echo "cancelled-ticket" ;;
     27)  echo "linear-unusable" ;;
+    28)  echo "spec-capacity-wait" ;;
     124) echo "timeout" ;;
     130) echo "cancelled-run" ;;
     *)   echo "error-$1" ;;

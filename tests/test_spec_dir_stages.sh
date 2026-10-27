@@ -72,15 +72,19 @@ check_stdout() {
 
 # 1 — spec: plan, tasks, crosscheck and digest use the directory from feature.json.
 setup Triage
+OWN="specs/002-exp-900/"
+export FAKE_CLAUDE_BIN="$LIB_DIR/pr4-fake-specify.sh" PR4_SPECIFY_ACTION=populate
 export BUREAU_STUB_LABELS='["lane-2"]'
 mkdir -p "$SANDBOX/.specify"
 printf '{"feature_directory":"specs/001-test-branch"}\n' > "$SANDBOX/.specify/feature.json"
 run_pipeline spec-pipeline.sh EXP-900; set +e
 check_prompts spec
-grep -qE "^crosscheck_open_prs	EXP-900	${OWN}tasks.md$" "$SANDBOX/calls.log" \
+grep -qE "^crosscheck_open_prs	EXP-900	.*${OWN}tasks.md$" "$SANDBOX/calls.log" \
   || fail spec "crosscheck got: $(grep crosscheck_open_prs "$SANDBOX/calls.log" || echo '<no call>')"
 unset BUREAU_STUB_LABELS
 teardown
+unset PR4_SPECIFY_ACTION
+OWN="specs/001-test-branch/"
 echo "PASS spec stage works on the directory from .specify/feature.json"
 
 # 2 — spec review: prints and reviews the ticket's directory.

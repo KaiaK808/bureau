@@ -270,6 +270,16 @@ class CiGateTests(Repo):
 
 
 class PushEachIterationTests(Repo):
+    def test_admission_merge_override_requires_a_boolean(self):
+        for mode in ('manual', 'auto'):
+            for value in (None, True, False, 'false', 0, [], {}):
+                with self.subTest(mode=mode, value=value):
+                    result = self.diagnose(self.config(merge_mode=mode, max_concurrent_include_merge=value))
+                    found = [w for w in result['warnings'] if w.startswith('agents.max_concurrent_include_merge ')]
+                    self.assertEqual(len(found), int(value is not None and type(value) is not bool))
+                    if found:
+                        self.assertIn('excluded' if mode == 'manual' else 'included', found[0])
+
     def test_only_a_boolean_or_null_is_accepted(self):
         key = 'agents.implement.push_each_iteration'
         for implement, warned in ((True, False), ('true', False), ({'enabled': True}, False),

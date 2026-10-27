@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persist review boundaries shared by bounded ticks in a Git repository."""
+"""Persist review boundaries and spec reservations shared by Git worktrees."""
 import argparse
 from contextlib import contextmanager
 import fcntl
@@ -99,6 +99,82 @@ def save(path, value):
     finally:
         if os.path.exists(name):
             os.unlink(name)
+
+
+def spec_lock_timeout():
+    value = os.environ.get('BUREAU_SPEC_LOCK_TIMEOUT', '300')
+    if re.fullmatch(r'[0-9]{1,10}', value) and 1 <= int(value) <= 86400:
+        return int(value)
+    print('WARNING: invalid BUREAU_SPEC_LOCK_TIMEOUT; using 300 seconds', file=sys.stderr)
+    return 300
+
+
+def reserve_spec_number(repo, root, issue, specs_dir, base):
+    """Allocate once per issue across every checkout sharing this Git common dir.
+
+    The caller fetches all origin heads first. Inspect trees, not just branch
+    names: feat/TEAM-123-... can contain 051 even though its name has no number.
+    Reservations intentionally outlive failed runs; gaps are harmless.
+    """
+    specs = (repo / specs_dir).resolve().relative_to(repo).as_posix()
+    if specs == '.' or specs.startswith('.git/') or specs == '.git':
+        raise ValueError('specs_dir must name a directory inside the repository')
+    git(repo, 'rev-parse', '--verify', 'refs/remotes/origin/' + base + '^{commit}')
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / 'spec-numbers.guard').open('a') as guard:
+        timeout = spec_lock_timeout()
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f'timed out after {timeout}s waiting for spec allocator lock {guard.name}; stop or release its holder before retrying')
+                time.sleep(min(0.1, remaining))
+        path = root / 'spec-numbers.json'
+        numbers = read(path)
+        if any(not re.fullmatch(r'[A-Z][A-Z0-9]*-[0-9]+', key)
+               or type(value) is not int or not 0 < value < 9223372036854775807
+               for key, value in numbers.items()) or len(set(numbers.values())) != len(numbers):
+            raise ValueError('Invalid spec number reservations; refusing to allocate')
+        if issue in numbers:
+            return {'issue': issue, 'number': numbers[issue]}
+
+        used = list(numbers.values())
+
+        def consider(name):
+            # Match Spec Kit's sequential prefixes, excluding timestamp names.
+            name = name.rsplit('/', 1)[-1]
+            match = re.match(r'^([0-9]{3,})-', name)
+            if match and not re.match(r'^[0-9]{8}-[0-9]{6}-', name):
+                used.append(int(match[1]))
+
+        refs = git(repo, 'for-each-ref', '--format=%(refname)',
+                   'refs/remotes/origin/', 'refs/heads/').splitlines()
+        refs.append('HEAD')
+        worktrees = git(repo, 'worktree', 'list', '--porcelain', '-z')
+        for field in worktrees.split('\0'):
+            if field.startswith('HEAD '):
+                refs.append(field[5:])  # Detached worktree commits count too.
+            elif field.startswith('worktree '):
+                directory = Path(field[9:]) / specs
+                if directory.is_dir():
+                    for entry in directory.iterdir():
+                        if entry.is_dir():
+                            consider(entry.name)  # Includes uncommitted work.
+        for ref in sorted(set(refs)):
+            consider(ref)
+            for entry in git(repo, 'ls-tree', '-z', '-d', '--name-only', ref,
+                             '--', specs + '/').split('\0'):
+                consider(entry)
+        number = max(used, default=0) + 1
+        if number >= 9223372036854775807:
+            raise ValueError('Spec number range exhausted')
+        numbers[issue] = number
+        save(path, numbers)
+        return {'issue': issue, 'number': number}
 
 
 def fingerprint(detail, issue):
@@ -329,6 +405,8 @@ def main():
     work = commands.add_parser('workspace'); work.add_argument('issue')
     work.add_argument('--stage', required=True, choices=('spec','spec_review','ux','copy','implement','qa','code_review','merge','rebase'))
     again = commands.add_parser('resume'); again.add_argument('issue')
+    allocate = commands.add_parser('reserve-spec-number'); allocate.add_argument('issue')
+    allocate.add_argument('--specs-dir', default='specs'); allocate.add_argument('--base', default='main')
     waits = commands.add_parser('gate-waits'); waits.add_argument('--cap', type=int, required=True)
     waits.add_argument('--first', type=int, required=True); waits.add_argument('--stage', required=True, choices=('review', 'merge'))
     mark = commands.add_parser('merge-wait'); mark.add_argument('issue'); mark.add_argument('--clear', action='store_true')
@@ -359,6 +437,8 @@ def main():
         repo, root = directory(Path(args.repo).resolve())
         if args.action == 'status':
             result = {'review_stops': read(root / 'review-stops.json')}
+        elif args.action == 'reserve-spec-number':
+            result = reserve_spec_number(repo, root, args.issue, args.specs_dir, args.base)
         elif args.action == 'checkpoint':
             result = checkpoint(repo, root, args.issue)
         elif args.action == 'workspace':
@@ -406,6 +486,9 @@ def main():
                 result = {'stopped': True, 'issue': args.issue, 'head': args.head, 'pr': args.pr}
         print(json.dumps(result))
         return 0
+    except TimeoutError as exc:
+        print('bureau supervision: ' + str(exc), file=sys.stderr)
+        return 124
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         print('bureau supervision: ' + str(exc), file=sys.stderr)
         return 1
