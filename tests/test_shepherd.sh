@@ -68,6 +68,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-env.sh"
 # touches. The "Linear state machine" is a single file at $STATE_FILE.
 
 # Sandbox handles
+# Withdrawal itself uses the real transport in test_ticket_kill_switch.sh.
+bureau_ticket_checkpoint() { :; }
+bureau_ticket_stopped() { return 1; }
+bureau_observe_waits() { :; }
 STATE_FILE="${STATE_FILE:-$PWD/state.txt}"
 INVOCATIONS_LOG="${INVOCATIONS_LOG:-$PWD/invocations.log}"
 LABEL_LOG="${LABEL_LOG:-$PWD/labels.log}"
@@ -516,6 +520,7 @@ _use_real_linear_reads() {
     -e '/^_bureau_linear_fetch() {/,/^}/p'    -e '/^linear_query() {/,/^}/p' \
     -e '/^bureau_issue_snapshot() {/,/^}/p'   -e '/^get_issue_state() {/,/^}/p' \
     -e '/^get_issue_detail() {/,/^}/p'        -e '/^get_issue_branch() {/,/^}/p' \
+    -e '/^_bureau_curl_config() {/,/^}/p' \
     -e '/^_bureau_linear_request_limits() {/,/^}/p' -e '/^linear_issue_query() {/,/^}/p' \
     -e '/^_BUREAU_LINEAR_STATUS_MARK=/p'      -e '/^_BUREAU_SHAPE_/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
@@ -1271,6 +1276,9 @@ STAGE_EOF
   sb=$(make_sandbox sig_stage_old)
   _use_real_linear_reads "$sb" || return 1
   _old_signal_trap "$sb" || return 1
+  # PR9 also preserves signal precedence after the worker returns. Restore
+  # that old behavior as well; otherwise the second guard still stops it.
+  _mutate "$sb/scripts/shepherd.sh" '  [ "$RC" != 130 ] || exit 130' '  :' || return 1
   rm -f "$sb/bin/sleep"; echo build > "$sb/queue"
   cat > "$sb/scripts/implement-pipeline.sh" <<STAGE_EOF
 #!/bin/bash

@@ -758,7 +758,8 @@ def execute(repo, args, store):
             code = 130; return code
         child = store.spawn(run, command, repo, env={**os.environ, 'BUREAU_RUN_ID': run, 'BUREAU_RUN_DEPTH': str(depth + 1), 'BUREAU_ACTIVE_ENTRY': args.entry or '',
                  'BUREAU_STAGE_ATTEMPT_ID': attempt or '', 'BUREAU_CURRENT_ISSUE': args.issue, 'BUREAU_CONFIG': str(config_for(repo)),
-                 'BUREAU_SPEC_CHECKPOINTS_DISABLED': evidence_disabled})
+                 'BUREAU_SPEC_CHECKPOINTS_DISABLED': evidence_disabled,
+                 'BUREAU_TICKET_CONTROL_DIR': str(store.root / 'ticket-control' / run)})
         if interrupted: signal_child(interrupted)
         while True:
             try:

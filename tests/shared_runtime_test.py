@@ -692,6 +692,10 @@ class RuntimeTests(unittest.TestCase):
         r.git(self.repo,'remote','add','origin',str(origin)); r.git(self.repo,'push','-q','origin','main','feat/issue')
         r.git(self.repo,'switch','-q','main')
         scripts=self.repo/'scripts'; shutil.copytree(ROOT/'templates/scripts',scripts)
+        # This cancellation fixture has no Linear transport. The new worker
+        # checkpoint shares the stage's fixed-state double below.
+        with (scripts/'bureau-config.sh').open('a') as config:
+            config.write('\nbureau_ticket_checkpoint() { BUREAU_TICKET_STATE_ID=s3; }\n')
         worker=Path(self.temp.name).resolve()/'worker'
         ready=Path(self.temp.name)/'child.pid'
         stage=scripts/'implement-pipeline.sh'

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f978e7752b845d59e1bec070c9dc2e5c34d0bbbd7ae0349adfa72db8829c11b7">
+<meta name="bureau-source-sha256" content="85c4c97ec7c0bfc819f625a2af7a814c5fddffe8e2a1750af794be3bb6bd1ecd">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -37,7 +37,8 @@ doesn't spam you 30 times an hour.</p>
 <tr>
 <td><code>0</code></td>
 <td>ok</td>
-<td>Pipeline completed successfully</td>
+<td>Pipeline completed successfully, or configured Done observed at a
+ticket checkpoint or mandatory background state guard</td>
 <td>—</td>
 </tr>
 <tr>
@@ -203,7 +204,8 @@ value</td>
 <tr>
 <td><code>25</code></td>
 <td>needs-human-or-paused</td>
-<td>Halt requiring attention or paused dispatch</td>
+<td>Halt requiring attention, paused dispatch, or ticket parked outside
+its configured active states</td>
 <td>Resolve the blocker or unpause explicitly.
 <code>merge-pipeline.sh</code> ends with 25 when its gate is decided
 against the merge (a failing check, a head without any check run or
@@ -226,7 +228,7 @@ and holds the ticket locally; see the troubleshooting guide.</td>
 <tr>
 <td><code>26</code></td>
 <td>cancelled-ticket</td>
-<td>Ticket cancelled/duplicate</td>
+<td>Ticket at a configured cancelled/canceled/duplicate state ID</td>
 <td>Not successful completion</td>
 </tr>
 <tr>
@@ -275,6 +277,13 @@ troubleshooting guide</td>
 </tr>
 </tbody>
 </table>
+<p>Successful mandatory background state reads use the same
+configured-ID withdrawal protocol as additional checkpoints: Done 0,
+cancelled/duplicate 26, other inactive IDs 25, never the stage-mismatch
+exit 2. The observation is latched before routing, so later refresh
+failures cannot replace it with an error or a needs-human escalation. A
+failed mandatory read itself retains its existing strict error
+handling.</p>
 <p><code>bureau-tick.sh</code> additionally writes a JSON outcome.
 Capacity waiting keeps process exit 28 and JSON
 <code>exit_code:28</code>, with <code>outcome:"waiting"</code>. Quota
@@ -405,6 +414,18 @@ binary, not the script's exit logic) and
 exit codes). See <code>docs/token-efficiency.md</code> for the
 rationale.</p>
 <hr />
+<p>Ticket withdrawal checkpoints classify configured IDs, never display
+names. A confirmed external Done ends with 0, cancellation/duplication
+with 26 and every other inactive ID with 25. No recovery transition or
+new provider/publication follows a confirmed stop. The runtime releases
+issue/workspace leases normally after writers finish; unfinished work
+survives, including for Done's 0. Active-to-active stale mutation
+conflicts remain 21 and signals remain 130 with interrupted ownership.
+Additional checkpoint refresh failures warn once per run and allow the
+already authorized unit to continue. Mandatory initial dispatch,
+mutation and ownership reads keep their strict behavior. Shepherd's
+existing mandatory iteration reads also remain strict; only its extra
+checkpoint refresh can fail open.</p>
 <h2 id="telegram-alerts">Telegram alerts</h2>
 <p><code>alert_telegram</code> (in <code>bureau-config.sh</code>) sends
 a message when:</p>

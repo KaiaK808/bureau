@@ -114,6 +114,7 @@ fi
 bureau_stage_enter "$ISSUE" "$@"
 
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
+bureau_ticket_checkpoint "$ISSUE" latched
 if [ "$ACTUAL_STATE" != "Build Review" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Build Review'. Skipping."
   exit 2
@@ -456,9 +457,19 @@ Emit human-readable prose, then a SINGLE fenced json block:
 PERF_PID=$!
 
 echo "  Waiting for specialists..."
-wait $CORRECT_PID 2>/dev/null; echo "    Correctness: done"
-wait $SEC_PID 2>/dev/null; echo "    Security: done"
-wait $PERF_PID 2>/dev/null; echo "    Performance: done"
+# A withdrawn specialist can end before its siblings. Drain every writer before
+# the parent checkpoint exits and the worker releases/preserves the checkout.
+CORRECT_RC=0; wait $CORRECT_PID 2>/dev/null || CORRECT_RC=$?; echo "    Correctness: done"
+SEC_RC=0; wait $SEC_PID 2>/dev/null || SEC_RC=$?; echo "    Security: done"
+PERF_RC=0; wait $PERF_PID 2>/dev/null || PERF_RC=$?; echo "    Performance: done"
+# A later withdrawal must not overwrite an earlier signal cancellation.
+for REVIEW_PASS_RC in "$CORRECT_RC" "$SEC_RC" "$PERF_RC"; do
+  [ "$REVIEW_PASS_RC" != 130 ] || exit 130
+done
+bureau_ticket_checkpoint "$ISSUE" latched
+for REVIEW_PASS_RC in "$CORRECT_RC" "$SEC_RC" "$PERF_RC"; do
+  [ "$REVIEW_PASS_RC" = 0 ] || exit "$REVIEW_PASS_RC"
+done
 
 CORRECTNESS_REVIEW="Failed"
 SECURITY_REVIEW="Failed"
@@ -518,6 +529,7 @@ Answer with ONE JSON object (the schema is enforced). \"comment\" is the human-r
 \`\`\`json
 {\"verdict\":\"APPROVE|REQUEST_CHANGES|BLOCK\",\"insights\":[],\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"\",\"comment\":\"## Specialist Summaries\\n…\",\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\"}]}
 \`\`\`" 2>"$REVIEW_TMP/merge.stderr")
+bureau_ticket_checkpoint "$ISSUE" latched
 MERGED_REVIEW=$(review_text_from_merger "$MERGED_RAW")
 fi
 
@@ -698,6 +710,7 @@ else
   # GitHub refuses a comment over 65,536 characters, and the failure is swallowed here;
   # the cap keeps the header with the verdict the merge gate reads.
   REVIEW_COMMENT_BODY=$(bureau_cap_comment "$REVIEW_COMMENT") || REVIEW_COMMENT_BODY="$REVIEW_COMMENT"
+  bureau_ticket_checkpoint "$ISSUE"
   gh pr comment "$PR_NUMBER" --body "$REVIEW_COMMENT_BODY" || true
   echo "  Posted review to PR #$PR_NUMBER"
 fi
@@ -756,6 +769,8 @@ $REVIEW_ROUND_MARKER"
       INLINE_RC=0
       BUREAU_INLINE_MERGE=1 BUREAU_MERGE_GATE_REPORT="$GATE_REPORT" \
         bash "$SCRIPT_REPO/scripts/merge-pipeline.sh" "$ISSUE" || INLINE_RC=$?
+      [ "$INLINE_RC" != 130 ] || exit 130
+      bureau_ticket_checkpoint "$ISSUE" latched
       GATE_OUTCOME=$(head -n 1 "$GATE_REPORT" 2>/dev/null || true)
       GATE_LINES=$(sed -n '2,$p' "$GATE_REPORT" 2>/dev/null | sed -e '/^$/d' -e 's/^/- /' || true)
       # A caller that asked for the gate report (the shepherd) gets it as from the merge stage.

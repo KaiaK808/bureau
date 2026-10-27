@@ -48,6 +48,11 @@ _worker_reset_refused() {
   exit "$rc"
 }
 trap _worker_reset_refused EXIT
+# The driver claimed issue/workspace ownership before re-entering. Refuse a
+# withdrawn selection before resetting any checkout; this mandatory read is strict.
+if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"; fi
+bureau_secret_copy --optional API_KEY LINEAR_API_KEY
+bureau_ticket_checkpoint "$ISSUE" strict
 reset_worktree "$WORKTREE" "$PIPELINE" "$BRANCH"
 trap - EXIT
 # Release only this registered worker's branch after the stage, so the next
@@ -61,11 +66,11 @@ _worker_cleanup() {
   # Spec retries discard every unfinished edit through the ordinary registered
   # reset. Local phase commits live in the shared Git store and survive it.
   # Interrupted runs still keep leases and require explicit recovery.
-  if [ "$PIPELINE" = spec-pipeline.sh ] && [ "$rc" != 130 ]; then
+  if [ "$PIPELINE" = spec-pipeline.sh ] && [ "$rc" != 130 ] && ! bureau_ticket_stopped; then
     git -C "$WORKTREE" checkout --detach --quiet 2>/dev/null || true
     return
   fi
-  if [ "$rc" != 0 ] && { [ -n "$(git -C "$WORKTREE" status --porcelain)" ] || [ "$ahead" != 0 ]; }; then
+  if { [ "$rc" != 0 ] || bureau_ticket_stopped; } && { [ -n "$(git -C "$WORKTREE" status --porcelain)" ] || [ "$ahead" != 0 ]; }; then
     common=$(git -C "$REPO_DIR" rev-parse --git-common-dir)
     case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
     key=$(python3 -I -c 'import hashlib, pathlib, sys; print(hashlib.sha256(str(pathlib.Path(sys.argv[1]).resolve()).encode()).hexdigest())' "$WORKTREE")

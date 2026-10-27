@@ -236,6 +236,7 @@ queue_run() {  # $1 = merge_mode JSON value, $2 = BUREAU_NO_MERGE, $3 = stage ex
   rm -f "$Q/alerts" "$Q/log" "$Q/picks"
   Q="$Q" BUREAU_NO_MERGE="$2" STUB_RC="${3:-20}" SCRIPT="${4:-}" /bin/bash -c '
     source "$Q/queue.sh"
+    bureau_ticket_checkpoint() { :; }
     REPO_DIR="$Q"; LOG_FILE="$Q/log"; MODE=all
     preselect_issue() { echo pick >> "$Q/picks"; echo EXP-9; }
     get_issue_branch() { echo feat/x; }

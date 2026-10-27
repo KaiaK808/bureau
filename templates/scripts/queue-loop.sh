@@ -138,7 +138,7 @@ run_script() {
     ;;
   esac
   local exit_code=0
-  (cd "$REPO_DIR" && bash "$REPO_DIR/scripts/bureau-worker.sh" "$picked" "$script" "$wt" "$target_branch") 2>&1 | tee -a "$LOG_FILE"
+  (cd "$REPO_DIR" && bureau_ticket_checkpoint "$picked" strict && bash "$REPO_DIR/scripts/bureau-worker.sh" "$picked" "$script" "$wt" "$target_branch") 2>&1 | tee -a "$LOG_FILE"
   exit_code=${PIPESTATUS[0]}
 
   TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')

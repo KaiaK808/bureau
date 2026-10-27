@@ -47,6 +47,7 @@ fi
 bureau_stage_enter "$ISSUE" "$@"
 
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
+bureau_ticket_checkpoint "$ISSUE" latched
 if [ "$ACTUAL_STATE" != "Triage" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Triage'. Skipping."
   exit 2
@@ -68,6 +69,10 @@ echo "  Done."
 _spec_recovery() {
   local rc=$?
   [ "$rc" = 0 ] && return 0
+  # A provider/subshell may already have latched withdrawal. A fresh checkpoint
+  # also covers withdrawal during a failed local unit: never reverse that move.
+  [ "$rc" != 130 ] || return 130
+  bureau_ticket_checkpoint "$ISSUE"
   local klass="speckit-failed"
   case "$rc" in
     10) klass="linear-down" ;;
@@ -125,6 +130,7 @@ if agent_enabled research \
   echo ""
   echo "Phase 0/5: research (needs-research label present)"
   CLAUDE_RESEARCH=(run_stage_for research)
+  RESEARCH_RC=0
   RESEARCH_RAW=$("${CLAUDE_RESEARCH[@]}" "You are doing pre-spec research for a Linear issue. The spec/build agents that come after you have stale training data, so your job is to ground them in current docs.
 
 Issue: $ISSUE_TITLE
@@ -153,7 +159,10 @@ If the issue has no external API surface, emit:
     <!-- bureau-research:  -->
     No external API surface identified.
 
-After the marker, write a concise markdown body with inline doc URLs. No preamble, no closing summary. Be terse." 2>&1 || echo "")
+After the marker, write a concise markdown body with inline doc URLs. No preamble, no closing summary. Be terse." 2>&1) || RESEARCH_RC=$?
+
+  [ "$RESEARCH_RC" != 130 ] || exit 130
+  bureau_ticket_checkpoint "$ISSUE" latched
 
   # Extract the marker from anywhere in the output (not just line 1).
   # Headless claude -p subprocesses regularly prepend markdown headers,
@@ -439,6 +448,7 @@ git commit 2>/dev/null \
 if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
   echo "  [DRY_RUN] would: git push -u origin HEAD ($BRANCH)"
 else
+  bureau_ticket_checkpoint "$ISSUE"
   git push -u origin HEAD
   echo "  Pushed branch: $BRANCH"
 fi
@@ -454,6 +464,7 @@ PREV_DIGEST=$(get_issue_comments "$ISSUE" \
   | jq -r '[.[] | select(.body | test("\\*\\*Spec Artifacts —"))][0].body // ""' 2>/dev/null || echo "")
 SPEC_DIGEST=""
 if [ -n "$SPEC_DIR" ]; then
+  DIGEST_RC=0
   SPEC_DIGEST=$(BUREAU_PROVIDER_PHASE=digest "${CLAUDE[@]}" "Read the spec artifacts in $SPEC_DIR and write a digest for a Linear comment.
 
 Previous digest on this issue (may be empty if this is the first spec run):
@@ -475,8 +486,12 @@ End with:
 Branch: \`$BRANCH\`
 Spec dir: \`$SPEC_DIR\`
 
-Constraints: do not invent requirements. If a section has no source material, write 'Not specified.' Keep sections 1-4 short; section 5 must be complete." 2>&1 || echo "Spec digest generation failed")
+Constraints: do not invent requirements. If a section has no source material, write 'Not specified.' Keep sections 1-4 short; section 5 must be complete." 2>&1) || DIGEST_RC=$?
+  [ "$DIGEST_RC" != 130 ] || exit 130
+  [ "$DIGEST_RC" = 0 ] || SPEC_DIGEST="${SPEC_DIGEST}Spec digest generation failed"
 fi
+
+bureau_ticket_checkpoint "$ISSUE" latched
 
 # Clear the recovery trap — we're about to succeed.
 trap - EXIT

@@ -48,6 +48,7 @@ fi
 bureau_stage_enter "$ISSUE" "$@"
 
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
+bureau_ticket_checkpoint "$ISSUE" latched
 if [ "$ACTUAL_STATE" != "QA" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'QA'. Skipping."
   exit 2
@@ -268,6 +269,7 @@ Emit a fenced json block at the very end:
 \`\`\`json
 {\"status\":\"GREEN|RED|NEEDS_HUMAN\",\"tests_added\":0,\"tests_failing\":0,\"coverage_notes\":\"\",\"insights\":[]}
 \`\`\`")
+  bureau_ticket_checkpoint "$ISSUE" latched
   echo "$QA_RESULT"
 fi
 
@@ -278,6 +280,7 @@ commit_stage_changes qa "$ISSUE" "$QA_GATE_CONTEXT"
 if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
   echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
 else
+  bureau_ticket_checkpoint "$ISSUE"
   git push origin HEAD || exit 18
 fi
 
@@ -291,6 +294,7 @@ if [ "$(resolve_runner_for_stage qa)" = codex ] \
   OUTSIDE_RC=0
   OUTSIDE_GATE=$(codex_gate_run qa "$QA_GATE_PLAN") || OUTSIDE_RC=$?
   [ "$OUTSIDE_RC" != 130 ] || exit 130
+  bureau_ticket_checkpoint "$ISSUE"
   [ "$OUTSIDE_RC" = 0 ] || OUTSIDE_GATE='{"green":false,"logs":[]}'
   QA_GATE_RECONCILE=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.eligible // false')
   FINAL_GREEN=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green // false')

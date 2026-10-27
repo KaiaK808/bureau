@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="22a2233b3ea427d36baa5253aa2537734f35f57cb950f2b11576cd8f01c47b05">
+<meta name="bureau-source-sha256" content="063e172f3e4d1488fb90c206271579bcc65030fafa22343b3fdb087a72fd1b3d">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -33,6 +33,61 @@ branches in other worktrees cause exit 21 rather than detaching the
 owner. Existing <code>.worktrees/</code> directories are not implicitly
 disposable; inspect and retire or hand off an old worker before starting
 a new registered one.</p>
+<h2 id="cooperative-ticket-withdrawal">Cooperative ticket
+withdrawal</h2>
+<p><code>bureau_ticket_checkpoint</code> is the trusted shell boundary
+for background work. It checks after selection/claim before dispatch,
+before and after each provider pass, before ordinary
+push/PR/comment/acceptance publication, immediately before the merge and
+on queue/shepherd iterations. Preservation pushes of commits already
+made remain allowed on exit, as described below.
+<code>agents.ticket_active_states</code> resolves state keys to
+configured IDs; display names do not decide whether work continues. Done
+exits 0, configured cancellation/duplication exits 26, other inactive
+IDs exit 25. Active-to-active moves retain the optimistic mutation
+conflict (21). Normal stage transitions, including manual Merge approval
+publication, continue as before.</p>
+<p>A confirmed withdrawal latches under
+<code>&lt;git common dir&gt;/bureau/ticket-control/RUN_ID/stop-CODE</code>.
+Captured and parallel calls share that latch; it prevents a later
+refresh failure or reactivation from resuming this withdrawn run.
+Mandatory stage guards and shepherd state reads classify their
+successful snapshot with the same ID-based checkpoint and latch
+withdrawal before routing. Parents consume the latch after captured
+calls, including Done's exit 0 and before shepherd's read-error
+handling; a snapshot of another inactive state ends shepherd with 25
+without adding needs-human, even if subsequent additional refreshes
+fail. A failed additional refresh warns once per run and permits the
+already authorized unit; a failed mandatory read retains its existing
+strict error handling. Invalid active-state configuration exits 24. This
+adds no polling daemon or interval.</p>
+<p>Withdrawal sends no signal. A provider already in flight finishes
+before its post-call checkpoint; provider-internal actions can therefore
+finish within that unit. Parallel review joins every specialist before
+the parent exits. Spec recovery skips rollback. Implementation preserves
+already made commits with its existing best-effort failure/EXIT push,
+without another checkpoint or any PR create/ready, comment or merge;
+failed preservation pushes leave the commits locally. The worker removes
+disposable registration for dirty/ahead work even when Done returned 0.
+Files, local commits and the branch remain available for inspection;
+they are not automatically reset on the next pick. Issue/workspace
+leases release after the stage and worker finish. Signals retain 130 and
+the existing interrupted-lease recovery requirements; a worker
+interrupted independently of shepherd retains its cancelled-run log and
+halt alert. Additional refreshes run only within a claimed background
+run, use one attempt without changing the caller's retry/fault state,
+and leave standalone Linear helpers on their existing strict reads. App
+prepare/finish retains its separate stale-result checks.</p>
+<p>PR 6 outside-sandbox recovery checks before starting the rerun and
+after it returns; a withdrawn ticket starts no new rerun. PR 7 checks
+each acceptance destination before publication and consumes any stop in
+the parent; an externally parked ticket gets no new approval brief.
+Fresh ticket posts require an explicit publication-completed
+acknowledgment after <code>post_comment</code> returns successfully: a
+checkpoint that exits 0 without posting leaves delivery pending, so a
+new run after reactivation can publish at the same HEAD. An existing
+remote marker still reconciles delivery. The ordinary manual Merge
+boundary still publishes its approval brief.</p>
 <h2 id="app-stages">App stages</h2>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py status</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py prepare TEAM-123 implement <span class="at">--owner</span> app-task</span>
@@ -287,16 +342,17 @@ branch/digest, recovery and passed-review comments are bookkeeping.</p>
 verifies disposable registration. It fetches origin, selects the last
 contiguous checkpoint reachable from the reserved local or origin
 branch, then checks out that branch at the recorded commit using the
-normal forced checkout, hard reset and <code>clean -fdx</code>.
-Uncommitted, staged, untracked and ignored leftovers are discarded.
-Hashes are recomputed from committed Git blobs, using the complete
-artifact snapshot recorded for each phase; file existence and a recorded
-commit ID alone cannot qualify a phase. A checkpoint never grants reset
-permission to an unregistered or user checkout. App preparation removes
-disposable registration and any former-worker failure note. Interrupted
-runs retain their existing explicit ownership recovery requirement. App
-stages use prepare/finish without disposable resets or automatic
-background phase checkpoints.</p>
+normal forced checkout, hard reset and <code>clean -fdx</code>. On
+ordinary Spec retries, uncommitted, staged, untracked and ignored
+leftovers are discarded; a cooperative withdrawal instead preserves the
+unfinished worker as described above. Hashes are recomputed from
+committed Git blobs, using the complete artifact snapshot recorded for
+each phase; file existence and a recorded commit ID alone cannot qualify
+a phase. A checkpoint never grants reset permission to an unregistered
+or user checkout. App preparation removes disposable registration and
+any former-worker failure note. Interrupted runs retain their existing
+explicit ownership recovery requirement. App stages use prepare/finish
+without disposable resets or automatic background phase checkpoints.</p>
 <p>The spec stage revalidates the current input fingerprint and
 committed artifact maps before skipping a prefix. A plan timeout resumes
 at plan from the specify commit; a tasks timeout resumes at tasks from
@@ -314,9 +370,11 @@ returns the ticket to Triage and the needs-human label/hold excludes
 automatic picks. Bureau never force-pushes. The final stage commit is
 omitted when phase commits already include all changes. Changed
 reservations start fresh on their newly reserved branch. Incomplete
-phase edits never survive a retry. Checkpoints expire after 30 inactive
-days on evidence creation unless the issue has an active run;
-completed-run rotation is independent.</p>
+phase edits do not survive an ordinary registered Spec retry;
+cooperative withdrawal removes that registration and preserves them for
+explicit inspection. Checkpoints expire after 30 inactive days on
+evidence creation unless the issue has an active run; completed-run
+rotation is independent.</p>
 <p>Checkpoint and observational evidence I/O failures warn and disable
 reuse for a fresh run under ordinary ownership/reset rules. Optional
 checkpoint reads and retention pruning are isolated per ticket,

@@ -48,6 +48,7 @@ fi
 bureau_stage_enter "$ISSUE" "$@"
 
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
+bureau_ticket_checkpoint "$ISSUE" latched
 if [ "$ACTUAL_STATE" != "Copy" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Copy'. Skipping."
   exit 2
@@ -152,6 +153,7 @@ commit_stage_changes copy "$ISSUE"
 if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
   echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
 else
+  bureau_ticket_checkpoint "$ISSUE"
   git push origin HEAD || exit 18
 fi
 

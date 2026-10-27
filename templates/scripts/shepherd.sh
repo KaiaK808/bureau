@@ -475,6 +475,9 @@ _shepherd_read_failed() {
     echo "[shepherd] interrupted while reading the $what of $ISSUE (exit $rc) — cancelled, nothing written" >&2
     exit 130
   fi
+  # A successful mandatory snapshot can exit its capture with 25/26. That
+  # shared withdrawal is not a failed read and must not add needs-human.
+  bureau_ticket_checkpoint "$ISSUE" latched
   [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && _shepherd_linear_halt shepherd.sh "$rc" "reading the $what"
   echo "[shepherd] could not read the $what of $ISSUE (exit $rc) — labeling needs-human and aborting shepherd" >&2
   alert_telegram "$ISSUE" shepherd.sh "$rc" "shepherd halt (could not read the $what, exit $rc)" 2>/dev/null || true
@@ -550,6 +553,7 @@ bureau_secret_set LINEAR_API_KEY || { echo "$0: LINEAR_API_KEY: Set LINEAR_API_K
 _shepherd_hold_check_failed() {
   local rc="$1" what="${2:-labels}" fault
   [ "$rc" -gt 128 ] && _shepherd_cancelled "a signal (exit $rc)"
+  bureau_ticket_checkpoint "$ISSUE" latched
   fault=$(_shepherd_fault_class "$SHEPHERD_FAULT_FILE")
   if [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ]; then
     echo "[shepherd] could not read the $what of $ISSUE — Linear stayed unusable after every retry (fault: $fault); $ISSUE not claimed, nothing written" >&2
@@ -575,6 +579,7 @@ if [ -n "$HOLD" ]; then
   case "$HELD_STATE" in
     Done)
       echo "[shepherd] terminal state 'Done' — done (the hold left on it stays: $HOLD; nothing claimed, nothing written)"
+      bureau_ticket_checkpoint "$ISSUE" latched
       exit 0 ;;
     Cancelled|Canceled|Duplicate)
       echo "[shepherd] cancelled: $HELD_STATE (the hold left on it stays: $HOLD; nothing claimed, nothing written)"
@@ -589,11 +594,13 @@ fi
 # Any exit above 128 (a signal, whichever way it ended the shell) releases with
 # one attempt, like a cancelled run. The line is written from a subshell, as in
 # _shepherd_cancelled: after a hang-up it cannot stop or spoil the release.
+bureau_ticket_checkpoint "$ISSUE" strict
 trap '[ $? -gt 128 ] && export _BUREAU_LINEAR_SINGLE_ATTEMPT=1; ( echo "[shepherd] releasing $ISSUE" ) || true; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" "$MERGE_GATE_FILE" 2>/dev/null || true' EXIT
 SHEPHERD_CLAIMED=1
 echo "[shepherd] claiming $ISSUE (label: shepherd-focused)"
 add_issue_label "$ISSUE" "shepherd-focused" \
   || echo "  WARN: failed to add shepherd-focused label" >&2
+bureau_ticket_checkpoint "$ISSUE"
 
 # --from-stage: move the ticket before the loop. After the claim (it used to
 # run before it), so the queue keeps away from a ticket that just moved into a
@@ -722,6 +729,7 @@ echo "════════════════════════�
 while true; do
   if bureau_is_paused; then echo "[shepherd] paused"; exit 25; fi
   STATE=$(_shepherd_state) || _shepherd_read_failed state $?
+  bureau_ticket_checkpoint "$ISSUE" latched
   if [ -z "$STATE" ]; then
     # Linear answered, but without a state (transient faults are retried inside
     # the read and end in 27 above).
@@ -732,6 +740,7 @@ while true; do
     continue
   fi
   NO_STATE_COUNT=0
+  bureau_ticket_checkpoint "$ISSUE"
 
   # Confirm a move before acting on it (see MOVED_TO / MOVED_FROM / MOVED_VIA above).
   CONFIRM_COUNT=0
@@ -740,7 +749,9 @@ while true; do
     echo "[shepherd] $ISSUE still reads '$STATE' after the move — reading again in ${CONFIRM_SECONDS}s ($CONFIRM_COUNT/$CONFIRM_TRIES)"
     _shepherd_sleep "$CONFIRM_SECONDS"
     STATE=$(_shepherd_state) || _shepherd_read_failed state $?
+    bureau_ticket_checkpoint "$ISSUE" latched
   done
+  bureau_ticket_checkpoint "$ISSUE"
   MOVED_FROM=""; MOVED_TO=""; MOVED_VIA=""
   # An answer without a state while confirming goes through the check above.
   [ -z "$STATE" ] && continue
@@ -854,6 +865,16 @@ while true; do
       bash "$SCRIPT_REPO/scripts/bureau-worker.sh" "$ISSUE" "$PIPELINE" "$WORKTREE" "${BRANCH:-}" )
   RC=$?
   set -e
+  # A worker interrupted independently of this shepherd still takes the
+  # existing cancelled-run log/alert path. No refresh may replace its 130.
+  if [ "$RC" = 130 ]; then
+    CLASS=$(exit_class "$RC")
+    ( echo "[shepherd] $PIPELINE exit=$RC ($CLASS)" ) || true
+    ( echo "[shepherd] $PIPELINE halted ($CLASS) — aborting shepherd" ) || true
+    alert_telegram "$ISSUE" "$PIPELINE" "$RC" "shepherd halt ($CLASS)" 2>/dev/null || true
+  fi
+  [ "$RC" != 130 ] || exit 130
+  bureau_ticket_checkpoint "$ISSUE"
   CLASS=$(exit_class "$RC")
   echo "[shepherd] $PIPELINE exit=$RC ($CLASS)"
 

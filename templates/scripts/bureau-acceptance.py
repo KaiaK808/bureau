@@ -16,6 +16,10 @@ from urllib.parse import quote
 sys.dont_write_bytecode = True
 
 
+class PublicationInterrupted(Exception):
+    """Separate from InterruptedError, which subprocess/select may retry."""
+
+
 def sibling(name):
     spec = importlib.util.spec_from_file_location(name.replace('-', '_'), Path(__file__).with_name(name + '.py'))
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
@@ -35,16 +39,18 @@ def git_bytes(repo, *args):
     return subprocess.check_output(command, stderr=subprocess.DEVNULL, timeout=10, env=p.process_env(command))
 
 
-def bounded(command, repo, body=None):
+def bounded(command, repo, body=None, diagnostics=False):
     """Kill the whole API-helper group on timeout, including a surviving curl."""
     # The trusted Linear shell helper needs its credentials. Git/gh follow
     # the shared Python policy, including remote GitHub authentication.
     environ = p.process_env(command) if Path(command[0]).name == 'gh' else dict(os.environ)
     for name in ('BASH_ENV', 'ENV'): environ.pop(name, None)
     child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, text=True, start_new_session=True, env=environ)
+                             stderr=None if diagnostics else subprocess.DEVNULL, text=True, start_new_session=True, env=environ)
     try:
         output, _ = child.communicate(body, timeout=45)
+        if child.returncode == 130 or child.returncode < 0:
+            raise PublicationInterrupted('acceptance helper interrupted')
         return child.returncode, output
     finally:
         try: os.killpg(child.pid, signal.SIGKILL)
@@ -197,7 +203,7 @@ def publish(store, issue, pr, head, build, deliver):
         for destination in ('ticket', 'pull_request'):
             if record[destination] == 'delivered': continue
             try: ok = deliver(destination, record['body'])
-            except InterruptedError: raise
+            except PublicationInterrupted: raise
             except Exception: ok = False
             record[destination] = 'delivered' if ok else 'pending'
             # A lost acknowledgment is repaired by the remote marker lookup.
@@ -216,7 +222,7 @@ def main():
     parser.add_argument('--publish', action='store_true')
     args = parser.parse_args()
     if os.environ.get('BUREAU_DRY_RUN') == '1': return
-    def interrupted(signum, frame): raise InterruptedError('acceptance publication interrupted')
+    def interrupted(signum, frame): raise PublicationInterrupted('acceptance publication interrupted')
     for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):
         signal.signal(getattr(signal, name), interrupted)
     try:
@@ -241,14 +247,22 @@ def main():
             print(build(), end=''); return
         def deliver(destination, body):
             marker = body.splitlines()[0]
+            setup = ('source "$1"; '
+                     'if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env "$BUREAU_ENV_FILE" || exit 1; fi; '
+                     'if declare -F bureau_secret_copy >/dev/null; then bureau_secret_copy --optional API_KEY LINEAR_API_KEY; fi; ')
+            # Use the same trusted shell checkpoint at each publication edge.
+            # Done exits 0 without the sentinel; it is a stop, not delivery.
+            check = ['bash', '-c', setup + 'bureau_ticket_checkpoint "$2" && printf authorized',
+                     'bureau-acceptance-delivery', str(args.config_script.resolve()), issue]
+            code, allowed = bounded(check, repo, diagnostics=True)
+            if code or allowed != 'authorized': return False
             if destination == 'ticket':
                 # All Linear CRUD stays in the existing helper. No provider call.
-                setup = ('source "$1"; '
-                         'if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env "$BUREAU_ENV_FILE" || exit 1; fi; '
-                         'if declare -F bureau_secret_copy >/dev/null; then bureau_secret_copy --optional API_KEY LINEAR_API_KEY; fi; ')
                 lookup = ['bash', '-c', setup + 'get_issue_comments "$2"',
                           'bureau-acceptance-delivery', str(args.config_script.resolve()), issue]
-                command = ['bash', '-c', setup + 'body=$(cat); post_comment "$2" "$body"',
+                # post_comment can cooperatively exit this shell 0 without
+                # posting. Only a successful return reaches the acknowledgment.
+                command = ['bash', '-c', setup + 'body=$(cat); post_comment "$2" "$body" >/dev/null && printf published',
                            'bureau-acceptance-delivery', str(args.config_script.resolve()), issue]
             else:
                 lookup = ['gh', 'pr', 'view', str(args.pr), '--json', 'comments']
@@ -259,10 +273,14 @@ def main():
             if destination == 'pull_request': comments = comments['comments']
             if not isinstance(comments, list): return False
             if any(isinstance(c, dict) and c.get('body', '').splitlines()[:1] == [marker] for c in comments): return True
-            code, _ = bounded(command, repo, body)
-            return code == 0
+            code, allowed = bounded(check, repo, diagnostics=True)
+            if code or allowed != 'authorized': return False
+            code, completed = bounded(command, repo, body)
+            return code == 0 and (destination != 'ticket' or completed == 'published')
         result = publish(store, issue, args.pr, args.head, build, deliver)
         if 'pending' in (result['ticket'], result['pull_request']): e.warn()
+    except PublicationInterrupted:
+        raise SystemExit(130)
     except Exception:
         e.warn()
 

@@ -64,6 +64,9 @@ config_text=\$(printf '%s\n' "\$config" | sed -n 's/^data-urlencode = "text=\(.*
 [ -z "\$config_text" ] || text="\$config_text"
 case "\$url" in *api.telegram.org*) printf '%s\n' "\$text" >> "\$sb/alerts.log"; exit 0 ;; esac
 labels=\$(jq -c '{nodes: map({name: .})}' "\$sb/labels.json")
+issue_ref() {
+  printf '%s' "\$payload" | jq -r '.query | split("number: { eq: ")[1] | split(" ")[0] | "EXP-" + .'
+}
 case "\$payload" in
   *commentCreate*)    echo comment >> "\$sb/linear.log"; b='{"data":{"commentCreate":{"success":true}}}' ;;
   *issueAddLabel*)    echo add-label >> "\$sb/linear.log"; b='{"data":{"issueAddLabel":{"success":true}}}' ;;
@@ -78,11 +81,11 @@ case "\$payload" in
   *'nodes { identifier title description project'*)
     echo labels >> "\$sb/linear.log"
     if [ -f "\$sb/labels-broken" ]; then b='<html>502 Bad Gateway</html>'
-    else b=\$(jq -nc --argjson l "\$labels" '{data:{issues:{nodes:[{identifier:"EXP-7",title:"T",description:"D",project:null,labels:\$l}]}}}'); fi ;;
+    else b=\$(jq -nc --arg ref "\$(issue_ref)" --argjson l "\$labels" '{data:{issues:{nodes:[{identifier:\$ref,title:"T",description:"D",project:null,labels:\$l}]}}}'); fi ;;
   *'nodes { id identifier title description state'*)
     echo state >> "\$sb/linear.log"
     if [ -f "\$sb/state-broken" ]; then b='<html>502 Bad Gateway</html>'
-    else b=\$(jq -nc --argjson l "\$labels" --arg s "\$(cat "\$sb/state")" --arg n "\$(cat "\$sb/state-name" 2>/dev/null || echo '?')" '{data:{issues:{nodes:[{id:"U7",identifier:"EXP-7",title:"T",description:"D",state:{id:\$s,name:\$n},labels:\$l}]}}}'); fi ;;
+    else b=\$(jq -nc --arg ref "\$(issue_ref)" --argjson l "\$labels" --arg s "\$(cat "\$sb/state")" --arg n "\$(cat "\$sb/state-name" 2>/dev/null || echo '?')" '{data:{issues:{nodes:[{id:"U7",identifier:\$ref,title:"T",description:"D",state:{id:\$s,name:\$n},labels:\$l}]}}}'); fi ;;
   *'nodes { branchName'*) echo branch >> "\$sb/linear.log"; b='{"data":{"issues":{"nodes":[{"branchName":"exp-7-x","comments":{"nodes":[]}}]}}}' ;;
   *'nodes { id } }'*) echo uuid >> "\$sb/linear.log"; b='{"data":{"issues":{"nodes":[{"id":"U7"}]}}}' ;;
   *)                  echo unmatched >> "\$sb/linear.log"; b='{}' ;;
@@ -107,7 +110,8 @@ printf s8 > "$SB/state"
 WORKER
   jq -n --arg human "$1" '{
     linear: {teams: [{id: "t", key: "EXP", name: "T",
-      states: {triage: "s1", spec: "s2", spec_review: "s3", design: "s4", build: "s5", build_review: "s6", merge: "s7", done: "s8"}}],
+      states: {triage: "s1", spec: "s2", spec_review: "s3", design: "s4", build: "s5", build_review: "s6", merge: "s7", done: "s8",
+               cancelled: "s9", canceled: "s10", duplicate: "s11"}}],
       labels: {lane2: {id: "l1", name: "lane-2"}, needs_human: {id: "l2", name: $human},
                needs_ux: {id: "l3", name: "needs-ux"}, ai_implementable: {id: "l4", name: "ai-implementable"}},
       projects: []},
@@ -177,11 +181,11 @@ ticket s5 '["lane-2"]'
 run EXP-7
 [ "$RC" = 0 ] || fail "free ticket: exit $RC, wanted 0 (its stage moves it to Done)"
 [ "$STAGES" = "implement-pipeline.sh " ] || fail "free ticket: the stage did not run once"
-case "$LIN" in "viewer labels uuid label-id add-label "*) ;; *) fail "free ticket: the labels are not read between the start check and the claim" ;; esac
+case "$LIN" in "viewer labels state uuid label-id add-label "*) ;; *) fail "free ticket: the labels are not read between the start check and the claim" ;; esac
 ticket s5 '["lane-2"]'
 run --from-stage build EXP-7
 [ "$RC" = 0 ] || fail "free ticket, --from-stage: exit $RC"
-case "$LIN" in "viewer labels uuid label-id add-label uuid move-s5 "*) ;; *) fail "free ticket, --from-stage: not check, claim, move in that order" ;; esac
+case "$LIN" in "viewer labels state uuid label-id add-label state uuid move-s5 "*) ;; *) fail "free ticket, --from-stage: not check, claim, move in that order" ;; esac
 # Labels match exactly, as in the picker: a longer name or another case holds nothing.
 for free in needs-human-later Needs-Human WIP; do
   ticket s5 "[\"lane-2\",\"$free\"]"
@@ -304,12 +308,17 @@ run EXP-7
 nothing_written "Done + hold file"
 [ -f "$HOLD/EXP-7" ] || fail "Done + hold file: the hold was removed"
 rm -rf "$HOLD"
-for name in Canceled Cancelled Duplicate; do
-  ticket s9 '["needs-human"]'; printf '%s' "$name" > "$SB/state-name"
+for pair in s9:Cancelled s10:Canceled s11:Duplicate; do
+  name="${pair#*:}"
+  ticket "${pair%%:*}" '["needs-human"]'; printf '%s' 'misleading active name' > "$SB/state-name"
   run EXP-7
   [ "$RC" = 26 ] || fail "$name + needs-human: exit $RC, wanted 26"
   nothing_written "$name + needs-human"
 done
+ticket unknown-id '["needs-human"]'; printf '%s' Cancelled > "$SB/state-name"
+run EXP-7
+[ "$RC" = 25 ] || fail "unconfigured ID named Cancelled: exit $RC, wanted 25"
+nothing_written "unconfigured ID named Cancelled"
 # --from-stage would move the ticket back into the pipeline: its hold refuses it, no state read.
 ticket s8 '["needs-human"]'
 run --from-stage build EXP-7

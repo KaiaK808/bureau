@@ -37,6 +37,7 @@ fi
 bureau_stage_enter "$ISSUE" "$@"
 
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
+bureau_ticket_checkpoint "$ISSUE" latched
 if [ "$ACTUAL_STATE" != "Spec Review" ]; then
   echo "  WARNING: $ISSUE is in '$ACTUAL_STATE', not 'Spec Review'. Skipping."
   exit 2
@@ -150,6 +151,7 @@ End your response with a single fenced json block (the shell parses it):
 {\"review_status\":\"PASS|FAIL\",\"ui_work_needed\":true,\"issues_found\":0,\"issues_fixed\":0,\"remaining_issues\":[],\"summary\":\"2-3 sentences\"}
 \`\`\`")
 
+bureau_ticket_checkpoint "$ISSUE" latched
 echo "$REVIEW_RESULT"
 
 echo ""
@@ -180,6 +182,7 @@ commit_stage_changes spec_review "$ISSUE"
 if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
   echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
 else
+  bureau_ticket_checkpoint "$ISSUE"
   git push origin HEAD || exit 18
 fi
 

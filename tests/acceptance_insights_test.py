@@ -77,7 +77,8 @@ else:
     with stored.open('a') as out: out.write(body)
 '''); gh.chmod(0o755)
         self.config = self.repo/'config.sh'
-        self.config.write_text('''get_issue_comments() {
+        self.config.write_text('''bureau_ticket_checkpoint() { :; }
+get_issue_comments() {
   if [ "${PR7_BAD_TICKET_LOOKUP:-0}" = 1 ]; then echo invalid; return 0; fi
   python3 -c 'import json, os, pathlib; p=pathlib.Path(os.environ["PR7_ROOT"])/"ticket-comment"; print(json.dumps([{"body":p.read_text()}] if p.exists() else []))'
 }
