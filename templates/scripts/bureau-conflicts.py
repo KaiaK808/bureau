@@ -405,6 +405,7 @@ class Transaction:
                     or stages[1][0] not in (b'100644', b'100755')
                     or any(b'\0' in self.git('cat-file', 'blob', oid.decode()).stdout for _, oid in stages.values())):
                 raise Declined('model repair requires regular text three-way conflicts')
+        markers = {name: self.conflict_markers(name) for name in paths}
         self.checkpoint()
         identity = provider.configuration('conflict_resolver', self.config, os.environ)
         common = Path(os.fsdecode(self.git('rev-parse', '--git-common-dir').stdout).strip())
@@ -438,7 +439,7 @@ class Transaction:
             if touched - set(paths): raise Declined('provider changed an out-of-scope path')
             for name in paths:
                 if (after.get(name, (None,))[0] != 'file' or before[name][:2] != after[name][:2]
-                        or b'\0' in (self.repo / name).read_bytes() or MARKERS.search((self.repo / name).read_bytes())):
+                        or b'\0' in (self.repo / name).read_bytes() or markers[name].search((self.repo / name).read_bytes())):
                     raise Declined('provider left invalid files or conflict markers')
                 self.git('add', '--', name)
             self.semantic = True
@@ -601,10 +602,19 @@ class Transaction:
             resolved_paths.update(outputs)
         return resolved_paths
 
+    def conflict_markers(self, name):
+        value = self.git('check-attr', '-z', 'conflict-marker-size', '--', name).stdout.split(b'\0')[2]
+        number = re.fullmatch(rb'\+?([0-9]+)', value)
+        digits = number[1].lstrip(b'0') if number else b''
+        # Invalid/nonpositive sizes use seven. Standard markers and sizes
+        # >= seven are already covered by the default detector.
+        if len(digits) != 1 or not b'1' <= digits <= b'6': return MARKERS
+        return re.compile(MARKERS.pattern.replace(b'{7,}', b'{' + digits + b',}'), re.M)
+
     def reject_markers(self, paths):
         for name in paths:
             path = self.repo / name
-            if path.is_file() and MARKERS.search(path.read_bytes()):
+            if path.is_file() and self.conflict_markers(name).search(path.read_bytes()):
                 raise Declined('resolved tree contains conflict markers')
 
     def commit_merge(self):

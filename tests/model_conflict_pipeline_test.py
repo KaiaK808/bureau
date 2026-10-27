@@ -113,4 +113,53 @@ class ConflictPipelineTests(unittest.TestCase):
         self.assertEqual(self.git('rev-parse','origin/001-task'),self.old_head)
         self.assertIn('needs-human',[v['name'] for v in json.loads(self.f.linear.read_text())['T-1']['labels']['nodes']])
 
+    def test_rebase_failure_comment_errors_preserve_hold_and_withdrawal(self):
+        config=json.loads((self.repo/'.bureau.json').read_text())
+        config['agents']['conflict_resolver']['enabled']=False
+        config['linear']['teams'][0]['states']['cancelled']='cancelled'
+        (self.repo/'.bureau.json').write_text(json.dumps(config))
+        curl=self.root/'bin/curl'
+        injection=r'''
+if 'commentCreate' in query and 'Rebase conflict resolution failed' in variables.get('body',''):
+    with open(os.environ['COMMENT_ATTEMPTS'],'a') as out: out.write('comment\n')
+    target=os.environ.get('COMMENT_WITHDRAW')
+    if target:
+        items['T-1']['state']={'id':target,'name':target}; path.write_text(json.dumps(items))
+    mode=os.environ['COMMENT_ERROR']
+    if mode.startswith('transport-'): sys.exit(int(mode.split('-')[1]))
+    print('not JSON' if mode=='malformed' else json.dumps({'data':{'commentCreate':{'success':False}}}))
+    sys.exit(0)
+if 'issueAddLabel' in query and os.environ.get('FAIL_HUMAN_LABEL')=='1': sys.exit(27)
+'''
+        needle="if 'viewer' in query:"
+        self.assertEqual(curl.read_text().count(needle),1)
+        curl.write_text(curl.read_text().replace(needle,injection+'\n'+needle))
+        self.env['BUREAU_LINEAR_RETRIES']='0'
+        cases=[('success-false',False,'',17),('transport-27',False,'',17),
+               ('transport-1',False,'',17),('malformed',False,'',17),
+               ('transport-27',True,'',17),('success-false',False,'done',0),
+               ('transport-27',False,'backlog',25),('transport-1',False,'cancelled',26)]
+        actual,expected=[],[]
+        for number,(mode,label_down,target,code) in enumerate(cases):
+            items=json.loads(self.f.linear.read_text())
+            items['T-1']['state']={'id':'merge','name':'Merge'}
+            items['T-1']['labels']['nodes']=[{'name':'lane-2'},{'name':'ai-implementable'}]
+            self.f.linear.write_text(json.dumps(items))
+            hold=self.repo/'.git/bureau/needs-human-held/T-1'; hold.unlink(missing_ok=True)
+            attempts=self.root/('comment-attempts-'+str(number))
+            self.env.update(COMMENT_ERROR=mode,COMMENT_WITHDRAW=target,
+                            FAIL_HUMAN_LABEL=str(int(label_down)),COMMENT_ATTEMPTS=str(attempts))
+            self.worker=self.root/('comment-worker-'+str(number))
+            result=self.run_worker('rebase-pipeline.sh')
+            labels=json.loads(self.f.linear.read_text())['T-1']['labels']['nodes']
+            actual.append((mode,label_down,target,result.returncode,
+                           'needs-human' in [v['name'] for v in labels],hold.exists(),
+                           attempts.read_text() if attempts.exists() else '',
+                           self.git('ls-remote','origin','refs/heads/001-task').split()[0],
+                           self.git('-C',str(self.worker),'status','--porcelain'),
+                           self.git('-C',str(self.worker),'ls-files','-u')))
+            expected.append((mode,label_down,target,code,not target and not label_down,
+                             not target and label_down,'comment\n',self.old_head,'',''))
+        self.assertEqual(actual,expected)
+
 if __name__=='__main__': unittest.main()

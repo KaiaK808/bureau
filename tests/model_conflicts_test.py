@@ -30,7 +30,7 @@ if c.get('mode') == 'error': sys.exit(3)
 paths = json.loads(re.search(r'source conflicts: (\[[^\n]+\])',prompt)[1])
 for name in paths:
     p=pathlib.Path(name)
-    if c.get('mode') != 'false':
+    if c.get('mode') != 'false' and not (c.get('mode') == 'false-source' and name == 'source.txt'):
         p.write_text('bad\n' if c.get('mode') == 'red' else '<<<<<<< leftover\n' if c.get('mode') == 'markers' else 'resolved\n')
     if c.get('mode') == 'chmod': p.chmod(0o755)
 if c.get('mode') == 'outside': pathlib.Path('unrelated.txt').write_text('unauthorized\n')
@@ -206,6 +206,21 @@ class ModelConflictTests(unittest.TestCase):
 
     def test_surviving_markers_are_rejected(self):
         self.diverge(); self.control['mode']='markers'; self.refused(); self.assertEqual(len(self.records()),1)
+
+    def test_git_attribute_markers_are_rejected_with_a_passing_check(self):
+        (self.repo/'.gitattributes').write_text('source.txt conflict-marker-size=5\nsecond.txt conflict-marker-size=11\n')
+        self.commit('per-path conflict marker sizes'); self.git('branch','-f','feature','main')
+        self.diverge()
+        self.git('merge','--no-ff','--no-edit',self.base,check=False)
+        self.assertTrue(self.git('ls-files','-u'))
+        for name,size in [('source.txt',5),('second.txt',11)]:
+            self.assertTrue((self.repo/name).read_bytes().startswith(b'<'*size+b' HEAD\n'))
+        self.git('merge','--abort')
+        self.control['mode']='false-source'
+        self.settings['repo']['test_command']='true'
+        self.refused()
+        self.assertEqual(self.calls(),['provider'])
+        self.assertEqual(self.records()[0]['outcome'],'failed')
 
     def test_out_of_scope_tracked_edit_is_rejected(self):
         self.diverge(); self.control['mode']='outside'; self.refused(); self.assertEqual(len(self.records()),1)

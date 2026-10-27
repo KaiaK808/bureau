@@ -160,8 +160,12 @@ case "$REBASE_RC" in
   0) ;;
   10|16|21|25|26|27|130) exit "$REBASE_RC" ;;
   *)
-    post_comment "$ISSUE" "🛑 Rebase conflict resolution failed or was unavailable on \`$BRANCH\`. The entire rebase was aborted; needs human resolution."
+    # Advisory publication cannot bypass the hold or replace exit 17. Consume
+    # any withdrawal latched inside either best-effort subshell in this parent.
+    ( post_comment "$ISSUE" "🛑 Rebase conflict resolution failed or was unavailable on \`$BRANCH\`. The entire rebase was aborted; needs human resolution." ) || true
+    bureau_ticket_checkpoint "$ISSUE"
     ( mark_needs_human "$ISSUE" rebase 17 ) || true
+    bureau_ticket_checkpoint "$ISSUE" latched
     exit 17 ;;
 esac
 
