@@ -703,6 +703,7 @@ if [ -z "$TASKS_FILE" ]; then
 fi
 
 NEGATIVE_CONSTRAINTS=$(build_negative_constraints)
+LESSONS_CONTEXT=$(build_lessons_context implement "$SPEC_DIR_MATCH")
 
 # A Codex turn runs inside the Codex sandbox (workspace-write), where binding a
 # socket and reaching the network are denied. The note tells Codex to report
@@ -832,7 +833,8 @@ if use_goal_loop_enabled; then
   REVIEW_CONTEXT=$(refresh_review_context "$ISSUE")
 
   IMPL_SYSTEM="You are implementing $ISSUE on branch $BRANCH for $ISSUE_TITLE.
-$SPEC_CONTEXT
+$SPEC_CONTEXT${LESSONS_CONTEXT:+
+$LESSONS_CONTEXT}
 $PROJECT_CONTEXT
 $DESIGN_CONTEXT
 $REVIEW_CONTEXT
@@ -1010,7 +1012,8 @@ Pass $((i - 1)) of this stage was stopped at its time limit of ${TIMED_OUT_AFTER
   # changes nothing else.
   PROMPT="Implement tasks from $TASKS_FILE for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
 
-$SPEC_CONTEXT
+$SPEC_CONTEXT${LESSONS_CONTEXT:+
+$LESSONS_CONTEXT}
 $PROJECT_CONTEXT
 $DESIGN_CONTEXT
 $REVIEW_CONTEXT

@@ -198,8 +198,6 @@ $PROJECT_DESC
 --- End project context ---
 "
 
-# logs→memory: include human-curated LESSONS.md if present. Empty when absent.
-LESSONS_CONTEXT=$(build_lessons_context)
 SPECKIT_DIR=.claude/skills
 if [ "$(resolve_runner_for_stage spec)" = codex ]; then SPECKIT_DIR=.agents/skills; fi
 
@@ -292,6 +290,9 @@ fi
 ALLOCATED_DIR=$(cd "$WANTED_DIR" && pwd -P)
 jq -n --arg dir "$ALLOCATED_DIR" '{feature_directory:$dir}' > .specify/feature.json
 export SPECIFY_FEATURE="$ALLOCATED_NAME" SPECIFY_FEATURE_DIRECTORY="$ALLOCATED_DIR"
+
+# Read lessons after branch reconciliation so retries use this ticket's tasks.
+LESSONS_CONTEXT=$(build_lessons_context spec "$ALLOCATED_DIR" "origin/$SPEC_BASE...HEAD")
 
 # Ticket text and review/human feedback are inputs. Generated digests, recovery
 # comments and research publication are bookkeeping, not new ticket decisions.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3a524e83633c93c2aff96369904717439895e9ee793da8e6dfb37edc0afe0ea2">
+<meta name="bureau-source-sha256" content="2127fc67cbf6cc8fd6fd05ee522a815e35043bc2f5924bda05dbdb0f5aec1ae8">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -485,6 +485,15 @@ lock conflicts return 21, invalid dispatcher configuration returns 24,
 and interrupted dispatcher/supervisor shutdown returns 130 after
 cleanup. Standalone shepherd retains its cancellable admission and merge
 waits.</p>
+<p>Optional <code>build_lessons_context</code> selection and
+<code>agents.lessons_budget_bytes</code> add no exit code. Expired or
+invalid entries, unavailable local diff/context and invalid or
+undersized budgets can warn while the stage continues. Lessons remain
+advisory: ticket checkpoint exits
+<code>0</code>/<code>25</code>/<code>26</code>, quiet overlap
+<code>29</code>, silence <code>25</code> with
+<code>timeout_kind: silence</code>, review floors/rounds and dispatcher
+lane outcomes retain their existing meaning.</p>
 <h2 id="telegram-alerts">Telegram alerts</h2>
 <p><code>alert_telegram</code> (in <code>bureau-config.sh</code>) sends
 a message when:</p>

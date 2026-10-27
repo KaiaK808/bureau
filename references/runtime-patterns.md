@@ -389,6 +389,10 @@ Every pipeline that invokes Claude for non-trivial work now calls `build_spec_co
 These describe the background templates. The scripts are authoritative; do not regenerate them from these examples.
 
 
+### Bounded advisory context: `build_lessons_context`
+
+Spec, implement (both loops), QA and the review specialists call `build_lessons_context <stage> <spec-directory> [local-diff-range]`. `bureau-lessons.py` selects task/diff path matches plus untagged general sets, drops expired entries with one warning and caps the complete advisory block at 8192 UTF-8 bytes by default (`agents.lessons_budget_bytes.<stage>`). Budgets keep whole entries in deterministic order, skipping entries that do not fit and continuing to later entries, followed by the truncation marker; never slice an entry, even when one entry exceeds the whole budget. Review passes its pinned PR range; other stages use the configured local base. Preserve the wrapper, keep advice outside gate decisions and never write back to `LESSONS.md`. Legacy free-form files remain one bounded general set; resync the helper and callers together. The format and deterministic ordering are specified in `docs/stage-protocol.md`.
+
 ### Interrupted worker recovery
 
 A cancelled background run keeps its issue/workspace leases and revokes disposable-worker registration. An exited shell does not prove that nested stage processes stopped. Inspect saved work and live processes before `bureau-runtime.py release RUN`; release refuses known live writers or unavailable process inspection. The checkout stays unregistered after release, ready for explicit app adoption or retirement: the interrupt message names the release command, the worktree and its unpushed local branch, and a rerun that meets the claim or the unregistered worktree stops with 21, sets `needs-human` and comments the same steps once. Never reset it automatically to recover from cancellation.

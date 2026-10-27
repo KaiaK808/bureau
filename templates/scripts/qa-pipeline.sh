@@ -225,6 +225,7 @@ else
   fi
 
   NEGATIVE_CONSTRAINTS_BODY=$(build_negative_constraints)
+  LESSONS_CONTEXT=$(build_lessons_context qa "$SPEC_DIR")
 
   # Codex needs a sandbox diagnosis the shell can reconcile with Phase 3.
   # Claude gets no note: its prompt stays byte for byte as before.
@@ -236,7 +237,9 @@ else
 
   QA_RESULT=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-qa.schema.json" --gate-context "$QA_GATE_CONTEXT" "You are the QA agent for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
 
-$SPEC_CONTEXT
+$SPEC_CONTEXT${LESSONS_CONTEXT:+
+
+$LESSONS_CONTEXT}
 
 Test command: \`$TEST_CMD\`
 Tasks file: ${TASKS_FILE:-<none — implementation came from issue description>}
