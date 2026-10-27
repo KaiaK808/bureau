@@ -42,6 +42,13 @@
               },
               "reason": {
                 "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["gate", "product", "security", "human"]
+              },
+              "command": {
+                "type": "string"
               }
             },
             "required": [

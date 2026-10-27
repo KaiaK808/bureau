@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
@@ -20,6 +21,9 @@ sys.dont_write_bytecode = True
 _evidence_spec = importlib.util.spec_from_file_location('bureau_evidence', Path(__file__).resolve().with_name('bureau-evidence.py'))
 e = importlib.util.module_from_spec(_evidence_spec)
 _evidence_spec.loader.exec_module(e)
+_gate_spec = importlib.util.spec_from_file_location('bureau_gates', Path(__file__).resolve().with_name('bureau-gates.py'))
+g = importlib.util.module_from_spec(_gate_spec)
+_gate_spec.loader.exec_module(g)
 
 
 # The values the Claude CLI's --effort accepts.
@@ -256,13 +260,14 @@ def sandbox_gate_only(value):
     notes = value.get('notes') if isinstance(value, dict) else None
     items = notes.get('needs_human') if isinstance(notes, dict) else None
     if not isinstance(items, list) or not items: return False
-    return all(isinstance(item, dict) and isinstance(item.get('reason'), str)
+    return all(isinstance(item, dict) and 'kind' not in item and 'command' not in item and isinstance(item.get('reason'), str)
                and item['reason'].startswith('SANDBOX_GATE:') for item in items)
 
 
 def qa_sandbox_gate_only(value):
     # QA has no needs-human array: coverage_notes carries the sandbox diagnosis.
     return (isinstance(value, dict) and value.get('status') == 'NEEDS_HUMAN'
+            and 'blockers' not in value
             and isinstance(value.get('coverage_notes'), str)
             and value['coverage_notes'].startswith('SANDBOX_GATE:'))
 
@@ -342,6 +347,11 @@ def run(options, prompt, system, repo, evidence, schema=None):
     identity = dict(run_id=run_id, provider_attempt_id=attempt, stage_attempt_id=stage_attempt,
                     issue=issue, stage=e.tag(options['stage']), phase=e.tag(phase),
                     schema_sha256=hashlib.sha256(schema.read_bytes()).hexdigest() if schema else None)
+    observer = None
+    if options['runner'] == 'codex' and options['stage'] in ('implement', 'qa'):
+        observer = g.Observer(repo, options.get('gate_commands', []), lambda: current_head(repo), options.get('gate_command_id', 'repo.test_command'))
+    options['_gate_observer'] = observer
+    options['_gate_start_head'] = start
     error = None
     try:
         code, text, metadata = _run(options, prompt, system, repo, evidence, schema)
@@ -350,6 +360,9 @@ def run(options, prompt, system, repo, evidence, schema=None):
         code, text = (24 if isinstance(exc, (PermissionError, UntrustedEnvError)) else 22), ''
         metadata = dict(outcome='invalid-result', error=str(exc))
     end = e.observe(current_head, repo)
+    gate_attempts = []
+    if observer and not observer.error:
+        gate_attempts = e.observe(observer.records, (e.observe(transcript, options, repo, evidence) or {}).get('transcript')) or []
     result_text = json.loads(text)['result'] if code == 0 and metadata.get('cost_envelope') else text
     result = structured(result_text) if code == 0 and schema else None
     if result is not None: validate(result, json.loads(schema.read_text()))
@@ -358,7 +371,8 @@ def run(options, prompt, system, repo, evidence, schema=None):
                    normalized_exit=code, outcome=metadata['outcome'], structured_result=result,
                    result_absence=None if result is not None else ('no-schema' if code == 0 else metadata['outcome']),
                    start_head=start, end_head=end, started_at=started, ended_at=time.time(),
-                   provider_logs=str(evidence), transcript=(e.observe(transcript, options, repo, evidence) or {}).get('transcript'))
+                   provider_logs=str(evidence), transcript=(e.observe(transcript, options, repo, evidence) or {}).get('transcript'),
+                   gate_attempts=gate_attempts)
     # _run reports the actual child exit; no inferred success from commits.
     if code == 0: receipt['provider_exit'] = 0
     if code == 0:
@@ -368,6 +382,8 @@ def run(options, prompt, system, repo, evidence, schema=None):
         path = e.observe(store.put_receipt, receipt) if store is not None else None
     if standalone and store is not None: e.observe(store.end_attempt, run_id, stage_attempt, code, end, outer=not os.environ.get('BUREAU_RUN_ID'))
     metadata.update(identity, receipt=str(path) if path else None)
+    if options['runner'] == 'codex' and options.get('gate_context') and code == 0 and path:
+        e.observe(e.atomic, Path(options['gate_context']), {**identity, 'receipt':str(path)})
     options['_receipt_metadata'] = dict(metadata)
     if error: raise error
     return code, text, metadata
@@ -398,7 +414,12 @@ def completion_text(code, text, metadata, repo, schema):
         validate(structured(candidate), contract)
         return text
     except (ValueError, TypeError, KeyError):
-        result = evidence_store(repo).reconcile(metadata, current_head(repo), contract, validate, receipt_result)
+        def load_result(receipt):
+            original = receipt_result(receipt)
+            # The original Codex file uses the nullable wire schema; receipts
+            # hash the canonical result with declared optional nulls omitted.
+            return g.canonical_result(original, contract) if receipt.get('provider') == 'codex' else original
+        result = evidence_store(repo).reconcile(metadata, current_head(repo), contract, validate, load_result)
         if result is None: raise ValueError('no matching completion receipt for this attempt and HEAD')
         metadata['structured_source'] = 'receipt'
         recovered = json.dumps(result)
@@ -413,7 +434,15 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     if runner == 'codex':
         command = ['codex', 'exec', '--json', '-C', str(repo), '-s', options['sandbox'], '-o', str(final)]
         if options['reasoning']: command += ['-c', 'model_reasoning_effort=' + json.dumps(options['reasoning'])]
-        if schema: command += ['--output-schema', str(schema)]
+        if schema:
+            contract = json.loads(schema.read_text())
+            wire = g.codex_schema(contract)
+            wire_path = schema
+            if wire != contract:
+                wire_path = evidence / 'codex-schema.json'
+                wire_path.write_text(json.dumps(wire))
+                prompt += '\nOptional Bureau result fields are required but nullable in the Codex wire schema. Use null to omit an unused optional field, including kind/command for the legacy SANDBOX_GATE form or QA blockers when using that legacy form. Declare every real blocker; never omit a product, security or human-decision hold.'
+            command += ['--output-schema', str(wire_path)]
         # Codex edits files; Git metadata writes remain the shell executor's job.
         prompt = system + '\n\n' + prompt + '\n\nDo not run git commit or git push. Leave changes for the Bureau shell executor. Mark completed tasks truthfully. If tests are denied by the environment, report the permission blocker separately from code failures.'
     else:
@@ -461,8 +490,25 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         started = time.monotonic()
         with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
         with (evidence/'stdout.log').open('wb') as stdout, (evidence/'stderr.log').open('wb') as stderr:
-            child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, start_new_session=True,
+            observer = options.get('_gate_observer')
+            child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE if observer else stdout, stderr=stderr, start_new_session=True,
                                      env=child_env)
+            reader = None
+            if observer:
+                pipe = child.stdout
+                # communicate owns stdin and waiting; this reader alone owns
+                # stdout, preserving the actual JSONL and sampling execution HEADs.
+                child.stdout = None
+                def read_events():
+                    try:
+                        for line in pipe:
+                            stdout.write(line); stdout.flush()
+                            try: observer.line(line.decode(errors='replace'))
+                            except Exception: observer.error = 'execution evidence unavailable'
+                    except (OSError, ValueError, TypeError) as exc: observer.error = str(exc)
+                    finally: pipe.close()
+                reader = threading.Thread(target=read_events, daemon=True)
+                reader.start()
             if interrupted: kill(interrupted)
             timed_out = False
             try:
@@ -481,6 +527,9 @@ def _run(options, prompt, system, repo, evidence, schema=None):
                         child.communicate()
                 finally:
                     signal.setitimer(signal.ITIMER_REAL, 0)
+                    if reader:
+                        reader.join(timeout=5)
+                        if reader.is_alive(): observer.error = 'execution stream did not close'
             if timed_out:
                 return 124, '', dict(outcome='timeout', provider_exit=child.returncode, duration_seconds=time.monotonic()-started)
     finally:
@@ -541,10 +590,16 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     if not isinstance(text, str) or not text.strip(): raise ValueError('provider returned no final message')
     if schema:
         value = structured(text)
+        if runner == 'codex': value = g.canonical_result(value, json.loads(schema.read_text()))
         validate(value, json.loads(schema.read_text()))
         text = json.dumps(value)
     value = structured(text)
-    if environment_blocked(value, text, runner, options['stage']):
+    observer = options.get('_gate_observer')
+    gate_head = e.observe(current_head, repo) if observer else None
+    machine_gate = (observer and not observer.error and gate_head == options.get('_gate_start_head')
+                    and g.machine_only(value, options['stage'], options.get('gate_commands', []), gate_head,
+                                       e.observe(observer.records, (e.observe(transcript, options, repo, evidence) or {}).get('transcript')) or []))
+    if not machine_gate and environment_blocked(value, text, runner, options['stage']):
         return 24, '', dict(outcome='environment', provider_exit=child.returncode)
     metadata = dict(outcome='complete', provider=runner, provider_exit=child.returncode, usage=usage, total_cost_usd=cost, duration_seconds=time.monotonic()-started)
     if recovered_errors: metadata['recovered_errors'] = recovered_errors
@@ -736,20 +791,147 @@ def note(text):
         os.dup2(devnull, 2); os.close(devnull)
 
 
+def outside_gate(options, repo, command, log):
+    """Run a canonical command once, bounded and without Bureau credentials."""
+    child = None; stopped = None; abort = None
+    def stop(signum, frame):
+        nonlocal stopped
+        stopped = signum
+        if child:
+            try: os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+    previous = {sig:signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    try:
+        with os.fdopen(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as output:
+            child = subprocess.Popen(['/bin/bash', '--noprofile', '--norc', '-o', 'pipefail', '-c', command], cwd=repo,
+                                     stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                                     env=untrusted_env(os.environ, options['untrusted_env']), start_new_session=True)
+            if stopped: stop(stopped, None)
+            try: code = child.wait(timeout=options['timeout'])
+            except subprocess.TimeoutExpired:
+                abort = 'timeout'
+                try: os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError: pass
+                child.wait(); code = 124
+            if stopped: code, abort = 130, 'kill'
+            elif code < 0 or code == 130: abort = 'kill'
+        return code, abort
+    finally:
+        if child and child.poll() is None:
+            try: os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            child.wait()
+        for sig, handler in previous.items(): signal.signal(sig, handler)
+
+
+def gate_action(args, config, options, repo):
+    configured = g.commands(config, repo, args.stage)
+    if args.gate_action == 'command': return configured[0] if configured else ''
+    store = evidence_store(repo); head = current_head(repo)
+    raw = {} if args.gate_action == 'publish' else json.load(sys.stdin)
+    if not isinstance(raw, dict):
+        return json.dumps(dict(eligible=False, green=False, logs=[], reason='gate input must be one object'))
+    context = raw.get('context') if args.gate_action == 'run' and isinstance(raw, dict) else None
+    if args.gate_action in ('plan', 'publish'):
+        value = json.loads(raw['result']) if isinstance(raw, dict) and isinstance(raw.get('result'), str) else raw
+        if args.gate_context and Path(args.gate_context).is_file() and Path(args.gate_context).stat().st_size:
+            context = json.loads(Path(args.gate_context).read_text())
+    expected = dict(run_id=os.environ.get('BUREAU_RUN_ID') or None, stage_attempt_id=os.environ.get('BUREAU_STAGE_ATTEMPT_ID') or None,
+                    issue=os.environ.get('BUREAU_CURRENT_ISSUE') or None, stage=args.stage, phase=options['phase'])
+    foreign = (options['runner'] != 'codex' or context is not None and
+               (not isinstance(context, dict) or any(v is not None and context.get(k) != v for k,v in expected.items())))
+    if args.gate_action == 'run' and not foreign:
+        for key in ('run_id', 'stage_attempt_id'):
+            owner = (context or {}).get(key) or expected[key]
+            if owner and raw.get(key) != owner: foreign = True
+    if foreign:
+        return json.dumps(dict(eligible=False, green=False, logs=[], reason='gate evidence belongs to another current stage'))
+    if args.gate_action == 'publish':
+        store.record_publication(context, args.stage, repo, args.publication_before, args.publication_after)
+        return json.dumps(dict(recorded=True))
+    if args.gate_action == 'plan':
+        plan = g.plan(store, value, args.stage, configured, head, context, repo)
+        if plan['eligible']:
+            # Even the compatibility prefix uses the same durable reservation.
+            run_id = (context or {}).get('run_id') or os.environ.get('BUREAU_RUN_ID') or uuid.uuid4().hex
+            issue = os.environ.get('BUREAU_CURRENT_ISSUE') or None
+            store.begin_run(run_id, issue, repo, head)
+            attempt = (context or {}).get('stage_attempt_id') or os.environ.get('BUREAU_STAGE_ATTEMPT_ID')
+            if not attempt: attempt = store.begin_attempt(run_id, issue, args.stage, 'gate', repo, head)
+            plan.update(run_id=run_id, stage_attempt_id=attempt)
+        return json.dumps(plan)
+    # Re-check original evidence, config and HEAD immediately before running.
+    fresh = g.plan(store, raw.get('result'), args.stage, configured, head, raw.get('context'), repo)
+    if not fresh['eligible'] or raw.get('head') != head or raw.get('commands') != fresh.get('commands'):
+        return json.dumps(dict(eligible=False, green=False, reason='gate evidence changed before outside execution', logs=[]))
+    run_id, owner = raw['run_id'], raw['stage_attempt_id']
+    logs = []; green = True; verified = True
+    for command in fresh['commands']:
+        reserved = e.observe(store.reserve_gate_rerun, run_id, owner, head, command, g.digest(command), fresh.get('gate_attempt_ids', []))
+        if reserved is None:
+            green = False; verified = False; continue
+        claimed, reservation = reserved
+        record = reservation.get('result')
+        if reservation['gate_attempt_ids'] != fresh.get('gate_attempt_ids', []): record = None
+        if claimed:
+            # Original outside output belongs to normal stage logs, never the
+            # metadata store. Eligibility depends on its digest, not copied bytes.
+            directory = repo / 'logs' / 'outside-gates'
+            e.private_dir(directory)
+            log = directory / (reservation['attempt_id'] + '.log')
+            started = time.monotonic()
+            code, abort = outside_gate(options, repo, command, log)
+            # Cancellation wins over EVERY subsequent read/write/validation.
+            if code == 130: options['_gate_cancelled'] = True
+            logs.append(str(log))
+            def measurement():
+                data = log.read_bytes()
+                return dict(attempt_id=reservation['attempt_id'], gate_id=g.digest(command), command_sha256=g.digest(command),
+                            command_id='repo.test_command' if (config.get('repo') or {}).get('test_command') else 'qa.test',
+                            head=head, end_head=current_head(repo), normalized_exit=code,
+                            source='bureau.shell', environment='outside', abort=abort, call_id_sha256=None,
+                            duration_seconds=time.monotonic()-started, bytes=len(data),
+                            sha256=hashlib.sha256(data).hexdigest(), stage_log=str(log))
+            record = e.observe(measurement)
+            if record is not None:
+                record = e.observe(store.finish_gate_rerun, run_id, owner, reservation['attempt_id'], record)
+        elif record and isinstance(record.get('stage_log'), str):
+            logs.append(record['stage_log'])
+        if not record or not store.valid_execution(record):
+            green = False; verified = False; continue
+        if record['normalized_exit'] == 130: options['_gate_cancelled'] = True
+        verified = verified and record['head'] == head and record['end_head'] == head
+        green = green and record['normalized_exit'] == 0 and record['head'] == head and record['end_head'] == head
+    verified = verified and current_head(repo) == head
+    return json.dumps(dict(eligible=verified, green=green and verified, logs=logs,
+                           reason='outside gate green' if green and verified else 'outside gate red, aborted or incomplete'))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stage', required=True); parser.add_argument('--repo', default='.')
     parser.add_argument('--phase')
     parser.add_argument('--config', default=os.environ.get('BUREAU_CONFIG', '.bureau.json'))
     parser.add_argument('--prompt-file'); parser.add_argument('--system-file'); parser.add_argument('--schema')
+    parser.add_argument('--gate-context')
+    parser.add_argument('--gate-action', choices=('command', 'plan', 'run', 'publish'))
+    parser.add_argument('--publication-before'); parser.add_argument('--publication-after')
     parser.add_argument('--check', action='store_true'); parser.add_argument('--describe', action='store_true')
-    args = parser.parse_args(); evidence = None
+    args = parser.parse_args(); evidence = None; options = {}
     try:
         config_path=Path(args.config).resolve(); config=json.loads(config_path.read_text())
         options=configuration(args.stage, config, os.environ)
         options['phase'] = args.phase or os.environ.get('BUREAU_PROVIDER_PHASE') or args.stage
         if args.describe: print(json.dumps(options)); return 0
         options['untrusted_env']=untrusted_env_mode(config)
+        repo=Path(args.repo).resolve()
+        if args.gate_action:
+            response = e.observe(gate_action, args, config, options, repo)
+            print(response or json.dumps(dict(eligible=False, green=False, logs=[], reason='gate evidence unavailable')))
+            return 130 if options.get('_gate_cancelled') else 0
+        options['gate_commands'] = g.commands(config, repo, args.stage)
+        options['gate_command_id'] = 'repo.test_command' if (config.get('repo') or {}).get('test_command') else 'qa.test'
+        options['gate_context'] = args.gate_context
         auth(options)
         if args.check: print(json.dumps(dict(runner=options['runner'], authenticated=True))); return 0
         if not args.prompt_file: raise ValueError('--prompt-file is required')
@@ -792,13 +974,14 @@ def main():
         else: note('Bureau provider outcome: '+metadata['outcome'])
         return code
     except AuthError as exc: print(str(exc),file=sys.stderr); return 16
-    except (PermissionError, UntrustedEnvError) as exc: print(str(exc),file=sys.stderr); return 24
+    except (PermissionError, UntrustedEnvError) as exc:
+        note('Bureau provider: '+str(exc)); return 130 if options.get('_gate_cancelled') else 24
     except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
         if evidence:
             failed={**options.get('_receipt_metadata', {}), 'outcome':'invalid-result','error':str(exc)}
             failed.update(e.observe(transcript,options,repo,evidence) or {})
             e.observe(e.atomic,evidence/'result.json', failed)
-        print('Bureau provider: '+str(exc),file=sys.stderr); return 22
+        note('Bureau provider: '+str(exc)); return 130 if options.get('_gate_cancelled') else 22
 
 
 if __name__=='__main__': sys.exit(main())

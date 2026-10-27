@@ -714,11 +714,12 @@ resolve_runner_for_stage() {
 # Execute a creative pass without shell command strings or ARG_MAX-sized argv.
 run_stage_for() {
   local stage="$1"; shift
-  local temp rc system="" schema=""
+  local temp rc system="" schema="" gate_context=""
   while [ "$#" -gt 1 ]; do
     case "$1" in
       --append-system-prompt) system="$2"; shift 2 ;;
       --schema) schema="$2"; shift 2 ;;
+      --gate-context) gate_context="$2"; shift 2 ;;
       *) break ;;
     esac
   done
@@ -739,6 +740,7 @@ run_stage_for() {
   printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and document unknowns for implementation/QA. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system"
   local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
   [ -n "$schema" ] && args+=(--schema "$schema")
+  [ -n "$gate_context" ] && args+=(--gate-context "$gate_context")
   # The provider needs none of the Bureau secrets: it starts without them, so
   # the agent's parent process does not hold them either (bureau-env.sh).
   if bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" "${args[@]}"; then rc=0; else rc=$?; fi
@@ -770,7 +772,7 @@ if private:
     print('Refusing to commit staged private Bureau files; inspect and unstage them before retrying.', file=sys.stderr)
     sys.exit(24)
 PY_STAGED
-  local paths
+  local paths publication_before publication_after
   paths=$(mktemp)
   bureau_without_secrets python3 -I - "$paths" <<'PY_PATHS'
 import subprocess, sys
@@ -783,7 +785,18 @@ PY_PATHS
     GIT_LITERAL_PATHSPECS=1 git add -A --pathspec-from-file="$paths" --pathspec-file-nul
   fi
   rm -f "$paths"
-  git diff --cached --quiet || git commit -m "$2: Bureau $1 changes" -m "Bureau-Generated: true"
+  if ! git diff --cached --quiet; then
+    publication_before=$(git rev-parse HEAD)
+    git commit -m "$2: Bureau $1 changes" -m "Bureau-Generated: true" || return $?
+    publication_after=$(git rev-parse HEAD)
+    # Optional gate recovery accepts only this executor's verified one-hop
+    # publication, linked to the exact provider/stage attempt in its context.
+    if [ -n "${3:-}" ] && [ "$(resolve_runner_for_stage "$1")" = codex ]; then
+      bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
+        --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action publish --gate-context "$3" \
+        --publication-before "$publication_before" --publication-after "$publication_after" >/dev/null || true
+    fi
+  fi
 }
 
 # Build the model invocation for a stage. Default backend is `claude -p`;
@@ -4145,6 +4158,7 @@ codex_sandbox_gate_only() {
         else .notes.needs_human
           | if type != "array" or length == 0 then false
             else all(.[]; if type != "object" then false
+              elif has("kind") or has("command") then false
               elif (.reason | type) != "string" then false
               else .reason | startswith("SANDBOX_GATE:") end)
             end
@@ -4165,9 +4179,22 @@ codex_qa_sandbox_gate_only() {
         if (.result | type) == "string" then .result | fromjson else null end
       else . end
       | if type != "object" then false
+        elif has("blockers") then false
         elif .status != "NEEDS_HUMAN" then false
         elif (.coverage_notes | type) != "string" then false
         else .coverage_notes | startswith("SANDBOX_GATE:") end
     end' 2>/dev/null) || return 1
   [ "$parsed" = true ]
+}
+
+# Both compatibility prefixes and machine-linked blockers use the same planner,
+# reservation and runner. JSON travels on stdin, never in shell command text.
+codex_gate_plan() {
+  printf '%s' "$2" | bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
+    --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action plan --gate-context "$3"
+}
+
+codex_gate_run() {
+  printf '%s' "$2" | bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
+    --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action run
 }

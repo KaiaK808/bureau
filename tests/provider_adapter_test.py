@@ -34,7 +34,7 @@ class ProviderTests(unittest.TestCase):
         self.config=self.root/'config.json'; self.config.write_text('{"agents":{"runner":"codex"}}')
         self.prompt=self.root/'prompt.txt'; self.prompt.write_text('Review this fixture')
         fake='#!'+sys.executable+'''
-import json, os, pathlib, signal, sys, time
+import json, os, pathlib, runpy, signal, sys, time
 name=pathlib.Path(sys.argv[0]).name
 # Under repo.untrusted_env "clean" only CLAUDE_* names reach the CLI.
 root=pathlib.Path(os.environ.get('FAKE_ROOT') or os.environ['CLAUDE_FAKE_ROOT'])
@@ -55,6 +55,16 @@ if sys.argv[1]=='--help':
 if os.environ.get('OLD_CLI') and '--session-id' in sys.argv:
     print("error: unknown option '--session-id'",file=sys.stderr); sys.exit(1)
 (root/'argv.json').write_text(json.dumps(sys.argv[1:]))
+if name=='codex' and os.environ.get('ASSERT_STRICT_SCHEMA'):
+    wire=json.loads(pathlib.Path(sys.argv[sys.argv.index('--output-schema')+1]).read_text())
+    def strict(node):
+        if node.get('type')=='object':
+            assert node.get('additionalProperties') is False, 'wire object must be closed'
+            assert set(node.get('required',[]))==set(node.get('properties',{})), 'wire optional property rejected'
+            for child in node.get('properties',{}).values(): strict(child)
+        if isinstance(node.get('items'),dict): strict(node['items'])
+        for child in node.get('anyOf',[]): strict(child)
+    strict(wire)
 (root/(name+'-env.json')).write_text(json.dumps(dict(os.environ)))
 (root/'stdin.txt').write_text(sys.stdin.read())
 tmpdir=os.environ.get('TMPDIR')
@@ -85,6 +95,9 @@ if os.environ.get('RECORD_SIGNALS'):
     for name in ('SIGTERM','SIGINT','SIGHUP'): signal.signal(getattr(signal,name),record)
 (root/'ready').touch()
 if os.environ.get('IGNORE_TERM'): signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if name=='codex' and os.environ.get('GATE_COMMAND'):
+    runpy.run_path(os.environ['GATE_HELPER'])['emit'](command=os.environ['GATE_COMMAND'],
+        mode=os.environ.get('GATE_MODE','abort'), code=int(os.environ.get('GATE_CODE','124')))
 if os.environ.get('SLEEP'): time.sleep(float(os.environ['SLEEP']))
 if name=='codex' and 'CODEX_STREAM' in os.environ:
     print(os.environ['CODEX_STREAM'],end='')
@@ -112,6 +125,7 @@ else:
             if key.startswith(('BUREAU_RUNNER_','BUREAU_MODEL_','BUREAU_CODEX_MODEL_','BUREAU_STAGE_TIMEOUT')): self.env.pop(key)
         # The provider looks for the CLI's own records here, never in the real home.
         self.env.update(CLAUDE_CONFIG_DIR=str(self.root/'claude config'),CODEX_HOME=str(self.root/'codex home'))
+        self.env['GATE_HELPER']=str(ROOT/'tests/lib/codex_gate_events.py')
 
     def command(self,*extra):
         return [sys.executable,str(SCRIPT),'--stage','implement','--config',str(self.config),
@@ -327,6 +341,87 @@ if os.environ['FAULT_OPERATION']=='opt-out': p.e.atomic=checkpoint_atomic
         result=self.run_provider('--stage','qa','--schema',str(schema),FINAL=json.dumps(value),code=24)
         self.assertEqual(result.stdout,'')
         self.assertEqual(self.evidence()[1]['outcome'],'environment')
+        command='echo QA gate'
+        self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
+        linked={**plain,'blockers':[dict(kind='gate',command=command,reason='aborted without a prefix')]}
+        context=self.root/'qa-context/identity.json'
+        result=self.run_provider('--stage','qa','--schema',str(schema),'--gate-context',str(context),
+                                 FINAL=json.dumps(linked),GATE_COMMAND=command)
+        self.assertEqual(json.loads(result.stdout),linked)
+        identity=json.loads(context.read_text())
+        receipt=json.loads(Path(identity['receipt']).read_text())
+        self.assertEqual(receipt['stage'],'qa')
+        self.assertEqual(receipt['gate_attempts'][0]['normalized_exit'],124)
+
+    def test_gate_plan_uses_only_digests_and_rejects_foreign_receipt(self):
+        command='echo gate'
+        self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
+        value=self.sandbox_result('gate was killed')
+        value['notes']['needs_human'][0].update(kind='gate',command=command)
+        context=self.root/'context/identity.json'
+        self.run_provider('--schema',str(ROOT/'templates/scripts/bureau-implement.schema.json'),'--gate-context',str(context),
+                          FINAL=json.dumps(value),GATE_COMMAND=command)
+        identity=json.loads(context.read_text()); receipt=json.loads(Path(identity['receipt']).read_text())
+        valid=self.gate_action('plan',value,context=context)
+        self.assertTrue(valid['eligible'])
+        self.assertFalse(self.gate_action('plan',value,context=context,BUREAU_STAGE_ATTEMPT_ID=uuid.uuid4().hex)['eligible'])
+        self.assertFalse(self.gate_action('plan',value,context=context,BUREAU_RUN_ID=uuid.uuid4().hex)['eligible'])
+        self.assertFalse(self.gate_action('run',{**valid,'stage_attempt_id':uuid.uuid4().hex})['green'])
+        store=p.evidence_store(self.root)
+        # PR 3 retains no output copy or result prose. Removing provider
+        # originals must not disable digest-only gate reconciliation.
+        self.assertIsNone(receipt['structured_result'])
+        shutil.rmtree(receipt['provider_logs'])
+        self.assertTrue(self.gate_action('plan',value,context=context)['eligible'])
+        tampered=json.loads(json.dumps(value)); tampered['prose_notes']='changed result'
+        self.assertFalse(self.gate_action('plan',tampered,context=context)['eligible'])
+        context.write_text(json.dumps({**identity,'stage_attempt_id':uuid.uuid4().hex}))
+        self.assertFalse(self.gate_action('plan',value,context=context)['eligible'])
+
+    def test_gate_rerun_reservation_survives_incomplete_execution(self):
+        store=p.evidence_store(self.root); head=p.current_head(self.root)
+        run=uuid.uuid4().hex; store.begin_run(run,None,self.root,head)
+        owner=store.begin_attempt(run,None,'implement','implement',self.root,head)
+        command='echo gate'; gate_id=p.g.digest(command)
+        first,reservation=store.reserve_gate_rerun(run,owner,head,command,gate_id,[])
+        second,same=store.reserve_gate_rerun(run,owner,head,command,gate_id,[])
+        self.assertTrue(first); self.assertFalse(second)
+        self.assertEqual(reservation,same); self.assertIsNone(same['result'])
+
+    def test_optional_gate_fields_use_strict_codex_wire_schema(self):
+        cases=[('implement',self.sandbox_result()),('qa',dict(status='NEEDS_HUMAN',tests_added=0,tests_failing=0,
+                                                            coverage_notes='SANDBOX_GATE: denied bind'))]
+        for stage,canonical in cases:
+            schema=ROOT/('templates/scripts/bureau-'+stage+'.schema.json')
+            wire=json.loads(json.dumps(canonical))
+            if stage=='implement': wire['notes']['needs_human'][0].update(kind=None,command=None)
+            else: wire['blockers']=None
+            with self.subTest(stage=stage):
+                result=self.run_provider('--stage',stage,'--schema',str(schema),FINAL=json.dumps(wire),ASSERT_STRICT_SCHEMA='1')
+                self.assertEqual(json.loads(result.stdout),canonical)
+                argv=json.loads((self.root/'argv.json').read_text())
+                sent=Path(argv[argv.index('--output-schema')+1])
+                self.assertNotEqual(sent,schema,'canonical optional schema was sent unchanged')
+                self.assertTrue(sent.is_file())
+                _,metadata=self.evidence(); receipt=json.loads(Path(metadata['receipt']).read_text())
+                self.assertIsNone(receipt['structured_result'])
+                self.assertEqual(receipt['result_sha256'],p.e.digest(canonical))
+                self.assertEqual(receipt['schema_sha256'],p.hashlib.sha256(schema.read_bytes()).hexdigest())
+                recovered=self.run_wrapped_provider("""forward=p.run
+def lose_forward(*args,**kwargs):
+    code,text,metadata=forward(*args,**kwargs)
+    return code,'lost forwarding',metadata
+p.run=lose_forward
+""",'--stage',stage,'--schema',str(schema),FINAL=json.dumps(wire),ASSERT_STRICT_SCHEMA='1')
+                self.assertEqual(json.loads(recovered.stdout),canonical)
+                self.assertEqual(self.evidence()[1]['structured_source'],'receipt')
+        schema=ROOT/'templates/scripts/bureau-qa.schema.json'
+        # The strict-wire projection is necessary, not merely a local validator
+        # accepting the fixtures. Removing it reproduces the native rejection.
+        self.run_wrapped_provider('p.g.codex_schema=lambda value:value\n','--stage','qa','--schema',str(schema),
+                                  code=22,FINAL=json.dumps(cases[1][1]),ASSERT_STRICT_SCHEMA='1')
+        for bad in ({**cases[1][1],'unknown':None},{**cases[1][1],'status':None}):
+            self.run_provider('--stage','qa','--schema',str(schema),code=22,FINAL=json.dumps(bad),ASSERT_STRICT_SCHEMA='1')
 
     def test_codex_sandbox_result_reaches_shell_but_unprefixed_blocker_exits_24(self):
         self.env.pop('TMPDIR',None)
@@ -347,6 +442,203 @@ if os.environ['FAULT_OPERATION']=='opt-out': p.e.atomic=checkpoint_atomic
         result=self.run_provider('--schema',str(schema),FINAL=json.dumps(value),code=24)
         self.assertEqual(result.stdout,'')
         self.assertIsNone(json.loads((self.root/'tmpdir.json').read_text())['value'])
+        # Same unprefixed permission blocker, now linked to actual execution
+        # events. Evidence, not the denied-operation wording, lets it reach shell.
+        command="printf 'run\\n' >> outside-runs; echo outside-green"
+        self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
+        plain=self.sandbox_result('Operation not permitted; gate aborted')
+        plain['notes']['needs_human'][0].update(kind='gate',command=command)
+        context=self.root/'context/identity.json'
+        result=self.run_provider('--schema',str(schema),'--gate-context',str(context),
+                                 FINAL=json.dumps(plain),GATE_COMMAND=command)
+        self.assertEqual(json.loads(result.stdout),plain)
+        plan=self.gate_action('plan',plain,context=context)
+        self.assertTrue(plan['eligible'],plan)
+        first=self.gate_action('run',plan)
+        second=self.gate_action('run',plan)
+        self.assertTrue(first['green'],first)
+        self.assertEqual(first,second)
+        self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['run'])
+        receipt=json.loads(Path(json.loads(context.read_text())['receipt']).read_text())
+        attempt=receipt['gate_attempts'][0]
+        self.assertEqual(attempt['abort'],'timeout')
+        self.assertEqual(attempt['normalized_exit'],124)
+        self.assertEqual(attempt['head'],attempt['end_head'])
+        self.assertTrue(p.evidence_store(self.root).valid_execution(attempt))
+        subprocess.run(['git','-C',str(self.root),'-c','user.name=Test','-c','user.email=test@example.invalid',
+                        'commit','-q','--allow-empty','-m','new HEAD'],check=True)
+        self.assertFalse(self.gate_action('plan',plain,context=context)['eligible'])
+        self.assertFalse(self.gate_action('run',plan)['green'])
+        self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['run'])
+
+    def gate_action(self,action,value,context=None,expected_code=0,**env):
+        extra=['--gate-action',action]
+        if context: extra+=['--gate-context',str(context)]
+        proc=subprocess.run(self.command(*extra),input=json.dumps(value),capture_output=True,text=True,
+                            env={**self.env,**env},timeout=12)
+        self.assertEqual(proc.returncode,expected_code,proc.stdout+proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_machine_gate_outside_red_unknown_missing_and_mixed_blockers(self):
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'
+        command='echo outside-red; exit 1'
+        self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
+        value=self.sandbox_result('gate red')
+        value['notes']['needs_human'][0].update(kind='gate',command=command)
+        context=self.root/'context/identity.json'
+        for mode in ('red','unknown','missing_cwd'):
+            with self.subTest(mode=mode):
+                self.run_provider('--schema',str(schema),'--gate-context',str(context),FINAL=json.dumps(value),
+                                  GATE_COMMAND=command,GATE_MODE=mode,GATE_CODE='1')
+                plan=self.gate_action('plan',value,context=context)
+                self.assertEqual(plan['eligible'],mode=='red',plan)
+                if plan['eligible']:
+                    outside=self.gate_action('run',plan)
+                    self.assertFalse(outside['green'])
+                    self.assertIn('outside-red',Path(outside['logs'][0]).read_text())
+        for kind in ('product','security','human'):
+            mixed=json.loads(json.dumps(value))
+            mixed['notes']['needs_human'].append(dict(task_id='T004',reason='independent hold',kind=kind,command=''))
+            mixed['tasks_needs_human']=2
+            self.run_provider('--schema',str(schema),'--gate-context',str(context),FINAL=json.dumps(mixed),GATE_COMMAND=command)
+            self.assertFalse(self.gate_action('plan',mixed,context=context)['eligible'],kind)
+
+    def test_machine_gate_timeout_is_bounded_and_reservation_cannot_retry(self):
+        command='echo started >> outside-runs; sleep 2'
+        self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
+        value=self.sandbox_result('gate was killed')
+        value['notes']['needs_human'][0].update(kind='gate',command=command)
+        context=self.root/'context/identity.json'
+        self.run_provider('--schema',str(ROOT/'templates/scripts/bureau-implement.schema.json'),'--gate-context',str(context),
+                          FINAL=json.dumps(value),GATE_COMMAND=command,GATE_CODE='137')
+        plan=self.gate_action('plan',value,context=context)
+        first=self.gate_action('run',plan,BUREAU_STAGE_TIMEOUT='0.15')
+        self.assertFalse(first['green'])
+        self.assertEqual(first,self.gate_action('run',plan))
+        self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['started'])
+
+    def test_machine_gate_cancellation_preserves_130_and_the_log(self):
+        command='echo started > outside-ready; sleep 20'
+        self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
+        value=self.sandbox_result('gate aborted')
+        value['notes']['needs_human'][0].update(kind='gate',command=command)
+        context=self.root/'context/identity.json'
+        self.run_provider('--schema',str(ROOT/'templates/scripts/bureau-implement.schema.json'),'--gate-context',str(context),
+                          FINAL=json.dumps(value),GATE_COMMAND=command)
+        plan=self.gate_action('plan',value,context=context)
+        proc=subprocess.Popen(self.command('--gate-action','run'),stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE,text=True,env=self.env)
+        try:
+            proc.stdin.write(json.dumps(plan)); proc.stdin.close(); proc.stdin=None
+            deadline=time.monotonic()+5
+            while not (self.root/'outside-ready').exists() and time.monotonic()<deadline: time.sleep(.02)
+            self.assertTrue((self.root/'outside-ready').exists(),'outside command never started')
+            proc.send_signal(signal.SIGTERM)
+            stdout,stderr=proc.communicate(timeout=5)
+            self.assertEqual(proc.returncode,130,stdout+stderr)
+            self.assertFalse(json.loads(stdout)['green'])
+            manifest=json.loads(p.evidence_store(self.root).manifest_path(plan['run_id']).read_text())
+            record=manifest['attempts'][0]['gate_reruns'][0]['result']
+            self.assertEqual(record['normalized_exit'],130)
+            self.assertEqual(record['abort'],'kill')
+            self.assertTrue(p.evidence_store(self.root).valid_execution(record))
+        finally:
+            if proc.poll() is None: proc.kill(); proc.communicate()
+
+    def prepared_gate(self, command='echo gate', prefix=False, **events):
+        self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
+        value=self.sandbox_result('SANDBOX_GATE: failed configured gate' if prefix else 'gate aborted')
+        if not prefix: value['notes']['needs_human'][0].update(kind='gate',command=command)
+        context=self.root/'gate-context/identity.json'
+        self.run_provider('--schema',str(ROOT/'templates/scripts/bureau-implement.schema.json'),
+                          '--gate-context',str(context),FINAL=json.dumps(value),GATE_COMMAND=command,**events)
+        return value,context
+
+    def test_gate_evidence_store_contains_only_metadata_and_digests(self):
+        command="printf 'OUTPUT_SECRET_SENTINEL\\n'; : COMMAND_SECRET_SENTINEL"
+        value,context=self.prepared_gate(command,GATE_OUTPUT='TOOL_OUTPUT_SECRET_SENTINEL')
+        # Force free text through the original result and receipt digest too.
+        value['prose_notes']='TICKET_TEXT_SECRET_SENTINEL'
+        self.run_provider('--schema',str(ROOT/'templates/scripts/bureau-implement.schema.json'),
+                          '--gate-context',str(context),FINAL=json.dumps(value),GATE_COMMAND=command,
+                          GATE_OUTPUT='TOOL_OUTPUT_SECRET_SENTINEL')
+        plan=self.gate_action('plan',value,context=context)
+        outside=self.gate_action('run',plan)
+        self.assertTrue(outside['green'],outside)
+        self.assertIn('OUTPUT_SECRET_SENTINEL',Path(outside['logs'][0]).read_text())
+        store=p.evidence_store(self.root)
+        for file in store.root.rglob('*'):
+            if not file.is_file(): continue
+            raw=file.read_bytes()
+            for sentinel in (b'OUTPUT_SECRET_SENTINEL',b'COMMAND_SECRET_SENTINEL',b'TICKET_TEXT_SECRET_SENTINEL',
+                             b'TOOL_OUTPUT_SECRET_SENTINEL',command.encode()):
+                self.assertNotIn(sentinel,raw,'gate output leaked into evidence: '+str(file))
+        receipt=json.loads(Path(json.loads(context.read_text())['receipt']).read_text())
+        self.assertIsNone(receipt['structured_result'])
+        self.assertEqual(receipt['result_sha256'],p.e.digest(value))
+        self.assertEqual(receipt['gate_attempts'][0]['sha256'],p.g.digest('TOOL_OUTPUT_SECRET_SENTINEL'))
+        manifest=json.loads(store.manifest_path(plan['run_id']).read_text())
+        rerun=manifest['attempts'][0]['gate_reruns'][0]
+        self.assertEqual(rerun['command_sha256'],p.g.digest(command))
+        self.assertEqual(rerun['result']['stage_log'],outside['logs'][0])
+        self.assertNotIn(str(store.root),outside['logs'][0])
+
+    def test_shell_wrappers_and_execution_bound_cwd_fail_closed(self):
+        agent=self.root/'agent/bash'; agent.parent.mkdir(); agent.write_text('#!/bin/sh\nexit 1\n');agent.chmod(0o755)
+        link=agent.with_name('symlink-bash'); link.symlink_to('/bin/bash')
+        for mode in ('agent_bash','agent_symlink_bash','relative_bash','env_agent_bash','borrowed_cwd','duplicate_begin','duplicate_end',
+                     'reordered','ambiguous','ambiguous_duplicate','ambiguous_cwd','wrong_end','missing_cwd','env_bash','red'):
+            with self.subTest(mode=mode):
+                value,context=self.prepared_gate(GATE_MODE=mode)
+                self.assertEqual(self.gate_action('plan',value,context=context)['eligible'],mode in ('env_bash','red'))
+        for shell in ('/bin/bash','/bin/sh'):
+            for option in ('-c','-lc'):
+                self.assertEqual(p.g.command_text([shell,option,'echo gate']),'echo gate')
+        for argv in ([str(agent),'-c','echo gate'],[str(link),'-c','echo gate'],['bash','-c','echo gate'],['/bin/bash','-c','echo gate','extra'],
+                     ['/bin/bash','-x','-c','echo gate'],['/usr/bin/env','bash','-c','echo gate'],
+                     ['/usr/bin/env','PATH=.:/bin','bash','-c','echo gate']):
+            self.assertIsNone(p.g.command_text(argv))
+
+    def test_prefix_requires_failed_execution_and_current_head(self):
+        value,context=self.prepared_gate(prefix=True)
+        self.assertTrue(self.gate_action('plan',value,context=context)['eligible'])
+        self.assertFalse(self.gate_action('plan',value)['eligible'])
+        for events in ({'GATE_MODE':'missing_cwd'},{'GATE_CODE':'0','GATE_MODE':'red'},{'GATE_MODE':'stale'}):
+            with self.subTest(events=events):
+                value,context=self.prepared_gate(prefix=True,**events)
+                self.assertFalse(self.gate_action('plan',value,context=context)['eligible'])
+        # A real prefix receipt with zero command executions is insufficient.
+        self.run_provider('--schema',str(ROOT/'templates/scripts/bureau-implement.schema.json'),
+                          '--gate-context',str(context),FINAL=json.dumps(value))
+        self.assertFalse(self.gate_action('plan',value,context=context)['eligible'])
+
+    def test_cancelled_outside_gate_survives_evidence_failures(self):
+        for fault in ('write','read','validation'):
+            with self.subTest(fault=fault):
+                value,context=self.prepared_gate('echo cancelled >> outside-cancel-count; exit 130')
+                plan=self.gate_action('plan',value,context=context)
+                source='''import importlib.util, os, pathlib, sys
+spec=importlib.util.spec_from_file_location('provider',sys.argv[1])
+p=importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
+del sys.argv[1]
+original=p.outside_gate
+def after_execution(*args):
+    result=original(*args)
+    def fail(*args,**kwargs): raise OSError('injected evidence failure')
+    if os.environ['FAULT']=='write': p.e.atomic=fail
+    elif os.environ['FAULT']=='read': pathlib.Path.read_bytes=fail
+    else: p.e.Store.valid_execution=lambda *args: False
+    return result
+p.outside_gate=after_execution
+sys.exit(p.main())
+'''
+                proc=subprocess.run([sys.executable,'-c',source,str(SCRIPT),*self.command('--gate-action','run')[2:]],
+                                    input=json.dumps(plan),text=True,capture_output=True,timeout=12,env={**self.env,'FAULT':fault})
+                self.assertEqual(proc.returncode,130,proc.stdout+proc.stderr)
+                self.assertFalse(json.loads(proc.stdout)['green'])
+                self.assertTrue(json.loads(proc.stdout)['logs'])
+                self.assertFalse(self.gate_action('run',plan,expected_code=130 if fault=='validation' else 0)['green'])
+        self.assertEqual((self.root/'outside-cancel-count').read_text().splitlines(),['cancelled']*3)
 
     def test_codex_tmpdir_is_under_tmp_even_when_temp_and_tmp_point_into_repo(self):
         self.env.pop('TMPDIR',None)
@@ -951,6 +1243,7 @@ p.Path.open=refuse_transcript_read
         self.assertEqual(source.count(changed),1,'the control no longer matches the adapter')
         control=self.root/'control'/'bureau-provider.py'; control.parent.mkdir(exist_ok=True)
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), control.parent / 'bureau-evidence.py')
+        shutil.copy(SCRIPT.with_name('bureau-gates.py'), control.parent / 'bureau-gates.py')
         control.write_text(source.replace(changed,'        return env\n'))
         return control
 

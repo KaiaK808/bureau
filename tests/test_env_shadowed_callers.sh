@@ -36,7 +36,7 @@ while True:
     if found <= callers:
         break
     callers |= found
-assert functions['run_stage_for'][2] == {'stage', 'temp', 'rc', 'system', 'schema', 'args'}
+assert functions['run_stage_for'][2] == {'stage', 'temp', 'rc', 'system', 'schema', 'gate_context', 'args'}
 failures, count = [], 0
 with tempfile.TemporaryDirectory(prefix='bureau-test.shadowed-callers.') as directory:
     temp = Path(directory)
@@ -126,7 +126,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.shadowed-callers.') as dire
         if mode == 'default' and 'ORDINARY=line one\nline two' not in result.stdout:
             failures.append('multiline innocent value changed')
 
-print(f'{count} caller-local/filter combinations plus 18 actual run_stage_for, ordinary rc and multiline probes; {len(failures)} failed')
+print(f'{count} caller-local/filter combinations plus 21 actual run_stage_for, ordinary rc and multiline probes; {len(failures)} failed')
 for failure in failures:
     print('FAIL ' + failure)
 sys.exit(bool(failures))

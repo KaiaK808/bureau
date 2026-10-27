@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ae1ec85bfc93ef610d4a5bf4bd665fc77c36b19788bc70f3eedd94d9243ca980">
+<meta name="bureau-source-sha256" content="bfe8a6b1ea0f924ad705fa7e163bdb9dbea25297ee32d3052c4a965875958ec5">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -288,29 +288,56 @@ without one shows the inherited directory as
 <code>configured: false</code>, not checked.</p>
 <h2 id="codex-implementation-sandbox-gate">Codex implementation sandbox
 gate</h2>
-<p>A Codex implement turn normally uses <code>workspace-write</code>,
-where socket bind/listen, network access or the per-user temporary
-directory can be denied. Finish the other work and report
-<code>NEEDS_HUMAN</code> with one <code>notes.needs_human</code> object
-per affected task. Its string <code>reason</code> must begin with
-<code>SANDBOX_GATE:</code> and name the failing tests and denied
-operation. Never change, skip or deselect tests to bypass the sandbox;
-code failures and other blockers must not use this prefix.</p>
-<p>Only a non-empty array with every reason prefixed qualifies. The
-provider passes that Codex result to the shell even when it contains
-“Operation not permitted”. The shell accepts one JSON object or a cost
-envelope whose <code>result</code> string holds one object; fenced JSON,
-trailing garbage, multiple values and malformed or mixed reasons do not
-qualify. With <code>repo.test_command</code> configured and commits
-beyond <code>origin/main</code>, the stage promotes to COMPLETE before
-the post-implement hook and squash-range check. If both allow
-completion, it runs the tests once after the final push, outside the
-Codex sandbox via
-<code>bureau_untrusted_env bash --noprofile --norc -c</code>, without
-Bureau secrets. Green hands off to QA or Build Review; red or an emptied
-command restores NEEDS_HUMAN. The summary comment records the decision.
-Hook failures still halt with exit 14; other intervening halts and
-Claude behaviour stay as before.</p>
+<p>Codex may abort or fail a configured gate inside its sandbox even
+when it passes outside. For these holds, report <code>NEEDS_HUMAN</code>
+with an exhaustive <code>notes.needs_human</code> array: each gate entry
+has <code>kind: gate</code>, <code>command</code> equal to the exact
+<code>repo.test_command</code>, and a free-text <code>reason</code>.
+Include independent product, security and human-decision holds with
+their corresponding kind and empty command. Never change/skip tests or
+disguise other holds as gates. Existing <code>SANDBOX_GATE:</code>
+reason syntax remains supported, with the same machine-proof
+requirement.</p>
+<p>The adapter observes live Codex command execution items and
+repository HEADs. Repository-root cwd comes from exactly one matching,
+ordered rollout begin/end pair sharing a call ID and matching
+command/exit/output. It recognizes only the exact configured command or
+an absolute system <code>/bin/bash</code> or <code>/bin/sh</code> in the
+exact <code>-c</code>/<code>-lc</code> form. <code>env</code> wrappers
+require absolute <code>/usr/bin/env</code>, explicit system-only PATH
+and <code>bash</code>; relative/agent-owned shells, arbitrary flags,
+missing/duplicate/reordered/ambiguous events and agent tool requests are
+not execution proof.</p>
+<p>The planner requires a matching metadata-only completion receipt,
+canonical result digest, configured-command digest and failed/aborted
+execution at HEAD A, with current HEAD still A when unpublished or
+exactly B after an explicit executor publication recorded under the
+evidence lock for the same provider/stage attempt (allowlisted IDs,
+HEADs, sole-parent verification, <code>Bureau-Generated: true</code>
+trailer flag and timestamp), reverified for exactly one hop with the
+outside rerun/reservation at B, including QA's final run. The prefix
+alone grants no eligibility. It reserves at most one outside rerun per
+gate/HEAD/stage attempt, including incomplete runs, then revalidates
+immediately before running system Bash with pipefail, secret filtering
+and the stage timeout. Green clears only those gate holds; unknown
+commands, stale HEAD, missing evidence and product/security/human holds
+stay blocked, even with contradictory COMPLETE/GREEN. With commits
+beyond origin/main, implement still runs the post-implement hook and
+squash-range check before this gate. Red/abort restores NEEDS_HUMAN and
+includes a normal stage-log pointer; hook failure remains 14. Merge
+authorization is unchanged.</p>
+<p>The shared evidence store contains only allowlisted execution
+identities/measurements and digests: no raw command, output,
+ticket/result prose or copied log. Outside logs live under
+<code>logs/outside-gates/</code> and are outside evidence retention.
+Gate reconciliation uses the result and command digests plus gate IDs,
+independently of original provider log availability. Completion-output
+recovery still needs its original result as described above. Optional
+evidence failures disable gate recovery without changing provider
+outcomes. Cancellation 130 is captured before later evidence I/O and
+wins over write/read/validation failures. See the <a
+href="stage-protocol.html#sandbox-only-gate-recovery">exact reconciliation
+contract</a>.</p>
 <p>A Codex child without <code>TMPDIR</code> gets a private
 <code>bureau-codex-*</code> directory under resolved <code>/tmp</code>,
 outside the repository regardless of <code>TEMP</code> or
@@ -320,39 +347,36 @@ provider's own environment is unchanged. Removal failures are reported
 without failing the run. An existing <code>TMPDIR</code> passes through
 unchanged; Claude gets no added directory.</p>
 <h2 id="codex-qa-sandbox-gate">Codex QA sandbox gate</h2>
-<p>When the QA runner resolves to Codex (including
-<code>BUREAU_RUNNER_QA=codex</code>), its prompt notes that socket
-bind/listen, network access and the per-user temporary directory can be
-denied inside the sandbox. The initial test output in the prompt comes
-from the shell outside it. Never change, skip or deselect a test to
-bypass the sandbox. If the sandbox alone prevents confirmation of the
-suite, report status <code>NEEDS_HUMAN</code> with string
-<code>coverage_notes</code> beginning with <code>SANDBOX_GATE:</code>
-and naming the tests and denied operation. A correctness bug or a
-harness broken outside the sandbox stays NEEDS_HUMAN without the prefix.
-QA uses its existing schema; there is no needs-human array.</p>
-<p>The provider passes a qualifying Codex QA result to the shell even
-when it contains “Operation not permitted”, instead of ending with 24.
-The shell accepts exactly one JSON object or a cost envelope whose
-<code>result</code> string holds exactly one object with status
-<code>NEEDS_HUMAN</code> and the prefixed notes; fenced JSON, trailing
-garbage, multiple values, missing or non-string notes and prefixes
-elsewhere in the notes do not qualify. After publication, the existing
-Phase 3 test run outside the sandbox via
-<code>bureau_untrusted_env bash --noprofile --norc -o pipefail -c</code>
-decides GREEN or RED: green moves to Build Review, red returns to Build,
-neither adds <code>needs-human</code>. No extra test run is added. The
-shell echoes the decision and puts it first in the summary comment; a
-later squash-range failure still sets NEEDS_HUMAN and puts its report
-first. Unprefixed blockers retain their existing handling even with a
-passing suite. Claude prompts and behaviour, other stages and exit codes
-stay unchanged.</p>
-<p>Resync <code>qa-pipeline.sh</code>, <code>bureau-config.sh</code> and
-<code>bureau-provider.py</code> together and restart queue loops and
-supervisors. Keep <code>repo.test_command</code> set to the full project
-gate: the prefix is the agent's diagnosis, and the outside run covers
-only that command's tests. Full-stage harness tests and mutation
-controls run in CI; live Codex QA acceptance remains pending.</p></main>
+<p>QA uses the same proof, planner, reservation and runner. Report an
+exhaustive <code>blockers</code> array with <code>kind</code>, exact
+test <code>command</code> and free-text <code>reason</code>;
+product/security/human holds must also be included. The existing
+NEEDS_HUMAN <code>coverage_notes</code> prefix
+<code>SANDBOX_GATE:</code> remains one input, subject to the same
+failed-execution/current-HEAD proof. Typed blockers take precedence.
+Optional canonical fields stay optional for Claude and old results; the
+Codex wire projection makes them required/nullable and removes only
+declared optional nulls before canonical validation. Receipt recovery
+applies that same normalization to the original Codex file before
+comparing its canonical result digest.</p>
+<p>The configured command or existing deterministic QA fallback is
+shared by the provider observer and QA shell. The initial shell run and
+its flake retry remain unchanged. After publication, an eligible hold
+uses Phase 3 as its one outside rerun; no extra final run is added. QA
+reads the outside log from the normal stage log directory, never from
+evidence. Green hands off to Build Review; red returns to Build, with
+output/pointer in the normal QA log/comment. An independent hold remains
+NEEDS_HUMAN even when the suite passes; a later squash-range failure
+also retains its hold. A Codex RED with missing/unknown/stale proof
+cannot be promoted merely because a normal final suite passes. Claude
+behavior remains unchanged.</p>
+<p>Resync provider, evidence, gates, config, implement/QA and schemas
+together, reconcile installation drift and restart drivers. A prefix
+without failed-execution proof now stays blocked. No configuration
+migration or exit-code change. These are local fake-provider/real-Git
+tests; representative live CLI/event and adopting-repository
+qualification remains pending. The store is not tamper-proof and neither
+an outside green nor a gate receipt authorizes a merge.</p></main>
 </div>
 </body>
 </html>

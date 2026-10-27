@@ -9,7 +9,7 @@ import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPTS=ROOT/'templates/scripts'
-names=('bureau-provider.py','bureau-runtime.py','bureau-evidence.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
+names=('bureau-provider.py','bureau-runtime.py','bureau-evidence.py','bureau-gates.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
        'merge-pipeline.sh','bureau-config.sh','bureau-env.sh','code-review-pipeline.sh')
 before={name:hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
 
@@ -76,6 +76,15 @@ with tempfile.TemporaryDirectory(prefix='bureau evidence controls ') as scratch:
              env,'PRIVACY_SENTINEL')
     print('PASS fix 1 control: retaining result prose fails the whole-store byte scan')
     evidence.write_text(original_evidence)
+
+    gate_evidence=root/'bureau-evidence.py'; gate_original=gate_evidence.read_text()
+    anchor="        value.update(start_head=head(receipt.get('start_head')), end_head=head(receipt.get('end_head')))"
+    assert gate_original.count(anchor)==1
+    gate_evidence.write_text(gate_original.replace(anchor,anchor+"\n        value['raw_gate_output'] = (Path(receipt['provider_logs'])/'stdout.log').read_text()"))
+    rejected('provider_adapter_test.py',['ProviderTests.test_gate_evidence_store_contains_only_metadata_and_digests'],
+             {'BUREAU_TEST_PROVIDER_SCRIPT':str(provider)},'gate output leaked into evidence')
+    print('PASS PR6 privacy control: storing raw gate output fails the whole-store scan')
+    gate_evidence.write_text(gate_original)
 
     runtime=root/'bureau-runtime.py'; original_runtime=runtime.read_text()
     anchor='        begun = e.observe(evidence.begin_run, run, args.issue, repo, evidence_head(repo))'
@@ -245,4 +254,4 @@ with tempfile.TemporaryDirectory(prefix='bureau evidence controls ') as scratch:
     evidence.write_text(original_evidence)
 
 assert before=={name:hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
-print('Results: 22 negative controls detected; source hashes unchanged')
+print('Results: 23 negative controls detected; source hashes unchanged')

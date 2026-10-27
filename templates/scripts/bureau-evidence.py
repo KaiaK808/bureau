@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -153,11 +154,89 @@ def times(value, names):
             raise ValueError('invalid evidence time')
 
 
+EXECUTION_FIELDS = ('attempt_id gate_id command_id command_sha256 head end_head normalized_exit source '
+                    'environment abort call_id_sha256 duration_seconds bytes sha256 stage_log')
+
+
+def execution_metadata(record):
+    """An explicit allowlist; never copy tool payloads into receipts/reservations."""
+    value = {key: record.get(key) for key in EXECUTION_FIELDS.split()}
+    execution_shape(value)
+    return value
+
+
+def execution_shape(value):
+    shape(value, EXECUTION_FIELDS)
+    identifier(value['attempt_id'])
+    if value['command_id'] not in COMMAND_IDS: raise ValueError('invalid execution command role')
+    for key in ('gate_id', 'command_sha256', 'sha256'):
+        if not re.fullmatch(r'[a-f0-9]{64}', value[key] or ''): raise ValueError('invalid execution digest')
+    if value['gate_id'] != value['command_sha256']: raise ValueError('invalid gate identity')
+    if not head(value['head']) or not head(value['end_head']): raise ValueError('invalid execution HEAD')
+    if type(value['normalized_exit']) is not int or type(value['bytes']) is not int or value['bytes'] < 0: raise ValueError('invalid execution measurement')
+    if value['abort'] not in (None, 'kill', 'timeout'): raise ValueError('invalid execution abort')
+    duration = value['duration_seconds']
+    if type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0: raise ValueError('invalid execution duration')
+    if (value['source'], value['environment']) == ('codex.command_execution', 'sandbox'):
+        if not re.fullmatch(r'[a-f0-9]{64}', value['call_id_sha256'] or '') or value['stage_log'] is not None:
+            raise ValueError('invalid sandbox provenance')
+    elif (value['source'], value['environment']) == ('bureau.shell', 'outside'):
+        if value['call_id_sha256'] is not None or not isinstance(value['stage_log'], str) or not Path(value['stage_log']).is_absolute():
+            raise ValueError('invalid stage log pointer')
+    else: raise ValueError('invalid execution source')
+
+
+def rerun_shape(value):
+    shape(value, 'attempt_id head command_sha256 gate_id gate_attempt_ids started_at result')
+    identifier(value['attempt_id'])
+    if not head(value['head']) or value['gate_id'] != value['command_sha256'] or not re.fullmatch(r'[a-f0-9]{64}', value['gate_id'] or ''):
+        raise ValueError('invalid rerun identity')
+    if not isinstance(value['gate_attempt_ids'], list): raise ValueError('invalid rerun sources')
+    for source in value['gate_attempt_ids']: identifier(source)
+    times(value, 'started_at')
+    if value['result'] is not None:
+        execution_shape(value['result'])
+        if (value['result']['source'] != 'bureau.shell' or value['result']['environment'] != 'outside'
+                or any(value['result'][k] != value[k] for k in ('attempt_id', 'head', 'gate_id', 'command_sha256'))):
+            raise ValueError('mismatched rerun completion')
+
+
+def publication_shape(value):
+    shape(value, 'provider_attempt_id stage_attempt_id pre_head head parent_head bureau_generated recorded_at')
+    for key in ('provider_attempt_id', 'stage_attempt_id'): identifier(value[key])
+    if (not head(value['pre_head']) or not head(value['head']) or value['pre_head'] == value['head']
+            or value['parent_head'] != value['pre_head'] or value['bureau_generated'] is not True):
+        raise ValueError('invalid executor publication')
+    times(value, 'recorded_at')
+    if value['recorded_at'] is None: raise ValueError('missing publication time')
+
+
+def verify_publication(repo, before, after):
+    """Read Git metadata transiently; never retain the commit message."""
+    if not head(before) or not head(after) or before == after: return False
+    def git(*args):
+        return subprocess.check_output(['git', '--no-replace-objects', '-C', str(repo), *args],
+                                       text=True, stderr=subprocess.DEVNULL).strip()
+    try:
+        return (git('rev-parse', '--verify', 'HEAD') == after
+                and git('rev-list', '--parents', '-n', '1', after).split() == [after, before]
+                and git('log', '-1', '--format=%(trailers:key=Bureau-Generated,valueonly)', after) == 'true')
+    except (OSError, ValueError, subprocess.SubprocessError): return False
+
+
 def manifest_shape(value):
     shape(value, 'schema_version record_type run_id issue workspace started_at ended_at start_head final_head normalized_exit pr attempts')
     if not isinstance(value['attempts'], list): raise ValueError('invalid attempts')
     for attempt in value['attempts']:
-        shape(attempt, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
+        if 'gate_reruns' in attempt:
+            if not isinstance(attempt['gate_reruns'], list): raise ValueError('invalid gate reservations')
+            for rerun in attempt['gate_reruns']: rerun_shape(rerun)
+        if 'publications' in attempt:
+            if not isinstance(attempt['publications'], list): raise ValueError('invalid publications')
+            for publication in attempt['publications']:
+                publication_shape(publication)
+                if publication['stage_attempt_id'] != attempt['attempt_id']: raise ValueError('foreign publication')
+        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
         identifier(attempt['attempt_id'])
         if attempt['parent_attempt_id'] is not None: identifier(attempt['parent_attempt_id'])
         times(attempt, 'started_at ended_at')
@@ -418,6 +497,8 @@ class Store:
             if value[key] is not None and (not isinstance(value[key], str) or not Path(value[key]).is_absolute()):
                 raise ValueError('receipt needs an absolute provider pointer')
         value.update(start_head=head(receipt.get('start_head')), end_head=head(receipt.get('end_head')))
+        attempts = observe(lambda: [execution_metadata(a) for a in receipt.get('gate_attempts', [])])
+        if attempts: value['gate_attempts'] = attempts
         with self.guard():
             path = self.receipt_path(value['run_id'], value['provider_attempt_id'])
             self._write(path, value)
@@ -466,6 +547,100 @@ class Store:
             if pr is not None: attempt['pr'] = dict(number=pr_number(pr)); value['pr'] = attempt['pr']
             self._save_manifest(value)
             return record
+
+    def valid_execution(self, record):
+        try:
+            execution_shape(record)
+            return True
+        except (ValueError, KeyError, TypeError): return False
+
+    def record_publication(self, identity, stage, repo, before, after):
+        # Only the executor calls this after its own successful git commit.
+        # Verification and metadata publication share the evidence lock.
+        with self.guard():
+            receipt = read(self.receipt_path(identity['run_id'], identity['provider_attempt_id']), {})
+            keys = ('run_id', 'provider_attempt_id', 'stage_attempt_id', 'issue', 'stage', 'phase', 'schema_sha256')
+            if (stage not in ('implement', 'qa') or receipt.get('provider') != 'codex'
+                    or receipt.get('schema_version') != VERSION or receipt.get('record_type') != 'receipt'
+                    or any(receipt.get(k) != identity.get(k) for k in keys) or receipt.get('stage') != stage
+                    or receipt.get('start_head') != before or receipt.get('end_head') != before
+                    or not verify_publication(repo, before, after)):
+                raise ValueError('unverified executor publication')
+            value = self._manifest(identity['run_id'])
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == identity['stage_attempt_id'])
+            if (value['issue'] != identity['issue'] or attempt['stage'] != stage
+                    or Path(attempt['workspace']).resolve() != Path(repo).resolve()):
+                raise ValueError('publication belongs to another stage')
+            record = dict(provider_attempt_id=identity['provider_attempt_id'], stage_attempt_id=identity['stage_attempt_id'],
+                          pre_head=before, head=after, parent_head=before, bureau_generated=True, recorded_at=self.clock())
+            publication_shape(record)
+            publications = attempt.setdefault('publications', [])
+            if any(p['provider_attempt_id'] == identity['provider_attempt_id'] for p in publications):
+                raise ValueError('provider attempt already published')
+            publications.append(record); self._save_manifest(value)
+            return record
+
+    def _publication_matches(self, identity, stage, repo, before, after, receipt):
+        if repo is None: return False
+        with self.guard():
+            value = self._manifest(identity['run_id'])
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == identity['stage_attempt_id'])
+            if (value['issue'] != identity['issue'] or attempt['stage'] != stage
+                    or Path(attempt['workspace']).resolve() != Path(repo).resolve()): return False
+            matches = [p for p in attempt.get('publications', [])
+                       if p['provider_attempt_id'] == identity['provider_attempt_id']]
+            return (len(matches) == 1 and matches[0]['stage_attempt_id'] == identity['stage_attempt_id']
+                    and matches[0]['pre_head'] == before and matches[0]['head'] == after
+                    and type(receipt.get('ended_at')) in (int, float)
+                    and receipt['ended_at'] <= matches[0]['recorded_at'] <= self.clock()
+                    and verify_publication(repo, before, after))
+
+    def match_gate_receipt(self, identity, stage, checked_head, result, repo=None):
+        # Reconcile digests/identities, never retained logs or result prose.
+        value = read(self.receipt_path(identity['run_id'], identity['provider_attempt_id']), {})
+        keys = ('run_id', 'provider_attempt_id', 'stage_attempt_id', 'issue', 'stage', 'phase', 'schema_sha256')
+        if (value.get('schema_version') != VERSION or value.get('record_type') != 'receipt' or value.get('provider') != 'codex'
+                or any(value.get(k) != identity.get(k) for k in keys)
+                or value.get('stage') != stage or value.get('normalized_exit') != 0 or value.get('provider_exit') != 0
+                or not head(checked_head) or not head(value.get('start_head')) or value.get('start_head') != value.get('end_head')
+                or value.get('result_sha256') != digest(result)): return None
+        receipt_head = value['end_head']
+        if checked_head == receipt_head:
+            # A known publication binds this attempt to B even if someone
+            # rewinds HEAD to A; only an unpublished attempt uses equality.
+            with self.guard():
+                manifest = self._load(self.manifest_path(identity['run_id']), 'manifest')
+                if manifest and any(p['provider_attempt_id'] == identity['provider_attempt_id']
+                                    for a in manifest['attempts'] if a['attempt_id'] == identity['stage_attempt_id']
+                                    for p in a.get('publications', [])): return None
+        if checked_head != receipt_head and not self._publication_matches(identity, stage, repo, receipt_head, checked_head, value):
+            return None
+        return value
+
+    def reserve_gate_rerun(self, run, attempt_id, checked_head, command, gate_id, sources):
+        # Durable before spawn: an incomplete reservation never permits a retry.
+        with self.guard():
+            value = self._manifest(run)
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == attempt_id)
+            reruns = attempt.setdefault('gate_reruns', [])
+            old = next((a for a in reruns if a['head'] == checked_head and a['gate_id'] == gate_id), None)
+            if old is not None: return False, old
+            record = dict(attempt_id=uuid.uuid4().hex, head=checked_head, command_sha256=text_digest(command),
+                          gate_id=gate_id, gate_attempt_ids=list(sources), started_at=self.clock(), result=None)
+            rerun_shape(record)
+            reruns.append(record); self._save_manifest(value)
+            return True, record
+
+    def finish_gate_rerun(self, run, attempt_id, reservation, result):
+        with self.guard():
+            value = self._manifest(run)
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == attempt_id)
+            record = next(a for a in attempt['gate_reruns'] if a['attempt_id'] == reservation)
+            record['result'] = execution_metadata(result)
+            if record['result']['attempt_id'] != reservation: raise ValueError('invalid rerun completion')
+            rerun_shape(record)
+            self._save_manifest(value)
+            return record['result']
 
     def set_pr(self, run, attempt_id, pr):
         with self.guard():
