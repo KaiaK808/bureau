@@ -332,8 +332,8 @@ _throttle_should_suppress() { return 1; }
 _throttle_record() { :; }
 $IMPL" "$label_rc"
   expect "implement conflict, label exit $label_rc" 17 "$hold_wanted"
-  grep -q '^bureau_exec_runtime\t' "$SANDBOX/calls.log" || fail "implement conflict: resolver transaction was not attempted"
-  grep -q '^add_issue_label\tEXP-300\tneeds-human$' "$SANDBOX/calls.log" || fail "implement conflict: needs-human label was not attempted"
+  grep -q $'^bureau_exec_runtime\t' "$SANDBOX/calls.log" || fail "implement conflict: resolver transaction was not attempted"
+  grep -q $'^add_issue_label\tEXP-300\tneeds-human$' "$SANDBOX/calls.log" || fail "implement conflict: needs-human label was not attempted"
 done
 # An unusable resolver read is propagated before any conflict-label attempt.
 arm "BUREAU_CONFIG='$SANDBOX/.bureau.json'
@@ -341,7 +341,7 @@ $MERGE_HELPER
 bureau_exec_runtime() { return 27; }
 $IMPL" 0
 expect "implement resolver, Linear unusable" 27 no
-grep -q '^add_issue_label\t' "$SANDBOX/calls.log" && fail "implement resolver: a 27 attempted a conflict label"
+grep -q $'^add_issue_label\t' "$SANDBOX/calls.log" && fail "implement resolver: a 27 attempted a conflict label"
 echo "PASS implement propagates the real merge helper: 3 conflict label outcomes keep exit 17 and the required hold; resolver exit 27 propagates without labelling"
 
 tail_from() {  # $1 = script, $2 = routing case line: from the flag's init (or the case) to the end
