@@ -278,7 +278,7 @@ def insertion_only(base, side):
 
 
 class Transaction:
-    def __init__(self, repo, config, base, config_path, issue='', operation='merge', result_file=None):
+    def __init__(self, repo, config, base, config_path, issue='', operation='merge', result_file=None, failure_result_file=None):
         self.repo, self.config, self.base = repo, config, base
         self.config_path = config_path
         self.issue = issue
@@ -288,6 +288,8 @@ class Transaction:
         self.operation, self.semantic = operation, False
         self.reservations = []
         self.result_file = result_file
+        self.failure_result_file = failure_result_file
+        self.failure_cause = 'human_hold'
 
     def git(self, *args, check=True, data=None):
         result = subprocess.run(['git', '-C', str(self.repo), *args], input=data, capture_output=True, env=self.git_env)
@@ -312,11 +314,16 @@ class Transaction:
             elif path.exists(): result[name] = entry(path)
         return result
 
-    def complete(self):
-        if self.result_file:
-            if self.result_file.resolve() == self.repo or self.repo in self.result_file.resolve().parents:
+    def complete(self, failure_cause=None):
+        # Rebase needs only the observational failure channel. Its successful
+        # publication must not depend on a new metadata write succeeding.
+        result_file = (self.failure_result_file or self.result_file) if failure_cause else self.result_file
+        if result_file:
+            if result_file.resolve() == self.repo or self.repo in result_file.resolve().parents:
                 raise Declined('transaction result must be outside checkout')
-            self.result_file.write_text(json.dumps(dict(semantic=self.semantic)))
+            result = dict(semantic=self.semantic)
+            if failure_cause: result['failure_cause'] = failure_cause
+            result_file.write_text(json.dumps(result))
 
     def checkpoint(self):
         if not self.issue: return
@@ -356,11 +363,17 @@ class Transaction:
                     break
                 except subprocess.TimeoutExpired:
                     if not owned: raise
+            # Only executor/provider status selects the terminal cause. This
+            # metadata must survive the hook's existing conversion to exit 17.
+            if provider_call:
+                if self.child.returncode in (124, 25): self.failure_cause = 'timeout'
+                elif self.child.returncode in (16, 22): self.failure_cause = 'provider_error'
             if trusted and self.child.returncode in (10, 16, 21, 25, 26, 27, 130):
                 raise ProviderStop(self.child.returncode)
             if self.child.returncode: raise Declined('configured command failed')
             return output
         except subprocess.TimeoutExpired:
+            if provider_call: self.failure_cause = 'timeout'
             raise Declined('configured command exceeded its executor bound')
         finally:
             # Reap the leader and stop any remaining children in its owned group,
@@ -390,6 +403,7 @@ class Transaction:
         if not enabled: raise Declined('unsupported source conflict; model resolution is disabled')
         check = self.config.get('repo', {}).get('test_command')
         if not isinstance(check, str) or not any(line.strip() and not line.lstrip().startswith('#') for line in check.splitlines()):
+            self.failure_cause = 'gate_red'
             raise Declined('model resolution requires repo.test_command')
         branch = self.branch[len('refs/heads/'):]
         if not self.branch.startswith('refs/heads/') or not branch: raise Declined('model resolution requires an attached branch')
@@ -467,7 +481,9 @@ class Transaction:
             budget.finish(record, check_outcome='passed' if valid else 'failed', check_exit=code)
         self.checkpoint()
         if code == 130: raise ProviderStop(130)
-        if not valid: raise Declined('external conflict validation failed or changed the checked tree')
+        if not valid:
+            self.failure_cause = 'gate_red'
+            raise Declined('external conflict validation failed or changed the checked tree')
 
     def evidence(self, outcome, code=0):
         for budget, record in self.reservations:
@@ -521,6 +537,7 @@ class Transaction:
         if configured:
             check = self.config.get('repo', {}).get('test_command')
             if not isinstance(check, str) or not any(line.strip() and not line.lstrip().startswith('#') for line in check.split('\n')):
+                self.failure_cause = 'gate_red'
                 raise Declined('configured repair requires repo.test_command')
         # Verify ALL inputs before running any generator. Append-only sources
         # and legacy resolutions are staged before generated outputs are built.
@@ -723,18 +740,22 @@ def main():
     parser.add_argument('--issue', default='')
     parser.add_argument('--operation', choices=('merge', 'rebase'), default='merge')
     parser.add_argument('--result-file', type=Path)
+    parser.add_argument('--failure-result-file', type=Path)
     args = parser.parse_args()
+    transaction = None
     def stop(signum, frame): raise ProviderStop(130)
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sig, stop)
     try:
-        transaction = Transaction(args.repo.resolve(), json.loads(args.config.read_text()), args.base, args.config.resolve(), args.issue, args.operation, args.result_file)
+        transaction = Transaction(args.repo.resolve(), json.loads(args.config.read_text()), args.base, args.config.resolve(), args.issue, args.operation, args.result_file, args.failure_result_file)
         result = transaction.execute()
         return result
     except ProviderStop as exc:
+        if transaction: provider.e.observe(transaction.complete, transaction.failure_cause)
         if exc.code in (10, 16, 27):
             print('  Conflict resolution declined: trusted checkpoint or provider precondition refused.', file=sys.stderr)
         return exc.code
     except (Declined, OSError, ValueError, provider.UntrustedEnvError) as exc:
+        if transaction: provider.e.observe(transaction.complete, transaction.failure_cause)
         # Do not copy command text, paths or child stderr into control messages.
         print('  Conflict resolution declined: ' + str(exc) if isinstance(exc, Declined) else '  Conflict resolution unavailable.', file=sys.stderr)
         return 1

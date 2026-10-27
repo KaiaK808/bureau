@@ -360,7 +360,7 @@ def manifest_shape(value):
             review_round_shape(attempt['review_round'])
         if 'outcome_signals' in attempt:
             if (not isinstance(attempt['outcome_signals'], list)
-                    or any(s not in ('review_capped', 'gate_red', 'human_hold') for s in attempt['outcome_signals'])):
+                    or any(s not in ('timeout', 'provider_error', 'review_capped', 'gate_red', 'human_hold') for s in attempt['outcome_signals'])):
                 raise ValueError('invalid outcome signals')
         shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications', 'review_round', 'outcome_signals')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
         identifier(attempt['attempt_id'])
@@ -699,7 +699,7 @@ class Store:
             atomic_bytes(path, payload)
 
     def outcome_signal(self, run, stage_attempt, signal):
-        if signal not in ('review_capped', 'gate_red', 'human_hold'): raise ValueError('invalid outcome signal')
+        if signal not in ('timeout', 'provider_error', 'review_capped', 'gate_red', 'human_hold'): raise ValueError('invalid outcome signal')
         with self.guard():
             value = self._manifest(run)
             attempt = next(a for a in value['attempts'] if a['attempt_id'] == identifier(stage_attempt))
@@ -725,14 +725,15 @@ class Store:
         signals = attempt.get('outcome_signals', [])
         gates = [g for g in attempt['gates'] if g.get('kind') == 'gate']
         red = code != 0 and gates and gates[-1].get('normalized_exit') not in (None, 0)
-        signal = next((s for s in ('review_capped', 'gate_red', 'human_hold') if s in signals), 'gate_red' if red else None)
+        signal = next((s for s in ('timeout', 'provider_error', 'review_capped', 'gate_red', 'human_hold') if s in signals), 'gate_red' if red else None)
+        if signal == 'timeout' and code == 25: timeout = 'silence'
         control = self.root.parent.parent / 'ticket-control' / run
         withdrawn = any((control / ('stop-' + str(c))).exists() for c in (0, 25, 26))
         cause = insight_cause(code, outcome, timeout, signal, withdrawn)
         row = dict(schema_version=VERSION, record_type='stage_outcome', issue=manifest['issue'], stage=attempt['stage'],
                    run_id=run, stage_attempt_id=attempt['attempt_id'], provider_attempt_id=None,
                    phase=attempt['phase'], timestamp=self.clock(), normalized_exit=code, cause_class=cause)
-        if code == 124: row['timeout_kind'] = 'wall-clock'
+        if code == 124 or (cause == 'timeout' and signal == 'timeout' and code != 25): row['timeout_kind'] = 'wall-clock'
         elif cause == 'timeout' and timeout: row['timeout_kind'] = timeout
         self._append_learning('stage-outcomes.jsonl', [row], ('stage_attempt_id',), run)
 
@@ -1073,7 +1074,7 @@ def review_round_main():
     parser.add_argument('--repo', type=Path, required=True)
     parser.add_argument('--round', type=int)
     parser.add_argument('--min-severity', choices=('BUG', 'MINOR'))
-    parser.add_argument('--signal', choices=('review_capped', 'gate_red', 'human_hold'))
+    parser.add_argument('--signal', choices=('timeout', 'provider_error', 'review_capped', 'gate_red', 'human_hold'))
     parser.add_argument('--provider-verdict')
     parser.add_argument('--final-verdict')
     args = parser.parse_args()

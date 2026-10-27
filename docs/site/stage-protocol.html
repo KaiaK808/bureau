@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a0bee4af3bf6b7013395df528209679a3a328b9f635420102c3d15707b1534a1">
+<meta name="bureau-source-sha256" content="e5ae17da1cc896e88ae47abec5e155f0d5a4a7aa3a7916fc6534c71ac0e13376">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1130,6 +1130,17 @@ their original routing/quiet/cancellation meaning. A latched ticket
 withdrawal takes precedence over earlier failures: Done/cancelled remain
 0/26 and <code>other</code>, an inactive-state 25 is
 <code>human_hold</code>.</p>
+<p>Conflict-resolver receipts keep their separate
+<code>conflict_resolver</code> stage. At both merge and rebase hooks,
+the trusted transaction's terminal failure metadata supplies a shell
+signal for the enclosing stage: disabled/unresolved/exhausted repair is
+<code>human_hold</code>, a red or missing external check is
+<code>gate_red</code>, a provider error is <code>provider_error</code>,
+and wall-clock or silence expiry is <code>timeout</code>. Successful
+repair supplies no failure signal, so a later review, check or
+publication failure keeps its own cause. This observational handoff
+changes no exit, hold, rollback or publication decision; ticket
+withdrawal still takes precedence.</p>
 <p><code>collect_insights</code> accepts bounded, filtered observations
 from any stage and any provider exit. Rows keep their existing
 provenance and observation fields and add provider-call

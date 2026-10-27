@@ -9,11 +9,11 @@ bureau_insight_cause() {
   if [ "$withdrawn" = 1 ]; then
     case "$code" in 25) printf '%s\n' human_hold ;; *) printf '%s\n' other ;; esac
   elif [ "$code" = 0 ] && [ -z "$signal" ]; then printf '%s\n' other
-  elif [ "$code" = 124 ] || { [ "$code" = 25 ] && [ "$timeout_kind" = silence ]; }; then
+  elif [ "$code" = 124 ] || [ "$signal" = timeout ] || { [ "$code" = 25 ] && [ "$timeout_kind" = silence ]; }; then
     printf '%s\n' timeout
   elif [ "$code" = 21 ] || [ "$code" = 11 ]; then printf '%s\n' ownership
   elif [ "$code" = 23 ] || [ "$outcome" = quota ]; then printf '%s\n' quota
-  elif [ "$code" = 16 ] || [ "$code" = 22 ] || [ "$outcome" = provider-error ] || [ "$outcome" = invalid-result ]; then
+  elif [ "$code" = 16 ] || [ "$code" = 22 ] || [ "$signal" = provider_error ] || [ "$outcome" = provider-error ] || [ "$outcome" = invalid-result ]; then
     printf '%s\n' provider_error
   elif [ "$signal" = review_capped ]; then printf '%s\n' review_capped
   elif [ "$code" = 14 ] || [ "$signal" = gate_red ]; then printf '%s\n' gate_red

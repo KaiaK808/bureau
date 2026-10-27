@@ -2690,6 +2690,7 @@ merge_origin_main_or_abort() {
   if [ "$merge_rc" = 0 ] && [ "$(jq -r '.semantic // false' "$result_file" 2>/dev/null)" = true ]; then
     BUREAU_CONFLICT_REPAIRED_HEAD=$(git rev-parse HEAD) || merge_rc=18
   fi
+  bureau_conflict_failure_signal "$merge_rc" "$result_file"
   rm -f "$result_file"
   bureau_ticket_checkpoint "$issue"
   case "$merge_rc" in
@@ -2711,6 +2712,18 @@ merge_origin_main_or_abort() {
   bureau_ticket_checkpoint "$issue"
   ( mark_needs_human "$issue" conflict_resolver 17 ) || true
   return 17
+}
+
+# Carry only a terminal failure from the trusted transaction into THIS stage.
+# A successful repair must never explain a later review/gate/publication stop.
+bureau_conflict_failure_signal() {
+  [ "$1" != 0 ] || return 0
+  local cause
+  cause=$(jq -r '.failure_cause // "human_hold"' "$2" 2>/dev/null) || cause=human_hold
+  case "$cause" in
+    human_hold|gate_red|provider_error|timeout) bureau_outcome_signal "$cause" || true ;;
+  esac
+  return 0
 }
 
 # count issues currently in-flight between Spec (inclusive) and Done
