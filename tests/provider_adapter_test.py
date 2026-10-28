@@ -1410,14 +1410,15 @@ p.Path.open=refuse_transcript_read
         self.assertIsNone(p.configuration('implement',config,{})['config_dir'])
 
     def test_negative_control_the_env_assertion_fails_without_the_change(self):
+        from mutation_checks import caught_mutation
         lean=self.profile('lean')
         config={'agents':{'runner':'claude','providers':{'claude':{'config_dir':str(lean)}}}}
-        child,login=self.claude_envs(config,script=self.without_config_dir())
-        self.assertNotEqual(child.get('CLAUDE_CONFIG_DIR'),str(lean))
-        self.assertNotEqual(login.get('CLAUDE_CONFIG_DIR'),str(lean))
-        with self.assertRaises(AssertionError): self.assertEqual(child['CLAUDE_CONFIG_DIR'],str(lean))
         child,login=self.claude_envs(config)
         self.assertEqual((child['CLAUDE_CONFIG_DIR'],login['CLAUDE_CONFIG_DIR']),(str(lean),str(lean)))
+        script=self.without_config_dir()
+        with caught_mutation():
+            child,login=self.claude_envs(config,script=script)
+            self.assertEqual((child['CLAUDE_CONFIG_DIR'],login['CLAUDE_CONFIG_DIR']),(str(lean),str(lean)))
 
     def test_invalid_claude_config_dir_is_a_configuration_error_before_any_call(self):
         (self.bin/'claude').write_text('#!/bin/sh\necho unexpected Claude >&2\ntouch "$FAKE_ROOT/claude-ran"\nexit 99\n')

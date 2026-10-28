@@ -4,6 +4,7 @@ import sys
 import time
 import unittest
 from dispatcher_test import DispatcherFixture
+from mutation_checks import caught_mutation
 
 
 class SemaphoreControl(DispatcherFixture):
@@ -21,16 +22,19 @@ class SemaphoreControl(DispatcherFixture):
         self.assertFalse(self.events('provider-end'))
         try:
             self.assertLessEqual(live,2,f'{live} synchronized writers exceeded agents.parallel_lanes=2')
-        except AssertionError as error:
-            if not bypass: raise
-            print('PASS NEGATIVE CONTROL: '+str(error),flush=True)
-        else:
-            self.assertFalse(bypass,'lane-semaphore bypass escaped the concurrency assertion')
-            print('PASS shipped dispatcher: exactly two synchronized writers, third held',flush=True)
-        self.stop(child)
+        finally:
+            self.stop(child)
 
-    def test_shipped_semaphore(self): self.probe(False)
-    def test_private_semaphore_bypass(self): self.probe(True)
+    def test_shipped_semaphore(self):
+        self.probe(False)
+        print('PASS shipped dispatcher: exactly two synchronized writers, third held',flush=True)
+
+    def test_private_semaphore_bypass(self):
+        # The shipped probe runs first in the explicit suite below; its ERRORs
+        # remain ordinary test errors, never caught mutation results.
+        with caught_mutation():
+            self.probe(True)
+        print('PASS NEGATIVE CONTROL: lane-semaphore bypass failed or errored',flush=True)
 
 
 suite=unittest.TestSuite(SemaphoreControl(name) for name in

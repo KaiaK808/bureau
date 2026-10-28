@@ -1,11 +1,11 @@
 """Prove PR 7 assertions detect deliberate defects in private copies."""
 import hashlib
-import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
+
+from mutation_checks import mutation_caught
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'templates/scripts'
@@ -14,14 +14,17 @@ before = {name: hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name
 
 
 def rejected(command, expected, env=None):
-    result = subprocess.run(command, capture_output=True, text=True, env={**os.environ, **(env or {})}, timeout=90)
-    output = result.stdout + result.stderr
-    assert result.returncode != 0 and expected in output, output
+    env = env or {}
+    mutation_caught(command, env=env,
+                    baseline_command=[str(ROOT/Path(arg).relative_to(root)) if arg.startswith(str(root)+'/') else arg
+                                      for arg in command],
+                    baseline_env={key: str(SCRIPTS/Path(value).name) if key.startswith('BUREAU_TEST_') else value
+                                  for key, value in env.items()}, expected=expected)
     print('PASS negative control: ' + expected)
 
 
 with tempfile.TemporaryDirectory(prefix='bureau-pr7-negative-') as temp:
-    root = Path(temp)
+    root = Path(temp).resolve()
     shutil.copytree(SCRIPTS, root/'templates/scripts')
     shutil.copytree(ROOT/'tests/lib', root/'tests/lib')
     (root/'tests/fixtures').mkdir()

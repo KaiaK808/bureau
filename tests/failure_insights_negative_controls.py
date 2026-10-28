@@ -2,18 +2,19 @@
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 
+from mutation_checks import mutation_caught
+
 ROOT = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='bureau-1753-negative-') as temp:
-    scripts = Path(temp) / 'templates/scripts'; shutil.copytree(ROOT / 'templates/scripts', scripts)
+    scripts = Path(temp).resolve() / 'templates/scripts'; shutil.copytree(ROOT / 'templates/scripts', scripts)
     env = {**os.environ, 'BUREAU_TEST_INSIGHTS_SCRIPTS':str(scripts), 'PYTHONDONTWRITEBYTECODE':'1'}
     def reject(label, case, expected):
-        p = subprocess.run([sys.executable, str(ROOT / 'tests/failure_insights_test.py'), case],
-                           env=env, capture_output=True, text=True, timeout=90)
-        assert p.returncode != 0 and expected in p.stdout + p.stderr, (label, p.returncode, p.stdout, p.stderr)
+        mutation_caught([sys.executable, str(ROOT / 'tests/failure_insights_test.py'), case],
+                        env=env, baseline_env={'BUREAU_TEST_INSIGHTS_SCRIPTS':str(ROOT/'templates/scripts')},
+                        expected=expected)
         print('PASS negative control: ' + label)
     evidence = scripts / 'bureau-evidence.py'; original = evidence.read_text()
     needle = "        if not items or receipt.get('stage') not in STAGES:\n"

@@ -10,6 +10,7 @@ import unittest
 import zipfile
 
 import git_maintenance
+from mutation_checks import caught_mutation
 
 ROOT = Path(__file__).resolve().parents[1]
 REAL_GIT = shutil.which('git')
@@ -430,13 +431,13 @@ exit 130
         config.write_text(source.replace(needle,'  [ "$rc" != 130 ] || exit 130\n',1))
         self.state('build'); (self.root/'events').write_text(''); self.wt=self.repo/'.worktrees/mutant'
         (self.root/'fail-reads').unlink(missing_ok=True); (self.root/'provider-done').unlink(missing_ok=True)
-        result=self.worker()
-        self.assertTrue([e for e in self.events() if e['kind']=='comment'],result.stdout+result.stderr)
-        # Exercise the exact publication assertion used by the positive fixture,
-        # independently of any later strict read's exit-code failure.
-        with self.assertRaises(AssertionError): self.assert_no_publication(self.events())
-        with self.assertRaises(AssertionError): self.assert_withdrawn(result,25,STATES['backlog'])
-        self.assert_released()
+        with caught_mutation():
+            result=self.worker()
+            # Exercise the unchanged positive assertions. A TimeoutExpired or
+            # another mutation-induced ERROR detects the defect as well.
+            self.assert_no_publication(self.events())
+            self.assert_withdrawn(result,25,STATES['backlog'])
+            self.assert_released()
         print('NEGATIVE CONTROL: removing the post-provider checkpoint posts a new comment and fails the withdrawal assertion')
 
     def test_custom_active_keys_and_strict_entry(self):
