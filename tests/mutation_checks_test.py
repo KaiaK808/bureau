@@ -1,6 +1,7 @@
 """Exercise the real control runner with a short timeout and baseline errors."""
 import os
 import json
+import io
 from pathlib import Path
 import signal
 import subprocess
@@ -10,8 +11,9 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from mutation_checks import (baseline_fixture, caught_mutation, fixture_pids, historical_scripts,
-                             mutation_caught, restored_files, run, snapshot_files, stop_fixtures)
+from mutation_checks import (_run, baseline_fixture, caught_mutation, fixture_pids, historical_scripts,
+                             macos_cwds, mutation_caught, restored_files, run, snapshot_files,
+                             stop_fixtures)
 
 
 class MutationChecks(unittest.TestCase):
@@ -142,10 +144,100 @@ def work():
         output += f'103 python --repo="{self.root}/repo with spaces"\n'
         with patch('mutation_checks.sys.platform', 'darwin'), \
                 patch('mutation_checks.subprocess.run', return_value=Mock(stdout=output)) as ps:
-            self.assertEqual({101, 103}, fixture_pids(self.root))
+            self.assertEqual({101, 103}, fixture_pids(self.root, cwds=lambda: {}))
         self.assertEqual(['ps', '-axo', 'pid=,command='], ps.call_args.args[0])
         self.assertEqual(1, ps.call_args.kwargs['timeout'])
         self.assertTrue(ps.call_args.kwargs['check'])
+
+    def test_macos_lsof_cwd_scan_parses_pid_fields_and_is_bounded(self):
+        output = f'n/ignored\np101\nfcwd\nn{self.root}/with spaces\n'
+        output += f'p102\nfcwd\nn{self.root}-sibling\npinvalid\nn/ignored\n'
+        with patch('mutation_checks.subprocess.run', return_value=Mock(stdout=output)) as lsof:
+            self.assertEqual({101: str(self.root/'with spaces'), 102: str(self.root)+'-sibling'},
+                             macos_cwds())
+        self.assertEqual(['lsof', '-nP', '-a', '-d', 'cwd', '-Fpn'], lsof.call_args.args[0])
+        self.assertEqual(1, lsof.call_args.kwargs['timeout'])
+        self.assertTrue(lsof.call_args.kwargs['check'])
+
+    def test_macos_cwd_scan_reaps_argvless_descendant_and_preserves_sibling(self):
+        commands = lambda: (f'101 python -c "import time; time.sleep(30)"\n'
+                            f'102 python {self.root}-sibling/child.py\n'
+                            '103 python -c "import time; time.sleep(30)"\n')
+        directories = {101: str(self.root/'nested with spaces'),
+                       102: str(self.root)+'-sibling',
+                       103: str(self.root/'..'/'outside'), os.getpid(): str(self.root)}
+        stopped = set()
+        reaped = []
+
+        def discover(root):
+            return fixture_pids(root, commands=commands, cwds=lambda: directories.copy())
+
+        def reap(pid, flags):
+            if pid in stopped:
+                directories.pop(pid)
+                stopped.remove(pid)
+                reaped.append(pid)
+                return pid, 0
+            return 0, 0
+
+        child = Mock(pid=100, poll=Mock(return_value=0))
+        with patch('mutation_checks.sys.platform', 'darwin'), \
+                patch('mutation_checks.fixture_pids', side_effect=discover), \
+                patch('mutation_checks.os.kill', side_effect=lambda pid, sig: stopped.add(pid)) as kill, \
+                patch('mutation_checks.os.waitpid', side_effect=reap):
+            self.assertEqual({101}, discover(self.root))
+            stop_fixtures(self.root, child)
+        kill.assert_called_once_with(101, signal.SIGTERM)
+        self.assertEqual([101], reaped)
+        self.assertIn(102, directories, 'cwd cleanup stopped an unrelated sibling')
+
+    def test_macos_cwd_discovery_failure_reports_argv_fallback(self):
+        for error in (FileNotFoundError('lsof unavailable'),
+                      subprocess.TimeoutExpired('lsof', 1),
+                      subprocess.CalledProcessError(1, 'lsof')):
+            with self.subTest(error=type(error).__name__), \
+                    patch('mutation_checks.sys.platform', 'darwin'), \
+                    patch('mutation_checks.sys.stderr', new_callable=io.StringIO) as report:
+                found = fixture_pids(self.root,
+                                     commands=lambda: f'101 python {self.root}/child.py\n',
+                                     cwds=Mock(side_effect=error))
+                self.assertEqual({101}, found)
+                self.assertIn(str(self.root), report.getvalue())
+                self.assertIn(str(error), report.getvalue())
+                self.assertIn('falling back to argv matching', report.getvalue())
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'live macOS cwd discovery')
+    def test_live_macos_cwd_cleanup_reaps_python_c_sleeper(self):
+        # Exercise real lsof even in sandboxes that deny ps inspection.
+        try:
+            macos_cwds()
+        except (OSError, subprocess.SubprocessError) as error:
+            self.skipTest(f'lsof cwd discovery unavailable: {error}')
+        sibling = self.root.with_name(self.root.name+'-sibling')
+        sibling.mkdir()
+        self.addCleanup(sibling.rmdir)
+        unrelated = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], cwd=sibling)
+        self.addCleanup(self.stop_child, unrelated)
+        pid = self.root/'cwd-pids'
+        self.addCleanup(self.stop_recorded, pid)
+        command = [sys.executable, '-c', f'''import os, signal, subprocess, sys, time
+from pathlib import Path
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+def stop(*args):
+    child.wait(timeout=3)
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, stop)
+Path({str(pid)!r}).write_text(str(os.getpid()) + '\\n' + str(child.pid))
+time.sleep(30)
+''']
+        with patch('mutation_checks.fixture_pids',
+                   side_effect=lambda root: fixture_pids(root, commands=lambda: '')):
+            result = _run(command, env=None, timeout=1, root=self.root)
+        self.assertEqual(124, result.returncode)
+        self.assertIsNone(unrelated.poll(), 'cwd cleanup stopped an unrelated sibling')
+        for raw in pid.read_text().splitlines():
+            with self.subTest(pid=raw), self.assertRaises(ProcessLookupError):
+                os.kill(int(raw), 0)
 
     def test_linux_scan_finds_cwd_without_a_matching_command(self):
         proc = self.root/'proc'; proc.mkdir()

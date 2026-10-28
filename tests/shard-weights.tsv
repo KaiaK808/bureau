@@ -125,3 +125,5 @@ test_review_reuse_approval.sh	58	-
 test_review_verdict_order.sh	52	-
 test_session_throttle.sh	1	-
 test_shared_runtime.sh	206	-
+test_spec_resume_negative_controls.sh	-	928
+test_ticket_kill_switch.sh	-	368

@@ -18,14 +18,35 @@ DEFAULT_TIMEOUT = 300
 PROC = Path('/proc')
 
 
-def fixture_pids(root):
-    """Find only commands/cwds inside this resolved, randomly named run root."""
+def process_commands():
     result = subprocess.run(['ps', '-axo', 'pid=,command='], text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             check=True, timeout=1)
+    return result.stdout
+
+
+def macos_cwds():
+    """Bound cwd discovery even when a descendant's argv contains no path."""
+    result = subprocess.run(['lsof', '-nP', '-a', '-d', 'cwd', '-Fpn'], text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            check=True, timeout=1)
+    cwds = {}
+    pid = None
+    for line in result.stdout.splitlines():
+        if line.startswith('p'):
+            pid = int(line[1:]) if line[1:].isdigit() else None
+        elif line.startswith('n') and pid is not None:
+            cwds[pid] = line[1:]
+    return cwds
+
+
+def fixture_pids(root, *, commands=None, cwds=None):
+    """Find only commands/cwds inside this resolved, randomly named run root."""
+    root = Path(root).resolve()
+    output = (commands or process_commands)()
     command_path = re.compile(r'(?<![\w./-])' + re.escape(str(root)) + r'''(?=$|[/\s'\"])''')
     pids = set()
-    for line in result.stdout.splitlines():
+    for line in output.splitlines():
         fields = line.strip().split(None, 1)
         if len(fields) == 2 and fields[0].isdigit() and command_path.search(fields[1]):
             pids.add(int(fields[0]))
@@ -43,6 +64,23 @@ def fixture_pids(root):
                     pids.add(int(path.name))
             except (OSError, RuntimeError):
                 pass  # inaccessible process or a raced exit
+    elif sys.platform == 'darwin':
+        try:
+            discovered = (cwds or macos_cwds)()
+        except (OSError, subprocess.SubprocessError) as error:
+            print(f'fixture cwd discovery unavailable for {root}: {error}; '
+                  'falling back to argv matching', file=sys.stderr)
+        else:
+            for pid, directory in discovered.items():
+                cwd = Path(directory)
+                if not cwd.is_absolute():
+                    continue
+                try:
+                    cwd = cwd.resolve()
+                    if cwd == root or root in cwd.parents:
+                        pids.add(pid)
+                except (OSError, RuntimeError):
+                    pass  # inaccessible directory or a raced exit
     pids.discard(os.getpid())
     return pids
 
