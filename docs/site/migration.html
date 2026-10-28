@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="15c1bf3c4629a17348ce7a98ca9878f27738b3b73fdac464d62b3d593f704ac9">
+<meta name="bureau-source-sha256" content="4afe2b45ffa6f40a49ab5792443331379494186861cd5cad6b2ac943847eaba7">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -28,12 +28,15 @@ href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
 the v3.2 release candidate, v3.2.0, v3.2.1, the v3.3 release candidates,
-v3.3.0 and v3.4.0 to the stable <strong>Bureau v3.4.1</strong>, marked
-as latest. The commands below require the selected release's source
-skill. See the <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.1">v3.4.1
+v3.3.0, v3.4.0 and v3.4.1 to <strong>Bureau v3.5.0</strong>, dated
+2026-10-28 (prepared 2026-10-27). The commands below require the
+selected release's source skill. See the <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">v3.5.0
 release</a> and its <a href="release-notes.html">release notes</a>, the
 previous stable <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.1">v3.4.1
+release</a> and its <a href="release-notes-v3.4.1.html">release notes</a>,
+the earlier <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.0">v3.4.0
 release</a> and its <a href="release-notes-v3.4.0.html">release notes</a>,
 the <a
@@ -64,15 +67,210 @@ the <a href="../../CHANGELOG.md">changelog</a> and the <a
 href="releases.html">release process</a>. A Bureau major version marks
 operational changes (v2.0.0: explicit worker ownership; v3: the
 exit-code contract, see <a href="#upgrade-to-v3">Upgrade to v3</a>); it
-does not require configuration schema v2. v3.1, v3.2, v3.3 and v3.4 keep
-that contract; see <a href="#upgrade-to-v31">Upgrade to v3.1</a>, <a
+does not require configuration schema v2. v3.1 through v3.4 keep that
+contract; v3.5 adds quiet waits 28/29 and requires coordinated
+consumers; see <a href="#upgrade-to-v31">Upgrade to v3.1</a>, <a
 href="#upgrade-to-v32">Upgrade to v3.2</a>, <a
 href="#upgrade-to-v33">Upgrade to v3.3</a>, <a
-href="#upgrade-to-v34">Upgrade to v3.4</a> and <a
-href="#upgrade-to-v341">Upgrade to v3.4.1</a>.</p>
-<h2 id="pending-spec-resume-and-governance-adoption">Pending spec resume
-and governance adoption</h2>
-<p>Unreleased: resync the whole scripts scope, including
+href="#upgrade-to-v34">Upgrade to v3.4</a>, <a
+href="#upgrade-to-v341">Upgrade to v3.4.1</a> and <a
+href="#upgrade-to-v35">Upgrade to v3.5</a>.</p>
+<h2 id="select-the-source-release">Select the source release</h2>
+<p>First update the actual source clone that supplies
+<code>/bureau-init</code>. Its usual location is
+<code>~/.claude/skills/bureau-init</code>, but it may be a symlink or
+installed elsewhere. Check the loaded skill location; do not pull the
+adopting project's repository by mistake.</p>
+<p>In a terminal, inspect the source checkout:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SOURCE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills/bureau-init&quot;</span> <span class="co"># replace with the actual loaded skill path</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> status <span class="at">--short</span> <span class="at">--branch</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> remote <span class="at">-v</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> describe <span class="at">--tags</span> <span class="at">--always</span> <span class="at">--dirty</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
+<p>For a Codex-only install, the entry point may be
+<code>~/.agents/skills/bureau-init</code> or a configured skill
+directory. Follow its link to the actual source clone. Record the
+previous commit and branch/tag privately for rollback;
+<code>describe</code> alone may name a nearby tag instead of the
+installed commit.</p>
+<p>Confirm that <code>origin</code> identifies the official
+<code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
+source changes before continuing; do not reset the skill clone. With a
+clean checkout, select the exact release (<code>v3.5.0</code> for this
+release, <code>v3.4.1</code> for the previous stable release,
+<code>v3.4.0</code>, <code>v3.3.0</code>, <code>v3.2.1</code>,
+<code>v3.2.0</code>, <code>v3.1.0</code>, <code>v3.0.2</code>,
+<code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
+earlier one):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.5.0 <span class="co"># or v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
+<p>Stop if fetching fails, especially if an existing local tag conflicts
+with the remote; do not force-replace it. Compare the resulting commit
+with the commit recorded in the GitHub Release and record it for
+rollback. This leaves the source on a detached release checkout. A later
+release upgrade repeats these steps with that release's tag; it does not
+use <code>git pull</code>.</p>
+<p>An intentionally <code>main</code>-tracking installation can instead
+use <code>git pull --ff-only</code> when its checkout is clean and its
+upstream is the official <code>origin/main</code>. This follows ongoing
+development rather than pinning a release. If the source is an
+archive-origin checkout, an unrelated history or a plain copied
+directory, keep it intact and install a separate official clone from the
+<a href="index.html#install">installation guide</a>; review how the
+loaded skill entry point should move before replacing any link. Do not
+merge unrelated histories or change the old checkout's remote as an
+upgrade shortcut.</p>
+<h2 id="upgrade-to-v35">Upgrade to v3.5</h2>
+<p>The stable release <strong>v3.5.0</strong>, dated
+<strong>2026-10-28</strong> (prepared 2026-10-27), is a minor release on
+v3.4.1. Its <a href="release-notes.html">release notes</a> list every new
+setting, file/state location and changed default. New exits 28/29 extend
+the v3 vocabulary. No configuration schema migration is needed. There is
+no release candidate, and no installation has run v3.5.0 before
+release.</p>
+<p><strong>From v3.4.1:</strong> select tag <code>v3.5.0</code> using <a
+href="#select-the-source-release">the source-update steps</a>, and
+refresh skill discovery. <strong>From earlier versions:</strong> follow
+<a href="#upgrade-to-v341">Upgrade to v3.4.1</a> and its earlier
+sections first, then the steps below.</p>
+<p><strong>Stop all shepherds, queue loops, dispatchers and supervisors
+before resyncing.</strong> Inspect ownership and preserve unfinished
+work, local commits, customized scripts/interfaces, Spec Kit assets and
+the constitution. Compare installed-script drift with the new source; do
+not overwrite installation hardening without review. Install
+<code>uv tool install specify-cli==1.2.2</code>, resolve modified
+helpers before running Spec Kit upgrade commands, and refresh every
+installed integration while retaining the active host. Follow <a
+href="#resync-in-claude-code-or-codex">Spec Kit resync</a> for the full
+content-check/backup procedure.</p>
+<p>Preview and resync the <strong>complete scripts and interfaces scopes
+together</strong> in each adopting repository, using <a
+href="#preview-and-resolve-asset-conflicts">preview and resolve</a>:</p>
+<pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
+<p>Use the existing target selection, or <code>$bureau-init</code> in
+Codex. Include all new <code>bureau-*.py</code> helpers,
+<code>bureau-insights.sh</code>, result schemas, stage prompts, commands
+and managed instructions; partial resync is incompatible. Updating the
+source clone or <code>--update</code> alone does not refresh assets. No
+adopter CI resync is required for this repository's sharded CI. Commit
+the resolved adopting-repository assets before its workers read
+them.</p>
+<p><strong>Mixed consumers are incompatible.</strong> A v3.4.1 shepherd
+meeting a v3.5 spec stage alerts and exits on 28; an old exit-2 spec
+stage with a new shepherd can still give 13 plus
+<code>needs-human</code>. The updated set treats full capacity as 28 and
+enabled overlap as 29, with quiet cancellable waits. Restart every
+driver only after the coordinated resync; a running shell keeps its
+loaded case statements.</p>
+<p>Before restarting, check these default changes and optional
+features:</p>
+<ul>
+<li><strong>Launcher dispatch and overlap:</strong> both tmux launchers
+now start one supervised continuous dispatcher. It requires literal
+<code>agents.file_overlap_gate: true</code>, even with one lane or
+dry-run, and otherwise refuses with 24. Update every writer before
+enabling it. Standalone operations keep overlap off by default. Dispatch
+uses two process lanes by default; <code>agents.parallel_lanes</code>,
+existing <code>BUREAU_MAX_CONCURRENT</code> and
+<code>--max-concurrent</code> can override, independently of the ticket
+cap. Batch execution retains three when the shared setting is
+absent/null. Human/unknown/terminal/handoff skip records persist; stop
+dispatch and reconcile the ticket's skip entry and holds before
+retrying.</li>
+<li><strong>Spec capacity and numbering:</strong> manual Merge no longer
+counts against <code>agents.max_concurrent_issues</code>; auto still
+includes it, and Build Review always counts. Set
+<code>agents.max_concurrent_include_merge: true</code> before restart to
+retain previous manual single-flight behavior. The ticket-cap default
+stays 0. Shared reservations prevent duplicate local spec numbers; the
+allocator lock defaults to 300 seconds
+(<code>BUREAU_SPEC_LOCK_TIMEOUT</code>, process environment, whole
+seconds 1–86400). Timeout returns 124 and routes back to Triage; Git
+scanning after lock acquisition has no new timeout. Spec moves now
+serialize count/reservation/move for all updated drivers in the common
+Git directory.</li>
+<li><strong>Merge CI gate:</strong> only the newest check run per name
+and app counts, and only <code>success</code> results meet
+<code>agents.merge_min_required_checks</code> (default 1). Heads whose
+checks are all skipped or neutral, for example drafts in a workflow that
+skips draft pull requests, now wait. Arrange a successful check, or set
+the minimum to <code>0</code>.</li>
+<li><strong>Review policy:</strong> default
+<code>agents.review_min_severity: "BUG"</code> defers validated
+MINOR/SKIP findings; choose <code>"MINOR"</code> for stricter review.
+Total <code>agents.max_review_rounds</code> defaults to
+<code>max_review_cycles + 1</code>, normally four. Unresolved work at
+the limit ends BLOCK/25; genuine approval may finish. Changed policy or
+legacy approval evidence requires a fresh paid review.
+Failed/interrupted fresh attempts consume their reserved round; gate
+polling and unchanged approval reuse do not.</li>
+<li><strong>Ticket withdrawal:</strong> configured active workflow IDs
+now govern background work by default.
+<code>agents.ticket_active_states</code> can replace the
+triage-through-Merge set; <code>[]</code> stops all tickets. Configure
+cancelled/canceled/duplicate IDs for 26; other inactive IDs use 25 and
+Done uses 0. Current provider calls finish; subsequent ordinary
+publication stops. Implement may still preservation-push commits already
+made. App prepare/finish retains its existing stale-result protocol.
+Additional refresh failures warn once and fail open; mandatory reads
+stay strict.</li>
+<li><strong>Recovery and evidence:</strong> successful
+specify/plan/tasks phases commit locally and reuse verified checkpoints
+by default. Ordinary registered retries discard unfinished edits;
+withdrawal preserves them for inspection. Add/move the governance
+section as described below. Sandbox gate claims now require exact
+failed-execution and receipt proof; keep <code>repo.test_command</code>
+configured. Successful provider receipts require durable storage, so
+inspect full protected evidence stores. Human merge boundaries
+automatically publish acceptance briefs; local
+insights/outcomes/dispositions and bounded lessons need no new enable
+switch. Existing <code>LESSONS.md</code> becomes one bounded general
+set; per-stage <code>agents.lessons_budget_bytes</code> defaults to 8192
+and 0 disables it.</li>
+<li><strong>Dependencies and optional repair:</strong> the shell filter
+needs Python 3.9+ on the system default PATH from
+<code>/usr/bin/getconf PATH</code>, plus <code>/usr/bin/env -0</code>;
+custom-PATH Python alone is insufficient. Check out-of-range numeric
+settings and supervisor JSON values that now take effect. Git 2.38+ is
+needed only for the new merge-only implement reuse.
+Generated/append-only conflict strategies default to empty, model repair
+defaults off with one attempt when enabled, and provider silence
+defaults to 0/off. Review their full <a
+href="configuration.html">configuration</a> and qualify them before opting
+in. Unresolved rebase conflicts now hold and exit 17 even with model
+repair off. Configured repair needs explicit outside tests and external
+snapshot space for the full checkout.</li>
+</ul>
+<p>Preserve
+<code>&lt;git common dir&gt;/bureau/spec-numbers.json</code>, checkpoint
+commits/metadata, admission reservations, spec-admission records,
+dispatcher skips/journals and the conflict-resolver allowance ledger.
+These are shared only within one Git directory. They have different
+retention rules; deleting evidence cannot grant admission, release a
+lease or replenish repair. Older issue-directory associations are not
+imported into numbering, and the new dispatch journal cannot reconstruct
+outcomes of pre-upgrade lanes. Inspect any pre-fix development evidence
+or unsafe historical insights/comments separately; resync does not scrub
+private bytes or backfill history. See <a
+href="release-notes.html#new-files-and-state-locations">the state
+inventory</a>.</p>
+<p>Run <code>python3 scripts/bureau-doctor.py --mode background</code>,
+restart the chosen drivers together and qualify a representative live
+ticket before unattended dispatch. The release validation record uses
+fake providers; it supplies no v3.5 installation acceptance.</p>
+<p><strong>Rollback:</strong> stop every driver, select
+<code>v3.4.1</code> and restore its scripts/interfaces and compatible
+Spec Kit 0.7.5 assets together, using the backup and <a
+href="#rollback">rollback procedure</a>. Preserve v3.5 state separately
+for inspection, restore earlier configuration and reconcile unfinished
+work/leases before restarting older pollers. Older consumers cannot
+coordinate v3.5 stores or waits. Commits, pushes, published briefs and
+Linear/GitHub changes remain.</p>
+<h3 id="spec-resume-and-governance-adoption">Spec resume and governance
+adoption</h3>
+<p>In v3.5.0, resync the whole scripts scope, including
 <code>bureau-spec.py</code>, <code>bureau-evidence.py</code>,
 <code>bureau-provider.py</code>, <code>bureau-runtime.py</code>,
 <code>bureau-worker.sh</code>, <code>bureau-config.sh</code> and both
@@ -82,8 +280,9 @@ committed phase checkpoints only (<code>schema_version: 1</code>,
 <code>checkpoint_version: 2</code>). Each successful specify/plan/tasks
 phase commits its reserved feature directory locally; the existing final
 stage push is unchanged. Workers reset/clean normally to a verified
-checkpoint reachable on the reserved local or origin branch. All
-uncommitted leftovers are discarded. Changed inputs require fresh
+checkpoint reachable on the reserved local or origin branch. On ordinary
+registered retries, uncommitted leftovers are discarded; cooperative
+withdrawal preserves unfinished work. Changed inputs require fresh
 specify, and failed spec review still invalidates from specify. Earlier
 checkpoint records are ignored; old unregistered workers require
 explicit inspection/recovery. Commits and checkpoint evidence must both
@@ -156,12 +355,12 @@ is no punctuation, verb or word-count requirement. Ordinary words such
 as “pending” or “wird definiert durch” inside a real explanation remain
 valid.</p>
 <p><strong>Known limits (governance check):</strong> the check targets
-honest mistakes by the spec agent; it is not a security boundary against
-deliberate obfuscation. Deliberate evasion, for example link reference
-titles, empty link labels or unusual Markdown or HTML constructs, is not
-guaranteed to be caught. Spec review remains responsible for judging
-whether the section is real and adequate, including applicability,
-circular or vague explanations and access/logging/retention risks.</p>
+honest mistakes by the spec agent; deliberate obfuscation can bypass it.
+Deliberate evasion, for example link reference titles, empty link labels
+or unusual Markdown or HTML constructs, is not guaranteed to be caught.
+Spec review remains responsible for judging whether the section is real
+and adequate, including applicability, circular or vague explanations
+and access/logging/retention risks.</p>
 <p>Add or move the section before review or app completion; a detected
 error uses the existing spec-review FAIL/rework route or leaves app
 completion prepared for repair. The no-measurement rule for specify/plan
@@ -169,99 +368,6 @@ is unchanged. Preserve customized <code>.specify/templates</code>, the
 constitution and pinned Spec Kit 1.2.2 helpers. See <a
 href="stage-protocol.html#spec-phase-resume-and-governance">spec resume
 and governance</a> for checkpoint schema and validation limits.</p>
-<h2 id="select-the-source-release">Select the source release</h2>
-<p>First update the actual source clone that supplies
-<code>/bureau-init</code>. Its usual location is
-<code>~/.claude/skills/bureau-init</code>, but it may be a symlink or
-installed elsewhere. Check the loaded skill location; do not pull the
-adopting project's repository by mistake.</p>
-<p>In a terminal, inspect the source checkout:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SOURCE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills/bureau-init&quot;</span> <span class="co"># replace with the actual loaded skill path</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> status <span class="at">--short</span> <span class="at">--branch</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> remote <span class="at">-v</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> describe <span class="at">--tags</span> <span class="at">--always</span> <span class="at">--dirty</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
-<p>For a Codex-only install, the entry point may be
-<code>~/.agents/skills/bureau-init</code> or a configured skill
-directory. Follow its link to the actual source clone. Record the
-previous commit and branch/tag privately for rollback;
-<code>describe</code> alone may name a nearby tag instead of the
-installed commit.</p>
-<p>Confirm that <code>origin</code> identifies the official
-<code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
-source changes before continuing; do not reset the skill clone. With a
-clean checkout, select the exact release (<code>v3.4.1</code> for the
-stable release, <code>v3.4.0</code> for the previous stable release,
-<code>v3.3.0</code>, <code>v3.2.1</code>, <code>v3.2.0</code>,
-<code>v3.1.0</code>, <code>v3.0.2</code>, <code>v3.0.1</code>,
-<code>v3.0.0</code> or <code>v2.0.0</code> for an earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.4.1 <span class="co"># or v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
-<p>Stop if fetching fails, especially if an existing local tag conflicts
-with the remote; do not force-replace it. Compare the resulting commit
-with the commit recorded in the GitHub Release and record it for
-rollback. This leaves the source on a detached release checkout. A later
-release upgrade repeats these steps with that release's tag; it does not
-use <code>git pull</code>.</p>
-<p>An intentionally <code>main</code>-tracking installation can instead
-use <code>git pull --ff-only</code> when its checkout is clean and its
-upstream is the official <code>origin/main</code>. This follows ongoing
-development rather than pinning a release. If the source is an
-archive-origin checkout, an unrelated history or a plain copied
-directory, keep it intact and install a separate official clone from the
-<a href="index.html#install">installation guide</a>; review how the
-loaded skill entry point should move before replacing any link. Do not
-merge unrelated histories or change the old checkout's remote as an
-upgrade shortcut.</p>
-<h2 id="upgrade-to-v35-unreleased">Upgrade to v3.5 (unreleased)</h2>
-<p>These instructions cover the unreleased spec admission/numbering
-changes on top of v3.4.1; they do not select a published v3.5 release.
-Update the source skill to the reviewed revision that contains these
-changes. Follow the earlier upgrade sections first when upgrading from
-before v3.4.1.</p>
-<p><strong>Stop all shepherds, queue loops and dispatchers before
-resyncing scripts.</strong> Preserve unfinished work and customized
-files, install/resync Spec Kit 1.2.2, then resync the complete scripts
-scope as one set (<code>--resync-scripts</code>) in each adopting
-repository. Resync interfaces for the <code>bureau-learnings</code>
-capacity-wait filter. Restart all shepherds, queue loops and dispatchers
-only after the coordinated resync is complete. Updating scripts on disk
-does not replace the case statements already loaded by a running
-shell.</p>
-<p><strong>Mixed resync is incompatible.</strong> A v3.4.1 shepherd
-meeting a v3.5 spec stage alerts and exits on 28 instead of waiting. In
-the other direction, an old exit-2 spec stage with a new shepherd can
-still give 13 plus <code>needs-human</code>. The updated scripts
-together treat a full cap as <code>28</code>
-(<code>spec-capacity-wait</code>), with a cancellable wait and no
-escalation.</p>
-<p><strong>Manual merge mode changes throughput.</strong> Merge is
-excluded from <code>agents.max_concurrent_issues</code> by default under
-<code>agents.merge_mode: "manual"</code>. With cap 1, the next spec can
-start while earlier tickets wait for a manual merge. Set
-<code>agents.max_concurrent_include_merge: true</code> before resyncing
-to keep the old single-flight behavior. Auto mode still includes Merge
-by default, and Build Review always counts. The allocator prevents
-number collisions; it does not coordinate dependencies on unmerged
-work.</p>
-<p>Keep <code>&lt;git common dir&gt;/bureau/spec-numbers.json</code>
-across retries and cleanup. Reservations are shared only by worktrees of
-that Git directory; separate clones/hosts require their own
-coordination, and older issue-to-directory associations are not
-imported. Reserved branches resume before specify after a worker reset,
-preserving existing artifacts; divergent local/origin history halts with
-25 and needs-human. <code>repo.base_branch</code> identifies the origin
-ref the allocator verifies, while fresh disposable spec resets use that
-configured origin base, while eligible retries reset to the last
-verified phase checkpoint commit. Allocation lock acquisition defaults
-to a 300-second bound; set <code>BUREAU_SPEC_LOCK_TIMEOUT</code> in the
-process environment (whole seconds 1–86400) to change it. A lock
-acquisition timeout prints the lock path, exits 124 and routes the issue
-back to Triage before specify. Git scanning after acquisition has no new
-timeout. See <a href="configuration.html">configuration</a> and the <a
-href="../../CHANGELOG.md">changelog</a> for validation limits.</p>
 <h2 id="upgrade-to-v341">Upgrade to v3.4.1</h2>
 <p>The stable release <strong>v3.4.1</strong> is a patch release on
 v3.4.0 with three fixes in <a
@@ -271,9 +377,9 @@ every <code>HERDR_</code> variable from child environments in both
 recovered by a later completed turn, and protecting Claude structured
 results from scheduled wakeups. The v3 exit-code contract stays; no exit
 code or configuration key is new, and no interfaces change. See the <a
-href="release-notes.html">release notes</a> for validation and known
-limitations. There is no release candidate, and no installation has run
-v3.4.1 before the release.</p>
+href="release-notes-v3.4.1.html">release notes</a> for validation and
+known limitations. There is no release candidate, and no installation
+has run v3.4.1 before the release.</p>
 <p><strong>From v3.4.0:</strong> select tag <code>v3.4.1</code> in the
 source skill checkout and resync the <strong>scripts scope as one
 set</strong> (<code>--resync-scripts</code>) in each adopting
@@ -1248,9 +1354,9 @@ native hook-name mapping and the helper guidance below.</p>
 branch, including numeric feature branches, <code>codex/*</code> and
 detached checkouts, resolve the issue's exact approved spec folder and
 always pass both variables:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
 <p>Replace both example values with the real approved feature and
 configured specs path. Use the same pair for every helper that consumes
 an existing feature. Fresh worktrees lack the ignored
@@ -1322,8 +1428,8 @@ href="stage-protocol.html">ownership/recovery protocol</a>.</li>
 conflicts</h2>
 <p>Run the helper from the refreshed source, with the adopting
 repository as the current directory:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Preview writes nothing. Exit code <code>3</code> means at least one
 asset conflict. Even with <code>--apply</code>, <strong>one unresolved
 conflict prevents every file in that asset batch from being
@@ -1362,11 +1468,11 @@ unpacked archive or a copy inside another repository, is recorded as
 repository's commit is never used. A preview or an apply stopped by a
 conflict writes no source. The manifest stays at version <code>1</code>:
 installers without source recording still read it.</p>
-<div class="sourceCode" id="cb9"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
 <table>
 <thead>
 <tr>
@@ -1429,11 +1535,11 @@ do not describe an incomplete scripts upgrade as a working new
 runtime.</li>
 </ul>
 <p>Example for a single reviewed script replacement:</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
 <p>Other conflicts still block that example. Repeat
 <code>--overwrite</code> only for each reviewed path in the selected
 scope. There is no blanket force, skip-conflicts or automatic merge
@@ -1465,9 +1571,9 @@ migration</h2>
 <code>.bureau.json</code> or <code>.env</code>. Configuration version
 <code>2</code> is a schema version, not a Bureau release number. To
 adopt it, preview and then apply:</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
 <p>Migration retains existing IDs, labels, models, switches and
 extension keys. It makes the existing Claude runner default explicit
 when absent and adds <code>agents.model_compatibility: "v1"</code> when

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="66b4a0a2099a59addebb8bed1698a5741f2e8c935840a407e7a6da232f3c581c">
+<meta name="bureau-source-sha256" content="5ab6b3887b76a986732e62269e3a0ad6038c81dbceae75c9f6647cadcc1e02dd">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -53,7 +53,7 @@ backend to host.</p>
 </tr>
 <tr>
 <td>Continuous background pipeline</td>
-<td>Configured provider CLIs, supervised shell loops/tmux</td>
+<td>Configured provider CLIs, supervised dispatcher/tmux</td>
 <td><code>bash scripts/start-bureau-v2.sh</code></td>
 </tr>
 </tbody>
@@ -61,7 +61,7 @@ backend to host.</p>
 <p>App work preserves the current checkout. Background workers claim
 both the ticket and their own disposable checkout. Held branches and
 unfinished work are preserved for reconciliation. App review and bounded
-ticks stop before merge by default; continuous legacy pipelines can
+ticks stop before merge by default; continuous background pipelines can
 merge after approval and the full CI/base gate. Use
 <code>--no-merge</code> when supervising through review only.</p>
 <p>Codex support is implemented and covered by local fixtures. Before
@@ -69,9 +69,9 @@ unattended adoption, qualify a representative live ticket in your
 repository. See the <a href="codex-acceptance.html">acceptance
 record</a> for verified coverage and remaining live checks.</p>
 <h2 id="install">Install</h2>
-<p>Install the stable v3.4.1 source, keep one clone and expose it to the
-assistants you use:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.4.1 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
+<p>Install the v3.5.0 source (release date 2026-10-28; prepared
+2026-10-27), keep one clone and expose it to the assistants you use:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.5.0 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills&quot;</span></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills/bureau-init&quot;</span></span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optional Claude Code entry point:</span></span>
@@ -120,7 +120,9 @@ repository.</p>
 <tbody>
 <tr>
 <td>Python 3.9+, Bash 3.2+, Git 2.26+, jq, curl</td>
-<td>Installation and shared runtime</td>
+<td>Installation and shared runtime; the shell filter needs Python on
+the system default PATH and <code>/usr/bin/env -0</code>. Merge-only
+worker reuse needs Git 2.38+</td>
 </tr>
 <tr>
 <td><code>specify-cli</code> 1.2.2
@@ -196,6 +198,15 @@ href="../../templates/skills/bureau/references/supervision.md">supervision
 guide</a> covers quiet change notifications, native app scheduling when
 requested, and shared conflict scheduling. Installation does not start
 recurring automation.</p>
+<p>The tmux launchers now run one continuous dispatcher with two lanes
+by default. It requires explicit
+<code>agents.file_overlap_gate: true</code>, including with one lane or
+dry-run; otherwise startup returns 24. Update all writers together
+before enabling it. <code>agents.parallel_lanes</code> controls process
+lanes separately from the ticket cap; standalone shepherds, ticks, batch
+and upstream-port remain available. See <a
+href="stage-protocol.html#continuous-ticket-dispatch">continuous
+dispatch</a>.</p>
 <p>The existing single-ticket, batch and upstream-port modes remain
 available:</p>
 <table>
@@ -230,23 +241,28 @@ and build/test commands</td>
 <p>The <a href="../../references/operations.md">background operations
 reference</a> covers these modes, the installed driver/helper inventory,
 single-flight limits, multiple repositories and the scope of dry-run
-controls. <code>agents.max_concurrent_issues: 1</code> prevents Spec
-from admitting another issue while work is in flight; it does not
-replace ownership checks or schedule validation.</p>
+controls. <code>agents.max_concurrent_issues: 1</code> limits counted
+work in flight. Manual Merge is excluded by default; set
+<code>agents.max_concurrent_include_merge: true</code> to keep full
+single-flight behavior. Build Review always counts. Ownership and
+schedule validation remain required.</p>
 <h2 id="update-and-migrate">Update and migrate</h2>
-<p>Select <code>v3.4.1</code> in the source clone that supplies
+<p>Select tag <code>v3.5.0</code> in the source clone that supplies
 <code>bureau-init</code> using the <a
 href="migration.html#select-the-source-release">source-update
-instructions</a> and refresh skill discovery. From v3.4.0, resync the
-<strong>scripts scope as one set in each adopting repository</strong>,
-then restart queue loops and supervisors and follow <a
-href="migration.html#upgrade-to-v341">Upgrade to v3.4.1</a>. No other
-action is required; no configuration key is new, no interfaces change
-and the v3 exit-code contract stays. From earlier versions, follow <a
-href="migration.html#upgrade-to-v34">Upgrade to v3.4</a> and its
-earlier upgrade sections first. In Claude Code, after loading the new
-source skill:</p>
-<pre class="text"><code>/bureau-init --resync-scripts --target both</code></pre>
+instructions</a> and refresh skill discovery. From v3.4.1, stop every
+driver, preserve unfinished work and customized assets, install/resync
+Spec Kit 1.2.2, then resync the <strong>scripts and interfaces scopes
+together in each adopting repository</strong>. Review changed defaults
+for manual-Merge capacity, review severity/rounds, ticket withdrawal,
+evidence, lessons and launcher dispatch; a launcher requires explicit
+overlap opt-in. Follow <a
+href="migration.html#upgrade-to-v35">Upgrade to v3.5</a>, restart all
+drivers together and qualify a representative ticket. From earlier
+versions follow <a href="migration.html#upgrade-to-v341">Upgrade to
+v3.4.1</a> and its earlier sections first. In Claude Code, after loading
+the new source skill:</p>
+<pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
 <p>In a Codex app task, request the same scopes with:</p>
 <pre class="text"><code>$bureau-init --resync-scripts --target both</code></pre>
 <p>Use <code>--target claude</code> to stay Claude-only. Refresh Spec
@@ -268,7 +284,7 @@ records <code>model_compatibility: "v1"</code> to retain model
 ownership. Its private backup covers configuration only. Installing
 Codex interfaces does not switch the background runner.</p>
 <p>The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.1">v3.4.1
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">v3.5.0
 release</a> and <a href="../../CHANGELOG.md">changelog</a> list what changes
 and what adopters must do. v2.0.0 was the first tagged release; earlier
 source installs were untagged. The <a href="releases.html">release
@@ -338,7 +354,7 @@ and <a href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>, which
 stay published as prereleases; runtime, installer, templates and tests
 are identical to rc.2. v3.3.0 followed <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">v3.2.1</a>.</p>
-<p>v3.4.0, dated 2026-10-09, is the previous stable release, a minor
+<p>v3.4.0, dated 2026-10-09, is an earlier stable release, a minor
 release on v3.3.0. It adds operator hooks without submodule recursion
 (<a href="https://github.com/KaiaK808/bureau/pull/69">#69</a>), applies
 Claude effort per stage (<a
@@ -358,8 +374,8 @@ no release candidate; live acceptance follows the release. See the <a
 href="release-notes-v3.4.0.html">release notes</a>; v3.4.0 followed
 <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0">v3.3.0</a>.</p>
-<p>v3.4.1, dated 2026-10-20, is the current stable release, marked as
-latest, a patch release on v3.4.0. It contains three fixes in <a
+<p>v3.4.1, dated 2026-10-20, is the previous stable release, a patch
+release on v3.4.0. It contains three fixes in <a
 href="https://github.com/KaiaK808/bureau/pull/73">#73</a>: dropping
 every <code>HERDR_</code> variable from child environments, accepting
 Codex error notices recovered by a later completed turn, and protecting
@@ -372,9 +388,22 @@ Installations that start shepherd runs from inside Herdr benefit
 directly. There is no release candidate and no installation has run
 v3.4.1 before the release; provider calls are faked in tests, and no
 live Herdr session, Codex 503 recovery or wakeup was reproduced. See the
-<a href="release-notes.html">release notes</a>; the previous stable
-release is <a
+<a href="release-notes-v3.4.1.html">release notes</a>; v3.4.1
+followed <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.0">v3.4.0</a>.</p>
+<p>v3.5.0, dated 2026-10-28 (prepared 2026-10-27), is the current
+release preparation, a minor release on v3.4.1. It adds quiet exits
+28/29, shared completion/wait evidence, committed spec checkpoints and
+governance checks, stricter sandbox-gate proof, review convergence,
+cooperative ticket withdrawal, file admission, continuous dispatch and
+bounded learning. Spec Kit is pinned to 1.2.2. Configurable conflict
+repair and silence detection stay opt-in; launchers require overlap
+enabled. Each PR was reviewed by Codex before push; stack-top #93 at
+<code>9842550</code> is green on all ten CI shards. No installation has
+run v3.5.0 before the release and there is no release candidate; see <a
+href="release-notes.html">release notes</a> for all defaults, state
+locations, the validation record and pending main CI. Publication
+remains a separate maintainer operation.</p>
 <h2 id="documentation">Documentation</h2>
 <table>
 <thead>
