@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="bd33deb82e26bd0f908da3b4d3e6a2f8a770c282f5e7a905cc0ae0a24f91f6aa">
+<meta name="bureau-source-sha256" content="1e4a5b90a5802792895941e0927ed8644e8b75d19f24a9d8d6cfd13d341acfeb">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -26,7 +26,7 @@ Tagging and publication remain separate maintainer operations. The
 previous stable release is <a href="release-notes-v3.4.1.html">v3.4.1</a>;
 its notes retain the earlier release history.</p>
 <p>v3.5.0 is a minor release on v3.4.1. It collects <a
-href="https://github.com/KaiaK808/bureau/compare/v3.4.1...56d4170">#76–#93</a>
+href="https://github.com/KaiaK808/bureau/compare/v3.4.1...v3.5.0">#76–#94</a>
 and the Spec Kit 1.2.2 upgrade in <a
 href="https://github.com/KaiaK808/bureau/pull/75">#75</a>. The v3 exit
 vocabulary gains <code>28</code> and <code>29</code>; scripts and
@@ -64,8 +64,21 @@ fixtures accept Git's newer fetch-error wording and ensure productive
 silence tests emit enough events. These CI changes require no adopter CI
 resync. (<a
 href="https://github.com/KaiaK808/bureau/pull/93">#93</a>)</p>
-<!-- ci-green entry pending -->
-
+<h3 id="merge-gate-ci-check">Merge gate CI check</h3>
+<p>The merge gate's CI check now judges only the newest check run per
+check name and app, ordered by <code>started_at</code> (fractional
+seconds and numeric offsets included) and then by <code>id</code>; a
+group with an unreadable time orders by <code>id</code> alone. An older
+failed or queued run no longer holds back a newer successful run of the
+same check. Only successful check runs and successful legacy statuses
+count toward <code>agents.merge_min_required_checks</code>; skipped and
+neutral runs never fail the head and never count. This changes by
+default: a head whose checks are all skipped, for example a draft pull
+request in a workflow that skips drafts, now waits with "only 0
+completed check(s)" under the default minimum of 1, also after the CI
+start grace. Set <code>merge_min_required_checks: 0</code> to let such
+heads pass. The "no check run and no status" line still needs a head
+with no check run and no status at all.</p>
 <h3 id="spec-admission-numbering-and-phase-resume">Spec admission,
 numbering and phase resume</h3>
 <p>A full configured spec cap now returns quiet wait <code>28</code>,
@@ -653,13 +666,16 @@ href="migration.html#preview-and-resolve-asset-conflicts">preview and
 resolve</a>. <code>--update</code> changes configuration only. See <a
 href="migration.html#upgrade-to-v35">Upgrade to v3.5</a>.</p>
 <p>Before restart, choose the manual-Merge counting policy and review
-severity floor, check active/cancellation state IDs and numeric
-settings, add/move governance in existing specs, and retain the shared
-number/checkpoint/admission/dispatch/repair records. Launcher users must
-explicitly enable overlap after every writer is updated. Silence and
-both configurable conflict strategies stay opt-in; do not enable them
-merely by copying an example. Restart drivers together, run doctor and
-qualify a representative ticket before unattended dispatch.</p>
+severity floor, check that repositories whose heads carry only skipped
+or neutral checks get a successful check or set
+<code>merge_min_required_checks: 0</code>, check active/cancellation
+state IDs and numeric settings, add/move governance in existing specs,
+and retain the shared number/checkpoint/admission/dispatch/repair
+records. Launcher users must explicitly enable overlap after every
+writer is updated. Silence and both configurable conflict strategies
+stay opt-in; do not enable them merely by copying an example. Restart
+drivers together, run doctor and qualify a representative ticket before
+unattended dispatch.</p>
 <p><strong>Mixed resync is incompatible:</strong> old shepherds treat
 <code>28</code> as a failure, and an old exit-2 spec stage with a new
 shepherd can still escalate to <code>13</code>. Partial
@@ -703,10 +719,14 @@ href="https://github.com/KaiaK808/bureau/pull/93">#93</a> at head
 #83's 15-file ADR change (14 Markdown files and
 <code>tests/test_adrs.sh</code>). The full suite also ran locally on
 macOS, 151/151 at <code>950a5d9</code>, before the sharding commit. An
-Ubuntu 24.04 container run matched PR 1's container baseline. Provider
-calls are faked in tests. No installation has run v3.5.0 before the
-release, and there is no release candidate. Release preparation changes
-documentation only.</p>
+Ubuntu 24.04 container run matched PR 1's container baseline. <a
+href="https://github.com/KaiaK808/bureau/pull/94">#94</a>, the merge CI
+gate fix on top of <code>56d4170</code>, was reviewed by Codex in two
+rounds; the full suite passed locally on macOS, 154/154 at
+<code>1b9615e</code>. <!-- pr94 CI result pending --> Provider calls are
+faked in tests. No installation has run v3.5.0 before the release, and
+there is no release candidate. Release preparation changes documentation
+only.</p>
 <p>GitHub CI on <code>main</code> at <code>56d4170</code> is green on
 all 10 shards (<a
 href="https://github.com/KaiaK808/bureau/actions/runs/40573763078">run

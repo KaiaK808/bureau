@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="137a8776fce339fd1c1ba07946c5b419b7f527cf2e8e63ba8512b5b37032c74a">
+<meta name="bureau-source-sha256" content="4afe2b45ffa6f40a49ab5792443331379494186861cd5cad6b2ac943847eaba7">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -191,6 +191,12 @@ seconds 1–86400). Timeout returns 124 and routes back to Triage; Git
 scanning after lock acquisition has no new timeout. Spec moves now
 serialize count/reservation/move for all updated drivers in the common
 Git directory.</li>
+<li><strong>Merge CI gate:</strong> only the newest check run per name
+and app counts, and only <code>success</code> results meet
+<code>agents.merge_min_required_checks</code> (default 1). Heads whose
+checks are all skipped or neutral, for example drafts in a workflow that
+skips draft pull requests, now wait. Arrange a successful check, or set
+the minimum to <code>0</code>.</li>
 <li><strong>Review policy:</strong> default
 <code>agents.review_min_severity: "BUG"</code> defers validated
 MINOR/SKIP findings; choose <code>"MINOR"</code> for stricter review.

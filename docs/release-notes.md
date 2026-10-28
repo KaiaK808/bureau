@@ -2,7 +2,7 @@
 
 **Stable release · 2026-10-28 · source tag `v3.5.0` · prepared 2026-10-27.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.0) is marked as latest and records the exact tagged commit. Tagging and publication remain separate maintainer operations. The previous stable release is [v3.4.1](release-notes-v3.4.1.md); its notes retain the earlier release history.
 
-v3.5.0 is a minor release on v3.4.1. It collects [#76–#93](https://github.com/KaiaK808/bureau/compare/v3.4.1...56d4170) and the Spec Kit 1.2.2 upgrade in [#75](https://github.com/KaiaK808/bureau/pull/75). The v3 exit vocabulary gains `28` and `29`; scripts and interfaces must be resynced together. It goes straight to stable without a release candidate.
+v3.5.0 is a minor release on v3.4.1. It collects [#76–#94](https://github.com/KaiaK808/bureau/compare/v3.4.1...v3.5.0) and the Spec Kit 1.2.2 upgrade in [#75](https://github.com/KaiaK808/bureau/pull/75). The v3 exit vocabulary gains `28` and `29`; scripts and interfaces must be resynced together. It goes straight to stable without a release candidate.
 
 ## What changed since v3.4.1
 
@@ -14,7 +14,9 @@ The shell filter requires Python 3.9+ on the system default PATH from `/usr/bin/
 
 Repository CI now runs four `ubuntu-latest` shards and six `macos-latest` shards, with a 90-minute job limit. `BUREAU_TEST_SHARD=i/n` selects one balanced share; unset runs the full suite and `bash tests/run.sh --list` lists it. Portable fixture paths and two CI-only test fixes are included: the fixtures accept Git's newer fetch-error wording and ensure productive silence tests emit enough events. These CI changes require no adopter CI resync. ([#93](https://github.com/KaiaK808/bureau/pull/93))
 
-<!-- ci-green entry pending -->
+### Merge gate CI check
+
+The merge gate's CI check now judges only the newest check run per check name and app, ordered by `started_at` (fractional seconds and numeric offsets included) and then by `id`; a group with an unreadable time orders by `id` alone. An older failed or queued run no longer holds back a newer successful run of the same check. Only successful check runs and successful legacy statuses count toward `agents.merge_min_required_checks`; skipped and neutral runs never fail the head and never count. This changes by default: a head whose checks are all skipped, for example a draft pull request in a workflow that skips drafts, now waits with "only 0 completed check(s)" under the default minimum of 1, also after the CI start grace. Set `merge_min_required_checks: 0` to let such heads pass. The "no check run and no status" line still needs a head with no check run and no status at all.
 
 ### Spec admission, numbering and phase resume
 
@@ -134,7 +136,7 @@ Records are created as needed. There is no historical backfill. Provider origina
 
 **From v3.4.1:** stop all shepherds, pollers, dispatchers and supervisors, preserve unfinished work, and compare installed script drift before replacing anything. Select tag `v3.5.0` in the source skill checkout and refresh skill discovery. Install/resync pinned Spec Kit 1.2.2 after resolving customized helpers, preserving the constitution and active integration. Resync the **scripts and interfaces scopes as one set** (`--resync-interfaces --resync-scripts`) in each adopting repository, resolving customization conflicts through [preview and resolve](migration.md#preview-and-resolve-asset-conflicts). `--update` changes configuration only. See [Upgrade to v3.5](migration.md#upgrade-to-v35).
 
-Before restart, choose the manual-Merge counting policy and review severity floor, check active/cancellation state IDs and numeric settings, add/move governance in existing specs, and retain the shared number/checkpoint/admission/dispatch/repair records. Launcher users must explicitly enable overlap after every writer is updated. Silence and both configurable conflict strategies stay opt-in; do not enable them merely by copying an example. Restart drivers together, run doctor and qualify a representative ticket before unattended dispatch.
+Before restart, choose the manual-Merge counting policy and review severity floor, check that repositories whose heads carry only skipped or neutral checks get a successful check or set `merge_min_required_checks: 0`, check active/cancellation state IDs and numeric settings, add/move governance in existing specs, and retain the shared number/checkpoint/admission/dispatch/repair records. Launcher users must explicitly enable overlap after every writer is updated. Silence and both configurable conflict strategies stay opt-in; do not enable them merely by copying an example. Restart drivers together, run doctor and qualify a representative ticket before unattended dispatch.
 
 **Mixed resync is incompatible:** old shepherds treat `28` as a failure, and an old exit-2 spec stage with a new shepherd can still escalate to `13`. Partial helper/schema/interface updates also break receipt/gate and provider-result contracts. Resyncing scripts cannot replace case statements already loaded in a running shell.
 
@@ -148,7 +150,7 @@ To roll back, stop every driver, select tag `v3.4.1` in the source skill checkou
 
 ## Validation
 
-The maintainer's release validation record reports each PR reviewed by Codex before push. CI was judged at the top of the stack: [#93](https://github.com/KaiaK808/bureau/pull/93) at head `9842550` is green on all 10 shards (four `ubuntu-latest`, six `macos-latest`). `main` at `56d4170` equals that tested tree plus #83's 15-file ADR change (14 Markdown files and `tests/test_adrs.sh`). The full suite also ran locally on macOS, 151/151 at `950a5d9`, before the sharding commit. An Ubuntu 24.04 container run matched PR 1's container baseline. Provider calls are faked in tests. No installation has run v3.5.0 before the release, and there is no release candidate. Release preparation changes documentation only.
+The maintainer's release validation record reports each PR reviewed by Codex before push. CI was judged at the top of the stack: [#93](https://github.com/KaiaK808/bureau/pull/93) at head `9842550` is green on all 10 shards (four `ubuntu-latest`, six `macos-latest`). `main` at `56d4170` equals that tested tree plus #83's 15-file ADR change (14 Markdown files and `tests/test_adrs.sh`). The full suite also ran locally on macOS, 151/151 at `950a5d9`, before the sharding commit. An Ubuntu 24.04 container run matched PR 1's container baseline. [#94](https://github.com/KaiaK808/bureau/pull/94), the merge CI gate fix on top of `56d4170`, was reviewed by Codex in two rounds; the full suite passed locally on macOS, 154/154 at `1b9615e`. <!-- pr94 CI result pending --> Provider calls are faked in tests. No installation has run v3.5.0 before the release, and there is no release candidate. Release preparation changes documentation only.
 
 GitHub CI on `main` at `56d4170` is green on all 10 shards ([run 40573763078](https://github.com/KaiaK808/bureau/actions/runs/40573763078)), the first CI run that includes `tests/test_adrs.sh`.
 

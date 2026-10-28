@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1a4745f4e26af2b7943cf2765323c1b52803997aa5ff9411809288159fd78d27">
+<meta name="bureau-source-sha256" content="3199ceff66d2d224402c0213e955230c2615179423a3bfdb3db5fb651e717541">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -31,16 +31,16 @@ href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">GitHub
 Release</a> records the exact tagged commit. Tagging and publication
 remain separate maintainer operations. The <a
 href="../../CHANGELOG.md">changelog</a> and <a
-href="release-notes.html">release notes</a> cover PRs #76–#93 and the Spec
+href="release-notes.html">release notes</a> cover PRs #76–#94 and the Spec
 Kit 1.2.2 upgrade in #75. New exits 28/29 require coordinated consumers.
-Default changes include manual-Merge capacity counting, review
-severity/round policy, ticket withdrawal, completion evidence, bounded
-lessons and continuous launcher dispatch; the dispatcher requires
-explicit overlap opt-in. Configurable conflict repair and provider
-silence remain opt-in. From v3.4.1, stop every driver, preserve
-unfinished work and customized assets, select tag <code>v3.5.0</code>,
-install/resync Spec Kit 1.2.2, resync scripts and interfaces together
-and restart only after the checks in <a
+Default changes include manual-Merge capacity counting, the merge CI
+gate's success-only counting, review severity/round policy, ticket
+withdrawal, completion evidence, bounded lessons and continuous launcher
+dispatch; the dispatcher requires explicit overlap opt-in. Configurable
+conflict repair and provider silence remain opt-in. From v3.4.1, stop
+every driver, preserve unfinished work and customized assets, select tag
+<code>v3.5.0</code>, install/resync Spec Kit 1.2.2, resync scripts and
+interfaces together and restart only after the checks in <a
 href="migration.html#upgrade-to-v35">Upgrade to v3.5</a>.</p>
 <p>The maintainer's release validation record reports each PR reviewed
 by Codex before push. CI was judged at the top of the stack: <a
@@ -51,10 +51,14 @@ href="https://github.com/KaiaK808/bureau/pull/93">#93</a> at head
 #83's 15-file ADR change (14 Markdown files and
 <code>tests/test_adrs.sh</code>). The full suite also ran locally on
 macOS, 151/151 at <code>950a5d9</code>, before the sharding commit. An
-Ubuntu 24.04 container run matched PR 1's container baseline. Provider
-calls are faked in tests. No installation has run v3.5.0 before the
-release, and there is no release candidate. Release preparation changes
-documentation only.</p>
+Ubuntu 24.04 container run matched PR 1's container baseline. <a
+href="https://github.com/KaiaK808/bureau/pull/94">#94</a>, the merge CI
+gate fix on top of <code>56d4170</code>, was reviewed by Codex in two
+rounds; the full suite passed locally on macOS, 154/154 at
+<code>1b9615e</code>. <!-- pr94 CI result pending --> Provider calls are
+faked in tests. No installation has run v3.5.0 before the release, and
+there is no release candidate. Release preparation changes documentation
+only.</p>
 <p>GitHub CI on <code>main</code> at <code>56d4170</code> is green on
 all 10 shards (<a
 href="https://github.com/KaiaK808/bureau/actions/runs/40573763078">run

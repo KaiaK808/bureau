@@ -8,7 +8,7 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [3.5.0] - 2026-10-28
 
-v3.5.0 is a minor release on v3.4.1, prepared 2026-10-27 for the 2026-10-28 tag. It collects PRs #76–#93 plus the Spec Kit 1.2.2 upgrade in #75. The v3 exit vocabulary gains 28 (spec-capacity-wait) and 29 (file-overlap-wait). Stop all drivers and resync scripts and interfaces together; manual-Merge capacity counting, review severity/round policy, ticket withdrawal, evidence, lessons and launcher dispatch change by default. Launcher dispatch requires explicit overlap opt-in; configurable conflict repair and provider silence remain opt-in. There is no release candidate. See the [v3.5.0 release notes](docs/release-notes.md) for every new setting, state location, upgrade action and the release validation record.
+v3.5.0 is a minor release on v3.4.1, prepared 2026-10-27 for the 2026-10-28 tag. It collects PRs #76–#94 plus the Spec Kit 1.2.2 upgrade in #75. The v3 exit vocabulary gains 28 (spec-capacity-wait) and 29 (file-overlap-wait). Stop all drivers and resync scripts and interfaces together; manual-Merge capacity counting, the merge CI gate's newest-run and success-only counting, review severity/round policy, ticket withdrawal, evidence, lessons and launcher dispatch change by default. Launcher dispatch requires explicit overlap opt-in; configurable conflict repair and provider silence remain opt-in. There is no release candidate. See the [v3.5.0 release notes](docs/release-notes.md) for every new setting, state location, upgrade action and the release validation record.
 
 ### Added
 
