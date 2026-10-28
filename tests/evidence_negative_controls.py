@@ -5,24 +5,25 @@ import shutil
 import sys
 import tempfile
 
-from mutation_checks import mutation_caught
+from mutation_checks import mutation_caught, snapshot_files
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPTS=ROOT/'templates/scripts'
 names=('bureau-provider.py','bureau-runtime.py','bureau-evidence.py','bureau-gates.py','bureau-activity.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
-       'merge-pipeline.sh','bureau-config.sh','bureau-env.sh','code-review-pipeline.sh')
+       'merge-pipeline.sh','bureau-config.sh','bureau-env.sh','bureau-insights.sh','code-review-pipeline.sh')
 before={name:hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
 
 
 def rejected(test, cases, env, expected):
     mutation_caught([sys.executable,str(ROOT/'tests'/test),*cases],env=env,
-                    baseline_env={key:str(SCRIPTS/Path(value).name) for key,value in env.items()},
+                    originals=originals,
                     timeout=30,expected=expected)
 
 
 with tempfile.TemporaryDirectory(prefix='bureau evidence controls ') as scratch:
     root=Path(scratch).resolve()
     for name in names: shutil.copy(SCRIPTS/name,root/name)
+    originals=snapshot_files(root)
     provider=root/'bureau-provider.py'; original=provider.read_text()
     anchor='        path = store.put_receipt(receipt)\n'
     assert original.count(anchor)==1

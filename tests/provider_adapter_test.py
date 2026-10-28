@@ -1389,6 +1389,7 @@ p.Path.open=refuse_transcript_read
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), control.parent / 'bureau-evidence.py')
         shutil.copy(SCRIPT.with_name('bureau-gates.py'), control.parent / 'bureau-gates.py')
         shutil.copy(SCRIPT.with_name('bureau-activity.py'), control.parent / 'bureau-activity.py')
+        shutil.copy(SCRIPT.with_name('bureau-insights.sh'), control.parent / 'bureau-insights.sh')
         control.write_text(source.replace(changed,'        return env\n'))
         return control
 
@@ -1410,12 +1411,13 @@ p.Path.open=refuse_transcript_read
         self.assertIsNone(p.configuration('implement',config,{})['config_dir'])
 
     def test_negative_control_the_env_assertion_fails_without_the_change(self):
-        from mutation_checks import caught_mutation
+        from mutation_checks import caught_mutation, restored_files
         lean=self.profile('lean')
         config={'agents':{'runner':'claude','providers':{'claude':{'config_dir':str(lean)}}}}
-        child,login=self.claude_envs(config)
-        self.assertEqual((child['CLAUDE_CONFIG_DIR'],login['CLAUDE_CONFIG_DIR']),(str(lean),str(lean)))
         script=self.without_config_dir()
+        with restored_files({script: SCRIPT.read_bytes()}):
+            child,login=self.claude_envs(config,script=script)
+            self.assertEqual((child['CLAUDE_CONFIG_DIR'],login['CLAUDE_CONFIG_DIR']),(str(lean),str(lean)))
         with caught_mutation():
             child,login=self.claude_envs(config,script=script)
             self.assertEqual((child['CLAUDE_CONFIG_DIR'],login['CLAUDE_CONFIG_DIR']),(str(lean),str(lean)))

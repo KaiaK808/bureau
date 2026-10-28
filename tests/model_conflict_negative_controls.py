@@ -9,25 +9,29 @@ import tarfile
 import tempfile
 import unittest
 
-from mutation_checks import mutation_caught
+from mutation_checks import mutation_caught, snapshot_files
 
 ROOT=Path(__file__).resolve().parents[1]
 
 
 class ModelConflictControls(unittest.TestCase):
-    def run_cases(self,scripts,module,*cases):
+    def run_cases(self,scripts,module,*cases,originals=None):
         return mutation_caught([sys.executable,str(ROOT/'tests'/module),*cases],
             env={'BUREAU_MODEL_CONFLICT_SCRIPTS':str(scripts)},
-            baseline_env={'BUREAU_MODEL_CONFLICT_SCRIPTS':str(ROOT/'templates/scripts')},timeout=180)
+            baseline_env=None if originals is not None else
+                {'BUREAU_MODEL_CONFLICT_SCRIPTS':str(ROOT/'templates/scripts')},
+            originals=originals,timeout=180)
 
     def test_bypassing_external_checks_accepts_bad_resolution(self):
         with tempfile.TemporaryDirectory(prefix='bureau-1750-no-check-') as name:
             scripts=Path(name).resolve()/'scripts';shutil.copytree(ROOT/'templates/scripts',scripts)
+            originals=snapshot_files(scripts)
             path=scripts/'bureau-conflicts.py';code=path.read_text()
             needle='    def validate(self, check, scratch):\n'
             self.assertEqual(code.count(needle),1)
             path.write_text(code.replace(needle,needle+'        return  # private negative control\n',1))
-            self.run_cases(scripts,'model_conflicts_test.py','ModelConflictTests.test_red_check_rolls_back_and_is_human_17')
+            self.run_cases(scripts,'model_conflicts_test.py','ModelConflictTests.test_red_check_rolls_back_and_is_human_17',
+                           originals=originals)
             print('PASS negative control: bypassing the external check incorrectly accepted failing source (0 instead of 17)')
 
     @unittest.skipUnless(os.environ.get('BUREAU_MODEL_CONFLICT_BASELINE'),'explicit baseline required for build qualification')

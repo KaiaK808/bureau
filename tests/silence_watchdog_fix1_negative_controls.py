@@ -5,7 +5,7 @@ import shutil
 import sys
 import tempfile
 
-from mutation_checks import mutation_caught
+from mutation_checks import mutation_caught, snapshot_files
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPTS=ROOT/'templates/scripts'
@@ -58,12 +58,12 @@ before={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in SCRIPTS.iterd
 for name, filename, mutate, test, expected in controls:
     with tempfile.TemporaryDirectory(prefix='bureau-1723-fix1-control-') as scratch:
         target=Path(scratch).resolve()/'scripts'; shutil.copytree(SCRIPTS,target)
+        originals=snapshot_files(target)
         source=target/filename; source.write_text(mutate(source.read_text()))
         mutation_caught([sys.executable,str(ROOT/'tests/silence_watchdog_fix1_test.py'),test],
             env={'BUREAU_TEST_PROVIDER_SCRIPT':str(target/'bureau-provider.py'),
                  'BUREAU_TEST_SILENCE_SCRIPTS':str(target)},
-            baseline_env={'BUREAU_TEST_PROVIDER_SCRIPT':str(SCRIPTS/'bureau-provider.py'),
-                          'BUREAU_TEST_SILENCE_SCRIPTS':str(SCRIPTS)},timeout=65,expected=expected)
+            originals=originals,timeout=65,expected=expected)
         print('PASS negative control: '+name,flush=True)
 assert before=={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in SCRIPTS.iterdir() if p.is_file()}
 print('PASS negative controls: runtime source hashes unchanged')

@@ -8,14 +8,14 @@ import tarfile
 import tempfile
 import unittest
 
-from mutation_checks import mutation_caught
+from mutation_checks import mutation_caught, snapshot_files
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class NegativeControls(unittest.TestCase):
-    def check_withdrawal_failure(self, scripts, case):
-        return self.check_failure(scripts, [case], 'conflicts_withdrawal_test.py', 'ConflictWithdrawal')
+    def check_withdrawal_failure(self, scripts, case, originals=None):
+        return self.check_failure(scripts, [case], 'conflicts_withdrawal_test.py', 'ConflictWithdrawal', originals)
 
     @unittest.skipUnless(os.environ.get('BUREAU_CONFLICT_WITHDRAWAL_BASELINE'), 'explicit pre-integration ref required')
     def test_pre_integration_bypasses_withdrawal(self):
@@ -32,18 +32,21 @@ class NegativeControls(unittest.TestCase):
     def test_bypass_command_checkpoints_breaks_rollback_and_step_boundary(self):
         with tempfile.TemporaryDirectory(prefix='bureau-conflicts-withdrawal-mutation-') as directory:
             scripts = Path(directory).resolve() / 'scripts'; shutil.copytree(ROOT / 'templates/scripts', scripts)
+            originals = snapshot_files(scripts)
             path = scripts / 'bureau-conflicts.py'; source = path.read_text()
             self.assertEqual(source.count('self.checkpoint()'), 10)
             path.write_text(source.replace('self.checkpoint()', 'None  # private mutation: no command checkpoint'))
-            self.check_withdrawal_failure(scripts, 'test_withdrawal_before_dependencies_and_between_commands')
+            self.check_withdrawal_failure(scripts, 'test_withdrawal_before_dependencies_and_between_commands', originals)
             print('PASS command-boundary control: removing transaction checkpoints starts later steps or commits withdrawn work')
 
-    def check_failure(self, scripts, cases, module='conflicts_test.py', group='ConflictTests'):
+    def check_failure(self, scripts, cases, module='conflicts_test.py', group='ConflictTests', originals=None):
         output = ''
         for case in cases:
             result = mutation_caught([sys.executable, str(ROOT/'tests'/module), group+'.'+case],
                 env={'BUREAU_CONFLICT_TEST_SCRIPTS': str(scripts)},
-                baseline_env={'BUREAU_CONFLICT_TEST_SCRIPTS': str(ROOT/'templates/scripts')},timeout=None)
+                baseline_env=None if originals is not None else
+                    {'BUREAU_CONFLICT_TEST_SCRIPTS': str(ROOT/'templates/scripts')},
+                originals=originals,timeout=None)
             output += result.stdout + result.stderr
         return output
 
@@ -74,11 +77,12 @@ class NegativeControls(unittest.TestCase):
     def test_bypass_regeneration_breaks_success_assertion(self):
         with tempfile.TemporaryDirectory(prefix='bureau-conflicts-mutation-') as directory:
             scripts = Path(directory).resolve() / 'scripts'; shutil.copytree(ROOT / 'templates/scripts', scripts)
+            originals = snapshot_files(scripts)
             path = scripts / 'bureau-conflicts.py'; source = path.read_text()
             anchor = "            self.run(rule['command'])"
             self.assertEqual(source.count(anchor), 1)
             path.write_text(source.replace(anchor, '            pass  # private negative control: bypass regeneration'))
-            self.check_failure(scripts, ['test_generated_only'])
+            self.check_failure(scripts, ['test_generated_only'], originals=originals)
             print('PASS negative control: bypassing regeneration leaves invalid old output; the successful-resolution assertion fails')
 
 

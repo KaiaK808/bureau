@@ -5,7 +5,7 @@ import shutil
 import sys
 import tempfile
 
-from mutation_checks import mutation_caught
+from mutation_checks import mutation_caught, snapshot_files
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT/'templates/scripts'
@@ -16,12 +16,12 @@ before = {name: hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name
 
 def rejected(script, case, env, expected):
     mutation_caught([sys.executable, str(ROOT/'tests'/script), case], env=env,
-                    baseline_env={key: str(SCRIPTS if key.endswith('_SCRIPTS') else SCRIPTS/Path(value).name)
-                                  for key, value in env.items()}, timeout=900, expected=expected)
+                    originals=originals, timeout=900, expected=expected)
 
 
 with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     root = Path(scratch).resolve()/'scripts'; shutil.copytree(SCRIPTS, root)
+    originals = snapshot_files(root)
     spec = root/'bureau-spec.py'; original = spec.read_text()
     env = {'BUREAU_TEST_SPEC_SCRIPTS': str(root)}
 

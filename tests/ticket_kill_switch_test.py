@@ -437,7 +437,7 @@ exit 130
             # another mutation-induced ERROR detects the defect as well.
             self.assert_no_publication(self.events())
             self.assert_withdrawn(result,25,STATES['backlog'])
-            self.assert_released()
+        self.assert_released()
         print('NEGATIVE CONTROL: removing the post-provider checkpoint posts a new comment and fails the withdrawal assertion')
 
     def test_custom_active_keys_and_strict_entry(self):

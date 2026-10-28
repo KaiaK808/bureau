@@ -3,6 +3,7 @@
 # Default is the observed Ubuntu mean (~45s) rounded up; macOS scaling is 2x (~1.8x observed).
 # CI newest-run test: local macOS elapsed 13.45s, rounded up (2026-10-27).
 # Judged stage result fixtures: local macOS elapsed 191.94s, rounded up (2026-10-28).
+# Mutation harness: local macOS elapsed 8.97s, rounded up (2026-10-28).
 # test_file	ubuntu_seconds	macos_seconds
 test_acceptance_insights.sh	-	10
 test_acceptance_insights_negative_controls.sh	59	-
@@ -97,6 +98,7 @@ test_model_conflict_negative_controls.sh	3	-
 test_model_conflict_pipeline.sh	73	-
 test_model_conflicts.sh	99	-
 test_model_resolution.sh	3	-
+test_mutation_checks.sh	-	9
 test_needs_human_hold.sh	17	-
 test_no_internal_refs.sh	1	-
 test_orchestrate_defaults.sh	17	-

@@ -33,8 +33,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-pr8-controls-') as scratch:
         source = sources[env_key]
         if source.count(old) != 1: raise SystemExit('CONTROL PATCH FAILED: ' + name)
         path = Path(scratch).resolve() / (name + '.sh'); path.write_text(source.replace(old, new))
-        original = 'code-review-pipeline.sh' if env_key == 'BUREAU_TEST_REVIEW_SCRIPT' else 'bureau-config.sh'
         mutation_caught([sys.executable, str(ROOT / 'tests/review_convergence_test.py'), test],
-                        env={env_key:str(path)}, baseline_env={env_key:str(ROOT/'templates/scripts'/original)},
+                        env={env_key:str(path)}, originals={path:source.encode()},
                         timeout=60,expected=expected)
         print('PASS negative control: ' + name + ' fails the unchanged positive assertion')
