@@ -1,5 +1,6 @@
 """Exercise the installer against real temporary Git repositories, without network."""
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -37,6 +38,14 @@ class InstallationTests(unittest.TestCase):
                               capture_output=True, text=True, env=env)
         self.assertEqual(proc.returncode, status, proc.stdout + proc.stderr)
         return proc
+
+    def run_install_in_process(self, *args, env):
+        argv = [str(INSTALLER), *args, "--repo", str(self.repo)]
+        with patch.dict(os.environ, env), patch.object(sys, "argv", argv), \
+                patch.object(sys, "stdout", new_callable=io.StringIO) as out, \
+                patch.object(sys, "stderr", new_callable=io.StringIO) as err:
+            status = installer.main()
+        return subprocess.CompletedProcess(argv, status, out.getvalue(), err.getvalue())
 
     def write(self, path, text):
         target = self.repo / path
@@ -483,8 +492,11 @@ if in_repo and os.environ.get("TEST_FAIL_TARGET") == target: sys.exit(7)
         self.assertEqual({path: path.read_bytes() for path in helpers}, before)
         for path in helpers: self.assertEqual(path.stat().st_mode & 0o777, 0o755)
 
-    def test_specify_preview_reports_mode_fixes_without_customization(self):
+    def test_specify_preview_reports_only_existing_mode_drift_without_customization(self):
         env = self.fake_specify()
+        fresh = json.loads(self.run_install("speckit", env=env).stdout)
+        self.assertEqual(fresh["existing_helper_mode_drift"], [])
+        self.assertNotIn("helper_mode_fixes", fresh)
         self.run_install("speckit", "--apply", env=env)
         helpers = sorted((self.repo / ".specify/scripts").rglob("*.sh"))
         for path in helpers: path.chmod(0o644)
@@ -493,13 +505,156 @@ if in_repo and os.environ.get("TEST_FAIL_TARGET") == target: sys.exit(7)
         modes = {p: p.stat().st_mode for p in helpers}
         Path(env["TEST_SPECIFY_CALLS"]).unlink()
         plan = json.loads(self.run_install("speckit", env=env).stdout)
-        self.assertEqual(plan["helper_mode_fixes"], [str(p.relative_to(self.repo)) for p in helpers[1:]])
+        self.assertEqual(plan["existing_helper_mode_drift"], [str(p.relative_to(self.repo)) for p in helpers[1:]])
         self.assertFalse(set(plan["preserved"]) & {str(p.relative_to(self.repo)) for p in helpers})
         self.assertEqual(self.snapshot(), before)
         self.assertEqual({p: p.stat().st_mode for p in helpers}, modes)
         self.assert_no_specify_repo_writes(env)
         for path in helpers: path.chmod(0o755)
-        self.assertEqual(json.loads(self.run_install("speckit", env=env).stdout)["helper_mode_fixes"], [])
+        self.assertEqual(json.loads(self.run_install("speckit", env=env).stdout)["existing_helper_mode_drift"], [])
+
+    def assert_helper_modes(self, unrepaired=()):
+        helpers = sorted((self.repo / ".specify/scripts").rglob("*.sh"))
+        self.assertEqual(len(helpers), 6)
+        for path in helpers:
+            if path not in unrepaired:
+                self.assertEqual(path.stat().st_mode & 0o777, 0o755, str(path))
+
+    def test_specify_cli_failure_keeps_primary_error_and_repairs_modes(self):
+        env = {**self.fake_specify(), "TEST_FAIL_TARGET": "claude"}
+        proc = self.run_install_in_process("speckit", "--apply", env=env)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("returned non-zero exit status 7", proc.stderr)
+        self.assertNotIn("cleanup failed", proc.stderr)
+        self.assert_helper_modes()
+
+    def test_specify_cli_failure_and_denied_chmod_keep_primary_and_repair_others(self):
+        env = {**self.fake_specify(), "TEST_FAIL_TARGET": "claude"}
+        denied = self.repo / ".specify/scripts/bash/check-prerequisites.sh"
+        chmod = Path.chmod
+
+        def deny_one(path, mode, **kwargs):
+            if path == denied:
+                raise PermissionError("test chmod denied")
+            return chmod(path, mode, **kwargs)
+
+        with patch.object(Path, "chmod", deny_one):
+            proc = self.run_install_in_process("speckit", "--apply", env=env)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("returned non-zero exit status 7", proc.stderr)
+        self.assertIn("cleanup failed", proc.stderr)
+        self.assertIn(str(denied.relative_to(self.repo)), proc.stderr)
+        self.assertIn("test chmod denied", proc.stderr)
+        self.assertEqual(denied.stat().st_mode & 0o777, 0o644)
+        self.assert_helper_modes(unrepaired=(denied,))
+
+    def test_specify_cli_failure_and_introduced_symlink_keep_primary_and_repair_others(self):
+        env = {**self.fake_specify(), "TEST_FAIL_TARGET": "claude"}
+        linked = self.repo / ".specify/scripts/bash/check-prerequisites.sh"
+        outside = self.root / "outside.sh"
+        outside.write_text("# outside\n")
+        outside.chmod(0o640)
+        run = subprocess.run
+
+        def introduce_symlink(command, **kwargs):
+            try:
+                return run(command, **kwargs)
+            except subprocess.CalledProcessError:
+                if kwargs.get("cwd") == self.repo:
+                    linked.unlink()
+                    linked.symlink_to(outside)
+                raise
+
+        with patch.object(installer.subprocess, "run", side_effect=introduce_symlink):
+            proc = self.run_install_in_process("speckit", "--apply", env=env)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("returned non-zero exit status 7", proc.stderr)
+        self.assertIn("cleanup failed", proc.stderr)
+        self.assertIn("refusing symlink destination: " + str(linked.relative_to(self.repo)), proc.stderr)
+        self.assertTrue(linked.is_symlink())
+        self.assertEqual(outside.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(outside.read_text(), "# outside\n")
+        self.assert_helper_modes(unrepaired=(linked,))
+
+    def test_specify_success_and_denied_chmod_fail_with_message_and_repair_others(self):
+        env = self.fake_specify()
+        denied = self.repo / ".specify/scripts/bash/check-prerequisites.sh"
+        chmod = Path.chmod
+
+        def deny_one(path, mode, **kwargs):
+            if path == denied:
+                raise PermissionError("test chmod denied")
+            return chmod(path, mode, **kwargs)
+
+        with patch.object(Path, "chmod", deny_one):
+            proc = self.run_install_in_process("speckit", "--apply", env=env)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("cleanup failed", proc.stderr)
+        self.assertIn(str(denied.relative_to(self.repo)), proc.stderr)
+        self.assertIn("test chmod denied", proc.stderr)
+        self.assertNotIn("returned non-zero exit status", proc.stderr)
+        self.assertEqual(denied.stat().st_mode & 0o777, 0o644)
+        self.assert_helper_modes(unrepaired=(denied,))
+
+    def test_specify_cli_failure_and_helper_inspection_errors_keep_primary(self):
+        env = {**self.fake_specify(), "TEST_FAIL_TARGET": "claude"}
+        directory = self.repo / ".specify/scripts/aaa-unreadable"
+        directory.mkdir(parents=True)
+        helper = self.repo / ".specify/scripts/bash/check-prerequisites.sh"
+        run = subprocess.run
+        for operation, denied in (("iterdir", directory), ("stat", helper)):
+            with self.subTest(operation=operation):
+                cleanup = False
+                original = getattr(Path, operation)
+
+                def fail_cli(command, **kwargs):
+                    nonlocal cleanup
+                    try:
+                        return run(command, **kwargs)
+                    except subprocess.CalledProcessError:
+                        if kwargs.get("cwd") == self.repo:
+                            cleanup = True
+                        raise
+
+                def deny_inspection(path, *args, **kwargs):
+                    if cleanup and path == denied:
+                        raise PermissionError("test " + operation + " denied")
+                    return original(path, *args, **kwargs)
+
+                with patch.object(installer.subprocess, "run", side_effect=fail_cli), \
+                        patch.object(Path, operation, deny_inspection):
+                    proc = self.run_install_in_process("speckit", "--apply", env=env)
+                self.assertEqual(proc.returncode, 1)
+                self.assertIn("returned non-zero exit status 7", proc.stderr)
+                self.assertIn("cleanup failed", proc.stderr)
+                self.assertIn(str(denied.relative_to(self.repo)), proc.stderr)
+                self.assertIn("test " + operation + " denied", proc.stderr)
+                self.assert_helper_modes(unrepaired=(helper,) if operation == "stat" else ())
+
+    def test_specify_restore_errors_do_not_skip_other_restores_or_mode_repairs(self):
+        env = {**self.fake_specify(), "TEST_FAIL_TARGET": "claude"}
+        constitution = self.write(".specify/memory/constitution.md", "Keep me")
+        metadata = self.write(".specify/integration.json", '{"integration":"claude","custom":true}')
+        options = self.write(".specify/init-options.json", "{\"custom\":true}")
+        agents = self.write("CLAUDE.md", "Keep my instructions")
+        write = installer.atomic_write
+
+        def deny_restores(path, data, **kwargs):
+            if path in (constitution, metadata):
+                raise PermissionError("test restore denied")
+            return write(path, data, **kwargs)
+
+        with patch.object(installer, "atomic_write", side_effect=deny_restores):
+            proc = self.run_install_in_process("speckit", "--apply", env=env)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("returned non-zero exit status 7", proc.stderr)
+        self.assertIn(str(constitution.relative_to(self.repo)), proc.stderr)
+        self.assertIn(str(metadata.relative_to(self.repo)), proc.stderr)
+        self.assertEqual(proc.stderr.count("test restore denied"), 2)
+        self.assertEqual(options.read_text(), "{\"custom\":true}")
+        self.assertEqual(agents.read_text(), "Keep my instructions")
+        self.assertNotIn("metadata restored", proc.stderr)
+        self.assert_helper_modes()
 
     def test_specify_restored_helpers_gain_execute_bits_even_after_failed_apply(self):
         env = self.fake_specify()

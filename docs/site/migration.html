@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="7350cbabd2e013556373733e4773cef6ed4013c80f926bbdc1ea161ae88c9743">
+<meta name="bureau-source-sha256" content="f7880e9b037316b3216ddd7107ef0bd8a0ab3e9e72e6d0a7316b6da593fdcd2e">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1385,14 +1385,23 @@ and 0 missing files. These update commands never touch
 <code>.specify/memory/constitution.md</code>; the constitution must
 never be changed.</p>
 <p>Run <code>/bureau-init --resync-speckit</code> after a direct CLI
-upgrade or forced init to repair execute permission on every
-<code>.sh</code> under <code>.specify/scripts/</code>, including helpers
-restored from drift snapshots: Bureau applies
-<code>(mode &amp; 0o777) | 0o111</code> without changing content,
-preview lists pending <code>helper_mode_fixes</code>, mode-only drift
-does not count as customization, and the updated doctor warns with each
-non-executable helper's path (resync the complete scripts scope to
-install it).</p>
+upgrade or forced init. Apply always attempts to repair execute
+permission on every safe, regular <code>.sh</code> under
+<code>.specify/scripts/</code>, including new helpers, helpers restored
+from drift snapshots and those left by partial failures, using
+<code>(mode &amp; 0o777) | 0o111</code> without changing content. Each
+restore and helper repair is independent, and mode repair is attempted
+even if a restore fails. Cleanup errors are reported separately on
+stderr, preserve the primary failure, and make an otherwise successful
+apply exit non-zero. Mode-only drift does not count as customization,
+and the updated doctor warns with each non-executable helper's path
+(resync the complete scripts scope to install it).</p>
+<p>Preview's <code>existing_helper_mode_drift</code> (renamed from
+<code>helper_mode_fixes</code>) lists only existing regular
+<code>.sh</code> helpers under <code>.specify/scripts/</code> that lack
+one or more execute bits before apply. It does not predict helpers that
+init will create or executable helpers whose modes init will reset. An
+empty list still leads to mode repair during apply.</p>
 <p>See the <a href="../../references/resync.md">Spec Kit resync
 procedure</a> for the forced-init fallback: initialize the first host,
 install further hosts with
