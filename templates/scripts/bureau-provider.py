@@ -534,8 +534,7 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         if child and owned:
             owned.scan(); owned.signal(signum)
         elif child:
-            try: os.killpg(child.pid, signum)
-            except ProcessLookupError: pass
+            signal_group(child, signum)
     def stop(signum, frame):
         nonlocal interrupted
         # A hang-up stops the call like SIGTERM, and the provider's process
@@ -918,38 +917,60 @@ def note(text):
         os.dup2(devnull, 2); os.close(devnull)
 
 
+def signal_group(child, signum):
+    """Signal an owned group, falling back to its live child on EPERM."""
+    try: os.killpg(child.pid, signum)
+    except ProcessLookupError: pass
+    except PermissionError:
+        # macOS can deny signalling an exited/zombie group. A live leader
+        # still needs stopping; failure of the direct kill must reach the caller.
+        if child.poll() is None: child.kill()
+
+
 def outside_gate(options, repo, command, log):
     """Run a canonical command once, bounded and without Bureau credentials."""
-    child = None; stopped = None; abort = None
+    child = None; outcome = None; failure = None; previous = {}
     def stop(signum, frame):
-        nonlocal stopped
-        stopped = signum
-        if child:
-            try: os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError: pass
-    previous = {sig:signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        nonlocal outcome
+        # Latch before any kill or cleanup: cancellation survives their errors.
+        options['_gate_cancelled'] = True
+        outcome = 130, 'kill'
+        if child: signal_group(child, signal.SIGKILL)
     try:
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            previous[sig] = signal.signal(sig, stop)
         with os.fdopen(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as output:
             child = subprocess.Popen(['/bin/bash', '--noprofile', '--norc', '-o', 'pipefail', '-c', command], cwd=repo,
                                      stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                                      env=untrusted_env(os.environ, options['untrusted_env']), start_new_session=True)
-            if stopped: stop(stopped, None)
+            if options.get('_gate_cancelled'): stop(None, None)
             try: code = child.wait(timeout=options['timeout'])
             except subprocess.TimeoutExpired:
-                abort = 'timeout'
-                try: os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError: pass
-                child.wait(); code = 124
-            if stopped: code, abort = 130, 'kill'
-            elif code < 0 or code == 130: abort = 'kill'
-        return code, abort
+                if outcome is None: outcome = 124, 'timeout'
+                signal_group(child, signal.SIGKILL)
+                child.wait()
+            else:
+                if code == 130: options['_gate_cancelled'] = True
+                if outcome is None: outcome = code, 'kill' if code < 0 or code == 130 else None
+    except Exception as exc:
+        failure = exc
     finally:
-        if child:
-            # A successful check may leave background writers in its group.
-            try: os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError: pass
-            child.wait()
-        for sig, handler in previous.items(): signal.signal(sig, handler)
+        try:
+            if child:
+                # A successful check may leave background writers in its group.
+                signal_group(child, signal.SIGKILL)
+                child.wait()
+        except Exception as exc:
+            failure = failure or exc
+        finally:
+            for sig, handler in previous.items():
+                try: signal.signal(sig, handler)
+                except Exception as exc: failure = failure or exc
+    if failure is not None:
+        # Preserve a determined outcome while making cleanup failure fail closed.
+        options['_gate_execution_failed'] = True
+        if outcome is None: raise failure
+    return outcome
 
 
 def gate_action(args, config, options, repo):
@@ -1008,10 +1029,15 @@ def gate_action(args, config, options, repo):
             e.private_dir(directory)
             log = directory / (reservation['attempt_id'] + '.log')
             started = time.monotonic()
-            code, abort = outside_gate(options, repo, command, log)
+            logs.append(str(log))
+            try:
+                code, abort = outside_gate(options, repo, command, log)
+            except Exception:
+                return json.dumps(dict(eligible=False, green=False, logs=logs, reason='outside gate execution failed'))
+            if options.get('_gate_execution_failed'):
+                return json.dumps(dict(eligible=False, green=False, logs=logs, reason='outside gate execution failed'))
             # Cancellation wins over EVERY subsequent read/write/validation.
             if code == 130: options['_gate_cancelled'] = True
-            logs.append(str(log))
             def measurement():
                 data = log.read_bytes()
                 return dict(attempt_id=reservation['attempt_id'], gate_id=g.digest(command), command_sha256=g.digest(command),

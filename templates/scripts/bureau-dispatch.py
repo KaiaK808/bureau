@@ -73,8 +73,7 @@ class Helpers:
     def stop(self):
         self.stopping = True
         if self.child is not None and self.child.poll() is None:
-            try: os.killpg(self.child.pid, signal.SIGTERM)
-            except ProcessLookupError: pass
+            r.signal_group(self.child, signal.SIGTERM)
 
     def call(self, body, *args, env=None):
         if self.stopping:
@@ -99,8 +98,7 @@ class Helpers:
                     if self.stopping:
                         deadline = deadline or time.monotonic() + 5
                         if time.monotonic() >= deadline:
-                            try: os.killpg(child.pid, signal.SIGKILL)
-                            except ProcessLookupError: pass
+                            r.signal_group(child, signal.SIGKILL)
         finally:
             self.child = None
         if self.stopping:

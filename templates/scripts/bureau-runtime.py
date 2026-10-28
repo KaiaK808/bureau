@@ -192,8 +192,7 @@ class Store:
             try:
                 save(path, record)
             except BaseException:
-                try: os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError: pass
+                signal_group(child, signal.SIGKILL)
                 child.wait()
                 raise
             return child
@@ -261,6 +260,9 @@ class Store:
         for group in groups:
             try: os.killpg(group, 0)
             except ProcessLookupError: continue
+            # A stored group has no owned child handle. EPERM needs the same
+            # process-state inspection as a successful probe before release.
+            except PermissionError: pass
             live.add(group)
         if live:
             # killpg(0) includes zombies, which cannot write. Fail closed if the
@@ -473,8 +475,7 @@ shift
     try:
         output, _ = child.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        try: os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError: pass
+        signal_group(child, signal.SIGKILL)
         child.communicate()
         raise
     if child.returncode: raise subprocess.CalledProcessError(child.returncode, helper)
@@ -714,6 +715,16 @@ def finish(repo, args, store):
     print(json.dumps(record, indent=2))
 
 
+def signal_group(child, signum):
+    """Signal an owned group, falling back to its live child on EPERM."""
+    try: os.killpg(child.pid, signum)
+    except ProcessLookupError: pass
+    except PermissionError:
+        # Keep this standalone runtime's rule equal to bureau-provider.py:
+        # exited/zombie groups are harmless; a live child's kill must succeed.
+        if child.poll() is None: child.kill()
+
+
 def stop_grace(depth):
     """Seconds a runtime waits for its child after forwarding a signal, before
     it kills the child's process group. The wrappers of one run nest (shepherd
@@ -754,8 +765,7 @@ def execute(repo, args, store):
 
     def signal_child(signum):
         if child is not None:
-            try: os.killpg(child.pid, signum)
-            except ProcessLookupError: pass
+            signal_group(child, signum)
 
     def stop(signum, frame):
         nonlocal interrupted

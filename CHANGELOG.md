@@ -6,6 +6,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Fixed
+
+- Outside gate cancellation retains exit 130 and its log when macOS denies signalling an exited process group. Timeouts retain exit 124 and consume their reservation. Group termination ignores permission errors only after the child exits; a live child receives a direct kill, and a failed kill reports `outside gate execution failed` with recovery blocked. Signal handlers are restored and cleanup preserves determined outcomes. The same termination rule covers provider, acceptance, conflict, dispatcher, runtime and post-implement helpers; interrupted-run release still requires process-state inspection. **Upgrade:** compare installed drift, resync the complete scripts scope and restart drivers. No configuration or exit-code migration. Validation uses synchronized local fixtures, injected permission failures and fake providers/services; live adopter and hosted CI qualification remain pending.
+
 ## [3.5.1] - 2026-10-29
 
 v3.5.1 is a patch release on v3.5.0, prepared 2026-10-28 for the 2026-10-29 tag. It contains only [#98](https://github.com/KaiaK808/bureau/pull/98): Spec Review and UX fail closed on invalid results, and their overlap readiness requires a validated passing status and the installed schema digest. All behavior changes are on by default after resync; readiness validation applies when overlap admission is enabled. No configuration keys or exit codes are new; the existing exit 22 widens to these invalid results. See the [v3.5.1 release notes](docs/release-notes.md) for the contracts, upgrade actions, validation record and known limitation.

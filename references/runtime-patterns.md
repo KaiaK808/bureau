@@ -335,6 +335,8 @@ Terminal status routing:
 
 For Codex implement turns only, typed gate-only NEEDS_HUMAN holds or legacy `SANDBOX_GATE:` reasons enter the same machine-evidence reconciliation: matching result/command digests, one execution-bound cwd, current HEAD and a failed/aborted configured command are mandatory. One reserved outside rerun per gate/HEAD/stage attempt can clear exactly those holds. Other blockers and missing/stale proof stay blocked. Commit, hook, squash-range and merge gates remain in force; outside logs stay in normal stage logs and only metadata/digests enter evidence. See [Background providers](../docs/provider-runtime.md#codex-implementation-sandbox-gate).
 
+Owned process-group termination treats `ProcessLookupError` as an exited group. On `PermissionError`, poll the owned child: an exited child needs no fallback, and a live child receives `child.kill()` with failures propagated. Provider, acceptance and conflict helpers share the provider function; dispatcher uses the standalone runtime function; the inline post-implement runner keeps the same rule locally. Stored group IDs have no child handle and confer no signalling authority: release still requires process-state inspection on a successful or permission-denied probe. Outside gates latch cancellation before any kill, restore signal handlers independently of cleanup and retain determined outcomes; execution or cleanup failures keep the reservation consumed and return a distinct fail-closed reason.
+
 | Status | PR | needs-human label | State move | escalations.log |
 |---|---|---|---|---|
 | `COMPLETE` | flipped to ready | no | → QA or Build Review | no |

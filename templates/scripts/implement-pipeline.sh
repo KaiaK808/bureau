@@ -222,26 +222,33 @@ _POST_IMPLEMENT_RUNNER='
 import os, signal, subprocess, sys, time
 limit, cmd, status_file = int(sys.argv[1]), sys.argv[2], sys.argv[3]
 child = subprocess.Popen(["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
+def signal_group(signum):
+    try:
+        os.killpg(child.pid, signum)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # Exited/zombie groups can report EPERM on macOS. A live child must
+        # still be killed, and a failed direct kill remains an execution error.
+        if child.poll() is None:
+            child.kill()
 def stop(code, why):
     with open(status_file, "w") as f:
         f.write(why)
-    pgid = child.pid
-    try:
-        os.killpg(pgid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
+    signal_group(signal.SIGTERM)
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         child.poll()
         try:
-            os.killpg(pgid, 0)
+            os.killpg(child.pid, 0)
         except ProcessLookupError:
             break
+        except PermissionError:
+            if child.poll() is not None:
+                break
+            child.kill()
         time.sleep(0.1)
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    signal_group(signal.SIGKILL)
     child.wait()
     sys.exit(code)
 for sig, code in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)):

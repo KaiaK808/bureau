@@ -387,8 +387,7 @@ class Transaction:
                     except subprocess.TimeoutExpired: pass
                     owned.scan(); owned.signal(signal.SIGKILL)
             finally:
-                try: os.killpg(self.child.pid, signal.SIGKILL)
-                except ProcessLookupError: pass
+                provider.signal_group(self.child, signal.SIGKILL)
                 self.child.wait()
                 if owned: owned.drain()
                 self.child = None

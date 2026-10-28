@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d417a11c50d9603c55193bd8bdf355ac72cc8849b85053073bd6ef540853d39c">
+<meta name="bureau-source-sha256" content="9f50984f70d9c643a6df99c80bf4df2216ddd1437724d2f4665b3aefd852a090">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -377,6 +377,21 @@ outcomes. Cancellation 130 is captured before later evidence I/O and
 wins over write/read/validation failures. See the <a
 href="stage-protocol.html#sandbox-only-gate-recovery">exact reconciliation
 contract</a>.</p>
+<p>Gate-run responses use <code>outside gate green</code> for verified
+success and <code>outside gate red, aborted or incomplete</code> for
+failed, timed-out, cancelled or incomplete runs.
+<code>gate evidence unavailable</code> means evidence reconciliation
+failed; <code>outside gate execution failed</code> means command
+execution or cleanup failed. Execution failures return
+<code>eligible: false</code> and <code>green: false</code> and keep any
+outside-log pointer. Every claimed reservation prevents another
+execution, including failed or incomplete runs. Cancellation is latched
+before termination and exits 130 through cleanup failures; timeout
+records retain exit 124 and <code>abort: timeout</code>. Signal handlers
+are restored on every path. On macOS a permission error from signalling
+an exited or zombie group is harmless; a live child receives a direct
+kill, whose failure keeps recovery blocked. A determined outcome
+survives cleanup errors, which still prevent a green gate.</p>
 <p>A Codex child without <code>TMPDIR</code> gets a private
 <code>bureau-codex-*</code> directory under resolved <code>/tmp</code>,
 outside the repository regardless of <code>TEMP</code> or

@@ -53,8 +53,7 @@ def bounded(command, repo, body=None, diagnostics=False):
             raise PublicationInterrupted('acceptance helper interrupted')
         return child.returncode, output
     finally:
-        try: os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError: pass
+        p.signal_group(child, signal.SIGKILL)
         child.communicate()
 
 
