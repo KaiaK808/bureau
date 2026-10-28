@@ -89,7 +89,7 @@ bureau_overlap() {
 }
 bureau_overlap_record() { bureau_overlap record "$1" "$2" "$3"; }
 bureau_overlap_admit() { bureau_overlap admit "$@"; }
-bureau_overlap_ready() { bureau_overlap ready "$1" "$2" "$3"; }
+bureau_overlap_ready() { bureau_overlap ready "$@"; }
 bureau_overlap_resume() {
   local rc
   if bureau_overlap ready-check "$1" "$2" "$3"; then

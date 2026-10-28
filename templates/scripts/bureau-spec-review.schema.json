@@ -7,7 +7,18 @@
       "enum": ["PASS", "FAIL"]
     },
     "ui_work_needed": {
-      "type": "boolean"
+      "type": ["boolean", "string"],
+      "enum": [true, false, "true", "TRUE", "yes", "YES", "false", "FALSE", "no", "NO"]
+    },
+    "issues_found": {
+      "type": "integer"
+    },
+    "issues_fixed": {
+      "type": "integer"
+    },
+    "remaining_issues": {
+      "type": "array",
+      "items": {"type": "string"}
     },
     "summary": {
       "type": "string"

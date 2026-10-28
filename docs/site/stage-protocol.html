@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a2410a57063da8bfe666025d6ddc0ba8501111cc98fe0e027f39d64c1b4edba3">
+<meta name="bureau-source-sha256" content="9866f293ae4e7917c59f721b5ff571dd073e11b1302c4174e36c62e3f656ea98">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -372,10 +372,12 @@ checkout without resets; app <code>finish</code> gates Build/Copy/QA
 transitions and retains a prepared result on a wait so it can be
 submitted again. Background Spec Review/UX/Copy store a successful
 readiness result bound to branch HEAD, task digest, ticket snapshot,
-stage and configuration. Repeated waits retry admission without another
-creative pass. Changed tasks, branch, ticket or configuration invalidate
-readiness. Review admission polling consumes no PR 8 round, approval or
-gate receipt.</p>
+stage and configuration. Spec Review/UX additionally bind readiness to
+their validated passing status and installed schema digest; see <a
+href="#spec-review-and-ux-results">result contracts and upgrades</a>.
+Repeated waits retry admission without another creative pass. Changed
+tasks, branch, ticket or configuration invalidate readiness. Review
+admission polling consumes no PR 8 round, approval or gate receipt.</p>
 <p>Migration runs under the admission lock. Existing Build/Copy tickets
 become queued only after proving a readable spec-only branch, no
 execution lease/preserved work and no dirty attached checkout. State
@@ -422,15 +424,30 @@ installation or full Codex background qualification is implied.</p>
 <code>run_stage_for --schema</code> to the shared provider adapter.
 <code>bureau-spec-review.schema.json</code> requires string
 <code>review_status</code> (<code>PASS</code> or <code>FAIL</code>),
-boolean <code>ui_work_needed</code> and string <code>summary</code>.
+<code>ui_work_needed</code> and string <code>summary</code>. The UI
+field accepts booleans and the exact legacy strings <code>true</code>,
+<code>TRUE</code>, <code>yes</code>, <code>YES</code>,
+<code>false</code>, <code>FALSE</code>, <code>no</code>,
+<code>NO</code>; the parser normalizes them to the same UI/no-UI routes.
+Status enums remain exact and case-sensitive.
 <code>bureau-ux.schema.json</code> requires string
 <code>design_status</code> (<code>COMPLETE</code>,
 <code>INCOMPLETE</code> or <code>NEEDS_HUMAN</code>) and string
-<code>summary</code>. Objects allow only these fields. Review gaps
-belong in the summary; component prop sketches and blocking questions
-belong in <code>design.md</code>. Both schemas install with the scripts
-scope. Codex uses the existing recursive wire projection and canonical
-validation; Claude uses the existing structured-output and transcript
+<code>summary</code>.</p>
+<p>The v3.5.0 prompt fields remain optional: Spec Review accepts integer
+<code>issues_found</code> and <code>issues_fixed</code>, plus
+<code>remaining_issues</code> as an array of strings. UX accepts
+<code>components_net_new</code> (path and prop sketches with name, type
+and scalar-or-null default), <code>components_reused</code> (paths) and
+<code>open_questions</code> (question <code>q</code> and boolean
+<code>blocking</code>). Unknown extra fields are rejected with
+<code>additionalProperties: false</code>, following the other Bureau
+schemas, including nested component/question objects. Review gaps still
+belong in the summary, and design details in <code>design.md</code>.
+Both schemas install with the scripts scope. Codex uses the existing
+recursive wire projection, making optional fields required but nullable
+on the wire and omitting only declared optional nulls before canonical
+validation. Claude uses the existing structured-output and transcript
 recovery rules.</p>
 <table>
 <thead>
@@ -483,6 +500,23 @@ routing. Resync both pipelines and their schemas together and restart
 background drivers. Customized prompts must follow these result
 contracts. Qualification uses fake providers and local Git; live
 provider validation remains separate.</p>
+<p><strong>Readiness upgrade:</strong> with overlap admission enabled,
+Spec Review/UX readiness records now include
+<code>validated_status</code> (<code>PASS</code>/<code>COMPLETE</code>,
+respectively) and <code>result_contract_sha256</code> (SHA-256 of the
+installed canonical schema). A resume requires both to match, as well as
+the existing branch/task/ticket/configuration identity. Records without
+the contract identity, including every v3.5.0 record even if its
+original result was PASS, and records with a different digest or
+non-passing status are deleted and the stage calls the provider again
+normally. An invalid fresh result holds with 22; it cannot reuse the old
+record to reach Build. A fresh passing result records current readiness,
+so subsequent overlap waits still return quiet 29 and retry admission
+without another provider call. Copy readiness and all other admission
+rules stay unchanged. No manual store migration is required; resync the
+full scripts scope and restart drivers. This one fresh pass for an old
+waiting ticket is intentional, since legacy records cannot establish
+that their result was validated.</p>
 <h2 id="spec-phase-resume-and-governance">Spec phase resume and
 governance</h2>
 <p>Specify and plan must run no measurements, probes, benchmarks or full

@@ -261,7 +261,7 @@ $DESIGN_SUMMARY"
     NEXT_STATE_LABEL="Spec Review (rework)"
     ;;
   COMPLETE)
-    bureau_overlap_ready "$ISSUE" "$BRANCH" ux
+    bureau_overlap_ready "$ISSUE" "$BRANCH" ux --status "$DESIGN_STATUS"
     bureau_overlap_admit "$ISSUE" "$BRANCH" --local
     post_comment "$ISSUE" "🎨 Design phase complete. Design artifacts committed to \`$BRANCH\`. Ready for implementation."
     move_issue "$ISSUE" "$BUREAU_STATE_BUILD"

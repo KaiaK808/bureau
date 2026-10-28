@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local Git, real parsers/ownership, fake service transports; no paid calls."""
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -100,9 +101,9 @@ def load(file):
 
 class Fixture(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='bureau-1748-test-', dir='/private/tmp' if Path('/private/tmp').is_dir() else None)
+        self.temp = tempfile.TemporaryDirectory(prefix='bureau-overlap-test-')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name); self.repo = self.root / 'repo'; self.repo.mkdir()
+        self.root = Path(self.temp.name).resolve(); self.repo = self.root / 'repo'; self.repo.mkdir()
         self.remote = self.root / 'origin.git'; self.bin = self.root / 'bin'; self.bin.mkdir()
         self.children = []; self.addCleanup(self.stop_children)
         self.run_cmd(['git', 'init', '-q', '--bare', str(self.remote)])
@@ -587,11 +588,86 @@ touch "$BUREAU_TEST_STOP/UNEXPECTED"
 
     def test_readiness_survives_wait_and_invalidates_on_tasks_or_ticket_edit(self):
         a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/a.py']); self.expect(0,self.cli('admit',b))
-        self.g('checkout','-q',a[1]); self.expect(0,self.cli('ready',a,'spec_review')); self.expect(29,self.cli('admit',a,'--local'))
+        self.g('checkout','-q',a[1]); self.expect(0,self.cli('ready',a,'spec_review','--status','PASS')); self.expect(29,self.cli('admit',a,'--local'))
         self.expect(0,self.cli('ready-check',a,'spec_review')); self.data['issues'][0]['description']='changed'; self.save()
-        self.expect(2,self.cli('ready-check',a,'spec_review')); self.expect(0,self.cli('ready',a,'spec_review'))
+        self.expect(2,self.cli('ready-check',a,'spec_review')); self.expect(0,self.cli('ready',a,'spec_review','--status','PASS'))
         self.g('checkout','-q','main'); self.change_tasks(a,['pkg/b.py']); self.g('checkout','-q',a[1])
         self.expect(2,self.cli('ready-check',a,'spec_review'))
+
+    def test_readiness_requires_current_contract_and_passing_status(self):
+        a=self.ticket(1,['pkg/a.py']); self.g('checkout','-q',a[1])
+        path=self.repo/'.git/bureau/admission/v1.json'
+        for stage, status, schema in (('spec_review','PASS','bureau-spec-review.schema.json'),
+                                      ('ux','COMPLETE','bureau-ux.schema.json')):
+            with self.subTest(stage=stage):
+                for args in ((), ('--status','ERROR')):
+                    self.expect(22,self.cli('ready',a,stage,*args))
+                    self.assertNotIn(a[0],self.store()['ready'])
+                self.expect(0,self.cli('ready',a,stage,'--status',status))
+                record=self.store()['ready'][a[0]]
+                self.assertEqual(status,record['validated_status'])
+                self.assertEqual(hashlib.sha256((SCRIPTS/schema).read_bytes()).hexdigest(),
+                                 record['result_contract_sha256'])
+                self.expect(0,self.cli('ready-check',a,stage))
+                for change in ('legacy','contract-mismatch','invalid-status'):
+                    with self.subTest(change=change):
+                        state=self.store(); state['ready'][a[0]]=dict(record)
+                        if change=='legacy':
+                            for key in ('validated_status','result_contract_sha256'): state['ready'][a[0]].pop(key)
+                        elif change=='contract-mismatch': state['ready'][a[0]]['result_contract_sha256']='0'*64
+                        else: state['ready'][a[0]]['validated_status']='ERROR'
+                        path.write_text(json.dumps(state))
+                        self.expect(2,self.cli('ready-check',a,stage))
+                        self.assertNotIn(a[0],self.store()['ready'])
+        # Copy has no judged-result contract and keeps its existing readiness.
+        self.expect(0,self.cli('ready',a,'copy')); self.expect(0,self.cli('ready-check',a,'copy'))
+
+    def judged_driver(self, stage, value, suffix):
+        scripts=self.root/('driver-'+suffix)/'scripts'; shutil.copytree(SCRIPTS,scripts)
+        paid=self.root/('paid-'+suffix); result=self.root/('result-'+suffix+'.json')
+        result.write_text(json.dumps(value))
+        with (scripts/'bureau-config.sh').open('a') as out:
+            out.write('''
+precondition_runner() { :; }
+run_stage_for() {
+  printf 'paid\\n' >> "$BUREAU_TEST_PAID"
+  cat "$BUREAU_TEST_RESULT"
+}
+''')
+        env={**self.env,'BUREAU_WORKSPACE_MODE':'disposable',
+             'BUREAU_TEST_PAID':str(paid),'BUREAU_TEST_RESULT':str(result)}
+        command=['bash',str(scripts/('spec-review-pipeline.sh' if stage=='spec_review' else 'ux-pipeline.sh'))]
+        return command,env,paid
+
+    def test_untrusted_readiness_reruns_judged_stage(self):
+        number=1
+        for stage, passing in (('spec_review','PASS'),('ux','COMPLETE')):
+            for record_kind, provider_status in (('legacy','ERROR'),('legacy',passing),('mismatch',passing)):
+                with self.subTest(stage=stage, record=record_kind, provider_status=provider_status):
+                    a=self.ticket(number,['pkg/a.py'],state=stage if stage=='spec_review' else 'design')
+                    b=self.ticket(number+1,['pkg/a.py']); number+=2
+                    self.expect(0,self.cli('admit',b)); self.g('checkout','-q',a[1])
+                    self.expect(0,self.cli('ready',a,stage,'--status',passing))
+                    self.expect(29,self.cli('admit',a,'--local'))
+                    state=self.store(); record=state['ready'][a[0]]
+                    if record_kind=='legacy':
+                        for key in ('validated_status','result_contract_sha256'): record.pop(key)
+                    else: record['result_contract_sha256']='0'*64
+                    (self.repo/'.git/bureau/admission/v1.json').write_text(json.dumps(state))
+                    # Once the old conflict clears, an untrusted result still
+                    # cannot use the admission fast path to bypass validation.
+                    self.data['issues'][-1]['state'].update(id='done',type='completed'); self.save()
+                    value=(dict(review_status=provider_status,ui_work_needed=False,summary='fresh')
+                           if stage=='spec_review' else dict(design_status=provider_status,summary='fresh'))
+                    command,env,paid=self.judged_driver(stage,value,str(number))
+                    self.expect(22 if provider_status=='ERROR' else 0,
+                                self.invoke(command+[a[0]],env=env,cwd=self.repo))
+                    self.assertEqual(['paid'],paid.read_text().splitlines())
+                    row=next(i for i in json.loads(self.state.read_text())['issues'] if i['identifier']==a[0])
+                    self.assertEqual(('spec_review' if stage=='spec_review' else 'design')
+                                     if provider_status=='ERROR' else 'build',row['state']['id'])
+                    if provider_status=='ERROR': self.assertNotIn(a[0],self.store()['ready'])
+                    self.data['issues'][-2]['state'].update(id='done',type='completed'); self.save()
 
     def test_uncommitted_or_missing_inventory_is_unknown(self):
         a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/b.py']); self.expect(0,self.cli('admit',b))
@@ -653,18 +729,20 @@ touch "$BUREAU_TEST_STOP/UNEXPECTED"
         self.expect(29,result); self.assertFalse(marker.exists())
 
     def test_background_readiness_polling_does_not_buy_another_spec_review(self):
-        a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/a.py']); self.expect(0,self.cli('admit',b))
-        scripts=self.root/'driver/scripts'; shutil.copytree(SCRIPTS,scripts)
-        paid=self.root/'paid'
-        with (scripts/'bureau-config.sh').open('a') as out:
-            out.write('\nprecondition_runner() { :; }\nrun_stage_for() { printf "paid\\n" >> "$BUREAU_TEST_PAID"; printf \'```json\\n{"review_status":"PASS","ui_work_needed":false,"summary":"ready"}\\n```\\n\'; }\n')
-        env={**self.env,'BUREAU_WORKSPACE_MODE':'disposable','BUREAU_TEST_PAID':str(paid)}
-        command=['bash',str(scripts/'spec-review-pipeline.sh'),a[0]]
-        for _ in range(2): self.expect(29,self.invoke(command,env=env,cwd=self.repo))
-        self.assertEqual(paid.read_text().splitlines(),['paid'])
-        self.data['issues'][1]['state'].update(id='done',type='completed'); self.save()
-        self.expect(0,self.invoke(command,env=env,cwd=self.repo)); self.assertEqual(paid.read_text().splitlines(),['paid'])
-        self.assertEqual(json.loads(self.state.read_text())['issues'][0]['state']['id'],'build')
+        for number,stage in ((1,'spec_review'),(3,'ux')):
+            with self.subTest(stage=stage):
+                a=self.ticket(number,['pkg/a.py'],state='spec_review' if stage=='spec_review' else 'design')
+                b=self.ticket(number+1,['pkg/a.py']); self.expect(0,self.cli('admit',b))
+                value=(dict(review_status='PASS',ui_work_needed=False,summary='ready') if stage=='spec_review'
+                       else dict(design_status='COMPLETE',summary='ready'))
+                command,env,paid=self.judged_driver(stage,value,stage); command+=[a[0]]
+                for _ in range(2): self.expect(29,self.invoke(command,env=env,cwd=self.repo))
+                self.assertEqual(paid.read_text().splitlines(),['paid'])
+                self.data['issues'][-1]['state'].update(id='done',type='completed'); self.save()
+                self.expect(0,self.invoke(command,env=env,cwd=self.repo))
+                self.assertEqual(paid.read_text().splitlines(),['paid'])
+                self.assertEqual(json.loads(self.state.read_text())['issues'][-2]['state']['id'],'build')
+                self.data['issues'][-2]['state'].update(id='done',type='completed'); self.save()
 
     def test_review_admission_wait_spends_no_round_or_provider_pass(self):
         a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/b.py'],state='triage')

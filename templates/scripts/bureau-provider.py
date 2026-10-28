@@ -315,8 +315,12 @@ def validate(value, schema):
     kind = schema.get('type')
     checks = {'object': lambda x:isinstance(x, dict), 'array': lambda x:isinstance(x, list),
               'string': lambda x:isinstance(x, str), 'integer': lambda x:type(x) is int,
-              'number': lambda x:type(x) in (int,float), 'boolean':lambda x:type(x) is bool}
-    if kind in checks and not checks[kind](value): raise ValueError('result type must be ' + kind)
+              'number': lambda x:type(x) in (int,float), 'boolean':lambda x:type(x) is bool,
+              'null': lambda x:x is None}
+    if isinstance(kind, list):
+        if not any(checks.get(k, lambda _:False)(value) for k in kind):
+            raise ValueError('result type must be one of ' + ', '.join(kind))
+    elif kind in checks and not checks[kind](value): raise ValueError('result type must be ' + kind)
     if 'enum' in schema and value not in schema['enum']: raise ValueError('unrecognized result value')
     if isinstance(value, dict):
         if any(k not in value for k in schema.get('required', [])): raise ValueError('result missing required fields')

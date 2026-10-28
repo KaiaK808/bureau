@@ -85,7 +85,7 @@ else
   exit 12
 fi
 
-# A successful readiness decision waiting for admission buys no second review.
+# Only readiness bound to the current validated contract skips another review.
 if bureau_overlap_resume "$ISSUE" "$BRANCH" spec_review; then exit 0
 else OVERLAP_RC=$?; [ "$OVERLAP_RC" = 2 ] || exit "$OVERLAP_RC"; fi
 
@@ -174,7 +174,7 @@ echo ""
 echo "Phase 2/2: route issue"
 
 REVIEW_STATUS=$(parse_claude_json "$REVIEW_RESULT" '.review_status | select(type == "string")')
-UI_NEEDED_RAW=$(parse_claude_json "$REVIEW_RESULT" '.ui_work_needed | select(type == "boolean")')
+UI_NEEDED_RAW=$(parse_claude_json "$REVIEW_RESULT" '.ui_work_needed | select(type == "boolean" or type == "string")')
 
 # Reject invalid results before governance can turn a valid PASS into FAIL.
 case "$REVIEW_STATUS" in
@@ -189,8 +189,8 @@ fi
 
 # Normalise ui_work_needed. Downstream `case` expects YES/NO strings.
 case "$UI_NEEDED_RAW" in
-  true) UI_NEEDED="YES" ;;
-  false) UI_NEEDED="NO" ;;
+  true|TRUE|yes|YES) UI_NEEDED="YES" ;;
+  false|FALSE|no|NO) UI_NEEDED="NO" ;;
   *) invalid_review_result ;;
 esac
 
@@ -239,7 +239,7 @@ $REVIEW_SUMMARY"
       echo "  Spec review PASSED — routing to Design"
       NEXT_STATE="Design"
     else
-      bureau_overlap_ready "$ISSUE" "$BRANCH" spec_review
+      bureau_overlap_ready "$ISSUE" "$BRANCH" spec_review --status "$REVIEW_STATUS"
       bureau_overlap_admit "$ISSUE" "$BRANCH" --local
       post_comment "$ISSUE" "✅ Spec review **PASSED**. Ready for implementation.
 

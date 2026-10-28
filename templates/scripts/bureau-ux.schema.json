@@ -6,6 +6,46 @@
       "type": "string",
       "enum": ["COMPLETE", "INCOMPLETE", "NEEDS_HUMAN"]
     },
+    "components_net_new": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string"},
+          "props": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {"type": "string"},
+                "type": {"type": "string"},
+                "default": {"type": ["string", "number", "boolean", "null"]}
+              },
+              "required": ["name", "type", "default"]
+            }
+          }
+        },
+        "required": ["path", "props"]
+      }
+    },
+    "components_reused": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "q": {"type": "string"},
+          "blocking": {"type": "boolean"}
+        },
+        "required": ["q", "blocking"]
+      }
+    },
     "summary": {
       "type": "string"
     }

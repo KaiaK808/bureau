@@ -39,7 +39,7 @@ sandbox_init TEAM-1 001-test-branch
 trap - EXIT
 printf '%s' "$SANDBOX"
 ''', 'fixture', str(ROOT)], text=True, capture_output=True, check=True, env=self.git_env)
-        self.repo = Path(setup.stdout)
+        self.repo = Path(setup.stdout).resolve()
         self.addCleanup(shutil.rmtree, self.repo)
         self.scripts = self.repo / 'scripts'
         self.git(*git_maintenance.OFF_CONFIG)
@@ -87,7 +87,9 @@ stop = os.environ.get('JUDGED_WITHDRAWAL')
 if stop: (root/'withdrawal').write_text(stop)
 value = json.loads((root/'provider-result.json').read_text())
 if runner == 'codex':
-    if schema and 'advisory' in schema['properties']: value['advisory'] = None
+    if schema:
+        for name, field in schema['properties'].items():
+            if name not in value and {'type':'null'} in field.get('anyOf', []): value[name] = None
     pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(value))
     print('{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}')
 else:
@@ -213,8 +215,51 @@ run_stage_for() {
                         with self.subTest(stage=stage, runner=runner, field=field, change=change):
                             value = self.value(stage)
                             if change == 'missing': value.pop(field)
-                            else: value[field] = 'false' if field == 'ui_work_needed' else []
+                            else: value[field] = []
                             self.assert_invalid(self.run_stage(stage, runner, value), 0)
+
+    def test_legacy_prompt_shaped_results(self):
+        review = dict(self.value('spec-review'), issues_found=2, issues_fixed=1,
+                      remaining_issues=['Pinned in research.md; no rework needed'])
+        design = dict(self.value('ux'),
+                      components_net_new=[dict(path='src/Panel.tsx', props=[
+                          dict(name='title', type='string | null', default=None),
+                          dict(name='expanded', type='boolean', default=False),
+                          dict(name='limit', type='number', default=10),
+                          dict(name='label', type='string', default='Details')])],
+                      components_reused=['src/Button.tsx'],
+                      open_questions=[dict(q='Confirm optional copy', blocking=False)])
+        for stage, value in (('spec-review', review), ('ux', design)):
+            for runner in ('claude', 'codex'):
+                with self.subTest(stage=stage, runner=runner):
+                    result = self.run_stage(stage, runner, value)
+                    self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                    self.assertEqual(['state-build'], self.moves)
+
+    def test_legacy_ui_strings_route(self):
+        for runner in ('claude', 'codex'):
+            for ui in ('true', 'TRUE', 'yes', 'YES', 'false', 'FALSE', 'no', 'NO'):
+                with self.subTest(runner=runner, ui=ui):
+                    result = self.run_stage('spec-review', runner, self.value('spec-review', ui=ui))
+                    self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                    self.assertEqual(['state-design' if ui in ('true', 'TRUE', 'yes', 'YES')
+                                      else 'state-build'], self.moves)
+            for ui in ('True', 'Yes', ' true ', 1, 0, [], {}, None):
+                with self.subTest(runner=runner, invalid_ui=ui):
+                    self.assert_invalid(self.run_stage('spec-review', runner,
+                                                      self.value('spec-review', ui=ui)), 0)
+
+    def test_optional_field_types_and_unknown_fields_stay_strict(self):
+        for stage, extra in (('spec-review', dict(issues_found='2')),
+                             ('spec-review', dict(remaining_issues=[{}])),
+                             ('ux', dict(components_reused=[{}])),
+                             ('ux', dict(open_questions=[dict(q='Question', blocking='no')])),
+                             ('spec-review', dict(unknown_field=True)),
+                             ('ux', dict(unknown_field=True))):
+            for runner in ('claude', 'codex'):
+                with self.subTest(stage=stage, runner=runner, extra=extra):
+                    self.assert_invalid(self.run_stage(stage, runner,
+                                                      dict(self.value(stage), **extra)), 0)
 
     def test_governance_still_forces_fail(self):
         self.spec.write_text('# Missing governance\n')
