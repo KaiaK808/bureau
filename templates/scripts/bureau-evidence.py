@@ -648,6 +648,9 @@ class Store:
         inputs = receipt.get('review_inputs')
         if value['stage'] == 'code_review' and isinstance(inputs, dict):
             value['review_inputs'] = {key: head(inputs.get(key)) for key in ('head', 'base', 'validation_head')}
+        refs = receipt.get('adr_refs')
+        if value['stage'] == 'code_review' and isinstance(refs, list):
+            value['adr_refs'] = sorted({ref for ref in refs if isinstance(ref, str) and re.fullmatch(r'[0-9]{4}', ref)})[:1024]
         conflict = receipt.get('conflict_resolution')
         if value['stage'] == 'conflict_resolver' and isinstance(conflict, dict):
             if (type(conflict.get('attempt')) is int and 1 <= conflict['attempt'] <= 2

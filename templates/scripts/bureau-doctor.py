@@ -60,6 +60,8 @@ def validate(config):
         value = agents.get(stage, False)
         if not isinstance(value, (bool, str, dict)): errors.append('agents.' + stage + ' must be a boolean, legacy string or object')
         elif isinstance(value, dict) and type(value.get('enabled', True)) is not bool: errors.append(stage + '.enabled must be boolean')
+    try: module('adr').settings(config)
+    except (ValueError, TypeError, AttributeError) as exc: errors.append(str(exc))
     if errors: return errors
     provider = module('provider')
     for stage in STAGES:

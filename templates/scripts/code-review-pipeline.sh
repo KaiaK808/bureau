@@ -102,7 +102,7 @@ _review_join_specialists() {
 review_text_from_merger() {
   local text projected
   projected=$(bureau_comment_projection "$1")
-  if text=$(printf '%s' "$projected" | jq -r --arg floor "${BUREAU_REVIEW_MIN_SEVERITY:-BUG}" '
+  if text=$(printf '%s' "$projected" | jq -r --arg floor "${BUREAU_REVIEW_MIN_SEVERITY:-BUG}" --argjson adr_index "${BUREAU_REVIEW_ADR_REFS:-null}" '
       def section($title; $items):
         if ($items | length) == 0 then "" else
           "\n\n### " + $title + "\n" + ($items | map("- `" + .file + ":" + (.line | tostring) + "` — " + .msg) | join("\n")) end;
@@ -113,7 +113,13 @@ review_text_from_merger() {
          then ($v | del(.findings)) + {findings_omitted: ($v.findings | length? // 0)} else $v end) as $v
       | .comment + "\n\n```json\n" + ($v | tojson) + "\n```"
         + section("Deferred below threshold (" + $floor + ")"; [.findings[]? | select(.class == "MINOR" and $floor == "BUG")])
-        + section("SKIP findings"; [.findings[]? | select(.class == "SKIP")])' 2>/dev/null) && [ -n "$text" ]; then
+        + section("SKIP findings"; [.findings[]? | select(.class == "SKIP")])
+        + (if $adr_index == null then "" else
+            [.findings[]? | select(.adr_refs | type == "array")
+              | . as $finding | [.adr_refs[] | select(type == "string")
+                | select(. as $ref | $adr_index | index($ref) != null) | "ADR " + .] | unique
+              | select(length > 0) | "- `" + $finding.file + ":" + ($finding.line | tostring) + "` — " + join(", ")]
+            | if length == 0 then "" else "\n\n### ADR references\n" + join("\n") end end)' 2>/dev/null) && [ -n "$text" ]; then
     printf '%s' "$text"
   else
     printf '%s' "$projected"
@@ -302,6 +308,20 @@ SPEC_CONTEXT+=$'\n\nA finding that contradicts a pinned decision in any of the a
 
 # All specialists share the bounded selection for the immutable PR inputs.
 LESSONS_CONTEXT=$(build_lessons_context code_review "$SPEC_DIR" "$REVIEW_DIFF")
+# An empty suffix preserves every prompt byte when disabled. IDs are kept
+# separate from untrusted record text for convergence and comment projection.
+ADR_CONTEXT=""
+ADR_MERGE_NOTE=""
+ADR_POLICY=""
+export BUREAU_REVIEW_ADR_REFS=null
+if [ "$(bureau_get '.agents.review_adr_context == true')" = true ]; then
+  ADR_INDEX=$(build_review_adr_context "$REVIEW_HEAD") || exit 24
+  ADR_CONTEXT=$(printf '%s' "$ADR_INDEX" | jq -er '.context') || exit 24
+  BUREAU_REVIEW_ADR_REFS=$(printf '%s' "$ADR_INDEX" | jq -ce '.refs') || exit 24
+  ADR_POLICY=$(printf '%s' "$ADR_INDEX" | jq -er '.policy') || exit 24
+  [ -z "$ADR_CONTEXT" ] || ADR_CONTEXT=$'\n\n'"$ADR_CONTEXT"
+  ADR_MERGE_NOTE=$'\n\nPreserve each finding\047s optional adr_refs array of four-digit IDs from the specialist reviews. Accepted ADRs are settled: a contradictory finding must cite its ADR and give new evidence justifying reopening it; otherwise it is only an ADR change proposal (SKIP). Documented Known limits are not findings. Cite IDs only (ADR 0003), never copy ADR text into the comment.'
+fi
 
 echo ""
 echo "Phase 1/3: multi-specialist review (3 passes in parallel)"
@@ -358,6 +378,7 @@ REUSED_GATE_WAITS=0
 # Version the decision policy as well as its configured severity and both caps.
 # Older records have no policy and require a fresh review; gate polls use the same key.
 REVIEW_POLICY="v1:$BUREAU_REVIEW_MIN_SEVERITY:$BUREAU_MAX_REVIEW_CYCLES:$BUREAU_MAX_REVIEW_ROUNDS"
+[ -z "$ADR_POLICY" ] || REVIEW_POLICY+=":adr:$ADR_POLICY"
 STAGE_EXIT=""   # set when an APPROVE's inline merge did not go through (2 or 25)
 if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
   if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
@@ -445,7 +466,7 @@ BUREAU_PROVIDER_PHASE=correctness BUREAU_PROVIDER_CANCEL_FILE="$REVIEW_TMP/cance
 
 $SPEC_CONTEXT
 
-$LESSONS_CONTEXT
+$LESSONS_CONTEXT$ADR_CONTEXT
 
 $CYCLE_NOTE
 
@@ -467,7 +488,7 @@ BUREAU_PROVIDER_PHASE=security BUREAU_PROVIDER_CANCEL_FILE="$REVIEW_TMP/cancel-s
 
 $SPEC_CONTEXT
 
-$LESSONS_CONTEXT
+$LESSONS_CONTEXT$ADR_CONTEXT
 
 $CYCLE_NOTE
 
@@ -489,7 +510,7 @@ BUREAU_PROVIDER_PHASE=performance BUREAU_PROVIDER_CANCEL_FILE="$REVIEW_TMP/cance
 
 $SPEC_CONTEXT
 
-$LESSONS_CONTEXT
+$LESSONS_CONTEXT$ADR_CONTEXT
 
 $CYCLE_NOTE
 
@@ -573,7 +594,7 @@ Verdict rules:
 
 Defer MINOR findings below the configured severity floor; SKIP never requests changes. Hypothetical edge cases are not defects.
 Report bugs as the exact number of BUG-class entries in findings. Keep security_issues and missing_acceptance explicit even when zero or empty; do not omit unresolved acceptance work from them.
-Each fixes_needed entry must repeat its corresponding finding message verbatim. A required fix without an exact deferred/SKIP match keeps REQUEST_CHANGES; unrelated deferred findings cannot discharge it.
+Each fixes_needed entry must repeat its corresponding finding message verbatim. A required fix without an exact deferred/SKIP match keeps REQUEST_CHANGES; unrelated deferred findings cannot discharge it.$ADR_MERGE_NOTE
 
 Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
 

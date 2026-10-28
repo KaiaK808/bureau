@@ -18,6 +18,8 @@ For upstream ports, explicitly configure `repo.upstream`, `repo.upstream_port.bu
 
 ## Installed scripts
 
+For a read-only external review of a Bureau PR, use the [review brief template](review-brief.md). List the relevant ADR numbers and titles from the [ADR index](../docs/adr/README.md) before handing it to a reviewer; accepted decisions and documented limits constrain the review.
+
 All runtime scripts come from the loaded skill's `templates/scripts/`, installed by `bureau_install.py assets --scope scripts`. Never reconstruct them from this inventory or assume a fixed skill installation path.
 
 | Group | Files |
@@ -38,6 +40,9 @@ Preserve existing values during updates and add these only where useful. The [co
 |---|---|
 | `agents.max_concurrent_issues` | `0` (unlimited); `1` gates new Spec admissions until in-flight issues drain |
 | `agents.code_review_sampling_threshold` | `500` changed lines before reviewers receive sampling guidance |
+| `agents.review_adr_context` | `false`; opt into accepted ADR context from the pinned PR head |
+| `agents.review_adr_budget_bytes` | `4096` UTF-8 bytes including instructions and truncation notice; `0` omits context |
+| `repo.adr_dir` | `docs/adr`; validated repository-relative directory of numbered ADR Markdown files |
 | `agents.merge_min_required_checks` | `1`; retains protection against a vacuous green-CI result |
 | `agents.merge_ci_queued_grace_seconds` | `3600`; a check run queued longer (no runner took it) blocks the merge gate |
 | `agents.merge_gate_recheck_seconds` | `3600`; the longest hold on a ticket waiting on its merge gate (review and merge pickers put it after the others meanwhile; `0` = off) |

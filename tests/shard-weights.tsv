@@ -3,6 +3,7 @@
 # Default is the observed Ubuntu mean (~45s) rounded up; macOS scaling is 2x (~1.8x observed).
 # CI newest-run test: local macOS elapsed 13.45s, rounded up (2026-10-27).
 # Judged stage result fixtures: local macOS elapsed 191.94s, rounded up (2026-10-28).
+# ADR review tests: local macOS elapsed 111.91s / 17.28s, rounded up (2026-10-28).
 # test_file	ubuntu_seconds	macos_seconds
 test_acceptance_insights.sh	-	10
 test_acceptance_insights_negative_controls.sh	59	-
@@ -112,6 +113,8 @@ test_reaccept_clean_worktree.sh	40	-
 test_rebase_dry_run_label.sh	1	-
 test_remote_git_hooks.sh	37	-
 test_review_base.sh	78	-
+test_review_adr.sh	-	112
+test_review_adr_negative_control.sh	-	18
 test_review_build_check.sh	30	-
 test_review_build_floor.sh	1	-
 test_review_build_output_tail.sh	9	-

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="329fa4cb999d78ab172aac6c19bf6f1de9d04c5820ae733be1d80eeca35d774d">
+<meta name="bureau-source-sha256" content="3aaaf76eab447de1534db9c2c52bb06b3985e61ad3b24e587073cca7c2725924">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -56,6 +56,14 @@ model selection, and saves a private exact backup.
 <code>bureau-doctor.py</code> validates shape/version and reports
 effective settings without contacting providers. See <a
 href="migration.html">migration and rollback</a>.</p>
+<p>Doctor also validates <code>agents.review_adr_context</code> as a
+boolean, <code>agents.review_adr_budget_bytes</code> as an integer from
+0 to 1048576, and <code>repo.adr_dir</code> as a plain
+repository-relative directory: no absolute path, empty, <code>.</code>,
+<code>..</code> or <code>.git</code> components, backslashes, colons or
+control characters. These optional keys default to false, 4096 and
+<code>docs/adr</code>; invalid explicit values are configuration errors,
+including when context is disabled.</p>
 <h3 id="linear"><code>linear</code></h3>
 <table>
 <thead>
@@ -419,6 +427,26 @@ MINOR. Validated findings decide before security/build/cap rules; BLOCK,
 CRITICAL, security/acceptance blockers and malformed or contradictory
 results cannot be promoted. Deferred/SKIP findings remain in the
 projected PR comment</td>
+</tr>
+<tr>
+<td><code>agents.review_adr_context</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Include a bounded index of accepted ADRs from the pinned PR head in
+all three specialist prompts. Accepted decisions are settled;
+contradictory findings must cite the ADR and give new evidence. Known
+limits are not findings. Disabled preserves existing prompt/comment
+bytes and ignores <code>adr_refs</code> during convergence</td>
+</tr>
+<tr>
+<td><code>agents.review_adr_budget_bytes</code></td>
+<td>integer</td>
+<td><code>4096</code></td>
+<td>Complete ADR context limit in UTF-8 bytes, including instructions,
+separators and truncation notice. Range 0–1048576; <code>0</code> omits
+the index. Whole records form a deterministic prefix ordered by ADR
+number; an overflowing context too small for instructions and notice is
+omitted</td>
 </tr>
 <tr>
 <td><code>agents.code_review_sampling_threshold</code></td>
@@ -984,6 +1012,14 @@ pause</td>
 <td><code>"specs"</code></td>
 <td>Spec directory inside the repository. The spec stage relocates the
 pinned helper's output here and persists the exact feature pointer</td>
+</tr>
+<tr>
+<td><code>repo.adr_dir</code></td>
+<td>string</td>
+<td><code>"docs/adr"</code></td>
+<td>Directory of direct <code>NNNN-*.md</code> ADR files inside the
+reviewed tree; validated as a plain relative path. Git symlinks are not
+followed. Missing directory supplies no context</td>
 </tr>
 <tr>
 <td><code>repo.base_branch</code></td>
