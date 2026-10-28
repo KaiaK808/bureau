@@ -1,6 +1,7 @@
 # PR #93 completed-file timestamp deltas, seconds rounded up; first timestamp has no start.
 # A dash means unmeasured: run.sh estimates from the other OS or uses 60s Ubuntu / 120s macOS.
 # Default is the observed Ubuntu mean (~45s) rounded up; macOS scaling is 2x (~1.8x observed).
+# CI newest-run test: local macOS elapsed 13.45s, rounded up (2026-10-27).
 # test_file	ubuntu_seconds	macos_seconds
 test_acceptance_insights.sh	-	10
 test_acceptance_insights_negative_controls.sh	59	-
@@ -10,6 +11,7 @@ test_bounded_lessons.sh	19	45
 test_bounded_lessons_negative_control.sh	1	1
 test_bounded_lessons_stages.sh	10	27
 test_branch_is_bureau_only.sh	3	9
+test_ci_green_newest_check.sh	-	14
 test_ci_queued_grace.sh	46	135
 test_ci_workflow_template.sh	1	1
 test_codex_implement_pipeline.sh	5	12

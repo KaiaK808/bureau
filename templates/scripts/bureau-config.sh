@@ -2037,18 +2037,26 @@ _bureau_gh_owner_repo() {
 }
 
 # pr_ci_is_green <pr-number>
-# Returns 0 if every check-run AND legacy status context on the PR's CURRENT
-# head SHA is completed and successful (success/skipped/neutral). Returns 1
-# with a stderr diagnostic if any check is pending, in-progress, or failing.
+# Returns 0 if the newest check runs and legacy status contexts on the PR's
+# CURRENT head SHA have finished without failure and meet the success minimum.
+# Check runs are grouped by name and app.id across all pages. Within each group,
+# the latest started_at wins, with the highest id breaking ties. Readable times
+# use YYYY-MM-DDTHH:MM:SS[.digits] with Z or a numeric ±HH:MM offset; fractional
+# digits are compared exactly. If any started_at in a group is unreadable, ids
+# alone order that group. Legacy statuses already carry GitHub's latest result
+# per context and are handled separately.
+# Returns 1 with a stderr diagnostic for pending, in-progress, or failing checks.
 #
-# Independent of `mergeStateStatus`. Treats "no checks completed" as failure
-# unless .agents.merge_min_required_checks is set to 0 (default 1 — repos
-# without CI should opt out via .agents.merge_require_green_ci=false rather
-# than via this knob).
+# Independent of `mergeStateStatus`. Only newest check runs with conclusion
+# success and legacy statuses in state success count toward
+# .agents.merge_min_required_checks (default 1). Skipped and neutral check runs
+# never fail the head and never count toward that minimum. An all-skipped or
+# all-neutral head passes when the minimum is 0. Repos without CI can opt out via
+# .agents.merge_require_green_ci=false.
 #
-# "No checks completed" is normally a check that has not started yet, which the
-# merge stage reads as "not yet". A head that carries nothing at all — no check
-# run, not even a queued one, and no status — when its commit is older than
+# Too few successful checks is "not yet" to the merge stage. A head that carries
+# nothing at all in the raw lists — no check run, not even a queued one, and no
+# status — when its commit is older than
 # .agents.merge_ci_start_grace_seconds (default 1800) will not get CI any more
 # (no workflow, a trigger that does not match): that is reported as its own
 # line, "ci: no check run and no status on …", which the merge stage reads as
@@ -2076,9 +2084,35 @@ pr_ci_is_green() {
   # check-runs: paginate-and-slurp; `--paginate --jq` returns per-page
   # filtered output which loses the aggregation. The `-s` jq slurps all
   # response bodies into one array, then we concat their check_runs.
-  local checks
+  local checks raw_check_count
   checks=$(gh api "repos/$owner_repo/commits/$head_sha/check-runs" --paginate 2>/dev/null \
             | jq -s 'map(.check_runs // []) | add // []') || {
+    echo "ci: gh check-runs query failed for $head_sha" >&2
+    return 1
+  }
+  raw_check_count=$(printf '%s' "$checks" | jq 'length')
+  checks=$(printf '%s' "$checks" | jq '
+    def started_at_key:
+      if type != "string" then null
+      else try (
+        (capture("\\A(?<second>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]+))?(?<zone>Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])\\z") // {})
+        | (.second + "Z" | fromdateiso8601) as $second
+        | if ($second | todateiso8601) != (.second + "Z") then null
+          else
+            (if .zone == "Z" then 0
+             else ((.zone[1:3] | tonumber) * 3600 + (.zone[4:6] | tonumber) * 60)
+               * (if .zone[0:1] == "+" then 1 else -1 end)
+             end) as $offset
+            # Keep fractions as digit strings: epoch floats lose small differences.
+            # Removing trailing zeros makes equivalent fractions tie for id ordering.
+            | [($second - $offset), (.fraction // "" | sub("0+\\z"; ""))]
+          end
+      ) catch null end;
+    group_by([.name, .app.id])
+    | map(map({run: ., at: (.started_at | started_at_key)})
+      | if any(.at == null) then max_by(.run.id)
+        else max_by([.at, .run.id]) end
+      | .run)') || {
     echo "ci: gh check-runs query failed for $head_sha" >&2
     return 1
   }
@@ -2086,13 +2120,14 @@ pr_ci_is_green() {
   # Legacy commit status (for status contexts not registered as check-runs,
   # e.g. some third-party CI integrations). The endpoint returns a flat
   # `statuses` array per-context with state ∈ {success,pending,failure,error}.
-  local statuses statuses_read=ok
+  local statuses statuses_read=ok raw_status_count
   statuses=$(gh api "repos/$owner_repo/commits/$head_sha/status" --jq '.statuses // []' 2>/dev/null) \
     || { statuses='[]'; statuses_read=failed; }
+  raw_status_count=$(printf '%s' "$statuses" | jq 'length')
 
   local pending failed completed pending_legacy failed_legacy
   pending=$(echo "$checks"   | jq '[.[] | select(.status != "completed")] | length')
-  completed=$(echo "$checks" | jq '[.[] | select(.status == "completed")] | length')
+  completed=$(echo "$checks" | jq '[.[] | select(.status == "completed" and .conclusion == "success")] | length')
   failed=$(echo "$checks"    | jq '[.[]
     | select(.status == "completed")
     | select((.conclusion // "") as $c
@@ -2149,16 +2184,16 @@ pr_ci_is_green() {
   local min_required
   min_required=$(_merge_gate_number merge_min_required_checks 1) || true
   local total_completed="$completed" completed_legacy
-  # Count completed legacy statuses too (any non-pending state counts).
-  completed_legacy=$(echo "$statuses" | jq '[.[] | select(.state != "pending")] | length')
+  # Legacy statuses keep their own pending/failure handling; only success counts.
+  completed_legacy=$(echo "$statuses" | jq '[.[] | select(.state == "success")] | length')
   completed_legacy=$(bureau_number ci.completed_legacy "$completed_legacy" 0 0 9999999999)
   total_completed=$((total_completed + completed_legacy))
   if [ "$total_completed" -lt "$min_required" ]; then
-    # Past the pending check above, zero completed means nothing at all on the head.
-    # Both lists must have been read; a head commit time that cannot be read keeps
-    # the "only 0 completed" line (not yet).
+    # Only empty raw lists mean no CI started. Skipped/neutral runs still prove
+    # CI appeared. Both lists must have been read; an unreadable head commit time
+    # keeps the "only 0 completed" line (not yet).
     local grace age
-    if [ "$total_completed" = 0 ] && [ "$statuses_read" = ok ]; then
+    if [ "$raw_check_count" = 0 ] && [ "$statuses_read" = ok ] && [ "$raw_status_count" = 0 ]; then
       grace=$(_merge_gate_number merge_ci_start_grace_seconds 1800) || true
       if age=$(_pr_head_commit_age "$owner_repo" "$head_sha") && [ "$age" -ge "$grace" ]; then
         # No age in the line: the merge stage posts a new PR comment when a line changes.

@@ -227,7 +227,7 @@ new_sandbox
 python3 - "$SCRIPTS_DIR/real-helpers.sh" <<'PY'
 import sys
 p = sys.argv[1]; src = open(p).read()
-old = '    if [ "$total_completed" = 0 ] && [ "$statuses_read" = ok ]; then\n'
+old = '    if [ "$raw_check_count" = 0 ] && [ "$statuses_read" = ok ] && [ "$raw_status_count" = 0 ]; then\n'
 assert src.count(old) == 1, 'grace branch not found'
 open(p, 'w').write(src.replace(old, '    if false; then\n'))
 PY

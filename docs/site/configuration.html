@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="edc9587b91a2b9c4f31832bb46b422780e9b9e4d5f8fc168a20fd9027376267e">
+<meta name="bureau-source-sha256" content="4a9ce83fee5c3d3f62c3841c410452ea462bb3e42111e6244d94bcdf346df095">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -515,8 +515,17 @@ Validated at config-load — invalid values fall back to
 <td><code>agents.merge_require_green_ci</code></td>
 <td>bool</td>
 <td><code>true</code></td>
-<td>Bureau-enforced "all check-runs on PR head SHA must be completed +
-green" gate, independent of GitHub's <code>mergeStateStatus</code>.
+<td>Bureau checks the newest check run per name and app ID on the PR
+head SHA, plus legacy commit statuses, independently of GitHub's
+<code>mergeStateStatus</code>. Check runs must be completed without
+failure; skipped and neutral runs are allowed and contribute zero to
+<code>merge_min_required_checks</code>. Newest means latest readable
+<code>started_at</code>, then highest <code>id</code>. Readable times
+use <code>YYYY-MM-DDTHH:MM:SS[.digits]</code> with <code>Z</code> or a
+numeric <code>±HH:MM</code> offset, preserving every fractional digit;
+if any timestamp in a name/app group is unreadable, that group uses IDs
+alone. Pending, queue-grace and failure decisions use these newest runs.
+Legacy statuses already carry GitHub's latest result per context.
 Catches the "no required-checks rule configured" hole where CLEAN passes
 with red CI. Set false only for repos genuinely without CI (docs-only,
 prototypes). Only the JSON value <code>false</code> switches it off
@@ -538,15 +547,20 @@ value keeps it on with a warning</td>
 <td><code>agents.merge_min_required_checks</code></td>
 <td>number</td>
 <td><code>1</code></td>
-<td>Minimum completed check-runs required on the PR head SHA before
-<code>merge_require_green_ci</code> will pass. Prevents a PR with zero
-registered workflows from passing vacuously. Set to <code>0</code> for
-repos with no CI at all (rare — prefer flipping
-<code>merge_require_green_ci</code> to <code>false</code> instead). A
-value that is not a plain whole number is read by the gate's number
-rule: a string that reads as a number is that number (ASCII blanks
-around it and one leading <code>+</code> are dropped, then digits with
-an optional fraction and exponent: <code>" 2"</code>, <code>"+2"</code>,
+<td>Minimum successful checks required on the PR head SHA before
+<code>merge_require_green_ci</code> will pass: newest completed check
+runs with conclusion <code>success</code>, plus legacy commit statuses
+in state <code>success</code>. Skipped and neutral runs never fail the
+head and never count toward this minimum. A workflow that skips draft
+pull requests leaves an all-skipped head at "only 0 completed check(s)",
+even after the CI start grace. Setting <code>0</code> allows heads whose
+newest runs are all skipped or neutral, and heads with no checks or
+statuses; pending and failing results still prevent a merge. For repos
+without CI, prefer <code>merge_require_green_ci: false</code>. A value
+that is not a plain whole number is read by the gate's number rule: a
+string that reads as a number is that number (ASCII blanks around it and
+one leading <code>+</code> are dropped, then digits with an optional
+fraction and exponent: <code>" 2"</code>, <code>"+2"</code>,
 <code>"2.0"</code>, <code>"1e3"</code>), a fraction is rounded up (never
 fewer than written), a number above 9999999 is 9999999, and a negative
 number or any other value is the default, each with a warning from the

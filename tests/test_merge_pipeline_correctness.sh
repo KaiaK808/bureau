@@ -691,6 +691,15 @@ test_gate_outcome() {
   sb=$(make_sandbox gate_notstarted); populate_happy_fixtures "$sb"
   echo '{"check_runs":[]}' > "$sb/stub_data/check_runs.json"
   run_gate "$sb"; gate_case "$sb" not-started 2 not-yet 'only 0 completed' || return 1
+  # A workflow that skips draft pull requests has run, yet contributes no success.
+  sb=$(make_sandbox gate_skipped); populate_happy_fixtures "$sb"
+  echo '{"check_runs":[{"name":"ci","id":20,"status":"completed","conclusion":"skipped"}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" skipped 2 not-yet 'only 0 completed check(s) on HEAD_SHA (require >= 1)' || return 1
+  grep -q 'no CI started' <<< "$GREP" && { echo 'FAIL gate skipped: claimed no CI started' >&2; return 1; }
+  # The stage reports the success count when the configured minimum is higher.
+  jq '.agents.merge_min_required_checks = 2' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
+  echo '{"check_runs":[{"name":"ci","id":20,"status":"completed","conclusion":"success"},{"name":"docs","id":30,"status":"completed","conclusion":"neutral"}]}' > "$sb/stub_data/check_runs.json"
+  run_gate "$sb"; gate_case "$sb" success-count 2 not-yet 'only 1 completed check(s) on HEAD_SHA (require >= 2)' || return 1
   # GitHub still computing mergeStateStatus, everything else green: not yet.
   sb=$(make_sandbox gate_unknown); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNKNOWN"'
   run_gate "$sb"; gate_case "$sb" unknown 2 not-yet 'UNKNOWN' || return 1
