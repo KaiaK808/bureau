@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="329fa4cb999d78ab172aac6c19bf6f1de9d04c5820ae733be1d80eeca35d774d">
+<meta name="bureau-source-sha256" content="4cdd2c5cb56372c33e9159bb28bd55dcb546192d289f70769b46afe85b290f38">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1354,24 +1354,71 @@ line also decline, including identical new headings or context:
 preserving side sequences alone cannot prove section associations. New
 ATX/Setext Markdown headings in either insertion also decline, since
 they could capture entries from the other side. After source conflicts
-resolve, <code>restore_worktree_deps</code> prepares npm dependencies
-against the merged manifests before any generator or check; preparation
-failure declines the repair. All configured generators then run in
-declaration order, each limited to its own full output set. Generator or
-check failure, unavailable commands (including Pandoc), undeclared edits
-or remaining conflict markers restore the saved clean checkout and use
-existing conflict exit 17. Rollback restores only paths changed since
-the snapshot and grants directory/parent access only when needed.
-Unchanged ignored content and modes stay untouched. A filesystem failure
-on one path does not stop other restores or the saved-index/Git reset
-attempt; incomplete restoration declines explicitly. Saved directory
-modes are restored after the reset. Commands run outside the provider
-sandbox under <code>repo.untrusted_env</code>, with a fixed 1,800-second
-limit per command. Checks must leave the tracked tree/index unchanged
-and create no nonignored untracked files; ignored test caches are
-permitted. See <a
+resolve, <code>restore_worktree_deps</code> prepares Node dependencies
+against the merged manifests using the <a
+href="#node-repositories">package-manager rules</a> before any generator
+or check; preparation failure declines the repair. All configured
+generators then run in declaration order, each limited to its own full
+output set. Generator or check failure, unavailable commands (including
+Pandoc), undeclared edits or remaining conflict markers restore the
+saved clean checkout and use existing conflict exit 17. Rollback
+restores only paths changed since the snapshot and grants
+directory/parent access only when needed. Unchanged ignored content and
+modes stay untouched. A filesystem failure on one path does not stop
+other restores or the saved-index/Git reset attempt; incomplete
+restoration declines explicitly. Saved directory modes are restored
+after the reset. Commands run outside the provider sandbox under
+<code>repo.untrusted_env</code>, with a fixed 1,800-second limit per
+command. Checks must leave the tracked tree/index unchanged and create
+no nonignored untracked files; ignored test caches are permitted. See <a
 href="stage-protocol.html#deterministic-conflict-resolution">the
 transaction contract</a> for rollback and ownership limits.</p>
+<h4 id="node-repositories">Node repositories</h4>
+<p><code>restore_worktree_deps</code> detects the lockfile beside
+<code>package.json</code> after a disposable worker's checkout/merge.
+npm retains its existing <code>package-lock.json</code> path: clone
+matching main-checkout dependencies or stage
+<code>npm ci --ignore-scripts --no-audit --no-fund</code>, then mount
+atomically. pnpm (<code>pnpm-lock.yaml</code>) and Yarn Classic 1.x
+(<code>yarn.lock</code>) install directly in the worker so relative
+workspace package links resolve there. They never clone or symlink the
+main checkout's <code>node_modules</code>; leave it out of
+<code>repo.worktree_links</code>.</p>
+<p>pnpm runs
+<code>pnpm install --frozen-lockfile --offline --ignore-scripts --prefer-offline --ignore-pnpmfile</code>.
+Yarn Classic runs
+<code>yarn install --frozen-lockfile --offline --ignore-scripts --non-interactive</code>
+with <code>YARN_IGNORE_PATH=1</code>. Both set
+<code>COREPACK_ENABLE_NETWORK=0</code> and disable Corepack download
+prompts. Offline-only is deliberate: cache preference must not silently
+become registry access. Provision the manager and populate its local
+cache during trusted setup. These new paths retry once, allow 120
+seconds per install attempt (20 seconds for Yarn version detection),
+kill their owned command process groups on timeout/interruption, remove
+partial dependency directories and return 24 on failure. npm's existing
+retry/network behavior is unchanged.</p>
+<p>The shared Git directory holds logs and a manifest fingerprint stamp.
+It includes workspace <code>package.json</code> files, the selected
+lockfile and workspace/manager configuration visible to Git (tracked or
+unignored new files). A changed input reinstalls dependencies. A
+successful dependency-free install may have no module directories;
+missing modules with declared dependencies still block. Tracked or
+symlinked dependency directories are discarded even when the stamp
+matches; failures cannot reuse stale modules. The main checkout is
+untouched. Frozen installs that alter an input are rejected. Multiple
+lockfiles or a conflicting <code>packageManager</code> field stop with
+24. Yarn modern/PnP is intentionally unsupported by this helper:
+Classic's flags and lifecycle protections cannot be assumed to apply to
+its plugin/linker model. Other dependency layouts need a separately
+reviewed setup; live package-manager/cache qualification is still an
+operator check.</p>
+<p>For documentation work without a JavaScript manifest, configure a
+real trusted <code>repo.test_command</code> as in the <a
+href="recipes.html#documentation-only-tickets">documentation-only
+recipe</a>. Test commands remain repository-wide; ticket/model text
+cannot select an override. Configure before prepare; see <a
+href="troubleshooting.html#configuration-changed-since-prepare">configuration-change
+recovery</a>.</p>
 <h4 id="python-repositories">Python repositories</h4>
 <p>The stage worktrees are reset with <code>git clean -fdx</code>, which
 removes an ignored <code>.venv</code>. First commit the resynced scripts

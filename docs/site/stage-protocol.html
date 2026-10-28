@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9866f293ae4e7917c59f721b5ff571dd073e11b1302c4174e36c62e3f656ea98">
+<meta name="bureau-source-sha256" content="cb324451dd87321d96b568dbc7034a0e3afb04957214f5b3011cd965adbeed5d">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -749,7 +749,10 @@ supported. Replacements and deletions cannot be authorized by labeling a
 path append-only.</p>
 <p>Only after all source conflicts resolve does the transaction call the
 runtime's existing <code>restore_worktree_deps</code> against the merged
-manifests. Its npm clone/install and manifest-stamp rules remain; other
+manifests. Its <a
+href="configuration.html#node-repositories">package-manager rules</a>
+apply: npm retains clone/staged install, while pnpm and Yarn Classic
+install offline in the worktree with workspace-aware stamps. Other
 project types retain the helper's existing behavior. Failed dependency
 preparation declines resolution before any generator or check runs.
 Configured generators then run, in order, over the merged sources. Each

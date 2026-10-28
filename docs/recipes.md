@@ -4,6 +4,30 @@ Configuration overlays and launch examples. Merge settings into the existing `.b
 
 ---
 
+## Documentation-only tickets
+
+Choose a real documentation check before preparing the ticket. In a fresh repository without `package.json`, a default such as `pnpm test` cannot validate the work. Put a reviewed check script in the repository (for example, one that checks Markdown links and required architecture sections), then set this overlay in the **trusted** `.bureau.json`:
+
+```json
+{"repo":{"test_command":"bash scripts/check-docs.sh"}}
+```
+
+The script must exist and fail on invalid documentation; a no-op is not test evidence. Implementation, QA, review and the app tests action use this configured command. Do not take a command from a ticket, generated result, model suggestion or an unreviewed branch configuration. Bureau has no per-ticket test-command override. For a repository with both application and documentation work, prefer a reviewed repository check script that runs the appropriate checks from known repository inputs. If a maintainer temporarily selects a documentation-only command, stop background drivers and finish/release other runs first: the setting is repository-wide. Set it before prepare, use it through the ticket's last finish, then restore the normal command before resuming other work. Changing it during a prepared run requires [release and prepare again](troubleshooting.md#configuration-changed-since-prepare).
+
+To keep a small documentation ticket as one pickup candidate, keep `tasks.md` as its checklist and run the shared app stages directly. For spec, start in the repository root:
+
+```sh
+python3 scripts/bureau-runtime.py prepare TEAM-123 spec --owner docs-task
+# Follow scripts/bureau-stage.md and the repository's Spec Kit skills.
+# Produce spec.md, plan.md and tasks.md in the canonical feature directory.
+# Write the result JSON using the returned run_id and actual artifact paths.
+python3 scripts/bureau-runtime.py finish RUN_ID --result RESULT_FILE
+```
+
+Continue Spec Review, implementation, QA and review with their own prepare/finish pairs, using the same parent issue and accepted checklist. Respect configured entry states and the requested review/merge boundary. The runtime does not create sub-issues. Do not invoke `linear-to-spec` step 6 or the `linear-implement` sub-issue workflow for this recipe: those interfaces deliberately create/reconcile children, and the queue selects leaf issues once children exist. There is no documentation label that disables their fan-out. Select this workflow before creating children; it does not delete or reparent existing sub-issues. Existing children need an explicit maintainer reconciliation before the parent can become the queue's unit of work again.
+
+---
+
 ## Single-flight pipeline
 
 Process exactly one issue end-to-end before another enters Spec. Eliminates cross-issue rebase storms in active repos.

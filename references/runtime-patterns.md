@@ -206,7 +206,7 @@ Every pipeline script:
 | 21 | ownership-conflict | checkout/issue ownership refused |
 | 22 | provider-or-result-error | provider execution or result validation failed |
 | 23 | quota-wait | provider quota requires waiting |
-| 24 | environment-blocked | required execution environment unavailable (includes npm dependencies that could not be restored) |
+| 24 | environment-blocked | required execution environment unavailable (includes Node dependencies that could not be restored) |
 | 25 | needs-human-or-paused | human attention or dispatch pause |
 | 26 | cancelled-ticket | ticket is cancelled |
 | 27 | linear-unusable | a Linear answer stayed unusable after every retry |

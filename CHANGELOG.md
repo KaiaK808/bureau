@@ -6,6 +6,17 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Fixed
+
+- App finish now names the exact release and prepare commands when trusted configuration changes during a run, and tells the operator to regenerate the result with the new run ID. The configuration check and ownership rules remain strict. Troubleshooting documents recovery without discarding work.
+- Disposable worktrees restore pnpm and Yarn Classic dependencies using frozen, offline installs without lifecycle scripts. Installs run in the worker to preserve relative workspace links; stamps include workspace manifests/configuration. Corepack downloads are disabled, attempts are bounded and partial modules are removed on failure (24). npm's clone/staged-install behavior is unchanged. Modern Yarn/PnP is refused rather than using Classic safety flags on an incompatible runtime.
+
+### Documentation
+
+- Added a documentation-ticket recipe using a reviewed check script selected by trusted `repo.test_command` before prepare, plus direct shared stages that keep tasks on the parent without creating pickup candidates. No ticket/model-supplied command override or fan-out label was added. Documented repository-local Spec Kit discovery for both hosts and the repository-root/explicit-SKILL.md workaround.
+
+**Upgrade:** compare installed script drift, resync the complete scripts scope (including `bureau-worktree-deps.py`) and restart drivers together. No configuration migration or exit-code change. Provision pnpm/Yarn Classic and populate their offline caches in trusted setup; remove `node_modules` from worktree links. Validation uses local Git and fake package-manager/Linear tools; live manager/cache and adopting-repository qualification remains an operator check. Modern Yarn/PnP needs a separately reviewed dependency setup.
+
 ## [3.5.1] - 2026-10-29
 
 v3.5.1 is a patch release on v3.5.0, prepared 2026-10-28 for the 2026-10-29 tag. It contains only [#98](https://github.com/KaiaK808/bureau/pull/98): Spec Review and UX fail closed on invalid results, and their overlap readiness requires a validated passing status and the installed schema digest. All behavior changes are on by default after resync; readiness validation applies when overlap admission is enabled. No configuration keys or exit codes are new; the existing exit 22 widens to these invalid results. See the [v3.5.1 release notes](docs/release-notes.md) for the contracts, upgrade actions, validation record and known limitation.
