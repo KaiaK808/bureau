@@ -3377,7 +3377,9 @@ restore_worktree_deps() {
 
   [ -f "$wt/package.json" ] || return 0
   if [ -f "$wt/pnpm-lock.yaml" ] || [ -f "$wt/yarn.lock" ]; then
-    python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-worktree-deps.py" "$wt"
+    # Filter before Python starts: its Git and package-manager children must
+    # inherit the same default/clean boundary as other branch-controlled code.
+    bureau_untrusted_env python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-worktree-deps.py" "$wt"
     return $?
   fi
   [ -f "$wt/package-lock.json" ] || return 0

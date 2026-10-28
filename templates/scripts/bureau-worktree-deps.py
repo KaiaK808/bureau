@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -41,6 +42,45 @@ def modules(repo):
 def clean(repo):
     for path in modules(repo):
         remove(path)
+
+
+def yarn_pnp_enabled(repo, manifest):
+    """Classic also supports PnP; version detection alone cannot rule it out."""
+    install_config = manifest.get('installConfig', {})
+    if isinstance(install_config, dict) and install_config.get('pnp'):
+        return True
+    if any((repo / name).exists() or (repo / name).is_symlink()
+           for name in ('.pnp.js', '.pnp.cjs', '.pnp.loader.mjs', '.pnp.data.json')):
+        return True
+
+    def enabled(value):
+        # Only an absent/empty or explicit false switch is known to be off;
+        # other strings can be truthy to a package manager's option parser.
+        return str(value) not in ('', 'false')
+
+    if any(enabled(os.environ.get(name, ''))
+           for name in ('YARN_PNP', 'YARN_ENABLE_PNP', 'YARN_PLUGNPLAY')):
+        return True
+    if '.pnp.' in os.environ.get('NODE_OPTIONS', ''):
+        return True
+    # Yarn reads rc files above the project and in the operator's home too.
+    directories = {repo, *repo.parents, Path.home()}
+    pnp_keys = {'pnp', 'enable-pnp', 'plugnplay', 'install.pnp',
+                'install.enable-pnp', 'install.plugnplay'}
+    for directory in sorted(directories):
+        for name in ('.yarnrc', '.yarnrc.yml'):
+            path = directory / name
+            if not path.is_file():
+                continue
+            for line in path.read_text().splitlines():
+                parts = shlex.split(line, comments=True)
+                if not parts:
+                    continue
+                key = parts[0].lstrip('-').rstrip(':')
+                value = parts[1] if len(parts) > 1 else 'true'
+                if (key in pnp_keys and enabled(value)) or (key == 'nodeLinker' and value == 'pnp'):
+                    return True
+    return False
 
 
 def fingerprint(repo, manager, lockfile):
@@ -106,9 +146,13 @@ def restore(repo):
         raise ValueError('multiple package-manager lockfiles; keep the intended one')
     lockfile = locks[0]
     manager = 'pnpm' if lockfile == 'pnpm-lock.yaml' else 'yarn'
-    package_manager = json.loads((repo / 'package.json').read_text()).get('packageManager')
+    manifest = json.loads((repo / 'package.json').read_text())
+    package_manager = manifest.get('packageManager')
     if package_manager and (not isinstance(package_manager, str) or not package_manager.startswith(manager + '@')):
         raise ValueError('packageManager disagrees with ' + lockfile)
+    if manager == 'yarn' and yarn_pnp_enabled(repo, manifest):
+        clean(repo)
+        raise ValueError('Yarn PnP is unsupported, including Classic; use a separate dependency setup')
     want = fingerprint(repo, manager, lockfile)
     directory = common / 'bureau-deps'
     directory.mkdir(parents=True, exist_ok=True)

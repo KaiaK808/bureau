@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -18,9 +19,10 @@ SCRIPTS = Path(os.environ.get('BUREAU_TEST_SCRIPTS_DIR', ROOT / 'templates/scrip
 FAKE = '''#!/usr/bin/env python3
 import json, os, pathlib, subprocess, sys, time
 root = pathlib.Path.cwd()
-with open(os.environ['MANAGER_CALLS'], 'a') as output:
+with open(os.environ.get('MANAGER_CALLS', root.parent / 'calls.jsonl'), 'a') as output:
     output.write(json.dumps(dict(tool=pathlib.Path(sys.argv[0]).name, argv=sys.argv[1:], cwd=str(root),
-        network=os.environ.get('COREPACK_ENABLE_NETWORK'), ignore_path=os.environ.get('YARN_IGNORE_PATH'))) + '\\n')
+        network=os.environ.get('COREPACK_ENABLE_NETWORK'), ignore_path=os.environ.get('YARN_IGNORE_PATH'),
+        environment=sorted(os.environ))) + '\\n')
 if sys.argv[1:] == ['--version']:
     print(os.environ.get('FAKE_YARN_VERSION', '1.22.22')); sys.exit(0)
 if os.environ.get('FAKE_EMPTY'): sys.exit(0)
@@ -51,9 +53,11 @@ class PackageManagerTests(unittest.TestCase):
         self.main = self.root / 'main'; self.main.mkdir()
         self.repo = self.root / 'worker with spaces'
         self.bin = self.root / 'bin'; self.bin.mkdir()
+        self.home = self.root / 'home'; self.home.mkdir()
         self.calls = self.root / 'calls.jsonl'
         self.child = self.root / 'child.pid'
         self.env = dict(os.environ, **git_maintenance.OFF_ENV,
+                        HOME=str(self.home),
                         PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
                         MANAGER_CALLS=str(self.calls), MANAGER_CHILD=str(self.child))
         for name in ('npm', 'pnpm', 'yarn'):
@@ -124,6 +128,73 @@ class PackageManagerTests(unittest.TestCase):
     def test_yarn_detection_installs_in_worktree_with_safe_flags_and_relative_links(self):
         self.setup_manager('yarn'); self.assert_installed('yarn')
 
+    def assert_environment_filtered(self, manager, mode):
+        self.setup_manager(manager)
+        config = self.root / 'operator.json'
+        config.write_text(json.dumps({'repo': {'untrusted_env': mode}}))
+        startup = self.root / 'startup.sh'; startup.write_text('# fixture only\n')
+        # Record the helper's Git children too. No environment values are logged.
+        real_git = shutil.which('git', path=self.env['PATH'])
+        git_env = self.root / 'git-env.jsonl'
+        fake_git = self.bin / 'git'
+        fake_git.write_text('#!/usr/bin/env python3\nimport json, os, sys\n'
+                            f'with open({str(git_env)!r}, "a") as output:\n'
+                            '    output.write(json.dumps(sorted(os.environ)) + "\\n")\n'
+                            f'os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n')
+        fake_git.chmod(0o755)
+        result = self.restore(GH_TOKEN='fixture-dependency-token',
+                              TOKEN_CARRIER='Bearer fixture-dependency-token',
+                              _beb_name='reserved-helper-sentinel', BASH_ENV=str(startup), ENV=str(startup),
+                              BUREAU_CONFIG=str(config), BUREAU_ENV_FILE=str(self.root / 'private.env'),
+                              HERDR_PANE_ID='operator-pane', APPLICATION_SETTING='ordinary-setting')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.invocations()
+        self.assertEqual([call['argv'][0] for call in calls],
+                         ['install'] if manager == 'pnpm' else ['--version', 'install'])
+        forbidden = {'GH_TOKEN', 'TOKEN_CARRIER', '_beb_name', 'BASH_ENV', 'ENV',
+                     'BUREAU_CONFIG', 'BUREAU_ENV_FILE', 'HERDR_PANE_ID'}
+        for call in calls:
+            self.assertFalse(forbidden.intersection(call['environment']),
+                             'unfiltered variables reached package manager: ' + str(call['environment']))
+            self.assertEqual('APPLICATION_SETTING' in call['environment'], mode == 'default')
+            self.assertIn('PATH', call['environment'])
+        environments = [json.loads(line) for line in git_env.read_text().splitlines()]
+        self.assertGreaterEqual(len(environments), 4)
+        for environment in environments:
+            self.assertFalse(forbidden.intersection(environment),
+                             'unfiltered variables reached helper Git: ' + str(environment))
+            self.assertEqual('APPLICATION_SETTING' in environment, mode == 'default')
+
+    def test_pnpm_environment_filters_secrets_and_reserved_names(self):
+        self.assert_environment_filtered('pnpm', 'default')
+
+    def test_yarn_environment_filters_secrets_and_reserved_names(self):
+        self.assert_environment_filtered('yarn', 'default')
+
+    def test_pnpm_environment_honors_clean_mode(self):
+        self.assert_environment_filtered('pnpm', 'clean')
+
+    def test_yarn_environment_honors_clean_mode(self):
+        self.assert_environment_filtered('yarn', 'clean')
+
+    def test_environment_negative_control_detects_bypassed_filter(self):
+        source = self.function.read_text()
+        filtered = 'bureau_untrusted_env python3 -I '
+        self.assertIn(filtered, source)
+        self.function.write_text(source.replace(filtered, 'python3 -I ', 1))
+        with self.assertRaisesRegex(AssertionError, 'unfiltered variables reached package manager'):
+            self.assert_environment_filtered('pnpm', 'default')
+
+    def test_invalid_environment_mode_refuses_before_starting_the_helper(self):
+        self.setup_manager('pnpm')
+        config = self.root / 'operator.json'
+        config.write_text('{"repo":{"untrusted_env":"invalid"}}')
+        result = self.restore(BUREAU_CONFIG=str(config))
+        self.assertEqual(result.returncode, 24)
+        self.assertIn('repo.untrusted_env', result.stderr)
+        self.assertEqual(self.invocations(), [])
+        self.assertFalse((self.main / '.git/bureau-deps').exists())
+
     def test_stamp_skips_and_workspace_manifest_change_invalidates_it(self):
         self.setup_manager('pnpm'); self.assert_installed('pnpm')
         self.assertIn('unchanged, skipped', self.restore().stdout)
@@ -178,6 +249,87 @@ class PackageManagerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 24)
         self.assertIn('Yarn Classic 1.x', result.stderr)
         self.assertEqual(self.invocations(installs=True), [])
+
+    def assert_yarn_pnp_refused(self, **env):
+        result = self.restore(**env)
+        self.assertEqual(result.returncode, 24, result.stdout + result.stderr)
+        self.assertIn('Yarn PnP is unsupported', result.stderr)
+        self.assertEqual(self.invocations(), [], 'PnP must be refused before any Yarn process')
+        self.assertFalse((self.repo / 'node_modules').exists())
+        self.assertFalse((self.repo / 'packages/app/node_modules').exists())
+        self.assertTrue((self.main / 'node_modules/main-only').exists())
+
+    def test_yarn_classic_manifest_pnp_is_refused_even_without_dependencies(self):
+        self.setup_manager('yarn')
+        package = self.repo / 'package.json'
+        manifest = json.loads(package.read_text()); manifest['installConfig'] = {'pnp': True}
+        package.write_text(json.dumps(manifest))
+        self.assert_yarn_pnp_refused(FAKE_EMPTY='1')
+
+    def test_yarn_pnp_loader_files_are_refused(self):
+        self.setup_manager('yarn')
+        for name in ('.pnp.js', '.pnp.cjs', '.pnp.loader.mjs', '.pnp.data.json'):
+            with self.subTest(name=name):
+                path = self.repo / name; path.touch()
+                self.assert_yarn_pnp_refused()
+                path.unlink()
+
+    def test_yarn_pnp_loader_symlink_is_refused(self):
+        self.setup_manager('yarn')
+        (self.repo / '.pnp.cjs').symlink_to('missing-loader')
+        self.assert_yarn_pnp_refused()
+
+    def test_yarn_classic_rc_pnp_options_are_refused(self):
+        self.setup_manager('yarn')
+        rc = self.repo / '.yarnrc'
+        for option in ('pnp', '--pnp', '--enable-pnp', '--install.pnp', '"--install.enable-pnp"', 'plugnplay'):
+            with self.subTest(option=option):
+                rc.write_text(option + ' true\n')
+                self.assert_yarn_pnp_refused()
+
+    def test_yarn_pnp_in_inherited_rc_files_is_refused(self):
+        self.setup_manager('yarn')
+        for parent in (self.root, self.home):
+            with self.subTest(parent=parent):
+                rc = parent / '.yarnrc'; rc.write_text('--install.pnp true\n')
+                self.assert_yarn_pnp_refused()
+                rc.unlink()
+
+    def test_yarn_pnp_ambiguous_switch_values_fail_closed(self):
+        self.setup_manager('yarn')
+        rc = self.repo / '.yarnrc'
+        for value in ('no', 'null', '0', 'FALSE'):
+            with self.subTest(value=value):
+                rc.write_text('pnp ' + value + '\n')
+                self.assert_yarn_pnp_refused()
+                rc.unlink()
+                self.assert_yarn_pnp_refused(YARN_PNP=value)
+
+    def test_yarn_pnp_linker_configuration_is_refused(self):
+        self.setup_manager('yarn')
+        (self.repo / '.yarnrc.yml').write_text('nodeLinker: "pnp" # explicit PnP\n')
+        self.assert_yarn_pnp_refused()
+
+    def test_yarn_pnp_environment_switches_are_refused(self):
+        self.setup_manager('yarn')
+        for name in ('YARN_PNP', 'YARN_ENABLE_PNP', 'YARN_PLUGNPLAY', 'NODE_OPTIONS'):
+            with self.subTest(name=name):
+                value = '--require /fixture/.pnp.cjs' if name == 'NODE_OPTIONS' else 'true'
+                self.assert_yarn_pnp_refused(**{name: value})
+
+    def test_yarn_pnp_cannot_reuse_a_matching_stamp(self):
+        self.setup_manager('yarn'); self.assert_installed('yarn')
+        self.calls.unlink()
+        (self.repo / '.pnp.cjs').touch()
+        self.assert_yarn_pnp_refused()
+
+    def test_yarn_classic_disabled_pnp_configuration_is_allowed(self):
+        self.setup_manager('yarn')
+        package = self.repo / 'package.json'
+        manifest = json.loads(package.read_text()); manifest['installConfig'] = {'pnp': False}
+        package.write_text(json.dumps(manifest))
+        (self.repo / '.yarnrc').write_text('# pnp true\npnp false\n--install.pnp false\n')
+        self.assert_installed('yarn')
 
     def test_multiple_lockfiles_and_package_manager_mismatch_fail_closed(self):
         self.setup_manager('pnpm')

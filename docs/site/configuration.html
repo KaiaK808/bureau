@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4cdd2c5cb56372c33e9159bb28bd55dcb546192d289f70769b46afe85b290f38">
+<meta name="bureau-source-sha256" content="23152a418677a1e9e7cfa4f2870ef5e496aa91bcd8e775706434dd173f94dc83">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1397,6 +1397,15 @@ seconds per install attempt (20 seconds for Yarn version detection),
 kill their owned command process groups on timeout/interruption, remove
 partial dependency directories and return 24 on failure. npm's existing
 retry/network behavior is unchanged.</p>
+<p>The pnpm/Yarn helper starts through
+<code>bureau_untrusted_env</code>, so its Git children, Yarn version
+check and every install attempt inherit the configured
+<code>repo.untrusted_env</code> reduction. Default mode removes secrets
+and their carriers, startup/configuration paths, host pane variables and
+reserved filter names; clean mode keeps only its existing allowlist.
+Invalid modes stop before the helper starts. Any package-manager/cache
+settings needed by clean-mode workers must come from trusted
+configuration files rather than extra inherited variables.</p>
 <p>The shared Git directory holds logs and a manifest fingerprint stamp.
 It includes workspace <code>package.json</code> files, the selected
 lockfile and workspace/manager configuration visible to Git (tracked or
@@ -1407,11 +1416,18 @@ symlinked dependency directories are discarded even when the stamp
 matches; failures cannot reuse stale modules. The main checkout is
 untouched. Frozen installs that alter an input are rejected. Multiple
 lockfiles or a conflicting <code>packageManager</code> field stop with
-24. Yarn modern/PnP is intentionally unsupported by this helper:
-Classic's flags and lifecycle protections cannot be assumed to apply to
-its plugin/linker model. Other dependency layouts need a separately
-reviewed setup; live package-manager/cache qualification is still an
-operator check.</p>
+24. Modern Yarn and all Yarn PnP layouts, including Classic PnP, are
+intentionally unsupported. Before running Yarn or reusing a stamp, the
+helper refuses <code>installConfig.pnp</code>, <code>.pnp.js</code>,
+<code>.pnp.cjs</code>, <code>.pnp.loader.mjs</code> or
+<code>.pnp.data.json</code> (including dangling links), enabled PnP
+options in project/ancestor/home <code>.yarnrc</code> files,
+<code>nodeLinker: pnp</code> in <code>.yarnrc.yml</code>, inherited
+<code>YARN_PNP</code>/<code>YARN_ENABLE_PNP</code>/<code>YARN_PLUGNPLAY</code>
+switches and PnP loaders in <code>NODE_OPTIONS</code>. Explicit false
+settings without loader files remain supported. Other dependency layouts
+need a separately reviewed setup; live package-manager/cache
+qualification is still an operator check.</p>
 <p>For documentation work without a JavaScript manifest, configure a
 real trusted <code>repo.test_command</code> as in the <a
 href="recipes.html#documentation-only-tickets">documentation-only
