@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4afe2b45ffa6f40a49ab5792443331379494186861cd5cad6b2ac943847eaba7">
+<meta name="bureau-source-sha256" content="85d4f39247f95e8261a3bf8e2a5f36bbde3203730d5ef628454b715fe53639a3">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -28,12 +28,15 @@ href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
 the v3.2 release candidate, v3.2.0, v3.2.1, the v3.3 release candidates,
-v3.3.0, v3.4.0 and v3.4.1 to <strong>Bureau v3.5.0</strong>, dated
-2026-10-28 (prepared 2026-10-27). The commands below require the
+v3.3.0, v3.4.0, v3.4.1 and v3.5.0 to <strong>Bureau v3.5.1</strong>,
+dated 2026-10-29 (prepared 2026-10-28). The commands below require the
 selected release's source skill. See the <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">v3.5.0
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.1">v3.5.1
 release</a> and its <a href="release-notes.html">release notes</a>, the
 previous stable <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">v3.5.0
+release</a> and its <a href="release-notes-v3.5.0.html">release notes</a>,
+the earlier <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.1">v3.4.1
 release</a> and its <a href="release-notes-v3.4.1.html">release notes</a>,
 the earlier <a
@@ -73,8 +76,9 @@ consumers; see <a href="#upgrade-to-v31">Upgrade to v3.1</a>, <a
 href="#upgrade-to-v32">Upgrade to v3.2</a>, <a
 href="#upgrade-to-v33">Upgrade to v3.3</a>, <a
 href="#upgrade-to-v34">Upgrade to v3.4</a>, <a
-href="#upgrade-to-v341">Upgrade to v3.4.1</a> and <a
-href="#upgrade-to-v35">Upgrade to v3.5</a>.</p>
+href="#upgrade-to-v341">Upgrade to v3.4.1</a>, <a
+href="#upgrade-to-v35">Upgrade to v3.5</a> and <a
+href="#upgrade-to-v351">Upgrade to v3.5.1</a>.</p>
 <h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is
@@ -96,13 +100,13 @@ installed commit.</p>
 <p>Confirm that <code>origin</code> identifies the official
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. With a
-clean checkout, select the exact release (<code>v3.5.0</code> for this
-release, <code>v3.4.1</code> for the previous stable release,
-<code>v3.4.0</code>, <code>v3.3.0</code>, <code>v3.2.1</code>,
-<code>v3.2.0</code>, <code>v3.1.0</code>, <code>v3.0.2</code>,
-<code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
-earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.5.0 <span class="co"># or v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+clean checkout, select the exact release (<code>v3.5.1</code> for this
+release, <code>v3.5.0</code> for the previous stable release,
+<code>v3.4.1</code>, <code>v3.4.0</code>, <code>v3.3.0</code>,
+<code>v3.2.1</code>, <code>v3.2.0</code>, <code>v3.1.0</code>,
+<code>v3.0.2</code>, <code>v3.0.1</code>, <code>v3.0.0</code> or
+<code>v2.0.0</code> for an earlier one):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.5.1 <span class="co"># or v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -122,14 +126,75 @@ directory, keep it intact and install a separate official clone from the
 loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
+<h2 id="upgrade-to-v351">Upgrade to v3.5.1</h2>
+<p>The stable release <strong>v3.5.1</strong>, dated
+<strong>2026-10-29</strong> (prepared 2026-10-28), is a patch release on
+v3.5.0 containing only <a
+href="https://github.com/KaiaK808/bureau/pull/98">#98</a>. Spec Review
+and UX fail closed on invalid results, and their overlap readiness is
+bound to a validated passing status and the installed schema digest. All
+changes are on by default after resync under the existing overlap
+configuration. No configuration keys or exit codes are new; the existing
+exit 22 widens to invalid Spec Review/UX results. See the <a
+href="release-notes.html">release notes</a> for validation and the known
+macOS cancellation-test limitation.</p>
+<p><strong>From v3.5.0:</strong> stop all shepherds, queue loops,
+dispatchers and supervisors, preserve unfinished work and customized
+assets, compare installed-script drift, select tag <code>v3.5.1</code>
+using <a href="#select-the-source-release">the source-update steps</a>,
+and refresh skill discovery. Preview and resync the <strong>complete
+scripts and interfaces scopes together</strong>
+(<code>--resync-interfaces --resync-scripts</code>) in each adopting
+repository using <a href="#preview-and-resolve-asset-conflicts">preview
+and resolve</a>, as for v3.5.0. The scripts scope must install both new
+files, <code>scripts/bureau-spec-review.schema.json</code> and
+<code>scripts/bureau-ux.schema.json</code>, together with the updated
+pipelines, adapter and admission helpers. Restart all drivers together
+after resync; running shells retain their loaded code.
+<code>--update</code> changes configuration only.</p>
+<p><strong>Readiness upgrade:</strong> a pending Spec Review/UX overlap
+readiness record from v3.5.0 is deleted on resume and causes one fresh
+provider call after resync, including when its original result was PASS.
+New records require <code>validated_status</code>
+(<code>PASS</code>/<code>COMPLETE</code>) and
+<code>result_contract_sha256</code>, the installed schema's SHA-256
+digest, alongside the existing input identity. An invalid fresh result
+holds with 22; a fresh passing record still resumes quiet overlap waits
+(29) without another provider call. Copy readiness and admission rules
+stay unchanged. No manual readiness migration is needed.</p>
+<p><strong>Result routing:</strong> missing, unknown, wrongly typed or
+schema-invalid Spec Review/UX results now exit 22, preserve edits and
+hold the current ticket with <code>needs-human</code>; a failed label
+write leaves a durable local hold. They publish no success comment,
+ordinary push or Build/Design move. Valid statuses retain their existing
+routes, the governance check can still force Spec Review FAIL, and
+ticket withdrawal retains precedence. Check customized prompts against
+the <a href="stage-protocol.html#spec-review-and-ux-results">declared
+fields</a>. Legacy <code>ui_work_needed</code> strings
+<code>true</code>, <code>TRUE</code>, <code>yes</code>,
+<code>YES</code>, <code>false</code>, <code>FALSE</code>,
+<code>no</code>, <code>NO</code> stay accepted alongside booleans, and
+the v3.5.0 optional result fields remain accepted. No configuration
+migration or Spec Kit version change is needed. Run doctor and qualify a
+representative ticket before unattended dispatch.</p>
+<p><strong>From earlier versions:</strong> follow <a
+href="#upgrade-to-v35">Upgrade to v3.5</a> and its earlier sections
+first, then follow the v3.5.1 steps above.</p>
+<p><strong>Rollback:</strong> stop every driver, select tag
+<code>v3.5.0</code> and restore its scripts and interfaces together, or
+restore the private backup (<a href="#rollback">rollback</a>), then
+restart drivers together. Preserve unfinished work and common-Git
+admission state for reconciliation. Rollback restores v3.5.0's result
+handling and cannot undo commits, pushes or Linear/GitHub changes made
+in between.</p>
 <h2 id="upgrade-to-v35">Upgrade to v3.5</h2>
 <p>The stable release <strong>v3.5.0</strong>, dated
 <strong>2026-10-28</strong> (prepared 2026-10-27), is a minor release on
-v3.4.1. Its <a href="release-notes.html">release notes</a> list every new
-setting, file/state location and changed default. New exits 28/29 extend
-the v3 vocabulary. No configuration schema migration is needed. There is
-no release candidate, and no installation has run v3.5.0 before
-release.</p>
+v3.4.1. Its <a href="release-notes-v3.5.0.html">release notes</a> list
+every new setting, file/state location and changed default. New exits
+28/29 extend the v3 vocabulary. No configuration schema migration is
+needed. There is no release candidate, and no installation has run
+v3.5.0 before release.</p>
 <p><strong>From v3.4.1:</strong> select tag <code>v3.5.0</code> using <a
 href="#select-the-source-release">the source-update steps</a>, and
 refresh skill discovery. <strong>From earlier versions:</strong> follow
@@ -254,7 +319,7 @@ imported into numbering, and the new dispatch journal cannot reconstruct
 outcomes of pre-upgrade lanes. Inspect any pre-fix development evidence
 or unsafe historical insights/comments separately; resync does not scrub
 private bytes or backfill history. See <a
-href="release-notes.html#new-files-and-state-locations">the state
+href="release-notes-v3.5.0.html#new-files-and-state-locations">the state
 inventory</a>.</p>
 <p>Run <code>python3 scripts/bureau-doctor.py --mode background</code>,
 restart the chosen drivers together and qualify a representative live
