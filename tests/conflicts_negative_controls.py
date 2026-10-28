@@ -2,31 +2,26 @@
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
-import tarfile
 import tempfile
 import unittest
 
-from mutation_checks import mutation_caught, snapshot_files
+from mutation_checks import historical_scripts, mutation_caught, snapshot_files
 
 ROOT = Path(__file__).resolve().parents[1]
+TIMEOUT = float(os.environ.get('BUREAU_CONFLICT_CONTROL_TIMEOUT', '300'))
 
 
 class NegativeControls(unittest.TestCase):
-    def check_withdrawal_failure(self, scripts, case, originals=None):
-        return self.check_failure(scripts, [case], 'conflicts_withdrawal_test.py', 'ConflictWithdrawal', originals)
+    def check_withdrawal_failure(self, scripts, case, originals):
+        return self.check_failure(scripts, [case], 'conflicts_withdrawal_test.py', 'ConflictWithdrawal', originals=originals)
 
     @unittest.skipUnless(os.environ.get('BUREAU_CONFLICT_WITHDRAWAL_BASELINE'), 'explicit pre-integration ref required')
     def test_pre_integration_bypasses_withdrawal(self):
-        with tempfile.TemporaryDirectory(prefix='bureau-conflicts-withdrawal-base-') as directory:
-            root = Path(directory).resolve(); archive = root / 'base.tar'
-            baseline = os.environ['BUREAU_CONFLICT_WITHDRAWAL_BASELINE']
-            with archive.open('wb') as output:
-                subprocess.run(['git', '-C', str(ROOT), 'archive', baseline, 'templates/scripts'], stdout=output, check=True)
-            with tarfile.open(archive) as files: files.extractall(root)
+        baseline = os.environ['BUREAU_CONFLICT_WITHDRAWAL_BASELINE']
+        with historical_scripts(ROOT, baseline) as (scripts, originals):
             for case in ('test_withdrawal_before_transaction', 'test_throttled_failed_generator_respects_withdrawal'):
-                self.check_withdrawal_failure(root / 'templates/scripts', case)
+                self.check_withdrawal_failure(scripts, case, originals)
             print('PASS pre-integration control: fetch and throttled-failure withdrawal assertions fail on ' + baseline)
 
     def test_bypass_command_checkpoints_breaks_rollback_and_step_boundary(self):
@@ -39,39 +34,32 @@ class NegativeControls(unittest.TestCase):
             self.check_withdrawal_failure(scripts, 'test_withdrawal_before_dependencies_and_between_commands', originals)
             print('PASS command-boundary control: removing transaction checkpoints starts later steps or commits withdrawn work')
 
-    def check_failure(self, scripts, cases, module='conflicts_test.py', group='ConflictTests', originals=None):
+    def check_failure(self, scripts, cases, module='conflicts_test.py', group='ConflictTests', *, originals):
         output = ''
         for case in cases:
             result = mutation_caught([sys.executable, str(ROOT/'tests'/module), group+'.'+case],
                 env={'BUREAU_CONFLICT_TEST_SCRIPTS': str(scripts)},
-                baseline_env=None if originals is not None else
-                    {'BUREAU_CONFLICT_TEST_SCRIPTS': str(ROOT/'templates/scripts')},
-                originals=originals,timeout=None)
+                originals=originals, timeout=TIMEOUT)
             output += result.stdout + result.stderr
         return output
 
     @unittest.skipUnless(os.environ.get('BUREAU_CONFLICT_BASELINE'), 'explicit baseline ref required; shallow CI need not retain build history')
     def test_base_lacks_configured_repairs(self):
-        with tempfile.TemporaryDirectory(prefix='bureau-conflicts-base-') as directory:
-            root = Path(directory).resolve(); archive = root / 'base.tar'
-            baseline = os.environ['BUREAU_CONFLICT_BASELINE']
-            with archive.open('wb') as output:
-                subprocess.run(['git', '-C', str(ROOT), 'archive', baseline, 'templates/scripts'], stdout=output, check=True)
-            with tarfile.open(archive) as files: files.extractall(root)
+        baseline = os.environ['BUREAU_CONFLICT_BASELINE']
+        with historical_scripts(ROOT, baseline) as (scripts, originals):
             cases = ['test_generated_only', 'test_append_only_under_unreleased',
                      'test_combined_sources_precede_regeneration', 'test_pinned_base_is_not_refetched',
                      'test_append_only_unusual_filename', 'test_generated_unusual_filename_and_argv',
                      'test_append_repair_also_regenerates_nonconflicted_outputs', 'test_check_command_process_is_reaped',
                      'test_recursive_globs_and_new_parent_directories', 'test_generator_and_check_use_untrusted_environment',
                      'test_append_filename_is_not_a_git_pathspec']
-            self.check_failure(root / 'templates/scripts', cases)
+            self.check_failure(scripts, cases, originals=originals)
             print(f'PASS base control: all {len(cases)} successful configured-repair assertions fail on ' + baseline)
             for case in ('published', 'unpublished'):
                 mutation_caught(['/bin/bash', str(ROOT / 'tests/test_conflicts_worker.sh')],
-                    env={'BUREAU_CONFLICT_TEST_SCRIPTS': str(root / 'templates/scripts'),
+                    env={'BUREAU_CONFLICT_TEST_SCRIPTS': str(scripts),
                          'BUREAU_CONFLICT_WORKER_CASE': case},
-                    baseline_env={'BUREAU_CONFLICT_TEST_SCRIPTS': str(ROOT/'templates/scripts'),
-                                  'BUREAU_CONFLICT_WORKER_CASE': case},timeout=None)
+                    originals=originals, timeout=TIMEOUT)
             print('PASS base control: both worker success assertions fail before the provider on ' + baseline)
 
     def test_bypass_regeneration_breaks_success_assertion(self):

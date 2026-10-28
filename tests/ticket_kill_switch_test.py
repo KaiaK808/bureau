@@ -10,7 +10,7 @@ import unittest
 import zipfile
 
 import git_maintenance
-from mutation_checks import caught_mutation
+from mutation_checks import baseline_fixture, caught_mutation
 
 ROOT = Path(__file__).resolve().parents[1]
 REAL_GIT = shutil.which('git')
@@ -180,7 +180,7 @@ class WithdrawalFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-pr9-fixture-')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.repo = self.root/'repo with spaces'; self.repo.mkdir()
         self.bin = self.root/'bin'; self.bin.mkdir()
         self.env = {k:v for k,v in os.environ.items() if not k.startswith('BUREAU_')}
@@ -423,14 +423,13 @@ exit 130
         # work needs no preservation push; a comment is still new publication.
         # The immediate post-pass read sees withdrawal; later reads cannot.
         self.control(target=STATES['backlog']); (self.root/'late-read-failure').touch()
-        self.assert_withdrawn(self.worker(),25,STATES['backlog'])
-        self.git('-C',str(self.wt),'checkout','--detach','-q')
+        with baseline_fixture(self.root):
+            self.assert_withdrawn(self.worker(),25,STATES['backlog'])
+            self.assert_no_providers()
         config=self.repo/'scripts/bureau-config.sh'; source=config.read_text()
         needle='  [ "$rc" != 130 ] || exit 130\n  bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"\n'
         self.assertEqual(1,source.count(needle))
         config.write_text(source.replace(needle,'  [ "$rc" != 130 ] || exit 130\n',1))
-        self.state('build'); (self.root/'events').write_text(''); self.wt=self.repo/'.worktrees/mutant'
-        (self.root/'fail-reads').unlink(missing_ok=True); (self.root/'provider-done').unlink(missing_ok=True)
         with caught_mutation():
             result=self.worker()
             # Exercise the unchanged positive assertions. A TimeoutExpired or

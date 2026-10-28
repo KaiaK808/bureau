@@ -1,49 +1,103 @@
 """Mutation controls require a green baseline, then accept failures or errors."""
 from contextlib import contextmanager
-import importlib.util
+import ctypes
+import math
 import os
 from pathlib import Path
+import re
+import shutil
 import signal
 import subprocess
+import sys
+import tarfile
 import tempfile
 import time
 
 
-# Use the shipped native inspector, never a mutated private adapter. Its random
-# inherited marker and process birth identities cover setsid/double-fork children
-# without signalling unrelated processes or relying on a process group alone.
-spec = importlib.util.spec_from_file_location(
-    'mutation_activity', Path(__file__).resolve().parents[1]/'templates/scripts/bureau-activity.py')
-activity = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(activity)
+DEFAULT_TIMEOUT = 300
+PROC = Path('/proc')
 
 
-def stop_fixtures(owner, child):
+def fixture_pids(root):
+    """Find only commands/cwds inside this resolved, randomly named run root."""
+    result = subprocess.run(['ps', '-axo', 'pid=,command='], text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            check=True, timeout=1)
+    command_path = re.compile(r'(?<![\w./-])' + re.escape(str(root)) + r'''(?=$|[/\s'\"])''')
+    pids = set()
+    for line in result.stdout.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) == 2 and fields[0].isdigit() and command_path.search(fields[1]):
+            pids.add(int(fields[0]))
+    if sys.platform.startswith('linux'):
+        # A detached executable need not mention the root in argv. procfs also
+        # finds it by cwd, even after its intermediate parent has exited.
+        for path in PROC.iterdir():
+            if not path.name.isdigit():
+                continue
+            try:
+                # procfs retains a deleted cwd with this suffix. It still
+                # belongs to the run even when a fixture removed its directory.
+                cwd = Path(os.readlink(path/'cwd').removesuffix(' (deleted)'))
+                if cwd == root or root in cwd.parents:
+                    pids.add(int(path.name))
+            except (OSError, RuntimeError):
+                pass  # inaccessible process or a raced exit
+    pids.discard(os.getpid())
+    return pids
+
+
+def stop_fixtures(root, child):
     """Bound both signal escalation and reaping, and report surviving PIDs."""
+    seen = set()
     for sig, grace in ((signal.SIGTERM, 1), (signal.SIGKILL, 3)):
+        signalled = set()
         deadline = time.monotonic() + grace
         while True:
-            owner.scan()
             try:
-                owner.signal(sig)
-            except PermissionError as error:
-                raise AssertionError('could not stop fixture PIDs: ' +
-                                     ', '.join(map(str, sorted(owner.current)))) from error
+                current = fixture_pids(root)
+            except (OSError, subprocess.SubprocessError) as error:
+                # Even when inspection is unavailable, never leave our direct
+                # child running. Do not pretend detached cleanup was verified.
+                try:
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait(timeout=3)
+                except (OSError, subprocess.TimeoutExpired) as stop_error:
+                    raise AssertionError(f'could not reap fixture PID {child.pid}') from stop_error
+                raise AssertionError(f'fixture process inspection failed for {root}: {error}') from error
+            if child.poll() is None:
+                current.add(child.pid)
+            seen.update(current)
+            for pid in seen - {child.pid}:
+                try:
+                    os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
+                    pass
+            if not current:
+                return
+            for pid in sorted(current - signalled, key=lambda pid: pid == child.pid):
+                try:
+                    os.kill(pid, sig)
+                except (ProcessLookupError, PermissionError):
+                    pass  # A live denial remains in the final survivor report.
+                signalled.add(pid)
             child.poll()  # Popen owns the direct child's wait status.
-            for pid in owner.current:
+            for pid in seen:
                 if pid == child.pid:
                     continue
                 try:
                     os.waitpid(pid, os.WNOHANG)
                 except ChildProcessError:
                     pass  # macOS launchd reaps detached orphans.
-            owner.scan()
-            if not owner.current:
-                return
             if time.monotonic() >= deadline:
                 break
             time.sleep(.05)
-    raise AssertionError('could not reap fixture PIDs: ' + ', '.join(map(str, sorted(owner.current))))
+    current = fixture_pids(root)
+    if child.poll() is None:
+        current.add(child.pid)
+    if current:
+        raise AssertionError('could not reap fixture PIDs: ' + ', '.join(map(str, sorted(current))))
 
 
 def output_text(value):
@@ -51,29 +105,44 @@ def output_text(value):
     return value.decode(errors='replace') if isinstance(value, bytes) else (value or '')
 
 
-def run(command, *, env=None, timeout=90):
-    """Bound a test run, pipe draining and cleanup of its owned descendants."""
+def finite_timeout(timeout):
+    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError('timeout must be a positive finite number of seconds')
+    return timeout
+
+
+@contextmanager
+def fixture_root():
+    with tempfile.TemporaryDirectory(prefix='bureau-mutation-run-') as directory:
+        if sys.platform.startswith('linux'):
+            # Adopt detached orphans so the harness can waitpid after killing
+            # them. Discovery still depends only on the unique root.
+            if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:
+                raise OSError('cannot adopt fixture descendants')
+        root = Path(directory).resolve()
+        fixture_pids(root)  # Fail before spawning anything if ps is unavailable.
+        yield root
+
+
+def run(command, *, env=None, timeout=DEFAULT_TIMEOUT):
+    """Bound a test run, pipe draining and cleanup of its fixture root."""
+    timeout = finite_timeout(timeout)
+    with fixture_root() as root:
+        return _run(command, env=env, timeout=timeout, root=root)
+
+
+def _run(command, *, env, timeout, root):
     environ = {**os.environ, **(env or {})}
     environ['PYTHONDONTWRITEBYTECODE'] = '1'
-    with tempfile.TemporaryDirectory(prefix='bureau-mutation-run-') as directory:
-        environ['TMPDIR'] = str(Path(directory).resolve())
-        owner = activity.OwnedProcesses()
-        environ[activity.OWNER_ENV] = owner.token
-        child = subprocess.Popen(command, env=environ, text=True, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, start_new_session=True)
+    environ['TMPDIR'] = str(root)
+    child = subprocess.Popen(command, env=environ, cwd=root, text=True, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, start_new_session=True)
+    try:
         try:
-            owner.attach(child.pid)
-            deadline = None if timeout is None else time.monotonic() + timeout
-            while True:
-                owner.scan()
-                remaining = None if deadline is None else max(0, deadline - time.monotonic())
-                try:
-                    out, err = child.communicate(timeout=.1 if remaining is None else min(.1, remaining))
-                    return subprocess.CompletedProcess(command, child.returncode, out, err)
-                except subprocess.TimeoutExpired:
-                    if deadline is not None and time.monotonic() >= deadline:
-                        break
-            stop_fixtures(owner, child)
+            out, err = child.communicate(timeout=timeout)
+            return subprocess.CompletedProcess(command, child.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            stop_fixtures(root, child)
             try:
                 out, err = child.communicate(timeout=1)
             except subprocess.TimeoutExpired as error:
@@ -81,17 +150,49 @@ def run(command, *, env=None, timeout=90):
                 err += '\nfixture output drain timed out'
             return subprocess.CompletedProcess(command, 124, out,
                                                err + '\n' + str(subprocess.TimeoutExpired(command, timeout)))
+    finally:
+        try:
+            stop_fixtures(root, child)
         finally:
-            try:
-                stop_fixtures(owner, child)
-            finally:
-                child.stdout.close()
-                child.stderr.close()
+            child.stdout.close()
+            child.stderr.close()
 
 
 def snapshot_files(root):
     """Capture the actual private inventory before constructing mutations."""
     return {path: path.read_bytes() for path in Path(root).rglob('*') if path.is_file()}
+
+
+@contextmanager
+def baseline_fixture(root):
+    """Validate in place, join/audit workers, then restore the same fixture paths.
+
+    The caller must stop its processes before leaving the block. A failed
+    baseline keeps its files available to the caller's usual cleanup/reporting.
+    """
+    with tempfile.TemporaryDirectory(prefix='bureau-baseline-snapshot-') as directory:
+        snapshot = Path(directory).resolve()/'fixture'
+        shutil.copytree(root, snapshot)
+        yield
+        shutil.rmtree(root)
+        shutil.copytree(snapshot, root)
+
+
+@contextmanager
+def historical_scripts(source_root, ref):
+    """Overlay old scripts on a complete private inventory; baseline it in place."""
+    with tempfile.TemporaryDirectory(prefix='bureau-historical-control-') as directory:
+        root = Path(directory).resolve()
+        scripts = root/'templates/scripts'
+        shutil.copytree(source_root/'templates/scripts', scripts)
+        originals = snapshot_files(scripts)
+        archive = root/'base.tar'
+        with archive.open('wb') as output:
+            subprocess.run(['git', '-C', str(source_root), 'archive', ref, 'templates/scripts'],
+                           stdout=output, check=True, timeout=30)
+        with tarfile.open(archive) as files:
+            files.extractall(root)
+        yield scripts, originals
 
 
 @contextmanager
@@ -107,17 +208,17 @@ def restored_files(originals):
             path.write_bytes(data)
 
 
-def mutation_caught(command, *, env, baseline_env=None, baseline_command=None,
-                    originals=None, timeout=90, expected=None):
+def mutation_caught(command, *, env, originals, timeout=DEFAULT_TIMEOUT, expected=None):
     """Only the private mutation may fail: baseline ERRORs/timeouts are fatal."""
-    with restored_files(originals or {}):
-        baseline = run(baseline_command or command,
-                       env=env if baseline_env is None else baseline_env, timeout=timeout)
-    assert baseline.returncode == 0, 'unmutated baseline failed:\n' + baseline.stdout + baseline.stderr
-    result = run(command, env=env, timeout=timeout)
-    assert result.returncode != 0, ('mutation was not caught' + (f' ({expected})' if expected else '')
-                                    + ':\n' + result.stdout + result.stderr)
-    return result
+    timeout = finite_timeout(timeout)
+    with fixture_root() as root:
+        with restored_files(originals):
+            baseline = _run(command, env=env, timeout=timeout, root=root)
+        assert baseline.returncode == 0, 'unmutated baseline failed:\n' + baseline.stdout + baseline.stderr
+        result = _run(command, env=env, timeout=timeout, root=root)
+        assert result.returncode != 0, ('mutation was not caught' + (f' ({expected})' if expected else '')
+                                        + ':\n' + result.stdout + result.stderr)
+        return result
 
 
 @contextmanager
