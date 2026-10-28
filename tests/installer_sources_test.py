@@ -106,6 +106,16 @@ class LegacyMarkerTests(Target):
 
 
 class IgnoredTemplateFileTests(Target):
+    def test_judged_stage_schemas_install_with_scripts_scope(self):
+        names = ('bureau-spec-review.schema.json', 'bureau-ux.schema.json')
+        preview = self.plan(self.install('assets', '--scope', 'scripts'))
+        for name in names:
+            self.assertEqual('install', preview['scripts/' + name]['action'])
+        self.install('assets', '--scope', 'scripts', '--apply')
+        for name in names:
+            self.assertEqual((ROOT / 'templates/scripts' / name).read_bytes(),
+                             (self.repo / 'scripts' / name).read_bytes())
+
     # Files a maintainer's checkout accumulates: ignored by the repository's .gitignore or
     # by the patterns added in source(); none of them may reach an installation.
     IGNORED = ("templates/scripts/.DS_Store", "templates/scripts/.env", "templates/scripts/.env.local",

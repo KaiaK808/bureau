@@ -2,6 +2,7 @@
 # A dash means unmeasured: run.sh estimates from the other OS or uses 60s Ubuntu / 120s macOS.
 # Default is the observed Ubuntu mean (~45s) rounded up; macOS scaling is 2x (~1.8x observed).
 # CI newest-run test: local macOS elapsed 13.45s, rounded up (2026-10-27).
+# Judged stage result fixtures: local macOS elapsed 191.94s, rounded up (2026-10-28).
 # test_file	ubuntu_seconds	macos_seconds
 test_acceptance_insights.sh	-	10
 test_acceptance_insights_negative_controls.sh	59	-
@@ -77,6 +78,7 @@ test_installation.sh	14	-
 test_installer_sources.sh	5	-
 test_interrupt_grace.sh	78	-
 test_interrupted_run_resume.sh	14	-
+test_judged_stage_results.sh	-	192
 test_label_lookup.sh	6	-
 test_linear_implement_matcher.sh	3	-
 test_linear_lists.sh	7	-

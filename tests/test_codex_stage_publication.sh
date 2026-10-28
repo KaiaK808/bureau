@@ -49,7 +49,7 @@ if stage=='qa':
     value={'status':'GREEN','tests_added':1,'tests_failing':0,'coverage_notes':'Added a passing regression test'}
 elif stage=='spec_review':
     pathlib.Path('specs/001-test-branch/acceptance.md').write_text('Acceptance detail\n')
-    value={'review_status':'PASS','ui_work_needed':False,'issues_found':1,'issues_fixed':1,'remaining_issues':[],'summary':'Added acceptance detail'}
+    value={'review_status':'PASS','ui_work_needed':False,'summary':'Added acceptance detail'}
 else:
     pathlib.Path('messages.json').write_text('{"submit":"Send"}\n')
     value={'strings_changed':1,'changes':[],'open_questions':[],'summary':'Added copy resource'}

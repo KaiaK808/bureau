@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2127fc67cbf6cc8fd6fd05ee522a815e35043bc2f5924bda05dbdb0f5aec1ae8">
+<meta name="bureau-source-sha256" content="05982705abbaeb5a69fa042b5c4528cf4c60c973569c6418b5dbed342045d386">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -177,7 +177,12 @@ troubleshooting guide</td>
 <td><code>22</code></td>
 <td>provider-or-result-error</td>
 <td>Provider failed or final result invalid</td>
-<td>Inspect provider evidence</td>
+<td>Inspect provider evidence. Spec Review and UX require schema-valid
+results with their exact status enums; missing, unknown or wrongly typed
+statuses and invalid objects preserve edits and hold the ticket for a
+human. No ordinary push, success comment or Build/Design move follows. A
+failed needs-human label write leaves a durable local hold. Ticket
+withdrawal still takes precedence with 25/26</td>
 </tr>
 <tr>
 <td><code>23</code></td>

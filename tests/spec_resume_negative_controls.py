@@ -211,9 +211,9 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
         print('PASS control: fatal invalidation I/O broke existing recovery routing; guard detected it')
         review.write_text(review_original)
 
-    anchor = 'if [ "$REVIEW_STATUS" = "FAIL" ]; then\n'
+    anchor = 'case "$REVIEW_STATUS" in\n  FAIL)\n'
     assert review_original.count(anchor) == 1
-    review.write_text(review_original.replace(anchor, 'if false; then # Broken: ignore model FAIL\n'))
+    review.write_text(review_original.replace(anchor, 'case "${REVIEW_STATUS/FAIL/PASS}" in\n  FAIL)\n'))
     rejected('spec_resume_test.py', 'SpecWorkerTests.test_model_rejects_structurally_valid_but_inadequate_rationale', env, "'Build' != 'Spec'")
     print('PASS control: ignoring model FAIL admitted a structurally valid circular rationale; guard detected it')
     review.write_text(review_original)

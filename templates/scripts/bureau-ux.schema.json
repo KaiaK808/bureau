@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "design_status": {
+      "type": "string",
+      "enum": ["COMPLETE", "INCOMPLETE", "NEEDS_HUMAN"]
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": ["design_status", "summary"]
+}

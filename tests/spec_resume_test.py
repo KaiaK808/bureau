@@ -301,7 +301,7 @@ class SpecWorkerTests(unittest.TestCase):
         self.write('state', 'Triage'); self.write('spec-body', VALID)
         self.write('comments.json', '[]')
         self.write('detail.json', json.dumps(dict(title='Feature', description='Ticket input', project=dict(name='Project', description='Context'), labels=dict(nodes=[]))))
-        self.write('review.json', json.dumps(dict(review_status='PASS', ui_work_needed=False, issues_found=0, issues_fixed=0, remaining_issues=[], summary='Model PASS')))
+        self.write('review.json', json.dumps(dict(review_status='PASS', ui_work_needed=False, summary='Model PASS')))
         with (self.repo / 'scripts/bureau-config.sh').open('a') as out:
             out.write(r'''
 # Test-only fake service boundaries; ownership/reset/checkpoints remain real.
@@ -319,8 +319,13 @@ move_issue() { printf '%s' "$2" > "$SPEC_TEST_ROOT/state"; }
 post_comment() { printf '%s' "$2" | python3 -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); v=json.loads(p.read_text()); v.insert(0,{"body":sys.stdin.read()}); p.write_text(json.dumps(v))' "$SPEC_TEST_ROOT/comments.json"; }
 run_stage_for() {
   local stage="$1" phase="${BUREAU_PROVIDER_PHASE:-review}" dir
+  shift
+  if [ "${1:-}" = --schema ]; then
+    [ -f "$2" ] || return 22
+    shift 2
+  fi
   printf '%s\n' "$phase" >> "$SPEC_TEST_ROOT/calls"
-  printf '%s\n' "$2" >> "$SPEC_TEST_ROOT/prompts"
+  printf '%s\n' "$1" >> "$SPEC_TEST_ROOT/prompts"
   if [ "$stage" = spec_review ]; then cat "$SPEC_TEST_ROOT/review.json"; return; fi
   dir=$(jq -r .feature_directory .specify/feature.json)
   case "$phase" in
@@ -563,7 +568,7 @@ run_stage_for() {
         self.worker()
         self.assertIsNone(r.s.governance_error(self.wt/'specs/001-team-1/spec.md'))
         self.write('review.json',json.dumps(dict(review_status='FAIL',ui_work_needed=False,
-                   remaining_issues=['Circular rationale gives no applicability basis'],summary='Governance rationale is circular and vague')))
+                   summary='Governance rationale is circular and vague')))
         self.worker(review=True)
         prompt=(self.root/'prompts').read_text()
         self.assertIn('You must judge substantive adequacy',prompt)

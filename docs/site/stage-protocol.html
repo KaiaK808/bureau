@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a6144b5fec6b72c5728d458700258a9e4377cc8c0a5d4b261a51f519fa39a89d">
+<meta name="bureau-source-sha256" content="a2410a57063da8bfe666025d6ddc0ba8501111cc98fe0e027f39d64c1b4edba3">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -417,6 +417,72 @@ class. No alert, human label or model call is added for admission
 polling. Other ownership/service errors retain their existing codes.
 Qualification uses real local Git and fake providers/services; no live
 installation or full Codex background qualification is implied.</p>
+<h2 id="spec-review-and-ux-results">Spec Review and UX results</h2>
+<p>Both background stages pass a canonical JSON schema through
+<code>run_stage_for --schema</code> to the shared provider adapter.
+<code>bureau-spec-review.schema.json</code> requires string
+<code>review_status</code> (<code>PASS</code> or <code>FAIL</code>),
+boolean <code>ui_work_needed</code> and string <code>summary</code>.
+<code>bureau-ux.schema.json</code> requires string
+<code>design_status</code> (<code>COMPLETE</code>,
+<code>INCOMPLETE</code> or <code>NEEDS_HUMAN</code>) and string
+<code>summary</code>. Objects allow only these fields. Review gaps
+belong in the summary; component prop sketches and blocking questions
+belong in <code>design.md</code>. Both schemas install with the scripts
+scope. Codex uses the existing recursive wire projection and canonical
+validation; Claude uses the existing structured-output and transcript
+recovery rules.</p>
+<table>
+<thead>
+<tr>
+<th>Stage result</th>
+<th>Route</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Spec Review <code>PASS</code>, UI needed</td>
+<td>Design with <code>needs-ux</code></td>
+</tr>
+<tr>
+<td>Spec Review <code>PASS</code>, no UI needed</td>
+<td>Build through overlap admission</td>
+</tr>
+<tr>
+<td>Spec Review <code>FAIL</code></td>
+<td>Spec for rework</td>
+</tr>
+<tr>
+<td>UX <code>COMPLETE</code></td>
+<td>Build through overlap admission</td>
+</tr>
+<tr>
+<td>UX <code>INCOMPLETE</code></td>
+<td>Spec Review for rework</td>
+</tr>
+<tr>
+<td>UX <code>NEEDS_HUMAN</code></td>
+<td>Remain in Design with the existing human hold</td>
+</tr>
+<tr>
+<td>Either stage: missing, unknown, wrong type or schema-invalid
+result</td>
+<td>Exit 22, preserve edits and hold for a human in the current
+state</td>
+</tr>
+</tbody>
+</table>
+<p>Invalid results trigger no ordinary push, success comment or
+Build/Design move. The hold uses <code>mark_needs_human</code>; if the
+label cannot be written, the durable local hold keeps the ticket out of
+automatic selection. The stage retains exit 22 after recording that
+hold. A post-provider ticket checkpoint runs first, preserving
+withdrawal precedence, including exits 25/26. For a valid Spec Review
+result, the deterministic governance check can still force FAIL before
+routing. Resync both pipelines and their schemas together and restart
+background drivers. Customized prompts must follow these result
+contracts. Qualification uses fake providers and local Git; live
+provider validation remains separate.</p>
 <h2 id="spec-phase-resume-and-governance">Spec phase resume and
 governance</h2>
 <p>Specify and plan must run no measurements, probes, benchmarks or full

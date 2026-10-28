@@ -73,6 +73,22 @@ Migration runs under the admission lock. Existing Build/Copy tickets become queu
 
 Conflicts return `29` (`file-overlap-wait`) with holder identifiers and intersecting paths or the unknown reason. Evidence mirrors a stable `file-overlap` resource wait; losing/pruning evidence cannot grant admission. Within each queue poll, a stage skips candidates that just returned 29 and tries the next candidate, allowing disjoint work through. The skip list clears for the next poll, restoring each waiter's priority; exhausting only waiting candidates returns 29. Tick reports waiting, and the shepherd's stage loop waits cancellably without stuck counts. A guarded `move_issue` call, including shepherd `--from-stage build`, returns 29 to its caller without a failure comment, human label or alert. Failure summaries exclude this class. No alert, human label or model call is added for admission polling. Other ownership/service errors retain their existing codes. Qualification uses real local Git and fake providers/services; no live installation or full Codex background qualification is implied.
 
+## Spec Review and UX results
+
+Both background stages pass a canonical JSON schema through `run_stage_for --schema` to the shared provider adapter. `bureau-spec-review.schema.json` requires string `review_status` (`PASS` or `FAIL`), boolean `ui_work_needed` and string `summary`. `bureau-ux.schema.json` requires string `design_status` (`COMPLETE`, `INCOMPLETE` or `NEEDS_HUMAN`) and string `summary`. Objects allow only these fields. Review gaps belong in the summary; component prop sketches and blocking questions belong in `design.md`. Both schemas install with the scripts scope. Codex uses the existing recursive wire projection and canonical validation; Claude uses the existing structured-output and transcript recovery rules.
+
+| Stage result | Route |
+|---|---|
+| Spec Review `PASS`, UI needed | Design with `needs-ux` |
+| Spec Review `PASS`, no UI needed | Build through overlap admission |
+| Spec Review `FAIL` | Spec for rework |
+| UX `COMPLETE` | Build through overlap admission |
+| UX `INCOMPLETE` | Spec Review for rework |
+| UX `NEEDS_HUMAN` | Remain in Design with the existing human hold |
+| Either stage: missing, unknown, wrong type or schema-invalid result | Exit 22, preserve edits and hold for a human in the current state |
+
+Invalid results trigger no ordinary push, success comment or Build/Design move. The hold uses `mark_needs_human`; if the label cannot be written, the durable local hold keeps the ticket out of automatic selection. The stage retains exit 22 after recording that hold. A post-provider ticket checkpoint runs first, preserving withdrawal precedence, including exits 25/26. For a valid Spec Review result, the deterministic governance check can still force FAIL before routing. Resync both pipelines and their schemas together and restart background drivers. Customized prompts must follow these result contracts. Qualification uses fake providers and local Git; live provider validation remains separate.
+
 ## Spec phase resume and governance
 
 Specify and plan must run no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and leave unknowns for implementation/QA. Bureau supplies this rule and the governance requirement through prompts, managed instructions and commands; it preserves customized `.specify/templates`, the constitution and Spec Kit 1.2.2 helpers.

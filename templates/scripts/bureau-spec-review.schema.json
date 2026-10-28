@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "review_status": {
+      "type": "string",
+      "enum": ["PASS", "FAIL"]
+    },
+    "ui_work_needed": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": ["review_status", "ui_work_needed", "summary"]
+}
