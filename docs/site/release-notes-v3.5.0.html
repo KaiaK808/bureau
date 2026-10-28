@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="df673b647503e78e6cd5a015c40eefba3833707895f5dc38e30945d29ad995c6">
+<title>release-notes-v3.5.0 · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="bureau-v350--coordinated-dispatch-evidence-and-bounded-recovery">Bureau
+v3.5.0 — coordinated dispatch, evidence and bounded recovery</h1>
+<p><strong>Stable release · 2026-10-28 · source tag <code>v3.5.0</code>
+· prepared 2026-10-27.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">GitHub
+Release</a> is marked as latest and records the exact tagged commit.
+Tagging and publication remain separate maintainer operations. The
+previous stable release is <a href="release-notes-v3.4.1.html">v3.4.1</a>;
+its notes retain the earlier release history.</p>
+<p>v3.5.0 is a minor release on v3.4.1. It collects <a
+href="https://github.com/KaiaK808/bureau/compare/v3.4.1...v3.5.0">#76–#94</a>
+and the Spec Kit 1.2.2 upgrade in <a
+href="https://github.com/KaiaK808/bureau/pull/75">#75</a>. The v3 exit
+vocabulary gains <code>28</code> and <code>29</code>; scripts and
+interfaces must be resynced together. It goes straight to stable without
+a release candidate.</p>
+<h2 id="what-changed-since-v341">What changed since v3.4.1</h2>
+<h3 id="shell-inputs-and-the-child-environment">Shell inputs and the
+child environment</h3>
+<p>Numeric settings are validated after source selection and before
+arithmetic. Invalid values use bounded defaults and warnings name only
+the key; leading zeros in inherited values and JSON digit strings are
+decimal. Supervisor environment/JSON precedence now takes effect. The
+environment filter judges actual child-visible exports, including
+caller-local shadowing and Bash 5.2's export-cache rebuild, and keeps
+reserved helper names out of children. Unknown or different encodings
+use conservative secret-carrier removal, which can remove otherwise
+allowed variables containing a short secret. These changes are on by
+default in both environment modes. (<a
+href="https://github.com/KaiaK808/bureau/pull/76">#76</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/93">#93</a>)</p>
+<p>The shell filter requires Python 3.9+ on the system default PATH from
+<code>/usr/bin/getconf PATH</code> and <code>/usr/bin/env -0</code>. A
+Python available only on a custom PATH is insufficient;
+<code>BUREAU_PYTHON</code> does not override the snapshot interpreter.
+Missing trusted tooling or an invalid snapshot stops before the child
+with <code>24</code>. See <a
+href="configuration.html#numeric-runtime-settings">numeric and environment
+rules</a> for bounds, precedence and measured overhead.</p>
+<p>Repository CI now runs four <code>ubuntu-latest</code> shards and six
+<code>macos-latest</code> shards, with a 90-minute job limit.
+<code>BUREAU_TEST_SHARD=i/n</code> selects one balanced share; unset
+runs the full suite and <code>bash tests/run.sh --list</code> lists it.
+Portable fixture paths and two CI-only test fixes are included: the
+fixtures accept Git's newer fetch-error wording and ensure productive
+silence tests emit enough events. These CI changes require no adopter CI
+resync. (<a
+href="https://github.com/KaiaK808/bureau/pull/93">#93</a>)</p>
+<h3 id="merge-gate-ci-check">Merge gate CI check</h3>
+<p>The merge gate's CI check now judges only the newest check run per
+check name and app, ordered by <code>started_at</code> (fractional
+seconds and numeric offsets included) and then by <code>id</code>; a
+group with an unreadable time orders by <code>id</code> alone. An older
+failed or queued run no longer holds back a newer successful run of the
+same check. Only successful check runs and successful legacy statuses
+count toward <code>agents.merge_min_required_checks</code>; skipped and
+neutral runs never fail the head and never count. This changes by
+default: a head whose checks are all skipped, for example a draft pull
+request in a workflow that skips drafts, now waits with "only 0
+completed check(s)" under the default minimum of 1, also after the CI
+start grace. Set <code>merge_min_required_checks: 0</code> to let such
+heads pass. The "no check run and no status" line still needs a head
+with no check run and no status at all.</p>
+<h3 id="spec-admission-numbering-and-phase-resume">Spec admission,
+numbering and phase resume</h3>
+<p>A full configured spec cap now returns quiet wait <code>28</code>,
+with holding issue identifiers and states. Under manual merge mode,
+Merge stops counting by default; Build Review still counts. Set
+<code>agents.max_concurrent_include_merge: true</code> to keep the
+earlier manual single-flight behavior. The existing ticket-cap default
+remains <code>0</code> (unlimited). Numbers are reserved per issue
+across fetched origin branches, local branches and worktrees sharing one
+Git directory; retries reuse them. The allocator lock waits at most 300
+seconds by default, then returns <code>124</code> and routes back to
+Triage. Separate clones/hosts need separate coordination. (<a
+href="https://github.com/KaiaK808/bureau/pull/77">#77</a>)</p>
+<p>Successful specify, plan and tasks phases now commit their feature
+directory locally and record input and artifact fingerprints. Registered
+workers resume only a verified committed prefix; ordinary retries
+discard unfinished edits. Changed inputs or failed spec review start
+again at specify. Stale local feature branches fast-forward; divergent
+local/origin history holds with <code>25</code> and
+<code>needs-human</code> before model work. Fresh spec resets use
+<code>origin/&lt;repo.base_branch&gt;</code>; a verified checkpoint
+selects its recorded commit. There is still one final stage push.
+Checkpoint reuse is on by default, requires both commits and metadata,
+and ignores older checkpoint formats. (<a
+href="https://github.com/KaiaK808/bureau/pull/79">#79</a>)</p>
+<p>Every spec now needs a plain, column-0
+<code>Governance and security</code> section with <code>Decision:</code>
+and <code>Rationale:</code> lines before its first code or HTML block;
+leading YAML front matter is allowed. Background spec review and app
+spec/spec_review completion enforce the shared structural check by
+default. Add or move this section in existing specs. Spec review still
+judges adequacy; specify/plan must leave measurements, probes,
+benchmarks and full test gates to implementation/QA. Customized Spec Kit
+templates and the constitution remain preserved. See <a
+href="stage-protocol.html#spec-phase-resume-and-governance">spec resume
+and governance</a>.</p>
+<p>The source range also upgrades Spec Kit to pinned 1.2.2, checks
+helper content before repository-writing CLI calls, preserves active
+dual-host integration and requires exact feature-directory variables for
+existing-feature helpers. Resolve customized helpers before
+<code>specify integration upgrade</code>; see <a
+href="migration.html#resync-in-claude-code-or-codex">Spec Kit resync</a>.
+This upgrade is required for the new allocator. (<a
+href="https://github.com/KaiaK808/bureau/pull/75">#75</a>)</p>
+<h3 id="preserved-implement-worktrees-and-outside-gates">Preserved
+implement worktrees and outside gates</h3>
+<p>A worker preserved after provider/result failure <code>22</code> or
+quota <code>23</code> can retain a clean HEAD ahead of origin solely by
+verified clean two-parent base merges. This narrow reuse rule is on by
+default, uses the original worktree path and requires Git 2.38+ for
+merge-tree verification. Own commits, conflict resolutions, dirt,
+unknown legacy records, timeouts and interrupted runs do not qualify.
+The existing clean on-origin rule remains independent of base
+resolution. See <a
+href="stage-protocol.html#implement-retries-with-clean-base-merges">merge-only
+retries</a>. (<a
+href="https://github.com/KaiaK808/bureau/pull/80">#80</a>)</p>
+<p>Codex implement/QA gate recovery now requires same-attempt receipt
+identity and proof that the exact configured command failed or aborted
+in a real repository-root execution. A legacy <code>SANDBOX_GATE:</code>
+claim alone stays blocked. Typed gate holds share that proof rule;
+independent product, security and human holds survive outside green. The
+executor reserves one outside run per stage attempt/gate/HEAD, with at
+most one verified executor publication commit between receipt and rerun.
+QA reuses its final outside test phase. This stricter behavior is on by
+default; keep <code>repo.test_command</code> set to the full project
+gate. See <a
+href="stage-protocol.html#sandbox-only-gate-recovery">outside-gate
+recovery</a>. (<a
+href="https://github.com/KaiaK808/bureau/pull/81">#81</a>)</p>
+<h3 id="review-convergence-and-ticket-withdrawal">Review convergence and
+ticket withdrawal</h3>
+<p>The default review severity floor is now <code>BUG</code>: validated
+MINOR and SKIP findings are deferred, and a required fix can be
+discharged only by an exact match to a nonblank deferred finding. Choose
+<code>MINOR</code> for stricter review. A new total-round limit defaults
+to <code>max_review_cycles + 1</code> (four with the existing default);
+unresolved work at that limit blocks with <code>25</code>, while genuine
+approval can finish. Fresh attempts reserve a round before paid calls,
+including attempts later interrupted or failed. Changed policy or legacy
+approval records require fresh review; unchanged approval reuse and gate
+polling consume no round. Security/build floors and BLOCK remain in
+force. (<a
+href="https://github.com/KaiaK808/bureau/pull/84">#84</a>)</p>
+<p>Background ticket state is now a cooperative kill switch by default.
+Configured Done stops with <code>0</code>, configured
+cancelled/canceled/duplicate IDs with <code>26</code>, and other
+inactive IDs with <code>25</code>. A latched withdrawal prevents later
+refresh failure or reactivation from restarting that run. Providers
+finish their current call; subsequent ordinary publication and recovery
+stop. Implement's best-effort preservation push of commits already made
+still runs. Additional checkpoint refresh failures warn once and allow
+the authorized unit to continue; mandatory reads stay strict. App
+prepare/finish keeps its existing protocol. See <a
+href="stage-protocol.html#cooperative-ticket-withdrawal">withdrawal</a>.
+(<a href="https://github.com/KaiaK808/bureau/pull/85">#85</a>)</p>
+<h3 id="optional-conflict-repair-and-silence-detection">Optional
+conflict repair and silence detection</h3>
+<p>Declared generated outputs and verified append-only files can be
+resolved deterministically, with dependency preparation, regeneration,
+explicit outside tests and checkout rollback. Both strategy lists
+default to empty; legacy mechanical rules remain available. Optional
+model repair runs only when
+<code>agents.conflict_resolver.enabled</code> is true, after
+deterministic resolution, with one durable attempt per ticket/base by
+default (maximum two). It cannot edit outside the conflict set or stage
+its own changes. Both forms need explicit <code>repo.test_command</code>
+and writable external snapshot storage sized for ignored dependencies
+too. (<a href="https://github.com/KaiaK808/bureau/pull/86">#86</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/90">#90</a>)</p>
+<p>Unresolved rebase conflicts now roll back, hold for a human and
+return <code>17</code> even when model repair is disabled; the old
+fallback returned <code>0</code> or <code>25</code>. Successful semantic
+repair during review is published normally and receives fresh review
+inputs. Rebase alone force-pushes with a lease pinned to the fetched
+issue SHA. Green repair creates no approval or reusable merge gate. See
+<a
+href="stage-protocol.html#deterministic-conflict-resolution">deterministic
+repair</a> and <a
+href="stage-protocol.html#model-conflict-resolution">model repair</a>.</p>
+<p>The provider silence watchdog is opt-in and defaults to
+<code>0</code> (off). Useful JSONL events reset its deadline; noise and
+CLI liveness do not. An optional longer child window requires an
+identified owned tool process. Silence drains owned writers, returns
+<code>25</code> with <code>timeout_kind: silence</code> and records a
+human hold after withdrawal checks. Review cancels and joins siblings
+before recording its partial paid round. Wall-clock timeout stays
+<code>124</code>; independent cancellation stays <code>130</code>.
+Owned-process cleanup also applies with the watchdog off. Test the
+installed CLI's streaming compatibility before enabling it. (<a
+href="https://github.com/KaiaK808/bureau/pull/88">#88</a>)</p>
+<h3 id="file-admission-and-continuous-dispatch">File admission and
+continuous dispatch</h3>
+<p>The file-overlap gate is opt-in
+(<code>agents.file_overlap_gate: false</code> by default for standalone
+operations). When enabled, atomic reservations cover task paths and open
+Bureau PR diffs before Build and before writers, including app
+prepare/finish, Copy/QA and rework. Unknown scope is repository-wide,
+rename paths count on both sides, and generated docs/changelogs still
+overlap. Conflicts return quiet <code>29</code> without a paid pass,
+alert or human label. Waiting scope expansions retain the previous
+grant; reservations have no TTL and survive evidence pruning. (<a
+href="https://github.com/KaiaK808/bureau/pull/87">#87</a>)</p>
+<p><strong>The tmux launchers now start one supervised continuous
+dispatcher in place of stage pollers.</strong> It requires explicit
+<code>agents.file_overlap_gate: true</code> even for one lane or
+dry-run; otherwise startup returns <code>24</code> before selection.
+After all writers are resynced, enable that gate before restarting a
+launcher. Dispatch defaults to two concurrent ticket lanes, drains
+downstream work first and refills when a lane finishes. The process-lane
+cap is separate from <code>agents.max_concurrent_issues</code>; existing
+batch execution retains default three when no shared value is
+configured. (<a
+href="https://github.com/KaiaK808/bureau/pull/89">#89</a>)</p>
+<p>Quiet admission, quota, transient service/authentication and pending
+merge-gate waits yield lanes. Human, unknown, terminal and intentional
+handoff outcomes persist in the skip store; reconcile the ticket, stop
+dispatch and remove its skip entry before retrying, clearing human holds
+too. Launch journals preserve outcomes across dispatcher loss;
+incomplete launches remain held. Owned stale/DIRTY Merge work can
+refresh the pinned base at most twice per lane and return to fresh Build
+Review through exit <code>20</code>. This creates no merge success or
+reused approval. Stop/join cleanup signals only live owned runtime
+handles. Separate clones/hosts and older writers do not share this
+coordination. See <a
+href="stage-protocol.html#continuous-ticket-dispatch">dispatch</a> and <a
+href="stage-protocol.html#file-overlap-admission">file admission</a>.</p>
+<h3 id="completion-evidence-human-briefs-and-local-learning">Completion
+evidence, human briefs and local learning</h3>
+<p>Receipts, run manifests, gate digests and a stable waiting register
+are automatic. Successful provider receipts must persist before success
+is forwarded; other evidence writes are best effort. Recovery requires
+the same attempt and HEAD plus the unchanged original result.
+<code>bureau-runtime.py waits</code> shows open causes and the observed
+waiting share; missing historical end times remain null. The private
+evidence store has a global 16 MiB/4,096-file budget, including staging;
+completed runs rotate at 128 runs/30 days and open waits/active or
+interrupted runs are protected. Full protected storage can prevent
+success persistence and end the provider call with <code>22</code>. (<a
+href="https://github.com/KaiaK808/bureau/pull/78">#78</a>)</p>
+<p>Existing human merge boundaries now automatically publish one
+acceptance brief per PR/HEAD to the ticket and PR, with independent
+retry status, immutable pointers and explicit missing evidence. A brief
+grants no acceptance or merge authority. Optional <code>insights</code>
+are normally empty and limited to three single-line observations of 280
+characters per attempt. They stay local, with best-effort privacy
+filtering; malformed observations do not fail a stage.
+<code>bureau-learnings</code> drafts
+<code>BUREAU-BACKLOG.proposed.md</code> candidates for human triage. (<a
+href="https://github.com/KaiaK808/bureau/pull/82">#82</a>)</p>
+<p>Failed and held calls can also contribute insights. Shell-derived
+cause classes, metadata-only stage outcomes and review dispositions
+(<code>applied</code>, <code>declined</code>, <code>skip</code>,
+<code>deferred</code>) are collected automatically without a new switch.
+Each learning ledger keeps 2,048 rows/30 days on collection under the
+global evidence budget. Dispositions contain severity and a filtered
+repository-relative path; applied/declined remain model self-reports.
+Learning fields are removed from external comment projections and never
+change routing or rules. See <a
+href="stage-protocol.html#versioned-background-evidence">evidence and
+privacy</a> and <a
+href="stage-protocol.html#failure-learning-records">failure learning</a>.
+(<a href="https://github.com/KaiaK808/bureau/pull/91">#91</a>)</p>
+<p>Stage prompts now select unexpired, path-relevant
+<code>LESSONS.md</code> entries plus untagged general advice, with a
+default complete-context budget of 8192 UTF-8 bytes per stage. Spec and
+review use the bounded form; both implement loops and QA gain injection.
+Whole entries are retained in deterministic order and oversized entries
+are dropped. Existing free-form files need no migration and become one
+bounded general set; a legacy file that cannot fit is dropped whole too.
+Entry metadata keys <code>paths</code>, <code>globs</code>,
+<code>tags</code>, <code>owner</code>, <code>expires</code> (inclusive
+UTC date) and <code>evidence</code> are optional and unset by default;
+advice never authorizes work. Set a stage budget to <code>0</code> to
+disable it. (<a
+href="https://github.com/KaiaK808/bureau/pull/92">#92</a>)</p>
+<p>Derived architecture decisions, their template and index are under <a
+href="../adr/README.md">docs/adr</a>. They retain their dated derivation
+and open disagreements; proposed status records the historical snapshot.
+They add no runtime behavior. (<a
+href="https://github.com/KaiaK808/bureau/pull/83">#83</a>)</p>
+<h2 id="new-settings-and-exit-codes">New settings and exit codes</h2>
+<p>These defaults are runtime behavior after a coordinated upgrade.
+Optional keys can be omitted unless a selected feature requires them;
+existing configuration versions remain supported. See <a
+href="configuration.html">configuration</a> for full validation rules.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Default / adoption</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agents.max_concurrent_include_merge</code></td>
+<td>Mode-dependent: false for manual, true for auto</td>
+<td>Explicit boolean overrides; Build Review always counts. Applies when
+the existing ticket cap is nonzero.</td>
+</tr>
+<tr>
+<td><code>repo.base_branch</code></td>
+<td><code>"main"</code></td>
+<td>Spec allocation/base reset; merge-only reuse falls back to symbolic
+<code>origin/HEAD</code>, then <code>origin/main</code>, when
+absent/invalid. An unresolved selected reuse base refuses reuse.</td>
+</tr>
+<tr>
+<td><code>BUREAU_SPEC_LOCK_TIMEOUT</code></td>
+<td><code>300</code> seconds; optional process-environment override</td>
+<td>Whole seconds 1–86400 for number-allocation lock acquisition.</td>
+</tr>
+<tr>
+<td><code>agents.review_min_severity</code></td>
+<td><code>"BUG"</code>; on by default</td>
+<td><code>"MINOR"</code> is stricter; invalid values fall closed to
+MINOR.</td>
+</tr>
+<tr>
+<td><code>agents.max_review_rounds</code></td>
+<td>Existing <code>max_review_cycles + 1</code>, normally
+<code>4</code>; on by default</td>
+<td>Total rounds 1–1001; both total and cycle limits apply.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_active_states</code></td>
+<td>Configured <code>triage</code>, <code>spec</code>,
+<code>spec_review</code>, <code>design</code>, <code>copy</code>,
+<code>build</code>, <code>qa</code>, <code>build_review</code>,
+<code>merge</code>; on by default</td>
+<td>An explicit list replaces the set; <code>[]</code> stops all
+tickets. Invalid configuration returns 24.</td>
+</tr>
+<tr>
+<td><code>linear.teams[0].states.cancelled</code>,
+<code>.canceled</code>, <code>.duplicate</code></td>
+<td>Unset; optional configured UUIDs</td>
+<td>Enable specific cancellation classification 26; other inactive IDs
+stop with 25.</td>
+</tr>
+<tr>
+<td><code>repo.conflict_resolution.generated</code></td>
+<td><code>[]</code>; opt-in</td>
+<td>Entries require
+<code>repo.conflict_resolution.generated[].globs</code> and
+<code>.command</code>, with no defaults for either field; the command is
+an argv array. Declare every generator output.</td>
+</tr>
+<tr>
+<td><code>repo.conflict_resolution.append_only_paths</code></td>
+<td><code>[]</code>; opt-in</td>
+<td>Exact filenames eligible for verified insertion-only repair.</td>
+</tr>
+<tr>
+<td><code>agents.file_overlap_gate</code></td>
+<td><code>false</code>; opt-in, required true for continuous
+dispatch</td>
+<td>False/absent refuses dispatcher startup with 24; standalone legacy
+admission remains available.</td>
+</tr>
+<tr>
+<td><code>agents.&lt;stage&gt;.silence_timeout_seconds</code>,
+<code>agents.providers.&lt;provider&gt;.silence_timeout_seconds</code></td>
+<td><code>0</code> (off); opt-in</td>
+<td>Stage overrides provider; finite seconds 0–86400. Explicit stage 0
+disables an inherited window.</td>
+</tr>
+<tr>
+<td><code>agents.&lt;stage&gt;.silence_child_timeout_seconds</code>,
+<code>agents.providers.&lt;provider&gt;.silence_child_timeout_seconds</code></td>
+<td>Effective normal silence window; optional</td>
+<td>Stage overrides provider; finite seconds 0–86400, at least the
+normal window.</td>
+</tr>
+<tr>
+<td><code>agents.parallel_lanes</code></td>
+<td><code>2</code> for dispatch, <code>3</code> for batch when
+absent/null</td>
+<td>Optional shared process-lane cap 1–1000; invalid configured values
+use 2 for both. Existing <code>--max-concurrent</code>, then
+<code>BUREAU_MAX_CONCURRENT</code>, override it.</td>
+</tr>
+<tr>
+<td><code>agents.conflict_resolver.enabled</code></td>
+<td><code>false</code>; opt-in</td>
+<td>The containing <code>agents.conflict_resolver</code> object is
+optional. Requires explicit outside tests.</td>
+</tr>
+<tr>
+<td><code>agents.conflict_resolver.max_attempts</code></td>
+<td><code>1</code> while enabled</td>
+<td>Integer 1 or 2; durable allowance per ticket/immutable base.</td>
+</tr>
+<tr>
+<td><code>agents.conflict_resolver.runner</code>, <code>.model</code>,
+<code>.sandbox</code>, <code>.reasoning_effort</code>,
+<code>.timeout_seconds</code></td>
+<td>Shared provider resolution: default runner <code>claude</code>, CLI
+model/effort, Codex <code>workspace-write</code>, 3600-second
+timeout</td>
+<td>Optional stage overrides and existing environment/provider
+precedence apply. Claude retains its existing permission policy.</td>
+</tr>
+<tr>
+<td><code>agents.conflict_resolver.silence_timeout_seconds</code>,
+<code>.silence_child_timeout_seconds</code></td>
+<td><code>0</code>, then effective normal window</td>
+<td>Optional inherited watchdog settings; repair remains off until
+enabled.</td>
+</tr>
+<tr>
+<td><code>BUREAU_RUNNER_CONFLICT_RESOLVER</code>,
+<code>BUREAU_MODEL_CONFLICT_RESOLVER</code>,
+<code>BUREAU_CODEX_MODEL_CONFLICT_RESOLVER</code>,
+<code>BUREAU_CLAUDE_MODEL_CONFLICT_RESOLVER</code>,
+<code>BUREAU_SANDBOX_CONFLICT_RESOLVER</code>,
+<code>BUREAU_REASONING_CONFLICT_RESOLVER</code></td>
+<td>Unset; optional overrides for the new stage</td>
+<td>Inherit the resolved settings above. The first three use the
+existing accepted <code>.env</code> families; Claude model, sandbox and
+reasoning overrides are process-environment only.</td>
+</tr>
+<tr>
+<td><code>agents.lessons_budget_bytes.spec</code>,
+<code>.implement</code>, <code>.qa</code>,
+<code>.code_review</code></td>
+<td><code>8192</code> bytes each; on when lessons exist</td>
+<td>Optional object; integers 0–1048576, 0 disables that stage, invalid
+values use 8192.</td>
+</tr>
+<tr>
+<td><code>BUREAU_TEST_SHARD</code></td>
+<td>Unset: full suite; opt-in repository test selector</td>
+<td><code>i/n</code>, 1-based; used by the 4/6-shard CI matrix.</td>
+</tr>
+<tr>
+<td><code>BUREAU_ADR_DENYLIST</code></td>
+<td>Unset: extra scan skipped; opt-in repository check</td>
+<td>Existing external UTF-8 file, one private name per line; a supplied
+invalid path fails the ADR check.</td>
+</tr>
+</tbody>
+</table>
+<p>Only two numeric exit codes are new. The rest of the vocabulary keeps
+its numbers; consumers must be updated together.</p>
+<table>
+<thead>
+<tr>
+<th>Exit</th>
+<th>Class</th>
+<th>Default / adoption</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>28</code></td>
+<td><code>spec-capacity-wait</code></td>
+<td>Automatic when the existing nonzero spec cap is full; quiet
+cancellable wait, no human escalation. Tick process/result keep 28 and
+<code>outcome: waiting</code>.</td>
+</tr>
+<tr>
+<td><code>29</code></td>
+<td><code>file-overlap-wait</code></td>
+<td>Only with the opt-in overlap gate; quiet wait before Build/writers,
+including manual guarded moves. Tick process/result keep 29 and
+<code>outcome: waiting</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Existing exits gain these uses: <code>17</code> for unresolved rebase
+repair even with the resolver off; <code>20</code> for a dispatcher
+disabled-stage handoff or owned base-refresh return to review;
+<code>21</code> for a competing dispatcher/poller lock; <code>24</code>
+for invalid dispatcher/active-state configuration or missing trusted
+environment tooling; <code>25</code> for inactive tickets, unresolved
+review-round caps or opt-in silence
+(<code>timeout_kind: silence</code>); <code>26</code> for configured
+cancellation IDs; <code>124</code> for allocator lock timeout as well as
+wall-clock timeout; <code>130</code> for joined dispatcher cancellation.
+Withdrawal retains precedence over holds and repair failures. See the <a
+href="exit-codes.html">complete exit contract</a>.</p>
+<h2 id="new-files-and-state-locations">New files and state
+locations</h2>
+<p>All <code>bureau/</code> state paths below are relative to the Git
+common directory and shared by linked worktrees. They do not coordinate
+separate clones/hosts. Preserve authoritative coordination data while
+reconciling unfinished work; deleting evidence cannot release ownership
+or replenish repair attempts. Paths within a grouped evidence row share
+its <code>bureau/evidence/v1/</code> prefix.</p>
+<table>
+<thead>
+<tr>
+<th>Location</th>
+<th>Default / adoption and purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Installed <code>scripts/bureau-evidence.py</code>,
+<code>bureau-spec.py</code>, <code>bureau-gates.py</code>,
+<code>bureau-acceptance.py</code>, <code>bureau-insights.sh</code>,
+<code>bureau-lessons.py</code></td>
+<td>Installed by the complete scripts resync; support automatic
+evidence, phase reuse, gate recovery, briefs, learning and bounded
+lessons. Source copies live in <code>templates/scripts/</code>.</td>
+</tr>
+<tr>
+<td>Installed <code>scripts/bureau-paths.py</code>,
+<code>bureau-admission.py</code>, <code>bureau-dispatch.py</code>,
+<code>bureau-activity.py</code>, <code>bureau-conflicts.py</code></td>
+<td>Installed by the same resync; overlap, continuous dispatch, silence
+and configured repair use them under the feature settings above. Legacy
+conflict handling also uses the conflict helper by default.</td>
+</tr>
+<tr>
+<td><code>bureau/spec-numbers.json</code>,
+<code>bureau/spec-numbers.guard</code></td>
+<td>Automatic persistent number reservations and allocator lock; retain
+across cleanup.</td>
+</tr>
+<tr>
+<td><code>bureau/evidence/v1/guard</code>,
+<code>runs/RUN_ID/manifest.json</code>,
+<code>runs/RUN_ID/receipts/PROVIDER_ATTEMPT_ID.json</code></td>
+<td>Automatic private evidence lock, background attempts/gate records
+and provider receipts; receipt persistence is mandatory before
+success.</td>
+</tr>
+<tr>
+<td><code>bureau/evidence/v1/waits/WAIT_ID.json</code>,
+<code>tickets/ISSUE.json</code>, <code>quarantine/*.json</code></td>
+<td>Automatic wait register, observation cursors and digest-only
+corruption quarantine; no raw logs.</td>
+</tr>
+<tr>
+<td><code>bureau/evidence/v1/spec-checkpoints/ISSUE.json</code>,
+<code>bureau/spec-checkpoints-disabled/ISSUE.json</code></td>
+<td>Automatic version-2 committed phase records inside the v1 envelope
+and a durable reuse opt-out after storage failures.</td>
+</tr>
+<tr>
+<td><code>logs/outside-gates/ATTEMPT_ID.log</code>, attempt
+<code>gate_reruns</code>/publication records in the manifest</td>
+<td>Automatic for eligible Codex gate recovery; original outside output
+remains in normal logs, with reservations/digests in evidence. No second
+run after an incomplete reservation.</td>
+</tr>
+<tr>
+<td><code>bureau/evidence/v1/acceptance/NUMBER-HEAD.json</code>,
+<code>bureau/acceptance.guard</code></td>
+<td>Automatic at existing human merge boundaries; frozen projected brief
+and pending/delivered destinations, plus publication lock.</td>
+</tr>
+<tr>
+<td><code>bureau/evidence/v1/insights.jsonl</code>,
+<code>stage-outcomes.jsonl</code>,
+<code>review-dispositions.jsonl</code></td>
+<td>Automatic collection when data is available; bounded local-only
+learning ledgers. Insights are the explicit filtered free-text
+exception.</td>
+</tr>
+<tr>
+<td><code>BUREAU-BACKLOG.proposed.md</code>, existing
+<code>LESSONS.md</code></td>
+<td>Optional learnings output for human triage; existing lessons gain
+default bounded injection and optional entry metadata. Neither file is
+automatically applied as policy.</td>
+</tr>
+<tr>
+<td>Linear <code>bureau-review-round</code> marker and manifest
+<code>review_round</code></td>
+<td>Automatic before paid review; persists round accounting and
+numeric/null usage without requiring cost tracking.</td>
+</tr>
+<tr>
+<td><code>bureau/ticket-control/RUN_ID/stop-CODE</code></td>
+<td>Automatic latched background withdrawal shared by nested/parallel
+calls.</td>
+</tr>
+<tr>
+<td><code>bureau/admission/v1.json</code>,
+<code>bureau/admission/guard</code></td>
+<td>Opt-in overlap inventory, granted reservations,
+migration/readiness/wait state and lock; no TTL, outside evidence
+pruning.</td>
+</tr>
+<tr>
+<td><code>bureau/dispatch.lock</code>, <code>dispatch-skips.json</code>,
+<code>dispatch-lanes/ATTEMPT.json</code>,
+<code>dispatch-ready/ATTEMPT</code> and its <code>.paused</code>
+acknowledgment</td>
+<td>Used by the new launcher dispatcher after overlap opt-in; locks
+exclude pollers, skips/launch outcomes survive restarts, readiness
+serializes startup. All share the <code>bureau/</code> prefix.</td>
+</tr>
+<tr>
+<td><code>bureau/spec-admissions.json</code>,
+<code>spec-admissions.guard</code></td>
+<td>Automatic for capped Spec transitions through any updated driver;
+pending moves count before Linear catches up. Both share the
+<code>bureau/</code> prefix.</td>
+</tr>
+<tr>
+<td><code>bureau/dispatch-logs/ISSUE-ATTEMPT.log</code>, repository
+<code>.worktrees/dispatch-ISSUE-ATTEMPT</code></td>
+<td>Per-lane dispatcher logs and unique owned worker paths after
+dispatch opt-in.</td>
+</tr>
+<tr>
+<td><code>bureau/conflict-resolver/guard</code>,
+<code>bureau/conflict-resolver/DIGEST.json</code>,
+<code>bureau/conflict-provider-runs/</code></td>
+<td>Opt-in model-repair lock, fsynced attempt ledger and provider
+originals; ledger survives HEAD changes and evidence pruning.</td>
+</tr>
+<tr>
+<td><code>docs/adr/0000-template.md</code>,
+<code>0001</code>–<code>0012</code> records and
+<code>README.md</code></td>
+<td>Documentation only; twelve derived decisions, one template and an
+index. <code>tests/test_adrs.sh</code> checks their contract.</td>
+</tr>
+</tbody>
+</table>
+<p>Records are created as needed. There is no historical backfill.
+Provider originals and stage logs remain outside the evidence cap;
+inspect them under the existing local privacy policy.
+Evidence/checkpoint retention and optional failures are described in the
+<a href="stage-protocol.html#retention-and-global-limits">stage
+protocol</a>.</p>
+<h2 id="upgrade-an-existing-installation">Upgrade an existing
+installation</h2>
+<p><strong>From v3.4.1:</strong> stop all shepherds, pollers,
+dispatchers and supervisors, preserve unfinished work, and compare
+installed script drift before replacing anything. Select tag
+<code>v3.5.0</code> in the source skill checkout and refresh skill
+discovery. Install/resync pinned Spec Kit 1.2.2 after resolving
+customized helpers, preserving the constitution and active integration.
+Resync the <strong>scripts and interfaces scopes as one set</strong>
+(<code>--resync-interfaces --resync-scripts</code>) in each adopting
+repository, resolving customization conflicts through <a
+href="migration.html#preview-and-resolve-asset-conflicts">preview and
+resolve</a>. <code>--update</code> changes configuration only. See <a
+href="migration.html#upgrade-to-v35">Upgrade to v3.5</a>.</p>
+<p>Before restart, choose the manual-Merge counting policy and review
+severity floor, check that repositories whose heads carry only skipped
+or neutral checks get a successful check or set
+<code>merge_min_required_checks: 0</code>, check active/cancellation
+state IDs and numeric settings, add/move governance in existing specs,
+and retain the shared number/checkpoint/admission/dispatch/repair
+records. Launcher users must explicitly enable overlap after every
+writer is updated. Silence and both configurable conflict strategies
+stay opt-in; do not enable them merely by copying an example. Restart
+drivers together, run doctor and qualify a representative ticket before
+unattended dispatch.</p>
+<p><strong>Mixed resync is incompatible:</strong> old shepherds treat
+<code>28</code> as a failure, and an old exit-2 spec stage with a new
+shepherd can still escalate to <code>13</code>. Partial
+helper/schema/interface updates also break receipt/gate and
+provider-result contracts. Resyncing scripts cannot replace case
+statements already loaded in a running shell.</p>
+<p><strong>From earlier versions:</strong> follow <a
+href="migration.html#upgrade-to-v341">Upgrade to v3.4.1</a> and its
+earlier sections first, then the v3.5 steps above. Existing approved
+specs should resume downstream; number reservations do not import older
+issue-directory associations. Inspect any pre-fix development evidence
+store or previously published unsafe learning text separately; resync
+does not scrub history.</p>
+<h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
+<p>Configuration schema versions and the app prepare/finish protocol
+remain compatible. New numeric exits require coordinated consumers. Bash
+3.2+ remains supported; the shell snapshot filter has the system-PATH
+Python/env requirements above, and merge-only reuse needs Git 2.38+.
+Existing customized templates, project instructions and the Spec Kit
+constitution must be preserved. Local locks and rollback cannot protect
+separate clones/hosts, unrelated external writers, detached commands or
+writes through external symlinks.</p>
+<p>To roll back, stop every driver, select tag <code>v3.4.1</code> in
+the source skill checkout and restore its scripts and interfaces
+together or the private backup (<a
+href="migration.html#rollback">rollback</a>). Preview removal of new
+helpers and return Spec Kit assets to the saved compatible set; v3.4.1
+expects Spec Kit 0.7.5. Restore earlier configuration, preserving the
+v3.5 coordination records separately for inspection. Disable the new
+launcher pool and reconcile leases, reservations and unfinished work
+before starting the older pollers. Old scripts cannot consume the v3.5
+wait codes or coordinate its stores. Rollback cannot undo commits,
+pushes, published briefs or Linear/GitHub changes.</p>
+<h2 id="validation">Validation</h2>
+<p>The maintainer's release validation record reports each PR reviewed
+by Codex before push. CI was judged at the top of the stack: <a
+href="https://github.com/KaiaK808/bureau/pull/93">#93</a> at head
+<code>9842550</code> is green on all 10 shards (four
+<code>ubuntu-latest</code>, six <code>macos-latest</code>).
+<code>main</code> at <code>56d4170</code> equals that tested tree plus
+#83's 15-file ADR change (14 Markdown files and
+<code>tests/test_adrs.sh</code>). The full suite also ran locally on
+macOS, 151/151 at <code>950a5d9</code>, before the sharding commit. An
+Ubuntu 24.04 container run matched PR 1's container baseline. <a
+href="https://github.com/KaiaK808/bureau/pull/94">#94</a>, the merge CI
+gate fix on top of <code>56d4170</code>, was reviewed by Codex in two
+rounds; the full suite passed locally on macOS, 154/154 at
+<code>1b9615e</code>. GitHub CI on #94 at <code>1b9615e</code> is green
+on all 10 shards (<a
+href="https://github.com/KaiaK808/bureau/actions/runs/40617197495">run
+40617197495</a>) after one re-run of a macOS shard: on the first attempt
+<code>test_machine_gate_cancellation_preserves_130_and_the_log</code> in
+<code>tests/provider_adapter_test.py</code> failed on timing, in
+provider code that #94 does not change, and it passed 15 of 15 local
+runs. Provider calls are faked in tests. No installation has run v3.5.0
+before the release, and there is no release candidate. Release
+preparation changes documentation only.</p>
+<p>GitHub CI on <code>main</code> at <code>56d4170</code> is green on
+all 10 shards (<a
+href="https://github.com/KaiaK808/bureau/actions/runs/40573763078">run
+40573763078</a>), the first CI run that includes
+<code>tests/test_adrs.sh</code>.</p>
+<p>See <a href="releases.html#current-release-status">current release
+status</a>. The pending main-branch CI result remains for the maintainer
+to record.</p>
+<h2 id="known-limitations">Known limitations</h2>
+<p>Live provider/event compatibility and representative installation
+acceptance remain pending. Evidence is local and best effort except for
+successful provider receipts; unusual process/filesystem failures can
+lose observations. Original provider files are required for completion
+recovery. The insight filter can miss private text or reject benign
+text, and brief delivery cannot guarantee exactly-once service
+publication. Bounded lessons and learning remain advisory. Strict
+CI/base/just-in-time merge gates and human merge authority still apply
+after every local green result.</p></main>
+</div>
+</body>
+</html>

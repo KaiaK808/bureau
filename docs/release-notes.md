@@ -1,161 +1,72 @@
-# Bureau v3.5.0 — coordinated dispatch, evidence and bounded recovery
+# Bureau v3.5.1 — Spec Review and UX fail closed on invalid results
 
-**Stable release · 2026-10-28 · source tag `v3.5.0` · prepared 2026-10-27.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.0) is marked as latest and records the exact tagged commit. Tagging and publication remain separate maintainer operations. The previous stable release is [v3.4.1](release-notes-v3.4.1.md); its notes retain the earlier release history.
+**Stable release · 2026-10-29 · source tag `v3.5.1` · prepared 2026-10-28.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.1) is marked as latest and records the exact tagged commit. Tagging and publication remain separate maintainer operations. The previous stable release is [v3.5.0](release-notes-v3.5.0.md); its notes retain the earlier release history.
 
-v3.5.0 is a minor release on v3.4.1. It collects [#76–#94](https://github.com/KaiaK808/bureau/compare/v3.4.1...v3.5.0) and the Spec Kit 1.2.2 upgrade in [#75](https://github.com/KaiaK808/bureau/pull/75). The v3 exit vocabulary gains `28` and `29`; scripts and interfaces must be resynced together. It goes straight to stable without a release candidate.
+v3.5.1 is a patch release on v3.5.0. It contains only [#98](https://github.com/KaiaK808/bureau/pull/98), which validates Spec Review and UX results before routing and binds their cached overlap readiness to the validated result contract. No configuration keys and no exit codes are new. The existing exit `22` (`provider-or-result-error`) widens to these invalid results; see the [exit-code contract](exit-codes.md).
 
-## What changed since v3.4.1
+## What changed since v3.5.0
 
-### Shell inputs and the child environment
+All behavior changes below are on by default after resync. The readiness changes apply when the existing overlap gate is enabled; this release keeps its configuration unchanged.
 
-Numeric settings are validated after source selection and before arithmetic. Invalid values use bounded defaults and warnings name only the key; leading zeros in inherited values and JSON digit strings are decimal. Supervisor environment/JSON precedence now takes effect. The environment filter judges actual child-visible exports, including caller-local shadowing and Bash 5.2's export-cache rebuild, and keeps reserved helper names out of children. Unknown or different encodings use conservative secret-carrier removal, which can remove otherwise allowed variables containing a short secret. These changes are on by default in both environment modes. ([#76](https://github.com/KaiaK808/bureau/pull/76), [#93](https://github.com/KaiaK808/bureau/pull/93))
+### Spec Review and UX validate their result contracts
 
-The shell filter requires Python 3.9+ on the system default PATH from `/usr/bin/getconf PATH` and `/usr/bin/env -0`. A Python available only on a custom PATH is insufficient; `BUREAU_PYTHON` does not override the snapshot interpreter. Missing trusted tooling or an invalid snapshot stops before the child with `24`. See [numeric and environment rules](configuration.md#numeric-runtime-settings) for bounds, precedence and measured overhead.
+Both background stages pass their new schemas through the shared provider adapter for Claude and Codex. Spec Review requires an exact, case-sensitive `review_status` of `PASS` or `FAIL`, `ui_work_needed` and a string `summary`. The UI field accepts booleans and the legacy strings `true`, `TRUE`, `yes`, `YES`, `false`, `FALSE`, `no`, `NO`, normalized to the existing UI/no-UI routes. UX requires an exact, case-sensitive `design_status` of `COMPLETE`, `INCOMPLETE` or `NEEDS_HUMAN` and a string `summary`.
 
-Repository CI now runs four `ubuntu-latest` shards and six `macos-latest` shards, with a 90-minute job limit. `BUREAU_TEST_SHARD=i/n` selects one balanced share; unset runs the full suite and `bash tests/run.sh --list` lists it. Portable fixture paths and two CI-only test fixes are included: the fixtures accept Git's newer fetch-error wording and ensure productive silence tests emit enough events. These CI changes require no adopter CI resync. ([#93](https://github.com/KaiaK808/bureau/pull/93))
+The v3.5.0 prompt fields remain optional: Spec Review accepts integer `issues_found` and `issues_fixed` and a string array `remaining_issues`; UX accepts `components_net_new` with path and prop sketches, `components_reused` paths and `open_questions` with question `q` and boolean `blocking`. Prop sketches require `name`, `type` and a scalar-or-null `default`. The shared validator enforces declared type unions. Unknown extra fields are rejected, including within component, prop and question objects. Codex uses the existing strict wire projection and canonical validation; Claude uses the existing structured-output and transcript recovery rules. Stage prompts now request the required result fields, with review gaps in `summary` and design details, prop sketches and questions in `design.md`. Customized prompts can keep the declared optional fields. See [the result contracts](stage-protocol.md#spec-review-and-ux-results).
 
-### Merge gate CI check
+### Invalid results hold before publication
 
-The merge gate's CI check now judges only the newest check run per check name and app, ordered by `started_at` (fractional seconds and numeric offsets included) and then by `id`; a group with an unreadable time orders by `id` alone. An older failed or queued run no longer holds back a newer successful run of the same check. Only successful check runs and successful legacy statuses count toward `agents.merge_min_required_checks`; skipped and neutral runs never fail the head and never count. This changes by default: a head whose checks are all skipped, for example a draft pull request in a workflow that skips drafts, now waits with "only 0 completed check(s)" under the default minimum of 1, also after the CI start grace. Set `merge_min_required_checks: 0` to let such heads pass. The "no check run and no status" line still needs a head with no check run and no status at all.
+Missing, unknown, wrongly typed or schema-invalid results exit `22`, preserve stage edits and hold the ticket in its current state with `needs-human`. A failed label write leaves a durable local hold. The stages publish no success comment, ordinary push or Build/Design move. The shell also checks exact known statuses before routing. Valid results retain these routes:
 
-### Spec admission, numbering and phase resume
-
-A full configured spec cap now returns quiet wait `28`, with holding issue identifiers and states. Under manual merge mode, Merge stops counting by default; Build Review still counts. Set `agents.max_concurrent_include_merge: true` to keep the earlier manual single-flight behavior. The existing ticket-cap default remains `0` (unlimited). Numbers are reserved per issue across fetched origin branches, local branches and worktrees sharing one Git directory; retries reuse them. The allocator lock waits at most 300 seconds by default, then returns `124` and routes back to Triage. Separate clones/hosts need separate coordination. ([#77](https://github.com/KaiaK808/bureau/pull/77))
-
-Successful specify, plan and tasks phases now commit their feature directory locally and record input and artifact fingerprints. Registered workers resume only a verified committed prefix; ordinary retries discard unfinished edits. Changed inputs or failed spec review start again at specify. Stale local feature branches fast-forward; divergent local/origin history holds with `25` and `needs-human` before model work. Fresh spec resets use `origin/<repo.base_branch>`; a verified checkpoint selects its recorded commit. There is still one final stage push. Checkpoint reuse is on by default, requires both commits and metadata, and ignores older checkpoint formats. ([#79](https://github.com/KaiaK808/bureau/pull/79))
-
-Every spec now needs a plain, column-0 `Governance and security` section with `Decision:` and `Rationale:` lines before its first code or HTML block; leading YAML front matter is allowed. Background spec review and app spec/spec_review completion enforce the shared structural check by default. Add or move this section in existing specs. Spec review still judges adequacy; specify/plan must leave measurements, probes, benchmarks and full test gates to implementation/QA. Customized Spec Kit templates and the constitution remain preserved. See [spec resume and governance](stage-protocol.md#spec-phase-resume-and-governance).
-
-The source range also upgrades Spec Kit to pinned 1.2.2, checks helper content before repository-writing CLI calls, preserves active dual-host integration and requires exact feature-directory variables for existing-feature helpers. Resolve customized helpers before `specify integration upgrade`; see [Spec Kit resync](migration.md#resync-in-claude-code-or-codex). This upgrade is required for the new allocator. ([#75](https://github.com/KaiaK808/bureau/pull/75))
-
-### Preserved implement worktrees and outside gates
-
-A worker preserved after provider/result failure `22` or quota `23` can retain a clean HEAD ahead of origin solely by verified clean two-parent base merges. This narrow reuse rule is on by default, uses the original worktree path and requires Git 2.38+ for merge-tree verification. Own commits, conflict resolutions, dirt, unknown legacy records, timeouts and interrupted runs do not qualify. The existing clean on-origin rule remains independent of base resolution. See [merge-only retries](stage-protocol.md#implement-retries-with-clean-base-merges). ([#80](https://github.com/KaiaK808/bureau/pull/80))
-
-Codex implement/QA gate recovery now requires same-attempt receipt identity and proof that the exact configured command failed or aborted in a real repository-root execution. A legacy `SANDBOX_GATE:` claim alone stays blocked. Typed gate holds share that proof rule; independent product, security and human holds survive outside green. The executor reserves one outside run per stage attempt/gate/HEAD, with at most one verified executor publication commit between receipt and rerun. QA reuses its final outside test phase. This stricter behavior is on by default; keep `repo.test_command` set to the full project gate. See [outside-gate recovery](stage-protocol.md#sandbox-only-gate-recovery). ([#81](https://github.com/KaiaK808/bureau/pull/81))
-
-### Review convergence and ticket withdrawal
-
-The default review severity floor is now `BUG`: validated MINOR and SKIP findings are deferred, and a required fix can be discharged only by an exact match to a nonblank deferred finding. Choose `MINOR` for stricter review. A new total-round limit defaults to `max_review_cycles + 1` (four with the existing default); unresolved work at that limit blocks with `25`, while genuine approval can finish. Fresh attempts reserve a round before paid calls, including attempts later interrupted or failed. Changed policy or legacy approval records require fresh review; unchanged approval reuse and gate polling consume no round. Security/build floors and BLOCK remain in force. ([#84](https://github.com/KaiaK808/bureau/pull/84))
-
-Background ticket state is now a cooperative kill switch by default. Configured Done stops with `0`, configured cancelled/canceled/duplicate IDs with `26`, and other inactive IDs with `25`. A latched withdrawal prevents later refresh failure or reactivation from restarting that run. Providers finish their current call; subsequent ordinary publication and recovery stop. Implement's best-effort preservation push of commits already made still runs. Additional checkpoint refresh failures warn once and allow the authorized unit to continue; mandatory reads stay strict. App prepare/finish keeps its existing protocol. See [withdrawal](stage-protocol.md#cooperative-ticket-withdrawal). ([#85](https://github.com/KaiaK808/bureau/pull/85))
-
-### Optional conflict repair and silence detection
-
-Declared generated outputs and verified append-only files can be resolved deterministically, with dependency preparation, regeneration, explicit outside tests and checkout rollback. Both strategy lists default to empty; legacy mechanical rules remain available. Optional model repair runs only when `agents.conflict_resolver.enabled` is true, after deterministic resolution, with one durable attempt per ticket/base by default (maximum two). It cannot edit outside the conflict set or stage its own changes. Both forms need explicit `repo.test_command` and writable external snapshot storage sized for ignored dependencies too. ([#86](https://github.com/KaiaK808/bureau/pull/86), [#90](https://github.com/KaiaK808/bureau/pull/90))
-
-Unresolved rebase conflicts now roll back, hold for a human and return `17` even when model repair is disabled; the old fallback returned `0` or `25`. Successful semantic repair during review is published normally and receives fresh review inputs. Rebase alone force-pushes with a lease pinned to the fetched issue SHA. Green repair creates no approval or reusable merge gate. See [deterministic repair](stage-protocol.md#deterministic-conflict-resolution) and [model repair](stage-protocol.md#model-conflict-resolution).
-
-The provider silence watchdog is opt-in and defaults to `0` (off). Useful JSONL events reset its deadline; noise and CLI liveness do not. An optional longer child window requires an identified owned tool process. Silence drains owned writers, returns `25` with `timeout_kind: silence` and records a human hold after withdrawal checks. Review cancels and joins siblings before recording its partial paid round. Wall-clock timeout stays `124`; independent cancellation stays `130`. Owned-process cleanup also applies with the watchdog off. Test the installed CLI's streaming compatibility before enabling it. ([#88](https://github.com/KaiaK808/bureau/pull/88))
-
-### File admission and continuous dispatch
-
-The file-overlap gate is opt-in (`agents.file_overlap_gate: false` by default for standalone operations). When enabled, atomic reservations cover task paths and open Bureau PR diffs before Build and before writers, including app prepare/finish, Copy/QA and rework. Unknown scope is repository-wide, rename paths count on both sides, and generated docs/changelogs still overlap. Conflicts return quiet `29` without a paid pass, alert or human label. Waiting scope expansions retain the previous grant; reservations have no TTL and survive evidence pruning. ([#87](https://github.com/KaiaK808/bureau/pull/87))
-
-**The tmux launchers now start one supervised continuous dispatcher in place of stage pollers.** It requires explicit `agents.file_overlap_gate: true` even for one lane or dry-run; otherwise startup returns `24` before selection. After all writers are resynced, enable that gate before restarting a launcher. Dispatch defaults to two concurrent ticket lanes, drains downstream work first and refills when a lane finishes. The process-lane cap is separate from `agents.max_concurrent_issues`; existing batch execution retains default three when no shared value is configured. ([#89](https://github.com/KaiaK808/bureau/pull/89))
-
-Quiet admission, quota, transient service/authentication and pending merge-gate waits yield lanes. Human, unknown, terminal and intentional handoff outcomes persist in the skip store; reconcile the ticket, stop dispatch and remove its skip entry before retrying, clearing human holds too. Launch journals preserve outcomes across dispatcher loss; incomplete launches remain held. Owned stale/DIRTY Merge work can refresh the pinned base at most twice per lane and return to fresh Build Review through exit `20`. This creates no merge success or reused approval. Stop/join cleanup signals only live owned runtime handles. Separate clones/hosts and older writers do not share this coordination. See [dispatch](stage-protocol.md#continuous-ticket-dispatch) and [file admission](stage-protocol.md#file-overlap-admission).
-
-### Completion evidence, human briefs and local learning
-
-Receipts, run manifests, gate digests and a stable waiting register are automatic. Successful provider receipts must persist before success is forwarded; other evidence writes are best effort. Recovery requires the same attempt and HEAD plus the unchanged original result. `bureau-runtime.py waits` shows open causes and the observed waiting share; missing historical end times remain null. The private evidence store has a global 16 MiB/4,096-file budget, including staging; completed runs rotate at 128 runs/30 days and open waits/active or interrupted runs are protected. Full protected storage can prevent success persistence and end the provider call with `22`. ([#78](https://github.com/KaiaK808/bureau/pull/78))
-
-Existing human merge boundaries now automatically publish one acceptance brief per PR/HEAD to the ticket and PR, with independent retry status, immutable pointers and explicit missing evidence. A brief grants no acceptance or merge authority. Optional `insights` are normally empty and limited to three single-line observations of 280 characters per attempt. They stay local, with best-effort privacy filtering; malformed observations do not fail a stage. `bureau-learnings` drafts `BUREAU-BACKLOG.proposed.md` candidates for human triage. ([#82](https://github.com/KaiaK808/bureau/pull/82))
-
-Failed and held calls can also contribute insights. Shell-derived cause classes, metadata-only stage outcomes and review dispositions (`applied`, `declined`, `skip`, `deferred`) are collected automatically without a new switch. Each learning ledger keeps 2,048 rows/30 days on collection under the global evidence budget. Dispositions contain severity and a filtered repository-relative path; applied/declined remain model self-reports. Learning fields are removed from external comment projections and never change routing or rules. See [evidence and privacy](stage-protocol.md#versioned-background-evidence) and [failure learning](stage-protocol.md#failure-learning-records). ([#91](https://github.com/KaiaK808/bureau/pull/91))
-
-Stage prompts now select unexpired, path-relevant `LESSONS.md` entries plus untagged general advice, with a default complete-context budget of 8192 UTF-8 bytes per stage. Spec and review use the bounded form; both implement loops and QA gain injection. Whole entries are retained in deterministic order and oversized entries are dropped. Existing free-form files need no migration and become one bounded general set; a legacy file that cannot fit is dropped whole too. Entry metadata keys `paths`, `globs`, `tags`, `owner`, `expires` (inclusive UTC date) and `evidence` are optional and unset by default; advice never authorizes work. Set a stage budget to `0` to disable it. ([#92](https://github.com/KaiaK808/bureau/pull/92))
-
-Derived architecture decisions, their template and index are under [docs/adr](adr/README.md). They retain their dated derivation and open disagreements; proposed status records the historical snapshot. They add no runtime behavior. ([#83](https://github.com/KaiaK808/bureau/pull/83))
-
-## New settings and exit codes
-
-These defaults are runtime behavior after a coordinated upgrade. Optional keys can be omitted unless a selected feature requires them; existing configuration versions remain supported. See [configuration](configuration.md) for full validation rules.
-
-| Key | Default / adoption | Effect |
-|---|---|---|
-| `agents.max_concurrent_include_merge` | Mode-dependent: false for manual, true for auto | Explicit boolean overrides; Build Review always counts. Applies when the existing ticket cap is nonzero. |
-| `repo.base_branch` | `"main"` | Spec allocation/base reset; merge-only reuse falls back to symbolic `origin/HEAD`, then `origin/main`, when absent/invalid. An unresolved selected reuse base refuses reuse. |
-| `BUREAU_SPEC_LOCK_TIMEOUT` | `300` seconds; optional process-environment override | Whole seconds 1–86400 for number-allocation lock acquisition. |
-| `agents.review_min_severity` | `"BUG"`; on by default | `"MINOR"` is stricter; invalid values fall closed to MINOR. |
-| `agents.max_review_rounds` | Existing `max_review_cycles + 1`, normally `4`; on by default | Total rounds 1–1001; both total and cycle limits apply. |
-| `agents.ticket_active_states` | Configured `triage`, `spec`, `spec_review`, `design`, `copy`, `build`, `qa`, `build_review`, `merge`; on by default | An explicit list replaces the set; `[]` stops all tickets. Invalid configuration returns 24. |
-| `linear.teams[0].states.cancelled`, `.canceled`, `.duplicate` | Unset; optional configured UUIDs | Enable specific cancellation classification 26; other inactive IDs stop with 25. |
-| `repo.conflict_resolution.generated` | `[]`; opt-in | Entries require `repo.conflict_resolution.generated[].globs` and `.command`, with no defaults for either field; the command is an argv array. Declare every generator output. |
-| `repo.conflict_resolution.append_only_paths` | `[]`; opt-in | Exact filenames eligible for verified insertion-only repair. |
-| `agents.file_overlap_gate` | `false`; opt-in, required true for continuous dispatch | False/absent refuses dispatcher startup with 24; standalone legacy admission remains available. |
-| `agents.<stage>.silence_timeout_seconds`, `agents.providers.<provider>.silence_timeout_seconds` | `0` (off); opt-in | Stage overrides provider; finite seconds 0–86400. Explicit stage 0 disables an inherited window. |
-| `agents.<stage>.silence_child_timeout_seconds`, `agents.providers.<provider>.silence_child_timeout_seconds` | Effective normal silence window; optional | Stage overrides provider; finite seconds 0–86400, at least the normal window. |
-| `agents.parallel_lanes` | `2` for dispatch, `3` for batch when absent/null | Optional shared process-lane cap 1–1000; invalid configured values use 2 for both. Existing `--max-concurrent`, then `BUREAU_MAX_CONCURRENT`, override it. |
-| `agents.conflict_resolver.enabled` | `false`; opt-in | The containing `agents.conflict_resolver` object is optional. Requires explicit outside tests. |
-| `agents.conflict_resolver.max_attempts` | `1` while enabled | Integer 1 or 2; durable allowance per ticket/immutable base. |
-| `agents.conflict_resolver.runner`, `.model`, `.sandbox`, `.reasoning_effort`, `.timeout_seconds` | Shared provider resolution: default runner `claude`, CLI model/effort, Codex `workspace-write`, 3600-second timeout | Optional stage overrides and existing environment/provider precedence apply. Claude retains its existing permission policy. |
-| `agents.conflict_resolver.silence_timeout_seconds`, `.silence_child_timeout_seconds` | `0`, then effective normal window | Optional inherited watchdog settings; repair remains off until enabled. |
-| `BUREAU_RUNNER_CONFLICT_RESOLVER`, `BUREAU_MODEL_CONFLICT_RESOLVER`, `BUREAU_CODEX_MODEL_CONFLICT_RESOLVER`, `BUREAU_CLAUDE_MODEL_CONFLICT_RESOLVER`, `BUREAU_SANDBOX_CONFLICT_RESOLVER`, `BUREAU_REASONING_CONFLICT_RESOLVER` | Unset; optional overrides for the new stage | Inherit the resolved settings above. The first three use the existing accepted `.env` families; Claude model, sandbox and reasoning overrides are process-environment only. |
-| `agents.lessons_budget_bytes.spec`, `.implement`, `.qa`, `.code_review` | `8192` bytes each; on when lessons exist | Optional object; integers 0–1048576, 0 disables that stage, invalid values use 8192. |
-| `BUREAU_TEST_SHARD` | Unset: full suite; opt-in repository test selector | `i/n`, 1-based; used by the 4/6-shard CI matrix. |
-| `BUREAU_ADR_DENYLIST` | Unset: extra scan skipped; opt-in repository check | Existing external UTF-8 file, one private name per line; a supplied invalid path fails the ADR check. |
-
-Only two numeric exit codes are new. The rest of the vocabulary keeps its numbers; consumers must be updated together.
-
-| Exit | Class | Default / adoption |
-|---|---|---|
-| `28` | `spec-capacity-wait` | Automatic when the existing nonzero spec cap is full; quiet cancellable wait, no human escalation. Tick process/result keep 28 and `outcome: waiting`. |
-| `29` | `file-overlap-wait` | Only with the opt-in overlap gate; quiet wait before Build/writers, including manual guarded moves. Tick process/result keep 29 and `outcome: waiting`. |
-
-Existing exits gain these uses: `17` for unresolved rebase repair even with the resolver off; `20` for a dispatcher disabled-stage handoff or owned base-refresh return to review; `21` for a competing dispatcher/poller lock; `24` for invalid dispatcher/active-state configuration or missing trusted environment tooling; `25` for inactive tickets, unresolved review-round caps or opt-in silence (`timeout_kind: silence`); `26` for configured cancellation IDs; `124` for allocator lock timeout as well as wall-clock timeout; `130` for joined dispatcher cancellation. Withdrawal retains precedence over holds and repair failures. See the [complete exit contract](exit-codes.md).
-
-## New files and state locations
-
-All `bureau/` state paths below are relative to the Git common directory and shared by linked worktrees. They do not coordinate separate clones/hosts. Preserve authoritative coordination data while reconciling unfinished work; deleting evidence cannot release ownership or replenish repair attempts. Paths within a grouped evidence row share its `bureau/evidence/v1/` prefix.
-
-| Location | Default / adoption and purpose |
+| Result | Route |
 |---|---|
-| Installed `scripts/bureau-evidence.py`, `bureau-spec.py`, `bureau-gates.py`, `bureau-acceptance.py`, `bureau-insights.sh`, `bureau-lessons.py` | Installed by the complete scripts resync; support automatic evidence, phase reuse, gate recovery, briefs, learning and bounded lessons. Source copies live in `templates/scripts/`. |
-| Installed `scripts/bureau-paths.py`, `bureau-admission.py`, `bureau-dispatch.py`, `bureau-activity.py`, `bureau-conflicts.py` | Installed by the same resync; overlap, continuous dispatch, silence and configured repair use them under the feature settings above. Legacy conflict handling also uses the conflict helper by default. |
-| `bureau/spec-numbers.json`, `bureau/spec-numbers.guard` | Automatic persistent number reservations and allocator lock; retain across cleanup. |
-| `bureau/evidence/v1/guard`, `runs/RUN_ID/manifest.json`, `runs/RUN_ID/receipts/PROVIDER_ATTEMPT_ID.json` | Automatic private evidence lock, background attempts/gate records and provider receipts; receipt persistence is mandatory before success. |
-| `bureau/evidence/v1/waits/WAIT_ID.json`, `tickets/ISSUE.json`, `quarantine/*.json` | Automatic wait register, observation cursors and digest-only corruption quarantine; no raw logs. |
-| `bureau/evidence/v1/spec-checkpoints/ISSUE.json`, `bureau/spec-checkpoints-disabled/ISSUE.json` | Automatic version-2 committed phase records inside the v1 envelope and a durable reuse opt-out after storage failures. |
-| `logs/outside-gates/ATTEMPT_ID.log`, attempt `gate_reruns`/publication records in the manifest | Automatic for eligible Codex gate recovery; original outside output remains in normal logs, with reservations/digests in evidence. No second run after an incomplete reservation. |
-| `bureau/evidence/v1/acceptance/NUMBER-HEAD.json`, `bureau/acceptance.guard` | Automatic at existing human merge boundaries; frozen projected brief and pending/delivered destinations, plus publication lock. |
-| `bureau/evidence/v1/insights.jsonl`, `stage-outcomes.jsonl`, `review-dispositions.jsonl` | Automatic collection when data is available; bounded local-only learning ledgers. Insights are the explicit filtered free-text exception. |
-| `BUREAU-BACKLOG.proposed.md`, existing `LESSONS.md` | Optional learnings output for human triage; existing lessons gain default bounded injection and optional entry metadata. Neither file is automatically applied as policy. |
-| Linear `bureau-review-round` marker and manifest `review_round` | Automatic before paid review; persists round accounting and numeric/null usage without requiring cost tracking. |
-| `bureau/ticket-control/RUN_ID/stop-CODE` | Automatic latched background withdrawal shared by nested/parallel calls. |
-| `bureau/admission/v1.json`, `bureau/admission/guard` | Opt-in overlap inventory, granted reservations, migration/readiness/wait state and lock; no TTL, outside evidence pruning. |
-| `bureau/dispatch.lock`, `dispatch-skips.json`, `dispatch-lanes/ATTEMPT.json`, `dispatch-ready/ATTEMPT` and its `.paused` acknowledgment | Used by the new launcher dispatcher after overlap opt-in; locks exclude pollers, skips/launch outcomes survive restarts, readiness serializes startup. All share the `bureau/` prefix. |
-| `bureau/spec-admissions.json`, `spec-admissions.guard` | Automatic for capped Spec transitions through any updated driver; pending moves count before Linear catches up. Both share the `bureau/` prefix. |
-| `bureau/dispatch-logs/ISSUE-ATTEMPT.log`, repository `.worktrees/dispatch-ISSUE-ATTEMPT` | Per-lane dispatcher logs and unique owned worker paths after dispatch opt-in. |
-| `bureau/conflict-resolver/guard`, `bureau/conflict-resolver/DIGEST.json`, `bureau/conflict-provider-runs/` | Opt-in model-repair lock, fsynced attempt ledger and provider originals; ledger survives HEAD changes and evidence pruning. |
-| `docs/adr/0000-template.md`, `0001`–`0012` records and `README.md` | Documentation only; twelve derived decisions, one template and an index. `tests/test_adrs.sh` checks their contract. |
+| Spec Review `PASS`, UI needed | Design with `needs-ux` |
+| Spec Review `PASS`, no UI needed | Build through overlap admission |
+| Spec Review `FAIL` | Spec for rework |
+| UX `COMPLETE` | Build through overlap admission |
+| UX `INCOMPLETE` | Spec Review for rework |
+| UX `NEEDS_HUMAN` | Remain in Design with the existing human hold |
 
-Records are created as needed. There is no historical backfill. Provider originals and stage logs remain outside the evidence cap; inspect them under the existing local privacy policy. Evidence/checkpoint retention and optional failures are described in the [stage protocol](stage-protocol.md#retention-and-global-limits).
+The deterministic governance check can still force a valid Spec Review result to `FAIL`. Ticket withdrawal is checked first and retains precedence over result errors and human escalation.
+
+### Overlap readiness requires the current validated contract
+
+Spec Review/UX readiness now records `validated_status` (`PASS`/`COMPLETE`) and `result_contract_sha256`, the SHA-256 digest of the installed canonical schema, alongside the existing branch, HEAD, task, ticket and configuration identity. Missing identity, a different digest or a non-passing status invalidates and deletes the cached record. A pending overlap readiness record from v3.5.0 therefore causes one fresh provider call on the first resume after resync, including when its original result was `PASS` or `COMPLETE`.
+
+An invalid fresh result holds with `22`. A fresh passing result records current readiness; subsequent overlap waits still return quiet `29` and retry admission without another provider call. Copy readiness and admission rules remain unchanged. No manual readiness migration is needed.
+
+## New files
+
+| File | Installation and purpose |
+|---|---|
+| `templates/scripts/bureau-spec-review.schema.json` | Installed as `scripts/bureau-spec-review.schema.json` by scripts resync; validates Spec Review results by default. |
+| `templates/scripts/bureau-ux.schema.json` | Installed as `scripts/bureau-ux.schema.json` by the same resync; validates UX results by default. |
+| `tests/judged_stage_results_test.py`, `tests/test_judged_stage_results.sh` | Repository regression fixtures and their shell entry point; use fake Claude/Codex CLIs and local Git. |
+
+The existing common-Git `bureau/admission/v1.json` readiness entries gain the two identity fields above. This release adds no state store or configuration key.
 
 ## Upgrade an existing installation
 
-**From v3.4.1:** stop all shepherds, pollers, dispatchers and supervisors, preserve unfinished work, and compare installed script drift before replacing anything. Select tag `v3.5.0` in the source skill checkout and refresh skill discovery. Install/resync pinned Spec Kit 1.2.2 after resolving customized helpers, preserving the constitution and active integration. Resync the **scripts and interfaces scopes as one set** (`--resync-interfaces --resync-scripts`) in each adopting repository, resolving customization conflicts through [preview and resolve](migration.md#preview-and-resolve-asset-conflicts). `--update` changes configuration only. See [Upgrade to v3.5](migration.md#upgrade-to-v35).
+**From v3.5.0:** stop all shepherds, queue loops, dispatchers and supervisors, preserve unfinished work and customized assets, and compare installed-script drift. Select tag `v3.5.1` in the source skill checkout and refresh skill discovery. Resync the **complete scripts and interfaces scopes together** (`--resync-interfaces --resync-scripts`) in each adopting repository, including both new schema files, then restart drivers together. Resolve customizations through [preview and resolve](migration.md#preview-and-resolve-asset-conflicts). `--update` changes configuration only. See [Upgrade to v3.5.1](migration.md#upgrade-to-v351) and the [source-update instructions](migration.md#select-the-source-release).
 
-Before restart, choose the manual-Merge counting policy and review severity floor, check that repositories whose heads carry only skipped or neutral checks get a successful check or set `merge_min_required_checks: 0`, check active/cancellation state IDs and numeric settings, add/move governance in existing specs, and retain the shared number/checkpoint/admission/dispatch/repair records. Launcher users must explicitly enable overlap after every writer is updated. Silence and both configurable conflict strategies stay opt-in; do not enable them merely by copying an example. Restart drivers together, run doctor and qualify a representative ticket before unattended dispatch.
+Check customized prompts against the declared result fields and expect one fresh provider call for each old waiting Spec Review/UX readiness record. Legacy `ui_work_needed` strings stay accepted. Run doctor and qualify a representative ticket before unattended dispatch.
 
-**Mixed resync is incompatible:** old shepherds treat `28` as a failure, and an old exit-2 spec stage with a new shepherd can still escalate to `13`. Partial helper/schema/interface updates also break receipt/gate and provider-result contracts. Resyncing scripts cannot replace case statements already loaded in a running shell.
-
-**From earlier versions:** follow [Upgrade to v3.4.1](migration.md#upgrade-to-v341) and its earlier sections first, then the v3.5 steps above. Existing approved specs should resume downstream; number reservations do not import older issue-directory associations. Inspect any pre-fix development evidence store or previously published unsafe learning text separately; resync does not scrub history.
+**From earlier versions:** follow [Upgrade to v3.5](migration.md#upgrade-to-v35) and its earlier sections first, then the v3.5.1 steps above.
 
 ## Compatibility and rollback
 
-Configuration schema versions and the app prepare/finish protocol remain compatible. New numeric exits require coordinated consumers. Bash 3.2+ remains supported; the shell snapshot filter has the system-PATH Python/env requirements above, and merge-only reuse needs Git 2.38+. Existing customized templates, project instructions and the Spec Kit constitution must be preserved. Local locks and rollback cannot protect separate clones/hosts, unrelated external writers, detached commands or writes through external symlinks.
+The v3.5 exit-code vocabulary, configuration schemas, Spec Kit 1.2.2 pin and app prepare/finish protocol remain compatible. Exit `22` already exists; its use widens to invalid Spec Review/UX results. The new result schemas and stricter routing apply automatically. Partial script/schema updates are incompatible.
 
-To roll back, stop every driver, select tag `v3.4.1` in the source skill checkout and restore its scripts and interfaces together or the private backup ([rollback](migration.md#rollback)). Preview removal of new helpers and return Spec Kit assets to the saved compatible set; v3.4.1 expects Spec Kit 0.7.5. Restore earlier configuration, preserving the v3.5 coordination records separately for inspection. Disable the new launcher pool and reconcile leases, reservations and unfinished work before starting the older pollers. Old scripts cannot consume the v3.5 wait codes or coordinate its stores. Rollback cannot undo commits, pushes, published briefs or Linear/GitHub changes.
+To roll back, stop every driver, select tag `v3.5.0` in the source skill checkout and restore its scripts and interfaces together, or restore the private backup ([rollback](migration.md#rollback)), then restart drivers together. Preserve unfinished work and common-Git admission state for reconciliation. Rollback restores v3.5.0's result handling and cannot undo commits, pushes or Linear/GitHub changes made in between.
 
 ## Validation
 
-The maintainer's release validation record reports each PR reviewed by Codex before push. CI was judged at the top of the stack: [#93](https://github.com/KaiaK808/bureau/pull/93) at head `9842550` is green on all 10 shards (four `ubuntu-latest`, six `macos-latest`). `main` at `56d4170` equals that tested tree plus #83's 15-file ADR change (14 Markdown files and `tests/test_adrs.sh`). The full suite also ran locally on macOS, 151/151 at `950a5d9`, before the sharding commit. An Ubuntu 24.04 container run matched PR 1's container baseline. [#94](https://github.com/KaiaK808/bureau/pull/94), the merge CI gate fix on top of `56d4170`, was reviewed by Codex in two rounds; the full suite passed locally on macOS, 154/154 at `1b9615e`. GitHub CI on #94 at `1b9615e` is green on all 10 shards ([run 40617197495](https://github.com/KaiaK808/bureau/actions/runs/40617197495)) after one re-run of a macOS shard: on the first attempt `test_machine_gate_cancellation_preserves_130_and_the_log` in `tests/provider_adapter_test.py` failed on timing, in provider code that #94 does not change, and it passed 15 of 15 local runs. Provider calls are faked in tests. No installation has run v3.5.0 before the release, and there is no release candidate. Release preparation changes documentation only.
+The maintainer's release validation record reports two Codex review rounds for [#98](https://github.com/KaiaK808/bureau/pull/98): round 1 requested three changes and round 2 approved. GitHub CI on #98 at `0ce1b2a` is green on all 10 shards ([run 40703173924](https://github.com/KaiaK808/bureau/actions/runs/40703173924)) after one re-run of a macOS shard. On the first attempt, a gate cancellation test in `tests/provider_adapter_test.py` failed on timing; it covers code #98 does not change and is the known limitation below. The changed tests passed locally on macOS outside the sandbox. Provider calls are faked in tests. No installation has run v3.5.1 before the release. Release preparation changes documentation only.
 
-GitHub CI on `main` at `56d4170` is green on all 10 shards ([run 40573763078](https://github.com/KaiaK808/bureau/actions/runs/40573763078)), the first CI run that includes `tests/test_adrs.sh`.
+<!-- main CI result pending -->
 
-See [current release status](releases.md#current-release-status). The pending main-branch CI result remains for the maintainer to record.
+See [current release status](releases.md#current-release-status). The main-branch CI result remains for the maintainer to record.
 
 ## Known limitations
 
-Live provider/event compatibility and representative installation acceptance remain pending. Evidence is local and best effort except for successful provider receipts; unusual process/filesystem failures can lose observations. Original provider files are required for completion recovery. The insight filter can miss private text or reject benign text, and brief delivery cannot guarantee exactly-once service publication. Bounded lessons and learning remain advisory. Strict CI/base/just-in-time merge gates and human merge authority still apply after every local green result.
+On macOS CI, a gate cancellation test can intermittently lose the cancellation exit code `130`. A gate run is never falsely green because of this. The fix is planned for v3.6.0.

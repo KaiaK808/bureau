@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c72775ddcfbb8afdec423e36f692e5efecc44828c325ebb2c04b0f03f1f9602a">
+<meta name="bureau-source-sha256" content="7e7bf3d7e50d796cd49f3d34e64a2dcd2c5351a40d15b49e6a1d4d465823ddb6">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,24 +24,59 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.5.0</strong>, dated
-<strong>2026-10-28</strong> (prepared 2026-10-27), the current stable
+<p>This source tree contains <strong>Bureau v3.5.1</strong>, dated
+<strong>2026-10-29</strong> (prepared 2026-10-28), the current stable
 release, marked as latest. Its <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">GitHub
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.1">GitHub
 Release</a> records the exact tagged commit. Tagging and publication
 remain separate maintainer operations. The <a
 href="../../CHANGELOG.md">changelog</a> and <a
-href="release-notes.html">release notes</a> cover PRs #76–#94 and the Spec
-Kit 1.2.2 upgrade in #75. New exits 28/29 require coordinated consumers.
-Default changes include manual-Merge capacity counting, the merge CI
-gate's success-only counting, review severity/round policy, ticket
-withdrawal, completion evidence, bounded lessons and continuous launcher
-dispatch; the dispatcher requires explicit overlap opt-in. Configurable
-conflict repair and provider silence remain opt-in. From v3.4.1, stop
-every driver, preserve unfinished work and customized assets, select tag
-<code>v3.5.0</code>, install/resync Spec Kit 1.2.2, resync scripts and
-interfaces together and restart only after the checks in <a
-href="migration.html#upgrade-to-v35">Upgrade to v3.5</a>.</p>
+href="release-notes.html">release notes</a> cover only <a
+href="https://github.com/KaiaK808/bureau/pull/98">#98</a>: Spec Review
+and UX fail closed on invalid results, and overlap readiness requires a
+validated passing status and the installed schema digest. All changes
+apply by default after resync under the existing overlap configuration.
+No configuration keys or exit codes are new; exit 22 widens to invalid
+Spec Review/UX results. From v3.5.0 stop all drivers, preserve
+unfinished work and customizations, select tag <code>v3.5.1</code>,
+resync scripts and interfaces together including both new schemas, and
+restart all drivers. Pending v3.5.0 Spec Review/UX overlap readiness
+requires one fresh provider call. See <a
+href="migration.html#upgrade-to-v351">Upgrade to v3.5.1</a>.</p>
+<p>The maintainer's release validation record reports two Codex review
+rounds for <a href="https://github.com/KaiaK808/bureau/pull/98">#98</a>:
+round 1 requested three changes and round 2 approved. GitHub CI on #98
+at <code>0ce1b2a</code> is green on all 10 shards (<a
+href="https://github.com/KaiaK808/bureau/actions/runs/40703173924">run
+40703173924</a>) after one re-run of a macOS shard. On the first
+attempt, a gate cancellation test in
+<code>tests/provider_adapter_test.py</code> failed on timing; it covers
+code #98 does not change and is the known limitation below. The changed
+tests passed locally on macOS outside the sandbox. Provider calls are
+faked in tests. No installation has run v3.5.1 before the release.
+Release preparation changes documentation only.</p>
+<!-- main CI result pending -->
+
+<p><strong>Known limitation:</strong> On macOS CI, a gate cancellation
+test can intermittently lose the cancellation exit code
+<code>130</code>. A gate run is never falsely green because of this. The
+fix is planned for v3.6.0.</p>
+<p>The previous stable release is <strong>Bureau v3.5.0</strong>, dated
+<strong>2026-10-28</strong> (prepared 2026-10-27). Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">GitHub
+Release</a> records the exact tagged commit. The <a
+href="../../CHANGELOG.md">changelog</a> and <a
+href="release-notes-v3.5.0.html">release notes</a> cover PRs #76–#94 and
+the Spec Kit 1.2.2 upgrade in #75. New exits 28/29 require coordinated
+consumers. Default changes include manual-Merge capacity counting, the
+merge CI gate's success-only counting, review severity/round policy,
+ticket withdrawal, completion evidence, bounded lessons and continuous
+launcher dispatch; the dispatcher requires explicit overlap opt-in.
+Configurable conflict repair and provider silence remain opt-in. From
+v3.4.1, stop every driver, preserve unfinished work and customized
+assets, select tag <code>v3.5.0</code>, install/resync Spec Kit 1.2.2,
+resync scripts and interfaces together and restart only after the checks
+in <a href="migration.html#upgrade-to-v35">Upgrade to v3.5</a>.</p>
 <p>The maintainer's release validation record reports each PR reviewed
 by Codex before push. CI was judged at the top of the stack: <a
 href="https://github.com/KaiaK808/bureau/pull/93">#93</a> at head
@@ -63,14 +98,14 @@ href="https://github.com/KaiaK808/bureau/actions/runs/40617197495">run
 <code>tests/provider_adapter_test.py</code> failed on timing, in
 provider code that #94 does not change, and it passed 15 of 15 local
 runs. Provider calls are faked in tests. No installation has run v3.5.0
-before the release, and there is no release candidate. Release
-preparation changes documentation only.</p>
-<p>GitHub CI on <code>main</code> at <code>56d4170</code> is green on
-all 10 shards (<a
+before the release, and there is no release candidate. Its release
+preparation changed documentation only.</p>
+<p>For v3.5.0, GitHub CI on <code>main</code> at <code>56d4170</code> is
+green on all 10 shards (<a
 href="https://github.com/KaiaK808/bureau/actions/runs/40573763078">run
 40573763078</a>), the first CI run that includes
 <code>tests/test_adrs.sh</code>.</p>
-<p>The previous stable release is <strong>Bureau v3.4.1</strong>, dated
+<p>An earlier stable release is <strong>Bureau v3.4.1</strong>, dated
 <strong>2026-10-20</strong>. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.1">GitHub
 Release</a> records the exact tagged commit; the <a
