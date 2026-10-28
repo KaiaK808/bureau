@@ -537,11 +537,13 @@ p.run=lose_forward
                         self.assertEqual(json.loads(recovered.stdout), expected)
                         self.assertEqual(self.evidence()[1]['structured_source'], 'receipt')
 
-    def gate_action(self,action,value,context=None,expected_code=0,**env):
+    def gate_action(self,action,value,context=None,expected_code=0,diagnostics=None,**env):
         extra=['--gate-action',action]
         if context: extra+=['--gate-context',str(context)]
         proc=subprocess.run(self.command(*extra),input=json.dumps(value),capture_output=True,text=True,
                             env={**self.env,**env},timeout=12)
+        if diagnostics is not None:
+            diagnostics.append('provider '+action+' stdout:\n'+proc.stdout+'\nprovider stderr:\n'+proc.stderr)
         self.assertEqual(proc.returncode,expected_code,proc.stdout+proc.stderr)
         return json.loads(proc.stdout)
 
@@ -570,6 +572,7 @@ p.run=lose_forward
             self.assertFalse(self.gate_action('plan',mixed,context=context)['eligible'],kind)
 
     def test_machine_gate_timeout_is_bounded_and_reservation_cannot_retry(self):
+        diagnostics=[]
         command='echo started >> outside-runs; sleep 2'
         self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
         value=self.sandbox_result('gate was killed')
@@ -577,11 +580,13 @@ p.run=lose_forward
         context=self.root/'context/identity.json'
         self.run_provider('--schema',str(ROOT/'templates/scripts/bureau-implement.schema.json'),'--gate-context',str(context),
                           FINAL=json.dumps(value),GATE_COMMAND=command,GATE_CODE='137')
-        plan=self.gate_action('plan',value,context=context)
-        first=self.gate_action('run',plan,BUREAU_STAGE_TIMEOUT='0.15')
-        self.assertFalse(first['green'])
-        self.assertEqual(first,self.gate_action('run',plan))
-        self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['started'])
+        plan=self.gate_action('plan',value,context=context,diagnostics=diagnostics)
+        first=self.gate_action('run',plan,BUREAU_STAGE_TIMEOUT='0.15',diagnostics=diagnostics)
+        self.assertFalse(first['green'],'\n'.join(diagnostics))
+        self.assertEqual(first['reason'],'outside gate red, aborted or incomplete','\n'.join(diagnostics))
+        repeated=self.gate_action('run',plan,diagnostics=diagnostics)
+        self.assertEqual(first,repeated,'\n'.join(diagnostics))
+        self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['started'],'\n'.join(diagnostics))
 
     def test_machine_gate_cancellation_preserves_130_and_the_log(self):
         command='echo started > outside-ready; sleep 20'
@@ -598,16 +603,20 @@ p.run=lose_forward
             proc.stdin.write(json.dumps(plan)); proc.stdin.close(); proc.stdin=None
             deadline=time.monotonic()+5
             while not (self.root/'outside-ready').exists() and time.monotonic()<deadline: time.sleep(.02)
-            self.assertTrue((self.root/'outside-ready').exists(),'outside command never started')
+            if not (self.root/'outside-ready').exists():
+                proc.terminate()
+                stdout,stderr=proc.communicate(timeout=5)
+                self.fail('outside command never started\nprovider stdout:\n'+stdout+'\nprovider stderr:\n'+stderr)
             proc.send_signal(signal.SIGTERM)
             stdout,stderr=proc.communicate(timeout=5)
-            self.assertEqual(proc.returncode,130,stdout+stderr)
-            self.assertFalse(json.loads(stdout)['green'])
+            diagnostics='provider stdout:\n'+stdout+'\nprovider stderr:\n'+stderr
+            self.assertEqual(proc.returncode,130,diagnostics)
+            self.assertFalse(json.loads(stdout)['green'],diagnostics)
             manifest=json.loads(p.evidence_store(self.root).manifest_path(plan['run_id']).read_text())
             record=manifest['attempts'][0]['gate_reruns'][0]['result']
-            self.assertEqual(record['normalized_exit'],130)
-            self.assertEqual(record['abort'],'kill')
-            self.assertTrue(p.evidence_store(self.root).valid_execution(record))
+            self.assertEqual(record['normalized_exit'],130,diagnostics)
+            self.assertEqual(record['abort'],'kill',diagnostics)
+            self.assertTrue(p.evidence_store(self.root).valid_execution(record),diagnostics)
         finally:
             if proc.poll() is None: proc.kill(); proc.communicate()
 

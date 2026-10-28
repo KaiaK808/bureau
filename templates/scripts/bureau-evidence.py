@@ -83,6 +83,15 @@ def observe(call, *args, **kwargs):
     try: return call(*args, **kwargs)
     except Exception:
         warn()
+        if os.environ.get('BUREAU_EVIDENCE_DEBUG') == '1':
+            try:
+                import traceback
+                pending = traceback.format_exc().encode('utf-8', errors='backslashreplace')
+                while pending:
+                    written = os.write(2, pending)
+                    if written <= 0: break
+                    pending = pending[written:]
+            except Exception: pass
         return None
 
 

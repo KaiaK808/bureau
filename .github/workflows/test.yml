@@ -1,8 +1,9 @@
 name: test
+# This is a debug branch that is never merged.
 
 on:
   push:
-    branches: [main]
+    branches: [main, debug/gate-evidence-unavailable]
   pull_request:
 
 # Cancel any older in-progress run on the same ref when a new push lands.
@@ -20,6 +21,7 @@ permissions:
 
 jobs:
   shell:
+    if: github.ref != 'refs/heads/debug/gate-evidence-unavailable' && github.head_ref != 'debug/gate-evidence-unavailable'
     name: ${{ matrix.os }} (shard ${{ matrix.shard }}/${{ matrix.total }})
     strategy:
       fail-fast: false
@@ -88,3 +90,32 @@ jobs:
 
       - name: Run test harness
         run: PATH="/bin:$PATH" /bin/bash tests/run.sh
+
+  gate-evidence-debug:
+    if: github.ref == 'refs/heads/debug/gate-evidence-unavailable' || github.head_ref == 'debug/gate-evidence-unavailable'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      BUREAU_EVIDENCE_DEBUG: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    defaults:
+      run:
+        shell: /bin/bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Repeat only the two failing gate tests (30 times each)
+        run: |
+          python3 --version
+          failed=0
+          for iteration in {1..30}; do
+            echo "::group::Gate evidence iteration $iteration/30"
+            if python3 tests/provider_adapter_test.py -v \
+              ProviderTests.test_machine_gate_cancellation_preserves_130_and_the_log \
+              ProviderTests.test_machine_gate_timeout_is_bounded_and_reservation_cannot_retry; then
+              :
+            else
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
