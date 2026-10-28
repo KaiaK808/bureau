@@ -2,6 +2,7 @@
 import argparse
 import errno
 import importlib.util
+import itertools
 import os
 from pathlib import Path
 import signal
@@ -37,11 +38,17 @@ class ProcessGroupTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(prefix='bureau process groups ')
         self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name)
+        self.root = Path(temp.name).resolve()
         self.child = Mock(pid=123456, returncode=0)
         self.child.poll.return_value = 0
         self.child.wait.return_value = 0
         self.child.communicate.return_value = ('output', None)
+        self.inspectors = {}
+        for module in (p, r, a.p, c.provider, d.r):
+            if hasattr(module, 'pg'):
+                self.inspectors[module.pg] = module.pg.inspect_groups
+                fake = patch.object(module.pg, 'inspect_groups', return_value=set())
+                fake.start(); self.addCleanup(fake.stop)
         self.previous = {sig: signal.getsignal(sig) for sig in
                          (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM)}
         self.addCleanup(self.restore_handlers)
@@ -63,7 +70,7 @@ class ProcessGroupTests(unittest.TestCase):
                 (self.root / 'outside.log').unlink(missing_ok=True)
                 options = dict(timeout=60, untrusted_env='default')
                 def wait(timeout=None):
-                    if timeout is not None:
+                    if timeout == 60:
                         if site == 'signal': signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
                         if site == 'timeout': raise subprocess.TimeoutExpired('fixture', timeout)
                     return 0
@@ -77,7 +84,6 @@ class ProcessGroupTests(unittest.TestCase):
                 self.assertEqual(killpg.call_count, 1 if site == 'cleanup' else 2)
                 self.child.kill.assert_not_called()
                 self.assertEqual(bool(options.get('_gate_cancelled')), site == 'signal')
-                self.assertFalse(options.get('_gate_execution_failed'))
                 self.assert_handlers_restored()
 
     def test_outside_live_group_falls_back_and_latches_before_kill(self):
@@ -88,7 +94,7 @@ class ProcessGroupTests(unittest.TestCase):
             self.child.poll.return_value = -signal.SIGKILL
         self.child.kill.side_effect = kill
         def wait(timeout=None):
-            if timeout is not None: signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+            if timeout == 60: signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
             return -signal.SIGKILL
         self.child.wait.side_effect = wait
         with patch.object(p.os, 'killpg', side_effect=denied()):
@@ -107,10 +113,13 @@ class ProcessGroupTests(unittest.TestCase):
                     if cancel: signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
                     raise subprocess.TimeoutExpired('fixture', timeout)
                 self.child.wait.side_effect = wait
-                with patch.object(p.os, 'killpg', side_effect=denied()):
-                    self.assertEqual(self.outside(options), (130, 'kill') if cancel else (124, 'timeout'))
+                with patch.object(p.os, 'killpg', side_effect=denied()), \
+                        patch.object(p.pg, 'inspect_groups', return_value={self.child.pid}):
+                    with self.assertRaises(p.GateExecutionError) as failure: self.outside(options)
+                self.assertEqual((failure.exception.code, failure.exception.abort),
+                                 (130, 'kill') if cancel else (124, 'timeout'))
+                self.assertEqual(failure.exception.reason, 'outside gate termination uncertain')
                 self.assertEqual(bool(options.get('_gate_cancelled')), cancel)
-                self.assertTrue(options['_gate_execution_failed'])
                 self.child.kill.assert_called()
                 self.assert_handlers_restored()
 
@@ -118,15 +127,16 @@ class ProcessGroupTests(unittest.TestCase):
         options = dict(timeout=60, untrusted_env='default')
         self.child.wait.side_effect = [0, OSError('cleanup wait failed')]
         with patch.object(p.os, 'killpg', side_effect=denied()):
-            self.assertEqual(self.outside(options), (0, None))
-        self.assertTrue(options['_gate_execution_failed'])
+            with self.assertRaises(p.GateExecutionError) as failure: self.outside(options)
+        self.assertEqual(failure.exception.code, 22)
         self.assert_handlers_restored()
 
     def test_outside_execution_error_restores_handlers(self):
         options = dict(timeout=60, untrusted_env='default')
         self.child.wait.side_effect = [OSError('execution wait failed'), 0]
         with patch.object(p.os, 'killpg', side_effect=denied()):
-            with self.assertRaisesRegex(OSError, 'execution wait failed'): self.outside(options)
+            with self.assertRaisesRegex(p.GateExecutionError, 'outside gate execution failed') as failure: self.outside(options)
+        self.assertEqual(str(failure.exception.__cause__), 'execution wait failed')
         self.assert_handlers_restored()
 
     def test_shared_helpers_live_eperm_fallback_failure_and_esrch(self):
@@ -138,7 +148,8 @@ class ProcessGroupTests(unittest.TestCase):
                     module.signal_group(self.child, signal.SIGTERM)
                     self.child.kill.assert_called_once()
                     self.child.kill.side_effect = denied()
-                    with self.assertRaises(PermissionError): module.signal_group(self.child, signal.SIGKILL)
+                    with patch.object(module.pg, 'inspect_groups', return_value={self.child.pid}):
+                        with self.assertRaises(module.pg.TerminationUncertain): module.signal_group(self.child, signal.SIGKILL)
                 self.child.kill.side_effect = None
                 self.child.reset_mock()
                 with patch.object(module.os, 'killpg', side_effect=ProcessLookupError):
@@ -168,6 +179,27 @@ class ProcessGroupTests(unittest.TestCase):
                 else: self.assertEqual(transaction.run(['fixture']), 'output')
                 self.assertIsNone(transaction.child)
 
+    def test_acceptance_and_conflict_helpers_refuse_live_or_uninspectable_descendants(self):
+        for module, inspection_module in ((a, a.p.pg), (c, c.provider.pg)):
+            for unavailable in (False, True):
+                for code in (0, 130):
+                    with self.subTest(module=module.__name__, unavailable=unavailable, code=code):
+                        self.child.returncode = code
+                        inspection = (dict(side_effect=inspection_module.TerminationUncertain('inspection unavailable'))
+                                      if unavailable else dict(return_value={self.child.pid}))
+                        with patch.object(module.subprocess, 'Popen', return_value=self.child), \
+                                patch.object(module.os, 'killpg', side_effect=denied()), \
+                                patch.object(inspection_module, 'inspect_groups', **inspection):
+                            if module is a:
+                                expected = a.PublicationInterrupted if code == 130 else inspection_module.TerminationUncertain
+                                with self.assertRaises(expected): a.bounded(['gh'], self.root)
+                            else:
+                                transaction = c.Transaction.__new__(c.Transaction)
+                                transaction.repo, transaction.config, transaction.failure_cause = self.root, {}, 'human_hold'
+                                expected = c.ProviderStop if code == 130 else inspection_module.TerminationUncertain
+                                with self.assertRaises(expected): transaction.run(['fixture'], trusted=True)
+                                self.assertIsNone(transaction.child)
+
     def test_dispatch_stop_eperm_race_retains_cancellation(self):
         helper = d.Helpers(self.root)
         helper.child = self.child
@@ -178,18 +210,24 @@ class ProcessGroupTests(unittest.TestCase):
         self.assertEqual(stopped.exception.code, 130)
 
     def test_dispatch_escalation_eperm_retains_cancellation_and_clears_handle(self):
-        helper = d.Helpers(self.root)
+        helper = d.Helpers(self.root, self.root)
         def communicate(timeout=None):
+            if self.child.communicate.call_count > 10:
+                raise AssertionError('dispatcher escalation exceeded its bound')
             helper.stopping = True
-            self.child.communicate.side_effect = None
             raise subprocess.TimeoutExpired('fixture', timeout)
         self.child.communicate.side_effect = communicate
         with patch.object(d.subprocess, 'Popen', return_value=self.child), \
                 patch.object(d.os, 'killpg', side_effect=denied()), \
-                patch.object(d.time, 'monotonic', side_effect=[1, 10]):
+                patch.object(d.r.pg, 'inspect_groups', return_value={self.child.pid}), \
+                patch.object(d.time, 'monotonic', side_effect=itertools.count()):
             with self.assertRaises(d.Stop) as stopped: helper.call('fixture')
         self.assertEqual(stopped.exception.code, 130)
         self.assertIsNone(helper.child)
+        self.assertLess(self.child.communicate.call_count, 10, 'live stdout survivor must not wedge escalation')
+        self.assertTrue(helper.failure_path.exists())
+        with self.assertRaises(d.Stop) as held: d.Helpers(self.root, self.root).call('fixture')
+        self.assertEqual(held.exception.code, 25)
 
     def test_provider_signal_eperm_preserves_130_and_handlers(self):
         options = p.configuration('implement', {'agents': {'runner': 'claude'}}, {})
@@ -218,6 +256,28 @@ class ProcessGroupTests(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired): r.shell(self.root, 'fixture', timeout=1)
         self.assertEqual(self.child.communicate.call_count, 2)
 
+    def test_runtime_helper_timeout_with_live_descendant_stays_timeout(self):
+        self.child.communicate.side_effect = subprocess.TimeoutExpired('fixture', 1)
+        with patch.object(r.subprocess, 'Popen', return_value=self.child), \
+                patch.object(r.os, 'killpg', side_effect=denied()), \
+                patch.object(r.pg, 'inspect_groups', return_value={self.child.pid}):
+            with self.assertRaises(subprocess.TimeoutExpired): r.shell(self.root, 'fixture', timeout=1)
+        self.assertEqual(self.child.communicate.call_count, 1)
+
+    def test_provider_timeout_with_live_descendant_stays_124(self):
+        options = p.configuration('implement', {'agents': {'runner': 'claude'}}, {})
+        options.update(untrusted_env='default', timeout=1)
+        self.child.communicate.side_effect = subprocess.TimeoutExpired('fixture', 1)
+        with patch.object(p.subprocess, 'Popen', return_value=self.child), \
+                patch.object(p.os, 'killpg', side_effect=denied()), \
+                patch.object(p.pg, 'inspect_groups', return_value={self.child.pid}), \
+                patch.object(p.time, 'monotonic', side_effect=itertools.count(0, 2)):
+            code, _, metadata = p._run(options, 'fixture', '', self.root, self.root)
+        self.assertEqual(code, 124)
+        self.assertEqual(metadata['outcome'], 'timeout')
+        self.assertTrue(metadata['termination_uncertain'])
+        self.assert_handlers_restored()
+
     def test_runtime_forward_eperm_preserves_130_and_ownership(self):
         store = Mock(root=self.root)
         store.claim.return_value = ['issue:TST-1']
@@ -231,13 +291,15 @@ class ProcessGroupTests(unittest.TestCase):
         self.child.wait.side_effect = wait
         with patch.dict(os.environ, {}, clear=True), patch.object(r, 'config_for', return_value=config), \
                 patch.object(r, 'evidence_head', return_value='a' * 40), patch.object(r.e, 'Store'), \
-                patch.object(r.os, 'killpg', side_effect=denied()):
+                patch.object(r.os, 'killpg', side_effect=denied()), \
+                patch.object(r.pg, 'inspect_groups', return_value={self.child.pid}):
             self.assertEqual(r.execute(self.root, args, store), 130)
         self.assertTrue(store.finish_execution.call_args.args[2])
 
     def test_runtime_probe_eperm_requires_positive_process_state_inspection(self):
         store = r.Store.__new__(r.Store)
-        with patch.object(r.os, 'killpg', side_effect=denied()), patch.object(r.subprocess, 'check_output') as ps:
+        with patch.object(r.os, 'killpg', side_effect=denied()), patch.object(r.subprocess, 'check_output') as ps, \
+                patch.object(r.pg, 'inspect_groups', self.inspectors[r.pg]):
             ps.return_value = '123456 Z\n'
             store.assert_groups_stopped({123456})
             ps.return_value = '123456 S\n'
@@ -254,14 +316,15 @@ class ProcessGroupTests(unittest.TestCase):
             self.child.poll.return_value = None
             self.child.kill.side_effect = denied()
         def wait(timeout=None):
-            if timeout is not None:
+            if timeout == 60:
                 if cancel: signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
                 raise subprocess.TimeoutExpired('fixture', timeout)
             return 0
         self.child.wait.side_effect = wait
-        with patch.object(sys, 'argv', ['runner', '60', 'fixture', str(self.root / 'status')]), \
+        with patch.object(sys, 'argv', ['runner', '60', 'fixture', str(self.root / 'status'), str(SCRIPTS)]), \
                 patch.object(subprocess, 'Popen', return_value=self.child), patch.object(os, 'killpg', side_effect=killpg), \
-                patch('time.monotonic', side_effect=[0, 1]), patch('time.sleep'):
+                patch.object(subprocess, 'check_output', return_value='123456 S\n' if live else '123456 Z\n'), \
+                patch('time.monotonic', side_effect=itertools.count()), patch('time.sleep'):
             exec(compile(source, 'post-implement-runner', 'exec'), {})
 
     def test_inline_eperm_at_term_probe_and_kill_preserves_timeout_and_signal(self):
@@ -272,11 +335,49 @@ class ProcessGroupTests(unittest.TestCase):
                     self.assertEqual(stopped.exception.code, 143 if cancel else 124)
                     self.assertEqual((self.root / 'status').read_text(), 'signal' if cancel else 'timeout')
 
-    def test_inline_live_eperm_direct_kill_failure_surfaces(self):
+    def test_inline_live_eperm_preserves_determined_timeout(self):
         for target in (signal.SIGTERM, 0, signal.SIGKILL):
             with self.subTest(target=target):
-                with self.assertRaises(PermissionError): self.inline_runner(target, live=True)
-                self.child.kill.assert_called()
+                with self.assertRaises(SystemExit) as stopped: self.inline_runner(target, live=True)
+                self.assertEqual(stopped.exception.code, 124)
+                if target != 0: self.child.kill.assert_called()
+
+    def test_exited_leader_eperm_requires_no_live_descendant_and_preserves_stop(self):
+        # Model group membership independently from the already-exited leader.
+        for membership in ('live', 'unavailable', 'zombies', 'empty'):
+            for site, expected in (('signal', (130, 'kill')), ('timeout', (124, 'timeout')), ('cleanup', (0, None))):
+                with self.subTest(membership=membership, site=site):
+                    (self.root / 'outside.log').unlink(missing_ok=True)
+                    options = dict(timeout=60, untrusted_env='default')
+                    def wait(timeout=None):
+                        if timeout == 60:
+                            if site == 'signal': signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+                            if site == 'timeout': raise subprocess.TimeoutExpired('fixture', timeout)
+                        return 0
+                    self.child.wait.side_effect = wait
+                    inspection = (dict(side_effect=p.pg.TerminationUncertain('inspection unavailable'))
+                                  if membership == 'unavailable' else
+                                  dict(return_value={self.child.pid} if membership == 'live' else set()))
+                    with patch.object(p.os, 'killpg', side_effect=denied()), patch.object(p.pg, 'inspect_groups', **inspection):
+                        if membership in ('live', 'unavailable'):
+                            with self.assertRaises(p.GateExecutionError) as failed: self.outside(options)
+                            self.assertEqual(failed.exception.reason, 'outside gate termination uncertain')
+                            self.assertEqual((failed.exception.code, failed.exception.abort),
+                                             expected if site != 'cleanup' else (22, None))
+                        else: self.assertEqual(self.outside(options), expected)
+                    self.assert_handlers_restored()
+
+    def test_group_snapshot_ignores_zombies_but_refuses_incomplete_inspection(self):
+        inspect = self.inspectors[r.pg]
+        for output, live in (('123456 Z\n123456 Z+\n', set()), ('', set()),
+                             ('123456 Z\n123456 S+\n', {123456})):
+            with patch.object(r.subprocess, 'check_output', return_value=output):
+                self.assertEqual(inspect({123456}), live)
+        for failure in (PermissionError('ps denied'), subprocess.TimeoutExpired('ps', 2)):
+            with patch.object(r.subprocess, 'check_output', side_effect=failure):
+                with self.assertRaises(r.pg.TerminationUncertain): inspect({123456})
+        with patch.object(r.subprocess, 'check_output', return_value='unreadable row\n'):
+            with self.assertRaises(r.pg.TerminationUncertain): inspect({123456})
 
 
 if __name__ == '__main__': unittest.main()

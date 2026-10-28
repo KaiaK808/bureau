@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9f50984f70d9c643a6df99c80bf4df2216ddd1437724d2f4665b3aefd852a090">
+<meta name="bureau-source-sha256" content="2c804658e1c1a66393c84ca0e4cf0ecdfb79f113f013a2809073d09c8e9b7184">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -382,16 +382,37 @@ success and <code>outside gate red, aborted or incomplete</code> for
 failed, timed-out, cancelled or incomplete runs.
 <code>gate evidence unavailable</code> means evidence reconciliation
 failed; <code>outside gate execution failed</code> means command
-execution or cleanup failed. Execution failures return
-<code>eligible: false</code> and <code>green: false</code> and keep any
-outside-log pointer. Every claimed reservation prevents another
+execution or cleanup failed, and
+<code>outside gate termination uncertain</code> means the process group
+cannot be proven stopped after a permission error. Execution failures
+return <code>eligible: false</code> and <code>green: false</code> and
+keep any outside-log pointer. Every claimed reservation prevents another
 execution, including failed or incomplete runs. Cancellation is latched
 before termination and exits 130 through cleanup failures; timeout
-records retain exit 124 and <code>abort: timeout</code>. Signal handlers
-are restored on every path. On macOS a permission error from signalling
-an exited or zombie group is harmless; a live child receives a direct
-kill, whose failure keeps recovery blocked. A determined outcome
-survives cleanup errors, which still prevent a green gate.</p>
+retains exit 124 and <code>abort: timeout</code>. On execution failure
+those determined outcomes are carried by the failure response as
+<code>normalized_exit</code> and <code>abort</code>; an otherwise
+successful command becomes 22. No successful rerun record is persisted.
+Signal handlers are restored on every path.</p>
+<p>An exited leader and a best-effort <code>child.kill()</code> do not
+prove that its descendants have stopped. The shared
+<code>bureau-process.py</code> helper treats group EPERM as failure
+unless complete process-state inspection shows no live member. On both
+macOS and Linux it runs <code>ps -axo pgid=,stat=</code> with a
+two-second bound, ignores zombie states (<code>Z</code>) and fails
+closed on unavailable, timed-out or malformed inspection. Outside-gate
+execution/cleanup failure raises an exception carrying the stop outcome:
+both gate recovery and conflict validation reject it. Acceptance and
+ordinary conflict helpers propagate cleanup errors instead of reporting
+success; existing cancellation and timeout outcomes survive. Dispatcher
+helpers allow five seconds before SIGKILL, at most one more second to
+drain stdout and one second to reap the leader. A survivor or
+unavailable inspection records a termination hold at
+<code>&lt;git common dir&gt;/bureau/dispatch-termination.json</code>;
+stop and inspect the recorded group before explicitly removing the hold.
+Stored IDs are never signalled during release or hold reconciliation.
+Resync the complete scripts scope, including the shared helper, after
+comparing installed drift.</p>
 <p>A Codex child without <code>TMPDIR</code> gets a private
 <code>bureau-codex-*</code> directory under resolved <code>/tmp</code>,
 outside the repository regardless of <code>TEMP</code> or

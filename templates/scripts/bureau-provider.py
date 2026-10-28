@@ -27,6 +27,10 @@ _gate_spec.loader.exec_module(g)
 _activity_spec = importlib.util.spec_from_file_location('bureau_activity', Path(__file__).resolve().with_name('bureau-activity.py'))
 a = importlib.util.module_from_spec(_activity_spec)
 _activity_spec.loader.exec_module(a)
+_process_spec = importlib.util.spec_from_file_location('bureau_process', Path(__file__).resolve().with_name('bureau-process.py'))
+pg = importlib.util.module_from_spec(_process_spec)
+_process_spec.loader.exec_module(pg)
+signal_group = pg.signal_group
 
 
 # The values the Claude CLI's --effort accepts.
@@ -530,11 +534,26 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     interrupted = None
     child = None
     owned = None
+    timed_out = False
+    termination_failure = None
     def kill(signum):
-        if child and owned:
-            owned.scan(); owned.signal(signum)
-        elif child:
-            signal_group(child, signum)
+        nonlocal termination_failure
+        try:
+            if child and owned:
+                owned.scan(); owned.signal(signum)
+            elif child:
+                signal_group(child, signum)
+        except OSError as exc:
+            if not interrupted and not timed_out: raise
+            termination_failure = str(exc)
+            note('Bureau provider termination uncertain: ' + str(exc))
+    def reap():
+        nonlocal termination_failure
+        try: child.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            if not interrupted and not timed_out: raise
+            termination_failure = 'provider did not exit after bounded escalation'
+            note('Bureau provider termination uncertain: ' + termination_failure)
     def stop(signum, frame):
         nonlocal interrupted
         # A hang-up stops the call like SIGTERM, and the provider's process
@@ -630,7 +649,7 @@ def _run(options, prompt, system, repo, evidence, schema=None):
                         try: child.communicate(timeout=.3 if owned else 5)
                         except subprocess.TimeoutExpired: pass
                         kill(signal.SIGKILL)
-                        child.communicate()
+                        reap()
                     if owned: owned.drain()
                 finally:
                     signal.setitimer(signal.ITIMER_REAL, 0)
@@ -639,14 +658,16 @@ def _run(options, prompt, system, repo, evidence, schema=None):
                         if reader.is_alive():
                             stream_error.append('execution stream did not close')
                             if observer: observer.error = 'execution stream did not close'
-            if interrupted: return 130, '', dict(outcome='cancelled', provider_exit=child.returncode)
+            if interrupted: return 130, '', dict(outcome='cancelled', provider_exit=child.returncode,
+                                                termination_uncertain=termination_failure)
             if timed_out:
                 if timeout_kind == 'silence' and options.get('cancel_file') and options.get('phase') in ('correctness', 'security', 'performance'):
                     # A specialist shell can also return 25 for withdrawal.
                     # Give its parent evidence of an actual watchdog failure.
                     e.observe(e.atomic, Path(options['cancel_file'] + '.' + options['phase'] + '.silence'), dict(timeout_kind='silence'))
                 return (25 if timeout_kind == 'silence' else 124), '', dict(outcome='timeout', timeout_kind=timeout_kind,
-                            provider_exit=child.returncode, duration_seconds=time.monotonic()-started)
+                            provider_exit=child.returncode, duration_seconds=time.monotonic()-started,
+                            termination_uncertain=termination_failure)
             # Without the watchdog this remains observational gate evidence;
             # an inherited pipe cannot invalidate a successful final result.
             if stream_error and options.get('silence_timeout_seconds'):
@@ -654,21 +675,15 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     finally:
         # Exceptional reader/inspection/spawn paths must also finish all owned
         # writers before the receipt or the trusted shell can report a stop.
-        if child and child.poll() is None:
-            kill(signal.SIGKILL)
-            child.communicate()
-        if owned: owned.drain()
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        for sig, handler in previous.items(): signal.signal(sig, handler)
-        if tempdir:
-            try:
-                # A failure after Popen must also finish the child before its
-                # temporary directory is removed. Normal exits already waited.
-                if child and child.poll() is None:
-                    kill(signal.SIGKILL)
-                    child.communicate()
-            finally:
-                signal.setitimer(signal.ITIMER_REAL, 0)
+        try:
+            if child and child.poll() is None:
+                kill(signal.SIGKILL)
+                reap()
+            if owned: owned.drain()
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            for sig, handler in previous.items(): signal.signal(sig, handler)
+            if tempdir:
                 try: shutil.rmtree(tempdir)
                 except OSError as exc: note('Bureau provider: could not remove ' + tempdir + ': ' + str(exc))
     options['_provider_exit'] = child.returncode
@@ -917,14 +932,14 @@ def note(text):
         os.dup2(devnull, 2); os.close(devnull)
 
 
-def signal_group(child, signum):
-    """Signal an owned group, falling back to its live child on EPERM."""
-    try: os.killpg(child.pid, signum)
-    except ProcessLookupError: pass
-    except PermissionError:
-        # macOS can deny signalling an exited/zombie group. A live leader
-        # still needs stopping; failure of the direct kill must reach the caller.
-        if child.poll() is None: child.kill()
+class GateExecutionError(OSError):
+    """Execution/cleanup failed, even if the command already returned zero."""
+    def __init__(self, failure, outcome):
+        self.code, self.abort = outcome if outcome is not None else (22, None)
+        if self.code == 0: self.code = 22
+        self.reason = ('outside gate termination uncertain' if isinstance(failure, pg.TerminationUncertain)
+                       else 'outside gate execution failed')
+        super().__init__(self.reason)
 
 
 def outside_gate(options, repo, command, log):
@@ -948,7 +963,7 @@ def outside_gate(options, repo, command, log):
             except subprocess.TimeoutExpired:
                 if outcome is None: outcome = 124, 'timeout'
                 signal_group(child, signal.SIGKILL)
-                child.wait()
+                child.wait(timeout=5)
             else:
                 if code == 130: options['_gate_cancelled'] = True
                 if outcome is None: outcome = code, 'kill' if code < 0 or code == 130 else None
@@ -959,7 +974,7 @@ def outside_gate(options, repo, command, log):
             if child:
                 # A successful check may leave background writers in its group.
                 signal_group(child, signal.SIGKILL)
-                child.wait()
+                child.wait(timeout=5)
         except Exception as exc:
             failure = failure or exc
         finally:
@@ -967,9 +982,9 @@ def outside_gate(options, repo, command, log):
                 try: signal.signal(sig, handler)
                 except Exception as exc: failure = failure or exc
     if failure is not None:
-        # Preserve a determined outcome while making cleanup failure fail closed.
-        options['_gate_execution_failed'] = True
-        if outcome is None: raise failure
+        # Every caller must handle failure. Never return (0, None) after a
+        # failed cleanup; cancellation/timeout travel on the exception instead.
+        raise GateExecutionError(failure, outcome) from failure
     return outcome
 
 
@@ -1032,9 +1047,11 @@ def gate_action(args, config, options, repo):
             logs.append(str(log))
             try:
                 code, abort = outside_gate(options, repo, command, log)
+            except GateExecutionError as exc:
+                if exc.code == 130: options['_gate_cancelled'] = True
+                return json.dumps(dict(eligible=False, green=False, logs=logs, reason=exc.reason,
+                                       normalized_exit=exc.code, abort=exc.abort))
             except Exception:
-                return json.dumps(dict(eligible=False, green=False, logs=logs, reason='outside gate execution failed'))
-            if options.get('_gate_execution_failed'):
                 return json.dumps(dict(eligible=False, green=False, logs=logs, reason='outside gate execution failed'))
             # Cancellation wins over EVERY subsequent read/write/validation.
             if code == 130: options['_gate_cancelled'] = True

@@ -378,6 +378,7 @@ class Transaction:
         finally:
             # Reap the leader and stop any remaining children in its owned group,
             # including a command that exits after leaving a background writer.
+            pending = sys.exc_info()[1]
             try:
                 if owned:
                     # Scan while ancestry still exists, then stop descendants
@@ -387,10 +388,17 @@ class Transaction:
                     except subprocess.TimeoutExpired: pass
                     owned.scan(); owned.signal(signal.SIGKILL)
             finally:
-                provider.signal_group(self.child, signal.SIGKILL)
-                self.child.wait()
-                if owned: owned.drain()
-                self.child = None
+                try:
+                    provider.signal_group(self.child, signal.SIGKILL)
+                    self.child.wait(timeout=1)
+                    if owned: owned.drain()
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    if not isinstance(pending, ProviderStop) and self.failure_cause != 'timeout':
+                        raise
+                    print('conflict helper termination uncertain: ' + str(exc), file=sys.stderr)
+                finally:
+                    if self.child.stdout is not None: self.child.stdout.close()
+                    self.child = None
 
     def shell(self, body, *args):
         return ['/bin/bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
@@ -470,16 +478,25 @@ class Transaction:
         self.checkpoint()
         log = scratch / ('check-' + uuid.uuid4().hex + '.log')
         options = dict(timeout=1800, untrusted_env=provider.untrusted_env_mode(self.config))
-        code, abort = provider.outside_gate(options, self.repo, check, log)
+        failure = None
+        try: code, abort = provider.outside_gate(options, self.repo, check, log)
+        except provider.GateExecutionError as exc:
+            failure = exc
+            code, abort = exc.code, exc.abort
         tracked = {os.fsdecode(p) for p in self.git('ls-files', '-z').stdout.split(b'\0') if p}
-        valid = (code == 0 and not abort and self.identity() == identity
+        valid = (failure is None and code == 0 and not abort and self.identity() == identity
                  and not changed(before, inventory(self.repo)) & tracked
                  and not self.git('diff', '--name-only').stdout
                  and not self.git('ls-files', '--others', '--exclude-standard', '-z').stdout)
-        for budget, record in self.reservations:
-            budget.finish(record, check_outcome='passed' if valid else 'failed', check_exit=code)
+        try:
+            for budget, record in self.reservations:
+                budget.finish(record, check_outcome='passed' if valid else 'failed', check_exit=code)
+        finally:
+            if code == 130: raise ProviderStop(130)
         self.checkpoint()
-        if code == 130: raise ProviderStop(130)
+        if failure is not None:
+            self.failure_cause = 'timeout' if code == 124 else 'gate_red'
+            raise Declined(failure.reason) from failure
         if not valid:
             self.failure_cause = 'gate_red'
             raise Declined('external conflict validation failed or changed the checked tree')

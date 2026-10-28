@@ -276,6 +276,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), self.root / 'bureau-evidence.py')
         shutil.copy(SCRIPT.with_name('bureau-gates.py'), self.root / 'bureau-gates.py')
         shutil.copy(SCRIPT.with_name('bureau-activity.py'), self.root / 'bureau-activity.py')
+        shutil.copy(SCRIPT.with_name('bureau-process.py'), self.root / 'bureau-process.py')
         control_spec = importlib.util.spec_from_file_location('provider_keep', copy)
         control = importlib.util.module_from_spec(control_spec); control_spec.loader.exec_module(control)
         reduced = control.untrusted_env({**PATHS, 'PATH': '/bin'}, 'default', 'claude')

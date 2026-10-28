@@ -65,19 +65,31 @@ class Stop(Exception):
 
 class Helpers:
     """Track only handles created here; cancellation never reads stored PIDs."""
-    def __init__(self, repo):
+    def __init__(self, repo, control_root=None):
         self.repo = repo
         self.stopping = False
         self.child = None
+        self.termination_failure = None
+        self.failure_path = control_root / 'dispatch-termination.json' if control_root is not None else None
+
+    def uncertain(self, child, reason):
+        self.termination_failure = dict(group=child.pid, reason='dispatcher helper termination uncertain', detail=str(reason))
+        print('dispatch: ' + self.termination_failure['reason'] + ': ' + str(reason), file=sys.stderr)
+        if self.failure_path is not None:
+            try: r.save(self.failure_path, self.termination_failure)
+            except OSError as exc: print('dispatch: could not persist termination hold: ' + str(exc), file=sys.stderr)
 
     def stop(self):
         self.stopping = True
-        if self.child is not None and self.child.poll() is None:
-            r.signal_group(self.child, signal.SIGTERM)
+        if self.child is not None:
+            try: r.signal_group(self.child, signal.SIGTERM)
+            except OSError as exc: self.uncertain(self.child, exc)
 
     def call(self, body, *args, env=None):
         if self.stopping:
             raise Stop(130)
+        if self.failure_path is not None and self.failure_path.exists():
+            raise Stop(25, 'dispatcher termination hold: inspect dispatch-termination.json and stop its group before removing the hold')
         environ = dict(os.environ if env is None else env)
         for key in ('BASH_ENV', 'ENV'):
             environ.pop(key, None)
@@ -90,6 +102,7 @@ class Helpers:
             self.stop()
         try:
             deadline = None
+            kill_deadline = None
             while True:
                 try:
                     output, _ = child.communicate(timeout=.2)
@@ -97,9 +110,18 @@ class Helpers:
                 except subprocess.TimeoutExpired:
                     if self.stopping:
                         deadline = deadline or time.monotonic() + 5
-                        if time.monotonic() >= deadline:
-                            r.signal_group(child, signal.SIGKILL)
+                        if time.monotonic() >= deadline and kill_deadline is None:
+                            try: r.signal_group(child, signal.SIGKILL)
+                            except OSError as exc: self.uncertain(child, exc)
+                            kill_deadline = time.monotonic() + 1
+                        if kill_deadline is not None and time.monotonic() >= kill_deadline:
+                            self.uncertain(child, 'stdout did not close after bounded escalation')
+                            break
         finally:
+            if child.stdout is not None: child.stdout.close()
+            if self.stopping:
+                try: child.wait(timeout=1)
+                except subprocess.TimeoutExpired: self.uncertain(child, 'leader did not exit after bounded escalation')
             self.child = None
         if self.stopping:
             raise Stop(130)
@@ -133,7 +155,7 @@ def spec_start(repo, issue):
     held across a shell helper or Linear call.
     """
     store = r.Store(repo)
-    helpers = Helpers(repo)
+    helpers = Helpers(repo, store.root)
     signal.signal(signal.SIGTERM, lambda *_: helpers.stop())
     signal.signal(signal.SIGINT, lambda *_: helpers.stop())
     signal.signal(signal.SIGHUP, lambda *_: helpers.stop())
@@ -173,7 +195,7 @@ class Dispatcher:
         self.repo, self.args = repo, args
         self.lock_fd = lock_fd
         self.store = r.Store(repo)
-        self.helpers = Helpers(repo)
+        self.helpers = Helpers(repo, self.store.root)
         self.lanes = {}
         self.ready = {}
         self.path = self.store.root / 'dispatch-skips.json'
@@ -418,6 +440,7 @@ def main():
                 os.execvpe(command[0], command, {**os.environ, 'BUREAU_POLLER_LOCKED': '1'})
             return Dispatcher(repo, args, lock.fileno()).run(cancelled=lambda: stopped)
     except Stop as exc:
+        if exc.output: print('dispatch: ' + exc.output, file=sys.stderr)
         return exc.code
     except BlockingIOError:
         print('dispatch: another dispatcher or stage poller owns this common Git directory', file=sys.stderr)

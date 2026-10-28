@@ -23,7 +23,7 @@ class ConflictTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-conflict-test-')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.repo = self.root / 'owned checkout'; self.repo.mkdir()
         self.config = self.root / 'configuration.json'
         self.comments = self.root / 'linear-comments'
@@ -275,6 +275,35 @@ _throttle_record() { :; }
         self.diverge()
         self.generated[0]['command'] = [sys.executable, '-c', 'from pathlib import Path; Path("ignored.txt").write_text("lost"); Path("created/sub").mkdir(parents=True); Path("created/sub/leftover").touch(); raise SystemExit(3)']
         self.refused(); self.assertFalse((self.repo / 'created').exists())
+
+    def test_validation_cleanup_failure_cannot_record_passed(self):
+        spec = importlib.util.spec_from_file_location('conflict_validation_fault', SCRIPTS / 'bureau-conflicts.py')
+        runtime = importlib.util.module_from_spec(spec); spec.loader.exec_module(runtime)
+        for fault in ('cleanup', 'live_descendant', 'inspection_unavailable'):
+            with self.subTest(fault=fault):
+                transaction = runtime.Transaction(self.repo, self.settings, self.git('rev-parse', 'HEAD'), self.config)
+                transaction.branch = 'main'
+                transaction.checkpoint = mock.Mock()
+                budget, record = mock.Mock(), {}
+                transaction.reservations = [(budget, record)]
+                child = mock.Mock(pid=123456, returncode=0)
+                child.poll.return_value = child.wait.return_value = 0
+                original_popen = subprocess.Popen
+                def popen(*args, **kwargs):
+                    if args[0][0] == '/bin/bash': return child
+                    return original_popen(*args, **kwargs)
+                # The real outside_gate returns a determined zero, then its
+                # group cleanup fails; the caller must reject the transaction.
+                inspection = (dict(side_effect=runtime.provider.pg.TerminationUncertain('inspection unavailable'))
+                              if fault == 'inspection_unavailable' else dict(return_value={child.pid}))
+                with mock.patch.object(runtime.provider.subprocess, 'Popen', side_effect=popen), \
+                        mock.patch.object(runtime.provider.os, 'killpg', side_effect=OSError('cleanup failed') if fault == 'cleanup'
+                                          else PermissionError('group EPERM')), \
+                        mock.patch.object(runtime.provider.pg, 'inspect_groups', **inspection):
+                    with self.assertRaises(runtime.Declined) as declined:
+                        transaction.validate('fixture', self.root)
+                self.assertEqual(budget.finish.call_args.kwargs, dict(check_outcome='failed', check_exit=22))
+                self.assertIn('outside gate execution failed' if fault == 'cleanup' else 'outside gate termination uncertain', str(declined.exception))
 
     def rollback_with_fault(self, fault):
         # Exercise the actual transaction with real Git; only the one denied

@@ -53,8 +53,16 @@ def bounded(command, repo, body=None, diagnostics=False):
             raise PublicationInterrupted('acceptance helper interrupted')
         return child.returncode, output
     finally:
-        p.signal_group(child, signal.SIGKILL)
-        child.communicate()
+        pending = sys.exc_info()[1]
+        try:
+            p.signal_group(child, signal.SIGKILL)
+            child.communicate(timeout=1)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            if not isinstance(pending, (PublicationInterrupted, subprocess.TimeoutExpired)):
+                raise
+            print('acceptance helper termination uncertain: ' + str(exc), file=sys.stderr)
+        finally:
+            if child.stdout is not None: child.stdout.close()
 
 
 def evidence_ref(store, path):

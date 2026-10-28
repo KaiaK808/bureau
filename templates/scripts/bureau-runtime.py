@@ -25,6 +25,10 @@ _evidence_spec.loader.exec_module(e)
 _spec_spec = importlib.util.spec_from_file_location('bureau_spec', SCRIPTS / 'bureau-spec.py')
 s = importlib.util.module_from_spec(_spec_spec)
 _spec_spec.loader.exec_module(s)
+_process_spec = importlib.util.spec_from_file_location('bureau_process', SCRIPTS / 'bureau-process.py')
+pg = importlib.util.module_from_spec(_process_spec)
+_process_spec.loader.exec_module(pg)
+signal_group = pg.signal_group
 # Keep equal to bureau-provider.py and bureau-env.sh (standalone script).
 UNTRUSTED_HOST_PREFIXES = ('HERDR_',)
 STAGES = {
@@ -192,8 +196,11 @@ class Store:
             try:
                 save(path, record)
             except BaseException:
-                signal_group(child, signal.SIGKILL)
-                child.wait()
+                try:
+                    signal_group(child, signal.SIGKILL)
+                    child.wait(timeout=1)
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    print('bureau: registration cleanup failed: ' + str(exc), file=sys.stderr)
                 raise
             return child
 
@@ -256,25 +263,8 @@ class Store:
         self.assert_groups_stopped(groups)
 
     def assert_groups_stopped(self, groups):
-        live = set()
-        for group in groups:
-            try: os.killpg(group, 0)
-            except ProcessLookupError: continue
-            # A stored group has no owned child handle. EPERM needs the same
-            # process-state inspection as a successful probe before release.
-            except PermissionError: pass
-            live.add(group)
-        if live:
-            # killpg(0) includes zombies, which cannot write. Fail closed if the
-            # host cannot inspect process state rather than guessing it is safe.
-            try:
-                output = subprocess.check_output(['ps', '-axo', 'pgid=,stat='], text=True, stderr=subprocess.DEVNULL)
-            except (OSError, subprocess.CalledProcessError):
-                raise Conflict('Cannot confirm interrupted process groups stopped; inspect them before release')
-            active = {int(parts[0]) for line in output.splitlines()
-                      if len(parts := line.split()) >= 2 and not parts[1].startswith('Z')}
-            if live & active:
-                raise Conflict('Background process group still alive; stop it before releasing')
+        try: pg.assert_groups_stopped(groups)
+        except pg.TerminationUncertain as exc: raise Conflict(str(exc)) from exc
 
     def assert_owner(self, issue, workspace, run):
         leases = read(self.leases, {})
@@ -475,8 +465,13 @@ shift
     try:
         output, _ = child.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        signal_group(child, signal.SIGKILL)
-        child.communicate()
+        try:
+            signal_group(child, signal.SIGKILL)
+            child.communicate(timeout=1)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print('bureau: timed-out helper termination uncertain: ' + str(exc), file=sys.stderr)
+        finally:
+            if child.stdout is not None: child.stdout.close()
         raise
     if child.returncode: raise subprocess.CalledProcessError(child.returncode, helper)
     return output.strip()
@@ -715,16 +710,6 @@ def finish(repo, args, store):
     print(json.dumps(record, indent=2))
 
 
-def signal_group(child, signum):
-    """Signal an owned group, falling back to its live child on EPERM."""
-    try: os.killpg(child.pid, signum)
-    except ProcessLookupError: pass
-    except PermissionError:
-        # Keep this standalone runtime's rule equal to bureau-provider.py:
-        # exited/zombie groups are harmless; a live child's kill must succeed.
-        if child.poll() is None: child.kill()
-
-
 def stop_grace(depth):
     """Seconds a runtime waits for its child after forwarding a signal, before
     it kills the child's process group. The wrappers of one run nest (shepherd
@@ -765,7 +750,11 @@ def execute(repo, args, store):
 
     def signal_child(signum):
         if child is not None:
-            signal_group(child, signum)
+            try: signal_group(child, signum)
+            except OSError as exc:
+                # The stop is already latched. Keep ownership interrupted and
+                # report uncertainty rather than throwing out of the handler.
+                print('bureau: run termination uncertain: ' + str(exc), file=sys.stderr)
 
     def stop(signum, frame):
         nonlocal interrupted
@@ -863,7 +852,11 @@ def execute(repo, args, store):
             except subprocess.TimeoutExpired:
                 if interrupted:
                     try: child.wait(timeout=stop_grace(depth))
-                    except subprocess.TimeoutExpired: signal_child(signal.SIGKILL); child.wait()
+                    except subprocess.TimeoutExpired:
+                        signal_child(signal.SIGKILL)
+                        try: child.wait(timeout=1)
+                        except subprocess.TimeoutExpired:
+                            print('bureau: run termination uncertain: leader did not exit', file=sys.stderr)
                     code = 130; return code
     except AdmissionStop as exc:
         code = exc.code

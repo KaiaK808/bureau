@@ -219,19 +219,19 @@ POST_IMPLEMENT_FAILED=0
 POST_IMPLEMENT_HEAD_REWRITTEN=0
 POST_IMPLEMENT_REPORT=""
 _POST_IMPLEMENT_RUNNER='
-import os, signal, subprocess, sys, time
+import importlib.util, os, signal, subprocess, sys, time
+from pathlib import Path
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("bureau_process", Path(sys.argv[4]) / "bureau-process.py")
+pg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pg)
 limit, cmd, status_file = int(sys.argv[1]), sys.argv[2], sys.argv[3]
 child = subprocess.Popen(["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
 def signal_group(signum):
     try:
-        os.killpg(child.pid, signum)
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        # Exited/zombie groups can report EPERM on macOS. A live child must
-        # still be killed, and a failed direct kill remains an execution error.
-        if child.poll() is None:
-            child.kill()
+        pg.signal_group(child, signum)
+    except OSError as exc:
+        print("post-implement termination uncertain: " + str(exc), file=sys.stderr)
 def stop(code, why):
     with open(status_file, "w") as f:
         f.write(why)
@@ -240,16 +240,16 @@ def stop(code, why):
     while time.monotonic() < deadline:
         child.poll()
         try:
-            os.killpg(child.pid, 0)
-        except ProcessLookupError:
+            pg.assert_groups_stopped({child.pid})
             break
-        except PermissionError:
-            if child.poll() is not None:
-                break
-            child.kill()
+        except OSError:
+            pass
         time.sleep(0.1)
     signal_group(signal.SIGKILL)
-    child.wait()
+    try:
+        child.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        print("post-implement termination uncertain: leader did not exit", file=sys.stderr)
     sys.exit(code)
 for sig, code in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)):
     signal.signal(sig, lambda *_, c=code: stop(c, "signal"))
@@ -391,7 +391,7 @@ command: ${cmd}"
   log=$(mktemp "${TMPDIR:-/tmp}/bureau-post-implement.XXXXXX")
   status_file="$log.why"
   echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
-  if bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" >"$log" 2>&1; then
+  if bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" >"$log" 2>&1; then
     rc=0
   else
     rc=$?

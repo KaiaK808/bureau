@@ -2,7 +2,7 @@ import importlib.util
 import atexit
 import argparse
 import io
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 import json
 import os
 from pathlib import Path
@@ -28,6 +28,7 @@ if CODEX_TMP_PREFIX != 'bureau-codex-':
     shutil.copy(SCRIPT.with_name('bureau-evidence.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-gates.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-activity.py'), isolated.name)
+    shutil.copy(SCRIPT.with_name('bureau-process.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-insights.sh'), isolated.name)
     source = SCRIPT.read_text().replace("prefix='bureau-codex-'", 'prefix=' + repr(CODEX_TMP_PREFIX))
     SCRIPT = Path(isolated.name) / SCRIPT.name; SCRIPT.write_text(source)
@@ -592,12 +593,12 @@ p.run=lose_forward
             if args[0][0]=='/bin/bash':
                 original_wait=child.wait
                 def wait(timeout=None):
-                    if timeout is not None:
+                    if timeout == options['timeout']:
                         # The command has started and blocks until signalled.
                         # Expire the executor wait explicitly, independent of load.
                         self.wait_for_gate_ready()
                         raise subprocess.TimeoutExpired(child.args,timeout)
-                    return original_wait()
+                    return original_wait(timeout=timeout)
                 child.wait=wait
             return child
         with patch.object(p.subprocess,'Popen',controlled_popen), patch.object(sys,'stdin',io.StringIO(json.dumps(plan))):
@@ -670,7 +671,7 @@ signal.pause()
                 child.poll.return_value=None if fault.endswith('kill_error') else 0
                 child.kill.side_effect=PermissionError('injected direct kill failure')
                 def wait(timeout=None):
-                    if timeout is not None:
+                    if timeout == 3600:
                         if fault in ('signal','cancel_kill_error'):
                             signal.getsignal(signal.SIGTERM)(signal.SIGTERM,None)
                         elif fault in ('timeout','timeout_kill_error'):
@@ -690,12 +691,15 @@ signal.pause()
                 output=io.StringIO()
                 with patch.dict(os.environ,self.env,clear=True), patch.object(sys,'stdin',io.StringIO(json.dumps(plan))), \
                         patch.object(sys,'argv',self.command('--gate-action','run')[1:]), redirect_stdout(output), \
-                        patch.object(p.subprocess,'Popen',popen), patch.object(p.os,'killpg',side_effect=killpg):
+                        patch.object(p.subprocess,'Popen',popen), patch.object(p.os,'killpg',side_effect=killpg), \
+                        (patch.object(p.pg,'inspect_groups',return_value={child.pid} if fault.endswith('kill_error') else set())
+                         if hasattr(p,'pg') else nullcontext()):
                     code=p.main()
                 self.assertEqual(code,130 if fault in ('signal','cancel_kill_error') else 0,output.getvalue())
                 result=json.loads(output.getvalue())
                 failed=fault.endswith('error')
-                self.assertEqual(result['reason'],'outside gate execution failed' if failed else
+                self.assertEqual(result['reason'],('outside gate termination uncertain' if fault.endswith('kill_error') else
+                                                  'outside gate execution failed') if failed else
                                  ('outside gate green' if fault=='cleanup' else 'outside gate red, aborted or incomplete'))
                 self.assertEqual(result['eligible'],not failed)
                 self.assertEqual(result['green'],fault=='cleanup')
@@ -711,6 +715,46 @@ signal.pause()
                 self.assertEqual(retry['green'],fault=='cleanup')
                 if fault.endswith('kill_error'): child.kill.assert_called()
                 else: child.kill.assert_not_called()
+
+    def test_machine_gate_exited_leader_with_live_or_uninspectable_descendants_never_passes(self):
+        for membership in ('live', 'unavailable'):
+            for outcome in ('success', 'cancelled', 'timeout'):
+                with self.subTest(membership=membership, outcome=outcome):
+                    value,context=self.prepared_gate('echo descendant-'+membership+'-'+outcome)
+                    plan=self.gate_action('plan',value,context=context)
+                    child=Mock(pid=123456,returncode=0)
+                    child.poll.return_value=0
+                    def wait(timeout=None):
+                        if timeout == 3600:
+                            if outcome == 'cancelled': signal.getsignal(signal.SIGTERM)(signal.SIGTERM,None)
+                            if outcome == 'timeout': raise subprocess.TimeoutExpired('fixture',timeout)
+                        return 0
+                    child.wait.side_effect=wait
+                    original_popen=subprocess.Popen
+                    def popen(*args,**kwargs):
+                        if args[0][0]!='/bin/bash': return original_popen(*args,**kwargs)
+                        kwargs['stdout'].write(b'descendant gate log\n')
+                        return child
+                    inspector=getattr(p,'pg',None)
+                    inspection=(dict(return_value={child.pid}) if membership=='live' else
+                                dict(side_effect=(inspector.TerminationUncertain if inspector else OSError)('inspection unavailable')))
+                    output=io.StringIO()
+                    with patch.dict(os.environ,self.env,clear=True), patch.object(sys,'stdin',io.StringIO(json.dumps(plan))), \
+                            patch.object(sys,'argv',self.command('--gate-action','run')[1:]), redirect_stdout(output), \
+                            patch.object(p.subprocess,'Popen',popen), patch.object(p.os,'killpg',side_effect=PermissionError('EPERM')), \
+                            (patch.object(inspector,'inspect_groups',**inspection) if inspector else nullcontext()):
+                        code=p.main()
+                    result=json.loads(output.getvalue())
+                    self.assertFalse(result['green'],result)
+                    self.assertFalse(result['eligible'],result)
+                    self.assertEqual(result['reason'],'outside gate termination uncertain')
+                    self.assertEqual((result['normalized_exit'],result['abort']),
+                                     {'success':(22,None),'cancelled':(130,'kill'),'timeout':(124,'timeout')}[outcome])
+                    self.assertEqual(code,130 if outcome=='cancelled' else 0)
+                    retry=self.gate_action('run',plan)
+                    self.assertFalse(retry['green'],retry)
+                    self.assertFalse(retry['eligible'],retry)
+                    child.kill.assert_not_called()
 
     def prepared_gate(self, command='echo gate', prefix=False, **events):
         self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
@@ -1490,6 +1534,7 @@ p.Path.open=refuse_transcript_read
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), control.parent / 'bureau-evidence.py')
         shutil.copy(SCRIPT.with_name('bureau-gates.py'), control.parent / 'bureau-gates.py')
         shutil.copy(SCRIPT.with_name('bureau-activity.py'), control.parent / 'bureau-activity.py')
+        shutil.copy(SCRIPT.with_name('bureau-process.py'), control.parent / 'bureau-process.py')
         control.write_text(source.replace(changed,'        return env\n'))
         return control
 
