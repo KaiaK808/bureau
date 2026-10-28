@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3199ceff66d2d224402c0213e955230c2615179423a3bfdb3db5fb651e717541">
+<meta name="bureau-source-sha256" content="c72775ddcfbb8afdec423e36f692e5efecc44828c325ebb2c04b0f03f1f9602a">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -55,10 +55,16 @@ Ubuntu 24.04 container run matched PR 1's container baseline. <a
 href="https://github.com/KaiaK808/bureau/pull/94">#94</a>, the merge CI
 gate fix on top of <code>56d4170</code>, was reviewed by Codex in two
 rounds; the full suite passed locally on macOS, 154/154 at
-<code>1b9615e</code>. <!-- pr94 CI result pending --> Provider calls are
-faked in tests. No installation has run v3.5.0 before the release, and
-there is no release candidate. Release preparation changes documentation
-only.</p>
+<code>1b9615e</code>. GitHub CI on #94 at <code>1b9615e</code> is green
+on all 10 shards (<a
+href="https://github.com/KaiaK808/bureau/actions/runs/40617197495">run
+40617197495</a>) after one re-run of a macOS shard: on the first attempt
+<code>test_machine_gate_cancellation_preserves_130_and_the_log</code> in
+<code>tests/provider_adapter_test.py</code> failed on timing, in
+provider code that #94 does not change, and it passed 15 of 15 local
+runs. Provider calls are faked in tests. No installation has run v3.5.0
+before the release, and there is no release candidate. Release
+preparation changes documentation only.</p>
 <p>GitHub CI on <code>main</code> at <code>56d4170</code> is green on
 all 10 shards (<a
 href="https://github.com/KaiaK808/bureau/actions/runs/40573763078">run
