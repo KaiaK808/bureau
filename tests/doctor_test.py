@@ -56,6 +56,34 @@ class DoctorTests(unittest.TestCase):
         (self.repo/'scripts/bureau-runtime.py').write_text('local edit')
         self.assertIn('scripts/bureau-runtime.py',d.diagnose(self.repo,'app')['drift'])
 
+    def test_specify_nonexecutable_helpers_warn_in_both_doctor_entrypoints(self):
+        installer=[sys.executable,str(ROOT/'scripts/bureau_install.py')]
+        subprocess.run(installer+['assets','--repo',str(self.repo),'--target','codex','--scope','interfaces','--scope','scripts','--apply'],
+                       check=True,stdout=subprocess.DEVNULL)
+        blocked=['.specify/scripts/bash/common.sh','.specify/scripts/custom/nested/standalone.sh']
+        modes={name:0o644 for name in blocked}
+        modes.update({'.specify/scripts/bash/executable.sh':0o755,
+                      '.specify/scripts/bash/notes.txt':0o644,'.specify/outside.sh':0o644})
+        for name,mode in modes.items():
+            path=self.repo/name;path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_bytes(b'# unchanged\n');path.chmod(mode)
+        directory=self.repo/'.specify/scripts/directory.sh';directory.mkdir()
+        commands=[installer+['doctor'],[sys.executable,str(self.repo/'scripts/bureau-doctor.py')]]
+        for command in commands:
+            with self.subTest(command=command):
+                proc=subprocess.run(command+['--repo',str(self.repo)],capture_output=True,text=True)
+                self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+                result=json.loads(proc.stdout)
+                self.assertTrue(result['ok'],result);self.assertEqual(result['errors'],[])
+                warnings=[w for w in result['warnings'] if 'not executable' in w]
+                self.assertEqual(len(warnings),len(blocked),warnings)
+                for name in blocked: self.assertTrue(any(name in w for w in warnings),warnings)
+                for name,mode in modes.items():
+                    self.assertEqual((self.repo/name).read_bytes(),b'# unchanged\n')
+                    self.assertEqual((self.repo/name).stat().st_mode & 0o777,mode)
+        for name in blocked: (self.repo/name).chmod(0o755)
+        self.assertFalse(any('not executable' in w for w in d.diagnose(self.repo,'app')['warnings']))
+
     def test_doctor_reports_recorded_missing_and_stale_template_source(self):
         installer=[sys.executable,str(ROOT/'scripts/bureau_install.py')]
         subprocess.run(installer+['assets','--repo',str(self.repo),'--target','both','--scope','interfaces','--scope','scripts','--apply'],

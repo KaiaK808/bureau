@@ -362,6 +362,15 @@ def render_speckit_helpers(command):
         return helpers
 
 
+def speckit_shell_helpers(repo):
+    helpers = []
+    for path in sorted(destination(repo, ".specify/scripts").rglob("*.sh")):
+        destination(repo, str(path.relative_to(repo)))
+        if path.is_file():
+            helpers.append(path)
+    return helpers
+
+
 def speckit_sourced_extras(helpers, extras):
     """Inspect bundled source/dot-source paths without executing any project helper."""
     if not extras:
@@ -529,10 +538,13 @@ def speckit(repo, args, manifest, targets):
         preserved.pop(repo / relative, None)
     for relative in extras:
         preserved[repo / relative] = (repo / relative).read_bytes()
+    mode_fixes = [str(path.relative_to(repo)) for path in speckit_shell_helpers(repo)
+                  if path.stat().st_mode & 0o111 != 0o111]
     extension = git_extension_plan(repo, installed)
     print(json.dumps({"version": SPECKIT_VERSION, "active_integration": active, "commands": commands,
                       "extension_registration": [extension] if extension else [],
                       "extra_helpers_preserved": extras,
+                      "helper_mode_fixes": mode_fixes,
                       "preserved": sorted(str(p.relative_to(repo)) for p in preserved)}, indent=2))
     if not args.apply:
         return 0
@@ -560,6 +572,10 @@ def speckit(repo, args, manifest, targets):
                 else:
                     atomic_write(path, data)
             print("Spec Kit failed; existing constitution and active-integration metadata restored. Inspect any partially installed assets before retrying.", file=sys.stderr)
+        # The pinned package copies helpers as 0644. Match executable asset installs, including
+        # restored drift snapshots and helpers left by a partially failed initialization.
+        for path in speckit_shell_helpers(repo):
+            path.chmod((path.stat().st_mode & 0o777) | 0o111)
     return 0
 
 

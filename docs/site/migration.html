@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="85d4f39247f95e8261a3bf8e2a5f36bbde3203730d5ef628454b715fe53639a3">
+<meta name="bureau-source-sha256" content="7350cbabd2e013556373733e4773cef6ed4013c80f926bbdc1ea161ae88c9743">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1384,6 +1384,15 @@ then run Bureau's doctor; an unmodified upgrade should report 0 modified
 and 0 missing files. These update commands never touch
 <code>.specify/memory/constitution.md</code>; the constitution must
 never be changed.</p>
+<p>Run <code>/bureau-init --resync-speckit</code> after a direct CLI
+upgrade or forced init to repair execute permission on every
+<code>.sh</code> under <code>.specify/scripts/</code>, including helpers
+restored from drift snapshots: Bureau applies
+<code>(mode &amp; 0o777) | 0o111</code> without changing content,
+preview lists pending <code>helper_mode_fixes</code>, mode-only drift
+does not count as customization, and the updated doctor warns with each
+non-executable helper's path (resync the complete scripts scope to
+install it).</p>
 <p>See the <a href="../../references/resync.md">Spec Kit resync
 procedure</a> for the forced-init fallback: initialize the first host,
 install further hosts with

@@ -401,11 +401,17 @@ if sys.argv[1] == "init":
     setup = 'source "$SCRIPT_DIR/common.sh"\\n'
     if os.environ.get("TEST_PINNED_EXTRA_SOURCE"): setup += 'source "$SCRIPT_DIR/retired.sh"\\n'
     for relative, content in ((".specify/scripts/bash/common.sh", "# 1.2.2 helper\\n"),
+                              (".specify/scripts/bash/check-prerequisites.sh", "# 1.2.2 prerequisites\\n"),
+                              (".specify/scripts/bash/create-new-feature.sh", "# 1.2.2 feature\\n"),
+                              (".specify/scripts/bash/setup-plan.sh", "# 1.2.2 plan\\n"),
+                              (".specify/scripts/bash/resolve-template.sh", "# 1.2.2 template\\n"),
                               (".specify/scripts/bash/setup-tasks.sh", setup),
                               (".specify/.gitignore", "feature.json\\nextensions/*/local-config.yml\\nintegrations/packages/\\nintegrations/packages.json\\n"),
                               (".specify/templates/plan-template.md", "generated template")):
         if not in_repo and os.environ.get("TEST_HELPER_RENDER_EMPTY") and relative.startswith(".specify/scripts/"): continue
         path = pathlib.Path(relative); path.parent.mkdir(parents=True, exist_ok=True); path.write_text(content)
+        # The pinned package copies shell helpers as 0644, including over existing executables.
+        if relative.startswith(".specify/scripts/"): path.chmod(0o644)
         files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     manifests = p / "integrations"; manifests.mkdir(exist_ok=True)
     (manifests / "speckit.manifest.json").write_text(json.dumps({"version":"1.2.2", "files":files}))
@@ -450,6 +456,72 @@ if in_repo and os.environ.get("TEST_FAIL_TARGET") == target: sys.exit(7)
         self.assertEqual(set(state["integration_settings"]), set(installed))
         self.assertEqual(state["default_integration"], active)
         self.assertEqual(state["integration"], active)
+
+    def test_specify_apply_makes_all_shell_helpers_executable(self):
+        env = self.fake_specify()
+        self.legacy_specify_helpers()
+        manifest = self.repo / ".specify/integrations/speckit.manifest.json"
+        record = json.loads(manifest.read_text())
+        # Four legacy helpers lose their mode on init; two new helpers also arrive as 0644.
+        for name in ("common.sh", "check-prerequisites.sh", "create-new-feature.sh", "setup-plan.sh"):
+            relative = ".specify/scripts/bash/" + name
+            path = self.write(relative, "# 0.7.5 helper\n")
+            path.chmod(0o755)
+            record["files"][relative] = installer.digest(path.read_bytes())
+        manifest.write_text(json.dumps(record))
+        self.run_install("speckit", "--apply", env=env)
+        helpers = sorted((self.repo / ".specify/scripts").rglob("*.sh"))
+        self.assertEqual([p.name for p in helpers], ["check-prerequisites.sh", "common.sh", "create-new-feature.sh",
+                                                    "resolve-template.sh", "setup-plan.sh", "setup-tasks.sh"])
+        for path in helpers:
+            self.assertEqual(path.stat().st_mode & 0o777, 0o755, str(path.relative_to(self.repo)))
+        self.assertEqual((self.repo / ".specify/scripts/bash/common.sh").read_bytes(), b"# 1.2.2 helper\n")
+        # An apply with only mode drift is accepted and changes no file content.
+        before = {path: path.read_bytes() for path in helpers}
+        for path in helpers: path.chmod(0o644)
+        self.run_install("speckit", "--apply", env=env)
+        self.assertEqual({path: path.read_bytes() for path in helpers}, before)
+        for path in helpers: self.assertEqual(path.stat().st_mode & 0o777, 0o755)
+
+    def test_specify_preview_reports_mode_fixes_without_customization(self):
+        env = self.fake_specify()
+        self.run_install("speckit", "--apply", env=env)
+        helpers = sorted((self.repo / ".specify/scripts").rglob("*.sh"))
+        for path in helpers: path.chmod(0o644)
+        helpers[0].chmod(0o755)
+        before = self.snapshot()
+        modes = {p: p.stat().st_mode for p in helpers}
+        Path(env["TEST_SPECIFY_CALLS"]).unlink()
+        plan = json.loads(self.run_install("speckit", env=env).stdout)
+        self.assertEqual(plan["helper_mode_fixes"], [str(p.relative_to(self.repo)) for p in helpers[1:]])
+        self.assertFalse(set(plan["preserved"]) & {str(p.relative_to(self.repo)) for p in helpers})
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual({p: p.stat().st_mode for p in helpers}, modes)
+        self.assert_no_specify_repo_writes(env)
+        for path in helpers: path.chmod(0o755)
+        self.assertEqual(json.loads(self.run_install("speckit", env=env).stdout)["helper_mode_fixes"], [])
+
+    def test_specify_restored_helpers_gain_execute_bits_even_after_failed_apply(self):
+        env = self.fake_specify()
+        extra = ".specify/scripts/custom/nested/standalone.sh"
+        other = ".specify/scripts/custom/notes.txt"
+        outside = ".specify/untouched.sh"
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                for relative in (extra, other, outside):
+                    self.write(relative, "# preserved bytes\n").chmod(0o640)
+                # Explicitly recovered extra helpers are restored from the drift snapshot too.
+                self.write(".specify/integrations/speckit.manifest.json", json.dumps({
+                    "files": {extra: installer.digest((self.repo / extra).read_bytes())}, "recovered_files": [extra]}))
+                self.run_install("speckit", "--target", "both", "--active-integration", "codex", "--apply",
+                                 env={**env, **({"TEST_FAIL_TARGET": "codex"} if failed else {})}, status=int(failed))
+                self.assertEqual((self.repo / extra).stat().st_mode & 0o777, 0o751)
+                for relative in (extra, other, outside):
+                    self.assertEqual((self.repo / relative).read_bytes(), b"# preserved bytes\n")
+                for relative in (other, outside):
+                    self.assertEqual((self.repo / relative).stat().st_mode & 0o777, 0o640)
+                for path in (self.repo / ".specify/scripts/bash").glob("*.sh"):
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o755)
 
     def test_specify_dual_registration_and_default(self):
         env = self.fake_specify()
