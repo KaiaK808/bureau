@@ -458,16 +458,32 @@ class Admission:
             r.e.observe(r.e.Store(self.runtime.root).resolve_waits, issue, keys=['file-overlap'], basis='observed-resume')
             print('File overlap gate: admitted ' + issue)
 
-    def ready(self, issue, branch, stage, write=False):
+    def ready(self, issue, branch, stage, write=False, status=None):
         with self.guard() as state:
             scope = self.scope(branch, local=True)
             self.refresh(state, issue, scope)
             snapshot = r.issue_snapshot(self.repo, issue)
             value = dict(branch=branch, stage=stage, head=scope.get('head'),
                          tasks_digest=scope.get('tasks_digest'), config=digest(self.config), input=digest(snapshot))
+            contracts = {'spec_review': ('bureau-spec-review.schema.json', 'PASS'),
+                         'ux': ('bureau-ux.schema.json', 'COMPLETE')}
+            if stage in contracts:
+                schema, passing = contracts[stage]
+                if write and status != passing:
+                    state['ready'].pop(issue, None)
+                    self.save(state)
+                    raise Stop(22, 'Readiness requires a validated passing ' + stage + ' result')
+                value.update(validated_status=passing,
+                             result_contract_sha256=hashlib.sha256(Path(__file__).with_name(schema).read_bytes()).hexdigest())
             if write:
                 state['ready'][issue] = value
             valid = state['ready'].get(issue) == value
+            if not valid and stage in contracts and issue in state['ready']:
+                # Pre-contract records (even old PASS results) cannot prove
+                # validation. Discard them and buy one fresh provider pass;
+                # its new readiness still survives ordinary overlap waits.
+                state['ready'].pop(issue)
+                print('Readiness invalidated for ' + issue + '; a fresh stage result is required', file=sys.stderr)
             self.save(state)
             return 0 if valid else 2
 
@@ -484,6 +500,7 @@ def main():
             part.add_argument('--local', action='store_true')
             part.add_argument('--continuation', action='store_true')
         if action in ('ready', 'ready-check'): part.add_argument('stage')
+        if action == 'ready': part.add_argument('--status')
     args = parser.parse_args()
     try:
         repo = r.root_for(Path(args.repo).resolve())
@@ -513,7 +530,7 @@ def main():
                 except SnapshotMoved:
                     if attempt + 1 == tries: raise
         else:
-            return admission.ready(args.issue, args.branch, args.stage, args.action == 'ready')
+            return admission.ready(args.issue, args.branch, args.stage, args.action == 'ready', getattr(args, 'status', None))
         return 0
     except Stop as exc:
         print(str(exc), file=sys.stderr)

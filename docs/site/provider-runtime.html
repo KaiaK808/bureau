@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="95e71d3125d3856c1d9bda01c8def567ff8c686b5d1d78d59743066b9ac576e6">
+<meta name="bureau-source-sha256" content="d417a11c50d9603c55193bd8bdf355ac72cc8849b85053073bd6ef540853d39c">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -164,14 +164,16 @@ final message exists. Recovered errors remain in
 <code>turn.completed</code>. A final message and any configured schema
 validation are still required. A failing process keeps its
 authentication, quota and environment classification.</p>
-<p>JSON schema contracts cover implementation iterations, QA, and the
-merged review verdict. Both plain JSON and legacy fenced JSON are
-parsed; Claude envelopes are unwrapped. A provider's diagnostic stream
-cannot supply the verdict. Raw prompt/output/error evidence and metadata
-remain under <code>logs/provider-runs/RUN/</code>.
-<code>result.json</code> there also names the provider's own record of
-the call, which outlives a timeout: since v3.2 every Claude call starts
-with a fresh <code>--session-id</code>, and <code>session_id</code>,
+<p>JSON schema contracts cover implementation iterations, Spec Review
+(<code>bureau-spec-review.schema.json</code>), UX
+(<code>bureau-ux.schema.json</code>), QA, and the merged review verdict.
+Both plain JSON and legacy fenced JSON are parsed; Claude envelopes are
+unwrapped. A provider's diagnostic stream cannot supply the verdict. Raw
+prompt/output/error evidence and metadata remain under
+<code>logs/provider-runs/RUN/</code>. <code>result.json</code> there
+also names the provider's own record of the call, which outlives a
+timeout: since v3.2 every Claude call starts with a fresh
+<code>--session-id</code>, and <code>session_id</code>,
 <code>transcript</code>
 (<code>&lt;config_dir, else CLAUDE_CONFIG_DIR, else ~/.claude&gt;/projects/&lt;slug&gt;/&lt;session id&gt;.jsonl</code>;
 when Claude placed it elsewhere under <code>projects/</code>, the file

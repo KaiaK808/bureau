@@ -85,7 +85,7 @@ else
   exit 12
 fi
 
-# A successful readiness decision waiting for admission buys no second review.
+# Only readiness bound to the current validated contract skips another review.
 if bureau_overlap_resume "$ISSUE" "$BRANCH" spec_review; then exit 0
 else OVERLAP_RC=$?; [ "$OVERLAP_RC" = 2 ] || exit "$OVERLAP_RC"; fi
 
@@ -127,13 +127,23 @@ echo "Phase 1/2: review specs against codebase"
 
 SPEC_CONTEXT=$(build_spec_context "$SPEC_DIR")
 
-REVIEW_RESULT=$("${CLAUDE[@]}" "You are the spec reviewer for $ISSUE ($ISSUE_TITLE). Validate, don't rewrite.
+invalid_review_result() {
+  bureau_ticket_checkpoint "$ISSUE"
+  ( mark_needs_human "$ISSUE" spec_review 22 technical 'Invalid spec review result; inspect provider evidence and preserved edits' maintainer ) || true
+  bureau_ticket_checkpoint "$ISSUE" latched
+  bureau_outcome_signal human_hold || true
+  echo "  Invalid spec review result — work preserved; human review required." >&2
+  exit 22
+}
+
+REVIEW_RC=0
+REVIEW_RESULT=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-spec-review.schema.json" "You are the spec reviewer for $ISSUE ($ISSUE_TITLE). Validate, don't rewrite.
 
 $SPEC_CONTEXT
 
 Artifacts live under $SPEC_DIR (spec.md, plan.md, tasks.md, research.md if present).
 In spec.md, place ## Governance and security with Decision: and Rationale: lines at column 0, in plain text, before any code block or HTML block; a leading YAML front matter block is allowed.
-Require an explicit Decision: required/not required and a Rationale: explaining applicability (German labels/decisions are valid too). Justified not required is valid. The shared validator catches common authoring and placeholder/deferral mistakes, including bare restatements of the decision. You must judge substantive adequacy and whether the section is real: reject circular reasoning, vague assertions and explanations that do not justify applicability or address the relevant access, logging and retention risks. Passing the validator does not establish adequacy. Return review_status FAIL for missing or inadequate governance and name the concrete gaps in remaining_issues and summary, even when the deterministic check passes. Do not invent the decision or rationale for the author.
+Require an explicit Decision: required/not required and a Rationale: explaining applicability (German labels/decisions are valid too). Justified not required is valid. The shared validator catches common authoring and placeholder/deferral mistakes, including bare restatements of the decision. You must judge substantive adequacy and whether the section is real: reject circular reasoning, vague assertions and explanations that do not justify applicability or address the relevant access, logging and retention risks. Passing the validator does not establish adequacy. Return review_status FAIL for missing or inadequate governance and name the concrete gaps in summary, even when the deterministic check passes. Do not invent the decision or rationale for the author.
 
 Do this, in order:
 1. Read the artifacts. Compare tasks.md file paths against the real repo tree (ls, grep, etc).
@@ -147,29 +157,30 @@ Do this, in order:
 Do NOT:
 - Rewrite tasks.md from scratch. If the spec is fundamentally broken, set review_status to FAIL and list the issues — let Spec pipeline rework it.
 - Touch files outside $SPEC_DIR.
-- Re-litigate decisions pinned in SPEC.md, plan.md, or research.md — skip and cite the pin in remaining_issues if you considered flagging them.
+- Re-litigate decisions pinned in SPEC.md, plan.md, or research.md — skip and cite the pin in summary if you considered flagging them.
 
 End your response with a single fenced json block (the shell parses it):
 
 \`\`\`json
-{\"review_status\":\"PASS|FAIL\",\"ui_work_needed\":true,\"issues_found\":0,\"issues_fixed\":0,\"remaining_issues\":[],\"summary\":\"2-3 sentences\"}
-\`\`\`")
+{\"review_status\":\"PASS|FAIL\",\"ui_work_needed\":true,\"summary\":\"2-3 sentences, including remaining issues\"}
+\`\`\`") || REVIEW_RC=$?
 
 bureau_ticket_checkpoint "$ISSUE" latched
+if [ "$REVIEW_RC" = 22 ]; then invalid_review_result; fi
+[ "$REVIEW_RC" = 0 ] || exit "$REVIEW_RC"
 echo "$REVIEW_RESULT"
 
 echo ""
 echo "Phase 2/2: route issue"
 
-REVIEW_STATUS=$(parse_claude_json "$REVIEW_RESULT" '.review_status // empty')
-UI_NEEDED_RAW=$(parse_claude_json "$REVIEW_RESULT" '.ui_work_needed // empty')
+REVIEW_STATUS=$(parse_claude_json "$REVIEW_RESULT" '.review_status | select(type == "string")')
+UI_NEEDED_RAW=$(parse_claude_json "$REVIEW_RESULT" '.ui_work_needed | select(type == "boolean" or type == "string")')
 
-# Parse failure → treat as FAIL and route back to Spec so a human (or a fresh
-# spec run) can figure out what went wrong. Safer than silently routing to
-# Build with a half-reviewed spec.
-if [ -z "$REVIEW_STATUS" ]; then
-  REVIEW_STATUS="FAIL"
-fi
+# Reject invalid results before governance can turn a valid PASS into FAIL.
+case "$REVIEW_STATUS" in
+  PASS|FAIL) ;;
+  *) invalid_review_result ;;
+esac
 # The model cannot waive the document contract. Check after its allowed edits.
 GOVERNANCE_ERROR=""
 if ! GOVERNANCE_ERROR=$(bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" validate "${SPEC_DIR}spec.md" 2>&1); then
@@ -179,7 +190,8 @@ fi
 # Normalise ui_work_needed. Downstream `case` expects YES/NO strings.
 case "$UI_NEEDED_RAW" in
   true|TRUE|yes|YES) UI_NEEDED="YES" ;;
-  *) UI_NEEDED="NO" ;;
+  false|FALSE|no|NO) UI_NEEDED="NO" ;;
+  *) invalid_review_result ;;
 esac
 
 commit_stage_changes spec_review "$ISSUE"
@@ -203,36 +215,42 @@ if [ -n "$GOVERNANCE_ERROR" ] && [[ "$REVIEW_SUMMARY" != *"$GOVERNANCE_ERROR"* ]
 $GOVERNANCE_ERROR"
 fi
 
-if [ "$REVIEW_STATUS" = "FAIL" ]; then
-  bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" invalidate "$ISSUE" specify --reason spec-review-failed \
-    || echo 'WARN: checkpoint invalidation unavailable; FAIL feedback still requires fresh specify.' >&2
-  echo "  Spec review FAILED — moving back to Spec"
-  post_comment "$ISSUE" "❌ Spec review: **FAIL**
+case "$REVIEW_STATUS" in
+  FAIL)
+    bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" invalidate "$ISSUE" specify --reason spec-review-failed \
+      || echo 'WARN: checkpoint invalidation unavailable; FAIL feedback still requires fresh specify.' >&2
+    echo "  Spec review FAILED — moving back to Spec"
+    post_comment "$ISSUE" "❌ Spec review: **FAIL**
 
 $REVIEW_SUMMARY
 
 Routing back to Spec for re-work."
-  move_issue "$ISSUE" "$BUREAU_STATE_SPEC"
-  NEXT_STATE="Spec (rework)"
-elif [ "$UI_NEEDED" = "YES" ]; then
-  add_issue_label "$ISSUE" "needs-ux" \
-    || echo "  WARN: failed to add 'needs-ux' label to $ISSUE; will retry on next tick" >&2
-  post_comment "$ISSUE" "✅ Spec review **PASSED**. UI work detected — routing to Design.
+    move_issue "$ISSUE" "$BUREAU_STATE_SPEC"
+    NEXT_STATE="Spec (rework)"
+    ;;
+  PASS)
+    if [ "$UI_NEEDED" = "YES" ]; then
+      add_issue_label "$ISSUE" "needs-ux" \
+        || echo "  WARN: failed to add 'needs-ux' label to $ISSUE; will retry on next tick" >&2
+      post_comment "$ISSUE" "✅ Spec review **PASSED**. UI work detected — routing to Design.
 
 $REVIEW_SUMMARY"
-  move_issue "$ISSUE" "$BUREAU_STATE_DESIGN"
-  echo "  Spec review PASSED — routing to Design"
-  NEXT_STATE="Design"
-else
-  bureau_overlap_ready "$ISSUE" "$BRANCH" spec_review
-  bureau_overlap_admit "$ISSUE" "$BRANCH" --local
-  post_comment "$ISSUE" "✅ Spec review **PASSED**. Ready for implementation.
+      move_issue "$ISSUE" "$BUREAU_STATE_DESIGN"
+      echo "  Spec review PASSED — routing to Design"
+      NEXT_STATE="Design"
+    else
+      bureau_overlap_ready "$ISSUE" "$BRANCH" spec_review --status "$REVIEW_STATUS"
+      bureau_overlap_admit "$ISSUE" "$BRANCH" --local
+      post_comment "$ISSUE" "✅ Spec review **PASSED**. Ready for implementation.
 
 $REVIEW_SUMMARY"
-  move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
-  echo "  Spec review PASSED — moving to Build"
-  NEXT_STATE="Build"
-fi
+      move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
+      echo "  Spec review PASSED — moving to Build"
+      NEXT_STATE="Build"
+    fi
+    ;;
+  *) invalid_review_result ;;
+esac
 
 echo ""
 echo "═══════════════════════════════════════"

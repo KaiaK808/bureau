@@ -131,7 +131,17 @@ $PROJECT_DESC
 SPEC_CONTEXT=$(build_spec_context "$SPEC_DIR")
 NEGATIVE_CONSTRAINTS=$(build_negative_constraints)
 
-UX_RESULT=$("${CLAUDE[@]}" "You are the UX/UI design agent for $ISSUE ($ISSUE_TITLE).
+invalid_ux_result() {
+  bureau_ticket_checkpoint "$ISSUE"
+  ( mark_needs_human "$ISSUE" ux 22 technical 'Invalid UX result; inspect provider evidence and preserved edits' maintainer ) || true
+  bureau_ticket_checkpoint "$ISSUE" latched
+  bureau_outcome_signal human_hold || true
+  echo "  Invalid UX result — work preserved; human review required." >&2
+  exit 22
+}
+
+UX_RC=0
+UX_RESULT=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-ux.schema.json" "You are the UX/UI design agent for $ISSUE ($ISSUE_TITLE).
 
 $SPEC_CONTEXT
 $PROJECT_CONTEXT
@@ -183,7 +193,7 @@ Then update tasks.md: for each UI-touching task, append a sub-bullet linking to 
 Commit: '$ISSUE: design artifacts'. One commit is fine — design is a single logical change.
 
 Stop conditions — emit \`design_status\` accordingly:
-- NEEDS_HUMAN: a required design token (color, spacing, typography, motion) is missing from the existing config AND the spec doesn't pin a fallback. Name the missing token(s) in open_questions with \`blocking: true\`.
+- NEEDS_HUMAN: a required design token (color, spacing, typography, motion) is missing from the existing config AND the spec doesn't pin a fallback. Name the missing token(s) as blocking in Open Questions and summary.
 - NEEDS_HUMAN: component-library version conflict (the spec needs a feature only available in a newer version than what's installed).
 - INCOMPLETE: any blocking open question (a UX-critical decision the spec is silent on). Pipeline routes to Spec, not Build.
 - COMPLETE: design.md fully populated, all open questions are non-blocking.
@@ -196,18 +206,17 @@ Role-specific:
 - Do NOT fabricate Figma links, screenshots, or URLs — cite repo file paths instead.
 - Do NOT touch source files outside ${SPEC_DIR}; implementation happens later.
 
-At the end, emit a fenced json block. \`components_net_new\` MUST include prop sketches so implementers consume them directly without re-deriving:
+The Net-New Components section MUST include prop sketches so implementers consume them directly without re-deriving. Record questions and whether they block progress in Open Questions. At the end, emit a fenced json block:
 
 \`\`\`json
 {
   \"design_status\": \"COMPLETE|INCOMPLETE|NEEDS_HUMAN\",
-  \"components_net_new\": [{\"path\": \"\", \"props\": [{\"name\": \"\", \"type\": \"\", \"default\": null}]}],
-  \"components_reused\": [\"path\"],
-  \"open_questions\": [{\"q\": \"\", \"blocking\": false}],
   \"summary\": \"\"
 }
-\`\`\`")
+\`\`\`") || UX_RC=$?
 bureau_ticket_checkpoint "$ISSUE" latched
+if [ "$UX_RC" = 22 ]; then invalid_ux_result; fi
+[ "$UX_RC" = 0 ] || exit "$UX_RC"
 echo "$UX_RESULT"
 
 echo ""
@@ -216,7 +225,11 @@ echo "  design artifacts generated"
 echo ""
 echo "Phase 2/2: push + route"
 
-DESIGN_STATUS=$(parse_claude_json "$UX_RESULT" '.design_status // "COMPLETE"')
+DESIGN_STATUS=$(parse_claude_json "$UX_RESULT" '.design_status | select(type == "string")')
+case "$DESIGN_STATUS" in
+  COMPLETE|INCOMPLETE|NEEDS_HUMAN) ;;
+  *) invalid_ux_result ;;
+esac
 DESIGN_SUMMARY=$(bureau_comment_projection "$(parse_claude_json "$UX_RESULT" '.summary // ""')")
 
 git add -A
@@ -247,13 +260,14 @@ $DESIGN_SUMMARY"
     move_issue "$ISSUE" "$BUREAU_STATE_SPEC_REVIEW"
     NEXT_STATE_LABEL="Spec Review (rework)"
     ;;
-  COMPLETE|*)
-    bureau_overlap_ready "$ISSUE" "$BRANCH" ux
+  COMPLETE)
+    bureau_overlap_ready "$ISSUE" "$BRANCH" ux --status "$DESIGN_STATUS"
     bureau_overlap_admit "$ISSUE" "$BRANCH" --local
     post_comment "$ISSUE" "🎨 Design phase complete. Design artifacts committed to \`$BRANCH\`. Ready for implementation."
     move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
     NEXT_STATE_LABEL="Build"
     ;;
+  *) invalid_ux_result ;;
 esac
 
 echo "  Moved $ISSUE to $NEXT_STATE_LABEL"

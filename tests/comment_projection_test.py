@@ -16,7 +16,7 @@ PUBLIC = 'PUBLIC_STAGE_SUMMARY'
 def spec_review_summary():
     source = (SCRIPTS/'spec-review-pipeline.sh').read_text()
     start = source.index('REVIEW_SUMMARY=')
-    return source[start:source.index('\nif [ "$REVIEW_STATUS" = "FAIL" ]; then', start)]
+    return source[start:source.index('\ncase "$REVIEW_STATUS" in', start)]
 
 
 def function(source, name):
