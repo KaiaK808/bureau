@@ -29,7 +29,9 @@ class InstallationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="bureau install ")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # Resolve once: on macOS the temp dir sits behind the /var -> /private/var symlink,
+        # and the installer compares resolved paths.
+        self.root = Path(self.temp.name).resolve()
         self.repo = self.root / "target repo"
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
 
