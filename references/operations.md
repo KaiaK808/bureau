@@ -40,7 +40,7 @@ Preserve existing values during updates and add these only where useful. The [co
 |---|---|
 | `agents.max_concurrent_issues` | `0` (unlimited); `1` gates new Spec admissions until in-flight issues drain |
 | `agents.code_review_sampling_threshold` | `500` changed lines before reviewers receive sampling guidance |
-| `agents.review_adr_context` | `false`; opt into accepted ADR context from the pinned PR head |
+| `agents.review_adr_context` | `false`; opt into pinned base/head ADR context; only unchanged accepted records are settled, added/changed/removed records are non-authoritative proposals |
 | `agents.review_adr_budget_bytes` | `4096` UTF-8 bytes including instructions and truncation notice; `0` omits context |
 | `repo.adr_dir` | `docs/adr`; validated repository-relative directory of numbered ADR Markdown files |
 | `agents.merge_min_required_checks` | `1`; retains protection against a vacuous green-CI result |

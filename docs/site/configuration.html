@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3aaaf76eab447de1534db9c2c52bb06b3985e61ad3b24e587073cca7c2725924">
+<meta name="bureau-source-sha256" content="d3ddee6b92be4190fa9449dc81fbe6c0915a3cfa38b481ac05ba5eb27f3ac24b">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -432,11 +432,14 @@ projected PR comment</td>
 <td><code>agents.review_adr_context</code></td>
 <td>bool</td>
 <td><code>false</code></td>
-<td>Include a bounded index of accepted ADRs from the pinned PR head in
-all three specialist prompts. Accepted decisions are settled;
-contradictory findings must cite the ADR and give new evidence. Known
-limits are not findings. Disabled preserves existing prompt/comment
-bytes and ignores <code>adr_refs</code> during convergence</td>
+<td>Include a bounded ADR index from pinned PR base/head in all three
+specialist prompts. Only accepted records with identical paths and blob
+IDs are settled, including for Known-limit exclusions.
+Added/changed/removed records are non-authoritative proposals; citations
+are valid but never waive or downgrade findings. Enabled selects the
+extended ADR schema. Disabled keeps the legacy schema bytes, Codex wire
+projection, validation, receipt schema digest and prompt/comment bytes;
+unsolicited <code>adr_refs</code> are unexpected result fields</td>
 </tr>
 <tr>
 <td><code>agents.review_adr_budget_bytes</code></td>
@@ -1017,9 +1020,10 @@ pinned helper's output here and persists the exact feature pointer</td>
 <td><code>repo.adr_dir</code></td>
 <td>string</td>
 <td><code>"docs/adr"</code></td>
-<td>Directory of direct <code>NNNN-*.md</code> ADR files inside the
-reviewed tree; validated as a plain relative path. Git symlinks are not
-followed. Missing directory supplies no context</td>
+<td>Directory of direct <code>NNNN-*.md</code> ADR files in both pinned
+trees; validated as a plain relative path. Git symlinks are not
+followed. Missing on both inputs supplies no context; base-only records
+are removal proposals</td>
 </tr>
 <tr>
 <td><code>repo.base_branch</code></td>

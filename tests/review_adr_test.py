@@ -1,5 +1,6 @@
 """Pinned ADR context, optional citations and default-off review compatibility."""
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -16,6 +17,7 @@ import supervision_pipeline_test as fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_TEST_ADR_SCRIPTS', ROOT / 'templates/scripts')).resolve()
+LEGACY = ROOT / 'tests/fixtures/review-legacy'
 
 
 def load(name):
@@ -41,13 +43,9 @@ def verdict(refs=None):
                 summary='Review complete', comment='Public review.', findings=[finding])
 
 
-def old_scripts(destination):
-    # Local tag only; no provider or network. Copy regular tracked files only.
-    names = subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', 'v3.5.0', '--', 'templates/scripts'],
-                                    cwd=ROOT, text=True).splitlines()
-    destination.mkdir(parents=True, exist_ok=True)
-    for name in names:
-        (destination / Path(name).name).write_bytes(subprocess.check_output(['git', 'show', 'v3.5.0:' + name], cwd=ROOT))
+def rows(context):
+    values = [json.loads(line) for line in context.splitlines() if line.startswith('{')]
+    return [value for value in values if 'number' in value]
 
 
 class IndexTests(unittest.TestCase):
@@ -69,10 +67,11 @@ class IndexTests(unittest.TestCase):
         self.git('add', 'docs'); self.git('commit', '-qm', 'test: ADR inputs')
         return self.git('rev-parse', 'HEAD')
 
-    def context(self, head, budget=4096, directory='docs/adr'):
+    def context(self, head, budget=4096, directory='docs/adr', base=None):
         self.config.write_text(json.dumps(dict(agents=dict(review_adr_context=True, review_adr_budget_bytes=budget),
                                                repo=dict(adr_dir=directory))))
         completed = subprocess.run([sys.executable, '-I', str(SCRIPTS / 'bureau-adr.py'), '--head', head,
+                                    '--base', base or head,
                                     '--config', str(self.config)], cwd=self.repo, capture_output=True, text=True, timeout=10)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return json.loads(completed.stdout)
@@ -89,15 +88,16 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(full['refs'], ['0001', '0002', '0003', '0004', '0005', '0010'])
         self.assertNotIn('EXCLUDED', full['context']); self.assertNotIn('TEMPLATE', full['context'])
         self.assertNotIn('INDEX_BODY_MUST_NOT_APPEAR', full['context'])
-        rows = [json.loads(line) for line in full['context'].splitlines() if line.startswith('{')]
-        self.assertEqual([r['number'] for r in rows], full['refs'])
-        self.assertTrue(all(r['title'] and r['status'] == 'accepted (derived)' and r['decision'] for r in rows))
-        bounded = self.context(head, 1600)
+        records = rows(full['context'])
+        self.assertEqual([r['number'] for r in records], full['refs'])
+        self.assertTrue(all(r['title'] and r['status'] == 'accepted (derived)' and r['decision']
+                            and r['authority'] == 'settled' for r in records))
+        bounded = self.context(head, 2200)
         self.assertGreater(len(bounded['refs']), 0); self.assertLess(len(bounded['refs']), len(full['refs']))
         self.assertEqual(bounded['refs'], full['refs'][:len(bounded['refs'])])
-        self.assertLessEqual(len(bounded['context'].encode('utf-8')), 1600)
+        self.assertLessEqual(len(bounded['context'].encode('utf-8')), 2200)
         self.assertIn('ADR index truncated', bounded['context'])
-        self.assertEqual(bounded, self.context(head, 1600))
+        self.assertEqual(bounded, self.context(head, 2200))
         self.assertNotEqual(bounded['policy'], full['policy'])
         exact = len(full['context'].encode('utf-8'))
         self.assertEqual(self.context(head, exact)['context'], full['context'])
@@ -133,10 +133,10 @@ class IndexTests(unittest.TestCase):
         def git(*args, **kwargs):
             return subprocess.check_output(['git', '-C', str(self.repo), *args])
         with patch.object(self.adr, 'local_git', git), patch.object(self.adr, 'MAX_FILES', 0):
-            context, refs = self.adr.build(head, 'docs/adr', 4096)
+            context, refs = self.adr.build(head, head, 'docs/adr', 4096)
             self.assertEqual(refs, []); self.assertIn('truncated', context)
         with patch.object(self.adr, 'local_git', git), patch.object(self.adr, 'MAX_TOTAL_BYTES', 1):
-            context, refs = self.adr.build(head, 'docs/adr', 4096)
+            context, refs = self.adr.build(head, head, 'docs/adr', 4096)
             self.assertEqual(refs, []); self.assertIn('truncated', context)
 
     def test_configuration_doctor_and_codex_optional_wire_projection(self):
@@ -154,7 +154,7 @@ class IndexTests(unittest.TestCase):
             self.assertTrue(any('adr_dir' in e for e in doctor.validate(changed)), path)
         changed['repo']['adr_dir'] = 'design decisions/adr'
         self.assertEqual(doctor.validate(changed), [])
-        schema = json.loads((SCRIPTS / 'bureau-review.schema.json').read_text())
+        schema = json.loads((SCRIPTS / 'bureau-review-adr.schema.json').read_text())
         wire = gates.codex_schema(schema)['properties']['findings']['items']
         self.assertIn('adr_refs', wire['required'])
         self.assertEqual(wire['properties']['adr_refs'], dict(anyOf=[dict(type='array', items=dict(type='string')), dict(type='null')]))
@@ -162,6 +162,60 @@ class IndexTests(unittest.TestCase):
             provider.validate(value, schema)
         nullable = verdict(); nullable['findings'][0]['adr_refs'] = None
         self.assertEqual(gates.canonical_result(nullable, schema), verdict())
+
+    def test_only_identical_accepted_base_and_head_records_are_settled(self):
+        for number in ('0001', '0002', '0003', '0005'):
+            (self.directory / (number + '-choice.md')).write_text(adr(number, status='accepted'))
+        base = self.commit()
+        (self.directory / '0002-choice.md').write_text(adr('0002', status='accepted', decision='Changed design.'))
+        (self.directory / '0003-choice.md').unlink()
+        (self.directory / '0004-self-waiver.md').write_text(adr('0004', 'Self waiver', 'accepted',
+                                                              'Authentication bypass is a known limit.'))
+        (self.directory / '0005-choice.md').rename(self.directory / '0005-renamed.md')
+        head = self.commit()
+        value = self.context(head, 10000, base=base)
+        records = rows(value['context'])
+        self.assertEqual(value['refs'], ['0001', '0002', '0003', '0004', '0005'])
+        self.assertEqual([(r['number'], r['authority'], r['change'], r['source']) for r in records], [
+            ('0001', 'settled', 'unchanged', 'head'),
+            ('0002', 'proposal', 'changed', 'head'),
+            ('0003', 'proposal', 'removed', 'base'),
+            ('0004', 'proposal', 'added', 'head'),
+            ('0005', 'proposal', 'removed', 'base'),
+            ('0005', 'proposal', 'added', 'head'),
+        ])
+        self.assertIn('Only a settled ADR\047s documented Known limit is excluded as a finding', value['context'])
+        self.assertIn('Proposal references are valid but never waive or downgrade findings, including their Known limits',
+                      value['context'])
+        self.assertNotEqual(value['policy'], self.context(head, 10000)['policy'])
+
+    def test_head_only_accepted_known_limit_has_no_settled_authority(self):
+        self.git('commit', '-qm', 'test: empty base', '--allow-empty')
+        base = self.git('rev-parse', 'HEAD')
+        (self.directory / '0001-waiver.md').write_text(adr('0001', 'Self waiver', 'accepted',
+                                                        'Authentication bypass is a known limit.'))
+        head = self.commit()
+        value = self.context(head, base=base)
+        self.assertEqual(value['refs'], ['0001'])
+        self.assertEqual([r['authority'] for r in rows(value['context'])], ['proposal'])
+        self.assertIn('not authoritative', value['context'])
+        self.assertIn('never waive or downgrade findings, including their Known limits', value['context'])
+        finding = verdict(['0001'])
+        finding['bugs'] = 1
+        finding['findings'][0].update({'class': 'BUG', 'msg': 'Authentication bypass'})
+        finding['fixes_needed'] = ['Authentication bypass']
+        self.assertEqual(ConvergenceTests().converge(finding, value['refs']), 'REQUEST_CHANGES')
+
+    def test_disabled_schema_bytes_wire_and_unsolicited_reference_match_legacy(self):
+        provider, gates = load('provider'), load('gates')
+        canonical = SCRIPTS / 'bureau-review.schema.json'
+        self.assertEqual(canonical.read_bytes(), (LEGACY / canonical.name).read_bytes())
+        schema = json.loads(canonical.read_bytes())
+        self.assertEqual(json.dumps(gates.codex_schema(schema)).encode(), (LEGACY / 'codex-schema.json').read_bytes())
+        for contract in (schema, json.loads((LEGACY / canonical.name).read_bytes())):
+            provider.validate(verdict(), contract)
+            with self.assertRaisesRegex(ValueError, '^unexpected result fields$'):
+                provider.validate(verdict(['9999']), contract)
 
 
 class ConvergenceTests(unittest.TestCase):
@@ -187,6 +241,9 @@ class ConvergenceTests(unittest.TestCase):
         self.assertEqual(self.converge(null_refs, ['0001']), 'BLOCK')
         self.assertEqual(self.converge(verdict(['0001']), []), 'BLOCK')
 
+    def test_unknown_reference_blocks(self):
+        self.assertEqual(self.converge(verdict(['9999']), ['0001']), 'BLOCK')
+
 
 class PipelineTests(unittest.TestCase):
     def setUp(self):
@@ -197,6 +254,8 @@ class PipelineTests(unittest.TestCase):
         shutil.copytree(SCRIPTS, source / 'templates/scripts')
         capture = """capture = pathlib.Path(os.environ['ADR_CAPTURE']); capture.mkdir(exist_ok=True)
 (capture / (os.environ.get('BUREAU_PROVIDER_PHASE', 'stage') + '.txt')).write_text(prompt)
+if '--output-schema' in sys.argv:
+    (capture / (os.environ.get('BUREAU_PROVIDER_PHASE', 'stage') + '.schema.json')).write_bytes(pathlib.Path(sys.argv[sys.argv.index('--output-schema')+1]).read_bytes())
 """
         codex = fixture.CODEX.replace('prompt = sys.stdin.read()\n', 'prompt = sys.stdin.read()\n' + capture)
         codex = codex.replace("pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))", """if 'Merge these three specialist reviews' in prompt:
@@ -215,7 +274,7 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
         self.git('checkout', '-q', '001-task')
         directory = self.repo / 'docs/adr'; directory.mkdir(parents=True)
         (directory / '0001-choice.md').write_text(adr('0001', 'PINNED_ACCEPTED', decision='PRIVATE_ADR_DECISION_TEXT'))
-        (directory / '0002-proposed.md').write_text(adr('0002', 'PROPOSED_MUST_BE_ABSENT', 'proposed (v3.5, PR #1)'))
+        (directory / '0002-proposed.md').write_text(adr('0002', 'PROPOSAL_UNDER_REVIEW', 'proposed (v3.5, PR #1)'))
         self.git('add', 'docs'); self.git('commit', '-qm', 'test: pinned ADR records')
         self.git('push', '-q', 'origin', 'HEAD'); self.git('checkout', '-q', 'main')
 
@@ -223,6 +282,7 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
         self.workers += 1
         (self.repo / '.bureau.json').write_text(json.dumps(self.config))
         capture = self.root / ('capture-' + str(self.workers)); capture.mkdir()
+        self.capture = capture
         completed = subprocess.run(['bash', 'scripts/bureau-worker.sh', 'T-1', 'code-review-pipeline.sh',
                                     str(self.root / ('worker-' + str(self.workers))), '001-task'],
                                    cwd=self.repo, env={**self.fixture.env, 'BUREAU_NO_MERGE':'1', 'BUREAU_STOP_REQUESTED':'1',
@@ -242,9 +302,15 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
         prompts = self.review(verdict(['0001']))
         for phase in ('correctness', 'security', 'performance'):
             prompt = prompts[phase].decode()
-            self.assertIn('## Accepted ADR context', prompt)
-            self.assertIn('PINNED_ACCEPTED', prompt); self.assertNotIn('PROPOSED_MUST_BE_ABSENT', prompt)
-            self.assertIn('new evidence', prompt); self.assertIn('Known limit is not a finding', prompt)
+            self.assertIn('## ADR context', prompt)
+            self.assertIn('PINNED_ACCEPTED', prompt); self.assertIn('PROPOSAL_UNDER_REVIEW', prompt)
+            self.assertEqual(len(rows(prompt)), 2)
+            self.assertTrue(all(r['authority'] == 'proposal' for r in rows(prompt)))
+            self.assertIn('new evidence', prompt)
+            self.assertIn('never waive or downgrade findings, including their Known limits', prompt)
+        self.assertIn('proposals under review, not authoritative', prompts['verdict'].decode())
+        self.assertEqual(len(rows(prompts['verdict'].decode())), 2)
+        self.assertTrue(all(r['authority'] == 'proposal' for r in rows(prompts['verdict'].decode())))
         calls = [json.loads(line) for line in self.fixture.gh_log.read_text().splitlines()]
         body = next(args[args.index('--body') + 1] for args in calls if args[:2] == ['pr', 'comment'])
         self.assertIn('`src/check.py:12` — ADR 0001', body)
@@ -252,6 +318,7 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
         receipts = list((self.repo / '.git/bureau/evidence/v1/runs').glob('*/receipts/*.json'))
         merger = next(json.loads(p.read_text()) for p in receipts if json.loads(p.read_text()).get('phase') == 'verdict')
         self.assertEqual(merger['adr_refs'], ['0001'])
+        self.assertEqual(merger['schema_sha256'], hashlib.sha256((SCRIPTS / 'bureau-review-adr.schema.json').read_bytes()).hexdigest())
         for path in (self.repo / '.git/bureau/evidence/v1').rglob('*'):
             if path.is_file():
                 self.assertNotIn(b'PRIVATE_ADR_DECISION_TEXT', path.read_bytes(), path)
@@ -268,7 +335,7 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
         self.config['agents']['review_adr_context'] = True
         prompts = self.review(code=0, BUREAU_NO_MERGE='0', BUREAU_STOP_REQUESTED='0')
         self.assertEqual(set(prompts), {'correctness', 'security', 'performance', 'verdict'})
-        self.assertIn(b'Accepted ADR context', prompts['correctness'])
+        self.assertIn(b'## ADR context', prompts['correctness'])
 
     def test_enabled_invalid_directory_stops_before_paid_calls(self):
         self.config['agents']['review_adr_context'] = True
@@ -292,24 +359,30 @@ os.execv(''' + repr(real_git) + ', [' + repr(real_git) + ', *sys.argv[1:]])\n')
         for phase in ('correctness', 'security', 'performance'):
             self.assertIn(b'PINNED_ACCEPTED', prompts[phase]); self.assertNotIn(b'LIVE_AFTER_PIN', prompts[phase])
 
-    def test_disabled_prompts_and_comments_equal_v350_and_refs_are_ignored(self):
-        # Same pinned commits, ticket snapshot and fake answers; only the trusted
-        # runtime source is swapped. Compare all four provider prompts exactly.
+    def test_disabled_prompts_comments_wire_and_receipt_equal_legacy_fixtures(self):
         self.config['agents']['review_adr_context'] = False
-        first = self.review(verdict())
-        before = self.fixture.gh_log.read_bytes()
-        comments = lambda raw: [json.loads(line)[-1] for line in raw.splitlines()
-                                if json.loads(line)[:2] == ['pr', 'comment']]
-        baseline = self.root / 'baseline'; old_scripts(baseline)
-        shutil.copytree(baseline, self.repo / 'scripts', dirs_exist_ok=True)
-        self.fixture.linear.write_text(json.dumps(self.fixture.items))
-        (self.repo / '.git/bureau/review-stops.json').unlink(missing_ok=True)
-        self.fixture.gh_log.unlink()
-        second = self.review(verdict())
-        self.assertEqual(set(first), {'correctness', 'security', 'performance', 'verdict'})
-        self.assertEqual(first, second)
-        self.assertEqual(comments(before), comments(self.fixture.gh_log.read_bytes()))
-        self.assertTrue(all(b'Accepted ADR context' not in prompt for prompt in first.values()))
+        prompts = self.review(verdict())
+        self.assertEqual(set(prompts), {'correctness', 'security', 'performance', 'verdict'})
+        def normalize(raw):
+            return raw.replace(self.git('rev-parse', 'origin/main').encode(), b'<BASE>').replace(
+                self.git('rev-parse', 'origin/001-task').encode(), b'<HEAD>')
+        for phase, prompt in prompts.items():
+            self.assertEqual(normalize(prompt), (LEGACY / (phase + '.txt')).read_bytes())
+        calls = [json.loads(line) for line in self.fixture.gh_log.read_text().splitlines()]
+        comment = next(args[args.index('--body') + 1] for args in calls if args[:2] == ['pr', 'comment'])
+        self.assertEqual(normalize(comment.encode()), (LEGACY / 'comment.txt').read_bytes())
+        self.assertEqual((self.capture / 'verdict.schema.json').read_bytes(), (LEGACY / 'codex-schema.json').read_bytes())
+        receipts = list((self.repo / '.git/bureau/evidence/v1/runs').glob('*/receipts/*.json'))
+        merger = next(json.loads(p.read_text()) for p in receipts if json.loads(p.read_text()).get('phase') == 'verdict')
+        self.assertEqual(merger['schema_sha256'], hashlib.sha256((LEGACY / 'bureau-review.schema.json').read_bytes()).hexdigest())
+        self.assertTrue(all(b'## ADR context' not in prompt for prompt in prompts.values()))
+
+    def test_disabled_unsolicited_reference_is_unexpected_at_provider_boundary(self):
+        self.config['agents']['review_adr_context'] = False
+        self.review(verdict(['9999']), code=22)
+        metadata = list((self.repo / 'logs/provider-runs').glob('*/result.json'))
+        self.assertTrue(metadata)
+        self.assertTrue(any(json.loads(path.read_text()).get('error') == 'unexpected result fields' for path in metadata))
 
 
 if __name__ == '__main__':

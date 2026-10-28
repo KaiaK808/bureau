@@ -313,14 +313,17 @@ LESSONS_CONTEXT=$(build_lessons_context code_review "$SPEC_DIR" "$REVIEW_DIFF")
 ADR_CONTEXT=""
 ADR_MERGE_NOTE=""
 ADR_POLICY=""
+REVIEW_SCHEMA="$SCRIPT_REPO/scripts/bureau-review.schema.json"
 export BUREAU_REVIEW_ADR_REFS=null
 if [ "$(bureau_get '.agents.review_adr_context == true')" = true ]; then
-  ADR_INDEX=$(build_review_adr_context "$REVIEW_HEAD") || exit 24
+  REVIEW_SCHEMA="$SCRIPT_REPO/scripts/bureau-review-adr.schema.json"
+  ADR_INDEX=$(build_review_adr_context "$REVIEW_BASE" "$REVIEW_HEAD") || exit 24
   ADR_CONTEXT=$(printf '%s' "$ADR_INDEX" | jq -er '.context') || exit 24
   BUREAU_REVIEW_ADR_REFS=$(printf '%s' "$ADR_INDEX" | jq -ce '.refs') || exit 24
   ADR_POLICY=$(printf '%s' "$ADR_INDEX" | jq -er '.policy') || exit 24
   [ -z "$ADR_CONTEXT" ] || ADR_CONTEXT=$'\n\n'"$ADR_CONTEXT"
-  ADR_MERGE_NOTE=$'\n\nPreserve each finding\047s optional adr_refs array of four-digit IDs from the specialist reviews. Accepted ADRs are settled: a contradictory finding must cite its ADR and give new evidence justifying reopening it; otherwise it is only an ADR change proposal (SKIP). Documented Known limits are not findings. Cite IDs only (ADR 0003), never copy ADR text into the comment.'
+  ADR_MERGE_NOTE=$'\n\nPreserve each finding\047s optional adr_refs array of four-digit IDs from the specialist reviews. Only accepted ADRs whose path and blob ID match on pinned base and head are settled. A contradictory finding must cite that settled ADR and give new evidence justifying reopening it; otherwise classify the disagreement SKIP. Only settled ADR Known limits are excluded as findings. Added, changed and removed ADRs are proposals under review, not authoritative even with accepted status: references to proposals are valid but never waive or downgrade findings, including claimed Known limits. Cite IDs only (ADR 0003), never copy ADR text into the comment.'
+  ADR_MERGE_NOTE+="$ADR_CONTEXT"
 fi
 
 echo ""
@@ -576,7 +579,7 @@ done
 echo ""
 echo "  Merging findings..."
 
-MERGED_RAW=$(BUREAU_PROVIDER_PHASE=verdict "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-review.schema.json" "${CAVEMAN_PREFIX}Merge these three specialist reviews into a single verdict for PR #$PR_NUMBER ($ISSUE — $ISSUE_TITLE).
+MERGED_RAW=$(BUREAU_PROVIDER_PHASE=verdict "${CLAUDE[@]}" --schema "$REVIEW_SCHEMA" "${CAVEMAN_PREFIX}Merge these three specialist reviews into a single verdict for PR #$PR_NUMBER ($ISSUE — $ISSUE_TITLE).
 
 ### Correctness
 $CORRECTNESS_REVIEW

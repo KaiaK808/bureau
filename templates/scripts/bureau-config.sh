@@ -4446,11 +4446,11 @@ build_lessons_context() {
   return 0
 }
 
-# build_review_adr_context <pinned-head>: JSON context plus included IDs and a
+# build_review_adr_context <pinned-base> <pinned-head>: context, included IDs and a
 # reuse-policy digest. Read only local Git objects, never live checkout files.
 # Explicit opt-in failures stop review with 24 instead of inventing context.
 build_review_adr_context() {
-  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-adr.py" --config "$BUREAU_CONFIG" --head "$1"
+  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-adr.py" --config "$BUREAU_CONFIG" --base "$1" --head "$2"
 }
 
 # build_negative_constraints: shared "Do NOT" block injected into prompts that

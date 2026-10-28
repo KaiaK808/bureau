@@ -9,8 +9,9 @@ Maintainer: copy this brief, fill in the inputs and replace the ADR list with th
 - Pinned base: `<commit ID>`
 - Pinned head: `<commit ID>`
 - Review focus and explicit exclusions: `<scope>`
-- Relevant ADRs, by number **and title**, including status:
-  - `ADR NNNN — Full decision title — accepted (derived)`
+- Relevant ADRs, by number **and title**, including status and verified authority:
+  - `ADR NNNN — Full decision title — accepted (derived) — settled (same path and blob ID on base/head)`
+  - `ADR NNNN — Full proposal title — accepted — proposal under review (added/changed/removed by this PR)`
   - `<additional relevant records; remove this placeholder>`
 - Checks already run and their exact results: `<commands and outcomes>`
 
@@ -18,7 +19,9 @@ Maintainer: copy this brief, fill in the inputs and replace the ADR list with th
 
 Review the pinned diff and trace any suspected defect through its callers, persistence and error paths. This is a read-only external review: do not edit files, commit, push, open a PR, change remote state or launch live provider/service calls. Use local checks with fake services where appropriate. Report a tooling restriction as missing validation evidence, with its command and result.
 
-Read the listed ADRs at the pinned head before reporting findings. An accepted ADR is a settled decision. A finding that contradicts one must explicitly name it (for example `ADR 0003`) and state the new evidence that justifies reopening it, considering its Reversal condition. Without that evidence the disagreement is out of scope; it may only be noted separately as an ADR change proposal. A known limit documented in an ADR is not a finding. Proposed records are context, not accepted authority; superseded records do not override their replacements.
+Read the listed ADRs at the pinned head, or at the pinned base for a removed record. Only accepted ADRs unchanged from the target branch count as settled: verify that both path and blob ID are identical on pinned base and pinned head. A finding that contradicts a settled ADR must explicitly name it (for example `ADR 0003`) and state the new evidence that justifies reopening it, considering its Reversal condition. Without that evidence the disagreement is out of scope; it may only be noted separately as an ADR change proposal. Only a settled ADR's documented known limit is excluded as a finding.
+
+ADRs added, changed or removed by the PR are proposals under review, not authoritative, even when their Status says accepted. A finding may validly reference a proposal, but it carries no settled status and never waives or downgrades any finding, including a claimed known limit. Other proposed records are context; superseded records do not override their replacements.
 
 Use the evidence discipline in [ADR 0011](../docs/adr/0011-independent-provider-review.md) and [the review protocol](../docs/stage-protocol.md#review-convergence): independent inspection of pinned inputs, concrete evidence and explicit validation limits. Separate a violated decision or new regression from an intentional documented boundary. Cite ADR numbers without copying their bodies into review evidence.
 
