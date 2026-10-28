@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a5198c6314311bfddad1805ad802711052cbb35bfa97e986a09e5c7257933de2">
+<meta name="bureau-source-sha256" content="e32594fc242dc390ab972fbf1412071ea5a7508522300c9c0c282206cb219e86">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -198,17 +198,16 @@ reconciliation. Rollback restores v3.5.0's result handling and cannot
 undo commits, pushes or Linear/GitHub changes made in between.</p>
 <h2 id="validation">Validation</h2>
 <p>The maintainer's release validation record reports two Codex review
-rounds for <a href="https://github.com/KaiaK808/bureau/pull/98">#98</a>:
-round 1 requested three changes and round 2 approved. GitHub CI on #98
-at <code>0ce1b2a</code> is green on all 10 shards (<a
+rounds for <a href="https://github.com/KaiaK808/bureau/pull/98">#98</a>.
+GitHub CI on #98 at <code>0ce1b2a</code> is green on all 10 shards (<a
 href="https://github.com/KaiaK808/bureau/actions/runs/40703173924">run
 40703173924</a>) after one re-run of a macOS shard. On the first
 attempt, a gate cancellation test in
 <code>tests/provider_adapter_test.py</code> failed on timing; it covers
 code #98 does not change and is the known limitation below. The changed
-tests passed locally on macOS outside the sandbox. Provider calls are
-faked in tests. No installation has run v3.5.1 before the release.
-Release preparation changes documentation only.</p>
+tests passed locally on macOS. Provider calls are faked in tests. No
+installation has run v3.5.1 before the release. Release preparation
+changes documentation only.</p>
 <!-- main CI result pending -->
 
 <p>See <a href="releases.html#current-release-status">current release
@@ -217,7 +216,7 @@ record.</p>
 <h2 id="known-limitations">Known limitations</h2>
 <p>On macOS CI, a gate cancellation test can intermittently lose the
 cancellation exit code <code>130</code>. A gate run is never falsely
-green because of this. The fix is planned for v3.6.0.</p></main>
+green because of this. A fix is planned for a later release.</p></main>
 </div>
 </body>
 </html>

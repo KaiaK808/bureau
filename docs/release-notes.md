@@ -61,7 +61,7 @@ To roll back, stop every driver, select tag `v3.5.0` in the source skill checkou
 
 ## Validation
 
-The maintainer's release validation record reports two Codex review rounds for [#98](https://github.com/KaiaK808/bureau/pull/98): round 1 requested three changes and round 2 approved. GitHub CI on #98 at `0ce1b2a` is green on all 10 shards ([run 40703173924](https://github.com/KaiaK808/bureau/actions/runs/40703173924)) after one re-run of a macOS shard. On the first attempt, a gate cancellation test in `tests/provider_adapter_test.py` failed on timing; it covers code #98 does not change and is the known limitation below. The changed tests passed locally on macOS outside the sandbox. Provider calls are faked in tests. No installation has run v3.5.1 before the release. Release preparation changes documentation only.
+The maintainer's release validation record reports two Codex review rounds for [#98](https://github.com/KaiaK808/bureau/pull/98). GitHub CI on #98 at `0ce1b2a` is green on all 10 shards ([run 40703173924](https://github.com/KaiaK808/bureau/actions/runs/40703173924)) after one re-run of a macOS shard. On the first attempt, a gate cancellation test in `tests/provider_adapter_test.py` failed on timing; it covers code #98 does not change and is the known limitation below. The changed tests passed locally on macOS. Provider calls are faked in tests. No installation has run v3.5.1 before the release. Release preparation changes documentation only.
 
 <!-- main CI result pending -->
 
@@ -69,4 +69,4 @@ See [current release status](releases.md#current-release-status). The main-branc
 
 ## Known limitations
 
-On macOS CI, a gate cancellation test can intermittently lose the cancellation exit code `130`. A gate run is never falsely green because of this. The fix is planned for v3.6.0.
+On macOS CI, a gate cancellation test can intermittently lose the cancellation exit code `130`. A gate run is never falsely green because of this. A fix is planned for a later release.

@@ -17,9 +17,9 @@ v3.5.1 is a patch release on v3.5.0, prepared 2026-10-28 for the 2026-10-29 tag.
 
 **Upgrade:** from v3.5.0 select tag `v3.5.1`, resync the complete scripts and interfaces scopes together, including `bureau-spec-review.schema.json` and `bureau-ux.schema.json`, then restart all drivers. A pending v3.5.0 Spec Review/UX overlap readiness record causes one fresh provider call after resync; no manual state migration is needed. Follow [Upgrade to v3.5.1](docs/migration.md#upgrade-to-v351).
 
-**Validation:** The maintainer's release validation record reports two Codex review rounds for [#98](https://github.com/KaiaK808/bureau/pull/98): round 1 requested three changes and round 2 approved. GitHub CI on #98 at `0ce1b2a` is green on all 10 shards ([run 40703173924](https://github.com/KaiaK808/bureau/actions/runs/40703173924)) after one re-run of a macOS shard. On the first attempt, a gate cancellation test in `tests/provider_adapter_test.py` failed on timing; it covers code #98 does not change and is the known limitation recorded here. The changed tests passed locally on macOS outside the sandbox. Provider calls are faked in tests. No installation has run v3.5.1 before the release. Release preparation changes documentation only.
+**Validation:** The maintainer's release validation record reports two Codex review rounds for [#98](https://github.com/KaiaK808/bureau/pull/98). GitHub CI on #98 at `0ce1b2a` is green on all 10 shards ([run 40703173924](https://github.com/KaiaK808/bureau/actions/runs/40703173924)) after one re-run of a macOS shard. On the first attempt, a gate cancellation test in `tests/provider_adapter_test.py` failed on timing; it covers code #98 does not change and is the known limitation recorded here. The changed tests passed locally on macOS. Provider calls are faked in tests. No installation has run v3.5.1 before the release. Release preparation changes documentation only.
 
-**Known limitation:** On macOS CI, a gate cancellation test can intermittently lose the cancellation exit code `130`. A gate run is never falsely green because of this. The fix is planned for v3.6.0.
+**Known limitation:** On macOS CI, a gate cancellation test can intermittently lose the cancellation exit code `130`. A gate run is never falsely green because of this. A fix is planned for a later release.
 
 ## [3.5.0] - 2026-10-28
 
