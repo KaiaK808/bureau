@@ -290,7 +290,9 @@ def merge(directory, base, head, refs):
         except (OSError, ValueError, TypeError, KeyError):
             failures.append(role)
             fallback_reasons.setdefault(role, 'invalid_specialist')
-        if role in values and summary_requires_merger(values[role]['summary']):
+        if role in values and any(not ' ' <= c <= '~' for c in values[role]['summary']):
+            fallback_reasons.setdefault(role, 'summary_non_ascii')
+        elif role in values and summary_requires_merger(values[role]['summary']):
             fallback_reasons.setdefault(role, 'summary_signal')
         try: raw = values.get(role) or structured(text)
         except (OSError, ValueError, TypeError): continue

@@ -139,7 +139,7 @@ def review_merge_shape(value):
     roles = ('correctness', 'security', 'performance')
     reasons = value.get('fallback_reasons', {})
     if (not isinstance(reasons, dict) or any(role not in roles for role in reasons)
-            or any(reason not in ('non_json_report', 'invalid_specialist', 'summary_signal') for reason in reasons.values())):
+            or any(reason not in ('non_json_report', 'invalid_specialist', 'summary_signal', 'summary_non_ascii') for reason in reasons.values())):
         raise ValueError('invalid fallback reason')
     if not isinstance(value['malformed_specialists'], list) or any(r not in roles for r in value['malformed_specialists']):
         raise ValueError('invalid fallback specialists')
