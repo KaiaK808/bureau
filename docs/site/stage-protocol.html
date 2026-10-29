@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="075a4d288953b40c7157ac2533c3428925f87a108d94ad526b0ee7bd1054eb12">
+<meta name="bureau-source-sha256" content="0c3e1f1ddfef072f492e3521788963cc7fdb0e632f8642d88d7d5f844cfd0780">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -167,17 +167,21 @@ with <code>usage_unknown: true</code>, unless
 bound still applies. With either policy enabled, initialization durably
 writes a separate marker in
 <code>&lt;common-git-dir&gt;/bureau/ticket-witnesses/</code> before
-creating the ledger. A witnessed missing, empty or unreadable ledger, or
-missing admitted attempt rows, stops as <code>budget</code> with
-<code>accounting_lost: true</code>, including provider-free progress.
-Receipts never count as witnesses or paid attempts; only ledger-admitted
-identities count. Only the <a
+creating the ledger. Initial witness creation preserves existing
+admission history and carries any missing identities into the ledger;
+they still spend call slots, with unknown tokens and conservative open
+wall intervals from the epoch. A witnessed missing, empty or unreadable
+ledger, or missing admitted attempt rows, stops as <code>budget</code>
+with <code>accounting_lost: true</code>, including provider-free
+progress. Receipts never count as witnesses or paid attempts; only
+ledger-admitted identities count. Only the <a
 href="configuration.html#ticket-run-budgets-and-trusted-progress">explicit
 operator reset</a> authorizes a new baseline. Other unavailable/invalid
 mandatory accounting uses existing exit 24 and cannot authorize more
-paid work. Both policies off means no accounting-loss hold and optional
-accounting I/O through checkpoints and finalization; old receipts with
-no ledger and configuration <code>{}</code> retain upgrade behavior.</p>
+paid work. Both policies off means no accounting-loss hold; accounting
+I/O errors, malformed/truncated JSON and invalid accounting types warn
+without changing checkpoint or finalization exits. Old receipts with no
+ledger and configuration <code>{}</code> retain upgrade behavior.</p>
 <p>The stop vocabulary is closed. Details can explain a stop but cannot
 supply another <code>terminal_reason</code>:</p>
 <table>
@@ -246,7 +250,10 @@ gates or confirmed findings, bound to exact configured gate commands
 <code>review.build</code>). Only actual runtime execution, green at
 unchanged HEAD with recorded output, qualifies: QA/review use
 <code>bureau_run_gate</code> and recovery uses the outside-gate
-executor. The exposed proof-submission command is removed;
+executor. Runtime-executed gates retain the earlier shell checks'
+unbounded test window; stage/provider <code>timeout_seconds</code> and
+<code>BUREAU_STAGE_TIMEOUT</code> apply only to provider calls. The
+exposed proof-submission command is removed;
 <code>bureau_record_gate</code> is observational only. Provider results,
 declared fixes, commits, completed checkboxes and activity never
 qualify. Each contract-bound fact resets the counter once; repeated

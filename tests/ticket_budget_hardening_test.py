@@ -79,11 +79,12 @@ class Hardening(AdapterFixture):
             self.replace('bureau-ticket.py', "        if self.required and value.get('accounting_lost'):",
                          "        if value.get('accounting_lost'):")
         elif name == 'test_validation_receipts_are_not_paid_attempts':
-            self.replace('bureau-ticket.py', '            history = self.history() if witnessed else dict(attempts=[], reset_baseline=[])',
-                         '''            history = self.history() if witnessed else dict(attempts=[], reset_baseline=[])
+            self.replace('bureau-ticket.py', '            history = self.history()\n            missing = False',
+                         '''            history = self.history()
             for receipt in (self.root.parent / 'evidence/v1/runs').glob('*/receipts/*.json'):
                 row = json.loads(receipt.read_text())
-                if row.get('issue') == self.issue: history['attempts'].append(row['provider_attempt_id'])''')
+                if row.get('issue') == self.issue: history['attempts'].append(row['provider_attempt_id'])
+            missing = False''')
         elif name == 'test_partial_usage_keeps_each_valid_counter':
             self.replace('bureau-ticket.py', "token_count(v.get('usage'), provider, partial=True)",
                          "token_count(v.get('usage'), provider)")
@@ -93,6 +94,15 @@ class Hardening(AdapterFixture):
         elif name == 'test_provider_free_progress_has_a_durable_witness':
             self.replace('bureau-ticket.py', '        atomic(self.witness_path, dict(version=1, issue=self.issue))',
                          "        if any(self.budget[k] for k in ('tokens', 'provider_calls', 'wall_seconds')): atomic(self.witness_path, dict(version=1, issue=self.issue))")
+        elif name == 'test_initial_witness_keeps_retained_admissions':
+            self.replace('bureau-ticket.py', "                retained = set(history['attempts']) - set(value['attempts'])",
+                         "                history = dict(attempts=[], reset_baseline=[])\n                retained = set()")
+        elif name == 'test_optional_accounting_errors_preserve_exits':
+            self.replace('bureau-ticket.py', '        except ACCOUNTING_ERRORS as exc:',
+                         '        except OSError as exc:')
+        elif name == 'test_runtime_gate_ignores_provider_deadlines':
+            self.replace('bureau-ticket.py', '        options = dict(timeout=None)',
+                         '        options = provider.configuration(stage, self.config, os.environ)')
         else: self.fail('no negative control for ' + name)
 
     def ledger_object(self):
@@ -462,6 +472,91 @@ with mock.patch.object(Path, 'mkdir', blocked): sys.exit(runtime.main())
                 self.assertEqual([], self.events())
                 if path.is_dir(): path.rmdir()
 
+    def test_initial_witness_keeps_retained_admissions(self):
+        for missing in (True, False):
+            with self.subTest(missing_ledger=missing):
+                self.config['agents'].pop('ticket_budget', None); self.save()
+                state = self.repo / '.git/bureau'
+                for directory in ('tickets', 'ticket-witnesses'):
+                    shutil.rmtree(state / directory, ignore_errors=True)
+                self.assertEqual(0, self.provider().returncode)
+                ledger = self.ledger_object()
+                original = self.ledger()['attempts']
+                history = json.loads(ledger.history_path.read_text())
+                history['reset_baseline'] = ['retained-baseline']
+                ledger.history_path.write_text(json.dumps(history))
+                self.assertFalse(ledger.witness_path.exists())
+                if missing: ledger.path.unlink()
+                self.config['agents']['ticket_budget'] = dict(provider_calls=2); self.save()
+                self.assertEqual(0, self.cli('check').returncode)
+                self.assertEqual(set(original), set(self.ledger()['attempts']),
+                                 'initial witness must retain admitted identities')
+                self.assertEqual(history, json.loads(ledger.history_path.read_text()))
+                if missing:
+                    self.assertIsNone(next(iter(self.ledger()['attempts'].values()))['tokens'])
+                else:
+                    self.assertEqual(original, self.ledger()['attempts'])
+                self.assertEqual(0, self.provider().returncode)
+                before = self.events()
+                result = self.provider()
+                self.assertEqual(25, result.returncode, result.stdout + result.stderr)
+                self.assertEqual(before, self.events(), 'only one further call fits the allowance')
+                self.assertTrue(set(original) <= set(self.ledger()['attempts']))
+                self.assertEqual(2, len(self.ledger()['attempts']))
+                self.assertEqual(['retained-baseline'], json.loads(ledger.history_path.read_text())['reset_baseline'])
+
+    def test_optional_accounting_errors_preserve_exits(self):
+        self.assertEqual(0, self.provider().returncode)
+        ledger = self.ledger_object(); original = self.ledger()
+        wrong_field = dict(original, attempts=[])
+        unhashable = dict(original, terminal_reason='human_hold',
+                          last_stop=dict(terminal_reason=[], code=25))
+        overflow = json.loads(json.dumps(original))
+        next(iter(overflow['attempts'].values()))['started_at'] = 10 ** 400
+        damages = ('{', 'not-json', '[]', json.dumps(wrong_field), json.dumps(unhashable), json.dumps(overflow))
+        for config in ({}, dict(agents=dict(ticket_budget=dict(provider_calls=2))),
+                       dict(agents=dict(ticket_progress=dict(enabled=True)))):
+            self.config = config; self.save()
+            for damage in damages:
+                with self.subTest(config=config, damage=damage[:60]):
+                    ledger.path.write_text(damage)
+                    checkpoint = subprocess.run(['/bin/bash', '-e', '-c', '''source scripts/bureau-config.sh
+bureau_ticket_checkpoint TEAM-1 latched
+'''], cwd=self.repo, env=self.env, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(24 if config else 0, checkpoint.returncode,
+                                     'optional accounting must preserve exits: ' + checkpoint.stdout + checkpoint.stderr)
+                    for code in (0, 25, 26, 124):
+                        result = self.runtime(code)
+                        self.assertEqual(24 if config else code, result.returncode,
+                                         'optional accounting must preserve exits: ' + result.stdout + result.stderr)
+                    self.assertEqual(damage, ledger.path.read_text(), 'invalid history must not be replaced')
+        # Wrong nested types can also surface as mapping/attribute errors.
+        for required in (False, True):
+            ledger = self.policy.Ledger(self.repo / '.git/bureau', 'TEAM-1',
+                                       dict(agents=dict(ticket_budget=dict(provider_calls=2))) if required else {})
+            for error in (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError):
+                for method in ('check', 'terminal'):
+                    with mock.patch.object(ledger, method, side_effect=error('accounting fixture')):
+                        if required:
+                            with self.assertRaises(ValueError): ledger.call(method)
+                        else: self.assertIsNone(ledger.call(method))
+
+    def test_runtime_gate_ignores_provider_deadlines(self):
+        command = 'sleep 0.2'
+        self.config['repo'] = dict(test_command=command)
+        self.config['agents']['providers'] = dict(codex=dict(timeout_seconds=0.03))
+        for command_id, stage in (('qa.test', 'qa'), ('review.build', 'code_review'), ('repo.test_command', 'implement')):
+            self.config['agents'][stage] = dict(timeout_seconds=0.05)
+            self.save()
+            result = self.cli('execute-gate', '--path', str(self.root / (stage + '.log')),
+                              '--command', command, '--command-id', command_id)
+            self.assertEqual(0, result.returncode,
+                             'runtime gates must keep their independent timeout: ' + result.stdout + result.stderr)
+            result = self.cli('execute-gate', '--path', str(self.root / (stage + '-override.log')),
+                              '--command', command, '--command-id', command_id, BUREAU_STAGE_TIMEOUT='0.01')
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual([], self.events(), 'gates must not invoke providers')
+
 
 if __name__ == '__main__':
     negative = '--negative-control' in sys.argv
@@ -470,8 +565,8 @@ if __name__ == '__main__':
         for name in unittest.defaultTestLoader.getTestCaseNames(Hardening):
             setattr(Hardening, name, unittest.expectedFailure(getattr(Hardening, name)))
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(Hardening))
-    if negative and len(result.expectedFailures) != 13:
-        sys.exit('each of the thirteen guard removals must fail its regression assertion')
+    if negative and len(result.expectedFailures) != 16:
+        sys.exit('each of the sixteen guard removals must fail its regression assertion')
     markers = dict(
         test_latch_precedes_diagnostics='latch must precede diagnostics',
         test_incomplete_turns_are_unknown='incomplete turn usage must hold',
@@ -485,10 +580,13 @@ if __name__ == '__main__':
         test_validation_receipts_are_not_paid_attempts='validation receipt must not spend a paid attempt',
         test_partial_usage_keeps_each_valid_counter='partial usage must enforce its known lower bound',
         test_finalization_accounting_io_is_optional_only_without_policies='finalization must preserve optional accounting exits',
-        test_provider_free_progress_has_a_durable_witness='lost progress must hold with its durable witness')
+        test_provider_free_progress_has_a_durable_witness='lost progress must hold with its durable witness',
+        test_initial_witness_keeps_retained_admissions='initial witness must retain admitted identities',
+        test_optional_accounting_errors_preserve_exits='optional accounting must preserve exits',
+        test_runtime_gate_ignores_provider_deadlines='runtime gates must keep their independent timeout')
     if negative:
         for case, failure in result.expectedFailures:
             if markers[case._testMethodName] not in failure:
                 sys.exit('negative control failed before reaching its safety assertion: ' + case._testMethodName)
-    if negative and result.wasSuccessful(): print('PASS: all thirteen private guard removals were detected')
+    if negative and result.wasSuccessful(): print('PASS: all sixteen private guard removals were detected')
     sys.exit(not result.wasSuccessful())

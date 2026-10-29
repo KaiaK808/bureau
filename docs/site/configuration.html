@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e477b142b4d4d066fcd2f7abb712bc127904fce31d6bd6ba4e82c23daf4bffb1">
+<meta name="bureau-source-sha256" content="547ecef2497a5197377cf709e3e757dae08aed00add22eee39eaa1f5da3bbecd">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1033,19 +1033,24 @@ outside prunable evidence. A sibling <code>TEAM-123.attempts.json</code>
 retains only ledger-admitted attempt identities. When either policy is
 enabled, initialization durably writes
 <code>&lt;common-git-dir&gt;/bureau/ticket-witnesses/TEAM-123.json</code>
-before creating the ledger. This marker is separate runtime state
-outside provider-writable worktrees, including for progress without
-provider calls. With a policy enabled and a witness present, a missing,
-empty or unreadable ledger, or missing admitted attempt rows, stops with
-25 / <code>budget</code>, <code>accounting_lost: true</code>, even with
-unknown usage allowed. Keep the ledger, admission history and witness
-across cleanup. Receipts of any age or type never witness accounting
-loss or add paid attempts; old receipts without a ledger do not stop an
-upgraded repository with configuration <code>{}</code>. Invalid ledgers,
+before creating the ledger. Existing admission history is preserved and
+carried into the initial ledger even if the optional ledger was deleted:
+retained identities spend call slots, missing token measurements remain
+unknown, and missing wall intervals count conservatively from the epoch.
+This marker is separate runtime state outside provider-writable
+worktrees, including for progress without provider calls. With a policy
+enabled and a witness present, a missing, empty or unreadable ledger, or
+missing admitted attempt rows, stops with 25 / <code>budget</code>,
+<code>accounting_lost: true</code>, even with unknown usage allowed.
+Keep the ledger, admission history and witness across cleanup. Receipts
+of any age or type never witness accounting loss or add paid attempts;
+old receipts without a ledger do not stop an upgraded repository with
+configuration <code>{}</code>. With a policy enabled, invalid ledgers,
 including invalid nested stop reasons/exit pairs, fail closed with 24.
-With both policies disabled, accounting I/O failures warn without
-changing execution, including runtime finalization; accounting-loss
-policy holds are disabled too.</p>
+With both policies disabled, accounting I/O errors, malformed/truncated
+JSON and invalid accounting types warn without changing checkpoint or
+runtime finalization exits; accounting-loss policy holds are disabled
+too.</p>
 <p>To resume, stop drivers, inspect preserved work and the ledger,
 reconcile ownership, and raise an exhausted limit if appropriate. A
 deliberate new lifetime allowance/progress reset requires

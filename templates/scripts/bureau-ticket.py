@@ -21,6 +21,7 @@ STOP_CODES = dict(budget=25, timeout=124, watchdog=25, review_capped=25,
                   human_hold=25, ticket_withdrawn=25, stalled=25)
 PROGRESS_KINDS = ('fulfilled_requirements', 'qualified_gates', 'confirmed_findings')
 GATE_IDS = ('repo.test_command', 'qa.test', 'review.build')
+ACCOUNTING_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError)
 
 
 def completed_work_turn(code):
@@ -217,7 +218,7 @@ class Ledger:
                 yield self.fresh()
                 return
             witnessed = self.required and self.witness_path.exists()
-            history = self.history() if witnessed else dict(attempts=[], reset_baseline=[])
+            history = self.history()
             missing = False
             try:
                 value = json.loads(self.path.read_text())
@@ -254,19 +255,26 @@ class Ledger:
             if type(value.get('non_improving_turns')) is not int or value['non_improving_turns'] < 0:
                 raise ValueError('invalid progress counter')
             if self.required and not witnessed:
-                # Start witnessing only this ledger, never receipts from an
-                # earlier release or non-paid validation receipt identities.
-                atomic(self.history_path, dict(attempts=sorted(value['attempts']), reset_baseline=[]))
+                # Retained admissions still spend call slots even if the
+                # optional ledger was lost before a policy was enabled.
+                retained = set(history['attempts']) - set(value['attempts'])
+                for attempt in retained:
+                    # Measurements cannot be recovered from identity alone.
+                    # An open epoch interval conservatively bounds wall time.
+                    value['attempts'][attempt] = dict(provider_attempt_id=attempt, provider=None,
+                        started_at=0, ended_at=None, tokens=None, normalized_exit=None)
+                history['attempts'] = sorted(set(history['attempts']) | set(value['attempts']))
+                atomic(self.history_path, history)
                 self.mark_witness()
                 # A crash after the marker but before this write fails closed.
-                if missing: atomic(self.path, value)
+                if missing or retained: atomic(self.path, value)
             yield value
 
     def call(self, method, *args, **kwargs):
-        # With both policies off, accounting I/O is optional at every boundary.
+        # With both policies off, unavailable or invalid accounting is optional.
         try: return getattr(self, method)(*args, **kwargs)
-        except OSError:
-            if self.required: raise
+        except ACCOUNTING_ERRORS as exc:
+            if self.required: raise ValueError('ticket accounting unavailable: ' + str(exc)) from exc
             diagnostic('WARN: optional accounting unavailable')
             return None
 
@@ -423,7 +431,9 @@ class Ledger:
         if command_id not in GATE_IDS or configured != [command]:
             raise ValueError('gate must execute the exact configured command')
         start = provider.current_head(repo)
-        options = provider.configuration(stage, self.config, os.environ)
+        # QA/review shell checks had no deadline. Provider call limits must
+        # never shorten their independent test execution window.
+        options = dict(timeout=None)
         try: options['untrusted_env'] = provider.untrusted_env_mode(self.config)
         except provider.UntrustedEnvError as exc: raise ValueError(str(exc)) from exc
         code, abort = provider.outside_gate(options, repo, command, Path(path))
