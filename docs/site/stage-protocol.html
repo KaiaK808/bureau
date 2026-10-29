@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f44a28c4b275a69483af1db38cd83269001d2ea18f58c5d4d10e60be720306e7">
+<meta name="bureau-source-sha256" content="90623984a5e807c6083d68327be323606057d380c273636a3d67760f8e95a809">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -871,17 +871,24 @@ metadata IDs remain traceable after temporary cleanup. Specialists
 report unresolved human decisions in <code>holds: ["reason"]</code>
 (empty when none); any hold forces BLOCK through convergence. Legacy
 summaries signaling BLOCK or human judgment also hold even without the
-field. Noncritical per-role counts must match their findings or select
-fallback; CRITICAL counts remain an independent floor, even when claim
-prose is unreadable. A malformed or missing specialist result selects
-the capped model merger, with fallback roles recorded as metadata. Every
-readable finding, acceptance gap, hold and severity-count floor from
-every specialist, including malformed ones, survives fallback.
-Completely unreadable output and uncertain claims require at least
-REQUEST_CHANGES; a fallback APPROVE cannot clear uncertainty. The helper
-supplies these floors to the legacy result contract; shell
-<code>review_convergence</code> and <code>decide_review_verdict</code>
-keep severity, security, build and cap decisions.</p>
+field. Explicit CRITICAL, BUG and MINOR summary markers supply
+severity-count floors even without findings; the shell applies the
+configured severity threshold. Explicit standalone clean negations such
+as “No human review required”, “No architectural disagreement remains”
+and “nothing blocks” create no hold. Mixed or uncertain assertions
+retain their signals; negation never clears typed holds or an explicit
+BLOCK verdict. Noncritical per-role counts must match their findings or
+select fallback; CRITICAL counts remain an independent floor, even when
+claim prose is unreadable. A malformed or missing specialist result
+selects the capped model merger, with fallback roles recorded as
+metadata. Every readable finding, acceptance gap, hold and
+severity-count floor from every specialist, including malformed ones,
+survives fallback. Completely unreadable output and uncertain claims
+require at least REQUEST_CHANGES; a fallback APPROVE cannot clear
+uncertainty. The helper supplies these floors to the legacy result
+contract; shell <code>review_convergence</code> and
+<code>decide_review_verdict</code> keep severity, security, build and
+cap decisions.</p>
 <p>A fixed findings template renders summaries, class groups, source
 anchors, fixes and human holds for both deterministic and fallback
 results. The outer comment preserves <code>Code Review v2</code>,
@@ -940,12 +947,15 @@ grounding holds them through fallback; a display placeholder never
 becomes a verified source location.</p>
 <p>The shadow adapter enforces Claude <code>--tools ''</code>, strict
 empty MCP configuration, disabled skills and settings hooks, without
-<code>--dangerously-skip-permissions</code>. Unsupported flags fail
-closed to unverifiable. Codex has no supported all-tools-off switch, so
-its checker attempt is recorded as unverifiable without launching the
-model. The allowlisted checker response updates only its verification
-record, never verdict/floor metadata or merged findings. These
-restrictions apply behind Headroom too.</p>
+<code>--dangerously-skip-permissions</code>. It sets
+<code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=1</code> for this phase,
+overriding an inherited enablement; this switch was checked in Claude
+2.1.312. Normal stages retain their configured memory policy.
+Unsupported flags fail closed to unverifiable. Codex has no supported
+all-tools-off switch, so its checker attempt is recorded as unverifiable
+without launching the model. The allowlisted checker response updates
+only its verification record, never verdict/floor metadata or merged
+findings. These restrictions apply behind Headroom too.</p>
 <p>Review policy identity includes the revised merge algorithm version,
 grounding option and verifier enablement alongside existing
 severity/caps/ADR identity. Older approvals require a fresh review.
@@ -1311,12 +1321,16 @@ confirms that merge's two ordered parents are exactly that HEAD and
 base. Missing metadata, different inputs, later commits or unavailable
 Git objects mean missing review evidence. This correlation is
 observational and changes no approval or merge authority.</p>
-<p>A completed deterministic review has three specialist receipts rather
-than a verdict-model receipt. The brief correlates all three successful
+<p>The brief selects the latest matching completed round across
+deterministic and model-fallback modes, ordered by correlated provider
+completion time with round number as a tie-breaker. A deterministic
+review requires three successful specialist receipts; fallback also
+requires the successful verdict receipt. The brief correlates these
 phases to the same run, stage attempt, round call IDs and pinned inputs,
-then projects the round's merged result digest, recorded final verdict,
-missing-acceptance/fix counts and human-hold count. Specialist calls
-intentionally have no verdict schema or result digest; temporary
+then projects that round's retained merged result digest, recorded final
+verdict, missing-acceptance/fix counts and human-hold count. A fallback
+provider's original counts cannot replace retained blockers. Specialist
+calls intentionally have no verdict schema or result digest; temporary
 provider originals are not required for these metadata counts.
 Incomplete rounds or missing/mismatched specialist receipts remain
 missing evidence. Shadow outcomes cannot change these blocker counts or

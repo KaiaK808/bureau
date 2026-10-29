@@ -1274,6 +1274,23 @@ p.Path.open=refuse_transcript_read
                         *tools,'--append-system-prompt-file',str(evidence/'system.txt'),
                         '--effort','high','--model','claude-fixture'])
 
+    def test_shadow_disables_automatic_memory_only_for_verification(self):
+        wrapper = self.bin/'headroom'
+        wrapper.write_text('#!/bin/sh\nshift 3\nexec claude "$@"\n'); wrapper.chmod(0o755)
+        for wrapped, policy in ((False, 'default'), (True, 'clean')):
+            self.config.write_text(json.dumps({'agents':{'runner':'claude', 'headroom_wrap':wrapped},
+                                              'repo':{'untrusted_env':policy}}))
+            with self.subTest(wrapped=wrapped, policy=policy):
+                self.run_provider('--stage', 'code_review', '--phase', 'finding_verifier',
+                                  CLAUDE_CODE_DISABLE_AUTO_MEMORY='0', CLAUDE_FAKE_ROOT=str(self.root))
+                child_env = json.loads((self.root/'claude-env.json').read_text())
+                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '1')
+                # Ordinary reviewers keep the installation's selected memory policy.
+                self.run_provider('--stage', 'code_review', '--phase', 'correctness',
+                                  CLAUDE_CODE_DISABLE_AUTO_MEMORY='0', CLAUDE_FAKE_ROOT=str(self.root))
+                child_env = json.loads((self.root/'claude-env.json').read_text())
+                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '0')
+
     def claude_argv(self,config,**env):
         self.config.write_text(json.dumps(config))
         (self.root/'argv.json').unlink(missing_ok=True)

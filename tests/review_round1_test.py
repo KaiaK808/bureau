@@ -1,4 +1,4 @@
-"""Round-one regressions: real parsing, Git, adapter flags and evidence stores."""
+"""Review regressions: real parsing, Git, adapter flags and evidence stores."""
 import json
 import os
 import re
@@ -77,6 +77,70 @@ class MergeRegressions(unittest.TestCase):
                     _, _, metadata = self.f.merge()
                     self.assertGreaterEqual(metadata['severity_counts'][severity], 2)
                     if severity == 'critical': self.assertGreaterEqual(metadata['critical_floor'], 2)
+
+    def test_summary_only_severities_supply_independent_floors(self):
+        for role in self.m.ROLES:
+            for severity in ('CRITICAL', 'BUG', 'MINOR'):
+                with self.subTest(role=role, severity=severity):
+                    self.f.values = {r: fixture.specialist(r) for r in self.m.ROLES}
+                    self.f.values[role].update(summary=severity + ': the recovery path deletes persisted user data.', holds=[])
+                    result, findings, metadata = self.f.merge()
+                    self.assertEqual(findings, [])
+                    self.assertEqual(metadata['severity_counts'][severity.lower()], 1)
+                    self.assertEqual(metadata['critical_floor'], int(severity == 'CRITICAL'))
+                    self.assertEqual(metadata['security_floor'], int(role == 'security'))
+                    self.assertIn(severity + ':', result['comment'])
+        for summary in ('The recovery path has a critical defect.', 'No proof the CRITICAL defect is fixed.',
+                        '_CRITICAL_: the recovery path deletes user data.', '__CRITICAL__: data loss.'):
+            self.f.values = {r: fixture.specialist(r) for r in self.m.ROLES}
+            self.f.values['correctness']['summary'] = summary
+            self.assertEqual(self.f.merge()[2]['critical_floor'], 1)
+
+    def test_summary_negations_keep_clean_and_unresolved_holds_distinct(self):
+        clean = ('No human review required.', 'No architectural disagreement remains.', 'Nothing blocks.',
+                 'Human review is not required.', 'Human approval is no longer necessary.',
+                 'No CRITICAL findings.', 'No BUG or MINOR defects remain.', 'No blocking issues remain.',
+                 'Nothing is blocking this PR.', 'No unresolved architectural disagreement remains.',
+                 'Not blocked.', 'This change is not blocked.', 'Nothing is blocked.',
+                 'There is no need for human review.', 'No human review is required for this PR.',
+                 '_No human review required._',
+                 'No human review required, and no architectural disagreement remains.',
+                 'No human review required. No architectural disagreement remains. Nothing blocks.')
+        unresolved = ('Human review required.', 'Architectural disagreement remains.', 'Something blocks.',
+                      'A blocking defect remains in recovery.',
+                      '__BLOCK__: the safety contract is unresolved.', '_NEEDS_HUMAN_: acceptance is unresolved.',
+                      'Human review is required.', 'Human approval is still necessary.',
+                      'No human review can resolve this ambiguity.', 'Human review is not clearly unnecessary.',
+                      'No human review required unless the missing safety condition is met.',
+                      'Not blocked unless the safety condition fails.', 'There is no proof that human review is unnecessary.',
+                      'No human review required, but architectural disagreement remains.',
+                      'No architectural disagreement remains, and human review is required.',
+                      'Nothing blocks; however, human review is required.',
+                      'No architectural disagreement remains. BLOCK: acceptance is unresolved.')
+        for summary in clean + unresolved:
+            with self.subTest(summary=summary):
+                self.f.values['correctness'] = fixture.specialist('correctness', holds=[])
+                self.f.values['correctness']['summary'] = summary
+                result, _, metadata = self.f.merge()
+                held = summary in unresolved
+                self.assertEqual(result['verdict'], 'BLOCK' if held else 'APPROVE')
+                self.assertEqual(bool(metadata['human_holds']), held)
+                if not held: self.assertFalse(any(metadata['severity_counts'].values()))
+        # Explicit contract holds and BLOCK verdicts stay authoritative even
+        # when a compatibility summary says that no human review is needed.
+        for fields in ({'holds':['Unresolved maintainer decision.']}, {'verdict':'BLOCK'}):
+            self.f.values['correctness'] = fixture.specialist('correctness', **fields)
+            self.f.values['correctness']['summary'] = clean[0]
+            _, metadata = self.finalize()
+            self.assertEqual(metadata['verdict_floor'], 'BLOCK')
+
+    def test_fallback_summary_retains_critical_and_bug_floors(self):
+        self.f.values['performance'] = 'Malformed specialist'
+        for severity in ('CRITICAL', 'BUG'):
+            with self.subTest(severity=severity):
+                _, metadata = self.finalize(summary=severity + ': unresolved recovery defect.')
+                self.assertEqual(metadata['severity_counts'][severity.lower()], 1)
+                self.assertEqual(metadata['critical_floor'], int(severity == 'CRITICAL'))
 
     def test_completely_unreadable_specialist_cannot_fall_back_to_approval(self):
         self.f.values['performance'] = 'Unreadable specialist output'
@@ -211,6 +275,33 @@ class PipelineRegressions(unittest.TestCase):
         self.f.values['correctness']['summary'] = 'BLOCK: ambiguous acceptance criteria require human judgment.'
         record, body, _ = self.f.run_review(25)
         self.assertEqual(record['final_verdict'], 'BLOCK'); self.assertIn('## Human Review Holds', body)
+
+    def test_summary_only_critical_is_a_stage_block(self):
+        self.f.values['correctness'].update(summary='CRITICAL: the recovery path silently deletes persisted user data.', holds=[])
+        record, body, _ = self.f.run_review(25)
+        self.assertEqual(record['merge']['mode'], 'deterministic')
+        self.assertEqual(record['merge']['critical_floor'], 1)
+        self.assertEqual(record['final_verdict'], 'BLOCK'); self.assertIn('**Verdict**: BLOCK', body)
+
+    def test_summary_only_bug_respects_the_configured_floor(self):
+        self.f.values['correctness']['summary'] = 'BUG: an unresolved recovery defect.'
+        record, _, _ = self.f.run_review(0)
+        self.assertEqual(record['final_verdict'], 'REQUEST_CHANGES')
+
+    def test_summary_minor_is_deferred_only_below_the_floor(self):
+        self.f.values['correctness']['summary'] = 'MINOR: an unresolved recovery defect.'
+        record, _, _ = self.f.run_review(20)
+        self.assertEqual(record['final_verdict'], 'APPROVE')
+        self.f.config['agents']['review_min_severity'] = 'MINOR'
+        record, _, _ = self.f.run_review(0)
+        self.assertEqual(record['final_verdict'], 'REQUEST_CHANGES')
+
+    def test_negated_holds_allow_clean_stage_approval(self):
+        self.f.values['correctness'].update(summary='No human review required.', holds=[])
+        self.f.values['security'].update(summary='No architectural disagreement remains.', holds=[])
+        self.f.values['performance'].update(summary='Nothing blocks.', holds=[])
+        record, body, _ = self.f.run_review(20)
+        self.assertEqual(record['final_verdict'], 'APPROVE'); self.assertIn('**Verdict**: APPROVE', body)
 
     def test_unreadable_specialist_requires_changes_after_empty_fallback(self):
         self.f.values['performance'] = 'Not a structured report'

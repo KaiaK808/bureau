@@ -139,13 +139,47 @@ def location_valid(finding):
             and 0 <= start <= end <= 999999999 and (start != 0 or end == 0))
 
 
+def summary_signals(value):
+    """Ignore only explicit clean negations; mixed/uncertain clauses keep floors."""
+    summary = value.get('summary', '')
+    if not isinstance(summary, str): return ''
+    # Markdown emphasis is presentation, including around severity markers.
+    # Keep internal underscores such as NEEDS_HUMAN intact.
+    summary = re.sub(r'(?<!\w)_{1,2}(?=\w)|(?<=\w)_{1,2}(?!\w)', '', summary)
+    human = r'human[\s-]+(?:judg(?:e)?ment|decision|review|approval|input|intervention)'
+    severity = r'(?:CRITICAL|BUGS?|MINOR|blocking)'
+    clean = re.compile(
+        r'(?:nothing\s+(?:blocks?|is\s+(?:blocking|blocked))(?:\s+(?:approval|merge|this\s+(?:change|PR)))?'
+        r'|(?:(?:this\s+(?:change|PR|review)|it)\s+is\s+)?(?:not|no\s+longer)\s+blocked'
+        r'|(?:there\s+(?:is|are)\s+)?(?:no|zero)\s+(?:(?:remaining|outstanding|unresolved|known|further|additional)\s+)*'
+        r'(?:' + human + r'\s+(?:is\s+)?(?:required|needed|necessary)'
+        r'|(?:need|requirement)\s+for\s+' + human +
+        r'|architectural\s+disagreements?(?:\s+(?:remains?|exists?))?'
+        r'|' + severity + r'(?:\s+(?:or|and)\s+' + severity + r')*'
+        r'(?:\s+(?:findings?|defects?|issues?|blockers?))?(?:\s+(?:remain|found|identified|detected|present))?)'
+        r'|' + human + r'\s+(?:is\s+)?(?:not|no\s+longer)\s+(?:required|needed|necessary))'
+        r'(?:\s+(?:here|for\s+this\s+(?:change|PR|review)))?', re.I)
+    signals = []
+    # Contrast starts a new assertion: "no hold, but human review required"
+    # must retain the unresolved half. A question/conditional is not a clean negation.
+    for clause in re.split(r'[.;!\n]+|\b(?:but|however|yet)\b|(?:,|\band\b)\s*(?=(?:no|nothing|human|architectural|there)\b)', summary, flags=re.I):
+        if not clean.fullmatch(clause.strip().strip('*` ,')): signals.append(clause)
+    return '\n'.join(signals)
+
+
+def summary_counts(value):
+    signals = summary_signals(value)
+    return {severity.lower(): int(bool(re.search(r'\b' + severity + r'(?:S)?\b', signals, re.I)))
+            for severity in SEVERITY}
+
+
 def human_holds(value):
     holds = value.get('holds', [])
     result = [h for h in holds if isinstance(h, str) and h.strip()] if isinstance(holds, list) else []
     if not isinstance(holds, list) or len(result) != len(holds): result.append('Unreadable specialist hold.')
-    summary = value.get('summary', '')
-    if isinstance(summary, str) and re.search(
-            r'\bBLOCK(?:ED)?\b|\bNEEDS[_ -]HUMAN\b|'
+    summary = summary_signals(value)
+    if re.search(
+            r'\bBLOCK(?:ED|ING|S)?\b|\bNEEDS[_ -]HUMAN\b|'
             r'\bhuman[\s-]+(?:judg(?:e)?ment|decision|review|approval|input|intervention)\b|'
             r'ambiguous acceptance|architectural disagreement', summary, re.I):
         result.append(summary)
@@ -280,6 +314,8 @@ def merge(directory, base, head, refs):
         reported = raw.get('counts', {})
         role_counts = {s: min(n, 999999999) if type(n) is int and n >= 0 else 0
                        for s in counts for n in [reported.get(s) if isinstance(reported, dict) else None]}
+        summary = summary_counts(raw)
+        for severity in counts: role_counts[severity] = max(role_counts[severity], summary[severity])
         for severity in counts: counts[severity] = max(counts[severity], role_counts[severity])
         raw_findings = raw.get('findings', [])
         if not isinstance(raw_findings, list): raw_findings = []
@@ -390,7 +426,7 @@ def main():
             for field in ('anchor', 'line_end', 'title', 'skip_citation'):
                 schema['properties']['findings']['items']['properties'][field] = fields[field]
             (args.directory / 'fallback.schema.json').write_text(encoded(schema) + '\n')
-        print(encoded(dict(grounding=grounding, verifier=verifier, policy='merge-v3:' + grounding + ':shadow-' + str(verifier).lower())))
+        print(encoded(dict(grounding=grounding, verifier=verifier, policy='merge-v4:' + grounding + ':shadow-' + str(verifier).lower())))
         return 0
     directory = args.directory
     metadata_path = directory / 'merge-metadata.json'
@@ -431,6 +467,9 @@ def main():
                 or (not result['findings'] and result['fixes_needed'])):
             result['verdict'] = 'BLOCK'
         fallback_holds = human_holds(result)
+        for severity, count in summary_counts(result).items():
+            metadata['severity_counts'][severity] = max(metadata['severity_counts'][severity], count)
+        metadata['critical_floor'] = max(metadata['critical_floor'], metadata['severity_counts']['critical'])
         if fallback_holds:
             retained['holds'].extend(fallback_holds)
             metadata['human_holds'] += len(fallback_holds)

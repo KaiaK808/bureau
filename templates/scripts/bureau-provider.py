@@ -565,6 +565,7 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     try:
         child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)
         child_env = claude_env(options, env=child_env)
+        if shadow: child_env['CLAUDE_CODE_DISABLE_AUTO_MEMORY'] = '1'
         tempdir = codex_tmpdir(runner, child_env, repo)
         if options.get('silence_timeout_seconds') or options.get('cancel_file'):
             owned = a.OwnedProcesses()

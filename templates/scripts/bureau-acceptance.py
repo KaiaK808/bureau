@@ -84,30 +84,34 @@ def review_matches(repo, receipt, head, base):
     except (OSError, subprocess.SubprocessError): return False
 
 
-def deterministic_review(repo, receipts, rounds, head, base):
-    """Require a completed round and all three correlated specialist receipts.
+def completed_review(repo, receipts, rounds, head, base):
+    """Select the latest completed matching round, independently of merge mode.
 
     Round counts describe the deterministic union, including dedup and holds;
     summing specialist counts would lose those semantics. Shadow results have
     no authority over these counts or the final verdict.
     """
-    for attempt, run in reversed(rounds):
+    candidates = []
+    for attempt, run in rounds:
         record = attempt['review_round']; merge = record.get('merge', {})
-        if (merge.get('mode') != 'deterministic' or record.get('final_verdict') not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK')
+        if (merge.get('mode') not in ('deterministic', 'model_fallback') or record.get('final_verdict') not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK')
                 or not all(k in merge for k in ('result_sha256', 'missing_acceptance_count', 'fixes_needed_count', 'human_holds'))):
             continue
+        phases = {'correctness', 'security', 'performance'}
+        if merge['mode'] == 'model_fallback': phases.add('verdict')
         selected = [(path, r) for path, r in receipts if r.get('provider_attempt_id') in record['provider_attempt_ids']
                     and r.get('run_id') == run and r.get('stage_attempt_id') == attempt['attempt_id']
-                    and r.get('stage') == 'code_review' and r.get('phase') in ('correctness', 'security', 'performance')]
-        if {r['phase'] for _, r in selected} != {'correctness', 'security', 'performance'}: continue
+                    and r.get('stage') == 'code_review' and r.get('phase') in phases]
+        if {r['phase'] for _, r in selected} != phases: continue
         if any(r.get('normalized_exit') != 0 or r.get('provider_exit') != 0 or r.get('start_head') != r.get('end_head')
                or not review_matches(repo, r, head, base) for _, r in selected): continue
         # Specialists run without a verdict schema so malformed output can reach
         # the conservative fallback. Their receipts have no structured-result
-        # digest. The completed deterministic round owns the merged digest and
-        # blocker counts; no merger receipt or temporary original is required.
-        return selected, record
-    return None
+        # digest. The completed round owns the retained merged digest/counts;
+        # a fallback provider's original may omit retained specialist blockers.
+        completed_at = max(r.get('ended_at') or 0 for _, r in selected)
+        candidates.append(((completed_at, record['number'], attempt['started_at'], run, attempt['attempt_id']), selected, record))
+    return max(candidates, key=lambda candidate: candidate[0])[1:] if candidates else None
 
 
 def render(store, repo, issue, pr, head, url, spec=None, base=None, verdict=None, review_head=None):
@@ -170,17 +174,17 @@ def render(store, repo, issue, pr, head, url, spec=None, base=None, verdict=None
                 review_matches(repo, receipt, head, base) and receipt.get('normalized_exit') == 0 and receipt.get('provider_exit') == 0):
             review = (path, receipt); break
     points = []
-    deterministic = deterministic_review(repo, receipts, rounds, head, base)
-    if deterministic:
-        selected, record = deterministic; merge = record['merge']
+    completed = completed_review(repo, receipts, rounds, head, base)
+    if completed:
+        selected, record = completed; merge = record['merge']; mode = merge['mode']
         lines += ['- Review receipt: ' + ', '.join(evidence_ref(store, path) for path, _ in selected) +
-                  f'; deterministic round {record["number"]}, REVIEW_HEAD={head}, result sha256={merge["result_sha256"]}.',
+                  f'; {mode} round {record["number"]}, REVIEW_HEAD={head}, result sha256={merge["result_sha256"]}.',
                   f'- Recorded final verdict: {record["final_verdict"]}.']
         validation = selected[0][1]['end_head']
         if validation != head:
             lines += [f'- Validation merge: {validation}; pinned input HEAD={head}, base={base} (verified parents).']
         for key in ('missing_acceptance', 'fixes_needed'):
-            points += [f'- {key}: {merge[key + "_count"]} (deterministic review metadata).']
+            points += [f'- {key}: {merge[key + "_count"]} ({mode} review metadata).']
         points += [f'- Human review holds: {merge["human_holds"]}.']
         points += [f'- Critical floor: {merge["critical_floor"]}; security floor: {merge["security_floor"]}; '
                    f'invalid anchors: {merge["invalid_anchors"]} (grounding {merge["grounding"]}).']
