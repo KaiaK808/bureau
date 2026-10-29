@@ -7,7 +7,7 @@ control is never mistaken for a caught defect. Names:
 
   old          the verdict block before decide_review_verdict (text from $OLD_BLOCK)
   oldread      the cycle count that read a failed Linear read as cycle 0
-  oldcrit      the CRITICAL count read from the review after the ARG_MAX trim
+  oldcrit      the historical CRITICAL read after trimming, without the new code-merge floor
   oldfallback  the text verdict that took the first verdict word anywhere on the lines
 """
 import os
@@ -46,6 +46,13 @@ def main(path, name):
         if src.count(EARLY_CRIT) != 1:
             raise ValueError('early CRITICAL read not found')
         src = src.replace(EARLY_CRIT, '', 1)
+        # The structured merger now independently retains readable specialist
+        # floors. Reproduce the historical single-reader path in this private
+        # copy, so that moving that reader after trimming still loses its count.
+        code_floor = "_merge_critical=$(jq -r '.critical_floor' \"$REVIEW_TMP/merge-metadata.json\")"
+        if src.count(code_floor) != 1:
+            raise ValueError('code-merge CRITICAL floor not found')
+        src = src.replace(code_floor, '_merge_critical=0', 1)
         d = src.index('_decision=$(decide_review_verdict')
         src = src[:d] + EARLY_CRIT + src[d:]
     elif name == 'oldfallback':

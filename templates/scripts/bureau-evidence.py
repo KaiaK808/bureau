@@ -23,7 +23,7 @@ LOCK_TIMEOUT_SECONDS = .25
 KINDS = ('decision', 'dependency', 'compliance', 'resource', 'technical')
 TAGS = frozenset(('spec', 'spec_review', 'ux', 'copy', 'implement', 'qa', 'code_review', 'conflict_resolver', 'validation',
                   'merge', 'rebase', 'research', 'upstream_summary', 'specify', 'plan', 'tasks',
-                  'correctness', 'security', 'performance', 'verdict', 'worker', 'stage', 'driver'))
+                  'correctness', 'security', 'performance', 'verdict', 'finding_verifier', 'worker', 'stage', 'driver'))
 ACTORS = frozenset(('maintainer', 'workspace-owner', 'ci-or-gate-owner', 'repository-maintainer',
                     'merge-worker', 'operator'))
 COMMAND_IDS = frozenset(('configured-command', 'repo.test_command', 'review.build', 'qa.test',
@@ -103,7 +103,8 @@ def usage_metadata(metadata):
 
 
 def review_round_shape(value):
-    shape(value, 'number min_severity provider_verdict final_verdict provider_attempt_ids calls usage')
+    shape({k:v for k,v in value.items() if k != 'merge'}, 'number min_severity provider_verdict final_verdict provider_attempt_ids calls usage')
+    if 'merge' in value: review_merge_shape(value['merge'])
     if type(value['number']) is not int or not 1 <= value['number'] <= 999999: raise ValueError('invalid review round')
     if value['min_severity'] not in ('BUG', 'MINOR'): raise ValueError('invalid review floor')
     if any(value[k] not in (None, 'APPROVE', 'REQUEST_CHANGES', 'BLOCK') for k in ('provider_verdict', 'final_verdict')):
@@ -116,6 +117,33 @@ def review_round_shape(value):
     for key, item in value['usage'].items():
         if item is not None and (type(item) not in ((int, float) if key == 'total_cost_usd' else (int,))
                                  or not math.isfinite(item) or item < 0): raise ValueError('invalid review usage')
+
+
+def review_merge_shape(value):
+    """Allowlist identities, counts and enums, never claim/source prose."""
+    shape(value, 'mode malformed_specialists grounding invalid_anchors anchor_checks verifier verifier_omitted critical_floor security_floor adr_refs')
+    if not isinstance(value['adr_refs'], list) or len(value['adr_refs']) > 1024 or any(not isinstance(r, str) or not re.fullmatch(r'[0-9]{4}', r) for r in value['adr_refs']):
+        raise ValueError('invalid merge ADR references')
+    if value['mode'] not in ('deterministic', 'model_fallback') or value['grounding'] not in ('off', 'required'):
+        raise ValueError('invalid review merge mode')
+    roles = ('correctness', 'security', 'performance')
+    if not isinstance(value['malformed_specialists'], list) or any(r not in roles for r in value['malformed_specialists']):
+        raise ValueError('invalid fallback specialists')
+    for key in ('invalid_anchors', 'verifier_omitted', 'critical_floor', 'security_floor'):
+        if type(value[key]) is not int or not 0 <= value[key] <= 3999999999: raise ValueError('invalid merge count')
+    if not isinstance(value['anchor_checks'], list) or len(value['anchor_checks']) > 4096: raise ValueError('invalid anchor checks')
+    for row in value['anchor_checks']:
+        shape(row, 'finding_id status')
+        if not re.fullmatch(r'[a-f0-9]{64}', row['finding_id']): raise ValueError('invalid finding identity')
+        if row['status'] not in ('valid', 'missing', 'shape', 'side', 'path', 'blob', 'digest', 'absent', 'foreign_blob', 'range', 'stale_digest'):
+            raise ValueError('invalid anchor status')
+    if not isinstance(value['verifier'], list) or len(value['verifier']) > 8: raise ValueError('invalid verifier count')
+    for row in value['verifier']:
+        shape(row, 'finding_id anchor_sha256 outcome basis')
+        if any(not re.fullmatch(r'[a-f0-9]{64}', row[k]) for k in ('finding_id', 'anchor_sha256')):
+            raise ValueError('invalid verification identity')
+        if row['outcome'] not in ('confirmed', 'refuted', 'unverifiable') or row['basis'] not in ('invalid_anchor', 'budget', 'pending', 'model', 'invalid_result'):
+            raise ValueError('invalid verification outcome')
 
 
 def disposition_path(value):
@@ -769,7 +797,7 @@ class Store:
             if relative not in attempt['receipts']: attempt['receipts'].append(relative)
             self._save_manifest(value)
 
-    def review_round(self, run, stage_attempt, number, min_severity, provider_verdict=None, final_verdict=None):
+    def review_round(self, run, stage_attempt, number, min_severity, provider_verdict=None, final_verdict=None, merge=None):
         """One round per stage attempt, with deduplicated provider-call measurements.
 
         A partial set of phases or any unknown measurement makes that aggregate
@@ -788,16 +816,20 @@ class Store:
                 receipt = read(self.root / relative, {})
                 if (receipt.get('run_id') == run and receipt.get('stage_attempt_id') == stage_attempt
                         and receipt.get('issue') == value['issue'] and receipt.get('stage') == 'code_review'
-                        and receipt.get('phase') in REVIEW_PHASES and receipt.get('record_type') == 'receipt'
+                        and receipt.get('phase') in REVIEW_PHASES | {'finding_verifier'} and receipt.get('record_type') == 'receipt'
                         and receipt.get('schema_version') == VERSION):
                     call_id = identifier(receipt['provider_attempt_id'])
                     if self.receipt_path(run, call_id) == self.root / relative: calls[call_id] = receipt
-            complete = {r['phase'] for r in calls.values()} == REVIEW_PHASES
+            required = REVIEW_PHASES - {'verdict'} if merge and merge.get('mode') == 'deterministic' else REVIEW_PHASES
+            complete = required <= {r['phase'] for r in calls.values()}
+            planned_checks = sum(r['basis'] in ('pending', 'model', 'invalid_result') for r in merge['verifier']) if merge else 0
+            complete = complete and sum(r['phase'] == 'finding_verifier' for r in calls.values()) >= planned_checks
             measurements = [usage_metadata(r) for r in calls.values()]
             usage = {key: sum(r[key] for r in measurements) if complete and all(r[key] is not None for r in measurements)
                      else None for key in USAGE_FIELDS}
             record = dict(number=number, min_severity=min_severity, provider_verdict=provider_verdict,
                           final_verdict=final_verdict, provider_attempt_ids=sorted(calls), calls=len(calls), usage=usage)
+            if merge is not None: record['merge'] = merge
             review_round_shape(record)
             attempt['review_round'] = record
             self._save_manifest(value)
@@ -1080,6 +1112,7 @@ def review_round_main():
     parser.add_argument('--signal', choices=('timeout', 'provider_error', 'review_capped', 'gate_red', 'human_hold'))
     parser.add_argument('--provider-verdict')
     parser.add_argument('--final-verdict')
+    parser.add_argument('--merge-metadata', type=Path)
     args = parser.parse_args()
     run = os.environ.get('BUREAU_RUN_ID'); attempt = os.environ.get('BUREAU_STAGE_ATTEMPT_ID')
     if not run or not attempt: return
@@ -1091,7 +1124,8 @@ def review_round_main():
     store.review_round(
         run, attempt, args.round, args.min_severity,
         args.provider_verdict if args.provider_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None,
-        args.final_verdict if args.final_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None)
+        args.final_verdict if args.final_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None,
+        json.loads(args.merge_metadata.read_text()) if args.merge_metadata else None)
 
 
 if __name__ == '__main__':

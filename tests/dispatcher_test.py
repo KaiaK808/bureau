@@ -508,7 +508,7 @@ class DispatcherFixture(unittest.TestCase):
         self.change(lambda d:d['prs'].append(dict(number=1,branch=branch,issue=issue,comments=[])))
         child=self.start(); self.wait_for(lambda:self.skipped(issue,20))
         self.assertEqual([v['state'] for v in self.events('move')],['merge'])
-        self.assertEqual(len(self.events('provider-start')),4); self.assertFalse(self.events('merge')); self.stop(child)
+        self.assertEqual(len(self.events('provider-start')),3); self.assertFalse(self.events('merge')); self.stop(child)
 
     def test_human_hold_and_unknown_failure_are_not_immediately_repicked(self):
         self.ticket(1,human=True); self.ticket(2,fail=True)
@@ -842,7 +842,7 @@ class DispatcherFixture(unittest.TestCase):
         self.assertNotEqual(before,after); self.g('merge-base','--is-ancestor',base,after)
         moves=self.events('move'); self.assertEqual([v['state'] for v in moves],['build_review','merge','done'])
         phases=[v['phase'] for v in self.events('provider-start')]
-        self.assertEqual(sorted(phases),['correctness','performance','security','verdict'])
+        self.assertEqual(sorted(phases),['correctness','performance','security'])
         first_review=min(v['at'] for v in self.events('provider-start'))
         self.assertLess(moves[0]['at'],first_review); self.assertGreater(self.events('merge')[0]['at'],first_review)
         self.assertTrue(any('round=2 ' in v['body'] for v in self.events('comment')))

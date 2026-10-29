@@ -122,6 +122,8 @@ test_review_comment_findings.sh	12	-
 test_review_convergence.sh	198	-
 test_review_gate_exit.sh	1	-
 test_review_gate_waits.sh	63	-
+test_review_merge.sh	-	165
+test_review_merge_negative_control.sh	-	2
 test_review_reuse_approval.sh	58	-
 test_review_verdict_order.sh	52	-
 test_session_throttle.sh	1	-

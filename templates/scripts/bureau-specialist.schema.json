@@ -1,0 +1,149 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "specialist": {
+      "type": "string",
+      "enum": [
+        "correctness",
+        "security",
+        "performance"
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "critical": {
+          "type": "integer"
+        },
+        "bug": {
+          "type": "integer"
+        },
+        "minor": {
+          "type": "integer"
+        },
+        "skip": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "critical",
+        "bug",
+        "minor",
+        "skip"
+      ]
+    },
+    "acceptance_gaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "class": {
+            "type": "string",
+            "enum": [
+              "CRITICAL",
+              "BUG",
+              "MINOR",
+              "SKIP"
+            ]
+          },
+          "msg": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "line_end": {
+            "type": "integer"
+          },
+          "skip_citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "adr_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "anchor": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "side": {
+                "type": "string",
+                "enum": [
+                  "base",
+                  "head"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "blob": {
+                "type": "string"
+              },
+              "start_line": {
+                "type": "integer"
+              },
+              "end_line": {
+                "type": "integer"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "file"
+                ]
+              }
+            },
+            "required": [
+              "side",
+              "path",
+              "blob",
+              "sha256"
+            ]
+          }
+        },
+        "required": [
+          "file",
+          "line",
+          "class",
+          "msg"
+        ]
+      }
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "specialist",
+    "counts",
+    "findings",
+    "summary"
+  ]
+}

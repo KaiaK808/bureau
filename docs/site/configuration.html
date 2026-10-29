@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d3ddee6b92be4190fa9449dc81fbe6c0915a3cfa38b481ac05ba5eb27f3ac24b">
+<meta name="bureau-source-sha256" content="131d43c13ece582fac68e1df9023d4d33539e6313fcda211f6b79aba9d0da3d9">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -429,6 +429,26 @@ results cannot be promoted. Deferred/SKIP findings remain in the
 projected PR comment</td>
 </tr>
 <tr>
+<td><code>agents.review_grounding</code></td>
+<td><code>off</code> or <code>required</code></td>
+<td><code>off</code></td>
+<td>Validate source anchors against pinned PR base/head. Off records
+invalid/missing anchors observationally; required adds BLOCK/25.
+Parse/provider errors stay 22. Part of review policy identity, so
+changes invalidate approval reuse</td>
+</tr>
+<tr>
+<td><code>agents.finding_verifier.enabled</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Opt into shadow checks only: at most eight fresh calls (60 seconds
+each), 24 KiB of request JSON each and 8 KiB of whole pinned contracts.
+Only claim, pinned source, contract and anchors are supplied. Outcomes
+and identity digests are evidence only and never change verdicts. No
+enforced mode is shipped; unknown verifier keys are rejected. Included
+in review policy identity</td>
+</tr>
+<tr>
 <td><code>agents.review_adr_context</code></td>
 <td>bool</td>
 <td><code>false</code></td>
@@ -438,8 +458,9 @@ IDs are settled, including for Known-limit exclusions.
 Added/changed/removed records are non-authoritative proposals; citations
 are valid but never waive or downgrade findings. Enabled selects the
 extended ADR schema. Disabled keeps the legacy schema bytes, Codex wire
-projection, validation, receipt schema digest and prompt/comment bytes;
-unsolicited <code>adr_refs</code> are unexpected result fields</td>
+projection, validation, receipt schema digest and fallback
+prompt/comment bytes; unsolicited <code>adr_refs</code> are unexpected
+result fields</td>
 </tr>
 <tr>
 <td><code>agents.review_adr_budget_bytes</code></td>
@@ -2167,9 +2188,10 @@ repo whose defaults don't match.</p>
 <td><code>BUREAU_REVIEW_MERGE_CAP_KB</code></td>
 <td><code>60</code></td>
 <td>Whole KB 1–1024, fallback 60. Tail-cap (KB) per specialist review
-before the merger prompt. Prevents ARG_MAX overflow when an individual
-review runs long (typical for codex-routed stages that emit heavy
-transcripts)</td>
+only for the malformed-output model fallback. The normal code merge
+reads complete structured output before this cap. Prevents ARG_MAX
+overflow when an individual review runs long (typical for codex-routed
+stages that emit heavy transcripts)</td>
 </tr>
 </tbody>
 </table>

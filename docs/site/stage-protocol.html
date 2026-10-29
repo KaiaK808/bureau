@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e7191cf878860d865c7345b9979fc4c79a77c3842dbf2190bbf38e43d5eee83b">
+<meta name="bureau-source-sha256" content="1dac5e5638b3b94be4461dc316a9237a8eacaa46327e4d64b6b96c86d03313f3">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -854,6 +854,88 @@ review-round accounting or strict merge gates. No implement force-push
 is introduced. The existing snapshot, external-write and
 concurrent-writer limits still apply.</p>
 <h2 id="review-convergence">Review convergence</h2>
+<p>The three specialists still run in parallel.
+<code>bureau-review.py</code> validates their complete structured
+outputs against <code>bureau-specialist.schema.json</code>, including
+optional ADR references, and merges in code without a verdict model
+call. It unwraps provider cost envelopes before reading the last fenced
+JSON block. Deduplication uses repository-relative path, inclusive
+<code>line</code>/<code>line_end</code> (end defaults to start) and
+NFKC/case-folded title with punctuation/whitespace normalized; absent
+title uses the first claim line. Highest severity wins; distinct
+duplicate claim details, specialist provenance, anchors and ADR IDs are
+retained. Normalized findings in the code-generated comment JSON retain
+finding IDs, specialist provenance, ranges and the complete anchor
+union, so metadata IDs remain traceable after temporary cleanup.
+Noncritical per-role counts must match their findings or select
+fallback; CRITICAL counts remain an independent floor. Readable security
+reports remain floors. A malformed or missing specialist result selects
+the existing capped model merger, with fallback roles recorded as
+metadata. Known critical/security/invalid-anchor floors from readable
+specialists survive fallback. The helper supplies a neutral APPROVE
+input to the legacy result contract; the existing shell
+<code>review_convergence</code> and <code>decide_review_verdict</code>
+keep severity, security, build and cap decisions.</p>
+<p>A fixed findings template renders summaries, class groups, source
+anchors and fixes. The outer comment preserves
+<code>Code Review v2</code>, <code>**Verdict**:</code>,
+<code>**Reviewed head**:</code> and <code>**Target**:</code>.
+<code>merge-pipeline.sh</code> and the dispatcher consume the review
+marker/verdict; <code>review_counts</code> consumes terminal
+<code>bureau-review-round</code> markers and legacy Changes Requested
+headers; <code>implement-pipeline.sh</code> consumes
+<code>Code Review.*Changes Requested</code>. These strings and round
+accounting are unchanged. The legacy model fallback keeps its existing
+comment projection when both new options are off.</p>
+<p><code>agents.review_grounding</code> defaults to <code>off</code>.
+Every supplied anchor is checked against the immutable base/head Git
+tree, never the checkout or a local validation merge. The pipeline
+invokes the helper through <code>bureau_without_secrets</code>; local
+Git reads disable lazy fetching and replacement objects and have a
+10-second limit. A line anchor is
+<code>{side: "base"|"head", path: "relative/file", blob: "FULL_GIT_BLOB_ID", start_line: 1, end_line: 2, sha256: "LOWERCASE_SHA256"}</code>;
+finding file/line/line_end must match. Hash exact cited bytes,
+preserving CRLF and the final newline (or its absence). Deleted code can
+cite base. A finding without a single line uses line 0 and
+<code>{side, path, blob, scope: "file", sha256}</code> over the complete
+blob; other implicit scopes are invalid. Paths must be relative, regular
+blobs at the selected path, with no traversal, symlink or submodule
+dereference. Missing paths, foreign blobs, impossible ranges and stale
+digests are invalid. In <code>required</code> mode any missing/invalid
+anchor produces BLOCK/25 before the unchanged ordered shell decision;
+off records the status only. Parse/schema/provider errors remain 22,
+with malformed specialists first trying the model fallback. A valid
+anchor never lowers severity. No deterministic stale-anchor suppression
+is shipped: even stale findings retain their floors and become a human
+hold in required mode.</p>
+<p><code>agents.finding_verifier.enabled: true</code> opts into shadow
+verification only (default false). In deterministic severity/path order,
+at most eight findings get a fresh checker call with a fixed 60-second
+provider limit each; no implementation or author review conversation is
+reused. Each input contains only the claim, validated pinned source
+bytes, anchors and whole pinned contracts (<code>SPEC.md</code>,
+<code>AGENTS.md</code>, <code>CLAUDE.md</code>, ticket spec/plan when
+present), with 8 KiB shared contract budget and 24 KiB JSON per request.
+Missing contracts can make a claim unverifiable. Invalid anchors or
+oversized inputs record unverifiable without calling a model; excess
+findings are counted as omitted. The checker returns exactly
+<code>finding_id</code>, <code>anchor_sha256</code> (SHA-256 of
+canonical sorted anchor JSON), and
+<code>outcome: confirmed|refuted|unverifiable</code>. Foreign
+identities, malformed responses, provider failures and checker
+silence/timeouts record unverifiable without setting a human hold;
+cancellation and ticket withdrawal still follow the stage protocol.
+Outcomes never change the candidate, convergence or
+CRITICAL/security/BLOCK floors. An enforced disagreement policy is
+deferred and has no configuration value in this release.</p>
+<p>Review policy identity includes the merge algorithm version,
+grounding option and verifier enablement alongside existing
+severity/caps/ADR identity. Older approvals require a fresh review.
+Helpers and schemas must be resynced together after installation
+comparison, followed by driver restart. Local Git/fake-provider tests
+establish contract behavior, not finding truth or live-provider
+acceptance. The <a href="review-merge-comparison.html">fixture
+comparison</a> reports measured limits.</p>
 <p>With <code>agents.review_adr_context: true</code> (default false),
 <code>bureau-adr.py</code> builds the same ADR index for all three
 specialists beside their lessons context; the verdict pass also receives
@@ -967,29 +1049,35 @@ still-requested stop remains stopped. Provider failures retain their
 existing exits; an unresolved decision in the next round sees the
 consumed number.</p>
 <p>Each fresh stage attempt records one <code>review_round</code> in its
-evidence manifest. Four existing provider phases
-(<code>correctness</code>, <code>security</code>,
-<code>performance</code>, <code>verdict</code>) contribute numeric usage
-through their run/stage/provider attempt identities. Duplicate receipt
-links count once; distinct retry identities count once each. Every
-metric sums only when all four phases and every measurement are
-available; otherwise it is null. Input/output/cache tokens and CLI cost
-estimates are numbers; absent usage/cost is never zero. Numeric
-receipt/round evidence uses the existing observational store,
-independent of the existing <code>session.cost_tracking</code> switch
-for per-issue cost logs; no additional switch or provider call is added.
-Approval reuse creates no round record or tokens. Evidence failures warn
-without changing routing; provider-success receipts retain their
-existing durability requirement.</p>
+evidence manifest. Three specialist phases (<code>correctness</code>,
+<code>security</code>, <code>performance</code>) contribute numeric
+usage through their run/stage/provider attempt identities for a code
+merge; model fallback additionally requires <code>verdict</code>.
+Optional <code>finding_verifier</code> calls also contribute usage.
+Duplicate receipt links count once; distinct retry identities count once
+each. Every metric sums only when all required phases and every
+measurement are available; otherwise it is null. Input/output/cache
+tokens and CLI cost estimates are numbers; absent usage/cost is never
+zero. Numeric receipt/round evidence uses the existing observational
+store, independent of the existing <code>session.cost_tracking</code>
+switch for per-issue cost logs; the optional shadow verifier adds
+bounded calls. Merge mode, malformed roles, floor counts, grounding
+statuses, finding/anchor digests and verifier outcomes are allowlisted
+metadata only (ADR 0003); claims, contracts and cited bytes are not
+copied into evidence. Approval reuse creates no round record or tokens.
+Evidence failures warn without changing routing; provider-success
+receipts retain their existing durability requirement.</p>
 <p>The provider-result object and digest remain unchanged. Evidence
 records <code>provider_verdict</code> separately from the final shell
-verdict. The existing PR review comment appends “Deferred below
-threshold” and SKIP lists after <code>bureau_comment_projection</code>
-has excluded insights; normal comment size limits still apply. PR 7's
-acceptance brief continues to distinguish provider verdict from
-invocation verdict. Old evidence needs no backfill. Resync scripts
-together after comparing installation drift, then restart drivers; live
-provider/adopter qualification remains outstanding.</p>
+verdict; for code merge this compatibility field holds the neutral
+APPROVE input, not a model approval. The existing PR review comment
+appends “Deferred below threshold” and SKIP lists after
+<code>bureau_comment_projection</code> has excluded insights; normal
+comment size limits still apply. PR 7's acceptance brief continues to
+distinguish provider verdict from invocation verdict. Old evidence needs
+no backfill. Resync scripts together after comparing installation drift,
+then restart drivers; live provider/adopter qualification remains
+outstanding.</p>
 <h2 id="bounded-advisory-lessons">Bounded advisory lessons</h2>
 <p><code>build_lessons_context STAGE [SPEC_DIRECTORY] [LOCAL_DIFF_RANGE]</code>
 reads <code>LESSONS.md</code> without writing it. Spec, both
