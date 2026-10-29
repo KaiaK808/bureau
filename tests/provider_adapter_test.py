@@ -23,6 +23,7 @@ if CODEX_TMP_PREFIX != 'bureau-codex-':
     shutil.copy(SCRIPT.with_name('bureau-evidence.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-gates.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-activity.py'), isolated.name)
+    shutil.copy(SCRIPT.with_name('bureau-ticket.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-insights.sh'), isolated.name)
     source = SCRIPT.read_text().replace("prefix='bureau-codex-'", 'prefix=' + repr(CODEX_TMP_PREFIX))
     SCRIPT = Path(isolated.name) / SCRIPT.name; SCRIPT.write_text(source)
@@ -1147,10 +1148,10 @@ p.Path.open=refuse_transcript_read
                     # write; a live descendant can outlast the released lease.
                     deadline=time.monotonic()+2
                     while True:
-                        status=subprocess.run(['ps','-p',str(descendant['pid']),'-o','stat='],capture_output=True,text=True)
-                        self.assertIn(status.returncode,(0,1),status.stderr)
-                        self.assertFalse(status.stderr.strip(),status.stderr)
-                        active=bool(status.stdout.strip()) and not status.stdout.strip().startswith('Z')
+                        # Native process inspection also works in sandboxes
+                        # that deny executing ps; inspection errors still fail.
+                        status=p.a.ProcessTable().snapshot().get(descendant['pid'])
+                        active=status is not None and not status[2]
                         if not active or time.monotonic() >= deadline: break
                         time.sleep(.02)
                     self.assertFalse(active,'provider descendant survived the bounded invocation')
@@ -1389,6 +1390,7 @@ p.Path.open=refuse_transcript_read
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), control.parent / 'bureau-evidence.py')
         shutil.copy(SCRIPT.with_name('bureau-gates.py'), control.parent / 'bureau-gates.py')
         shutil.copy(SCRIPT.with_name('bureau-activity.py'), control.parent / 'bureau-activity.py')
+        shutil.copy(SCRIPT.with_name('bureau-ticket.py'), control.parent / 'bureau-ticket.py')
         control.write_text(source.replace(changed,'        return env\n'))
         return control
 

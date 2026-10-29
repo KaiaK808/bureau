@@ -25,6 +25,9 @@ _evidence_spec.loader.exec_module(e)
 _spec_spec = importlib.util.spec_from_file_location('bureau_spec', SCRIPTS / 'bureau-spec.py')
 s = importlib.util.module_from_spec(_spec_spec)
 _spec_spec.loader.exec_module(s)
+_ticket_spec = importlib.util.spec_from_file_location('bureau_ticket', SCRIPTS / 'bureau-ticket.py')
+t = importlib.util.module_from_spec(_ticket_spec)
+_ticket_spec.loader.exec_module(t)
 # Keep equal to bureau-provider.py and bureau-env.sh (standalone script).
 UNTRUSTED_HOST_PREFIXES = ('HERDR_',)
 STAGES = {
@@ -849,6 +852,23 @@ def execute(repo, args, store):
             try:
                 code = child.wait(timeout=.2)
                 if interrupted: code = 130
+                control = store.root / 'ticket-control' / run
+                withdrawn = any((control / ('stop-' + str(c))).exists() for c in (0, 25, 26))
+                if phase == 'stage' and args.issue and code not in (20, 21, 25, 26, 130) and not withdrawn:
+                    try:
+                        ledger = t.Ledger(store.root, args.issue, read(config_for(repo)))
+                        decision = ledger.call('end_turn', attempt, run)
+                        if decision:
+                            # Consume exactly the same latch as withdrawal, in
+                            # time for the waiting worker's preservation trap.
+                            shell(repo, 'bureau_ticket_authorize', args.issue, 'latched', environ={
+                                **os.environ, 'BUREAU_RUN_ID': run, 'BUREAU_TICKET_CONTROL_DIR': str(control)})
+                            code = decision['code']
+                    except subprocess.CalledProcessError as exc:
+                        code = exc.returncode
+                    except (OSError, ValueError, TypeError, KeyError):
+                        code = 24
+                if interrupted: code = 130
                 return code
             except subprocess.TimeoutExpired:
                 if interrupted:
@@ -891,6 +911,8 @@ def execute(repo, args, store):
                 ready = os.environ.get('BUREAU_DISPATCH_READY_FILE')
                 dispatch_record.update(code=130 if interrupted or code < 0 else code,
                                        paused=bool(code == 25 and ready and Path(ready + '.paused').exists()))
+                dispatch_record['terminal_reason'] = e.observe(lambda: t.Ledger(
+                    store.root, args.issue, read(config_for(repo))).terminal(dispatch_record['code'], run))
                 # This coordination record is mandatory, outside prunable
                 # evidence, and written before the inherited dispatch FD closes.
                 save(dispatch_path, dispatch_record)

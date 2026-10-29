@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="329fa4cb999d78ab172aac6c19bf6f1de9d04c5820ae733be1d80eeca35d774d">
+<meta name="bureau-source-sha256" content="c0641c1ec0bbd79996cd42f78707e4a7db9e1275e8d57dfc44fbe53f98893f44">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -382,6 +382,59 @@ and batch orchestration keeps its legacy default of 3. Precedence:
 <code>--max-concurrent</code>, then <code>BUREAU_MAX_CONCURRENT</code>,
 then this setting, then the consumer's default. Separate from the
 in-flight ticket cap.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_budget.tokens</code></td>
+<td>integer</td>
+<td>off</td>
+<td>Positive cumulative token allowance per ticket; absent/null/0
+disables this dimension. Unknown usage stops at the next safe checkpoint
+unless explicitly allowed.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_budget.provider_calls</code></td>
+<td>integer</td>
+<td>off</td>
+<td>Positive cumulative provider-attempt allowance, including
+checker/verifier calls and retries across stages/runs.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_budget.wall_seconds</code></td>
+<td>number</td>
+<td>off</td>
+<td>Positive cumulative provider wall time in seconds; parallel attempt
+durations add. This excludes idle queue time and ordinary deterministic
+shell checks.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_budget.allow_unknown_usage</code></td>
+<td>boolean</td>
+<td><code>false</code></td>
+<td>Explicitly permits continuing with unreported token usage. It keeps
+totals unknown and enforces the known lower bound; it never turns
+missing usage into zero.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_progress.enabled</code></td>
+<td>boolean</td>
+<td><code>false</code></td>
+<td>Opt-in trusted progress policy; see the contract below.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_progress.max_non_improving_turns</code></td>
+<td>integer</td>
+<td><code>2</code></td>
+<td>Completed background stage attempts without a new qualified fact
+before exit 25 with <code>terminal_reason: stalled</code>; range
+1–100000.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_progress.contract</code></td>
+<td>object</td>
+<td><code>{}</code></td>
+<td>Stable fact IDs under <code>fulfilled_requirements</code>,
+<code>qualified_gates</code>, <code>confirmed_findings</code>, each
+bound to an exact trusted outer gate command and command ID.</td>
 </tr>
 <tr>
 <td><code>agents.workbench_panes</code></td>
@@ -887,6 +940,101 @@ the early cap check uses a Linear snapshot, while the common-directory
 spec-admission lock serializes the authoritative reservation and Spec
 move for every updated driver, including pending moves absent from
 lagging snapshots.</p>
+<h3 id="ticket-run-budgets-and-trusted-progress">Ticket run budgets and
+trusted progress</h3>
+<p>Ticket budgets are off by default. They cover every provider attempt
+for the issue in the same common Git directory, across stages,
+checker/verifier phases, worktrees, shepherd runs and dispatcher
+restarts:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_budget&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;tokens&quot;</span><span class="fu">:</span> <span class="dv">200000</span><span class="fu">,</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;provider_calls&quot;</span><span class="fu">:</span> <span class="dv">20</span><span class="fu">,</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;wall_seconds&quot;</span><span class="fu">:</span> <span class="dv">14400</span><span class="fu">,</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;allow_unknown_usage&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">},</span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_progress&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_non_improving_turns&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;contract&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;fulfilled_requirements&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;required-behavior&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;qualified_gates&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;acceptance&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;confirmed_findings&quot;</span><span class="fu">:</span> <span class="fu">{}</span></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>      <span class="fu">}</span></span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Each dimension is independently optional; absent/null/0 disables it.
+Wrong types, unknown keys, negative/nonfinite limits or invalid
+contracts refuse execution with 24. Tokens/calls require integers; wall
+seconds may be fractional. Auth/help probes and deterministic shell
+checks are not provider attempts. Wall time sums provider intervals,
+including concurrent calls, excluding idle queue time. Tokens include
+input/output plus Claude's disjoint cache-read/cache-creation input.
+Codex cached input is already included in input tokens. Every required
+counter must be reported; otherwise the attempt and aggregate token
+total stay unknown, with a separate known lower bound. Accounting is
+independent of <code>session.cost_tracking</code>.</p>
+<p><code>allow_unknown_usage: true</code> explicitly permits unreported
+tokens, retaining null totals and enforcing the known lower bound. It
+does not relax call/time limits. Failed/invalid/timed-out attempts count
+too. Abandoned attempts retain unknown usage and their open wall
+interval counts conservatively. A live adapter's birth identity
+postpones its unknown-usage decision until completion. Thresholds use
+<code>&gt;=</code>. Call slots are reserved atomically before paid work;
+token/time limits can overshoot by already admitted concurrent calls.
+Existing stage timeouts still apply.</p>
+<p>Progress is a separate opt-in policy. A turn is one completed
+background stage attempt; wrappers and individual specialists do not add
+turns. Interrupted, withdrawn and already held stages do not advance it.
+An empty contract supplies no trusted progress and stalls after two
+ordinary completed turns. Fact IDs must be stable, 1–128 ASCII
+letters/digits/<code>_.:-</code>. Values contain exactly
+<code>command_id</code> (<code>repo.test_command</code> or
+<code>qa.test</code>) and the exact command. Configure that command as
+an actual outer-shell test gate too. A qualifying gate exits 0 at
+unchanged HEAD with readable output. A requirement or confirmed finding
+needs a command that proves that particular claim; a generic green suite
+cannot establish an unrelated claim. Facts are bound to the contract
+digest. Provider-reported completion/findings/applied fixes, checkboxes,
+commits and activity never qualify. A new fact resets the count once;
+replaying the same green gate at a new HEAD does not. Changing the
+contract requires fresh gate evidence.</p>
+<p>The dispatcher's lane cap is the batch concurrency cap,
+<code>agents.parallel_lanes</code>, also used by
+<code>orchestrate.sh --execute</code>; there is no separate batch-budget
+knob. Lane limits bound simultaneous tickets; ticket budgets bound each
+ticket's spending. The legacy absent-setting defaults remain two
+dispatch lanes and three explicit batch lanes.</p>
+<p>Inspect with
+<code>python3 -I scripts/bureau-ticket.py --repo . --issue TEAM-123 status</code>.
+Authoritative records live under
+<code>&lt;common-git-dir&gt;/bureau/tickets/TEAM-123.json</code>,
+outside prunable evidence. They retain identities, measurements, fact
+digests and the closed stop reason, without provider prose/output.
+Counters survive reruns and evidence pruning; there is no backfill for
+earlier runtime versions. When enabled, unavailable/corrupt accounting
+fails closed with 24. With both policies disabled, accounting failures
+warn without changing execution.</p>
+<p>To resume, stop drivers, inspect preserved work and the ledger,
+reconcile ownership, raise the exhausted limit or deliberately reset the
+inspected progress counter/ledger, then clear the ticket's dispatcher
+skip/human hold. Deleting accounting grants a new lifetime allowance and
+is not a routine retry. Separate clones/hosts and calls bypassing
+Bureau's adapter are outside this local contract. Compare installed
+drift, resync all scripts together including
+<code>bureau-ticket.py</code>, and restart drivers before enabling.
+Tests use fake providers/services, real Git and a budget-removal
+negative control; live adopter/provider qualification remains
+outstanding. See the <a
+href="stage-protocol.html#ticket-budget-and-progress-stops">stop
+protocol</a>.</p>
 <h3 id="advisory-lesson-budgets">Advisory lesson budgets</h3>
 <p><code>agents.lessons_budget_bytes</code> is an optional object with
 <code>spec</code>, <code>implement</code>, <code>qa</code> and
@@ -1331,18 +1479,18 @@ configuration migration is required; existing installations retain the
 legacy rules.</p>
 <p>For Bureau's generated manual, cover <strong>every</strong> output of
 the renderer, which requires Pandoc:</p>
-<div class="sourceCode" id="cb1"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>A configured repair requires an explicit
 <code>repo.test_command</code> containing a command; whitespace-only or
 comment-only strings decline, and there is no inferred fallback.
@@ -1442,18 +1590,18 @@ or 2), and an explicit nonblank, non-comment
 <code>timeout_seconds</code> and silence-watchdog options apply through
 <code>run_stage_for conflict_resolver</code>; there is no separate
 provider integration. Invalid resolver configuration fails closed.</p>
-<div class="sourceCode" id="cb2"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
-<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>All conflict-stage environment overrides are optional and unset by
 default: <code>BUREAU_RUNNER_CONFLICT_RESOLVER</code>,
 <code>BUREAU_MODEL_CONFLICT_RESOLVER</code>,

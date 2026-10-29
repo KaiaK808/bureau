@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="05982705abbaeb5a69fa042b5c4528cf4c60c973569c6418b5dbed342045d386">
+<meta name="bureau-source-sha256" content="843fccee51c539943fe10833d203cd0fac31c13bdb3a7c050946c82cd7660485">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -499,6 +499,19 @@ advisory: ticket checkpoint exits
 <code>29</code>, silence <code>25</code> with
 <code>timeout_kind: silence</code>, review floors/rounds and dispatcher
 lane outcomes retain their existing meaning.</p>
+<h2 id="closed-terminal-stop-reasons">Closed terminal stop reasons</h2>
+<p>Ticket accounting refines existing exits with
+<code>terminal_reason</code>; it adds no exit code. The only values are
+<code>budget</code> (25), <code>timeout</code> (124),
+<code>watchdog</code> (25), <code>review_capped</code> (25),
+<code>human_hold</code> (25), <code>ticket_withdrawn</code> (Done 0,
+cancelled/duplicate 26, other inactive state 25), and
+<code>stalled</code> (25). Successful completion, handoffs, waits,
+infrastructure failures and cancellation 130 have no invented stop
+reason. See the <a
+href="stage-protocol.html#ticket-budget-and-progress-stops">stage
+protocol</a> for safe-point handling, precedence and persistence. These
+reasons are separate from learning cause classes.</p>
 <h2 id="telegram-alerts">Telegram alerts</h2>
 <p><code>alert_telegram</code> (in <code>bureau-config.sh</code>) sends
 a message when:</p>

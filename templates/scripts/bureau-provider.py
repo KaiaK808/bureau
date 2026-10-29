@@ -27,6 +27,9 @@ _gate_spec.loader.exec_module(g)
 _activity_spec = importlib.util.spec_from_file_location('bureau_activity', Path(__file__).resolve().with_name('bureau-activity.py'))
 a = importlib.util.module_from_spec(_activity_spec)
 _activity_spec.loader.exec_module(a)
+_ticket_spec = importlib.util.spec_from_file_location('bureau_ticket', Path(__file__).resolve().with_name('bureau-ticket.py'))
+t = importlib.util.module_from_spec(_ticket_spec)
+_ticket_spec.loader.exec_module(t)
 
 
 # The values the Claude CLI's --effort accepts.
@@ -380,6 +383,17 @@ def run(options, prompt, system, repo, evidence, schema=None):
     identity = dict(run_id=run_id, provider_attempt_id=attempt, stage_attempt_id=stage_attempt,
                     issue=issue, stage=e.tag(options['stage']), phase=e.tag(phase),
                     schema_sha256=hashlib.sha256(schema.read_bytes()).hexdigest() if schema else None)
+    ticket = None
+    if issue:
+        try:
+            ticket = t.Ledger(t.root_for(repo), issue, options['_ticket_config'] if '_ticket_config' in options else t.read_config(repo))
+            stop = ticket.call('begin', identity, options['runner'])
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise PermissionError('ticket accounting unavailable: ' + str(exc)) from exc
+        if stop:
+            if standalone and store is not None:
+                e.observe(store.end_attempt, run_id, stage_attempt, stop['code'], start, outer=not os.environ.get('BUREAU_RUN_ID'))
+            return stop['code'], '', dict(outcome=stop['terminal_reason'], **identity, **stop)
     observer = None
     if options['runner'] == 'codex' and options['stage'] in ('implement', 'qa'):
         observer = g.Observer(repo, options.get('gate_commands', []), lambda: current_head(repo), options.get('gate_command_id', 'repo.test_command'))
@@ -395,6 +409,17 @@ def run(options, prompt, system, repo, evidence, schema=None):
             error = exc
             code, text = (24 if isinstance(exc, (PermissionError, UntrustedEnvError)) else 22), ''
             metadata = dict(outcome='invalid-result', error=str(exc))
+    if ticket is not None:
+        try:
+            usage = t.reported_usage(options['runner'], evidence)
+            ticket.call('finish', attempt, usage, code)
+            reason = 'watchdog' if metadata.get('timeout_kind') == 'silence' else ('timeout' if code == 124 else None)
+            if reason: ticket.call('note_stop', reason, code, run_id)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            if code == 130:
+                note('Bureau ticket accounting unavailable after cancellation; usage remains unknown')
+            else:
+                raise PermissionError('ticket accounting unavailable: ' + str(exc)) from exc
     end = e.observe(current_head, repo)
     gate_attempts = []
     if observer and not observer.error:
@@ -1027,6 +1052,12 @@ def gate_action(args, config, options, repo):
             logs.append(record['stage_log'])
         if not record or not store.valid_execution(record):
             green = False; verified = False; continue
+        if claimed:
+            issue = os.environ.get('BUREAU_CURRENT_ISSUE')
+            if issue:
+                ticket = t.Ledger(t.root_for(repo), issue, config)
+                ticket.call('gate', run_id, owner, record['command_id'], command, record['normalized_exit'],
+                            record['head'], record['end_head'], record['stage_log'])
         if record['normalized_exit'] == 130: options['_gate_cancelled'] = True
         verified = verified and record['head'] == head and record['end_head'] == head
         green = green and record['normalized_exit'] == 0 and record['head'] == head and record['end_head'] == head
@@ -1053,6 +1084,7 @@ def main():
         options['phase'] = args.phase or os.environ.get('BUREAU_PROVIDER_PHASE') or args.stage
         options['cancel_file'] = args.cancel_file
         if args.describe: print(json.dumps(options)); return 0
+        options['_ticket_config'] = config
         options['untrusted_env']=untrusted_env_mode(config)
         repo=Path(args.repo).resolve()
         if args.gate_action:

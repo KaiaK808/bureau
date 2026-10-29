@@ -70,6 +70,13 @@ Which pipelines run, how often they poll, how aggressive they are.
 | `agents.rebase` | bool | `false` | Force-pushes to remote — opt-in for that reason |
 | `agents.poll_interval_minutes` | number | `30` | Whole minutes 1–10080; invalid values fall back to 30. Queue polling interval. Lower (e.g. `5`) for active work, higher for background |
 | `agents.parallel_lanes` | number | `2` dispatch / `3` batch | Whole numbers 1–1000. An explicit non-null value sets the process-lane cap for both continuous dispatch and `orchestrate.sh --execute`; invalid configured values warn and fall back to 2 for both. When absent or null, dispatch defaults to 2 and batch orchestration keeps its legacy default of 3. Precedence: `--max-concurrent`, then `BUREAU_MAX_CONCURRENT`, then this setting, then the consumer's default. Separate from the in-flight ticket cap. |
+| `agents.ticket_budget.tokens` | integer | off | Positive cumulative token allowance per ticket; absent/null/0 disables this dimension. Unknown usage stops at the next safe checkpoint unless explicitly allowed. |
+| `agents.ticket_budget.provider_calls` | integer | off | Positive cumulative provider-attempt allowance, including checker/verifier calls and retries across stages/runs. |
+| `agents.ticket_budget.wall_seconds` | number | off | Positive cumulative provider wall time in seconds; parallel attempt durations add. This excludes idle queue time and ordinary deterministic shell checks. |
+| `agents.ticket_budget.allow_unknown_usage` | boolean | `false` | Explicitly permits continuing with unreported token usage. It keeps totals unknown and enforces the known lower bound; it never turns missing usage into zero. |
+| `agents.ticket_progress.enabled` | boolean | `false` | Opt-in trusted progress policy; see the contract below. |
+| `agents.ticket_progress.max_non_improving_turns` | integer | `2` | Completed background stage attempts without a new qualified fact before exit 25 with `terminal_reason: stalled`; range 1–100000. |
+| `agents.ticket_progress.contract` | object | `{}` | Stable fact IDs under `fulfilled_requirements`, `qualified_gates`, `confirmed_findings`, each bound to an exact trusted outer gate command and command ID. |
 | `agents.workbench_panes` | number | `2` background / `0` app | Whole numbers 0–32; invalid values fall back to 2. Number of interactive provider panes in the tmux workbench; zero omits it |
 | `agents.max_review_cycles` | number | `3` | Whole numbers 0–1000; invalid values fall back to 3. Previous Changes Requested rounds allowed before unresolved work becomes BLOCK/exit 25. The default permits three rework rounds and escalates unresolved review four; genuine approval may finish |
 | `agents.max_review_rounds` | number | `max_review_cycles + 1` | Optional total-round limit, 1–1001; invalid values use the derived default. Unresolved work at round N becomes BLOCK/exit 25; genuine approval at N may finish. Both limits apply. Structured round markers take precedence over historical header counting. Approval reuse and merge-gate polling consume no new round |
@@ -118,6 +125,48 @@ Read [provider runtime](provider-runtime.md) for exact model precedence, sandbox
 Silence settings apply per creative provider call, alongside the existing hard timeout and implementation bounds; outside-gate commands retain their own wall-clock handling. Claude uses `--output-format stream-json --verbose --include-partial-messages` only with a nonzero silence window; unsupported CLI flags fail without falling back to an unobservable call. Native ownership inspection uses macOS libproc or Linux procfs and orphan adoption. A per-call inherited marker tracks detached descendants; a process that both clears that marker and detaches before observation cannot be identified. Review cancellation uses the same ownership cleanup even with silence disabled. Compare installation drift, resync all scripts including `bureau-activity.py`, and restart drivers before opting in. Qualification uses local fakes; test your installed provider CLI before production use.
 
 Spec numbers are reserved per issue in `<git common dir>/bureau/spec-numbers.json` under a sibling `.guard` lock. The spec stage fetches and prunes all origin heads using the full wildcard refspec before reserving, invokes the pinned 1.2.2 feature helper with `--number`, and checks that the helper did not auto-correct it. Retries reuse the number and stable issue-key short name; gaps are fine. After a disposable worker reset, the stage checks branch ownership and checks out its reserved local/origin branch before creating artifacts or calling specify. Remote revisions fast-forward; unpublished local commits are retained; divergent history halts with 25 and needs-human. Lock acquisition is bounded to 300 seconds by default (`BUREAU_SPEC_LOCK_TIMEOUT` in the process environment, whole seconds 1–86400; invalid values warn with the key only and use 300). On timeout the stage prints the lock path, exits 124 and returns the issue to Triage before specify; this does not bound Git scanning after acquisition. The helper creates under `specs/`, so Bureau relocates its output for a different `repo.specs_dir` and persists the exact directory for later phases. Existing approved specs resume downstream; older issue-directory associations are not imported into reservations. Keep the registry across cleanup. Separate clones or hosts need their own coordination; the early cap check uses a Linear snapshot, while the common-directory spec-admission lock serializes the authoritative reservation and Spec move for every updated driver, including pending moves absent from lagging snapshots.
+
+### Ticket run budgets and trusted progress
+
+Ticket budgets are off by default. They cover every provider attempt for the issue in the same common Git directory, across stages, checker/verifier phases, worktrees, shepherd runs and dispatcher restarts:
+
+```json
+{
+  "agents": {
+    "ticket_budget": {
+      "tokens": 200000,
+      "provider_calls": 20,
+      "wall_seconds": 14400,
+      "allow_unknown_usage": false
+    },
+    "ticket_progress": {
+      "enabled": true,
+      "max_non_improving_turns": 2,
+      "contract": {
+        "fulfilled_requirements": {
+          "required-behavior": {"command_id": "repo.test_command", "command": "bash tests/acceptance.sh"}
+        },
+        "qualified_gates": {
+          "acceptance": {"command_id": "repo.test_command", "command": "bash tests/acceptance.sh"}
+        },
+        "confirmed_findings": {}
+      }
+    }
+  }
+}
+```
+
+Each dimension is independently optional; absent/null/0 disables it. Wrong types, unknown keys, negative/nonfinite limits or invalid contracts refuse execution with 24. Tokens/calls require integers; wall seconds may be fractional. Auth/help probes and deterministic shell checks are not provider attempts. Wall time sums provider intervals, including concurrent calls, excluding idle queue time. Tokens include input/output plus Claude's disjoint cache-read/cache-creation input. Codex cached input is already included in input tokens. Every required counter must be reported; otherwise the attempt and aggregate token total stay unknown, with a separate known lower bound. Accounting is independent of `session.cost_tracking`.
+
+`allow_unknown_usage: true` explicitly permits unreported tokens, retaining null totals and enforcing the known lower bound. It does not relax call/time limits. Failed/invalid/timed-out attempts count too. Abandoned attempts retain unknown usage and their open wall interval counts conservatively. A live adapter's birth identity postpones its unknown-usage decision until completion. Thresholds use `>=`. Call slots are reserved atomically before paid work; token/time limits can overshoot by already admitted concurrent calls. Existing stage timeouts still apply.
+
+Progress is a separate opt-in policy. A turn is one completed background stage attempt; wrappers and individual specialists do not add turns. Interrupted, withdrawn and already held stages do not advance it. An empty contract supplies no trusted progress and stalls after two ordinary completed turns. Fact IDs must be stable, 1–128 ASCII letters/digits/`_.:-`. Values contain exactly `command_id` (`repo.test_command` or `qa.test`) and the exact command. Configure that command as an actual outer-shell test gate too. A qualifying gate exits 0 at unchanged HEAD with readable output. A requirement or confirmed finding needs a command that proves that particular claim; a generic green suite cannot establish an unrelated claim. Facts are bound to the contract digest. Provider-reported completion/findings/applied fixes, checkboxes, commits and activity never qualify. A new fact resets the count once; replaying the same green gate at a new HEAD does not. Changing the contract requires fresh gate evidence.
+
+The dispatcher's lane cap is the batch concurrency cap, `agents.parallel_lanes`, also used by `orchestrate.sh --execute`; there is no separate batch-budget knob. Lane limits bound simultaneous tickets; ticket budgets bound each ticket's spending. The legacy absent-setting defaults remain two dispatch lanes and three explicit batch lanes.
+
+Inspect with `python3 -I scripts/bureau-ticket.py --repo . --issue TEAM-123 status`. Authoritative records live under `<common-git-dir>/bureau/tickets/TEAM-123.json`, outside prunable evidence. They retain identities, measurements, fact digests and the closed stop reason, without provider prose/output. Counters survive reruns and evidence pruning; there is no backfill for earlier runtime versions. When enabled, unavailable/corrupt accounting fails closed with 24. With both policies disabled, accounting failures warn without changing execution.
+
+To resume, stop drivers, inspect preserved work and the ledger, reconcile ownership, raise the exhausted limit or deliberately reset the inspected progress counter/ledger, then clear the ticket's dispatcher skip/human hold. Deleting accounting grants a new lifetime allowance and is not a routine retry. Separate clones/hosts and calls bypassing Bureau's adapter are outside this local contract. Compare installed drift, resync all scripts together including `bureau-ticket.py`, and restart drivers before enabling. Tests use fake providers/services, real Git and a budget-removal negative control; live adopter/provider qualification remains outstanding. See the [stop protocol](stage-protocol.md#ticket-budget-and-progress-stops).
 
 ### Advisory lesson budgets
 

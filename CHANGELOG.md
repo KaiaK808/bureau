@@ -6,6 +6,13 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Added
+
+- Optional `agents.ticket_budget` limits cumulative tokens, provider attempts and provider wall time per ticket across stages, checker/verifier phases, reruns and dispatcher restarts. Unknown token usage remains null and stops at the next safe point unless `allow_unknown_usage: true` explicitly permits it. Atomic per-ticket accounting lives outside prunable evidence. Budgets use the existing cooperative withdrawal latch, preserving unfinished work and releasing ownership after writers finish. The closed terminal reasons are `budget`, `timeout`, `watchdog`, `review_capped`, `human_hold`, `ticket_withdrawn` and `stalled`, mapped only to existing exits. The dispatcher/batch concurrency cap remains `agents.parallel_lanes`; no new batch knob.
+- Opt-in `agents.ticket_progress` keeps a per-ticket progress ledger and stops with 25/`stalled` after `max_non_improving_turns` (default 2). Only new contract-bound fulfilled requirements, qualified gates or confirmed findings proved by matching outer-shell green gates reset it. Commits, checkboxes, provider reports/activity and repeated green checks do not.
+
+**Upgrade:** compare installed-script drift, resync the entire scripts scope including `bureau-ticket.py`, and restart every driver before enabling either policy. Both are off by default. Counters survive reruns/evidence pruning with no historical backfill; inspect preserved work and accounting before raising limits or deliberately resetting a lifetime allowance. Token/time limits may overshoot by already admitted calls. Separate clones/hosts and calls bypassing the adapter are outside coordination. Validation uses fake providers/services, real local Git, trusted-progress controls and a looping-ticket budget-removal negative control; live adopter/provider qualification is outstanding. See [configuration](docs/configuration.md#ticket-run-budgets-and-trusted-progress) and [stage protocol](docs/stage-protocol.md#ticket-budget-and-progress-stops).
+
 ## [3.5.1] - 2026-10-29
 
 v3.5.1 is a patch release on v3.5.0, prepared 2026-10-28 for the 2026-10-29 tag. It contains only [#98](https://github.com/KaiaK808/bureau/pull/98): Spec Review and UX fail closed on invalid results, and their overlap readiness requires a validated passing status and the installed schema digest. All behavior changes are on by default after resync; readiness validation applies when overlap admission is enabled. No configuration keys or exit codes are new; the existing exit 22 widens to these invalid results. See the [v3.5.1 release notes](docs/release-notes.md) for the contracts, upgrade actions, validation record and known limitation.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9866f293ae4e7917c59f721b5ff571dd073e11b1302c4174e36c62e3f656ea98">
+<meta name="bureau-source-sha256" content="77319040cfd273e4926d9404f3e0658bc06acefdc27d003faa2e52c22fe13d3c">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -130,6 +130,110 @@ resumes dispatch when the lock becomes available. Cancelling this wait
 stops only the supervisor's waiter, leaving inherited lanes to finish;
 the supervisor never adopts or signals a previous dispatcher's
 lanes.</p>
+<h2 id="ticket-budget-and-progress-stops">Ticket budget and progress
+stops</h2>
+<p><code>bureau-ticket.py</code> keeps authoritative per-ticket
+accounting in
+<code>&lt;common-git-dir&gt;/bureau/tickets/ISSUE.json</code>, with a
+per-ticket file lock, fsynced atomic replacement and private
+permissions. Every provider invocation reserves its
+<code>provider_attempt_id</code> with run/stage-attempt/stage/phase
+identity before starting, then records usage and elapsed time even on
+failure. Checker/verifier invocations use the same path. Nested wrappers
+never double-count a call. The ledger survives worktree cleanup, reruns
+and optional evidence pruning, without historical backfill. See <a
+href="configuration.html#ticket-run-budgets-and-trusted-progress">configuration
+and the progress contract</a>.</p>
+<p>An active ticket checks its cumulative budget and progress policy at
+each existing <code>bureau_ticket_checkpoint</code>. Confirmed
+withdrawal retains its existing exit before budget evaluation.
+Budget/stall exhaustion uses the <strong>same cooperative stop
+latch</strong>, <code>ticket-control/RUN_ID/stop-25</code>, and worker
+cleanup as withdrawal: no signals or state rollback, no new provider
+call or ordinary publication after the checkpoint, preserved dirty/ahead
+work with disposable registration removed, and ownership released after
+current writers finish. Parallel providers finish/join before their
+parent releases ownership. Existing best-effort preservation pushes
+remain allowed. Dispatcher persists a permanent 25 hold; standalone
+shepherd consumes the same latch at its existing boundaries.</p>
+<p>Tokens/time may overshoot by calls already admitted at the safe
+point; call slots are serialized under the ticket lock. Missing usage
+stays null. With a token limit it stops as <code>budget</code> with
+<code>usage_unknown: true</code>, unless
+<code>allow_unknown_usage</code> is explicitly true; the known lower
+bound still applies. Unavailable/invalid mandatory accounting uses
+existing exit 24 and cannot authorize more paid work.</p>
+<p>The stop vocabulary is closed. Details can explain a stop but cannot
+supply another <code>terminal_reason</code>:</p>
+<table>
+<thead>
+<tr>
+<th><code>terminal_reason</code></th>
+<th>Existing exit</th>
+<th>Origin</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>budget</code></td>
+<td>25</td>
+<td>Token, provider-call or cumulative provider-wall limit; disallowed
+unknown usage</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td>124</td>
+<td>Provider wall-clock timeout</td>
+</tr>
+<tr>
+<td><code>watchdog</code></td>
+<td>25</td>
+<td>Provider silence watchdog</td>
+</tr>
+<tr>
+<td><code>review_capped</code></td>
+<td>25</td>
+<td>Trusted review cycle/round cap</td>
+</tr>
+<tr>
+<td><code>human_hold</code></td>
+<td>25</td>
+<td>Human hold/pause or other human-attention stop</td>
+</tr>
+<tr>
+<td><code>ticket_withdrawn</code></td>
+<td>0 / 26 / 25</td>
+<td>Configured Done / cancellation-or-duplicate / other inactive
+state</td>
+</tr>
+<tr>
+<td><code>stalled</code></td>
+<td>25</td>
+<td>Opt-in trusted progress policy exhausted</td>
+</tr>
+</tbody>
+</table>
+<p>Successful completion, intentional handoff 20, quiet waits,
+infrastructure failures and cancellation 130 retain their exits without
+an invented reason. The ticket ledger stores the originating reason;
+dispatch lane records and <code>dispatch-skips.json</code> carry the
+matching reason. A later generic hold cannot overwrite that run's
+cap/watchdog/budget reason. This vocabulary does not replace
+observational learning cause classes.</p>
+<p>A progress turn ends once per completed background stage attempt.
+Contract IDs describe fulfilled requirements, qualified gates or
+confirmed findings, bound to exact configured outer gate commands. Only
+green checks at unchanged HEAD with readable output from
+<code>bureau_record_gate</code> or the outside-gate executor qualify.
+Provider results, declared fixes, commits, completed checkboxes and
+activity never do. Each contract-bound fact resets the counter once;
+repeated green checks at new HEADs earn no reset. After
+<code>max_non_improving_turns</code> (default 2), stage completion
+consumes the shared latch before the waiting worker cleans up, returning
+25 with <code>terminal_reason: stalled</code>.
+Interrupted/withdrawn/already-held stages and wrapper attempts do not
+advance it. Budgets and progress are both off by default; stage/review
+limits remain independent.</p>
 <h2 id="cooperative-ticket-withdrawal">Cooperative ticket
 withdrawal</h2>
 <p><code>bureau_ticket_checkpoint</code> is the trusted shell boundary

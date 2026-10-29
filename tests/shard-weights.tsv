@@ -123,3 +123,6 @@ test_review_reuse_approval.sh	58	-
 test_review_verdict_order.sh	52	-
 test_session_throttle.sh	1	-
 test_shared_runtime.sh	206	-
+test_ticket_budget.sh	-	12
+test_ticket_budget_negative_control.sh	-	6
+test_ticket_budget_pipeline.sh	-	90

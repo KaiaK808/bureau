@@ -131,6 +131,8 @@ bureau_record_gate() {
   end_head=$(git rev-parse HEAD 2>/dev/null) || end_head=""
   bureau_evidence evidence-gate --path "$1" --head "$2" --end-head "$end_head" \
     --command "$3" --command-id "${5:-repo.test_command}" --exit-code "$4" || true
+  bureau_ticket_policy "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" gate --path "$1" --head "$2" --end-head "$end_head" \
+    --command "$3" --command-id "${5:-repo.test_command}" --exit-code "$4" || return $?
 }
 
 # Human boundary publication is observational, including a closed diagnostic
@@ -198,6 +200,43 @@ bureau_sweep_waits() {
 # parallel provider calls. The runtime supplies this path outside the worktree.
 # Never inherit process-local authorization from an operator's environment.
 unset _BUREAU_TICKET_OWN_DONE _BUREAU_TICKET_STOPPED _BUREAU_TICKET_WARNED
+bureau_ticket_policy() {
+  local issue="$1"; shift
+  [ -n "$issue" ] && [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-ticket.py" --repo "$PWD" --issue "$issue" "$@"
+}
+
+bureau_ticket_reason() {
+  local issue="$1" reason="$2" code="$3"
+  # Diagnostics are best effort. Enforcement uses the mandatory check below.
+  ( bureau_ticket_policy "$issue" stop "$reason" "$code" ) || true
+}
+
+# One cooperative latch/exit for withdrawal, ticket budgets and stalled runs.
+# Keep this shared with the worker's existing preservation/ownership cleanup.
+_bureau_ticket_stop() {
+  local issue="$1" code="$2" reason="$3" dir="${BUREAU_TICKET_CONTROL_DIR:-}"
+  _BUREAU_TICKET_STOPPED=1
+  if [ -n "$dir" ]; then
+    mkdir -p "$dir" && : > "$dir/stop-$code" || {
+      echo 'ERROR: cannot latch ticket stop; refusing further work' >&2; exit 21;
+    }
+  fi
+  bureau_ticket_reason "$issue" "$reason" "$code"
+  exit "$code"
+}
+
+_bureau_ticket_policy_checkpoint() {
+  local issue="$1" policy policy_rc=0 reason
+  policy=$(bureau_ticket_policy "$issue" check) || policy_rc=$?
+  if [ "$policy_rc" = 25 ]; then
+    reason=$(printf '%s' "$policy" | jq -er '.terminal_reason | select(. == "budget" or . == "stalled")') || exit 24
+    echo "bureau ticket checkpoint: $issue terminal_reason=$reason $policy" >&2
+    _bureau_ticket_stop "$issue" 25 "$reason"
+  fi
+  [ "$policy_rc" = 0 ] || exit "$policy_rc"
+}
+
 bureau_ticket_stopped() {
   [ "${_BUREAU_TICKET_STOPPED:-0}" = 1 ] && return 0
   local dir="${BUREAU_TICKET_CONTROL_DIR:-}" code
@@ -244,7 +283,7 @@ bureau_ticket_checkpoint() {
       if [ -f "$dir/stop-$code" ]; then _BUREAU_TICKET_STOPPED=1; exit "$code"; fi
     done
   fi
-  [ "$mode" != latched ] || return 0
+  if [ "$mode" = latched ]; then _bureau_ticket_policy_checkpoint "$issue"; return 0; fi
   if [ -z "$snapshot" ]; then
     if [ "$mode" = strict ]; then
       snapshot=$(bureau_issue_snapshot "$issue") || rc=$?
@@ -268,22 +307,17 @@ bureau_ticket_checkpoint() {
         ( echo 'bureau ticket checkpoint: WARN: additional state refresh failed; already authorized work continues' >&2 ) || true
       fi
     fi
+    _bureau_ticket_policy_checkpoint "$issue"
     return 0
   fi
   BUREAU_TICKET_STATE_ID="$id"
   code=$(bureau_ticket_state_class "$id") || exit $?
-  [ "$code" != active ] || return 0
+  if [ "$code" = active ]; then _bureau_ticket_policy_checkpoint "$issue"; return 0; fi
   # A stage's own successful Done transition may finish its bookkeeping. An
   # externally observed Done never receives this process-local authorization.
   if [ "$code" = 0 ] && [ "${_BUREAU_TICKET_OWN_DONE:-}" = "$id" ]; then return 0; fi
-  _BUREAU_TICKET_STOPPED=1
-  if [ -n "$dir" ]; then
-    mkdir -p "$dir" && : > "$dir/stop-$code" || {
-      echo 'ERROR: cannot latch ticket withdrawal; refusing further work' >&2; exit 21;
-    }
-  fi
   echo "bureau ticket checkpoint: $issue left the active workflow (state ID $id); cooperative stop, exit $code" >&2
-  exit "$code"
+  _bureau_ticket_stop "$issue" "$code" ticket_withdrawn
 }
 
 # A subprocess must distinguish active from an externally observed Done: both
@@ -918,6 +952,7 @@ run_stage_for() {
 bureau_silence_hold() {
   [ -n "$1" ] || return 0
   bureau_ticket_checkpoint "$1"
+  bureau_ticket_reason "$1" watchdog 25
   local hold_rc=0
   # The existing helper persists a local picker hold before exiting 27 when
   # Linear is unusable. Keep that hold and the originating silence exit 25.
@@ -3740,6 +3775,7 @@ bureau_review_evidence() {
 # A trusted shell rule, never model prose, marks a cap or a red shell gate.
 bureau_outcome_signal() {
   [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  if [ "$1" = review_capped ]; then bureau_ticket_reason "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" review_capped 25; fi
   ( bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" --signal "$1" ) || true
   return 0
 }
