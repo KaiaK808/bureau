@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1dac5e5638b3b94be4461dc316a9237a8eacaa46327e4d64b6b96c86d03313f3">
+<meta name="bureau-source-sha256" content="f44a28c4b275a69483af1db38cd83269001d2ea18f58c5d4d10e60be720306e7">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -864,29 +864,35 @@ JSON block. Deduplication uses repository-relative path, inclusive
 NFKC/case-folded title with punctuation/whitespace normalized; absent
 title uses the first claim line. Highest severity wins; distinct
 duplicate claim details, specialist provenance, anchors and ADR IDs are
-retained. Normalized findings in the code-generated comment JSON retain
-finding IDs, specialist provenance, ranges and the complete anchor
-union, so metadata IDs remain traceable after temporary cleanup.
-Noncritical per-role counts must match their findings or select
-fallback; CRITICAL counts remain an independent floor. Readable security
-reports remain floors. A malformed or missing specialist result selects
-the existing capped model merger, with fallback roles recorded as
-metadata. Known critical/security/invalid-anchor floors from readable
-specialists survive fallback. The helper supplies a neutral APPROVE
-input to the legacy result contract; the existing shell
+retained. Actionable provenance is tracked per variant: a security SKIP
+cannot promote a correctness MINOR into the security floor. Normalized
+findings retain finding IDs, ranges and the complete anchor union, so
+metadata IDs remain traceable after temporary cleanup. Specialists
+report unresolved human decisions in <code>holds: ["reason"]</code>
+(empty when none); any hold forces BLOCK through convergence. Legacy
+summaries signaling BLOCK or human judgment also hold even without the
+field. Noncritical per-role counts must match their findings or select
+fallback; CRITICAL counts remain an independent floor, even when claim
+prose is unreadable. A malformed or missing specialist result selects
+the capped model merger, with fallback roles recorded as metadata. Every
+readable finding, acceptance gap, hold and severity-count floor from
+every specialist, including malformed ones, survives fallback.
+Completely unreadable output and uncertain claims require at least
+REQUEST_CHANGES; a fallback APPROVE cannot clear uncertainty. The helper
+supplies these floors to the legacy result contract; shell
 <code>review_convergence</code> and <code>decide_review_verdict</code>
 keep severity, security, build and cap decisions.</p>
 <p>A fixed findings template renders summaries, class groups, source
-anchors and fixes. The outer comment preserves
-<code>Code Review v2</code>, <code>**Verdict**:</code>,
-<code>**Reviewed head**:</code> and <code>**Target**:</code>.
-<code>merge-pipeline.sh</code> and the dispatcher consume the review
-marker/verdict; <code>review_counts</code> consumes terminal
-<code>bureau-review-round</code> markers and legacy Changes Requested
-headers; <code>implement-pipeline.sh</code> consumes
+anchors, fixes and human holds for both deterministic and fallback
+results. The outer comment preserves <code>Code Review v2</code>,
+<code>**Verdict**:</code>, <code>**Reviewed head**:</code> and
+<code>**Target**:</code>. <code>merge-pipeline.sh</code> and the
+dispatcher consume the review marker/verdict; <code>review_counts</code>
+consumes terminal <code>bureau-review-round</code> markers and legacy
+Changes Requested headers; <code>implement-pipeline.sh</code> consumes
 <code>Code Review.*Changes Requested</code>. These strings and round
-accounting are unchanged. The legacy model fallback keeps its existing
-comment projection when both new options are off.</p>
+accounting are unchanged. Fallback retention applies even with grounding
+and the verifier disabled.</p>
 <p><code>agents.review_grounding</code> defaults to <code>off</code>.
 Every supplied anchor is checked against the immutable base/head Git
 tree, never the checkout or a local validation merge. The pipeline
@@ -928,7 +934,19 @@ cancellation and ticket withdrawal still follow the stage protocol.
 Outcomes never change the candidate, convergence or
 CRITICAL/security/BLOCK floors. An enforced disagreement policy is
 deferred and has no configuration value in this release.</p>
-<p>Review policy identity includes the merge algorithm version,
+<p>Malformed finding paths or line types/ranges are counted as
+unverifiable anchors even when claim prose cannot be retained. Required
+grounding holds them through fallback; a display placeholder never
+becomes a verified source location.</p>
+<p>The shadow adapter enforces Claude <code>--tools ''</code>, strict
+empty MCP configuration, disabled skills and settings hooks, without
+<code>--dangerously-skip-permissions</code>. Unsupported flags fail
+closed to unverifiable. Codex has no supported all-tools-off switch, so
+its checker attempt is recorded as unverifiable without launching the
+model. The allowlisted checker response updates only its verification
+record, never verdict/floor metadata or merged findings. These
+restrictions apply behind Headroom too.</p>
+<p>Review policy identity includes the revised merge algorithm version,
 grounding option and verifier enablement alongside existing
 severity/caps/ADR identity. Older approvals require a fresh review.
 Helpers and schemas must be resynced together after installation
@@ -1003,9 +1021,11 @@ scope (helper, both review schemas, provider, evidence and pipeline
 together), and restarting drivers. Then opt in explicitly and run
 doctor. Validation uses local Git and fake providers/services; no live
 reviewer-quality guarantee follows from these checks. Fixed legacy
-fixtures cover disabled contract/prompt/comment parity. Negative
-controls mutate temporary copies of the current scripts; neither tests
-nor shallow CI checkouts require release tags or history.</p>
+fixtures cover the disabled ADR contract and absence of ADR prompt
+context; shared hold guidance and fallback rendering follow the
+structured merge rules above. Negative controls mutate temporary copies
+of the current scripts; neither tests nor shallow CI checkouts require
+release tags or history.</p>
 <p>The background review stage validates the merger's decision fields
 and findings before applying <code>agents.review_min_severity</code>
 (<code>BUG</code> by default, <code>MINOR</code> for stricter review).
@@ -1291,6 +1311,16 @@ confirms that merge's two ordered parents are exactly that HEAD and
 base. Missing metadata, different inputs, later commits or unavailable
 Git objects mean missing review evidence. This correlation is
 observational and changes no approval or merge authority.</p>
+<p>A completed deterministic review has three specialist receipts rather
+than a verdict-model receipt. The brief correlates all three successful
+phases to the same run, stage attempt, round call IDs and pinned inputs,
+then projects the round's merged result digest, recorded final verdict,
+missing-acceptance/fix counts and human-hold count. Specialist calls
+intentionally have no verdict schema or result digest; temporary
+provider originals are not required for these metadata counts.
+Incomplete rounds or missing/mismatched specialist receipts remain
+missing evidence. Shadow outcomes cannot change these blocker counts or
+verdicts.</p>
 <p><code>evidence/v1/acceptance/NUMBER-HEAD.json</code> freezes the
 rendered metadata brief with its SHA-256 and independent
 <code>ticket</code>/<code>pull_request</code> statuses

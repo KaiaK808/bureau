@@ -496,6 +496,11 @@ def completion_text(code, text, metadata, repo, schema):
 
 def _run(options, prompt, system, repo, evidence, schema=None):
     runner = options['runner']
+    shadow = options['stage'] == 'code_review' and options.get('phase') == 'finding_verifier'
+    # A read-only filesystem sandbox still permits reads and tool calls. Codex
+    # exec has no supported all-tools-off switch; do not launch an unrestricted
+    # checker. The caller records this unsupported shadow check as unverifiable.
+    if shadow and runner != 'claude': raise ValueError('tool-free finding verifier is unavailable for this runner')
     final = evidence / 'final.txt'
     if runner == 'codex':
         command = ['codex', 'exec', '--json', '-C', str(repo), '-s', options['sandbox'], '-o', str(final)]
@@ -517,7 +522,10 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         # The session id names the transcript Claude writes while it works
         # (transcript()); stdout.log gets the JSON envelope only at the end.
         if options.get('session_id'): command += ['--session-id', options['session_id']]
-        if options['stage'] == 'upstream_summary': command += ['--tools', '']
+        if shadow:
+            command += ['--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+                        '--disable-slash-commands', '--setting-sources', '', '--settings', '{"disableAllHooks":true}']
+        elif options['stage'] == 'upstream_summary': command += ['--tools', '']
         else:
             command += ['--dangerously-skip-permissions', '--disallowedTools',
                         'ScheduleWakeup,CronCreate,CronDelete,RemoteTrigger,Monitor']

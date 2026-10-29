@@ -85,6 +85,7 @@ PY
   printf 'Review checked.\n```json\n{"verdict":"%s","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"fixture"}\n```\n' \
     "$verdict" > "$SANDBOX/verdict.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt"
+  review_clean_specialists "$verdict"
   export BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
   export BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED=''
   # Stop before merge: every case ends at the posted review, none reaches a merge.

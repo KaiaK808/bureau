@@ -1176,10 +1176,10 @@ p.Path.open=refuse_transcript_read
                     # write; a live descendant can outlast the released lease.
                     deadline=time.monotonic()+2
                     while True:
-                        status=subprocess.run(['ps','-p',str(descendant['pid']),'-o','stat='],capture_output=True,text=True)
-                        self.assertIn(status.returncode,(0,1),status.stderr)
-                        self.assertFalse(status.stderr.strip(),status.stderr)
-                        active=bool(status.stdout.strip()) and not status.stdout.strip().startswith('Z')
+                        # Native inspection preserves the zombie/live check in
+                        # sandboxes that deny execution of the ps binary.
+                        status=p.a.ProcessTable().snapshot().get(descendant['pid'])
+                        active=status is not None and not status[2]
                         if not active or time.monotonic() >= deadline: break
                         time.sleep(.02)
                     self.assertFalse(active,'provider descendant survived the bounded invocation')

@@ -121,7 +121,17 @@ def review_round_shape(value):
 
 def review_merge_shape(value):
     """Allowlist identities, counts and enums, never claim/source prose."""
-    shape(value, 'mode malformed_specialists grounding invalid_anchors anchor_checks verifier verifier_omitted critical_floor security_floor adr_refs')
+    optional = {'human_holds', 'verdict_floor', 'severity_counts', 'result_sha256', 'missing_acceptance_count', 'fixes_needed_count'}
+    shape({k:v for k,v in value.items() if k not in optional}, 'mode malformed_specialists grounding invalid_anchors anchor_checks verifier verifier_omitted critical_floor security_floor adr_refs')
+    for key in ('human_holds', 'missing_acceptance_count', 'fixes_needed_count'):
+        if key in value and (type(value[key]) is not int or not 0 <= value[key] <= 3999999999): raise ValueError('invalid blocker count')
+    if 'verdict_floor' in value and value['verdict_floor'] not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK'):
+        raise ValueError('invalid specialist verdict floor')
+    if 'result_sha256' in value and not re.fullmatch(r'[a-f0-9]{64}', value['result_sha256']): raise ValueError('invalid review digest')
+    if 'severity_counts' in value:
+        shape(value['severity_counts'], 'critical bug minor skip')
+        if any(type(n) is not int or not 0 <= n <= 3999999999 for n in value['severity_counts'].values()):
+            raise ValueError('invalid severity counts')
     if not isinstance(value['adr_refs'], list) or len(value['adr_refs']) > 1024 or any(not isinstance(r, str) or not re.fullmatch(r'[0-9]{4}', r) for r in value['adr_refs']):
         raise ValueError('invalid merge ADR references')
     if value['mode'] not in ('deterministic', 'model_fallback') or value['grounding'] not in ('off', 'required'):
@@ -135,7 +145,7 @@ def review_merge_shape(value):
     for row in value['anchor_checks']:
         shape(row, 'finding_id status')
         if not re.fullmatch(r'[a-f0-9]{64}', row['finding_id']): raise ValueError('invalid finding identity')
-        if row['status'] not in ('valid', 'missing', 'shape', 'side', 'path', 'blob', 'digest', 'absent', 'foreign_blob', 'range', 'stale_digest'):
+        if row['status'] not in ('valid', 'missing', 'shape', 'side', 'path', 'blob', 'digest', 'absent', 'foreign_blob', 'range', 'stale_digest', 'location'):
             raise ValueError('invalid anchor status')
     if not isinstance(value['verifier'], list) or len(value['verifier']) > 8: raise ValueError('invalid verifier count')
     for row in value['verifier']:

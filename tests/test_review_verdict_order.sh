@@ -189,14 +189,32 @@ run_case() {
   local cmd="true"; [ "$build" = green ] || cmd="exit 3"
   jq -n --arg c "$cmd" '{repo: {test_command: $c}}' > "$SANDBOX/.bureau.json"
   [ -z "$old" ] || [ "$old" = hold ] || control_patch "$old"
-  # One fixture answers every reviewer call; its last json block is read both as the
-  # merged verdict and as the security specialist's own counts.
+  # Provider fixtures follow the real specialist contract. Malformed merger
+  # cases explicitly force fallback instead of relying on invalid specialists
+  # to supply a clean approval.
   jq -n --arg v "$verdict" --arg s "$sec" --argjson c "$crit" \
     '{verdict:$v, bugs:0, security_issues:(if $s == "-" then null else ($s|tonumber) end),
-      counts:{critical:$c}, findings:[], missing_acceptance:[], fixes_needed:[], comment:"Review checked.", summary:"fixture"} | if .security_issues == null then del(.security_issues) else . end' \
+      findings:[], missing_acceptance:[], fixes_needed:[], comment:"Review checked.", summary:"fixture"} | if .security_issues == null then del(.security_issues) else . end' \
     > "$SANDBOX/verdict.json"
   { printf 'Review.\n```json\n'; cat "$SANDBOX/verdict.json"; printf '```\n'; } > "$SANDBOX/verdict.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt"
+  export FAKE_CLAUDE_MERGE_FIXTURE="$SANDBOX/verdict.txt"
+  review_clean_specialists "$verdict"
+  python3 - "$SANDBOX" "$verdict" "$sec" "$crit" <<'PY'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1]); verdict, sec, critical = sys.argv[2:]
+for role in ('correctness', 'security'):
+    path = root / (role + '-review.json'); value = json.loads(path.read_text())
+    count = 1 if role == 'correctness' and verdict == 'REQUEST_CHANGES' else int(sec) if role == 'security' and sec.isdigit() else 0
+    value['findings'] = [dict(file='change.txt', line=1, **{'class':'BUG'}, msg=role + ' defect ' + str(i)) for i in range(count)]
+    value['counts']['bug'] = count
+    if role == 'security': value['counts']['critical'] = int(critical)
+    if role == 'correctness' and (not sec.isdigit() or verdict not in ('APPROVE','REQUEST_CHANGES','BLOCK')):
+        value['unknown'] = 'Force the malformed merger contract through real validation.'
+    path.write_text(json.dumps(value))
+PY
   local comments='[]' i
   for i in $(seq 1 "$prior"); do
     comments=$(jq -c --arg b "🔄 Code Review: **Changes Requested** (cycle $((i - 1))/3)" '. + [{body:$b, createdAt:"2026-09-28T00:00:00Z"}]' <<< "$comments")
@@ -246,54 +264,50 @@ run_case REQUEST_CHANGES 2 2 green 0 old
 teardown
 echo "PASS a CRITICAL security finding needs a human (the old floor sent it into rework)"
 
-# The CRITICAL count is the security specialist's own, not the merger's: the merger says
-# REQUEST_CHANGES with 2 security findings and nothing critical, the specialist says 2
-# CRITICAL — and the other way round.
-role_case() {  # $1 = merger's critical count, $2 = specialist's critical count
+# The specialist's independent CRITICAL count survives a count/finding mismatch
+# that selects the fallback; zero CRITICAL leaves the security bugs in rework.
+role_case() {  # $1 = specialist's critical count
   run_case REQUEST_CHANGES 2 0 green 0 hold
-  printf 'Merged.\n```json\n{"verdict":"REQUEST_CHANGES","bugs":0,"security_issues":2,"counts":{"critical":%s},"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","findings":[],"summary":"m"}\n```\n' "$1" > "$SANDBOX/merge.txt"
-  printf 'Security.\n```json\n{"specialist":"security","counts":{"critical":%s,"bug":2,"minor":0,"skip":0},"findings":[],"summary":"s"}\n```\n' "$2" > "$SANDBOX/security.txt"
+  printf 'Merged.\n```json\n{"verdict":"REQUEST_CHANGES","bugs":0,"security_issues":2,"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","findings":[],"summary":"m"}\n```\n' > "$SANDBOX/merge.txt"
+  printf 'Security.\n```json\n{"specialist":"security","counts":{"critical":%s,"bug":2,"minor":0,"skip":0},"findings":[],"summary":"s"}\n```\n' "$1" > "$SANDBOX/security.txt"
   FAKE_CLAUDE_MERGE_FIXTURE="$SANDBOX/merge.txt" FAKE_CLAUDE_SECURITY_FIXTURE="$SANDBOX/security.txt" \
     run_pipeline code-review-pipeline.sh EXP-702 </dev/null
   POSTED=$(cat "$SANDBOX/gh_calls.log" 2>/dev/null || true)
   VERDICT_LINE=$(grep -E '^\*\*Verdict\*\*: ' <<< "$POSTED" || true)
 }
-role_case 0 2
+role_case 2
 [ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "the specialist's CRITICAL count was not read ('$VERDICT_LINE')"
 teardown
-role_case 2 0
-[ "$VERDICT_LINE" = '**Verdict**: REQUEST_CHANGES' ] || fail "a CRITICAL count in the merger's block was taken for the specialist's ('$VERDICT_LINE')"
+role_case 0
+[ "$VERDICT_LINE" = '**Verdict**: REQUEST_CHANGES' ] || fail "a zero CRITICAL count incorrectly blocked security rework ('$VERDICT_LINE')"
 teardown
 echo "PASS the CRITICAL count comes from the security specialist's own block"
 
-# an unreadable or missing security count is not "none".
-for sec in -1 -; do
+# A negative count remains BLOCK; a missing schema field fails before publication.
+for sec in -1; do
   run_case APPROVE "$sec" 0 green 0
   [ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "security_issues '$sec' posted '$VERDICT_LINE'"
   [ "$LAST_RC" = 25 ] || fail "security_issues '$sec' ended with $LAST_RC"
   grep -q 'SECURITY COUNT UNREADABLE' <<< "$POSTED" || fail "security_issues '$sec' is not named in the review"
   teardown
-  run_case APPROVE "$sec" 0 green 0 old
-  [ "$VERDICT_LINE" = '**Verdict**: APPROVE' ] || fail "negative control: the old floor no longer reads '$sec' as 0 ('$VERDICT_LINE')"
-  teardown
 done
-echo "PASS an unreadable or missing security count blocks (the old floor approved)"
-
-# Two rules fire: the one that caused the BLOCK is the escalation-log reason.
-run_case MAYBE - 0 green 0
-[ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "an unknown verdict posted '$VERDICT_LINE'"
-grep -q 'VERDICT UNREADABLE' <<< "$POSTED" && grep -q 'SECURITY COUNT UNREADABLE' <<< "$POSTED" \
-  || fail "both escalating rules should be named in the review"
-grep -qF 'reason="review verdict unreadable"' "$SANDBOX/logs/escalations.log" \
-  || fail "the escalation log does not name the first rule: $(cat "$SANDBOX/logs/escalations.log" 2>/dev/null)"
+run_case APPROVE - 0 green 0
+[ "$LAST_RC" = 22 ] && [ -z "$VERDICT_LINE" ] || fail 'a missing security count passed fallback schema validation'
 teardown
-echo "PASS the rule that caused the BLOCK is the logged reason, every rule is in the review"
+echo "PASS negative security counts block; missing fields fail schema validation before publication"
+
+# Invalid merger contracts fail before the ordered decision or publication.
+run_case MAYBE - 0 green 0
+[ "$LAST_RC" = 22 ] && [ -z "$VERDICT_LINE" ] || fail 'an unknown verdict passed fallback schema validation'
+teardown
+echo "PASS an unknown merger verdict cannot reach publication"
 
 # The CRITICAL count survives the ARG_MAX trim: a security review over the merge cap,
 # wrapped in a provider envelope (cost tracking), still escalates. Trimmed to its last KB
 # the envelope is no longer JSON, and the count used to be lost without a sound.
 big_security_case() {  # $1 = control patch ('' = none)
   run_case REQUEST_CHANGES 2 0 green 0 hold
+  printf '{"unknown":true}\n' > "$SANDBOX/performance-review.json"
   [ -z "$1" ] || control_patch "$1"
   python3 - "$SANDBOX/security.txt" <<'PY'
 import json, sys
@@ -322,21 +336,20 @@ fallback_case() {  # $1 = control patch ('' = none)
   run_case APPROVE 0 0 green 0 hold
   [ -z "$1" ] || control_patch "$1"
   printf 'REVIEW_VERDICT: NOT_APPROVED — BLOCK\n\n```json\n{"bugs":1,"security_issues":0,"counts":{"critical":0},"summary":"x"}\n```\n' > "$SANDBOX/verdict.txt"
+  printf '{"unknown":true}\n' > "$SANDBOX/performance-review.json"
   run_pipeline code-review-pipeline.sh EXP-702 </dev/null
   POSTED=$(cat "$SANDBOX/gh_calls.log" 2>/dev/null || true)
   VERDICT_LINE=$(grep -E '^\*\*Verdict\*\*: ' <<< "$POSTED" || true)
 }
 fallback_case ''
-[ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "'NOT_APPROVED — BLOCK' posted '$VERDICT_LINE'"
-[ "$LAST_RC" = 25 ] || fail "'NOT_APPROVED — BLOCK' ended with $LAST_RC"
+[ -z "$VERDICT_LINE" ] && [ "$LAST_RC" = 22 ] || fail "a missing JSON verdict was published ('$VERDICT_LINE', $LAST_RC)"
 teardown
-fallback_case oldfallback
-[ "$VERDICT_LINE" = '**Verdict**: APPROVE' ] || fail "negative control: the old text verdict no longer reads APPROVE ('$VERDICT_LINE')"
-teardown
-echo "PASS 'NOT_APPROVED — BLOCK' is BLOCK (the old text verdict read APPROVE)"
+old_text=$(printf 'REVIEW_VERDICT: NOT_APPROVED — BLOCK\n' | grep -oE '(APPROVE|REQUEST_CHANGES|BLOCK)' | head -1)
+[ "$old_text" = APPROVE ] && [ -z "$(fallback 'REVIEW_VERDICT: NOT_APPROVED — BLOCK')" ] || fail 'text-verdict negative control changed'
+echo "PASS a missing JSON verdict fails before publication; the old text reader would approve"
 
-# The merger's own BLOCK with an unreadable count keeps its own reason in the escalation log.
-run_case BLOCK - 0 green 0
+# A structured human hold keeps its BLOCK reason in the escalation log.
+run_case BLOCK 0 0 green 0
 [ "$VERDICT_LINE" = '**Verdict**: BLOCK' ] || fail "the merger's BLOCK posted '$VERDICT_LINE'"
 grep -qF 'reason="Code reviewer returned BLOCK verdict"' "$SANDBOX/logs/escalations.log" \
   || fail "the merger's own BLOCK is not the logged reason: $(cat "$SANDBOX/logs/escalations.log" 2>/dev/null)"

@@ -40,6 +40,9 @@ def main(path, name):
         src = cut('# The verdict rules run as one ordered decision',
                   'done <<< "$(printf \'%s\\n\' "$_decision" | tail -n +2)"\n',
                   os.environ['OLD_BLOCK'] + '\n')
+        # Isolate this historical ordered decision from the newer independent
+        # code-merge CRITICAL floor, which otherwise protects both paths.
+        src = src.replace("_merge_critical=$(jq -r '.critical_floor' \"$REVIEW_TMP/merge-metadata.json\")", '_merge_critical=0', 1)
     elif name == 'oldread':
         src = cut('_comments_rc=0\n', 'CYCLE_NOTE=', OLD_READ, end_inclusive=False)
     elif name == 'oldcrit':

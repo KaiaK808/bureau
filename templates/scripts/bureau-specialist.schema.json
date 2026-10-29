@@ -136,6 +136,12 @@
         ]
       }
     },
+    "holds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "summary": {
       "type": "string"
     }

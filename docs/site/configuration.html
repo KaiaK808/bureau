@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="131d43c13ece582fac68e1df9023d4d33539e6313fcda211f6b79aba9d0da3d9">
+<meta name="bureau-source-sha256" content="788682377bb1b1c1729790453246f44d75a69cda8e0f77bcbee7e6520f02df64">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -441,12 +441,15 @@ changes invalidate approval reuse</td>
 <td><code>agents.finding_verifier.enabled</code></td>
 <td>bool</td>
 <td><code>false</code></td>
-<td>Opt into shadow checks only: at most eight fresh calls (60 seconds
-each), 24 KiB of request JSON each and 8 KiB of whole pinned contracts.
-Only claim, pinned source, contract and anchors are supplied. Outcomes
-and identity digests are evidence only and never change verdicts. No
-enforced mode is shipped; unknown verifier keys are rejected. Included
-in review policy identity</td>
+<td>Opt into shadow checks only: at most eight fresh tool-free Claude
+calls (60 seconds each), 24 KiB of request JSON each and 8 KiB of whole
+pinned contracts. Claude tools, MCP, skills and settings hooks are
+disabled without permission bypass. Codex checks remain unverifiable
+without model launch because its CLI has no all-tools-off switch. Only
+claim, pinned source, contract and anchors are supplied. Outcomes and
+identity digests are evidence only and never change verdicts or merge
+floors. No enforced mode is shipped; unknown verifier keys are rejected.
+Included in review policy identity</td>
 </tr>
 <tr>
 <td><code>agents.review_adr_context</code></td>
@@ -457,10 +460,10 @@ specialist prompts. Only accepted records with identical paths and blob
 IDs are settled, including for Known-limit exclusions.
 Added/changed/removed records are non-authoritative proposals; citations
 are valid but never waive or downgrade findings. Enabled selects the
-extended ADR schema. Disabled keeps the legacy schema bytes, Codex wire
-projection, validation, receipt schema digest and fallback
-prompt/comment bytes; unsolicited <code>adr_refs</code> are unexpected
-result fields</td>
+extended ADR schema. Disabled keeps legacy merger schema bytes, Codex
+wire projection and receipt schema digest; unsolicited
+<code>adr_refs</code> are unexpected result fields. Shared hold guidance
+and conservative fallback rules apply in either mode</td>
 </tr>
 <tr>
 <td><code>agents.review_adr_budget_bytes</code></td>

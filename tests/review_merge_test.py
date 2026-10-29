@@ -256,6 +256,8 @@ bureau_silence_hold() { : > "$HOLD_FILE"; }
 PROVIDER = r'''
 import json, os, pathlib, sys
 if sys.argv[1] == 'login': sys.exit(0)
+if sys.argv[1] == 'auth': print(json.dumps(dict(loggedIn=True))); sys.exit(0)
+if sys.argv[1] == '--help': print('Usage: claude'); sys.exit(0)
 prompt = sys.stdin.read(); phase = os.environ.get('BUREAU_PROVIDER_PHASE')
 capture = pathlib.Path(os.environ['REVIEW_CAPTURE']); capture.mkdir(exist_ok=True)
 (capture / (phase + '.txt')).write_text(prompt)
@@ -264,8 +266,11 @@ if phase == 'finding_verifier':
     request = next(json.loads(line) for line in prompt.splitlines() if line.startswith('{'))
     result = dict(finding_id=request['finding_id'], anchor_sha256=request['anchor_sha256'], outcome='refuted')
 else: result = json.loads(os.environ['REVIEW_RESULTS'])[phase]
-pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text(json.dumps(result) if not isinstance(result, str) else result)
-print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1,'output_tokens':1}}))
+if '-o' in sys.argv:
+    pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text(json.dumps(result) if not isinstance(result, str) else result)
+    print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1,'output_tokens':1}}))
+else:
+    print(json.dumps(dict(type='result', result=json.dumps(result), usage=dict(input_tokens=1,output_tokens=1))))
 '''
 
 
@@ -335,11 +340,11 @@ class PipelineTests(unittest.TestCase):
 
     def test_malformed_specialist_fallback_is_recorded_metadata_only(self):
         self.values['performance'] = 'Malformed specialist text'
-        record, body, _ = self.run_review(20)
+        record, body, _ = self.run_review(0)
         self.assertEqual(record['calls'], 4); self.assertEqual(record['usage']['input_tokens'], 4)
         self.assertEqual(record['merge']['mode'], 'model_fallback')
         self.assertEqual(record['merge']['malformed_specialists'], ['performance'])
-        self.assertNotIn('Malformed specialist text', json.dumps(record)); self.assertIn('**Verdict**: APPROVE', body)
+        self.assertNotIn('Malformed specialist text', json.dumps(record)); self.assertIn('**Verdict**: REQUEST_CHANGES', body)
 
     def test_invalid_anchor_off_is_observational_required_blocks(self):
         self.values['correctness'] = specialist('correctness', [self.claim(invalid=True)])
@@ -361,6 +366,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(record['final_verdict'], 'BLOCK'); self.assertIn('**Verdict**: BLOCK', body)
 
     def test_shadow_refutation_does_not_change_approval_or_security_floor(self):
+        self.config['agents']['runner'] = 'claude'
+        cli = self.root / 'bin/claude'; cli.write_text('#!' + sys.executable + '\n' + PROVIDER); cli.chmod(0o755)
         self.config['agents']['finding_verifier'] = dict(enabled=True)
         self.values['correctness'] = specialist('correctness', [self.claim()])
         record, body, capture = self.run_review(20)
@@ -371,6 +378,15 @@ class PipelineTests(unittest.TestCase):
         self.values['security'] = specialist('security', [self.claim('CRITICAL')])
         record, body, _ = self.run_review(25)
         self.assertEqual(record['merge']['verifier'][0]['outcome'], 'refuted'); self.assertEqual(record['final_verdict'], 'BLOCK')
+
+    def test_codex_shadow_without_tool_free_support_remains_unverifiable(self):
+        self.config['agents']['finding_verifier'] = dict(enabled=True)
+        self.values['correctness'] = specialist('correctness', [self.claim()])
+        record, body, capture = self.run_review(20)
+        self.assertEqual(record['merge']['verifier'][0]['outcome'], 'unverifiable')
+        self.assertEqual(record['calls'], 4); self.assertIsNone(record['usage']['input_tokens'])
+        self.assertFalse((capture / 'finding_verifier.txt').exists())
+        self.assertIn('**Verdict**: APPROVE', body)
 
     def test_required_fallback_invalid_anchor_blocks_parse_error_is_22(self):
         self.config['agents']['review_grounding'] = 'required'

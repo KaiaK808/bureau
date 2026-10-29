@@ -8,11 +8,11 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 controls = [
-    ('drop-performance', "for f in values[role]['findings']], base, head)",
-     "for f in (values[role]['findings'] if role != 'performance' else [])], base, head)",
+    ('drop-performance', 'if claim: claims.append((role, claim))',
+     "if claim and role != 'performance': claims.append((role, claim))",
      'MergeTests.test_each_specialist_is_preserved_and_template_is_stable'),
-    ('bypass-anchors', 'finding = dict(raw)\n        status, _ = anchor_check(finding, base, head)',
-     "finding = dict(raw)\n        status, _ = 'valid', None",
+    ('bypass-anchors', "status, _ = anchor_check(finding, base, head) if isinstance(finding, dict) else ('location', None)",
+     "status, _ = 'valid', None",
      'MergeTests.test_grounding_metadata_cannot_hide_invalid_anchor'),
 ]
 for name, old, new, test in controls:

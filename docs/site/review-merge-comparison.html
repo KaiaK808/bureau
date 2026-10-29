@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="968854c2d25e7598452c280b2ff16a9071c098f6073b089d3b21a1d042239cc6">
+<meta name="bureau-source-sha256" content="69d17ea7c89683bd3d0feb87a5c16e68d55559c9feb0a35789d1a53074e20b03">
 <title>review-merge-comparison · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,8 +24,9 @@ for three fresh workers per mode using the existing supervision fixture,
 real local Git and fake Codex/Linear/GitHub. Fixture setup is excluded;
 worker startup, specialist calls, build check, evidence and publication
 are included. The fallback forces one malformed specialist to exercise
-the existing merger path over the same empty findings. No network or
-live provider is used.</p>
+the model merger over the same empty findings. It now requires at least
+REQUEST_CHANGES because that specialist is uncertain. No network or live
+provider is used.</p>
 <p>The code merge makes three provider calls rather than four. The fake
 CLI reports one input and one output token per call, so the fixture
 reports 3/3 rather than 4/4 tokens (25% fewer calls and synthetic
@@ -33,7 +34,9 @@ tokens). These fixed counters are contract checks, not tokenizer or
 billing measurements. The code path also omits the complete merger
 prompt; the comparison script records its byte size. Live model token
 savings and wall time remain unmeasured.</p>
-<p>Measured locally on 2026-10-29, before the full-suite shard run:</p>
+<p>Measured locally on 2026-10-29, before the conservative fallback
+fixes and full-suite shard run (these historical timings have not been
+remeasured):</p>
 <table>
 <thead>
 <tr>
@@ -69,9 +72,11 @@ worker time); most fixture time is shared shell/Git/evidence work. The
 removed prompt is 4,578 UTF-8 bytes, approximately 1,145 tokens at the
 rough bytes/4 convention; that estimate is not an observed provider
 count. Timing is observational and never a test threshold. Enabling the
-shadow verifier adds up to eight fresh calls, so it can cost more than
-the previous four-call path. Malformed specialist output retains the
-existing four-call cost.</p></main>
+shadow verifier on Claude admits up to eight fresh tool-free calls, so
+it can cost more than the previous four-call path; Codex checks stay
+unverifiable without launching a checker. Malformed specialist output
+retains the existing four-call cost, with retained specialist floors and
+no approval on uncertainty.</p></main>
 </div>
 </body>
 </html>

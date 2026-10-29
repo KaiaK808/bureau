@@ -4,6 +4,7 @@
 # CI newest-run test: local macOS elapsed 13.45s, rounded up (2026-10-27).
 # Judged stage result fixtures: local macOS elapsed 191.94s, rounded up (2026-10-28).
 # ADR review tests: local macOS elapsed 111.91s / 17.28s, rounded up (2026-10-28).
+# Round-one review regressions and controls: local macOS elapsed 147.28s, rounded up (2026-10-29).
 # test_file	ubuntu_seconds	macos_seconds
 test_acceptance_insights.sh	-	10
 test_acceptance_insights_negative_controls.sh	59	-
@@ -125,6 +126,7 @@ test_review_gate_waits.sh	63	-
 test_review_merge.sh	-	165
 test_review_merge_negative_control.sh	-	2
 test_review_reuse_approval.sh	58	-
+test_review_round1.sh	-	148
 test_review_verdict_order.sh	52	-
 test_session_throttle.sh	1	-
 test_shared_runtime.sh	206	-

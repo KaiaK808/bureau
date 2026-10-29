@@ -93,6 +93,7 @@ def blob_at(commit, path):
 
 def anchor_check(finding, base, head):
     """Return a reason code and pinned bytes. Hash exact lines, including newlines."""
+    if not location_valid(finding): return 'location', None
     anchor = finding.get('anchor')
     if not isinstance(anchor, dict): return 'missing', None
     scope = anchor.get('scope')
@@ -126,6 +127,49 @@ def anchor_check(finding, base, head):
 def title_key(finding):
     title = finding.get('title', finding['msg'].splitlines()[0])
     return ' '.join(re.sub(r'[^\w]+', ' ', unicodedata.normalize('NFKC', title).casefold()).split())
+
+
+def finding_key(finding):
+    return (finding['file'], finding['line'], finding.get('line_end', finding['line']), title_key(finding))
+
+
+def location_valid(finding):
+    start, end = finding.get('line'), finding.get('line_end', finding.get('line'))
+    return (path_valid(finding.get('file')) and type(start) is int and type(end) is int
+            and 0 <= start <= end <= 999999999 and (start != 0 or end == 0))
+
+
+def human_holds(value):
+    holds = value.get('holds', [])
+    result = [h for h in holds if isinstance(h, str) and h.strip()] if isinstance(holds, list) else []
+    if not isinstance(holds, list) or len(result) != len(holds): result.append('Unreadable specialist hold.')
+    summary = value.get('summary', '')
+    if isinstance(summary, str) and re.search(
+            r'\bBLOCK(?:ED)?\b|\bNEEDS[_ -]HUMAN\b|'
+            r'\bhuman[\s-]+(?:judg(?:e)?ment|decision|review|approval|input|intervention)\b|'
+            r'ambiguous acceptance|architectural disagreement', summary, re.I):
+        result.append(summary)
+    if value.get('verdict') == 'BLOCK': result.append('Specialist requested BLOCK.')
+    return result
+
+
+def readable_finding(raw, refs):
+    """Keep readable claims even when another field violates the contract.
+
+    Invalid locations remain invalid in anchor_checks. Their display-only
+    placeholder must never manufacture a verifiable source location.
+    """
+    if not isinstance(raw, dict) or not isinstance(raw.get('msg'), str) or not raw['msg'].strip(): return None
+    finding = dict(file=raw['file'] if location_valid(raw) else 'unverifiable-location',
+                   line=raw['line'] if location_valid(raw) else 0,
+                   msg=raw['msg'], **{'class': raw.get('class') if isinstance(raw.get('class'), str) and raw['class'] in SEVERITY else 'BUG'})
+    if location_valid(raw) and 'line_end' in raw: finding['line_end'] = raw['line_end']
+    if isinstance(raw.get('title'), str) and raw['title'].strip(): finding['title'] = raw['title']
+    if isinstance(raw.get('skip_citation'), str): finding['skip_citation'] = raw['skip_citation']
+    if 'anchor' in raw and location_valid(raw): finding['anchor'] = raw['anchor']
+    if isinstance(raw.get('adr_refs'), list) and refs is not None:
+        finding['adr_refs'] = [r for r in raw['adr_refs'] if isinstance(r, str) and r in refs]
+    return finding
 
 
 def validate_finding(finding, refs):
@@ -165,10 +209,14 @@ def normalized(findings, base, head):
         finding = dict(raw)
         status, _ = anchor_check(finding, base, head)
         invalid += status != 'valid'
-        key = (finding['file'], finding['line'], finding.get('line_end', finding['line']), title_key(finding))
-        item = groups.setdefault(key, dict(variants=[], specialists=set(), anchors=[]))
-        item['variants'].append(finding); item['specialists'].add(role)
-        if 'anchor' in finding and finding['anchor'] not in item['anchors']: item['anchors'].append(finding['anchor'])
+        key = finding_key(finding)
+        item = groups.setdefault(key, dict(variants=[], specialists=set(), actionable_specialists=set(), anchors=[]))
+        item['variants'].append(finding); item['specialists'].update(finding.get('specialists', [role]))
+        item['actionable_specialists'].update(finding.get('actionable_specialists', [role] if finding['class'] != 'SKIP' else []))
+        # Re-normalizing the retained/fallback union must keep every variant's
+        # anchor, not only the highest-severity variant's primary anchor.
+        for anchor in finding.get('anchors', [finding['anchor']] if 'anchor' in finding else []):
+            if anchor not in item['anchors']: item['anchors'].append(anchor)
         checks.append(dict(finding_id=sha(encoded(key).encode()), status=status))
     result = []
     for key, item in groups.items():
@@ -176,6 +224,7 @@ def normalized(findings, base, head):
         chosen = dict(variants[0])
         chosen['finding_id'] = sha(encoded(key).encode())
         chosen['specialists'] = sorted(item['specialists'])
+        chosen['actionable_specialists'] = sorted(item['actionable_specialists'])
         chosen['anchors'] = sorted(item['anchors'], key=encoded)
         # Preserve distinct claim detail and citations from every duplicate.
         chosen['msg'] = '\n\n'.join(dict.fromkeys(f['msg'] for f in variants))
@@ -188,7 +237,7 @@ def normalized(findings, base, head):
     return result, checks, invalid
 
 
-def render(findings, summaries, gaps):
+def render(findings, summaries, gaps, holds=()):
     lines = ['## Specialist Summaries']
     lines += ['- ' + role.capitalize() + ': ' + summaries[role] for role in ROLES if role in summaries]
     lines += ['', '## All Findings']
@@ -208,61 +257,73 @@ def render(findings, summaries, gaps):
     lines += ['', '## Fixes Needed']
     fixes = [f['msg'] for f in findings if f['class'] in ('CRITICAL', 'BUG', 'MINOR')]
     lines += ['- ' + f for f in fixes + gaps] or ['None.']
+    if holds: lines += ['', '## Human Review Holds'] + ['- ' + h for h in holds]
     return '\n'.join(lines)
 
 
 def merge(directory, base, head, refs):
-    values, failures, failed_checks, failed_security_floor, failed_critical_floor = {}, [], [], 0, 0
+    values, failures, claims, checks, gaps, holds, summaries = {}, [], [], [], [], [], {}
+    uncertain_claims = False
+    counts = {s.lower(): 0 for s in SEVERITY}
+    security_floor = 0
     for role in ROLES:
         try: values[role] = load_specialist(directory / (role + '.txt'), role, refs)
         except (OSError, ValueError, TypeError, KeyError):
             failures.append(role)
-            # A schema error can select fallback, but cannot erase a readable
-            # invalid reference. Required grounding must still hold that claim.
-            try: raw = structured(read(directory / (role + '.txt')))
-            except (OSError, ValueError, TypeError): continue
-            if role == 'security' and isinstance(raw.get('counts'), dict):
-                failed_security_floor = sum(n for key, n in raw['counts'].items() if key in ('bug', 'minor')
-                                            and type(n) is int and 0 <= n <= 999999999)
-            raw_findings = raw.get('findings')
-            if not isinstance(raw_findings, list): continue
-            identified_security = 0
-            for index, finding in enumerate(raw_findings[:1024]):
-                if not isinstance(finding, dict) or not isinstance(finding.get('file'), str) or type(finding.get('line')) is not int:
-                    continue
-                status, _ = anchor_check(finding, base, head)
-                failed_checks.append(dict(finding_id=sha(encoded((role, index)).encode()), status=status))
-                if raw.get('specialist') == role:
-                    failed_critical_floor += finding.get('class') == 'CRITICAL'
-                    identified_security += role == 'security' and finding.get('class') in ('CRITICAL', 'BUG', 'MINOR')
-            failed_security_floor = max(failed_security_floor, identified_security)
+        try: raw = values.get(role) or structured(read(directory / (role + '.txt')))
+        except (OSError, ValueError, TypeError): continue
+        holds.extend(human_holds(raw))
+        if isinstance(raw.get('summary'), str): summaries[role] = raw['summary']
+        raw_gaps = raw.get('acceptance_gaps', [])
+        if isinstance(raw_gaps, str): raw_gaps = [raw_gaps]
+        if isinstance(raw_gaps, list): gaps.extend(g for g in raw_gaps if isinstance(g, str) and g.strip())
+        reported = raw.get('counts', {})
+        role_counts = {s: min(n, 999999999) if type(n) is int and n >= 0 else 0
+                       for s in counts for n in [reported.get(s) if isinstance(reported, dict) else None]}
+        for severity in counts: counts[severity] = max(counts[severity], role_counts[severity])
+        raw_findings = raw.get('findings', [])
+        if not isinstance(raw_findings, list): raw_findings = []
+        # Severity is readable independently of claim prose and location.
+        # Missing/malformed messages must not erase a literal CRITICAL signal.
+        for severity in role_counts:
+            role_counts[severity] = max(role_counts[severity], sum(
+                isinstance(f, dict) and f.get('class') == severity.upper() for f in raw_findings))
+            counts[severity] = max(counts[severity], role_counts[severity])
+        if role == 'security': security_floor = sum(role_counts[s] for s in ('critical', 'bug', 'minor'))
+        if len(raw_findings) > 1024: holds.append('Specialist findings exceed the supported limit.')
+        for index, finding in enumerate(raw_findings[:1024]):
+            if not isinstance(finding, dict) or not location_valid(finding) or finding.get('class') not in tuple(SEVERITY):
+                uncertain_claims = True
+            status, _ = anchor_check(finding, base, head) if isinstance(finding, dict) else ('location', None)
+            claim = readable_finding(finding, refs)
+            key = finding_key(claim) if claim else (role, index)
+            checks.append(dict(finding_id=sha(encoded(key).encode()), status=status))
+            if claim: claims.append((role, claim))
     metadata = dict(mode='model_fallback' if failures else 'deterministic', malformed_specialists=failures,
                     grounding='off', invalid_anchors=0, anchor_checks=[], verifier=[], verifier_omitted=0,
                     critical_floor=0, security_floor=0, adr_refs=[])
-    findings, checks, invalid = normalized([(role, f) for role in ROLES if role in values for f in values[role]['findings']], base, head)
-    checks = failed_checks + checks
-    invalid += sum(check['status'] != 'valid' for check in failed_checks)
-    metadata.update(invalid_anchors=invalid, anchor_checks=checks,
-                    critical_floor=max([v['counts']['critical'] for v in values.values()] +
-                                       [sum(f['class'] == 'CRITICAL' for f in findings), failed_critical_floor]),
-                    security_floor=max([sum(values['security']['counts'][s] for s in ('critical', 'bug', 'minor'))] if 'security' in values else [0]))
-    metadata['security_floor'] = max(metadata['security_floor'], failed_security_floor,
-                                     sum('security' in f['specialists'] and f['class'] != 'SKIP' for f in findings))
+    findings, _, _ = normalized(claims, base, head)
+    invalid = sum(check['status'] != 'valid' for check in checks)
+    for severity in counts: counts[severity] = max(counts[severity], sum(f['class'].lower() == severity for f in findings))
+    metadata.update(invalid_anchors=invalid, anchor_checks=checks, critical_floor=counts['critical'],
+                    security_floor=max(security_floor, sum('security' in f['actionable_specialists'] for f in findings)),
+                    severity_counts=counts, human_holds=len(holds),
+                    verdict_floor='BLOCK' if holds else 'REQUEST_CHANGES' if failures or uncertain_claims else 'APPROVE')
     metadata['adr_refs'] = sorted({ref for f in findings for ref in f.get('adr_refs', [])})
-    if failures: return None, [], metadata
-    gaps = sorted({gap for v in values.values() for gap in v.get('acceptance_gaps', [])})
-    security = max(sum(values['security']['counts'][s] for s in ('critical', 'bug', 'minor')),
-                   sum('security' in f['specialists'] and f['class'] != 'SKIP' for f in findings))
+    gaps = sorted(set(gaps))
+    retained = dict(findings=findings, gaps=gaps, holds=holds, summaries=summaries)
+    (directory / 'retained.json').write_text(encoded(retained) + '\n')
+    if failures: return None, findings, metadata
     # Neutral input to the legacy shell contract, NOT a severity decision.
     # review_convergence derives the verdict from these findings/counts/gaps;
     # the shell applies count-only CRITICAL floors, security/build and caps.
     # Publish the normalized identities/ranges/anchor union too, so shadow
     # metadata still maps to a claim after the temporary directory is removed.
     public = [dict(f) for f in findings]
-    result = dict(verdict='APPROVE', bugs=sum(f['class'] == 'BUG' for f in findings), security_issues=security,
+    result = dict(verdict=metadata['verdict_floor'], bugs=sum(f['class'] == 'BUG' for f in findings), security_issues=metadata['security_floor'],
                   missing_acceptance=gaps, fixes_needed=[f['msg'] for f in findings if f['class'] != 'SKIP'],
                   summary='Merged correctness, security and performance findings.',
-                  comment=render(findings, {r: v['summary'] for r, v in values.items()}, gaps), findings=public)
+                  comment=render(findings, summaries, gaps, holds), findings=public)
     metadata.update(invalid_anchors=invalid, anchor_checks=checks)
     return result, findings, metadata
 
@@ -329,7 +390,7 @@ def main():
             for field in ('anchor', 'line_end', 'title', 'skip_citation'):
                 schema['properties']['findings']['items']['properties'][field] = fields[field]
             (args.directory / 'fallback.schema.json').write_text(encoded(schema) + '\n')
-        print(encoded(dict(grounding=grounding, verifier=verifier, policy='merge-v1:' + grounding + ':shadow-' + str(verifier).lower())))
+        print(encoded(dict(grounding=grounding, verifier=verifier, policy='merge-v3:' + grounding + ':shadow-' + str(verifier).lower())))
         return 0
     directory = args.directory
     metadata_path = directory / 'merge-metadata.json'
@@ -359,14 +420,38 @@ def main():
             schema['properties']['findings']['items']['properties'][field] = json.loads((SCRIPTS / 'bureau-specialist.schema.json').read_text())['properties']['findings']['items']['properties'][field]
         module('provider').validate(result, schema)
         for f in result['findings']: validate_finding(f, refs)
-        findings, checks, invalid = normalized([('fallback', f) for f in result['findings']], args.base, args.head)
+        fallback_findings, checks, invalid = normalized([('fallback', f) for f in result['findings']], args.base, args.head)
         metadata = json.loads(metadata_path.read_text())
+        retained = json.loads((directory / 'retained.json').read_text())
+        # Union all readable specialist signals with the model result. The
+        # fallback cannot discharge uncertainty or erase a known blocker.
+        findings, _, _ = normalized([('retained', f) for f in retained['findings']] +
+                                    [('fallback', f) for f in fallback_findings], args.base, args.head)
+        if (result['bugs'] != sum(f['class'] == 'BUG' for f in result['findings'])
+                or (not result['findings'] and result['fixes_needed'])):
+            result['verdict'] = 'BLOCK'
+        fallback_holds = human_holds(result)
+        if fallback_holds:
+            retained['holds'].extend(fallback_holds)
+            metadata['human_holds'] += len(fallback_holds)
+            metadata['verdict_floor'] = 'BLOCK'
+        if metadata['verdict_floor'] == 'BLOCK': result['verdict'] = 'BLOCK'
+        elif metadata['verdict_floor'] == 'REQUEST_CHANGES' and result['verdict'] == 'APPROVE': result['verdict'] = 'REQUEST_CHANGES'
+        result['findings'] = findings
+        result['bugs'] = sum(f['class'] == 'BUG' for f in findings)
+        # Leave invalid counts to the shell's existing BLOCK rule. Clamping a
+        # negative/oversized count to zero would soften the old merger path.
+        if 0 <= result['security_issues'] <= 999999999:
+            result['security_issues'] = max(result['security_issues'], metadata['security_floor'])
+        result['missing_acceptance'] = sorted(set(result['missing_acceptance'] + retained['gaps']))
+        result['fixes_needed'] = list(dict.fromkeys(result['fixes_needed'] +
+                                                  [f['msg'] for f in findings if f['class'] != 'SKIP']))
         metadata['anchor_checks'].extend(checks)
         metadata['invalid_anchors'] += invalid
         metadata['adr_refs'] = sorted(set(metadata['adr_refs']) | {ref for f in findings for ref in f.get('adr_refs', [])})
-        # Fallback prose is replaced by the same fixed findings template. The
-        # provider verdict/counts stay intact for the existing shell rules.
-        result['comment'] = render(findings, {}, result['missing_acceptance'])
+        result['comment'] += '\n\n' + render(findings, retained['summaries'], result['missing_acceptance'], retained['holds'])
+    metadata.update(result_sha256=module('evidence').digest(result),
+                    missing_acceptance_count=len(result['missing_acceptance']), fixes_needed_count=len(result['fixes_needed']))
     (directory / 'merged.json').write_text(encoded(result) + '\n')
     (directory / 'normalized.json').write_text(encoded(findings) + '\n')
     if verifier:

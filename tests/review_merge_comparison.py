@@ -13,7 +13,7 @@ for mode in ('deterministic', 'model_fallback'):
         try:
             if mode == 'model_fallback': case.values['performance'] = 'Malformed fixture output'
             start = time.monotonic()
-            record, _, capture = case.run_review(20)
+            record, _, capture = case.run_review(0 if mode == 'model_fallback' else 20)
             elapsed = time.monotonic() - start
             samples.append(dict(wall_seconds=round(elapsed, 3), calls=record['calls'],
                                 input_tokens=record['usage']['input_tokens'], output_tokens=record['usage']['output_tokens'],

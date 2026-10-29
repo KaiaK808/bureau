@@ -111,7 +111,7 @@ review_text_from_merger() {
       | (del(.comment, .insights)) as $v
       | (if ($v | tojson | length) > 16000
          then ($v | del(.findings)) + {findings_omitted: ($v.findings | length? // 0)} else $v end) as $v
-      | .comment + "\n\n```json\n" + ($v | tojson) + "\n```"
+      | .comment
         + section("Deferred below threshold (" + $floor + ")"; [.findings[]? | select(.class == "MINOR" and $floor == "BUG")])
         + section("SKIP findings"; [.findings[]? | select(.class == "SKIP")])
         + (if $adr_index == null then "" else
@@ -119,7 +119,8 @@ review_text_from_merger() {
               | . as $finding | [.adr_refs[] | select(type == "string")
                 | select(. as $ref | $adr_index | index($ref) != null) | "ADR " + .] | unique
               | select(length > 0) | "- `" + $finding.file + ":" + ($finding.line | tostring) + "` — " + join(", ")]
-            | if length == 0 then "" else "\n\n### ADR references\n" + join("\n") end end)' 2>/dev/null) && [ -n "$text" ]; then
+            | if length == 0 then "" else "\n\n### ADR references\n" + join("\n") end end)
+        + "\n\n```json\n" + ($v | tojson) + "\n```"' 2>/dev/null) && [ -n "$text" ]; then
     printf '%s' "$text"
   else
     printf '%s' "$projected"
@@ -495,10 +496,12 @@ PR target: $PR_BASE_REF. Review the pinned PR inputs with 'git diff $REVIEW_DIFF
 
 For every finding, cite file:line. Classify CRITICAL (data-loss / silent corruption) / BUG (real defect) / MINOR (style, nit) / SKIP (contradicts a pinned decision — include citation to the pin).
 
+Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.
+
 Emit human-readable prose for the PR reviewer, then a SINGLE fenced json block at the very end:
 
 \`\`\`json
-{\"specialist\":\"correctness\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"acceptance_gaps\":[],\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"summary\":\"\"}
+{\"specialist\":\"correctness\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"acceptance_gaps\":[],\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"summary\":\"\"}
 \`\`\`" > "$REVIEW_TMP/correctness.txt" 2>"$REVIEW_TMP/correctness.stderr" &
 CORRECT_PID=$!
 
@@ -517,10 +520,12 @@ PR target: $PR_BASE_REF. Review the pinned PR inputs with 'git diff $REVIEW_DIFF
 
 For every finding, cite file:line. Classify CRITICAL / BUG / MINOR / SKIP (with pin citation).
 
+Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.
+
 Emit human-readable prose, then a SINGLE fenced json block:
 
 \`\`\`json
-{\"specialist\":\"security\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"summary\":\"\"}
+{\"specialist\":\"security\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"summary\":\"\"}
 \`\`\`" > "$REVIEW_TMP/security.txt" 2>"$REVIEW_TMP/security.stderr" &
 SEC_PID=$!
 
@@ -541,10 +546,12 @@ Performance is the most likely axis to over-flag. Only raise BUG for measurable 
 
 For every finding, cite file:line. Classify CRITICAL / BUG / MINOR / SKIP (with pin citation).
 
+Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.
+
 Emit human-readable prose, then a SINGLE fenced json block:
 
 \`\`\`json
-{\"specialist\":\"performance\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"summary\":\"\"}
+{\"specialist\":\"performance\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"summary\":\"\"}
 \`\`\`" > "$REVIEW_TMP/performance.txt" 2>"$REVIEW_TMP/performance.stderr" &
 PERF_PID=$!
 
@@ -633,16 +640,14 @@ Answer with ONE JSON object (the schema is enforced). \"comment\" is the human-r
 \`\`\`json
 {\"verdict\":\"APPROVE|REQUEST_CHANGES|BLOCK\",\"insights\":[],\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"\",\"comment\":\"## Specialist Summaries\\n…\",\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\"}]}
 \`\`\`" 2>"$REVIEW_TMP/merge.stderr")
-    # Grounding and the checker also apply to the model fallback. Parse/schema
-    # errors remain 22; a well-formed but impossible source reference is a hold.
-    if [ "$REVIEW_GROUNDING" = required ] || [ "$REVIEW_VERIFIER" = true ]; then
-      printf '%s' "$MERGED_RAW" > "$REVIEW_TMP/fallback.txt"
-      bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" fallback --config "$REVIEW_MERGE_CONFIG" \
-        --directory "$REVIEW_TMP" --base "$REVIEW_BASE" --head "$REVIEW_HEAD" --refs "$BUREAU_REVIEW_ADR_REFS" \
-        --result "$REVIEW_TMP/fallback.txt" --contract SPEC.md --contract AGENTS.md --contract CLAUDE.md \
-        --contract "${SPEC_DIR}spec.md" --contract "${SPEC_DIR}plan.md" || exit 22
-      MERGED_RAW=$(<"$REVIEW_TMP/merged.json")
-    fi
+    # Retain every readable specialist signal, even with grounding/checker off.
+    # Parse/schema errors remain 22; impossible source references hold when required.
+    printf '%s' "$MERGED_RAW" > "$REVIEW_TMP/fallback.txt"
+    bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" fallback --config "$REVIEW_MERGE_CONFIG" \
+      --directory "$REVIEW_TMP" --base "$REVIEW_BASE" --head "$REVIEW_HEAD" --refs "$BUREAU_REVIEW_ADR_REFS" \
+      --result "$REVIEW_TMP/fallback.txt" --contract SPEC.md --contract AGENTS.md --contract CLAUDE.md \
+      --contract "${SPEC_DIR}spec.md" --contract "${SPEC_DIR}plan.md" || exit 22
+    MERGED_RAW=$(<"$REVIEW_TMP/merged.json")
     ;;
   *) exit "$_merge_rc" ;;
 esac
@@ -779,6 +784,15 @@ fi
 if [ "$REUSED_APPROVAL" != 1 ]; then
   _merge_critical=$(jq -r '.critical_floor' "$REVIEW_TMP/merge-metadata.json")
   _merge_security=$(jq -r '.security_floor' "$REVIEW_TMP/merge-metadata.json")
+  _merge_floor=$(jq -r '.verdict_floor' "$REVIEW_TMP/merge-metadata.json")
+  _merge_severity=$(jq -r --arg floor "$BUREAU_REVIEW_MIN_SEVERITY" '.severity_counts.bug + (if $floor == "MINOR" then .severity_counts.minor else 0 end)' "$REVIEW_TMP/merge-metadata.json")
+  case "$_merge_floor" in
+    BLOCK) VERDICT=BLOCK ;;
+    REQUEST_CHANGES) [ "$VERDICT" != APPROVE ] || VERDICT=REQUEST_CHANGES ;;
+    APPROVE) ;;
+    *) VERDICT=BLOCK ;;
+  esac
+  if [ "$_merge_severity" -gt 0 ] && [ "$VERDICT" = APPROVE ]; then VERDICT=REQUEST_CHANGES; fi
   if [ "$_merge_critical" -gt 0 ]; then
     if [ "$VERDICT" != BLOCK ]; then
       MERGED_REVIEW+=$'\n\n**Critical floor**: readable specialist counts include CRITICAL findings; human review is required.'
