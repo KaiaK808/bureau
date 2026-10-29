@@ -854,7 +854,7 @@ def execute(repo, args, store):
                 if interrupted: code = 130
                 control = store.root / 'ticket-control' / run
                 withdrawn = any((control / ('stop-' + str(c))).exists() for c in (0, 25, 26))
-                if phase == 'stage' and args.issue and code not in (20, 21, 25, 26, 130) and not withdrawn:
+                if phase == 'stage' and args.issue and t.completed_work_turn(code) and not withdrawn:
                     try:
                         ledger = t.Ledger(store.root, args.issue, read(config_for(repo)))
                         decision = ledger.call('end_turn', attempt, run)
@@ -907,15 +907,26 @@ def execute(repo, args, store):
             e.warn()
         finally:
             store.finish_execution(run, resources, interrupted or code == 130, repo, report=bool(resources) or not inherited)
+            terminal_reason = None
+            terminal_error = False
+            try:
+                if args.issue:
+                    terminal_reason = t.Ledger(store.root, args.issue, read(config_for(repo))).terminal(
+                        130 if interrupted or code < 0 else code, run)
+            except (OSError, ValueError, KeyError, TypeError):
+                # Reasons are part of the protocol for standalone drivers too.
+                # Corrupt accounting cannot publish an unchecked lane reason.
+                code = 24
+                terminal_error = True
             if dispatch_record is not None:
                 ready = os.environ.get('BUREAU_DISPATCH_READY_FILE')
                 dispatch_record.update(code=130 if interrupted or code < 0 else code,
                                        paused=bool(code == 25 and ready and Path(ready + '.paused').exists()))
-                dispatch_record['terminal_reason'] = e.observe(lambda: t.Ledger(
-                    store.root, args.issue, read(config_for(repo))).terminal(dispatch_record['code'], run))
+                dispatch_record['terminal_reason'] = terminal_reason
                 # This coordination record is mandatory, outside prunable
                 # evidence, and written before the inherited dispatch FD closes.
                 save(dispatch_path, dispatch_record)
+            if terminal_error: raise AdmissionStop(24)
 
 
 def observation_time(value):

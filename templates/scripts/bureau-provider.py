@@ -411,8 +411,10 @@ def run(options, prompt, system, repo, evidence, schema=None):
             metadata = dict(outcome='invalid-result', error=str(exc))
     if ticket is not None:
         try:
-            usage = t.reported_usage(options['runner'], evidence)
-            ticket.call('finish', attempt, usage, code)
+            complete = (code not in (124, 130) and metadata.get('outcome') not in ('provider-error', 'timeout', 'cancelled')
+                        and metadata.get('provider_exit', options.get('_provider_exit', 0)) == 0)
+            usage = t.reported_usage(options['runner'], evidence, complete=complete)
+            ticket.call('finish', attempt, usage, code, tokens_known=t.reported_lower_bound(options['runner'], evidence))
             reason = 'watchdog' if metadata.get('timeout_kind') == 'silence' else ('timeout' if code == 124 else None)
             if reason: ticket.call('note_stop', reason, code, run_id)
         except (OSError, ValueError, TypeError, KeyError) as exc:
@@ -1056,7 +1058,7 @@ def gate_action(args, config, options, repo):
             issue = os.environ.get('BUREAU_CURRENT_ISSUE')
             if issue:
                 ticket = t.Ledger(t.root_for(repo), issue, config)
-                ticket.call('gate', run_id, owner, record['command_id'], command, record['normalized_exit'],
+                ticket.call('_record_gate', run_id, owner, record['command_id'], command, record['normalized_exit'],
                             record['head'], record['end_head'], record['stage_log'])
         if record['normalized_exit'] == 130: options['_gate_cancelled'] = True
         verified = verified and record['head'] == head and record['end_head'] == head

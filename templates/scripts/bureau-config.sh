@@ -131,8 +131,16 @@ bureau_record_gate() {
   end_head=$(git rev-parse HEAD 2>/dev/null) || end_head=""
   bureau_evidence evidence-gate --path "$1" --head "$2" --end-head "$end_head" \
     --command "$3" --command-id "${5:-repo.test_command}" --exit-code "$4" || true
-  bureau_ticket_policy "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" gate --path "$1" --head "$2" --end-head "$end_head" \
-    --command "$3" --command-id "${5:-repo.test_command}" --exit-code "$4" || return $?
+  # Caller-supplied evidence is observational; it cannot establish progress.
+}
+
+bureau_run_gate() {
+  local rc=0 head
+  head=$(git rev-parse HEAD 2>/dev/null) || head=""
+  bureau_ticket_policy "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" execute-gate --path "$1" \
+    --command "$2" --command-id "$3" || rc=$?
+  bureau_record_gate "$1" "$head" "$2" "$rc" "$3" || true
+  return "$rc"
 }
 
 # Human boundary publication is observational, including a closed diagnostic
@@ -215,14 +223,17 @@ bureau_ticket_reason() {
 # One cooperative latch/exit for withdrawal, ticket budgets and stalled runs.
 # Keep this shared with the worker's existing preservation/ownership cleanup.
 _bureau_ticket_stop() {
-  local issue="$1" code="$2" reason="$3" dir="${BUREAU_TICKET_CONTROL_DIR:-}"
+  local issue="$1" code="$2" reason="$3" message="${4:-}" dir="${BUREAU_TICKET_CONTROL_DIR:-}"
   _BUREAU_TICKET_STOPPED=1
   if [ -n "$dir" ]; then
     mkdir -p "$dir" && : > "$dir/stop-$code" || {
-      echo 'ERROR: cannot latch ticket stop; refusing further work' >&2; exit 21;
+      ( echo 'ERROR: cannot latch ticket stop; refusing further work' >&2 ) || true
+      exit 21
     }
   fi
   bureau_ticket_reason "$issue" "$reason" "$code"
+  # Latch first, then contain both SIGPIPE and closed-stderr write failures.
+  if [ -n "$message" ]; then ( echo "$message" >&2 ) || true; fi
   exit "$code"
 }
 
@@ -231,8 +242,7 @@ _bureau_ticket_policy_checkpoint() {
   policy=$(bureau_ticket_policy "$issue" check) || policy_rc=$?
   if [ "$policy_rc" = 25 ]; then
     reason=$(printf '%s' "$policy" | jq -er '.terminal_reason | select(. == "budget" or . == "stalled")') || exit 24
-    echo "bureau ticket checkpoint: $issue terminal_reason=$reason $policy" >&2
-    _bureau_ticket_stop "$issue" 25 "$reason"
+    _bureau_ticket_stop "$issue" 25 "$reason" "bureau ticket checkpoint: $issue terminal_reason=$reason $policy"
   fi
   [ "$policy_rc" = 0 ] || exit "$policy_rc"
 }
@@ -316,8 +326,8 @@ bureau_ticket_checkpoint() {
   # A stage's own successful Done transition may finish its bookkeeping. An
   # externally observed Done never receives this process-local authorization.
   if [ "$code" = 0 ] && [ "${_BUREAU_TICKET_OWN_DONE:-}" = "$id" ]; then return 0; fi
-  echo "bureau ticket checkpoint: $issue left the active workflow (state ID $id); cooperative stop, exit $code" >&2
-  _bureau_ticket_stop "$issue" "$code" ticket_withdrawn
+  _bureau_ticket_stop "$issue" "$code" ticket_withdrawn \
+    "bureau ticket checkpoint: $issue left the active workflow (state ID $id); cooperative stop, exit $code"
 }
 
 # A subprocess must distinguish active from an externally observed Done: both

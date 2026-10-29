@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c0641c1ec0bbd79996cd42f78707e4a7db9e1275e8d57dfc44fbe53f98893f44">
+<meta name="bureau-source-sha256" content="226380b144ac53c7267f9d07f6a2d4868812e7c87d025349d90e8170c40fb282">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -983,29 +983,40 @@ total stay unknown, with a separate known lower bound. Accounting is
 independent of <code>session.cost_tracking</code>.</p>
 <p><code>allow_unknown_usage: true</code> explicitly permits unreported
 tokens, retaining null totals and enforcing the known lower bound. It
-does not relax call/time limits. Failed/invalid/timed-out attempts count
-too. Abandoned attempts retain unknown usage and their open wall
-interval counts conservatively. A live adapter's birth identity
-postpones its unknown-usage decision until completion. Thresholds use
-<code>&gt;=</code>. Call slots are reserved atomically before paid work;
-token/time limits can overshoot by already admitted concurrent calls.
-Existing stage timeouts still apply.</p>
+does not relax call/time limits or lost-accounting holds.
+Failed/invalid/timed-out attempts count too. Every provider turn needs
+completed usage: a measured turn followed by a failed, interrupted or
+truncated turn makes the whole attempt unknown. Abandoned attempts
+retain unknown usage and their open wall interval counts conservatively.
+A live adapter's birth identity postpones its unknown-usage decision
+until completion. Thresholds use <code>&gt;=</code>. Call slots are
+reserved atomically before paid work; token/time limits can overshoot by
+already admitted concurrent calls. Existing stage timeouts still
+apply.</p>
 <p>Progress is a separate opt-in policy. A turn is one completed
-background stage attempt; wrappers and individual specialists do not add
-turns. Interrupted, withdrawn and already held stages do not advance it.
-An empty contract supplies no trusted progress and stalls after two
-ordinary completed turns. Fact IDs must be stable, 1–128 ASCII
+background work stage (exit 0 or completed red build 14); wrappers and
+individual specialists do not add turns. Quiet waits (2, 10, 16, 23, 28,
+29), handoffs, infrastructure faults, incomplete provider results,
+interruptions, withdrawals and holds do not advance it. An empty
+contract supplies no trusted progress and stalls after two ordinary
+completed turns. Fact IDs must be stable, 1–128 ASCII
 letters/digits/<code>_.:-</code>. Values contain exactly
-<code>command_id</code> (<code>repo.test_command</code> or
-<code>qa.test</code>) and the exact command. Configure that command as
-an actual outer-shell test gate too. A qualifying gate exits 0 at
-unchanged HEAD with readable output. A requirement or confirmed finding
-needs a command that proves that particular claim; a generic green suite
-cannot establish an unrelated claim. Facts are bound to the contract
-digest. Provider-reported completion/findings/applied fixes, checkboxes,
-commits and activity never qualify. A new fact resets the count once;
-replaying the same green gate at a new HEAD does not. Changing the
-contract requires fresh gate evidence.</p>
+<code>command_id</code> (<code>repo.test_command</code>,
+<code>qa.test</code> or <code>review.build</code>) and the exact
+command. Configure that command as an actual runtime test gate too. Only
+runtime execution of that configured command, exiting 0 at unchanged
+HEAD with recorded output, qualifies. <code>bureau_run_gate</code>
+executes QA/review checks; the outside-gate executor runs verified
+recovery checks. The ticket CLI accepts <code>execute-gate</code> to run
+the configured command, never a caller's exit, HEAD or proof file.
+<code>bureau_record_gate</code> remains observational and cannot submit
+progress. A requirement or confirmed finding needs a command that proves
+that particular claim; a generic green suite cannot establish an
+unrelated claim. Facts are bound to the contract digest.
+Provider-reported completion/findings/applied fixes, checkboxes, commits
+and activity never qualify. A new fact resets the count once; replaying
+the same green gate at a new HEAD does not. Changing the contract
+requires fresh gate evidence.</p>
 <p>The dispatcher's lane cap is the batch concurrency cap,
 <code>agents.parallel_lanes</code>, also used by
 <code>orchestrate.sh --execute</code>; there is no separate batch-budget
@@ -1016,24 +1027,33 @@ dispatch lanes and three explicit batch lanes.</p>
 <code>python3 -I scripts/bureau-ticket.py --repo . --issue TEAM-123 status</code>.
 Authoritative records live under
 <code>&lt;common-git-dir&gt;/bureau/tickets/TEAM-123.json</code>,
-outside prunable evidence. They retain identities, measurements, fact
-digests and the closed stop reason, without provider prose/output.
-Counters survive reruns and evidence pruning; there is no backfill for
-earlier runtime versions. When enabled, unavailable/corrupt accounting
-fails closed with 24. With both policies disabled, accounting failures
-warn without changing execution.</p>
+outside prunable evidence. A sibling <code>TEAM-123.attempts.json</code>
+retains admitted attempt identities and the explicit reset baseline.
+Provider receipts supply a second accounting-loss witness. A missing,
+empty, unreadable ledger or missing attempt rows with witnessed provider
+attempts stops with 25 / <code>budget</code>,
+<code>accounting_lost: true</code>; it never creates a fresh allowance
+or progress reset, even with unknown usage allowed or policies
+subsequently disabled. Keep both files. Counters survive reruns and
+evidence pruning; earlier receipt-only histories are not silently
+backfilled or forgiven. Invalid ledgers, including invalid nested stop
+reasons/exit pairs, fail closed with 24. With both policies disabled,
+optional I/O failures without evidence of lost accounting still warn
+without changing execution.</p>
 <p>To resume, stop drivers, inspect preserved work and the ledger,
-reconcile ownership, raise the exhausted limit or deliberately reset the
-inspected progress counter/ledger, then clear the ticket's dispatcher
-skip/human hold. Deleting accounting grants a new lifetime allowance and
-is not a routine retry. Separate clones/hosts and calls bypassing
-Bureau's adapter are outside this local contract. Compare installed
-drift, resync all scripts together including
+reconcile ownership, and raise an exhausted limit if appropriate. A
+deliberate new lifetime allowance/progress reset requires
+<code>python3 -I scripts/bureau-ticket.py --repo . --issue TEAM-123 reset --acknowledge-accounting-loss</code>,
+outside a run environment and with no ticket ownership claim. This also
+authorizes a baseline for a receipt-only history from an earlier
+runtime. Then clear the ticket's dispatcher skip/human hold. Deleting or
+emptying a ledger is not a reset command. Separate clones/hosts and
+calls bypassing Bureau's adapter are outside this local contract.
+Compare installed drift, resync all scripts together including
 <code>bureau-ticket.py</code>, and restart drivers before enabling.
-Tests use fake providers/services, real Git and a budget-removal
-negative control; live adopter/provider qualification remains
-outstanding. See the <a
-href="stage-protocol.html#ticket-budget-and-progress-stops">stop
+Tests use fake providers/services, real Git and per-guard negative
+controls; live adopter/provider qualification remains outstanding. See
+the <a href="stage-protocol.html#ticket-budget-and-progress-stops">stop
 protocol</a>.</p>
 <h3 id="advisory-lesson-budgets">Advisory lesson budgets</h3>
 <p><code>agents.lessons_budget_bytes</code> is an optional object with

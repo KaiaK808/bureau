@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="77319040cfd273e4926d9404f3e0658bc06acefdc27d003faa2e52c22fe13d3c">
+<meta name="bureau-source-sha256" content="787da8b2320eda89d9f45b24501045f22b6fd78602fb6b9a5c678f0f61ade4dd">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -158,11 +158,18 @@ remain allowed. Dispatcher persists a permanent 25 hold; standalone
 shepherd consumes the same latch at its existing boundaries.</p>
 <p>Tokens/time may overshoot by calls already admitted at the safe
 point; call slots are serialized under the ticket lock. Missing usage
-stays null. With a token limit it stops as <code>budget</code> with
-<code>usage_unknown: true</code>, unless
+stays null, including measured turns followed by an unmeasured
+failed/interrupted/truncated turn. With a token limit it stops as
+<code>budget</code> with <code>usage_unknown: true</code>, unless
 <code>allow_unknown_usage</code> is explicitly true; the known lower
-bound still applies. Unavailable/invalid mandatory accounting uses
-existing exit 24 and cannot authorize more paid work.</p>
+bound still applies. Lost accounting (missing, empty or unreadable
+ledger/attempts with provider attempt witnesses) stops as
+<code>budget</code> with <code>accounting_lost: true</code>, regardless
+of that setting. Only the <a
+href="configuration.html#ticket-run-budgets-and-trusted-progress">explicit
+operator reset</a> authorizes a new baseline. Other unavailable/invalid
+mandatory accounting uses existing exit 24 and cannot authorize more
+paid work.</p>
 <p>The stop vocabulary is closed. Details can explain a stop but cannot
 supply another <code>terminal_reason</code>:</p>
 <table>
@@ -178,7 +185,7 @@ supply another <code>terminal_reason</code>:</p>
 <td><code>budget</code></td>
 <td>25</td>
 <td>Token, provider-call or cumulative provider-wall limit; disallowed
-unknown usage</td>
+unknown usage; accounting lost</td>
 </tr>
 <tr>
 <td><code>timeout</code></td>
@@ -215,19 +222,27 @@ state</td>
 </table>
 <p>Successful completion, intentional handoff 20, quiet waits,
 infrastructure failures and cancellation 130 retain their exits without
-an invented reason. The ticket ledger stores the originating reason;
-dispatch lane records and <code>dispatch-skips.json</code> carry the
-matching reason. A later generic hold cannot overwrite that run's
-cap/watchdog/budget reason. This vocabulary does not replace
-observational learning cause classes.</p>
-<p>A progress turn ends once per completed background stage attempt.
-Contract IDs describe fulfilled requirements, qualified gates or
-confirmed findings, bound to exact configured outer gate commands. Only
-green checks at unchanged HEAD with readable output from
-<code>bureau_record_gate</code> or the outside-gate executor qualify.
-Provider results, declared fixes, commits, completed checkboxes and
-activity never do. Each contract-bound fact resets the counter once;
-repeated green checks at new HEADs earn no reset. After
+an invented reason. The ticket ledger stores the originating reason for
+standalone shepherds as well as dispatcher lanes; dispatch lane records
+and <code>dispatch-skips.json</code> carry the matching reason. Both
+top-level and nested stop reasons/exit pairs are validated before reuse;
+corrupt values hold with 24 and are never forwarded. A later generic
+hold cannot overwrite that run's cap/watchdog/budget reason. This
+vocabulary does not replace observational learning cause classes.</p>
+<p>A progress turn ends once per completed background work stage (exit 0
+or completed red build 14). Quiet waits (2, 10, 16, 23, 28, 29), other
+holds/handoffs, incomplete results and infrastructure faults do not
+consume turns. Contract IDs describe fulfilled requirements, qualified
+gates or confirmed findings, bound to exact configured gate commands
+(<code>repo.test_command</code>, <code>qa.test</code>,
+<code>review.build</code>). Only actual runtime execution, green at
+unchanged HEAD with recorded output, qualifies: QA/review use
+<code>bureau_run_gate</code> and recovery uses the outside-gate
+executor. The exposed proof-submission command is removed;
+<code>bureau_record_gate</code> is observational only. Provider results,
+declared fixes, commits, completed checkboxes and activity never
+qualify. Each contract-bound fact resets the counter once; repeated
+green checks at new HEADs earn no reset. After
 <code>max_non_improving_turns</code> (default 2), stage completion
 consumes the shared latch before the waiting worker cleans up, returning
 25 with <code>terminal_reason: stalled</code>.
@@ -236,6 +251,10 @@ advance it. Budgets and progress are both off by default; stage/review
 limits remain independent.</p>
 <h2 id="cooperative-ticket-withdrawal">Cooperative ticket
 withdrawal</h2>
+<p>Every cooperative stop creates its shared latch before writing
+diagnostics. Closed stderr or SIGPIPE cannot prevent preservation or
+change the stop exit, including withdrawal with both ticket policies
+disabled.</p>
 <p><code>bureau_ticket_checkpoint</code> is the trusted shell boundary
 for background work. It checks after selection/claim before dispatch,
 before and after each provider pass, before ordinary

@@ -632,9 +632,7 @@ elif [ -n "$BUILD_CMD" ]; then
   BUILD_TREE_BEFORE=$(git status --porcelain --untracked-files=all 2>/dev/null | sort || true)
   # PR code: runs without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).
   bureau_untrusted_env --check || exit 24
-  BUILD_EVIDENCE_HEAD=$(git rev-parse HEAD 2>/dev/null) || BUILD_EVIDENCE_HEAD=""
-  bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$BUILD_CMD" </dev/null >"$REVIEW_TMP/build.log" 2>&1 || BUILD_RC=$?
-  bureau_record_gate "$REVIEW_TMP/build.log" "$BUILD_EVIDENCE_HEAD" "$BUILD_CMD" "$BUILD_RC" review.build || true
+  bureau_run_gate "$REVIEW_TMP/build.log" "$BUILD_CMD" review.build || BUILD_RC=$?
   BUILD_LOG_LINES=$(wc -l < "$REVIEW_TMP/build.log" | tr -d ' ')
   BUILD_LOG_LINES=$(bureau_number review.build_log_lines "$BUILD_LOG_LINES" 0 0 9999999999)
   [ "$BUILD_LOG_LINES" -le 20 ] || echo "  Build output: last 20 of $BUILD_LOG_LINES lines"

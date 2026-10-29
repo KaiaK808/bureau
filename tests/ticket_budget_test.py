@@ -136,16 +136,16 @@ class Policy(unittest.TestCase):
         proof = self.root/'gate.log'; proof.write_text('green')
         # Activity, checkboxes, commits and provider declarations supply no gate.
         for command, code, start, end in [('different',0,'A','A'),('true',1,'A','A'),('true',0,'A','B')]:
-            ledger.gate('run-1','turn-2','repo.test_command',command,code,start,end,proof)
+            ledger._record_gate('run-1','turn-2','repo.test_command',command,code,start,end,proof)
         self.attempt(ledger,dict(input_tokens=1,output_tokens=1))
         stop = ledger.end_turn('turn-2','run-1')
         self.assertEqual(('stalled',25),(stop['terminal_reason'],stop['code']))
-        ledger.gate('run-1','turn-3','repo.test_command','true',0,'A','A',proof)
+        ledger._record_gate('run-1','turn-3','repo.test_command','true',0,'A','A',proof)
         self.assertIsNone(ledger.end_turn('turn-3','run-1'))
         with ledger.guard() as value:
             self.assertEqual(0,value['non_improving_turns']); self.assertEqual(3,len(value['facts']))
         # The same gate at a new HEAD, or duplicate turn finalization, earns nothing.
-        ledger.gate('run-2','turn-4','repo.test_command','true',0,'B','B',proof)
+        ledger._record_gate('run-2','turn-4','repo.test_command','true',0,'B','B',proof)
         self.assertIsNone(ledger.end_turn('turn-4','run-2'))
         self.assertIsNone(ledger.end_turn('turn-4','run-2'))
         self.assertEqual('stalled',ledger.end_turn('turn-5','run-2')['terminal_reason'])
@@ -199,6 +199,12 @@ class AdapterFixture(unittest.TestCase):
     def save(self): (self.repo/'.bureau.json').write_text(json.dumps(self.config))
     def events(self): return (self.root/'events').read_text().splitlines()
     def ledger(self): return json.loads((self.repo/'.git/bureau/tickets/TEAM-1.json').read_text())
+    def reset_accounting(self):
+        result=subprocess.run([sys.executable,'-I',str(self.scripts/'bureau-ticket.py'),'--repo',str(self.repo),
+                               '--issue','TEAM-1','reset','--acknowledge-accounting-loss'],cwd=self.repo,
+                              env={k:v for k,v in self.env.items() if k not in ('BUREAU_RUN_ID','BUREAU_STAGE_ATTEMPT_ID')},
+                              capture_output=True,text=True,timeout=10)
+        self.assertEqual(0,result.returncode,result.stdout+result.stderr)
     def provider(self,stage='implement',phase='implementation',**env):
         return subprocess.run([sys.executable,'-I',str(self.scripts/'bureau-provider.py'),'--repo',str(self.repo),
                                '--config',str(self.repo/'.bureau.json'),'--stage',stage,'--phase',phase,'--prompt-file',str(self.prompt)],
@@ -221,7 +227,7 @@ class Adapter(AdapterFixture):
         for dimension,limit in [('tokens',8),('provider_calls',1),('wall_seconds',0.01)]:
             with self.subTest(dimension=dimension):
                 path=self.repo/'.git/bureau/tickets/TEAM-1.json'
-                if path.exists(): path.unlink()
+                if path.exists(): self.reset_accounting()
                 shutil.rmtree(self.root/'control',ignore_errors=True); (self.root/'events').write_text('')
                 self.config['agents']['ticket_budget']={dimension:limit}; self.save()
                 result=self.loop(FAKE_DELAY='0.05')
@@ -352,15 +358,14 @@ sys.exit(p.main())
 
     def test_outer_gate_contract_and_stalled_checkpoint(self):
         self.config['agents']['ticket_progress']=dict(enabled=True,contract=dict(qualified_gates=dict(
-            suite=dict(command_id='repo.test_command',command='true')))); self.save()
+            suite=dict(command_id='repo.test_command',command='true'))))
+        self.config['repo']=dict(test_command='true'); self.save()
         script='''source scripts/bureau-config.sh
-printf green > gate.log
-bureau_record_gate gate.log A true 0
+bureau_run_gate gate.log true repo.test_command
 '''
         self.env['BUREAU_STAGE_ATTEMPT_ID']='a'*32
-        # A real repository HEAD, checked by the outer shell, qualifies the gate.
-        head=subprocess.check_output(['git','-C',str(self.repo),'rev-parse','HEAD'],text=True).strip()
-        result=subprocess.run(['/bin/bash','-e','-c',script.replace('gate.log A','gate.log '+head)],cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=10)
+        # Only actual execution by the runtime qualifies the configured gate.
+        result=subprocess.run(['/bin/bash','-e','-c',script],cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=10)
         self.assertEqual(0,result.returncode,result.stdout+result.stderr)
         ledger=t.Ledger(self.repo/'.git/bureau','TEAM-1',self.config)
         self.assertIsNone(ledger.end_turn('turn-1',self.env['BUREAU_RUN_ID']))

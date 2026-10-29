@@ -20,6 +20,13 @@ sys.dont_write_bytecode = True
 STOP_CODES = dict(budget=25, timeout=124, watchdog=25, review_capped=25,
                   human_hold=25, ticket_withdrawn=25, stalled=25)
 PROGRESS_KINDS = ('fulfilled_requirements', 'qualified_gates', 'confirmed_findings')
+GATE_IDS = ('repo.test_command', 'qa.test', 'review.build')
+
+
+def completed_work_turn(code):
+    # Success and a completed red build are work. Waits, holds, infrastructure
+    # faults and incomplete provider results do not spend the progress allowance.
+    return code in (0, 14)
 
 
 def diagnostic(message):
@@ -68,7 +75,7 @@ def settings(config):
         for key, gate in facts.items():
             if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}', key): raise ValueError('invalid progress identity')
             if (not isinstance(gate, dict) or set(gate) != {'command_id', 'command'}
-                    or gate['command_id'] not in ('repo.test_command', 'qa.test')
+                    or gate['command_id'] not in GATE_IDS
                     or not isinstance(gate['command'], str) or not gate['command'].strip()):
                 raise ValueError('progress needs an exact trusted gate command')
     return limits, dict(enabled=enabled, max_non_improving_turns=maximum, contract=contract)
@@ -112,36 +119,97 @@ def token_count(usage, provider):
     return sum(usage[k] for k in fields)
 
 
-def reported_usage(provider, directory):
+def reported_usage(provider, directory, complete=True):
     """Read actual provider output even on invalid results, timeouts and errors."""
     try:
+        if not complete: return None
         raw = (Path(directory) / 'stdout.log').read_text()
         events = []
         try: events = [json.loads(raw)]
         except ValueError:
             for line in raw.splitlines():
                 try: events.append(json.loads(line))
-                except ValueError: pass
+                except ValueError:
+                    if line.strip(): return None
         if provider == 'claude':
-            results = [v for v in events if isinstance(v, dict) and v.get('type') in (None, 'result') and 'usage' in v]
-            return results[-1].get('usage') if results else None
-        turns = [v.get('usage') for v in events if isinstance(v, dict) and v.get('type') == 'turn.completed']
+            results = [v for v in events if isinstance(v, dict) and v.get('type') in (None, 'result')]
+            if (not results or events[-1] is not results[-1]
+                    or any(token_count(v.get('usage'), provider) is None for v in results)):
+                return None
+            return results[-1]['usage']
+        turns, pending = [], False
+        for event in events:
+            if not isinstance(event, dict): return None
+            kind = event.get('type')
+            if (not isinstance(kind, str) or kind == 'error'
+                    or kind.startswith('turn.') and kind not in ('turn.started', 'turn.completed')): return None
+            if kind == 'turn.started':
+                if pending: return None
+                pending = True
+            elif isinstance(kind, str) and kind.startswith('item.'):
+                pending = True
+            elif kind == 'turn.completed':
+                turns.append(event.get('usage')); pending = False
+        if pending: return None
         if not turns or any(token_count(v, provider) is None for v in turns): return None
         return {key: sum(v[key] for v in turns) for key in ('input_tokens', 'output_tokens')}
     except (OSError, ValueError, TypeError): return None
+
+
+def reported_lower_bound(provider, directory):
+    """Retain measured turns even when a later turn makes the total unknown."""
+    try:
+        raw = (Path(directory) / 'stdout.log').read_text()
+        try: events = [json.loads(raw)]
+        except ValueError:
+            events = []
+            for line in raw.splitlines():
+                try: events.append(json.loads(line))
+                except ValueError: pass
+        counts = [token_count(v.get('usage'), provider) for v in events if isinstance(v, dict)
+                  and (v.get('type') == 'turn.completed' if provider == 'codex' else v.get('type') in (None, 'result'))]
+        known = [count for count in counts if count is not None]
+        return sum(known) if provider == 'codex' else max(known, default=0)
+    except (OSError, ValueError, TypeError): return 0
 
 
 class Ledger:
     def __init__(self, root, issue, config, clock=time.time):
         if not re.fullmatch(r'[A-Z][A-Z0-9_]*-\d+', issue): raise ValueError('invalid ticket identity')
         self.root, self.issue, self.clock = Path(root) / 'tickets', issue, clock
+        self.config = config
         self.budget, self.progress = settings(config)
         self.contract_digest = hashlib.sha256(json.dumps(self.progress['contract'],sort_keys=True).encode()).hexdigest()
         self.required = any(self.budget[k] for k in ('tokens', 'provider_calls', 'wall_seconds')) or self.progress['enabled']
         self.path = self.root / (issue + '.json')
+        self.history_path = self.root / (issue + '.attempts.json')
+
+    def fresh(self):
+        return dict(version=1, issue=self.issue, attempts={}, facts={}, turns={}, non_improving_turns=0,
+                    progress_seen=[], terminal_reason=None, last_stop=None)
+
+    def receipt_attempts(self):
+        """Legacy receipts are a second witness, never a source of free budget."""
+        attempts = set()
+        for path in (self.root.parent / 'evidence/v1/runs').glob('*/receipts/*.json'):
+            row = json.loads(path.read_text())
+            if not isinstance(row, dict): raise ValueError('invalid provider attempt record')
+            if row.get('issue') == self.issue:
+                if not isinstance(row.get('provider_attempt_id'), str): raise ValueError('invalid provider attempt identity')
+                attempts.add(row['provider_attempt_id'])
+        return attempts
+
+    def history(self):
+        if not self.history_path.exists(): return dict(attempts=[], reset_baseline=[])
+        value = json.loads(self.history_path.read_text())
+        if (not isinstance(value, dict) or set(value) != {'attempts', 'reset_baseline'}
+                or any(not isinstance(value[key], list) or any(not isinstance(v, str) for v in value[key])
+                       for key in ('attempts', 'reset_baseline'))):
+            raise ValueError('invalid ticket accounting history')
+        return value
 
     @contextmanager
-    def guard(self):
+    def guard(self, reset=False):
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         with os.fdopen(os.open(str(self.root / (self.issue + '.guard')), os.O_CREAT | os.O_RDWR, 0o600), 'a') as lock:
             deadline = time.monotonic() + 5
@@ -150,13 +218,32 @@ class Ledger:
                 except BlockingIOError:
                     if time.monotonic() >= deadline: raise OSError('ticket accounting lock unavailable')
                     time.sleep(.01)
-            value = json.loads(self.path.read_text()) if self.path.exists() else dict(
-                version=1, issue=self.issue, attempts={}, facts={}, turns={}, non_improving_turns=0,
-                progress_seen=[], terminal_reason=None, last_stop=None)
-            if (value.get('version') != 1 or value.get('issue') != self.issue
+            if reset:
+                yield self.fresh()
+                return
+            history = self.history()
+            witnessed = set(history['attempts']) | (self.receipt_attempts() - set(history['reset_baseline']))
+            try:
+                value = json.loads(self.path.read_text())
+            except FileNotFoundError:
+                value = self.fresh()
+            except (OSError, ValueError):
+                if not witnessed: raise
+                value = self.fresh()
+            if value == {} and witnessed: value = self.fresh()
+            if (not isinstance(value, dict) or value.get('version') != 1 or value.get('issue') != self.issue
                     or not isinstance(value.get('attempts'), dict)
                     or value.get('terminal_reason') not in (None, *STOP_CODES)):
                 raise ValueError('invalid ticket ledger; inspect before resuming')
+            prior = value.get('last_stop')
+            if prior is not None:
+                if (not isinstance(prior, dict) or prior.get('terminal_reason') not in STOP_CODES
+                        or prior['terminal_reason'] != value['terminal_reason'] or type(prior.get('code')) is not int):
+                    raise ValueError('invalid ticket ledger terminal reason')
+                stop_code(prior['terminal_reason'], prior.get('code'))
+            if witnessed - set(value['attempts']): value['accounting_lost'] = True
+            if type(value.get('accounting_lost', False)) is not bool:
+                raise ValueError('invalid ticket accounting status')
             for row in value['attempts'].values():
                 if (not isinstance(row, dict) or type(row.get('started_at')) not in (int, float)
                         or not math.isfinite(row['started_at']) or row['started_at'] < 0
@@ -164,17 +251,28 @@ class Ledger:
                             or not math.isfinite(row['ended_at']) or row['ended_at'] < row['started_at'])
                         or row.get('tokens') is not None and (type(row['tokens']) is not int or row['tokens'] < 0)):
                     raise ValueError('invalid ticket attempt measurements')
+                lower = row.get('tokens_known', row.get('tokens') or 0)
+                if (type(lower) is not int or lower < 0
+                        or row.get('tokens') is not None and lower != row['tokens']):
+                    raise ValueError('invalid ticket token lower bound')
             if type(value.get('non_improving_turns')) is not int or value['non_improving_turns'] < 0:
                 raise ValueError('invalid progress counter')
             yield value
 
     def call(self, method, *args, **kwargs):
-        # Disabled policies preserve the existing optional-evidence behavior.
+        # Only unwitnessed optional I/O may degrade; corrupt records fail closed.
         try: return getattr(self, method)(*args, **kwargs)
-        except (OSError, ValueError, KeyError, TypeError):
+        except OSError:
             if self.required: raise
             diagnostic('WARN: optional accounting unavailable')
             return None
+
+    def save_stop(self, value, reason, code, run=None, detail=None):
+        self._stop(value, reason, code, run, detail)
+        try: atomic(self.path, value)
+        except OSError:
+            if not value.get('accounting_lost'): raise
+            diagnostic('accounting lost; cannot persist stop, history still holds the ticket')
 
     def totals(self, value):
         now = self.clock()
@@ -191,12 +289,15 @@ class Ledger:
             process = live.get(row.get('pid'))
             return row['ended_at'] is None and process and not process[2] and str(process[1]) == row.get('birth')
         unknown = sum(v['tokens'] is None and not pending(v) for v in attempts)
-        known = sum(v['tokens'] for v in attempts if v['tokens'] is not None)
+        known = sum(v.get('tokens_known', v['tokens'] or 0) for v in attempts)
         return dict(provider_calls=len(attempts), tokens=None if any(v['tokens'] is None for v in attempts) else known, tokens_known=known,
                     unknown_usage=unknown, wall_seconds=sum(max(0, (v['ended_at'] if v['ended_at'] is not None else now) - v['started_at']) for v in attempts))
 
     def decision(self, value):
         totals = self.totals(value)
+        if value.get('accounting_lost'):
+            return dict(terminal_reason='budget', code=25, dimension='accounting', accounting_lost=True,
+                        detail='accounting lost; explicit reset required', totals=totals)
         for key in ('tokens', 'provider_calls', 'wall_seconds'):
             limit = self.budget[key]
             measured = totals['tokens_known'] if key == 'tokens' else totals[key]
@@ -213,12 +314,10 @@ class Ledger:
                                                           at=self.clock(), detail=detail))
 
     def check(self, run=None):
-        if not self.required: return None
         with self.guard() as value:
             decision = self.decision(value)
             if decision:
-                self._stop(value, decision['terminal_reason'], decision['code'], run, decision)
-                atomic(self.path, value)
+                self.save_stop(value, decision['terminal_reason'], decision['code'], run, decision)
             return decision
 
     def begin(self, identity, provider):
@@ -226,8 +325,8 @@ class Ledger:
         with self.guard() as value:
             decision = self.decision(value)
             if decision:
-                self._stop(value, decision['terminal_reason'], 25, identity['run_id'], decision)
-                atomic(self.path, value); return decision
+                self.save_stop(value, decision['terminal_reason'], 25, identity['run_id'], decision)
+                return decision
             attempt = identity['provider_attempt_id']
             if attempt in value['attempts']: raise ValueError('provider attempt reused')
             # Birth identity is used only to recognize live accounting, never to signal a PID.
@@ -238,13 +337,40 @@ class Ledger:
             value['attempts'][attempt] = dict(**identity, provider=provider, started_at=self.clock(), ended_at=None,
                                              tokens=None, normalized_exit=None, pid=os.getpid(), birth=str(process[1]) if process else None)
             atomic(self.path, value)
+            history = self.history()
+            history['attempts'] = sorted(set(history['attempts']) | set(value['attempts']))
+            atomic(self.history_path, history)
             return None
 
-    def finish(self, attempt, usage, code):
+    def reset(self):
+        """Operator-only lifetime reset; never an implicit retry or file deletion."""
+        if os.environ.get('BUREAU_RUN_ID') or os.environ.get('BUREAU_STAGE_ATTEMPT_ID'):
+            raise ValueError('stop drivers and leave the run environment before resetting accounting')
+        with self.guard(reset=True) as value:
+            # Serialize the reset with runtime claim admission as well as calls.
+            with (self.root.parent / 'guard').open('a') as ownership:
+                fcntl.flock(ownership, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                leases_path = self.root.parent / 'leases.json'
+                leases = json.loads(leases_path.read_text()) if leases_path.exists() else {}
+                if not isinstance(leases, dict) or 'issue:' + self.issue in leases:
+                    raise ValueError('reconcile ticket ownership before resetting accounting')
+                # A crash before the reset marker still fails closed against
+                # the previous history. Only this explicit command forgives it.
+                baseline = sorted(self.receipt_attempts())
+                atomic(self.path, value)
+                atomic(self.history_path, dict(attempts=[], reset_baseline=baseline))
+
+    def finish(self, attempt, usage, code, tokens_known=0):
         with self.guard() as value:
+            if attempt not in value['attempts'] and not self.required and not value.get('accounting_lost'):
+                diagnostic('WARN: optional attempt was not recorded')
+                return
             row = value['attempts'][attempt]
             if row['ended_at'] is None:
-                row.update(ended_at=self.clock(), tokens=token_count(usage, row['provider']), normalized_exit=code)
+                measured = token_count(usage, row['provider'])
+                if type(tokens_known) is not int or tokens_known < 0: raise ValueError('invalid token lower bound')
+                row.update(ended_at=self.clock(), tokens=measured,
+                           tokens_known=measured if measured is not None else tokens_known, normalized_exit=code)
                 atomic(self.path, value)
 
     def note_stop(self, reason, code, run=None):
@@ -252,26 +378,26 @@ class Ledger:
             # An originating cap/watchdog is more specific than its later generic hold.
             prior = value['last_stop']
             if prior and prior['run_id'] == run and prior['code'] == code and reason in ('human_hold', prior['terminal_reason']): return
-            self._stop(value, reason, code, run)
-            atomic(self.path, value)
+            self.save_stop(value, reason, code, run)
 
     def terminal(self, code, run=None):
         if code not in (0, 25, 26, 124): return None
         with self.guard() as value:
             prior = value['last_stop']
             if prior and prior['run_id'] == run and prior['code'] == code: return prior['terminal_reason']
-            reason = {124: 'timeout', 25: 'human_hold', 26: 'ticket_withdrawn'}.get(code)
+            reason = ('budget' if code == 25 and value.get('accounting_lost') else
+                      {124: 'timeout', 25: 'human_hold', 26: 'ticket_withdrawn'}.get(code))
             if reason:
-                self._stop(value, reason, code, run)
-                atomic(self.path, value)
+                self.save_stop(value, reason, code, run)
             return reason
 
-    def gate(self, run, turn, command_id, command, code, start, end, path):
+    def _record_gate(self, run, turn, command_id, command, code, start, end, path):
         if not self.progress['enabled'] or not run or not turn or code != 0 or not start or start != end: return
-        # This API is called only by the trusted outer shell / outside executor.
-        # A provider's receipt, declared status, checkbox or commit never calls it.
+        # Internal to executors that actually ran the canonical command. There
+        # is deliberately no CLI that accepts caller-supplied gate proof.
         proof = hashlib.sha256(Path(path).read_bytes()).hexdigest()
         with self.guard() as value:
+            if value.get('accounting_lost'): raise ValueError('accounting lost; gate cannot establish progress')
             for kind, entries in self.progress['contract'].items():
                 for key, expected in entries.items():
                     if expected == dict(command_id=command_id, command=command):
@@ -280,9 +406,32 @@ class Ledger:
                                                            contract_sha256=self.contract_digest))
             atomic(self.path, value)
 
+    def execute_gate(self, repo, run, turn, command_id, command, path):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('ticket_provider', Path(__file__).resolve().with_name('bureau-provider.py'))
+        provider = importlib.util.module_from_spec(spec); spec.loader.exec_module(provider)
+        repo = Path(repo).resolve()
+        stage = 'code_review' if command_id == 'review.build' else ('qa' if command_id == 'qa.test' else 'implement')
+        configured = provider.g.commands(self.config, repo, stage)
+        if command_id == 'review.build' and not configured:
+            if (repo / 'scripts/bureau-test.sh').is_file(): configured = ['bash scripts/bureau-test.sh']
+            elif (repo / 'package.json').is_file(): configured = ['npm run build']
+        if command_id not in GATE_IDS or configured != [command]:
+            raise ValueError('gate must execute the exact configured command')
+        start = provider.current_head(repo)
+        options = provider.configuration(stage, self.config, os.environ)
+        try: options['untrusted_env'] = provider.untrusted_env_mode(self.config)
+        except provider.UntrustedEnvError as exc: raise ValueError(str(exc)) from exc
+        code, abort = provider.outside_gate(options, repo, command, Path(path))
+        end = provider.current_head(repo)
+        if not abort:
+            self._record_gate(run, turn, command_id, command, code, start, end, path)
+        return 128 - code if code < 0 else code
+
     def end_turn(self, turn, run):
         if not self.progress['enabled']: return None
         with self.guard() as value:
+            if value.get('accounting_lost'): return self.decision(value)
             if turn in value['turns']: return self.decision(value)
             # Stable contract identities count once, even if a new HEAD or a
             # fresh provider replays the same successful gate indefinitely.
@@ -304,9 +453,10 @@ def main():
     sub = parser.add_subparsers(dest='action', required=True)
     sub.add_parser('check'); sub.add_parser('status')
     stop = sub.add_parser('stop'); stop.add_argument('reason', choices=STOP_CODES); stop.add_argument('code', type=int)
-    gate = sub.add_parser('gate')
-    for name in ('path', 'head', 'end-head', 'command', 'command-id'): gate.add_argument('--' + name, required=True)
-    gate.add_argument('--exit-code', type=int, required=True)
+    reset = sub.add_parser('reset')
+    reset.add_argument('--acknowledge-accounting-loss', action='store_true', required=True)
+    gate = sub.add_parser('execute-gate')
+    for name in ('path', 'command', 'command-id'): gate.add_argument('--' + name, required=True)
     args = parser.parse_args()
     try:
         repo = Path(args.repo).resolve(); ledger = Ledger(root_for(repo), args.issue, read_config(repo))
@@ -317,9 +467,10 @@ def main():
         elif args.action == 'status':
             with ledger.guard() as value: print(json.dumps(dict(value, totals=ledger.totals(value))))
         elif args.action == 'stop': ledger.call('note_stop', args.reason, args.code, run)
-        elif args.action == 'gate':
-            ledger.call('gate', run, os.environ.get('BUREAU_STAGE_ATTEMPT_ID'), args.command_id, args.command,
-                        args.exit_code, args.head, args.end_head, args.path)
+        elif args.action == 'reset': ledger.reset()
+        elif args.action == 'execute-gate':
+            return ledger.execute_gate(repo, run, os.environ.get('BUREAU_STAGE_ATTEMPT_ID'), args.command_id,
+                                       args.command, args.path)
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         diagnostic(str(exc)); return 24

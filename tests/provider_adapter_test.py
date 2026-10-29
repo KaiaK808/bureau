@@ -1905,8 +1905,11 @@ p.run=lost_result
 
     def test_foreign_receipt_and_stale_head_never_reconcile(self):
         schema=self.receipt_schema()
-        for field,foreign in [('issue','TEAM-2'),('provider_attempt_id','f'*32),('run_id','a'*32),
-                              ('stage','qa'),('phase','other-reviewer'),('end_head','0'*40)]:
+        # Each corruption case owns a fresh ticket: a forged attempt identity
+        # correctly holds that ticket's accounting on any subsequent call.
+        for number,(field,foreign) in enumerate([
+                ('issue','TEAM-2'),('provider_attempt_id','f'*32),('run_id','a'*32),
+                ('stage','qa'),('phase','other-reviewer'),('end_head','0'*40)], start=100):
             with self.subTest(field=field):
                 result=self.run_wrapped_provider('''
 recorded=p.run
@@ -1917,7 +1920,7 @@ def foreign_receipt(*args,**kwargs):
     p.e.atomic(path,value)
     return code,'late prose',metadata
 p.run=foreign_receipt
-''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}',BUREAU_CURRENT_ISSUE='TEAM-1',
+''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}',BUREAU_CURRENT_ISSUE='TEAM-'+str(number),
                     FOREIGN_FIELD=field,FOREIGN_VALUE=foreign)
                 self.assertEqual(result.stdout,'')
                 self.assertIn('no matching completion receipt',result.stderr)
