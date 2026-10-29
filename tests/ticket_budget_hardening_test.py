@@ -3,11 +3,13 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
 import time
 import unittest
+from unittest import mock
 
 from ticket_budget_test import AdapterFixture
 
@@ -47,7 +49,7 @@ class Hardening(AdapterFixture):
 ''' + text[end:]
             path.write_text(text)
         elif name == 'test_lost_accounting_requires_explicit_reset':
-            self.replace('bureau-ticket.py', "            if witnessed - set(value['attempts']): value['accounting_lost'] = True",
+            self.replace('bureau-ticket.py', "            if witnessed and (missing or set(history['attempts']) - set(value['attempts'])): value['accounting_lost'] = True",
                          '            if False: pass  # deliberately ignore lost accounting')
         elif name == 'test_quiet_waits_do_not_spend_progress':
             self.replace('bureau-runtime.py', 't.completed_work_turn(code)', 'code not in (20, 21, 25, 26, 130)')
@@ -69,8 +71,28 @@ class Hardening(AdapterFixture):
         elif name == 'test_nested_terminal_reason_is_validated':
             path = self.scripts / 'bureau-ticket.py'; text = path.read_text()
             start = text.index("            prior = value.get('last_stop')")
-            end = text.index("            if witnessed - set(value['attempts'])", start)
+            end = text.index("            if witnessed and (missing", start)
             path.write_text(text[:start] + text[end:])
+        elif name == 'test_upgrade_receipts_never_enable_accounting':
+            self.replace('bureau-ticket.py', '            witnessed = self.required and self.witness_path.exists()',
+                         "            witnessed = self.witness_path.exists() or any((self.root.parent / 'evidence/v1/runs').glob('*/receipts/*.json'))")
+            self.replace('bureau-ticket.py', "        if self.required and value.get('accounting_lost'):",
+                         "        if value.get('accounting_lost'):")
+        elif name == 'test_validation_receipts_are_not_paid_attempts':
+            self.replace('bureau-ticket.py', '            history = self.history() if witnessed else dict(attempts=[], reset_baseline=[])',
+                         '''            history = self.history() if witnessed else dict(attempts=[], reset_baseline=[])
+            for receipt in (self.root.parent / 'evidence/v1/runs').glob('*/receipts/*.json'):
+                row = json.loads(receipt.read_text())
+                if row.get('issue') == self.issue: history['attempts'].append(row['provider_attempt_id'])''')
+        elif name == 'test_partial_usage_keeps_each_valid_counter':
+            self.replace('bureau-ticket.py', "token_count(v.get('usage'), provider, partial=True)",
+                         "token_count(v.get('usage'), provider)")
+        elif name == 'test_finalization_accounting_io_is_optional_only_without_policies':
+            self.replace('bureau-runtime.py', ".call(\n                        'terminal', 130 if interrupted or code < 0 else code, run)",
+                         '.terminal(\n                        130 if interrupted or code < 0 else code, run)')
+        elif name == 'test_provider_free_progress_has_a_durable_witness':
+            self.replace('bureau-ticket.py', '        atomic(self.witness_path, dict(version=1, issue=self.issue))',
+                         "        if any(self.budget[k] for k in ('tokens', 'provider_calls', 'wall_seconds')): atomic(self.witness_path, dict(version=1, issue=self.issue))")
         else: self.fail('no negative control for ' + name)
 
     def ledger_object(self):
@@ -81,9 +103,10 @@ class Hardening(AdapterFixture):
                                '--repo', str(self.repo), '--issue', 'TEAM-1', *args],
                               cwd=self.repo, env={**self.env, **env}, capture_output=True, text=True, timeout=15)
 
-    def runtime(self, code, entry='implement-pipeline.sh'):
+    def runtime(self, code, entry='implement-pipeline.sh', wrapper=None):
         env = {k: v for k, v in self.env.items() if k not in ('BUREAU_RUN_ID', 'BUREAU_STAGE_ATTEMPT_ID')}
-        return subprocess.run([sys.executable, '-I', str(self.scripts / 'bureau-runtime.py'), '--repo', str(self.repo),
+        return subprocess.run([sys.executable, '-I', *([str(wrapper)] if wrapper else []),
+                               str(self.scripts / 'bureau-runtime.py'), '--repo', str(self.repo),
                                'exec', '--issue', 'TEAM-1', '--workspace', str(self.repo), '--entry', entry,
                                '--', '/bin/bash', '-c', 'exit ' + str(code)], cwd=self.repo, env=env,
                               capture_output=True, text=True, timeout=15)
@@ -188,7 +211,7 @@ elif tail == 'cancelled':
     def test_lost_accounting_requires_explicit_reset(self):
         self.config['agents']['ticket_budget'] = dict(provider_calls=2, allow_unknown_usage=True); self.save()
         path = self.repo / '.git/bureau/tickets/TEAM-1.json'
-        for damage in ('missing', 'empty', 'empty-object', 'unreadable', 'attempts', 'receipts-only', 'pruned'):
+        for damage in ('missing', 'empty', 'empty-object', 'unreadable', 'attempts', 'witness-only', 'pruned'):
             with self.subTest(damage=damage):
                 self.reset_accounting()
                 self.assertEqual(0, self.provider().returncode)
@@ -200,7 +223,7 @@ elif tail == 'cancelled':
                 else:
                     path.unlink()
                     if damage == 'unreadable': path.mkdir()
-                    elif damage == 'receipts-only': path.with_suffix('.attempts.json').unlink()
+                    elif damage == 'witness-only': path.with_suffix('.attempts.json').unlink()
                     elif damage == 'pruned':
                         import shutil
                         shutil.rmtree(self.repo / '.git/bureau/evidence')
@@ -305,6 +328,140 @@ bureau_run_gate review.log "$1" review.build
         path.write_text(json.dumps(original))
         self.assertEqual('budget', ledger.terminal(25, self.env['BUREAU_RUN_ID']))
 
+    def test_upgrade_receipts_never_enable_accounting(self):
+        # Produce real pre-upgrade receipts, then remove the new accounting files.
+        self.assertEqual(0, self.provider().returncode)
+        state = self.repo / '.git/bureau'
+        self.assertTrue(list((state / 'evidence/v1/runs').glob('*/receipts/*.json')))
+        self.assertFalse((state / 'ticket-witnesses/TEAM-1.json').exists())
+        for config in ({}, dict(agents=dict(ticket_budget=dict(tokens=0, provider_calls=0, wall_seconds=0),
+                                           ticket_progress=dict(enabled=False))),
+                       dict(agents=dict(ticket_budget=dict(provider_calls=2))),
+                       dict(agents=dict(ticket_progress=dict(enabled=True)))):
+            with self.subTest(config=config):
+                shutil.rmtree(state / 'tickets', ignore_errors=True)
+                shutil.rmtree(state / 'ticket-witnesses', ignore_errors=True)
+                self.config = config; self.save()
+                result = self.cli('check')
+                self.assertEqual(0, result.returncode, 'upgrade receipts must not stop execution: ' + result.stdout + result.stderr)
+                self.assertEqual(0, self.provider().returncode)
+                self.assertEqual(1, len(self.ledger()['attempts']))
+                self.assertFalse(list((state / 'ticket-control').glob('*/stop-*')))
+        # Even a real witness only enforces accounting loss while a policy is on.
+        (state / 'tickets/TEAM-1.json').unlink()
+        self.config = {}; self.save()
+        self.assertEqual(0, self.cli('check').returncode)
+        self.assertEqual(0, self.runtime(0).returncode)
+
+    def test_validation_receipts_are_not_paid_attempts(self):
+        self.config['agents']['ticket_budget'] = dict(tokens=100, provider_calls=2); self.save()
+        self.assertEqual(0, self.provider().returncode)
+        paid = set(self.ledger()['attempts'])
+        spec = importlib.util.spec_from_file_location('private_conflicts', self.scripts / 'bureau-conflicts.py')
+        conflicts = importlib.util.module_from_spec(spec); spec.loader.exec_module(conflicts)
+        head = subprocess.check_output(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'], text=True).strip()
+        transaction = conflicts.Transaction(self.repo, self.config, head, self.repo / '.bureau.json', issue='TEAM-1')
+        transaction.head = head
+        budget = conflicts.AttemptBudget(self.repo / '.git/bureau', 'TEAM-1', head)
+        record = budget.reserve(1, head, 'merge', dict(runner='codex'), ['README.md'])
+        transaction.reservations = [(budget, record)]
+        with mock.patch.dict(os.environ, self.env, clear=True): transaction.evidence('complete')
+        receipts = [json.loads(p.read_text()) for p in (self.repo / '.git/bureau/evidence/v1/runs').glob('*/receipts/*.json')]
+        summaries = [row for row in receipts if row['phase'] == 'validation']
+        self.assertEqual(1, len(summaries), 'exercise the real Transaction.evidence receipt path')
+        self.assertNotIn(summaries[0]['provider_attempt_id'], paid)
+        result = self.cli('check')
+        self.assertEqual(0, result.returncode, 'validation receipt must not spend a paid attempt: ' + result.stdout + result.stderr)
+        self.assertEqual(paid, set(self.ledger()['attempts']))
+        self.assertEqual(0, self.provider().returncode)
+        result = self.cli('check'); self.assertEqual(25, result.returncode, result.stdout + result.stderr)
+        stop = json.loads(result.stdout)
+        self.assertEqual('provider_calls', stop['dimension'])
+        self.assertEqual((2, 16), (stop['totals']['provider_calls'], stop['totals']['tokens_known']))
+
+    def test_partial_usage_keeps_each_valid_counter(self):
+        self.config['agents']['ticket_budget'] = dict(tokens=100, allow_unknown_usage=True)
+        for provider, usage, lower in (
+                ('codex', dict(input_tokens=120), 120),
+                ('codex', dict(output_tokens=120), 120),
+                ('codex', dict(input_tokens=True, output_tokens=120), 120),
+                ('codex', dict(input_tokens=-5, output_tokens=120, cached_input_tokens=500), 120),
+                ('claude', dict(input_tokens=20, output_tokens=30, cache_read_input_tokens=70), 120),
+                ('claude', dict(cache_creation_input_tokens=120), 120)):
+            with self.subTest(provider=provider, usage=usage):
+                self.config['agents']['runner'] = provider; self.save(); self.reset_accounting()
+                result = self.provider(FAKE_USAGE=json.dumps(usage))
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                result = self.cli('check')
+                self.assertEqual(25, result.returncode, 'partial usage must enforce its known lower bound: ' + result.stdout + result.stderr)
+                totals = json.loads(result.stdout)['totals']
+                self.assertEqual((None, lower, 1), (totals['tokens'], totals['tokens_known'], totals['unknown_usage']))
+                before = self.events(); self.assertEqual(25, self.provider().returncode)
+                self.assertEqual(before, self.events())
+        self.config['agents']['runner'] = 'codex'; self.save(); self.reset_accounting()
+        self.assertEqual(0, self.provider(FAKE_USAGE='{"input_tokens":12}').returncode)
+        self.assertEqual(0, self.cli('check').returncode)
+        self.assertEqual(12, next(iter(self.ledger()['attempts'].values()))['tokens_known'])
+        self.config['agents']['ticket_budget']['allow_unknown_usage'] = False; self.save()
+        self.assertTrue(json.loads(self.cli('check').stdout)['usage_unknown'])
+
+    def test_finalization_accounting_io_is_optional_only_without_policies(self):
+        wrapper = self.root / 'accounting-fault.py'
+        wrapper.write_text('''import importlib.util, sys
+from pathlib import Path
+from unittest import mock
+sys.argv = sys.argv[1:]
+spec = importlib.util.spec_from_file_location('fault_runtime', sys.argv[0])
+runtime = importlib.util.module_from_spec(spec); spec.loader.exec_module(runtime)
+blocked_path = Path(sys.argv[sys.argv.index('--repo') + 1]) / '.git/bureau/tickets'
+mkdir = Path.mkdir
+def blocked(self, *args, **kwargs):
+    if self == blocked_path: raise PermissionError('accounting fixture denial')
+    return mkdir(self, *args, **kwargs)
+with mock.patch.object(Path, 'mkdir', blocked): sys.exit(runtime.main())
+''')
+        for config in ({}, dict(agents=dict(ticket_budget=dict(provider_calls=1))),
+                       dict(agents=dict(ticket_progress=dict(enabled=True)))):
+            self.config = config; self.save()
+            for code in (0, 25, 26, 124):
+                with self.subTest(config=config, code=code):
+                    result = self.runtime(code, wrapper=wrapper)
+                    expected = 24 if config else code
+                    self.assertEqual(expected, result.returncode,
+                                     'finalization must preserve optional accounting exits: ' + result.stdout + result.stderr)
+                    if not config: self.assertIn('optional accounting unavailable', result.stderr)
+        self.config = {}; self.save()
+        result = self.runtime(25)
+        self.assertEqual(25, result.returncode, result.stdout + result.stderr)
+        self.assertEqual('human_hold', self.ledger()['terminal_reason'])
+
+    def test_provider_free_progress_has_a_durable_witness(self):
+        self.config['agents']['ticket_progress'] = dict(enabled=True); self.save()
+        # An intact ledger still reaches the ordinary two-turn stall.
+        self.assertEqual(0, self.runtime(0).returncode)
+        self.assertEqual(25, self.runtime(0).returncode)
+        self.assertEqual(('stalled', 2), (self.ledger()['terminal_reason'], self.ledger()['non_improving_turns']))
+        for damage in ('missing', 'empty', 'empty-object', 'unreadable', 'directory'):
+            with self.subTest(damage=damage):
+                self.reset_accounting()
+                self.assertEqual(0, self.runtime(0).returncode)
+                self.assertEqual(1, self.ledger()['non_improving_turns'])
+                path = self.ledger_object().path
+                if damage == 'empty': path.write_text('')
+                elif damage == 'empty-object': path.write_text('{}')
+                elif damage == 'directory': shutil.rmtree(path.parent)
+                else:
+                    path.unlink()
+                    if damage == 'unreadable': path.mkdir()
+                result = self.runtime(0)
+                self.assertEqual(25, result.returncode, 'lost progress must hold with its durable witness: ' + result.stdout + result.stderr)
+                result = self.cli('check'); self.assertEqual(25, result.returncode, result.stdout + result.stderr)
+                stop = json.loads(result.stdout)
+                self.assertEqual(('budget', True), (stop['terminal_reason'], stop['accounting_lost']))
+                self.assertTrue(self.ledger_object().witness_path.is_file())
+                self.assertEqual([], self.events())
+                if path.is_dir(): path.rmdir()
+
 
 if __name__ == '__main__':
     negative = '--negative-control' in sys.argv
@@ -313,8 +470,8 @@ if __name__ == '__main__':
         for name in unittest.defaultTestLoader.getTestCaseNames(Hardening):
             setattr(Hardening, name, unittest.expectedFailure(getattr(Hardening, name)))
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(Hardening))
-    if negative and len(result.expectedFailures) != 8:
-        sys.exit('each of the eight guard removals must fail its regression assertion')
+    if negative and len(result.expectedFailures) != 13:
+        sys.exit('each of the thirteen guard removals must fail its regression assertion')
     markers = dict(
         test_latch_precedes_diagnostics='latch must precede diagnostics',
         test_incomplete_turns_are_unknown='incomplete turn usage must hold',
@@ -323,10 +480,15 @@ if __name__ == '__main__':
         test_gate_proof_cannot_be_submitted='caller proof must not establish progress',
         test_review_build_is_a_qualified_gate='review.build must qualify',
         test_standalone_stops_record_reasons='standalone stop must persist reason',
-        test_nested_terminal_reason_is_validated='nested reason must be rejected')
+        test_nested_terminal_reason_is_validated='nested reason must be rejected',
+        test_upgrade_receipts_never_enable_accounting='upgrade receipts must not stop execution',
+        test_validation_receipts_are_not_paid_attempts='validation receipt must not spend a paid attempt',
+        test_partial_usage_keeps_each_valid_counter='partial usage must enforce its known lower bound',
+        test_finalization_accounting_io_is_optional_only_without_policies='finalization must preserve optional accounting exits',
+        test_provider_free_progress_has_a_durable_witness='lost progress must hold with its durable witness')
     if negative:
         for case, failure in result.expectedFailures:
             if markers[case._testMethodName] not in failure:
                 sys.exit('negative control failed before reaching its safety assertion: ' + case._testMethodName)
-    if negative and result.wasSuccessful(): print('PASS: all eight private guard removals were detected')
+    if negative and result.wasSuccessful(): print('PASS: all thirteen private guard removals were detected')
     sys.exit(not result.wasSuccessful())

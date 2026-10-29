@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="226380b144ac53c7267f9d07f6a2d4868812e7c87d025349d90e8170c40fb282">
+<meta name="bureau-source-sha256" content="e477b142b4d4d066fcd2f7abb712bc127904fce31d6bd6ba4e82c23daf4bffb1">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -973,13 +973,15 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="
 <p>Each dimension is independently optional; absent/null/0 disables it.
 Wrong types, unknown keys, negative/nonfinite limits or invalid
 contracts refuse execution with 24. Tokens/calls require integers; wall
-seconds may be fractional. Auth/help probes and deterministic shell
-checks are not provider attempts. Wall time sums provider intervals,
-including concurrent calls, excluding idle queue time. Tokens include
-input/output plus Claude's disjoint cache-read/cache-creation input.
-Codex cached input is already included in input tokens. Every required
-counter must be reported; otherwise the attempt and aggregate token
-total stay unknown, with a separate known lower bound. Accounting is
+seconds may be fractional. Auth/help probes, deterministic shell checks
+and conflict-resolution validation receipts are not paid provider
+attempts; only identities admitted through the ticket ledger count. Wall
+time sums provider intervals, including concurrent calls, excluding idle
+queue time. Tokens include input/output plus Claude's disjoint
+cache-read/cache-creation input. Codex cached input is already included
+in input tokens. Every required counter must be reported; otherwise the
+attempt and aggregate token total stay unknown. Every valid reported
+counter still contributes to the known lower bound. Accounting is
 independent of <code>session.cost_tracking</code>.</p>
 <p><code>allow_unknown_usage: true</code> explicitly permits unreported
 tokens, retaining null totals and enforcing the known lower bound. It
@@ -1028,28 +1030,31 @@ dispatch lanes and three explicit batch lanes.</p>
 Authoritative records live under
 <code>&lt;common-git-dir&gt;/bureau/tickets/TEAM-123.json</code>,
 outside prunable evidence. A sibling <code>TEAM-123.attempts.json</code>
-retains admitted attempt identities and the explicit reset baseline.
-Provider receipts supply a second accounting-loss witness. A missing,
-empty, unreadable ledger or missing attempt rows with witnessed provider
-attempts stops with 25 / <code>budget</code>,
-<code>accounting_lost: true</code>; it never creates a fresh allowance
-or progress reset, even with unknown usage allowed or policies
-subsequently disabled. Keep both files. Counters survive reruns and
-evidence pruning; earlier receipt-only histories are not silently
-backfilled or forgiven. Invalid ledgers, including invalid nested stop
-reasons/exit pairs, fail closed with 24. With both policies disabled,
-optional I/O failures without evidence of lost accounting still warn
-without changing execution.</p>
+retains only ledger-admitted attempt identities. When either policy is
+enabled, initialization durably writes
+<code>&lt;common-git-dir&gt;/bureau/ticket-witnesses/TEAM-123.json</code>
+before creating the ledger. This marker is separate runtime state
+outside provider-writable worktrees, including for progress without
+provider calls. With a policy enabled and a witness present, a missing,
+empty or unreadable ledger, or missing admitted attempt rows, stops with
+25 / <code>budget</code>, <code>accounting_lost: true</code>, even with
+unknown usage allowed. Keep the ledger, admission history and witness
+across cleanup. Receipts of any age or type never witness accounting
+loss or add paid attempts; old receipts without a ledger do not stop an
+upgraded repository with configuration <code>{}</code>. Invalid ledgers,
+including invalid nested stop reasons/exit pairs, fail closed with 24.
+With both policies disabled, accounting I/O failures warn without
+changing execution, including runtime finalization; accounting-loss
+policy holds are disabled too.</p>
 <p>To resume, stop drivers, inspect preserved work and the ledger,
 reconcile ownership, and raise an exhausted limit if appropriate. A
 deliberate new lifetime allowance/progress reset requires
 <code>python3 -I scripts/bureau-ticket.py --repo . --issue TEAM-123 reset --acknowledge-accounting-loss</code>,
-outside a run environment and with no ticket ownership claim. This also
-authorizes a baseline for a receipt-only history from an earlier
-runtime. Then clear the ticket's dispatcher skip/human hold. Deleting or
-emptying a ledger is not a reset command. Separate clones/hosts and
-calls bypassing Bureau's adapter are outside this local contract.
-Compare installed drift, resync all scripts together including
+outside a run environment and with no ticket ownership claim. Then clear
+the ticket's dispatcher skip/human hold. Deleting or emptying a
+witnessed ledger is not a reset command. Separate clones/hosts and calls
+bypassing Bureau's adapter are outside this local contract. Compare
+installed drift, resync all scripts together including
 <code>bureau-ticket.py</code>, and restart drivers before enabling.
 Tests use fake providers/services, real Git and per-guard negative
 controls; live adopter/provider qualification remains outstanding. See

@@ -110,13 +110,13 @@ def atomic(path, value):
         if os.path.exists(name): os.unlink(name)
 
 
-def token_count(usage, provider):
+def token_count(usage, provider, partial=False):
     """Claude caches are disjoint input; Codex cached input is already included."""
     fields = ('input_tokens', 'output_tokens')
     if provider == 'claude': fields += ('cache_read_input_tokens', 'cache_creation_input_tokens')
-    if not isinstance(usage, dict) or any(type(usage.get(k)) is not int or usage[k] < 0 for k in fields):
-        return None
-    return sum(usage[k] for k in fields)
+    counts = [usage[k] for k in fields if isinstance(usage, dict) and type(usage.get(k)) is int and usage[k] >= 0]
+    if not partial and len(counts) != len(fields): return None
+    return sum(counts)
 
 
 def reported_usage(provider, directory, complete=True):
@@ -166,7 +166,7 @@ def reported_lower_bound(provider, directory):
             for line in raw.splitlines():
                 try: events.append(json.loads(line))
                 except ValueError: pass
-        counts = [token_count(v.get('usage'), provider) for v in events if isinstance(v, dict)
+        counts = [token_count(v.get('usage'), provider, partial=True) for v in events if isinstance(v, dict)
                   and (v.get('type') == 'turn.completed' if provider == 'codex' else v.get('type') in (None, 'result'))]
         known = [count for count in counts if count is not None]
         return sum(known) if provider == 'codex' else max(known, default=0)
@@ -183,21 +183,16 @@ class Ledger:
         self.required = any(self.budget[k] for k in ('tokens', 'provider_calls', 'wall_seconds')) or self.progress['enabled']
         self.path = self.root / (issue + '.json')
         self.history_path = self.root / (issue + '.attempts.json')
+        self.witness_path = self.root.parent / 'ticket-witnesses' / (issue + '.json')
 
     def fresh(self):
         return dict(version=1, issue=self.issue, attempts={}, facts={}, turns={}, non_improving_turns=0,
                     progress_seen=[], terminal_reason=None, last_stop=None)
 
-    def receipt_attempts(self):
-        """Legacy receipts are a second witness, never a source of free budget."""
-        attempts = set()
-        for path in (self.root.parent / 'evidence/v1/runs').glob('*/receipts/*.json'):
-            row = json.loads(path.read_text())
-            if not isinstance(row, dict): raise ValueError('invalid provider attempt record')
-            if row.get('issue') == self.issue:
-                if not isinstance(row.get('provider_attempt_id'), str): raise ValueError('invalid provider attempt identity')
-                attempts.add(row['provider_attempt_id'])
-        return attempts
+    def mark_witness(self):
+        # Runtime state, outside provider-writable worktrees and prunable evidence.
+        self.witness_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        atomic(self.witness_path, dict(version=1, issue=self.issue))
 
     def history(self):
         if not self.history_path.exists(): return dict(attempts=[], reset_baseline=[])
@@ -221,16 +216,17 @@ class Ledger:
             if reset:
                 yield self.fresh()
                 return
-            history = self.history()
-            witnessed = set(history['attempts']) | (self.receipt_attempts() - set(history['reset_baseline']))
+            witnessed = self.required and self.witness_path.exists()
+            history = self.history() if witnessed else dict(attempts=[], reset_baseline=[])
+            missing = False
             try:
                 value = json.loads(self.path.read_text())
             except FileNotFoundError:
-                value = self.fresh()
+                value = self.fresh(); missing = True
             except (OSError, ValueError):
                 if not witnessed: raise
-                value = self.fresh()
-            if value == {} and witnessed: value = self.fresh()
+                value = self.fresh(); missing = True
+            if value == {} and witnessed: value = self.fresh(); missing = True
             if (not isinstance(value, dict) or value.get('version') != 1 or value.get('issue') != self.issue
                     or not isinstance(value.get('attempts'), dict)
                     or value.get('terminal_reason') not in (None, *STOP_CODES)):
@@ -241,7 +237,7 @@ class Ledger:
                         or prior['terminal_reason'] != value['terminal_reason'] or type(prior.get('code')) is not int):
                     raise ValueError('invalid ticket ledger terminal reason')
                 stop_code(prior['terminal_reason'], prior.get('code'))
-            if witnessed - set(value['attempts']): value['accounting_lost'] = True
+            if witnessed and (missing or set(history['attempts']) - set(value['attempts'])): value['accounting_lost'] = True
             if type(value.get('accounting_lost', False)) is not bool:
                 raise ValueError('invalid ticket accounting status')
             for row in value['attempts'].values():
@@ -257,10 +253,17 @@ class Ledger:
                     raise ValueError('invalid ticket token lower bound')
             if type(value.get('non_improving_turns')) is not int or value['non_improving_turns'] < 0:
                 raise ValueError('invalid progress counter')
+            if self.required and not witnessed:
+                # Start witnessing only this ledger, never receipts from an
+                # earlier release or non-paid validation receipt identities.
+                atomic(self.history_path, dict(attempts=sorted(value['attempts']), reset_baseline=[]))
+                self.mark_witness()
+                # A crash after the marker but before this write fails closed.
+                if missing: atomic(self.path, value)
             yield value
 
     def call(self, method, *args, **kwargs):
-        # Only unwitnessed optional I/O may degrade; corrupt records fail closed.
+        # With both policies off, accounting I/O is optional at every boundary.
         try: return getattr(self, method)(*args, **kwargs)
         except OSError:
             if self.required: raise
@@ -295,7 +298,7 @@ class Ledger:
 
     def decision(self, value):
         totals = self.totals(value)
-        if value.get('accounting_lost'):
+        if self.required and value.get('accounting_lost'):
             return dict(terminal_reason='budget', code=25, dimension='accounting', accounting_lost=True,
                         detail='accounting lost; explicit reset required', totals=totals)
         for key in ('tokens', 'provider_calls', 'wall_seconds'):
@@ -354,21 +357,22 @@ class Ledger:
                 leases = json.loads(leases_path.read_text()) if leases_path.exists() else {}
                 if not isinstance(leases, dict) or 'issue:' + self.issue in leases:
                     raise ValueError('reconcile ticket ownership before resetting accounting')
-                # A crash before the reset marker still fails closed against
-                # the previous history. Only this explicit command forgives it.
-                baseline = sorted(self.receipt_attempts())
+                if self.required and not self.witness_path.exists(): self.mark_witness()
+                # A crash before clearing history still fails closed against
+                # the previous admissions. Only this explicit command forgives it.
                 atomic(self.path, value)
-                atomic(self.history_path, dict(attempts=[], reset_baseline=baseline))
+                atomic(self.history_path, dict(attempts=[], reset_baseline=[]))
 
     def finish(self, attempt, usage, code, tokens_known=0):
         with self.guard() as value:
-            if attempt not in value['attempts'] and not self.required and not value.get('accounting_lost'):
+            if attempt not in value['attempts'] and not self.required:
                 diagnostic('WARN: optional attempt was not recorded')
                 return
             row = value['attempts'][attempt]
             if row['ended_at'] is None:
                 measured = token_count(usage, row['provider'])
                 if type(tokens_known) is not int or tokens_known < 0: raise ValueError('invalid token lower bound')
+                tokens_known = max(tokens_known, token_count(usage, row['provider'], partial=True))
                 row.update(ended_at=self.clock(), tokens=measured,
                            tokens_known=measured if measured is not None else tokens_known, normalized_exit=code)
                 atomic(self.path, value)
@@ -385,7 +389,7 @@ class Ledger:
         with self.guard() as value:
             prior = value['last_stop']
             if prior and prior['run_id'] == run and prior['code'] == code: return prior['terminal_reason']
-            reason = ('budget' if code == 25 and value.get('accounting_lost') else
+            reason = ('budget' if code == 25 and self.required and value.get('accounting_lost') else
                       {124: 'timeout', 25: 'human_hold', 26: 'ticket_withdrawn'}.get(code))
             if reason:
                 self.save_stop(value, reason, code, run)

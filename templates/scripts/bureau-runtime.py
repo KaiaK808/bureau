@@ -911,8 +911,8 @@ def execute(repo, args, store):
             terminal_error = False
             try:
                 if args.issue:
-                    terminal_reason = t.Ledger(store.root, args.issue, read(config_for(repo))).terminal(
-                        130 if interrupted or code < 0 else code, run)
+                    terminal_reason = t.Ledger(store.root, args.issue, read(config_for(repo))).call(
+                        'terminal', 130 if interrupted or code < 0 else code, run)
             except (OSError, ValueError, KeyError, TypeError):
                 # Reasons are part of the protocol for standalone drivers too.
                 # Corrupt accounting cannot publish an unchecked lane reason.
