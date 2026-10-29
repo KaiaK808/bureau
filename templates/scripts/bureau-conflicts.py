@@ -38,8 +38,8 @@ class Declined(Exception):
 
 
 class ProviderStop(Declined):
-    def __init__(self, code):
-        super().__init__('provider or ticket stopped the transaction')
+    def __init__(self, code, reason='provider or ticket stopped the transaction'):
+        super().__init__(reason)
         self.code = code
 
 
@@ -290,6 +290,7 @@ class Transaction:
         self.result_file = result_file
         self.failure_result_file = failure_result_file
         self.failure_cause = 'human_hold'
+        self.termination_uncertain = False
 
     def git(self, *args, check=True, data=None):
         result = subprocess.run(['git', '-C', str(self.repo), *args], input=data, capture_output=True, env=self.git_env)
@@ -482,8 +483,10 @@ class Transaction:
         try: code, abort = provider.outside_gate(options, self.repo, check, log)
         except provider.GateExecutionError as exc:
             failure = exc
+            self.termination_uncertain = exc.uncertain
             code, abort = exc.code, exc.abort
-        tracked = {os.fsdecode(p) for p in self.git('ls-files', '-z').stdout.split(b'\0') if p}
+        tracked = ({os.fsdecode(p) for p in self.git('ls-files', '-z').stdout.split(b'\0') if p}
+                   if failure is None and code == 0 and not abort else set())
         valid = (failure is None and code == 0 and not abort and self.identity() == identity
                  and not changed(before, inventory(self.repo)) & tracked
                  and not self.git('diff', '--name-only').stdout
@@ -493,10 +496,16 @@ class Transaction:
                 budget.finish(record, check_outcome='passed' if valid else 'failed', check_exit=code)
         finally:
             if code == 130: raise ProviderStop(130)
-        self.checkpoint()
+            if failure is not None and failure.uncertain:
+                self.failure_cause = 'human_hold'
+                raise ProviderStop(code, failure.reason) from failure
+            if code == 124:
+                self.failure_cause = 'timeout'
+                raise ProviderStop(124)
         if failure is not None:
             self.failure_cause = 'timeout' if code == 124 else 'gate_red'
             raise Declined(failure.reason) from failure
+        self.checkpoint()
         if not valid:
             self.failure_cause = 'gate_red'
             raise Declined('external conflict validation failed or changed the checked tree')
@@ -720,6 +729,11 @@ class Transaction:
                 self.complete()
                 return 0
             except BaseException as failure:
+                if self.termination_uncertain:
+                    # A surviving writer may still change the checkout. Keep
+                    # the merge/index/worktree and all reservations untouched.
+                    print('  human_hold: conflict gate termination uncertain; checkout preserved.', file=sys.stderr)
+                    raise
                 restoration_errors = set()
                 try:
                     self.git(self.operation, '--abort', check=False)

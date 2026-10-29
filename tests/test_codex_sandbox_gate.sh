@@ -320,5 +320,39 @@ assert_eq 0 "$LAST_RC" 'duplicate-check control still completes'
 assert_calls_include 'move_issue.*state-build-review' 'duplicate-check control still hands off'
 assert_eq 2 "$(test_runs)" 'without the pending guard tests run twice'
 teardown
+# An uncertain outside gate stops before routing or any further publication.
+for stop_code in 25 124 130; do
+  setup
+  cat >> "$SCRIPTS_DIR/bureau-config.sh" <<EOF
+codex_gate_run() {
+  printf '%s\n' '{"eligible":false,"green":false,"reason":"outside gate termination uncertain","failure_cause":"human_hold","logs":["uncertain-gate.log"]}'
+  return $stop_code
+}
+EOF
+  run_implement_pipeline TEAM-123
+  assert_eq "$stop_code" "$LAST_RC" 'uncertain outside gate preserves its stop'
+  assert_calls_exclude 'move_issue' 'uncertain gate never hands off'
+  assert_calls_exclude 'add_issue_label.*needs-human' 'uncertain gate stops before routing mutations'
+  assert_match 'uncertain-gate.log' "$LAST_STDERR" 'uncertain stop keeps its log pointer'
+  teardown
+done
+
+setup
+cat >> "$SCRIPTS_DIR/bureau-config.sh" <<'EOF'
+codex_gate_run() { printf '%s\n' '{"green":false,"logs":[]}'; return 25; }
+EOF
+python3 - "$SCRIPTS_DIR/implement-pipeline.sh" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); text=p.read_text(); anchor='25|124|130)'
+assert text.count(anchor)==1
+p.write_text(text.replace(anchor,'124|130)',1))
+PY
+run_implement_pipeline TEAM-123
+if assert_eq 25 "$LAST_RC" 'uncertain gate stop' > "$SANDBOX/logs/control.log" 2>&1; then
+  echo 'FAIL: removing the uncertain gate stop passed its exit assertion' >&2; exit 1
+fi
+echo 'PASS negative control: implement must propagate the uncertain gate hold'
+teardown
 trap - EXIT
 echo 'OK test_codex_sandbox_gate'

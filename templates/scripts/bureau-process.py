@@ -1,15 +1,63 @@
 #!/usr/bin/env python3
-"""Owned process-group signalling and conservative, zombie-aware inspection."""
+"""Conservative process-group signalling and durable unfinished-process holds."""
+import errno
+import fcntl
+import json
 import os
+from pathlib import Path
 import subprocess
+import sys
+import time
+import uuid
+
+
+# macOS can deny even signal 0 for an unreaped zombie-only group. Share one
+# two-second monotonic budget per signal failure or exit check, never per retry.
+# A successful probe can also mean a signalled writer is still exiting.
+GROUP_REPROBE_SECONDS = 2.0
 
 
 class TerminationUncertain(OSError):
     """A group may still contain a writer; a leader's exit is no proof."""
 
 
+def _signal_group(group, signum, *, wait_for_exit=False, reap=None):
+    """Share bounded probes; only a successful exit-check deadline permits ps."""
+    error = None
+    try: os.killpg(group, signum)
+    except ProcessLookupError: return True
+    except OSError as exc:
+        if exc.errno != errno.EPERM: raise
+        error = exc
+    else:
+        if not wait_for_exit: return False
+    deadline = time.monotonic() + GROUP_REPROBE_SECONDS
+    delay = .01
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0: break
+        time.sleep(min(delay, remaining))
+        # A zombie-only group cannot disappear until its owner reaps it. Do
+        # that while probing, rather than delaying the provider wrapper until
+        # after its enclosing runtime has returned. Only ESRCH proves absence.
+        if reap is not None:
+            try: reap()
+            except OSError: pass
+        if time.monotonic() > deadline: break
+        try: os.killpg(group, 0)
+        except ProcessLookupError: return True
+        except OSError as exc: error = exc
+        else:
+            # Exit checks can inspect after a successful final probe. A failed
+            # termination signal still needs ESRCH to resolve its uncertainty.
+            if wait_for_exit: error = None
+        delay = min(delay * 2, .1)
+    if error is not None: raise error
+    return False
+
+
 def inspect_groups(groups):
-    """Return live groups from a complete macOS/Linux ps snapshot, or refuse."""
+    """Return visible live groups; a listing can never override a signal error."""
     try:
         output = subprocess.check_output(['/bin/ps', '-axo', 'pgid=,stat='], text=True,
                                          stderr=subprocess.DEVNULL, timeout=2)
@@ -26,25 +74,100 @@ def inspect_groups(groups):
         raise TerminationUncertain('Cannot confirm process groups stopped; process-state inspection unavailable') from exc
 
 
-def assert_groups_stopped(groups, *, inspect=False):
-    """Never signal stored IDs. EPERM and successful probes require inspection."""
+def assert_groups_stopped(groups):
+    """Wait for asynchronous exit; inspect only after a successful probe deadline."""
     pending = set(groups)
-    if not inspect:
-        for group in list(pending):
-            try: os.killpg(group, 0)
-            except ProcessLookupError: pending.remove(group)
-            except PermissionError: pass
+    for group in list(pending):
+        try:
+            if _signal_group(group, 0, wait_for_exit=True): pending.remove(group)
+        except OSError as exc:
+            raise TerminationUncertain('Cannot confirm process group stopped: ' + str(exc)) from exc
     if pending and inspect_groups(pending):
         raise TerminationUncertain('Background process group still alive; stop it before continuing')
 
 
 def signal_group(child, signum):
-    """EPERM is a failure unless a complete inspection proves no live member."""
-    try: os.killpg(child.pid, signum)
-    except ProcessLookupError: return
-    except PermissionError:
+    """EPERM gets a bounded ESRCH re-probe; other errors remain uncertain."""
+    try: _signal_group(child.pid, signum, reap=child.poll)
+    except OSError as exc:
         # Killing the leader may help, but never proves descendants are gone.
-        if child.poll() is None:
-            try: child.kill()
-            except OSError: pass
-        assert_groups_stopped({child.pid}, inspect=True)
+        try:
+            if child.poll() is None: child.kill()
+        except OSError: pass
+        raise TerminationUncertain('Process group termination uncertain: ' + str(exc)) from exc
+
+
+class ProcessHold:
+    """Write ahead of spawn; unlock on return, remove only after confirmed cleanup."""
+    def __init__(self, root, kind, workspace):
+        directory = Path(root) / 'process-holds'
+        directory.mkdir(parents=True, exist_ok=True)
+        self.path = directory / (uuid.uuid4().hex + '.json')
+        pending = self.path.with_suffix('.pending')
+        self.handle = pending.open('x')
+        try:
+            fcntl.flock(self.handle, fcntl.LOCK_EX)
+            os.chmod(pending, 0o600)
+            json.dump(dict(reason='human_hold', kind=kind, workspace=str(workspace),
+                           run_id=os.environ.get('BUREAU_RUN_ID'),
+                           issue=os.environ.get('BUREAU_CURRENT_ISSUE')), self.handle)
+            self.handle.flush()
+            os.fsync(self.handle.fileno())
+            pending.replace(self.path)
+            self.sync_directory()
+        except BaseException:
+            self.handle.close()
+            pending.unlink(missing_ok=True)
+            raise
+
+    def sync_directory(self):
+        fd = os.open(self.path.parent, os.O_RDONLY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
+
+    def close(self, stopped=False):
+        try:
+            if stopped:
+                self.path.unlink()
+                self.sync_directory()
+        finally:
+            self.handle.close()
+
+
+def process_holds(root, run=None, inactive_only=False):
+    """Active locks allow parallel dispatch; unfinished unlocked records hold it."""
+    held = []
+    try:
+        with os.scandir(Path(root) / 'process-holds') as entries:
+            paths = [Path(entry.path) for entry in entries if entry.name.endswith('.json')]
+    except FileNotFoundError: return held
+    except OSError: return [Path(root) / 'process-holds']  # Unreadable coordination is a hold.
+    for path in paths:
+        try:
+            with path.open() as handle:
+                if inactive_only:
+                    try: fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    except BlockingIOError: continue
+                try: record = json.load(handle)
+                except ValueError: record = {}  # An unreadable identity holds every run.
+                # Unowned dispatcher policy helpers have their own global hold;
+                # they do not acquire or retain an unrelated lane's leases.
+                if (run is not None and isinstance(record, dict)
+                        and record.get('kind') == 'dispatcher_helper' and not record.get('run_id')):
+                    continue
+                if run is None or not isinstance(record, dict) or not record.get('run_id') or record['run_id'] == run:
+                    held.append(path)
+        except FileNotFoundError: pass  # A confirmed cleanup removed this record.
+        except OSError: held.append(path)
+    return held
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Refuse cleanup while an unfinished process hold exists.')
+    parser.add_argument('--root', required=True, type=Path)
+    parser.add_argument('--run')
+    args = parser.parse_args()
+    if process_holds(args.root, args.run):
+        print('bureau: human_hold: unfinished process hold; worktree cleanup refused', file=sys.stderr)
+        sys.exit(25)

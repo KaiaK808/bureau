@@ -345,5 +345,38 @@ assert_eq 1 "$(test_runs)" 'provider refusal stops before Phase 3'
 assert_calls_exclude 'move_issue' 'provider refusal does not route'
 assert_calls_exclude 'add_issue_label.*needs-human' 'provider refusal stops before routing'
 teardown
+for stop_code in 25 124 130; do
+  setup
+  cat >> "$SCRIPTS_DIR/bureau-config.sh" <<EOF
+codex_gate_run() {
+  printf '%s\n' '{"eligible":false,"green":false,"reason":"outside gate termination uncertain","failure_cause":"human_hold","logs":["uncertain-gate.log"]}'
+  return $stop_code
+}
+EOF
+  run_pipeline qa-pipeline.sh TEAM-123
+  assert_eq "$stop_code" "$LAST_RC" 'uncertain QA outside gate preserves its stop'
+  assert_calls_exclude 'move_issue' 'uncertain QA gate never routes'
+  assert_calls_exclude 'add_issue_label.*needs-human' 'uncertain QA gate stops before routing mutations'
+  assert_match 'uncertain-gate.log' "$LAST_STDERR" 'uncertain QA stop keeps its log pointer'
+  teardown
+done
+
+setup
+cat >> "$SCRIPTS_DIR/bureau-config.sh" <<'EOF'
+codex_gate_run() { printf '%s\n' '{"green":false,"logs":[]}'; return 25; }
+EOF
+python3 - "$SCRIPTS_DIR/qa-pipeline.sh" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); text=p.read_text(); anchor='25|124|130)'
+assert text.count(anchor)==1
+p.write_text(text.replace(anchor,'124|130)',1))
+PY
+run_pipeline qa-pipeline.sh TEAM-123
+if assert_eq 25 "$LAST_RC" 'uncertain QA gate stop' > "$SANDBOX/logs/control.log" 2>&1; then
+  echo 'FAIL: removing the uncertain QA stop passed its exit assertion' >&2; exit 1
+fi
+echo 'PASS negative control: QA must propagate the uncertain gate hold'
+teardown
 trap - EXIT
 echo 'OK test_codex_qa_sandbox_gate'

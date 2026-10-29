@@ -1387,7 +1387,9 @@ if [ "$SANDBOX_GATE_PENDING" = 1 ] && [ "$STATUS" = "COMPLETE" ]; then
   echo "  running repo.test_command outside the Codex sandbox (verified gate-only blockers)"
   OUTSIDE_RC=0
   OUTSIDE_GATE=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" codex_gate_run implement "$IMPLEMENT_GATE_PLAN") || OUTSIDE_RC=$?
-  [ "$OUTSIDE_RC" != 130 ] || exit 130
+  case "$OUTSIDE_RC" in
+    25|124|130) printf '%s\n' "$OUTSIDE_GATE" >&2; exit "$OUTSIDE_RC" ;;
+  esac
   bureau_ticket_checkpoint "$ISSUE"
   [ "$OUTSIDE_RC" = 0 ] || OUTSIDE_GATE='{"green":false,"logs":[]}'
   if [ "$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green')" = true ]; then

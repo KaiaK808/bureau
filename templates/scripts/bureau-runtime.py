@@ -173,6 +173,8 @@ class Store:
 
     def release(self, run, resources=None):
         with self.guard():
+            if pg.process_holds(self.root, run=run):
+                raise Conflict('human_hold: inspect and explicitly clear unfinished process holds before releasing ownership')
             leases = read(self.leases, {})
             leases = {k: v for k, v in leases.items()
                       if v['run_id'] != run or (resources is not None and k not in resources)}
@@ -191,14 +193,21 @@ class Store:
             record = read(path, {'groups': [], 'interrupted': False})
             if record['interrupted']:
                 raise Conflict('Run was interrupted; inspect and release it before continuing')
+            # An unregistered child may survive a failed post-spawn write. Keep
+            # a durable interrupted record until registration has completed.
+            save(path, dict(record, interrupted=True))
             child = subprocess.Popen(command, cwd=repo, start_new_session=True, env=env)
             record['groups'].append(child.pid)
             try:
                 save(path, record)
             except BaseException:
+                # A writer can raise after publishing the registration too.
+                # finish_execution must retain this run on either failure side.
+                self.failed_registration = run
                 try:
-                    signal_group(child, signal.SIGKILL)
-                    child.wait(timeout=1)
+                    try: signal_group(child, signal.SIGKILL)
+                    finally: child.wait(timeout=1)
+                    self.assert_groups_stopped({child.pid})
                 except (OSError, subprocess.TimeoutExpired) as exc:
                     print('bureau: registration cleanup failed: ' + str(exc), file=sys.stderr)
                 raise
@@ -206,6 +215,11 @@ class Store:
 
     def finish_execution(self, run, resources, interrupted, repo=None, report=True):
         with self.guard():
+            interrupted = interrupted or getattr(self, 'failed_registration', None) == run
+            if pg.process_holds(self.root, run):
+                # Uncertain gate ownership/worktree state stays exactly as it is.
+                print('bureau: human_hold: unfinished process hold; ownership retained', file=sys.stderr)
+                return
             path = self.process_path(run)
             record = read(path, {'groups': [], 'interrupted': False})
             if interrupted or record['interrupted']:

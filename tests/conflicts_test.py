@@ -279,7 +279,7 @@ _throttle_record() { :; }
     def test_validation_cleanup_failure_cannot_record_passed(self):
         spec = importlib.util.spec_from_file_location('conflict_validation_fault', SCRIPTS / 'bureau-conflicts.py')
         runtime = importlib.util.module_from_spec(spec); spec.loader.exec_module(runtime)
-        for fault in ('cleanup', 'live_descendant', 'inspection_unavailable'):
+        for fault in ('cleanup', 'live_descendant', 'inspection_unavailable', 'empty_inspection'):
             with self.subTest(fault=fault):
                 transaction = runtime.Transaction(self.repo, self.settings, self.git('rev-parse', 'HEAD'), self.config)
                 transaction.branch = 'main'
@@ -295,15 +295,59 @@ _throttle_record() { :; }
                 # The real outside_gate returns a determined zero, then its
                 # group cleanup fails; the caller must reject the transaction.
                 inspection = (dict(side_effect=runtime.provider.pg.TerminationUncertain('inspection unavailable'))
-                              if fault == 'inspection_unavailable' else dict(return_value={child.pid}))
+                              if fault == 'inspection_unavailable' else dict(return_value=set() if fault == 'empty_inspection' else {child.pid}))
                 with mock.patch.object(runtime.provider.subprocess, 'Popen', side_effect=popen), \
                         mock.patch.object(runtime.provider.os, 'killpg', side_effect=OSError('cleanup failed') if fault == 'cleanup'
                                           else PermissionError('group EPERM')), \
                         mock.patch.object(runtime.provider.pg, 'inspect_groups', **inspection):
                     with self.assertRaises(runtime.Declined) as declined:
                         transaction.validate('fixture', self.root)
-                self.assertEqual(budget.finish.call_args.kwargs, dict(check_outcome='failed', check_exit=22))
-                self.assertIn('outside gate execution failed' if fault == 'cleanup' else 'outside gate termination uncertain', str(declined.exception))
+                self.assertEqual(budget.finish.call_args.kwargs, dict(check_outcome='failed', check_exit=25))
+                self.assertIn('outside gate termination uncertain', str(declined.exception))
+
+    def test_uncertain_validation_keeps_merge_index_and_worktree(self):
+        self.diverge()
+        self.config.write_text(json.dumps(self.settings))
+        spec = importlib.util.spec_from_file_location('conflict_hold_fault', SCRIPTS / 'bureau-conflicts.py')
+        runtime = importlib.util.module_from_spec(spec); spec.loader.exec_module(runtime)
+        transaction = runtime.Transaction(self.repo, self.settings, self.git('rev-parse', 'refs/remotes/origin/main'), self.config)
+        transaction.checkpoint = mock.Mock()
+        outside = runtime.provider.outside_gate
+        child = mock.Mock(pid=123456, returncode=0)
+        child.poll.return_value = child.wait.return_value = 0
+        def uncertain(*args):
+            original_popen = subprocess.Popen
+            def popen(*popen_args, **kwargs):
+                if popen_args[0][0] == '/bin/bash': return child
+                return original_popen(*popen_args, **kwargs)
+            with mock.patch.object(runtime.provider.subprocess, 'Popen', side_effect=popen), \
+                    mock.patch.object(runtime.provider.os, 'killpg', side_effect=PermissionError('EPERM')):
+                return outside(*args)
+        with mock.patch.object(runtime.provider, 'outside_gate', side_effect=uncertain):
+            with self.assertRaises(runtime.ProviderStop) as held: transaction.execute()
+        self.assertEqual(held.exception.code, 25)
+        self.assertTrue(self.git('rev-parse', '--verify', 'MERGE_HEAD'))
+        self.assertTrue(self.git('diff', '--cached', '--name-only'))
+        self.assertTrue(runtime.provider.pg.process_holds(self.repo / '.git/bureau', inactive_only=True))
+
+    def test_uncertain_validation_preserves_stops_when_metadata_writes_fail(self):
+        spec = importlib.util.spec_from_file_location('conflict_stop_fault', SCRIPTS / 'bureau-conflicts.py')
+        runtime = importlib.util.module_from_spec(spec); spec.loader.exec_module(runtime)
+        for code, abort in ((0, None), (124, 'timeout'), (130, 'kill')):
+            with self.subTest(code=code):
+                transaction = runtime.Transaction(self.repo, self.settings, 'unused', self.config)
+                transaction.identity = mock.Mock(return_value='before')
+                transaction.checkpoint = mock.Mock()
+                transaction.git = mock.Mock(side_effect=AssertionError('uncertain tree must not be read'))
+                budget = mock.Mock()
+                budget.finish.side_effect = OSError('coordination write failed')
+                transaction.reservations = [(budget, {})]
+                failure = runtime.provider.GateExecutionError(runtime.provider.pg.TerminationUncertain('EPERM'), (code, abort))
+                with mock.patch.object(runtime.provider, 'outside_gate', side_effect=failure):
+                    with self.assertRaises(runtime.ProviderStop) as held:
+                        transaction.validate('fixture', self.root)
+                self.assertEqual(held.exception.code, code or 25)
+                transaction.git.assert_not_called()
 
     def rollback_with_fault(self, fault):
         # Exercise the actual transaction with real Git; only the one denied

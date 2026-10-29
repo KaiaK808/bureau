@@ -70,14 +70,14 @@ class Helpers:
         self.stopping = False
         self.child = None
         self.termination_failure = None
-        self.failure_path = control_root / 'dispatch-termination.json' if control_root is not None else None
+        self.control_root = control_root if control_root is not None else r.Store(repo).root
+        self.failure_path = self.control_root / 'dispatch-termination.json'  # Existing operator holds stay effective.
 
     def uncertain(self, child, reason):
         self.termination_failure = dict(group=child.pid, reason='dispatcher helper termination uncertain', detail=str(reason))
         print('dispatch: ' + self.termination_failure['reason'] + ': ' + str(reason), file=sys.stderr)
-        if self.failure_path is not None:
-            try: r.save(self.failure_path, self.termination_failure)
-            except OSError as exc: print('dispatch: could not persist termination hold: ' + str(exc), file=sys.stderr)
+        # The unfinished helper record was fsynced before Popen. No write here
+        # is needed to make uncertainty survive a restart or a full filesystem.
 
     def stop(self):
         self.stopping = True
@@ -88,19 +88,22 @@ class Helpers:
     def call(self, body, *args, env=None):
         if self.stopping:
             raise Stop(130)
-        if self.failure_path is not None and self.failure_path.exists():
-            raise Stop(25, 'dispatcher termination hold: inspect dispatch-termination.json and stop its group before removing the hold')
+        if (self.termination_failure or self.failure_path.exists()
+                or r.pg.process_holds(self.control_root, inactive_only=True)):
+            raise Stop(25, 'human_hold: inspect unfinished process holds and stop their writers before explicitly removing the holds')
         environ = dict(os.environ if env is None else env)
         for key in ('BASH_ENV', 'ENV'):
             environ.pop(key, None)
         command = ['bash', '-e', '-c', SOURCE + body, 'bureau-dispatch', str(SCRIPTS), *args]
-        child = subprocess.Popen(command, cwd=self.repo, env=environ, text=True,
-                                 stdout=subprocess.PIPE, start_new_session=True)
-        self.child = child
-        # A signal can arrive in Popen before its handle has been assigned.
-        if self.stopping:
-            self.stop()
+        hold = r.pg.ProcessHold(self.control_root, 'dispatcher_helper', self.repo)
+        child = None
         try:
+            child = subprocess.Popen(command, cwd=self.repo, env=environ, text=True,
+                                     stdout=subprocess.PIPE, start_new_session=True)
+            self.child = child
+            # A signal can arrive in Popen before its handle has been assigned.
+            if self.stopping:
+                self.stop()
             deadline = None
             kill_deadline = None
             while True:
@@ -118,13 +121,23 @@ class Helpers:
                             self.uncertain(child, 'stdout did not close after bounded escalation')
                             break
         finally:
-            if child.stdout is not None: child.stdout.close()
-            if self.stopping:
-                try: child.wait(timeout=1)
-                except subprocess.TimeoutExpired: self.uncertain(child, 'leader did not exit after bounded escalation')
-            self.child = None
+            try:
+                if child is not None:
+                    if child.stdout is not None: child.stdout.close()
+                    try:
+                        child.wait(timeout=1)
+                        r.pg.assert_groups_stopped({child.pid})
+                    except (OSError, subprocess.TimeoutExpired) as exc: self.uncertain(child, exc)
+            finally:
+                self.child = None
+                try: hold.close(stopped=child is not None and self.termination_failure is None)
+                except OSError as exc:
+                    if self.stopping: raise Stop(130) from exc
+                    raise
         if self.stopping:
             raise Stop(130)
+        if self.termination_failure:
+            raise Stop(25, 'human_hold: dispatcher helper termination uncertain')
         if child.returncode:
             raise Stop(130 if child.returncode < 0 else child.returncode, output.strip())
         return output.strip()

@@ -604,11 +604,19 @@ p.run=lose_forward
         with patch.object(p.subprocess,'Popen',controlled_popen), patch.object(sys,'stdin',io.StringIO(json.dumps(plan))):
             first=json.loads(p.gate_action(argparse.Namespace(stage='implement',gate_action='run'),config,options,self.root))
         self.assertFalse(first['green'])
-        self.assertEqual(first['reason'],'outside gate red, aborted or incomplete')
         manifest=json.loads(p.evidence_store(self.root).manifest_path(plan['run_id']).read_text())
         record=manifest['attempts'][0]['gate_reruns'][0]['result']
-        self.assertEqual((record['normalized_exit'],record['abort']),(124,'timeout'))
-        self.assertEqual(first,self.gate_action('run',plan))
+        retry=self.gate_action('run',plan)
+        if first['reason']=='outside gate termination uncertain':
+            self.assertFalse(first['eligible'])
+            self.assertEqual((first['normalized_exit'],first['abort']),(124,'timeout'))
+            self.assertIsNone(record)
+            self.assertFalse(retry['eligible'])
+            self.assertFalse(retry['green'])
+        else:
+            self.assertEqual(first['reason'],'outside gate red, aborted or incomplete')
+            self.assertEqual((record['normalized_exit'],record['abort']),(124,'timeout'))
+            self.assertEqual(first,retry)
         self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['started'])
 
     def test_machine_gate_cancellation_preserves_130_and_the_log(self):
@@ -628,12 +636,20 @@ p.run=lose_forward
             proc.send_signal(signal.SIGTERM)
             stdout,stderr=proc.communicate(timeout=5)
             self.assertEqual(proc.returncode,130,stdout+stderr)
-            self.assertFalse(json.loads(stdout)['green'])
+            result=json.loads(stdout)
+            self.assertFalse(result['green'])
+            self.assertTrue(result['logs'])
+            self.assertTrue(all('started' in Path(log).read_text() for log in result['logs']))
             manifest=json.loads(p.evidence_store(self.root).manifest_path(plan['run_id']).read_text())
             record=manifest['attempts'][0]['gate_reruns'][0]['result']
-            self.assertEqual(record['normalized_exit'],130)
-            self.assertEqual(record['abort'],'kill')
-            self.assertTrue(p.evidence_store(self.root).valid_execution(record))
+            if result['reason']=='outside gate termination uncertain':
+                self.assertFalse(result['eligible'])
+                self.assertEqual((result['normalized_exit'],result['abort']),(130,'kill'))
+                self.assertIsNone(record)
+            else:
+                self.assertEqual(record['normalized_exit'],130)
+                self.assertEqual(record['abort'],'kill')
+                self.assertTrue(p.evidence_store(self.root).valid_execution(record))
         finally:
             if proc.poll() is None:
                 proc.send_signal(signal.SIGTERM)
@@ -685,6 +701,7 @@ signal.pause()
                     kwargs['stdout'].write(b'injected outside log\n')
                     return child
                 def killpg(*args):
+                    if fault=='execution_error': raise ProcessLookupError()
                     if fault=='cleanup_error': raise OSError('injected cleanup failure')
                     raise PermissionError('injected exited group')
                 handlers={sig:signal.getsignal(sig) for sig in (signal.SIGTERM,signal.SIGINT,signal.SIGHUP)}
@@ -695,29 +712,26 @@ signal.pause()
                         (patch.object(p.pg,'inspect_groups',return_value={child.pid} if fault.endswith('kill_error') else set())
                          if hasattr(p,'pg') else nullcontext()):
                     code=p.main()
-                self.assertEqual(code,130 if fault in ('signal','cancel_kill_error') else 0,output.getvalue())
+                expected_code=(130 if fault in ('signal','cancel_kill_error') else
+                               124 if fault in ('timeout','timeout_kill_error') else 0 if fault=='execution_error' else 25)
+                self.assertEqual(code,expected_code,output.getvalue())
                 result=json.loads(output.getvalue())
-                failed=fault.endswith('error')
-                self.assertEqual(result['reason'],('outside gate termination uncertain' if fault.endswith('kill_error') else
-                                                  'outside gate execution failed') if failed else
-                                 ('outside gate green' if fault=='cleanup' else 'outside gate red, aborted or incomplete'))
-                self.assertEqual(result['eligible'],not failed)
-                self.assertEqual(result['green'],fault=='cleanup')
+                self.assertEqual(result['reason'],'outside gate execution failed' if fault=='execution_error' else
+                                 'outside gate termination uncertain')
+                self.assertFalse(result['eligible'])
+                self.assertFalse(result['green'])
                 self.assertIn('injected outside log',Path(result['logs'][0]).read_text())
                 for sig,handler in handlers.items(): self.assertEqual(signal.getsignal(sig),handler)
                 manifest=json.loads(p.evidence_store(self.root).manifest_path(plan['run_id']).read_text())
                 record=manifest['attempts'][0]['gate_reruns'][0]['result']
-                if fault in ('signal','timeout'):
-                    self.assertEqual((record['normalized_exit'],record['abort']),
-                                     (130,'kill') if fault=='signal' else (124,'timeout'))
-                if failed: self.assertIsNone(record)
-                retry=self.gate_action('run',plan,expected_code=130 if fault=='signal' else 0)
-                self.assertEqual(retry['green'],fault=='cleanup')
+                self.assertIsNone(record)
+                retry=self.gate_action('run',plan)
+                self.assertFalse(retry['green'])
                 if fault.endswith('kill_error'): child.kill.assert_called()
                 else: child.kill.assert_not_called()
 
-    def test_machine_gate_exited_leader_with_live_or_uninspectable_descendants_never_passes(self):
-        for membership in ('live', 'unavailable'):
+    def test_machine_gate_eperm_never_passes_even_with_empty_inspection(self):
+        for membership in ('live', 'unavailable', 'empty', 'zombies'):
             for outcome in ('success', 'cancelled', 'timeout'):
                 with self.subTest(membership=membership, outcome=outcome):
                     value,context=self.prepared_gate('echo descendant-'+membership+'-'+outcome)
@@ -736,8 +750,8 @@ signal.pause()
                         kwargs['stdout'].write(b'descendant gate log\n')
                         return child
                     inspector=getattr(p,'pg',None)
-                    inspection=(dict(return_value={child.pid}) if membership=='live' else
-                                dict(side_effect=(inspector.TerminationUncertain if inspector else OSError)('inspection unavailable')))
+                    inspection=(dict(side_effect=(inspector.TerminationUncertain if inspector else OSError)('inspection unavailable'))
+                                if membership=='unavailable' else dict(return_value={child.pid} if membership=='live' else set()))
                     output=io.StringIO()
                     with patch.dict(os.environ,self.env,clear=True), patch.object(sys,'stdin',io.StringIO(json.dumps(plan))), \
                             patch.object(sys,'argv',self.command('--gate-action','run')[1:]), redirect_stdout(output), \
@@ -749,10 +763,16 @@ signal.pause()
                     self.assertFalse(result['eligible'],result)
                     self.assertEqual(result['reason'],'outside gate termination uncertain')
                     self.assertEqual((result['normalized_exit'],result['abort']),
-                                     {'success':(22,None),'cancelled':(130,'kill'),'timeout':(124,'timeout')}[outcome])
-                    self.assertEqual(code,130 if outcome=='cancelled' else 0)
+                                     {'success':(25,None),'cancelled':(130,'kill'),'timeout':(124,'timeout')}[outcome])
+                    self.assertEqual(code,{'success':25,'cancelled':130,'timeout':124}[outcome])
                     retry=self.gate_action('run',plan)
                     self.assertFalse(retry['green'],retry)
+                    if inspector:
+                        self.assertTrue(inspector.process_holds(self.root/'.git/bureau', inactive_only=True))
+                    restarted=subprocess.run([sys.executable,str(ROOT/'templates/scripts/bureau-dispatch.py'),
+                                              '--repo',str(self.root),'run','--dry-run'], env=self.env, capture_output=True, text=True, timeout=10)
+                    self.assertEqual(restarted.returncode,25,restarted.stdout+restarted.stderr)
+                    self.assertIn('human_hold',restarted.stderr)
                     self.assertFalse(retry['eligible'],retry)
                     child.kill.assert_not_called()
 

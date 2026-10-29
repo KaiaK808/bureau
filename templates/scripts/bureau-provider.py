@@ -934,17 +934,19 @@ def note(text):
 
 class GateExecutionError(OSError):
     """Execution/cleanup failed, even if the command already returned zero."""
-    def __init__(self, failure, outcome):
+    def __init__(self, failure, outcome, uncertain=False):
+        self.uncertain = uncertain or isinstance(failure, pg.TerminationUncertain)
         self.code, self.abort = outcome if outcome is not None else (22, None)
-        if self.code == 0: self.code = 22
-        self.reason = ('outside gate termination uncertain' if isinstance(failure, pg.TerminationUncertain)
+        if self.uncertain and self.code not in (124, 130): self.code = 25
+        elif self.code == 0: self.code = 22
+        self.reason = ('outside gate termination uncertain' if self.uncertain
                        else 'outside gate execution failed')
         super().__init__(self.reason)
 
 
 def outside_gate(options, repo, command, log):
     """Run a canonical command once, bounded and without Bureau credentials."""
-    child = None; outcome = None; failure = None; previous = {}
+    child = None; outcome = None; failure = None; previous = {}; hold = None; stopped = False
     def stop(signum, frame):
         nonlocal outcome
         # Latch before any kill or cleanup: cancellation survives their errors.
@@ -955,6 +957,8 @@ def outside_gate(options, repo, command, log):
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             previous[sig] = signal.signal(sig, stop)
         with os.fdopen(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as output:
+            # Mandatory coordination, outside prunable evidence, durable before spawn.
+            hold = pg.ProcessHold(evidence_store(repo).root.parent.parent, 'outside_gate', repo)
             child = subprocess.Popen(['/bin/bash', '--noprofile', '--norc', '-o', 'pipefail', '-c', command], cwd=repo,
                                      stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                                      env=untrusted_env(os.environ, options['untrusted_env']), start_new_session=True)
@@ -973,18 +977,24 @@ def outside_gate(options, repo, command, log):
         try:
             if child:
                 # A successful check may leave background writers in its group.
-                signal_group(child, signal.SIGKILL)
-                child.wait(timeout=5)
+                try: signal_group(child, signal.SIGKILL)
+                finally: child.wait(timeout=5)
+                pg.assert_groups_stopped({child.pid})
+                # An earlier EPERM stays uncertain even if a later probe succeeds.
+                stopped = not isinstance(failure, pg.TerminationUncertain)
         except Exception as exc:
             failure = failure or exc
         finally:
+            if hold is not None:
+                try: hold.close(stopped=stopped)
+                except OSError as exc: failure = failure or exc
             for sig, handler in previous.items():
                 try: signal.signal(sig, handler)
                 except Exception as exc: failure = failure or exc
     if failure is not None:
         # Every caller must handle failure. Never return (0, None) after a
         # failed cleanup; cancellation/timeout travel on the exception instead.
-        raise GateExecutionError(failure, outcome) from failure
+        raise GateExecutionError(failure, outcome, uncertain=hold is not None and not stopped) from failure
     return outcome
 
 
@@ -1049,8 +1059,9 @@ def gate_action(args, config, options, repo):
                 code, abort = outside_gate(options, repo, command, log)
             except GateExecutionError as exc:
                 if exc.code == 130: options['_gate_cancelled'] = True
+                if exc.uncertain: options['_gate_exit'] = exc.code
                 return json.dumps(dict(eligible=False, green=False, logs=logs, reason=exc.reason,
-                                       normalized_exit=exc.code, abort=exc.abort))
+                                       normalized_exit=exc.code, abort=exc.abort, failure_cause='human_hold' if exc.uncertain else 'provider_error'))
             except Exception:
                 return json.dumps(dict(eligible=False, green=False, logs=logs, reason='outside gate execution failed'))
             # Cancellation wins over EVERY subsequent read/write/validation.
@@ -1101,7 +1112,7 @@ def main():
         if args.gate_action:
             response = e.observe(gate_action, args, config, options, repo)
             print(response or json.dumps(dict(eligible=False, green=False, logs=[], reason='gate evidence unavailable')))
-            return 130 if options.get('_gate_cancelled') else 0
+            return 130 if options.get('_gate_cancelled') else options.get('_gate_exit', 0)
         options['gate_commands'] = g.commands(config, repo, args.stage)
         options['gate_command_id'] = 'repo.test_command' if (config.get('repo') or {}).get('test_command') else 'qa.test'
         options['gate_context'] = args.gate_context
