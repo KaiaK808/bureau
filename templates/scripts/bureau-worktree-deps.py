@@ -58,15 +58,20 @@ def yarn_pnp_enabled(repo, manifest):
         # other strings can be truthy to a package manager's option parser.
         return str(value) not in ('', 'false')
 
-    if any(enabled(os.environ.get(name, ''))
-           for name in ('YARN_PNP', 'YARN_ENABLE_PNP', 'YARN_PLUGNPLAY')):
-        return True
+    pnp_keys = {'pnp', 'enable-pnp', 'plugnplay', 'plugnplay-experimental',
+                'install.pnp', 'install.enable-pnp', 'install.plugnplay'}
+    # These inherited settings reach both Yarn commands below. Classic's
+    # registry config folds case and maps underscores to option separators;
+    # its direct PLUGNPLAY_OVERRIDE=1 also bypasses the usual config switches.
+    for name, value in os.environ.items():
+        if name.lower().startswith('yarn_'):
+            key = name[5:].lower().replace('__', '.').replace('_', '-')
+            if key in pnp_keys | {'plugnplay-override'} and enabled(value):
+                return True
     if '.pnp.' in os.environ.get('NODE_OPTIONS', ''):
         return True
     # Yarn reads rc files above the project and in the operator's home too.
     directories = {repo, *repo.parents, Path.home()}
-    pnp_keys = {'pnp', 'enable-pnp', 'plugnplay', 'install.pnp',
-                'install.enable-pnp', 'install.plugnplay'}
     for directory in sorted(directories):
         for name in ('.yarnrc', '.yarnrc.yml'):
             path = directory / name

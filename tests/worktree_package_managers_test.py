@@ -317,6 +317,37 @@ class PackageManagerTests(unittest.TestCase):
                 value = '--require /fixture/.pnp.cjs' if name == 'NODE_OPTIONS' else 'true'
                 self.assert_yarn_pnp_refused(**{name: value})
 
+    def test_yarn_classic_plugnplay_override_is_refused_without_dependencies(self):
+        self.setup_manager('yarn')
+        self.assert_yarn_pnp_refused(YARN_PLUGNPLAY_OVERRIDE='1', FAKE_EMPTY='1')
+        self.assertFalse((self.main / '.git/bureau-deps').exists())
+
+    def test_yarn_classic_experimental_pnp_environment_is_refused(self):
+        self.setup_manager('yarn')
+        self.assert_yarn_pnp_refused(YARN_PLUGNPLAY_EXPERIMENTAL='true')
+
+    def test_yarn_classic_experimental_pnp_rc_is_refused(self):
+        self.setup_manager('yarn')
+        (self.repo / '.yarnrc').write_text('plugnplay-experimental true\n')
+        self.assert_yarn_pnp_refused()
+
+    def test_yarn_classic_pnp_environment_names_follow_classic_normalization(self):
+        self.setup_manager('yarn')
+        for name in ('yarn_plugnplay_experimental', 'Yarn_PlugNPlay_Experimental',
+                     'YARN_PLUGNPLAY-EXPERIMENTAL'):
+            with self.subTest(name=name):
+                self.assert_yarn_pnp_refused(**{name: 'true'})
+
+    def test_yarn_classic_plugnplay_override_cannot_reuse_a_matching_stamp(self):
+        self.setup_manager('yarn'); self.assert_installed('yarn')
+        self.calls.unlink()
+        self.assert_yarn_pnp_refused(YARN_PLUGNPLAY_OVERRIDE='1')
+
+    def test_yarn_classic_experimental_pnp_cannot_reuse_a_matching_stamp(self):
+        self.setup_manager('yarn'); self.assert_installed('yarn')
+        self.calls.unlink()
+        self.assert_yarn_pnp_refused(YARN_PLUGNPLAY_EXPERIMENTAL='true')
+
     def test_yarn_pnp_cannot_reuse_a_matching_stamp(self):
         self.setup_manager('yarn'); self.assert_installed('yarn')
         self.calls.unlink()
@@ -328,7 +359,9 @@ class PackageManagerTests(unittest.TestCase):
         package = self.repo / 'package.json'
         manifest = json.loads(package.read_text()); manifest['installConfig'] = {'pnp': False}
         package.write_text(json.dumps(manifest))
-        (self.repo / '.yarnrc').write_text('# pnp true\npnp false\n--install.pnp false\n')
+        (self.repo / '.yarnrc').write_text('# pnp true\npnp false\n--install.pnp false\nplugnplay-experimental false\n')
+        self.env.update(YARN_PNP='false', YARN_ENABLE_PNP='false', YARN_PLUGNPLAY='false',
+                        YARN_PLUGNPLAY_EXPERIMENTAL='false', YARN_PLUGNPLAY_OVERRIDE='false')
         self.assert_installed('yarn')
 
     def test_multiple_lockfiles_and_package_manager_mismatch_fail_closed(self):

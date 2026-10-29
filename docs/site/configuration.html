@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="23152a418677a1e9e7cfa4f2870ef5e496aa91bcd8e775706434dd173f94dc83">
+<meta name="bureau-source-sha256" content="d69f45801ddf0338c5992deee98da4f0d81155617d26636e2e1cab72606ad3ad">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1421,13 +1421,15 @@ intentionally unsupported. Before running Yarn or reusing a stamp, the
 helper refuses <code>installConfig.pnp</code>, <code>.pnp.js</code>,
 <code>.pnp.cjs</code>, <code>.pnp.loader.mjs</code> or
 <code>.pnp.data.json</code> (including dangling links), enabled PnP
-options in project/ancestor/home <code>.yarnrc</code> files,
+options (including Classic's <code>plugnplay-experimental</code>) in
+project/ancestor/home <code>.yarnrc</code> files,
 <code>nodeLinker: pnp</code> in <code>.yarnrc.yml</code>, inherited
-<code>YARN_PNP</code>/<code>YARN_ENABLE_PNP</code>/<code>YARN_PLUGNPLAY</code>
-switches and PnP loaders in <code>NODE_OPTIONS</code>. Explicit false
-settings without loader files remain supported. Other dependency layouts
-need a separately reviewed setup; live package-manager/cache
-qualification is still an operator check.</p>
+<code>YARN_PNP</code>/<code>YARN_ENABLE_PNP</code>/<code>YARN_PLUGNPLAY</code>/<code>YARN_PLUGNPLAY_EXPERIMENTAL</code>/<code>YARN_PLUGNPLAY_OVERRIDE</code>
+switches and PnP loaders in <code>NODE_OPTIONS</code>. Environment
+config names follow Classic's case folding and underscore-to-separator
+normalization. Explicit false settings without loader files remain
+supported. Other dependency layouts need a separately reviewed setup;
+live package-manager/cache qualification is still an operator check.</p>
 <p>For documentation work without a JavaScript manifest, configure a
 real trusted <code>repo.test_command</code> as in the <a
 href="recipes.html#documentation-only-tickets">documentation-only
