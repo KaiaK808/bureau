@@ -139,50 +139,27 @@ def location_valid(finding):
             and 0 <= start <= end <= 999999999 and (start != 0 or end == 0))
 
 
-def summary_signals(value):
-    """Ignore only explicit clean negations; mixed/uncertain clauses keep floors."""
-    summary = value.get('summary', '')
-    if not isinstance(summary, str): return ''
-    # Markdown emphasis is presentation, including around severity markers.
-    # Keep internal underscores such as NEEDS_HUMAN intact.
-    summary = re.sub(r'(?<!\w)_{1,2}(?=\w)|(?<=\w)_{1,2}(?!\w)', '', summary)
-    human = r'human[\s-]+(?:judg(?:e)?ment|decision|review|approval|input|intervention)'
-    severity = r'(?:CRITICAL|BUGS?|MINOR|blocking)'
-    clean = re.compile(
-        r'(?:nothing\s+(?:blocks?|is\s+(?:blocking|blocked))(?:\s+(?:approval|merge|this\s+(?:change|PR)))?'
-        r'|(?:(?:this\s+(?:change|PR|review)|it)\s+is\s+)?(?:not|no\s+longer)\s+blocked'
-        r'|(?:there\s+(?:is|are)\s+)?(?:no|zero)\s+(?:(?:remaining|outstanding|unresolved|known|further|additional)\s+)*'
-        r'(?:' + human + r'\s+(?:is\s+)?(?:required|needed|necessary)'
-        r'|(?:need|requirement)\s+for\s+' + human +
-        r'|architectural\s+disagreements?(?:\s+(?:remains?|exists?))?'
-        r'|' + severity + r'(?:\s+(?:or|and)\s+' + severity + r')*'
-        r'(?:\s+(?:findings?|defects?|issues?|blockers?))?(?:\s+(?:remain|found|identified|detected|present))?)'
-        r'|' + human + r'\s+(?:is\s+)?(?:not|no\s+longer)\s+(?:required|needed|necessary))'
-        r'(?:\s+(?:here|for\s+this\s+(?:change|PR|review)))?', re.I)
-    signals = []
-    # Contrast starts a new assertion: "no hold, but human review required"
-    # must retain the unresolved half. A question/conditional is not a clean negation.
-    for clause in re.split(r'[.;!\n]+|\b(?:but|however|yet)\b|(?:,|\band\b)\s*(?=(?:no|nothing|human|architectural|there)\b)', summary, flags=re.I):
-        if not clean.fullmatch(clause.strip().strip('*` ,')): signals.append(clause)
-    return '\n'.join(signals)
+def pure_report(text):
+    """Cost envelopes are transport; their report must itself be one JSON object."""
+    value = json.loads(text)
+    if isinstance(value, dict) and isinstance(value.get('result'), str):
+        value = json.loads(value['result'])
+    return isinstance(value, dict)
 
 
-def summary_counts(value):
-    signals = summary_signals(value)
-    return {severity.lower(): int(bool(re.search(r'\b' + severity + r'(?:S)?\b', signals, re.I)))
-            for severity in SEVERITY}
+def summary_requires_merger(summary):
+    """Conservative routing only: never infer counts or holds from prose."""
+    summary = ' '.join(re.findall(r'[a-z]+', unicodedata.normalize('NFKC', summary).casefold()))
+    return any(word in summary for word in (
+        'critical', 'block', 'bug', 'minor', 'skip', 'needs human', 'human judgment', 'human judgement',
+        'human decision', 'human review', 'human approval', 'human input', 'human intervention',
+        'ambiguous', 'architectural disagreement'))
 
 
 def human_holds(value):
     holds = value.get('holds', [])
     result = [h for h in holds if isinstance(h, str) and h.strip()] if isinstance(holds, list) else []
     if not isinstance(holds, list) or len(result) != len(holds): result.append('Unreadable specialist hold.')
-    summary = summary_signals(value)
-    if re.search(
-            r'\bBLOCK(?:ED|ING|S)?\b|\bNEEDS[_ -]HUMAN\b|'
-            r'\bhuman[\s-]+(?:judg(?:e)?ment|decision|review|approval|input|intervention)\b|'
-            r'ambiguous acceptance|architectural disagreement', summary, re.I):
-        result.append(summary)
     if value.get('verdict') == 'BLOCK': result.append('Specialist requested BLOCK.')
     return result
 
@@ -220,8 +197,9 @@ def validate_finding(finding, refs):
         if refs is None or any(ref not in refs for ref in finding['adr_refs']): raise ValueError('invalid ADR reference')
 
 
-def load_specialist(path, role, refs):
-    value = structured(read(path))
+def load_specialist(text, role, refs):
+    # Legacy prose/fences are parsed only for retention on the fallback path.
+    value = structured(text)
     module('provider').validate(value, json.loads((SCRIPTS / 'bureau-specialist.schema.json').read_text()))
     if value['specialist'] != role: raise ValueError('wrong specialist')
     if any(type(n) is not int or not 0 <= n <= 999999999 for n in value['counts'].values()):
@@ -297,14 +275,24 @@ def render(findings, summaries, gaps, holds=()):
 
 def merge(directory, base, head, refs):
     values, failures, claims, checks, gaps, holds, summaries = {}, [], [], [], [], [], {}
+    fallback_reasons = {}
     uncertain_claims = False
     counts = {s.lower(): 0 for s in SEVERITY}
     security_floor = 0
     for role in ROLES:
-        try: values[role] = load_specialist(directory / (role + '.txt'), role, refs)
+        text = ''
+        try:
+            text = read(directory / (role + '.txt'))
+            try:
+                if not pure_report(text): fallback_reasons[role] = 'non_json_report'
+            except (ValueError, TypeError): fallback_reasons[role] = 'non_json_report'
+            values[role] = load_specialist(text, role, refs)
         except (OSError, ValueError, TypeError, KeyError):
             failures.append(role)
-        try: raw = values.get(role) or structured(read(directory / (role + '.txt')))
+            fallback_reasons.setdefault(role, 'invalid_specialist')
+        if role in values and summary_requires_merger(values[role]['summary']):
+            fallback_reasons.setdefault(role, 'summary_signal')
+        try: raw = values.get(role) or structured(text)
         except (OSError, ValueError, TypeError): continue
         holds.extend(human_holds(raw))
         if isinstance(raw.get('summary'), str): summaries[role] = raw['summary']
@@ -314,8 +302,6 @@ def merge(directory, base, head, refs):
         reported = raw.get('counts', {})
         role_counts = {s: min(n, 999999999) if type(n) is int and n >= 0 else 0
                        for s in counts for n in [reported.get(s) if isinstance(reported, dict) else None]}
-        summary = summary_counts(raw)
-        for severity in counts: role_counts[severity] = max(role_counts[severity], summary[severity])
         for severity in counts: counts[severity] = max(counts[severity], role_counts[severity])
         raw_findings = raw.get('findings', [])
         if not isinstance(raw_findings, list): raw_findings = []
@@ -335,7 +321,8 @@ def merge(directory, base, head, refs):
             key = finding_key(claim) if claim else (role, index)
             checks.append(dict(finding_id=sha(encoded(key).encode()), status=status))
             if claim: claims.append((role, claim))
-    metadata = dict(mode='model_fallback' if failures else 'deterministic', malformed_specialists=failures,
+    metadata = dict(mode='model_fallback' if fallback_reasons else 'deterministic', malformed_specialists=failures,
+                    fallback_reasons=fallback_reasons,
                     grounding='off', invalid_anchors=0, anchor_checks=[], verifier=[], verifier_omitted=0,
                     critical_floor=0, security_floor=0, adr_refs=[])
     findings, _, _ = normalized(claims, base, head)
@@ -349,7 +336,7 @@ def merge(directory, base, head, refs):
     gaps = sorted(set(gaps))
     retained = dict(findings=findings, gaps=gaps, holds=holds, summaries=summaries)
     (directory / 'retained.json').write_text(encoded(retained) + '\n')
-    if failures: return None, findings, metadata
+    if fallback_reasons: return None, findings, metadata
     # Neutral input to the legacy shell contract, NOT a severity decision.
     # review_convergence derives the verdict from these findings/counts/gaps;
     # the shell applies count-only CRITICAL floors, security/build and caps.
@@ -426,7 +413,7 @@ def main():
             for field in ('anchor', 'line_end', 'title', 'skip_citation'):
                 schema['properties']['findings']['items']['properties'][field] = fields[field]
             (args.directory / 'fallback.schema.json').write_text(encoded(schema) + '\n')
-        print(encoded(dict(grounding=grounding, verifier=verifier, policy='merge-v4:' + grounding + ':shadow-' + str(verifier).lower())))
+        print(encoded(dict(grounding=grounding, verifier=verifier, policy='merge-v5:' + grounding + ':shadow-' + str(verifier).lower())))
         return 0
     directory = args.directory
     metadata_path = directory / 'merge-metadata.json'
@@ -467,9 +454,6 @@ def main():
                 or (not result['findings'] and result['fixes_needed'])):
             result['verdict'] = 'BLOCK'
         fallback_holds = human_holds(result)
-        for severity, count in summary_counts(result).items():
-            metadata['severity_counts'][severity] = max(metadata['severity_counts'][severity], count)
-        metadata['critical_floor'] = max(metadata['critical_floor'], metadata['severity_counts']['critical'])
         if fallback_holds:
             retained['holds'].extend(fallback_holds)
             metadata['human_holds'] += len(fallback_holds)

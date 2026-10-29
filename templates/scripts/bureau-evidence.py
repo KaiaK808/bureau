@@ -121,7 +121,7 @@ def review_round_shape(value):
 
 def review_merge_shape(value):
     """Allowlist identities, counts and enums, never claim/source prose."""
-    optional = {'human_holds', 'verdict_floor', 'severity_counts', 'result_sha256', 'missing_acceptance_count', 'fixes_needed_count'}
+    optional = {'human_holds', 'verdict_floor', 'severity_counts', 'result_sha256', 'missing_acceptance_count', 'fixes_needed_count', 'fallback_reasons'}
     shape({k:v for k,v in value.items() if k not in optional}, 'mode malformed_specialists grounding invalid_anchors anchor_checks verifier verifier_omitted critical_floor security_floor adr_refs')
     for key in ('human_holds', 'missing_acceptance_count', 'fixes_needed_count'):
         if key in value and (type(value[key]) is not int or not 0 <= value[key] <= 3999999999): raise ValueError('invalid blocker count')
@@ -137,6 +137,10 @@ def review_merge_shape(value):
     if value['mode'] not in ('deterministic', 'model_fallback') or value['grounding'] not in ('off', 'required'):
         raise ValueError('invalid review merge mode')
     roles = ('correctness', 'security', 'performance')
+    reasons = value.get('fallback_reasons', {})
+    if (not isinstance(reasons, dict) or any(role not in roles for role in reasons)
+            or any(reason not in ('non_json_report', 'invalid_specialist', 'summary_signal') for reason in reasons.values())):
+        raise ValueError('invalid fallback reason')
     if not isinstance(value['malformed_specialists'], list) or any(r not in roles for r in value['malformed_specialists']):
         raise ValueError('invalid fallback specialists')
     for key in ('invalid_anchors', 'verifier_omitted', 'critical_floor', 'security_floor'):

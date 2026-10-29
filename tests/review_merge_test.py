@@ -68,7 +68,7 @@ class MergeTests(unittest.TestCase):
 
     def merge(self, refs=None):
         for r, value in self.values.items():
-            (self.outputs / (r + '.txt')).write_text('Author reasoning stays private.\n```json\n' + json.dumps(value) + '\n```\n')
+            (self.outputs / (r + '.txt')).write_text(value if isinstance(value, str) else json.dumps(value))
         return self.m.merge(self.outputs, self.base, self.head, refs)
 
     def test_each_specialist_is_preserved_and_template_is_stable(self):
