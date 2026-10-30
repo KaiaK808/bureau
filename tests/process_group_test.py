@@ -658,7 +658,9 @@ provider() { echo pass >> events; return "$3"; }
         source = (SCRIPTS / 'implement-pipeline.sh').read_text()
         runner = source.split("_POST_IMPLEMENT_RUNNER='\n", 1)[1].split("\n'", 1)[0]
         def wait(timeout=None):
-            if timeout == 60: raise subprocess.TimeoutExpired('fixture', timeout)
+            if timeout == 60 or timeout <= 0.1:
+                clock.sleep(timeout)
+                raise subprocess.TimeoutExpired('fixture', timeout)
             return 0
         self.child.wait.side_effect = wait
         clock = ProbeClock()
@@ -679,6 +681,67 @@ provider() { echo pass >> events; return "$3"; }
         self.assertEqual(result.returncode, 124, result.stderr)
         self.assertFalse((self.root / 'events').exists(), result.stdout + result.stderr)
         self.assertIn('human_hold', result.stderr)
+
+    def test_post_implement_stage_signal_uncertain_cleanup_keeps_hold_and_leases(self):
+        store = r.Store(self.root); run = '5' * 32
+        resources = store.claim('TST-1', self.root, run, 'background')
+        leases = store.leases.read_bytes()
+        for args in (('config', 'user.name', 'Fixture'), ('config', 'user.email', 'fixture@example.invalid'),
+                     ('commit', '-q', '--allow-empty', '-m', 'baseline'),
+                     ('commit', '-q', '--allow-empty', '-m', 'progress')):
+            subprocess.run(['git', '-C', str(self.root), *args], check=True)
+        (self.root / 'hook.py').write_text('''import os, signal, sys, time
+from pathlib import Path
+Path('hook-pid').write_text(str(os.getpid()))
+os.kill(int(sys.argv[1]), signal.SIGTERM)
+time.sleep(20)
+''')
+        (self.root / 'inject.py').write_text('''import errno, os, sys
+from pathlib import Path
+from unittest.mock import patch
+source = sys.argv.pop(1)
+def denied(group, signum):
+    with Path('signals').open('a') as output: output.write(str(signum) + '\\n')
+    raise PermissionError(errno.EPERM, 'injected group permission failure')
+try:
+    with patch('os.killpg', side_effect=denied):
+        exec(compile(source, 'post-implement-runner', 'exec'), {})
+finally:
+    Path('runner-stopped').touch()
+''')
+        source = (SCRIPTS / 'implement-pipeline.sh').read_text()
+        call = source[source.index('HEAD_BEFORE_HOOK=$(git rev-parse HEAD)'):source.index('\ncheck_squash_range origin/main', source.index('HEAD_BEFORE_HOOK=$(git rev-parse HEAD)'))]
+        body = '''bureau_get() { printf 'git reset -q --hard HEAD^; exec python3 "%s/hook.py" %s' "$SCRIPT_REPO" "$$"; }
+bureau_untrusted_env() {
+  [ "$1" != --check ] || return 0
+  shift 5  # issue/branch assignments, python3, -I, -c; keep the real inline runner.
+  python3 -I "$SCRIPT_REPO/inject.py" "$@"
+}
+''' + call + '\necho publication >> events\n'
+        try:
+            result = self.implementation_replay(body, 0, run)
+            code = 128 - result.returncode if result.returncode < 0 else result.returncode
+            self.assertEqual(code, 143, result.stdout + result.stderr)
+            # The runner must have attempted TERM, the shared probes and KILL,
+            # then returned before EXIT checks holds. No ps or pid-0 oracle.
+            self.assertTrue((self.root / 'runner-stopped').exists())
+            attempts = [int(value) for value in (self.root / 'signals').read_text().splitlines()]
+            for signum in (signal.SIGTERM, 0, signal.SIGKILL): self.assertIn(signum, attempts)
+            self.assertIn('human_hold', result.stderr)
+            self.assertFalse((self.root / 'events').exists(), result.stdout + result.stderr)
+            self.assert_held_ownership(store, run, resources, leases)
+        finally:
+            # Also drain a deliberately broken implementation used as a negative
+            # control: it can return while the runner/hook are still alive.
+            if not (self.root / 'runner-stopped').exists():
+                pid_file = self.root / 'hook-pid'
+                if pid_file.exists():
+                    try: os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                    except ProcessLookupError: pass
+                deadline = time.monotonic() + 5
+                while not (self.root / 'runner-stopped').exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue((self.root / 'runner-stopped').exists(), 'runner did not drain')
 
     def test_confirmed_registration_cleanup_releases_ownership(self):
         store = r.Store(self.root); run = '3' * 32
@@ -779,7 +842,7 @@ provider() { echo pass >> events; return "$3"; }
             self.child.poll.return_value = None
             self.child.kill.side_effect = denied()
         def wait(timeout=None):
-            if timeout == 60:
+            if timeout == 60 or timeout <= 0.1:
                 if cancel: signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
                 raise subprocess.TimeoutExpired('fixture', timeout)
             return 0

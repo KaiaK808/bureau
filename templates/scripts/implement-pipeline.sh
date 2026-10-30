@@ -234,6 +234,17 @@ push_if_ahead() {
 POST_IMPLEMENT_FAILED=0
 POST_IMPLEMENT_HEAD_REWRITTEN=0
 POST_IMPLEMENT_REPORT=""
+POST_IMPLEMENT_RUNNER_PID=""
+POST_IMPLEMENT_CANCEL_FILE=""
+_stop_post_implement_runner() {
+  [ -n "${POST_IMPLEMENT_RUNNER_PID:-}" ] || return 0
+  # The job is the environment wrapper, not necessarily the Python runner.
+  # Let the runner signal/reap its own group and close (or retain) its hold.
+  : > "$POST_IMPLEMENT_CANCEL_FILE"
+  wait "$POST_IMPLEMENT_RUNNER_PID" 2>/dev/null || true
+  POST_IMPLEMENT_RUNNER_PID=""
+  rm -f "$POST_IMPLEMENT_CANCEL_FILE"
+}
 _POST_IMPLEMENT_RUNNER='
 import importlib.util, os, signal, subprocess, sys, time
 from pathlib import Path
@@ -271,10 +282,18 @@ try:
     child = subprocess.Popen(["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
     for sig, code in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)):
         signal.signal(sig, lambda *_, c=code: stop(c, "signal"))
-    try:
-        rc = child.wait(timeout=limit)
-    except subprocess.TimeoutExpired:
-        stop(124, "timeout")
+    deadline = time.monotonic() + limit
+    while True:
+        if Path(status_file + ".cancel").exists():
+            stop(143, "signal")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            stop(124, "timeout")
+        try:
+            rc = child.wait(timeout=min(remaining, 0.1))
+            break
+        except subprocess.TimeoutExpired:
+            pass
     outcome = 128 - rc if rc < 0 else rc
     sys.exit(outcome)
 finally:
@@ -421,11 +440,20 @@ command: ${cmd}"
   status_file="$log.why"
   common=$(git rev-parse --git-common-dir)
   echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
-  if bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" "$common/bureau" "${BUREAU_RUN_ID:-}" "$ISSUE" >"$log" 2>&1; then
+  POST_IMPLEMENT_CANCEL_FILE="$status_file.cancel"
+  (
+    # A signal to the stage group must not kill this wrapper before it joins
+    # the runner. Python installs its own handlers; EXIT also requests a stop.
+    trap ':' HUP INT TERM
+    bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" "$common/bureau" "${BUREAU_RUN_ID:-}" "$ISSUE"
+  ) >"$log" 2>&1 &
+  POST_IMPLEMENT_RUNNER_PID=$!
+  if wait "$POST_IMPLEMENT_RUNNER_PID"; then
     rc=0
   else
     rc=$?
   fi
+  POST_IMPLEMENT_RUNNER_PID=""
   _implement_process_checkpoint "$rc"
   why=$(cat "$status_file" 2>/dev/null || true)
   rm -f "$status_file"
@@ -830,13 +858,15 @@ push_iteration() {
 # the branch stops at it, and a run outside the worker checks the branch out
 # again from origin. Once repo.post_implement_command is about to run, the trap
 # pushes the commit the hook starts from, never HEAD: a stage ended during or
-# after the hook must not publish what the hook did to HEAD. On a stop the push
-# runs in the stage's process group, bounded by the runtime's stop grace.
+# after the hook must not publish what the hook did to HEAD. First drain the
+# hook through its runner and check holds. On a stop the push runs in the
+# stage's process group, bounded by the runtime's stop grace.
 EXIT_PUSH_ARMED=1
 IMPLEMENT_GATE_TMP=$(mktemp -d)
 IMPLEMENT_GATE_CONTEXT="$IMPLEMENT_GATE_TMP/context.json"
 _push_on_exit() {
   local rc=$?
+  _stop_post_implement_runner
   rm -rf "$IMPLEMENT_GATE_TMP"
   [ "$EXIT_PUSH_ARMED" = 1 ] || return "$rc"
   _implement_process_checkpoint "$rc"
