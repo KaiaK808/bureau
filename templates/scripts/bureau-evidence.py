@@ -121,7 +121,7 @@ def review_round_shape(value):
 
 def review_merge_shape(value):
     """Allowlist identities, counts and enums, never claim/source prose."""
-    optional = {'human_holds', 'verdict_floor', 'severity_counts', 'result_sha256', 'missing_acceptance_count', 'fixes_needed_count', 'fallback_reasons'}
+    optional = {'human_holds', 'verdict_floor', 'severity_counts', 'result_sha256', 'missing_acceptance_count', 'fixes_needed_count', 'fallback_reasons', 'specialist_sha256'}
     shape({k:v for k,v in value.items() if k not in optional}, 'mode malformed_specialists grounding invalid_anchors anchor_checks verifier verifier_omitted critical_floor security_floor adr_refs')
     for key in ('human_holds', 'missing_acceptance_count', 'fixes_needed_count'):
         if key in value and (type(value[key]) is not int or not 0 <= value[key] <= 3999999999): raise ValueError('invalid blocker count')
@@ -137,6 +137,11 @@ def review_merge_shape(value):
     if value['mode'] not in ('deterministic', 'model_fallback') or value['grounding'] not in ('off', 'required'):
         raise ValueError('invalid review merge mode')
     roles = ('correctness', 'security', 'performance')
+    if 'specialist_sha256' in value:
+        reports = value['specialist_sha256']
+        if (not isinstance(reports, dict) or set(reports) != set(roles)
+                or any(not isinstance(d, str) or not re.fullmatch(r'[a-f0-9]{64}', d) for d in reports.values())):
+            raise ValueError('invalid specialist digests')
     reasons = value.get('fallback_reasons', {})
     if (not isinstance(reasons, dict) or any(role not in roles for role in reasons)
             or any(reason not in ('non_json_report', 'invalid_specialist', 'summary_signal', 'summary_non_ascii') for reason in reasons.values())):
@@ -690,6 +695,14 @@ class Store:
         inputs = receipt.get('review_inputs')
         if value['stage'] == 'code_review' and isinstance(inputs, dict):
             value['review_inputs'] = {key: head(inputs.get(key)) for key in ('head', 'base', 'validation_head')}
+        if (value['stage'] == 'code_review' and value['phase'] in REVIEW_PHASES - {'verdict'}
+                and value['normalized_exit'] == 0 and value['provider_exit'] == 0 and value['outcome'] == 'complete'):
+            # Specialists have no verdict schema. Bind their parsed report
+            # independently, before forwarding output, without retaining prose.
+            report = receipt.get('structured_result')
+            if report is None: report = receipt.get('insights_result')
+            report_digest = observe(digest, report) if isinstance(report, dict) else None
+            if report_digest is not None: value['review_report_sha256'] = report_digest
         refs = receipt.get('adr_refs')
         if value['stage'] == 'code_review' and isinstance(refs, list):
             value['adr_refs'] = sorted({ref for ref in refs if isinstance(ref, str) and re.fullmatch(r'[0-9]{4}', ref)})[:1024]
@@ -816,15 +829,44 @@ class Store:
             record = attempt.get('review_round', {})
             if record.get('final_verdict') not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK'): return
             if record.get('merge') != merge: raise ValueError('foreign review merge')
-            phases = set()
+            phases = set(); specialists = {}
             for provider in record['provider_attempt_ids']:
                 receipt = read(self.receipt_path(run, provider), {})
                 if (receipt.get('run_id') == run and receipt.get('stage_attempt_id') == stage_attempt
                         and receipt.get('issue') == manifest['issue'] and receipt.get('stage') == 'code_review'
                         and receipt.get('normalized_exit') == 0):
                     phases.add(receipt.get('phase'))
+                    if merge['mode'] == 'deterministic' and receipt.get('phase') in REVIEW_PHASES - {'verdict'}:
+                        role = receipt['phase']
+                        if role in specialists: raise ValueError('ambiguous specialist receipts')
+                        specialists[role] = receipt
             required = REVIEW_PHASES - {'verdict'} if merge['mode'] == 'deterministic' else REVIEW_PHASES
             if not required <= phases: return
+        if merge['mode'] == 'deterministic':
+            # The caller may just have overwritten review_round.merge. Only
+            # the successful receipts independently bind this round's inputs.
+            expected = {role: receipt.get('review_report_sha256') for role, receipt in specialists.items()}
+            if (set(expected) != required or any(not isinstance(d, str) or not re.fullmatch(r'[a-f0-9]{64}', d) for d in expected.values())
+                    or merge.get('specialist_sha256') != expected):
+                raise ValueError('foreign specialist reports')
+            # Hashes alone would let a forged pair copy current input digests
+            # onto obsolete findings. Rebuild just the findings from originals
+            # verified against those receipt digests; no provider or Git reads.
+            import importlib.util
+            spec = importlib.util.spec_from_file_location('evidence_review', Path(__file__).with_name('bureau-review.py'))
+            review = importlib.util.module_from_spec(spec); spec.loader.exec_module(review)
+            provider = review.module('provider')
+            reports = {role: provider.receipt_result(receipt) for role, receipt in specialists.items()}
+            if any(not isinstance(report, dict) or digest(report) != expected[role] for role, report in reports.items()):
+                raise ValueError('unavailable specialist reports')
+            refs = sorted({ref for report in reports.values() for finding in report.get('findings', [])
+                           for ref in finding.get('adr_refs', [])})
+            claims = []
+            for role in review.ROLES:
+                report = review.load_specialist(review.encoded(reports[role]), role, refs)
+                claims.extend((role, review.readable_finding(finding, refs)) for finding in report['findings'])
+            findings, _, _ = review.normalized(claims, None, None, check_anchors=False)
+            if digest(findings) != digest(result.get('findings')): raise ValueError('foreign merged findings')
         self.collect_dispositions(dict(run_id=run, stage_attempt_id=stage_attempt, issue=manifest['issue'],
                                        stage='code_review', phase='verdict', normalized_exit=0,
                                        review_min_severity=record['min_severity'], structured_result=result), merged=True)

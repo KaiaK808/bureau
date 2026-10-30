@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e20ff6db1d216fdb426d3d9b68db4419d547ef0a5029c0e49f1390d426e9bac0">
+<meta name="bureau-source-sha256" content="7b4faa1b0b212daf58346c5d2b756e5f3d1e1ee34a3cd3fd6e070f04ed3bf599">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1347,11 +1347,24 @@ phases to the same run, stage attempt, round call IDs and pinned inputs,
 then projects that round's retained merged result digest, recorded final
 verdict, missing-acceptance/fix counts and human-hold count. A fallback
 provider's original counts cannot replace retained blockers. Specialist
-calls intentionally have no verdict schema or result digest; temporary
-provider originals are not required for these metadata counts.
-Incomplete rounds or missing/mismatched specialist receipts remain
-missing evidence. Shadow outcomes cannot change these blocker counts or
-verdicts.</p>
+calls intentionally have no verdict schema or verdict result digest;
+successful structured reports carry a separate
+<code>review_report_sha256</code> for disposition binding. Temporary
+provider originals are not required for these acceptance metadata
+counts. Incomplete rounds or missing/mismatched specialist receipts
+remain missing evidence. Shadow outcomes cannot change these blocker
+counts or verdicts.</p>
+<p>Deterministic disposition replacement requires the merged metadata's
+complete role-keyed <code>specialist_sha256</code> map to match the
+current round's successful specialist receipts. The collector verifies
+each original report against its independently captured receipt digest
+and rebuilds the normalized findings before replacing stage rows, so
+copying current digests onto stale findings cannot pass. Caller-supplied
+round metadata alone is insufficient. Missing legacy digests,
+missing/tampered originals or any mismatched findings preserve existing
+rows with an optional evidence warning. This collection reads report
+prose only transiently, adds no provider receipt or usage, and changes
+no fallback behavior or exit code.</p>
 <p><code>evidence/v1/acceptance/NUMBER-HEAD.json</code> freezes the
 rendered metadata brief with its SHA-256 and independent
 <code>ticket</code>/<code>pull_request</code> statuses

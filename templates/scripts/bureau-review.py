@@ -213,14 +213,15 @@ def load_specialist(text, role, refs):
     return value
 
 
-def normalized(findings, base, head):
+def normalized(findings, base, head, check_anchors=True):
     groups = {}
     invalid = 0
     checks = []
     for role, raw in findings:
         finding = dict(raw)
-        status, _ = anchor_check(finding, base, head)
-        invalid += status != 'valid'
+        if check_anchors:
+            status, _ = anchor_check(finding, base, head)
+            invalid += status != 'valid'
         key = finding_key(finding)
         item = groups.setdefault(key, dict(variants=[], specialists=set(), actionable_specialists=set(), anchors=[]))
         item['variants'].append(finding); item['specialists'].update(finding.get('specialists', [role]))
@@ -229,7 +230,7 @@ def normalized(findings, base, head):
         # anchor, not only the highest-severity variant's primary anchor.
         for anchor in finding.get('anchors', [finding['anchor']] if 'anchor' in finding else []):
             if anchor not in item['anchors']: item['anchors'].append(anchor)
-        checks.append(dict(finding_id=sha(encoded(key).encode()), status=status))
+        if check_anchors: checks.append(dict(finding_id=sha(encoded(key).encode()), status=status))
     result = []
     for key, item in groups.items():
         variants = sorted(item['variants'], key=lambda f: (SEVERITY[f['class']], encoded(f)))
@@ -327,6 +328,8 @@ def merge(directory, base, head, refs):
                     fallback_reasons=fallback_reasons,
                     grounding='off', invalid_anchors=0, anchor_checks=[], verifier=[], verifier_omitted=0,
                     critical_floor=0, security_floor=0, adr_refs=[])
+    if not fallback_reasons:
+        metadata['specialist_sha256'] = {role: module('evidence').digest(values[role]) for role in ROLES}
     findings, _, _ = normalized(claims, base, head)
     invalid = sum(check['status'] != 'valid' for check in checks)
     for severity in counts: counts[severity] = max(counts[severity], sum(f['class'].lower() == severity for f in findings))
