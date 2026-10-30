@@ -238,8 +238,11 @@ POST_IMPLEMENT_RUNNER_PID=""
 POST_IMPLEMENT_CANCEL_FILE=""
 POST_IMPLEMENT_LAUNCH_MARKER=""
 _stop_post_implement_runner() {
-  local pid="${POST_IMPLEMENT_RUNNER_PID:-}" last
+  local pid="${POST_IMPLEMENT_RUNNER_PID:-}" last saved_traps deadline common job alive code="${1:-25}"
   [ -n "${POST_IMPLEMENT_CANCEL_FILE:-}" ] || return 0
+  saved_traps=$(trap -p HUP INT TERM)
+  # EXIT must finish the join even if a second stop signal reaches the stage.
+  trap '' HUP INT TERM
   if [ -z "$pid" ] && [ -n "$POST_IMPLEMENT_LAUNCH_MARKER" ]; then
     # TERM can arrive after the fork but before PID registration. $! already
     # names that child; the pre-fork value distinguishes a job never launched.
@@ -250,11 +253,44 @@ _stop_post_implement_runner() {
   # The job is the environment wrapper, not necessarily the Python runner.
   # Let the runner signal/reap its own group and close (or retain) its hold.
   : > "$POST_IMPLEMENT_CANCEL_FILE"
-  if [ -n "$pid" ]; then wait "$pid" 2>/dev/null || true; fi
+  if [ -n "$pid" ]; then
+    deadline=$((SECONDS + 15))
+    while :; do
+      # Consult Bash's own jobs, including stopped jobs, without a PID probe
+      # whose permission error could be mistaken for completion.
+      alive=0
+      for job in $(jobs -pr; jobs -ps); do
+        if [ "$job" = "$pid" ]; then alive=1; break; fi
+      done
+      [ "$alive" = 1 ] || break
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        # A wrapper can stall before the runner writes its own hold. Keep a
+        # separate unfinished hold and the cancel file; neither ownership nor
+        # publication may proceed without a completed join.
+        EXIT_PUSH_ARMED=0
+        common=$(git rev-parse --git-common-dir)
+        python3 -I -c '
+import runpy, sys
+from pathlib import Path
+pg = runpy.run_path(sys.argv[1])
+pg["ProcessHold"](sys.argv[2], "post_implement", Path.cwd(), run_id=sys.argv[3], issue=sys.argv[4]).close()
+' "$_BUREAU_SCRIPTS_DIR/bureau-process.py" "$common/bureau" "${BUREAU_RUN_ID:-}" "$ISSUE"
+        bureau_outcome_signal human_hold || true
+        trap - HUP INT TERM
+        eval "$saved_traps"
+        case "$code" in 124|130|143) ;; *) code=25 ;; esac
+        exit "$code"
+      fi
+      sleep 0.1
+    done
+    wait "$pid" 2>/dev/null || true
+  fi
   POST_IMPLEMENT_RUNNER_PID=""
   POST_IMPLEMENT_LAUNCH_MARKER=""
   rm -f "$POST_IMPLEMENT_CANCEL_FILE"
   POST_IMPLEMENT_CANCEL_FILE=""
+  trap - HUP INT TERM
+  eval "$saved_traps"
 }
 _POST_IMPLEMENT_RUNNER='
 import importlib.util, os, signal, subprocess, sys, time
@@ -264,9 +300,10 @@ spec = importlib.util.spec_from_file_location("bureau_process", Path(sys.argv[4]
 pg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pg)
 limit, cmd, status_file = int(sys.argv[1]), sys.argv[2], sys.argv[3]
-if Path(status_file + ".cancel").exists():
-    sys.exit(143)
 hold = pg.ProcessHold(sys.argv[5], "post_implement", Path.cwd(), run_id=sys.argv[6], issue=sys.argv[7])
+if Path(status_file + ".cancel").exists():
+    hold.close(stopped=True)
+    sys.exit(143)
 child = None
 outcome = None
 def signal_group(signum):
@@ -292,6 +329,9 @@ def stop(code, why):
             print("post-implement termination uncertain: " + str(exc), file=sys.stderr)
         sys.exit(code)
 try:
+    if Path(status_file + ".cancel").exists():
+        outcome = 143
+        sys.exit(outcome)
     child = subprocess.Popen(["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
     for sig, code in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)):
         signal.signal(sig, lambda *_, c=code: stop(c, "signal"))
@@ -885,7 +925,7 @@ IMPLEMENT_GATE_TMP=$(mktemp -d)
 IMPLEMENT_GATE_CONTEXT="$IMPLEMENT_GATE_TMP/context.json"
 _push_on_exit() {
   local rc=$?
-  _stop_post_implement_runner
+  _stop_post_implement_runner "$rc"
   rm -rf "$IMPLEMENT_GATE_TMP"
   [ "$EXIT_PUSH_ARMED" = 1 ] || return "$rc"
   _implement_process_checkpoint "$rc"
