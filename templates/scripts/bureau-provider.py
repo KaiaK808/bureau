@@ -416,6 +416,10 @@ def run(options, prompt, system, repo, evidence, schema=None):
         receipt['review_inputs'] = dict(head=os.environ.get('BUREAU_REVIEW_INPUT_HEAD'),
                                       base=os.environ.get('BUREAU_REVIEW_INPUT_BASE'),
                                       validation_head=os.environ.get('BUREAU_REVIEW_VALIDATION_HEAD'))
+        if os.environ.get('BUREAU_REVIEW_ADR_REFS', 'null') != 'null' and result is not None:
+            receipt['adr_refs'] = sorted({ref for finding in result.get('findings', [])
+                                          for ref in finding.get('adr_refs', [])
+                                          if re.fullmatch(r'[0-9]{4}', ref)})
     # A failed CLI may still have a final advisory observation. Read originals
     # only for optional local capture; never validate/forward/recover a success.
     if code != 0: receipt['insights_result'] = e.observe(receipt_result, receipt)

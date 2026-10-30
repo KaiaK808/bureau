@@ -6,6 +6,12 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Added
+
+- Reusable [read-only PR review brief](references/review-brief.md) with relevant ADR numbers/titles, settled-decision and known-limit rules, and numbered evidence-backed findings. Opt-in `agents.review_adr_context` (default false) gives the three code-review specialists a bounded ADR index from pinned PR base/head. Only accepted ADRs with identical paths and blob IDs are settled, including for known-limit exclusions. Added, changed and removed records are non-authoritative proposals under review; references are valid but never waive or downgrade findings. `repo.adr_dir` defaults to `docs/adr`; `agents.review_adr_budget_bytes` defaults to 4096 bytes. Optional finding `adr_refs` are validated against included records, shown as short comment citations and stored as IDs only in evidence. Unknown references block as malformed. Enabled review selects a separate extended schema; disabled review preserves legacy schema bytes, Codex wire projection, validation, receipt schema digest and prompts/comments, including rejection of unsolicited `adr_refs` as unexpected result fields.
+
+  **Upgrade:** compare installed script drift, resync the complete scripts scope including both review schemas and restart drivers before opting in; run doctor after configuring the keys. No configuration migration is required. Whole-record truncation and fixed read caps can omit records; only included IDs are valid citations. Approval reuse includes the enabled ADR policy. Validation uses local Git and fake providers/services, fixed legacy fixtures and temporary-script mutation controls; no release tag or full-history checkout is required. Prompt guidance does not establish finding truth or replace live reviewer qualification.
+
 ## [3.5.1] - 2026-10-29
 
 v3.5.1 is a patch release on v3.5.0, prepared 2026-10-28 for the 2026-10-29 tag. It contains only [#98](https://github.com/KaiaK808/bureau/pull/98): Spec Review and UX fail closed on invalid results, and their overlap readiness requires a validated passing status and the installed schema digest. All behavior changes are on by default after resync; readiness validation applies when overlap admission is enabled. No configuration keys or exit codes are new; the existing exit 22 widens to these invalid results. See the [v3.5.1 release notes](docs/release-notes.md) for the contracts, upgrade actions, validation record and known limitation.

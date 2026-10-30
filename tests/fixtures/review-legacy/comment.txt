@@ -1,0 +1,23 @@
+## Code Review v2 — T-1
+
+**Verdict**: APPROVE
+**Build**: Passed
+**Reviewed head**: `<HEAD>`
+**Target**: `main` at `<BASE>`
+
+---
+
+Public review.
+
+```json
+{"verdict":"APPROVE","bugs":0,"security_issues":0,"missing_acceptance":[],"fixes_needed":[],"summary":"Review complete","findings":[{"file":"src/check.py","line":12,"class":"MINOR","msg":"A minor observation"}]}
+```
+
+### Deferred below threshold (BUG)
+- `src/check.py:12` — A minor observation
+
+**Review round**: 1/4 · **Severity floor**: BUG
+<!-- bureau-review-round: round=1 verdict=APPROVE -->
+
+---
+*Automated review by Bureau pipeline*

@@ -3663,9 +3663,12 @@ apply_build_failure() {
 review_convergence() {
   local result verdict
   result=$(parse_claude_json "$1" '.')
-  verdict=$(printf '%s' "$result" | jq -r --arg floor "$2" '
+  verdict=$(printf '%s' "$result" | jq -r --arg floor "$2" --argjson adr_index "${BUREAU_REVIEW_ADR_REFS:-null}" '
     def count: type == "number" and . >= 0 and . <= 999999999 and . == floor;
     def strings: type == "array" and all(.[]; type == "string");
+    def adr_refs_valid:
+      $adr_index == null or (has("adr_refs") | not) or
+      (.adr_refs | type == "array" and all(.[]; type == "string" and (. as $ref | $adr_index | index($ref) != null)));
     if type != "object" then "BLOCK"
     elif .verdict == "BLOCK" then "BLOCK"
     elif ((.verdict == "APPROVE" or .verdict == "REQUEST_CHANGES")
@@ -3674,7 +3677,7 @@ review_convergence() {
           and (.summary | type == "string") and (.comment | type == "string")
           and (.findings | type == "array" and all(.[];
             type == "object" and (.file | type == "string") and (.line | count)
-            and (.msg | type == "string") and
+            and (.msg | type == "string") and adr_refs_valid and
             (.class == "CRITICAL" or .class == "BUG" or .class == "MINOR" or .class == "SKIP")))) | not
       then "BLOCK"
     elif any(.findings[]; .class == "CRITICAL") then "BLOCK"
@@ -4441,6 +4444,13 @@ build_lessons_context() {
     ( echo 'bureau lessons: WARN: optional lesson helper unavailable; continuing without lessons' >&2 ) || true
   }
   return 0
+}
+
+# build_review_adr_context <pinned-base> <pinned-head>: context, included IDs and a
+# reuse-policy digest. Read only local Git objects, never live checkout files.
+# Explicit opt-in failures stop review with 24 instead of inventing context.
+build_review_adr_context() {
+  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-adr.py" --config "$BUREAU_CONFIG" --base "$1" --head "$2"
 }
 
 # build_negative_constraints: shared "Do NOT" block injected into prompts that

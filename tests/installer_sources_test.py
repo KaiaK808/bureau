@@ -141,6 +141,11 @@ class IgnoredTemplateFileTests(Target):
 
     ALL = ("assets", "--target", "both", "--scope", "interfaces", "--scope", "scripts", "--scope", "workflows")
 
+    def test_scripts_scope_ships_both_review_contracts(self):
+        self.install('assets', '--scope', 'scripts', '--apply')
+        for name in ('bureau-review.schema.json', 'bureau-review-adr.schema.json'):
+            self.assertEqual((self.repo / 'scripts' / name).read_bytes(), (ROOT / 'templates/scripts' / name).read_bytes())
+
     def test_the_source_commit_starts_no_git_maintenance(self):
         trace = self.root / "trace2.json"
         with patch.dict(GIT_ENV, {"GIT_TRACE2_EVENT": str(trace)}):

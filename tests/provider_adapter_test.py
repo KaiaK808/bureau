@@ -485,6 +485,35 @@ p.run=lose_forward
         self.assertFalse(self.gate_action('run',plan)['green'])
         self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['run'])
 
+    def test_review_contract_selection_preserves_legacy_wire_validation_and_receipt(self):
+        legacy = ROOT / 'tests/fixtures/review-legacy'
+        base = dict(verdict='APPROVE', bugs=0, security_issues=0, missing_acceptance=[], fixes_needed=[],
+                    summary='', comment='', findings=[dict(file='source.py', line=1, **{'class': 'MINOR'}, msg='Check')])
+        for runner in ('codex', 'claude'):
+            self.config.write_text(json.dumps({'agents': {'runner': runner}}))
+            for enabled in (False, True):
+                with self.subTest(runner=runner, enabled=enabled):
+                    name = 'bureau-review-adr.schema.json' if enabled else 'bureau-review.schema.json'
+                    schema = ROOT / 'templates/scripts' / name
+                    args = ('--stage', 'code_review', '--schema', str(schema))
+                    self.run_provider(*args, FINAL=json.dumps(base), ASSERT_STRICT_SCHEMA='1')
+                    argv = json.loads((self.root / 'argv.json').read_text())
+                    if runner == 'codex':
+                        wire = Path(argv[argv.index('--output-schema') + 1]).read_bytes()
+                        if enabled:
+                            self.assertIn('adr_refs', json.loads(wire)['properties']['findings']['items']['required'])
+                        else:
+                            self.assertEqual(wire, (legacy / 'codex-schema.json').read_bytes())
+                    receipt = json.loads(Path(self.evidence()[1]['receipt']).read_text())
+                    expected = schema if enabled else legacy / 'bureau-review.schema.json'
+                    self.assertEqual(receipt['schema_sha256'], p.hashlib.sha256(expected.read_bytes()).hexdigest())
+                    referenced = json.loads(json.dumps(base))
+                    referenced['findings'][0]['adr_refs'] = ['0001']
+                    self.run_provider(*args, FINAL=json.dumps(referenced), code=0 if enabled else 22,
+                                      ASSERT_STRICT_SCHEMA='1')
+                    if not enabled:
+                        self.assertEqual(self.evidence()[1]['error'], 'unexpected result fields')
+
     def test_insights_compose_with_strict_gate_schema_and_recovery(self):
         values = [('implement', 'implement', self.sandbox_result('SANDBOX_GATE: configured test failed')),
                   ('qa', 'qa', dict(status='NEEDS_HUMAN', tests_added=0, tests_failing=0,
