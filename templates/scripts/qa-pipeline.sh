@@ -295,7 +295,9 @@ if [ "$(resolve_runner_for_stage qa)" = codex ] \
    && [ "$(printf '%s' "$QA_GATE_PLAN" | jq -r '.eligible')" = true ]; then
   OUTSIDE_RC=0
   OUTSIDE_GATE=$(codex_gate_run qa "$QA_GATE_PLAN") || OUTSIDE_RC=$?
-  [ "$OUTSIDE_RC" != 130 ] || exit 130
+  case "$OUTSIDE_RC" in
+    25|124|130) printf '%s\n' "$OUTSIDE_GATE" >&2; exit "$OUTSIDE_RC" ;;
+  esac
   bureau_ticket_checkpoint "$ISSUE"
   [ "$OUTSIDE_RC" = 0 ] || OUTSIDE_GATE='{"green":false,"logs":[]}'
   QA_GATE_RECONCILE=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.eligible // false')

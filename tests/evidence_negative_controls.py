@@ -9,8 +9,8 @@ import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPTS=ROOT/'templates/scripts'
-names=('bureau-provider.py','bureau-runtime.py','bureau-evidence.py','bureau-gates.py','bureau-activity.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
-       'merge-pipeline.sh','bureau-config.sh','bureau-env.sh','code-review-pipeline.sh')
+names=('bureau-provider.py','bureau-runtime.py','bureau-process.py','bureau-evidence.py','bureau-gates.py','bureau-activity.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
+       'bureau-insights.sh','merge-pipeline.sh','bureau-config.sh','bureau-env.sh','code-review-pipeline.sh')
 before={name:hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
 
 
@@ -23,7 +23,7 @@ def rejected(test, cases, env, expected):
 
 
 with tempfile.TemporaryDirectory(prefix='bureau evidence controls ') as scratch:
-    root=Path(scratch)
+    root=Path(scratch).resolve()
     for name in names: shutil.copy(SCRIPTS/name,root/name)
     provider=root/'bureau-provider.py'; original=provider.read_text()
     anchor='        path = store.put_receipt(receipt)\n'

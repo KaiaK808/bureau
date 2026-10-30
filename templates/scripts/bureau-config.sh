@@ -2720,8 +2720,8 @@ merge_origin_main_or_abort() {
   ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
       --repo "$PWD" --config "$BUREAU_CONFIG" --base "$base_ref" --issue "$issue" --result-file "$result_file" ) || merge_rc=$?
   local transaction_rc="$merge_rc"
-  # The transaction has reaped its command and rolled back before returning a
-  # withdrawal. Consume its shared latch (including Done's 0) in THIS shell;
+  # A confirmed stop rolls back; uncertain termination preserves the checkout
+  # and its durable hold. Consume withdrawal (including Done's 0) in THIS shell;
   # a failed command also needs a fresh read even when the comment is throttled.
   if [ "$merge_rc" = 0 ] && [ "$(jq -r '.semantic // false' "$result_file" 2>/dev/null)" = true ]; then
     BUREAU_CONFLICT_REPAIRED_HEAD=$(git rev-parse HEAD) || merge_rc=18
@@ -2731,7 +2731,7 @@ merge_origin_main_or_abort() {
   bureau_ticket_checkpoint "$issue"
   case "$merge_rc" in
     0) return 0 ;;
-    10|16|21|25|26|27|130) return "$merge_rc" ;;
+    10|16|21|25|26|27|124|130) return "$merge_rc" ;;
   esac
   echo "  ERROR: merge of $base_ref has conflicts. Aborting $stage_label."
   # Throttle the conflict comment to once per hour per issue. Without this,

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d417a11c50d9603c55193bd8bdf355ac72cc8849b85053073bd6ef540853d39c">
+<meta name="bureau-source-sha256" content="163ad16d113f757a9422123edee031dcb299ff7734f4bd6611788cf8e3767dc1">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -377,6 +377,78 @@ outcomes. Cancellation 130 is captured before later evidence I/O and
 wins over write/read/validation failures. See the <a
 href="stage-protocol.html#sandbox-only-gate-recovery">exact reconciliation
 contract</a>.</p>
+<p>Gate-run responses use <code>outside gate green</code> for verified
+success and <code>outside gate red, aborted or incomplete</code> for
+failed, timed-out, cancelled or incomplete runs.
+<code>gate evidence unavailable</code> means evidence reconciliation
+failed; <code>outside gate execution failed</code> means command
+execution failed, and <code>outside gate termination uncertain</code>
+means cleanup could not confirm termination. Every signalling error
+except ESRCH remains uncertain unless the shared EPERM re-probe observes
+ESRCH within its deadline; an exited leader or an empty process listing
+cannot clear it. Both gate recovery and conflict validation reject
+uncertainty, return <code>eligible: false</code> and
+<code>green: false</code> and retain any outside-log pointer. Every
+claimed reservation prevents another execution. Cancellation is latched
+before termination and retains exit 130 / <code>abort: kill</code>;
+timeout retains 124 / <code>abort: timeout</code>. An otherwise
+successful uncertain gate exits 25 with
+<code>failure_cause: human_hold</code>; no passing rerun record is
+persisted. Implementation and QA propagate uncertain-gate 25, 124 and
+130 immediately, keeping the log pointer and stopping before routing or
+further publication. Signal handlers are restored on every path.</p>
+<p>The shared <code>bureau-process.py</code> helper gives provider,
+acceptance, conflict, dispatcher, runtime and inline post-implement
+callers the same termination handling. After a termination signal fails
+with EPERM it re-probes only with <code>killpg(group, 0)</code>, using a
+single two-second monotonic deadline and backoff from 10 ms to at most
+100 ms. ESRCH within that deadline proves the group is gone, including
+when macOS briefly returns EPERM for an unreaped zombie-only group.
+During these re-probes the owning caller reaps its direct child through
+the live process handle, allowing provider cleanup to finish before
+dispatcher shutdown; reaping alone never proves group absence.
+Successful probes and further errors do not reset the deadline or clear
+the original uncertainty; without ESRCH by the deadline, termination
+stays uncertain and ownership remains held. The error path never
+consults process listings. A direct leader kill remains best effort.
+Exit checks use the same shared deadline and backoff after both
+successful signal-0 probes and EPERM, allowing asynchronously killed
+members to exit before inspection. ESRCH within the deadline proves
+absence. Only when the deadline expires with a successful last probe
+does the check use bounded macOS/Linux <code>ps -axo pgid=,stat=</code>
+inspection: no visible non-zombie members means gone; a live member or
+unavailable, timed-out or malformed inspection remains uncertain. EPERM
+or another error at the deadline stays uncertain without consulting
+process listings. A failed termination signal still requires ESRCH to
+clear its uncertainty; exit-check inspection cannot override that
+failure. Outside gates also require the leader to be reaped. Before
+spawning, providers, conflict helpers, post-implement hooks, outside
+gates and dispatcher helpers fsync a record in
+<code>&lt;git common dir&gt;/bureau/process-holds/</code>; a lock
+distinguishes an active call from unfinished work. Uncertainty leaves
+that record intact, retains leases and worktree registration without
+cleanup, and makes a restarted dispatcher refuse with exit 25 and
+<code>human_hold</code>. Worker EXIT cleanup checks the same hold before
+detaching the branch or removing registration, while preserving its
+original exit. This remains durable when later writes fail. A failed
+initial hold write prevents launch. Stop and inspect the writers,
+reconcile saved work and explicitly remove their hold files before
+releasing the run or restarting dispatch; existing
+<code>dispatch-termination.json</code> holds also require explicit
+removal. Stored IDs are never signalled during release or
+reconciliation. Conflict helpers and validation leave an uncertain
+merge/index/worktree in place for the operator. Implementation checks
+the shared hold before another provider pass, hook bookkeeping or
+publication, including its EXIT push. A held timeout or cancellation
+retains 124 or 130; other uncertain outcomes use 25 with reason
+<code>human_hold</code>. Runtime registration writes an interrupted
+record before spawning; successful registration or confirmed cleanup
+clears it. Only uncertain cleanup retains ownership after registration
+fails. Dispatcher cancellation escalates after five seconds, bounds
+stdout drain and leader reaping to one second each and retains 130.
+Resync the complete scripts scope after comparing installed drift.
+Qualification uses fake services and local fixtures; hosted
+cross-platform and live installation checks remain separate.</p>
 <p>A Codex child without <code>TMPDIR</code> gets a private
 <code>bureau-codex-*</code> directory under resolved <code>/tmp</code>,
 outside the repository regardless of <code>TEMP</code> or
