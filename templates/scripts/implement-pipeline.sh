@@ -236,14 +236,25 @@ POST_IMPLEMENT_HEAD_REWRITTEN=0
 POST_IMPLEMENT_REPORT=""
 POST_IMPLEMENT_RUNNER_PID=""
 POST_IMPLEMENT_CANCEL_FILE=""
+POST_IMPLEMENT_LAUNCH_MARKER=""
 _stop_post_implement_runner() {
-  [ -n "${POST_IMPLEMENT_RUNNER_PID:-}" ] || return 0
+  local pid="${POST_IMPLEMENT_RUNNER_PID:-}" last
+  [ -n "${POST_IMPLEMENT_CANCEL_FILE:-}" ] || return 0
+  if [ -z "$pid" ] && [ -n "$POST_IMPLEMENT_LAUNCH_MARKER" ]; then
+    # TERM can arrive after the fork but before PID registration. $! already
+    # names that child; the pre-fork value distinguishes a job never launched.
+    # Bash 3.2's nounset also rejects ${!:-}, so read it with nounset off locally.
+    last=$(set +u; printf 'previous:%s' "$!")
+    [ "$last" = "$POST_IMPLEMENT_LAUNCH_MARKER" ] || pid=$!
+  fi
   # The job is the environment wrapper, not necessarily the Python runner.
   # Let the runner signal/reap its own group and close (or retain) its hold.
   : > "$POST_IMPLEMENT_CANCEL_FILE"
-  wait "$POST_IMPLEMENT_RUNNER_PID" 2>/dev/null || true
+  if [ -n "$pid" ]; then wait "$pid" 2>/dev/null || true; fi
   POST_IMPLEMENT_RUNNER_PID=""
+  POST_IMPLEMENT_LAUNCH_MARKER=""
   rm -f "$POST_IMPLEMENT_CANCEL_FILE"
+  POST_IMPLEMENT_CANCEL_FILE=""
 }
 _POST_IMPLEMENT_RUNNER='
 import importlib.util, os, signal, subprocess, sys, time
@@ -253,6 +264,8 @@ spec = importlib.util.spec_from_file_location("bureau_process", Path(sys.argv[4]
 pg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pg)
 limit, cmd, status_file = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+if Path(status_file + ".cancel").exists():
+    sys.exit(143)
 hold = pg.ProcessHold(sys.argv[5], "post_implement", Path.cwd(), run_id=sys.argv[6], issue=sys.argv[7])
 child = None
 outcome = None
@@ -441,19 +454,25 @@ command: ${cmd}"
   common=$(git rev-parse --git-common-dir)
   echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
   POST_IMPLEMENT_CANCEL_FILE="$status_file.cancel"
+  POST_IMPLEMENT_LAUNCH_MARKER=$(set +u; printf 'previous:%s' "$!")
   (
     # A signal to the stage group must not kill this wrapper before it joins
     # the runner. Python installs its own handlers; EXIT also requests a stop.
     trap ':' HUP INT TERM
+    [ ! -e "$POST_IMPLEMENT_CANCEL_FILE" ] || exit 143
+    # The runner checks again after the environment wrapper finishes setup.
     bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" "$common/bureau" "${BUREAU_RUN_ID:-}" "$ISSUE"
   ) >"$log" 2>&1 &
   POST_IMPLEMENT_RUNNER_PID=$!
+  POST_IMPLEMENT_LAUNCH_MARKER=""
   if wait "$POST_IMPLEMENT_RUNNER_PID"; then
     rc=0
   else
     rc=$?
   fi
   POST_IMPLEMENT_RUNNER_PID=""
+  rm -f "$POST_IMPLEMENT_CANCEL_FILE"
+  POST_IMPLEMENT_CANCEL_FILE=""
   _implement_process_checkpoint "$rc"
   why=$(cat "$status_file" 2>/dev/null || true)
   rm -f "$status_file"
