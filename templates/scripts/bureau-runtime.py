@@ -211,7 +211,8 @@ class Store:
                     self.failed_registration = run
                     print('bureau: registration cleanup failed: ' + str(exc), file=sys.stderr)
                 else:
-                    # Clear the write-ahead interruption after confirmed exit.
+                    # Confirmation survives a failed write-ahead recovery save.
+                    self.stopped_registration = run
                     save(path, record)
                 raise
             return child
@@ -225,7 +226,7 @@ class Store:
                 return
             path = self.process_path(run)
             record = read(path, {'groups': [], 'interrupted': False})
-            if interrupted or record['interrupted']:
+            if interrupted or (record['interrupted'] and getattr(self, 'stopped_registration', None) != run):
                 record['interrupted'] = True
                 save(path, record)
                 leases = read(self.leases, {})

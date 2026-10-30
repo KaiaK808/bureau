@@ -684,30 +684,61 @@ provider() { echo pass >> events; return "$3"; }
         store = r.Store(self.root); run = '3' * 32
         config = self.root / '.bureau.json'; config.write_text('{}')
         args = argparse.Namespace(workspace=None, entry=None, command=['fixture'], issue='TST-1')
-        for published in (False, True):
-            with self.subTest(published=published):
+        for published, persistent, cleanup in itertools.product((False, True), (False, True), ('esrch', 'empty')):
+            with self.subTest(published=published, persistent=persistent, cleanup=cleanup):
                 store = r.Store(self.root)
                 store.leases.unlink(missing_ok=True)
                 store.process_path(run).unlink(missing_ok=True)
+                self.child.wait.reset_mock()
                 real_save = r.save
                 failed = False
-                def fail_once(path, record):
+                def fail_registration(path, record):
                     nonlocal failed
-                    if path == store.process_path(run) and record.get('groups') and not failed:
+                    if path == store.process_path(run) and record.get('groups') and (persistent or not failed):
                         failed = True
                         if published: real_save(path, record)
-                        raise OSError('registration failed once')
+                        raise OSError('registration failed')
                     real_save(path, record)
                 with patch.dict(os.environ, {'BUREAU_RUN_ID': run}, clear=True), \
                         patch.object(r, 'config_for', return_value=config), \
                         patch.object(r, 'evidence_head', return_value='a' * 40), patch.object(r.e, 'Store'), \
                         patch.object(r.subprocess, 'Popen', return_value=self.child), \
-                        patch.object(r.os, 'killpg', side_effect=ProcessLookupError(errno.ESRCH, 'gone')), \
-                        patch.object(r, 'save', side_effect=fail_once):
-                    with self.assertRaisesRegex(OSError, 'registration failed once'): r.execute(self.root, args, store)
+                        patch.object(r.os, 'killpg', side_effect=ProcessLookupError(errno.ESRCH, 'gone') if cleanup == 'esrch' else None), \
+                        patch.object(r.pg, 'inspect_groups', self.inspectors[r.pg]), \
+                        patch.object(r.subprocess, 'check_output', return_value=''), \
+                        patch.object(r, 'save', side_effect=fail_registration):
+                    with self.assertRaisesRegex(OSError, 'registration failed'): r.execute(self.root, args, store)
+                self.child.wait.assert_called_once_with(timeout=1)
                 self.assertEqual(r.read(store.leases), {})
                 self.assertFalse(store.process_path(run).exists())
                 self.assertEqual(r.pg.process_holds(self.control), [])
+
+    def test_persistent_registration_failure_with_uncertain_cleanup_keeps_ownership(self):
+        store = r.Store(self.root); run = '4' * 32
+        config = self.root / '.bureau.json'; config.write_text('{}')
+        args = argparse.Namespace(workspace=None, entry=None, command=['fixture'], issue='TST-1')
+        real_save = r.save
+        def fail_registration(path, record):
+            if path == store.process_path(run) and record.get('groups'):
+                raise OSError('registration failed')
+            real_save(path, record)
+        with patch.dict(os.environ, {'BUREAU_RUN_ID': run}, clear=True), \
+                patch.object(r, 'config_for', return_value=config), \
+                patch.object(r, 'evidence_head', return_value='a' * 40), patch.object(r.e, 'Store'), \
+                patch.object(r.subprocess, 'Popen', return_value=self.child), \
+                patch.object(r.os, 'killpg', side_effect=denied()), \
+                patch.object(r, 'save', side_effect=fail_registration):
+            with self.assertRaisesRegex(OSError, 'registration failed'): r.execute(self.root, args, store)
+        self.child.wait.assert_called_once_with(timeout=1)
+        leases = r.read(store.leases)
+        self.assertEqual(set(leases), {'issue:TST-1', 'workspace:' + str(self.root)})
+        self.assertTrue(all(lease['interrupted'] for lease in leases.values()))
+        self.assertTrue(r.read(store.process_path(run))['interrupted'])
+        restarted = r.Store(self.root)
+        with patch.object(r.subprocess, 'Popen') as spawn:
+            with self.assertRaisesRegex(r.Conflict, 'Run was interrupted'):
+                restarted.spawn(run, ['fixture'], self.root, {})
+        spawn.assert_not_called()
 
     def test_runtime_forward_eperm_preserves_130_and_ownership(self):
         store = Mock(root=self.root)
