@@ -4,7 +4,7 @@ set -euo pipefail
 source "$(dirname "$0")/lib/harness.sh"
 source "$(dirname "$0")/lib/pr2-gate.sh"
 unset BUREAU_CALLER_STOP
-ISSUE=EXP-1760
+ISSUE=EXP-7
 
 for mode in code fallback; do
   for boundary in stop pending blocked manual worker; do
