@@ -729,7 +729,7 @@ class Store:
                      cause_class=cause) for s in items]
         self._append_learning('insights.jsonl', rows, ('provider_attempt_id',), run)
 
-    def _append_learning(self, name, incoming, identity, run):
+    def _append_learning(self, name, incoming, identity, run, replace=False):
         """All learning ledgers share PR 7's lock, atomic budget and bounded retention."""
         if not incoming: return
         path = self.root / name
@@ -737,6 +737,8 @@ class Store:
             rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
             now = self.clock()
             rows = [r for r in rows if now - r['timestamp'] <= RETENTION_SECONDS]
+            if replace:
+                rows = [r for r in rows if not all(r.get(k) == incoming[0].get(k) for k in identity)]
             if not any(all(r.get(k) == incoming[0].get(k) for k in identity) for r in rows): rows += incoming
             rows = rows[-2048:]
             payload = ''.join(json.dumps(r, ensure_ascii=True, separators=(',', ':')) + '\n' for r in rows).encode()
@@ -782,7 +784,7 @@ class Store:
         elif cause == 'timeout' and timeout: row['timeout_kind'] = timeout
         self._append_learning('stage-outcomes.jsonl', [row], ('stage_attempt_id',), run)
 
-    def collect_dispositions(self, receipt):
+    def collect_dispositions(self, receipt, merged=False):
         result = normalize_dispositions(receipt.get('structured_result') or receipt.get('insights_result'))
         if not isinstance(result, dict): return
         items = []
@@ -796,11 +798,36 @@ class Store:
         items = list({(r['disposition'], r['severity'], r['path']): r for r in items}.values())[:MAX_DISPOSITIONS]
         if not items: return
         issue = ticket(receipt['issue']) if receipt.get('issue') else None
-        run = identifier(receipt['run_id']); provider = identifier(receipt['provider_attempt_id'])
+        run = identifier(receipt['run_id']); provider = None if merged else identifier(receipt['provider_attempt_id'])
         attempt = identifier(receipt['stage_attempt_id'])
         rows = [dict(schema_version=VERSION, record_type='review_disposition', issue=issue, stage=receipt['stage'],
                      run_id=run, stage_attempt_id=attempt, provider_attempt_id=provider, timestamp=self.clock(), **item) for item in items]
-        self._append_learning('review-dispositions.jsonl', rows, ('provider_attempt_id',), run)
+        # A normalized merge is stage-derived evidence, not another provider
+        # call. Replace any earlier merger-receipt projection for this stage
+        # so retained specialist findings are included exactly once too.
+        identity = ('run_id', 'stage_attempt_id') if merged else ('provider_attempt_id',)
+        self._append_learning('review-dispositions.jsonl', rows, identity, run, replace=merged)
+
+    def collect_merged_dispositions(self, run, stage_attempt, result, merge):
+        if digest(result) != merge.get('result_sha256'): raise ValueError('foreign merged result')
+        with self.guard():
+            manifest = self._manifest(run)
+            attempt = next(a for a in manifest['attempts'] if a['attempt_id'] == identifier(stage_attempt))
+            record = attempt.get('review_round', {})
+            if record.get('final_verdict') not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK'): return
+            if record.get('merge') != merge: raise ValueError('foreign review merge')
+            phases = set()
+            for provider in record['provider_attempt_ids']:
+                receipt = read(self.receipt_path(run, provider), {})
+                if (receipt.get('run_id') == run and receipt.get('stage_attempt_id') == stage_attempt
+                        and receipt.get('issue') == manifest['issue'] and receipt.get('stage') == 'code_review'
+                        and receipt.get('normalized_exit') == 0):
+                    phases.add(receipt.get('phase'))
+            required = REVIEW_PHASES - {'verdict'} if merge['mode'] == 'deterministic' else REVIEW_PHASES
+            if not required <= phases: return
+        self.collect_dispositions(dict(run_id=run, stage_attempt_id=stage_attempt, issue=manifest['issue'],
+                                       stage='code_review', phase='verdict', normalized_exit=0,
+                                       review_min_severity=record['min_severity'], structured_result=result), merged=True)
 
     def _link_receipt(self, receipt, path):
         with self.guard():
@@ -1127,6 +1154,7 @@ def review_round_main():
     parser.add_argument('--provider-verdict')
     parser.add_argument('--final-verdict')
     parser.add_argument('--merge-metadata', type=Path)
+    parser.add_argument('--merge-result', type=Path)
     args = parser.parse_args()
     run = os.environ.get('BUREAU_RUN_ID'); attempt = os.environ.get('BUREAU_STAGE_ATTEMPT_ID')
     if not run or not attempt: return
@@ -1135,11 +1163,14 @@ def review_round_main():
     if args.signal:
         store.outcome_signal(run, attempt, args.signal)
         return
+    merge = json.loads(args.merge_metadata.read_text()) if args.merge_metadata else None
     store.review_round(
         run, attempt, args.round, args.min_severity,
         args.provider_verdict if args.provider_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None,
         args.final_verdict if args.final_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None,
-        json.loads(args.merge_metadata.read_text()) if args.merge_metadata else None)
+        merge)
+    if args.merge_result and merge:
+        store.collect_merged_dispositions(run, attempt, json.loads(args.merge_result.read_text()), merge)
 
 
 if __name__ == '__main__':

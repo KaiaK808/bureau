@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f1148162edcc6a9697d07d8227753a11a4815cd21430acac8807cdee6d2846d1">
+<meta name="bureau-source-sha256" content="e20ff6db1d216fdb426d3d9b68db4419d547ef0a5029c0e49f1390d426e9bac0">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1112,8 +1112,13 @@ receipts retain their existing durability requirement.</p>
 <p>The provider-result object and digest remain unchanged. Evidence
 records <code>provider_verdict</code> separately from the final shell
 verdict; for code merge this compatibility field holds the neutral
-APPROVE input, not a model approval. The existing PR review comment
-appends “Deferred below threshold” and SKIP lists after
+APPROVE input, not a model approval. Both modes collect deferred/SKIP
+dispositions from the final normalized merged result after checking its
+digest and successful correlated receipts. These stage-derived rows use
+<code>provider_attempt_id: null</code>, deduplicate by run/stage
+attempt, and replace any earlier raw merger-receipt projection for that
+stage; they create no provider receipt or usage. The existing PR review
+comment appends “Deferred below threshold” and SKIP lists after
 <code>bureau_comment_projection</code> has excluded insights; normal
 comment size limits still apply. PR 7's acceptance brief continues to
 distinguish provider verdict from invocation verdict. Old evidence needs

@@ -46,6 +46,7 @@ Review checked.
 ```
 EOF
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/approve.txt"
+  review_clean_specialists
   export BUREAU_STUB_ISSUE_STATE='Build Review' BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED=''
   export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0
   pr2_gate_setup

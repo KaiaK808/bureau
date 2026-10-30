@@ -294,7 +294,7 @@ class PipelineTests(unittest.TestCase):
         self.review.review(value)
         rows = self.rows('review-dispositions.jsonl')
         self.assertEqual({r['disposition'] for r in rows}, {'skip', 'deferred'})
-        self.assertEqual(len(self.review.rounds()), 1); self.assertEqual(self.review.rounds()[0]['calls'], 4)
+        self.assertEqual(len(self.review.rounds()), 1); self.assertEqual(self.review.rounds()[0]['calls'], 3)
         self.assertNotIn('PROSE_CANARY', json.dumps(rows))
 
     def test_real_cap_records_review_capped_and_preserves_exit_25(self):

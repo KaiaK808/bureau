@@ -150,6 +150,18 @@ PY
   export FAKE_CLAUDE_PERFORMANCE_FIXTURE="$SANDBOX/performance-review.json"
 }
 
+# Valid legacy fenced output exercises the real merger fallback without
+# manufacturing malformed reports or lowering the uncertainty floor.
+review_fallback_specialists() {
+  review_clean_specialists "${1:-APPROVE}"
+  python3 - "$FAKE_CLAUDE_CORRECTNESS_FIXTURE" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_text('```json\n' + path.read_text() + '\n```\n')
+PY
+}
+
 # Generic pipeline runner. Captures stdout/stderr/rc into $LAST_*. The pipeline
 # is allowed to fail (set +e); tests typically run pipelines that bail partway
 # through because we only stub the early helpers and care about a specific

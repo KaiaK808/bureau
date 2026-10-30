@@ -338,6 +338,35 @@ class PipelineTests(unittest.TestCase):
         counts = subprocess.check_output(['/bin/bash', '-c', helpers + '\nreview_counts'], input=json.dumps(comments), text=True)
         self.assertEqual(json.loads(counts), dict(cycles=0, rounds=2))
 
+    def test_code_and_fallback_keep_approval_and_merged_dispositions(self):
+        minor = self.claim('MINOR')
+        skipped = dict(self.claim('SKIP'), msg='Keep the pinned decision')
+        report = specialist('correctness', [minor, skipped])
+        projections = []
+        for mode in ('deterministic', 'model_fallback'):
+            with self.subTest(mode=mode):
+                self.values['correctness'] = report if mode == 'deterministic' else '```json\n' + json.dumps(report) + '\n```'
+                record, body, _ = self.run_review(20)
+                self.assertEqual(record['merge']['mode'], mode)
+                self.assertEqual(record['calls'], 3 if mode == 'deterministic' else 4)
+                self.assertEqual(record['final_verdict'], 'APPROVE')
+                approval = json.loads((self.repo / '.git/bureau/review-stops.json').read_text())['T-1']
+                self.assertEqual(approval['verdict'], 'APPROVE')
+                self.assertFalse(approval.get('merge_gate_wait', False))
+                self.assertIn('**Verdict**: APPROVE', body)
+                attempts = [a for p in (self.repo / '.git/bureau/evidence/v1/runs').glob('*/manifest.json')
+                            for a in json.loads(p.read_text())['attempts']]
+                attempt = next(a['attempt_id'] for a in attempts if a.get('review_round', {}).get('number') == record['number'])
+                ledger = self.repo / '.git/bureau/evidence/v1/review-dispositions.jsonl'
+                self.assertTrue(ledger.exists(), 'merged review lost deferred/SKIP dispositions')
+                rows = [json.loads(line) for line in ledger.read_text().splitlines() if json.loads(line)['stage_attempt_id'] == attempt]
+                projection = sorted((r['disposition'], r['severity'], r['path']) for r in rows)
+                self.assertEqual(projection, [('deferred', 'MINOR', 'task1.txt'), ('skip', 'SKIP', 'task1.txt')])
+                self.assertTrue(all(r['provider_attempt_id'] is None for r in rows), 'a code merge must not invent a provider call')
+                self.assertNotIn('Pinned claim', json.dumps(rows))
+                projections.append(projection)
+        self.assertEqual(projections, [[('deferred', 'MINOR', 'task1.txt'), ('skip', 'SKIP', 'task1.txt')]] * 2)
+
     def test_malformed_specialist_fallback_is_recorded_metadata_only(self):
         self.values['performance'] = 'Malformed specialist text'
         record, body, _ = self.run_review(0)

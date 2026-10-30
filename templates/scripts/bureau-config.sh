@@ -3737,6 +3737,7 @@ bureau_review_evidence() {
   [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
   if [ -f "${REVIEW_TMP:-}/merge-metadata.json" ]; then
     set -- --merge-metadata "$REVIEW_TMP/merge-metadata.json" "$@"
+    [ ! -f "$REVIEW_TMP/merged.json" ] || set -- --merge-result "$REVIEW_TMP/merged.json" "$@"
   fi
   ( bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" \
       --round "$REVIEW_ROUND" --min-severity "$BUREAU_REVIEW_MIN_SEVERITY" "$@" ) || true

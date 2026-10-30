@@ -260,6 +260,7 @@ review_run() {
   [ "${2:-}" != control ] || pr1_passthrough "$SCRIPTS_DIR"
   printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt" BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
+  review_clean_specialists
   export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=0 BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED=''
   run_pipeline code-review-pipeline.sh EXP-801 </dev/null; set +e  # run_pipeline leaves errexit on
   unset BASH_ENV

@@ -344,7 +344,7 @@ fallback_case() {  # $1 = control patch ('' = none)
 fallback_case ''
 [ -z "$VERDICT_LINE" ] && [ "$LAST_RC" = 22 ] || fail "a missing JSON verdict was published ('$VERDICT_LINE', $LAST_RC)"
 teardown
-old_text=$(printf 'REVIEW_VERDICT: NOT_APPROVED — BLOCK\n' | grep -oE '(APPROVE|REQUEST_CHANGES|BLOCK)' | head -1)
+old_text=$(grep -oE '(APPROVE|REQUEST_CHANGES|BLOCK)' <<< 'REVIEW_VERDICT: NOT_APPROVED — BLOCK' | sed -n '1p')
 [ "$old_text" = APPROVE ] && [ -z "$(fallback 'REVIEW_VERDICT: NOT_APPROVED — BLOCK')" ] || fail 'text-verdict negative control changed'
 echo "PASS a missing JSON verdict fails before publication; the old text reader would approve"
 
