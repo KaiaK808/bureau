@@ -2,9 +2,9 @@
 # Implement pipeline: Pick Build issue → checkout branch → execute tasks via a
 # bounded retry loop → push → PR. Each tick attempts up to MAX_ITER passes
 # through Claude, parsing the JSON status block emitted at the end of each
-# iteration to decide whether to continue. A pass that times out is counted
-# and followed by another while one is left; when none is left, the stage ends
-# with 124. Terminal states:
+# iteration to decide whether to continue. A timeout with confirmed cleanup is
+# counted and followed by another while one is left; when none is left, the stage
+# ends with 124. Terminal states:
 #   COMPLETE                  → push + mark PR ready + move to QA / Build Review
 #   NEEDS_HUMAN/STUCK/        → push + draft PR + needs-human label + summary
 #   CAP_TIME/PARTIAL            comment + no state move (issue stays in Build)
@@ -35,6 +35,20 @@ ITER_TIMEOUT=$(bureau_number BUREAU_IMPL_ITER_TIMEOUT "${BUREAU_IMPL_ITER_TIMEOU
 TOTAL_TIMEOUT=$(bureau_number BUREAU_IMPL_TOTAL_TIMEOUT "${BUREAU_IMPL_TOTAL_TIMEOUT-5400}" 5400 1 604800)
 
 # The provider adapter enforces per-pass timeouts on both macOS and Linux.
+
+# A held writer must stop retries and every publication path, including EXIT.
+_implement_process_checkpoint() {
+  local code="${1:-25}" common rc
+  common=$(git rev-parse --git-common-dir) || return $?
+  if python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-process.py" --root "$common/bureau" --run "${BUREAU_RUN_ID:-}" --exit-code "$code"; then
+    return 0
+  else
+    rc=$?
+  fi
+  EXIT_PUSH_ARMED=0
+  bureau_outcome_signal human_hold || true
+  exit "$rc"
+}
 
 # refresh_review_context: pull the newest comment for $1 that asks implement
 # for fixes and emit the prompt block the implement loop interpolates. Such a
@@ -215,6 +229,8 @@ push_if_ahead() {
 # human to look at), or when HEAD is no longer a descendant of the commit it
 # started from (then the final push is skipped: pushing would publish
 # rewritten history).
+# Uncertain cleanup instead keeps a durable hold and stops before publication,
+# retaining a determined timeout/cancellation exit (124/130), otherwise 25.
 POST_IMPLEMENT_FAILED=0
 POST_IMPLEMENT_HEAD_REWRITTEN=0
 POST_IMPLEMENT_REPORT=""
@@ -226,38 +242,51 @@ spec = importlib.util.spec_from_file_location("bureau_process", Path(sys.argv[4]
 pg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pg)
 limit, cmd, status_file = int(sys.argv[1]), sys.argv[2], sys.argv[3]
-child = subprocess.Popen(["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
+hold = pg.ProcessHold(sys.argv[5], "post_implement", Path.cwd(), run_id=sys.argv[6], issue=sys.argv[7])
+child = None
+outcome = None
 def signal_group(signum):
     try:
-        pg.signal_group(child, signum)
+        hold.signal(child, signum)
     except OSError as exc:
         print("post-implement termination uncertain: " + str(exc), file=sys.stderr)
 def stop(code, why):
-    with open(status_file, "w") as f:
-        f.write(why)
-    signal_group(signal.SIGTERM)
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        child.poll()
-        try:
-            pg.assert_groups_stopped({child.pid})
-            break
-        except OSError:
-            pass
-        time.sleep(0.1)
-    signal_group(signal.SIGKILL)
+    global outcome
+    outcome = code
     try:
-        child.wait(timeout=1)
-    except subprocess.TimeoutExpired:
-        print("post-implement termination uncertain: leader did not exit", file=sys.stderr)
-    sys.exit(code)
-for sig, code in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)):
-    signal.signal(sig, lambda *_, c=code: stop(c, "signal"))
+        with open(status_file, "w") as f:
+            f.write(why)
+    finally:
+        signal_group(signal.SIGTERM)
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            hold.cleanup(child)
+        except pg.TerminationUncertain as exc:
+            print("post-implement termination uncertain: " + str(exc), file=sys.stderr)
+        sys.exit(code)
 try:
-    rc = child.wait(timeout=limit)
-except subprocess.TimeoutExpired:
-    stop(124, "timeout")
-sys.exit(128 - rc if rc < 0 else rc)
+    child = subprocess.Popen(["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
+    for sig, code in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)):
+        signal.signal(sig, lambda *_, c=code: stop(c, "signal"))
+    try:
+        rc = child.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        stop(124, "timeout")
+    outcome = 128 - rc if rc < 0 else rc
+    sys.exit(outcome)
+finally:
+    try:
+        if child and child.poll() is None:
+            hold.cleanup(child)
+    except pg.TerminationUncertain as exc:
+        print("post-implement termination uncertain: " + str(exc), file=sys.stderr)
+    finally:
+        hold.close(stopped=not hold.uncertain)
+    if hold.uncertain:
+        sys.exit(pg.uncertain_exit(outcome))
 '
 # A path that is already uncommitted when the hook starts (` M a.txt`, an
 # untracked file) keeps the same `git status` line however much the hook adds
@@ -360,7 +389,7 @@ _post_implement_changed_dirty() {
   done < <(_post_implement_hash_paths "${blamed[@]}")
 }
 run_post_implement_command() {
-  local cmd limit before before_status after_status new_dirty changed_dirty dirty_snapshot rc log status_file why reason hook_commits
+  local cmd limit before before_status after_status new_dirty changed_dirty dirty_snapshot rc log status_file why reason hook_commits common
   cmd=$(bureau_get '.repo.post_implement_command // empty')
   [ -n "$cmd" ] || return 0
   if [ "$STATUS" != COMPLETE ] && ! { [ "$STATUS" = PARTIAL ] && [ "$COMMITS_TOTAL" -gt 0 ]; }; then
@@ -390,12 +419,14 @@ command: ${cmd}"
   _post_implement_dirty_snapshot "$dirty_snapshot"
   log=$(mktemp "${TMPDIR:-/tmp}/bureau-post-implement.XXXXXX")
   status_file="$log.why"
+  common=$(git rev-parse --git-common-dir)
   echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
-  if bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" >"$log" 2>&1; then
+  if bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" "$common/bureau" "${BUREAU_RUN_ID:-}" "$ISSUE" >"$log" 2>&1; then
     rc=0
   else
     rc=$?
   fi
+  _implement_process_checkpoint "$rc"
   why=$(cat "$status_file" 2>/dev/null || true)
   rm -f "$status_file"
   tail -20 "$log" | sed 's/^/    /'
@@ -808,6 +839,7 @@ _push_on_exit() {
   local rc=$?
   rm -rf "$IMPLEMENT_GATE_TMP"
   [ "$EXIT_PUSH_ARMED" = 1 ] || return "$rc"
+  _implement_process_checkpoint "$rc"
   # Preserve commits already made, including on withdrawal or a signal. This
   # best-effort push must not refresh the ticket or replace the stage's exit.
   ( push_if_ahead "the stage ends before its end-of-run push" "${HEAD_BEFORE_HOOK:-HEAD}" ) || true
@@ -894,6 +926,7 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   RESULT=$(BUREAU_STAGE_TIMEOUT="$TOTAL_TIMEOUT" "${CLAUDE[@]}" --append-system-prompt "$IMPL_SYSTEM" "/goal $GOAL_CONDITION")
   CLAUDE_EXIT=$?
   set -e
+  _implement_process_checkpoint "$CLAUDE_EXIT"
   [ "$CLAUDE_EXIT" != 130 ] || exit 130
   bureau_ticket_checkpoint "$ISSUE" latched
   [ "$CLAUDE_EXIT" = 0 ] || exit "$CLAUDE_EXIT"
@@ -927,8 +960,10 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
 fi
 
 # ─── a pass that times out (v3.2) ─────────────────────────────────────────
-# A provider pass that hits its time limit (exit 124) is normal flow in the
-# loop below: it is counted like every other pass — commits from Git, the
+# A provider pass that hits its time limit (exit 124) is normal flow only after
+# checking for an unfinished-process hold. A hold stops the stage immediately
+# before bookkeeping or publication. Otherwise the loop counts the timed-out
+# pass like every other pass — commits from Git, the
 # squash-range check, the push — with the status TIMEOUT, because it reported
 # none, and the loop goes on with another pass that is told so (TIMEOUT_NOTE).
 # Before v3.2 the first timeout ended the stage with 124, although the agent
@@ -1076,6 +1111,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
   RESULT=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-implement.schema.json" --gate-context "$IMPLEMENT_GATE_CONTEXT" "$PROMPT")
   CLAUDE_EXIT=$?
   set -e
+  _implement_process_checkpoint "$CLAUDE_EXIT"
   if [ "$CLAUDE_EXIT" = 130 ]; then
     push_if_ahead "provider exit 130"
     exit 130

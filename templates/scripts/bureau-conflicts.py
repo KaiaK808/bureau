@@ -349,9 +349,13 @@ class Transaction:
                provider.untrusted_env(os.environ, provider.untrusted_env_mode(self.config)))
         owned = provider.a.OwnedProcesses() if provider_call else None
         if owned: env[provider.a.OWNER_ENV] = owned.token
-        self.child = subprocess.Popen(command, cwd=self.repo, env=env, stdin=subprocess.DEVNULL,
-                                      stdout=subprocess.PIPE if trusted else None, start_new_session=True)
+        root = provider.pg.hold_root(self.repo, provider.process_env(['git']))
+        hold = provider.pg.ProcessHold(root, 'conflict_helper', self.repo)
+        outcome = None
+        self.child = None
         try:
+            self.child = subprocess.Popen(command, cwd=self.repo, env=env, stdin=subprocess.DEVNULL,
+                                          stdout=subprocess.PIPE if trusted else None, start_new_session=True)
             if owned: owned.attach(self.child.pid)
             timeout = provider.configuration('conflict_resolver', self.config, os.environ)['timeout'] + 30 if provider_call else 1800
             started = time.monotonic()
@@ -364,6 +368,7 @@ class Transaction:
                     break
                 except subprocess.TimeoutExpired:
                     if not owned: raise
+            outcome = self.child.returncode
             # Only executor/provider status selects the terminal cause. This
             # metadata must survive the hook's existing conversion to exit 17.
             if provider_call:
@@ -374,32 +379,44 @@ class Transaction:
             if self.child.returncode: raise Declined('configured command failed')
             return output
         except subprocess.TimeoutExpired:
+            outcome = 124
             if provider_call: self.failure_cause = 'timeout'
             raise Declined('configured command exceeded its executor bound')
         finally:
             # Reap the leader and stop any remaining children in its owned group,
             # including a command that exits after leaving a background writer.
             pending = sys.exc_info()[1]
+            cleanup_failure = None
             try:
-                if owned:
+                if self.child and owned:
                     # Scan while ancestry still exists, then stop descendants
                     # too, including CLI helpers in other sessions.
                     owned.scan(); owned.signal(signal.SIGTERM)
                     try: self.child.communicate(timeout=7)
                     except subprocess.TimeoutExpired: pass
                     owned.scan(); owned.signal(signal.SIGKILL)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                hold.uncertain = True
+                cleanup_failure = exc
             finally:
                 try:
-                    provider.signal_group(self.child, signal.SIGKILL)
-                    self.child.wait(timeout=1)
+                    if self.child: hold.cleanup(self.child)
                     if owned: owned.drain()
                 except (OSError, subprocess.TimeoutExpired) as exc:
-                    if not isinstance(pending, ProviderStop) and self.failure_cause != 'timeout':
-                        raise
-                    print('conflict helper termination uncertain: ' + str(exc), file=sys.stderr)
+                    hold.uncertain = True
+                    cleanup_failure = cleanup_failure or exc
                 finally:
-                    if self.child.stdout is not None: self.child.stdout.close()
-                    self.child = None
+                    self.termination_uncertain = (getattr(self, 'termination_uncertain', False) or hold.uncertain
+                        or bool(provider.pg.process_holds(root, os.environ.get('BUREAU_RUN_ID'), inactive_only=True)))
+                    try:
+                        if self.child and self.child.stdout is not None: self.child.stdout.close()
+                    finally:
+                        self.child = None
+                        hold.close(stopped=not self.termination_uncertain)
+            if cleanup_failure is not None or self.termination_uncertain:
+                self.failure_cause = 'human_hold'
+                code = pending.code if isinstance(pending, ProviderStop) else outcome
+                raise ProviderStop(provider.pg.uncertain_exit(code), 'human_hold: conflict helper termination uncertain') from cleanup_failure
 
     def shell(self, body, *args):
         return ['/bin/bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
@@ -483,7 +500,7 @@ class Transaction:
         try: code, abort = provider.outside_gate(options, self.repo, check, log)
         except provider.GateExecutionError as exc:
             failure = exc
-            self.termination_uncertain = exc.uncertain
+            self.termination_uncertain = self.termination_uncertain or exc.uncertain
             code, abort = exc.code, exc.abort
         tracked = ({os.fsdecode(p) for p in self.git('ls-files', '-z').stdout.split(b'\0') if p}
                    if failure is None and code == 0 and not abort else set())
@@ -732,7 +749,7 @@ class Transaction:
                 if self.termination_uncertain:
                     # A surviving writer may still change the checkout. Keep
                     # the merge/index/worktree and all reservations untouched.
-                    print('  human_hold: conflict gate termination uncertain; checkout preserved.', file=sys.stderr)
+                    print('  human_hold: conflict helper termination uncertain; checkout preserved.', file=sys.stderr)
                     raise
                 restoration_errors = set()
                 try:

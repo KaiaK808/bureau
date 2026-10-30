@@ -201,15 +201,18 @@ class Store:
             try:
                 save(path, record)
             except BaseException:
-                # A writer can raise after publishing the registration too.
-                # finish_execution must retain this run on either failure side.
-                self.failed_registration = run
+                # A writer can raise before or after publishing registration.
+                # Only uncertain cleanup may retain ownership on either side.
                 try:
                     try: signal_group(child, signal.SIGKILL)
                     finally: child.wait(timeout=1)
                     self.assert_groups_stopped({child.pid})
-                except (OSError, subprocess.TimeoutExpired) as exc:
+                except (OSError, Conflict, subprocess.TimeoutExpired) as exc:
+                    self.failed_registration = run
                     print('bureau: registration cleanup failed: ' + str(exc), file=sys.stderr)
+                else:
+                    # Clear the write-ahead interruption after confirmed exit.
+                    save(path, record)
                 raise
             return child
 

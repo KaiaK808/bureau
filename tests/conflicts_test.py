@@ -330,6 +330,50 @@ _throttle_record() { :; }
         self.assertTrue(self.git('diff', '--cached', '--name-only'))
         self.assertTrue(runtime.provider.pg.process_holds(self.repo / '.git/bureau', inactive_only=True))
 
+    def test_uncertain_generator_cleanup_preserves_transaction_and_ownership(self):
+        self.diverge(); self.config.write_text(json.dumps(self.settings))
+        spec = importlib.util.spec_from_file_location('generator_cleanup_fault', SCRIPTS / 'bureau-conflicts.py')
+        runtime = importlib.util.module_from_spec(spec); spec.loader.exec_module(runtime)
+        owner_spec = importlib.util.spec_from_file_location('generator_owner', SCRIPTS / 'bureau-runtime.py')
+        owner = importlib.util.module_from_spec(owner_spec); owner_spec.loader.exec_module(owner)
+        store = owner.Store(self.repo); run_id = '4' * 32
+        resources = store.claim('TST-1', self.repo, run_id, 'background')
+        leases = store.leases.read_bytes()
+        transaction = runtime.Transaction(self.repo, self.settings, self.git('rev-parse', 'refs/remotes/origin/main'), self.config)
+        transaction.checkpoint = mock.Mock()
+        execute_command = transaction.run
+        transaction.run = lambda command, **kwargs: execute_command(command, **kwargs) if command == self.generated[0]['command'] else b''
+        child = mock.Mock(pid=123456, returncode=0)
+        child.poll.return_value = child.wait.return_value = 0
+        child.communicate.return_value = (None, None)
+        original_popen = subprocess.Popen
+        index = self.repo / '.git/index'; snapshot = {}
+        def popen(command, *args, **kwargs):
+            if command == self.generated[0]['command']:
+                snapshot.update(index=index.read_bytes(), files=runtime.inventory(self.repo),
+                                merge_head=(self.repo / '.git/MERGE_HEAD').read_bytes())
+                return child
+            return original_popen(command, *args, **kwargs)
+        clock = [0.0]
+        def monotonic(): return clock[0]
+        def sleep(delay): clock[0] += delay
+        with mock.patch.dict(os.environ, {'BUREAU_RUN_ID': run_id, 'BUREAU_CURRENT_ISSUE': 'TST-1'}), \
+                mock.patch.object(subprocess, 'Popen', side_effect=popen), \
+                mock.patch.object(os, 'killpg', side_effect=PermissionError(errno.EPERM, 'injected group permission failure')), \
+                mock.patch.object(runtime.provider.pg, 'time', mock.Mock(monotonic=monotonic, sleep=sleep)), \
+                mock.patch.object(runtime.provider.pg, 'inspect_groups', side_effect=AssertionError('no process-list fallback')):
+            with self.assertRaises((runtime.ProviderStop, runtime.provider.pg.TerminationUncertain)) as held: transaction.execute()
+        self.assertTrue(transaction.termination_uncertain)
+        self.assertEqual(held.exception.code, 25)
+        self.assertEqual(transaction.failure_cause, 'human_hold')
+        self.assertEqual(index.read_bytes(), snapshot['index'])
+        self.assertEqual(runtime.inventory(self.repo), snapshot['files'])
+        self.assertEqual((self.repo / '.git/MERGE_HEAD').read_bytes(), snapshot['merge_head'])
+        store.finish_execution(run_id, resources, False, self.repo)
+        self.assertEqual(store.leases.read_bytes(), leases)
+        self.assertTrue(runtime.provider.pg.process_holds(store.root, run_id, inactive_only=True))
+        with self.assertRaisesRegex(owner.Conflict, 'human_hold'): store.release(run_id)
+
     def test_uncertain_validation_preserves_stops_when_metadata_writes_fail(self):
         spec = importlib.util.spec_from_file_location('conflict_stop_fault', SCRIPTS / 'bureau-conflicts.py')
         runtime = importlib.util.module_from_spec(spec); spec.loader.exec_module(runtime)

@@ -395,6 +395,9 @@ def run(options, prompt, system, repo, evidence, schema=None):
     except (OSError, ValueError, TypeError, UntrustedEnvError, subprocess.SubprocessError) as exc:
         if options.get('_provider_cancelled'):
             code, text, metadata = 130, '', dict(outcome='cancelled')
+        elif isinstance(exc, pg.TerminationUncertain):
+            code, text, metadata = 25, '', dict(outcome='human_hold', failure_cause='human_hold',
+                                               termination_uncertain=str(exc))
         else:
             error = exc
             code, text = (24 if isinstance(exc, (PermissionError, UntrustedEnvError)) else 22), ''
@@ -535,7 +538,9 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     child = None
     owned = None
     timed_out = False
+    timeout_kind = None
     termination_failure = None
+    hold = None
     def kill(signum):
         nonlocal termination_failure
         try:
@@ -544,16 +549,27 @@ def _run(options, prompt, system, repo, evidence, schema=None):
             elif child:
                 signal_group(child, signum)
         except OSError as exc:
-            if not interrupted and not timed_out: raise
+            hold.uncertain = True
             termination_failure = str(exc)
+            if not interrupted and not timed_out: raise pg.TerminationUncertain(str(exc)) from exc
             note('Bureau provider termination uncertain: ' + str(exc))
     def reap():
         nonlocal termination_failure
         try: child.communicate(timeout=1)
-        except subprocess.TimeoutExpired:
-            if not interrupted and not timed_out: raise
+        except subprocess.TimeoutExpired as exc:
+            hold.uncertain = True
             termination_failure = 'provider did not exit after bounded escalation'
+            if not interrupted and not timed_out: raise pg.TerminationUncertain(termination_failure) from exc
             note('Bureau provider termination uncertain: ' + termination_failure)
+    def drain():
+        nonlocal termination_failure
+        if not owned: return
+        try: owned.drain()
+        except OSError as exc:
+            hold.uncertain = True
+            termination_failure = str(exc)
+            if not interrupted and not timed_out: raise pg.TerminationUncertain(str(exc)) from exc
+            note('Bureau provider termination uncertain: ' + str(exc))
     def stop(signum, frame):
         nonlocal interrupted
         # A hang-up stops the call like SIGTERM, and the provider's process
@@ -581,6 +597,7 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
         with (evidence/'stdout.log').open('wb') as stdout, (evidence/'stderr.log').open('wb') as stderr:
             observer = options.get('_gate_observer')
+            hold = pg.ProcessHold(pg.hold_root(repo, process_env(['git'])), 'provider', repo)
             child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE if observer or owned else stdout, stderr=stderr, start_new_session=True,
                                      env=child_env)
             if owned: owned.attach(child.pid)
@@ -644,13 +661,11 @@ def _run(options, prompt, system, repo, evidence, schema=None):
                         # The leader can exit while descendants ignore the signal.
                         # Finish the entire group before returning to the owner.
                         kill(signal.SIGTERM)
-                        if owned:
-                            owned.scan(); owned.signal(signal.SIGTERM)
                         try: child.communicate(timeout=.3 if owned else 5)
                         except subprocess.TimeoutExpired: pass
                         kill(signal.SIGKILL)
                         reap()
-                    if owned: owned.drain()
+                    drain()
                 finally:
                     signal.setitimer(signal.ITIMER_REAL, 0)
                     if reader:
@@ -658,19 +673,9 @@ def _run(options, prompt, system, repo, evidence, schema=None):
                         if reader.is_alive():
                             stream_error.append('execution stream did not close')
                             if observer: observer.error = 'execution stream did not close'
-            if interrupted: return 130, '', dict(outcome='cancelled', provider_exit=child.returncode,
-                                                termination_uncertain=termination_failure)
-            if timed_out:
-                if timeout_kind == 'silence' and options.get('cancel_file') and options.get('phase') in ('correctness', 'security', 'performance'):
-                    # A specialist shell can also return 25 for withdrawal.
-                    # Give its parent evidence of an actual watchdog failure.
-                    e.observe(e.atomic, Path(options['cancel_file'] + '.' + options['phase'] + '.silence'), dict(timeout_kind='silence'))
-                return (25 if timeout_kind == 'silence' else 124), '', dict(outcome='timeout', timeout_kind=timeout_kind,
-                            provider_exit=child.returncode, duration_seconds=time.monotonic()-started,
-                            termination_uncertain=termination_failure)
             # Without the watchdog this remains observational gate evidence;
             # an inherited pipe cannot invalidate a successful final result.
-            if stream_error and options.get('silence_timeout_seconds'):
+            if stream_error and options.get('silence_timeout_seconds') and not interrupted and not timed_out:
                 raise OSError('provider execution stream unavailable')
     finally:
         # Exceptional reader/inspection/spawn paths must also finish all owned
@@ -679,15 +684,32 @@ def _run(options, prompt, system, repo, evidence, schema=None):
             if child and child.poll() is None:
                 kill(signal.SIGKILL)
                 reap()
-            if owned: owned.drain()
+            drain()
+            if child and (interrupted or timed_out) and not owned:
+                try: hold.cleanup(child)
+                except pg.TerminationUncertain as exc:
+                    termination_failure = termination_failure or str(exc)
         finally:
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            for sig, handler in previous.items(): signal.signal(sig, handler)
-            if tempdir:
-                try: shutil.rmtree(tempdir)
-                except OSError as exc: note('Bureau provider: could not remove ' + tempdir + ': ' + str(exc))
+            try:
+                if hold is not None: hold.close(stopped=not hold.uncertain)
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                for sig, handler in previous.items(): signal.signal(sig, handler)
+                if tempdir:
+                    try: shutil.rmtree(tempdir)
+                    except OSError as exc: note('Bureau provider: could not remove ' + tempdir + ': ' + str(exc))
     options['_provider_exit'] = child.returncode
-    if interrupted: return 130, '', dict(outcome='cancelled', provider_exit=child.returncode)
+    if interrupted or timed_out:
+        metadata = dict(outcome='cancelled' if interrupted else 'timeout', provider_exit=child.returncode,
+                        termination_uncertain=termination_failure, duration_seconds=time.monotonic()-started)
+        if termination_failure: metadata['failure_cause'] = 'human_hold'
+        if interrupted: return 130, '', metadata
+        metadata['timeout_kind'] = timeout_kind
+        if timeout_kind == 'silence' and options.get('cancel_file') and options.get('phase') in ('correctness', 'security', 'performance'):
+            # A specialist shell can also return 25 for withdrawal.
+            # Give its parent evidence of an actual watchdog failure.
+            e.observe(e.atomic, Path(options['cancel_file'] + '.' + options['phase'] + '.silence'), dict(timeout_kind='silence'))
+        return (25 if timeout_kind == 'silence' else 124), '', metadata
     stderr = (evidence/'stderr.log').read_text(errors='replace')
     stdout = (evidence/'stdout.log').read_text(errors='replace')
     if child.returncode:
@@ -937,7 +959,7 @@ class GateExecutionError(OSError):
     def __init__(self, failure, outcome, uncertain=False):
         self.uncertain = uncertain or isinstance(failure, pg.TerminationUncertain)
         self.code, self.abort = outcome if outcome is not None else (22, None)
-        if self.uncertain and self.code not in (124, 130): self.code = 25
+        if self.uncertain: self.code = pg.uncertain_exit(self.code)
         elif self.code == 0: self.code = 22
         self.reason = ('outside gate termination uncertain' if self.uncertain
                        else 'outside gate execution failed')

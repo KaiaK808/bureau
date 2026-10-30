@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="041afd7e7deaa562cfb4660fe7b3cff72af02a06d7a171b807557692c518f1c3">
+<meta name="bureau-source-sha256" content="163ad16d113f757a9422123edee031dcb299ff7734f4bd6611788cf8e3767dc1">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -422,7 +422,8 @@ or another error at the deadline stays uncertain without consulting
 process listings. A failed termination signal still requires ESRCH to
 clear its uncertainty; exit-check inspection cannot override that
 failure. Outside gates also require the leader to be reaped. Before
-spawning, outside gates and dispatcher helpers fsync a record in
+spawning, providers, conflict helpers, post-implement hooks, outside
+gates and dispatcher helpers fsync a record in
 <code>&lt;git common dir&gt;/bureau/process-holds/</code>; a lock
 distinguishes an active call from unfinished work. Uncertainty leaves
 that record intact, retains leases and worktree registration without
@@ -435,15 +436,19 @@ reconcile saved work and explicitly remove their hold files before
 releasing the run or restarting dispatch; existing
 <code>dispatch-termination.json</code> holds also require explicit
 removal. Stored IDs are never signalled during release or
-reconciliation. Conflict validation leaves an uncertain
-merge/index/worktree in place for the operator. Runtime registration
-writes an interrupted record before spawning and clears that flag only
-with successful registration; failed cleanup retains ownership.
-Dispatcher cancellation escalates after five seconds, bounds stdout
-drain and leader reaping to one second each and retains 130. Resync the
-complete scripts scope after comparing installed drift. Qualification
-uses fake services and local fixtures; hosted cross-platform and live
-installation checks remain separate.</p>
+reconciliation. Conflict helpers and validation leave an uncertain
+merge/index/worktree in place for the operator. Implementation checks
+the shared hold before another provider pass, hook bookkeeping or
+publication, including its EXIT push. A held timeout or cancellation
+retains 124 or 130; other uncertain outcomes use 25 with reason
+<code>human_hold</code>. Runtime registration writes an interrupted
+record before spawning; successful registration or confirmed cleanup
+clears it. Only uncertain cleanup retains ownership after registration
+fails. Dispatcher cancellation escalates after five seconds, bounds
+stdout drain and leader reaping to one second each and retains 130.
+Resync the complete scripts scope after comparing installed drift.
+Qualification uses fake services and local fixtures; hosted
+cross-platform and live installation checks remain separate.</p>
 <p>A Codex child without <code>TMPDIR</code> gets a private
 <code>bureau-codex-*</code> directory under resolved <code>/tmp</code>,
 outside the repository regardless of <code>TEMP</code> or

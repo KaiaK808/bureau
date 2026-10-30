@@ -60,6 +60,11 @@ class ProcessGroupTests(unittest.TestCase):
         self.child.poll.return_value = 0
         self.child.wait.return_value = 0
         self.child.communicate.return_value = ('output', None)
+        for module in (p, c.provider):
+            fake = patch.object(module, 'evidence_store', return_value=module.e.Store(self.control))
+            fake.start(); self.addCleanup(fake.stop)
+            fake = patch.object(module.pg, 'hold_root', return_value=self.control, create=True)
+            fake.start(); self.addCleanup(fake.stop)
         self.inspectors = {}
         self.clocks = {}
         for module in (p, r, a.p, c.provider, d.r):
@@ -339,7 +344,8 @@ class ProcessGroupTests(unittest.TestCase):
                     self.assertEqual(stopped.exception.code, 130)
                 else:
                     transaction.failure_cause = 'human_hold'
-                    with self.assertRaises(c.provider.pg.TerminationUncertain): transaction.run(['fixture'])
+                    with self.assertRaises(c.ProviderStop) as held: transaction.run(['fixture'])
+                    self.assertEqual(held.exception.code, 25)
                 self.assertIsNone(transaction.child)
 
     def test_acceptance_and_conflict_helpers_refuse_live_or_uninspectable_descendants(self):
@@ -359,7 +365,7 @@ class ProcessGroupTests(unittest.TestCase):
                             else:
                                 transaction = c.Transaction.__new__(c.Transaction)
                                 transaction.repo, transaction.config, transaction.failure_cause = self.root, {}, 'human_hold'
-                                expected = c.ProviderStop if code == 130 else inspection_module.TerminationUncertain
+                                expected = c.ProviderStop
                                 with self.assertRaises(expected): transaction.run(['fixture'], trusted=True)
                                 self.assertIsNone(transaction.child)
 
@@ -586,6 +592,123 @@ class ProcessGroupTests(unittest.TestCase):
         self.assertTrue(metadata['termination_uncertain'])
         self.assert_handlers_restored()
 
+    def implementation_replay(self, body, code, run):
+        """Use production callers and EXIT push; fake only the completed command."""
+        source = (SCRIPTS / 'implement-pipeline.sh').read_text()
+        definitions = source[source.index('push_branch_loud() {'):source.index('\nprecondition_linear\n')]
+        if '_implement_process_checkpoint() {' in source:
+            definitions = (source[source.index('_implement_process_checkpoint() {'):source.index('\n}\n', source.index('_implement_process_checkpoint() {')) + 3]
+                           + '\n' + definitions)
+        trap = source[source.index('_push_on_exit() {'):source.index('\ntrap _push_on_exit EXIT')]
+        script = '''set -euo pipefail
+cd "$1"
+_BUREAU_SCRIPTS_DIR="$2"; SCRIPT_REPO="$1"; ISSUE=TST-1; BRANCH=fixture
+EXIT_PUSH_ARMED=1; IMPLEMENT_GATE_TMP="$1/gate-tmp"; mkdir -p "$IMPLEMENT_GATE_TMP"
+IMPLEMENT_GATE_CONTEXT="$IMPLEMENT_GATE_TMP/context"; TOTAL_TIMEOUT=60
+STATUS=COMPLETE; COMMITS_TOTAL=1; THIS_TIMEOUT=1; PROMPT=fixture
+''' + definitions + '\n' + trap + '''
+trap _push_on_exit EXIT
+push_branch_loud() { echo publication >> events; }
+bureau_outcome_signal() { echo "$1" >> causes; }
+bureau_ticket_checkpoint() { :; }
+commit_codex_changes() { echo commit >> events; }
+bureau_number() { echo "$2"; }
+bureau_get() { echo fixture; }
+bureau_untrusted_env() { [ "$1" = --check ] || return "$3"; }
+provider() { echo pass >> events; return "$3"; }
+'''  # The replacements below embed only a numeric, determined executor exit.
+        script = script.replace('return "$3"', 'return ' + str(code))
+        script += '\n' + body
+        return subprocess.run(['/bin/bash', '-c', script, 'fixture', str(self.root), str(SCRIPTS)],
+                              capture_output=True, text=True, env={**os.environ, 'BUREAU_RUN_ID': run})
+
+    def assert_held_ownership(self, store, run, resources, leases):
+        store.finish_execution(run, resources, False, self.root)
+        self.assertEqual(store.leases.read_bytes(), leases)
+        self.assertTrue(p.pg.process_holds(self.control, run, inactive_only=True))
+        with self.assertRaisesRegex(r.Conflict, 'human_hold'): store.release(run)
+
+    def test_provider_uncertain_timeout_holds_ownership_and_stops_implementation(self):
+        store = r.Store(self.root); run = '1' * 32
+        resources = store.claim('TST-1', self.root, run, 'background')
+        leases = store.leases.read_bytes()
+        options = p.configuration('implement', {'agents': {'runner': 'claude'}}, {})
+        options.update(untrusted_env='default', timeout=1)
+        self.child.communicate.side_effect = [subprocess.TimeoutExpired('fixture', 1), (None, None), (None, None)]
+        with patch.dict(os.environ, {'BUREAU_RUN_ID': run, 'BUREAU_CURRENT_ISSUE': 'TST-1'}), \
+                patch.object(p, 'evidence_store', return_value=p.e.Store(self.control)), \
+                patch.object(p.subprocess, 'Popen', return_value=self.child), \
+                patch.object(p.os, 'killpg', side_effect=denied()), \
+                patch.object(p.time, 'monotonic', side_effect=itertools.count(0, 2)):
+            code, _, metadata = p._run(options, 'fixture', '', self.root, self.root)
+        self.assertEqual(code, 124)
+        self.assertEqual(metadata.get('failure_cause'), 'human_hold')
+        self.assert_held_ownership(store, run, resources, leases)
+        source = (SCRIPTS / 'implement-pipeline.sh').read_text()
+        call = source[source.index('  set +e\n  : > "$IMPLEMENT_GATE_CONTEXT"'):source.index('  # record this iteration')]
+        result = self.implementation_replay('CLAUDE=(provider)\nfor i in 1 2; do\n' + call + '\ndone\necho publication >> events\n', code, run)
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertEqual((self.root / 'events').read_text().splitlines(), ['pass'])
+        self.assertIn('human_hold', result.stderr)
+
+    def test_post_implement_uncertain_timeout_holds_without_publication(self):
+        store = r.Store(self.root); run = '2' * 32
+        resources = store.claim('TST-1', self.root, run, 'background')
+        leases = store.leases.read_bytes()
+        source = (SCRIPTS / 'implement-pipeline.sh').read_text()
+        runner = source.split("_POST_IMPLEMENT_RUNNER='\n", 1)[1].split("\n'", 1)[0]
+        def wait(timeout=None):
+            if timeout == 60: raise subprocess.TimeoutExpired('fixture', timeout)
+            return 0
+        self.child.wait.side_effect = wait
+        clock = ProbeClock()
+        with patch.dict(os.environ, {'BUREAU_RUN_ID': run, 'BUREAU_CURRENT_ISSUE': 'TST-1'}), \
+                patch.object(sys, 'argv', ['runner', '60', 'fixture', str(self.root / 'status'), str(SCRIPTS), str(self.control), run, 'TST-1']), \
+                patch.object(subprocess, 'Popen', return_value=self.child), \
+                patch.object(os, 'killpg', side_effect=denied()), \
+                patch('time.monotonic', clock.monotonic), patch('time.sleep', clock.sleep), \
+                patch.object(subprocess, 'check_output', side_effect=AssertionError('no process-list fallback')):
+            with self.assertRaises(SystemExit) as stopped: exec(compile(runner, 'post-implement-runner', 'exec'), {})
+        self.assertEqual(stopped.exception.code, 124)
+        self.assert_held_ownership(store, run, resources, leases)
+        for args in (('config', 'user.name', 'Fixture'), ('config', 'user.email', 'fixture@example.invalid'),
+                     ('commit', '-q', '--allow-empty', '-m', 'baseline')):
+            subprocess.run(['git', '-C', str(self.root), *args], check=True)
+        call = source[source.index('HEAD_BEFORE_HOOK=$(git rev-parse HEAD)'):source.index('\ncheck_squash_range origin/main', source.index('HEAD_BEFORE_HOOK=$(git rev-parse HEAD)'))]
+        result = self.implementation_replay(call + '\necho publication >> events\nexit 14\n', stopped.exception.code, run)
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertFalse((self.root / 'events').exists(), result.stdout + result.stderr)
+        self.assertIn('human_hold', result.stderr)
+
+    def test_confirmed_registration_cleanup_releases_ownership(self):
+        store = r.Store(self.root); run = '3' * 32
+        config = self.root / '.bureau.json'; config.write_text('{}')
+        args = argparse.Namespace(workspace=None, entry=None, command=['fixture'], issue='TST-1')
+        for published in (False, True):
+            with self.subTest(published=published):
+                store = r.Store(self.root)
+                store.leases.unlink(missing_ok=True)
+                store.process_path(run).unlink(missing_ok=True)
+                real_save = r.save
+                failed = False
+                def fail_once(path, record):
+                    nonlocal failed
+                    if path == store.process_path(run) and record.get('groups') and not failed:
+                        failed = True
+                        if published: real_save(path, record)
+                        raise OSError('registration failed once')
+                    real_save(path, record)
+                with patch.dict(os.environ, {'BUREAU_RUN_ID': run}, clear=True), \
+                        patch.object(r, 'config_for', return_value=config), \
+                        patch.object(r, 'evidence_head', return_value='a' * 40), patch.object(r.e, 'Store'), \
+                        patch.object(r.subprocess, 'Popen', return_value=self.child), \
+                        patch.object(r.os, 'killpg', side_effect=ProcessLookupError(errno.ESRCH, 'gone')), \
+                        patch.object(r, 'save', side_effect=fail_once):
+                    with self.assertRaisesRegex(OSError, 'registration failed once'): r.execute(self.root, args, store)
+                self.assertEqual(r.read(store.leases), {})
+                self.assertFalse(store.process_path(run).exists())
+                self.assertEqual(r.pg.process_holds(self.control), [])
+
     def test_runtime_forward_eperm_preserves_130_and_ownership(self):
         store = Mock(root=self.root)
         store.claim.return_value = ['issue:TST-1']
@@ -630,7 +753,7 @@ class ProcessGroupTests(unittest.TestCase):
                 raise subprocess.TimeoutExpired('fixture', timeout)
             return 0
         self.child.wait.side_effect = wait
-        with patch.object(sys, 'argv', ['runner', '60', 'fixture', str(self.root / 'status'), str(SCRIPTS)]), \
+        with patch.object(sys, 'argv', ['runner', '60', 'fixture', str(self.root / 'status'), str(SCRIPTS), str(self.control), '', 'TST-1']), \
                 patch.object(subprocess, 'Popen', return_value=self.child), patch.object(os, 'killpg', side_effect=killpg), \
                 patch.object(subprocess, 'check_output', return_value='123456 S\n' if live else '123456 Z\n'), \
                 patch('time.monotonic', side_effect=itertools.count()), patch('time.sleep'):
@@ -641,7 +764,7 @@ class ProcessGroupTests(unittest.TestCase):
             for cancel in (False, True):
                 with self.subTest(target=target, cancel=cancel):
                     with self.assertRaises(SystemExit) as stopped: self.inline_runner(target, cancel=cancel)
-                    self.assertEqual(stopped.exception.code, 143 if cancel else 124)
+                    self.assertEqual(stopped.exception.code, (25 if target == 0 else 143) if cancel else 124)
                     self.assertEqual((self.root / 'status').read_text(), 'signal' if cancel else 'timeout')
 
     def test_inline_live_eperm_preserves_determined_timeout(self):

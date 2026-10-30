@@ -16,6 +16,9 @@ import zipfile
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_DISPATCH_TEST_SCRIPTS', ROOT / 'templates/scripts'))
+_process_spec = importlib.util.spec_from_file_location('dispatcher_test_process', SCRIPTS / 'bureau-process.py')
+pg = importlib.util.module_from_spec(_process_spec)
+_process_spec.loader.exec_module(pg)
 REAL_GIT = shutil.which('git')
 NAMES = dict(triage='Triage', spec='Spec', spec_review='Spec Review', design='Design', copy='Copy',
              build='Build', qa='QA', build_review='Build Review', merge='Merge', done='Done',
@@ -547,7 +550,7 @@ class DispatcherFixture(unittest.TestCase):
         freeze.with_suffix('.ready').unlink(missing_ok=True)
         freeze.touch()
         self.wait_for(lambda:freeze.with_suffix('.ready').exists())
-        self.assertFalse(list((self.common/'process-holds').glob('*.json')))
+        self.assertFalse(pg.process_holds(self.common, inactive_only=True))
         return freeze
 
     def kill_idle_dispatcher(self, child):

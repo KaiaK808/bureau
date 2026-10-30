@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import time
@@ -19,6 +20,18 @@ GROUP_REPROBE_SECONDS = 2.0
 
 class TerminationUncertain(OSError):
     """A group may still contain a writer; a leader's exit is no proof."""
+
+
+def uncertain_exit(code):
+    """Keep a determined timeout/cancellation while carrying a durable hold."""
+    return code if code in (124, 130) else 25
+
+
+def hold_root(repo, env):
+    """Mandatory coordination is independent of optional evidence storage."""
+    common = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', '--git-common-dir'],
+                                     text=True, env=env).strip()
+    return (Path(repo) / common).resolve() / 'bureau'
 
 
 def _signal_group(group, signum, *, wait_for_exit=False, reap=None):
@@ -99,7 +112,8 @@ def signal_group(child, signum):
 
 class ProcessHold:
     """Write ahead of spawn; unlock on return, remove only after confirmed cleanup."""
-    def __init__(self, root, kind, workspace):
+    def __init__(self, root, kind, workspace, *, run_id=None, issue=None):
+        self.uncertain = False
         directory = Path(root) / 'process-holds'
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / (uuid.uuid4().hex + '.json')
@@ -109,8 +123,8 @@ class ProcessHold:
             fcntl.flock(self.handle, fcntl.LOCK_EX)
             os.chmod(pending, 0o600)
             json.dump(dict(reason='human_hold', kind=kind, workspace=str(workspace),
-                           run_id=os.environ.get('BUREAU_RUN_ID'),
-                           issue=os.environ.get('BUREAU_CURRENT_ISSUE')), self.handle)
+                           run_id=run_id if run_id is not None else os.environ.get('BUREAU_RUN_ID'),
+                           issue=issue if issue is not None else os.environ.get('BUREAU_CURRENT_ISSUE')), self.handle)
             self.handle.flush()
             os.fsync(self.handle.fileno())
             pending.replace(self.path)
@@ -125,9 +139,25 @@ class ProcessHold:
         try: os.fsync(fd)
         finally: os.close(fd)
 
+    def signal(self, child, signum):
+        try: signal_group(child, signum)
+        except OSError:
+            self.uncertain = True
+            raise
+
+    def cleanup(self, child):
+        """Latch cleanup failure even when the leader has already exited."""
+        try:
+            try: self.signal(child, signal.SIGKILL)
+            finally: child.wait(timeout=1)
+            assert_groups_stopped({child.pid})
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self.uncertain = True
+            raise TerminationUncertain('Process cleanup uncertain: ' + str(exc)) from exc
+
     def close(self, stopped=False):
         try:
-            if stopped:
+            if stopped and not self.uncertain:
                 self.path.unlink()
                 self.sync_directory()
         finally:
@@ -167,7 +197,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Refuse cleanup while an unfinished process hold exists.')
     parser.add_argument('--root', required=True, type=Path)
     parser.add_argument('--run')
+    parser.add_argument('--exit-code', type=int, default=25)
     args = parser.parse_args()
     if process_holds(args.root, args.run):
         print('bureau: human_hold: unfinished process hold; worktree cleanup refused', file=sys.stderr)
-        sys.exit(25)
+        sys.exit(uncertain_exit(args.exit_code))
