@@ -222,9 +222,9 @@ os.execv(os.environ['DISPATCH_REAL_GIT'],[os.environ['DISPATCH_REAL_GIT'],*sys.a
 
 class DispatcherFixture(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='bureau-1749-test-', dir='/private/tmp' if Path('/private/tmp').is_dir() else None)
+        self.temp = tempfile.TemporaryDirectory(prefix='bureau-dispatch-test-')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name); self.repo = self.root / 'repo with spaces'; self.repo.mkdir()
+        self.root = Path(self.temp.name).resolve(); self.repo = self.root / 'repo with spaces'; self.repo.mkdir()
         self.children = []; self.files = []; self.addCleanup(self.cleanup)
         self.bin = self.root/'bin'; self.bin.mkdir()
         self.state = self.root/'service.json'

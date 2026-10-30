@@ -1,11 +1,11 @@
 """Mutate private script copies; every broken guard must fail a real assertion."""
 import hashlib
-import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
+
+from mutation_checks import mutation_caught, snapshot_files
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT/'templates/scripts'
@@ -15,14 +15,13 @@ before = {name: hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name
 
 
 def rejected(script, case, env, expected):
-    proc = subprocess.run([sys.executable, str(ROOT/'tests'/script), case], capture_output=True,
-                          text=True, env={**os.environ, **env}, timeout=900)
-    output = proc.stdout + proc.stderr
-    assert proc.returncode != 0 and expected in output, output
+    mutation_caught([sys.executable, str(ROOT/'tests'/script), case], env=env,
+                    originals=originals, timeout=900, expected=expected)
 
 
 with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
-    root = Path(scratch)/'scripts'; shutil.copytree(SCRIPTS, root)
+    root = Path(scratch).resolve()/'scripts'; shutil.copytree(SCRIPTS, root)
+    originals = snapshot_files(root)
     spec = root/'bureau-spec.py'; original = spec.read_text()
     env = {'BUREAU_TEST_SPEC_SCRIPTS': str(root)}
 

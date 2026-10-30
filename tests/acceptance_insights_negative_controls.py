@@ -1,11 +1,11 @@
 """Prove PR 7 assertions detect deliberate defects in private copies."""
 import hashlib
-import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
+
+from mutation_checks import mutation_caught, snapshot_files
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'templates/scripts'
@@ -14,15 +14,15 @@ before = {name: hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name
 
 
 def rejected(command, expected, env=None):
-    result = subprocess.run(command, capture_output=True, text=True, env={**os.environ, **(env or {})}, timeout=90)
-    output = result.stdout + result.stderr
-    assert result.returncode != 0 and expected in output, output
+    env = env or {}
+    mutation_caught(command, env=env, originals=originals, expected=expected)
     print('PASS negative control: ' + expected)
 
 
 with tempfile.TemporaryDirectory(prefix='bureau-pr7-negative-') as temp:
-    root = Path(temp)
+    root = Path(temp).resolve()
     shutil.copytree(SCRIPTS, root/'templates/scripts')
+    originals = snapshot_files(root/'templates/scripts')
     shutil.copytree(ROOT/'tests/lib', root/'tests/lib')
     (root/'tests/fixtures').mkdir()
     shutil.copy(ROOT/'tests/fixtures/speckit-1.2.2.zip', root/'tests/fixtures')
@@ -41,7 +41,9 @@ with tempfile.TemporaryDirectory(prefix='bureau-pr7-negative-') as temp:
     projection_end = config_original.index('\n}\n', projection) + 3
     unsafe_projection = config_original[:projection] + 'bureau_comment_projection() { printf "%s" "$1"; }\n' + config_original[projection_end:]
     config.write_text(unsafe_projection)
-    review.write_text(review.read_text().replace('del(.comment, .insights)', 'del(.comment)'))
+    review_original = review.read_text()
+    assert review_original.count('del(.comment, .insights)') == 1
+    review.write_text(review_original.replace('del(.comment, .insights)', 'del(.comment)'))
     transport_env = dict(PR7_STAGES='review', PR7_VERDICTS='REQUEST_CHANGES', PR7_FORMS='object')
     rejected(['bash', str(root/'tests/test_insight_comment_privacy.sh')],
              'insight leaked into actual transport payload: review/REQUEST_CHANGES/object', transport_env)

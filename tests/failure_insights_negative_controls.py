@@ -2,18 +2,20 @@
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 
+from mutation_checks import mutation_caught, snapshot_files
+
 ROOT = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='bureau-1753-negative-') as temp:
-    scripts = Path(temp) / 'templates/scripts'; shutil.copytree(ROOT / 'templates/scripts', scripts)
+    scripts = Path(temp).resolve() / 'templates/scripts'; shutil.copytree(ROOT / 'templates/scripts', scripts)
+    originals = snapshot_files(scripts)
     env = {**os.environ, 'BUREAU_TEST_INSIGHTS_SCRIPTS':str(scripts), 'PYTHONDONTWRITEBYTECODE':'1'}
     def reject(label, case, expected):
-        p = subprocess.run([sys.executable, str(ROOT / 'tests/failure_insights_test.py'), case],
-                           env=env, capture_output=True, text=True, timeout=90)
-        assert p.returncode != 0 and expected in p.stdout + p.stderr, (label, p.returncode, p.stdout, p.stderr)
+        mutation_caught([sys.executable, str(ROOT / 'tests/failure_insights_test.py'), case],
+                        env=env, originals=originals,
+                        expected=expected)
         print('PASS negative control: ' + label)
     evidence = scripts / 'bureau-evidence.py'; original = evidence.read_text()
     needle = "        if not items or receipt.get('stage') not in STAGES:\n"
@@ -37,6 +39,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-1753-negative-') as temp:
     reject('failed provider observation dropped', 'ProviderRecordTests.test_real_failed_provider_captures_only_filtered_advisory_text', 'missing failed provider observation')
     provider.write_text(provider_original)
     shell = scripts / 'bureau-insights.sh'; shell_original = shell.read_text()
+    assert shell_original.count("printf '%s\\n' timeout") == 1
     shell.write_text(shell_original.replace("printf '%s\\n' timeout", "printf '%s\\n' human_hold"))
     reject('silence softened to ordinary hold', 'StoreTests.test_silence_is_timeout_without_result_and_prose_cannot_claim_it', "'human_hold' != 'timeout'")
     shell.write_text(shell_original)

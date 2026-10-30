@@ -1,9 +1,9 @@
 """Private mutations must fail the positive convergence and legacy-count assertions."""
-import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
+
+from mutation_checks import mutation_caught
 
 ROOT = Path(__file__).resolve().parents[1]
 sources = {key: (ROOT / 'templates/scripts' / name).read_text() for key, name in (
@@ -32,10 +32,8 @@ with tempfile.TemporaryDirectory(prefix='bureau-pr8-controls-') as scratch:
     for name, env_key, old, new, test, expected in controls:
         source = sources[env_key]
         if source.count(old) != 1: raise SystemExit('CONTROL PATCH FAILED: ' + name)
-        path = Path(scratch) / (name + '.sh'); path.write_text(source.replace(old, new))
-        completed = subprocess.run([sys.executable, str(ROOT / 'tests/review_convergence_test.py'), test],
-                                   env={**os.environ, env_key:str(path)},
-                                   capture_output=True, text=True, timeout=60)
-        if completed.returncode != 1 or expected not in completed.stderr or 'FAILED (failures=1)' not in completed.stderr:
-            raise SystemExit('CONTROL FAILED TO DETECT REGRESSION: ' + name + '\n' + completed.stdout + completed.stderr)
+        path = Path(scratch).resolve() / (name + '.sh'); path.write_text(source.replace(old, new))
+        mutation_caught([sys.executable, str(ROOT / 'tests/review_convergence_test.py'), test],
+                        env={env_key:str(path)}, originals={path:source.encode()},
+                        timeout=60,expected=expected)
         print('PASS negative control: ' + name + ' fails the unchanged positive assertion')
