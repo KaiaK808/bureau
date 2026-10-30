@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 
 
@@ -149,6 +150,80 @@ def finite_timeout(timeout):
     return timeout
 
 
+def linux_process_commands():
+    """Discover argv without starting Popen helpers in the reaper thread."""
+    lines = []
+    for path in PROC.iterdir():
+        if not path.name.isdigit():
+            continue
+        try:
+            argv = (path/'cmdline').read_bytes().replace(b'\0', b' ').decode(errors='replace')
+            if argv:
+                lines.append(f'{path.name} {argv}')
+        except OSError:
+            pass  # inaccessible process or a raced exit
+    return '\n'.join(lines)
+
+
+def linux_process_identity(pid):
+    """Keep birth identity after zombies lose their argv and cwd."""
+    try:
+        fields = (PROC/str(pid)/'stat').read_text().rsplit(')', 1)[1].split()
+        return int(fields[1]), fields[19]  # parent PID, starttime
+    except (OSError, IndexError, ValueError):
+        return None  # raced exit or inaccessible process
+
+
+def reap_adopted_fixtures(root, child_pid, known):
+    """Wait only for observed fixture PIDs that have become our children."""
+    known.pop(child_pid, None)  # Popen exclusively owns its child's status.
+    for pid in fixture_pids(root, commands=linux_process_commands) - {child_pid}:
+        identity = linux_process_identity(pid)
+        if identity is not None:
+            known[pid] = identity[1]
+    for pid, birth in list(known.items()):
+        identity = linux_process_identity(pid)
+        if identity is None or identity[1] != birth:
+            known.pop(pid)
+        elif identity[0] == os.getpid():
+            try:
+                waited, _ = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                known.pop(pid, None)  # cleanup may have reaped it first
+            else:
+                if waited:
+                    known.pop(pid, None)
+
+
+@contextmanager
+def reaping_fixtures(root, child):
+    """Reap Linux adoptees during communicate, then join before root removal."""
+    if not sys.platform.startswith('linux'):
+        yield
+        return
+    stopped = threading.Event()
+    errors = []
+
+    def reap():
+        known = {}
+        try:
+            while not stopped.is_set():
+                reap_adopted_fixtures(root, child.pid, known)
+                stopped.wait(.02)
+        except Exception as error:
+            errors.append(error)
+
+    reaper = threading.Thread(target=reap, name='fixture-orphan-reaper')
+    reaper.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        reaper.join()
+        if errors:
+            raise AssertionError(f'fixture orphan reaping failed for {root}') from errors[0]
+
+
 @contextmanager
 def fixture_root():
     with tempfile.TemporaryDirectory(prefix='bureau-mutation-run-') as directory:
@@ -176,18 +251,19 @@ def _run(command, *, env, timeout, root):
     child = subprocess.Popen(command, env=environ, cwd=root, text=True, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, start_new_session=True)
     try:
-        try:
-            out, err = child.communicate(timeout=timeout)
-            return subprocess.CompletedProcess(command, child.returncode, out, err)
-        except subprocess.TimeoutExpired:
-            stop_fixtures(root, child)
+        with reaping_fixtures(root, child):
             try:
-                out, err = child.communicate(timeout=1)
-            except subprocess.TimeoutExpired as error:
-                out, err = output_text(error.output), output_text(error.stderr)
-                err += '\nfixture output drain timed out'
-            return subprocess.CompletedProcess(command, 124, out,
-                                               err + '\n' + str(subprocess.TimeoutExpired(command, timeout)))
+                out, err = child.communicate(timeout=timeout)
+                return subprocess.CompletedProcess(command, child.returncode, out, err)
+            except subprocess.TimeoutExpired:
+                stop_fixtures(root, child)
+                try:
+                    out, err = child.communicate(timeout=1)
+                except subprocess.TimeoutExpired as error:
+                    out, err = output_text(error.output), output_text(error.stderr)
+                    err += '\nfixture output drain timed out'
+                return subprocess.CompletedProcess(command, 124, out,
+                                                   err + '\n' + str(subprocess.TimeoutExpired(command, timeout)))
     finally:
         try:
             stop_fixtures(root, child)

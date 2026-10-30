@@ -7,12 +7,14 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
 
 from mutation_checks import (_run, baseline_fixture, caught_mutation, fixture_pids, historical_scripts,
-                             macos_cwds, mutation_caught, restored_files, run, snapshot_files,
+                             linux_process_commands, linux_process_identity, macos_cwds, mutation_caught,
+                             reap_adopted_fixtures, reaping_fixtures, restored_files, run, snapshot_files,
                              stop_fixtures)
 
 
@@ -246,9 +248,120 @@ time.sleep(30)
             directory = proc/str(pid); directory.mkdir(); (directory/'cwd').symlink_to(cwd)
         deleted = proc/'104'; deleted.mkdir()
         (deleted/'cwd').symlink_to(str(self.root)+' (deleted)')
+        for pid, path in ((105, str(self.root/'child with spaces.py')),
+                          (106, str(self.root)+'-sibling/child.py')):
+            directory = proc/str(pid); directory.mkdir()
+            (directory/'cmdline').write_bytes(b'python\0' + path.encode() + b'\0')
         with patch('mutation_checks.sys.platform', 'linux'), patch('mutation_checks.PROC', proc), \
                 patch('mutation_checks.subprocess.run', return_value=Mock(stdout='101 sleep 30\n')):
             self.assertEqual({101, 102, 104}, fixture_pids(self.root))
+            self.assertEqual({101, 102, 104, 105}, fixture_pids(self.root, commands=linux_process_commands))
+
+    def test_linux_identity_keeps_zombie_birth_and_handles_parentheses(self):
+        proc = self.root/'proc'; directory = proc/'101'; directory.mkdir(parents=True)
+        fields = ['Z', '123'] + ['0'] * 17 + ['456']
+        (directory/'stat').write_text('101 (fixture (worker)) ' + ' '.join(fields))
+        with patch('mutation_checks.PROC', proc):
+            self.assertEqual((123, '456'), linux_process_identity(101))
+            self.assertIsNone(linux_process_identity(102))
+
+    def test_reaper_excludes_direct_child_nonchildren_and_reused_pids(self):
+        known = {100: 'direct', 103: 'old'}
+        identities = {100: (os.getpid(), 'direct'), 101: (os.getpid(), 'owned'),
+                      102: (0, 'descendant'), 103: (os.getpid(), 'reused'),
+                      104: (os.getpid(), 'outside')}
+        with patch('mutation_checks.fixture_pids', return_value={100, 101, 102}) as discover, \
+                patch('mutation_checks.linux_process_identity', side_effect=identities.get), \
+                patch('mutation_checks.os.waitpid', return_value=(0, 0)) as wait:
+            reap_adopted_fixtures(self.root, 100, known)
+            wait.assert_called_once_with(101, os.WNOHANG)
+            self.assertEqual({101: 'owned', 102: 'descendant'}, known)
+            # Zombies no longer match argv/cwd; their recorded birth still does.
+            discover.return_value = set()
+            identities[102] = (os.getpid(), 'reused-descendant')
+            wait.reset_mock(); wait.return_value = (101, 0)
+            reap_adopted_fixtures(self.root, 100, known)
+            wait.assert_called_once_with(101, os.WNOHANG)
+            self.assertEqual({}, known)
+
+    def test_macos_does_not_start_an_orphan_reaper(self):
+        with patch('mutation_checks.sys.platform', 'darwin'), \
+                patch('mutation_checks.threading.Thread') as thread:
+            with reaping_fixtures(self.root, Mock(pid=100)):
+                pass
+            thread.assert_not_called()
+
+    def test_reaper_joins_before_propagating_a_command_error(self):
+        inspected = threading.Event()
+        before = set(threading.enumerate())
+        with patch('mutation_checks.sys.platform', 'linux'), \
+                patch('mutation_checks.fixture_pids', side_effect=lambda root, **kw: inspected.set() or set()):
+            with self.assertRaisesRegex(ValueError, 'command failed'):
+                with reaping_fixtures(self.root, Mock(pid=100)):
+                    self.assertTrue(inspected.wait(3), 'reaper never inspected the fixture')
+                    workers = set(threading.enumerate()) - before
+                    self.assertEqual(1, len(workers))
+                    raise ValueError('command failed')
+            self.assertTrue(all(not worker.is_alive() for worker in workers))
+
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'Linux child subreaping is required; macOS uses launchd')
+    def test_linux_command_can_observe_its_killed_detached_grandchild_reaped(self):
+        recorded = self.root/'detached-pid'
+        observed = self.root/'observed-orphan'
+        self.addCleanup(self.stop_recorded, recorded)
+        source = f'''import os, signal, subprocess, sys, time
+from pathlib import Path
+recorded = Path({str(recorded)!r})
+observed = Path({str(observed)!r})
+def work():
+    observed.unlink(missing_ok=True)
+    launcher = ('import subprocess, sys; '
+                'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], '
+                'start_new_session=True, stdin=subprocess.DEVNULL, '
+                'stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); print(child.pid)')
+    parent = subprocess.Popen([sys.executable, '-c', launcher], stdout=subprocess.PIPE, text=True)
+    output, _ = parent.communicate(timeout=3)
+    assert parent.returncode == 0
+    pid = int(output)
+    recorded.write_text(str(pid))
+    try:
+        fields = Path(f'/proc/{{pid}}/stat').read_text().rsplit(')', 1)[1].split()
+        assert int(fields[1]) == os.getppid(), 'grandchild was not adopted by the harness'
+        # Synchronize with a real WNOHANG attempt instead of guessing how long
+        # discovery needs on a busy runner. Without a reaper, still kill the
+        # child and exercise the same zombie assertion after this bounded wait.
+        deadline = time.monotonic() + 2
+        while not observed.exists() and time.monotonic() < deadline: time.sleep(.02)
+        os.kill(pid, signal.SIGKILL)
+        deadline = time.monotonic() + 3
+        while True:
+            try: os.kill(pid, 0)
+            except ProcessLookupError: break
+            assert time.monotonic() < deadline, 'killed detached grandchild remains a zombie'
+            time.sleep(.02)
+    finally:
+        try: os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+'''
+        self.baseline.write_text(source)
+        self.source.write_text(source + '    raise ValueError("mutation after orphan reaping")\n')
+        waitpid = os.waitpid
+
+        def observe_wait(pid, flags):
+            result = waitpid(pid, flags)
+            if flags == os.WNOHANG and recorded.exists():
+                try:
+                    if pid == int(recorded.read_text()):
+                        observed.touch()
+                except ValueError:
+                    pass  # raced the command's PID-file write
+            return result
+
+        with patch('mutation_checks.os.waitpid', side_effect=observe_wait):
+            result = self.control(timeout=10)
+        self.assertEqual(1, result.returncode, 'Popen lost the mutation command exit status')
+        self.assertIn('mutation after orphan reaping', result.stderr)
 
     def test_scan_failure_prevents_fixture_launch(self):
         with patch('mutation_checks.fixture_pids', side_effect=PermissionError('inspection denied')), \

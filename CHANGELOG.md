@@ -6,6 +6,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Fixed
+
+- Mutation controls reap adopted Linux fixture processes while baseline and mutation commands run, so cleanup assertions can observe their exit without losing the direct command's status. Tests only; macOS cleanup and installed assets are unchanged, with no resync or configuration action needed. Validation uses local fixtures; Linux qualification remains pending.
+
 ## [3.5.1] - 2026-10-29
 
 v3.5.1 is a patch release on v3.5.0, prepared 2026-10-28 for the 2026-10-29 tag. It contains only [#98](https://github.com/KaiaK808/bureau/pull/98): Spec Review and UX fail closed on invalid results, and their overlap readiness requires a validated passing status and the installed schema digest. All behavior changes are on by default after resync; readiness validation applies when overlap admission is enabled. No configuration keys or exit codes are new; the existing exit 22 widens to these invalid results. See the [v3.5.1 release notes](docs/release-notes.md) for the contracts, upgrade actions, validation record and known limitation.
