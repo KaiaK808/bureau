@@ -3334,7 +3334,7 @@ $steps"
 # ── End of ownership halts ──────────────────────────────────────────────
 
 # restore_worktree_deps <worktree> — put node_modules back after reset_worktree's
-# `clean -fdx`, for an npm project. Returns 0 when there is nothing to do or the
+# `clean -fdx`, for a Node project. Returns 0 when there is nothing to do or the
 # dependencies are in place, 24 (environment-blocked) when they could not be
 # restored. The stages call it after their own checkout and merge of
 # origin/main (both can change the manifests) as `|| exit 24`.
@@ -3342,8 +3342,10 @@ $steps"
 # Carried over from an installation. `clean -fdx` removes ignored files,
 # node_modules included, and nothing installed them again: the review stage's
 # build check ran without dependencies every time, the build was red, and the
-# red build turned four unanimous APPROVEs into REQUEST_CHANGES. Only for npm
-# (package.json AND package-lock.json); every other project returns 0 at once.
+# red build turned four unanimous APPROVEs into REQUEST_CHANGES. npm retains
+# its clone/staged-install path below. pnpm and Yarn Classic use the sibling
+# helper: offline, frozen, without lifecycle scripts, in the actual worktree
+# so relative workspace links resolve correctly. Neither clones node_modules.
 #
 # Security, each point a review finding in installation B:
 #   - `npm ci --ignore-scripts`, never without: otherwise the lifecycle scripts
@@ -3374,6 +3376,12 @@ restore_worktree_deps() {
   local common main_repo stampdir stamp tmp want have src_want tracked log attempt reason
 
   [ -f "$wt/package.json" ] || return 0
+  if [ -f "$wt/pnpm-lock.yaml" ] || [ -f "$wt/yarn.lock" ]; then
+    # Filter before Python starts: its Git and package-manager children must
+    # inherit the same default/clean boundary as other branch-controlled code.
+    bureau_untrusted_env python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-worktree-deps.py" "$wt"
+    return $?
+  fi
   [ -f "$wt/package-lock.json" ] || return 0
   command -v shasum >/dev/null 2>&1 || return 0
 

@@ -18,6 +18,12 @@ Install the tool reported for the selected mode, then rerun setup. App tasks nee
 ### Linear MCP not available during setup
 Discover the available Linear connector in the current host. In Claude Code, use `/mcp`; in Codex, use the installed Linear tool capabilities. Shared runtime transitions still require the configured API key.
 
+### Spec Kit reports `Unknown skill` from another working directory
+
+Spec Kit skills are local to the adopting repository. Claude uses `.claude/skills/speckit-*/SKILL.md`; Codex uses `.agents/skills/speckit-*/SKILL.md`. Installing with `--target both` installs both interfaces in that repository; it does not register global skills or change a helper session's working directory. The active Spec Kit integration is selected separately in `.specify/integration.json`.
+
+Start the session/helper from the repository root. If discovery still uses another directory, give the helper the absolute paths to that repository's `speckit-specify/SKILL.md`, `speckit-plan/SKILL.md` and `speckit-tasks/SKILL.md`, tell it to read them directly, and set its working directory to that repository for all file/helper operations. Do not copy another repository's skills or constitution into a global location: their relative paths, templates and feature context belong to their target. Bureau intentionally leaves host skill discovery local.
+
 ### `LINEAR_API_KEY` not set
 Interactive setup completes without it, but agents fail on first run. Add to `.env` before launching:
 
@@ -28,6 +34,23 @@ echo 'LINEAR_API_KEY=lin_api_xxxxxxxxxxxx' >> .env
 ---
 
 ## Pipeline runtime
+
+### `Configuration changed since prepare`
+
+Finish binds the trusted `.bureau.json` bytes captured by prepare. Editing even an unrelated setting invalidates the prepared run; finish keeps the claim and refuses to post or advance it. Preserve the files, inspect `python3 scripts/bureau-runtime.py status --run RUN_ID`, and stop any remaining writer before releasing:
+
+```sh
+python3 scripts/bureau-runtime.py release RUN_ID
+python3 scripts/bureau-runtime.py prepare TEAM-123 implement --owner app-task
+```
+
+Use the original issue and stage shown in status (the error prints them), keep any original `--allow-merge` authorization and owner choice where applicable, then regenerate the result with the **new** `run_id`, current HEAD and actual evidence before finishing it. Release does not discard the files or move the issue. Do not reuse the old result, manually edit the saved config hash or release a live worker. See [app stages](stage-protocol.md#app-stages) and the [documentation recipe](recipes.md#documentation-only-tickets).
+
+### pnpm or Yarn dependencies are missing after a worktree reset
+
+Do not add `node_modules` to `repo.worktree_links`: workspace links must resolve inside the worker. Bureau detects `pnpm-lock.yaml` or `yarn.lock` and installs in that worktree with a frozen lockfile, no lifecycle scripts and offline-only access. Provision the package manager and warm its local cache in a separate trusted setup first. Corepack cannot download a missing manager during the stage. Missing cache entries, an unavailable manager or two failed attempts stop with 24; the stage output shows the final log lines and full logs remain in the shared Git directory's `bureau-deps/`.
+
+Keep one lockfile and make `package.json`'s optional `packageManager` agree with it. Yarn support is Classic 1.x; modern Yarn/PnP refuses with 24 because its immutable-install, plugin and linker contracts need separate qualification. See [Node repositories](configuration.md#node-repositories) for the boundaries.
 
 ### Agents running but not picking up issues
 Check the issue:

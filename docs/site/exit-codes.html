@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="05982705abbaeb5a69fa042b5c4528cf4c60c973569c6418b5dbed342045d386">
+<meta name="bureau-source-sha256" content="625b13277bda1776b72672ed039ebdeeb4ecc96df2cd06cf6e5df3081f090d53">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -194,11 +194,15 @@ withdrawal still takes precedence with 25/26</td>
 <td><code>24</code></td>
 <td>environment-blocked</td>
 <td>Permissions or required execution capability missing</td>
-<td>Inspect denied operation separately from code/test failures. Also:
-an npm project's <code>node_modules</code> could not be restored after
-the worktree reset (<code>npm ci --ignore-scripts</code> failed twice,
-or no npm); the last lines of the npm log are in the stage output, the
-full log sits next to the stamp in <code>.git/bureau-deps/</code>. The
+<td>Inspect denied operation separately from code/test failures. Also: a
+Node project's dependencies could not be restored after the worktree
+reset; the last install log lines appear in stage output and full logs
+sit beside stamps in the shared Git directory's
+<code>bureau-deps/</code>. npm retains its existing path; pnpm/Yarn
+Classic require a provisioned manager and offline cache, with two
+bounded attempts. Modern Yarn/PnP, ambiguous lockfiles and a conflicting
+<code>packageManager</code> are refused; see <a
+href="configuration.html#node-repositories">Node repositories</a>. The
 shepherd halts and alerts. Also: <code>agents.merge_mode</code> is
 <code>manual</code> but <code>linear.teams[0].states.merge</code> is not
 set — the review stage refuses at its start, before any paid review;
