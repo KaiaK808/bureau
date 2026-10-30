@@ -105,7 +105,6 @@ if form == 'envelope': text = json.dumps(dict(result=text, usage=dict(input_toke
 elif form == 'fenced': text = public + '\n```json\n' + text + '\n```\n'
 elif form == 'malformed': text = public + '\n```json\n' + text[:-1] + '\n```\n'
 (repo/'result.txt').write_text(text)
-(repo/'specialist.txt').write_text('```json\n{"counts":{"critical":0},"findings":[]}\n```\n')
 PY
   if [ "$3" = cap-failure ]; then
     echo 'bureau_cap_comment() { return 1; }' >> "$SCRIPTS_DIR/bureau-config.sh"
@@ -130,15 +129,19 @@ github_path = repo/'github-payloads.jsonl'
 github = [json.loads(line) for line in github_path.read_text().splitlines()] if github_path.exists() else []
 bodies = [p['variables']['body'] for p in linear] + [p['body'] for p in github]
 assert linear, 'no actual Linear payload captured'
-if stage in ('review', 'implement'): assert github, 'no actual GitHub payload captured'
+invalid_review = stage == 'review' and form in ('missing', 'nested', 'malformed')
+if invalid_review:
+    assert not github and not pr, 'invalid merger result was published'
+    assert not any('Code review **APPROVED**' in b or 'Code review **BLOCKED**' in b or 'Changes Requested' in b for b in bodies), 'invalid merger result was routed as a verdict'
+elif stage in ('review', 'implement'):
+    assert github, 'no actual GitHub payload captured'
 for body in bodies:
     assert os.environ['PR7_CANARY'] not in body, 'insight leaked into actual transport payload: ' + stage + '/' + verdict + '/' + form
     assert '"insights"' not in body, 'insights field leaked into comment projection'
-if form not in ('missing', 'malformed', 'projector-failure') and stage != 'implement':
+if not invalid_review and form not in ('missing', 'malformed', 'projector-failure') and stage != 'implement':
     assert any('PUBLIC_STAGE_SUMMARY' in b for b in bodies), 'public stage summary was lost'
-if stage == 'review' and form != 'malformed':
-    expected = 'BLOCK' if form in ('missing', 'nested') else verdict
-    assert any('**Verdict**: ' + expected in p['body'] for p in pr), 'review routing changed'
+if stage == 'review' and not invalid_review:
+    assert any('**Verdict**: ' + verdict in p['body'] for p in pr), 'review routing changed'
 if stage == 'qa' and form != 'malformed':
     header = {'GREEN':'QA **PASSED**', 'RED':'tests failing', 'NEEDS_HUMAN':'flagged for human review'}[verdict]
     assert any(header in p['variables']['body'] for p in linear), 'QA routing changed'
@@ -165,7 +168,7 @@ for stage in ${PR7_STAGES:-review qa implement}; do
       case "$stage" in
         review)
           export BUREAU_STUB_ISSUE_STATE='Build Review'
-          export FAKE_CLAUDE_FIXTURES="$SANDBOX/specialist.txt"
+          review_fallback_specialists
           run_pipeline code-review-pipeline.sh TEAM-712
           ;;
         qa)
@@ -178,10 +181,13 @@ for stage in ${PR7_STAGES:-review qa implement}; do
           unset FAKE_CLAUDE_COMMIT_ON_ITERS
           ;;
       esac
-      # A malformed result fails closed to BLOCK in review; the other stages
-      # keep their pre-existing objective/default decisions.
+      # Invalid merger results fail schema validation before publication (22).
+      # Valid BLOCK results still hold with 25.
       expected_rc=0
-      if [ "$stage" = review ] && { [ "$verdict" = BLOCK ] || [ "$form" = malformed ] || [ "$form" = missing ] || [ "$form" = nested ]; }; then expected_rc=25; fi
+      if [ "$stage" = review ]; then
+        if [ "$form" = malformed ] || [ "$form" = missing ] || [ "$form" = nested ]; then expected_rc=22
+        elif [ "$verdict" = BLOCK ]; then expected_rc=25; fi
+      fi
       assert_eq "$expected_rc" "$LAST_RC" "$stage/$verdict/$form exit: $LAST_STDERR"
       assert_transport_privacy "$stage" "$verdict" "$form"
     done

@@ -92,18 +92,18 @@ os.execv(os.environ['REAL_GIT'],[os.environ['REAL_GIT'],*sys.argv[1:]])
         self.assert_scope(base,head,'main')
         self.assertTrue(self.check()['stopped'])
         # Exercise the full producer/collector/renderer path after the actual
-        # diverged-base merge, using the provider's original result and digest.
+        # diverged-base merge, using the correlated deterministic round.
         acceptance = pipeline_fixture.load_script('review_acceptance', pipeline_fixture.ROOT/'templates/scripts/bureau-acceptance.py')
         store = acceptance.e.Store(self.repo/'.git/bureau')
         receipts = [json.loads(path.read_text()) for path in store.root.glob('runs/*/receipts/*.json')]
-        receipt = next(r for r in receipts if r['phase'] == 'verdict')
+        receipt = next(r for r in receipts if r['phase'] == 'correctness')
         validation = self.git('-C', str(worker), 'rev-parse', 'HEAD')
         self.assertNotEqual(validation, head)
         self.assertEqual(receipt['review_inputs'], {'head':head, 'base':base, 'validation_head':validation})
         self.assertEqual(receipt['end_head'], validation)
         brief = acceptance.render(store, worker, 'T-1', 1, head, 'https://github.com/test/repo/pull/1', base=base, verdict='APPROVE', review_head=head)
         self.assertIn('Validation merge: '+validation, brief)
-        self.assertIn('Provider verdict: APPROVE', brief)
+        self.assertIn('Recorded final verdict: APPROVE', brief)
         self.assertNotIn('Review receipt/verdict for this HEAD: missing.', brief)
         # Stored approvals predating base_ref retain their main interpretation.
         path=self.repo/'.git/bureau/review-stops.json'

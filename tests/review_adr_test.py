@@ -262,6 +262,11 @@ if '--output-schema' in sys.argv:
     result = json.loads(os.environ['ADR_RESULT'])
 else:
     result = {'counts':{'critical':0},'findings':json.loads(os.environ['ADR_RESULT'])['findings']}
+    if os.environ.get('ADR_CLEAN_SPECIALISTS'):
+        role = os.environ['BUREAU_PROVIDER_PHASE']
+        findings = result['findings'] if role == 'correctness' else []
+        result = dict(specialist=role, counts={s.lower():sum(f['class'] == s for f in findings) for s in ('CRITICAL','BUG','MINOR','SKIP')},
+                      findings=findings, holds=[], summary='Fixture specialist')
 pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))""")
         self.fixture = fixture.SupervisionPipelineTests('test_fixture_commits_and_pushes_start_no_git_maintenance')
         with patch.object(fixture, 'ROOT', source), patch.object(fixture, 'CODEX', codex):
@@ -278,7 +283,7 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
         self.git('add', 'docs'); self.git('commit', '-qm', 'test: pinned ADR records')
         self.git('push', '-q', 'origin', 'HEAD'); self.git('checkout', '-q', 'main')
 
-    def review(self, value=None, code=20, **overrides):
+    def review(self, value=None, code=0, **overrides):
         self.workers += 1
         (self.repo / '.bureau.json').write_text(json.dumps(self.config))
         capture = self.root / ('capture-' + str(self.workers)); capture.mkdir()
@@ -325,16 +330,16 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
 
     def test_enabled_unknown_reference_is_malformed_and_blocks(self):
         self.config['agents']['review_adr_context'] = True
-        self.review(verdict(['9999']), code=25)
-        items = json.loads(self.fixture.linear.read_text())
-        self.assertIn('needs-human', [v['name'] for v in items['T-1']['labels']['nodes']])
+        self.review(verdict(['9999']), code=22)
+        calls = [json.loads(line) for line in self.fixture.gh_log.read_text().splitlines()]
+        self.assertFalse(any(args[:2] == ['pr', 'comment'] for args in calls))
 
     def test_enabling_context_invalidates_reusable_approval(self):
         self.config['agents']['merge'] = True
-        self.review()
+        self.review(code=20, ADR_CLEAN_SPECIALISTS='1')
         self.config['agents']['review_adr_context'] = True
-        prompts = self.review(code=0, BUREAU_NO_MERGE='0', BUREAU_STOP_REQUESTED='0')
-        self.assertEqual(set(prompts), {'correctness', 'security', 'performance', 'verdict'})
+        prompts = self.review(code=0, BUREAU_NO_MERGE='0', BUREAU_STOP_REQUESTED='0', ADR_CLEAN_SPECIALISTS='1')
+        self.assertEqual(set(prompts), {'correctness', 'security', 'performance'})
         self.assertIn(b'## ADR context', prompts['correctness'])
 
     def test_enabled_invalid_directory_stops_before_paid_calls(self):
@@ -359,7 +364,7 @@ os.execv(''' + repr(real_git) + ', [' + repr(real_git) + ', *sys.argv[1:]])\n')
         for phase in ('correctness', 'security', 'performance'):
             self.assertIn(b'PINNED_ACCEPTED', prompts[phase]); self.assertNotIn(b'LIVE_AFTER_PIN', prompts[phase])
 
-    def test_disabled_prompts_comments_wire_and_receipt_equal_legacy_fixtures(self):
+    def test_disabled_adr_keeps_legacy_merger_schema_wire_and_prompt_context(self):
         self.config['agents']['review_adr_context'] = False
         prompts = self.review(verdict())
         self.assertEqual(set(prompts), {'correctness', 'security', 'performance', 'verdict'})
@@ -367,10 +372,16 @@ os.execv(''' + repr(real_git) + ', [' + repr(real_git) + ', *sys.argv[1:]])\n')
             return raw.replace(self.git('rev-parse', 'origin/main').encode(), b'<BASE>').replace(
                 self.git('rev-parse', 'origin/001-task').encode(), b'<HEAD>')
         for phase, prompt in prompts.items():
+            # Common hold guidance changed for every review; ADR off still adds
+            # no context, citation instruction or extended merger contract.
+            prompt = prompt.replace(b'Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.\n\n', b'')
+            prompt = prompt.replace(b',"holds":[]', b'')
             self.assertEqual(normalize(prompt), (LEGACY / (phase + '.txt')).read_bytes())
         calls = [json.loads(line) for line in self.fixture.gh_log.read_text().splitlines()]
         comment = next(args[args.index('--body') + 1] for args in calls if args[:2] == ['pr', 'comment'])
-        self.assertEqual(normalize(comment.encode()), (LEGACY / 'comment.txt').read_bytes())
+        self.assertIn('Public review.', comment)
+        self.assertIn('**Verdict**: REQUEST_CHANGES', comment)  # Malformed specialists cannot approve.
+        self.assertNotIn('ADR references', comment)
         self.assertEqual((self.capture / 'verdict.schema.json').read_bytes(), (LEGACY / 'codex-schema.json').read_bytes())
         receipts = list((self.repo / '.git/bureau/evidence/v1/runs').glob('*/receipts/*.json'))
         merger = next(json.loads(p.read_text()) for p in receipts if json.loads(p.read_text()).get('phase') == 'verdict')

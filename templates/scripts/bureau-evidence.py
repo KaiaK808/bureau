@@ -23,7 +23,7 @@ LOCK_TIMEOUT_SECONDS = .25
 KINDS = ('decision', 'dependency', 'compliance', 'resource', 'technical')
 TAGS = frozenset(('spec', 'spec_review', 'ux', 'copy', 'implement', 'qa', 'code_review', 'conflict_resolver', 'validation',
                   'merge', 'rebase', 'research', 'upstream_summary', 'specify', 'plan', 'tasks',
-                  'correctness', 'security', 'performance', 'verdict', 'worker', 'stage', 'driver'))
+                  'correctness', 'security', 'performance', 'verdict', 'finding_verifier', 'worker', 'stage', 'driver'))
 ACTORS = frozenset(('maintainer', 'workspace-owner', 'ci-or-gate-owner', 'repository-maintainer',
                     'merge-worker', 'operator'))
 COMMAND_IDS = frozenset(('configured-command', 'repo.test_command', 'review.build', 'qa.test',
@@ -103,7 +103,8 @@ def usage_metadata(metadata):
 
 
 def review_round_shape(value):
-    shape(value, 'number min_severity provider_verdict final_verdict provider_attempt_ids calls usage')
+    shape({k:v for k,v in value.items() if k != 'merge'}, 'number min_severity provider_verdict final_verdict provider_attempt_ids calls usage')
+    if 'merge' in value: review_merge_shape(value['merge'])
     if type(value['number']) is not int or not 1 <= value['number'] <= 999999: raise ValueError('invalid review round')
     if value['min_severity'] not in ('BUG', 'MINOR'): raise ValueError('invalid review floor')
     if any(value[k] not in (None, 'APPROVE', 'REQUEST_CHANGES', 'BLOCK') for k in ('provider_verdict', 'final_verdict')):
@@ -116,6 +117,52 @@ def review_round_shape(value):
     for key, item in value['usage'].items():
         if item is not None and (type(item) not in ((int, float) if key == 'total_cost_usd' else (int,))
                                  or not math.isfinite(item) or item < 0): raise ValueError('invalid review usage')
+
+
+def review_merge_shape(value):
+    """Allowlist identities, counts and enums, never claim/source prose."""
+    optional = {'human_holds', 'verdict_floor', 'severity_counts', 'result_sha256', 'missing_acceptance_count', 'fixes_needed_count', 'fallback_reasons', 'specialist_sha256'}
+    shape({k:v for k,v in value.items() if k not in optional}, 'mode malformed_specialists grounding invalid_anchors anchor_checks verifier verifier_omitted critical_floor security_floor adr_refs')
+    for key in ('human_holds', 'missing_acceptance_count', 'fixes_needed_count'):
+        if key in value and (type(value[key]) is not int or not 0 <= value[key] <= 3999999999): raise ValueError('invalid blocker count')
+    if 'verdict_floor' in value and value['verdict_floor'] not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK'):
+        raise ValueError('invalid specialist verdict floor')
+    if 'result_sha256' in value and not re.fullmatch(r'[a-f0-9]{64}', value['result_sha256']): raise ValueError('invalid review digest')
+    if 'severity_counts' in value:
+        shape(value['severity_counts'], 'critical bug minor skip')
+        if any(type(n) is not int or not 0 <= n <= 3999999999 for n in value['severity_counts'].values()):
+            raise ValueError('invalid severity counts')
+    if not isinstance(value['adr_refs'], list) or len(value['adr_refs']) > 1024 or any(not isinstance(r, str) or not re.fullmatch(r'[0-9]{4}', r) for r in value['adr_refs']):
+        raise ValueError('invalid merge ADR references')
+    if value['mode'] not in ('deterministic', 'model_fallback') or value['grounding'] not in ('off', 'required'):
+        raise ValueError('invalid review merge mode')
+    roles = ('correctness', 'security', 'performance')
+    if 'specialist_sha256' in value:
+        reports = value['specialist_sha256']
+        if (not isinstance(reports, dict) or set(reports) != set(roles)
+                or any(not isinstance(d, str) or not re.fullmatch(r'[a-f0-9]{64}', d) for d in reports.values())):
+            raise ValueError('invalid specialist digests')
+    reasons = value.get('fallback_reasons', {})
+    if (not isinstance(reasons, dict) or any(role not in roles for role in reasons)
+            or any(reason not in ('non_json_report', 'invalid_specialist', 'summary_signal', 'summary_non_ascii') for reason in reasons.values())):
+        raise ValueError('invalid fallback reason')
+    if not isinstance(value['malformed_specialists'], list) or any(r not in roles for r in value['malformed_specialists']):
+        raise ValueError('invalid fallback specialists')
+    for key in ('invalid_anchors', 'verifier_omitted', 'critical_floor', 'security_floor'):
+        if type(value[key]) is not int or not 0 <= value[key] <= 3999999999: raise ValueError('invalid merge count')
+    if not isinstance(value['anchor_checks'], list) or len(value['anchor_checks']) > 4096: raise ValueError('invalid anchor checks')
+    for row in value['anchor_checks']:
+        shape(row, 'finding_id status')
+        if not re.fullmatch(r'[a-f0-9]{64}', row['finding_id']): raise ValueError('invalid finding identity')
+        if row['status'] not in ('valid', 'missing', 'shape', 'side', 'path', 'blob', 'digest', 'absent', 'foreign_blob', 'range', 'stale_digest', 'location'):
+            raise ValueError('invalid anchor status')
+    if not isinstance(value['verifier'], list) or len(value['verifier']) > 8: raise ValueError('invalid verifier count')
+    for row in value['verifier']:
+        shape(row, 'finding_id anchor_sha256 outcome basis')
+        if any(not re.fullmatch(r'[a-f0-9]{64}', row[k]) for k in ('finding_id', 'anchor_sha256')):
+            raise ValueError('invalid verification identity')
+        if row['outcome'] not in ('confirmed', 'refuted', 'unverifiable') or row['basis'] not in ('invalid_anchor', 'budget', 'pending', 'model', 'invalid_result'):
+            raise ValueError('invalid verification outcome')
 
 
 def disposition_path(value):
@@ -648,6 +695,14 @@ class Store:
         inputs = receipt.get('review_inputs')
         if value['stage'] == 'code_review' and isinstance(inputs, dict):
             value['review_inputs'] = {key: head(inputs.get(key)) for key in ('head', 'base', 'validation_head')}
+        if (value['stage'] == 'code_review' and value['phase'] in REVIEW_PHASES - {'verdict'}
+                and value['normalized_exit'] == 0 and value['provider_exit'] == 0 and value['outcome'] == 'complete'):
+            # Specialists have no verdict schema. Bind their parsed report
+            # independently, before forwarding output, without retaining prose.
+            report = receipt.get('structured_result')
+            if report is None: report = receipt.get('insights_result')
+            report_digest = observe(digest, report) if isinstance(report, dict) else None
+            if report_digest is not None: value['review_report_sha256'] = report_digest
         refs = receipt.get('adr_refs')
         if value['stage'] == 'code_review' and isinstance(refs, list):
             value['adr_refs'] = sorted({ref for ref in refs if isinstance(ref, str) and re.fullmatch(r'[0-9]{4}', ref)})[:1024]
@@ -687,7 +742,7 @@ class Store:
                      cause_class=cause) for s in items]
         self._append_learning('insights.jsonl', rows, ('provider_attempt_id',), run)
 
-    def _append_learning(self, name, incoming, identity, run):
+    def _append_learning(self, name, incoming, identity, run, replace=False):
         """All learning ledgers share PR 7's lock, atomic budget and bounded retention."""
         if not incoming: return
         path = self.root / name
@@ -695,6 +750,8 @@ class Store:
             rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
             now = self.clock()
             rows = [r for r in rows if now - r['timestamp'] <= RETENTION_SECONDS]
+            if replace:
+                rows = [r for r in rows if not all(r.get(k) == incoming[0].get(k) for k in identity)]
             if not any(all(r.get(k) == incoming[0].get(k) for k in identity) for r in rows): rows += incoming
             rows = rows[-2048:]
             payload = ''.join(json.dumps(r, ensure_ascii=True, separators=(',', ':')) + '\n' for r in rows).encode()
@@ -740,7 +797,7 @@ class Store:
         elif cause == 'timeout' and timeout: row['timeout_kind'] = timeout
         self._append_learning('stage-outcomes.jsonl', [row], ('stage_attempt_id',), run)
 
-    def collect_dispositions(self, receipt):
+    def collect_dispositions(self, receipt, merged=False):
         result = normalize_dispositions(receipt.get('structured_result') or receipt.get('insights_result'))
         if not isinstance(result, dict): return
         items = []
@@ -754,11 +811,65 @@ class Store:
         items = list({(r['disposition'], r['severity'], r['path']): r for r in items}.values())[:MAX_DISPOSITIONS]
         if not items: return
         issue = ticket(receipt['issue']) if receipt.get('issue') else None
-        run = identifier(receipt['run_id']); provider = identifier(receipt['provider_attempt_id'])
+        run = identifier(receipt['run_id']); provider = None if merged else identifier(receipt['provider_attempt_id'])
         attempt = identifier(receipt['stage_attempt_id'])
         rows = [dict(schema_version=VERSION, record_type='review_disposition', issue=issue, stage=receipt['stage'],
                      run_id=run, stage_attempt_id=attempt, provider_attempt_id=provider, timestamp=self.clock(), **item) for item in items]
-        self._append_learning('review-dispositions.jsonl', rows, ('provider_attempt_id',), run)
+        # A normalized merge is stage-derived evidence, not another provider
+        # call. Replace any earlier merger-receipt projection for this stage
+        # so retained specialist findings are included exactly once too.
+        identity = ('run_id', 'stage_attempt_id') if merged else ('provider_attempt_id',)
+        self._append_learning('review-dispositions.jsonl', rows, identity, run, replace=merged)
+
+    def collect_merged_dispositions(self, run, stage_attempt, result, merge):
+        if digest(result) != merge.get('result_sha256'): raise ValueError('foreign merged result')
+        with self.guard():
+            manifest = self._manifest(run)
+            attempt = next(a for a in manifest['attempts'] if a['attempt_id'] == identifier(stage_attempt))
+            record = attempt.get('review_round', {})
+            if record.get('final_verdict') not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK'): return
+            if record.get('merge') != merge: raise ValueError('foreign review merge')
+            phases = set(); specialists = {}
+            for provider in record['provider_attempt_ids']:
+                receipt = read(self.receipt_path(run, provider), {})
+                if (receipt.get('run_id') == run and receipt.get('stage_attempt_id') == stage_attempt
+                        and receipt.get('issue') == manifest['issue'] and receipt.get('stage') == 'code_review'
+                        and receipt.get('normalized_exit') == 0):
+                    phases.add(receipt.get('phase'))
+                    if merge['mode'] == 'deterministic' and receipt.get('phase') in REVIEW_PHASES - {'verdict'}:
+                        role = receipt['phase']
+                        if role in specialists: raise ValueError('ambiguous specialist receipts')
+                        specialists[role] = receipt
+            required = REVIEW_PHASES - {'verdict'} if merge['mode'] == 'deterministic' else REVIEW_PHASES
+            if not required <= phases: return
+        if merge['mode'] == 'deterministic':
+            # The caller may just have overwritten review_round.merge. Only
+            # the successful receipts independently bind this round's inputs.
+            expected = {role: receipt.get('review_report_sha256') for role, receipt in specialists.items()}
+            if (set(expected) != required or any(not isinstance(d, str) or not re.fullmatch(r'[a-f0-9]{64}', d) for d in expected.values())
+                    or merge.get('specialist_sha256') != expected):
+                raise ValueError('foreign specialist reports')
+            # Hashes alone would let a forged pair copy current input digests
+            # onto obsolete findings. Rebuild just the findings from originals
+            # verified against those receipt digests; no provider or Git reads.
+            import importlib.util
+            spec = importlib.util.spec_from_file_location('evidence_review', Path(__file__).with_name('bureau-review.py'))
+            review = importlib.util.module_from_spec(spec); spec.loader.exec_module(review)
+            provider = review.module('provider')
+            reports = {role: provider.receipt_result(receipt) for role, receipt in specialists.items()}
+            if any(not isinstance(report, dict) or digest(report) != expected[role] for role, report in reports.items()):
+                raise ValueError('unavailable specialist reports')
+            refs = sorted({ref for report in reports.values() for finding in report.get('findings', [])
+                           for ref in finding.get('adr_refs', [])})
+            claims = []
+            for role in review.ROLES:
+                report = review.load_specialist(review.encoded(reports[role]), role, refs)
+                claims.extend((role, review.readable_finding(finding, refs)) for finding in report['findings'])
+            findings, _, _ = review.normalized(claims, None, None, check_anchors=False)
+            if digest(findings) != digest(result.get('findings')): raise ValueError('foreign merged findings')
+        self.collect_dispositions(dict(run_id=run, stage_attempt_id=stage_attempt, issue=manifest['issue'],
+                                       stage='code_review', phase='verdict', normalized_exit=0,
+                                       review_min_severity=record['min_severity'], structured_result=result), merged=True)
 
     def _link_receipt(self, receipt, path):
         with self.guard():
@@ -769,7 +880,7 @@ class Store:
             if relative not in attempt['receipts']: attempt['receipts'].append(relative)
             self._save_manifest(value)
 
-    def review_round(self, run, stage_attempt, number, min_severity, provider_verdict=None, final_verdict=None):
+    def review_round(self, run, stage_attempt, number, min_severity, provider_verdict=None, final_verdict=None, merge=None):
         """One round per stage attempt, with deduplicated provider-call measurements.
 
         A partial set of phases or any unknown measurement makes that aggregate
@@ -788,16 +899,20 @@ class Store:
                 receipt = read(self.root / relative, {})
                 if (receipt.get('run_id') == run and receipt.get('stage_attempt_id') == stage_attempt
                         and receipt.get('issue') == value['issue'] and receipt.get('stage') == 'code_review'
-                        and receipt.get('phase') in REVIEW_PHASES and receipt.get('record_type') == 'receipt'
+                        and receipt.get('phase') in REVIEW_PHASES | {'finding_verifier'} and receipt.get('record_type') == 'receipt'
                         and receipt.get('schema_version') == VERSION):
                     call_id = identifier(receipt['provider_attempt_id'])
                     if self.receipt_path(run, call_id) == self.root / relative: calls[call_id] = receipt
-            complete = {r['phase'] for r in calls.values()} == REVIEW_PHASES
+            required = REVIEW_PHASES - {'verdict'} if merge and merge.get('mode') == 'deterministic' else REVIEW_PHASES
+            complete = required <= {r['phase'] for r in calls.values()}
+            planned_checks = sum(r['basis'] in ('pending', 'model', 'invalid_result') for r in merge['verifier']) if merge else 0
+            complete = complete and sum(r['phase'] == 'finding_verifier' for r in calls.values()) >= planned_checks
             measurements = [usage_metadata(r) for r in calls.values()]
             usage = {key: sum(r[key] for r in measurements) if complete and all(r[key] is not None for r in measurements)
                      else None for key in USAGE_FIELDS}
             record = dict(number=number, min_severity=min_severity, provider_verdict=provider_verdict,
                           final_verdict=final_verdict, provider_attempt_ids=sorted(calls), calls=len(calls), usage=usage)
+            if merge is not None: record['merge'] = merge
             review_round_shape(record)
             attempt['review_round'] = record
             self._save_manifest(value)
@@ -1080,6 +1195,8 @@ def review_round_main():
     parser.add_argument('--signal', choices=('timeout', 'provider_error', 'review_capped', 'gate_red', 'human_hold'))
     parser.add_argument('--provider-verdict')
     parser.add_argument('--final-verdict')
+    parser.add_argument('--merge-metadata', type=Path)
+    parser.add_argument('--merge-result', type=Path)
     args = parser.parse_args()
     run = os.environ.get('BUREAU_RUN_ID'); attempt = os.environ.get('BUREAU_STAGE_ATTEMPT_ID')
     if not run or not attempt: return
@@ -1088,10 +1205,14 @@ def review_round_main():
     if args.signal:
         store.outcome_signal(run, attempt, args.signal)
         return
+    merge = json.loads(args.merge_metadata.read_text()) if args.merge_metadata else None
     store.review_round(
         run, attempt, args.round, args.min_severity,
         args.provider_verdict if args.provider_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None,
-        args.final_verdict if args.final_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None)
+        args.final_verdict if args.final_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None,
+        merge)
+    if args.merge_result and merge:
+        store.collect_merged_dispositions(run, attempt, json.loads(args.merge_result.read_text()), merge)
 
 
 if __name__ == '__main__':

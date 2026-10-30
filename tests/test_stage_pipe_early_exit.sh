@@ -114,6 +114,7 @@ review_run() {  # <ignore|default> <long|plain> [old]
   jq -n '{repo: {test_command: "true"}}' > "$SANDBOX/.bureau.json"
   printf 'Review.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"counts":{"critical":0},"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
   export FAKE_CLAUDE_BIN="$LIB_DIR/fake_claude.sh" FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt"
+  review_clean_specialists
   export BUREAU_STUB_REVIEW_COMMENTS='[]' BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
   export BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED='' BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=0
   if [ "$2" = long ]; then

@@ -62,6 +62,8 @@ def validate(config):
         elif isinstance(value, dict) and type(value.get('enabled', True)) is not bool: errors.append(stage + '.enabled must be boolean')
     try: module('adr').settings(config)
     except (ValueError, TypeError, AttributeError) as exc: errors.append(str(exc))
+    try: module('review').settings(config)
+    except (ValueError, TypeError, AttributeError) as exc: errors.append(str(exc))
     if errors: return errors
     provider = module('provider')
     for stage in STAGES:

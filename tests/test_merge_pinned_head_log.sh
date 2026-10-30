@@ -72,6 +72,7 @@ Review checked.
 ```
 EOF
 export FAKE_CLAUDE_FIXTURES="$SANDBOX/approve.txt"
+review_clean_specialists
 export BUREAU_STUB_ISSUE_STATE='Build Review' BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED=''
 echo '[]' > "$PR2_GH/comments.json"
 run_pipeline code-review-pipeline.sh "$ISSUE"

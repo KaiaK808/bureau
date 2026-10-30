@@ -26,6 +26,7 @@ jq -n --arg cmd "echo built >> '$MARK_DIR/build.log'; exit \"\${REUSE_BUILD_RC:-
   '{repo:{test_command:$cmd}}' > "$SANDBOX/.bureau.json"
 git -C "$SANDBOX" add .bureau.json && git -C "$SANDBOX" commit -q -m 'config' && git -C "$SANDBOX" push -q origin test-branch
 export FAKE_CLAUDE_FIXTURES="$SANDBOX/approve.txt"
+review_clean_specialists
 export BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
 export BUREAU_STUB_STATE_MERGE=state-merge BUREAU_STUB_AGENT_ENABLED=merge
 export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0 REUSE_BUILD_RC=0

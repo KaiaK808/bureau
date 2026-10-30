@@ -45,11 +45,12 @@ with tempfile.TemporaryDirectory(prefix='bureau-pr7-negative-') as temp:
     transport_env = dict(PR7_STAGES='review', PR7_VERDICTS='REQUEST_CHANGES', PR7_FORMS='object')
     rejected(['bash', str(root/'tests/test_insight_comment_privacy.sh')],
              'insight leaked into actual transport payload: review/REQUEST_CHANGES/object', transport_env)
-    # Even a correct primary formatter must not use raw legacy/fallback output.
-    review.write_text((SCRIPTS/review.name).read_text())
+    # Fenced merger output is now normalized to JSON before formatting too.
+    # Keep both disclosure barriers disabled to reproduce its historical leak.
     rejected(['bash', str(root/'tests/test_insight_comment_privacy.sh')],
              'insight leaked into actual transport payload: review/REQUEST_CHANGES/fenced',
              {**transport_env, 'PR7_FORMS':'fenced'})
+    review.write_text((SCRIPTS/review.name).read_text())
     config.write_text(config_original)
 
     # Comment outages must not turn a human hold into QA's default GREEN.

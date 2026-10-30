@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e7191cf878860d865c7345b9979fc4c79a77c3842dbf2190bbf38e43d5eee83b">
+<meta name="bureau-source-sha256" content="7b4faa1b0b212daf58346c5d2b756e5f3d1e1ee34a3cd3fd6e070f04ed3bf599">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -854,6 +854,128 @@ review-round accounting or strict merge gates. No implement force-push
 is introduced. The existing snapshot, external-write and
 concurrent-writer limits still apply.</p>
 <h2 id="review-convergence">Review convergence</h2>
+<p>The three specialists still run in parallel.
+<code>bureau-review.py</code> uses deterministic merge only when each
+report is one pure JSON object valid against
+<code>bureau-specialist.schema.json</code>, including optional ADR
+references, and no specialist summary contains a severity or hold
+signal. Provider cost envelopes are unwrapped, but the report inside
+must still be pure JSON; fences and surrounding prose select the
+existing capped model merger. Any summary character outside printable
+ASCII (U+0020 through U+007E), checked before any normalization, selects
+fallback with reason <code>summary_non_ascii</code>. Summary signals
+include CRITICAL, BUG, MINOR, SKIP, BLOCK and its variants, human
+judgment/judgement, decision, review, approval, input or intervention,
+NEEDS_HUMAN, ambiguous and architectural disagreement. Within printable
+ASCII, case, Markdown emphasis, whitespace and separator variants are
+normalized for this conservative routing check. Zero tallies and
+negations such as “CRITICAL: 0”, “No human review required”, “No
+architectural disagreement remains” and “nothing blocks” also select
+fallback. Summary prose never creates severity counts or human holds;
+the merger interprets it through the existing verdict rules. Fallback
+metadata records each role's allowlisted reason
+(<code>non_json_report</code>, <code>invalid_specialist</code>,
+<code>summary_signal</code> or <code>summary_non_ascii</code>), without
+copying prose.</p>
+<p>Deduplication uses repository-relative path, inclusive
+<code>line</code>/<code>line_end</code> (end defaults to start) and
+NFKC/case-folded title with punctuation/whitespace normalized; absent
+title uses the first claim line. Highest severity wins; distinct
+duplicate claim details, specialist provenance, anchors and ADR IDs are
+retained. Actionable provenance is tracked per variant: a security SKIP
+cannot promote a correctness MINOR into the security floor. Normalized
+findings retain finding IDs, ranges and the complete anchor union, so
+metadata IDs remain traceable after temporary cleanup. Specialists
+report unresolved human decisions in <code>holds: ["reason"]</code>
+(empty when none); any structured hold forces BLOCK through convergence,
+including after fallback. Noncritical per-role counts must match their
+findings or select fallback; structured CRITICAL counts remain an
+independent floor, even when claim prose is unreadable. Every readable
+structured finding, acceptance gap, hold and severity-count floor from
+every specialist, including malformed ones, survives fallback.
+Completely unreadable or schema-invalid output and uncertain claims
+require at least REQUEST_CHANGES; a fallback APPROVE cannot clear that
+uncertainty. Pure JSON with neutral summaries, empty holds/findings/gaps
+and zero counts can approve deterministically; negated or zero-tally
+summaries can approve through the merger without invented floors. The
+helper supplies retained floors to the legacy result contract; shell
+<code>review_convergence</code> and <code>decide_review_verdict</code>
+keep severity, security, build and cap decisions.</p>
+<p>A fixed findings template renders summaries, class groups, source
+anchors, fixes and human holds for both deterministic and fallback
+results. The outer comment preserves <code>Code Review v2</code>,
+<code>**Verdict**:</code>, <code>**Reviewed head**:</code> and
+<code>**Target**:</code>. <code>merge-pipeline.sh</code> and the
+dispatcher consume the review marker/verdict; <code>review_counts</code>
+consumes terminal <code>bureau-review-round</code> markers and legacy
+Changes Requested headers; <code>implement-pipeline.sh</code> consumes
+<code>Code Review.*Changes Requested</code>. These strings and round
+accounting are unchanged. Fallback retention applies even with grounding
+and the verifier disabled.</p>
+<p><code>agents.review_grounding</code> defaults to <code>off</code>.
+Every supplied anchor is checked against the immutable base/head Git
+tree, never the checkout or a local validation merge. The pipeline
+invokes the helper through <code>bureau_without_secrets</code>; local
+Git reads disable lazy fetching and replacement objects and have a
+10-second limit. A line anchor is
+<code>{side: "base"|"head", path: "relative/file", blob: "FULL_GIT_BLOB_ID", start_line: 1, end_line: 2, sha256: "LOWERCASE_SHA256"}</code>;
+finding file/line/line_end must match. Hash exact cited bytes,
+preserving CRLF and the final newline (or its absence). Deleted code can
+cite base. A finding without a single line uses line 0 and
+<code>{side, path, blob, scope: "file", sha256}</code> over the complete
+blob; other implicit scopes are invalid. Paths must be relative, regular
+blobs at the selected path, with no traversal, symlink or submodule
+dereference. Missing paths, foreign blobs, impossible ranges and stale
+digests are invalid. In <code>required</code> mode any missing/invalid
+anchor produces BLOCK/25 before the unchanged ordered shell decision;
+off records the status only. Parse/schema/provider errors remain 22,
+with malformed specialists first trying the model fallback. A valid
+anchor never lowers severity. No deterministic stale-anchor suppression
+is shipped: even stale findings retain their floors and become a human
+hold in required mode.</p>
+<p><code>agents.finding_verifier.enabled: true</code> opts into shadow
+verification only (default false). In deterministic severity/path order,
+at most eight findings get a fresh checker call with a fixed 60-second
+provider limit each; no implementation or author review conversation is
+reused. Each input contains only the claim, validated pinned source
+bytes, anchors and whole pinned contracts (<code>SPEC.md</code>,
+<code>AGENTS.md</code>, <code>CLAUDE.md</code>, ticket spec/plan when
+present), with 8 KiB shared contract budget and 24 KiB JSON per request.
+Missing contracts can make a claim unverifiable. Invalid anchors or
+oversized inputs record unverifiable without calling a model; excess
+findings are counted as omitted. The checker returns exactly
+<code>finding_id</code>, <code>anchor_sha256</code> (SHA-256 of
+canonical sorted anchor JSON), and
+<code>outcome: confirmed|refuted|unverifiable</code>. Foreign
+identities, malformed responses, provider failures and checker
+silence/timeouts record unverifiable without setting a human hold;
+cancellation and ticket withdrawal still follow the stage protocol.
+Outcomes never change the candidate, convergence or
+CRITICAL/security/BLOCK floors. An enforced disagreement policy is
+deferred and has no configuration value in this release.</p>
+<p>Malformed finding paths or line types/ranges are counted as
+unverifiable anchors even when claim prose cannot be retained. Required
+grounding holds them through fallback; a display placeholder never
+becomes a verified source location.</p>
+<p>The shadow adapter enforces Claude <code>--tools ''</code>, strict
+empty MCP configuration, disabled skills and settings hooks, without
+<code>--dangerously-skip-permissions</code>. It sets
+<code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=1</code> for this phase,
+overriding an inherited enablement; this switch was checked in Claude
+2.1.312. Normal stages retain their configured memory policy.
+Unsupported flags fail closed to unverifiable. Codex has no supported
+all-tools-off switch, so its checker attempt is recorded as unverifiable
+without launching the model. The allowlisted checker response updates
+only its verification record, never verdict/floor metadata or merged
+findings. These restrictions apply behind Headroom too.</p>
+<p>Review policy identity includes the revised merge algorithm version,
+grounding option and verifier enablement alongside existing
+severity/caps/ADR identity. Older approvals require a fresh review.
+Helpers and schemas must be resynced together after installation
+comparison, followed by driver restart. Local Git/fake-provider tests
+establish contract behavior, not finding truth or live-provider
+acceptance. The <a href="review-merge-comparison.html">fixture
+comparison</a> reports measured limits.</p>
 <p>With <code>agents.review_adr_context: true</code> (default false),
 <code>bureau-adr.py</code> builds the same ADR index for all three
 specialists beside their lessons context; the verdict pass also receives
@@ -921,9 +1043,11 @@ scope (helper, both review schemas, provider, evidence and pipeline
 together), and restarting drivers. Then opt in explicitly and run
 doctor. Validation uses local Git and fake providers/services; no live
 reviewer-quality guarantee follows from these checks. Fixed legacy
-fixtures cover disabled contract/prompt/comment parity. Negative
-controls mutate temporary copies of the current scripts; neither tests
-nor shallow CI checkouts require release tags or history.</p>
+fixtures cover the disabled ADR contract and absence of ADR prompt
+context; shared hold guidance and fallback rendering follow the
+structured merge rules above. Negative controls mutate temporary copies
+of the current scripts; neither tests nor shallow CI checkouts require
+release tags or history.</p>
 <p>The background review stage validates the merger's decision fields
 and findings before applying <code>agents.review_min_severity</code>
 (<code>BUG</code> by default, <code>MINOR</code> for stricter review).
@@ -967,29 +1091,40 @@ still-requested stop remains stopped. Provider failures retain their
 existing exits; an unresolved decision in the next round sees the
 consumed number.</p>
 <p>Each fresh stage attempt records one <code>review_round</code> in its
-evidence manifest. Four existing provider phases
-(<code>correctness</code>, <code>security</code>,
-<code>performance</code>, <code>verdict</code>) contribute numeric usage
-through their run/stage/provider attempt identities. Duplicate receipt
-links count once; distinct retry identities count once each. Every
-metric sums only when all four phases and every measurement are
-available; otherwise it is null. Input/output/cache tokens and CLI cost
-estimates are numbers; absent usage/cost is never zero. Numeric
-receipt/round evidence uses the existing observational store,
-independent of the existing <code>session.cost_tracking</code> switch
-for per-issue cost logs; no additional switch or provider call is added.
-Approval reuse creates no round record or tokens. Evidence failures warn
-without changing routing; provider-success receipts retain their
-existing durability requirement.</p>
+evidence manifest. Three specialist phases (<code>correctness</code>,
+<code>security</code>, <code>performance</code>) contribute numeric
+usage through their run/stage/provider attempt identities for a code
+merge; model fallback additionally requires <code>verdict</code>.
+Optional <code>finding_verifier</code> calls also contribute usage.
+Duplicate receipt links count once; distinct retry identities count once
+each. Every metric sums only when all required phases and every
+measurement are available; otherwise it is null. Input/output/cache
+tokens and CLI cost estimates are numbers; absent usage/cost is never
+zero. Numeric receipt/round evidence uses the existing observational
+store, independent of the existing <code>session.cost_tracking</code>
+switch for per-issue cost logs; the optional shadow verifier adds
+bounded calls. Merge mode, malformed roles, floor counts, grounding
+statuses, finding/anchor digests and verifier outcomes are allowlisted
+metadata only (ADR 0003); claims, contracts and cited bytes are not
+copied into evidence. Approval reuse creates no round record or tokens.
+Evidence failures warn without changing routing; provider-success
+receipts retain their existing durability requirement.</p>
 <p>The provider-result object and digest remain unchanged. Evidence
 records <code>provider_verdict</code> separately from the final shell
-verdict. The existing PR review comment appends “Deferred below
-threshold” and SKIP lists after <code>bureau_comment_projection</code>
-has excluded insights; normal comment size limits still apply. PR 7's
-acceptance brief continues to distinguish provider verdict from
-invocation verdict. Old evidence needs no backfill. Resync scripts
-together after comparing installation drift, then restart drivers; live
-provider/adopter qualification remains outstanding.</p>
+verdict; for code merge this compatibility field holds the neutral
+APPROVE input, not a model approval. Both modes collect deferred/SKIP
+dispositions from the final normalized merged result after checking its
+digest and successful correlated receipts. These stage-derived rows use
+<code>provider_attempt_id: null</code>, deduplicate by run/stage
+attempt, and replace any earlier raw merger-receipt projection for that
+stage; they create no provider receipt or usage. The existing PR review
+comment appends “Deferred below threshold” and SKIP lists after
+<code>bureau_comment_projection</code> has excluded insights; normal
+comment size limits still apply. PR 7's acceptance brief continues to
+distinguish provider verdict from invocation verdict. Old evidence needs
+no backfill. Resync scripts together after comparing installation drift,
+then restart drivers; live provider/adopter qualification remains
+outstanding.</p>
 <h2 id="bounded-advisory-lessons">Bounded advisory lessons</h2>
 <p><code>build_lessons_context STAGE [SPEC_DIRECTORY] [LOCAL_DIFF_RANGE]</code>
 reads <code>LESSONS.md</code> without writing it. Spec, both
@@ -1203,6 +1338,33 @@ confirms that merge's two ordered parents are exactly that HEAD and
 base. Missing metadata, different inputs, later commits or unavailable
 Git objects mean missing review evidence. This correlation is
 observational and changes no approval or merge authority.</p>
+<p>The brief selects the latest matching completed round across
+deterministic and model-fallback modes, ordered by correlated provider
+completion time with round number as a tie-breaker. A deterministic
+review requires three successful specialist receipts; fallback also
+requires the successful verdict receipt. The brief correlates these
+phases to the same run, stage attempt, round call IDs and pinned inputs,
+then projects that round's retained merged result digest, recorded final
+verdict, missing-acceptance/fix counts and human-hold count. A fallback
+provider's original counts cannot replace retained blockers. Specialist
+calls intentionally have no verdict schema or verdict result digest;
+successful structured reports carry a separate
+<code>review_report_sha256</code> for disposition binding. Temporary
+provider originals are not required for these acceptance metadata
+counts. Incomplete rounds or missing/mismatched specialist receipts
+remain missing evidence. Shadow outcomes cannot change these blocker
+counts or verdicts.</p>
+<p>Deterministic disposition replacement requires the merged metadata's
+complete role-keyed <code>specialist_sha256</code> map to match the
+current round's successful specialist receipts. The collector verifies
+each original report against its independently captured receipt digest
+and rebuilds the normalized findings before replacing stage rows, so
+copying current digests onto stale findings cannot pass. Caller-supplied
+round metadata alone is insufficient. Missing legacy digests,
+missing/tampered originals or any mismatched findings preserve existing
+rows with an optional evidence warning. This collection reads report
+prose only transiently, adds no provider receipt or usage, and changes
+no fallback behavior or exit code.</p>
 <p><code>evidence/v1/acceptance/NUMBER-HEAD.json</code> freezes the
 rendered metadata brief with its SHA-256 and independent
 <code>ticket</code>/<code>pull_request</code> statuses

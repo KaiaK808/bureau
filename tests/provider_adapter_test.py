@@ -1176,10 +1176,10 @@ p.Path.open=refuse_transcript_read
                     # write; a live descendant can outlast the released lease.
                     deadline=time.monotonic()+2
                     while True:
-                        status=subprocess.run(['ps','-p',str(descendant['pid']),'-o','stat='],capture_output=True,text=True)
-                        self.assertIn(status.returncode,(0,1),status.stderr)
-                        self.assertFalse(status.stderr.strip(),status.stderr)
-                        active=bool(status.stdout.strip()) and not status.stdout.strip().startswith('Z')
+                        # Native inspection preserves the zombie/live check in
+                        # sandboxes that deny execution of the ps binary.
+                        status=p.a.ProcessTable().snapshot().get(descendant['pid'])
+                        active=status is not None and not status[2]
                         if not active or time.monotonic() >= deadline: break
                         time.sleep(.02)
                     self.assertFalse(active,'provider descendant survived the bounded invocation')
@@ -1273,6 +1273,23 @@ p.Path.open=refuse_transcript_read
                     self.assertEqual(argv,['-p','--output-format','json','--session-id',metadata['session_id'],
                         *tools,'--append-system-prompt-file',str(evidence/'system.txt'),
                         '--effort','high','--model','claude-fixture'])
+
+    def test_shadow_disables_automatic_memory_only_for_verification(self):
+        wrapper = self.bin/'headroom'
+        wrapper.write_text('#!/bin/sh\nshift 3\nexec claude "$@"\n'); wrapper.chmod(0o755)
+        for wrapped, policy in ((False, 'default'), (True, 'clean')):
+            self.config.write_text(json.dumps({'agents':{'runner':'claude', 'headroom_wrap':wrapped},
+                                              'repo':{'untrusted_env':policy}}))
+            with self.subTest(wrapped=wrapped, policy=policy):
+                self.run_provider('--stage', 'code_review', '--phase', 'finding_verifier',
+                                  CLAUDE_CODE_DISABLE_AUTO_MEMORY='0', CLAUDE_FAKE_ROOT=str(self.root))
+                child_env = json.loads((self.root/'claude-env.json').read_text())
+                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '1')
+                # Ordinary reviewers keep the installation's selected memory policy.
+                self.run_provider('--stage', 'code_review', '--phase', 'correctness',
+                                  CLAUDE_CODE_DISABLE_AUTO_MEMORY='0', CLAUDE_FAKE_ROOT=str(self.root))
+                child_env = json.loads((self.root/'claude-env.json').read_text())
+                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '0')
 
     def claude_argv(self,config,**env):
         self.config.write_text(json.dumps(config))

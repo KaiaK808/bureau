@@ -907,7 +907,7 @@ run_stage_for() {
     # Parallel reviewers let their parent stop/join the siblings and consume
     # withdrawal first. No provider process performs Linear mutations.
     case "${BUREAU_PROVIDER_PHASE:-}" in
-      correctness|security|performance) ;;
+      correctness|security|performance|finding_verifier) ;;
       *) bureau_silence_hold "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" "$stage" ;;
     esac
   fi
@@ -3735,6 +3735,10 @@ review_counts() {
 # Optional metadata only; a failed sink cannot change a verdict or stage exit.
 bureau_review_evidence() {
   [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  if [ -f "${REVIEW_TMP:-}/merge-metadata.json" ]; then
+    set -- --merge-metadata "$REVIEW_TMP/merge-metadata.json" "$@"
+    [ ! -f "$REVIEW_TMP/merged.json" ] || set -- --merge-result "$REVIEW_TMP/merged.json" "$@"
+  fi
   ( bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" \
       --round "$REVIEW_ROUND" --min-severity "$BUREAU_REVIEW_MIN_SEVERITY" "$@" ) || true
   return 0
