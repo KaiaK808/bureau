@@ -214,7 +214,7 @@ PIPELINE_EOF
   # bureau_load_env lives next to the config the pipelines source (see
   # tests/test_env_read_safety.sh for why .env is parsed, not sourced).
   cp "$REPO_ROOT/templates/scripts/bureau-env.sh" "$sb/scripts/"
-  cp "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$REPO_ROOT/templates/scripts/bureau-spec.py" "$sb/scripts/"
+  cp "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$REPO_ROOT/templates/scripts/bureau-spec.py" "$REPO_ROOT/templates/scripts/bureau-ticket.py" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-worker.sh" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-acceptance.py" "$REPO_ROOT/templates/scripts/bureau-provider.py" \
     "$REPO_ROOT/templates/scripts/bureau-gates.py" "$REPO_ROOT/templates/scripts/bureau-activity.py" "$sb/scripts/"

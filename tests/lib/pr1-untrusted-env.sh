@@ -145,6 +145,11 @@ pr1_passthrough() {
   cat >> "$1/bureau-config.sh" <<'EOF'
 # ── pr1 negative control: the v3.0.2 behaviour, the command inherits everything ──
 bureau_untrusted_env() { [ "${1:-}" = --check ] && return 0; env "$@"; }
+# Restore the historical QA/review execution path as well: today's runtime
+# executor independently strips credentials and startup files.
+bureau_run_gate() {
+  bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$2" </dev/null > "$1" 2>&1
+}
 # … and the stage exports the .env keys, as every stage did before v3.2 (bureau-env.sh).
 bureau_env_key_secret() { return 1; }
 EOF

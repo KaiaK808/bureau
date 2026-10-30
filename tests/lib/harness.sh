@@ -102,6 +102,7 @@ PY
   # on top of the stub's add_issue_label and alert_telegram.
   sed -n '/^# ── needs-human hold/,/^# ── End of needs-human hold/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
   sed -n -e '/^bureau_evidence() {/,/^}/p' -e '/^bureau_record_gate() {/,/^}/p' \
+    -e '/^bureau_run_gate() {/,/^}/p' -e '/^bureau_ticket_policy() {/,/^}/p' \
     -e '/^bureau_archive_evidence() {/,/^}/p' -e '/^bureau_observe_waits() {/,/^}/p' -e '/^bureau_record_pr_url() {/,/^}/p' \
     -e '/^bureau_record_branch_pr() {/,/^}/p' -e '/^bureau_acceptance_brief() {/,/^}/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"

@@ -3,6 +3,7 @@
 # Default is the observed Ubuntu mean (~45s) rounded up; macOS scaling is 2x (~1.8x observed).
 # CI newest-run test: local macOS elapsed 13.45s, rounded up (2026-10-27).
 # Judged stage result fixtures: local macOS elapsed 191.94s, rounded up (2026-10-28).
+# Ticket hardening: local macOS Python 3.9 elapsed 25.86s; controls 3.62s (2026-10-29).
 # test_file	ubuntu_seconds	macos_seconds
 test_acceptance_insights.sh	-	10
 test_acceptance_insights_negative_controls.sh	59	-
@@ -123,3 +124,8 @@ test_review_reuse_approval.sh	58	-
 test_review_verdict_order.sh	52	-
 test_session_throttle.sh	1	-
 test_shared_runtime.sh	206	-
+test_ticket_budget.sh	-	12
+test_ticket_budget_hardening.sh	-	26
+test_ticket_budget_hardening_negative_control.sh	-	4
+test_ticket_budget_negative_control.sh	-	6
+test_ticket_budget_pipeline.sh	-	90

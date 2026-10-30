@@ -62,6 +62,10 @@ The continuous dispatcher adds no numeric exit. Lanes yield on 28/29 (quiet admi
 
 Optional `build_lessons_context` selection and `agents.lessons_budget_bytes` add no exit code. Expired or invalid entries, unavailable local diff/context and invalid or undersized budgets can warn while the stage continues. Lessons remain advisory: ticket checkpoint exits `0`/`25`/`26`, quiet overlap `29`, silence `25` with `timeout_kind: silence`, review floors/rounds and dispatcher lane outcomes retain their existing meaning.
 
+## Closed terminal stop reasons
+
+Ticket accounting refines existing exits with `terminal_reason`; it adds no exit code. The only values are `budget` (25), `timeout` (124), `watchdog` (25), `review_capped` (25), `human_hold` (25), `ticket_withdrawn` (Done 0, cancelled/duplicate 26, other inactive state 25), and `stalled` (25). Successful completion, handoffs, waits, infrastructure failures and cancellation 130 have no invented stop reason. See the [stage protocol](stage-protocol.md#ticket-budget-and-progress-stops) for safe-point handling, precedence and persistence. These reasons are separate from learning cause classes.
+
 ## Telegram alerts
 
 `alert_telegram` (in `bureau-config.sh`) sends a message when:
