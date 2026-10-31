@@ -17,6 +17,7 @@ import unittest
 from unittest.mock import patch
 
 import git_maintenance
+from process_helpers import process_running
 from governance_cases import (FENCED_GOVERNANCE, GOVERNANCE_FIRST,
                               COMMENT_HIDDEN_GOVERNANCE, COLUMN_ZERO_GOVERNANCE,
                               ROUND8_PROVIDER_INVALID, ROUND9_PROVIDER_INVALID, ROUND9_VALID,
@@ -408,8 +409,7 @@ class RuntimeTests(unittest.TestCase):
             pid=int(inner_pid.read_text()) if inner_pid.exists() else None
             deadline=time.monotonic()+20
             while pid and time.monotonic()<deadline:
-                try: os.kill(pid,0)
-                except ProcessLookupError: break
+                if not process_running(pid): break
                 time.sleep(.05)
         self.addCleanup(end_stage)
         stage=('import pathlib, time\nstarted, may_end = pathlib.Path(%r), pathlib.Path(%r)\nstarted.touch()\n'

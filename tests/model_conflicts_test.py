@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from process_helpers import process_running
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -147,7 +148,7 @@ class ModelConflictTests(unittest.TestCase):
         self.result=subprocess.run(command,cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=35)
         if (self.root/'pids').exists():
             for raw in (self.root/'pids').read_text().splitlines():
-                with self.assertRaises(ProcessLookupError, msg='test provider/check survived: '+raw): os.kill(int(raw),0)
+                self.assertFalse(process_running(int(raw)), 'test provider/check survived: '+raw)
         return self.result.returncode
 
     def records(self):

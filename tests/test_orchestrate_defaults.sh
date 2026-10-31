@@ -12,6 +12,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(sys.argv[1]) / 'tests'))
+from process_helpers import process_group_running, process_running
+
 scripts = Path(sys.argv[1]) / 'templates/scripts'
 with tempfile.TemporaryDirectory(prefix='bureau-1749-orchestrate-') as directory:
     root = Path(directory)
@@ -47,7 +50,7 @@ while not (root / 'release').exists(): time.sleep(.02)
                 pids = [int(file.read_text()) for file in run.glob('*.pid')]
                 assert len(pids) == expected, (label, expected, pids, (run / 'output.log').read_text())
                 for pid in pids:
-                    os.kill(pid, 0)
+                    assert process_running(pid), 'held worker exited: ' + str(pid)
             finally:
                 (run / 'release').touch()
                 try:
@@ -62,16 +65,7 @@ while not (root / 'release').exists(): time.sleep(.02)
         assert child.returncode == 0, (run / 'output.log').read_text()
         assert len(list(run.glob('*.pid'))) == 4, 'all four tickets must complete'
         for pid in [child.pid] + [int(file.read_text()) for file in run.glob('*.pid')]:
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                continue
-            raise AssertionError('owned test process survived: ' + str(pid))
-        try:
-            os.killpg(child.pid, 0)
-        except ProcessLookupError:
-            pass
-        else:
-            raise AssertionError('owned test process group survived: ' + str(child.pid))
+            assert not process_running(pid), 'owned test process survived: ' + str(pid)
+        assert not process_group_running(child.pid), 'owned test process group survived: ' + str(child.pid)
         print('PASS actual orchestrate lanes: ' + label + ' = ' + str(expected) + '; all processes joined')
 PY

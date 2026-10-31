@@ -8,7 +8,7 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ### Fixed
 
-- Mutation controls reap adopted Linux fixture processes while baseline and mutation commands run, so cleanup assertions can observe their exit without losing the direct command's status. Tests only; macOS cleanup and installed assets are unchanged, with no resync or configuration action needed. Validation uses local fixtures; Linux qualification remains pending.
+- Mutation-control survivor assertions treat zombies as exited on Linux and macOS, independently of cleanup timing. Linux cleanup records fixture ownership with stable process birth identities, preserves the command's own wait status and makes a final reap before removing the fixture root. Tests only; macOS cleanup, exit codes and installed assets are unchanged, with no resync or configuration action needed. Validation uses local fixtures; Linux qualification remains pending.
 
 ## [3.5.1] - 2026-10-29
 

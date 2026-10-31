@@ -13,6 +13,8 @@ import time
 import unittest
 import zipfile
 
+from process_helpers import process_group_running, process_running
+
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_DISPATCH_TEST_SCRIPTS', ROOT / 'templates/scripts'))
@@ -343,8 +345,8 @@ class DispatcherFixture(unittest.TestCase):
         if (self.root/'writer.pid').exists(): pids.add(int((self.root/'writer.pid').read_text()))
         denied_pids=set()
         for pid in pids:
-            try: os.kill(pid,0)
-            except ProcessLookupError: continue
+            try:
+                if not process_running(pid): continue
             except PermissionError:
                 denied_pids.add(pid); continue
             self.fail('owned test process survived: '+str(pid))
@@ -354,8 +356,8 @@ class DispatcherFixture(unittest.TestCase):
         while groups and time.monotonic()<deadline:
             remaining=set()
             for group in groups:
-                try: os.killpg(group,0)
-                except ProcessLookupError: continue
+                try:
+                    if not process_group_running(group): continue
                 except PermissionError:
                     denied_groups.add(group); continue
                 remaining.add(group)

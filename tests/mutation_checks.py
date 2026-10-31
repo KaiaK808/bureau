@@ -86,9 +86,23 @@ def fixture_pids(root, *, commands=None, cwds=None):
     return pids
 
 
-def stop_fixtures(root, child):
+def stop_fixtures(root, child, *, observed=None):
     """Bound both signal escalation and reaping, and report surviving PIDs."""
     seen = set()
+    # Keep retired births across timeout cleanup, the observer and final cleanup.
+    known, lock = observed if observed is not None else ({}, threading.Lock())
+
+    def reap_seen():
+        if sys.platform.startswith('linux'):
+            with lock:
+                reap_adopted_fixtures(root, child.pid, known)
+        else:
+            for pid in seen - {child.pid}:
+                try:
+                    os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
+                    pass  # macOS launchd reaps detached orphans.
+
     for sig, grace in ((signal.SIGTERM, 1), (signal.SIGKILL, 3)):
         signalled = set()
         deadline = time.monotonic() + grace
@@ -108,11 +122,7 @@ def stop_fixtures(root, child):
             if child.poll() is None:
                 current.add(child.pid)
             seen.update(current)
-            for pid in seen - {child.pid}:
-                try:
-                    os.waitpid(pid, os.WNOHANG)
-                except ChildProcessError:
-                    pass
+            reap_seen()
             if not current:
                 return
             for pid in sorted(current - signalled, key=lambda pid: pid == child.pid):
@@ -122,13 +132,7 @@ def stop_fixtures(root, child):
                     pass  # A live denial remains in the final survivor report.
                 signalled.add(pid)
             child.poll()  # Popen owns the direct child's wait status.
-            for pid in seen:
-                if pid == child.pid:
-                    continue
-                try:
-                    os.waitpid(pid, os.WNOHANG)
-                except ChildProcessError:
-                    pass  # macOS launchd reaps detached orphans.
+            reap_seen()
             if time.monotonic() >= deadline:
                 break
             time.sleep(.05)
@@ -174,41 +178,86 @@ def linux_process_identity(pid):
         return None  # raced exit or inaccessible process
 
 
+def linux_fixture_identities(root):
+    """Bracket each PID's ownership evidence with its birth, in one discovery.
+
+    None rejects a PID that changed birth while its argv/cwd was inspected.
+    """
+    root = Path(root).resolve()
+    command_path = re.compile(r'(?<![\w./-])' + re.escape(str(root)) + r'''(?=$|[/\s'\"])''')
+    found = {}
+    for path in PROC.iterdir():
+        if not path.name.isdigit():
+            continue
+        pid = int(path.name)
+        if pid == os.getpid():
+            continue
+        before = linux_process_identity(pid)
+        if before is None:
+            continue
+        try:
+            argv = (path/'cmdline').read_bytes().replace(b'\0', b' ').decode(errors='replace')
+        except OSError:
+            argv = ''
+        try:
+            cwd = Path(os.readlink(path/'cwd').removesuffix(' (deleted)'))
+            owned_cwd = cwd == root or root in cwd.parents
+        except (OSError, RuntimeError):
+            owned_cwd = False
+        after = linux_process_identity(pid)
+        if owned_cwd or command_path.search(argv):
+            found[pid] = after if after is not None and before[1] == after[1] else None
+    return found
+
+
 def reap_adopted_fixtures(root, child_pid, known):
-    """Wait only for observed fixture PIDs that have become our children."""
+    """Reap only recorded births adopted by us; None permanently retires a PID."""
     known.pop(child_pid, None)  # Popen exclusively owns its child's status.
-    for pid in fixture_pids(root, commands=linux_process_commands) - {child_pid}:
-        identity = linux_process_identity(pid)
-        if identity is not None:
-            known[pid] = identity[1]
+    for pid, identity in linux_fixture_identities(root).items():
+        if pid == child_pid:
+            continue
+        birth = identity[1] if identity is not None else None
+        if pid not in known:
+            known[pid] = birth
+        elif known[pid] != birth:
+            known[pid] = None  # Never replace an observed birth with a new one.
+    reap_recorded_fixtures(child_pid, known)
+
+
+def reap_recorded_fixtures(child_pid, known):
+    """The final sweep needs the cache even after argv/cwd have disappeared."""
     for pid, birth in list(known.items()):
+        if pid in (child_pid, os.getpid()) or birth is None:
+            continue
         identity = linux_process_identity(pid)
         if identity is None or identity[1] != birth:
-            known.pop(pid)
+            known[pid] = None
         elif identity[0] == os.getpid():
             try:
                 waited, _ = os.waitpid(pid, os.WNOHANG)
             except ChildProcessError:
-                known.pop(pid, None)  # cleanup may have reaped it first
+                known[pid] = None  # cleanup may have reaped it first
             else:
                 if waited:
-                    known.pop(pid, None)
+                    known[pid] = None
 
 
 @contextmanager
 def reaping_fixtures(root, child):
-    """Reap Linux adoptees during communicate, then join before root removal."""
+    """Observe Linux fixture births, then join and reap before root removal."""
     if not sys.platform.startswith('linux'):
         yield
         return
     stopped = threading.Event()
     errors = []
+    known = {}
+    lock = threading.Lock()
 
     def reap():
-        known = {}
         try:
             while not stopped.is_set():
-                reap_adopted_fixtures(root, child.pid, known)
+                with lock:
+                    reap_adopted_fixtures(root, child.pid, known)
                 stopped.wait(.02)
         except Exception as error:
             errors.append(error)
@@ -216,10 +265,11 @@ def reaping_fixtures(root, child):
     reaper = threading.Thread(target=reap, name='fixture-orphan-reaper')
     reaper.start()
     try:
-        yield
+        yield known, lock
     finally:
         stopped.set()
         reaper.join()
+        reap_recorded_fixtures(child.pid, known)
         if errors:
             raise AssertionError(f'fixture orphan reaping failed for {root}') from errors[0]
 
@@ -250,13 +300,13 @@ def _run(command, *, env, timeout, root):
     environ['TMPDIR'] = str(root)
     child = subprocess.Popen(command, env=environ, cwd=root, text=True, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, start_new_session=True)
-    try:
-        with reaping_fixtures(root, child):
+    with reaping_fixtures(root, child) as observed:
+        try:
             try:
                 out, err = child.communicate(timeout=timeout)
                 return subprocess.CompletedProcess(command, child.returncode, out, err)
             except subprocess.TimeoutExpired:
-                stop_fixtures(root, child)
+                stop_fixtures(root, child, observed=observed)
                 try:
                     out, err = child.communicate(timeout=1)
                 except subprocess.TimeoutExpired as error:
@@ -264,12 +314,12 @@ def _run(command, *, env, timeout, root):
                     err += '\nfixture output drain timed out'
                 return subprocess.CompletedProcess(command, 124, out,
                                                    err + '\n' + str(subprocess.TimeoutExpired(command, timeout)))
-    finally:
-        try:
-            stop_fixtures(root, child)
         finally:
-            child.stdout.close()
-            child.stderr.close()
+            try:
+                stop_fixtures(root, child, observed=observed)
+            finally:
+                child.stdout.close()
+                child.stderr.close()
 
 
 def snapshot_files(root):

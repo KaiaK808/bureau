@@ -10,8 +10,12 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
+import process_helpers
+from process_helpers import process_running
+from process_helpers_test import ProcessHelpers
 from mutation_checks import (_run, baseline_fixture, caught_mutation, fixture_pids, historical_scripts,
                              linux_process_commands, linux_process_identity, macos_cwds, mutation_caught,
                              reap_adopted_fixtures, reaping_fixtures, restored_files, run, snapshot_files,
@@ -90,8 +94,8 @@ def work():
 ''')
         self.assertEqual(124, self.control().returncode)
         for raw in pid.read_text().splitlines():
-            with self.subTest(pid=raw), self.assertRaises(ProcessLookupError):
-                os.kill(int(raw), 0)
+            with self.subTest(pid=raw):
+                self.assertFalse(process_running(int(raw)))
 
     def test_baseline_timeout_fails(self):
         self.baseline.write_text('import time\ndef work(): time.sleep(30)\n')
@@ -129,8 +133,8 @@ def work():
         self.assertLess(time.monotonic() - started, 8)
         self.assertIsNone(unrelated.poll(), 'timeout cleanup stopped an unrelated process')
         for raw in pid.read_text().splitlines():
-            with self.subTest(pid=raw), self.assertRaises(ProcessLookupError):
-                os.kill(int(raw), 0)
+            with self.subTest(pid=raw):
+                self.assertFalse(process_running(int(raw)))
 
     def test_rejects_unbounded_deadlines_before_starting_any_process(self):
         for timeout in (None, float('inf'), float('nan'), 0, -1):
@@ -238,8 +242,8 @@ time.sleep(30)
         self.assertEqual(124, result.returncode)
         self.assertIsNone(unrelated.poll(), 'cwd cleanup stopped an unrelated sibling')
         for raw in pid.read_text().splitlines():
-            with self.subTest(pid=raw), self.assertRaises(ProcessLookupError):
-                os.kill(int(raw), 0)
+            with self.subTest(pid=raw):
+                self.assertFalse(process_running(int(raw)))
 
     def test_linux_scan_finds_cwd_without_a_matching_command(self):
         proc = self.root/'proc'; proc.mkdir()
@@ -270,19 +274,20 @@ time.sleep(30)
         identities = {100: (os.getpid(), 'direct'), 101: (os.getpid(), 'owned'),
                       102: (0, 'descendant'), 103: (os.getpid(), 'reused'),
                       104: (os.getpid(), 'outside')}
-        with patch('mutation_checks.fixture_pids', return_value={100, 101, 102}) as discover, \
+        with patch('mutation_checks.linux_fixture_identities',
+                   return_value={pid: identities[pid] for pid in (100, 101, 102)}) as discover, \
                 patch('mutation_checks.linux_process_identity', side_effect=identities.get), \
                 patch('mutation_checks.os.waitpid', return_value=(0, 0)) as wait:
             reap_adopted_fixtures(self.root, 100, known)
             wait.assert_called_once_with(101, os.WNOHANG)
-            self.assertEqual({101: 'owned', 102: 'descendant'}, known)
+            self.assertEqual({101: 'owned', 102: 'descendant', 103: None}, known)
             # Zombies no longer match argv/cwd; their recorded birth still does.
-            discover.return_value = set()
+            discover.return_value = {}
             identities[102] = (os.getpid(), 'reused-descendant')
             wait.reset_mock(); wait.return_value = (101, 0)
             reap_adopted_fixtures(self.root, 100, known)
             wait.assert_called_once_with(101, os.WNOHANG)
-            self.assertEqual({}, known)
+            self.assertEqual({101: None, 102: None, 103: None}, known)
 
     def test_macos_does_not_start_an_orphan_reaper(self):
         with patch('mutation_checks.sys.platform', 'darwin'), \
@@ -291,11 +296,81 @@ time.sleep(30)
                 pass
             thread.assert_not_called()
 
+    def test_shutdown_reaps_a_zombie_after_the_last_observation_before_root_removal(self):
+        observed, release = threading.Event(), threading.Event()
+        zombie, reaped = False, False
+        join = threading.Thread.join
+
+        def wait(pid, flags):
+            nonlocal reaped
+            self.assertEqual((101, os.WNOHANG), (pid, flags))
+            if zombie:
+                reaped = True
+                return pid, 0
+            observed.set()
+            self.assertTrue(release.wait(3), 'shutdown never joined its observer')
+            return 0, 0  # Its last observation happened before the exit.
+
+        def finish_thread(thread, *args, **kwargs):
+            release.set()  # stopped is already set; no further background sweep.
+            return join(thread, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            root = Path(directory)
+            with patch('mutation_checks.sys.platform', 'linux'), \
+                    patch('mutation_checks.fixture_pids', side_effect=lambda *a, **k: set() if zombie else {101}), \
+                    patch('mutation_checks.linux_fixture_identities', create=True,
+                          side_effect=lambda *a: {} if zombie else {101: (os.getpid(), 'owned')}), \
+                    patch('mutation_checks.linux_process_identity', return_value=(os.getpid(), 'owned')), \
+                    patch('mutation_checks.os.waitpid', side_effect=wait), \
+                    patch('mutation_checks.threading.Thread.join', finish_thread):
+                with reaping_fixtures(root, Mock(pid=100)):
+                    self.assertTrue(observed.wait(3), 'fixture was never recorded')
+                    zombie = True
+                self.assertTrue(root.exists())
+                self.assertTrue(reaped, 'shutdown lost the recorded zombie before root removal')
+        self.assertFalse(root.exists())
+
+    def test_reaper_does_not_overwrite_cached_birth_when_reused_pid_is_discovered(self):
+        known = {103: 'original'}
+        with patch('mutation_checks.fixture_pids', return_value={103}), \
+                patch('mutation_checks.linux_fixture_identities', create=True,
+                      return_value={103: (os.getpid(), 'replacement')}), \
+                patch('mutation_checks.linux_process_identity', return_value=(os.getpid(), 'replacement')), \
+                patch('mutation_checks.os.waitpid', return_value=(0, 0)) as wait:
+            reap_adopted_fixtures(self.root, 100, known)
+            reap_adopted_fixtures(self.root, 100, known)
+            wait.assert_not_called()
+
+    def test_reaper_binds_initial_birth_to_ownership_evidence(self):
+        proc = self.root/'proc'; directory = proc/'103'; directory.mkdir(parents=True)
+        (directory/'cmdline').write_bytes(b'python\0' + str(self.root/'worker.py').encode() + b'\0')
+        (directory/'cwd').symlink_to(self.root)
+        birth = 'original'
+        known = {}
+        readlink = os.readlink
+
+        def ownership(path, *args, **kwargs):
+            nonlocal birth
+            evidence = readlink(path, *args, **kwargs)
+            if Path(path) == directory/'cwd':
+                birth = 'replacement'  # PID reuse just after ownership was read.
+            return evidence
+
+        with patch('mutation_checks.sys.platform', 'linux'), patch('mutation_checks.PROC', proc), \
+                patch('mutation_checks.os.readlink', side_effect=ownership), \
+                patch('mutation_checks.linux_process_identity', side_effect=lambda pid: (os.getpid(), birth)), \
+                patch('mutation_checks.os.waitpid', return_value=(0, 0)) as wait:
+            reap_adopted_fixtures(self.root, 100, known)
+            reap_adopted_fixtures(self.root, 100, known)
+            self.assertEqual('replacement', birth, 'recycled PID was excluded from discovery')
+            wait.assert_not_called()
+
     def test_reaper_joins_before_propagating_a_command_error(self):
         inspected = threading.Event()
         before = set(threading.enumerate())
         with patch('mutation_checks.sys.platform', 'linux'), \
-                patch('mutation_checks.fixture_pids', side_effect=lambda root, **kw: inspected.set() or set()):
+                patch('mutation_checks.linux_fixture_identities', side_effect=lambda root: inspected.set() or {}):
             with self.assertRaisesRegex(ValueError, 'command failed'):
                 with reaping_fixtures(self.root, Mock(pid=100)):
                     self.assertTrue(inspected.wait(3), 'reaper never inspected the fixture')
@@ -306,16 +381,20 @@ time.sleep(30)
 
     @unittest.skipUnless(sys.platform.startswith('linux'),
                          'Linux child subreaping is required; macOS uses launchd')
-    def test_linux_command_can_observe_its_killed_detached_grandchild_reaped(self):
+    def test_linux_command_observes_detached_grandchild_exit_before_reaping(self):
+        self.detached_grandchild_control()
+
+    def detached_grandchild_control(self, helper_source=None):
         recorded = self.root/'detached-pid'
-        observed = self.root/'observed-orphan'
         self.addCleanup(self.stop_recorded, recorded)
+        # The command imports the same shared rule from its private fixture.
+        (self.root/'process_helpers.py').write_text(
+            helper_source if helper_source is not None else Path(process_helpers.__file__).read_text())
         source = f'''import os, signal, subprocess, sys, time
 from pathlib import Path
+from process_helpers import process_running
 recorded = Path({str(recorded)!r})
-observed = Path({str(observed)!r})
 def work():
-    observed.unlink(missing_ok=True)
     launcher = ('import subprocess, sys; '
                 'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], '
                 'start_new_session=True, stdin=subprocess.DEVNULL, '
@@ -328,40 +407,50 @@ def work():
     try:
         fields = Path(f'/proc/{{pid}}/stat').read_text().rsplit(')', 1)[1].split()
         assert int(fields[1]) == os.getppid(), 'grandchild was not adopted by the harness'
-        # Synchronize with a real WNOHANG attempt instead of guessing how long
-        # discovery needs on a busy runner. Without a reaper, still kill the
-        # child and exercise the same zombie assertion after this bounded wait.
-        deadline = time.monotonic() + 2
-        while not observed.exists() and time.monotonic() < deadline: time.sleep(.02)
         os.kill(pid, signal.SIGKILL)
+        # Wait for exit, never for reaping. The single assertion below must work
+        # even if the harness has not observed this descendant yet.
         deadline = time.monotonic() + 3
         while True:
-            try: os.kill(pid, 0)
-            except ProcessLookupError: break
-            assert time.monotonic() < deadline, 'killed detached grandchild remains a zombie'
-            time.sleep(.02)
+            try: state = Path(f'/proc/{{pid}}/stat').read_text().rsplit(')', 1)[1].split()[0]
+            except FileNotFoundError: break
+            if state == 'Z': break
+            assert time.monotonic() < deadline, 'killed detached grandchild did not exit'
+            time.sleep(.01)
+        assert not process_running(pid), 'killed detached grandchild remains running'
     finally:
         try: os.kill(pid, signal.SIGKILL)
         except ProcessLookupError: pass
 '''
         self.baseline.write_text(source)
-        self.source.write_text(source + '    raise ValueError("mutation after orphan reaping")\n')
+        self.source.write_text(source + '    raise ValueError("mutation after orphan exit")\n')
         waitpid = os.waitpid
 
-        def observe_wait(pid, flags):
-            result = waitpid(pid, flags)
-            if flags == os.WNOHANG and recorded.exists():
+        def defer_background_wait(pid, flags):
+            if threading.current_thread().name == 'fixture-orphan-reaper' and recorded.exists():
                 try:
                     if pid == int(recorded.read_text()):
-                        observed.touch()
+                        return 0, 0  # No background reap can help the assertion.
                 except ValueError:
                     pass  # raced the command's PID-file write
-            return result
+            return waitpid(pid, flags)
 
-        with patch('mutation_checks.os.waitpid', side_effect=observe_wait):
+        with patch('mutation_checks.os.waitpid', side_effect=defer_background_wait):
             result = self.control(timeout=10)
         self.assertEqual(1, result.returncode, 'Popen lost the mutation command exit status')
-        self.assertIn('mutation after orphan reaping', result.stderr)
+        self.assertIn('mutation after orphan exit', result.stderr)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux zombie regression control')
+    def test_linux_regression_rejects_disabled_reaping_and_zombie_rule(self):
+        old_rule = '''import os
+def process_running(pid):
+    try: os.kill(pid, 0)
+    except ProcessLookupError: return False
+    return True
+'''
+        with patch('mutation_checks.reaping_fixtures', side_effect=lambda *a: nullcontext()), \
+                self.assertRaisesRegex(AssertionError, 'killed detached grandchild remains running'):
+            self.detached_grandchild_control(old_rule)
 
     def test_scan_failure_prevents_fixture_launch(self):
         with patch('mutation_checks.fixture_pids', side_effect=PermissionError('inspection denied')), \
@@ -406,9 +495,9 @@ def work():
                     os.waitpid(pid, os.WNOHANG)
                 except ChildProcessError:
                     pass
-                try:
-                    os.kill(pid, 0)
-                except ProcessLookupError:
+                if not process_running(pid):
+                    try: os.waitpid(pid, os.WNOHANG)
+                    except ChildProcessError: pass
                     break
                 if time.monotonic() >= deadline:
                     raise AssertionError(f'could not reap fixture PID {pid}')
