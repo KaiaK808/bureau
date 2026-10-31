@@ -657,6 +657,8 @@ provider() { echo pass >> events; return "$3"; }
         leases = store.leases.read_bytes()
         source = (SCRIPTS / 'implement-pipeline.sh').read_text()
         runner = source.split("_POST_IMPLEMENT_RUNNER='\n", 1)[1].split("\n'", 1)[0]
+        hold = p.pg.ProcessHold(self.control, 'post_implement', self.root, run_id=run, issue='TST-1')
+        hold.close()
         def wait(timeout=None):
             if timeout == 60 or timeout <= 0.1:
                 clock.sleep(timeout)
@@ -665,7 +667,7 @@ provider() { echo pass >> events; return "$3"; }
         self.child.wait.side_effect = wait
         clock = ProbeClock()
         with patch.dict(os.environ, {'BUREAU_RUN_ID': run, 'BUREAU_CURRENT_ISSUE': 'TST-1'}), \
-                patch.object(sys, 'argv', ['runner', '60', 'fixture', str(self.root / 'status'), str(SCRIPTS), str(self.control), run, 'TST-1']), \
+                patch.object(sys, 'argv', ['runner', '60', 'fixture', str(self.root / 'status'), str(SCRIPTS), str(hold.path)]), \
                 patch.object(subprocess, 'Popen', return_value=self.child), \
                 patch.object(os, 'killpg', side_effect=denied()), \
                 patch('time.monotonic', clock.monotonic), patch('time.sleep', clock.sleep), \
@@ -835,6 +837,8 @@ bureau_untrusted_env() {
 
     def inline_runner(self, target, cancel=False, live=False):
         source = (SCRIPTS / 'implement-pipeline.sh').read_text().split("_POST_IMPLEMENT_RUNNER='\n", 1)[1].split("\n'", 1)[0]
+        hold = p.pg.ProcessHold(self.control, 'post_implement', self.root, issue='TST-1')
+        hold.close()
         def killpg(pid, signum):
             if signum == target: raise denied()
             if signum == 0 and not live: raise ProcessLookupError()
@@ -847,7 +851,7 @@ bureau_untrusted_env() {
                 raise subprocess.TimeoutExpired('fixture', timeout)
             return 0
         self.child.wait.side_effect = wait
-        with patch.object(sys, 'argv', ['runner', '60', 'fixture', str(self.root / 'status'), str(SCRIPTS), str(self.control), '', 'TST-1']), \
+        with patch.object(sys, 'argv', ['runner', '60', 'fixture', str(self.root / 'status'), str(SCRIPTS), str(hold.path)]), \
                 patch.object(subprocess, 'Popen', return_value=self.child), patch.object(os, 'killpg', side_effect=killpg), \
                 patch.object(subprocess, 'check_output', return_value='123456 S\n' if live else '123456 Z\n'), \
                 patch('time.monotonic', side_effect=itertools.count()), patch('time.sleep'):

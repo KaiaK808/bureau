@@ -139,6 +139,50 @@ class ProcessHold:
         try: os.fsync(fd)
         finally: os.close(fd)
 
+    @classmethod
+    def adopt(cls, path):
+        """Claim a pre-fork hold; retain it until its owner completes the join."""
+        self = cls.__new__(cls)
+        self.path = Path(path)
+        self.handle = self.path.open('r+')
+        self.uncertain = False
+        try:
+            fcntl.flock(self.handle, fcntl.LOCK_EX)
+            self.record = json.load(self.handle)
+            # Persist the claim before spawning. A crashed runner must never
+            # look like an environment wrapper that returned without starting it.
+            self.record['adopted'] = True
+            self._save_adopted()
+        except BaseException:
+            self.handle.close()
+            raise
+        return self
+
+    def _save_adopted(self):
+        self.handle.seek(0)
+        json.dump(self.record, self.handle)
+        self.handle.truncate()
+        self.handle.flush()
+        os.fsync(self.handle.fileno())
+
+    @staticmethod
+    def complete_join(path):
+        """After wait, remove only an unclaimed or confirmed-stopped hold."""
+        path = Path(path)
+        try:
+            with path.open() as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                record = json.load(handle)
+                if record.get('adopted') and not record.get('stopped'):
+                    return False
+                path.unlink()
+                fd = os.open(path.parent, os.O_RDONLY)
+                try: os.fsync(fd)
+                finally: os.close(fd)
+        except FileNotFoundError: pass
+        except (OSError, ValueError, AttributeError): return False
+        return True
+
     def signal(self, child, signum):
         try: signal_group(child, signum)
         except OSError:
@@ -158,8 +202,14 @@ class ProcessHold:
     def close(self, stopped=False):
         try:
             if stopped and not self.uncertain:
-                self.path.unlink()
-                self.sync_directory()
+                if hasattr(self, 'record'):
+                    # The stage still owns the wrapper join. A late runner may
+                    # finish after that stage died; its receipt cannot unlink.
+                    self.record['stopped'] = True
+                    self._save_adopted()
+                else:
+                    self.path.unlink()
+                    self.sync_directory()
         finally:
             self.handle.close()
 

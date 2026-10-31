@@ -237,12 +237,29 @@ POST_IMPLEMENT_REPORT=""
 POST_IMPLEMENT_RUNNER_PID=""
 POST_IMPLEMENT_CANCEL_FILE=""
 POST_IMPLEMENT_LAUNCH_MARKER=""
+POST_IMPLEMENT_HOLD_FILE=""
+POST_IMPLEMENT_SIGNAL_TRAPS=""
+_close_post_implement_hold() {
+  [ -n "$POST_IMPLEMENT_HOLD_FILE" ] || return 0
+  # Called only after wait (or when no job was launched). An adopted hold
+  # without a stopped receipt stays on disk for the existing checkpoint.
+  python3 -I -c '
+import runpy, sys
+pg = runpy.run_path(sys.argv[1])
+if not pg["ProcessHold"].complete_join(sys.argv[2]):
+    print("post-implement termination uncertain: unfinished runner hold", file=sys.stderr)
+' "$_BUREAU_SCRIPTS_DIR/bureau-process.py" "$POST_IMPLEMENT_HOLD_FILE" || true
+  POST_IMPLEMENT_HOLD_FILE=""
+}
 _stop_post_implement_runner() {
-  local pid="${POST_IMPLEMENT_RUNNER_PID:-}" last saved_traps deadline common job alive code="${1:-25}"
-  [ -n "${POST_IMPLEMENT_CANCEL_FILE:-}" ] || return 0
-  saved_traps=$(trap -p HUP INT TERM)
   # EXIT must finish the join even if a second stop signal reaches the stage.
   trap '' HUP INT TERM
+  local pid="${POST_IMPLEMENT_RUNNER_PID:-}" last saved_traps="$POST_IMPLEMENT_SIGNAL_TRAPS" deadline job alive code="${1:-25}"
+  if [ -z "${POST_IMPLEMENT_CANCEL_FILE:-}" ]; then
+    trap - HUP INT TERM
+    eval "$saved_traps"
+    return 0
+  fi
   if [ -z "$pid" ] && [ -n "$POST_IMPLEMENT_LAUNCH_MARKER" ]; then
     # TERM can arrive after the fork but before PID registration. $! already
     # names that child; the pre-fork value distinguishes a job never launched.
@@ -264,17 +281,9 @@ _stop_post_implement_runner() {
       done
       [ "$alive" = 1 ] || break
       if [ "$SECONDS" -ge "$deadline" ]; then
-        # A wrapper can stall before the runner writes its own hold. Keep a
-        # separate unfinished hold and the cancel file; neither ownership nor
+        # Keep the pre-fork hold and cancel file; neither ownership nor
         # publication may proceed without a completed join.
         EXIT_PUSH_ARMED=0
-        common=$(git rev-parse --git-common-dir)
-        python3 -I -c '
-import runpy, sys
-from pathlib import Path
-pg = runpy.run_path(sys.argv[1])
-pg["ProcessHold"](sys.argv[2], "post_implement", Path.cwd(), run_id=sys.argv[3], issue=sys.argv[4]).close()
-' "$_BUREAU_SCRIPTS_DIR/bureau-process.py" "$common/bureau" "${BUREAU_RUN_ID:-}" "$ISSUE"
         bureau_outcome_signal human_hold || true
         trap - HUP INT TERM
         eval "$saved_traps"
@@ -285,6 +294,7 @@ pg["ProcessHold"](sys.argv[2], "post_implement", Path.cwd(), run_id=sys.argv[3],
     done
     wait "$pid" 2>/dev/null || true
   fi
+  _close_post_implement_hold
   POST_IMPLEMENT_RUNNER_PID=""
   POST_IMPLEMENT_LAUNCH_MARKER=""
   rm -f "$POST_IMPLEMENT_CANCEL_FILE"
@@ -300,7 +310,7 @@ spec = importlib.util.spec_from_file_location("bureau_process", Path(sys.argv[4]
 pg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pg)
 limit, cmd, status_file = int(sys.argv[1]), sys.argv[2], sys.argv[3]
-hold = pg.ProcessHold(sys.argv[5], "post_implement", Path.cwd(), run_id=sys.argv[6], issue=sys.argv[7])
+hold = pg.ProcessHold.adopt(sys.argv[5])
 if Path(status_file + ".cancel").exists():
     hold.close(stopped=True)
     sys.exit(143)
@@ -493,6 +503,25 @@ command: ${cmd}"
   status_file="$log.why"
   common=$(git rev-parse --git-common-dir)
   echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
+  # The durable record precedes the fork, environment setup and Python startup.
+  # Unlock the creator's handle; the runner adopts this same record, never a
+  # second hold. Only a completed wrapper join may remove it.
+  if ! POST_IMPLEMENT_HOLD_FILE=$(python3 -I -c '
+import runpy, sys
+from pathlib import Path
+pg = runpy.run_path(sys.argv[1])
+hold = pg["ProcessHold"](sys.argv[2], "post_implement", Path.cwd(), run_id=sys.argv[3], issue=sys.argv[4])
+print(hold.path.resolve())
+hold.close()
+' "$_BUREAU_SCRIPTS_DIR/bureau-process.py" "$common/bureau" "${BUREAU_RUN_ID:-}" "$ISSUE"); then
+    POST_IMPLEMENT_FAILED=1
+    POST_IMPLEMENT_REPORT="repo.post_implement_command was not run: its process hold could not be created.
+command: ${cmd}"
+    echo "  ✗✗ repo.post_implement_command not run: process hold creation failed" >&2
+    rm -f "$dirty_snapshot" "$log"
+    _implement_process_checkpoint 14
+    return 0
+  fi
   POST_IMPLEMENT_CANCEL_FILE="$status_file.cancel"
   POST_IMPLEMENT_LAUNCH_MARKER=$(set +u; printf 'previous:%s' "$!")
   (
@@ -501,7 +530,7 @@ command: ${cmd}"
     trap ':' HUP INT TERM
     [ ! -e "$POST_IMPLEMENT_CANCEL_FILE" ] || exit 143
     # The runner checks again after the environment wrapper finishes setup.
-    bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" "$common/bureau" "${BUREAU_RUN_ID:-}" "$ISSUE"
+    bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" "$POST_IMPLEMENT_HOLD_FILE"
   ) >"$log" 2>&1 &
   POST_IMPLEMENT_RUNNER_PID=$!
   POST_IMPLEMENT_LAUNCH_MARKER=""
@@ -511,6 +540,7 @@ command: ${cmd}"
     rc=$?
   fi
   POST_IMPLEMENT_RUNNER_PID=""
+  _close_post_implement_hold
   rm -f "$POST_IMPLEMENT_CANCEL_FILE"
   POST_IMPLEMENT_CANCEL_FILE=""
   _implement_process_checkpoint "$rc"
@@ -934,6 +964,8 @@ _push_on_exit() {
   ( push_if_ahead "the stage ends before its end-of-run push" "${HEAD_BEFORE_HOOK:-HEAD}" ) || true
   return "$rc"
 }
+# Capture alongside EXIT installation, never in the interruptible cleanup path.
+POST_IMPLEMENT_SIGNAL_TRAPS=$(trap -p HUP INT TERM)
 trap _push_on_exit EXIT
 
 # /goal-driven path. Resolves the stuck-detector lineage:
