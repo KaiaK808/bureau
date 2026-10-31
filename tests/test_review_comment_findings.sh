@@ -21,7 +21,8 @@
 #      a verdict is BLOCK even when its comment carries "REVIEW_VERDICT: APPROVE" (the
 #      text fallback never sees the comment's lines)
 #   4. a verdict block over 16 KB (hundreds of findings) drops its findings list for a
-#      count, so the verdict survives the comment size cap whole
+#      count, so the verdict survives the comment size cap whole; stdout stays within
+#      the published comment plus 4 KiB and under 128 KiB, with all findings retained
 # Negative controls: with the v3.0.2 schema the provider drops the prose (no src/a.py:12),
 # and a stage that posts the raw merger answer has no markdown finding line.
 set -euo pipefail
@@ -93,6 +94,17 @@ run_review() {  # <merger JSON> [control] — the real review stage in the harne
   export BUREAU_STUB_ISSUE_STATE='Build Review' BUREAU_STUB_STATE_MERGE=state-merge BUREAU_STUB_AGENT_ENABLED=merge
   export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0
   pr2_gate_setup
+  # Snapshot the real merge artifacts before successful stage cleanup removes them.
+  # Keep the production archive hook and all parsing unchanged.
+  cat >> "$SCRIPTS_DIR/bureau-config.sh" <<'EOF'
+eval "$(declare -f bureau_archive_evidence | sed '1s/bureau_archive_evidence /archive_review_evidence /')"
+bureau_archive_evidence() {
+  if [ -f "$1/merged.json" ]; then
+    cp "$1/merged.json" "$1/normalized.json" "$SANDBOX/"
+  fi
+  archive_review_evidence "$@"
+}
+EOF
   if [ "${2:-}" = raw ]; then
     python3 - "$SCRIPTS_DIR/code-review-pipeline.sh" <<'PY'
 import sys
@@ -155,6 +167,34 @@ VERDICT_BLOCK=$(awk '/^```json$/{b=""; on=1; next} /^```$/{if(on){last=b}; on=0;
 printf '%s' "$VERDICT_BLOCK" | jq -e '.verdict == "REQUEST_CHANGES" and .findings_omitted == 1500 and (has("findings") | not)' >/dev/null \
   || fail "4: the verdict block did not keep the verdict with a findings count: ${VERDICT_BLOCK:0:300}"
 grep -qE "$MARKDOWN_FINDING" <<< "$PR_BODY" || fail '4: the comment was lost'
+printf '%s' "$LAST_STDOUT" > "$SANDBOX/stage.stdout"
+printf '%s' "$PR_BODY" > "$SANDBOX/pr-comment"
+printf '%s' "$LINEAR_BODY" > "$SANDBOX/implement-feedback"
+python3 - "$SANDBOX" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+stdout = (root / 'stage.stdout').read_bytes()
+published = (root / 'pr-comment').read_bytes()
+merged = json.loads((root / 'merged.json').read_text())
+normalized = json.loads((root / 'normalized.json').read_text())
+feedback = (root / 'implement-feedback').read_text()
+rendered_bytes = len(merged['comment'].encode('utf-8'))
+print(f'Case 4 bytes: stdout={len(stdout)}, PR comment={len(published)}, rendered review={rendered_bytes}', flush=True)
+for label, findings in (('merged', merged['findings']), ('normalized', normalized)):
+    assert len(findings) == 1500, f'{label} lost findings: {len(findings)}'
+    assert {f['line'] for f in findings} == set(range(1500)), f'{label} lost finding locations'
+    assert all(f['msg'] == 'x' * 40 for f in findings), f'{label} lost finding messages'
+assert all(f'`src/a.py:{line}`' in feedback for line in range(1500)), 'implement feedback lost finding locations'
+assert all(f'`src/a.py:{line}`' in merged['comment'] for line in range(1500)), 'rendered findings lost locations'
+assert 'x' * 40 in merged['fixes_needed'], 'machine-readable fixes were replaced by the excerpt reference'
+assert len(stdout) < 128 * 1024, 'stage stdout exceeds the Linux environment string limit'
+assert len(stdout) <= len(published) + 4096, 'stage stdout exceeds the published comment plus 4 KiB'
+assert published in stdout, 'stage stdout does not carry the published PR comment'
+assert len(stdout) <= 91719, 'stage stdout exceeds the base commit size for this fixture'
+PY
 echo 'PASS 4 a verdict block over 16 KB keeps the verdict and counts its findings'
 
 # Negative control: the raw merger answer (v3.0.2) — no markdown finding line.

@@ -20,6 +20,8 @@ SCRIPTS = Path(__file__).resolve().parent
 ROLES = ('correctness', 'security', 'performance')
 SEVERITY = {'CRITICAL': 0, 'BUG': 1, 'MINOR': 2, 'SKIP': 3}
 MAX_OUTPUT = 8 * 1024 * 1024
+# Bound repeated fix prose only; merged and normalized finding lists stay complete.
+MAX_RENDER_FIXES = 10
 MAX_BLOB = 2 * 1024 * 1024
 MAX_VERIFY = 8
 MAX_REQUEST = 24576
@@ -269,6 +271,8 @@ def render(findings, summaries, gaps, holds=()):
                 lines.append('  Source anchor: `' + encoded(anchor) + '`')
     lines += ['', '## Fixes Needed']
     fixes = [f['msg'] for f in findings if f['class'] in ('CRITICAL', 'BUG', 'MINOR')]
+    if len(fixes) > MAX_RENDER_FIXES:
+        fixes = ['See the ' + str(len(fixes)) + ' CRITICAL, BUG and MINOR findings above for fixes.']
     lines += ['- ' + f for f in fixes + gaps] or ['None.']
     if holds: lines += ['', '## Human Review Holds'] + ['- ' + h for h in holds]
     return '\n'.join(lines)

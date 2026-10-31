@@ -1294,7 +1294,7 @@ if len(data) <= limit:
     sys.exit(0)
 def note(cut):
     return ("\n\n[… %d bytes cut from the middle of this comment: it was longer than the %d bytes"
-            " Bureau posts to Linear and GitHub. The stage output has the full text. …]\n\n" % (cut, limit)).encode("utf-8")
+            " Bureau posts to Linear and GitHub. …]\n\n" % (cut, limit)).encode("utf-8")
 # The number of cut bytes has at most as many digits as the whole length.
 room = limit - len(note(len(data)))
 if room < 2:

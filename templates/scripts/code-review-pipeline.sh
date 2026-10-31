@@ -670,8 +670,6 @@ bureau_ticket_checkpoint "$ISSUE" latched
 MERGED_REVIEW=$(review_text_from_merger "$MERGED_RAW")
 fi
 
-echo "$MERGED_REVIEW"
-
 echo ""
 echo "Phase 2/3: build check"
 # Order: the configured repo.test_command, then the scripts/bureau-test.sh shim,
@@ -883,6 +881,9 @@ else
   REVIEW_COMMENT_BODY=$(bureau_cap_comment "$REVIEW_COMMENT") || REVIEW_COMMENT_BODY="$REVIEW_COMMENT"
   bureau_ticket_checkpoint "$ISSUE"
   gh pr comment "$PR_NUMBER" --body "$REVIEW_COMMENT_BODY" || true
+  # Bound stdout even if the publication cap used its legacy failure fallback.
+  bureau_cap_comment "$REVIEW_COMMENT_BODY" || true
+  printf '\n'
   echo "  Posted review to PR #$PR_NUMBER"
 fi
 
