@@ -223,6 +223,8 @@ os.execv(os.environ['DISPATCH_REAL_GIT'],[os.environ['DISPATCH_REAL_GIT'],*sys.a
 
 
 class DispatcherFixture(unittest.TestCase):
+    pid_exit_timeout = 5
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-dispatch-test-')
         self.addCleanup(self.temp.cleanup)
@@ -344,12 +346,21 @@ class DispatcherFixture(unittest.TestCase):
         pids={row['pid'] for row in self.events() if 'pid' in row}
         if (self.root/'writer.pid').exists(): pids.add(int((self.root/'writer.pid').read_text()))
         denied_pids=set()
-        for pid in pids:
-            try:
-                if not process_running(pid): continue
-            except PermissionError:
-                denied_pids.add(pid); continue
-            self.fail('owned test process survived: '+str(pid))
+        deadline=time.monotonic()+self.pid_exit_timeout
+        remaining_pids=set(pids)
+        while remaining_pids:
+            remaining=set()
+            for pid in remaining_pids:
+                try:
+                    if not process_running(pid): continue
+                except PermissionError:
+                    denied_pids.add(pid); continue
+                remaining.add(pid)
+            remaining_pids=remaining
+            if not remaining_pids or time.monotonic()>=deadline: break
+            time.sleep(.05)
+        if remaining_pids:
+            self.fail('\n'.join('owned test process survived: '+str(pid) for pid in sorted(remaining_pids)))
         deadline=time.monotonic()+5
         denied_groups=set()
         group_count=len(groups)
@@ -898,6 +909,51 @@ class DispatcherFixture(unittest.TestCase):
         child=self.start(); self.wait_for(lambda:self.skipped(issue,25))
         self.assertFalse(self.events('git-push')); self.assertFalse(self.events('provider-start'))
         self.assertFalse(self.events('move')); self.assertFalse(self.events('merge')); self.stop(child)
+
+
+class DispatcherCleanupTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix='bureau-dispatch-cleanup-')
+        self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve()
+        # Exercise cleanup without starting a dispatcher or registering a Popen
+        # handle: recorded descendants are observed, never stopped by cleanup.
+        self.fixture=DispatcherFixture()
+        self.fixture.root=self.root
+        self.fixture.children=[]; self.fixture.files=[]
+
+    def start_process(self, code):
+        child=subprocess.Popen([sys.executable,'-c',code,str(self.root)],cwd=self.root,text=True,
+                               stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        self.addCleanup(self.reap,child)
+        self.assertEqual(child.stdout.readline().strip(),'ready')
+        try:
+            self.assertTrue(process_running(child.pid))
+        except PermissionError:
+            self.skipTest('sandbox process inspection: EPERM for cleanup regression PID')
+        return child
+
+    @staticmethod
+    def reap(child):
+        if child.poll() is None: child.kill()
+        child.wait(timeout=3)
+        child.stdin.close(); child.stdout.close()
+
+    def test_recorded_pid_exiting_during_cleanup_is_not_a_survivor(self):
+        child=self.start_process("import sys,time; print('ready',flush=True); sys.stdin.read(1); time.sleep(.3)")
+        (self.root/'events').write_text(json.dumps(dict(kind='provider-start',pid=child.pid))+'\n')
+        child.stdin.write('x'); child.stdin.flush()
+        self.fixture.cleanup()
+        self.assertEqual(child.wait(timeout=3),0)
+
+    def test_recorded_pid_surviving_deadline_is_reported(self):
+        child=self.start_process("import signal,sys; signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); sys.stdin.read()")
+        (self.root/'writer.pid').write_text(str(child.pid))
+        child.terminate()  # The ready handshake guarantees SIGTERM is ignored.
+        self.fixture.pid_exit_timeout=.15
+        with self.assertRaisesRegex(AssertionError,'owned test process survived: '+str(child.pid)):
+            self.fixture.cleanup()
+        self.assertIsNone(child.poll(),'cleanup must only observe recorded PIDs')
 
 
 if __name__=='__main__': unittest.main(verbosity=2)
