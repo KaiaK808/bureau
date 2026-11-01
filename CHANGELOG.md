@@ -8,7 +8,7 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ### Fixed
 
-- Mutation-control survivor assertions treat zombies as exited on Linux and macOS, independently of cleanup timing. Linux cleanup records fixture ownership with stable process birth identities, preserves the command's own wait status and makes a final reap before removing the fixture root. Tests only; macOS cleanup, exit codes and installed assets are unchanged, with no resync or configuration action needed. Validation uses local fixtures; Linux qualification remains pending.
+- Mutation-control survivor assertions treat zombies as exited on Linux and macOS, independently of cleanup timing. Linux cleanup records fixture ownership with stable process birth identities, preserves the command's own wait status and makes a final reap before removing the fixture root. Command cleanup and pipe closure also run when observer startup, observation or joining fails. Group checks first verify existence and skip unreadable foreign entries without hiding live owned members; unknown membership or unreadable owned state counts as running. EPERM probes still inspect members, so zombie-only macOS groups count as exited; failed or timed-out inspections and groups without visible members count as running. Tests only; macOS cleanup, exit codes and installed assets are unchanged, with no resync or configuration action needed. Validation uses local fixtures and injected Linux/macOS failures; sandbox process-inspection restrictions limit native macOS validation and native Linux qualification remains pending.
 
 ## [3.5.1] - 2026-10-29
 

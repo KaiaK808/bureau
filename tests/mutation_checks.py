@@ -300,26 +300,38 @@ def _run(command, *, env, timeout, root):
     environ['TMPDIR'] = str(root)
     child = subprocess.Popen(command, env=environ, cwd=root, text=True, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, start_new_session=True)
-    with reaping_fixtures(root, child) as observed:
-        try:
-            try:
-                out, err = child.communicate(timeout=timeout)
-                return subprocess.CompletedProcess(command, child.returncode, out, err)
-            except subprocess.TimeoutExpired:
-                stop_fixtures(root, child, observed=observed)
-                try:
-                    out, err = child.communicate(timeout=1)
-                except subprocess.TimeoutExpired as error:
-                    out, err = output_text(error.output), output_text(error.stderr)
-                    err += '\nfixture output drain timed out'
-                return subprocess.CompletedProcess(command, 124, out,
-                                                   err + '\n' + str(subprocess.TimeoutExpired(command, timeout)))
-        finally:
+    observed = None
+    cleaned = False
+
+    def cleanup():
+        nonlocal cleaned
+        if not cleaned:
+            cleaned = True
             try:
                 stop_fixtures(root, child, observed=observed)
             finally:
                 child.stdout.close()
                 child.stderr.close()
+
+    try:
+        with reaping_fixtures(root, child) as observed:
+            try:
+                try:
+                    out, err = child.communicate(timeout=timeout)
+                    return subprocess.CompletedProcess(command, child.returncode, out, err)
+                except subprocess.TimeoutExpired:
+                    stop_fixtures(root, child, observed=observed)
+                    try:
+                        out, err = child.communicate(timeout=1)
+                    except subprocess.TimeoutExpired as error:
+                        out, err = output_text(error.output), output_text(error.stderr)
+                        err += '\nfixture output drain timed out'
+                    return subprocess.CompletedProcess(command, 124, out,
+                                                       err + '\n' + str(subprocess.TimeoutExpired(command, timeout)))
+            finally:
+                cleanup()  # Keep cleanup before the observer's join/final reap.
+    finally:
+        cleanup()  # Also owns the command when observer startup fails.
 
 
 def snapshot_files(root):

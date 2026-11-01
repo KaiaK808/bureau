@@ -1,4 +1,5 @@
 """Process liveness for fixture assertions: an unreaped zombie is already gone."""
+import errno
 import os
 from pathlib import Path
 import subprocess
@@ -31,18 +32,53 @@ def process_running(pid):
 
 def process_group_running(group):
     """Check every group member; a zombie-only group has no running writer."""
-    if sys.platform.startswith('linux'):
-        for path in Path('/proc').iterdir():
-            if not path.name.isdigit():
-                continue
-            try:
-                fields = (path/'stat').read_text().rsplit(')', 1)[1].split()
-            except (FileNotFoundError, ProcessLookupError):
-                continue
-            if int(fields[2]) == group and process_running(int(path.name)):
-                return True
+    try:
+        os.killpg(group, 0)
+    except ProcessLookupError:
         return False
-    result = subprocess.run(['ps', '-axo', 'pid=,pgid='], text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=1)
-    return any(process_running(int(pid)) for pid, pgid in
-               (line.split() for line in result.stdout.splitlines()) if int(pgid) == group)
+    except OSError as error:
+        if error.errno != errno.EPERM:
+            return True  # Existence/state cannot be disproved.
+        # macOS reports EPERM for zombie-only groups; inspect their members.
+    if sys.platform.startswith('linux'):
+        zombie_seen = False
+        try:
+            for path in Path('/proc').iterdir():
+                if not path.name.isdigit():
+                    continue
+                try:
+                    fields = (path/'stat').read_text().rsplit(')', 1)[1].split()
+                    member_group = int(fields[2])
+                except (OSError, IndexError, ValueError):
+                    # hidepid can deny stat for foreign PIDs. Resolve group
+                    # membership separately before discarding the entry.
+                    try:
+                        member_group = os.getpgid(int(path.name))
+                    except ProcessLookupError:
+                        continue  # The PID itself has vanished.
+                    except OSError:
+                        return True  # Membership is unknown; fail closed.
+                    if member_group == group:
+                        return True  # An owned member's state is unreadable.
+                    continue
+                if member_group == group:
+                    if fields[0] != 'Z':
+                        return True
+                    zombie_seen = True
+        except OSError:
+            return True  # Cannot inspect the existing group.
+        return not zombie_seen  # No visible members cannot prove zombie-only.
+    zombie_seen = False
+    try:
+        result = subprocess.run(['ps', '-axo', 'pid=,pgid=,stat='], text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=1)
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if int(fields[1]) != group:
+                continue  # A foreign member's state is irrelevant.
+            if not fields[2].startswith('Z'):
+                return True
+            zombie_seen = True
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        return True  # Failed inspection or unknown membership/state.
+    return not zombie_seen  # No visible members cannot prove zombie-only.

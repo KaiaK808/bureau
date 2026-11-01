@@ -1,4 +1,5 @@
 """Real live, stopped, zombie and vanished fixtures, plus platform stat parsing."""
+import errno
 import os
 from pathlib import Path
 import signal
@@ -86,6 +87,86 @@ class ProcessHelpers(unittest.TestCase):
         with patch('process_helpers.sys.platform', 'linux'), \
                 patch('process_helpers.Path.read_text', side_effect=FileNotFoundError):
             self.assertFalse(process_running(42))
+
+    def test_linux_group_scan_skips_unreadable_foreign_entry(self):
+        group = 42
+        foreign, member = self.root/'proc'/'41', self.root/'proc'/'42'
+
+        def read_stat(path, *args, **kwargs):
+            if path.parent.name == foreign.name:
+                raise PermissionError('foreign stat is hidden')
+            return f'42 (sleep) {state} 1 {group} 0'
+
+        for state in ('S', 'Z'):
+            with self.subTest(state=state), patch('process_helpers.sys.platform', 'linux'), \
+                    patch('process_helpers.os.killpg', return_value=None) as exists, \
+                    patch('process_helpers.os.getpgid', return_value=99), \
+                    patch('process_helpers.Path.iterdir', return_value=iter([foreign, member])), \
+                    patch('process_helpers.Path.read_text', autospec=True, side_effect=read_stat):
+                self.assertEqual(state != 'Z', process_group_running(group))
+                exists.assert_called_once_with(group, 0)
+
+    def test_group_scan_after_eperm(self):
+        group = 42
+        for platform in ('darwin', 'linux'):
+            for state in ('Z', 'S'):
+                with self.subTest(platform=platform, state=state), \
+                        patch('process_helpers.sys.platform', platform), \
+                        patch('process_helpers.os.killpg', side_effect=PermissionError(errno.EPERM, 'not permitted')) as exists, \
+                        patch('process_helpers.Path.iterdir', return_value=iter([self.root/'42'])), \
+                        patch('process_helpers.Path.read_text', return_value=f'42 (sleep) {state} 1 {group} 0'), \
+                        patch('process_helpers.subprocess.run', return_value=Mock(stdout=f'42 {group} {state}\n')):
+                    self.assertEqual(state != 'Z', process_group_running(group))
+                    exists.assert_called_once_with(group, 0)
+
+    def test_group_scan_failure_is_running(self):
+        failures = (
+            ('linux', PermissionError(errno.EACCES, 'proc is hidden')),
+            ('darwin', PermissionError(errno.EACCES, 'ps is unavailable')),
+            ('darwin', subprocess.CalledProcessError(1, ['ps'])),
+            ('darwin', subprocess.TimeoutExpired(['ps'], 1)),
+        )
+        for platform, failure in failures:
+            for probe_error in (None, PermissionError(errno.EPERM, 'not permitted')):
+                with self.subTest(platform=platform, failure=type(failure).__name__, probe_error=probe_error), \
+                        patch('process_helpers.sys.platform', platform), \
+                        patch('process_helpers.os.killpg', side_effect=probe_error), \
+                        patch('process_helpers.Path.iterdir', side_effect=failure), \
+                        patch('process_helpers.subprocess.run', side_effect=failure):
+                    self.assertTrue(process_group_running(42))
+
+    def test_group_probe_other_errors_keep_existing_rules(self):
+        for code in (errno.ESRCH, errno.EACCES, errno.EIO):
+            with self.subTest(errno=code), \
+                    patch('process_helpers.os.killpg', side_effect=OSError(code, 'probe failed')), \
+                    patch('process_helpers.Path.iterdir') as proc, \
+                    patch('process_helpers.subprocess.run') as ps:
+                self.assertEqual(code != errno.ESRCH, process_group_running(42))
+                proc.assert_not_called()
+                ps.assert_not_called()
+
+    def test_group_without_visible_members_is_running(self):
+        for platform in ('darwin', 'linux'):
+            with self.subTest(platform=platform), patch('process_helpers.sys.platform', platform), \
+                    patch('process_helpers.os.killpg', side_effect=PermissionError(errno.EPERM, 'not permitted')), \
+                    patch('process_helpers.Path.iterdir', return_value=iter([])), \
+                    patch('process_helpers.subprocess.run', return_value=Mock(stdout='')):
+                self.assertTrue(process_group_running(42))
+
+    def test_ps_group_scan_skips_foreign_unreadable_state(self):
+        for state in ('S', 'Z'):
+            with self.subTest(state=state), patch('process_helpers.sys.platform', 'darwin'), \
+                    patch('process_helpers.os.killpg', side_effect=PermissionError(errno.EPERM, 'not permitted')), \
+                    patch('process_helpers.subprocess.run', return_value=Mock(stdout=f'41 99\n42 42 {state}\n')) as ps:
+                self.assertEqual(state != 'Z', process_group_running(42))
+                self.assertEqual(['ps', '-axo', 'pid=,pgid=,stat='], ps.call_args.args[0])
+
+    def test_ps_group_unknown_membership_or_state_is_running(self):
+        for row in ('41 ? Z', '42 42', '42 42 ?'):
+            with self.subTest(row=row), patch('process_helpers.sys.platform', 'darwin'), \
+                    patch('process_helpers.os.killpg', side_effect=PermissionError(errno.EPERM, 'not permitted')), \
+                    patch('process_helpers.subprocess.run', return_value=Mock(stdout=f'43 42 Z\n{row}\n')):
+                self.assertTrue(process_group_running(42))
 
     def test_ps_states_and_raced_exit(self):
         for state in ('Z', 'Z+', 'S', 'R+', 'T', 'D'):

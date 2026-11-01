@@ -296,6 +296,19 @@ time.sleep(30)
                 pass
             thread.assert_not_called()
 
+    def test_observer_start_failure_still_cleans_command_and_closes_pipes(self):
+        child = Mock(pid=100, stdout=io.StringIO(), stderr=io.StringIO())
+        with patch('mutation_checks.sys.platform', 'linux'), \
+                patch('mutation_checks.subprocess.Popen', return_value=child), \
+                patch('mutation_checks.threading.Thread.start', side_effect=RuntimeError('cannot start observer')), \
+                patch('mutation_checks.stop_fixtures') as stop:
+            with self.assertRaisesRegex(RuntimeError, 'cannot start observer'):
+                _run(self.command, env=None, timeout=1, root=self.root)
+        self.assertEqual((1, True, True),
+                         (stop.call_count, child.stdout.closed, child.stderr.closed))
+        stop.assert_called_once_with(self.root, child, observed=None)
+        child.communicate.assert_not_called()
+
     def test_shutdown_reaps_a_zombie_after_the_last_observation_before_root_removal(self):
         observed, release = threading.Event(), threading.Event()
         zombie, reaped = False, False
