@@ -1391,8 +1391,21 @@ p.Path.open=refuse_transcript_read
         shutil.copy(SCRIPT.with_name('bureau-gates.py'), control.parent / 'bureau-gates.py')
         shutil.copy(SCRIPT.with_name('bureau-activity.py'), control.parent / 'bureau-activity.py')
         shutil.copy(SCRIPT.with_name('bureau-ticket.py'), control.parent / 'bureau-ticket.py')
+        shutil.copy(SCRIPT.with_name('bureau-insights.sh'), control.parent / 'bureau-insights.sh')
         control.write_text(source.replace(changed,'        return env\n'))
         return control
+
+    def test_claude_config_dir_control_persists_successful_stage_outcome(self):
+        self.claude_envs({'agents':{'runner':'claude'}},script=self.without_config_dir())
+        records=self.root/'.git/bureau/evidence/v1/stage-outcomes.jsonl'
+        self.assertTrue(records.is_file(),'successful control stage outcome missing')
+        rows=[json.loads(line) for line in records.read_text().splitlines()]
+        self.assertEqual(len(rows),1)
+        self.assertEqual(tuple(rows[0][key] for key in ('record_type','stage','phase','normalized_exit','cause_class')),
+                         ('stage_outcome','implement','implement',0,'other'))
+        receipt,=self.receipts()
+        for key in ('run_id','stage_attempt_id'):
+            self.assertEqual(rows[0][key],receipt[key])
 
     def test_claude_without_a_config_dir_gets_the_environment_it_got_before(self):
         control=self.without_config_dir()
