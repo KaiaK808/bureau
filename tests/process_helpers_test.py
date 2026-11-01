@@ -54,9 +54,11 @@ class DeadlineWaits(unittest.TestCase):
         self.assertLessEqual(now[0], .2)
 
     def test_unreadable_transport_is_never_treated_as_exited(self):
-        with patch('process_helpers.process_running', side_effect=PermissionError), \
+        # A fixed clock: a paused runner must not reach the deadline before the probe.
+        with patch('process_helpers.time.monotonic', return_value=0), \
+                patch('process_helpers.process_running', side_effect=PermissionError), \
                 self.assertRaises(PermissionError):
-            wait_for_processes_exit({42}, time.monotonic() + 1)
+            wait_for_processes_exit({42}, 1)
 
     def test_probe_cost_consumes_the_shared_deadline(self):
         now = [0]
