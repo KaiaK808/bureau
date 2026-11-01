@@ -32,6 +32,17 @@ one-second grace, allows three seconds for reaping and bounds the final output
 drain to one second. Linux adopts orphans for reaping. Process inspection must
 work before a fixture can start; unavailable inspection fails the harness.
 
+The shepherd outcome and judged overlap-readiness integration tests use a
+135-second pipeline deadline: three 45-second command budgets for setup/re-entry,
+the judged stage and routing/cleanup. On macOS CI the previous single 45-second
+budget expired after the review reported BLOCK/25. A readiness subcase timeout
+also skipped its fixture cleanup, leaving reservations that correctly blocked
+later subcases. These tests assert behavior, not performance;
+exit codes, outcome counts, paid-call counts and routing remain exact. Direct
+overlap commands retain their 45-second budget. After auditing every recorded
+transport PID, survivor assertions allow five additional seconds total for
+teardown; live survivors and unavailable process inspection still fail.
+
 Baseline inventory audit (all locations below are private, resolved temp paths):
 
 | Harness | Baseline location before mutation |

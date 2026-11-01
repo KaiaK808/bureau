@@ -1,9 +1,42 @@
-"""Process liveness for fixture assertions: an unreaped zombie is already gone."""
+"""Deadline waits and process liveness for fixture assertions."""
 import errno
 import os
 from pathlib import Path
 import subprocess
 import sys
+import time
+
+
+COMMAND_TIMEOUT_SECONDS = 45
+# Full pipelines include setup/re-entry, the judged stage, then routing/cleanup.
+# The macOS CI log reached the review's BLOCK/25 cleanup inside the old single
+# command budget. Allow one command budget per phase; these are correctness
+# checks, not latency checks. A hung pipeline still exhausts this finite budget.
+PIPELINE_TIMEOUT_SECONDS = 3 * COMMAND_TIMEOUT_SECONDS
+PROCESS_EXIT_TIMEOUT_SECONDS = 5
+
+
+def communicate_until(child, deadline):
+    """Drain both pipes and reap the leader within the caller's shared budget."""
+    return child.communicate(timeout=max(0, deadline - time.monotonic()))
+
+
+def wait_for_processes_exit(pids, deadline):
+    """Return survivors after one shared deadline; inspection errors still fail."""
+    remaining = set(pids)
+    while remaining:
+        for pid in tuple(remaining):
+            if time.monotonic() >= deadline:
+                return remaining  # Uninspected PIDs are never assumed stopped.
+            if not process_running(pid):
+                remaining.remove(pid)
+        if not remaining:
+            break
+        seconds = deadline - time.monotonic()
+        if seconds <= 0:
+            break
+        time.sleep(min(.05, seconds))
+    return remaining
 
 
 def process_running(pid):

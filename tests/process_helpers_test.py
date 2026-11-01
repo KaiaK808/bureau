@@ -10,7 +10,63 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from process_helpers import process_group_running, process_running
+from process_helpers import (PIPELINE_TIMEOUT_SECONDS, communicate_until,
+                             process_group_running, process_running,
+                             wait_for_processes_exit)
+
+
+class DeadlineWaits(unittest.TestCase):
+    def test_pipeline_can_finish_after_old_command_bound_without_losing_output(self):
+        child = Mock()
+        def communicate(timeout):
+            if timeout < 46:
+                raise subprocess.TimeoutExpired('fixture', timeout, output='partial')
+            return 'complete', 'diagnostic'
+        child.communicate.side_effect = communicate
+        with patch('process_helpers.time.monotonic', return_value=10):
+            self.assertEqual(('complete', 'diagnostic'),
+                             communicate_until(child, 10 + PIPELINE_TIMEOUT_SECONDS))
+
+    def test_launch_time_consumes_budget_and_hung_command_still_times_out(self):
+        child = Mock()
+        child.communicate.side_effect = subprocess.TimeoutExpired('fixture', 1, output='partial')
+        with patch('process_helpers.time.monotonic', return_value=19), \
+                self.assertRaises(subprocess.TimeoutExpired) as caught:
+            communicate_until(child, 20)
+        child.communicate.assert_called_once_with(timeout=1)
+        self.assertEqual('partial', caught.exception.output)
+
+    def test_transient_transport_teardown_is_allowed(self):
+        now = [0]
+        def sleep(seconds): now[0] += seconds
+        with patch('process_helpers.time.monotonic', side_effect=lambda: now[0]), \
+                patch('process_helpers.time.sleep', side_effect=sleep), \
+                patch('process_helpers.process_running', side_effect=lambda pid: now[0] < .1):
+            self.assertEqual(set(), wait_for_processes_exit({41, 42}, .2))
+
+    def test_persistent_survivor_fails_with_one_budget_for_all_transports(self):
+        now = [0]
+        def sleep(seconds): now[0] += seconds
+        with patch('process_helpers.time.monotonic', side_effect=lambda: now[0]), \
+                patch('process_helpers.time.sleep', side_effect=sleep), \
+                patch('process_helpers.process_running', side_effect=lambda pid: pid == 42):
+            self.assertEqual({42}, wait_for_processes_exit({41, 42}, .2))
+        self.assertLessEqual(now[0], .2)
+
+    def test_unreadable_transport_is_never_treated_as_exited(self):
+        with patch('process_helpers.process_running', side_effect=PermissionError), \
+                self.assertRaises(PermissionError):
+            wait_for_processes_exit({42}, time.monotonic() + 1)
+
+    def test_probe_cost_consumes_the_shared_deadline(self):
+        now = [0]
+        def probe(pid):
+            now[0] += .1
+            return True
+        with patch('process_helpers.time.monotonic', side_effect=lambda: now[0]), \
+                patch('process_helpers.process_running', side_effect=probe):
+            self.assertEqual(set(range(10)), wait_for_processes_exit(range(10), .2))
+        self.assertLessEqual(now[0], .2)
 
 
 class ProcessHelpers(unittest.TestCase):

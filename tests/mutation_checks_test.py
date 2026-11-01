@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch
 
 import process_helpers
 from process_helpers import process_running
-from process_helpers_test import ProcessHelpers
+from process_helpers_test import DeadlineWaits, ProcessHelpers
 from mutation_checks import (_run, baseline_fixture, caught_mutation, fixture_pids, historical_scripts,
                              linux_process_commands, linux_process_identity, macos_cwds, mutation_caught,
                              reap_adopted_fixtures, reaping_fixtures, restored_files, run, snapshot_files,
