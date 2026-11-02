@@ -43,6 +43,8 @@ VERDICT_RC=$(jq -n --arg c "$(printf '%b' "$COMMENT")" '{verdict:"REQUEST_CHANGE
 # ── 1. the provider enforces the schema ────────────────────────────────────
 mkdir -p "$P/bin" "$P/repo"
 git -C "$P/repo" init -q
+git -C "$P/repo" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m 'test: provider base'
+PROVIDER_BASE=$(git -C "$P/repo" rev-parse HEAD)
 cat > "$P/bin/claude" <<'EOF'
 #!/bin/bash
 if [ "${1:-}" = auth ]; then echo '{"loggedIn":true}'; exit 0; fi
@@ -57,6 +59,7 @@ provider() {  # <structured output JSON> [schema] — prints the provider's stdo
   jq -n --argjson v "$1" '{result: "Prose: src/a.py:12 BUG in the loop.", structured_output: $v, is_error: false}' > "$P/envelope"
   set +e
   POUT=$(PATH="$P/bin:$PATH" FAKE_ENVELOPE="$P/envelope" FAKE_ARGS="$P/args" BUREAU_PROVIDER_LOG_DIR="$P/logs" \
+    BUREAU_PROVIDER_CONFIG_BASE="$PROVIDER_BASE" \
     python3 "$REPO_ROOT/templates/scripts/bureau-provider.py" --stage code_review --repo "$P/repo" \
       --config "$P/repo/.bureau.json" --prompt-file "$P/prompt" --schema "${2:-$SCHEMA}" 2>"$P/err")
   PRC=$?

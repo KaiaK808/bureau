@@ -129,7 +129,7 @@ fi
 
 if [ "$STAGE_CASE" = all ] || [ "$STAGE_CASE" = qa ]; then
 setup QA
-export BUREAU_STUB_STATE_QA=state-qa
+export BUREAU_STUB_STATE_QA=state-qa GH_STUB_EXISTING_PR=99
 printf '```json\n{"status":"GREEN","tests_added":0,"tests_failing":0,"coverage_notes":"fixture"}\n```\n' > "$SANDBOX/qa.txt"
 export FAKE_CLAUDE_FIXTURES="$SANDBOX/qa.txt"
 run_pipeline qa-pipeline.sh TEAM-900

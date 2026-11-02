@@ -9,6 +9,7 @@ setup() {
   unset FAKE_GATE_MODE FAKE_GATE_COMMAND
   export PATH="$BASE_PATH"
   sandbox_init TEAM-123 test-branch
+  export GH_STUB_EXISTING_PR=99
   export BUREAU_CONFIG="$SANDBOX/.bureau.json" BUREAU_STUB_RUNNER="$runner" BUREAU_RUNNER_QA="$runner"
   export BUREAU_STUB_STATE_QA=state-qa BUREAU_STUB_ISSUE_STATE=QA
   export FAKE_CLAUDE_PROMPT_LOG="$SANDBOX/logs/prompt.log" FAKE_CLAUDE_FIXTURES="$SANDBOX/logs/result.json"

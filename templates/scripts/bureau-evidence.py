@@ -806,7 +806,8 @@ class Store:
         if receipt.get('stage') == 'code_review' and receipt.get('phase') == 'verdict' and receipt.get('normalized_exit') == 0:
             for finding in result.get('findings', []):
                 severity = finding.get('class') if isinstance(finding, dict) else None
-                disposition = 'skip' if severity == 'SKIP' else ('deferred' if severity == 'MINOR' and receipt.get('review_min_severity') == 'BUG' else None)
+                disposition = ('human_merge' if merged and severity == 'AGENT_CONFIG' else 'skip' if severity == 'SKIP'
+                               else 'deferred' if severity == 'MINOR' and receipt.get('review_min_severity') == 'BUG' else None)
                 if disposition and disposition_path(finding.get('file')):
                     items.append(dict(disposition=disposition, severity=severity, path=finding['file']))
         items = list({(r['disposition'], r['severity'], r['path']): r for r in items}.values())[:MAX_DISPOSITIONS]
@@ -868,6 +869,10 @@ class Store:
                 report = review.load_specialist(review.encoded(reports[role]), role, refs)
                 claims.extend((role, review.readable_finding(finding, refs)) for finding in report['findings'])
             findings, _, _ = review.normalized(claims, None, None, check_anchors=False)
+            inputs = [r.get('review_inputs') for r in specialists.values()]
+            if all(isinstance(i, dict) and i.get('base') and i.get('head') for i in inputs):
+                if any(i != inputs[0] for i in inputs): raise ValueError('foreign review inputs')
+                findings.extend(review.configuration_findings(inputs[0]['base'], inputs[0]['head'], attempt['workspace']))
             if digest(findings) != digest(result.get('findings')): raise ValueError('foreign merged findings')
         self.collect_dispositions(dict(run_id=run, stage_attempt_id=stage_attempt, issue=manifest['issue'],
                                        stage='code_review', phase='verdict', normalized_exit=0,

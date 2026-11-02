@@ -28,6 +28,7 @@ EOF
 git -C "$SANDBOX" add .gitignore specs tests
 git -C "$SANDBOX" commit -qm 'test: baseline with spec and test directory'
 git -C "$SANDBOX" push -q origin HEAD
+export GH_STUB_EXISTING_PR=99
 export BUREAU_CONFIG="$SANDBOX/.bureau.json" BUREAU_STUB_RUNNER=codex
 export BUREAU_STUB_STATE_QA=state-qa BUREAU_STUB_STATE_COPY=state-copy
 # Production invocation/auth/commit helpers, with the harness's Linear stubs.

@@ -122,6 +122,8 @@ qa_comment() {
   mkdir -p "$SANDBOX/.nosleep"; printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/.nosleep/sleep"; chmod +x "$SANDBOX/.nosleep/sleep"
   PATH="$SANDBOX/.nosleep:$PATH"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/qa.txt" BUREAU_STUB_STATE_QA=state-qa BUREAU_STUB_ISSUE_STATE=QA
+  # QA pins its PR base before the provider starts, so the branch needs an open PR.
+  export GH_STUB_EXISTING_PR=99
   record_comments
   # The stub config has no commit_stage_changes; the QA agent here changes no file, so there
   # is nothing to commit (as tests/lib/pr1-untrusted-env.sh does).

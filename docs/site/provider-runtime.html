@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="fbf8bed7c4e33d7df246bb5c011c133220c7db555e1c3c2d9b47473ef7c9971c">
+<meta name="bureau-source-sha256" content="dcddc84dd8534bfc1ef348ed10f3b320a834aeb74e1f53822a4f7627c83c9e01">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -25,6 +25,68 @@ stdin, keeps provider diagnostics in separate logs, and returns only the
 final result. Legacy <code>claude_cmd_for_stage</code> remains for
 compatibility; shipped pipelines no longer execute its command
 strings.</p>
+<p>Review specialists, the fallback merger, verifier, QA and optional
+conflict repair during their validation merge exclude the project and
+local configuration layers. Claude keeps the operator-owned user layer,
+including user instructions and plugins. The checkout is never swapped
+or restored. Claude gets
+<code>--setting-sources user --settings '{"disableAllHooks":true}' --disable-slash-commands --strict-mcp-config --mcp-config '{"mcpServers":{}}'</code>;
+prompts stay on stdin because <code>--mcp-config</code> is variadic.
+Codex gets
+<code>-c project_doc_max_bytes=0 -c project_doc_fallback_filenames=[] -c features.hooks=false --ignore-rules</code>,
+plus Bureau's explicit sandbox, model and effort arguments. Ignoring
+rules excludes user and project execpolicy files; the selected sandbox
+still applies. Claude permissions remain explicit (tool-free for
+verification, the existing permission bypass for other workers). These
+stages need no MCP servers: Linear/GitHub operations belong to shell
+helpers. Explicit model/effort selections come from Bureau
+configuration/environment; otherwise Claude retains its user-settings
+defaults. User-settings <code>apiKeyHelper</code> and
+<code>env.ANTHROPIC_*</code> authentication/endpoint settings remain
+available, as does the configured provider profile. Implement and other
+stages keep their existing configuration behavior.</p>
+<p>Direct <code>run_stage_for code_review</code> and
+<code>run_stage_for qa</code> calls (including tools and tests) must
+supply <code>BUREAU_PROVIDER_CONFIG_BASE</code> as a full commit ID
+available in the target repository; a missing pin stops with 24 before
+launch. QA resolves an open PR’s actual target. When a successful PR
+lookup finds no PR (for example an operator rerun or a branch before PR
+creation), QA instead fetches and pins <code>origin/main</code>, the
+same base its validation merge uses. Lookup, metadata or fetch failures
+stop with 18, without a fallback to worktree configuration. Trusted
+review context travels only in system text, preserving the ADR-off user
+prompt; Codex concatenates that system prefix with the user text.</p>
+<p><code>bureau-review-config.py</code> reads only pinned base Git blobs
+and supplies one system block headed “Trusted instructions from the
+pinned PR base”, which takes precedence over worktree instructions.
+Claude receives root/nested <code>CLAUDE.md</code> and
+<code>CLAUDE.local.md</code> plus recursively imported
+<code>@path</code> files (quoted paths supported, relative to their
+importing file); Codex receives root/nested <code>AGENTS.md</code> or
+the same-directory <code>AGENTS.override.md</code> when present. Both
+receive <code>scripts/bureau-stage.md</code> and its recursive imports
+from base with the same safety limits. Imports inside fenced code blocks
+or inline code spans are ignored. Nested instructions retain their
+directory scope. Missing optional files are absent; symlinks or
+submodules in an instruction/import path, repository escapes, non-UTF-8
+contents, imports beyond five levels, or a complete block above 256 KiB
+fail closed with exit 24 before model launch. No checkout/index write,
+backup or restore is involved, including at a cooperative Done
+checkpoint. Root merger/verifier contracts also use base blobs. Each
+changed protected path in the pinned <code>base..head</code> diff
+produces a deterministic <code>AGENT_CONFIG</code> finding under its own
+comment heading and a <code>human_merge</code> evidence disposition.
+Protected paths are <code>CLAUDE.md</code>,
+<code>CLAUDE.local.md</code>, <code>AGENTS.md</code> and
+<code>AGENTS.override.md</code> anywhere, <code>.claude/**</code>,
+<code>.codex/**</code>, <code>.agents/**</code>, root
+<code>.mcp.json</code>, <code>scripts/bureau-stage.md</code>, and
+dependencies imported by base or head instruction/stage files.
+Configuration annotations are excluded from verification and fixes and
+never change the specialists' verdict in either merge mode.
+<strong>Upgrade:</strong> compare installed drift, resync the complete
+scripts scope and restart drivers. Validation uses fake CLIs and local
+Git; live CLI/adopter qualification remains separate.</p>
 <div class="sourceCode" id="cb1"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;version&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>

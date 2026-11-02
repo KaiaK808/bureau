@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9083a9bcd5d30a4ebd5cab9a3a2e82375c6fdc2cdb21dd76e8e338f65190bee1">
+<meta name="bureau-source-sha256" content="b0489d9ea4e524551fdbaf7fb37c09e217111d2e3a0f087fd9c32ac69af1aa3b">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1785,15 +1785,18 @@ provider attempt: provenance/timestamp plus <code>disposition</code>,
 self-reports, never verified fixes or pinned decisions. The review
 collector derives <code>skip</code> from validated SKIP findings and
 <code>deferred</code> from MINOR findings only at the trusted BUG
-severity floor. The existing finding class is the recorded severity
-(<code>CRITICAL</code>, <code>BUG</code>, <code>MINOR</code>,
-<code>SKIP</code>); SKIP does not claim an unknown underlying severity.
-Paths must be bounded, filtered repository-relative paths without
-traversal, controls or home paths. Invalid optional implementation
-arrays drop with a content-free warning; finding messages, reasons, line
-numbers and citations are never copied. At the MINOR floor no MINOR
-finding is recorded as deferred. No review round or severity decision
-reads these records.</p>
+severity floor. Deterministic merged <code>AGENT_CONFIG</code>
+annotations add <code>human_merge</code> dispositions with a null
+provider attempt ID; they request human merge inspection and never count
+as implementation fixes or change the verdict. The finding class is the
+recorded severity (<code>CRITICAL</code>, <code>BUG</code>,
+<code>MINOR</code>, <code>SKIP</code>, <code>AGENT_CONFIG</code>); SKIP
+does not claim an unknown underlying severity. Paths must be bounded,
+filtered repository-relative paths without traversal, controls or home
+paths. Invalid optional implementation arrays drop with a content-free
+warning; finding messages, reasons, line numbers and citations are never
+copied. At the MINOR floor no MINOR finding is recorded as deferred. No
+review round or severity decision reads these records.</p>
 <p>All three learning ledgers use the same evidence lock, 0700/0600
 permissions, atomic replacement and global 16 MiB/4,096-file budget.
 Each deduplicates retained provider attempts (stage outcomes use stage

@@ -22,6 +22,8 @@ FAILS=0
 fail() { echo "FAIL $*" >&2; FAILS=$((FAILS + 1)); }
 
 git -C "$SB" init -q
+git -C "$SB" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m 'test: stage base'
+CI_RULE_BASE=$(git -C "$SB" rev-parse HEAD)
 mkdir -p "$SB/bin" "$SB/evidence"
 cat > "$SB/bin/claude" <<EOF
 #!/bin/bash
@@ -87,7 +89,7 @@ for runner in claude codex; do
         schema) call="run_stage_for $stage --schema '$SCRIPTS/bureau-implement.schema.json' 'do the stage'" ;;
       esac
       rm -f "$SB/received"
-      (cd "$SB" && PATH="$SB/bin:$PATH" BUREAU_PROVIDER_LOG_DIR="$SB/evidence" /bin/bash -c "
+      (cd "$SB" && PATH="$SB/bin:$PATH" BUREAU_PROVIDER_LOG_DIR="$SB/evidence" BUREAU_PROVIDER_CONFIG_BASE="$CI_RULE_BASE" /bin/bash -c "
         set -uo pipefail
         source '$SCRIPTS/bureau-config.sh'
         $call" </dev/null >/dev/null 2>&1) || true
