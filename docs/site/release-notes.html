@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="31d65de9398e855bf2dff0a7b4d76436ba264aa4c1b5f9ebccd2bdeb89f9931f">
+<meta name="bureau-source-sha256" content="94fec9695e252fb7535321ff156e0ebb85ad7d0a7d491786fe2ddfce5528be9a">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -533,9 +533,10 @@ href="migration.html#preview-and-resolve-asset-conflicts">the migration
 guide</a>.</p>
 <p>Resync the <strong>complete scripts and interfaces scopes
 together</strong> in every adopting repository, including all new
-helpers and schemas, then restart drivers together. A running shell
-keeps its loaded code; partial helper/schema/pipeline updates are
-incompatible. Use the installation's existing target selection:</p>
+helpers and schemas; restart drivers only at the end, as the last step
+below. A running shell keeps its loaded code; partial
+helper/schema/pipeline updates are incompatible. Use the installation's
+existing target selection:</p>
 <pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
 <p>Use <code>$bureau-init</code> for the same scopes in Codex.
 <code>--update</code> changes configuration only. Run
@@ -566,6 +567,13 @@ ticket accounting, witnesses, admission, numbering, checkpoint, evidence
 and dispatcher state; frozen briefs and legacy comment-only feedback
 receive no backfill. Run doctor, restart drivers together and qualify a
 representative ticket before unattended dispatch.</p>
+<p><strong>Restart last:</strong> after the resync, the setup above
+(customized wrappers, offline pnpm/Yarn Classic caches,
+<code>node_modules</code> out of worktree links) and the reconciliation
+of holds, run
+<code>python3 scripts/bureau-doctor.py --mode background</code>, then
+restart all drivers together. Enable optional keys only after that, and
+run doctor again after configuring them.</p>
 <p><strong>From v3.4.1:</strong> first apply the intervening
 requirements in the <a
 href="release-notes-v3.5.0.html#upgrade-an-existing-installation">v3.5.0
