@@ -16,6 +16,9 @@ class MergeRegressions(unittest.TestCase):
     def setUp(self):
         self.f = fixture.MergeTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
         self.m = self.f.m
+        previous = os.getcwd()
+        os.chdir(self.f.repo)
+        self.addCleanup(os.chdir, previous)
 
     def finalize(self, grounding='off', **changes):
         _, _, metadata = self.f.merge()
@@ -316,7 +319,7 @@ class VerifierRegressions(unittest.TestCase):
         self.assertIn('--strict-mcp-config', argv)
         self.assertEqual(json.loads(argv[argv.index('--mcp-config') + 1]), {'mcpServers':{}})
         self.assertIn('--disable-slash-commands', argv)
-        self.assertEqual(argv[argv.index('--setting-sources') + 1], '')
+        self.assertEqual(argv[argv.index('--setting-sources') + 1], 'user')
         self.assertEqual(json.loads(argv[argv.index('--settings') + 1]), {'disableAllHooks':True})
         self.assertNotIn('--dangerously-skip-permissions', argv)
 

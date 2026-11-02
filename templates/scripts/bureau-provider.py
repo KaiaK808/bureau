@@ -125,8 +125,9 @@ class AuthError(Exception):
 
 
 # Untrusted code runs without Bureau secrets. The agent runs the branch's
-# tests (Claude with --dangerously-skip-permissions) and loads the branch's own
-# agent settings, so it starts in the environment bureau_untrusted_env in
+# tests (Claude with --dangerously-skip-permissions). Stages outside review/QA
+# isolation can load the branch's agent settings. Every child starts in the
+# environment bureau_untrusted_env in
 # bureau-env.sh gives every other command the branch controls. Keep
 # UNTRUSTED_REMOVE, UNTRUSTED_STARTUP, UNTRUSTED_PATHS, UNTRUSTED_HOST_PREFIXES
 # and UNTRUSTED_KEEP equal to the lists there; tests/test_untrusted_env.sh
@@ -386,6 +387,8 @@ def run(options, prompt, system, repo, evidence, schema=None):
     options['_gate_observer'] = observer
     options['_gate_start_head'] = start
     error = None
+    options['review_config_guard'] = (options['stage'] == 'conflict_resolver'
+                                      and bool(os.environ.get('BUREAU_PROVIDER_CONFIG_BASE')))
     try:
         code, text, metadata = _run(options, prompt, system, repo, evidence, schema)
     except (OSError, ValueError, TypeError, UntrustedEnvError, subprocess.SubprocessError) as exc:
@@ -501,9 +504,17 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     # exec has no supported all-tools-off switch; do not launch an unrestricted
     # checker. The caller records this unsupported shadow check as unverifiable.
     if shadow and runner != 'claude': raise ValueError('tool-free finding verifier is unavailable for this runner')
+    protected = options['stage'] in ('code_review', 'qa') or options.get('review_config_guard')
+    if protected:
+        spec = importlib.util.spec_from_file_location('review_config', Path(__file__).resolve().with_name('bureau-review-config.py'))
+        guard = importlib.util.module_from_spec(spec); spec.loader.exec_module(guard)
+        system += '\n\n' + guard.trusted_instructions(os.environ.get('BUREAU_PROVIDER_CONFIG_BASE'), runner, repo)
     final = evidence / 'final.txt'
     if runner == 'codex':
         command = ['codex', 'exec', '--json', '-C', str(repo), '-s', options['sandbox'], '-o', str(final)]
+        if protected:
+            command += ['--ignore-rules', '-c', 'project_doc_max_bytes=0',
+                        '-c', 'project_doc_fallback_filenames=[]', '-c', 'features.hooks=false']
         if options['reasoning']: command += ['-c', 'model_reasoning_effort=' + json.dumps(options['reasoning'])]
         if schema:
             contract = json.loads(schema.read_text())
@@ -522,13 +533,15 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         # The session id names the transcript Claude writes while it works
         # (transcript()); stdout.log gets the JSON envelope only at the end.
         if options.get('session_id'): command += ['--session-id', options['session_id']]
-        if shadow:
-            command += ['--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-                        '--disable-slash-commands', '--setting-sources', '', '--settings', '{"disableAllHooks":true}']
+        if shadow: command += ['--tools', '']
         elif options['stage'] == 'upstream_summary': command += ['--tools', '']
         else:
             command += ['--dangerously-skip-permissions', '--disallowedTools',
                         'ScheduleWakeup,CronCreate,CronDelete,RemoteTrigger,Monitor']
+        if protected:
+            # Keep the prompt on stdin: --mcp-config consumes positional args.
+            command += ['--setting-sources', 'user', '--settings', '{"disableAllHooks":true}',
+                        '--disable-slash-commands', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}']
         if system:
             (evidence/'system.txt').write_text(system)
             command += ['--append-system-prompt-file', str(evidence/'system.txt')]

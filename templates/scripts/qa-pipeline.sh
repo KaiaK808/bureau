@@ -21,6 +21,24 @@ else bureau_secret_set LINEAR_API_KEY || { echo "ERROR: Set LINEAR_API_KEY"; exi
 CLAUDE=(run_stage_for qa)
 bureau_secret_copy API_KEY LINEAR_API_KEY
 
+QA_BASE=""
+qa_pin_base() {
+  QA_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number') || return 18
+  # An operator's QA rerun may reach a branch before PR creation.
+  # Use the same fetched main that QA merges; never infer trust from HEAD.
+  QA_BASE_REF=main
+  if [ -n "$QA_PR" ] && [ "$QA_PR" != null ]; then
+    [[ "$QA_PR" =~ ^[1-9][0-9]*$ ]] || return 18
+    QA_PR_REFS=$(gh pr view "$QA_PR" --json state,baseRefName,headRefName) || return 18
+    QA_BASE_REF=$(printf '%s' "$QA_PR_REFS" | jq -er --arg branch "$BRANCH" \
+      'select(.state == "OPEN" and .headRefName == $branch) | .baseRefName | select(type == "string" and length > 0)') || return 18
+  fi
+  [[ "$QA_BASE_REF" != -* ]] && git check-ref-format "refs/heads/$QA_BASE_REF" >/dev/null 2>&1 || return 18
+  git fetch --no-tags origin "+refs/heads/$QA_BASE_REF:refs/remotes/origin/$QA_BASE_REF" || return 18
+  QA_BASE=$(git rev-parse --verify "refs/remotes/origin/$QA_BASE_REF^{commit}") || return 18
+  export BUREAU_PROVIDER_CONFIG_BASE="$QA_BASE"
+}
+
 precondition_linear
 precondition_runner qa
 
@@ -88,6 +106,9 @@ else
   exit 12
 fi
 
+# Optional semantic merge repair is a provider call too. Resolve its trusted
+# project configuration before entering the unchanged merge transaction.
+if agent_enabled conflict_resolver; then qa_pin_base || exit $?; fi
 MERGE_RC=0
 merge_origin_main_or_abort "$ISSUE" "QA" || MERGE_RC=$?
 [ "$MERGE_RC" = 0 ] || exit "$MERGE_RC"
@@ -226,6 +247,10 @@ else
 
   NEGATIVE_CONSTRAINTS_BODY=$(build_negative_constraints)
   LESSONS_CONTEXT=$(build_lessons_context qa "$SPEC_DIR")
+
+  # QA may target a stacked PR. Resolve and pin its actual base before the
+  # provider loads any project instructions, settings, skills or hooks.
+  if [ -z "$QA_BASE" ]; then qa_pin_base || exit $?; fi
 
   # Codex needs a sandbox diagnosis the shell can reconcile with Phase 3.
   # Claude gets no note: its prompt stays byte for byte as before.

@@ -257,7 +257,7 @@ def render(findings, summaries, gaps, holds=()):
     lines += ['- ' + role.capitalize() + ': ' + summaries[role] for role in ROLES if role in summaries]
     lines += ['', '## All Findings']
     if not findings: lines.append('No findings.')
-    for severity in SEVERITY:
+    for severity in (*SEVERITY, 'AGENT_CONFIG'):
         selected = [f for f in findings if f['class'] == severity]
         if not selected: continue
         lines += ['', '### ' + severity]
@@ -353,18 +353,18 @@ def merge(directory, base, head, refs):
     # metadata still maps to a claim after the temporary directory is removed.
     public = [dict(f) for f in findings]
     result = dict(verdict=metadata['verdict_floor'], bugs=sum(f['class'] == 'BUG' for f in findings), security_issues=metadata['security_floor'],
-                  missing_acceptance=gaps, fixes_needed=[f['msg'] for f in findings if f['class'] != 'SKIP'],
+                  missing_acceptance=gaps, fixes_needed=[f['msg'] for f in findings if f['class'] in ('CRITICAL', 'BUG', 'MINOR')],
                   summary='Merged correctness, security and performance findings.',
                   comment=render(findings, summaries, gaps, holds), findings=public)
     metadata.update(invalid_anchors=invalid, anchor_checks=checks)
     return result, findings, metadata
 
 
-def contracts(head, paths):
+def contracts(base, paths):
     result, remaining = [], CONTRACT_BUDGET
     for path in dict.fromkeys(paths):
         if not path_valid(path): continue
-        try: oid, data = blob_at(head, path)
+        try: oid, data = blob_at(base, path)
         except (ValueError, subprocess.SubprocessError): continue
         # Whole contracts only: an omitted/truncated rule cannot masquerade as
         # the complete contract. The checker can return unverifiable.
@@ -376,7 +376,7 @@ def contracts(head, paths):
 
 def prepare_verifier(directory, findings, base, head, paths, metadata):
     metadata['verifier_omitted'] = max(0, len(findings) - MAX_VERIFY)
-    contract = contracts(head, paths)
+    contract = contracts(base, paths)
     for i, f in enumerate(findings[:MAX_VERIFY]):
         digest = sha(encoded(f['anchors']).encode())
         record = dict(finding_id=f['finding_id'], anchor_sha256=digest, outcome='unverifiable', basis='invalid_anchor')
@@ -402,9 +402,21 @@ def prepare_verifier(directory, findings, base, head, paths, metadata):
                 'and outcome confirmed, refuted or unverifiable. Missing context means unverifiable.\n' + encoded(request))
 
 
+def configuration_findings(base, head, repo=None):
+    prefix = ('-C', str(repo)) if repo is not None else ()
+    changed = git(*prefix, 'diff', '--no-renames', '--name-only', '-z', base + '..' + head, '--')
+    config = module('review-config')
+    dependencies = config.imported_paths(base, repo or '.') | config.imported_paths(head, repo or '.')
+    return [dict(file=path, line=0, **{'class': 'AGENT_CONFIG'},
+                 msg='Agent configuration changed; review the proposed diff during the human merge. Only the pinned PR base configuration governed this review.',
+                 finding_id=sha(('AGENT_CONFIG:' + path).encode()),
+                 specialists=[], actionable_specialists=[], anchors=[])
+            for path in sorted(os.fsdecode(p) for p in changed.split(b'\0') if p) if config.sensitive(path) or path in dependencies]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('settings', 'merge', 'fallback', 'verifier-result'))
+    parser.add_argument('action', choices=('settings', 'contracts', 'merge', 'fallback', 'verifier-result'))
     parser.add_argument('--config', type=Path)
     parser.add_argument('--directory', type=Path)
     parser.add_argument('--base'); parser.add_argument('--head')
@@ -415,6 +427,9 @@ def main():
     args = parser.parse_args()
     config = json.loads(args.config.read_text()) if args.config else {}
     grounding, verifier = settings(config)
+    if args.action == 'contracts':
+        print(encoded(contracts(args.base, args.contract)))
+        return 0
     if args.action == 'settings':
         if args.directory and (grounding == 'required' or verifier):
             schema = json.loads((SCRIPTS / ('bureau-review-adr.schema.json' if config.get('agents', {}).get('review_adr_context') else 'bureau-review.schema.json')).read_text())
@@ -422,7 +437,7 @@ def main():
             for field in ('anchor', 'line_end', 'title', 'skip_citation'):
                 schema['properties']['findings']['items']['properties'][field] = fields[field]
             (args.directory / 'fallback.schema.json').write_text(encoded(schema) + '\n')
-        print(encoded(dict(grounding=grounding, verifier=verifier, policy='merge-v5:' + grounding + ':shadow-' + str(verifier).lower())))
+        print(encoded(dict(grounding=grounding, verifier=verifier, policy='merge-v6:base-config:' + grounding + ':shadow-' + str(verifier).lower())))
         return 0
     directory = args.directory
     metadata_path = directory / 'merge-metadata.json'
@@ -477,17 +492,30 @@ def main():
             result['security_issues'] = max(result['security_issues'], metadata['security_floor'])
         result['missing_acceptance'] = sorted(set(result['missing_acceptance'] + retained['gaps']))
         result['fixes_needed'] = list(dict.fromkeys(result['fixes_needed'] +
-                                                  [f['msg'] for f in findings if f['class'] != 'SKIP']))
+                                                  [f['msg'] for f in findings if f['class'] in ('CRITICAL', 'BUG', 'MINOR')]))
         metadata['anchor_checks'].extend(checks)
         metadata['invalid_anchors'] += invalid
         metadata['adr_refs'] = sorted(set(metadata['adr_refs']) | {ref for f in findings for ref in f.get('adr_refs', [])})
         result['comment'] += '\n\n' + render(findings, retained['summaries'], result['missing_acceptance'], retained['holds'])
+    # This class belongs to the deterministic shell merge, never a provider.
+    # Add it after fallback validation/retention so no model can waive it.
+    # It flags the human merge without changing verdicts, floors or fixes.
+    config_findings = configuration_findings(args.base, args.head)
+    if config_findings:
+        findings.extend(config_findings)
+        result['findings'] = findings
+        if metadata['mode'] == 'deterministic':
+            retained = json.loads((directory / 'retained.json').read_text())
+            result['comment'] = render(findings, retained['summaries'], retained['gaps'], retained['holds'])
+        else:
+            result['comment'] += '\n\n## Agent configuration changes\n\n### AGENT_CONFIG\n' + '\n'.join(
+                '- `' + f['file'] + ':0` — ' + f['msg'] for f in config_findings)
     metadata.update(result_sha256=module('evidence').digest(result),
                     missing_acceptance_count=len(result['missing_acceptance']), fixes_needed_count=len(result['fixes_needed']))
     (directory / 'merged.json').write_text(encoded(result) + '\n')
     (directory / 'normalized.json').write_text(encoded(findings) + '\n')
     if verifier:
-        prepare_verifier(directory, findings, args.base, args.head, args.contract, metadata)
+        prepare_verifier(directory, [f for f in findings if f['class'] != 'AGENT_CONFIG'], args.base, args.head, args.contract, metadata)
     metadata_path.write_text(encoded(metadata) + '\n')
     return 0
 

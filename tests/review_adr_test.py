@@ -376,7 +376,16 @@ os.execv(''' + repr(real_git) + ', [' + repr(real_git) + ', *sys.argv[1:]])\n')
             # no context, citation instruction or extended merger contract.
             prompt = prompt.replace(b'Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.\n\n', b'')
             prompt = prompt.replace(b',"holds":[]', b'')
-            self.assertEqual(normalize(prompt), (LEGACY / (phase + '.txt')).read_bytes())
+            # Codex concatenates system and user text. Freeze the user bytes;
+            # the trusted base context must be confined to the system prefix.
+            marker = (b'Merge these three specialist reviews' if phase == 'verdict'
+                      else b'You are a ' + phase.upper().encode() + b' specialist')
+            system, user = prompt.split(marker, 1)
+            legacy_user = (LEGACY / (phase + '.txt')).read_bytes().split(marker, 1)[1]
+            self.assertIn(b'## Trusted instructions from the pinned PR base', system)
+            self.assertIn(b'Project contracts from the pinned PR base', system)
+            self.assertNotIn(b'## Trusted instructions from the pinned PR base', user)
+            self.assertEqual(normalize(user), legacy_user)
         calls = [json.loads(line) for line in self.fixture.gh_log.read_text().splitlines()]
         comment = next(args[args.index('--body') + 1] for args in calls if args[:2] == ['pr', 'comment'])
         self.assertIn('Public review.', comment)

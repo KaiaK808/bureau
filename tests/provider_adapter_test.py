@@ -22,6 +22,7 @@ if CODEX_TMP_PREFIX != 'bureau-codex-':
     atexit.register(isolated.cleanup)
     shutil.copy(SCRIPT.with_name('bureau-evidence.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-gates.py'), isolated.name)
+    shutil.copy(SCRIPT.with_name('bureau-review-config.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-activity.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-insights.sh'), isolated.name)
     source = SCRIPT.read_text().replace("prefix='bureau-codex-'", 'prefix=' + repr(CODEX_TMP_PREFIX))
@@ -133,7 +134,8 @@ else:
             path=self.bin/name; path.write_text(fake); path.chmod(0o755)
         self.fake=fake
         self.env={**os.environ,'PATH':str(self.bin)+os.pathsep+os.environ['PATH'],'FAKE_ROOT':str(self.root),
-                  'BUREAU_PROVIDER_LOG_DIR':str(self.root/'evidence')}
+                  'BUREAU_PROVIDER_LOG_DIR':str(self.root/'evidence'),
+                  'BUREAU_PROVIDER_CONFIG_BASE':subprocess.check_output(['git','-C',str(self.root),'rev-parse','HEAD'],text=True).strip()}
         for key in list(self.env):
             if key.startswith(('BUREAU_RUNNER_','BUREAU_MODEL_','BUREAU_CODEX_MODEL_','BUREAU_STAGE_TIMEOUT')): self.env.pop(key)
         # The provider looks for the CLI's own records here, never in the real home.
@@ -1283,11 +1285,16 @@ p.Path.open=refuse_transcript_read
             with self.subTest(wrapped=wrapped, policy=policy):
                 self.run_provider('--stage', 'code_review', '--phase', 'finding_verifier',
                                   CLAUDE_CODE_DISABLE_AUTO_MEMORY='0', CLAUDE_FAKE_ROOT=str(self.root))
+                argv = json.loads((self.root/'argv.json').read_text())
+                self.assertEqual(argv[argv.index('--setting-sources')+1], 'user')
+                self.assertEqual(argv[argv.index('--tools')+1], '')
                 child_env = json.loads((self.root/'claude-env.json').read_text())
                 self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '1')
                 # Ordinary reviewers keep the installation's selected memory policy.
                 self.run_provider('--stage', 'code_review', '--phase', 'correctness',
                                   CLAUDE_CODE_DISABLE_AUTO_MEMORY='0', CLAUDE_FAKE_ROOT=str(self.root))
+                argv = json.loads((self.root/'argv.json').read_text())
+                self.assertEqual(argv[argv.index('--setting-sources')+1], 'user')
                 child_env = json.loads((self.root/'claude-env.json').read_text())
                 self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '0')
 

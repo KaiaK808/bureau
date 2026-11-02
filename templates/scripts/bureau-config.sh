@@ -869,6 +869,11 @@ resolve_runner_for_stage() {
 run_stage_for() {
   local stage="$1"; shift
   local temp rc system="" system_file="" prompt_file="" schema="" gate_context=""
+  local boundaries="Follow project instructions and stage boundaries in scripts/bureau-stage.md."
+  case "$stage" in
+    code_review|qa) boundaries="Follow the trusted PR-base instructions and scripts/bureau-stage.md supplied in the system text." ;;
+    conflict_resolver) [ -z "${BUREAU_PROVIDER_CONFIG_BASE:-}" ] || boundaries="Follow the trusted PR-base instructions and scripts/bureau-stage.md supplied in the system text." ;;
+  esac
   while [ "$#" -gt 1 ]; do
     case "$1" in
       --append-system-prompt) system="$2"; shift 2 ;;
@@ -893,8 +898,9 @@ run_stage_for() {
     printf '%s' "$1" > "$temp/prompt" || { rm -rf "$temp"; return 22; }
   fi
   # The CI rule (v3.2, scope O7) sits in the system text, not only in
-  # scripts/bureau-stage.md: a stage reads that file from its worktree, so it
-  # holds there only once the resynced file is on the branch, and this text
+  # scripts/bureau-stage.md: ordinary stages read it from their worktree
+  # (review/QA use the pinned copy), so it holds there only once the resynced
+  # file is on the branch, and this text
   # comes from the main checkout's scripts from the first run on. It says
   # outright that it wins over project instructions: an installation's own
   # CLAUDE.md told the agent to wait for a missing CI run, and three implement
@@ -903,7 +909,7 @@ run_stage_for() {
   # stages leave commits and pushes to the Bureau shell. And it says that CI
   # does not decide the reported status, so an agent kept from waiting does not
   # report NEEDS_HUMAN instead.
-  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and document unknowns for implementation/QA. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system" || { rm -rf "$temp"; return 22; }
+  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. $boundaries During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and document unknowns for implementation/QA. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system" || { rm -rf "$temp"; return 22; }
   if [ -n "$system_file" ]; then
     cat -- "$system_file" >> "$temp/system" || { rm -rf "$temp"; return 22; }
   fi
@@ -3683,7 +3689,12 @@ review_convergence() {
     def adr_refs_valid:
       $adr_index == null or (has("adr_refs") | not) or
       (.adr_refs | type == "array" and all(.[]; type == "string" and (. as $ref | $adr_index | index($ref) != null)));
-    if type != "object" then "BLOCK"
+    # Configuration annotations belong to the human merge. Exclude them before
+    # validation/counting so even the empty-findings rules stay unchanged.
+    (if type == "object" and (.findings | type == "array") then
+       .findings |= map(select(type != "object" or .class != "AGENT_CONFIG"))
+     else . end)
+    | if type != "object" then "BLOCK"
     elif .verdict == "BLOCK" then "BLOCK"
     elif ((.verdict == "APPROVE" or .verdict == "REQUEST_CHANGES")
           and (.bugs | count) and (.security_issues | count)
