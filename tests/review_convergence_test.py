@@ -155,7 +155,7 @@ class CountsTests(unittest.TestCase):
 
     def test_legacy_header_counts_a_completed_round(self):
         # Read the actual emitted header, rather than testing a duplicate literal.
-        header = re.search(r'post_comment "\$ISSUE" "(🔄 [^\n]+)', REVIEW.read_text())[1]
+        header = re.search(r'post_review_comment "\$ISSUE" "(🔄 [^\n]+)', REVIEW.read_text())[1]
         self.assertEqual(self.counts([header]), dict(cycles=1, rounds=1))
 
     def test_structured_rounds_take_priority_and_reuse_is_not_a_round(self):
@@ -172,6 +172,28 @@ class CountsTests(unittest.TestCase):
                          dict(cycles=0, rounds=3))
         with self.assertRaises(AssertionError):
             self.counts(['Code review round 3 started.\n<!-- bureau-review-round: round=oops -->'])
+
+    def test_run_footers_do_not_change_round_counts(self):
+        header = '🔄 Code Review: **Changes Requested**'
+        marker = '<!-- bureau-review-round: round=1 verdict=REQUEST_CHANGES -->'
+        body = header + '\n' + marker
+        expected = self.counts([body])
+        self.assertEqual(expected, dict(cycles=1, rounds=1))
+        # T-1 is at round 1; a pasted T-2 run cannot lend it round 7.
+        for ticket, run, number in (('T-1', 'a' * 32, 4), ('T-2', 'c' * 32, 7)):
+            footer = (f'<!-- bureau-review-run: run={run} stage=' + 'b' * 32
+                      + f' round={number} verdict=REQUEST_CHANGES -->')
+            with self.subTest(ticket=ticket, footer_round=number):
+                self.assertEqual(self.counts([body + '\n' + footer]), expected)
+                self.assertEqual(self.counts([body + '\n' + footer + ' \n\n']), expected)
+                self.assertEqual(self.counts(['Code review round 1 started.\n'
+                                             '<!-- bureau-review-round: round=1 -->',
+                                             header + '\n' + footer]), expected)
+                self.assertEqual(self.counts(['✅ Code review **APPROVED**.\n' + footer]),
+                                 dict(cycles=0, rounds=0))
+                for fence in ('```', '````', '~~~'):
+                    self.assertEqual(self.counts([header + '\n' + fence + '\n' + marker + '\n' + footer]),
+                                     expected)
 
     def test_marker_mentions_and_quotations_are_not_bureau_metadata(self):
         marker = '<!-- bureau-review-round: round=99 verdict=REQUEST_CHANGES -->'

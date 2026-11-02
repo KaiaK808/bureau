@@ -59,7 +59,7 @@ TOTAL_TIMEOUT=$(bureau_number BUREAU_IMPL_TOTAL_TIMEOUT "${BUREAU_IMPL_TOTAL_TIM
 # human comment posted mid-run is seen by the next pass.
 refresh_review_context() {
   local issue="$1"
-  local blob feedback pattern
+  local blob feedback pattern context=""
   # No fallback to '{}': a failed read would drop the reviewer's requested
   # fixes from the prompt without a word. The caller's `$(…)` ends the stage.
   blob=$(get_issue_branch_and_comments "$issue") || return $?
@@ -71,7 +71,20 @@ refresh_review_context() {
   feedback=$(printf '%s' "$blob" \
     | jq -r --arg re "$pattern" '[.comments[] | select(.body | test($re))][0].body // empty' 2>/dev/null || echo "")
   if [ -n "$feedback" ] && [ "${#feedback}" -gt 20 ]; then
+    # Only the selected review comment may be expanded. A human/QA note wins
+    # alone, with exactly the historical prompt bytes and no fallback warning.
+    case "${feedback%%$'\n'*}" in
+      '🔄 Code Review'*'Changes Requested'*|'## Code Review'*'Changes Requested'*|'Code Review'*'Changes Requested'*|'🚫 Code review **BLOCKED** — needs human review.'*)
+        if ! context=$(printf '%s' "$feedback" | ( bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review-context.py" \
+          --repo "$PWD" --issue "$issue" )); then
+          context=""
+          # Contain SIGPIPE too: a closed stderr must not abort this shell.
+          ( echo 'implement review context: fallback=linear-comment reason=reader-unavailable' >&2 ) || true
+        fi
+        ;;
+    esac
     printf '\n--- Feedback to address (PRIORITY) ---\n%s\nAddress ALL fixes before remaining tasks.\n--- End feedback ---\n' "$feedback"
+    [ -z "$context" ] || printf '\n%s\n' "$context"
   fi
 }
 
@@ -817,7 +830,7 @@ trap _push_on_exit EXIT
 # stops after $MAX_ITER turns.
 #
 # The full work instructions (spec / project / design / review contexts +
-# rules of engagement + JSON schema) go into --append-system-prompt; the
+# rules of engagement + JSON schema) go into --append-system-prompt-file; the
 # goal condition itself stays under the documented 4000-char limit and
 # describes only the verifiable end-state. parse_claude_json finds the last
 # fenced JSON block in the combined transcript — same parse path the iter
@@ -883,8 +896,9 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
 
   GOAL_CONDITION="every '[ ]' checkbox in $TASKS_FILE has become '[X]' AND a fenced JSON block at the end of the turn reports status=COMPLETE with tasks_done > 0. Report status=PARTIAL+commit-summary if you got real work done but couldn't finish; status=NEEDS_HUMAN if a task requires info not in the spec; status=STUCK if no progress is possible. Stop after $MAX_ITER turns regardless."
 
+  printf '%s' "$IMPL_SYSTEM" > "$IMPLEMENT_GATE_TMP/system.txt"
   set +e
-  RESULT=$(BUREAU_STAGE_TIMEOUT="$TOTAL_TIMEOUT" "${CLAUDE[@]}" --append-system-prompt "$IMPL_SYSTEM" "/goal $GOAL_CONDITION")
+  RESULT=$(BUREAU_STAGE_TIMEOUT="$TOTAL_TIMEOUT" "${CLAUDE[@]}" --append-system-prompt-file "$IMPLEMENT_GATE_TMP/system.txt" "/goal $GOAL_CONDITION")
   CLAUDE_EXIT=$?
   set -e
   [ "$CLAUDE_EXIT" != 130 ] || exit 130
@@ -1064,9 +1078,10 @@ At the end of your work, emit a single fenced json block so the shell can summar
 }
 \`\`\`"
 
-  set +e
   : > "$IMPLEMENT_GATE_CONTEXT"
-  RESULT=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-implement.schema.json" --gate-context "$IMPLEMENT_GATE_CONTEXT" "$PROMPT")
+  printf '%s' "$PROMPT" > "$IMPLEMENT_GATE_TMP/prompt.txt"
+  set +e
+  RESULT=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-implement.schema.json" --gate-context "$IMPLEMENT_GATE_CONTEXT" --prompt-file "$IMPLEMENT_GATE_TMP/prompt.txt")
   CLAUDE_EXIT=$?
   set -e
   if [ "$CLAUDE_EXIT" = 130 ]; then

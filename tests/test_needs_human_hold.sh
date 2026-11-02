@@ -233,6 +233,8 @@ echo "PASS the picker skips a held ticket, retries its label and releases it onc
 
 # --- the stage arms ------------------------------------------------------------------
 sandbox_init "EXP-300" "test-branch"
+sed -n -e '/^cap_review_comment() {/,/^}/p' -e '/^post_review_comment() {/,/^}/p' \
+  "$SCRIPTS/code-review-pipeline.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
 AHOLD="$SANDBOX/.git/bureau/needs-human-held/EXP-300"
 arm() {  # $1 = code block, $2 = label rc; sets ARM_OUT ARM_RC
   rm -f "$AHOLD"; : > "$SANDBOX/calls.log"

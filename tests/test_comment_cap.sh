@@ -202,7 +202,7 @@ review_long() {  # [nocap]
     python3 - "$SCRIPTS_DIR/code-review-pipeline.sh" <<'PY'
 import sys
 p = sys.argv[1]; src = open(p).read()
-old = 'REVIEW_COMMENT_BODY=$(bureau_cap_comment "$REVIEW_COMMENT") || REVIEW_COMMENT_BODY="$REVIEW_COMMENT"\n'
+old = 'REVIEW_COMMENT_BODY=$(cap_review_comment "$REVIEW_COMMENT")\n'
 assert src.count(old) == 1, 'PR comment cap not found'
 open(p, 'w').write(src.replace(old, 'REVIEW_COMMENT_BODY="$REVIEW_COMMENT"\n'))
 PY
@@ -229,5 +229,61 @@ review_long nocap
 [ "$(python3 -c 'import sys; print(len(sys.stdin.buffer.read().decode()))' < "$T/pr-comment")" -le 65536 ] && [ -s "$T/pr-comment" ] \
   && fail 'negative control: without the cap the review still posted an acceptable comment, so case 3 proves nothing'
 echo 'PASS negative control: without the cap the review posts no acceptable PR comment'
+
+# Cap failures keep the original body, including when a retry at the default
+# limit would succeed. Exercise the real review wrappers and Linear serializer.
+python3 - "$REPO_ROOT/templates/scripts" "$T" <<'PY'
+import json, os, pathlib, re, subprocess, sys
+scripts, scratch = map(pathlib.Path, sys.argv[1:])
+def function(name, source):
+    match = re.search(r'^' + name + r'\(\) \{\n.*?^\}', source, re.M | re.S)
+    assert match, name
+    return match[0]
+config = (scripts/'bureau-config.sh').read_text()
+review = (scripts/'code-review-pipeline.sh').read_text()
+helpers = 'BUREAU_COMMENT_MAX_BYTES=60000\n' + function('bureau_cap_comment', config)
+helpers += '\n' + function('bureau_cap_comment', config).replace('bureau_cap_comment()', 'real_cap()')
+helpers += '\n' + '\n'.join(function(name, review) for name in ('cap_review_comment', 'post_review_comment'))
+helpers += '\n' + function('post_comment', config)
+(scratch/'review-helpers.sh').write_text(helpers)
+body = 'Review fallback sentinel.\n' + 'A' * 62000 + '\nOriginal body ends here.'
+(scratch/'fallback-body').write_text(body)
+footer = '<!-- bureau-review-run: run=' + 'a'*32 + ' stage=' + 'b'*32 + ' round=1 verdict=REQUEST_CHANGES -->'
+for mode in ('capped', 'failed', 'reduced-only', 'no-room', 'legacy'):
+    result = subprocess.run(['/bin/bash', '-euo', 'pipefail', '-c', '''
+source "$SCRATCH/review-helpers.sh"
+case "$MODE" in
+  failed|legacy) bureau_cap_comment() { printf partial-cap-output; return 1; } ;;
+  reduced-only) bureau_cap_comment() {
+    [ "${2:-$BUREAU_COMMENT_MAX_BYTES}" = "$BUREAU_COMMENT_MAX_BYTES" ] || return 1
+    real_cap "$@"
+  } ;;
+  no-room) BUREAU_COMMENT_MAX_BYTES=${#REVIEW_RUN_FOOTER} ;;
+esac
+bureau_ticket_checkpoint() { :; }
+_resolve_issue_uuid() { echo fixture-id; }
+linear_raw() {
+  printf '%s' "$1" > "$SCRATCH/review-linear.json"
+  echo '{"data":{"commentCreate":{"success":true}}}'
+}
+body=$(cat "$SCRATCH/fallback-body")
+cap_review_comment "$body" > "$SCRATCH/review-pr-body"
+post_review_comment T-1 "$body"
+echo continued
+'''], env={**os.environ, 'SCRATCH':str(scratch), 'MODE':mode, 'BUREAU_DRY_RUN':'0',
+           'REVIEW_RUN_FOOTER':'' if mode == 'legacy' else footer},
+        capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0 and result.stdout.strip() == 'continued', (mode, result.stderr)
+    pr = (scratch/'review-pr-body').read_text()
+    linear = json.loads((scratch/'review-linear.json').read_text())['variables']['body']
+    assert pr == linear, mode + ': PR and Linear bodies differ'
+    if mode == 'capped':
+        assert len(pr.encode()) <= 60000 and pr.endswith('\n' + footer), 'normal footer reservation lost'
+        assert 'bytes cut from the middle' in pr, 'normal cap did not run'
+    else:
+        expected = body if mode == 'legacy' else body + '\n' + footer
+        assert pr == expected, mode + ': fallback changed the original body or final footer'
+    print('PASS review publication cap ' + mode + ': PR/Linear bodies and continuation')
+PY
 
 echo 'OK test_comment_cap'

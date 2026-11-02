@@ -829,13 +829,14 @@ class Store:
             record = attempt.get('review_round', {})
             if record.get('final_verdict') not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK'): return
             if record.get('merge') != merge: raise ValueError('foreign review merge')
-            phases = set(); specialists = {}
+            phases = set(); specialists = {}; successful = []
             for provider in record['provider_attempt_ids']:
                 receipt = read(self.receipt_path(run, provider), {})
                 if (receipt.get('run_id') == run and receipt.get('stage_attempt_id') == stage_attempt
                         and receipt.get('issue') == manifest['issue'] and receipt.get('stage') == 'code_review'
                         and receipt.get('normalized_exit') == 0):
                     phases.add(receipt.get('phase'))
+                    successful.append(receipt)
                     if merge['mode'] == 'deterministic' and receipt.get('phase') in REVIEW_PHASES - {'verdict'}:
                         role = receipt['phase']
                         if role in specialists: raise ValueError('ambiguous specialist receipts')
@@ -870,6 +871,14 @@ class Store:
         self.collect_dispositions(dict(run_id=run, stage_attempt_id=stage_attempt, issue=manifest['issue'],
                                        stage='code_review', phase='verdict', normalized_exit=0,
                                        review_min_severity=record['min_severity'], structured_result=result), merged=True)
+        # Keep prose out of evidence/v1. The ordinary provider logs retain the
+        # complete merged input for implement after REVIEW_TMP is removed. Its
+        # identity and digest must still match the current manifest on read.
+        original = next(r for r in successful if r.get('phase') in required and r.get('provider_exit') == 0)
+        directory = Path(original['provider_logs'])
+        if not directory.is_absolute() or not directory.is_dir(): raise ValueError('unavailable review logs')
+        atomic(directory / 'merged-review.json', dict(issue=manifest['issue'], run_id=run,
+               stage_attempt_id=stage_attempt, round=record['number'], min_severity=record['min_severity'], result=result))
 
     def _link_receipt(self, receipt, path):
         with self.guard():

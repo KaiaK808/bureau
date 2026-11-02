@@ -36,7 +36,7 @@ while True:
     if found <= callers:
         break
     callers |= found
-assert functions['run_stage_for'][2] == {'stage', 'temp', 'rc', 'system', 'schema', 'gate_context', 'args'}
+assert functions['run_stage_for'][2] == {'stage', 'temp', 'rc', 'system', 'system_file', 'prompt_file', 'schema', 'gate_context', 'args'}
 failures, count = [], 0
 with tempfile.TemporaryDirectory(prefix='bureau-test.shadowed-callers.') as directory:
     temp = Path(directory)

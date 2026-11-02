@@ -868,19 +868,30 @@ resolve_runner_for_stage() {
 # Execute a creative pass without shell command strings or ARG_MAX-sized argv.
 run_stage_for() {
   local stage="$1"; shift
-  local temp rc system="" schema="" gate_context=""
+  local temp rc system="" system_file="" prompt_file="" schema="" gate_context=""
   while [ "$#" -gt 1 ]; do
     case "$1" in
       --append-system-prompt) system="$2"; shift 2 ;;
+      --append-system-prompt-file) system_file="$2"; shift 2 ;;
+      --prompt-file) prompt_file="$2"; shift 2 ;;
       --schema) schema="$2"; shift 2 ;;
       --gate-context) gate_context="$2"; shift 2 ;;
       *) break ;;
     esac
   done
-  [ "$#" = 1 ] || { echo 'run_stage_for requires one prompt' >&2; return 22; }
+  if [ -n "$prompt_file" ]; then
+    [ "$#" = 0 ] && [ -r "$prompt_file" ] || { echo 'run_stage_for requires a readable prompt file' >&2; return 22; }
+  else
+    [ "$#" = 1 ] || { echo 'run_stage_for requires one prompt' >&2; return 22; }
+  fi
+  [ -z "$system_file" ] || [ -r "$system_file" ] || { echo 'run_stage_for requires a readable system file' >&2; return 22; }
   bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
   temp=$(mktemp -d)
-  printf '%s' "$1" > "$temp/prompt"
+  if [ -n "$prompt_file" ]; then
+    cat -- "$prompt_file" > "$temp/prompt" || { rm -rf "$temp"; return 22; }
+  else
+    printf '%s' "$1" > "$temp/prompt" || { rm -rf "$temp"; return 22; }
+  fi
   # The CI rule (v3.2, scope O7) sits in the system text, not only in
   # scripts/bureau-stage.md: a stage reads that file from its worktree, so it
   # holds there only once the resynced file is on the branch, and this text
@@ -892,7 +903,10 @@ run_stage_for() {
   # stages leave commits and pushes to the Bureau shell. And it says that CI
   # does not decide the reported status, so an agent kept from waiting does not
   # report NEEDS_HUMAN instead.
-  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and document unknowns for implementation/QA. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system"
+  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and document unknowns for implementation/QA. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system" || { rm -rf "$temp"; return 22; }
+  if [ -n "$system_file" ]; then
+    cat -- "$system_file" >> "$temp/system" || { rm -rf "$temp"; return 22; }
+  fi
   local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
   [ -n "$schema" ] && args+=(--schema "$schema")
   [ -n "$gate_context" ] && args+=(--gate-context "$gate_context")
@@ -3698,7 +3712,8 @@ review_convergence() {
 # Changes Requested comments retain their old meaning. Never rename that header:
 # implement also uses it to fetch feedback. Repeated markers (approval/gate reuse)
 # count once. Only Bureau review headers with a terminal, unquoted metadata line
-# qualify; prose examples and fenced/quoted markers are ignored. Malformed Bureau
+# qualify; prose examples and fenced/quoted markers are ignored. Run-binding
+# footers are ignored entirely. Malformed Bureau
 # metadata still fails closed through the caller's exit 27.
 review_counts() {
   jq -ce '
@@ -3718,7 +3733,8 @@ review_counts() {
         | ($body | split("\n")) as $lines
         | ($lines[0] | test("^(🔄 |## )?Code Review.*Changes Requested")) as $legacy
         | ($legacy or ($lines[0] | test("^(Code review round [1-9][0-9]* started\\.$|[✅⏳🛑🚫] Code review \\*\\*(APPROVED|BLOCKED)\\*\\*)"))) as $owned
-        | ($lines | prose_lines | map(select(test("\\S"))) | last // "") as $last
+        | ($lines | prose_lines | map(select(startswith("<!-- bureau-review-run:") | not))
+            | map(select(test("\\S"))) | last // "") as $last
         # Text after a closed comment makes it an inline example, even below a
         # Bureau header. An incomplete standalone metadata line still fails closed.
         | if $owned and ($last | startswith("<!-- bureau-review-round:") and (test("-->\\s*\\S") | not)) then

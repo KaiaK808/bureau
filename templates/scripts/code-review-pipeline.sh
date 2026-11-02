@@ -93,7 +93,8 @@ _review_join_specialists() {
 # comment, then the public object as a fenced JSON verdict. Local insights are
 # removed before every projection, including the legacy/raw fallback. A verdict block over
 # 16 KB drops its findings list and says how many it held (the comment names them),
-# so the block always survives the comment size cap. An answer without a verdict or
+# to keep the block small; other large fields can still make the cap split it.
+# An answer without a verdict or
 # without a comment string (an older schema, a fixture) uses the safe projection: the
 # comment's lines never reach the text-verdict fallback, which reads line starts and
 # finds none inside a JSON string. A cost-tracking envelope is unwrapped as
@@ -124,6 +125,38 @@ review_text_from_merger() {
     printf '%s' "$text"
   else
     printf '%s' "$projected"
+  fi
+}
+
+# Reserve the ASCII binding footer before capping; append it only afterwards.
+# Keep the uncapped body if capping fails. Body fence state is irrelevant.
+cap_review_comment() {
+  local body="$1" limit="$BUREAU_COMMENT_MAX_BYTES"
+  if [ -n "${REVIEW_RUN_FOOTER:-}" ]; then
+    limit=$((limit - ${#REVIEW_RUN_FOOTER} - 1))
+  fi
+  if [ "$limit" -gt 0 ]; then
+    body=$(bureau_cap_comment "$1" "$limit") || body="$1"
+  fi
+  printf '%s' "$body"
+  if [ -n "${REVIEW_RUN_FOOTER:-}" ]; then printf '\n%s' "$REVIEW_RUN_FOOTER"; fi
+}
+
+post_review_comment() {
+  local body="$2" rc
+  if [ -n "${REVIEW_RUN_FOOTER:-}" ]; then
+    body=$(cap_review_comment "$body") || return $?
+    # The body already reserves the footer, or uses the uncapped fallback.
+    # A second cap must not truncate either. Keep this override in a subshell.
+    (
+      bureau_cap_comment() { printf '%s' "$1"; }
+      post_comment "$1" "$body"
+    )
+    rc=$?
+    bureau_ticket_checkpoint "$1" latched
+    return "$rc"
+  else
+    post_comment "$1" "$body"
   fi
 }
 
@@ -835,6 +868,13 @@ $_text"
 done <<< "$(printf '%s\n' "$_decision" | tail -n +2)"
 
 REVIEW_ROUND_MARKER="<!-- bureau-review-round: round=$REVIEW_ROUND verdict=$VERDICT -->"
+# Bind published feedback to this exact stage attempt, including retries of a
+# round in the same run. cap_review_comment appends it as the last line after
+# capping. Legacy runs without evidence identities publish their ordinary comment.
+REVIEW_RUN_FOOTER=""
+if [[ "${BUREAU_RUN_ID:-}" =~ ^[a-f0-9]{32}$ ]] && [[ "${BUREAU_STAGE_ATTEMPT_ID:-}" =~ ^[a-f0-9]{32}$ ]]; then
+  REVIEW_RUN_FOOTER="<!-- bureau-review-run: run=$BUREAU_RUN_ID stage=$BUREAU_STAGE_ATTEMPT_ID round=$REVIEW_ROUND verdict=$VERDICT -->"
+fi
 MERGED_REVIEW="$MERGED_REVIEW
 
 **Review round**: $REVIEW_ROUND/$BUREAU_MAX_REVIEW_ROUNDS · **Severity floor**: $BUREAU_REVIEW_MIN_SEVERITY
@@ -878,7 +918,7 @@ if [ "$REUSED_GATE_WAIT" = 1 ] && [ "$VERDICT" = APPROVE ]; then
 else
   # GitHub refuses a comment over 65,536 characters, and the failure is swallowed here;
   # the cap keeps the header with the verdict the merge gate reads.
-  REVIEW_COMMENT_BODY=$(bureau_cap_comment "$REVIEW_COMMENT") || REVIEW_COMMENT_BODY="$REVIEW_COMMENT"
+  REVIEW_COMMENT_BODY=$(cap_review_comment "$REVIEW_COMMENT")
   bureau_ticket_checkpoint "$ISSUE"
   gh pr comment "$PR_NUMBER" --body "$REVIEW_COMMENT_BODY" || true
   # Bound stdout even if the publication cap used its legacy failure fallback.
@@ -896,7 +936,7 @@ case "$VERDICT" in
       # when there is no Merge state); merge-pipeline.sh refuses there. Moving
       # is not merging, so this holds under a requested stop too.
       echo "  APPROVED — routing to Merge for a manual merge (agents.merge_mode manual)."
-      post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual).
+      post_review_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual).
 $REVIEW_ROUND_MARKER"
       move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
       bureau_evidence wait-open "$ISSUE" --key approval --kind decision --reason 'Approved PR awaits manual merge' --actor maintainer --stage code_review --pr "$PR_NUMBER" --generation "$REVIEW_HEAD" || true
@@ -910,13 +950,13 @@ $REVIEW_ROUND_MARKER"
           --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
           --verdict APPROVE --review-policy "$REVIEW_POLICY" >/dev/null
       fi
-      post_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested.
+      post_review_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested.
 $REVIEW_ROUND_MARKER"
       bureau_acceptance_brief "$ISSUE" "$BRANCH" --pr "$PR_NUMBER" --head "$REVIEW_HEAD" --url "$PR_URL" --base "$REVIEW_BASE" --verdict "$VERDICT" --review-head "$REVIEW_HEAD" || true
       echo "Review complete; stopped before merge."
       exit 20
     elif agent_enabled "merge" && [ -n "${BUREAU_STATE_MERGE:-}" ]; then
-      post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaiting merge gate.
+      post_review_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaiting merge gate.
 $REVIEW_ROUND_MARKER"
       move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
       bureau_evidence wait-open "$ISSUE" --key merge-queue --kind dependency --reason 'Approved PR awaits the merge worker' --actor merge-worker --stage merge || true
@@ -968,7 +1008,7 @@ $REVIEW_ROUND_MARKER"
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
           fi
           if [ "$REUSED_GATE_WAIT" != 1 ]; then
-            post_comment "$ISSUE" "⏳ Code review **APPROVED**. PR #$PR_NUMBER is not merged yet: its merge gate is not decided.
+            post_review_comment "$ISSUE" "⏳ Code review **APPROVED**. PR #$PR_NUMBER is not merged yet: its merge gate is not decided.
 
 ${GATE_LINES:-- (the merge stage left no gate lines)}
 
@@ -995,7 +1035,7 @@ $REVIEW_ROUND_MARKER" || true
             log_escalation "$ISSUE" "code-review" "${REVIEW_CYCLE_COUNT:-0}" \
               "Merge gate blocked after APPROVE" "$PR_NUMBER" "$BRANCH"
           fi
-          post_comment "$ISSUE" "🛑 Code review **APPROVED**, but the merge gate is blocked: PR #$PR_NUMBER was not merged. Needs human.
+          post_review_comment "$ISSUE" "🛑 Code review **APPROVED**, but the merge gate is blocked: PR #$PR_NUMBER was not merged. Needs human.
 
 ${GATE_LINES:-- (the merge stage left no gate lines)}
 
@@ -1014,7 +1054,7 @@ $REVIEW_ROUND_MARKER"
     ;;
   REQUEST_CHANGES)
     echo "  Changes requested — moving back to Build"
-    post_comment "$ISSUE" "🔄 Code Review: **Changes Requested** (cycle ${REVIEW_CYCLE_COUNT:-0}/$MAX_REVIEW_CYCLES)
+    post_review_comment "$ISSUE" "🔄 Code Review: **Changes Requested** (cycle ${REVIEW_CYCLE_COUNT:-0}/$MAX_REVIEW_CYCLES)
 
 $MERGED_REVIEW"
     move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
@@ -1029,7 +1069,7 @@ $MERGED_REVIEW"
         "${ESCALATION_REASON:-Code reviewer returned BLOCK verdict}" \
         "$PR_NUMBER" "$BRANCH"
     fi
-    post_comment "$ISSUE" "🚫 Code review **BLOCKED** — needs human review.
+    post_review_comment "$ISSUE" "🚫 Code review **BLOCKED** — needs human review.
 
 $MERGED_REVIEW"
     NEXT_STATE="Build Review (needs-human)"
