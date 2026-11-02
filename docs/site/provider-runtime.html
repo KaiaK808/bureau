@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="163ad16d113f757a9422123edee031dcb299ff7734f4bd6611788cf8e3767dc1">
+<meta name="bureau-source-sha256" content="ec422bb9e3d28a584ed0f467900aa7bd93cfcfbb5d9b85e6574488c33a81c783">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -327,6 +327,20 @@ without one shows the inherited directory as
 <code>configured: false</code>, not checked.</p>
 <h2 id="codex-implementation-sandbox-gate">Codex implementation sandbox
 gate</h2>
+<p>Opt-in <code>agents.providers.codex.gate_outside_sandbox</code>
+delegates the configured gate after each successful implementation pass
+and QA's final phase to the same outside runner, environment filter,
+teardown and execution evidence. The edit sandbox stays enabled; the
+brief permits focused tests and leaves the full gate to Bureau.
+Delegation binds the current provider receipt/result and HEAD without
+requiring an earlier sandbox failure. Its reservation uses that provider
+attempt as its source, so repeated reads reuse a result while another
+pass at the same HEAD gets its own check. Implementation receives the
+previous outside log in its next brief; QA receives its initial shell
+output and records the final outside log. Ordinary red routing and
+independent blockers remain. Absent/false retains the recovery flow
+below. See <a href="configuration.html">configuration</a> and <a
+href="../adr/0013-codex-gate-delegation.md">ADR 0013</a>.</p>
 <p>Codex may abort or fail a configured gate inside its sandbox even
 when it passes outside. For these holds, report <code>NEEDS_HUMAN</code>
 with an exhaustive <code>notes.needs_human</code> array: each gate entry

@@ -18,6 +18,7 @@ Options considered reconstruct alternatives from the present implementation and 
 | [0010](0010-bounded-conflict-resolution.md) | Five fixed conflict rules and explicit escalation | accepted (derived) | Bounded mechanical resolution and stage-specific human recovery. |
 | [0011](0011-independent-provider-review.md) | Independent review with optional Codex review of Claude builds | accepted (derived) | Independent specialist calls and deterministic verdict floors. |
 | [0012](0012-human-boundary-briefs-and-local-insights.md) | Metadata briefs at human boundaries and local advisory insights | proposed (v3.5, PR #82) | Projected handoffs and a bounded local prose exception. |
+| [0013](0013-codex-gate-delegation.md) | Optional Codex gate delegation to Bureau | accepted (derived) | Opt-in full gates outside the inner sandbox, using existing receipts and teardown; current working tree. |
 
 Use [0000-template.md](0000-template.md) for a new record and retain the section order. Every Decision paragraph needs a source listed in Sources. Evidence must name existing repository tests or CI checks and describe actual coverage. Write one physical line per paragraph; do not copy private names, addresses or ticket quotations. The explicitly required Decided by field is the maintainer attribution.
 

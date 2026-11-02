@@ -119,6 +119,74 @@ assert '\n\n'+line+'\n\nSANDBOX_GATE:' in text, 'the decision must precede the c
 PY
 }
 
+outside_setup() {
+  setup codex "${1:-0}" 'Coverage checked; Bureau owns the full gate'
+  unset FAKE_GATE_MODE
+  jq '.agents.providers.codex.gate_outside_sandbox = true' "$BUREAU_CONFIG" > "$SANDBOX/logs/config.json"
+  mv "$SANDBOX/logs/config.json" "$BUREAU_CONFIG"
+  jq '.status="GREEN"' "$FAKE_CLAUDE_FIXTURES" > "$SANDBOX/logs/green.json"
+  mv "$SANDBOX/logs/green.json" "$FAKE_CLAUDE_FIXTURES"
+}
+
+test_delegated_qa_missing_context_fails_closed() {
+  outside_setup
+  # Simulate the best-effort context write being lost after a successful pass.
+  python3 - "$SCRIPTS_DIR/bureau-provider.py" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]); text = path.read_text()
+write = "        e.observe(e.atomic, Path(options['gate_context']), {**identity, 'receipt':str(path)})\n"
+assert text.count(write) == 1
+path.write_text(text.replace(write, "        pass  # No context file from this successful provider pass.\n"))
+PY
+  run_pipeline qa-pipeline.sh "$BUREAU_STUB_PICKED_ISSUE"
+  assert_eq 0 "$LAST_RC" 'missing context keeps ordinary QA rework exit'
+  assert_eq 1 "$(test_runs)" 'missing context never runs the legacy final gate'
+  assert_calls_include 'move_issue.*state-build$' 'missing context returns to Build'
+  assert_calls_exclude 'move_issue.*state-build-review' 'missing context never routes GREEN'
+  assert_file_contains 'Do not run the full test gate yourself' "$SANDBOX/logs/prompt.log" 'delegated provider ran'
+  teardown
+}
+
+test_delegated_qa_skipped_provider_uses_legacy_gate() {
+  outside_setup
+  git -C "$SANDBOX" rm -q specs/001-test-branch/tasks.md
+  git -C "$SANDBOX" commit -qm 'test: no task coverage required'
+  git -C "$SANDBOX" push -q origin HEAD
+  run_pipeline qa-pipeline.sh "$BUREAU_STUB_PICKED_ISSUE"
+  assert_green
+  if [ -f "$SANDBOX/logs/prompt.log" ]; then echo 'FAIL: QA should skip the provider without tasks' >&2; exit 1; fi
+  teardown
+}
+
+test_delegated_qa_missing_context_fails_closed
+test_delegated_qa_skipped_provider_uses_legacy_gate
+
+outside_setup
+run_pipeline qa-pipeline.sh TEAM-123
+assert_green
+assert_file_contains 'Do not run the full test gate yourself' "$SANDBOX/logs/prompt.log" 'delegated QA brief'
+if grep -q 'Re-run the test command after each change' "$SANDBOX/logs/prompt.log"; then echo 'FAIL: contradictory delegated QA brief' >&2; exit 1; fi
+assert_file_contains 'Outside gate log:.*logs/outside-gates/' "$(qa_log_path)" 'delegated QA receipt log'
+teardown
+
+outside_setup 1
+run_pipeline qa-pipeline.sh TEAM-123
+assert_eq 0 "$LAST_RC" 'delegated red keeps ordinary QA rework exit'
+assert_eq 3 "$(test_runs)" 'delegated QA initial retry and one final run'
+assert_calls_include 'move_issue.*state-build$' 'delegated QA red returns to Build'
+assert_calls_exclude 'move_issue.*state-build-review' 'delegated QA red never hands off'
+teardown
+
+outside_setup
+jq '.status="NEEDS_HUMAN" | .blockers=[{kind:"product",command:"",reason:"A product decision is missing"}]' \
+  "$FAKE_CLAUDE_FIXTURES" > "$SANDBOX/logs/held.json"
+mv "$SANDBOX/logs/held.json" "$FAKE_CLAUDE_FIXTURES"
+run_pipeline qa-pipeline.sh TEAM-123
+assert_halted
+assert_eq 2 "$(test_runs)" 'delegated green cannot clear an independent blocker'
+teardown
+
 setup
 run_pipeline qa-pipeline.sh TEAM-123
 assert_green

@@ -865,7 +865,7 @@ LESSONS_CONTEXT=$(build_lessons_context implement "$SPEC_DIR_MATCH")
 # tests that fail only for that reason with the SANDBOX_GATE: prefix, so the
 # shell gate after the loop can decide (codex_sandbox_gate_only). A Claude run
 # gets no note: its prompt stays as it was, byte for byte.
-if [ "$(resolve_runner_for_stage implement)" = codex ]; then
+if [ "$(resolve_runner_for_stage implement)" = codex ] && ! codex_gate_outside_enabled implement; then
   SANDBOX_NOTE="Sandbox: this stage runs inside the Codex sandbox, where binding or listening on a socket, network access and the per-user temp directory can be denied. A test that fails only for such a reason (for example PermissionError: [Errno 1] Operation not permitted on bind or listen) is not a code failure. Never change, skip or deselect a test to get around the sandbox. When such failures are the only thing keeping a task open, finish every other task, then report status NEEDS_HUMAN with one notes.needs_human entry per affected task whose reason begins with SANDBOX_GATE: and names the failing tests and the denied operation. After your turn the shell runs repo.test_command outside the sandbox: if it passes, the stage continues as COMPLETE; if it fails, the ticket halts for a human. Any other needs-human reason must not begin with SANDBOX_GATE:."
   SANDBOX_NOTE+=" For a failed or aborted configured gate, report each affected notes.needs_human entry with kind gate and command equal to the exact configured repo.test_command; reason is free text, with no required prefix. Include every independent blocker with kind product, security or human and an empty command. Only actual Codex command executions at the current HEAD qualify; a reference alone is no evidence. Do not label a product, security or decision blocker as a gate. Run the configured command unchanged from the repository root."
   NEGATIVE_CONSTRAINTS+=$'\n\n'"$SANDBOX_NOTE"
@@ -884,6 +884,7 @@ i=0
 CLAUDE_EXIT=0
 TIMED_OUT_AFTER=0
 IMPL_RUNNER=$(resolve_runner_for_stage implement)
+IMPLEMENT_GATE_FEEDBACK=""
 
 # agents.implement.push_each_iteration. true (the default): the branch is
 # pushed after every iteration and after the /goal run, as it always was.
@@ -1180,7 +1181,8 @@ $LESSONS_CONTEXT}
 $PROJECT_CONTEXT
 $DESIGN_CONTEXT
 $REVIEW_CONTEXT
-$TIMEOUT_NOTE
+$TIMEOUT_NOTE${IMPLEMENT_GATE_FEEDBACK:+
+$IMPLEMENT_GATE_FEEDBACK}
 
 Parent issue: $ISSUE — $ISSUE_TITLE
 $ISSUE_DESC
@@ -1286,6 +1288,23 @@ At the end of your work, emit a single fenced json block so the shell can summar
   FIXED_REVIEW=$(parse_claude_json "$RESULT" '.fixed_review_items // [] | length')
   [[ "$FIXED_REVIEW" =~ ^[0-9]+$ ]] || FIXED_REVIEW=0
   TASKS_DONE_TOTAL=$(( TASKS_DONE_TOTAL + TASKS_DONE ))
+
+  if [ "$CLAUDE_EXIT" = 0 ] && codex_gate_outside_enabled implement; then
+    OUTSIDE_RC=0
+    OUTSIDE_GATE=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" codex_gate_check implement "$RESULT" "$IMPLEMENT_GATE_CONTEXT") || OUTSIDE_RC=$?
+    case "$OUTSIDE_RC" in
+      25|124|130) printf '%s\n' "$OUTSIDE_GATE" >&2; exit "$OUTSIDE_RC" ;;
+    esac
+    bureau_ticket_checkpoint "$ISSUE"
+    [ "$OUTSIDE_RC" = 0 ] || exit 14
+    IMPLEMENT_GATE_FEEDBACK="Bureau configured gate outside the Codex sandbox: $(printf '%s' "$OUTSIDE_GATE" | jq -r '.reason')."
+    while IFS= read -r gate_log; do
+      [ -n "$gate_log" ] || continue
+      IMPLEMENT_GATE_FEEDBACK+=$'\n'"Outside gate log: $gate_log"$'\n'"$(tail -n 80 "$gate_log")"
+    done < <(printf '%s' "$OUTSIDE_GATE" | jq -r '.logs[]?')
+    echo "  $IMPLEMENT_GATE_FEEDBACK"
+    ITER_LOG+="  $IMPLEMENT_GATE_FEEDBACK"$'\n'
+  fi
 
   LINE="iter $i: status=$STATUS tasks_done=$TASKS_DONE commits=$COMMITS_THIS_ITER"
   [ "$CLAUDE_EXIT" = 124 ] && LINE+=" (timed out after ${THIS_TIMEOUT}s)"
@@ -1565,7 +1584,18 @@ if [ "$STATUS" = "COMPLETE" ] && [ "$SANDBOX_GATE_PENDING" != 1 ] && [ "$(resolv
   TEST_COMMAND=$(bureau_get '.repo.test_command // empty')
   [ -n "$TEST_COMMAND" ] || { echo 'Codex completion needs repo.test_command for independent verification.' >&2; exit 24; }
   # Branch code: without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).
-  bureau_untrusted_env bash --noprofile --norc -c "$TEST_COMMAND" || exit 14
+  if codex_gate_outside_enabled implement; then
+    # Authenticate the pre-hook pass; reuse its gate only at an unchanged HEAD.
+    # Hook commits get a new reservation and execution over the final state.
+    OUTSIDE_RC=0
+    OUTSIDE_GATE=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" codex_gate_check implement "$RESULT" "$IMPLEMENT_GATE_CONTEXT" "$HEAD_BEFORE_HOOK") || OUTSIDE_RC=$?
+    case "$OUTSIDE_RC" in
+      25|124|130) printf '%s\n' "$OUTSIDE_GATE" >&2; exit "$OUTSIDE_RC" ;;
+    esac
+    [ "$OUTSIDE_RC" = 0 ] && [ "$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green // false')" = true ] || exit 14
+  else
+    bureau_untrusted_env bash --noprofile --norc -c "$TEST_COMMAND" || exit 14
+  fi
 fi
 
 PR_URL=""

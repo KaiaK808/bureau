@@ -330,14 +330,15 @@ def publication_shape(value):
     if value['recorded_at'] is None: raise ValueError('missing publication time')
 
 
-def verify_publication(repo, before, after):
+def verify_publication(repo, before, after, allow_ancestor=False):
     """Read Git metadata transiently; never retain the commit message."""
     if not head(before) or not head(after) or before == after: return False
     def git(*args):
         return subprocess.check_output(['git', '--no-replace-objects', '-C', str(repo), *args],
                                        text=True, stderr=subprocess.DEVNULL).strip()
     try:
-        return (git('rev-parse', '--verify', 'HEAD') == after
+        return ((git('rev-parse', '--verify', 'HEAD') == after
+                 or allow_ancestor and git('merge-base', '--is-ancestor', after, 'HEAD') == '')
                 and git('rev-list', '--parents', '-n', '1', after).split() == [after, before]
                 and git('log', '-1', '--format=%(trailers:key=Bureau-Generated,valueonly)', after) == 'true')
     except (OSError, ValueError, subprocess.SubprocessError): return False
@@ -865,7 +866,7 @@ class Store:
             publications.append(record); self._save_manifest(value)
             return record
 
-    def _publication_matches(self, identity, stage, repo, before, after, receipt):
+    def _publication_matches(self, identity, stage, repo, before, after, receipt, allow_ancestor=False):
         if repo is None: return False
         with self.guard():
             value = self._manifest(identity['run_id'])
@@ -878,9 +879,9 @@ class Store:
                     and matches[0]['pre_head'] == before and matches[0]['head'] == after
                     and type(receipt.get('ended_at')) in (int, float)
                     and receipt['ended_at'] <= matches[0]['recorded_at'] <= self.clock()
-                    and verify_publication(repo, before, after))
+                    and verify_publication(repo, before, after, allow_ancestor=allow_ancestor))
 
-    def match_gate_receipt(self, identity, stage, checked_head, result, repo=None):
+    def match_gate_receipt(self, identity, stage, checked_head, result, repo=None, allow_ancestor=False):
         # Reconcile digests/identities, never retained logs or result prose.
         value = read(self.receipt_path(identity['run_id'], identity['provider_attempt_id']), {})
         keys = ('run_id', 'provider_attempt_id', 'stage_attempt_id', 'issue', 'stage', 'phase', 'schema_sha256')
@@ -898,17 +899,21 @@ class Store:
                 if manifest and any(p['provider_attempt_id'] == identity['provider_attempt_id']
                                     for a in manifest['attempts'] if a['attempt_id'] == identity['stage_attempt_id']
                                     for p in a.get('publications', [])): return None
-        if checked_head != receipt_head and not self._publication_matches(identity, stage, repo, receipt_head, checked_head, value):
+        if checked_head != receipt_head and not self._publication_matches(identity, stage, repo, receipt_head, checked_head, value, allow_ancestor=allow_ancestor):
             return None
         return value
 
-    def reserve_gate_rerun(self, run, attempt_id, checked_head, command, gate_id, sources):
+    def reserve_gate_rerun(self, run, attempt_id, checked_head, command, gate_id, sources, scope_sources=False):
         # Durable before spawn: an incomplete reservation never permits a retry.
         with self.guard():
             value = self._manifest(run)
             attempt = next(a for a in value['attempts'] if a['attempt_id'] == attempt_id)
             reruns = attempt.setdefault('gate_reruns', [])
-            old = next((a for a in reruns if a['head'] == checked_head and a['gate_id'] == gate_id), None)
+            # Opt-in delegated checks use their provider receipt as the source,
+            # so two passes at the same HEAD each get one check. Legacy reruns
+            # keep their existing per-stage/gate/HEAD reservation semantics.
+            old = next((a for a in reruns if a['head'] == checked_head and a['gate_id'] == gate_id
+                        and (not scope_sources or a['gate_attempt_ids'] == list(sources))), None)
             if old is not None: return False, old
             record = dict(attempt_id=uuid.uuid4().hex, head=checked_head, command_sha256=text_digest(command),
                           gate_id=gate_id, gate_attempt_ids=list(sources), started_at=self.clock(), result=None)

@@ -4589,3 +4589,13 @@ codex_gate_run() {
   printf '%s' "$2" | bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
     --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action run
 }
+
+codex_gate_outside_enabled() {
+  [ "$(resolve_runner_for_stage "$1")" = codex ] && [ "$(bureau_get '.agents.providers.codex.gate_outside_sandbox // false')" = true ]
+}
+
+codex_gate_check() {
+  bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
+  printf '%s' "$2" | bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
+    --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action check --gate-context "$3" --gate-source-head "${4:-}"
+}

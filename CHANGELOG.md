@@ -6,6 +6,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in `agents.providers.codex.gate_outside_sandbox` (default `false`): Bureau runs the configured gate after each successful Codex implementation pass and in QA's final phase through the existing filtered outside runner and receipts. Codex keeps its edit sandbox and may run focused tests; subsequent implementation briefs include outside results. Existing sandbox-only recovery and red-gate routing remain. **Upgrade:** compare installed drift, resync the complete scripts scope and restart drivers before enabling. No evidence schema or exit-code change; local fake-provider qualification does not establish live CLI or adopting-runner acceptance.
+
 ### Fixed
 
 - Post-implement launch creates its durable hold synchronously before forking or setting the launch marker. The runner adopts that same hold before checking cancellation and checks again immediately before starting the hook; confirmed pre-spawn cancellation exits 143. A clean or confirmed-stopped runner closes its handle and records completion; only the stage's completed join removes the hold, before checking holds or preserving the pre-hook commit. EXIT masks TERM, INT and HUP as its first cleanup command, using the traps saved when EXIT was installed for exact restoration, including unset and ignored traps. The drain stays bounded to fifteen seconds: an unfinished join retains the original hold and cancellation request, keeps leases and blocks publication, preserving 124/130/143 or otherwise exiting 25. A delayed runner cannot remove that hold after the stage exits. Failed hold creation prevents hook launch and uses the existing failure exits. **Upgrade:** compare installed drift, resync the complete scripts scope including `bureau-process.py` and restart drivers; no configuration or exit-code changes. Validated by synchronized Bash 3.2 launch/EXIT and early double-TERM replays, deadline/hold and trap-restoration checks, clean completion and failed hold creation; hosted Linux/macOS and live adopter validation remain pending.

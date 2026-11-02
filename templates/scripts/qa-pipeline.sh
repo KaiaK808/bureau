@@ -208,6 +208,7 @@ TEST_LOG_TAIL=$(tail -n 80 "$QA_TMP/test1.log" 2>/dev/null || echo "")
 echo ""
 echo "Phase 2/3: coverage / repair pass"
 
+QA_PROVIDER_RAN=false
 if [ "$GREEN_ON_FIRST_TRY" = true ] && [ -z "$TASKS_FILE" ]; then
   # Green tests, no tasks.md — nothing for Claude to do. Skip straight to routing.
   QA_RESULT="$(printf '```json\n{"status":"GREEN","tests_added":0,"tests_failing":0,"coverage_notes":"Tests passed on first run; no tasks.md to cross-check coverage."}\n```')"
@@ -229,12 +230,16 @@ else
 
   # Codex needs a sandbox diagnosis the shell can reconcile with Phase 3.
   # Claude gets no note: its prompt stays byte for byte as before.
-  if [ "$(resolve_runner_for_stage qa)" = codex ]; then
+  if [ "$(resolve_runner_for_stage qa)" = codex ] && ! codex_gate_outside_enabled qa; then
     SANDBOX_NOTE="Sandbox: this turn runs inside the Codex sandbox, where binding or listening on a socket, network access and the per-user temp directory can be denied. The test output above comes from the shell outside the sandbox. A test that fails inside the sandbox only for such a reason is not a test failure. Never change, skip or deselect a test to get around the sandbox. If the sandbox is the only thing keeping you from confirming the suite, report status NEEDS_HUMAN with coverage_notes beginning SANDBOX_GATE: and naming the tests and the denied operation. The shell's final run outside the sandbox then decides GREEN or RED. A correctness bug, or a harness that is broken outside the sandbox, stays NEEDS_HUMAN without the prefix."
     SANDBOX_NOTE+=" For a failed or aborted configured gate, you may instead report an exhaustive blockers array, each object with kind gate, command equal to the exact test command above and a free-text reason; coverage_notes needs no prefix. Include every independent blocker with kind product, security or human and an empty command. Only actual Codex command executions at the current HEAD qualify; a reference alone is no evidence. Run the configured command unchanged from the repository root. Never label product, security or decision blockers as gates."
     NEGATIVE_CONSTRAINTS_BODY+=$'\n\n'"$SANDBOX_NOTE"
   fi
 
+  QA_GATE_RULE="Re-run the test command after each change until the suite is green or three consecutive failures on the same test."
+  if codex_gate_outside_enabled qa; then QA_GATE_RULE="Leave the full test gate to Bureau after this pass; you may run focused tests."; fi
+
+  QA_PROVIDER_RAN=true
   QA_RESULT=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-qa.schema.json" --gate-context "$QA_GATE_CONTEXT" "You are the QA agent for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
 
 $SPEC_CONTEXT${LESSONS_CONTEXT:+
@@ -255,7 +260,7 @@ Rules:
 1. Read the test output and the source it references before editing anything.
 2. Any test you add or modify must exercise a concrete acceptance criterion from spec.md — not happy-path smoke only.
 3. Commit per logical change: '$ISSUE: tests — <what>'. One concern per commit.
-4. Re-run the test command after each change until the suite is green or three consecutive failures on the same test.
+4. ${QA_GATE_RULE:-Re-run the test command after each change until the suite is green or three consecutive failures on the same test.}
 
 Role-specific NEVER:
 - Edit source files to make a failing test pass. That's a bug — flag it NEEDS_HUMAN.
@@ -290,17 +295,25 @@ echo ""
 echo "Phase 3/3: final test run + route"
 QA_GATE_PLAN='{}'
 QA_GATE_RECONCILE=false
+QA_OUTSIDE_MODE=""
+OUTSIDE_RC=0
 if [ "$(resolve_runner_for_stage qa)" = codex ] \
    && QA_GATE_PLAN=$(codex_gate_plan qa "$QA_RESULT" "$QA_GATE_CONTEXT") \
    && [ "$(printf '%s' "$QA_GATE_PLAN" | jq -r '.eligible')" = true ]; then
   OUTSIDE_RC=0
   OUTSIDE_GATE=$(codex_gate_run qa "$QA_GATE_PLAN") || OUTSIDE_RC=$?
+  QA_OUTSIDE_MODE=reconcile
+elif codex_gate_outside_enabled qa && [ "$QA_PROVIDER_RAN" = true ]; then
+  OUTSIDE_GATE=$(codex_gate_check qa "$QA_RESULT" "$QA_GATE_CONTEXT") || OUTSIDE_RC=$?
+  QA_OUTSIDE_MODE=delegated
+fi
+if [ -n "$QA_OUTSIDE_MODE" ]; then
   case "$OUTSIDE_RC" in
     25|124|130) printf '%s\n' "$OUTSIDE_GATE" >&2; exit "$OUTSIDE_RC" ;;
   esac
   bureau_ticket_checkpoint "$ISSUE"
   [ "$OUTSIDE_RC" = 0 ] || OUTSIDE_GATE='{"green":false,"logs":[]}'
-  QA_GATE_RECONCILE=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.eligible // false')
+  if [ "$QA_OUTSIDE_MODE" = reconcile ]; then QA_GATE_RECONCILE=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.eligible // false'); fi
   FINAL_GREEN=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green // false')
   : > "$QA_TMP/test2.log"
   while IFS= read -r gate_log; do

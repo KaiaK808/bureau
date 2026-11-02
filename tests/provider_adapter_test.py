@@ -551,6 +551,110 @@ p.run=lose_forward
         self.assertEqual(proc.returncode,expected_code,proc.stdout+proc.stderr)
         return json.loads(proc.stdout)
 
+    def test_delegated_gate_default_off_preserves_prompt_and_options(self):
+        self.run_provider()
+        prompt=(self.root/'stdin.txt').read_bytes()
+        options=json.loads(self.run_provider('--describe').stdout)
+        self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':False}}}}))
+        self.run_provider()
+        self.assertEqual((self.root/'stdin.txt').read_bytes(),prompt)
+        self.assertEqual(json.loads(self.run_provider('--describe').stdout),options)
+        self.assertFalse(self.gate_action('check',{'status':'COMPLETE'})['eligible'])
+        for invalid in (None, 'true', 1):
+            self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':invalid}}}}))
+            self.run_provider('--check',code=22)
+
+    def test_delegated_gate_once_per_pass_with_filtered_receipt(self):
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'
+        value={**self.sandbox_result(), 'status':'COMPLETE', 'tasks_needs_human':0,
+               'notes':{'needs_human':[], 'skipped':[], 'deviations':[]}}
+        command="printf 'run\\n' >> outside-runs; python3 -c " + shlex.quote(
+            "import json,os; from pathlib import Path; Path('outside-env.json').write_text(json.dumps(dict(os.environ)))")
+        context=self.root/'context.json'
+        # Both passes share a stage and HEAD: the receipt source distinguishes
+        # them, while repeated reads of one pass reuse its reserved result.
+        store=p.evidence_store(self.root); head=p.current_head(self.root); run=uuid.uuid4().hex
+        store.begin_run(run,None,self.root,head)
+        owner=store.begin_attempt(run,None,'implement','implement',self.root,head)
+        # Clean Codex children keep CODEX_* fixture inputs, just like login.
+        (self.bin/'codex').write_text(self.fake.replace("os.environ.get('FAKE_ROOT') or os.environ['CLAUDE_FAKE_ROOT']", "os.environ['CODEX_FAKE_ROOT']")
+                                    .replace("os.environ.get('FINAL','final response')", "os.environ['CODEX_FINAL']"))
+        self.env.update(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=owner,
+                        LINEAR_API_KEY='fixture-linear-secret', TELEGRAM_BOT_TOKEN='fixture-telegram-secret',
+                        GH_TOKEN='fixture-github-secret', SECRET_COPY='prefix-fixture-linear-secret',
+                        OUTSIDE_EXTRA='default-only', CODEX_FAKE_ROOT=str(self.root), CODEX_FINAL=json.dumps(value))
+        for count,mode in enumerate(('default','clean'),1):
+            with self.subTest(mode=mode):
+                self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':True}}},
+                                                  'repo':{'test_command':command,'untrusted_env':mode}}))
+                self.run_provider('--schema',str(schema),'--gate-context',str(context),FINAL=json.dumps(value))
+                prompt=(self.root/'stdin.txt').read_text()
+                self.assertIn('Do not run the full test gate yourself',prompt)
+                argv=json.loads((self.root/'argv.json').read_text())
+                self.assertEqual(argv[argv.index('-s')+1],'workspace-write')
+                first=self.gate_action('check',value,context=context)
+                self.assertTrue(first['eligible'],first); self.assertTrue(first['green'],first)
+                self.assertEqual(first,self.gate_action('check',value,context=context))
+                self.assertEqual(len((self.root/'outside-runs').read_text().splitlines()),count)
+                environment=json.loads((self.root/'outside-env.json').read_text())
+                for key in ('LINEAR_API_KEY','TELEGRAM_BOT_TOKEN','GH_TOKEN','SECRET_COPY','BUREAU_CONFIG','BUREAU_ENV_FILE','BASH_ENV','ENV'):
+                    self.assertNotIn(key,environment)
+                self.assertEqual(environment.get('OUTSIDE_EXTRA'),'default-only' if mode=='default' else None)
+                manifest=json.loads(store.manifest_path(run).read_text())
+                records=manifest['attempts'][0]['gate_reruns']
+                self.assertEqual(len(records),count)
+                record=records[-1]['result']
+                self.assertEqual(records[-1]['gate_attempt_ids'],[json.loads(context.read_text())['provider_attempt_id']])
+                self.assertEqual((record['source'],record['environment'],record['normalized_exit']),('bureau.shell','outside',0))
+                self.assertTrue(store.valid_execution(record))
+                self.assertEqual(record['stage_log'],first['logs'][0])
+                self.assertFalse(self.gate_action('check',{**value,'prose_notes':'tampered'},context=context)['green'])
+                self.assertFalse(self.gate_action('check',value,context=context,BUREAU_STAGE_ATTEMPT_ID=uuid.uuid4().hex)['green'])
+
+    def test_delegated_gate_recovery_uses_current_pass_at_unchanged_head(self):
+        command="printf 'run\\n' >> outside-runs"
+        self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':True}}},
+                                          'repo':{'test_command':command}}))
+        store=p.evidence_store(self.root); head=p.current_head(self.root); run=uuid.uuid4().hex
+        store.begin_run(run,None,self.root,head)
+        owner=store.begin_attempt(run,None,'implement','implement',self.root,head)
+        self.env.update(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=owner)
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'; context=self.root/'context.json'
+        partial={**self.sandbox_result(), 'status':'PARTIAL', 'tasks_needs_human':0,
+                 'notes':{'needs_human':[], 'skipped':[], 'deviations':[]}}
+        self.run_provider('--schema',str(schema),'--gate-context',str(context),FINAL=json.dumps(partial))
+        first=self.gate_action('check',partial,context=context)
+        self.assertTrue(first['green'],first)
+        held=self.sandbox_result()
+        self.run_provider('--schema',str(schema),'--gate-context',str(context),FINAL=json.dumps(held),
+                          GATE_COMMAND=command,GATE_MODE='abort')
+        second=self.gate_action('check',held,context=context)
+        self.assertTrue(second['green'],second)
+        plan=self.gate_action('plan',held,context=context)
+        self.assertTrue(plan['eligible'],plan)
+        records=json.loads(store.manifest_path(run).read_text())['attempts'][0]['gate_reruns']
+        self.assertEqual([record['head'] for record in records],[head,head])
+        self.assertNotEqual(records[0]['gate_attempt_ids'],records[1]['gate_attempt_ids'])
+        recovered=self.gate_action('run',plan)
+        self.assertTrue(recovered['eligible'],recovered); self.assertTrue(recovered['green'],recovered)
+        self.assertEqual(recovered['logs'],second['logs'])
+        self.assertNotEqual(recovered['logs'],first['logs'])
+        self.assertEqual(recovered,self.gate_action('run',plan))
+        self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['run','run'])
+
+    def test_delegated_gate_red_is_recorded_without_changing_provider_result(self):
+        self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':True}}},
+                                          'repo':{'test_command':'echo outside-red; exit 1'}}))
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'; value=self.sandbox_result('A product decision is missing')
+        context=self.root/'context.json'
+        result=self.run_provider('--schema',str(schema),'--gate-context',str(context),FINAL=json.dumps(value))
+        self.assertEqual(json.loads(result.stdout),value)
+        gate=self.gate_action('check',value,context=context)
+        self.assertTrue(gate['eligible'],gate); self.assertFalse(gate['green'],gate)
+        identity=json.loads(context.read_text())
+        manifest=json.loads(p.evidence_store(self.root).manifest_path(identity['run_id']).read_text())
+        self.assertEqual(manifest['attempts'][0]['gate_reruns'][0]['result']['normalized_exit'],1)
+
     def test_machine_gate_outside_red_unknown_missing_and_mixed_blockers(self):
         schema=ROOT/'templates/scripts/bureau-implement.schema.json'
         command='echo outside-red; exit 1'

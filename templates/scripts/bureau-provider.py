@@ -95,6 +95,10 @@ def configuration(stage, config, env):
                    silence_timeout_seconds=silence, silence_child_timeout_seconds=silence_child,
                    headroom=runner == 'claude' and env.get('BUREAU_HEADROOM_WRAP', str(agents.get('headroom_wrap', False))).lower() in ('1', 'true'),
                    cost_tracking=env.get('BUREAU_COST_TRACKING', str(config.get('session', {}).get('cost_tracking', False))).lower() in ('1', 'true'))
+    if runner == 'codex':
+        outside = provider.get('gate_outside_sandbox', False)
+        if type(outside) is not bool: raise ValueError('agents.providers.codex.gate_outside_sandbox must be a boolean')
+        if outside: options['gate_outside_sandbox'] = True
     if runner == 'claude': options['config_dir'] = claude_config_dir(provider, env)
     return options
 
@@ -514,6 +518,8 @@ def _run(options, prompt, system, repo, evidence, schema=None):
             command += ['--output-schema', str(wire_path)]
         # Codex edits files; Git metadata writes remain the shell executor's job.
         prompt = system + '\n\n' + prompt + '\n\nDo not run git commit or git push. Leave changes for the Bureau shell executor. Mark completed tasks truthfully. If tests are denied by the environment, report the permission blocker separately from code failures.'
+        if options.get('gate_outside_sandbox') and options['stage'] in ('implement', 'qa'):
+            prompt += '\nBureau runs the configured full test gate outside the Codex sandbox after this pass and records its receipt and log as stage evidence. Do not run the full test gate yourself or ask to escape the sandbox for it; this takes precedence over instructions to rerun the suite. You may run focused tests. Report completed edits and every independent product, security or human blocker truthfully; pending Bureau validation alone is not a blocker. The next implementation brief includes the outside result and log; QA already includes the initial shell output. The outside gate decides the stage test outcome.'
     else:
         command = ['claude', '-p', '--output-format', 'stream-json' if options.get('silence_timeout_seconds') else 'json']
         if options.get('silence_timeout_seconds'): command += ['--verbose', '--include-partial-messages']
@@ -1028,7 +1034,7 @@ def gate_action(args, config, options, repo):
     if not isinstance(raw, dict):
         return json.dumps(dict(eligible=False, green=False, logs=[], reason='gate input must be one object'))
     context = raw.get('context') if args.gate_action == 'run' and isinstance(raw, dict) else None
-    if args.gate_action in ('plan', 'publish'):
+    if args.gate_action in ('plan', 'publish', 'check'):
         value = json.loads(raw['result']) if isinstance(raw, dict) and isinstance(raw.get('result'), str) else raw
         if args.gate_context and Path(args.gate_context).is_file() and Path(args.gate_context).stat().st_size:
             context = json.loads(Path(args.gate_context).read_text())
@@ -1056,14 +1062,30 @@ def gate_action(args, config, options, repo):
             if not attempt: attempt = store.begin_attempt(run_id, issue, args.stage, 'gate', repo, head)
             plan.update(run_id=run_id, stage_attempt_id=attempt)
         return json.dumps(plan)
-    # Re-check original evidence, config and HEAD immediately before running.
-    fresh = g.plan(store, raw.get('result'), args.stage, configured, head, raw.get('context'), repo)
-    if not fresh['eligible'] or raw.get('head') != head or raw.get('commands') != fresh.get('commands'):
-        return json.dumps(dict(eligible=False, green=False, reason='gate evidence changed before outside execution', logs=[]))
+    if args.gate_action == 'check':
+        # Delegation needs a successful exact-pass receipt, but no failed
+        # sandbox execution or gate-only hold. Independent blockers stay held.
+        # A committing hook advances the execution HEAD; authenticate the pass
+        # at its pre-hook HEAD while reserving the check at the final HEAD.
+        source_head = args.gate_source_head or head
+        if (not options.get('gate_outside_sandbox') or args.stage not in ('implement', 'qa') or not configured
+                or not isinstance(context, dict)
+                or store.match_gate_receipt(context, args.stage, source_head, value, repo, allow_ancestor=source_head != head) is None):
+            return json.dumps(dict(eligible=False, green=False, logs=[], reason='outside check needs an enabled configured gate and current pass receipt'))
+        fresh = g.plan(store, value, args.stage, configured, source_head, context, repo)
+        sources = fresh.get('gate_attempt_ids') if fresh['eligible'] else [context['provider_attempt_id']]
+        fresh = dict(commands=configured, gate_attempt_ids=sources)
+        raw = dict(run_id=context['run_id'], stage_attempt_id=context['stage_attempt_id'])
+    else:
+        # Re-check original evidence, config and HEAD immediately before running.
+        fresh = g.plan(store, raw.get('result'), args.stage, configured, head, raw.get('context'), repo)
+        if not fresh['eligible'] or raw.get('head') != head or raw.get('commands') != fresh.get('commands'):
+            return json.dumps(dict(eligible=False, green=False, reason='gate evidence changed before outside execution', logs=[]))
     run_id, owner = raw['run_id'], raw['stage_attempt_id']
     logs = []; green = True; verified = True
     for command in fresh['commands']:
-        reserved = e.observe(store.reserve_gate_rerun, run_id, owner, head, command, g.digest(command), fresh.get('gate_attempt_ids', []))
+        reserved = e.observe(store.reserve_gate_rerun, run_id, owner, head, command, g.digest(command), fresh.get('gate_attempt_ids', []),
+                             scope_sources=options.get('gate_outside_sandbox', False))
         if reserved is None:
             green = False; verified = False; continue
         claimed, reservation = reserved
@@ -1118,8 +1140,9 @@ def main():
     parser.add_argument('--config', default=os.environ.get('BUREAU_CONFIG', '.bureau.json'))
     parser.add_argument('--prompt-file'); parser.add_argument('--system-file'); parser.add_argument('--schema')
     parser.add_argument('--gate-context')
+    parser.add_argument('--gate-source-head')
     parser.add_argument('--cancel-file')
-    parser.add_argument('--gate-action', choices=('command', 'plan', 'run', 'publish'))
+    parser.add_argument('--gate-action', choices=('command', 'plan', 'run', 'publish', 'check'))
     parser.add_argument('--publication-before'); parser.add_argument('--publication-after')
     parser.add_argument('--check', action='store_true'); parser.add_argument('--describe', action='store_true')
     args = parser.parse_args(); evidence = None; options = {}
