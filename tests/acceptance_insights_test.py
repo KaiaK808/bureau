@@ -122,7 +122,13 @@ class AcceptanceInsightsTests(unittest.TestCase):
         gh.write_text('#!'+sys.executable+'''\nimport json, os, pathlib, sys
 root=pathlib.Path(os.environ['PR7_ROOT']); stored=root/'pr-comment'
 (root/'gh-env.json').write_text(json.dumps(dict(os.environ)))
-if sys.argv[2]=='view':
+if sys.argv[1]=='api':
+    with (root/'ci-queries').open('a') as out: out.write(json.dumps(sys.argv[1:])+'\\n')
+    if os.environ.get('PR7_CI_FAIL') == '1': sys.exit(1)
+    head=sys.argv[-1].split('/commits/')[1].split('/')[0]
+    print(json.dumps([{'check_runs':[{'head_sha':head,'status':'completed','conclusion':'success',
+                                   'name':'PRIVATE_CI_SENTINEL','output':{'text':'API_KEY=private-ci-value'}}]}]))
+elif sys.argv[2]=='view':
     print(json.dumps({'comments':[{'body':stored.read_text()}] if stored.exists() else []}))
 else:
     body=sys.stdin.read()
@@ -152,8 +158,22 @@ post_comment() { printf '%s\\n' "$2" >> "$PR7_ROOT/ticket-comment"; }
         path = self.store.put_receipt(self.receipt(observation=observation))
         self.assertIn(observation, (self.store.root/'insights.jsonl').read_text())
         wait = self.store.open_wait(self.issue, 'approval', 'decision', 'private reason', 'maintainer', 'code_review', 20)
-        with patch.dict(os.environ, HOME=str(self.home)):
-            brief = self.render(verdict='APPROVE', review_head=self.head)
+        self.write_config(session=dict(cost_tracking=True))
+        tasks = self.spec.with_name('tasks.md'); tasks.write_text('PRIVATE_TICKET_SENTINEL\n`specs/`\n')
+        changed = self.repo / 'docs/extra.md'; changed.parent.mkdir()
+        changed.write_text('PRIVATE_DIFF_SENTINEL\nAPI_KEY=private-diff-value\n')
+        self.git('add', 'specs', 'docs'); self.git('commit', '-qm', 'test: metadata projection')
+        self.head = self.git('rev-parse', 'HEAD')
+        cost = self.repo / 'cost'; cost.mkdir()
+        (cost / (self.issue + '.jsonl')).write_text(json.dumps(dict(issue=self.issue, stage='qa',
+            input_tokens=3, output_tokens=4, cost_usd=.01, raw='RAW_USAGE_SENTINEL', ticket='PRIVATE_TICKET_SENTINEL',
+            secret='API_KEY=private-cost-value')) + '\n')
+        # Keep the original receipt correlated after adding the privacy canaries.
+        path = self.store.put_receipt(self.receipt(observation=observation))
+        ci = json.dumps([dict(check_runs=[dict(head_sha=self.head, status='completed', conclusion='success',
+                        output=dict(text='PRIVATE_CI_SENTINEL API_KEY=private-ci-value'))])])
+        with patch.dict(os.environ, HOME=str(self.home), BUREAU_COST_DIR=str(cost)), patch.object(a, 'bounded', return_value=(0, ci)):
+            brief = self.render(verdict='APPROVE', review_head=self.head, ci=a.ci_status(self.repo, self.url, self.head))
         for private in ('file:', str(self.repo), str(self.repo.resolve()), str(self.home), os.environ['HOME'],
                         '$HOME', self.repo.name, self.home.name):
             self.assertNotIn(private, brief, 'brief leaked local identity or absolute path')
@@ -167,8 +187,260 @@ post_comment() { printf '%s\\n' "$2" >> "$PR7_ROOT/ticket-comment"; }
         self.assertIn('exit=0', brief); self.assertIn('REVIEW_HEAD=' + self.head, brief)
         self.assertIn(hashlib.sha256(self.raw.read_bytes()).hexdigest(), brief)
         self.assertIn('Final verdict: APPROVE', brief); self.assertIn('missing_acceptance: 0', brief)
-        for secret in ('RAW_GATE_SENTINEL', 'canary', 'PRIVATE_SPEC_SENTINEL', 'PRIVATE_REVIEW_SENTINEL', 'PRIVATE_COMMAND_SENTINEL', observation):
+        for section in ('**Stage verdicts**', 'CI status: success=1', 'Diff size:', 'Files outside declared scope:',
+                        'Review rounds used:', 'Tokens spent', 'Risk tier:'):
+            self.assertIn(section, brief)
+        for secret in ('RAW_GATE_SENTINEL', 'canary', 'PRIVATE_SPEC_SENTINEL', 'PRIVATE_REVIEW_SENTINEL', 'PRIVATE_COMMAND_SENTINEL', observation,
+                       'PRIVATE_TICKET_SENTINEL', 'PRIVATE_DIFF_SENTINEL', 'PRIVATE_CI_SENTINEL', 'RAW_USAGE_SENTINEL',
+                       'API_KEY=', 'private-diff-value', 'private-cost-value', 'private-ci-value', '@@ '):
             self.assertNotIn(secret, brief, 'brief privacy leaked raw source bytes')
+
+    def write_config(self, **config):
+        (self.repo / '.bureau.json').write_text(json.dumps(config))
+
+    def change_files(self, files):
+        self.git('reset', '--hard', self.base)
+        for name, content in files.items():
+            target = self.repo / name; target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content if isinstance(content, bytes) else content.encode())
+        self.git('add', '--', *files); self.git('commit', '-qm', 'test: packet fixture')
+        self.head = self.git('rev-parse', 'HEAD')
+
+    def test_packet_diff_counts_and_declared_inventory_at_head(self):
+        self.write_config(repo=dict(path_prefix_strip='project/'))
+        self.change_files({'change': 'two\nlines\n', 'image.bin': b'\0binary',
+                           'specs/001-brief/tasks.md': '`project/change` `specs/`\n'})
+        # The overlap gate's committed inventory wins over uncommitted task text.
+        self.spec.with_name('tasks.md').write_text('PRIVATE_TICKET_SENTINEL `image.bin`')
+        brief = self.render()
+        self.assertIn('Diff size: 3 files, 3 insertions, 0 deletions, 1 binary files', brief)
+        self.assertIn('Files outside declared scope: 1; `image.bin`', brief)
+        (self.repo/'change').write_text('replacement\n'); self.git('add', 'change')
+        self.git('commit', '-qm', 'test: count deletions'); self.head = self.git('rev-parse', 'HEAD')
+        size = a.diff_size(self.repo, self.base, self.head)
+        self.assertEqual((size['files'], size['insertions'], size['deletions'], size['binary']), (3, 2, 0, 1))
+        size = a.diff_size(self.repo, self.head, self.base)
+        self.assertEqual((size['insertions'], size['deletions']), (0, 2))
+
+    def test_outside_paths_are_bounded_and_unsafe_metadata_withheld(self):
+        files = {f'src/file-{i:02}.py':'pass\n' for i in range(22)}
+        files.update({'specs/001-brief/tasks.md':'`specs/`\n', 'src/API_KEY=private-value.py':'pass\n'})
+        self.change_files(files)
+        brief = self.render()
+        self.assertIn('Files outside declared scope: 23;', brief)
+        self.assertIn('2 additional paths', brief); self.assertIn('1 paths withheld', brief)
+        self.assertNotIn('file-20.py', brief); self.assertNotIn('private-value', brief)
+
+    def test_stage_attempt_results_are_pr_and_head_scoped(self):
+        ids = []
+        for stage, pr, head, code in (('implement', self.pr, self.head, 0), ('qa', self.pr, self.head, 14),
+                                      ('qa', self.pr, self.head, 0), ('qa', self.pr + 1, self.head, 0),
+                                      ('implement', self.pr, self.base, 14)):
+            attempt = self.store.begin_attempt(self.run, self.issue, stage, 'stage', self.repo, head)
+            self.store.gate(self.run, attempt, self.raw, head, head, 'fixture', code, pr=pr)
+            self.store.end_attempt(self.run, attempt, code, head)
+            ids.append(attempt)
+        self.completed_round(1, 'deterministic', 'BLOCK')
+        brief = self.render()
+        for attempt in ids[:3]: self.assertIn('attempt `' + attempt + '`', brief)
+        stage_section = brief.split('**Stage verdicts**')[1].split('**Test evidence**')[0]
+        for attempt in ids[3:]: self.assertNotIn(attempt, stage_section)
+        for expected in ('implement: ok; exit=0', 'qa: failed; exit=14', 'qa: ok; exit=0', 'code_review: BLOCK;', 'spec: missing.'):
+            self.assertIn(expected, stage_section)
+
+    def test_review_round_count_is_for_pr_across_heads_and_uses_cap(self):
+        self.completed_round(1, 'deterministic', 'REQUEST_CHANGES')
+        self.completed_round(2, 'deterministic', 'APPROVE', matching=False)
+        self.write_config(agents=dict(max_review_rounds=6))
+        self.assertIn('Review rounds used: 2 recorded for this PR; cap=6', self.render())
+        self.write_config(agents=dict(max_review_cycles=1))
+        self.assertIn('cap=2 (effective max_review_rounds)', self.render())
+        self.write_config(agents=dict(max_review_rounds='00006', max_review_cycles='01'))
+        self.assertIn('cap=6 (effective max_review_rounds)', self.render())
+
+    def test_cost_log_stage_and_total_usage_nulls_and_receipt_fallback(self):
+        self.write_config(session=dict(cost_tracking=True))
+        cost = self.repo / 'cost'; cost.mkdir(); log = cost / (self.issue + '.jsonl')
+        rows = [dict(issue=self.issue, stage=stage, input_tokens=inp, output_tokens=out, cost_usd=usd)
+                for stage, inp, out, usd in [('implement', 100, 20, .1), ('qa', 30, 5, .02), ('qa', 10, 2, .01)]]
+        log.write_text('\n'.join(json.dumps(row) for row in rows))
+        with patch.dict(os.environ, BUREAU_COST_DIR=str(cost)):
+            brief = self.render()
+            self.assertIn('legacy per-issue cost log fallback; PR/HEAD correlation unavailable', brief)
+            self.assertIn('implement: input=100, output=20, estimated cost=$0.100000', brief)
+            self.assertIn('qa: input=40, output=7, estimated cost=$0.030000', brief)
+            self.assertIn('total: input=140, output=27, estimated cost=$0.130000', brief)
+            rows[0]['cost_usd'] = None; log.write_text('\n'.join(json.dumps(row) for row in rows))
+            self.assertIn('total: input=140, output=27, estimated cost=missing', self.render())
+            log.unlink()
+            self.store.put_receipt(self.receipt(usage=dict(input_tokens=12, output_tokens=3, total_cost_usd=.04)))
+            brief = self.render()
+            self.assertIn('PR/HEAD receipts; one entry per provider attempt', brief)
+            self.assertIn('code_review: input=12, output=3, estimated cost=$0.040000', brief)
+            unmeasured = self.receipt(); self.store.put_receipt(unmeasured)
+            self.assertIn('total: input=missing, output=missing, estimated cost=missing; partial: 1 of 2 attempts measured', self.render())
+            log.write_text(json.dumps(dict(issue=self.issue, stage='code_review',
+                provider_attempt_id=unmeasured['provider_attempt_id'], input_tokens=5, output_tokens=2, cost_usd=.01)))
+            brief = self.render()
+            self.assertIn('legacy cost log fallback for 1 attempt', brief)
+            self.assertIn('total: input=17, output=5, estimated cost=$0.050000', brief)
+            self.write_config(session=dict(cost_tracking=False))
+            with patch.dict(os.environ, BUREAU_COST_TRACKING='0'):
+                self.assertIn('Tokens spent: missing (cost tracking off)', self.render())
+
+    def test_spending_includes_all_correlated_receipts_despite_implement_log(self):
+        self.write_config(session=dict(cost_tracking=True))
+        cost = self.repo / 'cost'; cost.mkdir()
+        (cost / (self.issue + '.jsonl')).write_text(json.dumps(dict(issue=self.issue, stage='implement',
+            input_tokens=100, output_tokens=20, cost_usd=.1)))
+        validation = self.validation_merge()
+        review = None
+        for stage, pr, head, inp, out, usd in (
+                ('implement', self.pr, self.base, 100, 20, .1), ('qa', self.pr, self.head, 40, 7, .03),
+                ('code_review', self.pr, validation, 12, 3, .04),
+                ('qa', self.pr + 1, self.head, 900, 900, 9), ('qa', self.pr, self.base, 900, 900, 9)):
+            attempt = self.store.begin_attempt(self.run, self.issue, stage, 'stage', self.repo, head)
+            self.store.gate(self.run, attempt, self.raw, head, head, 'fixture', 0, pr=pr)
+            receipt = self.receipt(stage=stage, stage_attempt_id=attempt, start_head=head, end_head=head,
+                usage=dict(input_tokens=inp, output_tokens=out, total_cost_usd=usd),
+                review_inputs=dict(head=self.head, base=self.base, validation_head=validation))
+            self.store.put_receipt(receipt)
+            # Implement's wrapper may commit after the provider receipt ends.
+            self.store.end_attempt(self.run, attempt, 0, self.head if stage == 'implement' else head)
+            if stage == 'code_review': review = receipt
+        # A repeated manifest link must not create another provider attempt.
+        manifest = self.store.manifest_path(self.run)
+        record = json.loads(manifest.read_text())
+        attempt = next(item for item in record['attempts'] if item['stage'] == 'implement')
+        attempt['receipts'] *= 2
+        manifest.write_text(json.dumps(record))
+        with patch.dict(os.environ, BUREAU_COST_DIR=str(cost)):
+            brief = self.render()
+            self.assertIn('PR/HEAD receipts; one entry per provider attempt', brief)
+            for expected in ('implement: input=100, output=20, estimated cost=$0.100000',
+                             'qa: input=40, output=7, estimated cost=$0.030000',
+                             'code_review: input=12, output=3, estimated cost=$0.040000',
+                             'total: input=152, output=30, estimated cost=$0.170000'):
+                self.assertIn(expected, brief)
+            self.assertNotIn('legacy cost log fallback', brief)
+            # An unmeasured review cannot disappear behind the implement log.
+            review.pop('usage'); self.store.put_receipt(review)
+            self.assertIn('total: input=missing, output=missing, estimated cost=missing; partial: 2 of 3 attempts measured', self.render())
+
+    def test_ci_counts_are_for_immutable_head_and_allowlist_only(self):
+        checks = [dict(head_sha=self.head, conclusion=value, status='completed', name='PRIVATE_CI_SENTINEL')
+                  for value in ('success', 'success', 'failure', 'skipped')]
+        checks.append(dict(head_sha=self.head, conclusion=None, status='in_progress'))
+        with patch.object(a, 'bounded', return_value=(0, json.dumps([dict(check_runs=checks)]))) as query:
+            ci = a.ci_status(self.repo, self.url, self.head)
+        self.assertEqual(ci, 'failure=1, pending=1, skipped=1, success=2')
+        self.assertIn('/commits/' + self.head + '/check-runs', query.call_args.args[0][-1])
+        self.assertIn('CI status: ' + ci, self.render(ci=ci))
+        self.assertNotIn('PRIVATE_CI_SENTINEL', self.render(ci=ci))
+        for code, output in ((1, 'PRIVATE_CI_SENTINEL'), (0, 'not json'),
+                             (0, json.dumps([dict(check_runs=[dict(head_sha=self.base, conclusion='success')])])),
+                             (0, json.dumps([dict(check_runs=[dict(head_sha=self.head, conclusion='PRIVATE_CI_SENTINEL')])]))):
+            with patch.object(a, 'bounded', return_value=(code, output)):
+                self.assertIsNone(a.ci_status(self.repo, self.url, self.head))
+        with patch.object(a, 'bounded', side_effect=OSError('unavailable')):
+            self.assertIsNone(a.ci_status(self.repo, self.url, self.head))
+
+    def test_ci_failure_still_publishes_once_and_freezes_unavailable(self):
+        self.cli_fixture(); self.cli(PR7_CI_FAIL='1')
+        for name in ('ticket-comment', 'pr-comment'):
+            self.assertIn('CI status: unavailable', (self.repo / name).read_text())
+        self.cli()
+        self.assertEqual(len((self.repo / 'ci-queries').read_text().splitlines()), 1)
+        for name in ('ticket-comment', 'pr-comment'):
+            self.assertEqual((self.repo / name).read_text().count('<!-- bureau-acceptance:'), 1)
+
+    def test_ci_collection_runs_outside_evidence_store_lock(self):
+        def query(*args, **kwargs):
+            with self.store.guard(): pass
+            return 0, json.dumps([dict(check_runs=[])])
+        def build():
+            with patch.object(a, 'bounded', side_effect=query):
+                return self.render(ci=a.ci_status(self.repo, self.url, self.head))
+        record = a.publish(self.store, self.issue, self.pr, self.head, build, lambda *_: True)
+        self.assertIn('CI status: 0 check runs', record['body'])
+
+    def test_workflow_is_high(self):
+        self.change_files({'.github/workflows/check.yml':'name: check\n'})
+        self.assertIn('Risk tier: high;', self.render(), 'workflow must be high risk')
+
+    def test_risk_tiers_and_facts(self):
+        cases = [({'docs/guide.md':'short\n'}, 'low'), ({'tests/test_feature.py':'pass\n'}, 'low'),
+                 ({'src/feature.py':'pass\n'}, 'normal'), ({'config/runtime.ini':'mode=safe\n'}, 'high'),
+                 ({'package.json':'{}\n', 'yarn.lock':'bump\n'}, 'high'), ({'go.sum':'bump\n'}, 'high'),
+                 ({'setup.py':'dependencies = []\n'}, 'high'), ({'.editorconfig':'root = true\n'}, 'high'),
+                 ({'src/large.py':'line\n' * 1000}, 'high'), ({'CLAUDE.md':'agent\n'}, 'high'),
+                 ({'nested/AGENTS.md':'agent\n'}, 'high'), ({'.claude/skill.md':'agent\n'}, 'high'),
+                 ({'AGENTS.override.md':'agent\n'}, 'high'),
+                 ({'.codex/instructions.md':'agent\n'}, 'high'), ({'.mcp.json':'{}\n'}, 'high'),
+                 ({'scripts/bureau-stage.md':'agent\n'}, 'high'), ({'.env':'KEY=value\n'}, 'high'),
+                 ({f'docs/page-{i}.md':'short\n' for i in range(6)}, 'normal'),
+                 ({'docs/big.md':'line\n' * 101}, 'normal'), ({'docs/picture.bin':b'\0binary'}, 'normal')]
+        for files, tier in cases:
+            with self.subTest(files=list(files)):
+                self.change_files(files); brief = self.render(verdict='APPROVE', review_head=self.head)
+                self.assertIn('Risk tier: ' + tier + ';', brief)
+                self.assertIn('Final verdict: APPROVE;', brief)
+                self.assertIn('changes no routing, holds, verdicts or merges', brief)
+                self.assertIn('changed lines', brief)
+        self.write_config(agents=dict(risk_tier=dict(sensitive_patterns=['docs/private/*'])))
+        self.change_files({'docs/private/guide.md':'short\n'})
+        self.assertIn('Risk tier: high;', self.render())
+
+    def test_invalid_risk_configuration_exits_with_config_error(self):
+        values = [None, False, [], {'unknown':1}, {'low_max_files':True}, {'low_max_files':-1},
+                  {'low_max_changed_lines':'10'}, {'high_min_changed_lines':1.5},
+                  {'low_max_changed_lines':1000}, {'docs_patterns':'docs/*'},
+                  {'sensitive_patterns':[42]}, {'test_patterns':['../tests/*']}, {'docs_patterns':['bad\npattern']}]
+        for value in values:
+            with self.subTest(value=value):
+                self.write_config(agents=dict(risk_tier=value))
+                result = subprocess.run(['bash', '-c', 'source "$1"; echo unexpected', 'fixture',
+                                         str(PROGRAM.with_name('bureau-config.sh'))], cwd=self.repo,
+                                        env={**os.environ, 'BUREAU_CONFIG':str(self.repo / '.bureau.json')},
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 24, result.stdout + result.stderr)
+                self.assertIn('invalid agents.risk_tier configuration', result.stderr)
+                self.assertNotIn('unexpected', result.stdout)
+
+    def test_risk_configuration_preserves_verdict_and_merge_routing(self):
+        # Exercise the real decision/config helpers and manual pipeline entry;
+        # no provider, Linear or GitHub command can authorize a merge here.
+        script = '''source "$1"
+for verdict in APPROVE REQUEST_CHANGES BLOCK; do
+  decide_review_verdict "$verdict" 0 0 true 0 3 1 4
+done
+printf 'mode=%s\\n' "$BUREAU_MERGE_MODE"
+for stage in merge rebase; do
+  if agent_enabled "$stage"; then printf '%s=enabled\\n' "$stage"; else printf '%s=disabled\\n' "$stage"; fi
+done
+'''
+        for mode in ('auto', 'manual'):
+            results = []
+            for risk in (None, {}, dict(sensitive_patterns=['src/*'], low_max_files=0)):
+                agents = dict(merge_mode=mode, merge=True, rebase=True)
+                if risk is not None: agents['risk_tier'] = risk
+                self.write_config(agents=agents)
+                env = {**os.environ, 'BUREAU_CONFIG':str(self.repo / '.bureau.json')}
+                result = subprocess.run(['bash', '-c', script, 'fixture', str(PROGRAM.with_name('bureau-config.sh'))],
+                                        cwd=self.repo, env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.splitlines()[:3], ['APPROVE', 'REQUEST_CHANGES', 'BLOCK'])
+                self.assertIn('mode=' + mode, result.stdout)
+                for stage in ('merge', 'rebase'):
+                    self.assertIn(stage + ('=disabled' if mode == 'manual' else '=enabled'), result.stdout)
+                results.append(result.stdout)
+                if mode == 'manual':
+                    for stage in ('merge', 'rebase'):
+                        result = subprocess.run(['bash', str(PROGRAM.with_name(stage + '-pipeline.sh'))],
+                                                cwd=self.repo, env=env, capture_output=True, text=True, timeout=10)
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertIn('manual', result.stdout)
+            self.assertEqual(results, [results[0]] * 3)
 
     def validation_merge(self):
         self.git('checkout', '-qb', 'advanced-base', self.base)
@@ -227,8 +499,13 @@ post_comment() { printf '%s\\n' "$2" >> "$PR7_ROOT/ticket-comment"; }
     def test_absent_evidence_is_explicit(self):
         brief = a.render(self.store, self.repo, 'OTHER-1', 9, self.head, self.url, spec=None)
         for value in ('Spec intent: missing', 'Gate records (exit/digest): missing', 'Final verdict: missing',
-                      'Review receipt/verdict for this HEAD: missing', 'Run manifest: missing', 'Wait records: missing'):
+                      'Review receipt/verdict for this HEAD: missing', 'Run manifest: missing', 'Wait records: missing',
+                      'spec: missing', 'declared files: missing', 'CI status: unavailable',
+                      'Review rounds used: 0 recorded', 'Tokens spent: missing'):
             self.assertIn(value, brief)
+        brief = a.render(self.store, self.repo, 'OTHER-1', 9, self.head, self.url, base='f' * 40)
+        self.assertIn('Diff size: missing', brief)
+        self.assertIn('diff metadata: missing; low cannot be established', brief)
 
     def test_old_head_gate_is_not_current(self):
         (self.repo / 'change').write_text('next'); self.git('add', '.'); self.git('commit', '-qm', 'next')

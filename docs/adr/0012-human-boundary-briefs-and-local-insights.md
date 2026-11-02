@@ -3,7 +3,7 @@
 - **Status**: proposed (v3.5, PR #82)
 - **Date**: 2026-10-26
 - **Decided by**: Kai Ebert
-- **Sources**: `1282b9d` (acceptance briefs and advisory insights); `CHANGELOG.md:28` (human handoff package); `docs/stage-protocol.md:96` (brief projection); `docs/stage-protocol.md:100` (delivery ledger); `docs/stage-protocol.md:106` (optional observation shape); `docs/stage-protocol.md:110` (local-only projection); `docs/configuration.md:320` (retention and no new configuration); `templates/scripts/bureau-acceptance.py:81` (deterministic renderer); `templates/scripts/bureau-evidence.py:84` (advisory normalization).
+- **Sources**: `1282b9d` (acceptance briefs and advisory insights); `CHANGELOG.md:28` (human handoff package); `docs/stage-protocol.md:96` (brief projection); `docs/stage-protocol.md:100` (delivery ledger); `docs/stage-protocol.md:106` (optional observation shape); `docs/stage-protocol.md:110` (local-only projection); `docs/configuration.md:320` (retention and no new configuration); `templates/scripts/bureau-acceptance.py:81` (deterministic renderer); `templates/scripts/bureau-evidence.py:84` (advisory normalization).; `docs/configuration.md:393` (risk tier settings); `docs/stage-protocol.md:238` (evidence packet); `templates/scripts/bureau-acceptance.py:117` (risk classifier)
 
 ## Context
 
@@ -19,6 +19,8 @@ A human merge boundary needs a compact statement of intent, change identity, tes
 
 At manual review APPROVE, requested review stops and shepherd stops already at Merge, render one metadata brief per PR/HEAD with explicit missing evidence and store-relative identifiers. Persist its body/digest and independent ticket/PR delivery status before publishing; retry only missing destinations. Publication preserves the original stage outcome and declares no acceptance, freshness or merge. Sources: `1282b9d`; `docs/stage-protocol.md:96`; `docs/stage-protocol.md:100`; `templates/scripts/bureau-acceptance.py:81`.
 
+Extend that same brief into an evidence packet: stage verdicts/attempt IDs, immutable-HEAD CI conclusion counts, Git numstat counts, changed paths outside the overlap gate's declared task inventory, retained review-round usage/cap, per-stage and total token/cost metadata, and an advisory mechanical risk tier. Query CI only during the existing publication build, outside the evidence-store lock; failure records unavailable and does not prevent delivery. Configure thresholds and additional sensitive paths with optional `agents.risk_tier`; validate invalid settings with exit 24 before mutations. Mandatory sensitive defaults cannot be removed. The tier changes no routing, holds, verdicts or merges; a human merges every PR. Keep the same frozen body, delivery ledger, retry and dedup behavior, without historical backfill. Sources: `docs/configuration.md:393`; `docs/stage-protocol.md:238`; `templates/scripts/bureau-acceptance.py:117`.
+
 Treat insights as the explicit local free-text exception to ADR 0003: normally empty, up to three single-line observations of at most 280 characters per attempt, retained privately for at most 2,048 rows/30 days under the existing evidence budget. Drop malformed or unsafe observations best effort without failing the stage, remove the field recursively from external comment projections, and draft learning candidates only for human triage. Sources: `docs/stage-protocol.md:106`; `docs/stage-protocol.md:110`; `docs/configuration.md:320`; `templates/scripts/bureau-evidence.py:84`.
 
 ## Rationale
@@ -27,7 +29,7 @@ Deterministic identity and explicit missing fields make a handoff inspectable wi
 
 ## Consequences
 
-Delivery to two services requires a local ledger and publication lock; unavailable storage skips publication rather than changing the stop. Validation-merge review evidence needs pinned input/base/parent correlation. Insight collection shares retention/capacity with evidence, so observations and deduplication can expire. Resync scripts and interfaces together; no new configuration key or historical backfill is provided.
+Delivery to two services requires a local ledger and publication lock; unavailable storage skips publication rather than changing the stop. Validation-merge review evidence needs pinned input/base/parent correlation. Insight collection shares retention/capacity with evidence, so observations and deduplication can expire. Resync scripts and interfaces together; the packet adds optional `agents.risk_tier` configuration, with no historical backfill. Cost totals come from receipts correlated with the PR and HEAD; the issue-wide cost log is used only as a labelled fallback for attempts without receipt usage, and retained round counts may be incomplete after expiration. CI counts cover check runs at collection time, not legacy commit statuses or later transitions. Pattern classification is conservative and needs repository-specific additions for unusual configuration paths.
 
 ## Known limits
 
