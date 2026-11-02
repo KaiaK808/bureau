@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0d2052daabd98982a08bc03ae0c8b556c4a124faf750d5d2a75bfc61cc156556">
+<meta name="bureau-source-sha256" content="31d65de9398e855bf2dff0a7b4d76436ba264aa4c1b5f9ebccd2bdeb89f9931f">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -42,10 +42,10 @@ href="https://github.com/KaiaK808/bureau/pull/109">#109</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/110">#110</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/111">#111</a>, the
 <code>actions/checkout</code> 7.0.1 dependency update <a
-href="https://github.com/KaiaK808/bureau/pull/8">#8</a>, and
-#PR_REVIEW_CONFIG for review and QA configuration isolation. The v3
-exit-code vocabulary, configuration schema versions and Spec Kit 1.2.2
-pin stay in place.</p>
+href="https://github.com/KaiaK808/bureau/pull/8">#8</a>, and <a
+href="https://github.com/KaiaK808/bureau/pull/112">#112</a> for review
+and QA configuration isolation. The v3 exit-code vocabulary,
+configuration schema versions and Spec Kit 1.2.2 pin stay in place.</p>
 <h2 id="what-changed-since-v351">What changed since v3.5.1</h2>
 <h3 id="review-and-qa-configuration-isolation">Review and QA
 configuration isolation</h3>
@@ -298,7 +298,8 @@ the project. This recipe installs no new assets through
 <td><code>templates/scripts/bureau-review-config.py</code></td>
 <td>Installed as <code>scripts/bureau-review-config.py</code>; pinned
 trusted instructions and deterministic configuration-change annotations.
-Included with #PR_REVIEW_CONFIG.</td>
+Included with <a
+href="https://github.com/KaiaK808/bureau/pull/112">#112</a>.</td>
 </tr>
 <tr>
 <td><code>templates/scripts/bureau-review.py</code></td>
@@ -601,11 +602,12 @@ commits, pushes, comments, labels or state moves made in between.</p>
 by Codex before push within at most three rounds, with two recorded
 maintainer exceptions: <a
 href="https://github.com/KaiaK808/bureau/pull/108">#108</a> took five
-rounds and #PR_REVIEW_CONFIG took four. Each PR's full local suite ran
-on macOS outside any sandbox before push, with failures rerun serially.
-CI on each PR is green; several macOS shards needed one rerun of failed
-jobs on tests the change does not touch. Release preparation changes
-documentation only.</p>
+rounds and <a
+href="https://github.com/KaiaK808/bureau/pull/112">#112</a> took four.
+Each PR's full local suite ran on macOS outside any sandbox before push,
+with failures rerun serially. CI on each PR is green; several macOS
+shards needed one rerun of failed jobs on tests the change does not
+touch. Release preparation changes documentation only.</p>
 <!-- release: integrated release branch full-suite result pending -->
 
 <!-- release: integrated release branch CI result pending -->

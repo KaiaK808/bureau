@@ -6,7 +6,7 @@
 
 <!-- release: v3.6.0 GitHub Release URL and publication state pending -->
 
-The release includes [#96](https://github.com/KaiaK808/bureau/pull/96), [#97](https://github.com/KaiaK808/bureau/pull/97), [#100](https://github.com/KaiaK808/bureau/pull/100), [#101](https://github.com/KaiaK808/bureau/pull/101), [#102](https://github.com/KaiaK808/bureau/pull/102), [#103](https://github.com/KaiaK808/bureau/pull/103), [#104](https://github.com/KaiaK808/bureau/pull/104), [#105](https://github.com/KaiaK808/bureau/pull/105), [#106](https://github.com/KaiaK808/bureau/pull/106), [#107](https://github.com/KaiaK808/bureau/pull/107), [#108](https://github.com/KaiaK808/bureau/pull/108), [#109](https://github.com/KaiaK808/bureau/pull/109), [#110](https://github.com/KaiaK808/bureau/pull/110), [#111](https://github.com/KaiaK808/bureau/pull/111), the `actions/checkout` 7.0.1 dependency update [#8](https://github.com/KaiaK808/bureau/pull/8), and #PR_REVIEW_CONFIG for review and QA configuration isolation. The v3 exit-code vocabulary, configuration schema versions and Spec Kit 1.2.2 pin stay in place.
+The release includes [#96](https://github.com/KaiaK808/bureau/pull/96), [#97](https://github.com/KaiaK808/bureau/pull/97), [#100](https://github.com/KaiaK808/bureau/pull/100), [#101](https://github.com/KaiaK808/bureau/pull/101), [#102](https://github.com/KaiaK808/bureau/pull/102), [#103](https://github.com/KaiaK808/bureau/pull/103), [#104](https://github.com/KaiaK808/bureau/pull/104), [#105](https://github.com/KaiaK808/bureau/pull/105), [#106](https://github.com/KaiaK808/bureau/pull/106), [#107](https://github.com/KaiaK808/bureau/pull/107), [#108](https://github.com/KaiaK808/bureau/pull/108), [#109](https://github.com/KaiaK808/bureau/pull/109), [#110](https://github.com/KaiaK808/bureau/pull/110), [#111](https://github.com/KaiaK808/bureau/pull/111), the `actions/checkout` 7.0.1 dependency update [#8](https://github.com/KaiaK808/bureau/pull/8), and [#112](https://github.com/KaiaK808/bureau/pull/112) for review and QA configuration isolation. The v3 exit-code vocabulary, configuration schema versions and Spec Kit 1.2.2 pin stay in place.
 
 ## What changed since v3.5.1
 
@@ -76,7 +76,7 @@ The [architecture recipe](recipes.md#architecture-recipe-adrs-before-the-first-b
 
 | File | Installation and purpose |
 |---|---|
-| `templates/scripts/bureau-review-config.py` | Installed as `scripts/bureau-review-config.py`; pinned trusted instructions and deterministic configuration-change annotations. Included with #PR_REVIEW_CONFIG. |
+| `templates/scripts/bureau-review-config.py` | Installed as `scripts/bureau-review-config.py`; pinned trusted instructions and deterministic configuration-change annotations. Included with [#112](https://github.com/KaiaK808/bureau/pull/112). |
 | `templates/scripts/bureau-review.py` | Complete specialist merge, fallback floors, source anchors and shadow-verifier preparation. |
 | `templates/scripts/bureau-specialist.schema.json`, `bureau-finding-verifier.schema.json` | Specialist and optional checker contracts; install with the review helper and pipelines. |
 | `templates/scripts/bureau-adr.py`, `bureau-review-adr.schema.json` | Bounded pinned ADR index and the enabled ADR result contract. |
@@ -152,7 +152,7 @@ To roll back, stop every driver and reconcile all unfinished writers and holds b
 
 ## Validation
 
-The maintainer's release validation record reports every PR reviewed by Codex before push within at most three rounds, with two recorded maintainer exceptions: [#108](https://github.com/KaiaK808/bureau/pull/108) took five rounds and #PR_REVIEW_CONFIG took four. Each PR's full local suite ran on macOS outside any sandbox before push, with failures rerun serially. CI on each PR is green; several macOS shards needed one rerun of failed jobs on tests the change does not touch. Release preparation changes documentation only.
+The maintainer's release validation record reports every PR reviewed by Codex before push within at most three rounds, with two recorded maintainer exceptions: [#108](https://github.com/KaiaK808/bureau/pull/108) took five rounds and [#112](https://github.com/KaiaK808/bureau/pull/112) took four. Each PR's full local suite ran on macOS outside any sandbox before push, with failures rerun serially. CI on each PR is green; several macOS shards needed one rerun of failed jobs on tests the change does not touch. Release preparation changes documentation only.
 
 <!-- release: integrated release branch full-suite result pending -->
 
