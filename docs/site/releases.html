@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3ebe7bf146f8294999924648dbdfa99bd252f7ce36024f6677afa06fd474df58">
+<meta name="bureau-source-sha256" content="7f2d1b31e884a410a590e92486fca42170e2a837537316caf44489ecdd8cbe5d">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -75,8 +75,9 @@ Each PR's full local suite ran on macOS outside any sandbox before push,
 with failures rerun serially. CI on each PR is green; several macOS
 shards needed one rerun of failed jobs on tests the change does not
 touch. The integrated release branch's suite and CI and the main-branch
-CI record remain pending. Release preparation changes documentation
-only.</p>
+CI record remain pending. Release preparation changes documentation,
+plus one test repair: an import that an integration merge dropped from
+the evidence negative-control script is restored.</p>
 <!-- release: integrated release branch full-suite result pending -->
 
 <!-- release: integrated release branch CI result pending -->

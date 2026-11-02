@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="94fec9695e252fb7535321ff156e0ebb85ad7d0a7d491786fe2ddfce5528be9a">
+<meta name="bureau-source-sha256" content="aa50ece7d4e3952d6aa1ea2937673c67923c945247bd7a32e4f7ed837ca0a54d">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -615,7 +615,9 @@ href="https://github.com/KaiaK808/bureau/pull/112">#112</a> took four.
 Each PR's full local suite ran on macOS outside any sandbox before push,
 with failures rerun serially. CI on each PR is green; several macOS
 shards needed one rerun of failed jobs on tests the change does not
-touch. Release preparation changes documentation only.</p>
+touch. Release preparation changes documentation, plus one test repair:
+an import that an integration merge dropped from the evidence
+negative-control script is restored.</p>
 <!-- release: integrated release branch full-suite result pending -->
 
 <!-- release: integrated release branch CI result pending -->
