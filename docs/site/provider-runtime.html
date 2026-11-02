@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c03dcc1d33ed805d2b7d0ac7cf591ccd6bfe8d12031b353a47457663c869e4ef">
+<meta name="bureau-source-sha256" content="fbf8bed7c4e33d7df246bb5c011c133220c7db555e1c3c2d9b47473ef7c9971c">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -277,6 +277,15 @@ default runner; zero panes omits the bench. Optional upstream summaries
 are disabled by default; enabling <code>agents.upstream_summary</code>
 uses a tool-free Claude (<code>--tools ''</code>, without the deny list)
 or read-only Codex pass.</p>
+<p>Finding-verifier shadow calls use a stricter adapter path: Claude
+gets no built-in tools, strict empty MCP configuration, disabled skills
+and settings hooks, and no permission bypass, including behind Headroom.
+Codex has no supported all-tools-off switch, so its verifier attempt
+fails closed without model launch and is recorded as unverifiable. Only
+allowlisted verification identities/outcomes are consumed; neither
+refutation nor checker errors change the review verdict or merge floors.
+See <a href="stage-protocol.html#review-convergence">review
+convergence</a>.</p>
 <p>A failed worker with uncommitted or unpublished progress loses its
 disposable registration. Its checkout remains available for
 inspection/resume instead of being erased by the next tick. A clean

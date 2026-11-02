@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="33da95741752de9ea02d495b8447a0cc5417f5be6316d7c16e164ad543b1f236">
+<meta name="bureau-source-sha256" content="d7fa37f8f7894c893fac553fb4275deaa63115c90fb2c56220aabad78be03947">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -56,6 +56,14 @@ model selection, and saves a private exact backup.
 <code>bureau-doctor.py</code> validates shape/version and reports
 effective settings without contacting providers. See <a
 href="migration.html">migration and rollback</a>.</p>
+<p>Doctor also validates <code>agents.review_adr_context</code> as a
+boolean, <code>agents.review_adr_budget_bytes</code> as an integer from
+0 to 1048576, and <code>repo.adr_dir</code> as a plain
+repository-relative directory: no absolute path, empty, <code>.</code>,
+<code>..</code> or <code>.git</code> components, backslashes, colons or
+control characters. These optional keys default to false, 4096 and
+<code>docs/adr</code>; invalid explicit values are configuration errors,
+including when context is disabled.</p>
 <h3 id="linear"><code>linear</code></h3>
 <table>
 <thead>
@@ -472,6 +480,53 @@ MINOR. Validated findings decide before security/build/cap rules; BLOCK,
 CRITICAL, security/acceptance blockers and malformed or contradictory
 results cannot be promoted. Deferred/SKIP findings remain in the
 projected PR comment</td>
+</tr>
+<tr>
+<td><code>agents.review_grounding</code></td>
+<td><code>off</code> or <code>required</code></td>
+<td><code>off</code></td>
+<td>Validate source anchors against pinned PR base/head. Off records
+invalid/missing anchors observationally; required adds BLOCK/25.
+Parse/provider errors stay 22. Part of review policy identity, so
+changes invalidate approval reuse</td>
+</tr>
+<tr>
+<td><code>agents.finding_verifier.enabled</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Opt into shadow checks only: at most eight fresh tool-free Claude
+calls (60 seconds each), 24 KiB of request JSON each and 8 KiB of whole
+pinned contracts. Claude tools, MCP, skills and settings hooks are
+disabled without permission bypass. Codex checks remain unverifiable
+without model launch because its CLI has no all-tools-off switch. Only
+claim, pinned source, contract and anchors are supplied. Outcomes and
+identity digests are evidence only and never change verdicts or merge
+floors. No enforced mode is shipped; unknown verifier keys are rejected.
+Included in review policy identity</td>
+</tr>
+<tr>
+<td><code>agents.review_adr_context</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Include a bounded ADR index from pinned PR base/head in all three
+specialist prompts. Only accepted records with identical paths and blob
+IDs are settled, including for Known-limit exclusions.
+Added/changed/removed records are non-authoritative proposals; citations
+are valid but never waive or downgrade findings. Enabled selects the
+extended ADR schema. Disabled keeps legacy merger schema bytes, Codex
+wire projection and receipt schema digest; unsolicited
+<code>adr_refs</code> are unexpected result fields. Shared hold guidance
+and conservative fallback rules apply in either mode</td>
+</tr>
+<tr>
+<td><code>agents.review_adr_budget_bytes</code></td>
+<td>integer</td>
+<td><code>4096</code></td>
+<td>Complete ADR context limit in UTF-8 bytes, including instructions,
+separators and truncation notice. Range 0–1048576; <code>0</code> omits
+the index. Whole records form a deterministic prefix ordered by ADR
+number; an overflowing context too small for instructions and notice is
+omitted</td>
 </tr>
 <tr>
 <td><code>agents.code_review_sampling_threshold</code></td>
@@ -1194,6 +1249,15 @@ pause</td>
 <td><code>"specs"</code></td>
 <td>Spec directory inside the repository. The spec stage relocates the
 pinned helper's output here and persists the exact feature pointer</td>
+</tr>
+<tr>
+<td><code>repo.adr_dir</code></td>
+<td>string</td>
+<td><code>"docs/adr"</code></td>
+<td>Directory of direct <code>NNNN-*.md</code> ADR files in both pinned
+trees; validated as a plain relative path. Git symlinks are not
+followed. Missing on both inputs supplies no context; base-only records
+are removal proposals</td>
 </tr>
 <tr>
 <td><code>repo.base_branch</code></td>
@@ -2402,9 +2466,10 @@ repo whose defaults don't match.</p>
 <td><code>BUREAU_REVIEW_MERGE_CAP_KB</code></td>
 <td><code>60</code></td>
 <td>Whole KB 1–1024, fallback 60. Tail-cap (KB) per specialist review
-before the merger prompt. Prevents ARG_MAX overflow when an individual
-review runs long (typical for codex-routed stages that emit heavy
-transcripts)</td>
+only for the malformed-output model fallback. The normal code merge
+reads complete structured output before this cap. Prevents ARG_MAX
+overflow when an individual review runs long (typical for codex-routed
+stages that emit heavy transcripts)</td>
 </tr>
 </tbody>
 </table>

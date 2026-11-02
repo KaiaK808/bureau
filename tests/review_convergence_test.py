@@ -155,7 +155,7 @@ class CountsTests(unittest.TestCase):
 
     def test_legacy_header_counts_a_completed_round(self):
         # Read the actual emitted header, rather than testing a duplicate literal.
-        header = re.search(r'post_comment "\$ISSUE" "(🔄 [^\n]+)', REVIEW.read_text())[1]
+        header = re.search(r'post_review_comment "\$ISSUE" "(🔄 [^\n]+)', REVIEW.read_text())[1]
         self.assertEqual(self.counts([header]), dict(cycles=1, rounds=1))
 
     def test_structured_rounds_take_priority_and_reuse_is_not_a_round(self):
@@ -172,6 +172,28 @@ class CountsTests(unittest.TestCase):
                          dict(cycles=0, rounds=3))
         with self.assertRaises(AssertionError):
             self.counts(['Code review round 3 started.\n<!-- bureau-review-round: round=oops -->'])
+
+    def test_run_footers_do_not_change_round_counts(self):
+        header = '🔄 Code Review: **Changes Requested**'
+        marker = '<!-- bureau-review-round: round=1 verdict=REQUEST_CHANGES -->'
+        body = header + '\n' + marker
+        expected = self.counts([body])
+        self.assertEqual(expected, dict(cycles=1, rounds=1))
+        # T-1 is at round 1; a pasted T-2 run cannot lend it round 7.
+        for ticket, run, number in (('T-1', 'a' * 32, 4), ('T-2', 'c' * 32, 7)):
+            footer = (f'<!-- bureau-review-run: run={run} stage=' + 'b' * 32
+                      + f' round={number} verdict=REQUEST_CHANGES -->')
+            with self.subTest(ticket=ticket, footer_round=number):
+                self.assertEqual(self.counts([body + '\n' + footer]), expected)
+                self.assertEqual(self.counts([body + '\n' + footer + ' \n\n']), expected)
+                self.assertEqual(self.counts(['Code review round 1 started.\n'
+                                             '<!-- bureau-review-round: round=1 -->',
+                                             header + '\n' + footer]), expected)
+                self.assertEqual(self.counts(['✅ Code review **APPROVED**.\n' + footer]),
+                                 dict(cycles=0, rounds=0))
+                for fence in ('```', '````', '~~~'):
+                    self.assertEqual(self.counts([header + '\n' + fence + '\n' + marker + '\n' + footer]),
+                                     expected)
 
     def test_marker_mentions_and_quotations_are_not_bureau_metadata(self):
         marker = '<!-- bureau-review-round: round=99 verdict=REQUEST_CHANGES -->'
@@ -305,7 +327,7 @@ class UsageTests(unittest.TestCase):
 class ReviewRoundPipelineTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-pr8-source-'); self.addCleanup(self.temp.cleanup)
-        source = Path(self.temp.name)
+        source = Path(self.temp.name).resolve()
         shutil.copytree(SCRIPTS, source / 'templates/scripts')
         shutil.copy(REVIEW, source / 'templates/scripts/code-review-pipeline.sh')
         shutil.copy(CONFIG, source / 'templates/scripts/bureau-config.sh')
@@ -316,7 +338,15 @@ class ReviewRoundPipelineTests(unittest.TestCase):
 if 'Merge these three specialist reviews' in prompt:
     result = json.loads(os.environ['REVIEW_RESULT_JSON'])
 elif 'specialist reviewing' in prompt:
-    result = {'counts':{'critical':int(os.environ.get('SECURITY_CRITICAL','0'))}}
+    role = os.environ['BUREAU_PROVIDER_PHASE']; original = json.loads(os.environ['REVIEW_RESULT_JSON'])
+    findings = original['findings'] if role == 'correctness' else []
+    counts = {s.lower():sum(f['class'] == s for f in findings) for s in ('CRITICAL','BUG','MINOR','SKIP')}
+    if role == 'security': counts['critical'] = int(os.environ.get('SECURITY_CRITICAL', '0'))
+    gaps = original['missing_acceptance'] + [fix for fix in original['fixes_needed'] if fix not in [f['msg'] for f in original['findings']]]
+    result = dict(specialist=role, counts=counts, findings=findings, summary=original['summary'],
+                  acceptance_gaps=gaps if role == 'correctness' else [],
+                  holds=['Fixture requested human judgment.'] if original['verdict'] == 'BLOCK' else [])
+    if os.environ.get('FAIL_MERGER') == '1' and role == 'performance': result = 'Malformed fixture forces merger failure.'
 pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))""")
         codex = codex.replace("'usage':{'input_tokens':1,'output_tokens':1}", "'usage':json.loads(os.environ['ROUND_USAGE']).get(os.environ.get('BUREAU_PROVIDER_PHASE'), {})")
         self.fixture = fixture.SupervisionPipelineTests('test_fixture_commits_and_pushes_start_no_git_maintenance')
@@ -350,25 +380,24 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
         self.fixture.linear.write_text(json.dumps(items))
 
     def test_minor_only_request_changes_converges(self):
-        value = result(findings=[finding('MINOR'), finding('SKIP')], insights=['Private observation canary.'])
+        value = result(findings=[finding('MINOR'), finding('SKIP', 'A separate pinned decision')], insights=['Private observation canary.'])
         self.review(value)
         calls = [json.loads(line) for line in self.fixture.gh_log.read_text().splitlines()]
         body = next(args[args.index('--body')+1] for args in calls if args[:2] == ['pr', 'comment'] and '## Code Review v2' in args[-1])
         self.assertIn('**Verdict**: APPROVE', body)
-        self.assertIn('"verdict":"REQUEST_CHANGES"', body)
+        self.assertIn('"verdict":"APPROVE"', body)
         self.assertIn('Deferred below threshold (BUG)', body); self.assertIn('SKIP findings', body)
         self.assertNotIn('Private observation canary.', body)
         records = self.rounds(); self.assertEqual(len(records), 1)
         record = records[0]
-        self.assertEqual((record['number'], record['provider_verdict'], record['final_verdict']), (1, 'REQUEST_CHANGES', 'APPROVE'))
-        self.assertEqual(record['calls'], 4); self.assertEqual(len(set(record['provider_attempt_ids'])), 4)
-        self.assertEqual(record['usage']['input_tokens'], 10); self.assertEqual(record['usage']['output_tokens'], 20)
+        self.assertEqual((record['number'], record['provider_verdict'], record['final_verdict']), (1, 'APPROVE', 'APPROVE'))
+        self.assertEqual(record['calls'], 3); self.assertEqual(len(set(record['provider_attempt_ids'])), 3)
+        self.assertEqual(record['usage']['input_tokens'], 6); self.assertEqual(record['usage']['output_tokens'], 12)
         self.assertEqual(record['usage']['cached_input_tokens'], 0)
         self.assertIsNone(record['usage']['total_cost_usd'])
         receipts = [json.loads(p.read_text()) for p in (self.repo / '.git/bureau/evidence/v1/runs').glob('*/receipts/*.json')]
-        spec = importlib.util.spec_from_file_location('round_evidence', SCRIPTS / 'bureau-evidence.py')
-        evidence = importlib.util.module_from_spec(spec); spec.loader.exec_module(evidence)
-        self.assertEqual(next(r['result_sha256'] for r in receipts if r['phase'] == 'verdict'), evidence.digest(value))
+        self.assertEqual({r['phase'] for r in receipts}, {'correctness', 'security', 'performance'})
+        self.assertRegex(record['merge']['result_sha256'], r'^[a-f0-9]{64}$')
 
     def test_exact_total_boundary_and_legacy_cycle_cap(self):
         self.config['agents']['max_review_rounds'] = 2
@@ -393,7 +422,7 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
         calls = len(self.fixture.models())
         self.config['agents']['review_min_severity'] = 'MINOR'
         self.review(result(), code=0, BUREAU_NO_MERGE='0', BUREAU_STOP_REQUESTED='0')
-        self.assertEqual(len(self.fixture.models()), calls + 4)
+        self.assertEqual(len(self.fixture.models()), calls + 3)
         self.assertEqual(sorted(r['number'] for r in self.rounds()), [1, 2])
         self.assertEqual(next(r['final_verdict'] for r in self.rounds() if r['number'] == 2), 'REQUEST_CHANGES')
 

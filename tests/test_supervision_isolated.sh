@@ -95,6 +95,7 @@ Review checked.
 ```
 EOF
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/approve.txt" BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
+  review_clean_specialists
   export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0
   STOPS="$(git -C "$SANDBOX" rev-parse --path-format=absolute --git-common-dir)/bureau/review-stops.json"
 }

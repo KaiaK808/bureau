@@ -93,7 +93,8 @@ _review_join_specialists() {
 # comment, then the public object as a fenced JSON verdict. Local insights are
 # removed before every projection, including the legacy/raw fallback. A verdict block over
 # 16 KB drops its findings list and says how many it held (the comment names them),
-# so the block always survives the comment size cap. An answer without a verdict or
+# to keep the block small; other large fields can still make the cap split it.
+# An answer without a verdict or
 # without a comment string (an older schema, a fixture) uses the safe projection: the
 # comment's lines never reach the text-verdict fallback, which reads line starts and
 # finds none inside a JSON string. A cost-tracking envelope is unwrapped as
@@ -102,7 +103,7 @@ _review_join_specialists() {
 review_text_from_merger() {
   local text projected
   projected=$(bureau_comment_projection "$1")
-  if text=$(printf '%s' "$projected" | jq -r --arg floor "${BUREAU_REVIEW_MIN_SEVERITY:-BUG}" '
+  if text=$(printf '%s' "$projected" | jq -r --arg floor "${BUREAU_REVIEW_MIN_SEVERITY:-BUG}" --argjson adr_index "${BUREAU_REVIEW_ADR_REFS:-null}" '
       def section($title; $items):
         if ($items | length) == 0 then "" else
           "\n\n### " + $title + "\n" + ($items | map("- `" + .file + ":" + (.line | tostring) + "` — " + .msg) | join("\n")) end;
@@ -111,12 +112,51 @@ review_text_from_merger() {
       | (del(.comment, .insights)) as $v
       | (if ($v | tojson | length) > 16000
          then ($v | del(.findings)) + {findings_omitted: ($v.findings | length? // 0)} else $v end) as $v
-      | .comment + "\n\n```json\n" + ($v | tojson) + "\n```"
+      | .comment
         + section("Deferred below threshold (" + $floor + ")"; [.findings[]? | select(.class == "MINOR" and $floor == "BUG")])
-        + section("SKIP findings"; [.findings[]? | select(.class == "SKIP")])' 2>/dev/null) && [ -n "$text" ]; then
+        + section("SKIP findings"; [.findings[]? | select(.class == "SKIP")])
+        + (if $adr_index == null then "" else
+            [.findings[]? | select(.adr_refs | type == "array")
+              | . as $finding | [.adr_refs[] | select(type == "string")
+                | select(. as $ref | $adr_index | index($ref) != null) | "ADR " + .] | unique
+              | select(length > 0) | "- `" + $finding.file + ":" + ($finding.line | tostring) + "` — " + join(", ")]
+            | if length == 0 then "" else "\n\n### ADR references\n" + join("\n") end end)
+        + "\n\n```json\n" + ($v | tojson) + "\n```"' 2>/dev/null) && [ -n "$text" ]; then
     printf '%s' "$text"
   else
     printf '%s' "$projected"
+  fi
+}
+
+# Reserve the ASCII binding footer before capping; append it only afterwards.
+# Keep the uncapped body if capping fails. Body fence state is irrelevant.
+cap_review_comment() {
+  local body="$1" limit="$BUREAU_COMMENT_MAX_BYTES"
+  if [ -n "${REVIEW_RUN_FOOTER:-}" ]; then
+    limit=$((limit - ${#REVIEW_RUN_FOOTER} - 1))
+  fi
+  if [ "$limit" -gt 0 ]; then
+    body=$(bureau_cap_comment "$1" "$limit") || body="$1"
+  fi
+  printf '%s' "$body"
+  if [ -n "${REVIEW_RUN_FOOTER:-}" ]; then printf '\n%s' "$REVIEW_RUN_FOOTER"; fi
+}
+
+post_review_comment() {
+  local body="$2" rc
+  if [ -n "${REVIEW_RUN_FOOTER:-}" ]; then
+    body=$(cap_review_comment "$body") || return $?
+    # The body already reserves the footer, or uses the uncapped fallback.
+    # A second cap must not truncate either. Keep this override in a subshell.
+    (
+      bureau_cap_comment() { printf '%s' "$1"; }
+      post_comment "$1" "$body"
+    )
+    rc=$?
+    bureau_ticket_checkpoint "$1" latched
+    return "$rc"
+  else
+    post_comment "$1" "$body"
   fi
 }
 
@@ -302,6 +342,38 @@ SPEC_CONTEXT+=$'\n\nA finding that contradicts a pinned decision in any of the a
 
 # All specialists share the bounded selection for the immutable PR inputs.
 LESSONS_CONTEXT=$(build_lessons_context code_review "$SPEC_DIR" "$REVIEW_DIFF")
+# An empty suffix preserves every prompt byte when disabled. IDs are kept
+# separate from untrusted record text for convergence and comment projection.
+ADR_CONTEXT=""
+ADR_MERGE_NOTE=""
+ADR_POLICY=""
+REVIEW_SCHEMA="$SCRIPT_REPO/scripts/bureau-review.schema.json"
+export BUREAU_REVIEW_ADR_REFS=null
+if [ "$(bureau_get '.agents.review_adr_context == true')" = true ]; then
+  REVIEW_SCHEMA="$SCRIPT_REPO/scripts/bureau-review-adr.schema.json"
+  ADR_INDEX=$(build_review_adr_context "$REVIEW_BASE" "$REVIEW_HEAD") || exit 24
+  ADR_CONTEXT=$(printf '%s' "$ADR_INDEX" | jq -er '.context') || exit 24
+  BUREAU_REVIEW_ADR_REFS=$(printf '%s' "$ADR_INDEX" | jq -ce '.refs') || exit 24
+  ADR_POLICY=$(printf '%s' "$ADR_INDEX" | jq -er '.policy') || exit 24
+  [ -z "$ADR_CONTEXT" ] || ADR_CONTEXT=$'\n\n'"$ADR_CONTEXT"
+  ADR_MERGE_NOTE=$'\n\nPreserve each finding\047s optional adr_refs array of four-digit IDs from the specialist reviews. Only accepted ADRs whose path and blob ID match on pinned base and head are settled. A contradictory finding must cite that settled ADR and give new evidence justifying reopening it; otherwise classify the disagreement SKIP. Only settled ADR Known limits are excluded as findings. Added, changed and removed ADRs are proposals under review, not authoritative even with accepted status: references to proposals are valid but never waive or downgrade findings, including claimed Known limits. Cite IDs only (ADR 0003), never copy ADR text into the comment.'
+  ADR_MERGE_NOTE+="$ADR_CONTEXT"
+fi
+
+REVIEW_MERGE_CONFIG="$REVIEW_TMP/settings.json"
+bureau_get '.' > "$REVIEW_MERGE_CONFIG" || exit 24
+REVIEW_SETTINGS=$(bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" settings --config "$REVIEW_MERGE_CONFIG" --directory "$REVIEW_TMP") || exit 24
+REVIEW_GROUNDING=$(printf '%s' "$REVIEW_SETTINGS" | jq -er .grounding) || exit 24
+REVIEW_VERIFIER=$(printf '%s' "$REVIEW_SETTINGS" | jq -r .verifier) || exit 24
+REVIEW_MERGE_POLICY=$(printf '%s' "$REVIEW_SETTINGS" | jq -er .policy) || exit 24
+[ ! -f "$REVIEW_TMP/fallback.schema.json" ] || REVIEW_SCHEMA="$REVIEW_TMP/fallback.schema.json"
+SOURCE_ANCHOR_NOTE=""
+if [ "$REVIEW_GROUNDING" = required ] || [ "$REVIEW_VERIFIER" = true ]; then
+  SOURCE_ANCHOR_NOTE="
+Structured findings may add title and line_end (inclusive; defaults to line). Use a stable concise title, separate from the full claim in msg.
+Source anchors: every finding must cite pinned source, including deleted code on base. Add anchor: {side: base|head, path: repo-relative file, blob: full Git blob ID, start_line: inclusive first line, end_line: inclusive last line, sha256: SHA-256 of the exact cited bytes including original newlines}. The finding file, line and line_end must match. Read blobs from base $REVIEW_BASE or head $REVIEW_HEAD, never the validation checkout. For a file-wide finding use line: 0 and anchor: {side, path, blob, scope: file, sha256: SHA-256 of the entire blob}; do not invent a line. Emit JSON strings for every name/value. A valid anchor is evidence of location only, never a reason to weaken severity."
+fi
+ADR_MERGE_NOTE+="$SOURCE_ANCHOR_NOTE"
 
 echo ""
 echo "Phase 1/3: multi-specialist review (3 passes in parallel)"
@@ -358,6 +430,8 @@ REUSED_GATE_WAITS=0
 # Version the decision policy as well as its configured severity and both caps.
 # Older records have no policy and require a fresh review; gate polls use the same key.
 REVIEW_POLICY="v1:$BUREAU_REVIEW_MIN_SEVERITY:$BUREAU_MAX_REVIEW_CYCLES:$BUREAU_MAX_REVIEW_ROUNDS"
+REVIEW_POLICY+=":$REVIEW_MERGE_POLICY"
+[ -z "$ADR_POLICY" ] || REVIEW_POLICY+=":adr:$ADR_POLICY"
 STAGE_EXIT=""   # set when an APPROVE's inline merge did not go through (2 or 25)
 if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
   if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
@@ -445,7 +519,7 @@ BUREAU_PROVIDER_PHASE=correctness BUREAU_PROVIDER_CANCEL_FILE="$REVIEW_TMP/cance
 
 $SPEC_CONTEXT
 
-$LESSONS_CONTEXT
+$LESSONS_CONTEXT$ADR_CONTEXT$SOURCE_ANCHOR_NOTE
 
 $CYCLE_NOTE
 
@@ -455,10 +529,12 @@ PR target: $PR_BASE_REF. Review the pinned PR inputs with 'git diff $REVIEW_DIFF
 
 For every finding, cite file:line. Classify CRITICAL (data-loss / silent corruption) / BUG (real defect) / MINOR (style, nit) / SKIP (contradicts a pinned decision — include citation to the pin).
 
+Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.
+
 Emit human-readable prose for the PR reviewer, then a SINGLE fenced json block at the very end:
 
 \`\`\`json
-{\"specialist\":\"correctness\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"acceptance_gaps\":[],\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"summary\":\"\"}
+{\"specialist\":\"correctness\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"acceptance_gaps\":[],\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"summary\":\"\"}
 \`\`\`" > "$REVIEW_TMP/correctness.txt" 2>"$REVIEW_TMP/correctness.stderr" &
 CORRECT_PID=$!
 
@@ -467,7 +543,7 @@ BUREAU_PROVIDER_PHASE=security BUREAU_PROVIDER_CANCEL_FILE="$REVIEW_TMP/cancel-s
 
 $SPEC_CONTEXT
 
-$LESSONS_CONTEXT
+$LESSONS_CONTEXT$ADR_CONTEXT$SOURCE_ANCHOR_NOTE
 
 $CYCLE_NOTE
 
@@ -477,10 +553,12 @@ PR target: $PR_BASE_REF. Review the pinned PR inputs with 'git diff $REVIEW_DIFF
 
 For every finding, cite file:line. Classify CRITICAL / BUG / MINOR / SKIP (with pin citation).
 
+Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.
+
 Emit human-readable prose, then a SINGLE fenced json block:
 
 \`\`\`json
-{\"specialist\":\"security\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"summary\":\"\"}
+{\"specialist\":\"security\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"summary\":\"\"}
 \`\`\`" > "$REVIEW_TMP/security.txt" 2>"$REVIEW_TMP/security.stderr" &
 SEC_PID=$!
 
@@ -489,7 +567,7 @@ BUREAU_PROVIDER_PHASE=performance BUREAU_PROVIDER_CANCEL_FILE="$REVIEW_TMP/cance
 
 $SPEC_CONTEXT
 
-$LESSONS_CONTEXT
+$LESSONS_CONTEXT$ADR_CONTEXT$SOURCE_ANCHOR_NOTE
 
 $CYCLE_NOTE
 
@@ -501,10 +579,12 @@ Performance is the most likely axis to over-flag. Only raise BUG for measurable 
 
 For every finding, cite file:line. Classify CRITICAL / BUG / MINOR / SKIP (with pin citation).
 
+Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.
+
 Emit human-readable prose, then a SINGLE fenced json block:
 
 \`\`\`json
-{\"specialist\":\"performance\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"summary\":\"\"}
+{\"specialist\":\"performance\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"summary\":\"\"}
 \`\`\`" > "$REVIEW_TMP/performance.txt" 2>"$REVIEW_TMP/performance.stderr" &
 PERF_PID=$!
 
@@ -536,6 +616,17 @@ PERFORMANCE_REVIEW="Failed"
 # lost without a sound.
 _sec_critical=$(parse_claude_json "$SECURITY_REVIEW" '.counts.critical')
 
+# Read complete structured outputs before the legacy model's tail cap. The
+# helper's exit 3 is internal fallback, never a stage exit or verdict decision.
+_merge_rc=0
+bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" merge --config "$REVIEW_MERGE_CONFIG" \
+  --directory "$REVIEW_TMP" --base "$REVIEW_BASE" --head "$REVIEW_HEAD" --refs "$BUREAU_REVIEW_ADR_REFS" \
+  --contract SPEC.md --contract AGENTS.md --contract CLAUDE.md \
+  --contract "${SPEC_DIR}spec.md" --contract "${SPEC_DIR}plan.md" || _merge_rc=$?
+case "$_merge_rc" in
+  0) MERGED_RAW=$(<"$REVIEW_TMP/merged.json") ;;
+  3)
+
 # ARG_MAX guard: a codex specialist review can run 300-400KB; three of them
 # inlined into the merge prompt below as a single shell argument overflow
 # ARG_MAX (~1MB on macOS) and the merge call dies with exit 126 (E2BIG) before
@@ -555,7 +646,7 @@ done
 echo ""
 echo "  Merging findings..."
 
-MERGED_RAW=$(BUREAU_PROVIDER_PHASE=verdict "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-review.schema.json" "${CAVEMAN_PREFIX}Merge these three specialist reviews into a single verdict for PR #$PR_NUMBER ($ISSUE — $ISSUE_TITLE).
+MERGED_RAW=$(BUREAU_PROVIDER_PHASE=verdict "${CLAUDE[@]}" --schema "$REVIEW_SCHEMA" "${CAVEMAN_PREFIX}Merge these three specialist reviews into a single verdict for PR #$PR_NUMBER ($ISSUE — $ISSUE_TITLE).
 
 ### Correctness
 $CORRECTNESS_REVIEW
@@ -573,7 +664,7 @@ Verdict rules:
 
 Defer MINOR findings below the configured severity floor; SKIP never requests changes. Hypothetical edge cases are not defects.
 Report bugs as the exact number of BUG-class entries in findings. Keep security_issues and missing_acceptance explicit even when zero or empty; do not omit unresolved acceptance work from them.
-Each fixes_needed entry must repeat its corresponding finding message verbatim. A required fix without an exact deferred/SKIP match keeps REQUEST_CHANGES; unrelated deferred findings cannot discharge it.
+Each fixes_needed entry must repeat its corresponding finding message verbatim. A required fix without an exact deferred/SKIP match keeps REQUEST_CHANGES; unrelated deferred findings cannot discharge it.$ADR_MERGE_NOTE
 
 Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
 
@@ -582,11 +673,35 @@ Answer with ONE JSON object (the schema is enforced). \"comment\" is the human-r
 \`\`\`json
 {\"verdict\":\"APPROVE|REQUEST_CHANGES|BLOCK\",\"insights\":[],\"bugs\":0,\"security_issues\":0,\"missing_acceptance\":[],\"fixes_needed\":[],\"summary\":\"\",\"comment\":\"## Specialist Summaries\\n…\",\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\"}]}
 \`\`\`" 2>"$REVIEW_TMP/merge.stderr")
+    # Retain every readable specialist signal, even with grounding/checker off.
+    # Parse/schema errors remain 22; impossible source references hold when required.
+    printf '%s' "$MERGED_RAW" > "$REVIEW_TMP/fallback.txt"
+    bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" fallback --config "$REVIEW_MERGE_CONFIG" \
+      --directory "$REVIEW_TMP" --base "$REVIEW_BASE" --head "$REVIEW_HEAD" --refs "$BUREAU_REVIEW_ADR_REFS" \
+      --result "$REVIEW_TMP/fallback.txt" --contract SPEC.md --contract AGENTS.md --contract CLAUDE.md \
+      --contract "${SPEC_DIR}spec.md" --contract "${SPEC_DIR}plan.md" || exit 22
+    MERGED_RAW=$(<"$REVIEW_TMP/merged.json")
+    ;;
+  *) exit "$_merge_rc" ;;
+esac
+
+# Each bounded request is a fresh call with only claim, pinned source, contract
+# and anchor identity. Shadow results cannot change MERGED_RAW or the verdict.
+if [ "$REVIEW_VERIFIER" = true ]; then
+  for _verify_prompt in "$REVIEW_TMP"/verifier-*.prompt; do
+    [ -f "$_verify_prompt" ] || continue
+    _verify_rc=0
+    BUREAU_STAGE_TIMEOUT=60 BUREAU_PROVIDER_PHASE=finding_verifier "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-finding-verifier.schema.json" \
+      "$(<"$_verify_prompt")" > "$_verify_prompt.result" 2>"$_verify_prompt.stderr" || _verify_rc=$?
+    [ "$_verify_rc" != 130 ] || exit 130
+    bureau_ticket_checkpoint "$ISSUE" latched
+    bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" verifier-result --directory "$REVIEW_TMP" \
+      --request "$_verify_prompt" --result "$_verify_prompt.result" || true
+  done
+fi
 bureau_ticket_checkpoint "$ISSUE" latched
 MERGED_REVIEW=$(review_text_from_merger "$MERGED_RAW")
 fi
-
-echo "$MERGED_REVIEW"
 
 echo ""
 echo "Phase 2/3: build check"
@@ -693,6 +808,36 @@ if [ "$VERDICT" != "$PROVIDER_VERDICT" ]; then
 **Convergence**: validated findings at floor $BUREAU_REVIEW_MIN_SEVERITY changed provider $PROVIDER_VERDICT to $VERDICT before security/build/cap rules."
 fi
 
+# Grounding is an additional deterministic hold, before the unchanged ordered
+# shell decision. Convergence never consumes an invalid anchor as an approval.
+if [ "$REUSED_APPROVAL" != 1 ]; then
+  _merge_critical=$(jq -r '.critical_floor' "$REVIEW_TMP/merge-metadata.json")
+  _merge_security=$(jq -r '.security_floor' "$REVIEW_TMP/merge-metadata.json")
+  _merge_floor=$(jq -r '.verdict_floor' "$REVIEW_TMP/merge-metadata.json")
+  _merge_severity=$(jq -r --arg floor "$BUREAU_REVIEW_MIN_SEVERITY" '.severity_counts.bug + (if $floor == "MINOR" then .severity_counts.minor else 0 end)' "$REVIEW_TMP/merge-metadata.json")
+  case "$_merge_floor" in
+    BLOCK) VERDICT=BLOCK ;;
+    REQUEST_CHANGES) [ "$VERDICT" != APPROVE ] || VERDICT=REQUEST_CHANGES ;;
+    APPROVE) ;;
+    *) VERDICT=BLOCK ;;
+  esac
+  if [ "$_merge_severity" -gt 0 ] && [ "$VERDICT" = APPROVE ]; then VERDICT=REQUEST_CHANGES; fi
+  if [ "$_merge_critical" -gt 0 ]; then
+    if [ "$VERDICT" != BLOCK ]; then
+      MERGED_REVIEW+=$'\n\n**Critical floor**: readable specialist counts include CRITICAL findings; human review is required.'
+    fi
+    VERDICT=BLOCK
+  fi
+  if _review_count "$_sec_issues" >/dev/null; then
+    _sec_issues=$(jq -nr --arg raw "$_sec_issues" --argjson floor "$_merge_security" '[($raw | tonumber), $floor] | max')
+  fi
+fi
+if [ "$REUSED_APPROVAL" != 1 ] && [ "$REVIEW_GROUNDING" = required ] \
+   && [ "$(jq -r '.invalid_anchors' "$REVIEW_TMP/merge-metadata.json")" != 0 ]; then
+  VERDICT=BLOCK
+  MERGED_REVIEW+=$'\n\n**Source grounding**: BLOCK — one or more findings have missing, stale or impossible pinned source anchors.'
+fi
+
 # The verdict rules run as one ordered decision in bureau-config.sh
 # (`decide_review_verdict`): verdict check, security count, the security
 # specialist's CRITICAL count, the security floor, the build fold, and the cycle
@@ -721,6 +866,13 @@ $_text"
 done <<< "$(printf '%s\n' "$_decision" | tail -n +2)"
 
 REVIEW_ROUND_MARKER="<!-- bureau-review-round: round=$REVIEW_ROUND verdict=$VERDICT -->"
+# Bind published feedback to this exact stage attempt, including retries of a
+# round in the same run. cap_review_comment appends it as the last line after
+# capping. Legacy runs without evidence identities publish their ordinary comment.
+REVIEW_RUN_FOOTER=""
+if [[ "${BUREAU_RUN_ID:-}" =~ ^[a-f0-9]{32}$ ]] && [[ "${BUREAU_STAGE_ATTEMPT_ID:-}" =~ ^[a-f0-9]{32}$ ]]; then
+  REVIEW_RUN_FOOTER="<!-- bureau-review-run: run=$BUREAU_RUN_ID stage=$BUREAU_STAGE_ATTEMPT_ID round=$REVIEW_ROUND verdict=$VERDICT -->"
+fi
 MERGED_REVIEW="$MERGED_REVIEW
 
 **Review round**: $REVIEW_ROUND/$BUREAU_MAX_REVIEW_ROUNDS · **Severity floor**: $BUREAU_REVIEW_MIN_SEVERITY
@@ -764,9 +916,12 @@ if [ "$REUSED_GATE_WAIT" = 1 ] && [ "$VERDICT" = APPROVE ]; then
 else
   # GitHub refuses a comment over 65,536 characters, and the failure is swallowed here;
   # the cap keeps the header with the verdict the merge gate reads.
-  REVIEW_COMMENT_BODY=$(bureau_cap_comment "$REVIEW_COMMENT") || REVIEW_COMMENT_BODY="$REVIEW_COMMENT"
+  REVIEW_COMMENT_BODY=$(cap_review_comment "$REVIEW_COMMENT")
   bureau_ticket_checkpoint "$ISSUE"
   gh pr comment "$PR_NUMBER" --body "$REVIEW_COMMENT_BODY" || true
+  # Bound stdout even if the publication cap used its legacy failure fallback.
+  bureau_cap_comment "$REVIEW_COMMENT_BODY" || true
+  printf '\n'
   echo "  Posted review to PR #$PR_NUMBER"
 fi
 
@@ -779,7 +934,7 @@ case "$VERDICT" in
       # when there is no Merge state); merge-pipeline.sh refuses there. Moving
       # is not merging, so this holds under a requested stop too.
       echo "  APPROVED — routing to Merge for a manual merge (agents.merge_mode manual)."
-      post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual).
+      post_review_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaits a manual merge (\`agents.merge_mode\` is manual).
 $REVIEW_ROUND_MARKER"
       move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
       bureau_evidence wait-open "$ISSUE" --key approval --kind decision --reason 'Approved PR awaits manual merge' --actor maintainer --stage code_review --pr "$PR_NUMBER" --generation "$REVIEW_HEAD" || true
@@ -793,13 +948,13 @@ $REVIEW_ROUND_MARKER"
           --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
           --verdict APPROVE --review-policy "$REVIEW_POLICY" >/dev/null
       fi
-      post_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested.
+      post_review_comment "$ISSUE" "✅ Code review **APPROVED**. Stopped before merge as requested.
 $REVIEW_ROUND_MARKER"
       bureau_acceptance_brief "$ISSUE" "$BRANCH" --pr "$PR_NUMBER" --head "$REVIEW_HEAD" --url "$PR_URL" --base "$REVIEW_BASE" --verdict "$VERDICT" --review-head "$REVIEW_HEAD" || true
       echo "Review complete; stopped before merge."
       exit 20
     elif agent_enabled "merge" && [ -n "${BUREAU_STATE_MERGE:-}" ]; then
-      post_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaiting merge gate.
+      post_review_comment "$ISSUE" "✅ Code review **APPROVED**. PR #$PR_NUMBER awaiting merge gate.
 $REVIEW_ROUND_MARKER"
       move_issue "$ISSUE" "$BUREAU_STATE_MERGE"
       bureau_evidence wait-open "$ISSUE" --key merge-queue --kind dependency --reason 'Approved PR awaits the merge worker' --actor merge-worker --stage merge || true
@@ -851,7 +1006,7 @@ $REVIEW_ROUND_MARKER"
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
           fi
           if [ "$REUSED_GATE_WAIT" != 1 ]; then
-            post_comment "$ISSUE" "⏳ Code review **APPROVED**. PR #$PR_NUMBER is not merged yet: its merge gate is not decided.
+            post_review_comment "$ISSUE" "⏳ Code review **APPROVED**. PR #$PR_NUMBER is not merged yet: its merge gate is not decided.
 
 ${GATE_LINES:-- (the merge stage left no gate lines)}
 
@@ -878,7 +1033,7 @@ $REVIEW_ROUND_MARKER" || true
             log_escalation "$ISSUE" "code-review" "${REVIEW_CYCLE_COUNT:-0}" \
               "Merge gate blocked after APPROVE" "$PR_NUMBER" "$BRANCH"
           fi
-          post_comment "$ISSUE" "🛑 Code review **APPROVED**, but the merge gate is blocked: PR #$PR_NUMBER was not merged. Needs human.
+          post_review_comment "$ISSUE" "🛑 Code review **APPROVED**, but the merge gate is blocked: PR #$PR_NUMBER was not merged. Needs human.
 
 ${GATE_LINES:-- (the merge stage left no gate lines)}
 
@@ -897,7 +1052,7 @@ $REVIEW_ROUND_MARKER"
     ;;
   REQUEST_CHANGES)
     echo "  Changes requested — moving back to Build"
-    post_comment "$ISSUE" "🔄 Code Review: **Changes Requested** (cycle ${REVIEW_CYCLE_COUNT:-0}/$MAX_REVIEW_CYCLES)
+    post_review_comment "$ISSUE" "🔄 Code Review: **Changes Requested** (cycle ${REVIEW_CYCLE_COUNT:-0}/$MAX_REVIEW_CYCLES)
 
 $MERGED_REVIEW"
     move_issue "$ISSUE" "$BUREAU_STATE_BUILD"
@@ -912,7 +1067,7 @@ $MERGED_REVIEW"
         "${ESCALATION_REASON:-Code reviewer returned BLOCK verdict}" \
         "$PR_NUMBER" "$BRANCH"
     fi
-    post_comment "$ISSUE" "🚫 Code review **BLOCKED** — needs human review.
+    post_review_comment "$ISSUE" "🚫 Code review **BLOCKED** — needs human review.
 
 $MERGED_REVIEW"
     NEXT_STATE="Build Review (needs-human)"

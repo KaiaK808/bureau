@@ -912,19 +912,30 @@ resolve_runner_for_stage() {
 # Execute a creative pass without shell command strings or ARG_MAX-sized argv.
 run_stage_for() {
   local stage="$1"; shift
-  local temp rc system="" schema="" gate_context=""
+  local temp rc system="" system_file="" prompt_file="" schema="" gate_context=""
   while [ "$#" -gt 1 ]; do
     case "$1" in
       --append-system-prompt) system="$2"; shift 2 ;;
+      --append-system-prompt-file) system_file="$2"; shift 2 ;;
+      --prompt-file) prompt_file="$2"; shift 2 ;;
       --schema) schema="$2"; shift 2 ;;
       --gate-context) gate_context="$2"; shift 2 ;;
       *) break ;;
     esac
   done
-  [ "$#" = 1 ] || { echo 'run_stage_for requires one prompt' >&2; return 22; }
+  if [ -n "$prompt_file" ]; then
+    [ "$#" = 0 ] && [ -r "$prompt_file" ] || { echo 'run_stage_for requires a readable prompt file' >&2; return 22; }
+  else
+    [ "$#" = 1 ] || { echo 'run_stage_for requires one prompt' >&2; return 22; }
+  fi
+  [ -z "$system_file" ] || [ -r "$system_file" ] || { echo 'run_stage_for requires a readable system file' >&2; return 22; }
   bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
   temp=$(mktemp -d)
-  printf '%s' "$1" > "$temp/prompt"
+  if [ -n "$prompt_file" ]; then
+    cat -- "$prompt_file" > "$temp/prompt" || { rm -rf "$temp"; return 22; }
+  else
+    printf '%s' "$1" > "$temp/prompt" || { rm -rf "$temp"; return 22; }
+  fi
   # The CI rule (v3.2, scope O7) sits in the system text, not only in
   # scripts/bureau-stage.md: a stage reads that file from its worktree, so it
   # holds there only once the resynced file is on the branch, and this text
@@ -936,7 +947,10 @@ run_stage_for() {
   # stages leave commits and pushes to the Bureau shell. And it says that CI
   # does not decide the reported status, so an agent kept from waiting does not
   # report NEEDS_HUMAN instead.
-  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and document unknowns for implementation/QA. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system"
+  printf '%s\n' "You are a creative worker in an already claimed Bureau background stage ($stage). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and document unknowns for implementation/QA. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI." "$system" > "$temp/system" || { rm -rf "$temp"; return 22; }
+  if [ -n "$system_file" ]; then
+    cat -- "$system_file" >> "$temp/system" || { rm -rf "$temp"; return 22; }
+  fi
   local args=(--stage "$stage" --repo "$PWD" --config "$BUREAU_CONFIG" --prompt-file "$temp/prompt" --system-file "$temp/system")
   [ -n "$schema" ] && args+=(--schema "$schema")
   [ -n "$gate_context" ] && args+=(--gate-context "$gate_context")
@@ -951,7 +965,7 @@ run_stage_for() {
     # Parallel reviewers let their parent stop/join the siblings and consume
     # withdrawal first. No provider process performs Linear mutations.
     case "${BUREAU_PROVIDER_PHASE:-}" in
-      correctness|security|performance) ;;
+      correctness|security|performance|finding_verifier) ;;
       *) bureau_silence_hold "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" "$stage" ;;
     esac
   fi
@@ -1339,7 +1353,7 @@ if len(data) <= limit:
     sys.exit(0)
 def note(cut):
     return ("\n\n[… %d bytes cut from the middle of this comment: it was longer than the %d bytes"
-            " Bureau posts to Linear and GitHub. The stage output has the full text. …]\n\n" % (cut, limit)).encode("utf-8")
+            " Bureau posts to Linear and GitHub. …]\n\n" % (cut, limit)).encode("utf-8")
 # The number of cut bytes has at most as many digits as the whole length.
 room = limit - len(note(len(data)))
 if room < 2:
@@ -3716,9 +3730,12 @@ apply_build_failure() {
 review_convergence() {
   local result verdict
   result=$(parse_claude_json "$1" '.')
-  verdict=$(printf '%s' "$result" | jq -r --arg floor "$2" '
+  verdict=$(printf '%s' "$result" | jq -r --arg floor "$2" --argjson adr_index "${BUREAU_REVIEW_ADR_REFS:-null}" '
     def count: type == "number" and . >= 0 and . <= 999999999 and . == floor;
     def strings: type == "array" and all(.[]; type == "string");
+    def adr_refs_valid:
+      $adr_index == null or (has("adr_refs") | not) or
+      (.adr_refs | type == "array" and all(.[]; type == "string" and (. as $ref | $adr_index | index($ref) != null)));
     if type != "object" then "BLOCK"
     elif .verdict == "BLOCK" then "BLOCK"
     elif ((.verdict == "APPROVE" or .verdict == "REQUEST_CHANGES")
@@ -3727,7 +3744,7 @@ review_convergence() {
           and (.summary | type == "string") and (.comment | type == "string")
           and (.findings | type == "array" and all(.[];
             type == "object" and (.file | type == "string") and (.line | count)
-            and (.msg | type == "string") and
+            and (.msg | type == "string") and adr_refs_valid and
             (.class == "CRITICAL" or .class == "BUG" or .class == "MINOR" or .class == "SKIP")))) | not
       then "BLOCK"
     elif any(.findings[]; .class == "CRITICAL") then "BLOCK"
@@ -3748,7 +3765,8 @@ review_convergence() {
 # Changes Requested comments retain their old meaning. Never rename that header:
 # implement also uses it to fetch feedback. Repeated markers (approval/gate reuse)
 # count once. Only Bureau review headers with a terminal, unquoted metadata line
-# qualify; prose examples and fenced/quoted markers are ignored. Malformed Bureau
+# qualify; prose examples and fenced/quoted markers are ignored. Run-binding
+# footers are ignored entirely. Malformed Bureau
 # metadata still fails closed through the caller's exit 27.
 review_counts() {
   jq -ce '
@@ -3768,7 +3786,8 @@ review_counts() {
         | ($body | split("\n")) as $lines
         | ($lines[0] | test("^(🔄 |## )?Code Review.*Changes Requested")) as $legacy
         | ($legacy or ($lines[0] | test("^(Code review round [1-9][0-9]* started\\.$|[✅⏳🛑🚫] Code review \\*\\*(APPROVED|BLOCKED)\\*\\*)"))) as $owned
-        | ($lines | prose_lines | map(select(test("\\S"))) | last // "") as $last
+        | ($lines | prose_lines | map(select(startswith("<!-- bureau-review-run:") | not))
+            | map(select(test("\\S"))) | last // "") as $last
         # Text after a closed comment makes it an inline example, even below a
         # Bureau header. An incomplete standalone metadata line still fails closed.
         | if $owned and ($last | startswith("<!-- bureau-review-round:") and (test("-->\\s*\\S") | not)) then
@@ -3785,6 +3804,10 @@ review_counts() {
 # Optional metadata only; a failed sink cannot change a verdict or stage exit.
 bureau_review_evidence() {
   [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  if [ -f "${REVIEW_TMP:-}/merge-metadata.json" ]; then
+    set -- --merge-metadata "$REVIEW_TMP/merge-metadata.json" "$@"
+    [ ! -f "$REVIEW_TMP/merged.json" ] || set -- --merge-result "$REVIEW_TMP/merged.json" "$@"
+  fi
   ( bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" \
       --round "$REVIEW_ROUND" --min-severity "$BUREAU_REVIEW_MIN_SEVERITY" "$@" ) || true
   return 0
@@ -4495,6 +4518,13 @@ build_lessons_context() {
     ( echo 'bureau lessons: WARN: optional lesson helper unavailable; continuing without lessons' >&2 ) || true
   }
   return 0
+}
+
+# build_review_adr_context <pinned-base> <pinned-head>: context, included IDs and a
+# reuse-policy digest. Read only local Git objects, never live checkout files.
+# Explicit opt-in failures stop review with 24 instead of inventing context.
+build_review_adr_context() {
+  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-adr.py" --config "$BUREAU_CONFIG" --base "$1" --head "$2"
 }
 
 # build_negative_constraints: shared "Do NOT" block injected into prompts that

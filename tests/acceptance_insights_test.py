@@ -28,7 +28,7 @@ def append_observation(args):
 class AcceptanceInsightsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-pr7-fixture-'); self.addCleanup(self.temp.cleanup)
-        self.home = Path(self.temp.name) / 'Users/canary-private-operator'
+        self.home = Path(self.temp.name).resolve() / 'Users/canary-private-operator'
         self.repo = self.home / 'canary-private-client-repository'; self.spec = self.repo / 'specs/001-brief/spec.md'
         self.spec.parent.mkdir(parents=True); self.spec.write_text('# Intent\nPRIVATE_SPEC_SENTINEL\n')
         self.git('init', '-q', '-b', 'main'); self.git('config', 'user.name', 'Test')
@@ -63,6 +63,58 @@ class AcceptanceInsightsTests(unittest.TestCase):
                     start_head=self.head, end_head=self.head, schema_sha256='a' * 64)
         receipt.update(changes)
         return receipt
+
+    def completed_round(self, number, mode, verdict, complete=True, matching=True):
+        # A separate run also checks ordering across manifests. The fallback
+        # provider deliberately claims APPROVE/zero blockers; retained metadata wins.
+        self.run = uuid.uuid4().hex
+        self.store.begin_run(self.run, self.issue, self.repo, self.head)
+        self.attempt = self.store.begin_attempt(self.run, self.issue, 'code_review', 'stage', self.repo, self.head)
+        self.store.gate(self.run, self.attempt, self.raw, self.head, self.head, 'fixture', 0, pr=self.pr)
+        phases = ['correctness', 'security', 'performance']
+        if mode == 'model_fallback' and complete: phases.append('verdict')
+        for phase in phases:
+            fields = dict(phase=phase, started_at=number * 10, ended_at=number * 10 + 1,
+                          end_head=self.head if matching else self.base)
+            if phase != 'verdict': fields.update(structured_result=None, schema_sha256=None)
+            receipt = self.receipt(**fields)
+            self.store.put_receipt(receipt)
+            # Modern round evidence must survive expiration of provider originals.
+            Path(receipt['provider_logs'], 'final.txt').unlink()
+        blocked = verdict == 'BLOCK'
+        merge = dict(mode=mode, malformed_specialists=['performance'] if mode == 'model_fallback' else [],
+                     grounding='off', invalid_anchors=0, anchor_checks=[], verifier=[], verifier_omitted=0,
+                     critical_floor=int(blocked), security_floor=int(blocked), adr_refs=[],
+                     human_holds=2 if blocked else 0, verdict_floor=verdict,
+                     severity_counts=dict(critical=int(blocked), bug=0, minor=0, skip=0),
+                     result_sha256=str(number) * 64, missing_acceptance_count=2 if blocked else 0,
+                     fixes_needed_count=3 if blocked else 0)
+        return self.store.review_round(self.run, self.attempt, number, 'BUG', 'APPROVE', verdict, merge)
+
+    def test_latest_completed_round_uses_retained_counts_across_merge_modes(self):
+        self.completed_round(1, 'deterministic', 'APPROVE')
+        self.completed_round(2, 'model_fallback', 'BLOCK')
+        brief = self.render()
+        for expected in ('model_fallback round 2', 'Recorded final verdict: BLOCK', 'missing_acceptance: 2',
+                         'fixes_needed: 3', 'Human review holds: 2', 'Critical floor: 1; security floor: 1',
+                         'result sha256=' + '2' * 64):
+            self.assertIn(expected, brief)
+        for stale in ('deterministic round 1', 'Recorded final verdict: APPROVE', 'missing_acceptance: 0',
+                      'fixes_needed: 0', 'Provider verdict: APPROVE', 'original result unavailable'):
+            self.assertNotIn(stale, brief)
+        self.completed_round(3, 'deterministic', 'APPROVE')
+        brief = self.render()
+        self.assertIn('deterministic round 3', brief); self.assertIn('Recorded final verdict: APPROVE', brief)
+        self.assertIn('missing_acceptance: 0', brief); self.assertIn('fixes_needed: 0', brief)
+        self.assertNotIn('model_fallback round 2', brief); self.assertNotIn('Recorded final verdict: BLOCK', brief)
+
+    def test_newer_incomplete_or_unmatched_round_does_not_replace_completed_review(self):
+        self.completed_round(1, 'deterministic', 'APPROVE')
+        self.completed_round(2, 'model_fallback', 'BLOCK', complete=False)
+        self.completed_round(3, 'model_fallback', 'BLOCK', matching=False)
+        brief = self.render()
+        self.assertIn('deterministic round 1', brief); self.assertIn('Recorded final verdict: APPROVE', brief)
+        self.assertNotIn('Recorded final verdict: BLOCK', brief)
 
     def cli_fixture(self):
         self.bin = self.repo/'bin'; self.bin.mkdir()

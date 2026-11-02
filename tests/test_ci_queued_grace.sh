@@ -179,6 +179,7 @@ Review checked.
 ```
 EOF
 export FAKE_CLAUDE_FIXTURES="$SANDBOX/approve.txt"
+review_clean_specialists
 export BUREAU_STUB_ISSUE_STATE='Build Review' BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED=''
 STOPS="$(git -C "$SANDBOX" rev-parse --path-format=absolute --git-common-dir)/bureau/review-stops.json"
 checks queued:3700

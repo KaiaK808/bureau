@@ -243,7 +243,18 @@ source "$(dirname "$0")/parse-result.sh"
 # Ownership is exercised separately against the production runtime.
 bureau_stage_enter() { :; }
 
-run_stage_for() { shift; "$FAKE_CLAUDE_BIN" "$@"; }
+run_stage_for() {
+  shift
+  local args=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --prompt-file) args+=("$(cat "$2")"); shift 2 ;;
+      --append-system-prompt-file) args+=(--append-system-prompt "$(cat "$2")"); shift 2 ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  "$FAKE_CLAUDE_BIN" "${args[@]}"
+}
 precondition_runner() { _record precondition_runner "$1"; }
 resolve_runner_for_stage() { echo "${BUREAU_STUB_RUNNER:-claude}"; }
 commit_codex_changes() { :; }

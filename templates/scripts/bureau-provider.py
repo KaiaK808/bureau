@@ -454,6 +454,10 @@ def run(options, prompt, system, repo, evidence, schema=None):
         receipt['review_inputs'] = dict(head=os.environ.get('BUREAU_REVIEW_INPUT_HEAD'),
                                       base=os.environ.get('BUREAU_REVIEW_INPUT_BASE'),
                                       validation_head=os.environ.get('BUREAU_REVIEW_VALIDATION_HEAD'))
+        if os.environ.get('BUREAU_REVIEW_ADR_REFS', 'null') != 'null' and result is not None:
+            receipt['adr_refs'] = sorted({ref for finding in result.get('findings', [])
+                                          for ref in finding.get('adr_refs', [])
+                                          if re.fullmatch(r'[0-9]{4}', ref)})
     # A failed CLI may still have a final advisory observation. Read originals
     # only for optional local capture; never validate/forward/recover a success.
     if code != 0: receipt['insights_result'] = e.observe(receipt_result, receipt)
@@ -530,6 +534,11 @@ def completion_text(code, text, metadata, repo, schema):
 
 def _run(options, prompt, system, repo, evidence, schema=None):
     runner = options['runner']
+    shadow = options['stage'] == 'code_review' and options.get('phase') == 'finding_verifier'
+    # A read-only filesystem sandbox still permits reads and tool calls. Codex
+    # exec has no supported all-tools-off switch; do not launch an unrestricted
+    # checker. The caller records this unsupported shadow check as unverifiable.
+    if shadow and runner != 'claude': raise ValueError('tool-free finding verifier is unavailable for this runner')
     final = evidence / 'final.txt'
     if runner == 'codex':
         command = ['codex', 'exec', '--json', '-C', str(repo), '-s', options['sandbox'], '-o', str(final)]
@@ -553,7 +562,10 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         # The session id names the transcript Claude writes while it works
         # (transcript()); stdout.log gets the JSON envelope only at the end.
         if options.get('session_id'): command += ['--session-id', options['session_id']]
-        if options['stage'] == 'upstream_summary': command += ['--tools', '']
+        if shadow:
+            command += ['--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+                        '--disable-slash-commands', '--setting-sources', '', '--settings', '{"disableAllHooks":true}']
+        elif options['stage'] == 'upstream_summary': command += ['--tools', '']
         else:
             command += ['--dangerously-skip-permissions', '--disallowedTools',
                         'ScheduleWakeup,CronCreate,CronDelete,RemoteTrigger,Monitor']
@@ -620,6 +632,7 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     try:
         child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)
         child_env = claude_env(options, env=child_env)
+        if shadow: child_env['CLAUDE_CODE_DISABLE_AUTO_MEMORY'] = '1'
         tempdir = codex_tmpdir(runner, child_env, repo)
         if options.get('silence_timeout_seconds') or options.get('cancel_file'):
             owned = a.OwnedProcesses()
