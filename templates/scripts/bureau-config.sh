@@ -358,6 +358,12 @@ bureau_stage_enter() {
 
 bureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }
 
+# Validate advisory risk settings before any stage can mutate state. The
+# renderer owns the defaults and validation; the tier itself has no authority.
+if jq -e '(.agents // {}) | has("risk_tier")' "$BUREAU_CONFIG" >/dev/null 2>&1; then
+  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-acceptance.py" --validate-config "$BUREAU_CONFIG" ) || exit 24
+fi
+
 # _bureau_config_number <path> <default> <min> <max>. Check the JSON text
 # before shell capture can discard NULs or trailing newlines. Absent/null keeps
 # the default; every other value goes through the same consumer-side guard.

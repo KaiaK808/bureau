@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9d980c4aab7f5d09568e95989e2408380e6700e5168b4ec1311a7b393cbe4793">
+<meta name="bureau-source-sha256" content="9083a9bcd5d30a4ebd5cab9a3a2e82375c6fdc2cdb21dd76e8e338f65190bee1">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1479,6 +1479,65 @@ confirms that merge's two ordered parents are exactly that HEAD and
 base. Missing metadata, different inputs, later commits or unavailable
 Git objects mean missing review evidence. This correlation is
 observational and changes no approval or merge authority.</p>
+<p>The same brief is the human's evidence packet; there is no second
+comment or publication path:</p>
+<ul>
+<li>Stage verdicts list each recorded stage attempt for this PR and
+HEAD, with final review verdict or exit status and attempt ID.
+Unrecorded stages/results say <code>missing</code>; other HEADs and
+explicitly different PRs are excluded from this section. A review still
+running at the handoff can have its retained final verdict even before
+the stage exit is recorded.</li>
+<li>CI status counts check-run conclusions (including pending runs) from
+the check-runs API at the immutable brief HEAD, with pagination.
+Collection runs in the publication build outside the evidence-store
+lock. A failed, malformed or unavailable query says
+<code>CI status: unavailable</code> and still publishes. It is a frozen
+observation, not the merge gate's CI proof; legacy commit statuses are
+outside this check-run snapshot.</li>
+<li>Diff size comes from Git <code>--numstat -z base HEAD</code>,
+without external diff/text-conversion helpers: files, insertions,
+deletions and a separate binary-file count. Renames count as delete/add.
+No hunks are read.</li>
+<li>Files outside declared scope use the file-overlap gate's
+<code>bureau-paths.py</code> inventory of the committed
+<code>tasks.md</code> beside the spec at the brief HEAD, including
+<code>repo.path_prefix_strip</code>/<code>BUREAU_PATH_PREFIX_STRIP</code>
+and exact/directory/root scope semantics. Missing or ambiguous
+inventories say <code>declared files: missing</code>. At most 20 paths
+are listed, followed by the additional count. Unsafe path metadata is
+withheld and counted; no task or spec text is copied.</li>
+<li>Review rounds used counts retained code-review round records for
+this PR across HEADs, and shows the effective
+<code>agents.max_review_rounds</code> cap (default
+<code>max_review_cycles + 1</code>, normally 4). This is evidence-store
+accounting, not a reconstruction of expired rounds or historical remote
+comment markers.</li>
+<li>Tokens spent shows input/output tokens and estimated USD per stage
+and total, deduplicated by provider attempt across this PR’s linked
+stages and correlated HEADs (including final stage HEAD and verified
+review validation merges). With cost tracking enabled, receipts are
+primary. A legacy cost-log row is used only for an attempt with no
+receipt usage and an exact provider-attempt identity; when no correlated
+receipts exist, the per-issue log is an explicit fallback labeled
+<code>PR/HEAD correlation unavailable</code>. Legacy rows without
+identity are never joined by stage. Sources are labeled; missing
+measurements remain <code>missing</code>, and incomplete totals state
+<code>partial: n of m attempts measured</code> (all three metrics
+required). Cost tracking off says <code>missing</code>. No raw usage
+envelope is published.</li>
+<li>Risk tier is mechanical and advisory, with supporting counts,
+sensitive paths and thresholds. It changes no routing, holds, verdicts
+or merges. A human merges every PR. See <a
+href="configuration.html#risk-tier"><code>agents.risk_tier</code></a> for
+defaults, mandatory sensitive paths and validation.</li>
+</ul>
+<p>Resync the scripts scope together and restart drivers to install the
+packet extension. The existing <code>publish()</code> ledger/retry/dedup
+behavior is unchanged: already frozen PR/HEAD briefs keep their bodies,
+and retries do not re-query CI. A later HEAD receives the expanded
+packet. Tests use local Git and fake transports; live adopter/API
+qualification remains outstanding.</p>
 <p>The brief selects the latest matching completed round across
 deterministic and model-fallback modes, ordered by correlated provider
 completion time with round number as a tie-breaker. A deterministic

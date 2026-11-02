@@ -82,6 +82,7 @@ Which pipelines run, how often they poll, how aggressive they are.
 | `agents.workbench_panes` | number | `2` background / `0` app | Whole numbers 0–32; invalid values fall back to 2. Number of interactive provider panes in the tmux workbench; zero omits it |
 | `agents.max_review_cycles` | number | `3` | Whole numbers 0–1000; invalid values fall back to 3. Previous Changes Requested rounds allowed before unresolved work becomes BLOCK/exit 25. The default permits three rework rounds and escalates unresolved review four; genuine approval may finish |
 | `agents.max_review_rounds` | number | `max_review_cycles + 1` | Optional total-round limit, 1–1001; invalid values use the derived default. Unresolved work at round N becomes BLOCK/exit 25; genuine approval at N may finish. Both limits apply. Structured round markers take precedence over historical header counting. Approval reuse and merge-gate polling consume no new round |
+| `agents.risk_tier` | object | see [risk tier](#risk-tier) | Optional evidence-packet thresholds and path globs. Always advisory; changes no routing, holds, verdicts or merges. Invalid settings exit 24 before stage mutations |
 | `agents.review_min_severity` | string | `BUG` | `BUG` defers MINOR and SKIP findings; stricter `MINOR` requires rework for MINOR too. Invalid values use MINOR. Validated findings decide before security/build/cap rules; BLOCK, CRITICAL, security/acceptance blockers and malformed or contradictory results cannot be promoted. Deferred/SKIP findings remain in the projected PR comment |
 | `agents.review_grounding` | `off` or `required` | `off` | Validate source anchors against pinned PR base/head. Off records invalid/missing anchors observationally; required adds BLOCK/25. Parse/provider errors stay 22. Part of review policy identity, so changes invalidate approval reuse |
 | `agents.finding_verifier.enabled` | bool | `false` | Opt into shadow checks only: at most eight fresh tool-free Claude calls (60 seconds each), 24 KiB of request JSON each and 8 KiB of whole pinned contracts. Claude tools, MCP, skills and settings hooks are disabled without permission bypass. Codex checks remain unverifiable without model launch because its CLI has no all-tools-off switch. Only claim, pinned source, contract and anchors are supplied. Outcomes and identity digests are evidence only and never change verdicts or merge floors. No enforced mode is shipped; unknown verifier keys are rejected. Included in review policy identity |
@@ -451,7 +452,40 @@ Env overrides for the `repo.upstream_port.*` config family. Set inline when runn
 
 ### Evidence storage and retention
 
-Acceptance briefs and advisory insights add no configuration keys. Existing manual merge/stop settings trigger brief delivery; `evidence/v1/acceptance/NUMBER-HEAD.json` tracks pending/delivered ticket and PR destinations independently. Optional stage observations go to repository-shared `evidence/v1/insights.jsonl` (at most three single-line strings of 280 characters per provider attempt, 2,048 rows/30 days on collection). That advisory file is the explicit free-text exception to metadata-only evidence; it is never applied automatically. Both share the existing global evidence budget. Resync scripts and interfaces together, then restart drivers; see the [acceptance and insights protocol](stage-protocol.md#acceptance-briefs-at-human-merge-boundaries) for privacy, retention and delivery limits.
+Acceptance evidence packets need no enable switch. Existing manual merge/stop settings trigger the same brief delivery; optional `agents.risk_tier` customizes its advisory classification. `evidence/v1/acceptance/NUMBER-HEAD.json` tracks pending/delivered ticket and PR destinations independently. Optional stage observations go to repository-shared `evidence/v1/insights.jsonl` (at most three single-line strings of 280 characters per provider attempt, 2,048 rows/30 days on collection). That advisory file is the explicit free-text exception to metadata-only evidence; it is never applied automatically. Both share the existing global evidence budget. Resync scripts and interfaces together, then restart drivers; see the [acceptance and insights protocol](stage-protocol.md#acceptance-briefs-at-human-merge-boundaries) for privacy, retention and delivery limits.
+
+### Risk tier
+
+The acceptance brief includes a mechanical `low`, `normal` or `high` tier and the counts/paths supporting it. The tier changes no routing, holds, verdicts or merges; a human merges every PR. It does not enable automatic merging or change `agents.merge_mode`. Omitting `agents.risk_tier` uses these defaults:
+
+```json
+{
+  "agents": {
+    "risk_tier": {
+      "low_max_changed_lines": 100,
+      "low_max_files": 5,
+      "high_min_changed_lines": 1000,
+      "docs_patterns": ["docs/*", "**/docs/*", "*.md", "*.rst"],
+      "test_patterns": ["tests/*", "**/tests/*", "test/*", "**/test/*", "test_*.py", "*_test.py", "*.test.*", "*.spec.*"],
+      "sensitive_patterns": []
+    }
+  }
+}
+```
+
+Changed lines means insertions plus deletions in `base..HEAD`. Low requires at least one changed path, every path matching the docs/tests lists, at most 100 changed lines and 5 files, no binary files and no sensitive path. High wins whenever a sensitive path matches or changed lines reach 1000. Normal covers everything else, including missing diff metadata (which is stated explicitly). Threshold comparisons are inclusive. Renames count as delete/add; binary files count as files with no inferred line count.
+
+Globs use case-sensitive shell-style matching against repository-relative paths; `*` can cross `/`. A slashless glob also matches any basename. Docs/tests lists replace their defaults. `sensitive_patterns` adds to these mandatory defaults; an empty list cannot remove them:
+
+| Family | Built-in patterns |
+| --- | --- |
+| Configuration | `*.json`, `*.toml`, `*.yaml`, `*.yml`, `*.ini`, `*.cfg`, `*.config`, `*.config.*`, `*.properties`, `.editorconfig`, `.gitignore`, `.gitattributes`, `.gitmodules`, `config/*`, `**/config/*`, `.config/*`, `**/.config/*`, `.*rc`, `.*rc.*`, `Dockerfile*`, `Makefile` |
+| Dependencies | `package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock*`, `requirements*.txt`, `requirements*.in`, `setup.py`, `Pipfile*`, `poetry.lock`, `uv.lock`, `Cargo.toml`, `Cargo.lock`, `go.mod`, `go.sum`, `go.work*`, `Gemfile*`, `composer.json`, `composer.lock`, `*.csproj`, `pom.xml`, `build.gradle*`, `gradle.lockfile`, `mix.exs`, `mix.lock`, `Package.swift`, `Package.resolved`, `*.lock` |
+| CI | `.github/workflows/*`, `**/.github/workflows/*`, `.gitlab-ci*`, `Jenkinsfile`, `.circleci/*`, `**/.circleci/*`, `azure-pipelines*` |
+| Secrets/environment | `.env`, `.env.*`, `*.env`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*credentials*`, `*secrets*` |
+| Agents | `CLAUDE*.md`, `AGENTS*.md`, `.claude/*`, `**/.claude/*`, `.codex/*`, `**/.codex/*`, `.agents/*`, `**/.agents/*`, `.mcp.json`, `scripts/bureau-stage.md`, `**/scripts/bureau-stage.md` |
+
+This is deliberately conservative: a JSON test fixture is high too. Repository-specific configuration names need additional sensitive patterns. Only the six documented keys are accepted. Thresholds must be JSON integers from 0 through 1000000000, and `low_max_changed_lines` must be less than `high_min_changed_lines`. Each pattern list accepts at most 128 nonempty strings, at most 280 characters each, without whitespace, control characters, backslashes, absolute/home paths or `..` segments. Null, wrong types, unknown keys and inconsistent thresholds exit 24 with a content-free configuration error. Resync the scripts scope (including `bureau-config.sh` and `bureau-acceptance.py`) and restart drivers; existing frozen PR/HEAD packets are retained, without backfill.
 
 Failure insights and review dispositions also need no configuration key. The shell classifier `bureau-insights.sh` consumes runtime exits, provider metadata and trusted review/gate signals; model prose cannot choose a cause. All background stages can contribute filtered insights, including failed and held calls. Metadata-only `stage-outcomes.jsonl` and local `review-dispositions.jsonl` share the insight store's lock, private permissions, atomic capacity checks and per-ledger 2,048-row/30-day collection retention. A disposition has only its provenance, status, severity and filtered repository-relative path; applied/declined are advisory self-reports, not proof of a fix. Resync scripts and interfaces together and restart drivers; no backfill occurs. See [failure learning records](stage-protocol.md#failure-learning-records).
 
