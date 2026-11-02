@@ -164,7 +164,7 @@ rm -f "$REBASE_RESULT"
 bureau_ticket_checkpoint "$ISSUE" strict
 case "$REBASE_RC" in
   0) ;;
-  10|16|21|25|26|27|130) exit "$REBASE_RC" ;;
+  10|16|21|25|26|27|124|130) exit "$REBASE_RC" ;;
   *)
     # Advisory publication cannot bypass the hold or replace exit 17. Consume
     # any withdrawal latched inside either best-effort subshell in this parent.

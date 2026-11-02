@@ -30,6 +30,10 @@ _activity_spec.loader.exec_module(a)
 _ticket_spec = importlib.util.spec_from_file_location('bureau_ticket', Path(__file__).resolve().with_name('bureau-ticket.py'))
 t = importlib.util.module_from_spec(_ticket_spec)
 _ticket_spec.loader.exec_module(t)
+_process_spec = importlib.util.spec_from_file_location('bureau_process', Path(__file__).resolve().with_name('bureau-process.py'))
+pg = importlib.util.module_from_spec(_process_spec)
+_process_spec.loader.exec_module(pg)
+signal_group = pg.signal_group
 
 
 # The values the Claude CLI's --effort accepts.
@@ -94,6 +98,10 @@ def configuration(stage, config, env):
                    silence_timeout_seconds=silence, silence_child_timeout_seconds=silence_child,
                    headroom=runner == 'claude' and env.get('BUREAU_HEADROOM_WRAP', str(agents.get('headroom_wrap', False))).lower() in ('1', 'true'),
                    cost_tracking=env.get('BUREAU_COST_TRACKING', str(config.get('session', {}).get('cost_tracking', False))).lower() in ('1', 'true'))
+    if runner == 'codex':
+        outside = provider.get('gate_outside_sandbox', False)
+        if type(outside) is not bool: raise ValueError('agents.providers.codex.gate_outside_sandbox must be a boolean')
+        if outside: options['gate_outside_sandbox'] = True
     if runner == 'claude': options['config_dir'] = claude_config_dir(provider, env)
     return options
 
@@ -405,6 +413,9 @@ def run(options, prompt, system, repo, evidence, schema=None):
     except (OSError, ValueError, TypeError, UntrustedEnvError, subprocess.SubprocessError) as exc:
         if options.get('_provider_cancelled'):
             code, text, metadata = 130, '', dict(outcome='cancelled')
+        elif isinstance(exc, pg.TerminationUncertain):
+            code, text, metadata = 25, '', dict(outcome='human_hold', failure_cause='human_hold',
+                                               termination_uncertain=str(exc))
         else:
             error = exc
             code, text = (24 if isinstance(exc, (PermissionError, UntrustedEnvError)) else 22), ''
@@ -534,6 +545,8 @@ def _run(options, prompt, system, repo, evidence, schema=None):
             command += ['--output-schema', str(wire_path)]
         # Codex edits files; Git metadata writes remain the shell executor's job.
         prompt = system + '\n\n' + prompt + '\n\nDo not run git commit or git push. Leave changes for the Bureau shell executor. Mark completed tasks truthfully. If tests are denied by the environment, report the permission blocker separately from code failures.'
+        if options.get('gate_outside_sandbox') and options['stage'] in ('implement', 'qa'):
+            prompt += '\nBureau runs the configured full test gate outside the Codex sandbox after this pass and records its receipt and log as stage evidence. Do not run the full test gate yourself or ask to escape the sandbox for it; this takes precedence over instructions to rerun the suite. You may run focused tests. Report completed edits and every independent product, security or human blocker truthfully; pending Bureau validation alone is not a blocker. The next implementation brief includes the outside result and log; QA already includes the initial shell output. The outside gate decides the stage test outcome.'
     else:
         command = ['claude', '-p', '--output-format', 'stream-json' if options.get('silence_timeout_seconds') else 'json']
         if options.get('silence_timeout_seconds'): command += ['--verbose', '--include-partial-messages']
@@ -557,12 +570,39 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     interrupted = None
     child = None
     owned = None
+    timed_out = False
+    timeout_kind = None
+    termination_failure = None
+    hold = None
     def kill(signum):
-        if child and owned:
-            owned.scan(); owned.signal(signum)
-        elif child:
-            try: os.killpg(child.pid, signum)
-            except ProcessLookupError: pass
+        nonlocal termination_failure
+        try:
+            if child and owned:
+                owned.scan(); owned.signal(signum)
+            elif child:
+                signal_group(child, signum)
+        except OSError as exc:
+            hold.uncertain = True
+            termination_failure = str(exc)
+            if not interrupted and not timed_out: raise pg.TerminationUncertain(str(exc)) from exc
+            note('Bureau provider termination uncertain: ' + str(exc))
+    def reap():
+        nonlocal termination_failure
+        try: child.communicate(timeout=1)
+        except subprocess.TimeoutExpired as exc:
+            hold.uncertain = True
+            termination_failure = 'provider did not exit after bounded escalation'
+            if not interrupted and not timed_out: raise pg.TerminationUncertain(termination_failure) from exc
+            note('Bureau provider termination uncertain: ' + termination_failure)
+    def drain():
+        nonlocal termination_failure
+        if not owned: return
+        try: owned.drain()
+        except OSError as exc:
+            hold.uncertain = True
+            termination_failure = str(exc)
+            if not interrupted and not timed_out: raise pg.TerminationUncertain(str(exc)) from exc
+            note('Bureau provider termination uncertain: ' + str(exc))
     def stop(signum, frame):
         nonlocal interrupted
         # A hang-up stops the call like SIGTERM, and the provider's process
@@ -590,6 +630,7 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         with (evidence/'prompt.txt').open('w') as out: out.write(prompt)
         with (evidence/'stdout.log').open('wb') as stdout, (evidence/'stderr.log').open('wb') as stderr:
             observer = options.get('_gate_observer')
+            hold = pg.ProcessHold(pg.hold_root(repo, process_env(['git'])), 'provider', repo)
             child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE if observer or owned else stdout, stderr=stderr, start_new_session=True,
                                      env=child_env)
             if owned: owned.attach(child.pid)
@@ -653,13 +694,11 @@ def _run(options, prompt, system, repo, evidence, schema=None):
                         # The leader can exit while descendants ignore the signal.
                         # Finish the entire group before returning to the owner.
                         kill(signal.SIGTERM)
-                        if owned:
-                            owned.scan(); owned.signal(signal.SIGTERM)
                         try: child.communicate(timeout=.3 if owned else 5)
                         except subprocess.TimeoutExpired: pass
                         kill(signal.SIGKILL)
-                        child.communicate()
-                    if owned: owned.drain()
+                        reap()
+                    drain()
                 finally:
                     signal.setitimer(signal.ITIMER_REAL, 0)
                     if reader:
@@ -667,40 +706,43 @@ def _run(options, prompt, system, repo, evidence, schema=None):
                         if reader.is_alive():
                             stream_error.append('execution stream did not close')
                             if observer: observer.error = 'execution stream did not close'
-            if interrupted: return 130, '', dict(outcome='cancelled', provider_exit=child.returncode)
-            if timed_out:
-                if timeout_kind == 'silence' and options.get('cancel_file') and options.get('phase') in ('correctness', 'security', 'performance'):
-                    # A specialist shell can also return 25 for withdrawal.
-                    # Give its parent evidence of an actual watchdog failure.
-                    e.observe(e.atomic, Path(options['cancel_file'] + '.' + options['phase'] + '.silence'), dict(timeout_kind='silence'))
-                return (25 if timeout_kind == 'silence' else 124), '', dict(outcome='timeout', timeout_kind=timeout_kind,
-                            provider_exit=child.returncode, duration_seconds=time.monotonic()-started)
             # Without the watchdog this remains observational gate evidence;
             # an inherited pipe cannot invalidate a successful final result.
-            if stream_error and options.get('silence_timeout_seconds'):
+            if stream_error and options.get('silence_timeout_seconds') and not interrupted and not timed_out:
                 raise OSError('provider execution stream unavailable')
     finally:
         # Exceptional reader/inspection/spawn paths must also finish all owned
         # writers before the receipt or the trusted shell can report a stop.
-        if child and child.poll() is None:
-            kill(signal.SIGKILL)
-            child.communicate()
-        if owned: owned.drain()
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        for sig, handler in previous.items(): signal.signal(sig, handler)
-        if tempdir:
+        try:
+            if child and child.poll() is None:
+                kill(signal.SIGKILL)
+                reap()
+            drain()
+            if child and (interrupted or timed_out) and not owned:
+                try: hold.cleanup(child)
+                except pg.TerminationUncertain as exc:
+                    termination_failure = termination_failure or str(exc)
+        finally:
             try:
-                # A failure after Popen must also finish the child before its
-                # temporary directory is removed. Normal exits already waited.
-                if child and child.poll() is None:
-                    kill(signal.SIGKILL)
-                    child.communicate()
+                if hold is not None: hold.close(stopped=not hold.uncertain)
             finally:
                 signal.setitimer(signal.ITIMER_REAL, 0)
-                try: shutil.rmtree(tempdir)
-                except OSError as exc: note('Bureau provider: could not remove ' + tempdir + ': ' + str(exc))
+                for sig, handler in previous.items(): signal.signal(sig, handler)
+                if tempdir:
+                    try: shutil.rmtree(tempdir)
+                    except OSError as exc: note('Bureau provider: could not remove ' + tempdir + ': ' + str(exc))
     options['_provider_exit'] = child.returncode
-    if interrupted: return 130, '', dict(outcome='cancelled', provider_exit=child.returncode)
+    if interrupted or timed_out:
+        metadata = dict(outcome='cancelled' if interrupted else 'timeout', provider_exit=child.returncode,
+                        termination_uncertain=termination_failure, duration_seconds=time.monotonic()-started)
+        if termination_failure: metadata['failure_cause'] = 'human_hold'
+        if interrupted: return 130, '', metadata
+        metadata['timeout_kind'] = timeout_kind
+        if timeout_kind == 'silence' and options.get('cancel_file') and options.get('phase') in ('correctness', 'security', 'performance'):
+            # A specialist shell can also return 25 for withdrawal.
+            # Give its parent evidence of an actual watchdog failure.
+            e.observe(e.atomic, Path(options['cancel_file'] + '.' + options['phase'] + '.silence'), dict(timeout_kind='silence'))
+        return (25 if timeout_kind == 'silence' else 124), '', metadata
     stderr = (evidence/'stderr.log').read_text(errors='replace')
     stdout = (evidence/'stdout.log').read_text(errors='replace')
     if child.returncode:
@@ -945,38 +987,70 @@ def note(text):
         os.dup2(devnull, 2); os.close(devnull)
 
 
+class GateExecutionError(OSError):
+    """Execution/cleanup failed, even if the command already returned zero."""
+    def __init__(self, failure, outcome, uncertain=False):
+        self.uncertain = uncertain or isinstance(failure, pg.TerminationUncertain)
+        self.code, self.abort = outcome if outcome is not None else (22, None)
+        if self.uncertain: self.code = pg.uncertain_exit(self.code)
+        elif self.code == 0: self.code = 22
+        self.reason = ('outside gate termination uncertain' if self.uncertain
+                       else 'outside gate execution failed')
+        super().__init__(self.reason)
+
+
 def outside_gate(options, repo, command, log):
     """Run a canonical command once, bounded and without Bureau credentials."""
-    child = None; stopped = None; abort = None
+    child = None; outcome = None; failure = None; previous = {}; hold = None; stopped = False
     def stop(signum, frame):
-        nonlocal stopped
-        stopped = signum
-        if child:
-            try: os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError: pass
-    previous = {sig:signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        nonlocal outcome
+        # Latch before any kill or cleanup: cancellation survives their errors.
+        options['_gate_cancelled'] = True
+        outcome = 130, 'kill'
+        if child: signal_group(child, signal.SIGKILL)
     try:
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            previous[sig] = signal.signal(sig, stop)
         with os.fdopen(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as output:
+            # Mandatory coordination, outside prunable evidence, durable before spawn.
+            hold = pg.ProcessHold(evidence_store(repo).root.parent.parent, 'outside_gate', repo)
             child = subprocess.Popen(['/bin/bash', '--noprofile', '--norc', '-o', 'pipefail', '-c', command], cwd=repo,
                                      stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                                      env=untrusted_env(os.environ, options['untrusted_env']), start_new_session=True)
-            if stopped: stop(stopped, None)
+            if options.get('_gate_cancelled'): stop(None, None)
             try: code = child.wait(timeout=options['timeout'])
             except subprocess.TimeoutExpired:
-                abort = 'timeout'
-                try: os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError: pass
-                child.wait(); code = 124
-            if stopped: code, abort = 130, 'kill'
-            elif code < 0 or code == 130: abort = 'kill'
-        return code, abort
+                if outcome is None: outcome = 124, 'timeout'
+                signal_group(child, signal.SIGKILL)
+                child.wait(timeout=5)
+            else:
+                if code == 130: options['_gate_cancelled'] = True
+                if outcome is None: outcome = code, 'kill' if code < 0 or code == 130 else None
+    except Exception as exc:
+        failure = exc
     finally:
-        if child:
-            # A successful check may leave background writers in its group.
-            try: os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError: pass
-            child.wait()
-        for sig, handler in previous.items(): signal.signal(sig, handler)
+        try:
+            if child:
+                # A successful check may leave background writers in its group.
+                try: signal_group(child, signal.SIGKILL)
+                finally: child.wait(timeout=5)
+                pg.assert_groups_stopped({child.pid})
+                # An earlier EPERM stays uncertain even if a later probe succeeds.
+                stopped = not isinstance(failure, pg.TerminationUncertain)
+        except Exception as exc:
+            failure = failure or exc
+        finally:
+            if hold is not None:
+                try: hold.close(stopped=stopped)
+                except OSError as exc: failure = failure or exc
+            for sig, handler in previous.items():
+                try: signal.signal(sig, handler)
+                except Exception as exc: failure = failure or exc
+    if failure is not None:
+        # Every caller must handle failure. Never return (0, None) after a
+        # failed cleanup; cancellation/timeout travel on the exception instead.
+        raise GateExecutionError(failure, outcome, uncertain=hold is not None and not stopped) from failure
+    return outcome
 
 
 def gate_action(args, config, options, repo):
@@ -987,7 +1061,7 @@ def gate_action(args, config, options, repo):
     if not isinstance(raw, dict):
         return json.dumps(dict(eligible=False, green=False, logs=[], reason='gate input must be one object'))
     context = raw.get('context') if args.gate_action == 'run' and isinstance(raw, dict) else None
-    if args.gate_action in ('plan', 'publish'):
+    if args.gate_action in ('plan', 'publish', 'check'):
         value = json.loads(raw['result']) if isinstance(raw, dict) and isinstance(raw.get('result'), str) else raw
         if args.gate_context and Path(args.gate_context).is_file() and Path(args.gate_context).stat().st_size:
             context = json.loads(Path(args.gate_context).read_text())
@@ -1015,14 +1089,30 @@ def gate_action(args, config, options, repo):
             if not attempt: attempt = store.begin_attempt(run_id, issue, args.stage, 'gate', repo, head)
             plan.update(run_id=run_id, stage_attempt_id=attempt)
         return json.dumps(plan)
-    # Re-check original evidence, config and HEAD immediately before running.
-    fresh = g.plan(store, raw.get('result'), args.stage, configured, head, raw.get('context'), repo)
-    if not fresh['eligible'] or raw.get('head') != head or raw.get('commands') != fresh.get('commands'):
-        return json.dumps(dict(eligible=False, green=False, reason='gate evidence changed before outside execution', logs=[]))
+    if args.gate_action == 'check':
+        # Delegation needs a successful exact-pass receipt, but no failed
+        # sandbox execution or gate-only hold. Independent blockers stay held.
+        # A committing hook advances the execution HEAD; authenticate the pass
+        # at its pre-hook HEAD while reserving the check at the final HEAD.
+        source_head = args.gate_source_head or head
+        if (not options.get('gate_outside_sandbox') or args.stage not in ('implement', 'qa') or not configured
+                or not isinstance(context, dict)
+                or store.match_gate_receipt(context, args.stage, source_head, value, repo, allow_ancestor=source_head != head) is None):
+            return json.dumps(dict(eligible=False, green=False, logs=[], reason='outside check needs an enabled configured gate and current pass receipt'))
+        fresh = g.plan(store, value, args.stage, configured, source_head, context, repo)
+        sources = fresh.get('gate_attempt_ids') if fresh['eligible'] else [context['provider_attempt_id']]
+        fresh = dict(commands=configured, gate_attempt_ids=sources)
+        raw = dict(run_id=context['run_id'], stage_attempt_id=context['stage_attempt_id'])
+    else:
+        # Re-check original evidence, config and HEAD immediately before running.
+        fresh = g.plan(store, raw.get('result'), args.stage, configured, head, raw.get('context'), repo)
+        if not fresh['eligible'] or raw.get('head') != head or raw.get('commands') != fresh.get('commands'):
+            return json.dumps(dict(eligible=False, green=False, reason='gate evidence changed before outside execution', logs=[]))
     run_id, owner = raw['run_id'], raw['stage_attempt_id']
     logs = []; green = True; verified = True
     for command in fresh['commands']:
-        reserved = e.observe(store.reserve_gate_rerun, run_id, owner, head, command, g.digest(command), fresh.get('gate_attempt_ids', []))
+        reserved = e.observe(store.reserve_gate_rerun, run_id, owner, head, command, g.digest(command), fresh.get('gate_attempt_ids', []),
+                             scope_sources=options.get('gate_outside_sandbox', False))
         if reserved is None:
             green = False; verified = False; continue
         claimed, reservation = reserved
@@ -1035,10 +1125,18 @@ def gate_action(args, config, options, repo):
             e.private_dir(directory)
             log = directory / (reservation['attempt_id'] + '.log')
             started = time.monotonic()
-            code, abort = outside_gate(options, repo, command, log)
+            logs.append(str(log))
+            try:
+                code, abort = outside_gate(options, repo, command, log)
+            except GateExecutionError as exc:
+                if exc.code == 130: options['_gate_cancelled'] = True
+                if exc.uncertain: options['_gate_exit'] = exc.code
+                return json.dumps(dict(eligible=False, green=False, logs=logs, reason=exc.reason,
+                                       normalized_exit=exc.code, abort=exc.abort, failure_cause='human_hold' if exc.uncertain else 'provider_error'))
+            except Exception:
+                return json.dumps(dict(eligible=False, green=False, logs=logs, reason='outside gate execution failed'))
             # Cancellation wins over EVERY subsequent read/write/validation.
             if code == 130: options['_gate_cancelled'] = True
-            logs.append(str(log))
             def measurement():
                 data = log.read_bytes()
                 return dict(attempt_id=reservation['attempt_id'], gate_id=g.digest(command), command_sha256=g.digest(command),
@@ -1075,8 +1173,9 @@ def main():
     parser.add_argument('--config', default=os.environ.get('BUREAU_CONFIG', '.bureau.json'))
     parser.add_argument('--prompt-file'); parser.add_argument('--system-file'); parser.add_argument('--schema')
     parser.add_argument('--gate-context')
+    parser.add_argument('--gate-source-head')
     parser.add_argument('--cancel-file')
-    parser.add_argument('--gate-action', choices=('command', 'plan', 'run', 'publish'))
+    parser.add_argument('--gate-action', choices=('command', 'plan', 'run', 'publish', 'check'))
     parser.add_argument('--publication-before'); parser.add_argument('--publication-after')
     parser.add_argument('--check', action='store_true'); parser.add_argument('--describe', action='store_true')
     args = parser.parse_args(); evidence = None; options = {}
@@ -1092,7 +1191,7 @@ def main():
         if args.gate_action:
             response = e.observe(gate_action, args, config, options, repo)
             print(response or json.dumps(dict(eligible=False, green=False, logs=[], reason='gate evidence unavailable')))
-            return 130 if options.get('_gate_cancelled') else 0
+            return 130 if options.get('_gate_cancelled') else options.get('_gate_exit', 0)
         options['gate_commands'] = g.commands(config, repo, args.stage)
         options['gate_command_id'] = 'repo.test_command' if (config.get('repo') or {}).get('test_command') else 'qa.test'
         options['gate_context'] = args.gate_context

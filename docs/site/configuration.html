@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="8250f601298d2b89fd42651e18655f54e91b50de38f724732a628e44a67db03f">
+<meta name="bureau-source-sha256" content="33da95741752de9ea02d495b8447a0cc5417f5be6316d7c16e164ad543b1f236">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -831,6 +831,18 @@ runtime</a></td>
 provider defaults also supported</td>
 </tr>
 <tr>
+<td><code>agents.providers.codex.gate_outside_sandbox</code></td>
+<td><code>false</code></td>
+<td>Boolean, Codex implementation/QA only. Bureau runs the configured
+full gate outside Codex's inner sandbox after each successful
+implementation pass and in QA's final phase, using the existing outside
+runner, teardown and receipt. The agent may run focused tests; it does
+not run the full gate or request a sandbox escape. Absent/false
+preserves existing behavior; other types fail with 22 before a Codex
+call. Resync the complete scripts scope and restart drivers before
+enabling</td>
+</tr>
+<tr>
 <td><code>agents.&lt;stage&gt;.timeout_seconds</code></td>
 <td>3600</td>
 <td>Adapter timeout per provider call (900 before v3.1), also
@@ -901,6 +913,26 @@ write within the permitted workspace. The executor runs actual
 implementation/QA tests separately. Unknown runners, malformed results
 and denied permissions are errors, never automatic fallback to
 Claude.</p>
+<p>With <code>agents.providers.codex.gate_outside_sandbox: true</code>,
+the gate runs in the stage worktree under Bureau's existing outer
+runner/account and its network restrictions, outside only the nested
+Codex sandbox. It uses the existing <code>repo.untrusted_env</code>
+default or clean child filter, without Bureau service secrets, their
+carriers or shell startup hooks; clean mode keeps only the test
+environment allowlist, not the agent login/network additions. Filtering
+does not conceal files readable by that account. Implementation requires
+<code>repo.test_command</code>; QA retains its normal command detection
+and initial shell run/retry. Each successful provider pass is bound to
+its completion receipt and current HEAD (including the existing one-hop
+executor publication), with one durable outside reservation per
+pass/command/HEAD; final implementation validation reuses that receipt.
+A red partial pass supplies its log to the next brief; completed
+implementation still exits 14 on a red gate, and QA red still returns to
+Build. Independent blockers survive green tests. Provider
+errors/timeouts retain their existing handling and do not authorize a
+delegated check. Existing sandbox-only reruns remain available. See <a
+href="../adr/0013-codex-gate-delegation.md">ADR 0013</a> for the boundary
+and limits.</p>
 <p>Silence settings apply per creative provider call, alongside the
 existing hard timeout and implementation bounds; outside-gate commands
 retain their own wall-clock handling. Claude uses

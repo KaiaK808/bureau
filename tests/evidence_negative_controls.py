@@ -11,7 +11,7 @@ from mutation_checks import mutation_caught, snapshot_files
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPTS=ROOT/'templates/scripts'
-names=('bureau-provider.py','bureau-runtime.py','bureau-evidence.py','bureau-gates.py','bureau-activity.py','bureau-ticket.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
+names=('bureau-provider.py','bureau-runtime.py','bureau-process.py','bureau-evidence.py','bureau-gates.py','bureau-activity.py','bureau-ticket.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
        'merge-pipeline.sh','bureau-config.sh','bureau-env.sh','code-review-pipeline.sh','bureau-insights.sh')
 before={name:hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
 

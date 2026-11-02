@@ -2,9 +2,9 @@
 # Implement pipeline: Pick Build issue → checkout branch → execute tasks via a
 # bounded retry loop → push → PR. Each tick attempts up to MAX_ITER passes
 # through Claude, parsing the JSON status block emitted at the end of each
-# iteration to decide whether to continue. A pass that times out is counted
-# and followed by another while one is left; when none is left, the stage ends
-# with 124. Terminal states:
+# iteration to decide whether to continue. A timeout with confirmed cleanup is
+# counted and followed by another while one is left; when none is left, the stage
+# ends with 124. Terminal states:
 #   COMPLETE                  → push + mark PR ready + move to QA / Build Review
 #   NEEDS_HUMAN/STUCK/        → push + draft PR + needs-human label + summary
 #   CAP_TIME/PARTIAL            comment + no state move (issue stays in Build)
@@ -35,6 +35,20 @@ ITER_TIMEOUT=$(bureau_number BUREAU_IMPL_ITER_TIMEOUT "${BUREAU_IMPL_ITER_TIMEOU
 TOTAL_TIMEOUT=$(bureau_number BUREAU_IMPL_TOTAL_TIMEOUT "${BUREAU_IMPL_TOTAL_TIMEOUT-5400}" 5400 1 604800)
 
 # The provider adapter enforces per-pass timeouts on both macOS and Linux.
+
+# A held writer must stop retries and every publication path, including EXIT.
+_implement_process_checkpoint() {
+  local code="${1:-25}" common rc
+  common=$(git rev-parse --git-common-dir) || return $?
+  if python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-process.py" --root "$common/bureau" --run "${BUREAU_RUN_ID:-}" --exit-code "$code"; then
+    return 0
+  else
+    rc=$?
+  fi
+  EXIT_PUSH_ARMED=0
+  bureau_outcome_signal human_hold || true
+  exit "$rc"
+}
 
 # refresh_review_context: pull the newest comment for $1 that asks implement
 # for fixes and emit the prompt block the implement loop interpolates. Such a
@@ -215,42 +229,146 @@ push_if_ahead() {
 # human to look at), or when HEAD is no longer a descendant of the commit it
 # started from (then the final push is skipped: pushing would publish
 # rewritten history).
+# Uncertain cleanup instead keeps a durable hold and stops before publication,
+# retaining a determined timeout/cancellation exit (124/130), otherwise 25.
 POST_IMPLEMENT_FAILED=0
 POST_IMPLEMENT_HEAD_REWRITTEN=0
 POST_IMPLEMENT_REPORT=""
+POST_IMPLEMENT_RUNNER_PID=""
+POST_IMPLEMENT_CANCEL_FILE=""
+POST_IMPLEMENT_LAUNCH_MARKER=""
+POST_IMPLEMENT_HOLD_FILE=""
+POST_IMPLEMENT_SIGNAL_TRAPS=""
+_close_post_implement_hold() {
+  [ -n "$POST_IMPLEMENT_HOLD_FILE" ] || return 0
+  # Called only after wait (or when no job was launched). An adopted hold
+  # without a stopped receipt stays on disk for the existing checkpoint.
+  python3 -I -c '
+import runpy, sys
+pg = runpy.run_path(sys.argv[1])
+if not pg["ProcessHold"].complete_join(sys.argv[2]):
+    print("post-implement termination uncertain: unfinished runner hold", file=sys.stderr)
+' "$_BUREAU_SCRIPTS_DIR/bureau-process.py" "$POST_IMPLEMENT_HOLD_FILE" || true
+  POST_IMPLEMENT_HOLD_FILE=""
+}
+_stop_post_implement_runner() {
+  # EXIT must finish the join even if a second stop signal reaches the stage.
+  trap '' HUP INT TERM
+  local pid="${POST_IMPLEMENT_RUNNER_PID:-}" last saved_traps="$POST_IMPLEMENT_SIGNAL_TRAPS" deadline job alive code="${1:-25}"
+  if [ -z "${POST_IMPLEMENT_CANCEL_FILE:-}" ]; then
+    trap - HUP INT TERM
+    eval "$saved_traps"
+    return 0
+  fi
+  if [ -z "$pid" ] && [ -n "$POST_IMPLEMENT_LAUNCH_MARKER" ]; then
+    # TERM can arrive after the fork but before PID registration. $! already
+    # names that child; the pre-fork value distinguishes a job never launched.
+    # Bash 3.2's nounset also rejects ${!:-}, so read it with nounset off locally.
+    last=$(set +u; printf 'previous:%s' "$!")
+    [ "$last" = "$POST_IMPLEMENT_LAUNCH_MARKER" ] || pid=$!
+  fi
+  # The job is the environment wrapper, not necessarily the Python runner.
+  # Let the runner signal/reap its own group and close (or retain) its hold.
+  : > "$POST_IMPLEMENT_CANCEL_FILE"
+  if [ -n "$pid" ]; then
+    deadline=$((SECONDS + 15))
+    while :; do
+      # Consult Bash's own jobs, including stopped jobs, without a PID probe
+      # whose permission error could be mistaken for completion.
+      alive=0
+      for job in $(jobs -pr; jobs -ps); do
+        if [ "$job" = "$pid" ]; then alive=1; break; fi
+      done
+      [ "$alive" = 1 ] || break
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        # Keep the pre-fork hold and cancel file; neither ownership nor
+        # publication may proceed without a completed join.
+        EXIT_PUSH_ARMED=0
+        bureau_outcome_signal human_hold || true
+        trap - HUP INT TERM
+        eval "$saved_traps"
+        case "$code" in 124|130|143) ;; *) code=25 ;; esac
+        exit "$code"
+      fi
+      sleep 0.1
+    done
+    wait "$pid" 2>/dev/null || true
+  fi
+  _close_post_implement_hold
+  POST_IMPLEMENT_RUNNER_PID=""
+  POST_IMPLEMENT_LAUNCH_MARKER=""
+  rm -f "$POST_IMPLEMENT_CANCEL_FILE"
+  POST_IMPLEMENT_CANCEL_FILE=""
+  trap - HUP INT TERM
+  eval "$saved_traps"
+}
 _POST_IMPLEMENT_RUNNER='
-import os, signal, subprocess, sys, time
+import importlib.util, os, signal, subprocess, sys, time
+from pathlib import Path
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("bureau_process", Path(sys.argv[4]) / "bureau-process.py")
+pg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pg)
 limit, cmd, status_file = int(sys.argv[1]), sys.argv[2], sys.argv[3]
-child = subprocess.Popen(["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
+hold = pg.ProcessHold.adopt(sys.argv[5])
+if Path(status_file + ".cancel").exists():
+    hold.close(stopped=True)
+    sys.exit(143)
+child = None
+outcome = None
+def signal_group(signum):
+    try:
+        hold.signal(child, signum)
+    except OSError as exc:
+        print("post-implement termination uncertain: " + str(exc), file=sys.stderr)
 def stop(code, why):
-    with open(status_file, "w") as f:
-        f.write(why)
-    pgid = child.pid
+    global outcome
+    outcome = code
     try:
-        os.killpg(pgid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        child.poll()
+        with open(status_file, "w") as f:
+            f.write(why)
+    finally:
+        signal_group(signal.SIGTERM)
         try:
-            os.killpg(pgid, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.1)
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    child.wait()
-    sys.exit(code)
-for sig, code in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)):
-    signal.signal(sig, lambda *_, c=code: stop(c, "signal"))
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            hold.cleanup(child)
+        except pg.TerminationUncertain as exc:
+            print("post-implement termination uncertain: " + str(exc), file=sys.stderr)
+        sys.exit(code)
 try:
-    rc = child.wait(timeout=limit)
-except subprocess.TimeoutExpired:
-    stop(124, "timeout")
-sys.exit(128 - rc if rc < 0 else rc)
+    if Path(status_file + ".cancel").exists():
+        outcome = 143
+        sys.exit(outcome)
+    child = subprocess.Popen(["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", cmd], stdin=subprocess.DEVNULL, start_new_session=True)
+    for sig, code in ((signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129)):
+        signal.signal(sig, lambda *_, c=code: stop(c, "signal"))
+    deadline = time.monotonic() + limit
+    while True:
+        if Path(status_file + ".cancel").exists():
+            stop(143, "signal")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            stop(124, "timeout")
+        try:
+            rc = child.wait(timeout=min(remaining, 0.1))
+            break
+        except subprocess.TimeoutExpired:
+            pass
+    outcome = 128 - rc if rc < 0 else rc
+    sys.exit(outcome)
+finally:
+    try:
+        if child and child.poll() is None:
+            hold.cleanup(child)
+    except pg.TerminationUncertain as exc:
+        print("post-implement termination uncertain: " + str(exc), file=sys.stderr)
+    finally:
+        hold.close(stopped=not hold.uncertain)
+    if hold.uncertain:
+        sys.exit(pg.uncertain_exit(outcome))
 '
 # A path that is already uncommitted when the hook starts (` M a.txt`, an
 # untracked file) keeps the same `git status` line however much the hook adds
@@ -353,7 +471,7 @@ _post_implement_changed_dirty() {
   done < <(_post_implement_hash_paths "${blamed[@]}")
 }
 run_post_implement_command() {
-  local cmd limit before before_status after_status new_dirty changed_dirty dirty_snapshot rc log status_file why reason hook_commits
+  local cmd limit before before_status after_status new_dirty changed_dirty dirty_snapshot rc log status_file why reason hook_commits common
   cmd=$(bureau_get '.repo.post_implement_command // empty')
   [ -n "$cmd" ] || return 0
   if [ "$STATUS" != COMPLETE ] && ! { [ "$STATUS" = PARTIAL ] && [ "$COMMITS_TOTAL" -gt 0 ]; }; then
@@ -383,12 +501,49 @@ command: ${cmd}"
   _post_implement_dirty_snapshot "$dirty_snapshot"
   log=$(mktemp "${TMPDIR:-/tmp}/bureau-post-implement.XXXXXX")
   status_file="$log.why"
+  common=$(git rev-parse --git-common-dir)
   echo "  Running repo.post_implement_command (limit ${limit}s): $cmd"
-  if bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" >"$log" 2>&1; then
+  # The durable record precedes the fork, environment setup and Python startup.
+  # Unlock the creator's handle; the runner adopts this same record, never a
+  # second hold. Only a completed wrapper join may remove it.
+  if ! POST_IMPLEMENT_HOLD_FILE=$(python3 -I -c '
+import runpy, sys
+from pathlib import Path
+pg = runpy.run_path(sys.argv[1])
+hold = pg["ProcessHold"](sys.argv[2], "post_implement", Path.cwd(), run_id=sys.argv[3], issue=sys.argv[4])
+print(hold.path.resolve())
+hold.close()
+' "$_BUREAU_SCRIPTS_DIR/bureau-process.py" "$common/bureau" "${BUREAU_RUN_ID:-}" "$ISSUE"); then
+    POST_IMPLEMENT_FAILED=1
+    POST_IMPLEMENT_REPORT="repo.post_implement_command was not run: its process hold could not be created.
+command: ${cmd}"
+    echo "  ✗✗ repo.post_implement_command not run: process hold creation failed" >&2
+    rm -f "$dirty_snapshot" "$log"
+    _implement_process_checkpoint 14
+    return 0
+  fi
+  POST_IMPLEMENT_CANCEL_FILE="$status_file.cancel"
+  POST_IMPLEMENT_LAUNCH_MARKER=$(set +u; printf 'previous:%s' "$!")
+  (
+    # A signal to the stage group must not kill this wrapper before it joins
+    # the runner. Python installs its own handlers; EXIT also requests a stop.
+    trap ':' HUP INT TERM
+    [ ! -e "$POST_IMPLEMENT_CANCEL_FILE" ] || exit 143
+    # The runner checks again after the environment wrapper finishes setup.
+    bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" "$POST_IMPLEMENT_HOLD_FILE"
+  ) >"$log" 2>&1 &
+  POST_IMPLEMENT_RUNNER_PID=$!
+  POST_IMPLEMENT_LAUNCH_MARKER=""
+  if wait "$POST_IMPLEMENT_RUNNER_PID"; then
     rc=0
   else
     rc=$?
   fi
+  POST_IMPLEMENT_RUNNER_PID=""
+  _close_post_implement_hold
+  rm -f "$POST_IMPLEMENT_CANCEL_FILE"
+  POST_IMPLEMENT_CANCEL_FILE=""
+  _implement_process_checkpoint "$rc"
   why=$(cat "$status_file" 2>/dev/null || true)
   rm -f "$status_file"
   tail -20 "$log" | sed 's/^/    /'
@@ -710,7 +865,7 @@ LESSONS_CONTEXT=$(build_lessons_context implement "$SPEC_DIR_MATCH")
 # tests that fail only for that reason with the SANDBOX_GATE: prefix, so the
 # shell gate after the loop can decide (codex_sandbox_gate_only). A Claude run
 # gets no note: its prompt stays as it was, byte for byte.
-if [ "$(resolve_runner_for_stage implement)" = codex ]; then
+if [ "$(resolve_runner_for_stage implement)" = codex ] && ! codex_gate_outside_enabled implement; then
   SANDBOX_NOTE="Sandbox: this stage runs inside the Codex sandbox, where binding or listening on a socket, network access and the per-user temp directory can be denied. A test that fails only for such a reason (for example PermissionError: [Errno 1] Operation not permitted on bind or listen) is not a code failure. Never change, skip or deselect a test to get around the sandbox. When such failures are the only thing keeping a task open, finish every other task, then report status NEEDS_HUMAN with one notes.needs_human entry per affected task whose reason begins with SANDBOX_GATE: and names the failing tests and the denied operation. After your turn the shell runs repo.test_command outside the sandbox: if it passes, the stage continues as COMPLETE; if it fails, the ticket halts for a human. Any other needs-human reason must not begin with SANDBOX_GATE:."
   SANDBOX_NOTE+=" For a failed or aborted configured gate, report each affected notes.needs_human entry with kind gate and command equal to the exact configured repo.test_command; reason is free text, with no required prefix. Include every independent blocker with kind product, security or human and an empty command. Only actual Codex command executions at the current HEAD qualify; a reference alone is no evidence. Do not label a product, security or decision blocker as a gate. Run the configured command unchanged from the repository root."
   NEGATIVE_CONSTRAINTS+=$'\n\n'"$SANDBOX_NOTE"
@@ -729,6 +884,7 @@ i=0
 CLAUDE_EXIT=0
 TIMED_OUT_AFTER=0
 IMPL_RUNNER=$(resolve_runner_for_stage implement)
+IMPLEMENT_GATE_FEEDBACK=""
 
 # agents.implement.push_each_iteration. true (the default): the branch is
 # pushed after every iteration and after the /goal run, as it always was.
@@ -792,20 +948,25 @@ push_iteration() {
 # the branch stops at it, and a run outside the worker checks the branch out
 # again from origin. Once repo.post_implement_command is about to run, the trap
 # pushes the commit the hook starts from, never HEAD: a stage ended during or
-# after the hook must not publish what the hook did to HEAD. On a stop the push
-# runs in the stage's process group, bounded by the runtime's stop grace.
+# after the hook must not publish what the hook did to HEAD. First drain the
+# hook through its runner and check holds. On a stop the push runs in the
+# stage's process group, bounded by the runtime's stop grace.
 EXIT_PUSH_ARMED=1
 IMPLEMENT_GATE_TMP=$(mktemp -d)
 IMPLEMENT_GATE_CONTEXT="$IMPLEMENT_GATE_TMP/context.json"
 _push_on_exit() {
   local rc=$?
+  _stop_post_implement_runner "$rc"
   rm -rf "$IMPLEMENT_GATE_TMP"
   [ "$EXIT_PUSH_ARMED" = 1 ] || return "$rc"
+  _implement_process_checkpoint "$rc"
   # Preserve commits already made, including on withdrawal or a signal. This
   # best-effort push must not refresh the ticket or replace the stage's exit.
   ( push_if_ahead "the stage ends before its end-of-run push" "${HEAD_BEFORE_HOOK:-HEAD}" ) || true
   return "$rc"
 }
+# Capture alongside EXIT installation, never in the interruptible cleanup path.
+POST_IMPLEMENT_SIGNAL_TRAPS=$(trap -p HUP INT TERM)
 trap _push_on_exit EXIT
 
 # /goal-driven path. Resolves the stuck-detector lineage:
@@ -887,6 +1048,7 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
   RESULT=$(BUREAU_STAGE_TIMEOUT="$TOTAL_TIMEOUT" "${CLAUDE[@]}" --append-system-prompt "$IMPL_SYSTEM" "/goal $GOAL_CONDITION")
   CLAUDE_EXIT=$?
   set -e
+  _implement_process_checkpoint "$CLAUDE_EXIT"
   [ "$CLAUDE_EXIT" != 130 ] || exit 130
   bureau_ticket_checkpoint "$ISSUE" latched
   [ "$CLAUDE_EXIT" = 0 ] || exit "$CLAUDE_EXIT"
@@ -920,8 +1082,10 @@ Do NOT emit COMPLETE without commits to back it — the bash post-check (and the
 fi
 
 # ─── a pass that times out (v3.2) ─────────────────────────────────────────
-# A provider pass that hits its time limit (exit 124) is normal flow in the
-# loop below: it is counted like every other pass — commits from Git, the
+# A provider pass that hits its time limit (exit 124) is normal flow only after
+# checking for an unfinished-process hold. A hold stops the stage immediately
+# before bookkeeping or publication. Otherwise the loop counts the timed-out
+# pass like every other pass — commits from Git, the
 # squash-range check, the push — with the status TIMEOUT, because it reported
 # none, and the loop goes on with another pass that is told so (TIMEOUT_NOTE).
 # Before v3.2 the first timeout ended the stage with 124, although the agent
@@ -1017,7 +1181,8 @@ $LESSONS_CONTEXT}
 $PROJECT_CONTEXT
 $DESIGN_CONTEXT
 $REVIEW_CONTEXT
-$TIMEOUT_NOTE
+$TIMEOUT_NOTE${IMPLEMENT_GATE_FEEDBACK:+
+$IMPLEMENT_GATE_FEEDBACK}
 
 Parent issue: $ISSUE — $ISSUE_TITLE
 $ISSUE_DESC
@@ -1069,6 +1234,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
   RESULT=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" "${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-implement.schema.json" --gate-context "$IMPLEMENT_GATE_CONTEXT" "$PROMPT")
   CLAUDE_EXIT=$?
   set -e
+  _implement_process_checkpoint "$CLAUDE_EXIT"
   if [ "$CLAUDE_EXIT" = 130 ]; then
     push_if_ahead "provider exit 130"
     exit 130
@@ -1122,6 +1288,23 @@ At the end of your work, emit a single fenced json block so the shell can summar
   FIXED_REVIEW=$(parse_claude_json "$RESULT" '.fixed_review_items // [] | length')
   [[ "$FIXED_REVIEW" =~ ^[0-9]+$ ]] || FIXED_REVIEW=0
   TASKS_DONE_TOTAL=$(( TASKS_DONE_TOTAL + TASKS_DONE ))
+
+  if [ "$CLAUDE_EXIT" = 0 ] && codex_gate_outside_enabled implement; then
+    OUTSIDE_RC=0
+    OUTSIDE_GATE=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" codex_gate_check implement "$RESULT" "$IMPLEMENT_GATE_CONTEXT") || OUTSIDE_RC=$?
+    case "$OUTSIDE_RC" in
+      25|124|130) printf '%s\n' "$OUTSIDE_GATE" >&2; exit "$OUTSIDE_RC" ;;
+    esac
+    bureau_ticket_checkpoint "$ISSUE"
+    [ "$OUTSIDE_RC" = 0 ] || exit 14
+    IMPLEMENT_GATE_FEEDBACK="Bureau configured gate outside the Codex sandbox: $(printf '%s' "$OUTSIDE_GATE" | jq -r '.reason')."
+    while IFS= read -r gate_log; do
+      [ -n "$gate_log" ] || continue
+      IMPLEMENT_GATE_FEEDBACK+=$'\n'"Outside gate log: $gate_log"$'\n'"$(tail -n 80 "$gate_log")"
+    done < <(printf '%s' "$OUTSIDE_GATE" | jq -r '.logs[]?')
+    echo "  $IMPLEMENT_GATE_FEEDBACK"
+    ITER_LOG+="  $IMPLEMENT_GATE_FEEDBACK"$'\n'
+  fi
 
   LINE="iter $i: status=$STATUS tasks_done=$TASKS_DONE commits=$COMMITS_THIS_ITER"
   [ "$CLAUDE_EXIT" = 124 ] && LINE+=" (timed out after ${THIS_TIMEOUT}s)"
@@ -1380,7 +1563,9 @@ if [ "$SANDBOX_GATE_PENDING" = 1 ] && [ "$STATUS" = "COMPLETE" ]; then
   echo "  running repo.test_command outside the Codex sandbox (verified gate-only blockers)"
   OUTSIDE_RC=0
   OUTSIDE_GATE=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" codex_gate_run implement "$IMPLEMENT_GATE_PLAN") || OUTSIDE_RC=$?
-  [ "$OUTSIDE_RC" != 130 ] || exit 130
+  case "$OUTSIDE_RC" in
+    25|124|130) printf '%s\n' "$OUTSIDE_GATE" >&2; exit "$OUTSIDE_RC" ;;
+  esac
   bureau_ticket_checkpoint "$ISSUE"
   [ "$OUTSIDE_RC" = 0 ] || OUTSIDE_GATE='{"green":false,"logs":[]}'
   if [ "$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green')" = true ]; then
@@ -1399,7 +1584,18 @@ if [ "$STATUS" = "COMPLETE" ] && [ "$SANDBOX_GATE_PENDING" != 1 ] && [ "$(resolv
   TEST_COMMAND=$(bureau_get '.repo.test_command // empty')
   [ -n "$TEST_COMMAND" ] || { echo 'Codex completion needs repo.test_command for independent verification.' >&2; exit 24; }
   # Branch code: without the Bureau secrets (bureau_untrusted_env, bureau-env.sh).
-  bureau_untrusted_env bash --noprofile --norc -c "$TEST_COMMAND" || exit 14
+  if codex_gate_outside_enabled implement; then
+    # Authenticate the pre-hook pass; reuse its gate only at an unchanged HEAD.
+    # Hook commits get a new reservation and execution over the final state.
+    OUTSIDE_RC=0
+    OUTSIDE_GATE=$(BUREAU_STAGE_TIMEOUT="$THIS_TIMEOUT" codex_gate_check implement "$RESULT" "$IMPLEMENT_GATE_CONTEXT" "$HEAD_BEFORE_HOOK") || OUTSIDE_RC=$?
+    case "$OUTSIDE_RC" in
+      25|124|130) printf '%s\n' "$OUTSIDE_GATE" >&2; exit "$OUTSIDE_RC" ;;
+    esac
+    [ "$OUTSIDE_RC" = 0 ] && [ "$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green // false')" = true ] || exit 14
+  else
+    bureau_untrusted_env bash --noprofile --norc -c "$TEST_COMMAND" || exit 14
+  fi
 fi
 
 PR_URL=""

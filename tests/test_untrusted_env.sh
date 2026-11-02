@@ -228,6 +228,7 @@ cp "$(dirname "$PROVIDER")/bureau-evidence.py" "$TMPD/keep/"
 cp "$(dirname "$PROVIDER")/bureau-gates.py" "$TMPD/keep/"
 cp "$(dirname "$PROVIDER")/bureau-activity.py" "$TMPD/keep/"
 cp "$(dirname "$PROVIDER")/bureau-ticket.py" "$TMPD/keep/"
+cp "$(dirname "$PROVIDER")/bureau-process.py" "$TMPD/keep/"
 if cmp -s "$ENV_SH" "$TMPD/keep/bureau-env.sh"; then fail "1 control: the shell copy is unchanged (the sed found nothing)"; fi
 if cmp -s "$PROVIDER" "$TMPD/keep/bureau-provider.py"; then fail "1 control: the provider copy is unchanged (the sed found nothing)"; fi
 if parity "$TMPD/keep/bureau-env.sh" "$PROVIDER" default 2>/dev/null; then fail "1 control: a shell copy that keeps the paths passed the parity check"; fi
