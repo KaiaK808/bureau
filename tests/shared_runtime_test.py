@@ -126,6 +126,29 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaises(r.Conflict): self.finish(args)
         self.assertEqual(self.moves,[]); self.assertEqual(self.comments,[])
 
+    def test_config_change_names_release_and_reprepare_and_recovery_works(self):
+        run = self.prepare(); args = self.result(run)
+        self.config['repo']['test_command'] = 'bash scripts/check-docs.sh'
+        r.save(self.repo / '.bureau.json', self.config)
+        with self.assertRaises(r.Conflict) as error:
+            self.finish(args)
+        text = str(error.exception)
+        self.assertIn('Configuration changed since prepare', text)
+        self.assertIn('python3 scripts/bureau-runtime.py release ' + run['run_id'], text)
+        self.assertIn('python3 scripts/bureau-runtime.py prepare TEAM-1 implement', text)
+        self.assertIn('new run_id', text)
+        self.assertEqual(self.moves, []); self.assertEqual(self.comments, [])
+        self.store.assert_owner('TEAM-1', self.repo, run['run_id'])
+        # Follow the printed recovery using the real release CLI; only Linear
+        # is faked, as in the rest of this fixture.
+        released = subprocess.run([sys.executable, str(SCRIPT), '--repo', str(self.repo),
+                                   'release', run['run_id']], capture_output=True, text=True)
+        self.assertEqual(released.returncode, 0, released.stderr)
+        fresh = self.prepare()
+        self.assertNotEqual(fresh['run_id'], run['run_id'])
+        self.finish(self.result(fresh))
+        self.assertEqual(self.moves, ['s4']); self.assertEqual(r.read(self.store.leases), {})
+
     def test_partial_retains_state_and_preserves_resume_evidence(self):
         run=self.prepare(); self.finish(self.result(run,outcome='blocked',tests=[],summary='Missing credentials'))
         self.assertEqual(self.moves,[])

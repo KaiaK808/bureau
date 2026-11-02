@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1af4e88bdc766a8382fbf180d4acc01a5a104fd9b057ab641abde18c352045c6">
+<meta name="bureau-source-sha256" content="5956465333c28d24c8a5423a4ad548a77bc294559181516f5e7c338ab79f523e">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -21,16 +21,60 @@ existing <code>.bureau.json</code>; preserve project IDs, credentials
 and unrelated choices. Examples that run background work use the
 review-only boundary.</p>
 <hr />
+<h2 id="documentation-only-tickets">Documentation-only tickets</h2>
+<p>Choose a real documentation check before preparing the ticket. In a
+fresh repository without <code>package.json</code>, a default such as
+<code>pnpm test</code> cannot validate the work. Put a reviewed check
+script in the repository (for example, one that checks Markdown links
+and required architecture sections), then set this overlay in the
+<strong>trusted</strong> <code>.bureau.json</code>:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;repo&quot;</span><span class="fu">:{</span><span class="dt">&quot;test_command&quot;</span><span class="fu">:</span><span class="st">&quot;bash scripts/check-docs.sh&quot;</span><span class="fu">}}</span></span></code></pre></div>
+<p>The script must exist and fail on invalid documentation; a no-op is
+not test evidence. Implementation, QA, review and the app tests action
+use this configured command. Do not take a command from a ticket,
+generated result, model suggestion or an unreviewed branch
+configuration. Bureau has no per-ticket test-command override. For a
+repository with both application and documentation work, prefer a
+reviewed repository check script that runs the appropriate checks from
+known repository inputs. If a maintainer temporarily selects a
+documentation-only command, stop background drivers and finish/release
+other runs first: the setting is repository-wide. Set it before prepare,
+use it through the ticket's last finish, then restore the normal command
+before resuming other work. Changing it during a prepared run requires
+<a href="troubleshooting.html#configuration-changed-since-prepare">release
+and prepare again</a>.</p>
+<p>To keep a small documentation ticket as one pickup candidate, keep
+<code>tasks.md</code> as its checklist and run the shared app stages
+directly. For spec, start in the repository root:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py prepare TEAM-123 spec <span class="at">--owner</span> docs-task</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Follow scripts/bureau-stage.md and the repository&#39;s Spec Kit skills.</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Produce spec.md, plan.md and tasks.md in the canonical feature directory.</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Write the result JSON using the returned run_id and actual artifact paths.</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py finish RUN_ID <span class="at">--result</span> RESULT_FILE</span></code></pre></div>
+<p>Continue Spec Review, implementation, QA and review with their own
+prepare/finish pairs, using the same parent issue and accepted
+checklist. Respect configured entry states and the requested
+review/merge boundary. The runtime does not create sub-issues. Do not
+invoke <code>linear-to-spec</code> step 6 or the
+<code>linear-implement</code> sub-issue workflow for this recipe: those
+interfaces deliberately create/reconcile children, and the queue selects
+leaf issues once children exist. There is no documentation label that
+disables their fan-out. Select this workflow before creating children;
+it does not delete or reparent existing sub-issues. Existing children
+need an explicit maintainer reconciliation before the parent can become
+the queue's unit of work again.</p>
+<hr />
 <h2 id="single-flight-pipeline">Single-flight pipeline</h2>
 <p>Process exactly one issue end-to-end before another enters Spec.
 Eliminates cross-issue rebase storms in active repos.</p>
-<div class="sourceCode" id="cb1"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_concurrent_issues&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_concurrent_include_merge&quot;</span><span class="fu">:</span> <span class="kw">true</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_concurrent_issues&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_concurrent_include_merge&quot;</span><span class="fu">:</span> <span class="kw">true</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p><strong>When to use:</strong> repos with &gt; 3 simultaneous feature
 tickets where <code>origin/main</code> advances faster than the pipeline
 can drain. Symptom: every cron tick re-runs
@@ -55,24 +99,24 @@ their waiting result.</p>
 <p>Use a strong reasoning model for spec, a fast cheap model for
 spec-review, and an <em>adversarial</em> model for code-review (catches
 what the implementer missed).</p>
-<div class="sourceCode" id="cb2"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-sonnet-4-6&quot;</span><span class="fu">,</span></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;spec&quot;</span><span class="fu">:</span>         <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-opus-4-7&quot;</span> <span class="fu">},</span></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;spec_review&quot;</span><span class="fu">:</span>  <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-haiku-4-5-20251001&quot;</span> <span class="fu">},</span></span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;implement&quot;</span><span class="fu">:</span>    <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-opus-4-7&quot;</span> <span class="fu">},</span></span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review&quot;</span><span class="fu">:</span>  <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-haiku-4-5-20251001&quot;</span> <span class="fu">}</span></span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-sonnet-4-6&quot;</span><span class="fu">,</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;spec&quot;</span><span class="fu">:</span>         <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-opus-4-7&quot;</span> <span class="fu">},</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;spec_review&quot;</span><span class="fu">:</span>  <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-haiku-4-5-20251001&quot;</span> <span class="fu">},</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;implement&quot;</span><span class="fu">:</span>    <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-opus-4-7&quot;</span> <span class="fu">},</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review&quot;</span><span class="fu">:</span>  <span class="fu">{</span> <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="st">&quot;claude-haiku-4-5-20251001&quot;</span> <span class="fu">}</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>These are illustrative Claude model identifiers; use models available
 to the selected account. Provider/environment overrides also participate
 in <a href="provider-runtime.html">model precedence</a>. Legacy v1 model
 fields retain their Claude meaning after migration.</p>
 <p>For mixed providers, use a stage runner and provider-specific models.
 Example overlay (merge into the existing configuration):</p>
-<div class="sourceCode" id="cb3"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;agents&quot;</span><span class="fu">:{</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;claude&quot;</span><span class="fu">,</span><span class="dt">&quot;implement&quot;</span><span class="fu">:{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span><span class="kw">true</span><span class="fu">,</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;codex&quot;</span><span class="fu">},</span><span class="dt">&quot;qa&quot;</span><span class="fu">:{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span><span class="kw">true</span><span class="fu">,</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;codex&quot;</span><span class="fu">},</span><span class="dt">&quot;code_review&quot;</span><span class="fu">:{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span><span class="kw">true</span><span class="fu">,</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;claude&quot;</span><span class="fu">},</span><span class="dt">&quot;workbench_panes&quot;</span><span class="fu">:</span><span class="dv">0</span><span class="fu">},</span><span class="dt">&quot;repo&quot;</span><span class="fu">:{</span><span class="dt">&quot;test_command&quot;</span><span class="fu">:</span><span class="st">&quot;python3 -m unittest discover&quot;</span><span class="fu">}}</span></span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;agents&quot;</span><span class="fu">:{</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;claude&quot;</span><span class="fu">,</span><span class="dt">&quot;implement&quot;</span><span class="fu">:{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span><span class="kw">true</span><span class="fu">,</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;codex&quot;</span><span class="fu">},</span><span class="dt">&quot;qa&quot;</span><span class="fu">:{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span><span class="kw">true</span><span class="fu">,</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;codex&quot;</span><span class="fu">},</span><span class="dt">&quot;code_review&quot;</span><span class="fu">:{</span><span class="dt">&quot;enabled&quot;</span><span class="fu">:</span><span class="kw">true</span><span class="fu">,</span><span class="dt">&quot;runner&quot;</span><span class="fu">:</span><span class="st">&quot;claude&quot;</span><span class="fu">},</span><span class="dt">&quot;workbench_panes&quot;</span><span class="fu">:</span><span class="dv">0</span><span class="fu">},</span><span class="dt">&quot;repo&quot;</span><span class="fu">:{</span><span class="dt">&quot;test_command&quot;</span><span class="fu">:</span><span class="st">&quot;python3 -m unittest discover&quot;</span><span class="fu">}}</span></span></code></pre></div>
 <p>Set a real project test command. Leaving models unset uses each
 provider's CLI defaults. A generic Claude model does not leak into the
 Codex stages. Current app tasks use their selected model independently.
@@ -83,9 +127,9 @@ href="codex-acceptance.html">acceptance</a>.</p>
 <p>Validate a fresh checkout against a real Linear team without
 polluting state. No Linear mutations, no comments, no PRs, no
 <code>git push</code>.</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="ex">./scripts/queue-loop.sh</span> implement 1</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="ex">./scripts/queue-loop.sh</span> implement 1</span></code></pre></div>
 <p>Or pass the flag directly:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/queue-loop.sh</span> all 5 <span class="at">--dry-run</span></span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/queue-loop.sh</span> all 5 <span class="at">--dry-run</span></span></code></pre></div>
 <p>Queue and shepherd dry-runs report candidate stages without invoking
 creative work or resetting worktrees. They can read Linear, so they
 still need appropriate credentials. A dry-run does not validate a
@@ -100,13 +144,13 @@ unit, use <code>bash scripts/bureau-tick.sh --no-merge</code>. See the
 end-to-end (shepherd)</h2>
 <p>Drive one selected ticket through its configured stages without
 starting continuous queues:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
 <p>The default disposable checkout is <code>.worktrees/shepherd/</code>;
 <code>--worktree DIR</code> selects another worker path; a relative DIR
 is taken from the repo root. Existing unregistered or unfinished
 checkouts are preserved and can refuse reuse. Inspect ownership before
 resuming; never point a disposable worker at an app checkout.</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DRY_RUN</span><span class="op">=</span>1 <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
 <p>The preview reads state and reports the route without running the
 stages. In a live pass, exit 20 means the review boundary was reached,
 25 means pause/human attention, and 26 means cancellation. None means
@@ -132,14 +176,15 @@ then execute it. The current app task can prepare
 <code>input.json</code>; Claude's installed workflow uses the same
 partition core. Example shape (replace the tickets and paths with actual
 predictions):</p>
-<div class="sourceCode" id="cb8"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;tickets&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-7&quot;</span><span class="fu">,</span><span class="dt">&quot;title&quot;</span><span class="fu">:</span><span class="st">&quot;Update guide&quot;</span><span class="fu">}</span><span class="ot">,</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-8&quot;</span><span class="fu">,</span><span class="dt">&quot;title&quot;</span><span class="fu">:</span><span class="st">&quot;Update parser&quot;</span><span class="fu">}</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;predictions&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-7&quot;</span><span class="fu">,</span><span class="dt">&quot;predicted_paths&quot;</span><span class="fu">:</span><span class="ot">[</span><span class="st">&quot;docs/guide.md&quot;</span><span class="ot">]</span><span class="fu">}</span><span class="ot">,</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-8&quot;</span><span class="fu">,</span><span class="dt">&quot;predicted_paths&quot;</span><span class="fu">:</span><span class="ot">[</span><span class="st">&quot;src/parser.py&quot;</span><span class="ot">]</span><span class="fu">}</span><span class="ot">]</span></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">node</span> scripts/bureau-schedule-cli.mjs input.json <span class="op">&gt;</span> schedule.json</span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Inspect parallelSafe, serialChains, edges and blocked before execution.</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/orchestrate.sh <span class="at">--execute</span> <span class="at">--schedule</span> schedule.json <span class="at">--max-concurrent</span> 3 <span class="at">--no-merge</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;tickets&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-7&quot;</span><span class="fu">,</span><span class="dt">&quot;title&quot;</span><span class="fu">:</span><span class="st">&quot;Update guide&quot;</span><span class="fu">}</span><span class="ot">,</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-8&quot;</span><span class="fu">,</span><span class="dt">&quot;title&quot;</span><span class="fu">:</span><span class="st">&quot;Update parser&quot;</span><span class="fu">}</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;predictions&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-7&quot;</span><span class="fu">,</span><span class="dt">&quot;predicted_paths&quot;</span><span class="fu">:</span><span class="ot">[</span><span class="st">&quot;docs/guide.md&quot;</span><span class="ot">]</span><span class="fu">}</span><span class="ot">,</span><span class="fu">{</span><span class="dt">&quot;ticket&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-8&quot;</span><span class="fu">,</span><span class="dt">&quot;predicted_paths&quot;</span><span class="fu">:</span><span class="ot">[</span><span class="st">&quot;src/parser.py&quot;</span><span class="ot">]</span><span class="fu">}</span><span class="ot">]</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">node</span> scripts/bureau-schedule-cli.mjs input.json <span class="op">&gt;</span> schedule.json</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Inspect parallelSafe, serialChains, edges and blocked before execution.</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/orchestrate.sh <span class="at">--execute</span> <span class="at">--schedule</span> schedule.json <span class="at">--max-concurrent</span> 3 <span class="at">--no-merge</span></span></code></pre></div>
 <p>The planner exits 25 if predictions are missing or invalid; resolve
 every <code>blocked</code> entry before execution.
 <code>orchestrate.sh</code> does not have a <code>--plan</code> option.
@@ -167,10 +212,10 @@ ceremony for mechanical ports.</p>
     }
   }
 }</code></pre>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/upstream-port.sh</span> <span class="at">--sha</span> 53953a8               <span class="co"># port one upstream commit</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/upstream-port.sh</span> <span class="at">--pr</span>  3024                  <span class="co"># or a merged upstream PR</span></span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/upstream-port.sh</span> <span class="at">--sha</span> 53953a8 <span class="at">--with-llm</span>    <span class="co"># LLM-assisted conflict resolution</span></span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/upstream-port.sh</span> <span class="at">--sha</span> 53953a8               <span class="co"># port one upstream commit</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/upstream-port.sh</span> <span class="at">--pr</span>  3024                  <span class="co"># or a merged upstream PR</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/upstream-port.sh</span> <span class="at">--sha</span> 53953a8 <span class="at">--with-llm</span>    <span class="co"># LLM-assisted conflict resolution</span></span></code></pre></div>
 <p><code>--with-llm</code> makes one bounded call through the configured
 <code>upstream_port</code> provider on a <code>git apply --3way</code>
 conflict. It is off by default; non-interactive use additionally
@@ -194,8 +239,8 @@ diff.</p>
 <p>Provider calls with available usage evidence record token counts and
 CLI estimates in <code>~/.bureau/cost/&lt;issue&gt;.jsonl</code>
 (overridable with <code>BUREAU_COST_DIR</code>). Report:</p>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/bureau-status.sh</span> <span class="at">--cost</span></span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/bureau-status.sh</span> <span class="at">--cost</span></span></code></pre></div>
 <p>Prints a per-issue, per-stage summary. Unknown cost is
 <code>unavailable</code>, not zero, and CLI estimates are separate from
 actual billed dollars. Disabling the flag suppresses the optional cost
@@ -212,22 +257,22 @@ JSON.</p>
 code_review</h2>
 <p>Route background review through Codex while keeping the default
 provider Claude:</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;claude&quot;</span><span class="fu">,</span></span>
-<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span> <span class="fu">}</span></span>
-<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;claude&quot;</span><span class="fu">,</span></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span> <span class="fu">}</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>The review model inspects the pinned PR head against its actual
 target branch. The shell pipeline publishes the review and performs
 state routing; an approval alone never authorizes merge.</p>
 <p>Codex-specific overrides work with both legacy and v2 model
 semantics:</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="bu">:</span> <span class="st">&quot;</span><span class="va">${CODEX_REVIEW_MODEL</span><span class="op">:?</span>Choose an available Codex model identifier<span class="va">}</span><span class="st">&quot;</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_CODEX_MODEL_CODE_REVIEW</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$CODEX_REVIEW_MODEL</span><span class="st">&quot;</span> <span class="dt">\</span></span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="bu">:</span> <span class="st">&quot;</span><span class="va">${CODEX_REVIEW_MODEL</span><span class="op">:?</span>Choose an available Codex model identifier<span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_CODEX_MODEL_CODE_REVIEW</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$CODEX_REVIEW_MODEL</span><span class="st">&quot;</span> <span class="dt">\</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span></code></pre></div>
 <p>Use
 <code>python3 scripts/bureau-provider.py --stage code_review --describe</code>
 in the trusted launch environment to confirm resolution without invoking
@@ -245,16 +290,16 @@ it on a bounded ticket before broader adoption.</p>
 reaches its threshold. Bureau does not produce account-usage signals
 itself. Supply one from an operator-controlled producer;
 ClaudeWatch-compatible files are supported for Claude.</p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;session&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;usage_threshold_pct&quot;</span><span class="fu">:</span> <span class="dv">80</span><span class="fu">,</span> <span class="dt">&quot;pause_on_stale_data&quot;</span><span class="fu">:</span> <span class="kw">false</span> <span class="fu">}</span></span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;session&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;usage_threshold_pct&quot;</span><span class="fu">:</span> <span class="dv">80</span><span class="fu">,</span> <span class="dt">&quot;pause_on_stale_data&quot;</span><span class="fu">:</span> <span class="kw">false</span> <span class="fu">}</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>The default Claude signal is
 <code>~/.bureau/session-usage.json</code>, or
 <code>BUREAU_USAGE_FILE</code>. Its numeric timestamp fields use Unix
 seconds, updated by the producer:</p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span> <span class="dt">&quot;provider&quot;</span><span class="fu">:</span> <span class="st">&quot;claude&quot;</span><span class="fu">,</span> <span class="dt">&quot;pct&quot;</span><span class="fu">:</span> <span class="fl">74.3</span><span class="fu">,</span> <span class="dt">&quot;reset_epoch&quot;</span><span class="fu">:</span> <span class="dv">1788775200</span><span class="fu">,</span> <span class="dt">&quot;updated_epoch&quot;</span><span class="fu">:</span> <span class="dv">1788773400</span> <span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span> <span class="dt">&quot;provider&quot;</span><span class="fu">:</span> <span class="st">&quot;claude&quot;</span><span class="fu">,</span> <span class="dt">&quot;pct&quot;</span><span class="fu">:</span> <span class="fl">74.3</span><span class="fu">,</span> <span class="dt">&quot;reset_epoch&quot;</span><span class="fu">:</span> <span class="dv">1788775200</span><span class="fu">,</span> <span class="dt">&quot;updated_epoch&quot;</span><span class="fu">:</span> <span class="dv">1788773400</span> <span class="fu">}</span></span></code></pre></div>
 <p>For Codex, set <code>BUREAU_CODEX_USAGE_FILE</code>, or point
 <code>BUREAU_USAGE_FILE</code> at a signal tagged
 <code>"provider":"codex"</code>. Claude usage never throttles Codex.</p>
@@ -274,13 +319,13 @@ after inspecting the signal.</p>
 successfully adding the human label. Inspect the stage result and issue
 comment as well; a failed label update is not evidence of durable
 parking. Tail the log:</p>
-<div class="sourceCode" id="cb18"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="fu">tail</span> <span class="at">-F</span> logs/escalations.log</span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="fu">tail</span> <span class="at">-F</span> logs/escalations.log</span></code></pre></div>
 <p>Line format:</p>
 <pre><code>2000-01-01T00:00:00Z&lt;TAB&gt;ESCALATED&lt;TAB&gt;TEAM-123&lt;TAB&gt;code-review&lt;TAB&gt;cycle=3&lt;TAB&gt;reason=&quot;REQUEST_CHANGES exceeded max_review_cycles&quot;&lt;TAB&gt;pr=56&lt;TAB&gt;branch=049-parliament-debate</code></pre>
 <p>Filter to today's escalations from a specific pipeline:</p>
-<div class="sourceCode" id="cb20"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> ESCALATED logs/escalations.log <span class="kw">|</span> <span class="fu">grep</span> <span class="st">&quot;</span><span class="va">$(</span><span class="fu">date</span> <span class="at">-u</span> +%Y-%m-%d<span class="va">)</span><span class="st">&quot;</span> <span class="kw">|</span> <span class="fu">grep</span> code-review</span></code></pre></div>
+<div class="sourceCode" id="cb22"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> ESCALATED logs/escalations.log <span class="kw">|</span> <span class="fu">grep</span> <span class="st">&quot;</span><span class="va">$(</span><span class="fu">date</span> <span class="at">-u</span> +%Y-%m-%d<span class="va">)</span><span class="st">&quot;</span> <span class="kw">|</span> <span class="fu">grep</span> code-review</span></code></pre></div>
 <p>The matching JSON event also fires to <code>logs/events.jsonl</code>
 (so <code>/bureau-learnings</code> picks escalations up automatically).
 The TSV exists for monitors that prefer flat-text grep over jq.</p>
@@ -297,15 +342,15 @@ each capped at <code>BUREAU_IMPL_ITER_TIMEOUT</code> seconds (default
 1800), with <code>BUREAU_IMPL_TOTAL_TIMEOUT</code> (default 5400)
 bounding cumulative cost.</p>
 <p>Aggressive (small batches, fast feedback):</p>
-<div class="sourceCode" id="cb21"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_MAX_ITER</span><span class="op">=</span>2</span>
-<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_ITER_TIMEOUT</span><span class="op">=</span>600</span>
-<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_TOTAL_TIMEOUT</span><span class="op">=</span>1800</span></code></pre></div>
+<div class="sourceCode" id="cb23"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_MAX_ITER</span><span class="op">=</span>2</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_ITER_TIMEOUT</span><span class="op">=</span>600</span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_TOTAL_TIMEOUT</span><span class="op">=</span>1800</span></code></pre></div>
 <p>Patient (long-running specs, fewer escalations):</p>
-<div class="sourceCode" id="cb22"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_MAX_ITER</span><span class="op">=</span>5</span>
-<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_ITER_TIMEOUT</span><span class="op">=</span>2400</span>
-<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_TOTAL_TIMEOUT</span><span class="op">=</span>10800</span></code></pre></div>
+<div class="sourceCode" id="cb24"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_MAX_ITER</span><span class="op">=</span>5</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_ITER_TIMEOUT</span><span class="op">=</span>2400</span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_IMPL_TOTAL_TIMEOUT</span><span class="op">=</span>10800</span></code></pre></div>
 <p>The stuck detector treats an unproductive first <code>PARTIAL</code>
 iteration differently from a later partial result after committed
 progress. Inspect the final status and Git evidence rather than assuming
@@ -350,9 +395,9 @@ during a live run.</p>
 <p>Get a message when a pipeline fails. No-op when the credentials
 aren't set, so dev environments stay quiet.</p>
 <p>In the target repo's <code>.env</code>:</p>
-<div class="sourceCode" id="cb23"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="va">TELEGRAM_BOT_TOKEN</span><span class="op">=</span>123456:ABC-XYZ</span>
-<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="va">TELEGRAM_ALERT_CHAT_ID</span><span class="op">=</span>-100123456789</span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="va">TELEGRAM_BOT_TOKEN</span><span class="op">=</span>123456:ABC-XYZ</span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="va">TELEGRAM_ALERT_CHAT_ID</span><span class="op">=</span>-100123456789</span></code></pre></div>
 <p>Throttling: max 1 alert per issue, pipeline and exit code per hour
 from each repository, tracked in
 <code>&lt;git common dir&gt;/bureau/alert-throttle.log</code> of the
@@ -364,10 +409,10 @@ classification.</p>
 <h2 id="multi-repo-side-by-side">Multi-repo, side-by-side</h2>
 <p>Each repo gets its own tmux session, scoped by folder name. Size
 parallel activity to machine capacity and provider quotas:</p>
-<div class="sourceCode" id="cb24"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/projects/app          <span class="kw">&amp;&amp;</span> <span class="ex">./scripts/start-bureau-v2.sh</span>   <span class="co"># → bureau-v2-app</span></span>
-<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/projects/api          <span class="kw">&amp;&amp;</span> <span class="ex">./scripts/start-bureau-v2.sh</span>   <span class="co"># → bureau-v2-api</span></span>
-<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> ls <span class="kw">|</span> <span class="fu">grep</span> bureau-v2-                                      <span class="co"># both listed</span></span></code></pre></div>
+<div class="sourceCode" id="cb26"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/projects/app          <span class="kw">&amp;&amp;</span> <span class="ex">./scripts/start-bureau-v2.sh</span>   <span class="co"># → bureau-v2-app</span></span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/projects/api          <span class="kw">&amp;&amp;</span> <span class="ex">./scripts/start-bureau-v2.sh</span>   <span class="co"># → bureau-v2-api</span></span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> ls <span class="kw">|</span> <span class="fu">grep</span> bureau-v2-                                      <span class="co"># both listed</span></span></code></pre></div>
 <p><strong>Caveat:</strong> use disjoint Linear project scopes for
 independent repositories/clones. Ownership is shared by Git worktrees of
 one repository, not by unrelated clones. These continuous launchers can
@@ -375,9 +420,9 @@ merge; use the bounded review-only commands when that is the requested
 boundary.</p>
 <hr />
 <h2 id="override-the-session-name">Override the session name</h2>
-<div class="sourceCode" id="cb25"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SESSION_NAME</span><span class="op">=</span>nightshift <span class="ex">./scripts/start-bureau-v2.sh</span></span>
-<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> attach <span class="at">-t</span> nightshift</span></code></pre></div>
+<div class="sourceCode" id="cb27"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SESSION_NAME</span><span class="op">=</span>nightshift <span class="ex">./scripts/start-bureau-v2.sh</span></span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="ex">tmux</span> attach <span class="at">-t</span> nightshift</span></code></pre></div>
 <p>Useful when you want a single named session you can find without
 remembering the basename.</p>
 <hr />
@@ -385,12 +430,12 @@ remembering the basename.</p>
 for code-review</h2>
 <p>Repos with mature CI / type-safety can review larger diffs
 exhaustively. Repos without CI need stricter sampling.</p>
-<div class="sourceCode" id="cb26"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review_sampling_threshold&quot;</span><span class="fu">:</span> <span class="dv">1000</span></span>
-<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;code_review_sampling_threshold&quot;</span><span class="fu">:</span> <span class="dv">1000</span></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Default is <code>500</code> lines. Above this, code-review
 specialists shift to sampling-by-class. Tune up for confidence in
 tooling, down for legacy code.</p>
@@ -398,12 +443,12 @@ tooling, down for legacy code.</p>
 <h2 id="custom-merge-strategy">Custom merge strategy</h2>
 <p>Repos with linear-history-via-rebase policies should opt out of
 squash:</p>
-<div class="sourceCode" id="cb27"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_strategy&quot;</span><span class="fu">:</span> <span class="st">&quot;rebase&quot;</span></span>
-<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb29"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_strategy&quot;</span><span class="fu">:</span> <span class="st">&quot;rebase&quot;</span></span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Valid values: <code>squash</code> (default), <code>merge</code>,
 <code>rebase</code>. Anything else falls back to <code>squash</code>
 with a warning.</p>
@@ -419,12 +464,12 @@ stops a commit message carrying a suppressor.</p>
 editing the pipeline scripts. <strong><code>manual</code> needs a Merge
 state</strong> (<code>linear.teams[0].states.merge</code>): that is
 where an approved ticket waits for the person who merges.</p>
-<div class="sourceCode" id="cb28"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_mode&quot;</span><span class="fu">:</span> <span class="st">&quot;manual&quot;</span></span>
-<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb30"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_mode&quot;</span><span class="fu">:</span> <span class="st">&quot;manual&quot;</span></span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>What changes:</p>
 <ul>
 <li>The merge and rebase agents are off: the queue loop, the bounded
@@ -472,16 +517,16 @@ merging would be on again.</p>
 <h2 id="tighter-supervisor">Tighter supervisor</h2>
 <p>For long-running headless deployments, raise the give-up threshold so
 a transient flaky tick doesn't kill the pipeline:</p>
-<div class="sourceCode" id="cb29"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;supervisor&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_crashes&quot;</span><span class="fu">:</span> <span class="dv">10</span><span class="fu">,</span></span>
-<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;stability_window&quot;</span><span class="fu">:</span> <span class="dv">7200</span></span>
-<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;supervisor&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_crashes&quot;</span><span class="fu">:</span> <span class="dv">10</span><span class="fu">,</span></span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;stability_window&quot;</span><span class="fu">:</span> <span class="dv">7200</span></span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Or override at launch:</p>
-<div class="sourceCode" id="cb30"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SUPERVISOR_MAX_CRASHES</span><span class="op">=</span>10 <span class="ex">./scripts/start-bureau-v2.sh</span></span></code></pre></div>
+<div class="sourceCode" id="cb32"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SUPERVISOR_MAX_CRASHES</span><span class="op">=</span>10 <span class="ex">./scripts/start-bureau-v2.sh</span></span></code></pre></div>
 <hr />
 <h2 id="memory-loop-logs--lessonsmd">Memory loop (logs →
 <code>LESSONS.md</code>)</h2>
@@ -497,8 +542,8 @@ two JSONL lines to <code>logs/events.jsonl</code> — one
 <code>issue</code>, <code>branch</code>, <code>exit_code</code>,
 <code>class</code>, <code>duration_s</code>. Queue-empty ticks emit
 nothing.</p>
-<div class="sourceCode" id="cb31"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;ts&quot;</span><span class="fu">:</span><span class="st">&quot;2000-01-01T00:00:00Z&quot;</span><span class="fu">,</span><span class="dt">&quot;event&quot;</span><span class="fu">:</span><span class="st">&quot;stage_end&quot;</span><span class="fu">,</span><span class="dt">&quot;mode&quot;</span><span class="fu">:</span><span class="st">&quot;all&quot;</span><span class="fu">,</span><span class="dt">&quot;stage&quot;</span><span class="fu">:</span><span class="st">&quot;code-review-pipeline.sh&quot;</span><span class="fu">,</span><span class="dt">&quot;issue&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-123&quot;</span><span class="fu">,</span><span class="dt">&quot;branch&quot;</span><span class="fu">:</span><span class="st">&quot;037-foo&quot;</span><span class="fu">,</span><span class="dt">&quot;exit_code&quot;</span><span class="fu">:</span><span class="dv">14</span><span class="fu">,</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span><span class="st">&quot;build-failed&quot;</span><span class="fu">,</span><span class="dt">&quot;duration_s&quot;</span><span class="fu">:</span><span class="dv">287</span><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb33"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;ts&quot;</span><span class="fu">:</span><span class="st">&quot;2000-01-01T00:00:00Z&quot;</span><span class="fu">,</span><span class="dt">&quot;event&quot;</span><span class="fu">:</span><span class="st">&quot;stage_end&quot;</span><span class="fu">,</span><span class="dt">&quot;mode&quot;</span><span class="fu">:</span><span class="st">&quot;all&quot;</span><span class="fu">,</span><span class="dt">&quot;stage&quot;</span><span class="fu">:</span><span class="st">&quot;code-review-pipeline.sh&quot;</span><span class="fu">,</span><span class="dt">&quot;issue&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-123&quot;</span><span class="fu">,</span><span class="dt">&quot;branch&quot;</span><span class="fu">:</span><span class="st">&quot;037-foo&quot;</span><span class="fu">,</span><span class="dt">&quot;exit_code&quot;</span><span class="fu">:</span><span class="dv">14</span><span class="fu">,</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span><span class="st">&quot;build-failed&quot;</span><span class="fu">,</span><span class="dt">&quot;duration_s&quot;</span><span class="fu">:</span><span class="dv">287</span><span class="fu">}</span></span></code></pre></div>
 <p><code>logs/</code> is gitignored. <code>events.jsonl</code> is
 append-only — truncate it manually if it grows large; there's no
 auto-rotation in v1.</p></li>

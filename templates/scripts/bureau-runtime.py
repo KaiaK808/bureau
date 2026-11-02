@@ -645,7 +645,10 @@ def finish(repo, args, store):
     validate_result(repo, record, result)
     config = read(config_for(repo))
     if record['config_hash'] != hashlib.sha256(config_for(repo).read_bytes()).hexdigest():
-        raise Conflict('Configuration changed since prepare; prepare a fresh stage')
+        raise Conflict('Configuration changed since prepare; preserve the work, run '
+                       f'`python3 scripts/bureau-runtime.py release {args.run}`, then '
+                       f'`python3 scripts/bureau-runtime.py prepare {record["issue"]} {record["stage"]}` '
+                       'again and regenerate the result with the new run_id')
     states = config['linear']['teams'][0]['states']
     current = issue_snapshot(repo, record['issue'])
     target = STAGES[record['stage']][1]
