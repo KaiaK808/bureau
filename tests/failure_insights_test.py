@@ -18,6 +18,7 @@ from unittest.mock import patch
 import review_convergence_test as review
 import provider_adapter_test as provider_fixture
 import spec_resume_test as spec_fixture
+from process_helpers import PIPELINE_TIMEOUT_SECONDS, communicate_until
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_TEST_INSIGHTS_SCRIPTS', ROOT / 'templates/scripts'))
@@ -357,15 +358,16 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
         config = self.review.config
         config['agents']['merge_mode'] = 'manual'; (self.repo / '.bureau.json').write_text(json.dumps(config))
         # The real driver, worker, runtime and review stage run; providers and Linear use fixture transports.
+        deadline = time.monotonic() + PIPELINE_TIMEOUT_SECONDS
         p = subprocess.Popen(['/bin/bash', 'scripts/shepherd.sh', '--no-tmux', '--no-merge', '--worktree', str(self.root/'shepherd-worker'), 'T-1'],
                            cwd=self.repo, env={**self.review.fixture.env, 'REVIEW_RESULT_JSON':json.dumps(review.result('BLOCK', findings=[])),
                                                'ROUND_USAGE':json.dumps(self.review.usage), 'BUREAU_DISPATCH_LANE':'1'}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
         try:
-            stdout, stderr = p.communicate(timeout=45)
+            stdout, stderr = communicate_until(p, deadline)
         except subprocess.TimeoutExpired:
             os.killpg(p.pid, signal.SIGTERM)
             stdout, stderr = p.communicate(timeout=10)
-            self.fail('shepherd timed out: ' + stdout + stderr)
+            self.fail(f'shepherd exceeded {PIPELINE_TIMEOUT_SECONDS}s deadline: ' + stdout + stderr)
         finally:
             if p.poll() is None: os.killpg(p.pid, signal.SIGKILL); p.wait()
         self.assertEqual(p.returncode, 25, stdout + stderr)
