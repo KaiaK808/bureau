@@ -645,7 +645,7 @@ provider() { echo pass >> events; return "$3"; }
         self.assertEqual(metadata.get('failure_cause'), 'human_hold')
         self.assert_held_ownership(store, run, resources, leases)
         source = (SCRIPTS / 'implement-pipeline.sh').read_text()
-        call = source[source.index('  set +e\n  : > "$IMPLEMENT_GATE_CONTEXT"'):source.index('  # record this iteration')]
+        call = source[source.index('  : > "$IMPLEMENT_GATE_CONTEXT"\n'):source.index('  # record this iteration')]
         result = self.implementation_replay('CLAUDE=(provider)\nfor i in 1 2; do\n' + call + '\ndone\necho publication >> events\n', code, run)
         self.assertEqual(result.returncode, 124, result.stderr)
         self.assertEqual((self.root / 'events').read_text().splitlines(), ['pass'])
