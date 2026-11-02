@@ -13,6 +13,8 @@ import tempfile
 import time
 import unittest
 
+from process_helpers import process_running
+
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_1748_SCRIPTS', ROOT / 'templates/scripts'))
@@ -136,8 +138,7 @@ class Fixture(unittest.TestCase):
         self.assertTrue(all(child.poll() is not None for child in self.children))
         if hasattr(self, 'state') and self.state.with_suffix('.pids').exists():
             for pid in set(map(int,self.state.with_suffix('.pids').read_text().splitlines())):
-                try: os.kill(pid,0)
-                except ProcessLookupError: continue
+                if not process_running(pid): continue
                 self.fail('fake transport survived fixture: '+str(pid))
 
     def run_cmd(self, cmd, **kw):

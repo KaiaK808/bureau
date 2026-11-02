@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 
 import git_maintenance
+from process_helpers import process_running
 from ticket_kill_switch_test import WithdrawalFixture, STATES
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -132,8 +133,7 @@ class Watchdog(unittest.TestCase):
         live=[]
         for raw in set((self.root/'pids').read_text().splitlines()):
             pid=int(raw)
-            try: os.kill(pid,0)
-            except ProcessLookupError: continue
+            if not process_running(pid): continue
             live.append(pid)
             try: os.kill(pid,signal.SIGKILL)
             except ProcessLookupError: pass

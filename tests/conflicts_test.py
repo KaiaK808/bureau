@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import unittest
+from process_helpers import process_running
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -662,7 +663,7 @@ _throttle_record() { :; }
         pidfile = self.root / 'check-pid'
         self.settings['repo']['test_command'] = shlex.join([sys.executable, '-c', f'import os; from pathlib import Path; Path({str(pidfile)!r}).write_text(str(os.getpid()))'])
         self.success()
-        with self.assertRaises(ProcessLookupError): os.kill(int(pidfile.read_text()), 0)
+        self.assertFalse(process_running(int(pidfile.read_text())))
 
     def test_interrupted_generator_is_stopped_and_merge_rolled_back(self):
         self.diverge()
@@ -687,7 +688,7 @@ _throttle_record() { :; }
         stdout, stderr = child.communicate(timeout=10)
         self.assertEqual(child.returncode, 17, stdout + stderr)
         for pid in (generator, executor, child.pid):
-            with self.assertRaises(ProcessLookupError): os.kill(pid, 0)
+            self.assertFalse(process_running(pid))
         self.assertEqual(self.git('rev-parse', 'HEAD'), self.head)
         self.assertEqual(self.git('status', '--porcelain'), '')
         self.assertFalse((self.repo / '.git/MERGE_HEAD').exists())
