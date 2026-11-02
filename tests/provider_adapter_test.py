@@ -23,6 +23,7 @@ if CODEX_TMP_PREFIX != 'bureau-codex-':
     shutil.copy(SCRIPT.with_name('bureau-evidence.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-gates.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-activity.py'), isolated.name)
+    shutil.copy(SCRIPT.with_name('bureau-ticket.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-insights.sh'), isolated.name)
     source = SCRIPT.read_text().replace("prefix='bureau-codex-'", 'prefix=' + repr(CODEX_TMP_PREFIX))
     SCRIPT = Path(isolated.name) / SCRIPT.name; SCRIPT.write_text(source)
@@ -1147,10 +1148,10 @@ p.Path.open=refuse_transcript_read
                     # write; a live descendant can outlast the released lease.
                     deadline=time.monotonic()+2
                     while True:
-                        status=subprocess.run(['ps','-p',str(descendant['pid']),'-o','stat='],capture_output=True,text=True)
-                        self.assertIn(status.returncode,(0,1),status.stderr)
-                        self.assertFalse(status.stderr.strip(),status.stderr)
-                        active=bool(status.stdout.strip()) and not status.stdout.strip().startswith('Z')
+                        # Native process inspection also works in sandboxes
+                        # that deny executing ps; inspection errors still fail.
+                        status=p.a.ProcessTable().snapshot().get(descendant['pid'])
+                        active=status is not None and not status[2]
                         if not active or time.monotonic() >= deadline: break
                         time.sleep(.02)
                     self.assertFalse(active,'provider descendant survived the bounded invocation')
@@ -1389,9 +1390,22 @@ p.Path.open=refuse_transcript_read
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), control.parent / 'bureau-evidence.py')
         shutil.copy(SCRIPT.with_name('bureau-gates.py'), control.parent / 'bureau-gates.py')
         shutil.copy(SCRIPT.with_name('bureau-activity.py'), control.parent / 'bureau-activity.py')
+        shutil.copy(SCRIPT.with_name('bureau-ticket.py'), control.parent / 'bureau-ticket.py')
         shutil.copy(SCRIPT.with_name('bureau-insights.sh'), control.parent / 'bureau-insights.sh')
         control.write_text(source.replace(changed,'        return env\n'))
         return control
+
+    def test_claude_config_dir_control_persists_successful_stage_outcome(self):
+        self.claude_envs({'agents':{'runner':'claude'}},script=self.without_config_dir())
+        records=self.root/'.git/bureau/evidence/v1/stage-outcomes.jsonl'
+        self.assertTrue(records.is_file(),'successful control stage outcome missing')
+        rows=[json.loads(line) for line in records.read_text().splitlines()]
+        self.assertEqual(len(rows),1)
+        self.assertEqual(tuple(rows[0][key] for key in ('record_type','stage','phase','normalized_exit','cause_class')),
+                         ('stage_outcome','implement','implement',0,'other'))
+        receipt,=self.receipts()
+        for key in ('run_id','stage_attempt_id'):
+            self.assertEqual(rows[0][key],receipt[key])
 
     def test_claude_without_a_config_dir_gets_the_environment_it_got_before(self):
         control=self.without_config_dir()
@@ -1906,8 +1920,11 @@ p.run=lost_result
 
     def test_foreign_receipt_and_stale_head_never_reconcile(self):
         schema=self.receipt_schema()
-        for field,foreign in [('issue','TEAM-2'),('provider_attempt_id','f'*32),('run_id','a'*32),
-                              ('stage','qa'),('phase','other-reviewer'),('end_head','0'*40)]:
+        # Each corruption case owns a fresh ticket: a forged attempt identity
+        # correctly holds that ticket's accounting on any subsequent call.
+        for number,(field,foreign) in enumerate([
+                ('issue','TEAM-2'),('provider_attempt_id','f'*32),('run_id','a'*32),
+                ('stage','qa'),('phase','other-reviewer'),('end_head','0'*40)], start=100):
             with self.subTest(field=field):
                 result=self.run_wrapped_provider('''
 recorded=p.run
@@ -1918,7 +1935,7 @@ def foreign_receipt(*args,**kwargs):
     p.e.atomic(path,value)
     return code,'late prose',metadata
 p.run=foreign_receipt
-''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}',BUREAU_CURRENT_ISSUE='TEAM-1',
+''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}',BUREAU_CURRENT_ISSUE='TEAM-'+str(number),
                     FOREIGN_FIELD=field,FOREIGN_VALUE=foreign)
                 self.assertEqual(result.stdout,'')
                 self.assertIn('no matching completion receipt',result.stderr)

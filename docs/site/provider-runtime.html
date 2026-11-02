@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d417a11c50d9603c55193bd8bdf355ac72cc8849b85053073bd6ef540853d39c">
+<meta name="bureau-source-sha256" content="319a261a392c39fa823144cdc7b6797f277d4a64378757794f9dabade75aa151">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -292,6 +292,19 @@ unpublished result.</p>
 <p>Validation currently uses fake executors and real local Git/test
 commands. Run a representative live ticket in an adopting repository
 before relying on unattended Codex or mixed-provider operation.</p>
+<h2 id="ticket-accounting">Ticket accounting</h2>
+<p>Optional <code>agents.ticket_budget</code> bounds a ticket's total
+tokens, provider calls and summed provider wall time across stages and
+reruns. Every adapter call, including checker/verifier phases, reserves
+an attempt before starting and finalizes it from actual provider output
+even if structured validation fails. Unknown usage stays null and stops
+a token-budgeted ticket at the next cooperative checkpoint unless
+explicitly allowed. Accounting is independent of cost tracking. Provider
+wall/silence timeouts retain 124/25 and the closed reasons
+<code>timeout</code>/<code>watchdog</code>. See <a
+href="configuration.html#ticket-run-budgets-and-trusted-progress">configuration</a>
+and <a href="stage-protocol.html#ticket-budget-and-progress-stops">the
+stop protocol</a>.</p>
 <h2 id="claude-configuration-directory">Claude configuration
 directory</h2>
 <p>A headless Claude stage otherwise runs with the operator's personal

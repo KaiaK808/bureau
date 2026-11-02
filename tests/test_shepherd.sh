@@ -214,7 +214,8 @@ PIPELINE_EOF
   # bureau_load_env lives next to the config the pipelines source (see
   # tests/test_env_read_safety.sh for why .env is parsed, not sourced).
   cp "$REPO_ROOT/templates/scripts/bureau-env.sh" "$sb/scripts/"
-  cp "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$REPO_ROOT/templates/scripts/bureau-spec.py" "$sb/scripts/"
+  cp "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$REPO_ROOT/templates/scripts/bureau-spec.py" "$REPO_ROOT/templates/scripts/bureau-ticket.py" "$sb/scripts/"
+  cp "$REPO_ROOT/templates/scripts/bureau-insights.sh" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-worker.sh" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-acceptance.py" "$REPO_ROOT/templates/scripts/bureau-provider.py" \
     "$REPO_ROOT/templates/scripts/bureau-gates.py" "$REPO_ROOT/templates/scripts/bureau-activity.py" "$sb/scripts/"
@@ -318,6 +319,16 @@ test_happy_path() {
     || { echo "FAIL: shepherd-focused label was not applied"; return 1; }
   grep -q "^-EXP-1"$'\t'"shepherd-focused$" "$sb/labels.log" \
     || { echo "FAIL: shepherd-focused label was not removed on exit"; return 1; }
+
+  local records="$sb/.git/bureau/evidence/v1/stage-outcomes.jsonl"
+  [ -f "$records" ] || { echo 'FAIL: happy-path stage outcome records missing'; return 1; }
+  jq -se '
+    length == 5 and
+    (map(.stage) == ["spec", "spec_review", "implement", "code_review", "merge"]) and
+    all(.[]; .record_type == "stage_outcome" and .issue == "EXP-1" and
+      .phase == "worker" and .normalized_exit == 0 and .cause_class == "other")
+  ' "$records" >/dev/null \
+    || { echo 'FAIL: happy-path stage outcomes do not match the five executed stages'; cat "$records"; return 1; }
 
   return 0
 }

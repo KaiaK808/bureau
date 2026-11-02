@@ -153,11 +153,7 @@ bureau_archive_evidence_dir_log() {
 }
 
 qa_run_gate() {
-  local head rc=0
-  head=$(git rev-parse HEAD 2>/dev/null) || head=""
-  bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$TEST_CMD" > "$1" 2>&1 || rc=$?
-  bureau_record_gate "$1" "$head" "$TEST_CMD" "$rc" qa.test || true
-  return "$rc"
+  bureau_run_gate "$1" "$TEST_CMD" qa.test
 }
 
 echo ""

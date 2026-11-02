@@ -863,7 +863,8 @@ make_shepherd_merge_sandbox() {  # <name> — the merge sandbox plus the shepher
   jq '.agents.rebase = true' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
   cp "$REPO_ROOT/templates/scripts/shepherd.sh" "$REPO_ROOT/templates/scripts/bureau-worker.sh" \
      "$REPO_ROOT/templates/scripts/bureau-runtime.py" "$REPO_ROOT/templates/scripts/bureau-supervision.py" \
-     "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$REPO_ROOT/templates/scripts/bureau-spec.py" "$sb/scripts/"
+     "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$REPO_ROOT/templates/scripts/bureau-spec.py" \
+     "$REPO_ROOT/templates/scripts/bureau-ticket.py" "$REPO_ROOT/templates/scripts/bureau-insights.sh" "$sb/scripts/"
   git -C "$sb" init -q && git -C "$sb" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   echo Merge > "$sb/stub_data/ticket_state"
   cat >> "$sb/scripts/bureau-config.sh" <<'SHEP_EOF'
@@ -880,6 +881,18 @@ SHEP_EOF
   chmod +x "$sb/bin/sleep"
   echo "$sb"
 }
+assert_shepherd_merge_outcome() {  # <sb> <exit code> <cause>
+  local sb="$1" code="$2" cause="$3" records
+  records="$sb/.git/bureau/evidence/v1/stage-outcomes.jsonl"
+  [ -f "$records" ] || { echo 'FAIL shepherd merge: expected exactly one outcome record, found 0' >&2; return 1; }
+  jq -se --argjson code "$code" --arg cause "$cause" '
+    length == 1 and
+    (.[0] | .record_type == "stage_outcome" and .issue == "EXP-1" and
+      .stage == "merge" and .phase == "worker" and
+      .normalized_exit == $code and .cause_class == $cause)
+  ' "$records" >/dev/null \
+    || { echo 'FAIL shepherd merge: expected exactly one matching outcome record' >&2; cat "$records" >&2; return 1; }
+}
 test_gate_dirty_under_shepherd() {
   local sb
   sb=$(make_shepherd_merge_sandbox shep_dirty)
@@ -890,6 +903,7 @@ test_gate_dirty_under_shepherd() {
     || { echo "FAIL shepherd dirty: the halt comment lacks the gate report" >&2; cat "$sb/stub_data/comments_posted.log" >&2; return 1; }
   grep -q '+EXP-1 needs-human' "$sb/stub_data/labels.log" || { echo "FAIL shepherd dirty: no needs-human" >&2; return 1; }
   [ ! -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL shepherd dirty: merged a DIRTY PR" >&2; return 1; }
+  assert_shepherd_merge_outcome "$sb" 25 human_hold || return 1
   # The queue (no shepherd) keeps "not yet" for the same PR: the rebase stage takes it.
   run_gate "$sb"; gate_case "$sb" dirty-queue 2 not-yet 'the rebase stage resolves it' || return 1
 
@@ -902,8 +916,18 @@ old = '  [ "${BUREAU_HELD_BY_SHEPHERD:-0}" = 1 ] && return 1\n'
 if t.count(old) != 1: sys.exit("negative control: the shepherd check was not found")
 p.write_text(t.replace(old, ''))
 NEG_EOF
+  # Only the merge-poll wait proves the old stage's regression. A fall-through
+  # to ordinary success must not complete the ticket during state confirmation.
+  cat > "$sb/bin/sleep" <<'WAIT_EOF'
+#!/bin/bash
+printf '%s\n' "$1" >> "$(dirname "$STUB_DIR")/sleeps.log"
+[ "$1" != 60 ] || echo Done > "$STUB_DIR/ticket_state"
+exit 0
+WAIT_EOF
   run_shepherd_on_merge "$sb" BUREAU_SHEPHERD_MERGE_WAIT_SECONDS=120 BUREAU_SHEPHERD_MERGE_POLL_SECONDS=60
-  [ "$SWAITS" -ge 1 ] || { echo "FAIL negative control: the old stage should make the shepherd wait (exit $SRC, $SWAITS waits)" >&2; tail -5 "$sb/shepherd.out" >&2; return 1; }
+  grep -qx '60' "$sb/sleeps.log" \
+    || { echo "FAIL negative control: expected merge-poll sleep 60 (exit $SRC, $SWAITS waits)" >&2; tail -5 "$sb/shepherd.out" >&2; return 1; }
+  assert_shepherd_merge_outcome "$sb" 2 other || return 1
   return 0
 }
 
