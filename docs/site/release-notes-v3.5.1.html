@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="e6d3138141e9d1b1af01966a5b5d43c62563be20d74684d67552f2d3ee049aa2">
+<title>release-notes-v3.5.1 · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="bureau-v351--spec-review-and-ux-fail-closed-on-invalid-results">Bureau
+v3.5.1 — Spec Review and UX fail closed on invalid results</h1>
+<p><strong>Stable release · 2026-10-29 · source tag <code>v3.5.1</code>
+· prepared 2026-10-28.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.1">GitHub
+Release</a> is marked as latest and records the exact tagged commit.
+Tagging and publication remain separate maintainer operations. The
+previous stable release is <a href="release-notes-v3.5.0.html">v3.5.0</a>;
+its notes retain the earlier release history.</p>
+<p>v3.5.1 is a patch release on v3.5.0. It contains only <a
+href="https://github.com/KaiaK808/bureau/pull/98">#98</a>, which
+validates Spec Review and UX results before routing and binds their
+cached overlap readiness to the validated result contract. No
+configuration keys and no exit codes are new. The existing exit
+<code>22</code> (<code>provider-or-result-error</code>) widens to these
+invalid results; see the <a href="exit-codes.html">exit-code
+contract</a>.</p>
+<h2 id="what-changed-since-v350">What changed since v3.5.0</h2>
+<p>All behavior changes below are on by default after resync. The
+readiness changes apply when the existing overlap gate is enabled; this
+release keeps its configuration unchanged.</p>
+<h3 id="spec-review-and-ux-validate-their-result-contracts">Spec Review
+and UX validate their result contracts</h3>
+<p>Both background stages pass their new schemas through the shared
+provider adapter for Claude and Codex. Spec Review requires an exact,
+case-sensitive <code>review_status</code> of <code>PASS</code> or
+<code>FAIL</code>, <code>ui_work_needed</code> and a string
+<code>summary</code>. The UI field accepts booleans and the legacy
+strings <code>true</code>, <code>TRUE</code>, <code>yes</code>,
+<code>YES</code>, <code>false</code>, <code>FALSE</code>,
+<code>no</code>, <code>NO</code>, normalized to the existing UI/no-UI
+routes. UX requires an exact, case-sensitive <code>design_status</code>
+of <code>COMPLETE</code>, <code>INCOMPLETE</code> or
+<code>NEEDS_HUMAN</code> and a string <code>summary</code>.</p>
+<p>The v3.5.0 prompt fields remain optional: Spec Review accepts integer
+<code>issues_found</code> and <code>issues_fixed</code> and a string
+array <code>remaining_issues</code>; UX accepts
+<code>components_net_new</code> with path and prop sketches,
+<code>components_reused</code> paths and <code>open_questions</code>
+with question <code>q</code> and boolean <code>blocking</code>. Prop
+sketches require <code>name</code>, <code>type</code> and a
+scalar-or-null <code>default</code>. The shared validator enforces
+declared type unions. Unknown extra fields are rejected, including
+within component, prop and question objects. Codex uses the existing
+strict wire projection and canonical validation; Claude uses the
+existing structured-output and transcript recovery rules. Stage prompts
+now request the required result fields, with review gaps in
+<code>summary</code> and design details, prop sketches and questions in
+<code>design.md</code>. Customized prompts can keep the declared
+optional fields. See <a
+href="stage-protocol.html#spec-review-and-ux-results">the result
+contracts</a>.</p>
+<h3 id="invalid-results-hold-before-publication">Invalid results hold
+before publication</h3>
+<p>Missing, unknown, wrongly typed or schema-invalid results exit
+<code>22</code>, preserve stage edits and hold the ticket in its current
+state with <code>needs-human</code>. A failed label write leaves a
+durable local hold. The stages publish no success comment, ordinary push
+or Build/Design move. The shell also checks exact known statuses before
+routing. Valid results retain these routes:</p>
+<table>
+<thead>
+<tr>
+<th>Result</th>
+<th>Route</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Spec Review <code>PASS</code>, UI needed</td>
+<td>Design with <code>needs-ux</code></td>
+</tr>
+<tr>
+<td>Spec Review <code>PASS</code>, no UI needed</td>
+<td>Build through overlap admission</td>
+</tr>
+<tr>
+<td>Spec Review <code>FAIL</code></td>
+<td>Spec for rework</td>
+</tr>
+<tr>
+<td>UX <code>COMPLETE</code></td>
+<td>Build through overlap admission</td>
+</tr>
+<tr>
+<td>UX <code>INCOMPLETE</code></td>
+<td>Spec Review for rework</td>
+</tr>
+<tr>
+<td>UX <code>NEEDS_HUMAN</code></td>
+<td>Remain in Design with the existing human hold</td>
+</tr>
+</tbody>
+</table>
+<p>The deterministic governance check can still force a valid Spec
+Review result to <code>FAIL</code>. Ticket withdrawal is checked first
+and retains precedence over result errors and human escalation.</p>
+<h3
+id="overlap-readiness-requires-the-current-validated-contract">Overlap
+readiness requires the current validated contract</h3>
+<p>Spec Review/UX readiness now records <code>validated_status</code>
+(<code>PASS</code>/<code>COMPLETE</code>) and
+<code>result_contract_sha256</code>, the SHA-256 digest of the installed
+canonical schema, alongside the existing branch, HEAD, task, ticket and
+configuration identity. Missing identity, a different digest or a
+non-passing status invalidates and deletes the cached record. A pending
+overlap readiness record from v3.5.0 therefore causes one fresh provider
+call on the first resume after resync, including when its original
+result was <code>PASS</code> or <code>COMPLETE</code>.</p>
+<p>An invalid fresh result holds with <code>22</code>. A fresh passing
+result records current readiness; subsequent overlap waits still return
+quiet <code>29</code> and retry admission without another provider call.
+Copy readiness and admission rules remain unchanged. No manual readiness
+migration is needed.</p>
+<h2 id="new-files">New files</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Installation and purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>templates/scripts/bureau-spec-review.schema.json</code></td>
+<td>Installed as <code>scripts/bureau-spec-review.schema.json</code> by
+scripts resync; validates Spec Review results by default.</td>
+</tr>
+<tr>
+<td><code>templates/scripts/bureau-ux.schema.json</code></td>
+<td>Installed as <code>scripts/bureau-ux.schema.json</code> by the same
+resync; validates UX results by default.</td>
+</tr>
+<tr>
+<td><code>tests/judged_stage_results_test.py</code>,
+<code>tests/test_judged_stage_results.sh</code></td>
+<td>Repository regression fixtures and their shell entry point; use fake
+Claude/Codex CLIs and local Git.</td>
+</tr>
+</tbody>
+</table>
+<p>The existing common-Git <code>bureau/admission/v1.json</code>
+readiness entries gain the two identity fields above. This release adds
+no state store or configuration key.</p>
+<h2 id="upgrade-an-existing-installation">Upgrade an existing
+installation</h2>
+<p><strong>From v3.5.0:</strong> stop all shepherds, queue loops,
+dispatchers and supervisors, preserve unfinished work and customized
+assets, and compare installed-script drift. Select tag
+<code>v3.5.1</code> in the source skill checkout and refresh skill
+discovery. Resync the <strong>complete scripts and interfaces scopes
+together</strong> (<code>--resync-interfaces --resync-scripts</code>) in
+each adopting repository, including both new schema files, then restart
+drivers together. Resolve customizations through <a
+href="migration.html#preview-and-resolve-asset-conflicts">preview and
+resolve</a>. <code>--update</code> changes configuration only. See <a
+href="migration.html#upgrade-to-v351">Upgrade to v3.5.1</a> and the <a
+href="migration.html#select-the-source-release">source-update
+instructions</a>.</p>
+<p>Check customized prompts against the declared result fields and
+expect one fresh provider call for each old waiting Spec Review/UX
+readiness record. Legacy <code>ui_work_needed</code> strings stay
+accepted. Run doctor and qualify a representative ticket before
+unattended dispatch.</p>
+<p><strong>From earlier versions:</strong> follow <a
+href="migration.html#upgrade-to-v35">Upgrade to v3.5</a> and its earlier
+sections first, then the v3.5.1 steps above.</p>
+<h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
+<p>The v3.5 exit-code vocabulary, configuration schemas, Spec Kit 1.2.2
+pin and app prepare/finish protocol remain compatible. Exit
+<code>22</code> already exists; its use widens to invalid Spec Review/UX
+results. The new result schemas and stricter routing apply
+automatically. Partial script/schema updates are incompatible.</p>
+<p>To roll back, stop every driver, select tag <code>v3.5.0</code> in
+the source skill checkout and restore its scripts and interfaces
+together, or restore the private backup (<a
+href="migration.html#rollback">rollback</a>), then restart drivers
+together. Preserve unfinished work and common-Git admission state for
+reconciliation. Rollback restores v3.5.0's result handling and cannot
+undo commits, pushes or Linear/GitHub changes made in between.</p>
+<h2 id="validation">Validation</h2>
+<p>The maintainer's release validation record reports two Codex review
+rounds for <a href="https://github.com/KaiaK808/bureau/pull/98">#98</a>.
+GitHub CI on #98 at <code>0ce1b2a</code> is green on all 10 shards (<a
+href="https://github.com/KaiaK808/bureau/actions/runs/40703173924">run
+40703173924</a>) after one re-run of a macOS shard. On the first
+attempt, a gate cancellation test in
+<code>tests/provider_adapter_test.py</code> failed on timing; it covers
+code #98 does not change and is the known limitation below. The changed
+tests passed locally on macOS. Provider calls are faked in tests. No
+installation has run v3.5.1 before the release. Release preparation
+changes documentation only.</p>
+<!-- release: v3.5.1 main CI result pending -->
+
+<p>See <a href="releases.html#current-release-status">the v3.5.1 release
+record</a>. The main-branch CI result remains for the maintainer to
+record.</p>
+<h2 id="known-limitations">Known limitations</h2>
+<p>On macOS CI, a gate cancellation test can intermittently lose the
+cancellation exit code <code>130</code>. A gate run is never falsely
+green because of this. A fix is planned for a later release.</p></main>
+</div>
+</body>
+</html>

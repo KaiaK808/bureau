@@ -21,10 +21,10 @@ Codex support is implemented and covered by local fixtures. Before unattended ad
 
 ## Install
 
-Install the v3.5.1 source (release date 2026-10-29; prepared 2026-10-28), keep one clone and expose it to the assistants you use:
+After the maintainer publishes v3.6.0 (prepared 2026-11-02), install its source, keep one clone and expose it to the assistants you use. See [release status](docs/releases.md#current-release-status) for publication and validation. The commands below select the published tag.
 
 ```sh
-git clone --branch v3.5.1 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
+git clone --branch v3.6.0 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
 mkdir -p "$HOME/.agents/skills"
 ln -s "$HOME/bureau-init" "$HOME/.agents/skills/bureau-init"
 # Optional Claude Code entry point:
@@ -92,7 +92,7 @@ The [background operations reference](references/operations.md) covers these mod
 
 ## Update and migrate
 
-Select tag `v3.5.1` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release) and refresh skill discovery. From v3.5.0, stop every driver, preserve unfinished work and customized assets, then resync the **scripts and interfaces scopes together in each adopting repository**, including `bureau-spec-review.schema.json` and `bureau-ux.schema.json`. Invalid Spec Review/UX results now hold with exit 22; a pending v3.5.0 overlap readiness record for either stage causes one fresh provider call after resync. Legacy `ui_work_needed` strings stay accepted. Follow [Upgrade to v3.5.1](docs/migration.md#upgrade-to-v351), restart all drivers together and qualify a representative ticket. From earlier versions follow [Upgrade to v3.5](docs/migration.md#upgrade-to-v35) and its earlier sections first. In Claude Code, after loading the new source skill:
+After publication, select tag `v3.6.0` in the source clone that supplies `bureau-init` using the [source-update instructions](docs/migration.md#select-the-source-release) and refresh skill discovery. From v3.5.1, stop every driver, preserve unfinished work and customized assets, compare installed drift, then resync the **scripts and interfaces scopes together in each adopting repository**, including all new helpers and schemas. Review/QA now use pinned base instructions with project configuration excluded; a resync PR that changes protected agent files receives an advisory `AGENT_CONFIG` note for the human merge. QA requires successful PR lookup and a base fetch, using fetched `origin/main` only when lookup confirms no open PR. Structured review merge, evidence packets and process holds apply by default; ticket budgets/progress, required grounding, the shadow verifier, ADR context and Codex outside-gate delegation stay opt-in. Run `--resync-speckit` for helper execute-bit repair, follow [Upgrade to v3.6](docs/migration.md#upgrade-to-v36), restart all drivers together and qualify a representative ticket. From v3.4.1, apply the intervening [v3.5.0](docs/release-notes-v3.5.0.md#upgrade-an-existing-installation) and [v3.5.1](docs/release-notes-v3.5.1.md#upgrade-an-existing-installation) requirements first. In Claude Code, after loading the new source skill:
 
 ```text
 /bureau-init --resync-interfaces --resync-scripts --target both
@@ -101,7 +101,7 @@ Select tag `v3.5.1` in the source clone that supplies `bureau-init` using the [s
 In a Codex app task, request the same scopes with:
 
 ```text
-$bureau-init --resync-scripts --target both
+$bureau-init --resync-interfaces --resync-scripts --target both
 ```
 
 Use `--target claude` to stay Claude-only. Refresh Spec Kit separately with `--resync-speckit --target both`; the existing active integration stays active unless you request a switch. Repos with installed Claude planning workflows also need `--resync-workflows`; script resync does not update them. `--update` is configuration-only. Updating the source clone alone does not change installed project files.
@@ -110,7 +110,9 @@ Pause dispatch and preserve local work first. Resync previews conflicts; one unr
 
 Version 1 configs remain supported. Optional schema-v2 migration preserves existing values, adds the absent legacy runner default and records `model_compatibility: "v1"` to retain model ownership. Its private backup covers configuration only. Installing Codex interfaces does not switch the background runner.
 
-The [v3.5.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.1) and [changelog](CHANGELOG.md) list what changes and what adopters must do. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
+The [v3.6.0 release notes](docs/release-notes.md) and [changelog](CHANGELOG.md) list what changes and what adopters must do. Tagging and GitHub Release publication follow the maintainer's go. v2.0.0 was the first tagged release; earlier source installs were untagged. The [release process](docs/releases.md) defines immutable tags, GitHub Release notes and qualification before publication. Bureau release numbers are independent of configuration schema versions.
+
+<!-- release: v3.6.0 GitHub Release URL and publication state pending -->
 
 v3 changes the exit-code contract between stages and their drivers and needs configuration set before the resync; see the [v3.0.0 release notes](docs/release-notes-v3.0.0.md) and [Upgrade to v3](docs/migration.md#upgrade-to-v3). v3.0.1 is a patch on v3.0.0 (the merge stage's exit codes and a reused approval; see its [release notes](docs/release-notes-v3.0.1.md)); v3.0.2 is a patch on v3.0.1 (every stage finds the ticket's own spec directory, and `repo.worktree_links` brings a Python `.venv` back into the stage worktrees; see its [release notes](docs/release-notes-v3.0.2.md)). The previous major release is [v2.0.0](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0).
 
@@ -126,9 +128,11 @@ v3.4.0, dated 2026-10-09, is an earlier stable release, a minor release on v3.3.
 
 v3.4.1, dated 2026-10-20, is an earlier stable release, a patch release on v3.4.0. It contains three fixes in [#73](https://github.com/KaiaK808/bureau/pull/73): dropping every `HERDR_` variable from child environments, accepting Codex error notices recovered by a later completed turn, and protecting Claude structured results from scheduled wakeups. No exit code or configuration key is new, no interfaces change and the v3 exit-code contract stays. From v3.4.0 select tag `v3.4.1`, resync the scripts scope as one set and restart queue loops and supervisors; see [Upgrade to v3.4.1](docs/migration.md#upgrade-to-v341). Installations that start shepherd runs from inside Herdr benefit directly. There is no release candidate and no installation has run v3.4.1 before the release; provider calls are faked in tests, and no live Herdr session, Codex 503 recovery or wakeup was reproduced. See the [release notes](docs/release-notes-v3.4.1.md); v3.4.1 followed [v3.4.0](https://github.com/KaiaK808/bureau/releases/tag/v3.4.0).
 
-v3.5.0, dated 2026-10-28 (prepared 2026-10-27), is the previous stable release, a minor release on v3.4.1. It adds quiet exits 28/29, shared completion/wait evidence, committed spec checkpoints and governance checks, stricter sandbox-gate proof, review convergence, cooperative ticket withdrawal, file admission, continuous dispatch and bounded learning. Spec Kit is pinned to 1.2.2. Configurable conflict repair and silence detection stay opt-in; launchers require overlap enabled. See its [release notes](docs/release-notes-v3.5.0.md) for all defaults, state locations and the validation record. v3.5.0 followed [v3.4.1](https://github.com/KaiaK808/bureau/releases/tag/v3.4.1).
+v3.5.0, dated 2026-10-28 (prepared 2026-10-27), is an earlier stable release, a minor release on v3.4.1. It adds quiet exits 28/29, shared completion/wait evidence, committed spec checkpoints and governance checks, stricter sandbox-gate proof, review convergence, cooperative ticket withdrawal, file admission, continuous dispatch and bounded learning. Spec Kit is pinned to 1.2.2. Configurable conflict repair and silence detection stay opt-in; launchers require overlap enabled. See its [release notes](docs/release-notes-v3.5.0.md) for all defaults, state locations and the validation record. v3.5.0 followed [v3.4.1](https://github.com/KaiaK808/bureau/releases/tag/v3.4.1).
 
-v3.5.1, dated 2026-10-29 (prepared 2026-10-28), is the current stable release, a patch on v3.5.0 containing only [#98](https://github.com/KaiaK808/bureau/pull/98). Spec Review and UX validate exact result contracts and hold invalid results with exit 22 by default. Their cached overlap readiness now requires a validated passing status and the installed schema digest; old waiting records require one fresh provider call. No configuration keys or exit codes are new. Codex reviewed the fix in two rounds, and CI at `0ce1b2a` is green on all 10 shards after one macOS shard re-run. No installation has run v3.5.1 before the release. See [release notes](docs/release-notes.md) for the validation record and the known macOS cancellation-test timing limitation. Publication remains a separate maintainer operation.
+v3.5.1, dated 2026-10-29 (prepared 2026-10-28), is the previous stable release, a patch on v3.5.0 containing only [#98](https://github.com/KaiaK808/bureau/pull/98). Spec Review and UX validate exact result contracts and hold invalid results with exit 22 by default. Their cached overlap readiness requires a validated passing status and the installed schema digest; old waiting records require one fresh provider call. No configuration keys or exit codes were new. See its [release notes](docs/release-notes-v3.5.1.md) for the validation record and the macOS cancellation limitation recorded at that release; v3.6.0 addresses the cancellation-exit loss.
+
+v3.6.0, prepared 2026-11-02, is the current release preparation, a minor release on v3.5.1. It adds review/QA configuration isolation, complete structured review merge and optional ADR/source checks, an evidence packet with an advisory risk tier, opt-in cumulative ticket budgets and trusted progress, durable process termination holds, opt-in Codex full gates outside the inner sandbox, offline pnpm/Yarn Classic restoration, Spec Kit helper mode repair and architecture recipes. The v3.5 exit vocabulary and Spec Kit 1.2.2 pin remain. Every PR was reviewed by Codex before push within at most three rounds, with maintainer exceptions of five rounds for #108 and four for #PR_REVIEW_CONFIG. Each PR's full local suite ran on macOS outside any sandbox, with failures rerun serially; each PR's CI is green after some macOS job reruns on tests the change does not touch. See [release notes](docs/release-notes.md) for the complete scope, defaults, upgrade actions, limits and pending integrated/main validation. Publication follows the maintainer's go.
 
 ## Documentation
 
