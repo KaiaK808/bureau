@@ -154,7 +154,7 @@ To roll back, stop every driver and reconcile all unfinished writers and holds b
 
 ## Validation
 
-The maintainer's release validation record reports every PR reviewed by Codex before push within at most three rounds, with two recorded maintainer exceptions: [#108](https://github.com/KaiaK808/bureau/pull/108) took five rounds and [#112](https://github.com/KaiaK808/bureau/pull/112) took four. Each PR's full local suite ran on macOS outside any sandbox before push, with failures rerun serially. CI on each PR is green; several macOS shards needed one rerun of failed jobs on tests the change does not touch. Release preparation changes documentation, plus one test repair: an import that an integration merge dropped from the evidence negative-control script is restored.
+The maintainer's release validation record reports every PR reviewed by Codex before push within at most three rounds, with two recorded maintainer exceptions: [#108](https://github.com/KaiaK808/bureau/pull/108) took five rounds and [#112](https://github.com/KaiaK808/bureau/pull/112) took four. Each PR's full local suite ran on macOS outside any sandbox before push, with failures rerun serially. CI on each PR is green; several macOS shards needed one rerun of failed jobs on tests the change does not touch. Release preparation changes documentation, plus three test repairs found by the integrated suite: an import that an integration merge dropped from the evidence negative-control script is restored, the process-group implement replay anchors at the gate-context reset that the implementation-feedback change moved, and the ticket-budget adapter fixture pins a provider base, which review and QA calls now require.
 
 <!-- release: integrated release branch full-suite result pending -->
 
