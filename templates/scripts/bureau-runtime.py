@@ -25,6 +25,13 @@ _evidence_spec.loader.exec_module(e)
 _spec_spec = importlib.util.spec_from_file_location('bureau_spec', SCRIPTS / 'bureau-spec.py')
 s = importlib.util.module_from_spec(_spec_spec)
 _spec_spec.loader.exec_module(s)
+_ticket_spec = importlib.util.spec_from_file_location('bureau_ticket', SCRIPTS / 'bureau-ticket.py')
+t = importlib.util.module_from_spec(_ticket_spec)
+_ticket_spec.loader.exec_module(t)
+_process_spec = importlib.util.spec_from_file_location('bureau_process', SCRIPTS / 'bureau-process.py')
+pg = importlib.util.module_from_spec(_process_spec)
+_process_spec.loader.exec_module(pg)
+signal_group = pg.signal_group
 # Keep equal to bureau-provider.py and bureau-env.sh (standalone script).
 UNTRUSTED_HOST_PREFIXES = ('HERDR_',)
 STAGES = {
@@ -169,6 +176,8 @@ class Store:
 
     def release(self, run, resources=None):
         with self.guard():
+            if pg.process_holds(self.root, run=run):
+                raise Conflict('human_hold: inspect and explicitly clear unfinished process holds before releasing ownership')
             leases = read(self.leases, {})
             leases = {k: v for k, v in leases.items()
                       if v['run_id'] != run or (resources is not None and k not in resources)}
@@ -187,22 +196,40 @@ class Store:
             record = read(path, {'groups': [], 'interrupted': False})
             if record['interrupted']:
                 raise Conflict('Run was interrupted; inspect and release it before continuing')
+            # An unregistered child may survive a failed post-spawn write. Keep
+            # a durable interrupted record until registration has completed.
+            save(path, dict(record, interrupted=True))
             child = subprocess.Popen(command, cwd=repo, start_new_session=True, env=env)
             record['groups'].append(child.pid)
             try:
                 save(path, record)
             except BaseException:
-                try: os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError: pass
-                child.wait()
+                # A writer can raise before or after publishing registration.
+                # Only uncertain cleanup may retain ownership on either side.
+                try:
+                    try: signal_group(child, signal.SIGKILL)
+                    finally: child.wait(timeout=1)
+                    self.assert_groups_stopped({child.pid})
+                except (OSError, Conflict, subprocess.TimeoutExpired) as exc:
+                    self.failed_registration = run
+                    print('bureau: registration cleanup failed: ' + str(exc), file=sys.stderr)
+                else:
+                    # Confirmation survives a failed write-ahead recovery save.
+                    self.stopped_registration = run
+                    save(path, record)
                 raise
             return child
 
     def finish_execution(self, run, resources, interrupted, repo=None, report=True):
         with self.guard():
+            interrupted = interrupted or getattr(self, 'failed_registration', None) == run
+            if pg.process_holds(self.root, run):
+                # Uncertain gate ownership/worktree state stays exactly as it is.
+                print('bureau: human_hold: unfinished process hold; ownership retained', file=sys.stderr)
+                return
             path = self.process_path(run)
             record = read(path, {'groups': [], 'interrupted': False})
-            if interrupted or record['interrupted']:
+            if interrupted or (record['interrupted'] and getattr(self, 'stopped_registration', None) != run):
                 record['interrupted'] = True
                 save(path, record)
                 leases = read(self.leases, {})
@@ -257,22 +284,8 @@ class Store:
         self.assert_groups_stopped(groups)
 
     def assert_groups_stopped(self, groups):
-        live = set()
-        for group in groups:
-            try: os.killpg(group, 0)
-            except ProcessLookupError: continue
-            live.add(group)
-        if live:
-            # killpg(0) includes zombies, which cannot write. Fail closed if the
-            # host cannot inspect process state rather than guessing it is safe.
-            try:
-                output = subprocess.check_output(['ps', '-axo', 'pgid=,stat='], text=True, stderr=subprocess.DEVNULL)
-            except (OSError, subprocess.CalledProcessError):
-                raise Conflict('Cannot confirm interrupted process groups stopped; inspect them before release')
-            active = {int(parts[0]) for line in output.splitlines()
-                      if len(parts := line.split()) >= 2 and not parts[1].startswith('Z')}
-            if live & active:
-                raise Conflict('Background process group still alive; stop it before releasing')
+        try: pg.assert_groups_stopped(groups)
+        except pg.TerminationUncertain as exc: raise Conflict(str(exc)) from exc
 
     def assert_owner(self, issue, workspace, run):
         leases = read(self.leases, {})
@@ -473,9 +486,13 @@ shift
     try:
         output, _ = child.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        try: os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError: pass
-        child.communicate()
+        try:
+            signal_group(child, signal.SIGKILL)
+            child.communicate(timeout=1)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print('bureau: timed-out helper termination uncertain: ' + str(exc), file=sys.stderr)
+        finally:
+            if child.stdout is not None: child.stdout.close()
         raise
     if child.returncode: raise subprocess.CalledProcessError(child.returncode, helper)
     return output.strip()
@@ -645,7 +662,10 @@ def finish(repo, args, store):
     validate_result(repo, record, result)
     config = read(config_for(repo))
     if record['config_hash'] != hashlib.sha256(config_for(repo).read_bytes()).hexdigest():
-        raise Conflict('Configuration changed since prepare; prepare a fresh stage')
+        raise Conflict('Configuration changed since prepare; preserve the work, run '
+                       f'`python3 scripts/bureau-runtime.py release {args.run}`, then '
+                       f'`python3 scripts/bureau-runtime.py prepare {record["issue"]} {record["stage"]}` '
+                       'again and regenerate the result with the new run_id')
     states = config['linear']['teams'][0]['states']
     current = issue_snapshot(repo, record['issue'])
     target = STAGES[record['stage']][1]
@@ -754,8 +774,11 @@ def execute(repo, args, store):
 
     def signal_child(signum):
         if child is not None:
-            try: os.killpg(child.pid, signum)
-            except ProcessLookupError: pass
+            try: signal_group(child, signum)
+            except OSError as exc:
+                # The stop is already latched. Keep ownership interrupted and
+                # report uncertainty rather than throwing out of the handler.
+                print('bureau: run termination uncertain: ' + str(exc), file=sys.stderr)
 
     def stop(signum, frame):
         nonlocal interrupted
@@ -849,11 +872,32 @@ def execute(repo, args, store):
             try:
                 code = child.wait(timeout=.2)
                 if interrupted: code = 130
+                control = store.root / 'ticket-control' / run
+                withdrawn = any((control / ('stop-' + str(c))).exists() for c in (0, 25, 26))
+                if phase == 'stage' and args.issue and t.completed_work_turn(code) and not withdrawn:
+                    try:
+                        ledger = t.Ledger(store.root, args.issue, read(config_for(repo)))
+                        decision = ledger.call('end_turn', attempt, run)
+                        if decision:
+                            # Consume exactly the same latch as withdrawal, in
+                            # time for the waiting worker's preservation trap.
+                            shell(repo, 'bureau_ticket_authorize', args.issue, 'latched', environ={
+                                **os.environ, 'BUREAU_RUN_ID': run, 'BUREAU_TICKET_CONTROL_DIR': str(control)})
+                            code = decision['code']
+                    except subprocess.CalledProcessError as exc:
+                        code = exc.returncode
+                    except (OSError, ValueError, TypeError, KeyError):
+                        code = 24
+                if interrupted: code = 130
                 return code
             except subprocess.TimeoutExpired:
                 if interrupted:
                     try: child.wait(timeout=stop_grace(depth))
-                    except subprocess.TimeoutExpired: signal_child(signal.SIGKILL); child.wait()
+                    except subprocess.TimeoutExpired:
+                        signal_child(signal.SIGKILL)
+                        try: child.wait(timeout=1)
+                        except subprocess.TimeoutExpired:
+                            print('bureau: run termination uncertain: leader did not exit', file=sys.stderr)
                     code = 130; return code
     except AdmissionStop as exc:
         code = exc.code
@@ -887,13 +931,26 @@ def execute(repo, args, store):
             e.warn()
         finally:
             store.finish_execution(run, resources, interrupted or code == 130, repo, report=bool(resources) or not inherited)
+            terminal_reason = None
+            terminal_error = False
+            try:
+                if args.issue:
+                    terminal_reason = t.Ledger(store.root, args.issue, read(config_for(repo))).call(
+                        'terminal', 130 if interrupted or code < 0 else code, run)
+            except (OSError, ValueError, KeyError, TypeError):
+                # Reasons are part of the protocol for standalone drivers too.
+                # Corrupt accounting cannot publish an unchecked lane reason.
+                code = 24
+                terminal_error = True
             if dispatch_record is not None:
                 ready = os.environ.get('BUREAU_DISPATCH_READY_FILE')
                 dispatch_record.update(code=130 if interrupted or code < 0 else code,
                                        paused=bool(code == 25 and ready and Path(ready + '.paused').exists()))
+                dispatch_record['terminal_reason'] = terminal_reason
                 # This coordination record is mandatory, outside prunable
                 # evidence, and written before the inherited dispatch FD closes.
                 save(dispatch_path, dispatch_record)
+            if terminal_error: raise AdmissionStop(24)
 
 
 def observation_time(value):

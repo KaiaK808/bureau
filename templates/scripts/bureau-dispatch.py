@@ -65,32 +65,47 @@ class Stop(Exception):
 
 class Helpers:
     """Track only handles created here; cancellation never reads stored PIDs."""
-    def __init__(self, repo):
+    def __init__(self, repo, control_root=None):
         self.repo = repo
         self.stopping = False
         self.child = None
+        self.termination_failure = None
+        self.control_root = control_root if control_root is not None else r.Store(repo).root
+        self.failure_path = self.control_root / 'dispatch-termination.json'  # Existing operator holds stay effective.
+
+    def uncertain(self, child, reason):
+        self.termination_failure = dict(group=child.pid, reason='dispatcher helper termination uncertain', detail=str(reason))
+        print('dispatch: ' + self.termination_failure['reason'] + ': ' + str(reason), file=sys.stderr)
+        # The unfinished helper record was fsynced before Popen. No write here
+        # is needed to make uncertainty survive a restart or a full filesystem.
 
     def stop(self):
         self.stopping = True
-        if self.child is not None and self.child.poll() is None:
-            try: os.killpg(self.child.pid, signal.SIGTERM)
-            except ProcessLookupError: pass
+        if self.child is not None:
+            try: r.signal_group(self.child, signal.SIGTERM)
+            except OSError as exc: self.uncertain(self.child, exc)
 
     def call(self, body, *args, env=None):
         if self.stopping:
             raise Stop(130)
+        if (self.termination_failure or self.failure_path.exists()
+                or r.pg.process_holds(self.control_root, inactive_only=True)):
+            raise Stop(25, 'human_hold: inspect unfinished process holds and stop their writers before explicitly removing the holds')
         environ = dict(os.environ if env is None else env)
         for key in ('BASH_ENV', 'ENV'):
             environ.pop(key, None)
         command = ['bash', '-e', '-c', SOURCE + body, 'bureau-dispatch', str(SCRIPTS), *args]
-        child = subprocess.Popen(command, cwd=self.repo, env=environ, text=True,
-                                 stdout=subprocess.PIPE, start_new_session=True)
-        self.child = child
-        # A signal can arrive in Popen before its handle has been assigned.
-        if self.stopping:
-            self.stop()
+        hold = r.pg.ProcessHold(self.control_root, 'dispatcher_helper', self.repo)
+        child = None
         try:
+            child = subprocess.Popen(command, cwd=self.repo, env=environ, text=True,
+                                     stdout=subprocess.PIPE, start_new_session=True)
+            self.child = child
+            # A signal can arrive in Popen before its handle has been assigned.
+            if self.stopping:
+                self.stop()
             deadline = None
+            kill_deadline = None
             while True:
                 try:
                     output, _ = child.communicate(timeout=.2)
@@ -98,13 +113,31 @@ class Helpers:
                 except subprocess.TimeoutExpired:
                     if self.stopping:
                         deadline = deadline or time.monotonic() + 5
-                        if time.monotonic() >= deadline:
-                            try: os.killpg(child.pid, signal.SIGKILL)
-                            except ProcessLookupError: pass
+                        if time.monotonic() >= deadline and kill_deadline is None:
+                            try: r.signal_group(child, signal.SIGKILL)
+                            except OSError as exc: self.uncertain(child, exc)
+                            kill_deadline = time.monotonic() + 1
+                        if kill_deadline is not None and time.monotonic() >= kill_deadline:
+                            self.uncertain(child, 'stdout did not close after bounded escalation')
+                            break
         finally:
-            self.child = None
+            try:
+                if child is not None:
+                    if child.stdout is not None: child.stdout.close()
+                    try:
+                        child.wait(timeout=1)
+                        r.pg.assert_groups_stopped({child.pid})
+                    except (OSError, subprocess.TimeoutExpired) as exc: self.uncertain(child, exc)
+            finally:
+                self.child = None
+                try: hold.close(stopped=child is not None and self.termination_failure is None)
+                except OSError as exc:
+                    if self.stopping: raise Stop(130) from exc
+                    raise
         if self.stopping:
             raise Stop(130)
+        if self.termination_failure:
+            raise Stop(25, 'human_hold: dispatcher helper termination uncertain')
         if child.returncode:
             raise Stop(130 if child.returncode < 0 else child.returncode, output.strip())
         return output.strip()
@@ -135,7 +168,7 @@ def spec_start(repo, issue):
     held across a shell helper or Linear call.
     """
     store = r.Store(repo)
-    helpers = Helpers(repo)
+    helpers = Helpers(repo, store.root)
     signal.signal(signal.SIGTERM, lambda *_: helpers.stop())
     signal.signal(signal.SIGINT, lambda *_: helpers.stop())
     signal.signal(signal.SIGHUP, lambda *_: helpers.stop())
@@ -175,7 +208,7 @@ class Dispatcher:
         self.repo, self.args = repo, args
         self.lock_fd = lock_fd
         self.store = r.Store(repo)
-        self.helpers = Helpers(repo)
+        self.helpers = Helpers(repo, self.store.root)
         self.lanes = {}
         self.ready = {}
         self.path = self.store.root / 'dispatch-skips.json'
@@ -192,12 +225,18 @@ class Dispatcher:
                 try: child.send_signal(signal.SIGTERM)
                 except ProcessLookupError: pass
 
-    def defer(self, issue, code, paused=False, attempt=None):
+    def defer(self, issue, code, paused=False, attempt=None, terminal_reason=None):
         prior = self.skips.get(issue, {})
         count = min(prior.get('attempts', 0) + 1, 16)
         quiet = code in (2, 10, 16, 23, 28, 29)
         due = time.time() + min(self.poll * 2 ** (count - 1), self.recheck) if quiet or paused else None
         self.skips[issue] = dict(code=code, attempts=count, until=due)
+        if terminal_reason is None:
+            ledger = r.t.Ledger(self.store.root, issue, r.read(r.config_for(self.repo)))
+            terminal_reason = ledger.call('terminal', code)
+        if terminal_reason is not None:
+            r.t.stop_code(terminal_reason, code)
+        self.skips[issue]['terminal_reason'] = terminal_reason
         if attempt is not None: self.skips[issue]['attempt'] = attempt
         r.save(self.path, self.skips)
         if code not in (0, 2, 10, 16, 20, 23, 25, 26, 28, 29, 130):
@@ -221,7 +260,8 @@ class Dispatcher:
         if code is None: code = 130
         if type(code) is not int or not 0 <= code <= 255: raise ValueError('invalid dispatch outcome: ' + str(path))
         if self.skips.get(issue, {}).get('attempt') != attempt:
-            self.defer(issue, code, paused=code == 25 and row.get('paused') is True, attempt=attempt)
+            self.defer(issue, code, paused=code == 25 and row.get('paused') is True, attempt=attempt,
+                       terminal_reason=row.get('terminal_reason'))
         ready = self.store.root / 'dispatch-ready' / attempt
         ready.unlink(missing_ok=True)
         ready.with_suffix('.paused').unlink(missing_ok=True)
@@ -420,6 +460,7 @@ def main():
                 os.execvpe(command[0], command, {**os.environ, 'BUREAU_POLLER_LOCKED': '1'})
             return Dispatcher(repo, args, lock.fileno()).run(cancelled=lambda: stopped)
     except Stop as exc:
+        if exc.output: print('dispatch: ' + exc.output, file=sys.stderr)
         return exc.code
     except BlockingIOError:
         print('dispatch: another dispatcher or stage poller owns this common Git directory', file=sys.stderr)

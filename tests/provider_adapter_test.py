@@ -1,9 +1,13 @@
 import importlib.util
 import atexit
+import argparse
+import io
+from contextlib import nullcontext, redirect_stdout
 import json
 import os
 from pathlib import Path
 import signal
+import shlex
 import shutil
 import subprocess
 import sys
@@ -11,6 +15,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from unittest.mock import Mock, patch
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPT=Path(os.environ.get('BUREAU_TEST_PROVIDER_SCRIPT',ROOT/'templates/scripts/bureau-provider.py'))
@@ -22,7 +27,10 @@ if CODEX_TMP_PREFIX != 'bureau-codex-':
     atexit.register(isolated.cleanup)
     shutil.copy(SCRIPT.with_name('bureau-evidence.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-gates.py'), isolated.name)
+    shutil.copy(SCRIPT.with_name('bureau-review-config.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-activity.py'), isolated.name)
+    shutil.copy(SCRIPT.with_name('bureau-ticket.py'), isolated.name)
+    shutil.copy(SCRIPT.with_name('bureau-process.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-insights.sh'), isolated.name)
     source = SCRIPT.read_text().replace("prefix='bureau-codex-'", 'prefix=' + repr(CODEX_TMP_PREFIX))
     SCRIPT = Path(isolated.name) / SCRIPT.name; SCRIPT.write_text(source)
@@ -133,7 +141,8 @@ else:
             path=self.bin/name; path.write_text(fake); path.chmod(0o755)
         self.fake=fake
         self.env={**os.environ,'PATH':str(self.bin)+os.pathsep+os.environ['PATH'],'FAKE_ROOT':str(self.root),
-                  'BUREAU_PROVIDER_LOG_DIR':str(self.root/'evidence')}
+                  'BUREAU_PROVIDER_LOG_DIR':str(self.root/'evidence'),
+                  'BUREAU_PROVIDER_CONFIG_BASE':subprocess.check_output(['git','-C',str(self.root),'rev-parse','HEAD'],text=True).strip()}
         for key in list(self.env):
             if key.startswith(('BUREAU_RUNNER_','BUREAU_MODEL_','BUREAU_CODEX_MODEL_','BUREAU_STAGE_TIMEOUT')): self.env.pop(key)
         # The provider looks for the CLI's own records here, never in the real home.
@@ -485,6 +494,35 @@ p.run=lose_forward
         self.assertFalse(self.gate_action('run',plan)['green'])
         self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['run'])
 
+    def test_review_contract_selection_preserves_legacy_wire_validation_and_receipt(self):
+        legacy = ROOT / 'tests/fixtures/review-legacy'
+        base = dict(verdict='APPROVE', bugs=0, security_issues=0, missing_acceptance=[], fixes_needed=[],
+                    summary='', comment='', findings=[dict(file='source.py', line=1, **{'class': 'MINOR'}, msg='Check')])
+        for runner in ('codex', 'claude'):
+            self.config.write_text(json.dumps({'agents': {'runner': runner}}))
+            for enabled in (False, True):
+                with self.subTest(runner=runner, enabled=enabled):
+                    name = 'bureau-review-adr.schema.json' if enabled else 'bureau-review.schema.json'
+                    schema = ROOT / 'templates/scripts' / name
+                    args = ('--stage', 'code_review', '--schema', str(schema))
+                    self.run_provider(*args, FINAL=json.dumps(base), ASSERT_STRICT_SCHEMA='1')
+                    argv = json.loads((self.root / 'argv.json').read_text())
+                    if runner == 'codex':
+                        wire = Path(argv[argv.index('--output-schema') + 1]).read_bytes()
+                        if enabled:
+                            self.assertIn('adr_refs', json.loads(wire)['properties']['findings']['items']['required'])
+                        else:
+                            self.assertEqual(wire, (legacy / 'codex-schema.json').read_bytes())
+                    receipt = json.loads(Path(self.evidence()[1]['receipt']).read_text())
+                    expected = schema if enabled else legacy / 'bureau-review.schema.json'
+                    self.assertEqual(receipt['schema_sha256'], p.hashlib.sha256(expected.read_bytes()).hexdigest())
+                    referenced = json.loads(json.dumps(base))
+                    referenced['findings'][0]['adr_refs'] = ['0001']
+                    self.run_provider(*args, FINAL=json.dumps(referenced), code=0 if enabled else 22,
+                                      ASSERT_STRICT_SCHEMA='1')
+                    if not enabled:
+                        self.assertEqual(self.evidence()[1]['error'], 'unexpected result fields')
+
     def test_insights_compose_with_strict_gate_schema_and_recovery(self):
         values = [('implement', 'implement', self.sandbox_result('SANDBOX_GATE: configured test failed')),
                   ('qa', 'qa', dict(status='NEEDS_HUMAN', tests_added=0, tests_failing=0,
@@ -545,6 +583,110 @@ p.run=lose_forward
         self.assertEqual(proc.returncode,expected_code,proc.stdout+proc.stderr)
         return json.loads(proc.stdout)
 
+    def test_delegated_gate_default_off_preserves_prompt_and_options(self):
+        self.run_provider()
+        prompt=(self.root/'stdin.txt').read_bytes()
+        options=json.loads(self.run_provider('--describe').stdout)
+        self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':False}}}}))
+        self.run_provider()
+        self.assertEqual((self.root/'stdin.txt').read_bytes(),prompt)
+        self.assertEqual(json.loads(self.run_provider('--describe').stdout),options)
+        self.assertFalse(self.gate_action('check',{'status':'COMPLETE'})['eligible'])
+        for invalid in (None, 'true', 1):
+            self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':invalid}}}}))
+            self.run_provider('--check',code=22)
+
+    def test_delegated_gate_once_per_pass_with_filtered_receipt(self):
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'
+        value={**self.sandbox_result(), 'status':'COMPLETE', 'tasks_needs_human':0,
+               'notes':{'needs_human':[], 'skipped':[], 'deviations':[]}}
+        command="printf 'run\\n' >> outside-runs; python3 -c " + shlex.quote(
+            "import json,os; from pathlib import Path; Path('outside-env.json').write_text(json.dumps(dict(os.environ)))")
+        context=self.root/'context.json'
+        # Both passes share a stage and HEAD: the receipt source distinguishes
+        # them, while repeated reads of one pass reuse its reserved result.
+        store=p.evidence_store(self.root); head=p.current_head(self.root); run=uuid.uuid4().hex
+        store.begin_run(run,None,self.root,head)
+        owner=store.begin_attempt(run,None,'implement','implement',self.root,head)
+        # Clean Codex children keep CODEX_* fixture inputs, just like login.
+        (self.bin/'codex').write_text(self.fake.replace("os.environ.get('FAKE_ROOT') or os.environ['CLAUDE_FAKE_ROOT']", "os.environ['CODEX_FAKE_ROOT']")
+                                    .replace("os.environ.get('FINAL','final response')", "os.environ['CODEX_FINAL']"))
+        self.env.update(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=owner,
+                        LINEAR_API_KEY='fixture-linear-secret', TELEGRAM_BOT_TOKEN='fixture-telegram-secret',
+                        GH_TOKEN='fixture-github-secret', SECRET_COPY='prefix-fixture-linear-secret',
+                        OUTSIDE_EXTRA='default-only', CODEX_FAKE_ROOT=str(self.root), CODEX_FINAL=json.dumps(value))
+        for count,mode in enumerate(('default','clean'),1):
+            with self.subTest(mode=mode):
+                self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':True}}},
+                                                  'repo':{'test_command':command,'untrusted_env':mode}}))
+                self.run_provider('--schema',str(schema),'--gate-context',str(context),FINAL=json.dumps(value))
+                prompt=(self.root/'stdin.txt').read_text()
+                self.assertIn('Do not run the full test gate yourself',prompt)
+                argv=json.loads((self.root/'argv.json').read_text())
+                self.assertEqual(argv[argv.index('-s')+1],'workspace-write')
+                first=self.gate_action('check',value,context=context)
+                self.assertTrue(first['eligible'],first); self.assertTrue(first['green'],first)
+                self.assertEqual(first,self.gate_action('check',value,context=context))
+                self.assertEqual(len((self.root/'outside-runs').read_text().splitlines()),count)
+                environment=json.loads((self.root/'outside-env.json').read_text())
+                for key in ('LINEAR_API_KEY','TELEGRAM_BOT_TOKEN','GH_TOKEN','SECRET_COPY','BUREAU_CONFIG','BUREAU_ENV_FILE','BASH_ENV','ENV'):
+                    self.assertNotIn(key,environment)
+                self.assertEqual(environment.get('OUTSIDE_EXTRA'),'default-only' if mode=='default' else None)
+                manifest=json.loads(store.manifest_path(run).read_text())
+                records=manifest['attempts'][0]['gate_reruns']
+                self.assertEqual(len(records),count)
+                record=records[-1]['result']
+                self.assertEqual(records[-1]['gate_attempt_ids'],[json.loads(context.read_text())['provider_attempt_id']])
+                self.assertEqual((record['source'],record['environment'],record['normalized_exit']),('bureau.shell','outside',0))
+                self.assertTrue(store.valid_execution(record))
+                self.assertEqual(record['stage_log'],first['logs'][0])
+                self.assertFalse(self.gate_action('check',{**value,'prose_notes':'tampered'},context=context)['green'])
+                self.assertFalse(self.gate_action('check',value,context=context,BUREAU_STAGE_ATTEMPT_ID=uuid.uuid4().hex)['green'])
+
+    def test_delegated_gate_recovery_uses_current_pass_at_unchanged_head(self):
+        command="printf 'run\\n' >> outside-runs"
+        self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':True}}},
+                                          'repo':{'test_command':command}}))
+        store=p.evidence_store(self.root); head=p.current_head(self.root); run=uuid.uuid4().hex
+        store.begin_run(run,None,self.root,head)
+        owner=store.begin_attempt(run,None,'implement','implement',self.root,head)
+        self.env.update(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=owner)
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'; context=self.root/'context.json'
+        partial={**self.sandbox_result(), 'status':'PARTIAL', 'tasks_needs_human':0,
+                 'notes':{'needs_human':[], 'skipped':[], 'deviations':[]}}
+        self.run_provider('--schema',str(schema),'--gate-context',str(context),FINAL=json.dumps(partial))
+        first=self.gate_action('check',partial,context=context)
+        self.assertTrue(first['green'],first)
+        held=self.sandbox_result()
+        self.run_provider('--schema',str(schema),'--gate-context',str(context),FINAL=json.dumps(held),
+                          GATE_COMMAND=command,GATE_MODE='abort')
+        second=self.gate_action('check',held,context=context)
+        self.assertTrue(second['green'],second)
+        plan=self.gate_action('plan',held,context=context)
+        self.assertTrue(plan['eligible'],plan)
+        records=json.loads(store.manifest_path(run).read_text())['attempts'][0]['gate_reruns']
+        self.assertEqual([record['head'] for record in records],[head,head])
+        self.assertNotEqual(records[0]['gate_attempt_ids'],records[1]['gate_attempt_ids'])
+        recovered=self.gate_action('run',plan)
+        self.assertTrue(recovered['eligible'],recovered); self.assertTrue(recovered['green'],recovered)
+        self.assertEqual(recovered['logs'],second['logs'])
+        self.assertNotEqual(recovered['logs'],first['logs'])
+        self.assertEqual(recovered,self.gate_action('run',plan))
+        self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['run','run'])
+
+    def test_delegated_gate_red_is_recorded_without_changing_provider_result(self):
+        self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':True}}},
+                                          'repo':{'test_command':'echo outside-red; exit 1'}}))
+        schema=ROOT/'templates/scripts/bureau-implement.schema.json'; value=self.sandbox_result('A product decision is missing')
+        context=self.root/'context.json'
+        result=self.run_provider('--schema',str(schema),'--gate-context',str(context),FINAL=json.dumps(value))
+        self.assertEqual(json.loads(result.stdout),value)
+        gate=self.gate_action('check',value,context=context)
+        self.assertTrue(gate['eligible'],gate); self.assertFalse(gate['green'],gate)
+        identity=json.loads(context.read_text())
+        manifest=json.loads(p.evidence_store(self.root).manifest_path(identity['run_id']).read_text())
+        self.assertEqual(manifest['attempts'][0]['gate_reruns'][0]['result']['normalized_exit'],1)
+
     def test_machine_gate_outside_red_unknown_missing_and_mixed_blockers(self):
         schema=ROOT/'templates/scripts/bureau-implement.schema.json'
         command='echo outside-red; exit 1'
@@ -570,7 +712,7 @@ p.run=lose_forward
             self.assertFalse(self.gate_action('plan',mixed,context=context)['eligible'],kind)
 
     def test_machine_gate_timeout_is_bounded_and_reservation_cannot_retry(self):
-        command='echo started >> outside-runs; sleep 2'
+        command=self.blocking_gate_command()
         self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
         value=self.sandbox_result('gate was killed')
         value['notes']['needs_human'][0].update(kind='gate',command=command)
@@ -578,13 +720,43 @@ p.run=lose_forward
         self.run_provider('--schema',str(ROOT/'templates/scripts/bureau-implement.schema.json'),'--gate-context',str(context),
                           FINAL=json.dumps(value),GATE_COMMAND=command,GATE_CODE='137')
         plan=self.gate_action('plan',value,context=context)
-        first=self.gate_action('run',plan,BUREAU_STAGE_TIMEOUT='0.15')
+        config=json.loads(self.config.read_text())
+        options=p.configuration('implement',config,self.env)
+        options.update(phase='implement',untrusted_env='default')
+        original_popen=subprocess.Popen
+        def controlled_popen(*args,**kwargs):
+            child=original_popen(*args,**kwargs)
+            if args[0][0]=='/bin/bash':
+                original_wait=child.wait
+                def wait(timeout=None):
+                    if timeout == options['timeout']:
+                        # The command has started and blocks until signalled.
+                        # Expire the executor wait explicitly, independent of load.
+                        self.wait_for_gate_ready()
+                        raise subprocess.TimeoutExpired(child.args,timeout)
+                    return original_wait(timeout=timeout)
+                child.wait=wait
+            return child
+        with patch.object(p.subprocess,'Popen',controlled_popen), patch.object(sys,'stdin',io.StringIO(json.dumps(plan))):
+            first=json.loads(p.gate_action(argparse.Namespace(stage='implement',gate_action='run'),config,options,self.root))
         self.assertFalse(first['green'])
-        self.assertEqual(first,self.gate_action('run',plan))
+        manifest=json.loads(p.evidence_store(self.root).manifest_path(plan['run_id']).read_text())
+        record=manifest['attempts'][0]['gate_reruns'][0]['result']
+        retry=self.gate_action('run',plan)
+        if first['reason']=='outside gate termination uncertain':
+            self.assertFalse(first['eligible'])
+            self.assertEqual((first['normalized_exit'],first['abort']),(124,'timeout'))
+            self.assertIsNone(record)
+            self.assertFalse(retry['eligible'])
+            self.assertFalse(retry['green'])
+        else:
+            self.assertEqual(first['reason'],'outside gate red, aborted or incomplete')
+            self.assertEqual((record['normalized_exit'],record['abort']),(124,'timeout'))
+            self.assertEqual(first,retry)
         self.assertEqual((self.root/'outside-runs').read_text().splitlines(),['started'])
 
     def test_machine_gate_cancellation_preserves_130_and_the_log(self):
-        command='echo started > outside-ready; sleep 20'
+        command=self.blocking_gate_command()
         self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
         value=self.sandbox_result('gate aborted')
         value['notes']['needs_human'][0].update(kind='gate',command=command)
@@ -596,20 +768,149 @@ p.run=lose_forward
                               stderr=subprocess.PIPE,text=True,env=self.env)
         try:
             proc.stdin.write(json.dumps(plan)); proc.stdin.close(); proc.stdin=None
-            deadline=time.monotonic()+5
-            while not (self.root/'outside-ready').exists() and time.monotonic()<deadline: time.sleep(.02)
-            self.assertTrue((self.root/'outside-ready').exists(),'outside command never started')
+            self.wait_for_gate_ready()
             proc.send_signal(signal.SIGTERM)
             stdout,stderr=proc.communicate(timeout=5)
             self.assertEqual(proc.returncode,130,stdout+stderr)
-            self.assertFalse(json.loads(stdout)['green'])
+            result=json.loads(stdout)
+            self.assertFalse(result['green'])
+            self.assertTrue(result['logs'])
+            self.assertTrue(all('started' in Path(log).read_text() for log in result['logs']))
             manifest=json.loads(p.evidence_store(self.root).manifest_path(plan['run_id']).read_text())
             record=manifest['attempts'][0]['gate_reruns'][0]['result']
-            self.assertEqual(record['normalized_exit'],130)
-            self.assertEqual(record['abort'],'kill')
-            self.assertTrue(p.evidence_store(self.root).valid_execution(record))
+            if result['reason']=='outside gate termination uncertain':
+                self.assertFalse(result['eligible'])
+                self.assertEqual((result['normalized_exit'],result['abort']),(130,'kill'))
+                self.assertIsNone(record)
+            else:
+                self.assertEqual(record['normalized_exit'],130)
+                self.assertEqual(record['abort'],'kill')
+                self.assertTrue(p.evidence_store(self.root).valid_execution(record))
         finally:
-            if proc.poll() is None: proc.kill(); proc.communicate()
+            if proc.poll() is None:
+                proc.send_signal(signal.SIGTERM)
+                try: proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired: proc.kill(); proc.communicate()
+            ready=self.root/'outside-ready'
+            if ready.exists():
+                try: os.kill(int(ready.read_text()),signal.SIGKILL)
+                except ProcessLookupError: pass
+
+    def blocking_gate_command(self):
+        source="""import os, signal
+from pathlib import Path
+print('started',flush=True)
+with Path('outside-runs').open('a') as output: output.write('started\\n')
+Path('outside-ready').write_text(str(os.getpid()))
+signal.pause()
+"""
+        return 'exec '+shlex.quote(sys.executable)+' -c '+shlex.quote(source)
+
+    def wait_for_gate_ready(self):
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            ready=self.root/'outside-ready'
+            if ready.exists() and ready.read_text(): return
+            time.sleep(.01)
+        self.fail('outside command never reached its ready marker')
+
+    def test_machine_gate_injected_process_failures_preserve_reason_exit_and_reservation(self):
+        for fault in ('signal', 'timeout', 'cleanup', 'execution_error', 'cleanup_error', 'cancel_kill_error', 'timeout_kill_error'):
+            with self.subTest(fault=fault):
+                value,context=self.prepared_gate('echo injected-'+fault)
+                plan=self.gate_action('plan',value,context=context)
+                child=Mock(pid=123456,returncode=0)
+                child.poll.return_value=None if fault.endswith('kill_error') else 0
+                child.kill.side_effect=PermissionError('injected direct kill failure')
+                def wait(timeout=None):
+                    if timeout == 3600:
+                        if fault in ('signal','cancel_kill_error'):
+                            signal.getsignal(signal.SIGTERM)(signal.SIGTERM,None)
+                        elif fault in ('timeout','timeout_kill_error'):
+                            raise subprocess.TimeoutExpired('fixture',timeout)
+                        elif fault=='execution_error': raise OSError('injected execution failure')
+                    return 0
+                child.wait.side_effect=wait
+                original_popen=subprocess.Popen
+                def popen(*args,**kwargs):
+                    if args[0][0]!='/bin/bash': return original_popen(*args,**kwargs)
+                    kwargs['stdout'].write(b'injected outside log\n')
+                    return child
+                def killpg(*args):
+                    if fault=='execution_error': raise ProcessLookupError()
+                    if fault=='cleanup_error': raise OSError('injected cleanup failure')
+                    raise PermissionError('injected exited group')
+                handlers={sig:signal.getsignal(sig) for sig in (signal.SIGTERM,signal.SIGINT,signal.SIGHUP)}
+                output=io.StringIO()
+                with patch.dict(os.environ,self.env,clear=True), patch.object(sys,'stdin',io.StringIO(json.dumps(plan))), \
+                        patch.object(sys,'argv',self.command('--gate-action','run')[1:]), redirect_stdout(output), \
+                        patch.object(p.subprocess,'Popen',popen), patch.object(p.os,'killpg',side_effect=killpg), \
+                        (patch.object(p.pg,'inspect_groups',return_value={child.pid} if fault.endswith('kill_error') else set())
+                         if hasattr(p,'pg') else nullcontext()):
+                    code=p.main()
+                expected_code=(130 if fault in ('signal','cancel_kill_error') else
+                               124 if fault in ('timeout','timeout_kill_error') else 0 if fault=='execution_error' else 25)
+                self.assertEqual(code,expected_code,output.getvalue())
+                result=json.loads(output.getvalue())
+                self.assertEqual(result['reason'],'outside gate execution failed' if fault=='execution_error' else
+                                 'outside gate termination uncertain')
+                self.assertFalse(result['eligible'])
+                self.assertFalse(result['green'])
+                self.assertIn('injected outside log',Path(result['logs'][0]).read_text())
+                for sig,handler in handlers.items(): self.assertEqual(signal.getsignal(sig),handler)
+                manifest=json.loads(p.evidence_store(self.root).manifest_path(plan['run_id']).read_text())
+                record=manifest['attempts'][0]['gate_reruns'][0]['result']
+                self.assertIsNone(record)
+                retry=self.gate_action('run',plan)
+                self.assertFalse(retry['green'])
+                if fault.endswith('kill_error'): child.kill.assert_called()
+                else: child.kill.assert_not_called()
+
+    def test_machine_gate_eperm_never_passes_even_with_empty_inspection(self):
+        for membership in ('live', 'unavailable', 'empty', 'zombies'):
+            for outcome in ('success', 'cancelled', 'timeout'):
+                with self.subTest(membership=membership, outcome=outcome):
+                    value,context=self.prepared_gate('echo descendant-'+membership+'-'+outcome)
+                    plan=self.gate_action('plan',value,context=context)
+                    child=Mock(pid=123456,returncode=0)
+                    child.poll.return_value=0
+                    def wait(timeout=None):
+                        if timeout == 3600:
+                            if outcome == 'cancelled': signal.getsignal(signal.SIGTERM)(signal.SIGTERM,None)
+                            if outcome == 'timeout': raise subprocess.TimeoutExpired('fixture',timeout)
+                        return 0
+                    child.wait.side_effect=wait
+                    original_popen=subprocess.Popen
+                    def popen(*args,**kwargs):
+                        if args[0][0]!='/bin/bash': return original_popen(*args,**kwargs)
+                        kwargs['stdout'].write(b'descendant gate log\n')
+                        return child
+                    inspector=getattr(p,'pg',None)
+                    inspection=(dict(side_effect=(inspector.TerminationUncertain if inspector else OSError)('inspection unavailable'))
+                                if membership=='unavailable' else dict(return_value={child.pid} if membership=='live' else set()))
+                    output=io.StringIO()
+                    with patch.dict(os.environ,self.env,clear=True), patch.object(sys,'stdin',io.StringIO(json.dumps(plan))), \
+                            patch.object(sys,'argv',self.command('--gate-action','run')[1:]), redirect_stdout(output), \
+                            patch.object(p.subprocess,'Popen',popen), patch.object(p.os,'killpg',side_effect=PermissionError('EPERM')), \
+                            (patch.object(inspector,'inspect_groups',**inspection) if inspector else nullcontext()):
+                        code=p.main()
+                    result=json.loads(output.getvalue())
+                    self.assertFalse(result['green'],result)
+                    self.assertFalse(result['eligible'],result)
+                    self.assertEqual(result['reason'],'outside gate termination uncertain')
+                    self.assertEqual((result['normalized_exit'],result['abort']),
+                                     {'success':(25,None),'cancelled':(130,'kill'),'timeout':(124,'timeout')}[outcome])
+                    self.assertEqual(code,{'success':25,'cancelled':130,'timeout':124}[outcome])
+                    retry=self.gate_action('run',plan)
+                    self.assertFalse(retry['green'],retry)
+                    if inspector:
+                        self.assertTrue(inspector.process_holds(self.root/'.git/bureau', inactive_only=True))
+                    restarted=subprocess.run([sys.executable,str(ROOT/'templates/scripts/bureau-dispatch.py'),
+                                              '--repo',str(self.root),'run','--dry-run'], env=self.env, capture_output=True, text=True, timeout=10)
+                    self.assertEqual(restarted.returncode,25,restarted.stdout+restarted.stderr)
+                    self.assertIn('human_hold',restarted.stderr)
+                    self.assertFalse(retry['eligible'],retry)
+                    child.kill.assert_not_called()
 
     def prepared_gate(self, command='echo gate', prefix=False, **events):
         self.config.write_text(json.dumps(dict(agents=dict(runner='codex'),repo=dict(test_command=command))))
@@ -1147,10 +1448,10 @@ p.Path.open=refuse_transcript_read
                     # write; a live descendant can outlast the released lease.
                     deadline=time.monotonic()+2
                     while True:
-                        status=subprocess.run(['ps','-p',str(descendant['pid']),'-o','stat='],capture_output=True,text=True)
-                        self.assertIn(status.returncode,(0,1),status.stderr)
-                        self.assertFalse(status.stderr.strip(),status.stderr)
-                        active=bool(status.stdout.strip()) and not status.stdout.strip().startswith('Z')
+                        # Native inspection preserves the zombie/live check in
+                        # sandboxes that deny executing ps; inspection errors still fail.
+                        status=p.a.ProcessTable().snapshot().get(descendant['pid'])
+                        active=status is not None and not status[2]
                         if not active or time.monotonic() >= deadline: break
                         time.sleep(.02)
                     self.assertFalse(active,'provider descendant survived the bounded invocation')
@@ -1244,6 +1545,28 @@ p.Path.open=refuse_transcript_read
                     self.assertEqual(argv,['-p','--output-format','json','--session-id',metadata['session_id'],
                         *tools,'--append-system-prompt-file',str(evidence/'system.txt'),
                         '--effort','high','--model','claude-fixture'])
+
+    def test_shadow_disables_automatic_memory_only_for_verification(self):
+        wrapper = self.bin/'headroom'
+        wrapper.write_text('#!/bin/sh\nshift 3\nexec claude "$@"\n'); wrapper.chmod(0o755)
+        for wrapped, policy in ((False, 'default'), (True, 'clean')):
+            self.config.write_text(json.dumps({'agents':{'runner':'claude', 'headroom_wrap':wrapped},
+                                              'repo':{'untrusted_env':policy}}))
+            with self.subTest(wrapped=wrapped, policy=policy):
+                self.run_provider('--stage', 'code_review', '--phase', 'finding_verifier',
+                                  CLAUDE_CODE_DISABLE_AUTO_MEMORY='0', CLAUDE_FAKE_ROOT=str(self.root))
+                argv = json.loads((self.root/'argv.json').read_text())
+                self.assertEqual(argv[argv.index('--setting-sources')+1], 'user')
+                self.assertEqual(argv[argv.index('--tools')+1], '')
+                child_env = json.loads((self.root/'claude-env.json').read_text())
+                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '1')
+                # Ordinary reviewers keep the installation's selected memory policy.
+                self.run_provider('--stage', 'code_review', '--phase', 'correctness',
+                                  CLAUDE_CODE_DISABLE_AUTO_MEMORY='0', CLAUDE_FAKE_ROOT=str(self.root))
+                argv = json.loads((self.root/'argv.json').read_text())
+                self.assertEqual(argv[argv.index('--setting-sources')+1], 'user')
+                child_env = json.loads((self.root/'claude-env.json').read_text())
+                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '0')
 
     def claude_argv(self,config,**env):
         self.config.write_text(json.dumps(config))
@@ -1389,8 +1712,23 @@ p.Path.open=refuse_transcript_read
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), control.parent / 'bureau-evidence.py')
         shutil.copy(SCRIPT.with_name('bureau-gates.py'), control.parent / 'bureau-gates.py')
         shutil.copy(SCRIPT.with_name('bureau-activity.py'), control.parent / 'bureau-activity.py')
+        shutil.copy(SCRIPT.with_name('bureau-ticket.py'), control.parent / 'bureau-ticket.py')
+        shutil.copy(SCRIPT.with_name('bureau-insights.sh'), control.parent / 'bureau-insights.sh')
+        shutil.copy(SCRIPT.with_name('bureau-process.py'), control.parent / 'bureau-process.py')
         control.write_text(source.replace(changed,'        return env\n'))
         return control
+
+    def test_claude_config_dir_control_persists_successful_stage_outcome(self):
+        self.claude_envs({'agents':{'runner':'claude'}},script=self.without_config_dir())
+        records=self.root/'.git/bureau/evidence/v1/stage-outcomes.jsonl'
+        self.assertTrue(records.is_file(),'successful control stage outcome missing')
+        rows=[json.loads(line) for line in records.read_text().splitlines()]
+        self.assertEqual(len(rows),1)
+        self.assertEqual(tuple(rows[0][key] for key in ('record_type','stage','phase','normalized_exit','cause_class')),
+                         ('stage_outcome','implement','implement',0,'other'))
+        receipt,=self.receipts()
+        for key in ('run_id','stage_attempt_id'):
+            self.assertEqual(rows[0][key],receipt[key])
 
     def test_claude_without_a_config_dir_gets_the_environment_it_got_before(self):
         control=self.without_config_dir()
@@ -1410,14 +1748,16 @@ p.Path.open=refuse_transcript_read
         self.assertIsNone(p.configuration('implement',config,{})['config_dir'])
 
     def test_negative_control_the_env_assertion_fails_without_the_change(self):
+        from mutation_checks import caught_mutation, restored_files
         lean=self.profile('lean')
         config={'agents':{'runner':'claude','providers':{'claude':{'config_dir':str(lean)}}}}
-        child,login=self.claude_envs(config,script=self.without_config_dir())
-        self.assertNotEqual(child.get('CLAUDE_CONFIG_DIR'),str(lean))
-        self.assertNotEqual(login.get('CLAUDE_CONFIG_DIR'),str(lean))
-        with self.assertRaises(AssertionError): self.assertEqual(child['CLAUDE_CONFIG_DIR'],str(lean))
-        child,login=self.claude_envs(config)
-        self.assertEqual((child['CLAUDE_CONFIG_DIR'],login['CLAUDE_CONFIG_DIR']),(str(lean),str(lean)))
+        script=self.without_config_dir()
+        with restored_files({script: SCRIPT.read_bytes()}):
+            child,login=self.claude_envs(config,script=script)
+            self.assertEqual((child['CLAUDE_CONFIG_DIR'],login['CLAUDE_CONFIG_DIR']),(str(lean),str(lean)))
+        with caught_mutation():
+            child,login=self.claude_envs(config,script=script)
+            self.assertEqual((child['CLAUDE_CONFIG_DIR'],login['CLAUDE_CONFIG_DIR']),(str(lean),str(lean)))
 
     def test_invalid_claude_config_dir_is_a_configuration_error_before_any_call(self):
         (self.bin/'claude').write_text('#!/bin/sh\necho unexpected Claude >&2\ntouch "$FAKE_ROOT/claude-ran"\nexit 99\n')
@@ -1903,8 +2243,11 @@ p.run=lost_result
 
     def test_foreign_receipt_and_stale_head_never_reconcile(self):
         schema=self.receipt_schema()
-        for field,foreign in [('issue','TEAM-2'),('provider_attempt_id','f'*32),('run_id','a'*32),
-                              ('stage','qa'),('phase','other-reviewer'),('end_head','0'*40)]:
+        # Each corruption case owns a fresh ticket: a forged attempt identity
+        # correctly holds that ticket's accounting on any subsequent call.
+        for number,(field,foreign) in enumerate([
+                ('issue','TEAM-2'),('provider_attempt_id','f'*32),('run_id','a'*32),
+                ('stage','qa'),('phase','other-reviewer'),('end_head','0'*40)], start=100):
             with self.subTest(field=field):
                 result=self.run_wrapped_provider('''
 recorded=p.run
@@ -1915,7 +2258,7 @@ def foreign_receipt(*args,**kwargs):
     p.e.atomic(path,value)
     return code,'late prose',metadata
 p.run=foreign_receipt
-''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}',BUREAU_CURRENT_ISSUE='TEAM-1',
+''','--schema',str(schema),code=22,FINAL='{"status":"COMPLETE"}',BUREAU_CURRENT_ISSUE='TEAM-'+str(number),
                     FOREIGN_FIELD=field,FOREIGN_VALUE=foreign)
                 self.assertEqual(result.stdout,'')
                 self.assertIn('no matching completion receipt',result.stderr)

@@ -13,9 +13,14 @@ import time
 import unittest
 import zipfile
 
+from process_helpers import process_group_running, process_running
+
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_DISPATCH_TEST_SCRIPTS', ROOT / 'templates/scripts'))
+_process_spec = importlib.util.spec_from_file_location('dispatcher_test_process', SCRIPTS / 'bureau-process.py')
+pg = importlib.util.module_from_spec(_process_spec)
+_process_spec.loader.exec_module(pg)
 REAL_GIT = shutil.which('git')
 NAMES = dict(triage='Triage', spec='Spec', spec_review='Spec Review', design='Design', copy='Copy',
              build='Build', qa='QA', build_review='Build Review', merge='Merge', done='Done',
@@ -221,10 +226,12 @@ os.execv(os.environ['DISPATCH_REAL_GIT'],[os.environ['DISPATCH_REAL_GIT'],*sys.a
 
 
 class DispatcherFixture(unittest.TestCase):
+    pid_exit_timeout = 5
+
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='bureau-1749-test-', dir='/private/tmp' if Path('/private/tmp').is_dir() else None)
+        self.temp = tempfile.TemporaryDirectory(prefix='bureau-dispatch-test-')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name); self.repo = self.root / 'repo with spaces'; self.repo.mkdir()
+        self.root = Path(self.temp.name).resolve(); self.repo = self.root / 'repo with spaces'; self.repo.mkdir()
         self.children = []; self.files = []; self.addCleanup(self.cleanup)
         self.bin = self.root/'bin'; self.bin.mkdir()
         self.state = self.root/'service.json'
@@ -342,20 +349,29 @@ class DispatcherFixture(unittest.TestCase):
         pids={row['pid'] for row in self.events() if 'pid' in row}
         if (self.root/'writer.pid').exists(): pids.add(int((self.root/'writer.pid').read_text()))
         denied_pids=set()
-        for pid in pids:
-            try: os.kill(pid,0)
-            except ProcessLookupError: continue
-            except PermissionError:
-                denied_pids.add(pid); continue
-            self.fail('owned test process survived: '+str(pid))
+        deadline=time.monotonic()+self.pid_exit_timeout
+        remaining_pids=set(pids)
+        while remaining_pids:
+            remaining=set()
+            for pid in remaining_pids:
+                try:
+                    if not process_running(pid): continue
+                except PermissionError:
+                    denied_pids.add(pid); continue
+                remaining.add(pid)
+            remaining_pids=remaining
+            if not remaining_pids or time.monotonic()>=deadline: break
+            time.sleep(.05)
+        if remaining_pids:
+            self.fail('\n'.join('owned test process survived: '+str(pid) for pid in sorted(remaining_pids)))
         deadline=time.monotonic()+5
         denied_groups=set()
         group_count=len(groups)
         while groups and time.monotonic()<deadline:
             remaining=set()
             for group in groups:
-                try: os.killpg(group,0)
-                except ProcessLookupError: continue
+                try:
+                    if not process_group_running(group): continue
                 except PermissionError:
                     denied_groups.add(group); continue
                 remaining.add(group)
@@ -508,27 +524,63 @@ class DispatcherFixture(unittest.TestCase):
         self.change(lambda d:d['prs'].append(dict(number=1,branch=branch,issue=issue,comments=[])))
         child=self.start(); self.wait_for(lambda:self.skipped(issue,20))
         self.assertEqual([v['state'] for v in self.events('move')],['merge'])
-        self.assertEqual(len(self.events('provider-start')),4); self.assertFalse(self.events('merge')); self.stop(child)
+        self.assertEqual(len(self.events('provider-start')),3); self.assertFalse(self.events('merge')); self.stop(child)
 
     def test_human_hold_and_unknown_failure_are_not_immediately_repicked(self):
+        self.install_idle_crash_barrier()
         self.ticket(1,human=True); self.ticket(2,fail=True)
         child=self.start(); self.wait_for(lambda:self.skipped('TST-1',25) and self.skipped('TST-2',22))
         count=len(self.started()); time.sleep(.6); self.assertEqual(len(self.started()),count)
-        self.stop(child); child=self.start(); time.sleep(.6); self.assertEqual(len(self.started()),count); self.stop(child)
+        self.stop_idle_dispatcher(child); child=self.start(); time.sleep(.6); self.assertEqual(len(self.started()),count); self.stop_idle_dispatcher(child)
 
     def test_bare_human_exit_without_label_is_persistently_held(self):
+        self.install_idle_crash_barrier()
         self.ticket(1)
         with (self.repo/'.env').open('a') as out: out.write('BUREAU_FORCE_ALL_AGENTS=1\n')
         file=self.repo/'scripts/implement-pipeline.sh'
         file.write_text('#!/bin/bash\nsource "$(dirname "$0")/bureau-config.sh"\nbureau_load_env --export "$BUREAU_ENV_FILE"\nbureau_stage_enter "$1" "$@"\nif agent_enabled qa; then exit 99; fi\nexit 25\n')
-        child=self.start(); self.wait_for(lambda:self.skipped('TST-1',25)); self.stop(child)
+        child=self.start(); self.wait_for(lambda:self.skipped('TST-1',25)); self.stop_idle_dispatcher(child)
         self.assertFalse(any(v['name']=='needs-human' for v in self.events('label')))
         before=len(list((self.common/'dispatch-logs').glob('*.log')))
-        child=self.start(); time.sleep(.6); self.stop(child)
+        child=self.start(); time.sleep(.6); self.stop_idle_dispatcher(child)
         self.assertEqual(len(list((self.common/'dispatch-logs').glob('*.log'))),before)
+
+    def install_idle_crash_barrier(self):
+        # Lane crash tests kill between helper calls. An active helper has its
+        # own durable hold, covered separately by process-group regressions.
+        dispatcher = self.repo / 'scripts/bureau-dispatch.py'
+        source = dispatcher.read_text()
+        anchor = '                deadline = time.monotonic() + self.poll\n'
+        self.assertEqual(source.count(anchor), 1)
+        pause = ('                freeze = Path(os.environ["DISPATCH_FIXTURE"]) / "freeze-dispatch"\n'
+                 '                if freeze.exists():\n'
+                 '                    freeze.with_suffix(".ready").touch()\n'
+                 '                    while freeze.exists() and not self.stopping: time.sleep(.02)\n')
+        dispatcher.write_text(source.replace(anchor, pause + anchor, 1))
+
+    def pause_idle_dispatcher(self):
+        freeze = self.root / 'freeze-dispatch'
+        freeze.with_suffix('.ready').unlink(missing_ok=True)
+        freeze.touch()
+        self.wait_for(lambda:freeze.with_suffix('.ready').exists())
+        self.assertFalse(pg.process_holds(self.common, inactive_only=True))
+        return freeze
+
+    def kill_idle_dispatcher(self, child):
+        freeze = self.pause_idle_dispatcher()
+        try:
+            child.kill(); self.assertEqual(child.wait(timeout=5),-signal.SIGKILL)
+        finally:
+            freeze.unlink(missing_ok=True)
+
+    def stop_idle_dispatcher(self, child):
+        freeze = self.pause_idle_dispatcher()
+        try: self.stop(child)
+        finally: freeze.unlink(missing_ok=True)
 
     def test_human_exit_survives_dispatcher_kill_before_lane_finishes(self):
         self.ticket(1)
+        self.install_idle_crash_barrier()
         file=self.repo/'scripts/implement-pipeline.sh'
         file.write_text('#!/bin/bash\nsource "$(dirname "$0")/bureau-config.sh"\nbureau_stage_enter "$1" "$@"\n'
                         'echo "$BUREAU_RUN_ID" >> "$DISPATCH_FIXTURE/human-launches"\n'
@@ -536,7 +588,7 @@ class DispatcherFixture(unittest.TestCase):
         child=self.start()
         try:
             self.wait_for(lambda:(self.root/'human-launches').exists())
-            child.kill(); self.assertEqual(child.wait(timeout=5),-signal.SIGKILL)
+            self.kill_idle_dispatcher(child)
         finally:
             (self.root/'release-human').touch()
         self.wait_for(lambda:not json.loads((self.common/'leases.json').read_text()))
@@ -614,6 +666,61 @@ class DispatcherFixture(unittest.TestCase):
         self.assertEqual(result.returncode,21,result.stdout+result.stderr)
         self.stop(child)
 
+    def test_shutdown_reaps_provider_before_zombie_group_probe(self):
+        # Model the macOS denial for an unreaped, zombie-only provider group.
+        # The wrapper must reap its own child while probing, without needing
+        # the sandbox to permit signal 0 on historical fixture PIDs.
+        fake=self.bin/'claude'; text=fake.read_text()
+        needle="event('provider-start')"
+        self.assertEqual(text.count(needle),1)
+        fake.write_text(text.replace(needle,"""def exited(*_):
+    signal.signal(signal.SIGTERM,signal.SIG_IGN)
+    event('provider-exit')
+    (root/('provider-exited-'+str(os.getpid()))).touch()
+    sys.exit(0)
+signal.signal(signal.SIGTERM,exited)
+"""+needle,1))
+        wrapper=self.repo/'scripts/bureau-provider.py'; text=wrapper.read_text()
+        needle='signal_group = pg.signal_group'
+        self.assertEqual(text.count(needle),1)
+        text=text.replace(needle,"""def signal_group(child, signum):
+    import errno
+    original=pg.os.killpg
+    def zombie_probe(group, sig):
+        marker=Path(os.environ['DISPATCH_FIXTURE'])/('provider-exited-'+str(child.pid))
+        if group == child.pid and marker.exists():
+            if child.returncode is None:
+                raise PermissionError(errno.EPERM,'unreaped provider group')
+            raise ProcessLookupError()
+        return original(group,sig)
+    pg.os.killpg=zombie_probe
+    try: return pg.signal_group(child,signum)
+    finally: pg.os.killpg=original
+""",1)
+        needle="if __name__=='__main__': sys.exit(main())"
+        self.assertEqual(text.count(needle),1)
+        wrapper.write_text(text.replace(needle,"""if __name__=='__main__':
+    try: sys.exit(main())
+    finally:
+        if '--prompt-file' in sys.argv:
+            with (Path(os.environ['DISPATCH_FIXTURE'])/'events').open('a') as out:
+                out.write(json.dumps(dict(kind='provider-wrapper-exit',pid=os.getpid()))+'\\n')
+""",1))
+        self.ticket(1,hold=True); child=self.start(); self.wait_for(lambda:bool(self.started()))
+        try:
+            self.stop(child)
+            with (self.root/'events').open('a') as out:
+                out.write(json.dumps(dict(kind='dispatcher-exit'))+'\n')
+            kinds=[row['kind'] for row in self.events()]
+            self.assertIn('provider-wrapper-exit',kinds,'dispatcher returned before its provider wrapper joined')
+            self.assertLess(kinds.index('provider-exit'),kinds.index('provider-wrapper-exit'))
+            self.assertLess(kinds.index('provider-wrapper-exit'),kinds.index('dispatcher-exit'))
+        finally:
+            # The failing control must finish its own orphaned wrapper too.
+            self.release('TST-1')
+            if child.poll() is None: self.stop(child)
+            self.wait_for(lambda:bool(self.events('provider-wrapper-exit')),timeout=25)
+
     def test_running_legacy_poller_excludes_dispatcher(self):
         output=(self.root/'poller.out').open('w'); self.files.append(output)
         child=subprocess.Popen(['bash',str(self.repo/'scripts/queue-loop.sh'),'implement','1'],cwd=self.repo,
@@ -646,8 +753,9 @@ class DispatcherFixture(unittest.TestCase):
         self.stop(dispatcher); self.assertIsNone(holder.poll()); self.stop(holder)
 
     def test_lane_retains_dispatch_lock_after_parent_loss(self):
+        self.install_idle_crash_barrier()
         self.ticket(1,hold=True); child=self.start(); self.wait_for(lambda:bool(self.started()))
-        child.kill(); self.assertEqual(child.wait(timeout=5),-signal.SIGKILL)
+        self.kill_idle_dispatcher(child)
         self.ticket(2,hold=True)
         second=self.start(); self.assertEqual(second.wait(timeout=15),21,self.output())
         # A prior incarnation is never signalled. Let its owned lane finish
@@ -842,7 +950,7 @@ class DispatcherFixture(unittest.TestCase):
         self.assertNotEqual(before,after); self.g('merge-base','--is-ancestor',base,after)
         moves=self.events('move'); self.assertEqual([v['state'] for v in moves],['build_review','merge','done'])
         phases=[v['phase'] for v in self.events('provider-start')]
-        self.assertEqual(sorted(phases),['correctness','performance','security','verdict'])
+        self.assertEqual(sorted(phases),['correctness','performance','security'])
         first_review=min(v['at'] for v in self.events('provider-start'))
         self.assertLess(moves[0]['at'],first_review); self.assertGreater(self.events('merge')[0]['at'],first_review)
         self.assertTrue(any('round=2 ' in v['body'] for v in self.events('comment')))
@@ -896,6 +1004,51 @@ class DispatcherFixture(unittest.TestCase):
         child=self.start(); self.wait_for(lambda:self.skipped(issue,25))
         self.assertFalse(self.events('git-push')); self.assertFalse(self.events('provider-start'))
         self.assertFalse(self.events('move')); self.assertFalse(self.events('merge')); self.stop(child)
+
+
+class DispatcherCleanupTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix='bureau-dispatch-cleanup-')
+        self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve()
+        # Exercise cleanup without starting a dispatcher or registering a Popen
+        # handle: recorded descendants are observed, never stopped by cleanup.
+        self.fixture=DispatcherFixture()
+        self.fixture.root=self.root
+        self.fixture.children=[]; self.fixture.files=[]
+
+    def start_process(self, code):
+        child=subprocess.Popen([sys.executable,'-c',code,str(self.root)],cwd=self.root,text=True,
+                               stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        self.addCleanup(self.reap,child)
+        self.assertEqual(child.stdout.readline().strip(),'ready')
+        try:
+            self.assertTrue(process_running(child.pid))
+        except PermissionError:
+            self.skipTest('sandbox process inspection: EPERM for cleanup regression PID')
+        return child
+
+    @staticmethod
+    def reap(child):
+        if child.poll() is None: child.kill()
+        child.wait(timeout=3)
+        child.stdin.close(); child.stdout.close()
+
+    def test_recorded_pid_exiting_during_cleanup_is_not_a_survivor(self):
+        child=self.start_process("import sys,time; print('ready',flush=True); sys.stdin.read(1); time.sleep(.3)")
+        (self.root/'events').write_text(json.dumps(dict(kind='provider-start',pid=child.pid))+'\n')
+        child.stdin.write('x'); child.stdin.flush()
+        self.fixture.cleanup()
+        self.assertEqual(child.wait(timeout=3),0)
+
+    def test_recorded_pid_surviving_deadline_is_reported(self):
+        child=self.start_process("import signal,sys; signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); sys.stdin.read()")
+        (self.root/'writer.pid').write_text(str(child.pid))
+        child.terminate()  # The ready handshake guarantees SIGTERM is ignored.
+        self.fixture.pid_exit_timeout=.15
+        with self.assertRaisesRegex(AssertionError,'owned test process survived: '+str(child.pid)):
+            self.fixture.cleanup()
+        self.assertIsNone(child.poll(),'cleanup must only observe recorded PIDs')
 
 
 if __name__=='__main__': unittest.main(verbosity=2)

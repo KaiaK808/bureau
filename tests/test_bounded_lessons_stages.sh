@@ -129,7 +129,7 @@ fi
 
 if [ "$STAGE_CASE" = all ] || [ "$STAGE_CASE" = qa ]; then
 setup QA
-export BUREAU_STUB_STATE_QA=state-qa
+export BUREAU_STUB_STATE_QA=state-qa GH_STUB_EXISTING_PR=99
 printf '```json\n{"status":"GREEN","tests_added":0,"tests_failing":0,"coverage_notes":"fixture"}\n```\n' > "$SANDBOX/qa.txt"
 export FAKE_CLAUDE_FIXTURES="$SANDBOX/qa.txt"
 run_pipeline qa-pipeline.sh TEAM-900
@@ -143,6 +143,7 @@ if [ "$STAGE_CASE" = all ] || [ "$STAGE_CASE" = review ]; then
 setup 'Build Review'
 printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"fixture"}\n```\n' > "$SANDBOX/review.txt"
 export FAKE_CLAUDE_FIXTURES="$SANDBOX/review.txt" GH_STUB_EXISTING_PR=99
+review_clean_specialists
 run_pipeline code-review-pipeline.sh TEAM-900
 check_exit 20 'review honours no-merge boundary'
 check_prompts review 3

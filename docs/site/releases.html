@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b700e3b5c1511b74f0ff2316eef5175207822526a67a6a84fa3f69f8c74ce400">
+<meta name="bureau-source-sha256" content="a69d0adac926b7c837fbd2b56b43de46cd145b9775b5f4586a8c2660c7af8460">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,14 +24,87 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.5.1</strong>, dated
-<strong>2026-10-29</strong> (prepared 2026-10-28), the current stable
-release, marked as latest. Its <a
+<p>This source tree contains <strong>Bureau v3.6.0</strong>, the current
+release preparation, <strong>prepared 2026-11-02</strong>, a minor
+release on v3.5.1. Tagging and GitHub Release publication follow the
+maintainer's go. The <a href="release-notes.html">release notes</a> cover
+<a href="https://github.com/KaiaK808/bureau/pull/96">#96</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/97">#97</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/100">#100</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/101">#101</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/102">#102</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/103">#103</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/104">#104</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/105">#105</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/106">#106</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/107">#107</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/108">#108</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/109">#109</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/110">#110</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/111">#111</a>, the
+<code>actions/checkout</code> 7.0.1 update <a
+href="https://github.com/KaiaK808/bureau/pull/8">#8</a>, and <a
+href="https://github.com/KaiaK808/bureau/pull/112">#112</a>. The <a
+href="../../CHANGELOG.md">changelog</a> retains its Unreleased heading
+until the final change is merged.</p>
+<!-- release: v3.6.0 tag date pending -->
+
+<!-- release: v3.6.0 GitHub Release URL and publication state pending -->
+
+<p>Default changes include review/QA configuration isolation with pinned
+base instructions and advisory <code>AGENT_CONFIG</code> findings,
+structured review merging, complete evidence-backed implementation
+feedback, human-boundary evidence packets with an advisory risk tier,
+process termination holds, Node worktree dependency restoration and Spec
+Kit helper mode repair. QA requires successful PR lookup and base fetch;
+only a confirmed no-open-PR lookup permits fetched
+<code>origin/main</code>. Ticket budgets, trusted progress, required
+source grounding, shadow finding verification, ADR context and Codex
+gate delegation remain opt-in. The v3.5 exit vocabulary, configuration
+schema versions and Spec Kit 1.2.2 pin remain. From v3.5.1, stop all
+drivers, preserve unfinished work and customizations, compare installed
+drift, select the published tag, resync scripts and interfaces together,
+repair Spec Kit helper modes with <code>--resync-speckit</code>, then
+restart all drivers. See <a href="migration.html#upgrade-to-v36">Upgrade
+to v3.6</a>, including the cumulative path from v3.4.1.</p>
+<p>The maintainer's release validation record reports every PR reviewed
+by Codex before push within at most three rounds, with two recorded
+maintainer exceptions: #108 took five rounds and <a
+href="https://github.com/KaiaK808/bureau/pull/112">#112</a> took four.
+Each PR's full local suite ran on macOS outside any sandbox before push,
+with failures rerun serially. CI on each PR is green; several macOS
+shards needed one rerun of failed jobs on tests the change does not
+touch. The integrated release branch's suite and CI and the main-branch
+CI record remain pending. Release preparation changes documentation,
+plus three test repairs found by the integrated suite: an import that an
+integration merge dropped from the evidence negative-control script is
+restored, the process-group implement replay anchors at the gate-context
+reset that the implementation-feedback change moved, and the
+ticket-budget adapter fixture pins a provider base, which review and QA
+calls now require.</p>
+<!-- release: integrated release branch full-suite result pending -->
+
+<!-- release: integrated release branch CI result pending -->
+
+<!-- release: main CI run and result pending -->
+
+<p><strong>Known limitations:</strong> The v3.5.1 cancellation-exit loss
+is addressed. Uncertain process termination retains holds/ownership and
+requires operator inspection. Trusted instruction reads,
+review/source/verifier inputs and ADR context have bounded sizes; Codex
+shadow verification stays unverifiable without model launch. Budgets
+coordinate only adapter-admitted calls within one common Git directory.
+Evidence packets are frozen observations with retention and
+partial-coverage limits. Offline dependency paths, provider flags and
+outside gates still need representative live qualification. See the <a
+href="release-notes.html#known-limitations">full limitations</a>.</p>
+<p>The previous stable release is <strong>Bureau v3.5.1</strong>, dated
+<strong>2026-10-29</strong> (prepared 2026-10-28). Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.1">GitHub
 Release</a> records the exact tagged commit. Tagging and publication
 remain separate maintainer operations. The <a
 href="../../CHANGELOG.md">changelog</a> and <a
-href="release-notes.html">release notes</a> cover only <a
+href="release-notes-v3.5.1.html">release notes</a> cover only <a
 href="https://github.com/KaiaK808/bureau/pull/98">#98</a>: Spec Review
 and UX fail closed on invalid results, and overlap readiness requires a
 validated passing status and the installed schema digest. All changes
@@ -52,15 +125,15 @@ attempt, a gate cancellation test in
 <code>tests/provider_adapter_test.py</code> failed on timing; it covers
 code #98 does not change and is the known limitation below. The changed
 tests passed locally on macOS. Provider calls are faked in tests. No
-installation has run v3.5.1 before the release. Release preparation
-changes documentation only.</p>
-<!-- main CI result pending -->
+installation has run v3.5.1 before the release. Its release preparation
+changed documentation only.</p>
+<!-- release: v3.5.1 main CI result pending -->
 
-<p><strong>Known limitation:</strong> On macOS CI, a gate cancellation
-test can intermittently lose the cancellation exit code
-<code>130</code>. A gate run is never falsely green because of this. A
-fix is planned for a later release.</p>
-<p>The previous stable release is <strong>Bureau v3.5.0</strong>, dated
+<p><strong>v3.5.1 limitation at release:</strong> On macOS CI, a gate
+cancellation test could intermittently lose the cancellation exit code
+<code>130</code>, without falsely green gates. The v3.6.0 termination
+changes address this limitation.</p>
+<p>An earlier stable release is <strong>Bureau v3.5.0</strong>, dated
 <strong>2026-10-28</strong> (prepared 2026-10-27). Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">GitHub
 Release</a> records the exact tagged commit. The <a

@@ -72,7 +72,9 @@ fixture="${fixtures[$idx]}"
 # three specialists run in parallel): FAKE_CLAUDE_SECURITY_FIXTURE answers the security
 # specialist, FAKE_CLAUDE_MERGE_FIXTURE the merger.
 case "$*" in
+  *"You are a CORRECTNESS specialist"*)          [ -z "${FAKE_CLAUDE_CORRECTNESS_FIXTURE:-}" ] || fixture="$FAKE_CLAUDE_CORRECTNESS_FIXTURE" ;;
   *"You are a SECURITY specialist"*)             [ -z "${FAKE_CLAUDE_SECURITY_FIXTURE:-}" ] || fixture="$FAKE_CLAUDE_SECURITY_FIXTURE" ;;
+  *"You are a PERFORMANCE specialist"*)          [ -z "${FAKE_CLAUDE_PERFORMANCE_FIXTURE:-}" ] || fixture="$FAKE_CLAUDE_PERFORMANCE_FIXTURE" ;;
   *"Merge these three specialist reviews"*)      [ -z "${FAKE_CLAUDE_MERGE_FIXTURE:-}" ] || fixture="$FAKE_CLAUDE_MERGE_FIXTURE" ;;
 esac
 

@@ -101,6 +101,7 @@ Review checked.
 ```
 EOF
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/approve.txt"
+  review_fallback_specialists
   export FAKE_CLAUDE_PROMPT_LOG="$SANDBOX/review-prompts.log"
   export BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
   export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0

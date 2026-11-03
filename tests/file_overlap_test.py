@@ -13,6 +13,10 @@ import tempfile
 import time
 import unittest
 
+from process_helpers import (COMMAND_TIMEOUT_SECONDS, PIPELINE_TIMEOUT_SECONDS,
+                             PROCESS_EXIT_TIMEOUT_SECONDS, communicate_until,
+                             process_running, wait_for_processes_exit)
+
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_1748_SCRIPTS', ROOT / 'templates/scripts'))
@@ -135,10 +139,14 @@ class Fixture(unittest.TestCase):
             if child.stderr: child.stderr.close()
         self.assertTrue(all(child.poll() is not None for child in self.children))
         if hasattr(self, 'state') and self.state.with_suffix('.pids').exists():
-            for pid in set(map(int,self.state.with_suffix('.pids').read_text().splitlines())):
-                try: os.kill(pid,0)
-                except ProcessLookupError: continue
-                self.fail('fake transport survived fixture: '+str(pid))
+            pids = set(map(int,self.state.with_suffix('.pids').read_text().splitlines()))
+            # Pipe closure can precede interpreter teardown on a loaded runner.
+            # Audit every PID first: hundreds of historical transports can take
+            # longer to inspect than the teardown grace itself on slow macOS CI.
+            pids = {pid for pid in pids if process_running(pid)}
+            # Give potential survivors one shared grace, never one per PID.
+            survivors = wait_for_processes_exit(pids, time.monotonic() + PROCESS_EXIT_TIMEOUT_SECONDS)
+            self.assertFalse(survivors, 'fake transport survived fixture: '+str(sorted(survivors)))
 
     def run_cmd(self, cmd, **kw):
         return subprocess.check_output(cmd, text=True, stderr=subprocess.PIPE, **kw).strip()
@@ -163,13 +171,14 @@ class Fixture(unittest.TestCase):
         command=[sys.executable,'-I',str((scripts or SCRIPTS)/'bureau-admission.py'),'--repo',str(repo or self.repo),action,*ticket[:2],*args]
         return self.invoke(command)
 
-    def invoke(self, command, env=None, cwd=None):
+    def invoke(self, command, env=None, cwd=None, timeout=COMMAND_TIMEOUT_SECONDS):
+        deadline = time.monotonic() + timeout
         child=subprocess.Popen(command,env=env or self.env,cwd=cwd,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
         self.children.append(child)
-        try: out,err=child.communicate(timeout=45)
+        try: out,err=communicate_until(child, deadline)
         except subprocess.TimeoutExpired:
-            os.killpg(child.pid,signal.SIGTERM); child.communicate(timeout=5)
-            raise
+            os.killpg(child.pid,signal.SIGTERM); out,err=child.communicate(timeout=5)
+            self.fail(f'fixture command exceeded {timeout}s deadline: {command}\n{out}\n{err}')
         return subprocess.CompletedProcess(command,child.returncode,out,err)
 
     def expect(self, code, result):
@@ -661,7 +670,8 @@ run_stage_for() {
                            if stage=='spec_review' else dict(design_status=provider_status,summary='fresh'))
                     command,env,paid=self.judged_driver(stage,value,str(number))
                     self.expect(22 if provider_status=='ERROR' else 0,
-                                self.invoke(command+[a[0]],env=env,cwd=self.repo))
+                                self.invoke(command+[a[0]],env=env,cwd=self.repo,
+                                            timeout=PIPELINE_TIMEOUT_SECONDS))
                     self.assertEqual(['paid'],paid.read_text().splitlines())
                     row=next(i for i in json.loads(self.state.read_text())['issues'] if i['identifier']==a[0])
                     self.assertEqual(('spec_review' if stage=='spec_review' else 'design')

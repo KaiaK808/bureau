@@ -3,6 +3,11 @@
 # Default is the observed Ubuntu mean (~45s) rounded up; macOS scaling is 2x (~1.8x observed).
 # CI newest-run test: local macOS elapsed 13.45s, rounded up (2026-10-27).
 # Judged stage result fixtures: local macOS elapsed 191.94s, rounded up (2026-10-28).
+# Onboarding finish/package-manager fixtures: local macOS elapsed 0.41s / 5.89s (2026-10-28).
+# Mutation harness: local macOS elapsed 8.97s, rounded up (2026-10-28).
+# Ticket hardening: local macOS Python 3.9 elapsed 25.86s; controls 3.62s (2026-10-29).
+# ADR review tests: local macOS elapsed 111.91s / 17.28s, rounded up (2026-10-28).
+# Round-one review regressions and controls: local macOS elapsed 147.28s, rounded up (2026-10-29).
 # test_file	ubuntu_seconds	macos_seconds
 test_acceptance_insights.sh	-	10
 test_acceptance_insights_negative_controls.sh	59	-
@@ -97,8 +102,10 @@ test_model_conflict_negative_controls.sh	3	-
 test_model_conflict_pipeline.sh	73	-
 test_model_conflicts.sh	99	-
 test_model_resolution.sh	3	-
+test_mutation_checks.sh	-	9
 test_needs_human_hold.sh	17	-
 test_no_internal_refs.sh	1	-
+test_onboarding_finish.sh	-	1
 test_orchestrate_defaults.sh	17	-
 test_orchestrate_executor.sh	10	-
 test_ownership_halt_trace.sh	86	-
@@ -111,6 +118,8 @@ test_push_loud.sh	5	-
 test_reaccept_clean_worktree.sh	40	-
 test_rebase_dry_run_label.sh	1	-
 test_remote_git_hooks.sh	37	-
+test_review_adr.sh	-	112
+test_review_adr_negative_control.sh	-	18
 test_review_base.sh	78	-
 test_review_build_check.sh	30	-
 test_review_build_floor.sh	1	-
@@ -119,7 +128,18 @@ test_review_comment_findings.sh	12	-
 test_review_convergence.sh	198	-
 test_review_gate_exit.sh	1	-
 test_review_gate_waits.sh	63	-
+test_review_merge.sh	-	165
+test_review_merge_negative_control.sh	-	2
 test_review_reuse_approval.sh	58	-
+test_review_round1.sh	-	148
 test_review_verdict_order.sh	52	-
 test_session_throttle.sh	1	-
 test_shared_runtime.sh	206	-
+test_spec_resume_negative_controls.sh	-	928
+test_ticket_budget.sh	-	12
+test_ticket_budget_hardening.sh	-	26
+test_ticket_budget_hardening_negative_control.sh	-	4
+test_ticket_budget_negative_control.sh	-	6
+test_ticket_budget_pipeline.sh	-	90
+test_ticket_kill_switch.sh	-	368
+test_worktree_package_managers.sh	-	6

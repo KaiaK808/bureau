@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="329fa4cb999d78ab172aac6c19bf6f1de9d04c5820ae733be1d80eeca35d774d">
+<meta name="bureau-source-sha256" content="c980e79bde66506bb5a77f7fed1accb8f53899ff0701f667a7bf71b755a06de4">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -56,6 +56,14 @@ model selection, and saves a private exact backup.
 <code>bureau-doctor.py</code> validates shape/version and reports
 effective settings without contacting providers. See <a
 href="migration.html">migration and rollback</a>.</p>
+<p>Doctor also validates <code>agents.review_adr_context</code> as a
+boolean, <code>agents.review_adr_budget_bytes</code> as an integer from
+0 to 1048576, and <code>repo.adr_dir</code> as a plain
+repository-relative directory: no absolute path, empty, <code>.</code>,
+<code>..</code> or <code>.git</code> components, backslashes, colons or
+control characters. These optional keys default to false, 4096 and
+<code>docs/adr</code>; invalid explicit values are configuration errors,
+including when context is disabled.</p>
 <h3 id="linear"><code>linear</code></h3>
 <table>
 <thead>
@@ -384,6 +392,59 @@ then this setting, then the consumer's default. Separate from the
 in-flight ticket cap.</td>
 </tr>
 <tr>
+<td><code>agents.ticket_budget.tokens</code></td>
+<td>integer</td>
+<td>off</td>
+<td>Positive cumulative token allowance per ticket; absent/null/0
+disables this dimension. Unknown usage stops at the next safe checkpoint
+unless explicitly allowed.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_budget.provider_calls</code></td>
+<td>integer</td>
+<td>off</td>
+<td>Positive cumulative provider-attempt allowance, including
+checker/verifier calls and retries across stages/runs.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_budget.wall_seconds</code></td>
+<td>number</td>
+<td>off</td>
+<td>Positive cumulative provider wall time in seconds; parallel attempt
+durations add. This excludes idle queue time and ordinary deterministic
+shell checks.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_budget.allow_unknown_usage</code></td>
+<td>boolean</td>
+<td><code>false</code></td>
+<td>Explicitly permits continuing with unreported token usage. It keeps
+totals unknown and enforces the known lower bound; it never turns
+missing usage into zero.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_progress.enabled</code></td>
+<td>boolean</td>
+<td><code>false</code></td>
+<td>Opt-in trusted progress policy; see the contract below.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_progress.max_non_improving_turns</code></td>
+<td>integer</td>
+<td><code>2</code></td>
+<td>Completed background stage attempts without a new qualified fact
+before exit 25 with <code>terminal_reason: stalled</code>; range
+1–100000.</td>
+</tr>
+<tr>
+<td><code>agents.ticket_progress.contract</code></td>
+<td>object</td>
+<td><code>{}</code></td>
+<td>Stable fact IDs under <code>fulfilled_requirements</code>,
+<code>qualified_gates</code>, <code>confirmed_findings</code>, each
+bound to an exact trusted outer gate command and command ID.</td>
+</tr>
+<tr>
 <td><code>agents.workbench_panes</code></td>
 <td>number</td>
 <td><code>2</code> background / <code>0</code> app</td>
@@ -410,6 +471,14 @@ take precedence over historical header counting. Approval reuse and
 merge-gate polling consume no new round</td>
 </tr>
 <tr>
+<td><code>agents.risk_tier</code></td>
+<td>object</td>
+<td>see <a href="#risk-tier">risk tier</a></td>
+<td>Optional evidence-packet thresholds and path globs. Always advisory;
+changes no routing, holds, verdicts or merges. Invalid settings exit 24
+before stage mutations</td>
+</tr>
+<tr>
 <td><code>agents.review_min_severity</code></td>
 <td>string</td>
 <td><code>BUG</code></td>
@@ -419,6 +488,53 @@ MINOR. Validated findings decide before security/build/cap rules; BLOCK,
 CRITICAL, security/acceptance blockers and malformed or contradictory
 results cannot be promoted. Deferred/SKIP findings remain in the
 projected PR comment</td>
+</tr>
+<tr>
+<td><code>agents.review_grounding</code></td>
+<td><code>off</code> or <code>required</code></td>
+<td><code>off</code></td>
+<td>Validate source anchors against pinned PR base/head. Off records
+invalid/missing anchors observationally; required adds BLOCK/25.
+Parse/provider errors stay 22. Part of review policy identity, so
+changes invalidate approval reuse</td>
+</tr>
+<tr>
+<td><code>agents.finding_verifier.enabled</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Opt into shadow checks only: at most eight fresh tool-free Claude
+calls (60 seconds each), 24 KiB of request JSON each and 8 KiB of whole
+pinned contracts. Claude tools, MCP, skills and settings hooks are
+disabled without permission bypass. Codex checks remain unverifiable
+without model launch because its CLI has no all-tools-off switch. Only
+claim, pinned source, contract and anchors are supplied. Outcomes and
+identity digests are evidence only and never change verdicts or merge
+floors. No enforced mode is shipped; unknown verifier keys are rejected.
+Included in review policy identity</td>
+</tr>
+<tr>
+<td><code>agents.review_adr_context</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Include a bounded ADR index from pinned PR base/head in all three
+specialist prompts. Only accepted records with identical paths and blob
+IDs are settled, including for Known-limit exclusions.
+Added/changed/removed records are non-authoritative proposals; citations
+are valid but never waive or downgrade findings. Enabled selects the
+extended ADR schema. Disabled keeps legacy merger schema bytes, Codex
+wire projection and receipt schema digest; unsolicited
+<code>adr_refs</code> are unexpected result fields. Shared hold guidance
+and conservative fallback rules apply in either mode</td>
+</tr>
+<tr>
+<td><code>agents.review_adr_budget_bytes</code></td>
+<td>integer</td>
+<td><code>4096</code></td>
+<td>Complete ADR context limit in UTF-8 bytes, including instructions,
+separators and truncation notice. Range 0–1048576; <code>0</code> omits
+the index. Whole records form a deterministic prefix ordered by ADR
+number; an overflowing context too small for instructions and notice is
+omitted</td>
 </tr>
 <tr>
 <td><code>agents.code_review_sampling_threshold</code></td>
@@ -778,6 +894,18 @@ runtime</a></td>
 provider defaults also supported</td>
 </tr>
 <tr>
+<td><code>agents.providers.codex.gate_outside_sandbox</code></td>
+<td><code>false</code></td>
+<td>Boolean, Codex implementation/QA only. Bureau runs the configured
+full gate outside Codex's inner sandbox after each successful
+implementation pass and in QA's final phase, using the existing outside
+runner, teardown and receipt. The agent may run focused tests; it does
+not run the full gate or request a sandbox escape. Absent/false
+preserves existing behavior; other types fail with 22 before a Codex
+call. Resync the complete scripts scope and restart drivers before
+enabling</td>
+</tr>
+<tr>
 <td><code>agents.&lt;stage&gt;.timeout_seconds</code></td>
 <td>3600</td>
 <td>Adapter timeout per provider call (900 before v3.1), also
@@ -848,6 +976,26 @@ write within the permitted workspace. The executor runs actual
 implementation/QA tests separately. Unknown runners, malformed results
 and denied permissions are errors, never automatic fallback to
 Claude.</p>
+<p>With <code>agents.providers.codex.gate_outside_sandbox: true</code>,
+the gate runs in the stage worktree under Bureau's existing outer
+runner/account and its network restrictions, outside only the nested
+Codex sandbox. It uses the existing <code>repo.untrusted_env</code>
+default or clean child filter, without Bureau service secrets, their
+carriers or shell startup hooks; clean mode keeps only the test
+environment allowlist, not the agent login/network additions. Filtering
+does not conceal files readable by that account. Implementation requires
+<code>repo.test_command</code>; QA retains its normal command detection
+and initial shell run/retry. Each successful provider pass is bound to
+its completion receipt and current HEAD (including the existing one-hop
+executor publication), with one durable outside reservation per
+pass/command/HEAD; final implementation validation reuses that receipt.
+A red partial pass supplies its log to the next brief; completed
+implementation still exits 14 on a red gate, and QA red still returns to
+Build. Independent blockers survive green tests. Provider
+errors/timeouts retain their existing handling and do not authorize a
+delegated check. Existing sandbox-only reruns remain available. See <a
+href="../adr/0013-codex-gate-delegation.md">ADR 0013</a> for the boundary
+and limits.</p>
 <p>Silence settings apply per creative provider call, alongside the
 existing hard timeout and implementation bounds; outside-gate commands
 retain their own wall-clock handling. Claude uses
@@ -887,6 +1035,131 @@ the early cap check uses a Linear snapshot, while the common-directory
 spec-admission lock serializes the authoritative reservation and Spec
 move for every updated driver, including pending moves absent from
 lagging snapshots.</p>
+<h3 id="ticket-run-budgets-and-trusted-progress">Ticket run budgets and
+trusted progress</h3>
+<p>Ticket budgets are off by default. They cover every provider attempt
+for the issue in the same common Git directory, across stages,
+checker/verifier phases, worktrees, shepherd runs and dispatcher
+restarts:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_budget&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;tokens&quot;</span><span class="fu">:</span> <span class="dv">200000</span><span class="fu">,</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;provider_calls&quot;</span><span class="fu">:</span> <span class="dv">20</span><span class="fu">,</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;wall_seconds&quot;</span><span class="fu">:</span> <span class="dv">14400</span><span class="fu">,</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;allow_unknown_usage&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">},</span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_progress&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_non_improving_turns&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;contract&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;fulfilled_requirements&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;required-behavior&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;qualified_gates&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;acceptance&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;confirmed_findings&quot;</span><span class="fu">:</span> <span class="fu">{}</span></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>      <span class="fu">}</span></span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Each dimension is independently optional; absent/null/0 disables it.
+Wrong types, unknown keys, negative/nonfinite limits or invalid
+contracts refuse execution with 24. Tokens/calls require integers; wall
+seconds may be fractional. Auth/help probes, deterministic shell checks
+and conflict-resolution validation receipts are not paid provider
+attempts; only identities admitted through the ticket ledger count. Wall
+time sums provider intervals, including concurrent calls, excluding idle
+queue time. Tokens include input/output plus Claude's disjoint
+cache-read/cache-creation input. Codex cached input is already included
+in input tokens. Every required counter must be reported; otherwise the
+attempt and aggregate token total stay unknown. Every valid reported
+counter still contributes to the known lower bound. Accounting is
+independent of <code>session.cost_tracking</code>.</p>
+<p><code>allow_unknown_usage: true</code> explicitly permits unreported
+tokens, retaining null totals and enforcing the known lower bound. It
+does not relax call/time limits or lost-accounting holds.
+Failed/invalid/timed-out attempts count too. Every provider turn needs
+completed usage: a measured turn followed by a failed, interrupted or
+truncated turn makes the whole attempt unknown. Abandoned attempts
+retain unknown usage and their open wall interval counts conservatively.
+A live adapter's birth identity postpones its unknown-usage decision
+until completion. Thresholds use <code>&gt;=</code>. Call slots are
+reserved atomically before paid work; token/time limits can overshoot by
+already admitted concurrent calls. Existing stage timeouts still
+apply.</p>
+<p>Progress is a separate opt-in policy. A turn is one completed
+background work stage (exit 0 or completed red build 14); wrappers and
+individual specialists do not add turns. Quiet waits (2, 10, 16, 23, 28,
+29), handoffs, infrastructure faults, incomplete provider results,
+interruptions, withdrawals and holds do not advance it. An empty
+contract supplies no trusted progress and stalls after two ordinary
+completed turns. Fact IDs must be stable, 1–128 ASCII
+letters/digits/<code>_.:-</code>. Values contain exactly
+<code>command_id</code> (<code>repo.test_command</code>,
+<code>qa.test</code> or <code>review.build</code>) and the exact
+command. Configure that command as an actual runtime test gate too. Only
+runtime execution of that configured command, exiting 0 at unchanged
+HEAD with recorded output, qualifies. <code>bureau_run_gate</code>
+executes QA/review checks; the outside-gate executor runs verified
+recovery checks. The ticket CLI accepts <code>execute-gate</code> to run
+the configured command, never a caller's exit, HEAD or proof file.
+<code>bureau_record_gate</code> remains observational and cannot submit
+progress. A requirement or confirmed finding needs a command that proves
+that particular claim; a generic green suite cannot establish an
+unrelated claim. Facts are bound to the contract digest.
+Provider-reported completion/findings/applied fixes, checkboxes, commits
+and activity never qualify. A new fact resets the count once; replaying
+the same green gate at a new HEAD does not. Changing the contract
+requires fresh gate evidence.</p>
+<p>The dispatcher's lane cap is the batch concurrency cap,
+<code>agents.parallel_lanes</code>, also used by
+<code>orchestrate.sh --execute</code>; there is no separate batch-budget
+knob. Lane limits bound simultaneous tickets; ticket budgets bound each
+ticket's spending. The legacy absent-setting defaults remain two
+dispatch lanes and three explicit batch lanes.</p>
+<p>Inspect with
+<code>python3 -I scripts/bureau-ticket.py --repo . --issue TEAM-123 status</code>.
+Authoritative records live under
+<code>&lt;common-git-dir&gt;/bureau/tickets/TEAM-123.json</code>,
+outside prunable evidence. A sibling <code>TEAM-123.attempts.json</code>
+retains only ledger-admitted attempt identities. When either policy is
+enabled, initialization durably writes
+<code>&lt;common-git-dir&gt;/bureau/ticket-witnesses/TEAM-123.json</code>
+before creating the ledger. Existing admission history is preserved and
+carried into the initial ledger even if the optional ledger was deleted:
+retained identities spend call slots, missing token measurements remain
+unknown, and missing wall intervals count conservatively from the epoch.
+This marker is separate runtime state outside provider-writable
+worktrees, including for progress without provider calls. With a policy
+enabled and a witness present, a missing, empty or unreadable ledger, or
+missing admitted attempt rows, stops with 25 / <code>budget</code>,
+<code>accounting_lost: true</code>, even with unknown usage allowed.
+Keep the ledger, admission history and witness across cleanup. Receipts
+of any age or type never witness accounting loss or add paid attempts;
+old receipts without a ledger do not stop an upgraded repository with
+configuration <code>{}</code>. With a policy enabled, invalid ledgers,
+including invalid nested stop reasons/exit pairs, fail closed with 24.
+With both policies disabled, accounting I/O errors, malformed/truncated
+JSON and invalid accounting types warn without changing checkpoint or
+runtime finalization exits; accounting-loss policy holds are disabled
+too.</p>
+<p>To resume, stop drivers, inspect preserved work and the ledger,
+reconcile ownership, and raise an exhausted limit if appropriate. A
+deliberate new lifetime allowance/progress reset requires
+<code>python3 -I scripts/bureau-ticket.py --repo . --issue TEAM-123 reset --acknowledge-accounting-loss</code>,
+outside a run environment and with no ticket ownership claim. Then clear
+the ticket's dispatcher skip/human hold. Deleting or emptying a
+witnessed ledger is not a reset command. Separate clones/hosts and calls
+bypassing Bureau's adapter are outside this local contract. Compare
+installed drift, resync all scripts together including
+<code>bureau-ticket.py</code>, and restart drivers before enabling.
+Tests use fake providers/services, real Git and per-guard negative
+controls; live adopter/provider qualification remains outstanding. See
+the <a href="stage-protocol.html#ticket-budget-and-progress-stops">stop
+protocol</a>.</p>
 <h3 id="advisory-lesson-budgets">Advisory lesson budgets</h3>
 <p><code>agents.lessons_budget_bytes</code> is an optional object with
 <code>spec</code>, <code>implement</code>, <code>qa</code> and
@@ -984,6 +1257,15 @@ pause</td>
 <td><code>"specs"</code></td>
 <td>Spec directory inside the repository. The spec stage relocates the
 pinned helper's output here and persists the exact feature pointer</td>
+</tr>
+<tr>
+<td><code>repo.adr_dir</code></td>
+<td>string</td>
+<td><code>"docs/adr"</code></td>
+<td>Directory of direct <code>NNNN-*.md</code> ADR files in both pinned
+trees; validated as a plain relative path. Git symlinks are not
+followed. Missing on both inputs supplies no context; base-only records
+are removal proposals</td>
 </tr>
 <tr>
 <td><code>repo.base_branch</code></td>
@@ -1331,18 +1613,18 @@ configuration migration is required; existing installations retain the
 legacy rules.</p>
 <p>For Bureau's generated manual, cover <strong>every</strong> output of
 the renderer, which requires Pandoc:</p>
-<div class="sourceCode" id="cb1"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>A configured repair requires an explicit
 <code>repo.test_command</code> containing a command; whitespace-only or
 comment-only strings decline, and there is no inferred fallback.
@@ -1354,24 +1636,89 @@ line also decline, including identical new headings or context:
 preserving side sequences alone cannot prove section associations. New
 ATX/Setext Markdown headings in either insertion also decline, since
 they could capture entries from the other side. After source conflicts
-resolve, <code>restore_worktree_deps</code> prepares npm dependencies
-against the merged manifests before any generator or check; preparation
-failure declines the repair. All configured generators then run in
-declaration order, each limited to its own full output set. Generator or
-check failure, unavailable commands (including Pandoc), undeclared edits
-or remaining conflict markers restore the saved clean checkout and use
-existing conflict exit 17. Rollback restores only paths changed since
-the snapshot and grants directory/parent access only when needed.
-Unchanged ignored content and modes stay untouched. A filesystem failure
-on one path does not stop other restores or the saved-index/Git reset
-attempt; incomplete restoration declines explicitly. Saved directory
-modes are restored after the reset. Commands run outside the provider
-sandbox under <code>repo.untrusted_env</code>, with a fixed 1,800-second
-limit per command. Checks must leave the tracked tree/index unchanged
-and create no nonignored untracked files; ignored test caches are
-permitted. See <a
+resolve, <code>restore_worktree_deps</code> prepares Node dependencies
+against the merged manifests using the <a
+href="#node-repositories">package-manager rules</a> before any generator
+or check; preparation failure declines the repair. All configured
+generators then run in declaration order, each limited to its own full
+output set. Generator or check failure, unavailable commands (including
+Pandoc), undeclared edits or remaining conflict markers restore the
+saved clean checkout and use existing conflict exit 17. Rollback
+restores only paths changed since the snapshot and grants
+directory/parent access only when needed. Unchanged ignored content and
+modes stay untouched. A filesystem failure on one path does not stop
+other restores or the saved-index/Git reset attempt; incomplete
+restoration declines explicitly. Saved directory modes are restored
+after the reset. Commands run outside the provider sandbox under
+<code>repo.untrusted_env</code>, with a fixed 1,800-second limit per
+command. Checks must leave the tracked tree/index unchanged and create
+no nonignored untracked files; ignored test caches are permitted. See <a
 href="stage-protocol.html#deterministic-conflict-resolution">the
 transaction contract</a> for rollback and ownership limits.</p>
+<h4 id="node-repositories">Node repositories</h4>
+<p><code>restore_worktree_deps</code> detects the lockfile beside
+<code>package.json</code> after a disposable worker's checkout/merge.
+npm retains its existing <code>package-lock.json</code> path: clone
+matching main-checkout dependencies or stage
+<code>npm ci --ignore-scripts --no-audit --no-fund</code>, then mount
+atomically. pnpm (<code>pnpm-lock.yaml</code>) and Yarn Classic 1.x
+(<code>yarn.lock</code>) install directly in the worker so relative
+workspace package links resolve there. They never clone or symlink the
+main checkout's <code>node_modules</code>; leave it out of
+<code>repo.worktree_links</code>.</p>
+<p>pnpm runs
+<code>pnpm install --frozen-lockfile --offline --ignore-scripts --prefer-offline --ignore-pnpmfile</code>.
+Yarn Classic runs
+<code>yarn install --frozen-lockfile --offline --ignore-scripts --non-interactive</code>
+with <code>YARN_IGNORE_PATH=1</code>. Both set
+<code>COREPACK_ENABLE_NETWORK=0</code> and disable Corepack download
+prompts. Offline-only is deliberate: cache preference must not silently
+become registry access. Provision the manager and populate its local
+cache during trusted setup. These new paths retry once, allow 120
+seconds per install attempt (20 seconds for Yarn version detection),
+kill their owned command process groups on timeout/interruption, remove
+partial dependency directories and return 24 on failure. npm's existing
+retry/network behavior is unchanged.</p>
+<p>The pnpm/Yarn helper starts through
+<code>bureau_untrusted_env</code>, so its Git children, Yarn version
+check and every install attempt inherit the configured
+<code>repo.untrusted_env</code> reduction. Default mode removes secrets
+and their carriers, startup/configuration paths, host pane variables and
+reserved filter names; clean mode keeps only its existing allowlist.
+Invalid modes stop before the helper starts. Any package-manager/cache
+settings needed by clean-mode workers must come from trusted
+configuration files rather than extra inherited variables.</p>
+<p>The shared Git directory holds logs and a manifest fingerprint stamp.
+It includes workspace <code>package.json</code> files, the selected
+lockfile and workspace/manager configuration visible to Git (tracked or
+unignored new files). A changed input reinstalls dependencies. A
+successful dependency-free install may have no module directories;
+missing modules with declared dependencies still block. Tracked or
+symlinked dependency directories are discarded even when the stamp
+matches; failures cannot reuse stale modules. The main checkout is
+untouched. Frozen installs that alter an input are rejected. Multiple
+lockfiles or a conflicting <code>packageManager</code> field stop with
+24. Modern Yarn and all Yarn PnP layouts, including Classic PnP, are
+intentionally unsupported. Before running Yarn or reusing a stamp, the
+helper refuses <code>installConfig.pnp</code>, <code>.pnp.js</code>,
+<code>.pnp.cjs</code>, <code>.pnp.loader.mjs</code> or
+<code>.pnp.data.json</code> (including dangling links), enabled PnP
+options (including Classic's <code>plugnplay-experimental</code>) in
+project/ancestor/home <code>.yarnrc</code> files,
+<code>nodeLinker: pnp</code> in <code>.yarnrc.yml</code>, inherited
+<code>YARN_PNP</code>/<code>YARN_ENABLE_PNP</code>/<code>YARN_PLUGNPLAY</code>/<code>YARN_PLUGNPLAY_EXPERIMENTAL</code>/<code>YARN_PLUGNPLAY_OVERRIDE</code>
+switches and PnP loaders in <code>NODE_OPTIONS</code>. Environment
+config names follow Classic's case folding and underscore-to-separator
+normalization. Explicit false settings without loader files remain
+supported. Other dependency layouts need a separately reviewed setup;
+live package-manager/cache qualification is still an operator check.</p>
+<p>For documentation work without a JavaScript manifest, configure a
+real trusted <code>repo.test_command</code> as in the <a
+href="recipes.html#documentation-only-tickets">documentation-only
+recipe</a>. Test commands remain repository-wide; ticket/model text
+cannot select an override. Configure before prepare; see <a
+href="troubleshooting.html#configuration-changed-since-prepare">configuration-change
+recovery</a>.</p>
 <h4 id="python-repositories">Python repositories</h4>
 <p>The stage worktrees are reset with <code>git clean -fdx</code>, which
 removes an ignored <code>.venv</code>. First commit the resynced scripts
@@ -1442,18 +1789,18 @@ or 2), and an explicit nonblank, non-comment
 <code>timeout_seconds</code> and silence-watchdog options apply through
 <code>run_stage_for conflict_resolver</code>; there is no separate
 provider integration. Invalid resolver configuration fails closed.</p>
-<div class="sourceCode" id="cb2"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
-<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>All conflict-stage environment overrides are optional and unset by
 default: <code>BUREAU_RUNNER_CONFLICT_RESOLVER</code>,
 <code>BUREAU_MODEL_CONFLICT_RESOLVER</code>,
@@ -2127,9 +2474,10 @@ repo whose defaults don't match.</p>
 <td><code>BUREAU_REVIEW_MERGE_CAP_KB</code></td>
 <td><code>60</code></td>
 <td>Whole KB 1–1024, fallback 60. Tail-cap (KB) per specialist review
-before the merger prompt. Prevents ARG_MAX overflow when an individual
-review runs long (typical for codex-routed stages that emit heavy
-transcripts)</td>
+only for the malformed-output model fallback. The normal code merge
+reads complete structured output before this cap. Prevents ARG_MAX
+overflow when an individual review runs long (typical for codex-routed
+stages that emit heavy transcripts)</td>
 </tr>
 </tbody>
 </table>
@@ -2193,8 +2541,9 @@ the Spec Kit 1.2.2 pin lives in <code>scripts/bureau_install.py</code>
 (install with <code>uv tool install specify-cli==1.2.2</code>).</p>
 <h3 id="evidence-storage-and-retention">Evidence storage and
 retention</h3>
-<p>Acceptance briefs and advisory insights add no configuration keys.
-Existing manual merge/stop settings trigger brief delivery;
+<p>Acceptance evidence packets need no enable switch. Existing manual
+merge/stop settings trigger the same brief delivery; optional
+<code>agents.risk_tier</code> customizes its advisory classification.
 <code>evidence/v1/acceptance/NUMBER-HEAD.json</code> tracks
 pending/delivered ticket and PR destinations independently. Optional
 stage observations go to repository-shared
@@ -2207,6 +2556,112 @@ together, then restart drivers; see the <a
 href="stage-protocol.html#acceptance-briefs-at-human-merge-boundaries">acceptance
 and insights protocol</a> for privacy, retention and delivery
 limits.</p>
+<h3 id="risk-tier">Risk tier</h3>
+<p>The acceptance brief includes a mechanical <code>low</code>,
+<code>normal</code> or <code>high</code> tier and the counts/paths
+supporting it. The tier changes no routing, holds, verdicts or merges; a
+human merges every PR. It does not enable automatic merging or change
+<code>agents.merge_mode</code>. Omitting <code>agents.risk_tier</code>
+uses these defaults:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;risk_tier&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">100</span><span class="fu">,</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_files&quot;</span><span class="fu">:</span> <span class="dv">5</span><span class="fu">,</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;high_min_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">1000</span><span class="fu">,</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;docs_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.md&quot;</span><span class="ot">,</span> <span class="st">&quot;*.rst&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;test_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test_*.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*_test.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*.test.*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.spec.*&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;sensitive_patterns&quot;</span><span class="fu">:</span> <span class="ot">[]</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Changed lines means insertions plus deletions in
+<code>base..HEAD</code>. Low requires at least one changed path, every
+path matching the docs/tests lists, at most 100 changed lines and 5
+files, no binary files and no sensitive path. High wins whenever a
+sensitive path matches or changed lines reach 1000. Normal covers
+everything else, including missing diff metadata (which is stated
+explicitly). Threshold comparisons are inclusive. Renames count as
+delete/add; binary files count as files with no inferred line count.</p>
+<p>Globs use case-sensitive shell-style matching against
+repository-relative paths; <code>*</code> can cross <code>/</code>. A
+slashless glob also matches any basename. Docs/tests lists replace their
+defaults. <code>sensitive_patterns</code> adds to these mandatory
+defaults; an empty list cannot remove them:</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Built-in patterns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Configuration</td>
+<td><code>*.json</code>, <code>*.toml</code>, <code>*.yaml</code>,
+<code>*.yml</code>, <code>*.ini</code>, <code>*.cfg</code>,
+<code>*.config</code>, <code>*.config.*</code>,
+<code>*.properties</code>, <code>.editorconfig</code>,
+<code>.gitignore</code>, <code>.gitattributes</code>,
+<code>.gitmodules</code>, <code>config/*</code>,
+<code>**/config/*</code>, <code>.config/*</code>,
+<code>**/.config/*</code>, <code>.*rc</code>, <code>.*rc.*</code>,
+<code>Dockerfile*</code>, <code>Makefile</code></td>
+</tr>
+<tr>
+<td>Dependencies</td>
+<td><code>package.json</code>, <code>package-lock.json</code>,
+<code>npm-shrinkwrap.json</code>, <code>yarn.lock</code>,
+<code>pnpm-lock.yaml</code>, <code>bun.lock*</code>,
+<code>requirements*.txt</code>, <code>requirements*.in</code>,
+<code>setup.py</code>, <code>Pipfile*</code>, <code>poetry.lock</code>,
+<code>uv.lock</code>, <code>Cargo.toml</code>, <code>Cargo.lock</code>,
+<code>go.mod</code>, <code>go.sum</code>, <code>go.work*</code>,
+<code>Gemfile*</code>, <code>composer.json</code>,
+<code>composer.lock</code>, <code>*.csproj</code>, <code>pom.xml</code>,
+<code>build.gradle*</code>, <code>gradle.lockfile</code>,
+<code>mix.exs</code>, <code>mix.lock</code>, <code>Package.swift</code>,
+<code>Package.resolved</code>, <code>*.lock</code></td>
+</tr>
+<tr>
+<td>CI</td>
+<td><code>.github/workflows/*</code>,
+<code>**/.github/workflows/*</code>, <code>.gitlab-ci*</code>,
+<code>Jenkinsfile</code>, <code>.circleci/*</code>,
+<code>**/.circleci/*</code>, <code>azure-pipelines*</code></td>
+</tr>
+<tr>
+<td>Secrets/environment</td>
+<td><code>.env</code>, <code>.env.*</code>, <code>*.env</code>,
+<code>*.pem</code>, <code>*.key</code>, <code>*.p12</code>,
+<code>*.pfx</code>, <code>*credentials*</code>,
+<code>*secrets*</code></td>
+</tr>
+<tr>
+<td>Agents</td>
+<td><code>CLAUDE*.md</code>, <code>AGENTS*.md</code>,
+<code>.claude/*</code>, <code>**/.claude/*</code>,
+<code>.codex/*</code>, <code>**/.codex/*</code>, <code>.agents/*</code>,
+<code>**/.agents/*</code>, <code>.mcp.json</code>,
+<code>scripts/bureau-stage.md</code>,
+<code>**/scripts/bureau-stage.md</code></td>
+</tr>
+</tbody>
+</table>
+<p>This is deliberately conservative: a JSON test fixture is high too.
+Repository-specific configuration names need additional sensitive
+patterns. Only the six documented keys are accepted. Thresholds must be
+JSON integers from 0 through 1000000000, and
+<code>low_max_changed_lines</code> must be less than
+<code>high_min_changed_lines</code>. Each pattern list accepts at most
+128 nonempty strings, at most 280 characters each, without whitespace,
+control characters, backslashes, absolute/home paths or <code>..</code>
+segments. Null, wrong types, unknown keys and inconsistent thresholds
+exit 24 with a content-free configuration error. Resync the scripts
+scope (including <code>bureau-config.sh</code> and
+<code>bureau-acceptance.py</code>) and restart drivers; existing frozen
+PR/HEAD packets are retained, without backfill.</p>
 <p>Failure insights and review dispositions also need no configuration
 key. The shell classifier <code>bureau-insights.sh</code> consumes
 runtime exits, provider metadata and trusted review/gate signals; model

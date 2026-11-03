@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -362,6 +363,43 @@ def render_speckit_helpers(command):
         return helpers
 
 
+def speckit_shell_helpers(repo):
+    helpers = []
+    for path in sorted(destination(repo, ".specify/scripts").rglob("*.sh")):
+        destination(repo, str(path.relative_to(repo)))
+        if path.is_file():
+            helpers.append(path)
+    return helpers
+
+
+def repair_speckit_helper_modes(repo):
+    """Attempt every safe helper independently, collecting scan/stat/chmod failures."""
+    failures = []
+
+    def visit(path):
+        relative = str(path.relative_to(repo))
+        try:
+            destination(repo, relative)
+            try:
+                mode = path.stat().st_mode
+            except FileNotFoundError:
+                # A failed init may not have created the helper directory yet.
+                if relative == ".specify/scripts":
+                    return
+                raise
+            if stat.S_ISDIR(mode):
+                for child in sorted(path.iterdir()):
+                    visit(child)
+            elif path.name.endswith(".sh") and stat.S_ISREG(mode):
+                path.chmod((mode & 0o777) | 0o111)
+        except Exception as exc:
+            # Cleanup must not replace the CLI's exception or stop sibling repairs.
+            failures.append("repair helper modes " + relative + ": " + str(exc))
+
+    visit(repo / ".specify/scripts")
+    return failures
+
+
 def speckit_sourced_extras(helpers, extras):
     """Inspect bundled source/dot-source paths without executing any project helper."""
     if not extras:
@@ -529,10 +567,13 @@ def speckit(repo, args, manifest, targets):
         preserved.pop(repo / relative, None)
     for relative in extras:
         preserved[repo / relative] = (repo / relative).read_bytes()
+    existing_mode_drift = [str(path.relative_to(repo)) for path in speckit_shell_helpers(repo)
+                           if path.stat().st_mode & 0o111 != 0o111]
     extension = git_extension_plan(repo, installed)
     print(json.dumps({"version": SPECKIT_VERSION, "active_integration": active, "commands": commands,
                       "extension_registration": [extension] if extension else [],
                       "extra_helpers_preserved": extras,
+                      "existing_helper_mode_drift": existing_mode_drift,
                       "preserved": sorted(str(p.relative_to(repo)) for p in preserved)}, indent=2))
     if not args.apply:
         return 0
@@ -540,6 +581,7 @@ def speckit(repo, args, manifest, targets):
     metadata = [active_file, destination(repo, ".specify/init-options.json")]
     snapshots = {p: p.read_bytes() if p.exists() else None for p in metadata}
     succeeded = False
+    cleanup_failures = []
     try:
         for command in commands:
             subprocess.run(command, cwd=repo, check=True)
@@ -552,14 +594,33 @@ def speckit(repo, args, manifest, targets):
         succeeded = True
     finally:
         for path, data in preserved.items():
-            atomic_write(path, data)
+            try:
+                destination(repo, str(path.relative_to(repo)))
+                atomic_write(path, data)
+            except Exception as exc:
+                cleanup_failures.append("restore " + str(path.relative_to(repo)) + ": " + str(exc))
         if not succeeded:
             for path, data in snapshots.items():
-                if data is None:
-                    path.unlink(missing_ok=True)
-                else:
-                    atomic_write(path, data)
-            print("Spec Kit failed; existing constitution and active-integration metadata restored. Inspect any partially installed assets before retrying.", file=sys.stderr)
+                try:
+                    destination(repo, str(path.relative_to(repo)))
+                    if data is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        atomic_write(path, data)
+                except Exception as exc:
+                    cleanup_failures.append("restore " + str(path.relative_to(repo)) + ": " + str(exc))
+        # The pinned package copies helpers as 0644. Match executable asset installs, including
+        # restored drift snapshots and helpers left by a partially failed initialization.
+        cleanup_failures.extend(repair_speckit_helper_modes(repo))
+        for failure in cleanup_failures:
+            print("bureau-install: Spec Kit cleanup failed: " + failure, file=sys.stderr)
+        if not succeeded:
+            outcome = ("cleanup is incomplete" if cleanup_failures else
+                       "existing constitution and active-integration metadata restored")
+            print("Spec Kit failed; " + outcome + ". Inspect any partially installed assets before retrying.", file=sys.stderr)
+    # Reached only when the main apply succeeded; a primary exception propagates unchanged.
+    if cleanup_failures:
+        raise ValueError("Spec Kit cleanup failed; apply is incomplete. Resolve the errors above before retrying.")
     return 0
 
 

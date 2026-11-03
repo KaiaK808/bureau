@@ -110,6 +110,9 @@ if os.environ.get('REVIEW_PROBE') and 'specialist reviewing' in prompt:
 with open(os.environ['MODEL_LOG'],'a') as out: out.write(os.environ.get('BUREAU_CURRENT_ISSUE','?')+'\n')
 if 'QA' in prompt and 'tests_added' in prompt:
     result = {'status':'NEEDS_HUMAN','tests_added':0,'tests_failing':0,'coverage_notes':'A product decision needs human attention'}
+elif os.environ.get('BUREAU_PROVIDER_PHASE') in ('correctness', 'security', 'performance'):
+    result = dict(specialist=os.environ['BUREAU_PROVIDER_PHASE'], counts=dict(critical=0,bug=0,minor=0,skip=0),
+                  findings=[], holds=[], summary='Fixture review passed')
 else:
     # The merger's schema (bureau-review.schema.json) requires the markdown comment and the findings list.
     result = {'verdict':'APPROVE','bugs':0,'security_issues':0,'missing_acceptance':[],'fixes_needed':[],'summary':'Fixture review passed',
@@ -216,7 +219,7 @@ class SupervisionPipelineTests(unittest.TestCase):
         self.assertEqual(subprocess.check_output(['git','-C',str(preserved),'branch','--show-current'],text=True).strip(),'')
         subprocess.run(['python3','scripts/bureau-supervision.py','resume','T-1'],cwd=self.repo,env=self.env,check=True,stdout=subprocess.DEVNULL)
         self.assertEqual(self.run_tick(20)['issue'],'T-1')
-        self.assertEqual(self.models().count('T-1'),count+4)
+        self.assertEqual(self.models().count('T-1'),count+3)
         self.assertTrue(list((self.repo/'.worktrees').glob('tick-code_review-T-1.*')))
         self.assertEqual(subprocess.check_output(['git','-C',str(preserved),'rev-parse','HEAD'],text=True).strip(),actual)
         # An authoritative base change reopens the boundary even if the GH PR
@@ -228,12 +231,12 @@ class SupervisionPipelineTests(unittest.TestCase):
                                                cwd=self.repo,env=self.env,text=True,input=json.dumps(detail)))
         self.assertFalse(check['stopped'])
         self.assertEqual(subprocess.check_output(['git','-C',str(preserved),'rev-parse','HEAD'],text=True).strip(),actual)
-        self.assertEqual(self.run_tick(20)['issue'],'T-1');self.assertEqual(self.models().count('T-1'),count+8)
+        self.assertEqual(self.run_tick(20)['issue'],'T-1');self.assertEqual(self.models().count('T-1'),count+6)
         self.assertEqual(subprocess.check_output(['git','-C',str(preserved),'rev-parse','HEAD'],text=True).strip(),actual)
         self.git('checkout','-q','-B','001-task','origin/001-task')
         (self.repo/'new-head-work.txt').write_text('New PR work\n');self.git('add','new-head-work.txt')
         self.git('commit','-qm','fix: new PR head');self.git('push','-q','origin','HEAD');self.git('checkout','-q','main')
-        self.assertEqual(self.run_tick(20)['issue'],'T-1');self.assertEqual(self.models().count('T-1'),count+12)
+        self.assertEqual(self.run_tick(20)['issue'],'T-1');self.assertEqual(self.models().count('T-1'),count+9)
         self.assertEqual(subprocess.check_output(['git','-C',str(preserved),'rev-parse','HEAD'],text=True).strip(),actual)
         self.assertEqual({str(path.relative_to(preserved)):path.read_bytes() for path in preserved.rglob('*') if path.is_file()},original_bytes)
 
@@ -292,14 +295,14 @@ class SupervisionPipelineTests(unittest.TestCase):
 
     def test_real_stages_stop_skip_notify_and_resume(self):
         first=self.run_tick(20); self.assertEqual(first['issue'],'T-1'); self.assertEqual(first['outcome'],'stopped_for_review')
-        self.assertEqual(self.models(),['T-1']*4)
+        self.assertEqual(self.models(),['T-1']*3)
         # Simulate a competing tick whose pick preceded the durable stop. The
         # actual worker rechecks after claiming the issue and invokes no model.
         stale=subprocess.run(['bash','scripts/bureau-worker.sh','T-1','code-review-pipeline.sh',str(self.repo/'.worktrees/tick-code_review-T-1'),'001-task'],
                              cwd=self.repo,env={**self.env,'BUREAU_NO_MERGE':'1'},capture_output=True,text=True,timeout=30)
-        self.assertEqual(stale.returncode,20,stale.stdout+stale.stderr);self.assertEqual(self.models(),['T-1']*4)
+        self.assertEqual(stale.returncode,20,stale.stdout+stale.stderr);self.assertEqual(self.models(),['T-1']*3)
         second=self.run_tick(20); self.assertEqual(second['issue'],'T-2'); self.assertEqual(second['skipped_reviews'],['T-1'])
-        self.assertEqual(self.models().count('T-1'),4)
+        self.assertEqual(self.models().count('T-1'),3)
         third=self.run_tick(25);self.assertEqual(third['issue'],'T-3');self.assertEqual(third['outcome'],'blocked')
         self.assertEqual(third['before'],third['after']); self.assertEqual(third['skipped_reviews'],['T-1','T-2'])
         args=['python3','scripts/bureau-monitor.py','logs/bureau-tick.json','--previous','logs/previous.json']
@@ -312,14 +315,14 @@ class SupervisionPipelineTests(unittest.TestCase):
         status=json.loads(subprocess.check_output(['python3',str(self.repo/'scripts/bureau-supervision.py'),'--repo',str(worker),'status'],env=self.env,text=True))
         self.assertEqual(set(status['review_stops']),{'T-1','T-2'})
         subprocess.run(['python3','scripts/bureau-supervision.py','resume','T-1'],cwd=self.repo,env=self.env,check=True,stdout=subprocess.DEVNULL)
-        self.assertEqual(self.run_tick(20)['issue'],'T-1');self.assertEqual(self.models().count('T-1'),8)
+        self.assertEqual(self.run_tick(20)['issue'],'T-1');self.assertEqual(self.models().count('T-1'),6)
         # A pushed HEAD invalidates its approval boundary automatically.
         self.git('checkout','-q','001-task');(self.repo/'new-work.txt').write_text('New work\n');self.git('add','new-work.txt')
         self.git('commit','-qm','fix: new work\n\nBureau-Generated: true');self.git('push','-q','origin','HEAD');self.git('checkout','-q','main')
-        self.assertEqual(self.run_tick(20)['issue'],'T-1');self.assertEqual(self.models().count('T-1'),12)
+        self.assertEqual(self.run_tick(20)['issue'],'T-1');self.assertEqual(self.models().count('T-1'),9)
         # Material ticket edits reopen same-head reviews; bot digest comments do not.
         items=json.loads(self.linear.read_text());items['T-2']['description']='Updated acceptance criteria';self.linear.write_text(json.dumps(items))
-        self.assertEqual(self.run_tick(20)['issue'],'T-2');self.assertEqual(self.models().count('T-2'),8)
+        self.assertEqual(self.run_tick(20)['issue'],'T-2');self.assertEqual(self.models().count('T-2'),6)
         count=len(self.models());failed=self.run_tick(18,{'FAIL_GH_HEAD':'1'});self.assertEqual(failed['outcome'],'failed');self.assertEqual(len(self.models()),count)
         self.assertNotIn(['pr','merge'],[json.loads(line)[:2] for line in self.gh_log.read_text().splitlines()])
         self.assertEqual(json.loads((self.repo/'.git/bureau/leases.json').read_text()),{})
@@ -330,7 +333,7 @@ class SupervisionPipelineTests(unittest.TestCase):
         evidence=self.repo/'.git/bureau/evidence/v1'
         for review in reviews:
             phases={json.loads((evidence/path).read_text())['phase'] for path in review['receipts']}
-            self.assertEqual(phases,{'correctness','security','performance','verdict'})
+            self.assertEqual(phases,{'correctness','security','performance'})
             gates=[g for g in review['gates'] if g['kind']=='gate']
             self.assertEqual(len(gates),1)
             self.assertNotIn('path',gates[0]); self.assertTrue(gates[0]['sha256'])
@@ -459,6 +462,7 @@ class SupervisionPipelineTests(unittest.TestCase):
         # The fake provider quotes this into specialist/review artifacts; the
         # configured build also emits it. The whole shared store is scanned.
         binary=self.root/'bin/codex'; code=binary.read_text()
+        code=code.replace("summary='Fixture review passed'", "summary="+repr(sentinel))
         code=code.replace("'summary':'Fixture review passed'", "'summary':"+repr(sentinel))
         code=code.replace("'comment':'## Specialist Summaries\\nFixture review passed.'", "'comment':"+repr(sentinel))
         binary.write_text(code)
@@ -529,7 +533,7 @@ class SupervisionPipelineTests(unittest.TestCase):
         proc=self.queue_worker('T-1','001-task')
         self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
         self.assertEqual(json.loads(self.linear.read_text())['T-1']['state']['id'],'merge')
-        self.assertEqual(self.models(),['T-1']*4)
+        self.assertEqual(self.models(),['T-1']*3)
         self.assertNotIn(['pr','merge'],[json.loads(line)[:2] for line in self.gh_log.read_text().splitlines()])
         config=json.loads((self.repo/'.bureau.json').read_text()); config['agents'].pop('merge_mode')
         config['linear']['teams'][0]['states'].pop('merge'); (self.repo/'.bureau.json').write_text(json.dumps(config))

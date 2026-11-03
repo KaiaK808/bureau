@@ -1,5 +1,6 @@
 """Run evidence guards against deliberately broken private copies, never the source."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -7,24 +8,40 @@ import subprocess
 import sys
 import tempfile
 
+from mutation_checks import mutation_caught, snapshot_files
+
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPTS=ROOT/'templates/scripts'
-names=('bureau-provider.py','bureau-runtime.py','bureau-evidence.py','bureau-gates.py','bureau-activity.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
-       'merge-pipeline.sh','bureau-config.sh','bureau-env.sh','code-review-pipeline.sh')
+names=('bureau-provider.py','bureau-runtime.py','bureau-process.py','bureau-evidence.py','bureau-gates.py','bureau-activity.py','bureau-ticket.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
+       'merge-pipeline.sh','bureau-config.sh','bureau-env.sh','code-review-pipeline.sh','bureau-insights.sh')
 before={name:hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
 
 
 def rejected(test, cases, env, expected):
-    result=subprocess.run([sys.executable,str(ROOT/'tests'/test),*cases],env={**os.environ,**env},
-                          capture_output=True,text=True,timeout=30)
-    output=result.stdout+result.stderr
-    expected=(expected,) if isinstance(expected,str) else expected
-    assert result.returncode != 0 and all(value in output for value in expected), output
+    mutation_caught([sys.executable,str(ROOT/'tests'/test),*cases],env=env,
+                    originals=originals,
+                    timeout=30,expected=expected)
 
 
 with tempfile.TemporaryDirectory(prefix='bureau evidence controls ') as scratch:
-    root=Path(scratch)
+    root=Path(scratch).resolve()
     for name in names: shutil.copy(SCRIPTS/name,root/name)
+    originals=snapshot_files(root)
+    # Prove the copied runtime persists outcomes before testing broken variants.
+    baseline=root/'baseline'; baseline.mkdir()
+    subprocess.run(['git','-C',str(baseline),'init','-q'],check=True,capture_output=True)
+    (baseline/'.bureau.json').write_text('{}')
+    result=subprocess.run([sys.executable,str(root/'bureau-runtime.py'),'--repo',str(baseline),
+                           'exec','--issue','TEAM-1','--entry','implement-pipeline.sh','--',sys.executable,'-c','pass'],
+                          capture_output=True,text=True,timeout=12)
+    assert result.returncode==0, result.stdout+result.stderr
+    records=baseline/'.git/bureau/evidence/v1/stage-outcomes.jsonl'
+    assert records.is_file(), 'successful baseline stage outcome missing'
+    rows=[json.loads(line) for line in records.read_text().splitlines()]
+    assert len(rows)==1 and tuple(rows[0][key] for key in
+        ('record_type','issue','stage','phase','normalized_exit','cause_class'))==(
+        'stage_outcome','TEAM-1','implement','stage',0,'other'), rows
+    print('PASS baseline: successful runtime persists one stage-outcomes record')
     provider=root/'bureau-provider.py'; original=provider.read_text()
     anchor='        path = store.put_receipt(receipt)\n'
     assert original.count(anchor)==1

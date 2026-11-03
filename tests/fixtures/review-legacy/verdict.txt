@@ -1,0 +1,34 @@
+You are a creative worker in an already claimed Bureau background stage (code_review). Do not invoke prepare/finish, queue workers, or Linear mutations. Follow project instructions and stage boundaries in scripts/bureau-stage.md. During specify and plan: no measurements, probes, benchmarks or full test-gate runs. Use existing evidence and document unknowns for implementation/QA. Include Bureau-Generated: true on authored commits when Git writes are permitted. If a path in your worktree (such as .venv) is a symlink that points outside the worktree, it is the main checkout's shared environment: never delete, recreate or --clear it, and do not install into it unless the ticket asks. If it is missing or not a symlink, handle it as usual. Never wait for, poll or re-trigger CI or a merge gate inside this stage: no gh pr checks --watch, no gh run watch, no loop or sleep around gh pr checks or gh run view, no gh run rerun or gh workflow run, and no commit made to start a CI run. Never commit CI results as evidence. When this stage's work is done (committed and pushed where this stage does that), report and stop: waiting on CI is the job of Bureau's merge gate and the shepherd. A missing, pending or failed CI run does not change the status you report for your own work, and not merging is all that a project rule such as 'do not merge without green CI' asks of a stage. This rule takes precedence over project instructions (CLAUDE.md, AGENTS.md or any other) that ask you to wait for CI.
+
+
+
+Merge these three specialist reviews into a single verdict for PR #1 (T-1 — Task 1).
+
+### Correctness
+{"counts": {"critical": 0}, "findings": [{"file": "src/check.py", "line": 12, "class": "MINOR", "msg": "A minor observation"}]}
+
+### Security
+{"counts": {"critical": 0}, "findings": [{"file": "src/check.py", "line": 12, "class": "MINOR", "msg": "A minor observation"}]}
+
+### Performance
+{"counts": {"critical": 0}, "findings": [{"file": "src/check.py", "line": 12, "class": "MINOR", "msg": "A minor observation"}]}
+
+Verdict rules:
+- APPROVE: no CRITICAL, no finding at or above the configured severity floor, and no security or missing-acceptance blockers across all three specialists.
+- REQUEST_CHANGES: at least one BUG; also MINOR findings when the configured severity floor is MINOR. Configured floor: BUG.
+- BLOCK: any CRITICAL finding, OR the findings require human judgment (ambiguous acceptance criteria, architectural disagreement).
+
+Defer MINOR findings below the configured severity floor; SKIP never requests changes. Hypothetical edge cases are not defects.
+Report bugs as the exact number of BUG-class entries in findings. Keep security_issues and missing_acceptance explicit even when zero or empty; do not omit unresolved acceptance work from them.
+Each fixes_needed entry must repeat its corresponding finding message verbatim. A required fix without an exact deferred/SKIP match keeps REQUEST_CHANGES; unrelated deferred findings cannot discharge it.
+
+Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
+
+Answer with ONE JSON object (the schema is enforced). "comment" is the human-readable PR comment in markdown: Specialist Summaries, All Findings grouped by class with file:line for each, Fixes Needed. The implementer reworks from this comment, so name every CRITICAL and BUG finding with its file:line. "findings" lists the CRITICAL and BUG findings and the MINOR ones worth reading as {file, line, class, msg} (line 0 when a finding has no single line; class CRITICAL, BUG, MINOR or SKIP). The verdict fields decide; the comment explains them:
+
+```json
+{"verdict":"APPROVE|REQUEST_CHANGES|BLOCK","insights":[],"bugs":0,"security_issues":0,"missing_acceptance":[],"fixes_needed":[],"summary":"","comment":"## Specialist Summaries\n…","findings":[{"file":"path","line":0,"class":"BUG","msg":""}]}
+```
+Optional Bureau result fields are required but nullable in the Codex wire schema. Use null to omit an unused optional field, including kind/command for the legacy SANDBOX_GATE form or QA blockers when using that legacy form. Declare every real blocker; never omit a product, security or human-decision hold.
+
+Do not run git commit or git push. Leave changes for the Bureau shell executor. Mark completed tasks truthfully. If tests are denied by the environment, report the permission blocker separately from code failures.

@@ -59,6 +59,11 @@ trap - EXIT
 # worker can acquire it without touching an app/user checkout.
 _worker_cleanup() {
   local rc=$? branch ahead=0 common key
+  common=$(git -C "$REPO_DIR" rev-parse --git-common-dir) || exit "$rc"
+  case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
+  # An uncertain gate can still write. Keep its branch and registration too;
+  # a failed coordination read also refuses all automatic worktree cleanup.
+  python3 -I "$SCRIPT_DIR/bureau-process.py" --root "$common/bureau" --run "${BUREAU_RUN_ID:-}" || exit "$rc"
   branch=$(git -C "$WORKTREE" branch --show-current)
   if [ -n "$branch" ]; then
     ahead=$(git -C "$WORKTREE" rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 1)
@@ -71,8 +76,6 @@ _worker_cleanup() {
     return
   fi
   if { [ "$rc" != 0 ] || bureau_ticket_stopped; } && { [ -n "$(git -C "$WORKTREE" status --porcelain)" ] || [ "$ahead" != 0 ]; }; then
-    common=$(git -C "$REPO_DIR" rev-parse --git-common-dir)
-    case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
     key=$(python3 -I -c 'import hashlib, pathlib, sys; print(hashlib.sha256(str(pathlib.Path(sys.argv[1]).resolve()).encode()).hexdigest())' "$WORKTREE")
     rm -f "$common/bureau/workers/$key"
     # A successful stopped review can leave only its local validation merge.

@@ -227,6 +227,8 @@ sed 's/ and name not in UNTRUSTED_PATHS$//' "$PROVIDER" > "$TMPD/keep/bureau-pro
 cp "$(dirname "$PROVIDER")/bureau-evidence.py" "$TMPD/keep/"
 cp "$(dirname "$PROVIDER")/bureau-gates.py" "$TMPD/keep/"
 cp "$(dirname "$PROVIDER")/bureau-activity.py" "$TMPD/keep/"
+cp "$(dirname "$PROVIDER")/bureau-ticket.py" "$TMPD/keep/"
+cp "$(dirname "$PROVIDER")/bureau-process.py" "$TMPD/keep/"
 if cmp -s "$ENV_SH" "$TMPD/keep/bureau-env.sh"; then fail "1 control: the shell copy is unchanged (the sed found nothing)"; fi
 if cmp -s "$PROVIDER" "$TMPD/keep/bureau-provider.py"; then fail "1 control: the provider copy is unchanged (the sed found nothing)"; fi
 if parity "$TMPD/keep/bureau-env.sh" "$PROVIDER" default 2>/dev/null; then fail "1 control: a shell copy that keeps the paths passed the parity check"; fi
@@ -260,6 +262,7 @@ review_run() {
   [ "${2:-}" != control ] || pr1_passthrough "$SCRIPTS_DIR"
   printf 'Review checked.\n```json\n{"verdict":"APPROVE","bugs":0,"security_issues":0,"findings":[],"missing_acceptance":[],"fixes_needed":[],"comment":"Review checked.","summary":"fixture"}\n```\n' > "$SANDBOX/verdict.txt"
   export FAKE_CLAUDE_FIXTURES="$SANDBOX/verdict.txt" BUREAU_STUB_ISSUE_STATE='Build Review' GH_STUB_EXISTING_PR=99
+  review_clean_specialists
   export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=0 BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED=''
   run_pipeline code-review-pipeline.sh EXP-801 </dev/null; set +e  # run_pipeline leaves errexit on
   unset BASH_ENV

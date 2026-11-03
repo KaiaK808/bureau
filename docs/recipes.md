@@ -4,6 +4,30 @@ Configuration overlays and launch examples. Merge settings into the existing `.b
 
 ---
 
+## Documentation-only tickets
+
+Choose a real documentation check before preparing the ticket. In a fresh repository without `package.json`, a default such as `pnpm test` cannot validate the work. Put a reviewed check script in the repository (for example, one that checks Markdown links and required architecture sections), then set this overlay in the **trusted** `.bureau.json`:
+
+```json
+{"repo":{"test_command":"bash scripts/check-docs.sh"}}
+```
+
+The script must exist and fail on invalid documentation; a no-op is not test evidence. Implementation, QA, review and the app tests action use this configured command. Do not take a command from a ticket, generated result, model suggestion or an unreviewed branch configuration. Bureau has no per-ticket test-command override. For a repository with both application and documentation work, prefer a reviewed repository check script that runs the appropriate checks from known repository inputs. If a maintainer temporarily selects a documentation-only command, stop background drivers and finish/release other runs first: the setting is repository-wide. Set it before prepare, use it through the ticket's last finish, then restore the normal command before resuming other work. Changing it during a prepared run requires [release and prepare again](troubleshooting.md#configuration-changed-since-prepare).
+
+To keep a small documentation ticket as one pickup candidate, keep `tasks.md` as its checklist and run the shared app stages directly. For spec, start in the repository root:
+
+```sh
+python3 scripts/bureau-runtime.py prepare TEAM-123 spec --owner docs-task
+# Follow scripts/bureau-stage.md and the repository's Spec Kit skills.
+# Produce spec.md, plan.md and tasks.md in the canonical feature directory.
+# Write the result JSON using the returned run_id and actual artifact paths.
+python3 scripts/bureau-runtime.py finish RUN_ID --result RESULT_FILE
+```
+
+Continue Spec Review, implementation, QA and review with their own prepare/finish pairs, using the same parent issue and accepted checklist. Respect configured entry states and the requested review/merge boundary. The runtime does not create sub-issues. Do not invoke `linear-to-spec` step 6 or the `linear-implement` sub-issue workflow for this recipe: those interfaces deliberately create/reconcile children, and the queue selects leaf issues once children exist. There is no documentation label that disables their fan-out. Select this workflow before creating children; it does not delete or reparent existing sub-issues. Existing children need an explicit maintainer reconciliation before the parent can become the queue's unit of work again.
+
+---
+
 ## Single-flight pipeline
 
 Process exactly one issue end-to-end before another enters Spec. Eliminates cross-issue rebase storms in active repos.
@@ -464,6 +488,64 @@ Low-volume early data produces noisy clusters. Auto-applying would amplify garba
 | `duration_s` | number | Wall-time seconds between start and end (only on `stage_end`) |
 
 To add your own fields from a pipeline script, call `emit_event "event=..." "key=value" ...` — values matching `^-?[0-9]+$` are auto-typed as JSON numbers. The helper is silent-on-failure (any error logs to stderr and returns 0) so it can never wedge a cron-driven pipeline.
+
+---
+
+## Architecture recipe (ADRs before the first build ticket)
+
+Use an architecture ticket to give later build tickets a shared decision record.
+
+**When to use:** a new project whose first build would otherwise choose the stack implicitly, especially with customer-facing or security-relevant choices; an existing project where code and the constitution may have drifted; or parallel worktrees that need more detail than the constitution's principles.
+
+**When not to:** small repositories, short-lived tools, a stack already fixed by the customer or template, or ticket-sized changes. Fewer than about five real architecture questions usually makes a separate ADR set overhead. Keep the records current as code and requirements change.
+
+Start from Bureau's [ADR template](adr/0000-template.md) and [ADR check](../tests/test_adrs.sh), copying and adapting them into project-owned files. Both contain Bureau-specific status rules, maintainer attribution and checker-path assumptions. Adapt those for prospective and derived records, the project owner and the local checker. `bureau-init` installs nothing for this recipe today.
+
+The ticket uses a normal spec number and the normal stages: spec, spec review rounds with fixes, implement, QA, code review and merge. Set [repo.test_command](configuration.md#repo) to run the adapted ADR check alongside existing tests; the setting applies to the whole repository. A wrapper such as `scripts/bureau-test.sh` can run both. Checks validate document structure and references; review verifies the decisions and their evidence.
+
+### Variant A: a new project
+
+Place this ticket after the constitution and before the first build ticket. Keep ADRs `proposed` during review; merging the ticket accepts the approved decisions through an explicit status edit in the reviewed PR. Link the ADR directory from project instructions so later stages read it.
+
+Copyable ticket text:
+
+```text
+Title: Record architecture decisions for a new project
+
+Read the agreed constitution and keep approved inputs under docs/architecture/input/. Identify the architecture questions, such as runtime, data store, authentication, deployment and agent trust boundaries.
+
+Adapt Bureau's template into docs/adr/0000-template.md. Write one numbered ADR per architecture question under docs/adr/ with status proposed, options, rationale, consequences, reversal conditions and evidence.
+
+Track review findings per ADR in docs/architecture/review-findings.md with the round, finding, disposition and verification evidence. Collect owner questions in docs/architecture/owner-questions.md.
+
+Adapt Bureau's ADR check into tools/check-adrs.sh. Use bash tools/check-adrs.sh through repo.test_command alongside existing tests. Link docs/adr/ from AGENTS.md or CLAUDE.md and preserve the constitution.
+
+Run the normal spec review rounds, implement, QA and code review. Resolve findings and include the proposed-to-accepted status edit for approved ADRs in the PR that merges this ticket. Make the first build ticket depend on this merge.
+
+End with docs/architecture/summary.md: a short summary for the owner of decisions, remaining questions and the next build step.
+```
+
+### Variant B: an existing project
+
+Derive ADRs from current code, the constitution, lessons and specs with status `accepted (derived)`. Derived ADRs record dated observations and confer no fresh owner approval. The constitution stays authoritative. Record code/constitution deviations as open points; reconciling the constitution is a separate step that the owner authorizes in its own ticket.
+
+Copyable ticket text:
+
+```text
+Title: Derive architecture records for an existing project
+
+Read current code, .specify/memory/constitution.md, LESSONS.md if present, and relevant specs. Preserve the constitution and application behavior.
+
+Adapt Bureau's template into docs/adr/0000-template.md. Write one numbered ADR per observed architecture question under docs/adr/ with status accepted (derived). Cite the inspected revision and code paths, date the observations, and label reconstructed alternatives and inferred rationale.
+
+Record deviations between code and constitution in docs/architecture/open-points.md with the principle, observed behavior, evidence and recommendation. The constitution stays authoritative. Reconcile it only in a separate ticket authorized by the owner.
+
+List questions only the owner can answer in docs/architecture/owner-questions.md with recommendations and space for the owner's answers. Track review findings and dispositions per ADR in docs/architecture/review-findings.md.
+
+Adapt Bureau's ADR check into tools/check-adrs.sh and run bash tools/check-adrs.sh through repo.test_command alongside existing tests. Link docs/adr/ from AGENTS.md or CLAUDE.md and run the normal stages for this documentation ticket.
+
+End with docs/architecture/summary.md: a short summary for the owner of observed decisions, deviations and questions requiring an answer.
+```
 
 ---
 

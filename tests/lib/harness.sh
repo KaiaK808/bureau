@@ -102,6 +102,7 @@ PY
   # on top of the stub's add_issue_label and alert_telegram.
   sed -n '/^# ── needs-human hold/,/^# ── End of needs-human hold/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
   sed -n -e '/^bureau_evidence() {/,/^}/p' -e '/^bureau_record_gate() {/,/^}/p' \
+    -e '/^bureau_run_gate() {/,/^}/p' -e '/^bureau_ticket_policy() {/,/^}/p' \
     -e '/^bureau_archive_evidence() {/,/^}/p' -e '/^bureau_observe_waits() {/,/^}/p' -e '/^bureau_record_pr_url() {/,/^}/p' \
     -e '/^bureau_record_branch_pr() {/,/^}/p' -e '/^bureau_acceptance_brief() {/,/^}/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
@@ -131,6 +132,35 @@ EOF
 
 run_implement_pipeline() {
   run_pipeline implement-pipeline.sh "$@"
+}
+
+# Valid, explicit specialist reports for build/reuse tests that need approval.
+# Malformed-output/fallback tests supply their own reports instead.
+review_clean_specialists() {
+  python3 - "$SANDBOX" "${1:-APPROVE}" <<'PY'
+import json
+from pathlib import Path
+import sys
+for role in ('correctness', 'security', 'performance'):
+    value = dict(specialist=role, counts=dict(critical=0, bug=0, minor=0, skip=0), findings=[], summary='Fixture review.',
+                 holds=['Fixture requires human judgment.'] if sys.argv[2] == 'BLOCK' else [])
+    (Path(sys.argv[1]) / (role + '-review.json')).write_text(json.dumps(value))
+PY
+  export FAKE_CLAUDE_CORRECTNESS_FIXTURE="$SANDBOX/correctness-review.json"
+  export FAKE_CLAUDE_SECURITY_FIXTURE="$SANDBOX/security-review.json"
+  export FAKE_CLAUDE_PERFORMANCE_FIXTURE="$SANDBOX/performance-review.json"
+}
+
+# Valid legacy fenced output exercises the real merger fallback without
+# manufacturing malformed reports or lowering the uncertainty floor.
+review_fallback_specialists() {
+  review_clean_specialists "${1:-APPROVE}"
+  python3 - "$FAKE_CLAUDE_CORRECTNESS_FIXTURE" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_text('```json\n' + path.read_text() + '\n```\n')
+PY
 }
 
 # Generic pipeline runner. Captures stdout/stderr/rc into $LAST_*. The pipeline

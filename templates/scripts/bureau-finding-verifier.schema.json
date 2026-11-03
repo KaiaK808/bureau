@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "finding_id": {
+      "type": "string"
+    },
+    "anchor_sha256": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "refuted",
+        "unverifiable"
+      ]
+    }
+  },
+  "required": [
+    "finding_id",
+    "anchor_sha256",
+    "outcome"
+  ]
+}

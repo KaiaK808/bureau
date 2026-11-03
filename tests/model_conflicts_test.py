@@ -5,10 +5,12 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import unittest
+from process_helpers import process_running
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +77,7 @@ class ModelConflictTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory(prefix='bureau-1750-model-')
         self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name).resolve(); self.repo=self.root/'repo'; self.repo.mkdir()
+        self.addCleanup(self.stop_fixture_processes)
         self.scripts=self.root/'scripts'; shutil.copytree(SCRIPTS,self.scripts)
         self.bin=self.root/'bin'; self.bin.mkdir()
         self.control={}; self.save_control(); (self.root/'state').write_text('build')
@@ -103,6 +106,16 @@ class ModelConflictTests(unittest.TestCase):
         self.git('--git-dir',str(self.root/'origin.git'),'config','maintenance.auto','false')
         self.git('--git-dir',str(self.root/'origin.git'),'config','gc.auto','0')
         self.git('remote','add','origin',str(self.root/'origin.git'))
+
+    def stop_fixture_processes(self):
+        # A failed assertion must not leave the fake provider/check or its
+        # background writer alive. These files contain only this test's PIDs.
+        for name in ('pids', 'writer.pid'):
+            path = self.root / name
+            if path.exists():
+                for raw in path.read_text().splitlines():
+                    try: os.kill(int(raw), signal.SIGKILL)
+                    except ProcessLookupError: pass
 
     def git(self,*args,check=True):
         r=subprocess.run(['git','-C',str(self.repo),*args],env=self.env,capture_output=True,text=True,timeout=15)
@@ -147,7 +160,7 @@ class ModelConflictTests(unittest.TestCase):
         self.result=subprocess.run(command,cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=35)
         if (self.root/'pids').exists():
             for raw in (self.root/'pids').read_text().splitlines():
-                with self.assertRaises(ProcessLookupError, msg='test provider/check survived: '+raw): os.kill(int(raw),0)
+                self.assertFalse(process_running(int(raw)), 'test provider/check survived: '+raw)
         return self.result.returncode
 
     def records(self):

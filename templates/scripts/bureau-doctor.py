@@ -60,6 +60,10 @@ def validate(config):
         value = agents.get(stage, False)
         if not isinstance(value, (bool, str, dict)): errors.append('agents.' + stage + ' must be a boolean, legacy string or object')
         elif isinstance(value, dict) and type(value.get('enabled', True)) is not bool: errors.append(stage + '.enabled must be boolean')
+    try: module('adr').settings(config)
+    except (ValueError, TypeError, AttributeError) as exc: errors.append(str(exc))
+    try: module('review').settings(config)
+    except (ValueError, TypeError, AttributeError) as exc: errors.append(str(exc))
     if errors: return errors
     provider = module('provider')
     for stage in STAGES:
@@ -560,6 +564,9 @@ def diagnose(repo, mode):
         interfaces[name] = found
     if not any(interfaces.values()): errors.append('No Bureau instruction or command interfaces found; install interfaces')
     if not active.get('integration'): warnings.append('Spec Kit active integration is missing; initialize with the pinned installer')
+    for helper in sorted((repo / '.specify/scripts').rglob('*.sh')):
+        if helper.is_file() and not os.access(helper, os.X_OK):
+            warnings.append('Spec Kit helper is not executable: ' + str(helper.relative_to(repo)) + '; run Bureau Spec Kit resync to repair its mode')
     for name in ('bureau-runtime.py', 'bureau-provider.py', 'bureau-stage.md'):
         if not (repo / 'scripts' / name).is_file(): errors.append('Missing runtime asset: scripts/' + name)
     if len(config.get('linear', {}).get('teams', [])) > 1: warnings.append('Runtime routes through the first configured team; review other-team tickets manually')

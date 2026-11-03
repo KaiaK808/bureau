@@ -100,6 +100,88 @@ assert_publication() {
   python3 "$REPO_ROOT/tests/lib/assert_gate_publication.py" "$SANDBOX" implement
 }
 
+# Delegation does not need an agent execution or SANDBOX_GATE declaration.
+outside_setup() {
+  setup codex 0 "${1:-0}" "${2:-}"
+  unset FAKE_GATE_MODE
+  jq '.agents.providers.codex.gate_outside_sandbox = true' "$BUREAU_CONFIG" > "$SANDBOX/logs/config.json"
+  mv "$SANDBOX/logs/config.json" "$BUREAU_CONFIG"
+  jq '.status="COMPLETE" | .tasks_needs_human=0 | .notes.needs_human=[]' "$FAKE_CLAUDE_FIXTURES" > "$SANDBOX/logs/complete.json"
+  mv "$SANDBOX/logs/complete.json" "$FAKE_CLAUDE_FIXTURES"
+}
+
+test_delegated_post_implement_hook_heads() {
+  local committing hook
+  for committing in 0 1; do
+    hook="printf 'hook\\n' >> logs/hook-runs"
+    if [ "$committing" = 1 ]; then
+      hook+="; printf 'generated\\n' > generated.txt; git add generated.txt; git commit -qm 'test: generate fixture'"
+    fi
+    outside_setup 0 "$hook"
+    run_implement_pipeline TEAM-123
+    assert_eq 0 "$LAST_RC" "delegated hook completes (committing=$committing)"
+    assert_calls_include 'move_issue.*state-build-review' 'hook hands off after validation'
+    assert_calls_exclude 'add_issue_label.*needs-human' 'green hook has no human label'
+    assert_eq 1 "$(wc -l < "$SANDBOX/logs/hook-runs" | tr -d ' ')" 'hook runs once'
+    assert_eq "$((1 + committing))" "$(test_runs)" 'only a committing hook needs another gate'
+    assert_eq "$(git -C "$SANDBOX" rev-parse HEAD)" "$(tail -n 1 "$SANDBOX/logs/test-heads")" 'gate checks final hook HEAD'
+    python3 - "$SANDBOX" "$committing" <<'PY'
+import json, pathlib, sys
+root=pathlib.Path(sys.argv[1])
+heads=(root/'logs/test-heads').read_text().splitlines()
+assert (heads[0] != heads[-1]) == bool(int(sys.argv[2])), heads
+manifest=json.loads(next((root/'.git/bureau/evidence/v1').glob('runs/*/manifest.json')).read_text())
+gates=[gate['result'] for attempt in manifest['attempts'] for gate in attempt.get('gate_reruns', [])]
+assert [gate['head'] for gate in gates] == heads
+assert all(gate['end_head']==gate['head'] and gate['normalized_exit']==0 for gate in gates)
+PY
+    teardown
+  done
+}
+
+test_delegated_post_implement_hook_heads
+
+outside_setup
+run_implement_pipeline TEAM-123
+assert_handoff_once
+assert_eq 1 "$(test_runs)" 'delegated completion runs outside once'
+assert_file_contains 'Do not run the full test gate yourself' "$SANDBOX/logs/prompt.log" 'delegated implement brief'
+if grep -q 'Run the configured command unchanged' "$SANDBOX/logs/prompt.log"; then echo 'FAIL: contradictory delegated implement brief' >&2; exit 1; fi
+python3 - "$SANDBOX" <<'PY'
+import json, pathlib, sys
+root=pathlib.Path(sys.argv[1])
+receipt=json.loads(next((root/'.git/bureau/evidence/v1').glob('runs/*/receipts/*.json')).read_text())
+assert not receipt.get('gate_attempts'), 'the agent ran no configured gate'
+manifest=json.loads(next((root/'.git/bureau/evidence/v1').glob('runs/*/manifest.json')).read_text())
+gates=[gate for attempt in manifest['attempts'] for gate in attempt.get('gate_reruns', [])]
+assert len(gates)==1 and gates[0]['result']['environment']=='outside'
+assert gates[0]['result']['normalized_exit']==0
+PY
+teardown
+
+outside_setup 1
+run_implement_pipeline TEAM-123
+assert_eq 14 "$LAST_RC" 'delegated red keeps ordinary implement gate exit'
+assert_eq 1 "$(test_runs)" 'delegated red runs once'
+assert_calls_exclude 'move_issue.*state-build-review' 'red delegated gate never hands off'
+teardown
+
+# A red partial pass supplies evidence to the next pass. The second pass has
+# no new edits/HEAD, but must still get its own outside execution and receipt.
+outside_setup
+export BUREAU_IMPL_MAX_ITER=2
+jq '.status="PARTIAL"' "$FAKE_CLAUDE_FIXTURES" > "$SANDBOX/logs/partial.json"
+mv "$SANDBOX/logs/partial.json" "$FAKE_CLAUDE_FIXTURES"
+jq --arg cmd "printf 'run\\n' >> logs/test-runs; if [ \"\$(wc -l < logs/test-runs)\" -eq 1 ]; then jq '.status=\"COMPLETE\"' logs/result.json > logs/next.json; mv logs/next.json logs/result.json; echo outside-first-red; exit 1; fi; echo outside-next-green" \
+  '.repo.test_command=$cmd' "$BUREAU_CONFIG" > "$SANDBOX/logs/config.json"
+mv "$SANDBOX/logs/config.json" "$BUREAU_CONFIG"
+run_implement_pipeline TEAM-123
+assert_eq 0 "$LAST_RC" 'delegated second pass completes'
+assert_eq 2 "$(test_runs)" 'each delegated pass runs once at the same HEAD'
+assert_file_contains 'outside-first-red' "$SANDBOX/logs/prompt.log" 'next pass sees outside failure output'
+assert_calls_include 'move_issue.*state-build-review' 'green second pass hands off'
+teardown
+
 setup
 run_implement_pipeline TEAM-123
 assert_handoff_once
@@ -319,6 +401,40 @@ fi
 assert_eq 0 "$LAST_RC" 'duplicate-check control still completes'
 assert_calls_include 'move_issue.*state-build-review' 'duplicate-check control still hands off'
 assert_eq 2 "$(test_runs)" 'without the pending guard tests run twice'
+teardown
+# An uncertain outside gate stops before routing or any further publication.
+for stop_code in 25 124 130; do
+  setup
+  cat >> "$SCRIPTS_DIR/bureau-config.sh" <<EOF
+codex_gate_run() {
+  printf '%s\n' '{"eligible":false,"green":false,"reason":"outside gate termination uncertain","failure_cause":"human_hold","logs":["uncertain-gate.log"]}'
+  return $stop_code
+}
+EOF
+  run_implement_pipeline TEAM-123
+  assert_eq "$stop_code" "$LAST_RC" 'uncertain outside gate preserves its stop'
+  assert_calls_exclude 'move_issue' 'uncertain gate never hands off'
+  assert_calls_exclude 'add_issue_label.*needs-human' 'uncertain gate stops before routing mutations'
+  assert_match 'uncertain-gate.log' "$LAST_STDERR" 'uncertain stop keeps its log pointer'
+  teardown
+done
+
+setup
+cat >> "$SCRIPTS_DIR/bureau-config.sh" <<'EOF'
+codex_gate_run() { printf '%s\n' '{"green":false,"logs":[]}'; return 25; }
+EOF
+python3 - "$SCRIPTS_DIR/implement-pipeline.sh" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); text=p.read_text(); anchor='\n    25|124|130)'
+assert text.count(anchor)==1
+p.write_text(text.replace(anchor,'\n    124|130)',1))
+PY
+run_implement_pipeline TEAM-123
+if assert_eq 25 "$LAST_RC" 'uncertain gate stop' > "$SANDBOX/logs/control.log" 2>&1; then
+  echo 'FAIL: removing the uncertain gate stop passed its exit assertion' >&2; exit 1
+fi
+echo 'PASS negative control: implement must propagate the uncertain gate hold'
 teardown
 trap - EXIT
 echo 'OK test_codex_sandbox_gate'

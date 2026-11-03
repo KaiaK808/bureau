@@ -62,6 +62,8 @@ teardown
 # --- qa and code-review: the needs-human arms, cut from the real scripts -------------
 sandbox_init "EXP-114" "test-branch"
 SCRIPTS="$REPO_ROOT/templates/scripts"
+sed -n -e '/^cap_review_comment() {/,/^}/p' -e '/^post_review_comment() {/,/^}/p' \
+  "$SCRIPTS/code-review-pipeline.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
 QA_ARM=$(awk '/^case "\$STATUS" in$/ { f = 1 } f { print } f && /^esac$/ { exit }' "$SCRIPTS/qa-pipeline.sh")
 CR_ARM=$(awk '/^  BLOCK\|\*\)$/ { f = 1 } f { print } f && /^    ;;$/ { exit }' "$SCRIPTS/code-review-pipeline.sh")
 case "$QA_ARM" in *'mark_needs_human'*) ;; *) fail "the QA routing block is not where it was" ;; esac

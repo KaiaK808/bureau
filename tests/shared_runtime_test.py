@@ -17,6 +17,7 @@ import unittest
 from unittest.mock import patch
 
 import git_maintenance
+from process_helpers import process_running
 from governance_cases import (FENCED_GOVERNANCE, GOVERNANCE_FIRST,
                               COMMENT_HIDDEN_GOVERNANCE, COLUMN_ZERO_GOVERNANCE,
                               ROUND8_PROVIDER_INVALID, ROUND9_PROVIDER_INVALID, ROUND9_VALID,
@@ -125,6 +126,29 @@ class RuntimeTests(unittest.TestCase):
         self.config['agents']['qa']=False; r.save(self.repo/'.bureau.json',self.config)
         with self.assertRaises(r.Conflict): self.finish(args)
         self.assertEqual(self.moves,[]); self.assertEqual(self.comments,[])
+
+    def test_config_change_names_release_and_reprepare_and_recovery_works(self):
+        run = self.prepare(); args = self.result(run)
+        self.config['repo']['test_command'] = 'bash scripts/check-docs.sh'
+        r.save(self.repo / '.bureau.json', self.config)
+        with self.assertRaises(r.Conflict) as error:
+            self.finish(args)
+        text = str(error.exception)
+        self.assertIn('Configuration changed since prepare', text)
+        self.assertIn('python3 scripts/bureau-runtime.py release ' + run['run_id'], text)
+        self.assertIn('python3 scripts/bureau-runtime.py prepare TEAM-1 implement', text)
+        self.assertIn('new run_id', text)
+        self.assertEqual(self.moves, []); self.assertEqual(self.comments, [])
+        self.store.assert_owner('TEAM-1', self.repo, run['run_id'])
+        # Follow the printed recovery using the real release CLI; only Linear
+        # is faked, as in the rest of this fixture.
+        released = subprocess.run([sys.executable, str(SCRIPT), '--repo', str(self.repo),
+                                   'release', run['run_id']], capture_output=True, text=True)
+        self.assertEqual(released.returncode, 0, released.stderr)
+        fresh = self.prepare()
+        self.assertNotEqual(fresh['run_id'], run['run_id'])
+        self.finish(self.result(fresh))
+        self.assertEqual(self.moves, ['s4']); self.assertEqual(r.read(self.store.leases), {})
 
     def test_partial_retains_state_and_preserves_resume_evidence(self):
         run=self.prepare(); self.finish(self.result(run,outcome='blocked',tests=[],summary='Missing credentials'))
@@ -408,8 +432,7 @@ class RuntimeTests(unittest.TestCase):
             pid=int(inner_pid.read_text()) if inner_pid.exists() else None
             deadline=time.monotonic()+20
             while pid and time.monotonic()<deadline:
-                try: os.kill(pid,0)
-                except ProcessLookupError: break
+                if not process_running(pid): break
                 time.sleep(.05)
         self.addCleanup(end_stage)
         stage=('import pathlib, time\nstarted, may_end = pathlib.Path(%r), pathlib.Path(%r)\nstarted.touch()\n'
@@ -1288,7 +1311,7 @@ s.end_attempt(run,a,0,sys.argv[5])
 
     def test_isolated_entrypoints_do_not_write_bytecode_into_installed_scripts(self):
         installed=self.repo.parent/'installed scripts'; installed.mkdir()
-        for name in ('runtime','provider','supervision','evidence','spec','gates','activity','lessons'):
+        for name in ('runtime','provider','supervision','evidence','spec','gates','activity','lessons','ticket','process'):
             shutil.copy(ROOT/'templates/scripts'/('bureau-'+name+'.py'),installed)
         shutil.copy(ROOT/'templates/scripts/bureau-insights.sh', installed)
         before={p.name:p.read_bytes() for p in installed.iterdir()}

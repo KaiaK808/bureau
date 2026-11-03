@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="05982705abbaeb5a69fa042b5c4528cf4c60c973569c6418b5dbed342045d386">
+<meta name="bureau-source-sha256" content="4cdb6b55c3246bfb77890ec387b0ec417c8016b7064af42a08ce3ef3ae44748d">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -194,11 +194,15 @@ withdrawal still takes precedence with 25/26</td>
 <td><code>24</code></td>
 <td>environment-blocked</td>
 <td>Permissions or required execution capability missing</td>
-<td>Inspect denied operation separately from code/test failures. Also:
-an npm project's <code>node_modules</code> could not be restored after
-the worktree reset (<code>npm ci --ignore-scripts</code> failed twice,
-or no npm); the last lines of the npm log are in the stage output, the
-full log sits next to the stamp in <code>.git/bureau-deps/</code>. The
+<td>Inspect denied operation separately from code/test failures. Also: a
+Node project's dependencies could not be restored after the worktree
+reset; the last install log lines appear in stage output and full logs
+sit beside stamps in the shared Git directory's
+<code>bureau-deps/</code>. npm retains its existing path; pnpm/Yarn
+Classic require a provisioned manager and offline cache, with two
+bounded attempts. Modern Yarn/PnP, ambiguous lockfiles and a conflicting
+<code>packageManager</code> are refused; see <a
+href="configuration.html#node-repositories">Node repositories</a>. The
 shepherd halts and alerts. Also: <code>agents.merge_mode</code> is
 <code>manual</code> but <code>linear.teams[0].states.merge</code> is not
 set — the review stage refuses at its start, before any paid review;
@@ -499,6 +503,19 @@ advisory: ticket checkpoint exits
 <code>29</code>, silence <code>25</code> with
 <code>timeout_kind: silence</code>, review floors/rounds and dispatcher
 lane outcomes retain their existing meaning.</p>
+<h2 id="closed-terminal-stop-reasons">Closed terminal stop reasons</h2>
+<p>Ticket accounting refines existing exits with
+<code>terminal_reason</code>; it adds no exit code. The only values are
+<code>budget</code> (25), <code>timeout</code> (124),
+<code>watchdog</code> (25), <code>review_capped</code> (25),
+<code>human_hold</code> (25), <code>ticket_withdrawn</code> (Done 0,
+cancelled/duplicate 26, other inactive state 25), and
+<code>stalled</code> (25). Successful completion, handoffs, waits,
+infrastructure failures and cancellation 130 have no invented stop
+reason. See the <a
+href="stage-protocol.html#ticket-budget-and-progress-stops">stage
+protocol</a> for safe-point handling, precedence and persistence. These
+reasons are separate from learning cause classes.</p>
 <h2 id="telegram-alerts">Telegram alerts</h2>
 <p><code>alert_telegram</code> (in <code>bureau-config.sh</code>) sends
 a message when:</p>

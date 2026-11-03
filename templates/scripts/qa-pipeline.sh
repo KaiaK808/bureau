@@ -21,6 +21,24 @@ else bureau_secret_set LINEAR_API_KEY || { echo "ERROR: Set LINEAR_API_KEY"; exi
 CLAUDE=(run_stage_for qa)
 bureau_secret_copy API_KEY LINEAR_API_KEY
 
+QA_BASE=""
+qa_pin_base() {
+  QA_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number') || return 18
+  # An operator's QA rerun may reach a branch before PR creation.
+  # Use the same fetched main that QA merges; never infer trust from HEAD.
+  QA_BASE_REF=main
+  if [ -n "$QA_PR" ] && [ "$QA_PR" != null ]; then
+    [[ "$QA_PR" =~ ^[1-9][0-9]*$ ]] || return 18
+    QA_PR_REFS=$(gh pr view "$QA_PR" --json state,baseRefName,headRefName) || return 18
+    QA_BASE_REF=$(printf '%s' "$QA_PR_REFS" | jq -er --arg branch "$BRANCH" \
+      'select(.state == "OPEN" and .headRefName == $branch) | .baseRefName | select(type == "string" and length > 0)') || return 18
+  fi
+  [[ "$QA_BASE_REF" != -* ]] && git check-ref-format "refs/heads/$QA_BASE_REF" >/dev/null 2>&1 || return 18
+  git fetch --no-tags origin "+refs/heads/$QA_BASE_REF:refs/remotes/origin/$QA_BASE_REF" || return 18
+  QA_BASE=$(git rev-parse --verify "refs/remotes/origin/$QA_BASE_REF^{commit}") || return 18
+  export BUREAU_PROVIDER_CONFIG_BASE="$QA_BASE"
+}
+
 precondition_linear
 precondition_runner qa
 
@@ -88,6 +106,9 @@ else
   exit 12
 fi
 
+# Optional semantic merge repair is a provider call too. Resolve its trusted
+# project configuration before entering the unchanged merge transaction.
+if agent_enabled conflict_resolver; then qa_pin_base || exit $?; fi
 MERGE_RC=0
 merge_origin_main_or_abort "$ISSUE" "QA" || MERGE_RC=$?
 [ "$MERGE_RC" = 0 ] || exit "$MERGE_RC"
@@ -153,11 +174,7 @@ bureau_archive_evidence_dir_log() {
 }
 
 qa_run_gate() {
-  local head rc=0
-  head=$(git rev-parse HEAD 2>/dev/null) || head=""
-  bureau_untrusted_env bash --noprofile --norc -o pipefail -c "$TEST_CMD" > "$1" 2>&1 || rc=$?
-  bureau_record_gate "$1" "$head" "$TEST_CMD" "$rc" qa.test || true
-  return "$rc"
+  bureau_run_gate "$1" "$TEST_CMD" qa.test
 }
 
 echo ""
@@ -208,6 +225,7 @@ TEST_LOG_TAIL=$(tail -n 80 "$QA_TMP/test1.log" 2>/dev/null || echo "")
 echo ""
 echo "Phase 2/3: coverage / repair pass"
 
+QA_PROVIDER_RAN=false
 if [ "$GREEN_ON_FIRST_TRY" = true ] && [ -z "$TASKS_FILE" ]; then
   # Green tests, no tasks.md — nothing for Claude to do. Skip straight to routing.
   QA_RESULT="$(printf '```json\n{"status":"GREEN","tests_added":0,"tests_failing":0,"coverage_notes":"Tests passed on first run; no tasks.md to cross-check coverage."}\n```')"
@@ -227,14 +245,22 @@ else
   NEGATIVE_CONSTRAINTS_BODY=$(build_negative_constraints)
   LESSONS_CONTEXT=$(build_lessons_context qa "$SPEC_DIR")
 
+  # QA may target a stacked PR. Resolve and pin its actual base before the
+  # provider loads any project instructions, settings, skills or hooks.
+  if [ -z "$QA_BASE" ]; then qa_pin_base || exit $?; fi
+
   # Codex needs a sandbox diagnosis the shell can reconcile with Phase 3.
   # Claude gets no note: its prompt stays byte for byte as before.
-  if [ "$(resolve_runner_for_stage qa)" = codex ]; then
+  if [ "$(resolve_runner_for_stage qa)" = codex ] && ! codex_gate_outside_enabled qa; then
     SANDBOX_NOTE="Sandbox: this turn runs inside the Codex sandbox, where binding or listening on a socket, network access and the per-user temp directory can be denied. The test output above comes from the shell outside the sandbox. A test that fails inside the sandbox only for such a reason is not a test failure. Never change, skip or deselect a test to get around the sandbox. If the sandbox is the only thing keeping you from confirming the suite, report status NEEDS_HUMAN with coverage_notes beginning SANDBOX_GATE: and naming the tests and the denied operation. The shell's final run outside the sandbox then decides GREEN or RED. A correctness bug, or a harness that is broken outside the sandbox, stays NEEDS_HUMAN without the prefix."
     SANDBOX_NOTE+=" For a failed or aborted configured gate, you may instead report an exhaustive blockers array, each object with kind gate, command equal to the exact test command above and a free-text reason; coverage_notes needs no prefix. Include every independent blocker with kind product, security or human and an empty command. Only actual Codex command executions at the current HEAD qualify; a reference alone is no evidence. Run the configured command unchanged from the repository root. Never label product, security or decision blockers as gates."
     NEGATIVE_CONSTRAINTS_BODY+=$'\n\n'"$SANDBOX_NOTE"
   fi
 
+  QA_GATE_RULE="Re-run the test command after each change until the suite is green or three consecutive failures on the same test."
+  if codex_gate_outside_enabled qa; then QA_GATE_RULE="Leave the full test gate to Bureau after this pass; you may run focused tests."; fi
+
+  QA_PROVIDER_RAN=true
   QA_RESULT=$("${CLAUDE[@]}" --schema "$SCRIPT_REPO/scripts/bureau-qa.schema.json" --gate-context "$QA_GATE_CONTEXT" "You are the QA agent for $ISSUE ($ISSUE_TITLE) on branch $BRANCH.
 
 $SPEC_CONTEXT${LESSONS_CONTEXT:+
@@ -255,7 +281,7 @@ Rules:
 1. Read the test output and the source it references before editing anything.
 2. Any test you add or modify must exercise a concrete acceptance criterion from spec.md — not happy-path smoke only.
 3. Commit per logical change: '$ISSUE: tests — <what>'. One concern per commit.
-4. Re-run the test command after each change until the suite is green or three consecutive failures on the same test.
+4. ${QA_GATE_RULE:-Re-run the test command after each change until the suite is green or three consecutive failures on the same test.}
 
 Role-specific NEVER:
 - Edit source files to make a failing test pass. That's a bug — flag it NEEDS_HUMAN.
@@ -290,15 +316,25 @@ echo ""
 echo "Phase 3/3: final test run + route"
 QA_GATE_PLAN='{}'
 QA_GATE_RECONCILE=false
+QA_OUTSIDE_MODE=""
+OUTSIDE_RC=0
 if [ "$(resolve_runner_for_stage qa)" = codex ] \
    && QA_GATE_PLAN=$(codex_gate_plan qa "$QA_RESULT" "$QA_GATE_CONTEXT") \
    && [ "$(printf '%s' "$QA_GATE_PLAN" | jq -r '.eligible')" = true ]; then
   OUTSIDE_RC=0
   OUTSIDE_GATE=$(codex_gate_run qa "$QA_GATE_PLAN") || OUTSIDE_RC=$?
-  [ "$OUTSIDE_RC" != 130 ] || exit 130
+  QA_OUTSIDE_MODE=reconcile
+elif codex_gate_outside_enabled qa && [ "$QA_PROVIDER_RAN" = true ]; then
+  OUTSIDE_GATE=$(codex_gate_check qa "$QA_RESULT" "$QA_GATE_CONTEXT") || OUTSIDE_RC=$?
+  QA_OUTSIDE_MODE=delegated
+fi
+if [ -n "$QA_OUTSIDE_MODE" ]; then
+  case "$OUTSIDE_RC" in
+    25|124|130) printf '%s\n' "$OUTSIDE_GATE" >&2; exit "$OUTSIDE_RC" ;;
+  esac
   bureau_ticket_checkpoint "$ISSUE"
   [ "$OUTSIDE_RC" = 0 ] || OUTSIDE_GATE='{"green":false,"logs":[]}'
-  QA_GATE_RECONCILE=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.eligible // false')
+  if [ "$QA_OUTSIDE_MODE" = reconcile ]; then QA_GATE_RECONCILE=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.eligible // false'); fi
   FINAL_GREEN=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green // false')
   : > "$QA_TMP/test2.log"
   while IFS= read -r gate_log; do

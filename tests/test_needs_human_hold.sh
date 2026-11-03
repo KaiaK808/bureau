@@ -25,7 +25,7 @@ trap 'rm -rf "$SB"' EXIT
 git -C "$SB" init -q
 HOLD="$SB/.git/bureau/needs-human-held"
 # The picker as it was: the hold lines in pipeline_pick_next taken out again.
-mkdir -p "$SB/old"; cp "$SCRIPTS"/*.sh "$SCRIPTS/bureau-runtime.py" "$SCRIPTS/bureau-evidence.py" "$SCRIPTS/bureau-spec.py" "$SB/old/"
+mkdir -p "$SB/old"; cp "$SCRIPTS"/*.sh "$SCRIPTS/bureau-ticket.py" "$SCRIPTS/bureau-activity.py" "$SCRIPTS/bureau-runtime.py" "$SCRIPTS/bureau-process.py" "$SCRIPTS/bureau-evidence.py" "$SCRIPTS/bureau-spec.py" "$SB/old/"
 python3 - "$SCRIPTS/bureau-config.sh" "$SB/old/bureau-config.sh" <<'PYOLD'
 import re, sys
 s = open(sys.argv[1]).read()
@@ -233,6 +233,8 @@ echo "PASS the picker skips a held ticket, retries its label and releases it onc
 
 # --- the stage arms ------------------------------------------------------------------
 sandbox_init "EXP-300" "test-branch"
+sed -n -e '/^cap_review_comment() {/,/^}/p' -e '/^post_review_comment() {/,/^}/p' \
+  "$SCRIPTS/code-review-pipeline.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
 AHOLD="$SANDBOX/.git/bureau/needs-human-held/EXP-300"
 arm() {  # $1 = code block, $2 = label rc; sets ARM_OUT ARM_RC
   rm -f "$AHOLD"; : > "$SANDBOX/calls.log"

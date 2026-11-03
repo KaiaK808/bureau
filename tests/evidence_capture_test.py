@@ -1,4 +1,5 @@
 """Exercise the actual shell evidence helpers under errexit and failing I/O."""
+import json
 import os
 from pathlib import Path
 import re
@@ -23,7 +24,7 @@ class CaptureTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau capture ')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
 
     def shell(self, source, closed_stderr=False, **env):
         writer = None
@@ -93,14 +94,22 @@ bureau_evidence() { echo unexpected-evidence; }
                         self.assertEqual(result.stdout.strip(), 'stage-routed', 'optional merge redirection skipped routing')
 
     def test_qa_identity_and_evidence_failures_preserve_test_exit(self):
-        helper = function(SCRIPTS / 'qa-pipeline.sh', 'qa_run_gate')
+        helper = '\n'.join((function(SCRIPTS / 'qa-pipeline.sh', 'qa_run_gate'),
+                            function(CONFIG, 'bureau_run_gate'), function(CONFIG, 'bureau_ticket_policy')))
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
         for code in (0, 14):
             with self.subTest(code=code):
-                result = self.shell('''git() { return 1; }
+                (self.root / 'qa.log').unlink(missing_ok=True)
+                (self.root / '.bureau.json').write_text(json.dumps(dict(repo=dict(test_command='echo test-ran; exit ' + str(code)))))
+                result = self.shell('''cd "$SCRATCH"
+_BUREAU_SCRIPTS_DIR="$PRODUCTION_SCRIPTS"
+BUREAU_CONFIG="$SCRATCH/.bureau.json"
+BUREAU_CURRENT_ISSUE=TEAM-1
+git() { return 1; }
 bureau_record_gate() { return 1; }
-bureau_untrusted_env() { "$@"; }
+bureau_without_secrets() { "$@"; }
 TEST_CMD='echo test-ran; exit '"$TEST_EXIT"
-''' + helper + '\nqa_run_gate "$SCRATCH/qa.log"\n', TEST_EXIT=str(code))
+''' + helper + '\nqa_run_gate "$SCRATCH/qa.log"\n', TEST_EXIT=str(code), PRODUCTION_SCRIPTS=str(SCRIPTS))
                 self.assertEqual(result.returncode, code, result.stderr)
                 self.assertEqual((self.root / 'qa.log').read_text().strip(), 'test-ran')
 
