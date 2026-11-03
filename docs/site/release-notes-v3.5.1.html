@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e6d3138141e9d1b1af01966a5b5d43c62563be20d74684d67552f2d3ee049aa2">
+<meta name="bureau-source-sha256" content="dc730b4e8d04f9835bc9ff3ad0a2bc58b310d084f751f2857abd92daaceda418">
 <title>release-notes-v3.5.1 · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -208,11 +208,16 @@ code #98 does not change and is the known limitation below. The changed
 tests passed locally on macOS. Provider calls are faked in tests. No
 installation has run v3.5.1 before the release. Release preparation
 changes documentation only.</p>
-<!-- release: v3.5.1 main CI result pending -->
-
+<p>For v3.5.1, main CI on merge commit <code>db1ed0e</code> stayed red
+on macOS shard 2/6 after one rerun (<a
+href="https://github.com/KaiaK808/bureau/actions/runs/40753836094">run
+40753836094</a>):
+<code>test_failure_insights_negative_controls.sh</code> and
+<code>test_file_overlap.sh</code> hit fixed 45-second bounds on a slow
+runner; <a href="https://github.com/KaiaK808/bureau/pull/106">#106</a>
+in v3.6.0 derives those waits from absolute deadlines.</p>
 <p>See <a href="releases.html#current-release-status">the v3.5.1 release
-record</a>. The main-branch CI result remains for the maintainer to
-record.</p>
+record</a>.</p>
 <h2 id="known-limitations">Known limitations</h2>
 <p>On macOS CI, a gate cancellation test can intermittently lose the
 cancellation exit code <code>130</code>. A gate run is never falsely

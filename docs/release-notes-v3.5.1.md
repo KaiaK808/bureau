@@ -63,9 +63,9 @@ To roll back, stop every driver, select tag `v3.5.0` in the source skill checkou
 
 The maintainer's release validation record reports two Codex review rounds for [#98](https://github.com/KaiaK808/bureau/pull/98). GitHub CI on #98 at `0ce1b2a` is green on all 10 shards ([run 40703173924](https://github.com/KaiaK808/bureau/actions/runs/40703173924)) after one re-run of a macOS shard. On the first attempt, a gate cancellation test in `tests/provider_adapter_test.py` failed on timing; it covers code #98 does not change and is the known limitation below. The changed tests passed locally on macOS. Provider calls are faked in tests. No installation has run v3.5.1 before the release. Release preparation changes documentation only.
 
-<!-- release: v3.5.1 main CI result pending -->
+For v3.5.1, main CI on merge commit `db1ed0e` stayed red on macOS shard 2/6 after one rerun ([run 40753836094](https://github.com/KaiaK808/bureau/actions/runs/40753836094)): `test_failure_insights_negative_controls.sh` and `test_file_overlap.sh` hit fixed 45-second bounds on a slow runner; [#106](https://github.com/KaiaK808/bureau/pull/106) in v3.6.0 derives those waits from absolute deadlines.
 
-See [the v3.5.1 release record](releases.md#current-release-status). The main-branch CI result remains for the maintainer to record.
+See [the v3.5.1 release record](releases.md#current-release-status).
 
 ## Known limitations
 

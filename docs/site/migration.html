@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c2108a9865913f76d552a1d32bb0c45050aad42be91fbfe4b8a8ddd241c1305a">
+<meta name="bureau-source-sha256" content="ae6edf2d1013b1817e540a56b81d406006a31dac41926a3090e618ecae445020">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -29,10 +29,12 @@ legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
 the v3.2 release candidate, v3.2.0, v3.2.1, the v3.3 release candidates,
 v3.3.0, v3.4.0, v3.4.1, v3.5.0 and v3.5.1 to <strong>Bureau
-v3.6.0</strong>, prepared 2026-11-02. Tagging and publication follow the
-maintainer's go. The commands below require the selected release's
-source skill. See the <a href="release-notes.html">v3.6.0 release
-notes</a>, the previous stable <a
+v3.6.0</strong>, dated 2026-11-03 (prepared 2026-11-02), published as
+the latest <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">GitHub
+Release</a>. The commands below require the selected release's source
+skill. See the <a href="release-notes.html">v3.6.0 release notes</a>, the
+previous stable <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.1">v3.5.1
 release</a> and its <a href="release-notes-v3.5.1.html">release notes</a>,
 the earlier <a
@@ -82,10 +84,6 @@ href="#upgrade-to-v341">Upgrade to v3.4.1</a>, <a
 href="#upgrade-to-v35">Upgrade to v3.5</a>, <a
 href="#upgrade-to-v351">Upgrade to v3.5.1</a> and <a
 href="#upgrade-to-v36">Upgrade to v3.6</a>.</p>
-<!-- release: v3.6.0 tag date pending -->
-
-<!-- release: v3.6.0 GitHub Release URL and publication state pending -->
-
 <h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is
@@ -106,10 +104,10 @@ previous commit and branch/tag privately for rollback;
 installed commit.</p>
 <p>Confirm that <code>origin</code> identifies the official
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
-source changes before continuing; do not reset the skill clone. After
-the selected release is published, use a clean checkout to select its
-exact tag (<code>v3.6.0</code> for this release, <code>v3.5.1</code> for
-the previous stable release, <code>v3.5.0</code>, <code>v3.4.1</code>,
+source changes before continuing; do not reset the skill clone. Use a
+clean checkout to select the published release's exact tag
+(<code>v3.6.0</code> for this release, <code>v3.5.1</code> for the
+previous stable release, <code>v3.5.0</code>, <code>v3.4.1</code>,
 <code>v3.4.0</code>, <code>v3.3.0</code>, <code>v3.2.1</code>,
 <code>v3.2.0</code>, <code>v3.1.0</code>, <code>v3.0.2</code>,
 <code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
@@ -135,17 +133,18 @@ loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
 <h2 id="upgrade-to-v36">Upgrade to v3.6</h2>
-<p><strong>v3.6.0</strong>, prepared <strong>2026-11-02</strong>, is a
-minor release on v3.5.1. Its <a href="release-notes.html">release
-notes</a> list themes, new files, settings, validation and limits. The
-v3.5 exit vocabulary, configuration schema versions, Spec Kit 1.2.2 pin
-and app prepare/finish protocol remain. Tagging and publication follow
-the maintainer's go.</p>
+<p><strong>v3.6.0</strong>, dated <strong>2026-11-03</strong> (prepared
+2026-11-02), is a minor release on v3.5.1, published as the latest <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">GitHub
+Release</a>. Its <a href="release-notes.html">release notes</a> list
+themes, new files, settings, validation and limits. The v3.5 exit
+vocabulary, configuration schema versions, Spec Kit 1.2.2 pin and app
+prepare/finish protocol remain.</p>
 <p><strong>From v3.5.1:</strong> stop all shepherds, queue loops,
 dispatchers and supervisors. Preserve unfinished work, custom
 scripts/interfaces, user instruction text, Spec Kit assets and the
 constitution. Compare installed-script drift before replacing assets.
-After publication, select tag <code>v3.6.0</code> using <a
+Select tag <code>v3.6.0</code> using <a
 href="#select-the-source-release">the source-update steps</a> and
 refresh discovery. Preview and resync the <strong>complete scripts and
 interfaces scopes together</strong> in every adopting repository through
@@ -220,9 +219,9 @@ customizations, run
 <code>python3 scripts/bureau-doctor.py --mode background</code>, restart
 drivers together and qualify a representative ticket before unattended
 dispatch. Live CLI/provider, package-manager/cache and adopting-runner
-qualification remains an operator check; the supplied PR record and
-pending integrated checks are in the <a
-href="release-notes.html#validation">release notes</a>.</p>
+qualification remains an operator check; the PR, integrated-suite and
+main CI results are in the <a href="release-notes.html#validation">release
+notes</a>.</p>
 <p><strong>From v3.4.1:</strong> follow <a
 href="#upgrade-to-v35">Upgrade to v3.5</a> and the <a
 href="release-notes-v3.5.0.html#upgrade-an-existing-installation">v3.5.0
