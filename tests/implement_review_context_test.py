@@ -255,7 +255,8 @@ bash "$SANDBOX/scripts/code-review-pipeline.sh" T-1
                                    'FIXTURE_REVIEW_FAIL': '1' if fail else '0', 'BUREAU_RUN_ID': self.run,
                                    'BUREAU_STAGE_ATTEMPT_ID': self.attempt, 'BUREAU_CURRENT_ISSUE': 'T-1',
                                    'BUREAU_STUB_ISSUE_STATE': 'Build Review'},
-                                   capture_output=True, text=True, timeout=180)
+                                   # 1500 findings take about two minutes on a laptop and longer on CI runners.
+                                   capture_output=True, text=True, timeout=600)
         self.assertEqual(completed.returncode, 18 if fail else 0, completed.stdout[-3000:] + completed.stderr[-3000:])
         self.store.end_attempt(self.run, self.attempt, completed.returncode, self.head)
         bodies = [json.loads(line)['body'] for line in (self.repo / 'posted.jsonl').read_text().splitlines()]
