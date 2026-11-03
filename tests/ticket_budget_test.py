@@ -192,6 +192,9 @@ class AdapterFixture(unittest.TestCase):
                         BUREAU_CURRENT_ISSUE='TEAM-1',BUREAU_TICKET_CONTROL_DIR=str(self.root/'control'),
                         BUREAU_RUN_ID=uuid.uuid4().hex, PYTHONDONTWRITEBYTECODE='1',
                         CLAUDE_CONFIG_DIR=str(self.root/'claude'),CODEX_HOME=str(self.root/'codex'))
+        # Review and QA provider calls read trusted instructions from a pinned base commit.
+        self.env['BUREAU_PROVIDER_CONFIG_BASE']=subprocess.run(['git','-C',str(self.repo),'rev-parse','HEAD'],
+                                                              check=True,capture_output=True,text=True).stdout.strip()
         self.config = dict(agents=dict(runner='codex'),linear=dict(teams=[dict(states=dict(build='active',done='done'))]))
         self.prompt=self.root/'prompt'; self.prompt.write_text('work')
         (self.root/'events').touch(); self.save()
