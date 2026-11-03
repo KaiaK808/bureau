@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a69d0adac926b7c837fbd2b56b43de46cd145b9775b5f4586a8c2660c7af8460">
+<meta name="bureau-source-sha256" content="d4b69d7e941775b1b2d9cafae2a9adea18691cbfc22958e6d8dae07376e636e2">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -25,10 +25,14 @@ release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
 <p>This source tree contains <strong>Bureau v3.6.0</strong>, the current
-release preparation, <strong>prepared 2026-11-02</strong>, a minor
-release on v3.5.1. Tagging and GitHub Release publication follow the
-maintainer's go. The <a href="release-notes.html">release notes</a> cover
-<a href="https://github.com/KaiaK808/bureau/pull/96">#96</a>, <a
+stable release, dated <strong>2026-11-03</strong> (prepared 2026-11-02),
+a minor release on v3.5.1. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">GitHub
+Release</a> is marked as latest and records the exact tagged commit,
+merge commit <code>85b41a7</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/113">#113</a>. The <a
+href="release-notes.html">release notes</a> cover <a
+href="https://github.com/KaiaK808/bureau/pull/96">#96</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/97">#97</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/100">#100</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/101">#101</a>, <a
@@ -45,12 +49,8 @@ href="https://github.com/KaiaK808/bureau/pull/111">#111</a>, the
 <code>actions/checkout</code> 7.0.1 update <a
 href="https://github.com/KaiaK808/bureau/pull/8">#8</a>, and <a
 href="https://github.com/KaiaK808/bureau/pull/112">#112</a>. The <a
-href="../../CHANGELOG.md">changelog</a> retains its Unreleased heading
-until the final change is merged.</p>
-<!-- release: v3.6.0 tag date pending -->
-
-<!-- release: v3.6.0 GitHub Release URL and publication state pending -->
-
+href="../../CHANGELOG.md">changelog</a> section
+<code>[3.6.0] - 2026-11-03</code> records the release.</p>
 <p>Default changes include review/QA configuration isolation with pinned
 base instructions and advisory <code>AGENT_CONFIG</code> findings,
 structured review merging, complete evidence-backed implementation
@@ -72,22 +72,33 @@ by Codex before push within at most three rounds, with two recorded
 maintainer exceptions: #108 took five rounds and <a
 href="https://github.com/KaiaK808/bureau/pull/112">#112</a> took four.
 Each PR's full local suite ran on macOS outside any sandbox before push,
-with failures rerun serially. CI on each PR is green; several macOS
-shards needed one rerun of failed jobs on tests the change does not
-touch. The integrated release branch's suite and CI and the main-branch
-CI record remain pending. Release preparation changes documentation,
-plus three test repairs found by the integrated suite: an import that an
-integration merge dropped from the evidence negative-control script is
-restored, the process-group implement replay anchors at the gate-context
-reset that the implementation-feedback change moved, and the
-ticket-budget adapter fixture pins a provider base, which review and QA
-calls now require.</p>
-<!-- release: integrated release branch full-suite result pending -->
-
-<!-- release: integrated release branch CI result pending -->
-
-<!-- release: main CI run and result pending -->
-
+with failures rerun serially. CI on each PR passed; several macOS shards
+needed one rerun of failed jobs on tests the change does not touch. The
+release included documentation updates and four test-only repairs: an
+import dropped from the evidence negative-control script during
+integration was restored, the implement replay in
+<code>test_process_groups.sh</code> was anchored at the moved
+gate-context reset, <code>test_ticket_budget.sh</code> pinned the
+provider base now required by review and QA calls, and the 1500-findings
+review fixture's timeout was raised from 180 to 600 seconds.</p>
+<p>The integrated release branch's full suite first passed 171 of 174 on
+macOS in two shards outside any sandbox;
+<code>test_process_groups.sh</code> and
+<code>test_ticket_budget.sh</code> were fixed, and
+<code>test_dispatcher.sh</code> passed on a serial rerun. The full suite
+then passed 174 of 174. CI on <a
+href="https://github.com/KaiaK808/bureau/pull/113">#113</a> passed at
+<code>28f4720</code> on all 10 shards (<a
+href="https://github.com/KaiaK808/bureau/actions/runs/41582841038">run
+41582841038</a>) after the 1500-findings fixture timeout was raised from
+180 to 600 seconds; its real review merge and evidence collector take
+about 35 seconds each. Main CI on merge commit <code>85b41a7</code> was
+green on all 10 shards after one Ubuntu job rerun (<a
+href="https://github.com/KaiaK808/bureau/actions/runs/41591725054">run
+41591725054</a>);
+<code>test_shutdown_reaps_provider_before_zombie_group_probe</code> in
+<code>tests/dispatcher_test.py</code> hit the fixture's tight one-second
+stop grace under load, and widening it is planned for v3.7.</p>
 <p><strong>Known limitations:</strong> The v3.5.1 cancellation-exit loss
 is addressed. Uncertain process termination retains holds/ownership and
 requires operator inspection. Trusted instruction reads,
@@ -127,8 +138,14 @@ code #98 does not change and is the known limitation below. The changed
 tests passed locally on macOS. Provider calls are faked in tests. No
 installation has run v3.5.1 before the release. Its release preparation
 changed documentation only.</p>
-<!-- release: v3.5.1 main CI result pending -->
-
+<p>For v3.5.1, main CI on merge commit <code>db1ed0e</code> stayed red
+on macOS shard 2/6 after one rerun (<a
+href="https://github.com/KaiaK808/bureau/actions/runs/40753836094">run
+40753836094</a>):
+<code>test_failure_insights_negative_controls.sh</code> and
+<code>test_file_overlap.sh</code> hit fixed 45-second bounds on a slow
+runner; <a href="https://github.com/KaiaK808/bureau/pull/106">#106</a>
+in v3.6.0 derives those waits from absolute deadlines.</p>
 <p><strong>v3.5.1 limitation at release:</strong> On macOS CI, a gate
 cancellation test could intermittently lose the cancellation exit code
 <code>130</code>, without falsely green gates. The v3.6.0 termination

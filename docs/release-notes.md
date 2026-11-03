@@ -1,10 +1,6 @@
 # Bureau v3.6.0 — review isolation, evidence and bounded runs
 
-**Release preparation · prepared 2026-11-02 · planned source tag `v3.6.0`.** v3.6.0 is a minor release on [v3.5.1](release-notes-v3.5.1.md). Tagging and GitHub Release publication follow the maintainer's go.
-
-<!-- release: v3.6.0 tag date pending -->
-
-<!-- release: v3.6.0 GitHub Release URL and publication state pending -->
+**Stable release · 2026-11-03 · source tag `v3.6.0` · prepared 2026-11-02.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.6.0) is marked as latest and records the exact tagged commit, merge commit `85b41a7` of [#113](https://github.com/KaiaK808/bureau/pull/113). v3.6.0 is a minor release on [v3.5.1](release-notes-v3.5.1.md).
 
 The release includes [#96](https://github.com/KaiaK808/bureau/pull/96), [#97](https://github.com/KaiaK808/bureau/pull/97), [#100](https://github.com/KaiaK808/bureau/pull/100), [#101](https://github.com/KaiaK808/bureau/pull/101), [#102](https://github.com/KaiaK808/bureau/pull/102), [#103](https://github.com/KaiaK808/bureau/pull/103), [#104](https://github.com/KaiaK808/bureau/pull/104), [#105](https://github.com/KaiaK808/bureau/pull/105), [#106](https://github.com/KaiaK808/bureau/pull/106), [#107](https://github.com/KaiaK808/bureau/pull/107), [#108](https://github.com/KaiaK808/bureau/pull/108), [#109](https://github.com/KaiaK808/bureau/pull/109), [#110](https://github.com/KaiaK808/bureau/pull/110), [#111](https://github.com/KaiaK808/bureau/pull/111), the `actions/checkout` 7.0.1 dependency update [#8](https://github.com/KaiaK808/bureau/pull/8), and [#112](https://github.com/KaiaK808/bureau/pull/112) for review and QA configuration isolation. The v3 exit-code vocabulary, configuration schema versions and Spec Kit 1.2.2 pin stay in place.
 
@@ -58,7 +54,7 @@ Bounded PR/Linear comments carry a final run/stage/round/verdict footer. Impleme
 
 Fixtures now wait for recorded dispatcher processes within a deadline, account for zombies, retain stable process identities and clean up owned descendants on failure. Shared absolute deadlines cover slow pipeline setup, execution and teardown; survivor checks still reject live owned processes or unreadable owned state. Mutation controls validate the mutated setup and its baseline. Outcome fixtures include the classifier helper and assert persisted stage outcomes. These are test changes with no adopting-repository resync action.
 
-The public-reference check scans tracked and nonignored new files, including NUL-safe names, while excluding ignored bytecode. CI weights and fixtures account for long-running controls. The repository workflow updates `actions/checkout` from 7.0.0 to 7.0.1 in [#8](https://github.com/KaiaK808/bureau/pull/8). See [validation](#validation) for the supplied PR record and pending integrated checks.
+The public-reference check scans tracked and nonignored new files, including NUL-safe names, while excluding ignored bytecode. CI weights and fixtures account for long-running controls. The repository workflow updates `actions/checkout` from 7.0.0 to 7.0.1 in [#8](https://github.com/KaiaK808/bureau/pull/8). See [validation](#validation) for the PR, integrated-suite and main CI results.
 
 ### Onboarding and Spec Kit helpers
 
@@ -128,7 +124,7 @@ Existing `BUREAU_REVIEW_MERGE_CAP_KB` stays at 60 KiB by default and now applies
 
 ## Upgrade an existing installation
 
-**From v3.5.1:** stop all shepherds, queue loops, dispatchers and supervisors; preserve unfinished work, customized assets, user instructions, Spec Kit assets and the constitution. Compare installed-script drift before replacing assets. After the maintainer publishes the release, select tag `v3.6.0` in the source skill checkout and refresh discovery using [the source-update instructions](migration.md#select-the-source-release). Preview and resolve conflicts through [the migration guide](migration.md#preview-and-resolve-asset-conflicts).
+**From v3.5.1:** stop all shepherds, queue loops, dispatchers and supervisors; preserve unfinished work, customized assets, user instructions, Spec Kit assets and the constitution. Compare installed-script drift before replacing assets. Select tag `v3.6.0` in the source skill checkout and refresh discovery using [the source-update instructions](migration.md#select-the-source-release). Preview and resolve conflicts through [the migration guide](migration.md#preview-and-resolve-asset-conflicts).
 
 Resync the **complete scripts and interfaces scopes together** in every adopting repository, including all new helpers and schemas; restart drivers only at the end, as the last step below. A running shell keeps its loaded code; partial helper/schema/pipeline updates are incompatible. Use the installation's existing target selection:
 
@@ -156,13 +152,9 @@ To roll back, stop every driver and reconcile all unfinished writers and holds b
 
 The maintainer's release validation record reports every PR reviewed by Codex before push within at most three rounds, with two recorded maintainer exceptions: [#108](https://github.com/KaiaK808/bureau/pull/108) took five rounds and [#112](https://github.com/KaiaK808/bureau/pull/112) took four. Each PR's full local suite ran on macOS outside any sandbox before push, with failures rerun serially. CI on each PR is green; several macOS shards needed one rerun of failed jobs on tests the change does not touch. Release preparation changes documentation, plus three test repairs found by the integrated suite: an import that an integration merge dropped from the evidence negative-control script is restored, the process-group implement replay anchors at the gate-context reset that the implementation-feedback change moved, and the ticket-budget adapter fixture pins a provider base, which review and QA calls now require.
 
-<!-- release: integrated release branch full-suite result pending -->
+The integrated release branch's full suite passed 171 of 174 on its first run on macOS; the two integration breaks above were fixed and `test_dispatcher.sh` passed on a serial rerun. Its first CI run timed out in the 1500-findings review fixture, where the review merge and the evidence collector take about 35 seconds each; the fixture now allows 600 seconds, a fourth test-only repair. The full suite then passed 174 of 174, and CI on [#113](https://github.com/KaiaK808/bureau/pull/113) passed at `28f4720`. Main CI on the merge commit `85b41a7`: [run 41591725054](https://github.com/KaiaK808/bureau/actions/runs/41591725054), green after one rerun of a failed Ubuntu job; the dispatcher shutdown fixture's one-second stop grace is too tight under load, and widening it is tracked for v3.7.
 
-<!-- release: integrated release branch CI result pending -->
-
-<!-- release: main CI run and result pending -->
-
-The integrated branch's suite and CI and the main-branch CI record remain pending. The documentation preparation uses `bash tests/test_docs.sh` and `bash tests/test_no_internal_refs.sh`. See [current release status](releases.md#current-release-status).
+The documentation preparation uses `bash tests/test_docs.sh` and `bash tests/test_no_internal_refs.sh`. See [current release status](releases.md#current-release-status).
 
 ## Known limitations
 

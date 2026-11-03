@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="260ed0986a47bbf75663bd4989f8f6f0374a8202acc8a701da67041300ff5b24">
+<meta name="bureau-source-sha256" content="894d472fa0720d11e098fd52140d26257186b381687abb94eac170b30e826d76">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -18,14 +18,13 @@
 <main class="bhb-main"><h1
 id="bureau-v360--review-isolation-evidence-and-bounded-runs">Bureau
 v3.6.0 — review isolation, evidence and bounded runs</h1>
-<p><strong>Release preparation · prepared 2026-11-02 · planned source
-tag <code>v3.6.0</code>.</strong> v3.6.0 is a minor release on <a
-href="release-notes-v3.5.1.html">v3.5.1</a>. Tagging and GitHub Release
-publication follow the maintainer's go.</p>
-<!-- release: v3.6.0 tag date pending -->
-
-<!-- release: v3.6.0 GitHub Release URL and publication state pending -->
-
+<p><strong>Stable release · 2026-11-03 · source tag <code>v3.6.0</code>
+· prepared 2026-11-02.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">GitHub
+Release</a> is marked as latest and records the exact tagged commit,
+merge commit <code>85b41a7</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/113">#113</a>. v3.6.0 is a
+minor release on <a href="release-notes-v3.5.1.html">v3.5.1</a>.</p>
 <p>The release includes <a
 href="https://github.com/KaiaK808/bureau/pull/96">#96</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/97">#97</a>, <a
@@ -240,8 +239,8 @@ including NUL-safe names, while excluding ignored bytecode. CI weights
 and fixtures account for long-running controls. The repository workflow
 updates <code>actions/checkout</code> from 7.0.0 to 7.0.1 in <a
 href="https://github.com/KaiaK808/bureau/pull/8">#8</a>. See <a
-href="#validation">validation</a> for the supplied PR record and pending
-integrated checks.</p>
+href="#validation">validation</a> for the PR, integrated-suite and main
+CI results.</p>
 <h3 id="onboarding-and-spec-kit-helpers">Onboarding and Spec Kit
 helpers</h3>
 <p>App finish now prints the exact release/prepare recovery commands
@@ -524,10 +523,9 @@ installation</h2>
 <p><strong>From v3.5.1:</strong> stop all shepherds, queue loops,
 dispatchers and supervisors; preserve unfinished work, customized
 assets, user instructions, Spec Kit assets and the constitution. Compare
-installed-script drift before replacing assets. After the maintainer
-publishes the release, select tag <code>v3.6.0</code> in the source
-skill checkout and refresh discovery using <a
-href="migration.html#select-the-source-release">the source-update
+installed-script drift before replacing assets. Select tag
+<code>v3.6.0</code> in the source skill checkout and refresh discovery
+using <a href="migration.html#select-the-source-release">the source-update
 instructions</a>. Preview and resolve conflicts through <a
 href="migration.html#preview-and-resolve-asset-conflicts">the migration
 guide</a>.</p>
@@ -621,14 +619,21 @@ merge dropped from the evidence negative-control script is restored, the
 process-group implement replay anchors at the gate-context reset that
 the implementation-feedback change moved, and the ticket-budget adapter
 fixture pins a provider base, which review and QA calls now require.</p>
-<!-- release: integrated release branch full-suite result pending -->
-
-<!-- release: integrated release branch CI result pending -->
-
-<!-- release: main CI run and result pending -->
-
-<p>The integrated branch's suite and CI and the main-branch CI record
-remain pending. The documentation preparation uses
+<p>The integrated release branch's full suite passed 171 of 174 on its
+first run on macOS; the two integration breaks above were fixed and
+<code>test_dispatcher.sh</code> passed on a serial rerun. Its first CI
+run timed out in the 1500-findings review fixture, where the review
+merge and the evidence collector take about 35 seconds each; the fixture
+now allows 600 seconds, a fourth test-only repair. The full suite then
+passed 174 of 174, and CI on <a
+href="https://github.com/KaiaK808/bureau/pull/113">#113</a> passed at
+<code>28f4720</code>. Main CI on the merge commit <code>85b41a7</code>:
+<a
+href="https://github.com/KaiaK808/bureau/actions/runs/41591725054">run
+41591725054</a>, green after one rerun of a failed Ubuntu job; the
+dispatcher shutdown fixture's one-second stop grace is too tight under
+load, and widening it is tracked for v3.7.</p>
+<p>The documentation preparation uses
 <code>bash tests/test_docs.sh</code> and
 <code>bash tests/test_no_internal_refs.sh</code>. See <a
 href="releases.html#current-release-status">current release

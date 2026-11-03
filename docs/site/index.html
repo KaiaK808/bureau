@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="166393c29b1c342db61836930913858da985673a15b61b028402c7528861717d">
+<meta name="bureau-source-sha256" content="a251e250775402a5852768c585ec43f4c46d662d090d84a3a4dc57d0503ac0b7">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -69,8 +69,8 @@ unattended adoption, qualify a representative live ticket in your
 repository. See the <a href="codex-acceptance.html">acceptance
 record</a> for verified coverage and remaining live checks.</p>
 <h2 id="install">Install</h2>
-<p>After the maintainer publishes v3.6.0 (prepared 2026-11-02), install
-its source, keep one clone and expose it to the assistants you use. See
+<p>Install the source for v3.6.0, dated 2026-11-03 (prepared
+2026-11-02), keep one clone and expose it to the assistants you use. See
 <a href="releases.html#current-release-status">release status</a> for
 publication and validation. The commands below select the published
 tag.</p>
@@ -250,8 +250,8 @@ work in flight. Manual Merge is excluded by default; set
 single-flight behavior. Build Review always counts. Ownership and
 schedule validation remain required.</p>
 <h2 id="update-and-migrate">Update and migrate</h2>
-<p>After publication, select tag <code>v3.6.0</code> in the source clone
-that supplies <code>bureau-init</code> using the <a
+<p>Select tag <code>v3.6.0</code> in the source clone that supplies
+<code>bureau-init</code> using the <a
 href="migration.html#select-the-source-release">source-update
 instructions</a> and refresh skill discovery. From v3.5.1, stop every
 driver, preserve unfinished work and customized assets, compare
@@ -297,14 +297,13 @@ ownership. Its private backup covers configuration only. Installing
 Codex interfaces does not switch the background runner.</p>
 <p>The <a href="release-notes.html">v3.6.0 release notes</a> and <a
 href="../../CHANGELOG.md">changelog</a> list what changes and what adopters
-must do. Tagging and GitHub Release publication follow the maintainer's
-go. v2.0.0 was the first tagged release; earlier source installs were
-untagged. The <a href="releases.html">release process</a> defines
-immutable tags, GitHub Release notes and qualification before
-publication. Bureau release numbers are independent of configuration
-schema versions.</p>
-<!-- release: v3.6.0 GitHub Release URL and publication state pending -->
-
+must do. The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">v3.6.0
+GitHub Release</a> is marked as latest. v2.0.0 was the first tagged
+release; earlier source installs were untagged. The <a
+href="releases.html">release process</a> defines immutable tags,
+GitHub Release notes and qualification before publication. Bureau
+release numbers are independent of configuration schema versions.</p>
 <p>v3 changes the exit-code contract between stages and their drivers
 and needs configuration set before the resync; see the <a
 href="release-notes-v3.0.0.html">v3.0.0 release notes</a> and <a
@@ -426,23 +425,32 @@ were new. See its <a href="release-notes-v3.5.1.html">release
 notes</a> for the validation record and the macOS cancellation
 limitation recorded at that release; v3.6.0 addresses the
 cancellation-exit loss.</p>
-<p>v3.6.0, prepared 2026-11-02, is the current release preparation, a
-minor release on v3.5.1. It adds review/QA configuration isolation,
-complete structured review merge and optional ADR/source checks, an
-evidence packet with an advisory risk tier, opt-in cumulative ticket
-budgets and trusted progress, durable process termination holds, opt-in
-Codex full gates outside the inner sandbox, offline pnpm/Yarn Classic
-restoration, Spec Kit helper mode repair and architecture recipes. The
-v3.5 exit vocabulary and Spec Kit 1.2.2 pin remain. Every PR was
-reviewed by Codex before push within at most three rounds, with
+<p>v3.6.0, dated 2026-11-03 (prepared 2026-11-02), is the current stable
+release, a minor release on v3.5.1. It adds review/QA configuration
+isolation, complete structured review merge and optional ADR/source
+checks, an evidence packet with an advisory risk tier, opt-in cumulative
+ticket budgets and trusted progress, durable process termination holds,
+opt-in Codex full gates outside the inner sandbox, offline pnpm/Yarn
+Classic restoration, Spec Kit helper mode repair and architecture
+recipes. The v3.5 exit vocabulary and Spec Kit 1.2.2 pin remain. Every
+PR was reviewed by Codex before push within at most three rounds, with
 maintainer exceptions of five rounds for #108 and four for <a
 href="https://github.com/KaiaK808/bureau/pull/112">#112</a>. Each PR's
 full local suite ran on macOS outside any sandbox, with failures rerun
-serially; each PR's CI is green after some macOS job reruns on tests the
-change does not touch. See <a href="release-notes.html">release
-notes</a> for the complete scope, defaults, upgrade actions, limits and
-pending integrated/main validation. Publication follows the maintainer's
-go.</p>
+serially; each PR's CI passed after some macOS job reruns on tests the
+change does not touch. The integrated macOS suite first passed 171 of
+174; two integration breaks were fixed and
+<code>test_dispatcher.sh</code> passed on a serial rerun. The full suite
+then passed 174 of 174. CI on <a
+href="https://github.com/KaiaK808/bureau/pull/113">#113</a> passed at
+<code>28f4720</code> on all 10 shards after the review-fixture timeout
+repair. Main CI on merge commit <code>85b41a7</code> was green on all 10
+shards after one Ubuntu job rerun (<a
+href="https://github.com/KaiaK808/bureau/actions/runs/41591725054">run
+41591725054</a>); the dispatcher shutdown fixture's one-second stop
+grace is too tight under load, and widening it is planned for v3.7. See
+<a href="release-notes.html">release notes</a> for the complete
+scope, defaults, upgrade actions, limits and validation record.</p>
 <h2 id="documentation">Documentation</h2>
 <table>
 <thead>
