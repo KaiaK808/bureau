@@ -6,6 +6,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Added
+
+- Read-only maintainer baseline: `python3 -I scripts/bureau-baseline.py --repo PATH [--weeks N] [--format md|json]` reports retained weekly completion, abandonment, review rounds, cost estimates, attribution and defect back-references, with sources and explicit missing measurements. Eligibility history and Triage entry remain unavailable rather than inferred. Update the source checkout to use it; no asset resync or configuration change. Requires Python 3.9+, local Git, authenticated `gh` for PRs and optional jq/Linear credentials for current states. It keeps ticketless runs separate, accepts nested provider stages and conflict-resolver receipts linked to their enclosing stage, excludes approval reuse and gate polling from review rounds, verifies Bureau's own base integrations before counting attribution, and matches defect references against every earlier owned PR; the maintainer guide lists the remaining measurement limits. Validation uses synthetic evidence, real local Git and fake API readers, including byte-identical fixture checks; live historical completeness and defect causality are not established.
+
 ## [3.6.0] - 2026-11-03
 
 v3.6.0 is a minor release on v3.5.1, tagged and published 2026-11-03 (prepared 2026-11-02). It collects PRs #96, #97, #100–#112 and the `actions/checkout` 7.0.1 dependency update #8. The release adds pinned review and QA instructions, complete review evidence, bounded ticket runs and safer process cleanup. See the [v3.6.0 release notes](docs/release-notes.md) for upgrade actions, validation and known limitations.
