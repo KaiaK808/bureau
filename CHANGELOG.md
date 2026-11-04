@@ -8,6 +8,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 - Document the maintainer-accepted control-plane design in [ADR 0014](docs/adr/0014-control-plane.md) with the new `accepted (design)` status: one owning authority, transactional state/outbox and a supervised review-to-routing pilot. No implementation, runtime compatibility change or upgrade action yet; checks validate documentation only.
 
+### Fixed
+
+- The dispatcher shutdown fixture observes wrapper exit through a non-inherited FIFO descriptor, which closes even under SIGKILL. It checks EOF immediately after waiting for the dispatcher, before log/event I/O can hide a late exit. The one-second grace and provider-before-dispatcher check remain. Tests only; no resync needed. Validated with 20 parallel local runs under CPU load and a delayed no-join control; historical PID inspection remains sandbox-limited.
+
 ## [3.6.0] - 2026-11-03
 
 v3.6.0 is a minor release on v3.5.1, tagged and published 2026-11-03 (prepared 2026-11-02). It collects PRs #96, #97, #100–#112 and the `actions/checkout` 7.0.1 dependency update #8. The release adds pinned review and QA instructions, complete review evidence, bounded ticket runs and safer process cleanup. See the [v3.6.0 release notes](docs/release-notes.md) for upgrade actions, validation and known limitations.
