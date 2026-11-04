@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6988abbced764b9cf6f6a85566dfc6334630c7def8e38078c74ea9aae9bbd92d">
+<meta name="bureau-source-sha256" content="4f5996123c269e24c250bf5c47219e596954294ae0098d873aef03403af9a1a1">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -133,12 +133,20 @@ label or durable local hold</td>
 <td><code>18</code></td>
 <td>gh-failed</td>
 <td><code>gh</code> CLI command failed (e.g. <code>gh pr merge</code>
-rejected), or the implement stage's final <code>git push</code> failed
-twice while origin (fetched again) lacks commits of the branch or cannot
-be read; also: the spec stage could not fetch origin, verify its base or
-read/reserve a spec number</td>
+rejected), or implement's post-push PR lookup/ready/view/create failed
+after bounded transient retries (ready and draft paths); a failed lookup
+never counts as no PR. Also: implement's final <code>git push</code>
+failed twice while origin (fetched again) lacks commits of the branch or
+cannot be read; the spec stage could not fetch origin, verify its base
+or read/reserve a spec number</td>
 <td>API rate limit, missing permissions, branch protection, origin
-rejecting or unreachable</td>
+rejecting or unreachable. For a post-push PR failure, the hold message
+confirms the branch is pushed and only the PR step is incomplete: rerun
+the implement stage once GitHub recovers. No handoff occurs. Defaults:
+three retries after 2/4/8 s; <code>BUREAU_IMPL_PR_RETRIES</code> accepts
+0–5 and <code>BUREAU_IMPL_PR_RETRY_WAIT</code> an initial 0–60 s,
+doubling up to 60 s (environment or <code>.env</code>; invalid values
+use defaults). Permanent errors hold without retry.</td>
 </tr>
 <tr>
 <td><code>19</code></td>
