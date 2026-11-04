@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c980e79bde66506bb5a77f7fed1accb8f53899ff0701f667a7bf71b755a06de4">
+<meta name="bureau-source-sha256" content="bb7397a526fdeec3de58283cce21707d71c09a9d29d11d5d1c3b733eae3cc09b">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -518,13 +518,15 @@ Included in review policy identity</td>
 <td><code>false</code></td>
 <td>Include a bounded ADR index from pinned PR base/head in all three
 specialist prompts. Only accepted records with identical paths and blob
-IDs are settled, including for Known-limit exclusions.
-Added/changed/removed records are non-authoritative proposals; citations
-are valid but never waive or downgrade findings. Enabled selects the
-extended ADR schema. Disabled keeps legacy merger schema bytes, Codex
-wire projection and receipt schema digest; unsolicited
-<code>adr_refs</code> are unexpected result fields. Shared hold guidance
-and conservative fallback rules apply in either mode</td>
+IDs are settled, including for Known-limit exclusions;
+<code>accepted (design)</code> grants no settled authority and its Known
+limits never excuse findings. Added/changed/removed records are
+non-authoritative proposals; citations are valid but never waive or
+downgrade findings. Enabled selects the extended ADR schema. Disabled
+keeps legacy merger schema bytes, Codex wire projection and receipt
+schema digest; unsolicited <code>adr_refs</code> are unexpected result
+fields. Shared hold guidance and conservative fallback rules apply in
+either mode</td>
 </tr>
 <tr>
 <td><code>agents.review_adr_budget_bytes</code></td>
