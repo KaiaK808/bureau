@@ -6,6 +6,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Fixed
+
+- Provider failure classification now reads terminal Codex/Claude errors and CLI stderr without MCP server attribution, so tool output, agent messages and MCP authentication notices cannot mask model capacity failures. "At capacity" and "overloaded" report outcome `capacity` with existing exit 23; genuine CLI login/401 failures retain exit 16. Update the source skill and resync the complete scripts scope after comparing installation drift. Retry policy, waits and evidence schema are unchanged; validation uses fake providers, with live CLI qualification outstanding.
+
 ## [3.6.0] - 2026-11-03
 
 v3.6.0 is a minor release on v3.5.1, tagged and published 2026-11-03 (prepared 2026-11-02). It collects PRs #96, #97, #100–#112 and the `actions/checkout` 7.0.1 dependency update #8. The release adds pinned review and QA instructions, complete review evidence, bounded ticket runs and safer process cleanup. See the [v3.6.0 release notes](docs/release-notes.md) for upgrade actions, validation and known limitations.

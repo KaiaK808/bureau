@@ -222,7 +222,7 @@ Every pipeline script:
 | 20 | stopped-before-merge | review boundary reached |
 | 21 | ownership-conflict | checkout/issue ownership refused |
 | 22 | provider-or-result-error | provider execution or result validation failed |
-| 23 | quota-wait | provider quota requires waiting |
+| 23 | quota-wait | provider quota or model capacity requires waiting (`quota` or `capacity` outcome) |
 | 24 | environment-blocked | required execution environment unavailable (includes Node dependencies that could not be restored) |
 | 25 | needs-human-or-paused | human attention or dispatch pause |
 | 26 | cancelled-ticket | ticket is cancelled |
