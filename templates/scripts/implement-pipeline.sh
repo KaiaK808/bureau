@@ -614,12 +614,12 @@ open_or_update_pr_draft() {
     return 0
   fi
   local existing
-  existing=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+  existing=$(bureau_gh_pr_retry "$BRANCH" list --head "$BRANCH" --json number --jq '.[0].number') || return 18
   if [ -n "$existing" ] && [ "$existing" != null ]; then
-    gh pr view "$existing" --json url --jq '.url'
+    bureau_gh_pr_retry "$BRANCH" view "$existing" --json url --jq '.url'
   else
     bureau_ticket_checkpoint "$ISSUE"
-    gh pr create --draft \
+    bureau_gh_pr_retry "$BRANCH" create --draft \
       --title "$issue: $title" \
       --body "## Summary
 Implementation of $issue: $title (in progress).
@@ -639,19 +639,15 @@ open_or_update_pr_ready() {
     return 0
   fi
   local existing
-  existing=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+  existing=$(bureau_gh_pr_retry "$BRANCH" list --head "$BRANCH" --json number --jq '.[0].number') || return 18
   if [ -n "$existing" ] && [ "$existing" != null ]; then
-    # `gh pr ready` is a no-op if the PR is already ready; both are exit 0.
-    # A real non-zero exit (transient API error, missing permission, deleted
-    # PR) must surface so a human can finish the flip — FR-007.
+    # Complete the ready step before handing the pushed branch on.
     bureau_ticket_checkpoint "$ISSUE"
-    if ! gh pr ready "$existing" >/dev/null 2>&1; then
-      echo "  WARN: failed to mark PR #$existing as ready-for-review; please flip manually" >&2
-    fi
-    gh pr view "$existing" --json url --jq '.url'
+    bureau_gh_pr_retry "$BRANCH" ready "$existing" >/dev/null || return 18
+    bureau_gh_pr_retry "$BRANCH" view "$existing" --json url --jq '.url'
   else
     bureau_ticket_checkpoint "$ISSUE"
-    gh pr create \
+    bureau_gh_pr_retry "$BRANCH" create \
       --title "$issue: $title" \
       --body "## Summary
 Implementation of $issue: $title

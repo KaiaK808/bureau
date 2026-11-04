@@ -10,7 +10,8 @@
 #      the PR state asked exactly once; the push comes before the PR is marked ready
 #   3  false, no PR: a push after each iteration, as by default
 #   4  false, gh prints the literal "null": no PR, pushes as by default
-#   5  false, gh fails: no PR, pushes as by default, the stage goes on
+#   5  false, gh fails: the initial push check pushes as by default; the post-push
+#      PR lookup stops with 18 instead of creating after a failed lookup
 #   6  null, PR open: the default
 #   7  `agents.implement: true` (a boolean), PR open: the default, without a warning
 #   8  the string "false", PR open: the default, with a warning naming the value
@@ -124,10 +125,11 @@ teardown
 setup "$OFF"
 export GH_STUB_EXISTING_PR=7
 pr3_gh_pr_list fail
-pr3_run_implement
-check_eq 0 "$LAST_RC" "5 exit"
-check_eq 4 "$(pr3_pushes)" "5 a failing gh is no PR"
+BUREAU_IMPL_PR_RETRY_WAIT=0 pr3_run_implement
+check_eq 18 "$LAST_RC" "5 post-push lookup failure"
+check_eq 4 "$(pr3_pushes)" "5 pushes still happen before the PR step"
 check_eq 3 "$(pr3_receives)" "5 origin received each iteration"
+hasnt $'^gh\tpr\tcreate' "$(gh_log)" "5 failed lookup cannot create a PR"
 teardown
 
 # 6 — null
