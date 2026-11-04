@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b0489d9ea4e524551fdbaf7fb37c09e217111d2e3a0f087fd9c32ac69af1aa3b">
+<meta name="bureau-source-sha256" content="6c0a175d2841857fe3e9a63f46ee2a74506d78e09d12cfd42b9e3f907988f78d">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -266,6 +266,17 @@ advance it. Budgets and progress are both off by default; stage/review
 limits remain independent.</p>
 <h2 id="cooperative-ticket-withdrawal">Cooperative ticket
 withdrawal</h2>
+<p>Shepherd's <code>--from-stage</code> accepts a backlog or other
+inactive ticket (as classified by
+<code>agents.ticket_active_states</code>) only when the requested move
+has no admission gate, claims it and moves directly to the requested
+state with a strict withdrawal checkpoint immediately afterward; gated
+targets (Build with <code>agents.file_overlap_gate</code> enabled, Spec
+with <code>agents.max_concurrent_issues &gt; 0</code>) refuse with exit
+25 before any ownership claim, label or move and require a manual move
+into an active state first, while terminal states, human holds,
+ownership conflicts, ticket policy stops and withdrawal checks after
+startup retain their existing behavior.</p>
 <p>Every cooperative stop creates its shared latch before writing
 diagnostics. Closed stderr or SIGPIPE cannot prevent preservation or
 change the stop exit, including withdrawal with both ticket policies
