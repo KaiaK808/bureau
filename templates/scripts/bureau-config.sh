@@ -526,6 +526,49 @@ BUREAU_SPECS_DIR=$(bureau_get '.repo.specs_dir // "specs"')
 # Projects filter (comma-separated UUIDs; empty = all projects in the team)
 BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 
+# bureau_gh_pr_retry <pushed-branch> <verb> [args...]. Only for implement's
+# post-push PR step: keep stdout clean for the URL/number capture, retry HTTP
+# 429/5xx and transport errors, and hold with 18 on failure. Other stages keep
+# their existing GitHub handling. Defaults: three retries, waiting 2/4/8 s;
+# env/.env may set 0..5 retries and a 0..60 s initial wait (doubles, capped at 60).
+bureau_gh_pr_retry() {
+  local branch="$1"
+  shift
+  local retries wait attempt=1 output error_file
+  retries=$(bureau_number BUREAU_IMPL_PR_RETRIES "${BUREAU_IMPL_PR_RETRIES:-3}" 3 0 5)
+  wait=$(bureau_number BUREAU_IMPL_PR_RETRY_WAIT "${BUREAU_IMPL_PR_RETRY_WAIT:-2}" 2 0 60)
+  error_file=$(mktemp -t bureau-gh-pr.XXXXXXXX) || {
+    echo "HOLD: branch '$branch' is pushed; only the PR step is incomplete. Re-run the implement stage (exit 18: gh-failed)." >&2
+    return 18
+  }
+  while :; do
+    if output=$(gh pr "$@" 2>"$error_file"); then
+      rm -f "$error_file"
+      printf '%s\n' "$output"
+      return 0
+    fi
+    # gh reports an already-ready PR as an error. A rerun after a successful
+    # ready flip but a failed URL read must still be able to finish.
+    if [ "$1" = ready ] && grep -Fq 'is already "ready for review"' "$error_file"; then
+      rm -f "$error_file"
+      return 0
+    fi
+    if [ "$attempt" -gt "$retries" ] || ! LC_ALL=C grep -Eiq \
+      'HTTP (429|5[0-9][0-9])|rate limit|timed out|timeout|context deadline exceeded|connection (reset|refused)|(^|[[:space:]:])EOF([[:space:]]|$)|TLS handshake|temporary failure|no such host|network is unreachable' "$error_file"; then
+      break
+    fi
+    echo "gh pr $1: transient failure, attempt $attempt of $((retries + 1)); retrying in ${wait}s" >&2
+    sleep "$wait" || break
+    attempt=$((attempt + 1))
+    wait=$((wait * 2))
+    [ "$wait" -le 60 ] || wait=60
+  done
+  rm -f "$error_file"
+  echo "gh pr $1 failed after $attempt attempt(s)." >&2
+  echo "HOLD: branch '$branch' is pushed; only the PR step is incomplete. Re-run the implement stage (exit 18: gh-failed)." >&2
+  return 18
+}
+
 # ── Linear fetches: check the answer, retry, else stop with our own code ──
 # Carried over from an installation, where every fetch used to be
 # passed on unchecked: an error page ended at `jq` with exit 5, while an answer
