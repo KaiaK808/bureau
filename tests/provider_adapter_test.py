@@ -125,6 +125,7 @@ if os.environ.get('SLEEP'): time.sleep(float(os.environ['SLEEP']))
 if name=='codex' and 'CODEX_STREAM' in os.environ:
     print(os.environ['CODEX_STREAM'],end='')
 if os.environ.get('FAIL'):
+    if name=='claude' and os.environ.get('RAW'): print(os.environ['RAW'])
     print(os.environ['FAIL'],file=sys.stderr); sys.exit(1)
 final=os.environ.get('FINAL','final response')
 if os.environ.get('FINAL_FILE'): final=pathlib.Path(os.environ['FINAL_FILE']).read_text()
@@ -1435,6 +1436,94 @@ p.shutil.rmtree=fail_remove
                 self.assertEqual(metadata['outcome'],outcome)
                 self.assertEqual(metadata['provider_exit'],1)
                 self.assertIn(stream,(evidence/'stdout.log').read_text())
+
+    def test_codex_capacity_ignores_tool_agent_and_mcp_authentication(self):
+        stream='\n'.join(json.dumps(event) for event in (
+            {'type':'item.completed','item':{'type':'command_execution',
+                'aggregated_output':'fixture: authentication required'}},
+            {'type':'item.completed','item':{'type':'agent_message','text':'Checking authentication settings'}},
+            {'type':'turn.failed','error':{'message':'Selected model is at capacity'}},
+        ))+'\n'
+        stderr='ERROR rmcp::transport::worker: AuthRequired: authentication required'
+        result=self.run_provider(CODEX_STREAM=stream,FAIL=stderr,code=23)
+        self.assertEqual(result.stdout,'')
+        evidence,metadata=self.evidence()
+        self.assertEqual(metadata['outcome'],'capacity')
+        self.assertEqual(metadata['provider_exit'],1)
+        self.assertIn(stream,(evidence/'stdout.log').read_text())
+        self.assertIn(stderr,(evidence/'stderr.log').read_text())
+
+    def test_codex_failure_uses_the_last_terminal_error_message(self):
+        cases=(('turn.failed','Selected model is at capacity',23,'capacity'),
+               ('error','The model is overloaded',23,'capacity'),
+               ('error','quota exceeded',23,'quota'),
+               ('turn.failed','Permission denied by sandbox',24,'environment'),
+               ('error','HTTP 401: request rejected',16,'auth'),
+               ('turn.failed','backend failed',22,'provider-error'))
+        for kind,message,code,outcome in cases:
+            with self.subTest(kind=kind,message=message):
+                terminal={'type':kind,'error':{'message':message}} if kind=='turn.failed' else {'type':kind,'message':message}
+                stream='\n'.join(json.dumps(event) for event in (
+                    {'type':'error','message':'authentication failed during reconnect'}, terminal,
+                    {'type':'item.completed','item':{'type':'agent_message','text':'not logged in'}},
+                ))+'\n'
+                result=self.run_provider(CODEX_STREAM=stream,FAIL='provider exited',code=code)
+                self.assertEqual(result.stdout,'')
+                self.assertEqual(self.evidence()[1]['outcome'],outcome)
+
+    def test_provider_failure_keeps_cli_authentication_and_precedence(self):
+        for runner in ('codex','claude'):
+            self.config.write_text(json.dumps({'agents':{'runner':runner}}))
+            for message in ('Not logged in','HTTP 401: request rejected',
+                            'authentication failed; quota exceeded; sandbox denied'):
+                with self.subTest(runner=runner,message=message):
+                    result=self.run_provider(FAIL=message,code=16)
+                    self.assertEqual(result.stdout,'')
+                    self.assertEqual(self.evidence()[1]['outcome'],'auth')
+
+    def test_provider_failure_filters_only_mcp_attributed_stderr(self):
+        for stderr in ('ERROR codex_core::mcp_connection_manager: authentication required',
+                       '[MCP server fixture] not logged in',
+                       'MCP server fixture: authentication required'):
+            with self.subTest(stderr=stderr):
+                stream=json.dumps({'type':'turn.failed','error':{'message':'Selected model is at capacity'}})+'\n'
+                self.run_provider(CODEX_STREAM=stream,FAIL=stderr,code=23)
+                self.assertEqual(self.evidence()[1]['outcome'],'capacity')
+        self.run_provider(CODEX_STREAM=stream,
+                          FAIL='[MCP server fixture] quota exceeded\nCLI: Not logged in',code=16)
+        self.assertEqual(self.evidence()[1]['outcome'],'auth')
+
+    def test_claude_failure_uses_only_the_result_error(self):
+        self.config.write_text('{"agents":{"runner":"claude"}}')
+        cases=(({'result':'Selected model is at capacity'},23,'capacity'),
+               ({'errors':['The model is overloaded']},23,'capacity'),
+               ({'result':'quota exceeded; sandbox denied'},23,'quota'),
+               ({'errors':['HTTP 401: request rejected']},16,'auth'),
+               ({'result':'Permission denied by sandbox'},24,'environment'))
+        for error,code,outcome in cases:
+            with self.subTest(error=error):
+                raw='\n'.join(json.dumps(event) for event in (
+                    {'type':'result','is_error':True,'result':'authentication failed'},
+                    {'type':'assistant','message':{'content':[{'type':'text','text':'not logged in'}]}},
+                    {'type':'result','is_error':True,**error},
+                ))
+                result=self.run_provider(RAW=raw,FAIL='[MCP server fixture] authentication required',code=code)
+                self.assertEqual(result.stdout,'')
+                self.assertEqual(self.evidence()[1]['outcome'],outcome)
+
+    def test_provider_failure_does_not_classify_non_error_stdout(self):
+        noise='authentication; quota; at capacity; permission denied by sandbox'
+        for runner in ('codex','claude'):
+            self.config.write_text(json.dumps({'agents':{'runner':runner}}))
+            with self.subTest(runner=runner):
+                stream='\n'.join(json.dumps(event) for event in (
+                    {'type':'item.completed','item':{'type':'command_execution','aggregated_output':noise}},
+                    {'type':'item.completed','item':{'type':'agent_message','text':noise}},
+                ))+'\n'
+                raw=json.dumps({'type':'result','is_error':False,'result':noise})
+                result=self.run_provider(CODEX_STREAM=stream,RAW=raw,FAIL='provider exited',code=22)
+                self.assertEqual(result.stdout,'')
+                self.assertEqual(self.evidence()[1]['outcome'],'provider-error')
 
     def test_invalid_provider_configuration_is_classified(self):
         for config in ({'agents':{'providers':[]}}, {'agents':{'runner':'codex','model':42}},

@@ -528,6 +528,32 @@ def claude_envelope(stdout):
     return envelope
 
 
+def provider_failure_text(runner, stdout, stderr):
+    """Classify terminal provider errors, never tool output or agent prose."""
+    messages = []
+    if runner == 'codex':
+        for line in stdout.splitlines():
+            try: event = json.loads(line)
+            except ValueError: continue
+            if not isinstance(event, dict) or event.get('type') not in ('turn.failed', 'error'): continue
+            error = event.get('error', event)
+            message = error.get('message') if isinstance(error, dict) else None
+            messages = [message] if isinstance(message, str) else []
+    else:
+        try: envelope = claude_envelope(stdout)
+        except ValueError: envelope = {}
+        if envelope.get('is_error'):
+            result = envelope.get('result')
+            if isinstance(result, str): messages.append(result)
+            errors = envelope.get('errors')
+            if isinstance(errors, list): messages.extend(error for error in errors if isinstance(error, str))
+    # MCP transport/module and server-labelled diagnostics describe that
+    # server's failure, not the selected CLI's authentication or quota.
+    mcp_source = re.compile(r'\b[\w:]*mcp[\w:]*:|\[mcp\b|\bmcp server\b', re.I)
+    messages.extend(line for line in stderr.splitlines() if not mcp_source.search(line))
+    return '\n'.join(messages)
+
+
 def receipt_result(receipt, contract=None):
     # Recovery reads the original provider output, then the receipt checks its
     # full structured-result digest. No result prose is copied into the store.
@@ -824,10 +850,11 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     stderr = (evidence/'stderr.log').read_text(errors='replace')
     stdout = (evidence/'stdout.log').read_text(errors='replace')
     if child.returncode:
-        text = stderr + stdout
+        text = provider_failure_text(runner, stdout, stderr)
         outcome = 'provider-error'; code = 22
-        if re.search(r'not logged in|unauthorized|authentication', text, re.I): outcome='auth'; code=16
+        if re.search(r'not logged in|unauthorized|authentication|\b401\b', text, re.I): outcome='auth'; code=16
         elif re.search(r'quota|rate.limit|usage.limit', text, re.I): outcome='quota'; code=23
+        elif re.search(r'at capacity|overloaded', text, re.I): outcome='capacity'; code=23
         elif re.search(r'permission denied|operation not permitted|sandbox', text, re.I): outcome='environment'; code=24
         return code, '', dict(outcome=outcome, provider_exit=child.returncode)
     usage = {}; cost = None; recovered_errors = {}; structured_source = None
