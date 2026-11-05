@@ -1,5 +1,5 @@
 #!/bin/bash
-# The shepherd refuses a ticket a human holds before it claims it (v3.1).
+# Shepherd refuses human holds before claiming and admits explicit backlog starts.
 #
 # Runs the REAL shepherd.sh with the REAL bureau-config.sh, bureau-env.sh and runtime in a
 # sandbox repository whose path has a space. Only the edges are doubles: `curl` plays Linear
@@ -43,7 +43,8 @@ fail() {
 # --- the fake Linear and Telegram --------------------------------------------------------
 # State: $SB/state (a state id), $SB/state-name (the name Linear gives a state the config does
 # not know, default "?"), $SB/labels.json (the ticket's label names), $SB/labels-broken and
-# $SB/state-broken (that read answers with an error page). $SB/on-move runs after every move.
+# $SB/state-broken and $SB/viewer-broken (that read answers with an error page).
+# $SB/on-claim runs during the label write; $SB/on-move runs after every move.
 mkdir -p "$SB/bin" "$SB/tmp"
 cat > "$SB/bin/curl" <<EOF
 #!/bin/bash
@@ -65,11 +66,16 @@ config_text=\$(printf '%s\n' "\$config" | sed -n 's/^data-urlencode = "text=\(.*
 case "\$url" in *api.telegram.org*) printf '%s\n' "\$text" >> "\$sb/alerts.log"; exit 0 ;; esac
 labels=\$(jq -c '{nodes: map({name: .})}' "\$sb/labels.json")
 issue_ref() {
-  printf '%s' "\$payload" | jq -r '.query | split("number: { eq: ")[1] | split(" ")[0] | "EXP-" + .'
+  printf '%s' "\$payload" | jq -r '.query |
+    (split("key: { eq: ")[1] | split(" }")[0] | gsub("[^A-Z]"; "")) as \$key |
+    (split("number: { eq: ")[1] | split(" ")[0]) as \$number | \$key + "-" + \$number'
 }
 case "\$payload" in
   *commentCreate*)    echo comment >> "\$sb/linear.log"; b='{"data":{"commentCreate":{"success":true}}}' ;;
-  *issueAddLabel*)    echo add-label >> "\$sb/linear.log"; b='{"data":{"issueAddLabel":{"success":true}}}' ;;
+  *issueAddLabel*)
+    echo add-label >> "\$sb/linear.log"
+    [ ! -f "\$sb/on-claim" ] || bash "\$sb/on-claim"
+    b='{"data":{"issueAddLabel":{"success":true}}}' ;;
   *issueRemoveLabel*) echo remove-label >> "\$sb/linear.log"; b='{"data":{"issueRemoveLabel":{"success":true}}}' ;;
   *issueUpdate*)
     sid=\$(printf '%s' "\$payload" | jq -r .variables.sid)
@@ -77,7 +83,10 @@ case "\$payload" in
     [ ! -f "\$sb/on-move" ] || bash "\$sb/on-move"
     b='{"data":{"issueUpdate":{"success":true}}}' ;;
   *issueLabels*)      echo label-id >> "\$sb/linear.log"; b='{"data":{"issueLabels":{"nodes":[{"id":"L1","team":null}]}}}' ;;
-  *viewer*)           echo viewer >> "\$sb/linear.log"; b='{"data":{"viewer":{"id":"V"}}}' ;;
+  *viewer*)
+    echo viewer >> "\$sb/linear.log"
+    if [ -f "\$sb/viewer-broken" ]; then b='<html>502 Bad Gateway</html>'
+    else b='{"data":{"viewer":{"id":"V"}}}'; fi ;;
   *'nodes { identifier title description project'*)
     echo labels >> "\$sb/linear.log"
     if [ -f "\$sb/labels-broken" ]; then b='<html>502 Bad Gateway</html>'
@@ -86,7 +95,7 @@ case "\$payload" in
     echo state >> "\$sb/linear.log"
     if [ -f "\$sb/state-broken" ]; then b='<html>502 Bad Gateway</html>'
     else b=\$(jq -nc --arg ref "\$(issue_ref)" --argjson l "\$labels" --arg s "\$(cat "\$sb/state")" --arg n "\$(cat "\$sb/state-name" 2>/dev/null || echo '?')" '{data:{issues:{nodes:[{id:"U7",identifier:\$ref,title:"T",description:"D",state:{id:\$s,name:\$n},labels:\$l}]}}}'); fi ;;
-  *'nodes { branchName'*) echo branch >> "\$sb/linear.log"; b='{"data":{"issues":{"nodes":[{"branchName":"exp-7-x","comments":{"nodes":[]}}]}}}' ;;
+  *'nodes { branchName'*) echo branch >> "\$sb/linear.log"; b='{"data":{"issues":{"nodes":[{"branchName":"001-fixture","comments":{"nodes":[]}}]}}}' ;;
   *'nodes { id } }'*) echo uuid >> "\$sb/linear.log"; b='{"data":{"issues":{"nodes":[{"id":"U7"}]}}}' ;;
   *)                  echo unmatched >> "\$sb/linear.log"; b='{}' ;;
 esac
@@ -109,7 +118,7 @@ echo "\$2" >> "$SB/stages.log"
 printf s8 > "$SB/state"
 WORKER
   jq -n --arg human "$1" '{
-    linear: {teams: [{id: "t", key: "EXP", name: "T",
+    linear: {teams: [{id: "t", key: "TEAM", name: "T",
       states: {triage: "s1", spec: "s2", spec_review: "s3", design: "s4", build: "s5", build_review: "s6", merge: "s7", done: "s8",
                cancelled: "s9", canceled: "s10", duplicate: "s11"}}],
       labels: {lane2: {id: "l1", name: "lane-2"}, needs_human: {id: "l2", name: $human},
@@ -124,7 +133,7 @@ WORKER
 # ticket <state-id> <labels-json> — what the fake Linear answers for the fixture ticket.
 ticket() {
   printf '%s' "$1" > "$SB/state"; printf '%s' "$2" > "$SB/labels.json"
-  rm -f "$SB/labels-broken" "$SB/state-broken" "$SB/state-name" "$SB/on-move" "$SB/stages.log"
+  rm -f "$SB/labels-broken" "$SB/state-broken" "$SB/viewer-broken" "$SB/state-name" "$SB/on-claim" "$SB/on-move" "$SB/stages.log"
 }
 
 # run [shepherd args…] — sets RC, LIN (Linear calls), STAGES, ALERTS.
@@ -145,6 +154,76 @@ nothing_written() {
   case " $LIN" in *" add-label"*|*" remove-label"*|*" move-"*|*" comment"*) fail "$1: a Linear write went out" ;; esac
   [ -z "$ALERTS" ] || fail "$1: an alert went out"
   [ -z "$STAGES" ] || fail "$1: a stage ran"
+}
+
+# Seed actual lifetime accounting, including a completed turn with no progress.
+ticket_policy() {
+  python3 - "$REPO" "$1" "${2:-exhausted}" <<'PY_EOF'
+import importlib.util, json, pathlib, sys
+sys.dont_write_bytecode = True
+repo = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('ticket', repo / 'scripts/bureau-ticket.py')
+ticket = importlib.util.module_from_spec(spec); spec.loader.exec_module(ticket)
+config_path = repo / '.bureau.json'; config = json.loads(config_path.read_text())
+limit = 2 if sys.argv[3] == 'available' else 1
+if sys.argv[2] == 'budget':
+    config['agents']['ticket_budget'] = dict(provider_calls=limit)
+else:
+    config['agents']['ticket_progress'] = dict(enabled=True, max_non_improving_turns=limit)
+config_path.write_text(json.dumps(config))
+ledger = ticket.Ledger(repo / '.git/bureau', 'TEAM-7', config)
+if sys.argv[2] == 'budget':
+    identity = dict(run_id='fixture-run', provider_attempt_id='fixture-call',
+                    stage_attempt_id='fixture-stage', stage='spec', phase='checker', issue='TEAM-7')
+    assert ledger.begin(identity, 'codex') is None
+    ledger.finish('fixture-call', dict(input_tokens=1, output_tokens=1), 0)
+else:
+    ledger.end_turn('fixture-turn', 'fixture-run')
+decision = ledger.check()
+assert (decision is None) == (sys.argv[3] == 'available'), decision
+if decision:
+    assert decision['terminal_reason'] == sys.argv[2], decision
+PY_EOF
+}
+
+# Mutants reconstruct each reviewed omission in the copied shepherd only.
+start_control() {
+  python3 - "$REPO/scripts/shepherd.sh" "$1" <<'PY_EOF' || fail "could not build the startup negative control"
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); text = p.read_text(); kind = sys.argv[2]
+if kind == 'claim':
+    start = text.index('\nif [ -n "$FROM_STAGE" ] && [ "$START_STATE_CLASS" = 25 ]; then')
+    end = text.index('\n\n# --from-stage: move', start)
+    text = text[:start] + '\nif [ -z "$FROM_STAGE" ]; then bureau_ticket_checkpoint "$ISSUE"; fi' + text[end:]
+elif kind == 'admission':
+    before = '  _shepherd_from_stage_admission_check\n'
+    assert text.count(before) == 1
+    text = text.replace(before, '  :\n', 1)
+    before = '      _shepherd_from_stage_admission_check "$START_STATE_CLASS" ;;'
+    assert text.count(before) == 1
+    text = text.replace(before, '      : ;;', 1)
+elif kind == 'policy':
+    before = '    *) bureau_ticket_checkpoint "$ISSUE" strict "$START_SNAPSHOT" ;;'
+    assert text.count(before) == 1
+    text = text.replace(before, '    0|26) bureau_ticket_checkpoint "$ISSUE" strict "$START_SNAPSHOT" ;;', 1)
+elif kind == 'startup':
+    before = '''    snapshot=$(bureau_issue_snapshot "$ISSUE") || {
+      snapshot_rc=$?
+      # Let the established startup check report and alert on a Linear outage.
+      # Admission is checked again before the ticket label claim.
+      [ "$snapshot_rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && return 0
+      exit "$snapshot_rc"
+    }'''
+    assert text.count(before) == 1
+    text = text.replace(before, '    snapshot=$(bureau_issue_snapshot "$ISSUE") || exit $?', 1)
+elif kind == 'diagnostic':
+    before = 'nothing claimed or moved" >&2 || true\n    exit 25'
+    assert text.count(before) == 1
+    text = text.replace(before, 'nothing claimed or moved" >&2\n    exit 25', 1)
+else:
+    raise AssertionError(kind)
+p.write_text(text)
+PY_EOF
 }
 
 # old_checks <repo> — the v3.0.2 checks, rebuilt out of the current shepherd: no check before
@@ -175,6 +254,254 @@ p.write_text(t)
 PY_EOF
 }
 
+# --- admission read failures retain the startup failure exit and alert --------------------
+for mode in normal gated; do
+  new_repo "needs-human"
+  jq '.agents.max_concurrent_issues = 2 | .agents.file_overlap_gate = false' "$REPO/.bureau.json" > "$SB/config.json"
+  mv "$SB/config.json" "$REPO/.bureau.json"
+  ticket s5 '["lane-2"]'
+  : > "$SB/state-broken"; : > "$SB/viewer-broken"
+  if [ "$mode" = gated ]; then run --from-stage spec TEAM-7; else run TEAM-7; fi
+  [ "$RC" = 10 ] || fail "$mode startup outage: exit $RC, wanted 10"
+  [ -z "$STAGES" ] || fail "$mode startup outage: a stage ran"
+  case " $LIN" in *" add-label"*|*" remove-label"*|*" move-"*|*" comment"*) fail "$mode startup outage: a Linear write went out" ;; esac
+  case "$LIN" in *viewer*) ;; *) fail "$mode startup outage: the startup check was bypassed" ;; esac
+  grep -q 'Linear start check failed (linear-down, fault: not-json)' "$SB/err" || fail "$mode startup outage: missing startup diagnostic"
+  case "$ALERTS" in *"shepherd did not start (linear-down: not-json)"*) ;; *) fail "$mode startup outage: no startup alert" ;; esac
+  [ "$(wc -l < "$SB/alerts.log" | tr -d ' ')" = 1 ] || fail "$mode startup outage: more than one alert"
+  for tmp in "$SB/tmp"/bureau-linear-fault.* "$SB/tmp"/bureau-merge-gate.*; do
+    [ ! -e "$tmp" ] || fail "$mode startup outage: a temporary fault or gate file was left behind"
+  done
+done
+echo "PASS normal and gated Spec startup outages keep exit 10, one alert and no ticket writes or stage runs"
+
+new_repo "needs-human"; start_control startup
+jq '.agents.max_concurrent_issues = 2 | .agents.file_overlap_gate = false' "$REPO/.bureau.json" > "$SB/config.json"
+mv "$SB/config.json" "$REPO/.bureau.json"
+ticket s5 '["lane-2"]'
+: > "$SB/state-broken"; : > "$SB/viewer-broken"
+run --from-stage spec TEAM-7
+[ "$RC" = 27 ] && [ "$LIN" = "state " ] || fail "startup negative control: the early admission failure no longer bypasses startup with 27"
+nothing_written "startup negative control"
+echo "PASS negative control: exiting on the early admission read skips the startup check and alert with 27"
+
+# --- an explicit start admits backlog, but running work still honors withdrawal ------------
+new_repo "needs-human"
+ticket backlog-id '["lane-2"]'; printf Concept > "$SB/state-name"
+run --from-stage triage TEAM-7
+[ "$RC" = 0 ] || fail "backlog, --from-stage triage: exit $RC, wanted 0"
+[ "$STAGES" = "spec-pipeline.sh " ] || fail "backlog, --from-stage triage: the Triage stage did not run once"
+case "$LIN" in "viewer labels state uuid label-id add-label state uuid move-s1 state "*) ;; *) fail "backlog: not check, claim, refresh, move, strict checkpoint in that order" ;; esac
+[ "$(cat "$SB/state")" = s8 ] || fail "backlog: the stage did not finish the ticket"
+echo "PASS --from-stage triage claims a backlog ticket, moves it to Triage and enters the loop"
+
+ticket backlog-id '["lane-2"]'; printf Concept > "$SB/state-name"
+run TEAM-7
+[ "$RC" = 25 ] || fail "backlog without --from-stage: exit $RC, wanted 25"
+nothing_written "backlog without --from-stage"
+
+for pair in s8:0 s9:26 s10:26 s11:26; do
+  ticket "${pair%%:*}" '["lane-2"]'; printf Concept > "$SB/state-name"
+  run --from-stage triage TEAM-7
+  [ "$RC" = "${pair##*:}" ] || fail "terminal ${pair%%:*}, --from-stage: exit $RC, wanted ${pair##*:}"
+  nothing_written "terminal ${pair%%:*}, --from-stage"
+done
+for held in needs-human blocked wip; do
+  ticket backlog-id "[\"$held\"]"; printf Concept > "$SB/state-name"
+  run --from-stage triage TEAM-7
+  [ "$RC" = 25 ] || fail "backlog + $held, --from-stage: exit $RC, wanted 25"
+  nothing_written "backlog + $held, --from-stage"
+done
+# A live lease needs no fixture process: the test shell is its owner.
+ticket backlog-id '["lane-2"]'
+mkdir -p "$REPO/.git/bureau"
+jq -n --argjson pid "$$" '{"issue:TEAM-7": {run_id: "fixture-owner", owner: "background", pid: $pid}}' > "$SB/held-lease.json"
+cp "$SB/held-lease.json" "$REPO/.git/bureau/leases.json"
+run --from-stage triage TEAM-7
+[ "$RC" = 21 ] || fail "active ownership conflict, --from-stage: exit $RC, wanted 21"
+nothing_written "active ownership conflict, --from-stage"
+cmp -s "$SB/held-lease.json" "$REPO/.git/bureau/leases.json" || fail "active ownership conflict: the lease changed"
+rm "$REPO/.git/bureau/leases.json"
+echo "PASS backlog without --from-stage, terminal tickets, human holds and active conflicts still refuse entry without writes"
+
+# A person moves the ticket back after the requested move: stop before the loop.
+ticket backlog-id '["lane-2"]'
+printf "printf backlog-id > '%s/state'\n" "$SB" > "$SB/on-move"
+run --from-stage triage TEAM-7
+[ "$RC" = 25 ] && [ -z "$STAGES" ] || fail "withdrawn immediately after --from-stage: not stopped with 25 before a stage"
+grep -q 'left the active workflow (state ID backlog-id)' "$SB/err" || fail "post-move checkpoint: no withdrawal diagnostic"
+if grep -q '^  Shepherd:' "$SB/out"; then fail "post-move checkpoint: the stage loop was entered"; fi
+
+# After a successful start the first stage models a person parking the ticket.
+ticket backlog-id '["lane-2"]'
+cat > "$REPO/scripts/bureau-worker.sh" <<WORKER
+#!/bin/bash
+echo "\$2" >> "$SB/stages.log"
+printf backlog-id > "$SB/state"
+WORKER
+run --from-stage triage TEAM-7
+[ "$RC" = 25 ] || fail "withdrawn after --from-stage start: exit $RC, wanted 25"
+[ "$STAGES" = "spec-pipeline.sh " ] || fail "withdrawn after start: another stage ran"
+grep -q 'left the active workflow (state ID backlog-id)' "$SB/err" || fail "withdrawn after start: no withdrawal diagnostic"
+case "$LIN" in *move-s1*remove-label*) ;; *) fail "withdrawn after start: no initial move or claim release" ;; esac
+[ "$(printf '%s' "$LIN" | tr ' ' '\n' | grep -c '^add-label$')" = 1 ] || fail "withdrawn after start: an extra label was added"
+echo "PASS strict checkpoints stop a ticket returned to backlog immediately after the move or after the first stage (25)"
+
+# Negative control: restore v3.6.0's strict check before the claim. Reconstruct
+# the one guard so this also works in CI checkouts without release tags/history.
+new_repo "needs-human"
+python3 - "$REPO/scripts/shepherd.sh" <<'PY_EOF' || fail "could not build the backlog negative control"
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text()
+start = t.index('\nif [ -n "$FROM_STAGE" ]; then\n  _shepherd_start_checkpoint')
+end = t.index('\ntrap ', start)
+p.write_text(t[:start] + '\nbureau_ticket_checkpoint "$ISSUE" strict\n' + t[end:])
+PY_EOF
+ticket backlog-id '["lane-2"]'; printf Concept > "$SB/state-name"
+run --from-stage triage TEAM-7
+[ "$RC" = 25 ] || fail "negative control: strict pre-claim check no longer rejects backlog with 25"
+nothing_written "backlog negative control"
+echo "PASS negative control: the v3.6.0 pre-claim checkpoint rejects the same backlog start (25, no writes)"
+
+# --- terminal changes during the claim must not be overwritten ---------------------------
+new_repo "needs-human"
+for initial in s5 backlog-id; do
+  for pair in s8:0 s9:26 s11:26; do
+    ticket "$initial" '["lane-2"]'
+    printf "printf '%s' > '%s/state'\n" "${pair%%:*}" "$SB" > "$SB/on-claim"
+    run --from-stage triage TEAM-7
+    [ "$RC" = "${pair##*:}" ] || fail "$initial to ${pair%%:*} during claim: exit $RC, wanted ${pair##*:}"
+    [ "$(cat "$SB/state")" = "${pair%%:*}" ] || fail "terminal change during claim was overwritten"
+    [ -z "$STAGES$ALERTS" ] || fail "terminal change during claim: a stage or alert ran"
+    case "$LIN" in *add-label*state*remove-label*) ;; *) fail "terminal change during claim: not refreshed and released" ;; esac
+    case " $LIN" in *" move-"*|*" comment"*) fail "terminal change during claim: a move or comment went out" ;; esac
+  done
+done
+# An initially active ticket also retains withdrawal to backlog during claim.
+ticket s5 '["lane-2"]'
+printf "printf backlog-id > '%s/state'\n" "$SB" > "$SB/on-claim"
+run --from-stage triage TEAM-7
+[ "$RC" = 25 ] && [ -z "$STAGES" ] || fail "active ticket withdrawn during claim: not stopped with 25"
+case " $LIN" in *" move-"*) fail "active ticket withdrawn during claim: a move went out" ;; esac
+echo "PASS Done, cancellation, duplication and active-ticket withdrawal during the claim stop before the requested move"
+
+new_repo "needs-human"; start_control claim
+ticket s5 '["lane-2"]'
+printf "printf s9 > '%s/state'\n" "$SB" > "$SB/on-claim"
+run --from-stage triage TEAM-7
+[ "$RC" = 0 ] && [ "$STAGES" = "spec-pipeline.sh " ] || fail "claim negative control: cancellation was not overwritten"
+case "$LIN" in *add-label*move-s1*) ;; *) fail "claim negative control: no reopening move" ;; esac
+echo "PASS negative control: omitting the claim checkpoint reopens a cancelled ticket and runs a stage"
+
+# --- ungated starts use the configured active states, with no Triage detour ---------------
+for initial in backlog-id s1; do
+  new_repo "needs-human"
+  jq '.agents.ticket_active_states = ["build","build_review","merge"] |
+      .agents.file_overlap_gate = false | .agents.max_concurrent_issues = 2' "$REPO/.bureau.json" > "$SB/config.json"
+  mv "$SB/config.json" "$REPO/.bureau.json"
+  ticket "$initial" '["lane-2"]'
+  run --from-stage build TEAM-7
+  [ "$RC" = 0 ] || fail "$initial, ungated Build without active Triage: exit $RC, wanted 0"
+  [ "$STAGES" = "implement-pipeline.sh " ] || fail "ungated Build: the Build stage did not run alone"
+  case "$LIN" in *add-label*state*move-s5*state*) ;; *) fail "ungated Build: not claim, refresh, Build, strict checkpoint" ;; esac
+  [ "$(printf '%s' "$LIN" | tr ' ' '\n' | grep -c '^move-')" = 1 ] || fail "ungated Build: moved to a state other than Build"
+done
+echo "PASS ungated backlog and configured-inactive Triage starts move directly to Build even with Spec capacity enabled"
+
+# Gated starts stop before runtime ownership, labels, admission or stage moves.
+for target in build spec; do
+  for policy in default custom; do
+    new_repo "needs-human"
+    jq --arg target "$target" --arg policy "$policy" '
+      if $target == "build" then .agents.file_overlap_gate = true
+      else .agents.max_concurrent_issues = 2 end |
+      if $policy == "custom" then .agents.ticket_active_states = ["spec","build","build_review","merge"] else . end
+    ' "$REPO/.bureau.json" > "$SB/config.json"
+    mv "$SB/config.json" "$REPO/.bureau.json"
+    initial=backlog-id; [ "$policy" != custom ] || initial=s1
+    ticket "$initial" '["lane-2"]'
+    run --from-stage "$target" TEAM-7
+    [ "$RC" = 25 ] || fail "$target, $policy inactive start: exit $RC, wanted 25"
+    nothing_written "$target, $policy inactive start"
+    [ "$LIN" = "state " ] || fail "gated inactive start: calls beyond the state classification"
+    [ "$(cat "$SB/state")" = "$initial" ] || fail "gated inactive start: ticket state changed"
+    [ ! -e "$REPO/.git/bureau" ] || fail "gated inactive start: runtime ownership or admission was touched"
+    grep -q -- "--from-stage $target.*move the ticket into an active state first.*exit 25" "$SB/err" \
+      || fail "gated inactive start: no actionable refusal message"
+  done
+done
+echo "PASS Build overlap and Spec capacity refuse inactive starts with 25 before any claim, label, move or admission, including custom active states"
+
+# Closed stderr must not turn the refusal's diagnostic into an errexit failure.
+for target in build spec; do
+  for mode in guarded unguarded; do
+    new_repo "needs-human"
+    expected=25
+    if [ "$mode" = unguarded ]; then start_control diagnostic; expected=1; fi
+    jq --arg target "$target" '
+      if $target == "build" then .agents.file_overlap_gate = true
+      else .agents.max_concurrent_issues = 2 end
+    ' "$REPO/.bureau.json" > "$SB/config.json"
+    mv "$SB/config.json" "$REPO/.bureau.json"
+    ticket backlog-id '["lane-2"]'
+    rm -f "$SB/linear.log" "$SB/alerts.log" "$SB/err"
+    set +e
+    (cd "$REPO" && PATH="$SB/bin:$PATH" TMPDIR="$SB/tmp" BUREAU_LINEAR_RETRIES=0 BUREAU_SHEPHERD_CONFIRM_SECONDS=0 BUREAU_DISABLE_THROTTLE=1 \
+       bash scripts/shepherd.sh --no-tmux --from-stage "$target" TEAM-7 > "$SB/out" 2>&-)
+    RC=$?
+    set -e
+    [ "$RC" = "$expected" ] || fail "$target, $mode closed stderr: exit $RC, wanted $expected"
+    [ "$(cat "$SB/linear.log")" = state ] || fail "$target, $mode closed stderr: calls beyond state classification"
+    [ "$(cat "$SB/state")" = backlog-id ] || fail "$target, $mode closed stderr: ticket state changed"
+    [ ! -s "$SB/stages.log" ] && [ ! -s "$SB/alerts.log" ] || fail "$target, $mode closed stderr: a stage or alert ran"
+    [ ! -e "$REPO/.git/bureau" ] || fail "$target, $mode closed stderr: runtime ownership or admission was touched"
+  done
+done
+echo "PASS gated refusals with closed stderr keep exit 25; negative controls without the diagnostic guard exit 1 before any writes"
+
+# Negative controls remove only the new admission preflight. The original
+# strict admission stop still returns 25, but too late to prevent the claim.
+for target in build spec; do
+  new_repo "needs-human"; start_control admission
+  jq --arg target "$target" '
+    if $target == "build" then .agents.file_overlap_gate = true
+    else .agents.max_concurrent_issues = 2 end
+  ' "$REPO/.bureau.json" > "$SB/config.json"
+  mv "$SB/config.json" "$REPO/.bureau.json"
+  ticket backlog-id '["lane-2"]'
+  run --from-stage "$target" TEAM-7
+  [ "$RC" = 25 ] && [ -z "$STAGES" ] || fail "$target admission negative control: not stopped by the strict gate"
+  [ "$(cat "$SB/state")" = backlog-id ] || fail "$target admission negative control: the candidate moved"
+  case "$LIN" in *add-label*state*remove-label*) ;; *) fail "$target admission negative control: no claim before the admission refusal" ;; esac
+  case " $LIN" in *" move-"*) fail "$target admission negative control: a move went out" ;; esac
+done
+echo "PASS negative controls: without the preflight both gated backlog starts claim before refusing with 25"
+
+# --- exhausted active tickets must stop before any claim or move -------------------------
+for reason in budget stalled; do
+  for initial in s5 backlog-id; do
+    new_repo "needs-human"
+    ticket "$initial" '["lane-2"]'; ticket_policy "$reason"
+    run --from-stage triage TEAM-7
+    [ "$RC" = 25 ] || fail "$initial, exhausted $reason: exit $RC, wanted 25"
+    nothing_written "$initial, exhausted $reason"
+    grep -q "terminal_reason=$reason" "$SB/err" || fail "exhausted $reason: missing policy diagnostic"
+  done
+
+  new_repo "needs-human"
+  ticket s5 '["lane-2"]'; ticket_policy "$reason" available
+  run --from-stage triage TEAM-7
+  [ "$RC" = 0 ] && [ "$STAGES" = "spec-pipeline.sh " ] || fail "available $reason allowance: did not start normally"
+
+  new_repo "needs-human"; start_control policy
+  ticket s5 '["lane-2"]'; ticket_policy "$reason"
+  run --from-stage triage TEAM-7
+  [ "$RC" = 25 ] && [ -z "$STAGES" ] || fail "$reason negative control: not a policy stop"
+  case "$LIN" in *add-label*remove-label*) ;; *) fail "$reason negative control: terminal-only precheck no longer claims an exhausted active ticket" ;; esac
+done
+echo "PASS budget/progress exhaustion refuses active and backlog starts before mutations; available allowances start normally"
+echo "PASS negative controls: terminal-only prechecks claim exhausted active tickets before budget/progress stops"
+
 # --- a free ticket: the check lets it through, before the claim ----------------------------
 new_repo "needs-human"
 ticket s5 '["lane-2"]'
@@ -185,7 +512,7 @@ case "$LIN" in "viewer labels state uuid label-id add-label "*) ;; *) fail "free
 ticket s5 '["lane-2"]'
 run --from-stage build EXP-7
 [ "$RC" = 0 ] || fail "free ticket, --from-stage: exit $RC"
-case "$LIN" in "viewer labels state uuid label-id add-label state uuid move-s5 "*) ;; *) fail "free ticket, --from-stage: not check, claim, move in that order" ;; esac
+case "$LIN" in "viewer labels state uuid label-id add-label state uuid move-s5 state "*) ;; *) fail "free ticket, --from-stage: not check, claim, refresh, move, strict checkpoint in that order" ;; esac
 # Labels match exactly, as in the picker: a longer name or another case holds nothing.
 for free in needs-human-later Needs-Human WIP; do
   ticket s5 "[\"lane-2\",\"$free\"]"

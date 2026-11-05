@@ -102,6 +102,23 @@ class MergeTests(unittest.TestCase):
         self.values['correctness'] = specialist('correctness', [finding(), finding(line_end=2), finding('Different title')])
         self.assertEqual(len(self.merge()[1]), 3)
 
+    def test_many_findings_reuse_imports_and_still_validate_every_location(self):
+        self.values = {role: specialist(role, [finding(role + ' defect ' + str(i)) for i in range(16)])
+                       for role in self.m.ROLES}
+        with patch.object(importlib.util, 'spec_from_file_location', wraps=importlib.util.spec_from_file_location) as imports:
+            result, findings, metadata = self.merge()
+        provider_loads = [call for call in imports.call_args_list if Path(call.args[1]).name == 'bureau-provider.py']
+        self.assertEqual(len(provider_loads), 1, 'provider imports must not grow with the finding count')
+        self.assertEqual(len(findings), 48)
+        self.assertEqual({f['msg'] for f in result['findings']},
+                         {f['msg'] for value in self.values.values() for f in value['findings']})
+        self.assertEqual(metadata['mode'], 'deterministic')
+        # Warm imports cannot bypass a later finding's location validation.
+        self.values['performance']['findings'][-1]['file'] = '../outside.py'
+        result, _, metadata = self.merge()
+        self.assertIsNone(result)
+        self.assertEqual(metadata['malformed_specialists'], ['performance'])
+
     def test_malformed_missing_wrong_role_and_schema_fields_fall_back(self):
         invalid = [None, {}, specialist('security'), specialist('correctness', [dict(file='a', line=True, **{'class':'BUG'}, msg='bad')])]
         for value in invalid:

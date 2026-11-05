@@ -5,6 +5,7 @@ Only the shell decides convergence and routing. Durable evidence is metadata;
 claims and source excerpts live only in the ordinary temporary stage artifacts.
 """
 import argparse
+from functools import lru_cache
 import hashlib
 import importlib.util
 import json
@@ -28,7 +29,10 @@ MAX_REQUEST = 24576
 CONTRACT_BUDGET = 8192
 
 
+@lru_cache(maxsize=None)
 def module(name):
+    # Helper assets are fixed for this invocation. Reuse imports so validating
+    # each finding does not recompile the provider and its dependency graph.
     spec = importlib.util.spec_from_file_location('review_' + name, SCRIPTS / ('bureau-' + name + '.py'))
     value = importlib.util.module_from_spec(spec); spec.loader.exec_module(value)
     return value

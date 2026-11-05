@@ -1,4 +1,4 @@
-"""Unchanged positive assertions must reject both private-copy mutations."""
+"""Unchanged positive assertions must reject private-copy mutations."""
 import os
 from pathlib import Path
 import shutil
@@ -14,6 +14,8 @@ controls = [
     ('bypass-anchors', "status, _ = anchor_check(finding, base, head) if isinstance(finding, dict) else ('location', None)",
      "status, _ = 'valid', None",
      'MergeTests.test_grounding_metadata_cannot_hide_invalid_anchor'),
+    ('reload-per-finding', '@lru_cache(maxsize=None)\n', '',
+     'MergeTests.test_many_findings_reuse_imports_and_still_validate_every_location'),
 ]
 for name, old, new, test in controls:
     with tempfile.TemporaryDirectory(prefix='bureau-review-control-') as directory:
@@ -28,4 +30,4 @@ for name, old, new, test in controls:
         if completed.returncode == 0 or 'AssertionError' not in completed.stderr:
             sys.exit(name + ' did not fail its positive assertion:\n' + completed.stdout + completed.stderr)
         print('PASS negative control: ' + name + ' rejected by unchanged positive test')
-print('2 negative controls passed')
+print(str(len(controls)) + ' negative controls passed')
