@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3691df26b7b3f4c16ca4bd552fcde3cc5a20f6515cdc515a8daedb942f4cee78">
+<meta name="bureau-source-sha256" content="4f5996123c269e24c250bf5c47219e596954294ae0098d873aef03403af9a1a1">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -195,8 +195,10 @@ withdrawal still takes precedence with 25/26</td>
 <tr>
 <td><code>23</code></td>
 <td>quota-wait</td>
-<td>Selected provider quota reached</td>
-<td>Wait for reset; do not switch providers silently</td>
+<td>Selected provider quota reached or model temporarily at
+capacity/overloaded</td>
+<td>Provider outcome <code>quota</code> or <code>capacity</code>; wait
+for availability; do not switch providers silently</td>
 </tr>
 <tr>
 <td><code>24</code></td>
@@ -318,6 +320,15 @@ exit 2. The observation is latched before routing, so later refresh
 failures cannot replace it with an error or a needs-human escalation. A
 failed mandatory read itself retains its existing strict error
 handling.</p>
+<p>For a nonzero provider CLI exit, classification uses the last Codex
+<code>turn.failed</code>/<code>error</code> event's message or Claude's
+terminal result error, plus CLI stderr lines without MCP server
+attribution. Tool output and agent messages do not classify the failure.
+Authentication (including CLI HTTP 401) takes precedence over
+quota/capacity, then environment errors. Model errors containing "at
+capacity" or "overloaded" use outcome <code>capacity</code> with the
+existing exit <code>23</code>; spec admission capacity remains exit
+<code>28</code>. Retry policy and waits are unchanged.</p>
 <p>Provider silence also uses <code>25</code>
 (<code>needs-human-or-paused</code>), with <code>outcome: timeout</code>
 and <code>timeout_kind: silence</code> in the provider result metadata
