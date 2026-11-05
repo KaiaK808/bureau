@@ -699,27 +699,41 @@ signal.signal(signal.SIGTERM,exited)
 """,1)
         needle="if __name__=='__main__': sys.exit(main())"
         self.assertEqual(text.count(needle),1)
+        # Only the wrapper holds the writer; the kernel closes it even when
+        # bounded escalation kills the wrapper before Python cleanup can run.
+        lifetime=self.root/'provider-wrapper-lifetime'; os.mkfifo(lifetime)
+        reader=os.open(lifetime,os.O_RDONLY|os.O_NONBLOCK)
+        self.addCleanup(os.close,reader)
         wrapper.write_text(text.replace(needle,"""if __name__=='__main__':
-    try: sys.exit(main())
-    finally:
-        if '--prompt-file' in sys.argv:
-            with (Path(os.environ['DISPATCH_FIXTURE'])/'events').open('a') as out:
-                out.write(json.dumps(dict(kind='provider-wrapper-exit',pid=os.getpid()))+'\\n')
+    if '--prompt-file' in sys.argv:
+        lifetime=os.open(Path(os.environ['DISPATCH_FIXTURE'])/'provider-wrapper-lifetime',os.O_WRONLY)
+        os.set_inheritable(lifetime,False)
+        os.write(lifetime,b'1')
+    sys.exit(main())
 """,1))
         self.ticket(1,hold=True); child=self.start(); self.wait_for(lambda:bool(self.started()))
+
+        def wrapper_exited():
+            try: return os.read(reader,1)==b''
+            except BlockingIOError: return False
+
         try:
-            self.stop(child)
+            self.assertEqual(os.read(reader,1),b'1','provider wrapper did not open its lifetime witness')
+            if child.poll() is None: child.terminate()
+            code=child.wait(timeout=25)
+            # Check EOF before log/event I/O can hide an unjoined wrapper's late exit.
+            self.assertTrue(wrapper_exited(),'dispatcher returned before its provider wrapper joined')
+            self.assertEqual(code,130,self.output())
             with (self.root/'events').open('a') as out:
                 out.write(json.dumps(dict(kind='dispatcher-exit'))+'\n')
             kinds=[row['kind'] for row in self.events()]
-            self.assertIn('provider-wrapper-exit',kinds,'dispatcher returned before its provider wrapper joined')
-            self.assertLess(kinds.index('provider-exit'),kinds.index('provider-wrapper-exit'))
-            self.assertLess(kinds.index('provider-wrapper-exit'),kinds.index('dispatcher-exit'))
+            self.assertIn('provider-exit',kinds,'dispatcher returned before its provider exited')
+            self.assertLess(kinds.index('provider-exit'),kinds.index('dispatcher-exit'))
         finally:
             # The failing control must finish its own orphaned wrapper too.
             self.release('TST-1')
             if child.poll() is None: self.stop(child)
-            self.wait_for(lambda:bool(self.events('provider-wrapper-exit')),timeout=25)
+            self.wait_for(wrapper_exited,timeout=25)
 
     def test_running_legacy_poller_excludes_dispatcher(self):
         output=(self.root/'poller.out').open('w'); self.files.append(output)
