@@ -86,25 +86,35 @@ else: raise AssertionError(args)
 '''
 
 CODEX = r'''
-import json, os, pathlib, re, subprocess, sys, uuid
+import json, os, pathlib, re, shlex, subprocess, sys, uuid
 if sys.argv[1] == 'login': sys.exit(0)
 assert sys.argv[1] == 'exec'
 prompt = sys.stdin.read()
+repo_git = ['git']
+if '--skip-git-repo-check' in sys.argv:
+    # Follow the same command guidance as a specialist; stay in scratch so an
+    # unqualified Git call cannot accidentally succeed in the worker checkout.
+    sentence = next(line for line in prompt.splitlines() if line.startswith('The repository root is '))
+    repo_git = shlex.split(re.search(r'with `(git -C .+)` instead of `git`', sentence)[1])
+    repo = pathlib.Path(repo_git[2])
+    assert repo.is_absolute() and repo != pathlib.Path.cwd()
+    assert pathlib.Path(sys.argv[sys.argv.index('-C')+1]) == pathlib.Path.cwd()
+    assert not (pathlib.Path.cwd()/'.git').exists()
 if os.environ.get('REVIEW_PROBE') and 'specialist reviewing' in prompt:
     if os.environ.get('REVIEW_MOVE_REF') or os.environ.get('REVIEW_ADVANCE_REF'):
         try: pathlib.Path(os.environ['REVIEW_PROBE'],'ref-mutated').mkdir()
         except FileExistsError: pass
         else:
             if os.environ.get('REVIEW_MOVE_REF'):
-                subprocess.run(['git','update-ref','refs/remotes/origin/'+os.environ['REVIEW_MOVE_REF'],os.environ['REVIEW_MOVE_SHA']],check=True)
+                subprocess.run(repo_git+['update-ref','refs/remotes/origin/'+os.environ['REVIEW_MOVE_REF'],os.environ['REVIEW_MOVE_SHA']],check=True)
             if os.environ.get('REVIEW_ADVANCE_REF'):
                 subprocess.run(['git','--git-dir',os.environ['ORIGIN_FIXTURE'],'update-ref','refs/heads/'+os.environ['REVIEW_ADVANCE_REF'],os.environ['REVIEW_MOVE_SHA']],check=True)
     match = re.search(r"git diff ([0-9a-f]+\.\.\.[0-9a-f]+) --", prompt)
     if match:
         # Read the same immutable range the real specialist receives, against
         # the actual worker Git history after the local validation merge.
-        files=subprocess.check_output(['git','diff','--name-only',match.group(1),'--'],text=True).splitlines()
-        detail={'prompt':prompt,'files':files,'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()}
+        files=subprocess.check_output(repo_git+['diff','--name-only',match.group(1),'--'],text=True).splitlines()
+        detail={'prompt':prompt,'files':files,'head':subprocess.check_output(repo_git+['rev-parse','HEAD'],text=True).strip()}
     else: detail={'prompt':prompt,'files':None}
     pathlib.Path(os.environ['REVIEW_PROBE'],uuid.uuid4().hex+'.json').write_text(json.dumps(detail))
 with open(os.environ['MODEL_LOG'],'a') as out: out.write(os.environ.get('BUREAU_CURRENT_ISSUE','?')+'\n')

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -376,6 +377,17 @@ os.execv(''' + repr(real_git) + ', [' + repr(real_git) + ', *sys.argv[1:]])\n')
             # no context, citation instruction or extended merger contract.
             prompt = prompt.replace(b'Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.\n\n', b'')
             prompt = prompt.replace(b',"holds":[]', b'')
+            # The adapter appends common scratch guidance for read-only Codex;
+            # normalize only that exact sentence, keeping the legacy ADR check.
+            repo = str((self.root / 'worker-1').resolve())
+            scratch = ('\nThe repository root is ' + repo
+                       + '; the repository is read-only, the current directory and TMPDIR are a private scratch area'
+                       + '; prefix all repository Git commands (including those named above) with `git -C '
+                       + shlex.quote(repo) + '` instead of `git`, resolve repository-relative input paths from that root,'
+                       + ' and all file references in results must stay relative to the repository root.').encode()
+            self.assertEqual(prompt.count(scratch), 1)
+            self.assertEqual(prompt.count(b'The repository root is '), 1)
+            prompt = prompt.replace(scratch, b'')
             # Codex concatenates system and user text. Freeze the user bytes;
             # the trusted base context must be confined to the system prefix.
             marker = (b'Merge these three specialist reviews' if phase == 'verdict'

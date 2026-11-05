@@ -75,6 +75,7 @@ if sys.argv[1]=='--help':
     sys.exit(0)
 if os.environ.get('OLD_CLI') and '--session-id' in sys.argv:
     print("error: unknown option '--session-id'",file=sys.stderr); sys.exit(1)
+if os.environ.get('CAPTURE_DELAY'): time.sleep(float(os.environ['CAPTURE_DELAY']))
 (root/'argv.json').write_text(json.dumps(sys.argv[1:]))
 if name=='codex' and os.environ.get('ASSERT_STRICT_SCHEMA'):
     wire=json.loads(pathlib.Path(sys.argv[sys.argv.index('--output-schema')+1]).read_text())
@@ -87,6 +88,7 @@ if name=='codex' and os.environ.get('ASSERT_STRICT_SCHEMA'):
         for child in node.get('anyOf',[]): strict(child)
     strict(wire)
 (root/(name+'-env.json')).write_text(json.dumps(dict(os.environ)))
+(root/'cwd.txt').write_text(str(pathlib.Path.cwd()))
 (root/'stdin.txt').write_text(sys.stdin.read())
 tmpdir=os.environ.get('TMPDIR')
 (root/'tmpdir.json').write_text(json.dumps({'value':tmpdir,'is_dir':bool(tmpdir and pathlib.Path(tmpdir).is_dir())}))
@@ -163,18 +165,20 @@ else:
                 'fixed_review_items':[],'notes':{'needs_human':[{'task_id':'T003','reason':reason}],
                 'skipped':[],'deviations':[]},'prose_notes':'Other tasks are finished'}
 
-    def recorded_tmpdir(self):
-        record=json.loads((self.root/'tmpdir.json').read_text())
+    def recorded_tmpdir(self,capture='tmpdir.json'):
+        record=json.loads((self.root/capture).read_text())
         self.assertTrue(record['is_dir'],'TMPDIR was not a directory during the call')
         path=Path(record['value'])
         self.assertEqual(path.parent,Path('/tmp').resolve())
         self.assertTrue(path.name.startswith(CODEX_TMP_PREFIX))
+        self.addCleanup(shutil.rmtree,path,ignore_errors=True)
         self.assertFalse(path.exists(),'the Codex temporary directory survived the call')
         return path
 
     def run_wrapped_provider(self,patch,*extra,code=0,**env):
         # Instrument the actual adapter in a separate process: allocation and
         # lifecycle failures still run main(), its exit handling and cleanup.
+        for capture in ('allocation.json','tmpdir.json'): (self.root/capture).unlink(missing_ok=True)
         source='''import importlib.util, json, os, pathlib, signal, sys
 spec=importlib.util.spec_from_file_location('provider',sys.argv[1])
 p=importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
@@ -1013,6 +1017,269 @@ sys.exit(p.main())
             path=self.root/key; path.mkdir(); self.env[key]=str(path)
         self.run_provider()
         self.recorded_tmpdir()
+
+    def test_read_only_codex_uses_private_scratch_outside_repository(self):
+        self.env.pop('TMPDIR',None)
+        caller=self.root/'caller tmp'; caller.mkdir()
+        scratches=set()
+        for inherited in (False,True):
+            with self.subTest(inherited_tmpdir=inherited):
+                env=dict(TMP=str(caller),TEMP=str(caller),PYTHONDONTWRITEBYTECODE='0')
+                if inherited: env['TMPDIR']=str(caller)
+                self.run_provider('--stage','code_review',**env)
+                args=json.loads((self.root/'argv.json').read_text())
+                self.assertEqual(args[args.index('-s')+1],'workspace-write')
+                scratch=self.recorded_tmpdir()
+                self.assertEqual(args[args.index('-C')+1],str(scratch))
+                self.assertNotEqual(scratch,self.root)
+                self.assertNotIn(self.root,scratch.parents)
+                self.assertNotIn(scratch,self.root.parents,'the repository must not be under the writable root')
+                self.assertIn('--skip-git-repo-check',args)
+                self.assertIn('sandbox_workspace_write.exclude_slash_tmp=true',args)
+                child=json.loads((self.root/'codex-env.json').read_text())
+                for name in ('TMPDIR','TMP','TEMP'): self.assertEqual(child[name],str(scratch))
+                self.assertEqual(child['PYTHONDONTWRITEBYTECODE'],'1')
+                self.assertEqual((self.root/'cwd.txt').read_text(),str(scratch))
+                prompt=(self.root/'stdin.txt').read_text()
+                self.assertIn('The repository root is '+str(self.root),prompt)
+                self.assertIn('the repository is read-only',prompt)
+                self.assertIn('the current directory and TMPDIR are a private scratch area',prompt)
+                self.assertIn('all file references in results must stay relative to the repository root',prompt)
+                self.assertTrue(caller.is_dir(),'the inherited directory belongs to the caller')
+                scratches.add(scratch)
+        self.assertEqual(len(scratches),2,'every read-only run needs its own directory')
+
+    def test_read_only_codex_overrides_inherited_workspace_permissions(self):
+        home=self.root/'codex home'; home.mkdir()
+        config=home/'config.toml'
+        inherited=('[sandbox_workspace_write]\n'
+                   'writable_roots = ['+json.dumps(str(self.root))+']\n'
+                   'network_access = true\nexclude_slash_tmp = false\nexclude_tmpdir_env_var = true\n')
+        config.write_text(inherited)
+        self.run_provider('--stage','code_review',CODEX_HOME=str(home))
+        args=json.loads((self.root/'argv.json').read_text())
+        overrides={}
+        for index,arg in enumerate(args):
+            if arg=='-c' and args[index+1].startswith('sandbox_workspace_write.'):
+                key,value=args[index+1].split('=',1); overrides[key]=value
+        self.assertEqual(overrides,{'sandbox_workspace_write.writable_roots':'[]',
+                                    'sandbox_workspace_write.network_access':'false',
+                                    'sandbox_workspace_write.exclude_slash_tmp':'true',
+                                    'sandbox_workspace_write.exclude_tmpdir_env_var':'false'})
+        child=json.loads((self.root/'codex-env.json').read_text())
+        self.assertEqual(child['CODEX_HOME'],str(home))
+        self.assertEqual(config.read_text(),inherited,'the operator owns the inherited config')
+        self.recorded_tmpdir()
+
+    def test_read_only_codex_named_commands_and_source_reads_resolve_from_scratch(self):
+        self.repo=self.root/"repo with 'quotes'"; self.repo.mkdir()
+        def git(*args):
+            return subprocess.check_output(['git','-C',str(self.repo),*args],text=True).strip()
+        git('init','-q'); git('config','maintenance.auto','false')
+        git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-q','--allow-empty','-m','base')
+        base=git('rev-parse','HEAD')
+        source=self.repo/'src/check.py'; source.parent.mkdir(); source.write_text('fixture source\n')
+        git('add','src/check.py')
+        git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','fixture change')
+        head=git('rev-parse','HEAD')
+        self.prompt.write_text('Run `git diff '+base+'...'+head+' --` and `git rev-parse HEAD`; read `src/check.py`.')
+        probe=r'''
+import re, shlex, subprocess
+prompt=(root/'stdin.txt').read_text()
+sentence=next(line for line in prompt.splitlines() if line.startswith('The repository root is '))
+repo_git=shlex.split(re.search(r'with `(git -C .+)` instead of `git`',sentence)[1])
+repo=pathlib.Path(repo_git[2])
+cwd=pathlib.Path.cwd()
+assert cwd == pathlib.Path(sys.argv[sys.argv.index('-C')+1])
+assert cwd == pathlib.Path(os.environ['TMPDIR']) and cwd != repo
+bare=subprocess.run(['git','rev-parse','--show-toplevel'],capture_output=True,text=True)
+assert bare.returncode != 0, 'unqualified Git unexpectedly found a repository in scratch'
+commands=re.findall(r'`(git (?:diff [0-9a-f]+\.\.\.[0-9a-f]+ --|rev-parse HEAD))`',prompt)
+assert len(commands) == 2
+outputs=[subprocess.check_output(repo_git+shlex.split(command)[1:],text=True) for command in commands]
+(cwd/'probe.tmp').write_text('scratch only')
+(root/'git-probe.json').write_text(json.dumps(dict(cwd=str(cwd),repo=str(repo),diff=outputs[0],head=outputs[1].strip(),
+    source=(repo/'src/check.py').read_text(),bare_git_code=bare.returncode)))
+'''
+        (self.bin/'codex').write_text(self.fake.replace("(root/'ready').touch()",probe+"\n(root/'ready').touch()"))
+        self.run_provider('--stage','code_review',BUREAU_PROVIDER_CONFIG_BASE=base)
+        result=json.loads((self.root/'git-probe.json').read_text())
+        scratch=self.recorded_tmpdir()
+        self.assertEqual(result['cwd'],str(scratch))
+        self.assertEqual(result['repo'],str(self.repo))
+        self.assertEqual(result['head'],head)
+        self.assertIn('diff --git a/src/check.py b/src/check.py',result['diff'])
+        self.assertIn('+fixture source',result['diff'])
+        self.assertEqual(result['source'],'fixture source\n')
+        self.assertNotEqual(result['bare_git_code'],0)
+        self.assertFalse((self.repo/'probe.tmp').exists())
+
+    def test_scratch_guidance_is_once_only_for_read_only_codex(self):
+        for runner in ('codex','claude'):
+            for sandbox in ('read-only','workspace-write'):
+                with self.subTest(runner=runner,sandbox=sandbox):
+                    self.config.write_text(json.dumps({'agents':{'runner':runner,'code_review':{'sandbox':sandbox}}}))
+                    self.run_provider('--stage','code_review')
+                    prompt=(self.root/'stdin.txt').read_text()
+                    expected=int(runner=='codex' and sandbox=='read-only')
+                    self.assertEqual(prompt.count('The repository root is '),expected)
+                    self.assertEqual(prompt.count('the current directory and TMPDIR are a private scratch area'),expected)
+                    self.assertEqual(prompt.count('prefix all repository Git commands (including those named above)'),expected)
+                    if expected:
+                        self.assertIn('with `git -C '+shlex.quote(str(self.root))+'` instead of `git`',prompt)
+                        self.recorded_tmpdir()
+
+    def test_private_scratch_follows_the_resolved_sandbox_for_every_stage(self):
+        for stage in ('research','upstream_summary','implement','qa'):
+            with self.subTest(stage=stage):
+                self.config.write_text(json.dumps({'agents':{'runner':'codex',stage:{'sandbox':'read-only'}}}))
+                self.run_provider('--stage',stage)
+                args=json.loads((self.root/'argv.json').read_text())
+                scratch=self.recorded_tmpdir()
+                self.assertEqual(args[args.index('-C')+1],str(scratch))
+                self.assertEqual(args[args.index('-s')+1],'workspace-write')
+
+    def test_read_only_codex_preserves_protected_flags_and_relative_findings(self):
+        schema=ROOT/'templates/scripts/bureau-specialist.schema.json'
+        value=dict(specialist='correctness',counts=dict(critical=0,bug=1,minor=0,skip=0),
+                   findings=[dict(file='src/example.py',line=7,**{'class':'BUG'},msg='Fixture finding')],summary='Fixture')
+        result=self.run_provider('--stage','code_review','--schema',str(schema),FINAL=json.dumps(value),
+                                 BUREAU_CODEX_MODEL_CODE_REVIEW='fixture-model',BUREAU_REASONING_CODE_REVIEW='high',
+                                 ASSERT_STRICT_SCHEMA='1')
+        self.assertEqual(json.loads(result.stdout),value)
+        args=json.loads((self.root/'argv.json').read_text()); evidence,metadata=self.evidence()
+        self.assertEqual(args[args.index('-o')+1],str(evidence/'final.txt'))
+        self.assertEqual(args[args.index('--output-schema')+1],str(evidence/'codex-schema.json'))
+        self.assertEqual(args[args.index('--model')+1],'fixture-model')
+        self.assertIn('--ignore-rules',args)
+        for setting in ('project_doc_max_bytes=0','project_doc_fallback_filenames=[]','features.hooks=false',
+                        'model_reasoning_effort="high"'):
+            self.assertIn(setting,args)
+            self.assertEqual(args[args.index(setting)-1],'-c')
+        self.assertEqual(args[-1],'-')
+        self.assertEqual((metadata['sandbox_requested'],metadata['sandbox_effective'],metadata['sandbox_workspace']),
+                         ('read-only','workspace-write','private-scratch'))
+
+    def test_read_only_codex_overrides_tmpdir_after_clean_environment_filtering(self):
+        (self.bin/'codex').write_text(self.fake.replace("os.environ.get('FAKE_ROOT') or os.environ['CLAUDE_FAKE_ROOT']",
+                                                      "os.environ['CODEX_FAKE_ROOT']"))
+        self.config.write_text(json.dumps({'agents':{'runner':'codex'},'repo':{'untrusted_env':'clean'}}))
+        self.run_provider('--stage','code_review',CODEX_FAKE_ROOT=str(self.root),TMPDIR=str(self.root))
+        scratch=self.recorded_tmpdir(); child=json.loads((self.root/'codex-env.json').read_text())
+        for name in ('TMPDIR','TMP','TEMP'): self.assertEqual(child[name],str(scratch))
+        self.assertEqual(child['PYTHONDONTWRITEBYTECODE'],'1')
+
+    def test_read_only_codex_tmpdir_is_removed_after_provider_errors_and_timeout(self):
+        for code,env in ((22,{'FAIL':'backend failed'}),(22,{'EMPTY':'1'}),
+                         (124,{'CAPTURE_DELAY':'10','SLEEP':'10','BUREAU_STAGE_TIMEOUT':'0.1'})):
+            with self.subTest(code=code,env=env):
+                self.run_wrapped_provider('','--stage','code_review',code=code,TMPDIR=str(self.root),**env)
+                scratch=self.recorded_tmpdir('allocation.json')
+                if code==124:
+                    self.assertFalse((self.root/'tmpdir.json').exists(),'timeout must not reuse a previous capture')
+                else:
+                    self.assertEqual(self.recorded_tmpdir(),scratch)
+
+    def test_read_only_codex_tmpdir_is_removed_after_stop_signals(self):
+        for signum in (signal.SIGTERM,signal.SIGINT,signal.SIGHUP):
+            with self.subTest(signal=signum):
+                (self.root/'ready').unlink(missing_ok=True)
+                proc=subprocess.Popen(self.command('--stage','code_review'),stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                                      env={**self.env,'TMPDIR':str(self.root),'SLEEP':'10'})
+                try:
+                    deadline=time.monotonic()+4
+                    while not (self.root/'ready').exists() and time.monotonic()<deadline: time.sleep(.02)
+                    self.assertTrue((self.root/'ready').exists(),'fake provider did not start')
+                    proc.send_signal(signum); stdout,stderr=proc.communicate(timeout=8)
+                    self.assertEqual(proc.returncode,130,stderr.decode()); self.assertEqual(stdout,b'')
+                    self.recorded_tmpdir()
+                    metadata=self.evidence()[1]
+                    self.assertEqual(metadata['outcome'],'cancelled')
+                    self.assertEqual(metadata['sandbox_workspace'],'private-scratch')
+                finally:
+                    if proc.poll() is None: proc.kill()
+                    proc.communicate()
+
+    def test_read_only_codex_tmpdir_is_removed_when_spawn_fails(self):
+        self.run_wrapped_provider('''original_popen=p.subprocess.Popen
+def fail_popen(command,*args,**kwargs):
+    if command[:2]==['codex','exec']: raise OSError('fixture Popen failure')
+    return original_popen(command,*args,**kwargs)
+p.subprocess.Popen=fail_popen
+''','--stage','code_review',code=22,TMPDIR=str(self.root))
+        record=json.loads((self.root/'allocation.json').read_text())
+        self.assertTrue(record['is_dir']); self.assertFalse(Path(record['value']).exists())
+
+    def test_read_only_codex_refuses_a_temp_base_inside_the_repository(self):
+        env={'TMPDIR':str(self.root)}
+        with patch.object(p.tempfile,'mkdtemp') as allocate:
+            with self.assertRaises(PermissionError): p.codex_tmpdir('codex',env,Path('/tmp'),required=True)
+            allocate.assert_not_called()
+        self.assertEqual(env,{'TMPDIR':str(self.root)})
+
+    def test_workspace_write_codex_keeps_exact_argv_and_temp_environment(self):
+        schema=self.root/'schema.json'
+        schema.write_text(json.dumps(dict(type='object',additionalProperties=False,
+                                         properties=dict(status=dict(type='string')),required=['status'])))
+        caller=self.root/'caller tmp'; caller.mkdir()
+        for stage in ('implement','qa','code_review'):
+            with self.subTest(stage=stage):
+                self.run_provider('--stage',stage,'--schema',str(schema),TMPDIR=str(caller),TMP=str(caller),TEMP=str(caller),
+                                  PYTHONDONTWRITEBYTECODE='0',FINAL='{"status":"COMPLETE"}',
+                                  **{'BUREAU_CODEX_MODEL_'+stage.upper():'fixture-model',
+                                     'BUREAU_REASONING_'+stage.upper():'high','BUREAU_SANDBOX_'+stage.upper():'workspace-write'})
+                args=json.loads((self.root/'argv.json').read_text()); evidence,metadata=self.evidence()
+                expected=['exec','--json','-C',str(self.root),'-s','workspace-write','-o',str(evidence/'final.txt')]
+                if stage in ('qa','code_review'):
+                    expected+=['--ignore-rules','-c','project_doc_max_bytes=0','-c','project_doc_fallback_filenames=[]',
+                               '-c','features.hooks=false']
+                expected+=['-c','model_reasoning_effort="high"','--output-schema',str(schema),'--model','fixture-model','-']
+                self.assertEqual(args,expected)
+                self.assertEqual((self.root/'cwd.txt').read_text(),str(self.root))
+                child=json.loads((self.root/'codex-env.json').read_text())
+                for name in ('TMPDIR','TMP','TEMP'): self.assertEqual(child[name],str(caller))
+                self.assertEqual(child['PYTHONDONTWRITEBYTECODE'],'0')
+                self.assertTrue(caller.is_dir())
+                self.assertNotIn('private scratch area',(self.root/'stdin.txt').read_text())
+
+    def codex_command_stream(self):
+        events=[]
+        for key,code,output in (('denied',1,'mktemp: Operation not permitted; Permission denied'),('success',0,'ok')):
+            item=dict(id=key,type='command_execution',command='fixture command',status='in_progress',
+                      exit_code=None,aggregated_output='')
+            events.append(dict(type='item.started',item=item))
+            item={**item,'status':'failed' if code else 'completed','exit_code':code,'aggregated_output':output}
+            events.append(dict(type='item.completed',item=item))
+        return ''.join(json.dumps(event)+'\n' for event in events)+CODEX_COMPLETED
+
+    def test_codex_metadata_counts_commands_and_denials_from_events(self):
+        self.run_provider('--stage','code_review',CODEX_STREAM=self.codex_command_stream())
+        metadata=self.evidence()[1]
+        self.assertEqual((metadata['shell_command_count'],metadata['sandbox_denied_command_count']),(2,1))
+        self.assertEqual((metadata['sandbox_requested'],metadata['sandbox_effective'],metadata['sandbox_workspace']),
+                         ('read-only','workspace-write','private-scratch'))
+
+    def test_codex_command_counts_survive_provider_and_result_errors(self):
+        # Existing failure classification includes stdout: the recorded denied
+        # command makes a nonzero provider exit an environment error (24).
+        for code,env in ((24,{'FAIL':'backend failed'}),(22,{'EMPTY':'1'})):
+            with self.subTest(env=env):
+                self.run_provider('--stage','code_review',code=code,CODEX_STREAM=self.codex_command_stream(),**env)
+                metadata=self.evidence()[1]
+                self.assertEqual((metadata['shell_command_count'],metadata['sandbox_denied_command_count']),(2,1))
+                self.assertEqual(metadata['sandbox_workspace'],'private-scratch')
+
+    def test_codex_command_counts_ignore_duplicates_prose_and_successful_output(self):
+        item=dict(id='success',type='command_execution',command='echo permission denied',status='completed',
+                  exit_code=0,aggregated_output='Operation not permitted and permission denied are example messages')
+        events=[dict(type='item.completed',item=item)]*2
+        events+=[dict(type='item.completed',item=dict(id='message',type='agent_message',text='Permission denied')),
+                 dict(type='item.started',item=dict(id='interrupted',type='command_execution')),
+                 dict(type='item.completed',item=None)]
+        stream='invalid JSON\n[]\n'+''.join(json.dumps(event)+'\n' for event in events)+CODEX_COMPLETED
+        self.run_provider('--stage','code_review',CODEX_STREAM=stream)
+        metadata=self.evidence()[1]
+        self.assertEqual((metadata['shell_command_count'],metadata['sandbox_denied_command_count']),(2,0))
 
     def test_existing_tmpdir_is_passed_through_and_kept(self):
         path=self.root/'explicit tmp'; path.mkdir()

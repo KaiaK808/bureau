@@ -16,7 +16,7 @@ import review_merge_test as review_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 
-PROVIDER = r'''import json, os, pathlib, subprocess, sys
+PROVIDER = r'''import json, os, pathlib, re, shlex, subprocess, sys
 args = sys.argv[1:]
 if args[:1] == ['auth']: print('{"loggedIn":true}'); sys.exit(0)
 if args[:1] == ['login']: sys.exit(0)
@@ -25,11 +25,20 @@ prompt = sys.stdin.read()
 phase = os.environ.get('BUREAU_PROVIDER_PHASE', 'qa')
 if 'Resolve only these remaining source conflicts:' in prompt: phase = 'conflict_resolver'
 repo = pathlib.Path.cwd()
+repo_git = ['git', '-C', str(repo)]
+if '--skip-git-repo-check' in args:
+    # Read-only Codex starts outside Git. Resolve source reads through the
+    # repository-root sentence supplied to the real agent, not its scratch cwd.
+    location = next(line for line in prompt.splitlines() if line.startswith('The repository root is '))
+    repo_git = shlex.split(re.search(r'with `(git -C .+)` instead of `git`', location)[1])
+    repo = pathlib.Path(repo_git[2])
+    assert repo.is_absolute() and repo != pathlib.Path.cwd()
+    assert pathlib.Path(args[args.index('-C')+1]) == pathlib.Path.cwd()
 capture = pathlib.Path(os.environ['REVIEW_CAPTURE']); capture.mkdir(exist_ok=True)
 system = pathlib.Path(args[args.index('--append-system-prompt-file')+1]).read_text() if '--append-system-prompt-file' in args else prompt
 head = os.environ.get('BUREAU_REVIEW_INPUT_HEAD')
 base = os.environ.get('BUREAU_REVIEW_INPUT_BASE')
-diff = subprocess.check_output(['git', 'diff', base+'...'+head, '--'], text=True) if head and base else ''
+diff = subprocess.check_output(repo_git + ['diff', base+'...'+head, '--'], text=True) if head and base else ''
 (capture / (phase + '.json')).write_text(json.dumps(dict(system=system, args=args, diff=diff, prompt=prompt)))
 with open(os.environ['MODEL_LOG'], 'a') as out: out.write(phase + '\n')
 if os.environ.get('CONFIG_PROVIDER_EXIT'): sys.exit(int(os.environ['CONFIG_PROVIDER_EXIT']))
@@ -382,7 +391,16 @@ class ProviderIsolationTests(unittest.TestCase):
                         self.assertEqual(argv[argv.index('--effort')+1], 'high')
                         self.assertEqual('--dangerously-skip-permissions' in argv, phase != 'finding_verifier')
                     else:
-                        self.assertEqual(argv[argv.index('-s')+1], 'read-only' if stage == 'code_review' else 'workspace-write')
+                        self.assertEqual(argv[argv.index('-s')+1], 'workspace-write')
+                        workspace = Path(argv[argv.index('-C')+1])
+                        if stage == 'code_review':
+                            self.assertNotEqual(workspace, self.repo)
+                            self.assertNotIn(self.repo, workspace.parents)
+                            self.assertNotIn(workspace, self.repo.parents)
+                            self.assertIn('--skip-git-repo-check', argv)
+                            self.assertIn('sandbox_workspace_write.exclude_slash_tmp=true', argv)
+                        else:
+                            self.assertEqual(workspace, self.repo)
 
     def test_implement_and_unprotected_conflict_resolver_keep_existing_configuration(self):
         for runner in ('claude','codex'):

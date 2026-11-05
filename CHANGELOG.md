@@ -10,6 +10,8 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ### Fixed
 
+- Codex `read-only` runs keep the repository unwritable and gain a fresh private writable scratch directory, including when the caller sets `TMPDIR`; command-line overrides pin all workspace sandbox settings against inherited writable roots and network access, and the prompt gives an explicit, shell-quoted repository path for Git commands and source reads from that scratch directory. Cleanup covers success, errors and stops, with timeout tests recording allocations before child startup. Optional per-run metadata records the requested/effective sandbox and observed shell-command/denial counts without an evidence schema migration. Workspace-write and Claude launches and the legacy ADR prompt contract are unchanged. **Upgrade:** compare installed-script drift and resync the complete scripts scope (`--resync-scripts`). Validation uses fake providers; Linux sandbox behavior has not yet been qualified with a live run.
+
 - The dispatcher shutdown fixture observes wrapper exit through a non-inherited FIFO descriptor, which closes even under SIGKILL. It checks EOF immediately after waiting for the dispatcher, before log/event I/O can hide a late exit. The one-second grace and provider-before-dispatcher check remain. Tests only; no resync needed. Validated with 20 parallel local runs under CPU load and a delayed no-join control; historical PID inspection remains sandbox-limited.
 
 ## [3.6.0] - 2026-11-03

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="bb7397a526fdeec3de58283cce21707d71c09a9d29d11d5d1c3b733eae3cc09b">
+<meta name="bureau-source-sha256" content="cfe533b24f2506957b3c75392bad764e73558d436c3f1301efa901d1f42d93aa">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -978,6 +978,18 @@ write within the permitted workspace. The executor runs actual
 implementation/QA tests separately. Unknown runners, malformed results
 and denied permissions are errors, never automatic fallback to
 Claude.</p>
+<p>For Codex, <code>sandbox: read-only</code> keeps the repository
+unwritable while allowing temporary files in a fresh private scratch
+directory outside it. Bureau launches <code>workspace-write</code> with
+that directory as the working root, overrides inherited writable roots
+and network access, excludes shared temporary storage, and sets
+<code>TMPDIR</code>, <code>TMP</code> and <code>TEMP</code> to the
+scratch directory even when inherited; Python bytecode writes are
+disabled. The prompt identifies the repository root and keeps result
+paths relative to it. Scratch storage is removed after the child
+finishes, including failures and stops. Existing workspace-write and
+Claude launches are unchanged; Linux sandbox behavior has not yet been
+qualified with a live run.</p>
 <p>With <code>agents.providers.codex.gate_outside_sandbox: true</code>,
 the gate runs in the stage worktree under Bureau's existing outer
 runner/account and its network restrictions, outside only the nested
