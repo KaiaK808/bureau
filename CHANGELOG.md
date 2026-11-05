@@ -8,6 +8,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 - Document the maintainer-accepted control-plane design in [ADR 0014](docs/adr/0014-control-plane.md) with the new `accepted (design)` status: one owning authority, transactional state/outbox and a supervised review-to-routing pilot. No implementation, runtime compatibility change or upgrade action yet; checks validate documentation only.
 
+### Fixed
+
+- File-overlap admission compares Linear comments and snapshots only within `linear.projects`, always keeping the candidate and issues with reservations, waiters, migration entries or leases. Title and description edits no longer move the snapshot; membership, state and label changes still do, and shepherd runs use the dispatcher's three-attempt snapshot retry bound. Before admission, PR provenance is rechecked against the final unfiltered snapshot and execution ownership is refreshed: new excluded issues or a newly leased issue that leave skipped PRs undecided retry the full locked gate, and cross-project PR holders are preserved when scoped comments leave provenance incomplete, so unrecognized PRs still hold their diffs. Update the source skill, compare installed drift, resync scripts and restart drivers; no state-file, reservation or exit-code migration, and the open-PR snapshot comparison is unchanged. Validated with fake services, local Git and mocked I/O, including pre-fix negative controls; live service behavior and shared-team latency are not measured.
+
 ## [3.6.0] - 2026-11-03
 
 v3.6.0 is a minor release on v3.5.1, tagged and published 2026-11-03 (prepared 2026-11-02). It collects PRs #96, #97, #100–#112 and the `actions/checkout` 7.0.1 dependency update #8. The release adds pinned review and QA instructions, complete review evidence, bounded ticket runs and safer process cleanup. See the [v3.6.0 release notes](docs/release-notes.md) for upgrade actions, validation and known limitations.

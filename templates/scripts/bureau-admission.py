@@ -121,7 +121,9 @@ def issues(repo, config):
             if (not re.fullmatch(r'[A-Z][A-Z0-9]*-\d+', name) or not v['id']
                     or not isinstance(v['state']['id'], str) or not v['state']['id']
                     or not isinstance(v['state']['type'], str) or name in result
-                    or not isinstance(v['labels']['nodes'], list)):
+                    or not isinstance(v['labels']['nodes'], list)
+                    or any(not isinstance(label, dict) or not isinstance(label.get('name'), str)
+                           for label in v['labels']['nodes'])):
                 raise ValueError('invalid issue')
             result[name] = v
             if projects and ('project' not in v or (v['project'] is not None and
@@ -130,6 +132,21 @@ def issues(repo, config):
         except (KeyError, TypeError, ValueError) as exc:
             raise Stop(27, 'Linear issue snapshot is incomplete or duplicated') from exc
     return result
+
+
+def relevant_issues(snapshot, projects, retained):
+    """Use one project/ownership boundary for comments, holders and race checks."""
+    return {name: item for name, item in snapshot.items()
+            if not projects or name in retained or
+            (item.get('project') or {}).get('id') in projects}
+
+
+def admission_identity(snapshot):
+    """Ignore prose and service ordering; retain membership and decision inputs."""
+    return {name: (item['id'], item['identifier'], (item.get('project') or {}).get('id'),
+                   item['state']['id'], item['state']['type'],
+                   sorted({label['name'] for label in item['labels']['nodes']}))
+            for name, item in snapshot.items()}
 
 
 def branches(repo, snapshot):
@@ -188,7 +205,7 @@ def changed_paths(repo, base, head):
     return sorted(paths)
 
 
-def pr_scopes(repo, listed, canonical, inventories):
+def pr_scopes(repo, listed, canonical, inventories, canonical_complete=True):
     known = {b for b in canonical.values() if b} | {v['branch'] for v in inventories.values() if v.get('branch')}
     result = []
     for pr in listed:
@@ -198,9 +215,11 @@ def pr_scopes(repo, listed, canonical, inventories):
             raise Stop(18, 'GitHub PR provenance incomplete: #' + str(number))
         legacy = ('Generated with [Claude Code]' in body and
                   ('Implemented from tasks.md spec.' in body or 'Draft PR — see Linear issue for status.' in body))
-        # Canonical branch markers identify parked tickets too. Also retain old
-        # numbered spec branches and explicitly Bureau-marked orphan PRs.
-        if branch not in known and not re.match(r'^(?:[^/]+/)*\d+-', branch) and 'bureau' not in body.lower() and not legacy:
+        # Scoped comments cannot disprove canonical provenance elsewhere in the
+        # team. Keep those PR diffs conservatively, without paging other issues'
+        # comments. A complete map retains the existing provenance filter.
+        if (canonical_complete and branch not in known and not re.match(r'^(?:[^/]+/)*\d+-', branch)
+                and 'bureau' not in body.lower() and not legacy):
             continue
         try:
             for sha in (base, head): ensure_commit(repo, sha)
@@ -338,6 +357,17 @@ class Admission:
                 raise Stop(27, 'Candidate missing from complete Linear snapshot')
             current = snapshot[issue]
             checkpoint(current)
+            with self.runtime.guard():
+                leases = r.read(self.runtime.leases, {})
+            projects = self.config['linear'].get('projects') or []
+            # Keep original retained identities through cleanup; fresh leases
+            # can add members before the final comparison.
+            retained = ({issue} | state['reservations'].keys() | state['waiters'].keys()
+                        | state['migration'].keys()
+                        | {key[len('issue:'):] for key in leases if key.startswith('issue:')})
+            all_issue_names = snapshot.keys()
+            snapshot = relevant_issues(snapshot, projects, retained)
+            canonical_complete = snapshot.keys() == all_issue_names
             canonical = branches(self.repo, snapshot)
             if not branch or canonical[issue] != branch:
                 raise Stop(12, 'Candidate canonical branch missing or changed')
@@ -368,14 +398,9 @@ class Admission:
                 print('File overlap gate: retained rework reservation ' + issue)
                 return
             holders = []
-            projects = self.config['linear'].get('projects') or []
             classes = {}
             for name, item in snapshot.items():
                 reservation = state['reservations'].get(name)
-                project = item.get('project')
-                project = project.get('id') if isinstance(project, dict) else None
-                if projects and project not in projects and name != issue and not reservation and 'issue:' + name not in leases:
-                    continue
                 state_id = item['state']['id']
                 if state_id not in classes:
                     classes[state_id] = r.shell(self.repo, 'bureau_ticket_state_class', state_id)
@@ -416,7 +441,8 @@ class Admission:
                 if name != issue:
                     holders.append(dict(holder=name, paths=None, unknown=['reserved ticket missing from service snapshot']))
             listed = pulls(self.repo)
-            for pr in pr_scopes(self.repo, listed, canonical, state['inventories']):
+            scoped_prs = pr_scopes(self.repo, listed, canonical, state['inventories'], canonical_complete)
+            for pr in scoped_prs:
                 if pr['branch'] != branch or not pr['same_repo']:
                     holders.append(pr)
             effective = dict(candidate)
@@ -431,10 +457,19 @@ class Admission:
             conflicts = [dict(v, overlap=p.intersection(effective['paths'], v['paths'])) for v in holders
                          if p.intersection(effective['paths'], v['paths'])]
             latest = issues(self.repo, self.config)
+            latest_canonical_complete = canonical.keys() == latest.keys()
+            with self.runtime.guard():
+                latest_leases = r.read(self.runtime.leases, {})
+            latest_retained = retained | {key[len('issue:'):] for key in latest_leases if key.startswith('issue:')}
+            latest = relevant_issues(latest, projects, latest_retained)
             if issue in latest:
                 checkpoint(latest[issue])
-            if latest != snapshot:
+            if admission_identity(latest) != admission_identity(snapshot):
                 raise SnapshotMoved(27, 'Linear snapshot changed during admission; retry')
+            # A newly excluded issue may own a PR skipped by the initially
+            # complete comment map. Recheck those diffs on a full locked retry.
+            if canonical_complete and not latest_canonical_complete and len(scoped_prs) < len(listed):
+                raise SnapshotMoved(27, 'Linear PR provenance changed during admission; retry')
             if sorted(map(pull_identity, pulls(self.repo))) != sorted(map(pull_identity, listed)):
                 raise SnapshotMoved(18, 'Open PR snapshot changed during admission; retry')
             checkpoint()
@@ -522,7 +557,7 @@ def main():
             # Another lane may finish while this one is collecting snapshots.
             # Retry only this typed race, never a transport/shape/ownership
             # failure. Every attempt reruns the same locked gate and checkpoint.
-            tries = 3 if os.environ.get('BUREAU_DISPATCH_LANE') == '1' else 1
+            tries = 3
             for attempt in range(tries):
                 try:
                     admission.admit(args.issue, args.branch, args.local, args.continuation)
