@@ -1261,9 +1261,9 @@ p.subprocess.Popen=fail_popen
                          ('read-only','workspace-write','private-scratch'))
 
     def test_codex_command_counts_survive_provider_and_result_errors(self):
-        # Existing failure classification includes stdout: the recorded denied
-        # command makes a nonzero provider exit an environment error (24).
-        for code,env in ((24,{'FAIL':'backend failed'}),(22,{'EMPTY':'1'})):
+        # Failure classification ignores tool output, so the recorded denied
+        # command leaves a nonzero provider exit a provider error (22).
+        for code,env in ((22,{'FAIL':'backend failed'}),(22,{'EMPTY':'1'})):
             with self.subTest(env=env):
                 self.run_provider('--stage','code_review',code=code,CODEX_STREAM=self.codex_command_stream(),**env)
                 metadata=self.evidence()[1]
