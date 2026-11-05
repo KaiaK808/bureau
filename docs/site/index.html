@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a251e250775402a5852768c585ec43f4c46d662d090d84a3a4dc57d0503ac0b7">
+<meta name="bureau-source-sha256" content="914438ae6990198eae6cfeab58e343f7e95c401471658d469841737027bd9ffd">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -19,13 +19,116 @@
 <p><a href="../../LICENSE"><img
 src="https://img.shields.io/badge/license-MIT-blue.svg"
 alt="License: MIT" /></a></p>
-<p>Bureau connects Linear tickets, Spec Kit artifacts, implementation,
-QA and review. Use it directly in a Codex app task, through Claude Code
-commands, or in a background pipeline with Claude, Codex, or a mixture
-of providers. State lives in Linear and Git; there is no application
+<p>Bureau takes Linear tickets through specification, implementation, QA
+and code review, with Spec Kit artifacts tracking the work. It installs
+skills, project instructions and pipeline scripts into your Git
+repository for Codex app tasks, Claude Code sessions or background
+provider CLIs. State lives in Linear and Git; there is no application
 backend to host.</p>
+<p><img src="../assets/workflow.svg"
+alt="Linear workflow from Triage through Spec, Spec Review, Design, Build, QA and Build Review to a human Merge, with needs-human holds for a person to resolve" /></p>
+<p>The diagram shows human-merge mode; Design and QA run when enabled. A
+<code>needs-human</code> hold pauses background pickup until a person
+resolves the blocker and removes the label. See the <a
+href="stage-protocol.html">stage protocol</a> and <a
+href="../../references/setup.md">state setup</a>.</p>
+<h2 id="safety-model">Safety model</h2>
+<ul>
+<li><strong>A person merges:</strong> set
+<code>agents.merge_mode: "manual"</code> and configure a Merge state to
+park approved work for a human. The default is <code>auto</code>, so
+select manual mode explicitly. See <a
+href="../adr/0002-explicit-merge-authority.md">merge
+authority</a>.</li>
+<li><strong>Secrets stay filtered:</strong> branch-controlled code runs
+with Bureau service secrets and their environment carriers removed. This
+filters the environment; it does not hide files readable by the same
+account. See <a href="configuration.html#repo">environment
+filtering</a>.</li>
+<li><strong>Each background run owns a disposable worktree:</strong>
+workers claim the ticket and checkout before running; held branches and
+unfinished work are preserved. App tasks use their current checkout. See
+<a href="stage-protocol.html">workspace isolation</a>.</li>
+</ul>
+<h2 id="requirements">Requirements</h2>
+<table>
+<thead>
+<tr>
+<th>Dependency</th>
+<th>Needed for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Python 3.9+, Bash 3.2+, Git 2.26+, jq, curl</td>
+<td>Installation and shared runtime. The shell filter needs Python on
+the system default PATH and <code>env</code> with <code>-0</code>;
+merge-only worker reuse needs Git 2.38+</td>
+</tr>
+<tr>
+<td><code>specify-cli</code> 1.2.2
+(<code>uv tool install specify-cli==1.2.2</code>)</td>
+<td>Spec Kit initialization and resync, pinned by the installer</td>
+</tr>
+<tr>
+<td>Linear account and <code>LINEAR_API_KEY</code> in ignored
+<code>.env</code></td>
+<td>Shared ticket reads and transitions</td>
+</tr>
+<tr>
+<td>GitHub CLI (<code>gh</code>), authenticated</td>
+<td>PR creation and merge operations</td>
+</tr>
+<tr>
+<td>Claude CLI and/or Codex CLI, authenticated</td>
+<td>Providers selected for background stages; no provider CLI is
+required for a current Codex app task</td>
+</tr>
+<tr>
+<td>tmux</td>
+<td>Persistent pane launchers; app tasks and one-shot ticks do not need
+it</td>
+</tr>
+<tr>
+<td>Node.js 18+</td>
+<td>Shared conflict-schedule CLI</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="../../references/setup.md">setup prerequisites</a> and <a
+href="provider-runtime.html">provider configuration</a>. Keep
+credentials out of tracked files; shell helpers call Linear's API
+directly.</p>
 <p><img src="../assets/hero.png" alt="Bureau archive chamber" /></p>
+<h2 id="install">Install</h2>
+<p>Keep one source clone at the published <code>v3.6.0</code> tag and
+expose it to the assistants you use. See <a
+href="releases.html#current-release-status">release status</a> for
+validation and limitations.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.6.0 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills&quot;</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills/bureau-init&quot;</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optional Claude Code entry point:</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills&quot;</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills/bureau-init&quot;</span></span></code></pre></div>
+<p>Preserve existing installations and links. This clone is pinned in
+detached-HEAD state; upgrades select another published tag. In an
+adopting Git repository, invoke
+<code>$bureau-init --target codex</code>,
+<code>/bureau-init --target claude</code>, or
+<code>--target both</code>. For both, choose the active Spec Kit
+integration. Refresh skill discovery after installation.</p>
+<p>The installer discovers Linear settings, writes
+<code>.bureau.json</code>, initializes pinned Spec Kit and installs the
+selected interfaces and runtime assets. Codex uses
+<code>.agents/skills</code> and AGENTS.md; Claude uses
+<code>.claude/commands</code>, <code>.claude/skills</code> and
+CLAUDE.md. Resync preserves user instructions and the constitution;
+<code>.bureau-install.json</code> records customization hashes and
+source revisions. See the <a href="../../references/setup.md">setup
+procedure</a> for agent selection, optional CI and installed assets.</p>
 <h2 id="choose-how-to-work">Choose how to work</h2>
+<p>Replace <code>ISSUE</code> with your Linear issue key.</p>
 <table>
 <thead>
 <tr>
@@ -38,13 +141,13 @@ backend to host.</p>
 <tr>
 <td>Codex app task</td>
 <td>Current task, using its selected model and tools</td>
-<td><code>$bureau TEAM-123 through review</code></td>
+<td><code>$bureau ISSUE through review</code></td>
 </tr>
 <tr>
 <td>Claude interactive</td>
 <td>Current Claude Code session</td>
-<td><code>/linear-to-spec TEAM-123</code>,
-<code>/linear-implement TEAM-123</code></td>
+<td><code>/linear-to-spec ISSUE</code>,
+<code>/linear-implement ISSUE</code></td>
 </tr>
 <tr>
 <td>Bounded background tick</td>
@@ -58,160 +161,57 @@ backend to host.</p>
 </tr>
 </tbody>
 </table>
-<p>App work preserves the current checkout. Background workers claim
-both the ticket and their own disposable checkout. Held branches and
-unfinished work are preserved for reconciliation. App review and bounded
-ticks stop before merge by default; continuous background pipelines can
-merge after approval and the full CI/base gate. Use
-<code>--no-merge</code> when supervising through review only.</p>
-<p>Codex support is implemented and covered by local fixtures. Before
-unattended adoption, qualify a representative live ticket in your
-repository. See the <a href="codex-acceptance.html">acceptance
-record</a> for verified coverage and remaining live checks.</p>
-<h2 id="install">Install</h2>
-<p>Install the source for v3.6.0, dated 2026-11-03 (prepared
-2026-11-02), keep one clone and expose it to the assistants you use. See
-<a href="releases.html#current-release-status">release status</a> for
-publication and validation. The commands below select the published
-tag.</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.6.0 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills&quot;</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills/bureau-init&quot;</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optional Claude Code entry point:</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills&quot;</span></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills/bureau-init&quot;</span></span></code></pre></div>
-<p>Keep existing installations and links; do not overwrite them. This
-clone is pinned to the release in detached-HEAD state; future upgrades
-select another published tag as described in the <a
-href="migration.html">upgrade guide</a>. In an adopting Git
-repository, invoke <code>$bureau-init --target codex</code>,
-<code>/bureau-init --target claude</code>, or select
-<code>--target both</code>. For both, choose which Spec Kit integration
-should remain active. Refresh skill discovery after installation.</p>
-<p>The installer discovers Linear settings, writes
-<code>.bureau.json</code>, initializes pinned Spec Kit 1.2.2, and
-installs only the selected interfaces. Codex uses
-<code>.agents/skills</code> and AGENTS.md; Claude uses
-<code>.claude/commands</code>, <code>.claude/skills</code> and
-CLAUDE.md. Existing project instructions and the constitution survive
-resync. Hashes in <code>.bureau-install.json</code> identify
-customizations before updates, and the manifest records which source
-revision (tag and commit) each asset scope was installed from.</p>
-<p>First setup checks prerequisites, selects the host and operating
-mode, discovers one active Linear team and its projects/labels/states,
-collects agent choices, writes configuration, installs assets and
-validates the result. Existing choices are reused. Environment examples
-preserve credentials, and CI scaffolding is optional with
-<code>ubuntu-latest</code> as its default. See the <a
-href="../../references/setup.md">conditional setup procedure</a>.</p>
-<p>Installed assets include <code>.specify/</code> and the selected
-hosts' skills/instructions, shared runtime files under
-<code>scripts/</code>, optional Claude planning workflows under
-<code>.claude/workflows/</code>, and optional
-<code>.github/workflows/ci.yml</code>. <code>specs/</code> contains
-feature artifacts; <code>LESSONS.md</code> can hold curated learnings.
-Local configuration, installer bookkeeping and runtime logs remain
-ignored. Spec Kit comes from the pinned CLI; it is not vendored in this
-repository.</p>
-<table>
-<thead>
-<tr>
-<th>Dependency</th>
-<th>Needed for</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Python 3.9+, Bash 3.2+, Git 2.26+, jq, curl</td>
-<td>Installation and shared runtime; the shell filter needs Python on
-the system default PATH and <code>/usr/bin/env -0</code>. Merge-only
-worker reuse needs Git 2.38+</td>
-</tr>
-<tr>
-<td><code>specify-cli</code> 1.2.2
-(<code>uv tool install specify-cli==1.2.2</code>)</td>
-<td>Spec Kit initialization/resync</td>
-</tr>
-<tr>
-<td>Linear account and <code>LINEAR_API_KEY</code> in ignored
-<code>.env</code></td>
-<td>Shared ticket reads/transitions; interactive tools can assist
-discovery</td>
-</tr>
-<tr>
-<td>GitHub CLI (<code>gh</code>)</td>
-<td>Background PR creation and merge operations</td>
-</tr>
-<tr>
-<td>Claude CLI and/or Codex CLI</td>
-<td>Only providers selected for background stages; not required to run a
-current Codex app task</td>
-</tr>
-<tr>
-<td>tmux</td>
-<td>Persistent pane launchers; not required for app tasks or one-shot
-ticks</td>
-</tr>
-<tr>
-<td>Node.js 18+</td>
-<td>Shared conflict-schedule CLI</td>
-</tr>
-</tbody>
-</table>
-<p>On macOS, <code>brew install jq gh tmux</code> supplies common
-background dependencies. Authenticate each selected provider and
-<code>gh</code> normally. Never put credentials in tracked files. The
-shell helpers use Linear's GraphQL API directly.</p>
+<p>App review and bounded ticks stop before merge by default. Background
+pipelines in auto merge mode can merge after approval and the complete
+CI/base gate; <code>--no-merge</code> preserves a review-only boundary.
+Codex support has local fixture coverage; <a
+href="codex-acceptance.html">qualify a representative live ticket</a>
+before unattended adoption.</p>
 <h2 id="work-in-a-codex-app-task">Work in a Codex app task</h2>
-<p>After installation, use <code>$bureau spec TEAM-123</code>,
-<code>$bureau implement TEAM-123</code>,
-<code>$bureau qa TEAM-123</code>, <code>$bureau review TEAM-123</code>,
-or <code>$bureau TEAM-123 through review</code>. These work in the
-current task without launching a nested model.
-<code>$bureau status</code> inspects ownership and saved runs;
-<code>$bureau resume RUN_ID</code> continues preserved work.</p>
+<p>Use <code>$bureau spec ISSUE</code>,
+<code>$bureau implement ISSUE</code>, <code>$bureau qa ISSUE</code>,
+<code>$bureau review ISSUE</code>, or
+<code>$bureau ISSUE through review</code>. These work in the current
+task without launching a nested model. <code>$bureau status</code>
+inspects ownership and saved runs; <code>$bureau resume RUN_ID</code>
+continues preserved work.</p>
 <p>The <a href="../../templates/skills/bureau/references/app-setup.md">app
-setup guide</a> gives setup/status/test actions to add through app
-settings. <code>repo.test_command</code> must name the project's real
-tests. The app generates its own local-environment configuration; Bureau
-does not overwrite unrelated <code>.codex</code> settings.</p>
-<p>The <a href="stage-protocol.html">stage protocol</a> checks
-configured state IDs, ownership, current HEAD, canonical branch and
-completion evidence before posting a digest or advancing a ticket. A
-review request stops at review. Explicitly authorized merging still uses
-the existing complete merge gate.</p>
+setup guide</a> supplies setup/status/test actions for app settings. Set
+<code>repo.test_command</code> to the project's real tests. The app
+generates its own local-environment configuration; Bureau preserves
+unrelated <code>.codex</code> settings.</p>
+<p>The <a href="stage-protocol.html">stage protocol</a> checks state
+IDs, ownership, current HEAD, canonical branch and completion evidence
+before advancing a ticket. A review request stops at review; explicitly
+authorized automated merging still uses the complete merge gate.</p>
 <h2 id="background-execution">Background execution</h2>
 <p>Set <code>agents.runner</code> to <code>claude</code> (legacy
-default) or <code>codex</code>; stage objects can select another runner.
-Per-provider models avoid leaking a Claude model into a Codex stage. See
-<a href="provider-runtime.html">provider configuration</a>.</p>
+default) or <code>codex</code>; individual stages can select another
+runner. Use <a href="provider-runtime.html">provider-specific model
+settings</a> when mixing providers.</p>
 <div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Read-only checks, then one bounded stage:</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-doctor.py <span class="at">--mode</span> background</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/bureau-tick.sh <span class="at">--no-merge</span></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co"># One named ticket, preserving the review boundary:</span></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> TEAM-123</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co"># One named ticket through review:</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/shepherd.sh <span class="at">--no-tmux</span> <span class="at">--no-merge</span> ISSUE</span>
 <span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Pause future dispatch; existing work finishes normally:</span></span>
 <span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py pause</span>
 <span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/bureau-runtime.py unpause</span></code></pre></div>
-<p><code>logs/bureau-tick.json</code> distinguishes waiting,
-advancement, actual Done, review boundaries and failures. Provider
-evidence is under <code>logs/provider-runs/</code>. Missing account
-usage or dollar cost is unavailable, not zero. The <a
+<p><code>logs/bureau-tick.json</code> distinguishes waits, advancement,
+Done, review boundaries and failures; provider evidence lives under
+<code>logs/provider-runs/</code>. Missing usage or cost means
+unavailable, not zero. The <a
 href="../../templates/skills/bureau/references/supervision.md">supervision
-guide</a> covers quiet change notifications, native app scheduling when
-requested, and shared conflict scheduling. Installation does not start
-recurring automation.</p>
-<p>The tmux launchers now run one continuous dispatcher with two lanes
-by default. It requires explicit
-<code>agents.file_overlap_gate: true</code>, including with one lane or
-dry-run; otherwise startup returns 24. Update all writers together
-before enabling it. <code>agents.parallel_lanes</code> controls process
-lanes separately from the ticket cap; standalone shepherds, ticks, batch
-and upstream-port remain available. See <a
+guide</a> covers notifications, requested app scheduling and conflict
+scheduling. Installation does not start recurring automation.</p>
+<p>The tmux launchers run one continuous dispatcher with two lanes by
+default. Startup requires explicit
+<code>agents.file_overlap_gate: true</code>, even for one lane or
+dry-run; otherwise it exits 24. Update all writers together before
+enabling it. <code>agents.parallel_lanes</code> controls process lanes
+separately from the ticket cap. See <a
 href="stage-protocol.html#continuous-ticket-dispatch">continuous
 dispatch</a>.</p>
-<p>The existing single-ticket, batch and upstream-port modes remain
-available:</p>
 <table>
 <thead>
 <tr>
@@ -220,10 +220,6 @@ available:</p>
 </tr>
 </thead>
 <tbody>
-<tr>
-<td>One ticket through review</td>
-<td><code>bash scripts/shepherd.sh --no-tmux --no-merge TEAM-123</code></td>
-</tr>
 <tr>
 <td>Preview a batch schedule</td>
 <td><code>bash scripts/orchestrate.sh --execute --schedule schedule.json --max-concurrent 3 --no-merge --dry-run</code></td>
@@ -234,223 +230,32 @@ available:</p>
 serial lane</td>
 </tr>
 <tr>
-<td>Port a selected upstream change</td>
+<td>Port an upstream change</td>
 <td><code>bash scripts/upstream-port.sh --sha COMMIT</code> or
-<code>--pr NUMBER</code>, after configuring that repository's upstream
-and build/test commands</td>
+<code>--pr NUMBER</code>, after configuring the upstream and build/test
+commands</td>
 </tr>
 </tbody>
 </table>
-<p>The <a href="../../references/operations.md">background operations
-reference</a> covers these modes, the installed driver/helper inventory,
-single-flight limits, multiple repositories and the scope of dry-run
-controls. <code>agents.max_concurrent_issues: 1</code> limits counted
-work in flight. Manual Merge is excluded by default; set
-<code>agents.max_concurrent_include_merge: true</code> to keep full
-single-flight behavior. Build Review always counts. Ownership and
-schedule validation remain required.</p>
+<p>The <a href="../../references/operations.md">operations reference</a>
+covers these modes, dry-run limits and multiple repositories.
+<code>agents.max_concurrent_issues: 1</code> limits counted tickets;
+manual Merge is excluded unless
+<code>agents.max_concurrent_include_merge: true</code>, and Build Review
+always counts. Ownership and schedule validation remain required.</p>
 <h2 id="update-and-migrate">Update and migrate</h2>
-<p>Select tag <code>v3.6.0</code> in the source clone that supplies
-<code>bureau-init</code> using the <a
-href="migration.html#select-the-source-release">source-update
-instructions</a> and refresh skill discovery. From v3.5.1, stop every
-driver, preserve unfinished work and customized assets, compare
-installed drift, then resync the <strong>scripts and interfaces scopes
-together in each adopting repository</strong>, including all new helpers
-and schemas. Review/QA now use pinned base instructions with project
-configuration excluded; a resync PR that changes protected agent files
-receives an advisory <code>AGENT_CONFIG</code> note for the human merge.
-QA requires successful PR lookup and a base fetch, using fetched
-<code>origin/main</code> only when lookup confirms no open PR.
-Structured review merge, evidence packets and process holds apply by
-default; ticket budgets/progress, required grounding, the shadow
-verifier, ADR context and Codex outside-gate delegation stay opt-in. Run
-<code>--resync-speckit</code> for helper execute-bit repair, follow <a
-href="migration.html#upgrade-to-v36">Upgrade to v3.6</a>, restart all
-drivers together and qualify a representative ticket. From v3.4.1, apply
-the intervening <a
-href="release-notes-v3.5.0.html#upgrade-an-existing-installation">v3.5.0</a>
-and <a
-href="release-notes-v3.5.1.html#upgrade-an-existing-installation">v3.5.1</a>
-requirements first. In Claude Code, after loading the new source
-skill:</p>
-<pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
-<p>In a Codex app task, request the same scopes with:</p>
+<p>Stop drivers and preserve unfinished work and customizations, update
+the source tag and refresh discovery, then preview and resync each
+adopting repository. Keep the existing target selection; the example
+updates scripts and interfaces for both hosts. Use
+<code>/bureau-init</code> with the same arguments in Claude Code. The <a
+href="migration.html">migration guide</a> covers release-specific
+prerequisites, additional scopes, conflicts, validation and rollback;
+the <a href="releases.html">release record</a> lists changes and
+limits. Updating the clone or running <code>--update</code> alone does
+not refresh installed assets. Restart drivers together and qualify a
+representative ticket before unattended use.</p>
 <pre class="text"><code>$bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
-<p>Use <code>--target claude</code> to stay Claude-only. Refresh Spec
-Kit separately with <code>--resync-speckit --target both</code>; the
-existing active integration stays active unless you request a switch.
-Repos with installed Claude planning workflows also need
-<code>--resync-workflows</code>; script resync does not update them.
-<code>--update</code> is configuration-only. Updating the source clone
-alone does not change installed project files.</p>
-<p>Pause dispatch and preserve local work first. Resync previews
-conflicts; one unresolved conflict blocks the entire asset batch. The <a
-href="migration.html">upgrade and conflict guide</a> covers legacy
-installations without hashes, named replacements, retaining custom
-behavior, validation and rollback. Do not use a blanket overwrite or
-replace project instruction files wholesale.</p>
-<p>Version 1 configs remain supported. Optional schema-v2 migration
-preserves existing values, adds the absent legacy runner default and
-records <code>model_compatibility: "v1"</code> to retain model
-ownership. Its private backup covers configuration only. Installing
-Codex interfaces does not switch the background runner.</p>
-<p>The <a href="release-notes.html">v3.6.0 release notes</a> and <a
-href="../../CHANGELOG.md">changelog</a> list what changes and what adopters
-must do. The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">v3.6.0
-GitHub Release</a> is marked as latest. v2.0.0 was the first tagged
-release; earlier source installs were untagged. The <a
-href="releases.html">release process</a> defines immutable tags,
-GitHub Release notes and qualification before publication. Bureau
-release numbers are independent of configuration schema versions.</p>
-<p>v3 changes the exit-code contract between stages and their drivers
-and needs configuration set before the resync; see the <a
-href="release-notes-v3.0.0.html">v3.0.0 release notes</a> and <a
-href="migration.html#upgrade-to-v3">Upgrade to v3</a>. v3.0.1 is a
-patch on v3.0.0 (the merge stage's exit codes and a reused approval; see
-its <a href="release-notes-v3.0.1.html">release notes</a>); v3.0.2 is
-a patch on v3.0.1 (every stage finds the ticket's own spec directory,
-and <code>repo.worktree_links</code> brings a Python <code>.venv</code>
-back into the stage worktrees; see its <a
-href="release-notes-v3.0.2.html">release notes</a>). The previous
-major release is <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v2.0.0">v2.0.0</a>.</p>
-<p>v3.1.0 is a minor release on v3.0.2 and keeps the v3 exit-code
-contract; branch code runs without the Bureau secrets, the review stage
-acts on the result of its inline merge, the merge gate honours
-<code>false</code> switches, pins the head it checked and reads its
-numbers by one rule, the default timeout per stage call is one hour, and
-an interrupted run prints its own way back. Resync the scripts and
-interfaces scopes together and check the list in <a
-href="migration.html#upgrade-to-v31">Upgrade to v3.1</a> first; see
-its <a href="release-notes-v3.1.0.html">release notes</a> and those
-of its candidates, <a
-href="release-notes-v3.1.0-rc.2.html">v3.1.0-rc.2</a> and <a
-href="release-notes-v3.1.0-rc.1.html">v3.1.0-rc.1</a>. v3.1.0
-followed <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.0.2">v3.0.2</a>.</p>
-<p>v3.2.0 is a minor release on v3.1.0 and keeps the v3 exit-code
-contract; stages keep the <code>.env</code> keys unexported, remote git
-runs without branch hooks, implement retries timeouts and pushes failed
-work, rework receives the newest review or QA findings, queues move past
-waiting gates, and a hang-up stops the run. An upgrade from v3.1.0
-resyncs the scripts and interfaces scopes together, restarts queue loops
-and supervisors, and follows <a
-href="migration.html#upgrade-to-v32">Upgrade to v3.2</a>; Git LFS
-repositories need <code>repo.remote_git_runs_hooks: true</code> before
-resync. See the <a href="release-notes-v3.2.0.html">v3.2.0 release
-notes</a> and those of its candidate, <a
-href="release-notes-v3.2.0-rc.1.html">v3.2.0-rc.1</a>.</p>
-<p>v3.2.1 is a patch on v3.2.0 that removes internal references without
-behaviour change; see its <a href="release-notes-v3.2.1.html">release
-notes</a>. From v3.2.0 or v3.2.0-rc.1, select <code>v3.2.1</code>; a
-resync is optional to receive the cleaned comments and help texts
-(installers report those files as updates). v3.2.1 followed <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.0">v3.2.0</a>.</p>
-<p>v3.3.0, dated 2026-10-07, is an earlier stable release, a minor
-release on v3.2.1. It contains shell gates for Codex implement (<a
-href="https://github.com/KaiaK808/bureau/pull/60">#60</a>) and QA (<a
-href="https://github.com/KaiaK808/bureau/pull/62">#62</a>) turns blocked
-only by tests the sandbox denies, plus private temporary directories for
-Codex calls without <code>TMPDIR</code>; an installation's first real
-Codex implement turn passed the outside project gate, ended with exit
-<code>0</code> and handed the ticket on to QA. Claude runs and the v3
-exit-code contract are unchanged; live QA acceptance remains pending.
-From v3.2.1 select tag <code>v3.3.0</code>, resync the scripts scope as
-one set, keep <code>repo.test_command</code> configured with the full
-project gate, restart queue loops and supervisors, and follow <a
-href="migration.html#upgrade-to-v33">Upgrade to v3.3</a>. See its <a
-href="release-notes-v3.3.0.html">release notes</a> and those of its
-candidates, <a href="release-notes-v3.3.0-rc.2.html">v3.3.0-rc.2</a>
-and <a href="release-notes-v3.3.0-rc.1.html">v3.3.0-rc.1</a>, which
-stay published as prereleases; runtime, installer, templates and tests
-are identical to rc.2. v3.3.0 followed <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.2.1">v3.2.1</a>.</p>
-<p>v3.4.0, dated 2026-10-09, is an earlier stable release, a minor
-release on v3.3.0. It adds operator hooks without submodule recursion
-(<a href="https://github.com/KaiaK808/bureau/pull/69">#69</a>), applies
-Claude effort per stage (<a
-href="https://github.com/KaiaK808/bureau/pull/65">#65</a>), re-accepts a
-clean preserved worktree (<a
-href="https://github.com/KaiaK808/bureau/pull/66">#66</a>), selects a
-Claude configuration directory with a doctor login report (<a
-href="https://github.com/KaiaK808/bureau/pull/67">#67</a>), skips
-malformed environment names safely (<a
-href="https://github.com/KaiaK808/bureau/pull/70">#70</a>) and documents
-<code>.env</code> precedence (<a
-href="https://github.com/KaiaK808/bureau/pull/71">#71</a>). The v3
-exit-code contract stays. From v3.3.0 select tag <code>v3.4.0</code>,
-resync the scripts scope as one set and follow <a
-href="migration.html#upgrade-to-v34">Upgrade to v3.4</a>. There was
-no release candidate; live acceptance follows the release. See the <a
-href="release-notes-v3.4.0.html">release notes</a>; v3.4.0 followed
-<a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.3.0">v3.3.0</a>.</p>
-<p>v3.4.1, dated 2026-10-20, is an earlier stable release, a patch
-release on v3.4.0. It contains three fixes in <a
-href="https://github.com/KaiaK808/bureau/pull/73">#73</a>: dropping
-every <code>HERDR_</code> variable from child environments, accepting
-Codex error notices recovered by a later completed turn, and protecting
-Claude structured results from scheduled wakeups. No exit code or
-configuration key is new, no interfaces change and the v3 exit-code
-contract stays. From v3.4.0 select tag <code>v3.4.1</code>, resync the
-scripts scope as one set and restart queue loops and supervisors; see <a
-href="migration.html#upgrade-to-v341">Upgrade to v3.4.1</a>.
-Installations that start shepherd runs from inside Herdr benefit
-directly. There is no release candidate and no installation has run
-v3.4.1 before the release; provider calls are faked in tests, and no
-live Herdr session, Codex 503 recovery or wakeup was reproduced. See the
-<a href="release-notes-v3.4.1.html">release notes</a>; v3.4.1
-followed <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.0">v3.4.0</a>.</p>
-<p>v3.5.0, dated 2026-10-28 (prepared 2026-10-27), is an earlier stable
-release, a minor release on v3.4.1. It adds quiet exits 28/29, shared
-completion/wait evidence, committed spec checkpoints and governance
-checks, stricter sandbox-gate proof, review convergence, cooperative
-ticket withdrawal, file admission, continuous dispatch and bounded
-learning. Spec Kit is pinned to 1.2.2. Configurable conflict repair and
-silence detection stay opt-in; launchers require overlap enabled. See
-its <a href="release-notes-v3.5.0.html">release notes</a> for all
-defaults, state locations and the validation record. v3.5.0 followed <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.4.1">v3.4.1</a>.</p>
-<p>v3.5.1, dated 2026-10-29 (prepared 2026-10-28), is the previous
-stable release, a patch on v3.5.0 containing only <a
-href="https://github.com/KaiaK808/bureau/pull/98">#98</a>. Spec Review
-and UX validate exact result contracts and hold invalid results with
-exit 22 by default. Their cached overlap readiness requires a validated
-passing status and the installed schema digest; old waiting records
-require one fresh provider call. No configuration keys or exit codes
-were new. See its <a href="release-notes-v3.5.1.html">release
-notes</a> for the validation record and the macOS cancellation
-limitation recorded at that release; v3.6.0 addresses the
-cancellation-exit loss.</p>
-<p>v3.6.0, dated 2026-11-03 (prepared 2026-11-02), is the current stable
-release, a minor release on v3.5.1. It adds review/QA configuration
-isolation, complete structured review merge and optional ADR/source
-checks, an evidence packet with an advisory risk tier, opt-in cumulative
-ticket budgets and trusted progress, durable process termination holds,
-opt-in Codex full gates outside the inner sandbox, offline pnpm/Yarn
-Classic restoration, Spec Kit helper mode repair and architecture
-recipes. The v3.5 exit vocabulary and Spec Kit 1.2.2 pin remain. Every
-PR was reviewed by Codex before push within at most three rounds, with
-maintainer exceptions of five rounds for #108 and four for <a
-href="https://github.com/KaiaK808/bureau/pull/112">#112</a>. Each PR's
-full local suite ran on macOS outside any sandbox, with failures rerun
-serially; each PR's CI passed after some macOS job reruns on tests the
-change does not touch. The integrated macOS suite first passed 171 of
-174; two integration breaks were fixed and
-<code>test_dispatcher.sh</code> passed on a serial rerun. The full suite
-then passed 174 of 174. CI on <a
-href="https://github.com/KaiaK808/bureau/pull/113">#113</a> passed at
-<code>28f4720</code> on all 10 shards after the review-fixture timeout
-repair. Main CI on merge commit <code>85b41a7</code> was green on all 10
-shards after one Ubuntu job rerun (<a
-href="https://github.com/KaiaK808/bureau/actions/runs/41591725054">run
-41591725054</a>); the dispatcher shutdown fixture's one-second stop
-grace is too tight under load, and widening it is planned for v3.7. See
-<a href="release-notes.html">release notes</a> for the complete
-scope, defaults, upgrade actions, limits and validation record.</p>
 <h2 id="documentation">Documentation</h2>
 <table>
 <thead>
@@ -504,22 +309,13 @@ scope, defaults, upgrade actions, limits and validation record.</p>
 </table>
 <p>The same documents are <a href="index.html">available as
 styled HTML</a>. Contributions follow <a href="../../AGENTS.md">AGENTS.md</a>
-and <a href="../../CONTRIBUTING.md">CONTRIBUTING.md</a>. Run
-<code>bash tests/run.sh</code> for the local test harness.</p>
-<p>For contributors, <code>SKILL.md</code> routes into conditional
-<code>references/</code>; <code>scripts/bureau_install.py</code> owns
-installation. <code>templates/scripts/</code> is the runtime source,
-<code>templates/commands/</code> supplies Claude commands and rendered
-Codex skills, <code>templates/instructions/</code> supplies managed
-instructions, and <code>templates/workflows/</code> supplies optional
-planning workflows. Runtime templates win when prose disagrees.</p>
+and <a href="../../CONTRIBUTING.md">CONTRIBUTING.md</a>; see them for source
+layout and validation.</p>
 <p>Built by <a href="https://github.com/KaiaK808">Kai Ebert</a> /
 Brainhuggers under the <a href="../../LICENSE">MIT license</a>. See <a
 href="../../SECURITY.md">SECURITY.md</a>, <a
 href="../../CODE_OF_CONDUCT.md">CODE_OF_CONDUCT.md</a> and <a
-href="../../NOTICE">NOTICE</a>. Bureau can write code and change Linear/GitHub
-state; select its operating scope for the repository you intend to
-use.</p></main>
+href="../../NOTICE">NOTICE</a>.</p></main>
 </div>
 </body>
 </html>

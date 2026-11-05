@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="248" viewBox="0 0 1160 248" role="img" aria-labelledby="title description">
+  <title id="title">Linear workflow with human merge and needs-human holds</title>
+  <desc id="description">Triage to Spec to Spec Review to optional Design to Build to optional QA to Build Review to Merge, where a person merges in manual mode. A needs-human hold from any stage requires a person to resolve the blocker and clear the hold.</desc>
+  <style>
+    .canvas { fill: #f6f8fa; }
+    .stage { fill: #ffffff; stroke: #57606a; stroke-width: 1.5; }
+    .human { fill: #fff4d6; stroke: #805b00; stroke-width: 2; }
+    text { fill: #1f2328; font-family: system-ui, sans-serif; font-size: 16px; text-anchor: middle; }
+    .detail { font-size: 13px; }
+    .decision { fill: #604400; }
+    .flow { fill: none; stroke: #57606a; stroke-width: 1.5; }
+    .hold { fill: none; stroke: #805b00; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .arrow { fill: #57606a; }
+    .hold-arrow { fill: #805b00; }
+    @media (prefers-color-scheme: dark) {
+      .canvas { fill: #0d1117; }
+      .stage { fill: #161b22; stroke: #8b949e; }
+      .human { fill: #3b2e0a; stroke: #d29922; }
+      text { fill: #e6edf3; }
+      .decision { fill: #f0ca65; }
+      .flow { stroke: #8b949e; }
+      .hold { stroke: #d29922; }
+      .arrow { fill: #8b949e; }
+      .hold-arrow { fill: #d29922; }
+    }
+  </style>
+  <defs>
+    <marker id="next" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="arrow" d="M0 0 8 4 0 8Z"/>
+    </marker>
+    <marker id="pause" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="hold-arrow" d="M0 0 8 4 0 8Z"/>
+    </marker>
+  </defs>
+  <rect class="canvas" width="1160" height="248" rx="12"/>
+  <g class="flow" marker-end="url(#next)">
+    <path d="M136 52H156"/><path d="M280 52H300"/>
+    <path d="M424 52H444"/><path d="M568 52H588"/>
+    <path d="M712 52H732"/><path d="M856 52H876"/>
+    <path d="M1000 52H1020"/>
+  </g>
+  <g class="hold">
+    <path d="M76 80V108H1084V80 M220 80V108 M364 80V108 M508 80V108 M652 80V108 M796 80V108 M940 80V108"/>
+    <path d="M580 108V158" marker-end="url(#pause)"/>
+  </g>
+  <g class="stage">
+    <rect x="16" y="24" width="120" height="56" rx="6"/>
+    <rect x="160" y="24" width="120" height="56" rx="6"/>
+    <rect x="304" y="24" width="120" height="56" rx="6"/>
+    <rect x="448" y="24" width="120" height="56" rx="6"/>
+    <rect x="592" y="24" width="120" height="56" rx="6"/>
+    <rect x="736" y="24" width="120" height="56" rx="6"/>
+    <rect x="880" y="24" width="120" height="56" rx="6"/>
+  </g>
+  <g class="human">
+    <rect x="1024" y="24" width="120" height="56" rx="6"/>
+    <rect x="414" y="160" width="332" height="56" rx="6"/>
+  </g>
+  <text x="76" y="58">Triage</text>
+  <text x="220" y="58">Spec</text>
+  <text x="364" y="58">Spec Review</text>
+  <text x="508" y="47">Design</text>
+  <text class="detail" x="508" y="66">Optional</text>
+  <text x="652" y="58">Build</text>
+  <text x="796" y="47">QA</text>
+  <text class="detail" x="796" y="66">Optional</text>
+  <text x="940" y="58">Build Review</text>
+  <text class="decision" x="1084" y="47">Merge</text>
+  <text class="detail decision" x="1084" y="66">Person merges</text>
+  <text class="detail decision" x="650" y="139">When blocked</text>
+  <text class="decision" x="580" y="182">needs-human hold</text>
+  <text class="detail decision" x="580" y="202">Person resolves blocker and clears hold</text>
+  <text class="detail" x="580" y="238">Human-merge mode: agents.merge_mode = manual</text>
+</svg>
