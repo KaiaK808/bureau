@@ -222,7 +222,7 @@ Every pipeline script:
 | 20 | stopped-before-merge | review boundary reached |
 | 21 | ownership-conflict | checkout/issue ownership refused |
 | 22 | provider-or-result-error | provider execution or result validation failed |
-| 23 | quota-wait | provider quota requires waiting |
+| 23 | quota-wait | provider quota or model capacity requires waiting (`quota` or `capacity` outcome) |
 | 24 | environment-blocked | required execution environment unavailable (includes Node dependencies that could not be restored) |
 | 25 | needs-human-or-paused | human attention or dispatch pause |
 | 26 | cancelled-ticket | ticket is cancelled |
@@ -361,10 +361,13 @@ Post-implement launch creates its durable hold synchronously before forking or s
 | Status | PR | needs-human label | State move | escalations.log |
 |---|---|---|---|---|
 | `COMPLETE` | flipped to ready | no | → QA or Build Review | no |
-| `NEEDS_HUMAN` / `STUCK` / `CAP_TIME` / `PARTIAL` | draft (visible to reviewers) | yes | none (stays in Build) | yes |
+| `PARTIAL` with commits | ready | yes | none (stays in Build) | yes |
+| `NEEDS_HUMAN` / `STUCK` / `CAP_TIME` / `PARTIAL` without commits | draft (visible to reviewers) | yes | none (stays in Build) | yes |
 | `CI_MARKER` (squash-range check not clean; overrides every other status) | draft, report posted on the PR | yes | none (stays in Build) | yes |
 
-PRs open as `--draft` during intermediate iterations so QA and code-review don't trigger on half-done work; flipped to ready via `gh pr ready` only on COMPLETE.
+The post-push PR step uses `bureau_gh_pr_retry` for lookup, ready, URL view and create in both ready and draft paths. Transient HTTP 429/5xx and transport failures get three retries after 2/4/8 seconds by default; `BUREAU_IMPL_PR_RETRIES` (0–5) and `BUREAU_IMPL_PR_RETRY_WAIT` (initial 0–60 seconds, doubling up to 60) override this through environment or `.env`, with invalid values using defaults. A failed lookup cannot fall through to create. A failed ready call cannot hand off a draft. Failure returns 18 with a hold message: the branch is pushed, only the PR step is incomplete, rerun the implement stage. This adds no state-file writes or effect reordering; other stages and the initial push-deferral lookup keep their existing handling.
+
+The CLI's already-ready response completes the ready step, so a rerun can recover after a successful flip followed by a failed URL read. The terminal PR is ready on `COMPLETE` and on `PARTIAL` with commits; other halt statuses keep it draft. QA and code-review receive a handoff only after the required PR calls succeed.
 
 ### Deterministic review convergence
 

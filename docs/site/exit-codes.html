@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4cdb6b55c3246bfb77890ec387b0ec417c8016b7064af42a08ce3ef3ae44748d">
+<meta name="bureau-source-sha256" content="4f5996123c269e24c250bf5c47219e596954294ae0098d873aef03403af9a1a1">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -133,12 +133,20 @@ label or durable local hold</td>
 <td><code>18</code></td>
 <td>gh-failed</td>
 <td><code>gh</code> CLI command failed (e.g. <code>gh pr merge</code>
-rejected), or the implement stage's final <code>git push</code> failed
-twice while origin (fetched again) lacks commits of the branch or cannot
-be read; also: the spec stage could not fetch origin, verify its base or
-read/reserve a spec number</td>
+rejected), or implement's post-push PR lookup/ready/view/create failed
+after bounded transient retries (ready and draft paths); a failed lookup
+never counts as no PR. Also: implement's final <code>git push</code>
+failed twice while origin (fetched again) lacks commits of the branch or
+cannot be read; the spec stage could not fetch origin, verify its base
+or read/reserve a spec number</td>
 <td>API rate limit, missing permissions, branch protection, origin
-rejecting or unreachable</td>
+rejecting or unreachable. For a post-push PR failure, the hold message
+confirms the branch is pushed and only the PR step is incomplete: rerun
+the implement stage once GitHub recovers. No handoff occurs. Defaults:
+three retries after 2/4/8 s; <code>BUREAU_IMPL_PR_RETRIES</code> accepts
+0–5 and <code>BUREAU_IMPL_PR_RETRY_WAIT</code> an initial 0–60 s,
+doubling up to 60 s (environment or <code>.env</code>; invalid values
+use defaults). Permanent errors hold without retry.</td>
 </tr>
 <tr>
 <td><code>19</code></td>
@@ -187,8 +195,10 @@ withdrawal still takes precedence with 25/26</td>
 <tr>
 <td><code>23</code></td>
 <td>quota-wait</td>
-<td>Selected provider quota reached</td>
-<td>Wait for reset; do not switch providers silently</td>
+<td>Selected provider quota reached or model temporarily at
+capacity/overloaded</td>
+<td>Provider outcome <code>quota</code> or <code>capacity</code>; wait
+for availability; do not switch providers silently</td>
 </tr>
 <tr>
 <td><code>24</code></td>
@@ -310,6 +320,15 @@ exit 2. The observation is latched before routing, so later refresh
 failures cannot replace it with an error or a needs-human escalation. A
 failed mandatory read itself retains its existing strict error
 handling.</p>
+<p>For a nonzero provider CLI exit, classification uses the last Codex
+<code>turn.failed</code>/<code>error</code> event's message or Claude's
+terminal result error, plus CLI stderr lines without MCP server
+attribution. Tool output and agent messages do not classify the failure.
+Authentication (including CLI HTTP 401) takes precedence over
+quota/capacity, then environment errors. Model errors containing "at
+capacity" or "overloaded" use outcome <code>capacity</code> with the
+existing exit <code>23</code>; spec admission capacity remains exit
+<code>28</code>. Retry policy and waits are unchanged.</p>
 <p>Provider silence also uses <code>25</code>
 (<code>needs-human-or-paused</code>), with <code>outcome: timeout</code>
 and <code>timeout_kind: silence</code> in the provider result metadata

@@ -6,7 +6,15 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+- Document the maintainer-accepted control-plane design in [ADR 0014](docs/adr/0014-control-plane.md) with the new `accepted (design)` status: one owning authority, transactional state/outbox and a supervised review-to-routing pilot. No implementation, runtime compatibility change or upgrade action yet; checks validate documentation only.
+
 ### Fixed
+
+- Implement retries transient post-push PR lookup, ready, view and create failures for both ready and draft paths (three retries after 2/4/8 seconds by default; bounded `BUREAU_IMPL_PR_RETRIES` / `BUREAU_IMPL_PR_RETRY_WAIT` overrides). A failed lookup never means no PR. A PR step that still fails holds with exit 18 and tells the operator the branch is pushed and to rerun the stage; it does not hand the ticket on. Resync the complete scripts scope after comparing installation drift; no configuration or state-file migration. Validation uses fake GitHub/provider calls and local Git; live service recovery remains unqualified.
+
+- Provider failure classification now reads terminal Codex/Claude errors and CLI stderr without MCP server attribution, so tool output, agent messages and MCP authentication notices cannot mask model capacity failures. "At capacity" and "overloaded" report outcome `capacity` with existing exit 23; genuine CLI login/401 failures retain exit 16. Update the source skill and resync the complete scripts scope after comparing installation drift. Retry policy, waits and evidence schema are unchanged; validation uses fake providers, with live CLI qualification outstanding.
+
+- The dispatcher shutdown fixture observes wrapper exit through a non-inherited FIFO descriptor, which closes even under SIGKILL. It checks EOF immediately after waiting for the dispatcher, before log/event I/O can hide a late exit. The one-second grace and provider-before-dispatcher check remain. Tests only; no resync needed. Validated with 20 parallel local runs under CPU load and a delayed no-join control; historical PID inspection remains sandbox-limited.
 
 - Review merging and deterministic evidence reconstruction reuse helper imports within each invocation instead of recompiling them per finding. Review/evidence outputs, ordering, digests and exit codes are unchanged. **Upgrade:** compare installed-script drift and resync the scripts scope; no configuration or evidence migration. Validation uses local 1,500-finding fixtures and byte-for-byte output comparisons; live adopter performance remains unmeasured.
 

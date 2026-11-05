@@ -15,7 +15,7 @@ sections = ['Context', 'Options considered', 'Decision', 'Rationale',
             'Consequences', 'Known limits', 'Reversal condition', 'Evidence',
             'Open points']
 fields = ['Status', 'Date', 'Decided by', 'Sources']
-status_pattern = re.compile(r'accepted \(derived\)|proposed \(v3\.5, PR #[1-9][0-9]*\)|superseded by (?!0000)[0-9]{4}')
+status_pattern = re.compile(r'accepted \(derived\)|accepted \(design\)|proposed \(v3\.5, PR #[1-9][0-9]*\)|superseded by (?!0000)[0-9]{4}')
 template_status = 'accepted (derived) | proposed (v3.5, PR #n) | superseded by NNNN'
 email_pattern = re.compile(r"[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+", re.I)
 ticket_quote = re.compile(r'''\b[A-Z][A-Z0-9]*-[0-9]+\b(?:[^\n]{0,160}|[^\n]{0,160}\n[ \t]*(?:>[ \t]*)?)(?:["“„«]|(?<!\w)['‘])''')

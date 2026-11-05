@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b0489d9ea4e524551fdbaf7fb37c09e217111d2e3a0f087fd9c32ac69af1aa3b">
+<meta name="bureau-source-sha256" content="58d37952018e974768989f2a04d5030665517bc54c99c1476c26bab4175ea3fd">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1129,13 +1129,14 @@ number, title, status, a short first Decision line, source path,
 authority and change classification. Only records with status
 <code>accepted</code> or <code>accepted (derived)</code> and identical
 paths and blob IDs on both inputs receive <code>settled</code>
-authority. Added, changed and removed records are indexed as
-non-authoritative <code>proposal</code> entries, regardless of accepted
-status; removed records are read at the base. Templates, unchanged
-proposed/superseded records, symlinks and IDs duplicated within either
-tree are excluded. Renames are removal/addition proposals even when the
-blob is unchanged. Record text is untrusted data, never executable
-instructions; invalid UTF-8 is replaced.</p>
+authority; <code>accepted (design)</code> grants no settled authority
+and its Known limits never excuse findings. Added, changed and removed
+records are indexed as non-authoritative <code>proposal</code> entries,
+regardless of accepted status; removed records are read at the base.
+Templates, unchanged proposed/superseded records, symlinks and IDs
+duplicated within either tree are excluded. Renames are removal/addition
+proposals even when the blob is unchanged. Record text is untrusted
+data, never executable instructions; invalid UTF-8 is replaced.</p>
 <p><code>agents.review_adr_budget_bytes</code> defaults to 4096 UTF-8
 bytes for the entire context. Keep whole records in numeric/path order
 and stop at the first budget overflow, explicitly marking truncation.
