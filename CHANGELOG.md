@@ -16,6 +16,8 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 - The dispatcher shutdown fixture observes wrapper exit through a non-inherited FIFO descriptor, which closes even under SIGKILL. It checks EOF immediately after waiting for the dispatcher, before log/event I/O can hide a late exit. The one-second grace and provider-before-dispatcher check remain. Tests only; no resync needed. Validated with 20 parallel local runs under CPU load and a delayed no-join control; historical PID inspection remains sandbox-limited.
 
+- Review merging and deterministic evidence reconstruction reuse helper imports within each invocation instead of recompiling them per finding. Review/evidence outputs, ordering, digests and exit codes are unchanged. **Upgrade:** compare installed-script drift and resync the scripts scope; no configuration or evidence migration. Validation uses local 1,500-finding fixtures and byte-for-byte output comparisons; live adopter performance remains unmeasured.
+
 ## [3.6.0] - 2026-11-03
 
 v3.6.0 is a minor release on v3.5.1, tagged and published 2026-11-03 (prepared 2026-11-02). It collects PRs #96, #97, #100–#112 and the `actions/checkout` 7.0.1 dependency update #8. The release adds pinned review and QA instructions, complete review evidence, bounded ticket runs and safer process cleanup. See the [v3.6.0 release notes](docs/release-notes.md) for upgrade actions, validation and known limitations.
