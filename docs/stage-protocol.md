@@ -48,6 +48,8 @@ A progress turn ends once per completed background work stage (exit 0 or complet
 
 ## Cooperative ticket withdrawal
 
+Shepherd's `--from-stage` accepts a backlog or other inactive ticket (as classified by `agents.ticket_active_states`) only when the requested move has no admission gate, claims it and moves directly to the requested state with a strict withdrawal checkpoint immediately afterward; gated targets (Build with `agents.file_overlap_gate` enabled, Spec with `agents.max_concurrent_issues > 0`) refuse with exit 25 before any ownership claim, label or move and require a manual move into an active state first, while terminal states, human holds, ownership conflicts, ticket policy stops and withdrawal checks after startup retain their existing behavior.
+
 Every cooperative stop creates its shared latch before writing diagnostics. Closed stderr or SIGPIPE cannot prevent preservation or change the stop exit, including withdrawal with both ticket policies disabled.
 
 `bureau_ticket_checkpoint` is the trusted shell boundary for background work. It checks after selection/claim before dispatch, before and after each provider pass, before ordinary push/PR/comment/acceptance publication, immediately before the merge and on queue/shepherd iterations. Preservation pushes of commits already made remain allowed on exit, as described below. `agents.ticket_active_states` resolves state keys to configured IDs; display names do not decide whether work continues. Done exits 0, configured cancellation/duplication exits 26, other inactive IDs exit 25. Active-to-active moves retain the optimistic mutation conflict (21). Normal stage transitions, including manual Merge approval publication, continue as before.
