@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="dcddc84dd8534bfc1ef348ed10f3b320a834aeb74e1f53822a4f7627c83c9e01">
+<meta name="bureau-source-sha256" content="05d7323d82ed8c74a13d649323403781fab3875ed4dd59f19e1a4e89fbd9a9cb">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -547,14 +547,28 @@ stdout drain and leader reaping to one second each and retains 130.
 Resync the complete scripts scope after comparing installed drift.
 Qualification uses fake services and local fixtures; hosted
 cross-platform and live installation checks remain separate.</p>
-<p>A Codex child without <code>TMPDIR</code> gets a private
-<code>bureau-codex-*</code> directory under resolved <code>/tmp</code>,
-outside the repository regardless of <code>TEMP</code> or
-<code>TMP</code>. Allocation follows the stop handlers; removal follows
-the child on completion, timeout, interruption or exceptions. The
-provider's own environment is unchanged. Removal failures are reported
-without failing the run. An existing <code>TMPDIR</code> passes through
-unchanged; Claude gets no added directory.</p>
+<p>A Codex child with resolved <code>read-only</code> sandbox always
+gets a fresh private <code>bureau-codex-*</code> directory under
+resolved <code>/tmp</code>, outside the repository. Its effective
+sandbox is <code>workspace-write</code> rooted at that directory, with
+<code>--skip-git-repo-check</code> and command-line overrides for every
+<code>sandbox_workspace_write</code> key:
+<code>writable_roots=[]</code>, <code>network_access=false</code>,
+<code>exclude_slash_tmp=true</code> and
+<code>exclude_tmpdir_env_var=false</code>. These override user and
+project configuration so the repository remains unwritable and network
+access stays disabled. The child receives that directory in
+<code>TMPDIR</code>, <code>TMP</code> and <code>TEMP</code>, plus
+<code>PYTHONDONTWRITEBYTECODE=1</code>. Its prompt identifies the
+repository root and requires repository-relative result paths.
+Workspace-write runs retain the existing behavior: allocate private temp
+storage only without <code>TMPDIR</code>, otherwise pass the caller's
+directory through unchanged. Allocation follows the stop handlers;
+removal follows the child on completion, timeout, interruption or
+exceptions. The provider's own environment is unchanged. Removal
+failures are reported without failing the run; Claude gets no added
+directory. See <a href="configuration.html#agents">provider
+configuration</a> for the live Linux qualification limit.</p>
 <h2 id="codex-qa-sandbox-gate">Codex QA sandbox gate</h2>
 <p>QA uses the same proof, planner, reservation and runner. Report an
 exhaustive <code>blockers</code> array with <code>kind</code>, exact

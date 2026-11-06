@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -308,18 +309,45 @@ def environment_blocked(value, text, runner, stage):
     return bool(re.search(r'operation not permitted|permission denied|sandbox denied', text, re.I))
 
 
-def codex_tmpdir(runner, environ, repo):
+def codex_tmpdir(runner, environ, repo, required=False):
     # Without TMPDIR, git on macOS asks for the per-user temp directory, which
     # the Codex sandbox can deny. Only the child environment gets a directory
     # of its own; run() allocates after installing stop handlers and removes
     # it after the child finishes. An explicit resolved /tmp keeps TEMP or TMP
     # from moving it into the worktree, where a commit could pick it up.
-    if runner != 'codex' or environ.get('TMPDIR'): return None
+    # Read-only runs need a fresh workspace even with an inherited TMPDIR.
+    if runner != 'codex' or (environ.get('TMPDIR') and not required): return None
     base = Path('/tmp').resolve()
-    if base == Path(repo).resolve() or Path(repo).resolve() in base.parents: return None
+    if base == Path(repo).resolve() or Path(repo).resolve() in base.parents:
+        if required: raise PermissionError('private Codex scratch directory must be outside the repository')
+        return None
     path = tempfile.mkdtemp(prefix='bureau-codex-', dir=str(base))
     environ['TMPDIR'] = path
+    if required: environ.update(TMP=path, TEMP=path, PYTHONDONTWRITEBYTECODE='1')
     return path
+
+
+def codex_execution_metadata(path):
+    # Count observed command attempts, including interrupted ones, once per
+    # item ID. Only failed terminal command output can indicate a denial;
+    # messages, command text and successful output are not denial evidence.
+    commands = set(); denied = set()
+    with path.open(errors='replace') as stream:
+        for line in stream:
+            try: event = json.loads(line)
+            except ValueError: continue
+            if not isinstance(event, dict) or event.get('type') not in ('item.started', 'item.completed'): continue
+            item = event.get('item')
+            if not isinstance(item, dict) or item.get('type') != 'command_execution': continue
+            key = item.get('id')
+            if not isinstance(key, str) or not key: continue
+            commands.add(key)
+            output = item.get('aggregated_output')
+            failed = (type(item.get('exit_code')) is int and item['exit_code'] != 0) or item.get('status') == 'failed'
+            if (event['type'] == 'item.completed' and failed and isinstance(output, str)
+                    and re.search(r'operation not permitted|permission denied', output, re.I)):
+                denied.add(key)
+    return dict(shell_command_count=len(commands), sandbox_denied_command_count=len(denied))
 
 
 def validate(value, schema):
@@ -377,6 +405,7 @@ def run(options, prompt, system, repo, evidence, schema=None):
     options.pop('_provider_exit', None)
     options.pop('_receipt_metadata', None)
     options.pop('_provider_cancelled', None)
+    options.pop('_sandbox_metadata', None)
     store = e.observe(evidence_store, repo)
     run_id = options.setdefault('evidence_run_id', os.environ.get('BUREAU_RUN_ID') or uuid.uuid4().hex)
     issue = os.environ.get('BUREAU_CURRENT_ISSUE') or None
@@ -423,6 +452,11 @@ def run(options, prompt, system, repo, evidence, schema=None):
             error = exc
             code, text = (24 if isinstance(exc, (PermissionError, UntrustedEnvError)) else 22), ''
             metadata = dict(outcome='invalid-result', error=str(exc))
+    if options['runner'] == 'codex':
+        # result.json is extensible per-run metadata. Keep these optional
+        # diagnostics out of the closed metadata-only receipt projection.
+        metadata.update(sandbox_requested=options['sandbox'], **options.get('_sandbox_metadata', {}))
+        metadata.update(e.observe(codex_execution_metadata, evidence / 'stdout.log') or {})
     if ticket is not None:
         try:
             complete = (code not in (124, 130) and metadata.get('outcome') not in ('provider-error', 'timeout', 'cancelled')
@@ -563,6 +597,7 @@ def completion_text(code, text, metadata, repo, schema):
 
 def _run(options, prompt, system, repo, evidence, schema=None):
     runner = options['runner']
+    private_scratch = runner == 'codex' and options['sandbox'] == 'read-only'
     shadow = options['stage'] == 'code_review' and options.get('phase') == 'finding_verifier'
     # A read-only filesystem sandbox still permits reads and tool calls. Codex
     # exec has no supported all-tools-off switch; do not launch an unrestricted
@@ -672,7 +707,21 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)
         child_env = claude_env(options, env=child_env)
         if shadow: child_env['CLAUDE_CODE_DISABLE_AUTO_MEMORY'] = '1'
-        tempdir = codex_tmpdir(runner, child_env, repo)
+        tempdir = codex_tmpdir(runner, child_env, repo, required=private_scratch)
+        if private_scratch:
+            command[command.index('-C') + 1] = tempdir
+            command[command.index('-s') + 1] = 'workspace-write'
+            # Pin the whole workspace policy above user and project config:
+            # inherited roots or network access would widen the scratch sandbox.
+            command[-1:-1] = ['--skip-git-repo-check', '-c', 'sandbox_workspace_write.writable_roots=[]',
+                             '-c', 'sandbox_workspace_write.network_access=false',
+                             '-c', 'sandbox_workspace_write.exclude_slash_tmp=true',
+                             '-c', 'sandbox_workspace_write.exclude_tmpdir_env_var=false']
+            prompt += ('\nThe repository root is ' + str(repo.resolve())
+                       + '; the repository is read-only, the current directory and TMPDIR are a private scratch area'
+                       + '; prefix all repository Git commands (including those named above) with `git -C '
+                       + shlex.quote(str(repo.resolve())) + '` instead of `git`, resolve repository-relative input paths from that root,'
+                       + ' and all file references in results must stay relative to the repository root.')
         if options.get('silence_timeout_seconds') or options.get('cancel_file'):
             owned = a.OwnedProcesses()
             child_env[a.OWNER_ENV] = owned.token
@@ -683,8 +732,11 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         with (evidence/'stdout.log').open('wb') as stdout, (evidence/'stderr.log').open('wb') as stderr:
             observer = options.get('_gate_observer')
             hold = pg.ProcessHold(pg.hold_root(repo, process_env(['git'])), 'provider', repo)
-            child = subprocess.Popen(command, cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE if observer or owned else stdout, stderr=stderr, start_new_session=True,
+            child = subprocess.Popen(command, cwd=tempdir if private_scratch else repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE if observer or owned else stdout, stderr=stderr, start_new_session=True,
                                      env=child_env)
+            if runner == 'codex':
+                options['_sandbox_metadata'] = dict(sandbox_effective='workspace-write' if private_scratch else options['sandbox'],
+                                                   sandbox_workspace='private-scratch' if private_scratch else 'repository')
             if owned: owned.attach(child.pid)
             reader = None
             stream_error = []
