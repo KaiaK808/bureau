@@ -21,6 +21,6 @@ with tempfile.TemporaryDirectory(prefix='bureau-1748-negative-') as scratch:
     path.write_text(code.replace(original, '            pass  # NEGATIVE CONTROL: no atomic reservation'))
     mutation_caught([sys.executable, str(ROOT/'tests/file_overlap_test.py'),
                      'Fixture.test_simultaneous_contenders_have_exactly_one_admission'],
-                    env={'BUREAU_1748_SCRIPTS':str(scripts)},
+                    env={'BUREAU_OVERLAP_TEST_SCRIPTS':str(scripts)},
                     originals=originals)
     print('PASS negative control: removing atomic reservation admits both synchronized contenders; single-admission assertion fails')

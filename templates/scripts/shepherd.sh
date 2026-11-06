@@ -379,6 +379,39 @@ if [ -n "$FROM_STAGE" ]; then
   fi
 fi
 
+# Match move_issue's admission boundaries before the runtime claims ownership.
+# Admission itself requires an active ticket; an explicit start cannot bypass it.
+_shepherd_from_stage_admission_check() {
+  if [ "$TARGET_STATE" = "${BUREAU_STATE_SPEC:-_unset_}" ] && [ "${BUREAU_MAX_CONCURRENT_ISSUES:-0}" -gt 0 ]; then
+    :
+  elif [ "$TARGET_STATE" = "${BUREAU_STATE_BUILD:-}" ] \
+       && [ "$(bureau_get '(.agents // {}) | if has("file_overlap_gate") then .file_overlap_gate else false end | tojson')" != false ]; then
+    :
+  else
+    return 0
+  fi
+  local state_class="${1:-}" snapshot state_id snapshot_rc
+  if [ -z "$state_class" ]; then
+    snapshot=$(bureau_issue_snapshot "$ISSUE") || {
+      snapshot_rc=$?
+      # Let the established startup check report and alert on a Linear outage.
+      # Admission is checked again before the ticket label claim.
+      [ "$snapshot_rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && return 0
+      exit "$snapshot_rc"
+    }
+    state_id=$(printf '%s' "$snapshot" | jq -er --arg issue "$ISSUE" \
+      'select(.identifier == $issue) | .state.id | select(type == "string" and length > 0)') || exit 10
+    state_class=$(bureau_ticket_state_class "$state_id") || exit $?
+  fi
+  if [ "$state_class" = 25 ]; then
+    echo "ERROR: --from-stage $FROM_STAGE requires admission from an active state; move the ticket into an active state first (exit 25); nothing claimed or moved" >&2 || true
+    exit 25
+  fi
+}
+if [ -n "$FROM_STAGE" ]; then
+  _shepherd_from_stage_admission_check
+fi
+
 [ "$NO_MERGE" = 1 ] && export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
 WORKTREE="${WORKTREE_OVERRIDE:-$REPO_DIR/.worktrees/shepherd}"
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
@@ -603,13 +636,37 @@ fi
 # Any exit above 128 (a signal, whichever way it ended the shell) releases with
 # one attempt, like a cancelled run. The line is written from a subshell, as in
 # _shepherd_cancelled: after a hang-up it cannot stop or spoil the release.
-bureau_ticket_checkpoint "$ISSUE" strict
+_shepherd_start_checkpoint() {
+  # An explicit start may bring an inactive ticket into the workflow. Still
+  # check terminal states, shared stop latches and ticket policies before any
+  # mutation. Active tickets retain the complete strict checkpoint.
+  START_SNAPSHOT=$(bureau_issue_snapshot "$ISSUE") || exit $?
+  START_STATE_ID=$(printf '%s' "$START_SNAPSHOT" | jq -er --arg issue "$ISSUE" \
+    'select(.identifier == $issue) | .state.id | select(type == "string" and length > 0)') || exit 10
+  START_STATE_CLASS=$(bureau_ticket_state_class "$START_STATE_ID") || exit $?
+  case "$START_STATE_CLASS" in
+    25)
+      bureau_ticket_checkpoint "$ISSUE" latched
+      _shepherd_from_stage_admission_check "$START_STATE_CLASS" ;;
+    *) bureau_ticket_checkpoint "$ISSUE" strict "$START_SNAPSHOT" ;;
+  esac
+}
+if [ -n "$FROM_STAGE" ]; then
+  _shepherd_start_checkpoint
+else
+  bureau_ticket_checkpoint "$ISSUE" strict
+fi
 trap '[ $? -gt 128 ] && export _BUREAU_LINEAR_SINGLE_ATTEMPT=1; ( echo "[shepherd] releasing $ISSUE" ) || true; remove_issue_label "$ISSUE" "shepherd-focused" 2>/dev/null || true; rm -f "$SHEPHERD_FAULT_FILE" "$MERGE_GATE_FILE" 2>/dev/null || true' EXIT
 SHEPHERD_CLAIMED=1
 echo "[shepherd] claiming $ISSUE (label: shepherd-focused)"
 add_issue_label "$ISSUE" "shepherd-focused" \
   || echo "  WARN: failed to add shepherd-focused label" >&2
-bureau_ticket_checkpoint "$ISSUE"
+if [ -n "$FROM_STAGE" ] && [ "$START_STATE_CLASS" = 25 ]; then
+  # Refresh even an inactive start: a human may finish it during the claim.
+  _shepherd_start_checkpoint
+else
+  bureau_ticket_checkpoint "$ISSUE"
+fi
 
 # --from-stage: move the ticket before the loop. After the claim (it used to
 # run before it), so the queue keeps away from a ticket that just moved into a
@@ -620,6 +677,7 @@ if [ -n "$FROM_STAGE" ]; then
   : > "$SHEPHERD_FAULT_FILE" 2>/dev/null || true
   _BUREAU_LINEAR_FAULT_FILE="$SHEPHERD_FAULT_FILE" move_issue "$ISSUE" "$TARGET_STATE" \
     || _shepherd_move_failed "$FROM_STAGE" $?
+  bureau_ticket_checkpoint "$ISSUE" strict
   MOVED_TO="$TARGET_NAME"
 fi
 

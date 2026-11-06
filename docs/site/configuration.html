@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="cfe533b24f2506957b3c75392bad764e73558d436c3f1301efa901d1f42d93aa">
+<meta name="bureau-source-sha256" content="a9aaa7abc3333130d23fd3f5f7ef9829b0002d7ef514db09300a43e19352481b">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -217,8 +217,11 @@ turn, a ticket carrying this name or <code>needs-human</code></td>
 <td><code>linear.projects</code></td>
 <td>array</td>
 <td>optional</td>
-<td>List of project UUIDs to scope <code>pick_issue</code>. Empty array
-= unscoped (entire team)</td>
+<td>List of project UUIDs to scope <code>pick_issue</code> and
+file-overlap admission's comment fetches and decision snapshot.
+Admission always includes the candidate and issues with reservations,
+waiters, migration entries or leases, even outside these projects. Empty
+array = unscoped (entire team)</td>
 </tr>
 <tr>
 <td><code>linear.retry.retries</code>, <code>linear.retry.wait_1</code>
@@ -246,6 +249,24 @@ most 220 s. Env keys <code>BUREAU_LINEAR_MAX_TIME</code> /
 </table>
 <p>The runtime uses the first configured team. State IDs are
 authoritative; display names may be customized.</p>
+<p>File-overlap admission compares relevant issue membership, IDs,
+project IDs, state IDs/types and labels. Title, description and state
+display-name edits do not invalidate admission. The initial and final
+issue listings still page the whole team; only relevant issues require
+comment pagination. Execution ownership is refreshed after comment
+collection and before the final membership check; newly leased
+cross-project issues trigger a complete retry. If comments omit team
+issues, otherwise unrecognized PRs conservatively hold their diffs
+because their canonical markers may be outside the comment boundary. A
+complete comment map retains the existing PR provenance filter.
+Completeness is rechecked against the final unfiltered listing; new
+excluded issues force a full retry if PRs were skipped, so their diffs
+are reconsidered before any reservation is granted. Changed decision
+snapshots allow up to three admission attempts in both shepherd and
+dispatch runs; each attempt reruns the full locked gate and ticket
+checkpoint. Transport, incomplete-response and ownership failures are
+not retried by this admission loop; open-PR snapshot checks retain their
+existing behavior and exit 18.</p>
 <h3 id="agents"><code>agents</code></h3>
 <p>Which pipelines run, how often they poll, how aggressive they
 are.</p>

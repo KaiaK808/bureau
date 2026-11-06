@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from process_helpers import (COMMAND_TIMEOUT_SECONDS, PIPELINE_TIMEOUT_SECONDS,
                              PROCESS_EXIT_TIMEOUT_SECONDS, communicate_until,
@@ -19,7 +20,7 @@ from process_helpers import (COMMAND_TIMEOUT_SECONDS, PIPELINE_TIMEOUT_SECONDS,
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = Path(os.environ.get('BUREAU_1748_SCRIPTS', ROOT / 'templates/scripts'))
+SCRIPTS = Path(os.environ.get('BUREAU_OVERLAP_TEST_SCRIPTS', ROOT / 'templates/scripts'))
 
 SERVICE = r'''#!/usr/bin/env python3
 import json, os, re, sys
@@ -66,6 +67,12 @@ elif 'labels(first:100' in q:
     row = next(i for i in items if i['id'] == v['id'])
     result = dict(data=dict(issue=dict(labels=connection(row['labels']['nodes']))))
 elif 'first:100, after:$after' in q:
+    if data.get('track_snapshots') and v.get('after') is None:
+        data['snapshot_count'] = data.get('snapshot_count', 0) + 1
+        for edit in data.get('snapshot_edits', {}).get(str(data['snapshot_count']), []):
+            row = next(i for i in items if i['identifier'] == edit['issue'])
+            row.update(edit['fields'])
+        path.write_text(json.dumps(data))
     result = dict(data=dict(issues=connection(items)))
 elif 'issueUpdate' in q:
     row = next(i for i in items if i['id'] == v['id'])
@@ -482,6 +489,247 @@ touch "$BUREAU_TEST_STOP/UNEXPECTED"
         c=self.ticket(4,['pkg/a.py'],state='build_review'); self.data['issues'][-1]['project']=dict(id='repo-project'); self.data['issues'][-1]['comments']=[]
         self.save(); self.assertIn(c[0],self.expect(29,self.cli('admit',a)).stderr)
         self.data['issues'][1].pop('project'); self.save(); self.expect(27,self.cli('admit',a))
+
+    def project_snapshot(self):
+        self.config['linear']['projects'] = ['repo-project']
+        self.cfg.write_text(json.dumps(self.config))
+        self.env.pop('BUREAU_DISPATCH_LANE', None)
+        self.data['track_snapshots'] = True
+        candidate = self.ticket(1, ['pkg/a.py'])
+        other = self.ticket(2, ['pkg/a.py'])
+        self.data['issues'][0]['project'] = dict(id='repo-project')
+        self.data['issues'][1]['project'] = dict(id='other-project')
+        self.save()
+        return candidate, other
+
+    def linear_payloads(self, query):
+        calls = [json.loads(line) for line in self.state.with_suffix('.calls').read_text().splitlines()]
+        payloads = [json.loads(args[args.index('-d') + 1]) for binary, args in calls if binary == 'curl']
+        return [payload for payload in payloads if query in payload['query']]
+
+    def scoped_canonical_pr(self, changed_path):
+        candidate, other = self.project_snapshot()
+        self.g('branch', '-m', other[1], 'feature/shared-change')
+        other = (other[0], 'feature/shared-change', other[2])
+        self.data['issues'][1]['branch'] = other[1]
+        pr = self.pull(other, change=changed_path)
+        pr['body'] = ''
+        self.save()
+        return candidate, other, pr
+
+    def test_admission_cross_project_canonical_only_pr_remains_holder(self):
+        candidate, other, pr = self.scoped_canonical_pr('pkg/a.py')
+        self.assertIn('PR #1', self.expect(29, self.cli('admit', candidate)).stderr)
+        self.assertNotIn(candidate[0], self.store()['reservations'])
+        self.assertNotIn(other[0], self.store()['inventories'])
+        fetched = [payload['variables']['id'] for payload in self.linear_payloads('comments(first:100')]
+        self.assertEqual(fetched, [candidate[0]])
+
+    def test_admission_scoped_canonical_only_pr_uses_diff_and_checks_identity(self):
+        candidate, other, pr = self.scoped_canonical_pr('pkg/b.py')
+        self.expect(0, self.cli('admit', candidate))
+        self.data['moving_pr'] = True
+        self.save()
+        self.expect(18, self.cli('admit', candidate))
+
+    def test_admission_complete_comments_keep_existing_pr_provenance_filter(self):
+        candidate, other, pr = self.scoped_canonical_pr('pkg/a.py')
+        # With no omitted issues, the complete map proves this PR has no
+        # canonical marker in the team. The existing filter still skips it.
+        self.data['issues'].pop()
+        self.save()
+        self.expect(0, self.cli('admit', candidate))
+
+    def lease_race(self, trigger):
+        candidate, other = self.project_snapshot()
+        self.data['issues'][1]['state'] = dict(id='build_review', name='Build Review', type='started')
+        self.data['comment_page_size'] = 1
+        self.data['issues'][0]['comments'] = [
+            dict(body='Earlier comment', createdAt='2025-01-01'),
+            dict(body='<!-- bureau-branch: ' + candidate[1] + ' -->', createdAt='2026-01-01')]
+        self.save()
+        helper = load('bureau-admission.py')
+        admission = helper.Admission(self.repo, self.config)
+        linear = helper.linear
+        count = 0
+
+        def acquire_during_snapshot(repo, query, variables):
+            nonlocal count
+            response = linear(repo, query, variables)
+            if query == trigger and variables.get('after') is None:
+                count += 1
+                if count == (2 if trigger == helper.ISSUES else 1):
+                    admission.runtime.claim(other[0], self.root / 'other-workspace', 'lease-holder', 'app')
+            return response
+
+        with patch.dict(os.environ, self.env, clear=True), patch.object(helper, 'linear', side_effect=acquire_during_snapshot):
+            with self.assertRaises(helper.SnapshotMoved) as moved:
+                admission.admit(*candidate[:2])
+        self.assertEqual(moved.exception.code, 27)
+        self.assertFalse(admission.path.exists())
+        fetched = [payload['variables']['id'] for payload in self.linear_payloads('comments(first:100')]
+        self.assertEqual(fetched, [candidate[0], candidate[0]])
+        self.assertIn(other[0], self.expect(29, self.cli('admit', candidate)).stderr)
+        self.assertNotIn(candidate[0], self.store()['reservations'])
+
+    def test_admission_comment_pagination_lease_race_retries_into_overlap_wait(self):
+        self.lease_race(load('bureau-admission.py').COMMENTS)
+
+    def test_admission_final_snapshot_lease_race_retries_into_overlap_wait(self):
+        self.lease_race(load('bureau-admission.py').ISSUES)
+
+    def test_admission_candidate_ownership_acquired_during_comments_stops(self):
+        candidate, other = self.project_snapshot()
+        helper = load('bureau-admission.py')
+        admission = helper.Admission(self.repo, self.config)
+        branches = helper.branches
+
+        def acquire_during_comments(repo, snapshot):
+            result = branches(repo, snapshot)
+            admission.runtime.claim(candidate[0], self.root / 'other-workspace', 'lease-holder', 'app')
+            return result
+
+        with patch.dict(os.environ, self.env, clear=True), patch.object(helper, 'branches', side_effect=acquire_during_comments):
+            with self.assertRaises(helper.Stop) as stopped:
+                admission.admit(*candidate[:2])
+        self.assertEqual(stopped.exception.code, 21)
+        self.assertNotIsInstance(stopped.exception, helper.SnapshotMoved)
+        self.assertFalse(admission.path.exists())
+
+    def test_admission_ignores_unrelated_project_title_edit(self):
+        candidate, other = self.project_snapshot()
+        self.data['snapshot_edits'] = {str(count): [dict(issue=other[0], fields=dict(
+            title='Edited elsewhere ' + str(count)))] for count in (2, 4, 6)}
+        self.save()
+        self.expect(0, self.cli('admit', candidate))
+        self.assertEqual(json.loads(self.state.read_text())['snapshot_count'], 2)
+        self.assertIn(candidate[0], self.store()['reservations'])
+
+    def test_admission_ignores_relevant_prose_and_label_order(self):
+        candidate, other = self.project_snapshot()
+        self.data['issues'][0]['labels']['nodes'] = [dict(name='lane-2'), dict(name='routine')]
+        self.data['snapshot_edits'] = {'2': [dict(issue=candidate[0], fields=dict(
+            title='Edited title', description='Edited description',
+            state=dict(id='spec_review', name='Renamed display state', type='started'),
+            labels=dict(nodes=[dict(name='routine'), dict(name='lane-2')])))]}
+        self.save()
+        self.expect(0, self.cli('admit', candidate))
+        self.assertEqual(json.loads(self.state.read_text())['snapshot_count'], 2)
+
+    def test_admission_holding_state_race_retries_into_overlap_wait(self):
+        candidate, other = self.project_snapshot()
+        self.data['issues'][1]['project'] = dict(id='repo-project')
+        self.data['snapshot_edits'] = {'2': [dict(issue=other[0], fields=dict(
+            state=dict(id='build_review', name='Build Review', type='started')))]}
+        self.save()
+        helper = load('bureau-admission.py')
+        with patch.dict(os.environ, self.env, clear=True):
+            with self.assertRaises(helper.SnapshotMoved) as moved:
+                helper.Admission(self.repo, self.config).admit(*candidate[:2])
+        self.assertEqual(moved.exception.code, 27)
+        self.assertFalse((self.repo / '.git/bureau/admission/v1.json').exists())
+        self.assertIn(other[0], self.expect(29, self.cli('admit', candidate)).stderr)
+        self.assertNotIn(candidate[0], self.store()['reservations'])
+
+    def test_admission_project_membership_race_retries_into_overlap_wait(self):
+        candidate, other = self.project_snapshot()
+        self.data['issues'][1]['state'] = dict(id='build_review', name='Build Review', type='started')
+        self.data['snapshot_edits'] = {'2': [dict(issue=other[0], fields=dict(project=dict(id='repo-project')))]}
+        self.save()
+        helper = load('bureau-admission.py')
+        with patch.dict(os.environ, self.env, clear=True):
+            with self.assertRaises(helper.SnapshotMoved) as moved:
+                helper.Admission(self.repo, self.config).admit(*candidate[:2])
+        self.assertEqual(moved.exception.code, 27)
+        self.assertIn(other[0], self.expect(29, self.cli('admit', candidate)).stderr)
+        self.assertNotIn(candidate[0], self.store()['reservations'])
+
+    def test_admission_candidate_human_label_race_stops(self):
+        candidate, other = self.project_snapshot()
+        self.data['snapshot_edits'] = {'2': [dict(issue=candidate[0], fields=dict(
+            labels=dict(nodes=[dict(name='needs-human')])))]}
+        self.save()
+        helper = load('bureau-admission.py')
+        with patch.dict(os.environ, self.env, clear=True):
+            with self.assertRaises(helper.SnapshotMoved) as moved:
+                helper.Admission(self.repo, self.config).admit(*candidate[:2])
+        self.assertEqual(moved.exception.code, 27)
+        self.expect(25, self.cli('admit', candidate))
+        self.assertFalse((self.repo / '.git/bureau/admission/v1.json').exists())
+
+    def test_admission_comments_are_scoped_with_retained_cross_project_issues(self):
+        candidate, in_project = self.project_snapshot()
+        unrelated = self.ticket(3, ['pkg/b.py'])
+        reserved = self.ticket(4, ['pkg/b.py'])
+        waiter = self.ticket(5, ['pkg/b.py'])
+        migration = self.ticket(6, ['pkg/b.py'], state='done')
+        leased = self.ticket(7, ['pkg/b.py'])
+        for row in self.data['issues']:
+            row['project'] = dict(id='repo-project' if row['identifier'] == in_project[0] else 'other-project')
+        # Broken comments outside the boundary must never be requested.
+        self.data['issues'][2]['comments'] = ['malformed']
+        self.save()
+        helper = load('bureau-admission.py')
+        with patch.dict(os.environ, self.env, clear=True):
+            admission = helper.Admission(self.repo, self.config)
+            with admission.guard() as state:
+                state['reservations'][reserved[0]] = dict(branch=reserved[1], paths=['pkg/b.py'], unknown=[], phase='admitted')
+                state['waiters'][waiter[0]] = 'waiting-run'
+                state['migration'][migration[0]] = 'queued'
+                admission.save(state)
+            with admission.runtime.guard():
+                helper.r.save(admission.runtime.leases, {'issue:' + leased[0]: dict(run_id='other-run')})
+        self.expect(0, self.cli('admit', candidate))
+        fetched = [payload['variables']['id'] for payload in self.linear_payloads('comments(first:100')]
+        expected = {ticket[0] for ticket in (candidate, in_project, reserved, waiter, migration, leased)}
+        self.assertEqual(set(fetched), expected)
+        self.assertEqual(len(fetched), len(expected))
+        self.assertNotIn(unrelated[0], fetched)
+        self.assertEqual(json.loads(self.state.read_text())['snapshot_count'], 2)
+        self.assertNotIn(migration[0], self.store()['migration'])
+
+    def test_shepherd_admission_retries_moved_snapshot(self):
+        candidate, other = self.project_snapshot()
+        self.env['BUREAU_HELD_BY_SHEPHERD'] = '1'
+        self.assertNotIn('BUREAU_DISPATCH_LANE', self.env)
+        self.data['snapshot_edits'] = {'2': [dict(issue=candidate[0], fields=dict(
+            labels=dict(nodes=[dict(name='lane-2')])))]}
+        self.save()
+        self.expect(0, self.cli('admit', candidate))
+        self.assertEqual(json.loads(self.state.read_text())['snapshot_count'], 4)
+        self.assertEqual(len(self.linear_payloads('comments(first:100')), 2)
+        # Entry checkpoints rerun on both attempts, followed by the final
+        # fresh checkpoint; supplied snapshots do not issue another query.
+        fresh = [payload for payload in self.linear_payloads('issues(')
+                 if 'first:100, after:$after' not in payload['query']]
+        self.assertEqual(len(fresh), 3)
+        self.assertIn(candidate[0], self.store()['reservations'])
+
+    def test_admission_snapshot_retries_are_bounded_in_both_modes(self):
+        candidate, other = self.project_snapshot()
+        for dispatch in (False, True):
+            with self.subTest(dispatch=dispatch):
+                if dispatch:
+                    self.env['BUREAU_DISPATCH_LANE'] = '1'
+                else:
+                    self.env.pop('BUREAU_DISPATCH_LANE', None)
+                self.data['snapshot_count'] = 0
+                self.data['issues'][0]['labels']['nodes'] = []
+                self.data['snapshot_edits'] = {str(count): [dict(issue=candidate[0], fields=dict(
+                    labels=dict(nodes=[dict(name='revision-' + str(count))])))] for count in (2, 4, 6)}
+                self.save()
+                self.expect(27, self.cli('admit', candidate))
+                self.assertEqual(json.loads(self.state.read_text())['snapshot_count'], 6)
+                self.assertFalse((self.repo / '.git/bureau/admission/v1.json').exists())
+
+    def test_admission_shape_failure_is_not_retried(self):
+        candidate, other = self.project_snapshot()
+        self.data['bad_comments'] = True
+        self.save()
+        self.expect(27, self.cli('admit', candidate))
+        self.assertEqual(json.loads(self.state.read_text())['snapshot_count'], 1)
+        self.assertEqual(len(self.linear_payloads('comments(first:100')), 1)
+        self.assertFalse((self.repo / '.git/bureau/admission/v1.json').exists())
 
     def test_paginated_linear_comments_and_101_prs(self):
         a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/b.py']); self.data['linear_page_size']=1

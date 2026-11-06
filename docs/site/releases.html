@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d4b69d7e941775b1b2d9cafae2a9adea18691cbfc22958e6d8dae07376e636e2">
+<meta name="bureau-source-sha256" content="61fb1479ecfbf6d3a04c300659bd9d1669f108ab40d2035c16279f7258168701">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -55,18 +55,20 @@ href="../../CHANGELOG.md">changelog</a> section
 base instructions and advisory <code>AGENT_CONFIG</code> findings,
 structured review merging, complete evidence-backed implementation
 feedback, human-boundary evidence packets with an advisory risk tier,
-process termination holds, Node worktree dependency restoration and Spec
-Kit helper mode repair. QA requires successful PR lookup and base fetch;
-only a confirmed no-open-PR lookup permits fetched
-<code>origin/main</code>. Ticket budgets, trusted progress, required
-source grounding, shadow finding verification, ADR context and Codex
-gate delegation remain opt-in. The v3.5 exit vocabulary, configuration
-schema versions and Spec Kit 1.2.2 pin remain. From v3.5.1, stop all
-drivers, preserve unfinished work and customizations, compare installed
-drift, select the published tag, resync scripts and interfaces together,
-repair Spec Kit helper modes with <code>--resync-speckit</code>, then
-restart all drivers. See <a href="migration.html#upgrade-to-v36">Upgrade
-to v3.6</a>, including the cumulative path from v3.4.1.</p>
+process termination holds, offline pnpm/Yarn Classic worktree dependency
+restoration, Spec Kit helper mode repair and <a
+href="recipes.html#architecture-recipe-adrs-before-the-first-build-ticket">architecture
+recipes</a>. QA requires successful PR lookup and base fetch; only a
+confirmed no-open-PR lookup permits fetched <code>origin/main</code>.
+Ticket budgets, trusted progress, required source grounding, shadow
+finding verification, ADR context and Codex gate delegation remain
+opt-in. The v3.5 exit vocabulary, configuration schema versions and Spec
+Kit 1.2.2 pin remain. From v3.5.1, stop all drivers, preserve unfinished
+work and customizations, compare installed drift, select the published
+tag, resync scripts and interfaces together, repair Spec Kit helper
+modes with <code>--resync-speckit</code>, then restart all drivers. See
+<a href="migration.html#upgrade-to-v36">Upgrade to v3.6</a>, including the
+cumulative path from v3.4.1.</p>
 <p>The maintainer's release validation record reports every PR reviewed
 by Codex before push within at most three rounds, with two recorded
 maintainer exceptions: #108 took five rounds and <a
@@ -156,16 +158,18 @@ href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.0">GitHub
 Release</a> records the exact tagged commit. The <a
 href="../../CHANGELOG.md">changelog</a> and <a
 href="release-notes-v3.5.0.html">release notes</a> cover PRs #76–#94 and
-the Spec Kit 1.2.2 upgrade in #75. New exits 28/29 require coordinated
-consumers. Default changes include manual-Merge capacity counting, the
-merge CI gate's success-only counting, review severity/round policy,
-ticket withdrawal, completion evidence, bounded lessons and continuous
-launcher dispatch; the dispatcher requires explicit overlap opt-in.
-Configurable conflict repair and provider silence remain opt-in. From
-v3.4.1, stop every driver, preserve unfinished work and customized
-assets, select tag <code>v3.5.0</code>, install/resync Spec Kit 1.2.2,
-resync scripts and interfaces together and restart only after the checks
-in <a href="migration.html#upgrade-to-v35">Upgrade to v3.5</a>.</p>
+the Spec Kit 1.2.2 upgrade in #75. New quiet-wait exits 28/29 require
+coordinated consumers. Default changes include manual-Merge capacity
+counting, the merge CI gate's success-only counting, review
+severity/round policy, ticket withdrawal, completion/wait evidence,
+committed spec checkpoints and governance checks, stricter sandbox-gate
+proof, file admission, bounded lessons and continuous launcher dispatch;
+the dispatcher requires explicit overlap opt-in. Configurable conflict
+repair and provider silence remain opt-in. From v3.4.1, stop every
+driver, preserve unfinished work and customized assets, select tag
+<code>v3.5.0</code>, install/resync Spec Kit 1.2.2, resync scripts and
+interfaces together and restart only after the checks in <a
+href="migration.html#upgrade-to-v35">Upgrade to v3.5</a>.</p>
 <p>The maintainer's release validation record reports each PR reviewed
 by Codex before push. CI was judged at the top of the stack: <a
 href="https://github.com/KaiaK808/bureau/pull/93">#93</a> at head
@@ -332,9 +336,9 @@ and the upgrade. v3.2.1 is a patch on v3.2.0 that removes internal
 ticket references and incident dates without behaviour change, uses
 <code>TEAM-123</code> in ticket examples, removes the internal drift
 inventory, renames the <code>needs-human</code> section marker and adds
-<code>tests/test_no_internal_refs.sh</code>. From v3.2.0, select tag
-<code>v3.2.1</code>; a resync is optional because the scripts and
-interfaces change only in comments, help texts and example values
+<code>tests/test_no_internal_refs.sh</code>. From v3.2.0 or v3.2.0-rc.1,
+select tag <code>v3.2.1</code>; a resync is optional because the scripts
+and interfaces change only in comments, help texts and example values
 (installers will report those files as updates). From v3.1.0, select tag
 <code>v3.2.1</code> and follow <a
 href="migration.html#upgrade-to-v32">Upgrade to v3.2</a>.</p>
@@ -402,11 +406,11 @@ exit-code contract. It collects six pull requests: code a branch
 controls runs without the Bureau secrets (<a
 href="https://github.com/KaiaK808/bureau/pull/33">#33</a>); the review
 stage acts on the result of its inline merge, and the merge gate honours
-<code>false</code> switches, pins the head it checked and blocks a head
-without any CI after a grace period (<a
-href="https://github.com/KaiaK808/bureau/pull/38">#38</a>); the
-implement loop checks for CI markers after every iteration and can defer
-its pushes (<a
+<code>false</code> switches, pins the head it checked, reads its numeric
+settings by one rule and blocks a head without any CI after a grace
+period (<a href="https://github.com/KaiaK808/bureau/pull/38">#38</a>);
+the implement loop checks for CI markers after every iteration and can
+defer its pushes (<a
 href="https://github.com/KaiaK808/bureau/pull/37">#37</a>); spec
 directory handling (<a
 href="https://github.com/KaiaK808/bureau/pull/36">#36</a>); operator
@@ -491,7 +495,9 @@ exit-code contract between stages and their drivers changed (a review
 BLOCK ends with <code>25</code>, the new code <code>27</code> means
 Linear stayed unusable, and the shepherd halts with an alert on every
 code except <code>0</code>, <code>2</code>, <code>10</code> and
-<code>16</code>). Its candidates, <a
+<code>16</code>). Set the required configuration before resyncing the
+scripts and interfaces scopes together; see <a
+href="migration.html#upgrade-to-v3">Upgrade to v3</a>. Its candidates, <a
 href="release-notes-v3.0.0-rc.1.html">v3.0.0-rc.1</a> and <a
 href="release-notes-v3.0.0-rc.2.html">v3.0.0-rc.2</a>, stay published as
 prereleases; v3.0.0 has the same runtime as rc.2.</p>

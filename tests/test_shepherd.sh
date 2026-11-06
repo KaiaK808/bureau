@@ -116,6 +116,11 @@ get_issue_state() {
   _uuid_to_name "$uuid"
 }
 
+bureau_issue_snapshot() {
+  jq -nc --arg issue "$1" --arg id "$(cat "$STATE_FILE")" \
+    '{identifier: $issue, state: {id: $id}}'
+}
+
 move_issue() {
   local _issue="$1" uuid="$2"
   printf '%s' "$uuid" > "$STATE_FILE"
@@ -167,6 +172,7 @@ STUB_EOF
   # The shepherd's exit-code decisions run for real: the table and the Linear exit code
   # come from the real config.
   sed -n -e '/^BUREAU_EXIT_LINEAR_UNUSABLE=/p' -e '/^shepherd_rc_action() {/,/^}/p' \
+    -e '/^bureau_ticket_state_class() {/,/^}/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$sb/scripts/bureau-config.sh"
   # So do the stop boundary (--no-merge) and the merge policy (agents.merge_mode),
   # read from the sandbox .bureau.json by the real lines.

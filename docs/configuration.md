@@ -46,11 +46,13 @@ Doctor also validates `agents.review_adr_context` as a boolean, `agents.review_a
 | `linear.labels.needs_ux.id` | UUID | yes | Routes from Spec Review → Design |
 | `linear.labels.ai_implementable.id` | UUID | yes | Required on issues for stages from Build onwards |
 | `linear.labels.needs_copy.name` | string | optional | Required if `agents.copy: true`; routes from Spec Review (or UX) → Copy |
-| `linear.projects` | array | optional | List of project UUIDs to scope `pick_issue`. Empty array = unscoped (entire team) |
+| `linear.projects` | array | optional | List of project UUIDs to scope `pick_issue` and file-overlap admission's comment fetches and decision snapshot. Admission always includes the candidate and issues with reservations, waiters, migration entries or leases, even outside these projects. Empty array = unscoped (entire team) |
 | `linear.retry.retries`, `linear.retry.wait_1` / `wait_2` / `wait_3` | integer | optional | Retry ladder for an unusable Linear answer (no response, not JSON, GraphQL `errors`, no `data`). Defaults 3 retries after 10, 30, 60 s. Env keys of the same name win; see [Linear / external services](#linear--external-services) |
 | `linear.request.max_time`, `linear.request.connect_timeout` | integer | optional | Time limit of one Linear request in seconds: the whole request 1 to 300 (default 30), the connection 1 to 60 (default 10). A request cut off at the limit is an unusable answer and goes through the retry ladder; with the defaults a Linear that stays unusable ends the stage after at most 220 s. Env keys `BUREAU_LINEAR_MAX_TIME` / `BUREAU_LINEAR_CONNECT_TIMEOUT` win |
 
 The runtime uses the first configured team. State IDs are authoritative; display names may be customized.
+
+File-overlap admission compares relevant issue membership, IDs, project IDs, state IDs/types and labels. Title, description and state display-name edits do not invalidate admission. The initial and final issue listings still page the whole team; only relevant issues require comment pagination. Execution ownership is refreshed after comment collection and before the final membership check; newly leased cross-project issues trigger a complete retry. If comments omit team issues, otherwise unrecognized PRs conservatively hold their diffs because their canonical markers may be outside the comment boundary. A complete comment map retains the existing PR provenance filter. Completeness is rechecked against the final unfiltered listing; new excluded issues force a full retry if PRs were skipped, so their diffs are reconsidered before any reservation is granted. Changed decision snapshots allow up to three admission attempts in both shepherd and dispatch runs; each attempt reruns the full locked gate and ticket checkpoint. Transport, incomplete-response and ownership failures are not retried by this admission loop; open-PR snapshot checks retain their existing behavior and exit 18.
 
 ### `agents`
 
