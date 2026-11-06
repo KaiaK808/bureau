@@ -6,6 +6,8 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+- Rework the README around the Linear workflow, human merge and hold boundaries, environment filtering, worktree isolation and requirements; consolidate release history in the release record. Add a light/dark SVG for the static manual. Documentation only; no resync or compatibility change. Validation checks documentation and local links, not live provider behavior.
+
 - Document the maintainer-accepted control-plane design in [ADR 0014](docs/adr/0014-control-plane.md) with the new `accepted (design)` status: one owning authority, transactional state/outbox and a supervised review-to-routing pilot. No implementation, runtime compatibility change or upgrade action yet; checks validate documentation only.
 
 ### Added
