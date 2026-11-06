@@ -14,9 +14,9 @@ names = ('bureau-runtime.py', 'bureau-evidence.py', 'bureau-spec.py', 'bureau-pr
 before = {name: hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
 
 
-def rejected(script, case, env, expected):
-    mutation_caught([sys.executable, str(ROOT/'tests'/script), case], env=env,
-                    originals=originals, timeout=900, expected=expected)
+def rejected(script, case, env, expected, selection=None):
+    mutation_caught([sys.executable, str(ROOT/'tests'/script), case], env={**env, **(selection or {})},
+                    originals=originals, timeout=900, expected=expected, expected_exit=1)
 
 
 with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     assert original.count(anchor) == 1
     spec.write_text(original.replace(anchor, '        cutoff_line = line\n        cutoff_raw = raw_lines[index]'))
     rejected('spec_resume_test.py', 'GovernanceTests.test_quoted_code_and_html_cutoffs',
-             env, 'AssertionError:')
+             env, 'above the first code block\' not found')
     print('PASS final follow-up control: disabling blockquote stripping fails quoted code/HTML cutoff regressions')
     spec.write_text(original)
 
@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     assert original.count(anchor) == 1
     spec.write_text(original.replace(anchor,"        print('checkpoint storage unavailable',file=sys.stderr)\n        return 2"))
     rejected('spec_resume_test.py','CheckpointTests.test_checkpoint_io_with_closed_stderr_keeps_optional_status',
-             env,'AssertionError:')
+             env,'AssertionError: 120 != 2', {'BUREAU_TEST_CHECKPOINT_COMMANDS':'["begin"]'})
     print('PASS restack control: buffered optional-checkpoint diagnostics break closed-stderr status 2; the CLI guard detected it')
     spec.write_text(original)
 
@@ -81,7 +81,8 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     end = pipeline_original.index('    git checkout "$FEATURE_BRANCH"',start)
     pipeline.write_text(pipeline_original[:start] + '    free_branch_from_other_worktrees "$FEATURE_BRANCH" "$REPO_DIR"\n' + pipeline_original[end:])
     rejected('spec_resume_test.py','SpecWorkerTests.test_late_held_feature_halts_and_actual_picker_skips_ticket',
-             env,"'TEAM-1' != 'TEAM-2'")
+             env,'ownership refusal was selected again by the real picker',
+             {'BUREAU_TEST_SPEC_OWNERSHIP_CASES':'["label"]'})
     print('PASS round6 control: reverting the late ownership halt let the actual picker select the refused ticket again')
     pipeline.write_text(pipeline_original)
 
@@ -89,9 +90,12 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     assert original.count(anchor) == 1
     spec.write_text(original.replace(anchor, "            pass  # Broken: allow governance after the first fence-like line\n        lines.append(line)"))
     rejected('spec_resume_test.py','GovernanceTests.test_governance_precedes_first_fence',
-             env,'AssertionError:')
+             env,'above the first code block\' not found')
+    # One post-fence body detects the removed cutoff; retain a valid body and
+    # both app stages through the real adapter, receipt and finish wiring.
     rejected('shared_runtime_test.py','RuntimeTests.test_real_provider_pass_obeys_governance_placement',
-             {'BUREAU_TEST_RUNTIME_SCRIPT':str(root/'bureau-runtime.py')},'ValueError not raised')
+             {'BUREAU_TEST_RUNTIME_SCRIPT':str(root/'bureau-runtime.py')},'ValueError not raised',
+             {'BUREAU_TEST_GOVERNANCE_CASES':'["after_closed_root_backtick", "inline_fence_text"]'})
     print('PASS round7 control: allowing governance after the first fence-like line fails validator and real-provider app spec/spec_review guards')
     spec.write_text(original)
 
@@ -101,7 +105,8 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     rejected('spec_resume_test.py','GovernanceTests.test_governance_comments_and_column_zero_lines',
              env,'AssertionError: unexpectedly None')
     rejected('shared_runtime_test.py','RuntimeTests.test_real_provider_pass_obeys_governance_placement',
-             {'BUREAU_TEST_RUNTIME_SCRIPT':str(root/'bureau-runtime.py')},'ValueError not raised')
+             {'BUREAU_TEST_RUNTIME_SCRIPT':str(root/'bureau-runtime.py')},'ValueError not raised',
+             {'BUREAU_TEST_GOVERNANCE_CASES':'["rationale_before_fence", "inline_fence_text"]'})
     print('PASS round7 control: ignoring HTML comments fails validator and real-provider app spec/spec_review guards')
     spec.write_text(original)
 
@@ -119,7 +124,9 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     for case in ('test_optional_checkpoint_read_failures_do_not_abort_provider',
                  'test_optional_checkpoint_prune_failures_do_not_abort_provider'):
         rejected('provider_adapter_test.py','ProviderTests.'+case,
-                 {'BUREAU_TEST_PROVIDER_SCRIPT':str(root/'bureau-provider.py')},'22 != 0')
+                 {'BUREAU_TEST_PROVIDER_SCRIPT':str(root/'bureau-provider.py')},'22 != 0',
+                 {'BUREAU_TEST_CHECKPOINT_READ_CASES':'["OSError:0:0"]',
+                  'BUREAU_TEST_CHECKPOINT_PRUNE_ERRORS':'["OSError"]'})
     print('PASS round5 control: reverting optional pruning containment changed real adapter success to 22/24 before the provider; read and unlink guards detected it')
     evidence.write_text(evidence_original)
 
@@ -167,7 +174,8 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     anchor = "    try: text = Path(path).read_bytes().decode('utf-8')"
     assert original.count(anchor) == 1
     spec.write_text(original.replace(anchor, '    return None  # Broken: trust model PASS\n' + anchor))
-    rejected('spec_resume_test.py', 'SpecWorkerTests.test_model_pass_cannot_bypass_governance_validator', env, "'Build' != 'Spec'")
+    rejected('spec_resume_test.py', 'SpecWorkerTests.test_model_pass_cannot_bypass_governance_validator', env, "'Build' != 'Spec'",
+             {'BUREAU_TEST_SPEC_REVIEW_CASES':'["missing"]'})
     rejected('shared_runtime_test.py', 'RuntimeTests.test_app_spec_and_review_completion_reject_invalid_governance_even_with_pass',
              {'BUREAU_TEST_RUNTIME_SCRIPT': str(root/'bureau-runtime.py')}, 'ValueError not raised')
     print('PASS control: disabling governance validation admitted model PASS in background and app completion; both guards detected it')
@@ -184,7 +192,8 @@ with tempfile.TemporaryDirectory(prefix='bureau spec controls ') as scratch:
     anchor = "    body = '\\n'.join(section)\n"
     assert original.count(anchor) == 1
     spec.write_text(original.replace(anchor, anchor + "    if 'wird definiert' in body or any(line.startswith(('Rationale:', 'Begründung:')) and not line.endswith('.') for line in body.splitlines()):\n        return 'Broken: punctuation/word heuristic'\n"))
-    rejected('spec_resume_test.py', 'GovernanceTests.test_reviewer_placeholder_and_german_decision_matrix', env, 'AssertionError:')
+    rejected('spec_resume_test.py', 'GovernanceTests.test_reviewer_placeholder_and_german_decision_matrix', env,
+             "'Broken: punctuation/word heuristic' is not None")
     print('PASS control: punctuation/global-word heuristics rejected legitimate rationales; acceptance matrix detected it')
     spec.write_text(original)
 

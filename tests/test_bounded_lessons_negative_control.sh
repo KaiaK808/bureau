@@ -19,6 +19,7 @@ assert text.count(needle) == 1
 path.write_text(text.replace(needle, 'if True:  # negative control: no byte cap'))
 mutation_caught([sys.executable, str(root/'tests/bounded_lessons_test.py'),
                  'LessonsTests.test_default_8192_bytes_and_legacy_is_bounded'],
-                env={'BUREAU_TEST_LESSONS_SCRIPTS':str(scripts)}, originals=originals)
+                env={'BUREAU_TEST_LESSONS_SCRIPTS':str(scripts)}, originals=originals,
+                expected='not less than or equal to 8192', expected_exit=1)
 PY
 echo 'PASS negative control: disabling the byte cap fails the actual byte-budget assertion'

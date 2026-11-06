@@ -11,6 +11,7 @@ import tempfile
 import unittest
 
 import git_maintenance
+from selected_cases import selected_cases
 from governance_cases import (FENCED_GOVERNANCE, GOVERNANCE_FIRST,
                               COMMENT_HIDDEN_GOVERNANCE, COLUMN_ZERO_GOVERNANCE,
                               ROUND8_INVALID, ROUND8_VALID, ROUND9_INVALID, ROUND9_VALID,
@@ -251,10 +252,11 @@ spec.Checkpoints.read=unavailable
 os.close(2)
 sys.exit(spec.main())
 '''
-            for command in (['begin','TEAM-1','--specs-dir','specs','--directory',str(own),'--number','1'],
-                            ['complete','TEAM-1','specify','--commit','a'*40],
-                            ['invalidate','TEAM-1','specify','--reason','spec-review-failed'],
-                            ['reset-target','TEAM-1','--specs-dir','specs']):
+            commands=(['begin','TEAM-1','--specs-dir','specs','--directory',str(own),'--number','1'],
+                      ['complete','TEAM-1','specify','--commit','a'*40],
+                      ['invalidate','TEAM-1','specify','--reason','spec-review-failed'],
+                      ['reset-target','TEAM-1','--specs-dir','specs'])
+            for command in selected_cases({c[0]:c for c in commands},'BUREAU_TEST_CHECKPOINT_COMMANDS').values():
                 with self.subTest(command=command[0]):
                     result=subprocess.run([sys.executable,'-c',source,str(SCRIPTS/'bureau-spec.py'),
                                            '--repo',str(repo),*command],input='{}',capture_output=True,text=True,timeout=10)
@@ -656,7 +658,9 @@ remove_issue_label() { :; }
 
     def test_model_pass_cannot_bypass_governance_validator(self):
         self.worker()
-        for body in ('# Missing\n', '## Governance and security\n', '## Governance and security\nTBD\n', VALID):
+        cases={'missing':'# Missing\n', 'empty':'## Governance and security\n',
+               'placeholder':'## Governance and security\nTBD\n', 'valid':VALID}
+        for body in selected_cases(cases,'BUREAU_TEST_SPEC_REVIEW_CASES').values():
             with self.subTest(body=body):
                 # Review reads the real remote branch, not an uncommitted fixture.
                 file = self.wt / 'specs/001-team-1/spec.md'; file.write_text(body)
@@ -843,7 +847,7 @@ linear_raw() {
                                 cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=15)
             self.assertEqual(proc.returncode,0,proc.stderr)
             return proc.stdout.strip()
-        for fails in (False,True):
+        for fails in selected_cases({'label':False,'hold':True},'BUREAU_TEST_SPEC_OWNERSHIP_CASES').values():
             with self.subTest(label_write_fails=fails):
                 self.env['SPEC_FAIL_LABEL']='1' if fails else '0'
                 (self.root/'labels').unlink(missing_ok=True)

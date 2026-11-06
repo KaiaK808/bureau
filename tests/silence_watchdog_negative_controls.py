@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-1723-expiry-control-') as scratc
     adapter.write_text(source.replace(anchor,anchor.replace('if activity.expired(owned)', 'if False and activity.expired(owned)')))
     mutation_caught([sys.executable,str(ROOT/'tests/silence_watchdog_test.py'),'Watchdog.test_initial_silence'],
         env={'BUREAU_TEST_PROVIDER_SCRIPT':str(adapter)},
-        originals=originals,timeout=15)
+        originals=originals,timeout=15,expected='silent provider missed early-stop deadline',expected_exit=1)
     print('PASS negative control: disabled activity expiry misses the silent-provider early-stop deadline')
 assert before=={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in SCRIPTS.iterdir() if p.is_file()}
 print('PASS negative control: runtime source hashes unchanged')

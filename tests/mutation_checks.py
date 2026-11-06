@@ -1,4 +1,4 @@
-"""Mutation controls require a green baseline, then accept failures or errors."""
+"""Mutation controls require a green baseline and an explicit failure signal."""
 from contextlib import contextmanager
 import ctypes
 import math
@@ -384,16 +384,37 @@ def restored_files(originals):
             path.write_bytes(data)
 
 
-def mutation_caught(command, *, env, originals, timeout=DEFAULT_TIMEOUT, expected=None):
-    """Only the private mutation may fail: baseline ERRORs/timeouts are fatal."""
+def mutation_caught(command, *, env, originals, timeout=DEFAULT_TIMEOUT, expected=None,
+                    expected_exit=None, allow_timeout=False):
+    """Require declared output/exit; tuple output fragments must all match.
+
+    Only an explicit timeout control accepts 124. Baseline failures are fatal.
+    """
     timeout = finite_timeout(timeout)
+    fragments = (expected,) if isinstance(expected, str) else expected
+    if fragments is not None and (not isinstance(fragments, tuple) or not fragments
+                                  or any(not isinstance(item, str) or not item for item in fragments)):
+        raise ValueError('expected must contain nonempty output text')
+    if expected_exit is not None and (type(expected_exit) is not int or expected_exit == 0):
+        raise ValueError('expected_exit must be a nonzero exit code')
+    if type(allow_timeout) is not bool:
+        raise ValueError('allow_timeout must be a boolean')
+    if fragments is None and expected_exit is None and not allow_timeout:
+        raise ValueError('declare expected output, expected_exit or allow_timeout')
     with fixture_root() as root:
         with restored_files(originals):
             baseline = _run(command, env=env, timeout=timeout, root=root)
         assert baseline.returncode == 0, 'unmutated baseline failed:\n' + baseline.stdout + baseline.stderr
         result = _run(command, env=env, timeout=timeout, root=root)
-        assert result.returncode != 0, ('mutation was not caught' + (f' ({expected})' if expected else '')
-                                        + ':\n' + result.stdout + result.stderr)
+        output = result.stdout + result.stderr
+        if result.returncode == 124:
+            detected = allow_timeout
+        else:
+            detected = (result.returncode != 0 and (fragments is not None or expected_exit is not None)
+                        and (expected_exit is None or result.returncode == expected_exit)
+                        and all(fragment in output for fragment in fragments or ()))
+        assert detected, (f'mutation was not caught (expected={expected!r}, exit={expected_exit!r}, '
+                          f'allow_timeout={allow_timeout}; got exit {result.returncode}):\n' + output)
         return result
 
 

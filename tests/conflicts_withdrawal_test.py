@@ -10,6 +10,7 @@ import time
 import unittest
 
 from ticket_kill_switch_test import CURL, GIT, ROOT, STATES, WithdrawalFixture
+from selected_cases import selected_cases
 
 
 STEP = r'''
@@ -87,7 +88,7 @@ class ConflictWithdrawal(WithdrawalFixture):
 
     def assert_stopped(self, result, key, code, steps):
         self.assertEqual(code,result.returncode,result.stdout+'\n'+result.stderr)
-        self.assertEqual(steps,self.steps(),self.events())
+        self.assertEqual(steps,self.steps(),'withdrawal started a later resolution step: '+str(self.events()))
         self.assertEqual(steps,[e['step'] for e in self.events() if e['kind']=='resolution-finished'])
         self.assert_no_publication(self.events())
         self.assertFalse([e for e in self.events() if e['kind'] in ('label','move','pass')],self.events())
@@ -123,12 +124,13 @@ class ConflictWithdrawal(WithdrawalFixture):
                ('generator-1',['dependencies','generator-1']),
                ('generator-2',['dependencies','generator-1','generator-2']),
                ('test',['dependencies','generator-1','generator-2','test'])]
-        for point,steps in cases:
-            for key,code in [('done',0),('backlog',25),('cancelled',26)]:
-                with self.subTest(point=point,state=key):
-                    control={'withdraw_at_git' if point=='merge' else 'withdraw_at_step':point,'target':STATES[key]}
-                    self.start_case(point+'-'+key,**control)
-                    self.assert_stopped(self.worker(),key,code,steps)
+        matrix={point+':'+key:(point,steps,key,code) for point,steps in cases
+                for key,code in [('done',0),('backlog',25),('cancelled',26)]}
+        for point,steps,key,code in selected_cases(matrix,'BUREAU_TEST_WITHDRAWAL_CASES').values():
+            with self.subTest(point=point,state=key):
+                control={'withdraw_at_git' if point=='merge' else 'withdraw_at_step':point,'target':STATES[key]}
+                self.start_case(point+'-'+key,**control)
+                self.assert_stopped(self.worker(),key,code,steps)
 
     def test_throttled_failed_generator_respects_withdrawal(self):
         for key,code in [('done',0),('backlog',25),('cancelled',26)]:

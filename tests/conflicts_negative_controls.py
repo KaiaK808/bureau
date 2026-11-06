@@ -13,8 +13,8 @@ TIMEOUT = float(os.environ.get('BUREAU_CONFLICT_CONTROL_TIMEOUT', '300'))
 
 
 class NegativeControls(unittest.TestCase):
-    def check_withdrawal_failure(self, scripts, case, originals):
-        return self.check_failure(scripts, [case], 'conflicts_withdrawal_test.py', 'ConflictWithdrawal', originals=originals)
+    def check_withdrawal_failure(self, scripts, case, originals, **kwargs):
+        return self.check_failure(scripts, [case], 'conflicts_withdrawal_test.py', 'ConflictWithdrawal', originals=originals, **kwargs)
 
     @unittest.skipUnless(os.environ.get('BUREAU_CONFLICT_WITHDRAWAL_BASELINE'), 'explicit pre-integration ref required')
     def test_pre_integration_bypasses_withdrawal(self):
@@ -31,15 +31,20 @@ class NegativeControls(unittest.TestCase):
             path = scripts / 'bureau-conflicts.py'; source = path.read_text()
             self.assertEqual(source.count('self.checkpoint()'), 10)
             path.write_text(source.replace('self.checkpoint()', 'None  # private mutation: no command checkpoint'))
-            self.check_withdrawal_failure(scripts, 'test_withdrawal_before_dependencies_and_between_commands', originals)
+            # Generator 1 leaves dependencies/output to roll back; the next
+            # generator's checkpoint must stop generator 2 even for Done (0).
+            self.check_withdrawal_failure(scripts, 'test_withdrawal_before_dependencies_and_between_commands', originals,
+                env={'BUREAU_TEST_WITHDRAWAL_CASES':'["generator-1:done"]'},
+                expected='withdrawal started a later resolution step')
             print('PASS command-boundary control: removing transaction checkpoints starts later steps or commits withdrawn work')
 
-    def check_failure(self, scripts, cases, module='conflicts_test.py', group='ConflictTests', *, originals):
+    def check_failure(self, scripts, cases, module='conflicts_test.py', group='ConflictTests', *, originals, env=None, expected=None):
         output = ''
         for case in cases:
             result = mutation_caught([sys.executable, str(ROOT/'tests'/module), group+'.'+case],
-                env={'BUREAU_CONFLICT_TEST_SCRIPTS': str(scripts)},
-                originals=originals, timeout=TIMEOUT)
+                env={'BUREAU_CONFLICT_TEST_SCRIPTS': str(scripts), **(env or {})},
+                originals=originals, timeout=TIMEOUT,
+                expected=expected or ('FAIL: '+case, 'AssertionError:'), expected_exit=1)
             output += result.stdout + result.stderr
         return output
 
@@ -59,7 +64,9 @@ class NegativeControls(unittest.TestCase):
                 mutation_caught(['/bin/bash', str(ROOT / 'tests/test_conflicts_worker.sh')],
                     env={'BUREAU_CONFLICT_TEST_SCRIPTS': str(scripts),
                          'BUREAU_CONFLICT_WORKER_CASE': case},
-                    originals=originals, timeout=TIMEOUT)
+                    originals=originals, timeout=TIMEOUT,
+                    expected='repair succeeds before genuine provider failure' if case=='published' else 'refused push retains provider exit',
+                    expected_exit=1)
             print('PASS base control: both worker success assertions fail before the provider on ' + baseline)
 
     def test_bypass_regeneration_breaks_success_assertion(self):
@@ -70,7 +77,7 @@ class NegativeControls(unittest.TestCase):
             anchor = "            self.run(rule['command'])"
             self.assertEqual(source.count(anchor), 1)
             path.write_text(source.replace(anchor, '            pass  # private negative control: bypass regeneration'))
-            self.check_failure(scripts, ['test_generated_only'], originals=originals)
+            self.check_failure(scripts, ['test_generated_only'], originals=originals, expected='AssertionError: 17 != 0')
             print('PASS negative control: bypassing regeneration leaves invalid old output; the successful-resolution assertion fails')
 
 

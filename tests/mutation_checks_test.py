@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 import process_helpers
 from process_helpers import process_running
 from process_helpers_test import DeadlineWaits, ProcessHelpers
+from selected_cases import selected_cases
 from mutation_checks import (_run, baseline_fixture, caught_mutation, fixture_pids, historical_scripts,
                              linux_process_commands, linux_process_identity, macos_cwds, mutation_caught,
                              reap_adopted_fixtures, reaping_fixtures, restored_files, run, snapshot_files,
@@ -41,9 +42,10 @@ if __name__ == '__main__': unittest.main()
 ''')
         self.command = [sys.executable, str(self.test)]
 
-    def control(self, timeout=5):
+    def control(self, timeout=5, **expectation):
         return mutation_caught(self.command, env={'CONTROL_SOURCE': str(self.source)},
-                               originals={self.source:self.baseline.read_bytes()}, timeout=timeout)
+                               originals={self.source:self.baseline.read_bytes()}, timeout=timeout,
+                               **(expectation or {'expected':'AssertionError: mutated behavior'}))
 
     def test_target_timeout_error_is_caught(self):
         # subprocess.run kills and joins this child before unittest reports ERROR.
@@ -51,13 +53,13 @@ if __name__ == '__main__': unittest.main()
 def work():
     subprocess.run([sys.executable, '-c', 'import time; time.sleep(30)'], timeout=.05)
 ''')
-        result = self.control()
+        result = self.control(expected='subprocess.TimeoutExpired:')
         self.assertIn('TimeoutExpired', result.stderr)
         self.assertIn('FAILED (errors=1)', result.stderr)
 
     def test_other_target_error_is_caught(self):
         self.source.write_text('def work(): raise ValueError("mutated behavior")\n')
-        self.assertIn('FAILED (errors=1)', self.control().stderr)
+        self.assertIn('FAILED (errors=1)', self.control(expected='ValueError: mutated behavior').stderr)
 
     def test_assertion_failure_is_caught(self):
         self.source.write_text('def work(): assert False, "mutated behavior"\n')
@@ -92,7 +94,7 @@ def work():
     Path({str(pid)!r}).write_text(str(os.getpid()) + '\\n' + str(child.pid))
     time.sleep(30)
 ''')
-        self.assertEqual(124, self.control().returncode)
+        self.assertEqual(124, self.control(allow_timeout=True).returncode)
         for raw in pid.read_text().splitlines():
             with self.subTest(pid=raw):
                 self.assertFalse(process_running(int(raw)))
@@ -101,6 +103,17 @@ def work():
         self.baseline.write_text('import time\ndef work(): time.sleep(30)\n')
         with self.assertRaisesRegex(AssertionError, 'unmutated baseline failed:'):
             self.control(timeout=1)
+
+    def test_assertion_control_rejects_mutant_timeout(self):
+        self.source.write_text('import time\ndef work(): time.sleep(30)\n')
+        with self.assertRaisesRegex(AssertionError, 'mutation was not caught.*got exit 124'):
+            self.control(timeout=1)
+
+    def test_expected_text_rejects_unrelated_error(self):
+        self.source.write_text('def work(): raise ValueError("unrelated failure")\n')
+        with self.assertRaisesRegex(AssertionError, 'mutation was not caught') as error:
+            self.control()
+        self.assertIn('ValueError: unrelated failure', str(error.exception))
 
     def test_detached_timeout_reaps_only_its_own_descendants(self):
         # Fail before creating any detached process if inspection is forbidden.
@@ -128,7 +141,7 @@ def work():
     time.sleep(30)
 ''')
         started = time.monotonic()
-        result = self.control(timeout=1)
+        result = self.control(timeout=1, allow_timeout=True)
         self.assertEqual(124, result.returncode)
         self.assertLess(time.monotonic() - started, 8)
         self.assertIsNone(unrelated.poll(), 'timeout cleanup stopped an unrelated process')
@@ -142,7 +155,7 @@ def work():
                 with self.assertRaisesRegex(ValueError, 'positive finite'):
                     run(self.command, timeout=timeout)
                 with self.assertRaisesRegex(ValueError, 'positive finite'):
-                    mutation_caught(self.command, env={}, originals={}, timeout=timeout)
+                    mutation_caught(self.command, env={}, originals={}, timeout=timeout, expected_exit=1)
                 start.assert_not_called()
 
     def test_ps_scan_is_bounded_and_does_not_match_a_sibling_root(self):
@@ -449,7 +462,7 @@ def work():
             return waitpid(pid, flags)
 
         with patch('mutation_checks.os.waitpid', side_effect=defer_background_wait):
-            result = self.control(timeout=10)
+            result = self.control(timeout=10, expected='ValueError: mutation after orphan exit')
         self.assertEqual(1, result.returncode, 'Popen lost the mutation command exit status')
         self.assertIn('mutation after orphan exit', result.stderr)
 
@@ -547,7 +560,8 @@ def work():
         originals = snapshot_files(self.root)
         mutation = source + '    raise ValueError("private mutation")\n'
         self.source.write_text(mutation)
-        result = mutation_caught(self.command, env={'CONTROL_SOURCE': str(self.source)}, originals=originals)
+        result = mutation_caught(self.command, env={'CONTROL_SOURCE': str(self.source)}, originals=originals,
+                                 expected='ValueError: private mutation')
         self.assertIn('private mutation', result.stderr)
         self.assertEqual(mutation, self.source.read_text())
         contexts = [json.loads(line) for line in log.read_text().splitlines()]
@@ -572,7 +586,8 @@ def work():
         originals = snapshot_files(self.root)
         self.source.write_text('def work(): assert False, "mutation"\n')
         with self.assertRaisesRegex(AssertionError, 'unmutated baseline failed:') as error:
-            mutation_caught(self.command, env={'CONTROL_SOURCE': str(self.source)}, originals=originals)
+            mutation_caught(self.command, env={'CONTROL_SOURCE': str(self.source)}, originals=originals,
+                            expected='AssertionError: mutation')
         self.assertIn('missing_private_dependency', str(error.exception))
         self.assertIn('mutation', self.source.read_text())
 
@@ -628,13 +643,13 @@ def work():
             self.assertIn('historical mutation', (private/'subject.py').read_text())
             self.assertEqual('current companion inventory', (private/'companion').read_text())
             result = mutation_caught(self.command, env={'CONTROL_SOURCE':str(private/'subject.py')},
-                                     originals=originals)
+                                     originals=originals, expected='ValueError: historical mutation')
             self.assertIn('historical mutation', result.stderr)
             (private/'companion').unlink()
             # An absent companion must break the baseline, never count as detection.
             with self.assertRaises(FileNotFoundError):
                 mutation_caught(self.command, env={'CONTROL_SOURCE':str(private/'subject.py')},
-                                originals=originals)
+                                originals=originals, expected='ValueError: historical mutation')
 
     def test_file_restoration_survives_a_baseline_exception(self):
         self.source.write_bytes(b'mutated')
@@ -658,6 +673,85 @@ def work():
         with self.assertRaises(KeyboardInterrupt):
             with caught_mutation():
                 raise KeyboardInterrupt
+
+
+class MutationVerdicts(unittest.TestCase):
+    def check(self, code, output='', *, baseline=0, **expectation):
+        with tempfile.TemporaryDirectory(prefix='bureau-mutation-verdict-') as directory:
+            root=Path(directory)
+            source=root/'subject'; source.write_bytes(b'mutated')
+            def completed(command, **kwargs):
+                if source.read_bytes()==b'original':
+                    return subprocess.CompletedProcess(command,baseline,'','slow baseline' if baseline else '')
+                return subprocess.CompletedProcess(command,code,'',output)
+            with patch('mutation_checks.fixture_root',return_value=nullcontext(root)), \
+                    patch('mutation_checks._run',side_effect=completed) as execute:
+                try:
+                    return mutation_caught(['probe'],env={},originals={source:b'original'},**expectation)
+                finally:
+                    self.assertEqual(source.read_bytes(),b'mutated')
+                    self.assertEqual(execute.call_count,1 if baseline else 2)
+
+    def test_text_and_exit_must_match(self):
+        self.assertEqual(self.check(1,'expected assertion',expected='expected assertion',expected_exit=1).returncode,1)
+        for code,output in ((0,'expected assertion'),(1,'unrelated error'),(2,'expected assertion')):
+            with self.subTest(code=code,output=output), self.assertRaisesRegex(AssertionError,'mutation was not caught'):
+                self.check(code,output,expected='expected assertion',expected_exit=1)
+
+    def test_timeout_requires_opt_in_even_with_matching_output_or_exit(self):
+        for expectation in ({'expected':'expected assertion'},{'expected_exit':124}):
+            with self.subTest(expectation=expectation), self.assertRaisesRegex(AssertionError,'mutation was not caught'):
+                self.check(124,'expected assertion',**expectation)
+        self.assertEqual(self.check(124,allow_timeout=True).returncode,124)
+        with self.assertRaisesRegex(AssertionError,'mutation was not caught'):
+            self.check(1,'unrelated error',allow_timeout=True)
+
+    def test_tuple_requires_every_fragment(self):
+        self.assertEqual(self.check(1,'first and second',expected=('first','second')).returncode,1)
+        with self.assertRaisesRegex(AssertionError,'mutation was not caught'):
+            self.check(1,'first',expected=('first','second'))
+
+    def test_expected_exit_without_text(self):
+        self.assertEqual(self.check(2,expected_exit=2).returncode,2)
+        with self.assertRaisesRegex(AssertionError,'mutation was not caught'):
+            self.check(1,expected_exit=2)
+
+    def test_slow_baseline_is_never_detection(self):
+        with self.assertRaisesRegex(AssertionError,'unmutated baseline failed:\nslow baseline'):
+            self.check(124,baseline=124,allow_timeout=True)
+
+    def test_expectation_is_required_before_spawning(self):
+        for expectation in ({},{'expected':''},{'expected':()},{'expected_exit':0},{'allow_timeout':'yes'}):
+            with self.subTest(expectation=expectation), patch('mutation_checks.subprocess.Popen') as start:
+                with self.assertRaises(ValueError):
+                    mutation_caught(['probe'],env={},originals={},**expectation)
+                start.assert_not_called()
+
+
+class CaseSelection(unittest.TestCase):
+    def test_default_and_explicit_selection(self):
+        cases={'first':1,'second':2}
+        with patch.dict(os.environ,{},clear=True):
+            self.assertIs(selected_cases(cases,'CONTROL_CASES'),cases)
+            os.environ['CONTROL_CASES']='["second"]'
+            self.assertEqual(selected_cases(cases,'CONTROL_CASES'),{'second':2})
+
+    def test_empty_or_unknown_selection_cannot_make_a_green_control(self):
+        for value in ('[]','["unknown"]','"first"','[1]'):
+            with self.subTest(value=value), patch.dict(os.environ,{'CONTROL_CASES':value}):
+                with self.assertRaises(ValueError): selected_cases({'first':1},'CONTROL_CASES')
+
+    def test_withdrawal_selection_preserves_the_full_positive_matrix(self):
+        from conflicts_withdrawal_test import ConflictWithdrawal
+        case=ConflictWithdrawal('test_withdrawal_before_dependencies_and_between_commands')
+        for selection,count in (({},15),({'BUREAU_TEST_WITHDRAWAL_CASES':'["generator-1:done"]'},1)):
+            with self.subTest(selection=selection), patch.dict(os.environ,selection,clear=True), \
+                    patch.object(case,'start_case'), patch.object(case,'worker',return_value=None) as worker, \
+                    patch.object(case,'assert_stopped') as stopped:
+                case.test_withdrawal_before_dependencies_and_between_commands()
+                self.assertEqual(worker.call_count,count)
+                if count==1:
+                    stopped.assert_called_once_with(None,'done',0,['dependencies','generator-1'])
 
 
 if __name__ == '__main__':
