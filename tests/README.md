@@ -10,6 +10,25 @@ bash tests/run.sh
 
 Required tooling: `bash`, `git`, `jq`, `timeout` (GNU coreutils). On macOS, install with `brew install coreutils` (provides `timeout`; `bash` and `jq` are usually present).
 
+The runner also requires Python 3.9+. Each file has its own process group and a
+deadline of `max(600, 3 * estimated_seconds)` using the current OS's shard weight
+and the same fallback estimates as sharding. `BUREAU_TEST_FILE_TIMEOUT` overrides
+all file deadlines with a positive integer in seconds. Expiry prints `TIMEOUT`,
+sends TERM then KILL after one second, counts a failure and continues. Background
+group members are stopped even after a successful test.
+
+Set `BUREAU_TEST_TIMINGS=timings.tsv` to record monotonic elapsed seconds (including
+group cleanup), outcome (`PASS`, `FAIL`, `TIMEOUT`) and OS (`Linux`, `macOS`). The
+path is relative to the invoking directory; each run replaces the file. CI uploads
+one timing artifact per OS/shard even on failure. After checking that the source
+jobs succeeded, merge their files with
+`python3 tests/update_shard_weights.py path/to/timings.tsv [more-files.tsv ...]`.
+The updater rejects files containing failures/timeouts, rounds the slowest observed
+successful duration up to whole seconds and changes only the matching OS column.
+Unmeasured files without data and existing comments stay intact; new rows retain
+a dash for the other OS. An interrupted run may have only partial timings, so its
+artifact must not be used even if all recorded rows passed.
+
 Each test runs in an isolated `mktemp -d` sandbox with a real `git init`. Linear/GitHub helpers are stubbed via `tests/lib/stub-bureau-config.sh` (substituted for the real `bureau-config.sh` when the pipeline sources it). `$CLAUDE` is replaced with `tests/lib/fake_claude.sh`, which emits fixture JSON from `tests/fixtures/` and optionally creates real git commits to exercise the commit-count signal in the stuck detector.
 
 ## Mutation controls
@@ -32,7 +51,8 @@ one-second grace, allows three seconds for reaping and bounds the final output
 drain to one second. Linux adopts orphans for reaping. Process inspection must
 work before a fixture can start; unavailable inspection fails the harness.
 
-The shepherd outcome and judged overlap-readiness integration tests use a
+The review-base/review-convergence lifecycles, shepherd outcome and judged
+overlap-readiness integration tests use a
 135-second pipeline deadline: three 45-second command budgets for setup/re-entry,
 the judged stage and routing/cleanup. On macOS CI the previous single 45-second
 budget expired after the review reported BLOCK/25. A readiness subcase timeout
@@ -42,6 +62,9 @@ exit codes, outcome counts, paid-call counts and routing remain exact. Direct
 overlap commands retain their 45-second budget. After auditing every recorded
 transport PID, survivor assertions allow five additional seconds total for
 teardown; live survivors and unavailable process inspection still fail.
+The two review fixtures also use the shared fixture supervisor: it drains both
+pipes and joins descendants before assertions return or fixture directories are
+removed. Process inspection must be available, including for detached children.
 
 Baseline inventory audit (all locations below are private, resolved temp paths):
 

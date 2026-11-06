@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 import supervision_pipeline_test as fixture
+from process_helpers import run_pipeline
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'templates/scripts'
@@ -362,11 +363,10 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text(json.dumps(result))"""
     def review(self, value, code=20, **env):
         (self.repo / '.bureau.json').write_text(json.dumps(self.config))
         self.workers += 1
-        completed = subprocess.run(['bash', 'scripts/bureau-worker.sh', 'T-1', 'code-review-pipeline.sh',
-                                    str(self.root / f'worker-{self.workers}'), '001-task'], cwd=self.repo,
+        completed = run_pipeline(['bash', 'scripts/bureau-worker.sh', 'T-1', 'code-review-pipeline.sh',
+                                    str(self.root / f'worker-{self.workers}'), '001-task'], root=self.root, cwd=self.repo,
                                    env={**self.fixture.env, 'BUREAU_NO_MERGE':'1', 'BUREAU_STOP_REQUESTED':'1',
-                                        'REVIEW_RESULT_JSON':json.dumps(value), 'ROUND_USAGE':json.dumps(self.usage), **env},
-                                   capture_output=True, text=True, timeout=45)
+                                        'REVIEW_RESULT_JSON':json.dumps(value), 'ROUND_USAGE':json.dumps(self.usage), **env})
         self.assertEqual(completed.returncode, code, completed.stdout + completed.stderr)
         return completed
 

@@ -8,6 +8,7 @@ import sys
 import unittest
 
 import supervision_pipeline_test as pipeline_fixture
+from process_helpers import run_pipeline
 
 
 class ReviewBaseTests(unittest.TestCase):
@@ -53,8 +54,8 @@ os.execv(os.environ['REAL_GIT'],[os.environ['REAL_GIT'],*sys.argv[1:]])
     def review(self, code=20, **env):
         self.workers += 1
         worker = self.root / ('review-worker-'+str(self.workers))
-        result = subprocess.run(['bash','scripts/bureau-worker.sh','T-1','code-review-pipeline.sh',str(worker),'001-task'],
-            cwd=self.repo, env={**self.env,**env}, capture_output=True, text=True, timeout=40)
+        result = run_pipeline(['bash','scripts/bureau-worker.sh','T-1','code-review-pipeline.sh',str(worker),'001-task'],
+            root=self.root, cwd=self.repo, env={**self.env,**env})
         self.assertEqual(result.returncode,code,result.stdout+'\n'+result.stderr)
         return worker, result
 

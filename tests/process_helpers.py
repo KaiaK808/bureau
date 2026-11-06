@@ -21,6 +21,12 @@ def communicate_until(child, deadline):
     return child.communicate(timeout=max(0, deadline - time.monotonic()))
 
 
+def run_pipeline(command, *, root, cwd, env):
+    """Drain output and join fixture descendants before returning to assertions."""
+    from mutation_checks import run
+    return run(command, root=root, cwd=cwd, env=env, timeout=PIPELINE_TIMEOUT_SECONDS)
+
+
 def wait_for_processes_exit(pids, deadline):
     """Return survivors after one shared deadline; inspection errors still fail."""
     remaining = set(pids)
