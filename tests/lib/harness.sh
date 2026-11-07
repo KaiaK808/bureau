@@ -24,6 +24,16 @@ TESTS_DIR="$REPO_ROOT/tests"
 FIXTURES_DIR="$TESTS_DIR/fixtures"
 LIB_DIR="$TESTS_DIR/lib"
 
+
+copy_runtime_scripts() {
+  local f
+  local files=()
+  for f in "$REPO_ROOT/templates/scripts/"*; do
+    [ ! -f "$f" ] || files+=("$f")
+  done
+  [ "${#files[@]}" -eq 0 ] || cp "${files[@]}" "$SCRIPTS_DIR/"
+}
+
 sandbox_init() {
   local issue="${1:-EXP-1}"
   local branch="${2:-test-branch}"
@@ -35,7 +45,7 @@ sandbox_init() {
   # in the pipeline succeed. The pipeline does `git rev-parse --verify
   # origin/$BRANCH` and `git checkout -B "$BRANCH" "origin/$BRANCH"` — both
   # require the branch to exist on origin.
-  git -C "$SANDBOX" init -q -b main
+  git -C "$SANDBOX" init -q -b main; git -C "$SANDBOX" config maintenance.auto false
   git -C "$SANDBOX" config user.email "test@bureau"
   git -C "$SANDBOX" config user.name  "Bureau Test"
   git -C "$SANDBOX" commit -q --allow-empty -m "init"
@@ -43,7 +53,7 @@ sandbox_init() {
   git -C "$SANDBOX" commit -q --allow-empty -m "branch start on $branch"
 
   local fake_origin="$SANDBOX/.fake-origin.git"
-  git init -q --bare "$fake_origin"
+  git init -q --bare "$fake_origin"; git -C "$fake_origin" config maintenance.auto false
   git -C "$SANDBOX" remote add origin "$fake_origin"
   git -C "$SANDBOX" push -q origin main
   git -C "$SANDBOX" push -q origin "$branch"
@@ -68,10 +78,7 @@ EOF
   # stub bureau-config.sh wins because it's copied last under the same name.
   SCRIPTS_DIR="$SANDBOX/scripts"
   mkdir -p "$SCRIPTS_DIR"
-  local f
-  for f in "$REPO_ROOT/templates/scripts/"*; do
-    [ ! -f "$f" ] || cp "$f" "$SCRIPTS_DIR/"
-  done
+  copy_runtime_scripts
   cp "$LIB_DIR/stub-bureau-config.sh" "$SCRIPTS_DIR/bureau-config.sh"
   # Exercise the pinned upstream feature helper offline; providers remain faked.
   python3 - "$REPO_ROOT/tests/fixtures/speckit-1.2.2.zip" "$SANDBOX/.specify" <<'PY'

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 
+import git_maintenance
 from mutation_checks import mutation_caught, snapshot_files
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -30,6 +31,7 @@ with tempfile.TemporaryDirectory(prefix='bureau evidence controls ') as scratch:
     # Prove the copied runtime persists outcomes before testing broken variants.
     baseline=root/'baseline'; baseline.mkdir()
     subprocess.run(['git','-C',str(baseline),'init','-q'],check=True,capture_output=True)
+    git_maintenance.disable(baseline)
     (baseline/'.bureau.json').write_text('{}')
     result=subprocess.run([sys.executable,str(root/'bureau-runtime.py'),'--repo',str(baseline),
                            'exec','--issue','TEAM-1','--entry','implement-pipeline.sh','--',sys.executable,'-c','pass'],

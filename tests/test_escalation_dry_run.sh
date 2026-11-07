@@ -19,7 +19,7 @@ fail() { echo "FAIL $*" >&2; printf '  | rc=%s\n  | err=%s\n' "${RC:-}" "${ERR:-
 
 R="$SB/repo one"
 mkdir -p "$R"
-git -C "$R" init -q
+git -C "$R" init -q; git -C "$R" config maintenance.auto false
 cat > "$R/.bureau.json" <<'EOF'
 {
   "linear": {

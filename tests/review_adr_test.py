@@ -14,6 +14,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import git_maintenance
+
 import supervision_pipeline_test as fixture
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,7 +57,7 @@ class IndexTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-adr-index-')
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name).resolve()
-        self.git('init', '-q'); self.git('config', 'user.name', 'Bureau Test')
+        self.git('init', '-q'); git_maintenance.disable(self.repo); self.git('config', 'user.name', 'Bureau Test')
         self.git('config', 'user.email', 'test@bureau')
         self.directory = self.repo / 'docs/adr'; self.directory.mkdir(parents=True)
         self.config = self.repo / 'config.json'

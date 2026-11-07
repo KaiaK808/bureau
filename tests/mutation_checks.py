@@ -14,7 +14,7 @@ import tempfile
 import threading
 import time
 
-from process_helpers import communicate_until
+from process_helpers import communicate_until, process_snapshot
 
 
 DEFAULT_TIMEOUT = 300
@@ -22,17 +22,13 @@ PROC = Path('/proc')
 
 
 def process_commands():
-    result = subprocess.run(['ps', '-axo', 'pid=,command='], text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            check=True, timeout=1)
+    result = process_snapshot(['ps', '-axo', 'pid=,command='], check=True)
     return result.stdout
 
 
 def macos_cwds():
     """Bound cwd discovery even when a descendant's argv contains no path."""
-    result = subprocess.run(['lsof', '-nP', '-a', '-d', 'cwd', '-Fpn'], text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            check=True, timeout=1)
+    result = process_snapshot(['lsof', '-nP', '-a', '-d', 'cwd', '-Fpn'], check=True)
     cwds = {}
     pid = None
     for line in result.stdout.splitlines():
@@ -43,47 +39,49 @@ def macos_cwds():
     return cwds
 
 
-def fixture_pids(root, *, commands=None, cwds=None):
-    """Find only commands/cwds inside this resolved, randomly named run root."""
-    root = Path(root).resolve()
+def fixture_snapshot(root=None, *, commands=None, cwds=None):
+    """Read argv and cwd once per sweep; argv failure cannot prove cleanup."""
     output = (commands or process_commands)()
+    directories = {}
+    if sys.platform.startswith('linux'):
+        for path in PROC.iterdir():
+            if not path.name.isdigit():
+                continue
+            try:
+                directories[int(path.name)] = os.readlink(path/'cwd').removesuffix(' (deleted)')
+            except (OSError, RuntimeError):
+                pass  # inaccessible process or a raced exit
+    elif sys.platform == 'darwin':
+        try:
+            directories = (cwds or macos_cwds)()
+        except (OSError, subprocess.SubprocessError) as error:
+            context = f' for {root}' if root is not None else ''
+            print(f'fixture cwd discovery unavailable{context}: {error}; '
+                  'falling back to argv matching', file=sys.stderr)
+    return output, directories
+
+
+def fixture_pids(root, *, commands=None, cwds=None, snapshot=None):
+    """Answer ownership questions from one sweep's argv/cwd snapshot."""
+    root = Path(root).resolve()
+    output, directories = snapshot if snapshot is not None else fixture_snapshot(root, commands=commands, cwds=cwds)
     command_path = re.compile(r'(?<![\w./-])' + re.escape(str(root)) + r'''(?=$|[/\s'\"])''')
     pids = set()
     for line in output.splitlines():
         fields = line.strip().split(None, 1)
         if len(fields) == 2 and fields[0].isdigit() and command_path.search(fields[1]):
             pids.add(int(fields[0]))
-    if sys.platform.startswith('linux'):
-        # A detached executable need not mention the root in argv. procfs also
-        # finds it by cwd, even after its intermediate parent has exited.
-        for path in PROC.iterdir():
-            if not path.name.isdigit():
-                continue
-            try:
-                # procfs retains a deleted cwd with this suffix. It still
-                # belongs to the run even when a fixture removed its directory.
-                cwd = Path(os.readlink(path/'cwd').removesuffix(' (deleted)'))
-                if cwd == root or root in cwd.parents:
-                    pids.add(int(path.name))
-            except (OSError, RuntimeError):
-                pass  # inaccessible process or a raced exit
-    elif sys.platform == 'darwin':
+    for pid, directory in directories.items():
+        cwd = Path(directory)
+        if not cwd.is_absolute():
+            continue
         try:
-            discovered = (cwds or macos_cwds)()
-        except (OSError, subprocess.SubprocessError) as error:
-            print(f'fixture cwd discovery unavailable for {root}: {error}; '
-                  'falling back to argv matching', file=sys.stderr)
-        else:
-            for pid, directory in discovered.items():
-                cwd = Path(directory)
-                if not cwd.is_absolute():
-                    continue
-                try:
-                    cwd = cwd.resolve()
-                    if cwd == root or root in cwd.parents:
-                        pids.add(pid)
-                except (OSError, RuntimeError):
-                    pass  # inaccessible directory or a raced exit
+            if sys.platform == 'darwin':
+                cwd = cwd.resolve()
+            if cwd == root or root in cwd.parents:
+                pids.add(pid)
+        except (OSError, RuntimeError):
+            pass  # inaccessible directory or a raced exit
     pids.discard(os.getpid())
     return pids
 

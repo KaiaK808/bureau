@@ -217,7 +217,7 @@ PIPELINE_EOF
   _make_stub_pipeline merge-pipeline.sh       "$BUREAU_STATE_DONE_SIM"
 
   # Real ownership wrapper around the simulated stage state machine.
-  git -C "$sb" init -q
+  git -C "$sb" init -q; git -C "$sb" config maintenance.auto false
   # bureau_load_env lives next to the config the pipelines source (see
   # tests/test_env_read_safety.sh for why .env is parsed, not sourced).
   cp "$REPO_ROOT/templates/scripts/bureau-env.sh" "$sb/scripts/"

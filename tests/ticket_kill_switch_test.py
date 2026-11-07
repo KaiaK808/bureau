@@ -10,7 +10,7 @@ import unittest
 import zipfile
 
 import git_maintenance
-from process_helpers import process_running
+from process_helpers import running_processes
 from mutation_checks import baseline_fixture, caught_mutation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -248,9 +248,8 @@ class WithdrawalFixture(unittest.TestCase):
         self.assert_no_publication(events[first_pass:])
     def assert_no_providers(self):
         live=[]
-        for pid in set((self.root/'pids').read_text().splitlines()):
-            if not process_running(int(pid)): continue
-            live.append(pid)
+        for pid in running_processes(map(int, (self.root/'pids').read_text().splitlines())):
+            live.append(str(pid))
             os.kill(int(pid),signal.SIGKILL)
         self.assertEqual([],live,'provider still running (stopped by test cleanup)')
     def assert_withdrawn(self,result,code,target,stage='implement'):

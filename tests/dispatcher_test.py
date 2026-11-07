@@ -12,8 +12,10 @@ import tempfile
 import time
 import unittest
 import zipfile
+from unittest.mock import patch
 
-from process_helpers import process_group_running, process_running
+import git_maintenance
+from process_helpers import process_group_running, process_running, running_processes
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -251,6 +253,7 @@ class DispatcherFixture(unittest.TestCase):
             for name in ['scripts/bash/common.sh','scripts/bash/create-new-feature.sh']: z.extract(name,self.repo/'.specify')
         self.commit('foundation')
         self.command([REAL_GIT,'init','-q','--bare',str(self.root/'origin.git')])
+        git_maintenance.disable(self.root/'origin.git')
         self.g('remote','add','origin',str(self.root/'origin.git')); self.g('push','-q','origin','main')
         shutil.copytree(SCRIPTS,self.repo/'scripts')
         for file in (self.repo/'scripts').glob('*.sh'): file.chmod(0o755)
@@ -348,18 +351,10 @@ class DispatcherFixture(unittest.TestCase):
         for file in self.files: file.close()
         pids={row['pid'] for row in self.events() if 'pid' in row}
         if (self.root/'writer.pid').exists(): pids.add(int((self.root/'writer.pid').read_text()))
-        denied_pids=set()
         deadline=time.monotonic()+self.pid_exit_timeout
         remaining_pids=set(pids)
         while remaining_pids:
-            remaining=set()
-            for pid in remaining_pids:
-                try:
-                    if not process_running(pid): continue
-                except PermissionError:
-                    denied_pids.add(pid); continue
-                remaining.add(pid)
-            remaining_pids=remaining
+            remaining_pids=running_processes(remaining_pids)
             if not remaining_pids or time.monotonic()>=deadline: break
             time.sleep(.05)
         if remaining_pids:
@@ -380,10 +375,10 @@ class DispatcherFixture(unittest.TestCase):
         if os.environ.get('DISPATCH_PROCESS_AUDIT'):
             record=dict(test=self._testMethodName,top_handles=len(self.children),transport_provider_pids=len(pids),
                         runtime_groups=group_count,remaining_groups=sorted(groups),
-                        permission_denied_pids=sorted(denied_pids),permission_denied_groups=sorted(denied_groups))
+                        permission_denied_pids=[],permission_denied_groups=sorted(denied_groups))
             with open(os.environ['DISPATCH_PROCESS_AUDIT'],'a') as out: out.write(json.dumps(record)+'\n')
-        if denied_pids or denied_groups:
-            print('\nSKIP sandbox process inspection: EPERM for '+str(len(denied_pids))+' historical PID(s), '+str(len(denied_groups))+' historical group(s); live handles were joined, no stored ID was signalled',flush=True)
+        if denied_groups:
+            print('\nSKIP sandbox process inspection: EPERM for '+str(len(denied_groups))+' historical group(s); live handles were joined, no stored ID was signalled',flush=True)
         self.assertFalse(groups,'owned runtime process groups survived: '+str(groups))
 
     def skipped(self,issue,code):
@@ -1063,6 +1058,20 @@ class DispatcherCleanupTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,'owned test process survived: '+str(child.pid)):
             self.fixture.cleanup()
         self.assertIsNone(child.poll(),'cleanup must only observe recorded PIDs')
+
+    def test_unreadable_pid_cannot_hide_a_live_survivor(self):
+        (self.root/'events').write_text(json.dumps(dict(kind='provider-start',pid=41))+'\n')
+        (self.root/'writer.pid').write_text('42')
+        self.fixture.pid_exit_timeout=0
+        snapshot=subprocess.CompletedProcess(['ps'],0,'41 S\n','')
+        with patch('process_helpers.sys.platform','darwin'), \
+                patch('process_helpers.subprocess.run',return_value=snapshot) as inspect, \
+                patch('process_helpers.os.kill',side_effect=PermissionError('PID state is unreadable')) as probe:
+            with self.assertRaises(PermissionError):
+                self.fixture.cleanup()
+        inspect.assert_called_once()
+        self.assertEqual(inspect.call_args.args[0][-1],'41,42')
+        probe.assert_called_once_with(42,0)
 
 
 if __name__=='__main__': unittest.main(verbosity=2)

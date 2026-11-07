@@ -22,8 +22,8 @@ fail() { echo "FAIL $*" >&2; [ -n "${OUT:-}" ] && printf '%s\n' "$OUT" | sed 's/
 
 # --- 1. the script ------------------------------------------------------------
 R="$FX/repo"
-git init -q --bare "$FX/origin.git"
-git init -q -b main "$R"
+git init -q --bare "$FX/origin.git"; git -C "$FX/origin.git" config maintenance.auto false
+git init -q -b main "$R"; git -C "$R" config maintenance.auto false
 git -C "$R" config user.email test@bureau
 git -C "$R" config user.name "Bureau Test"
 git -C "$R" remote add origin "$FX/origin.git"

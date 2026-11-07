@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import git_maintenance
+
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('doctor', ROOT/'templates/scripts/bureau-doctor.py')
 d=importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
@@ -20,6 +22,7 @@ class DoctorTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory(prefix='bureau doctor '); self.addCleanup(self.temp.cleanup)
         self.repo=Path(self.temp.name).resolve()
         subprocess.run(['git','init','-q',str(self.repo)],check=True)
+        git_maintenance.disable(self.repo)
         self.config={'version':1,'linear':{'teams':[{'id':'team-id','key':'TEAM','states':{'build':'state-id'}}],
                      'labels':{'lane2':{'id':'label-id','name':'custom-name'}}},
                      'agents':{'spec':'true','spec_review':'false','model':'legacy-model','implement':True,'qa':False,'custom_extension':{'keep':3}},

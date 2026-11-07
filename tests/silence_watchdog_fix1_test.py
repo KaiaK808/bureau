@@ -1,52 +1,41 @@
-"""Review regressions: real shell exec, async Bash, inherited pipes and withdrawal."""
+"""Injected activity deadlines, native process inspection, pipes and withdrawal."""
 import json
 import os
-from pathlib import Path
+import select
+import shlex
 import signal
 import subprocess
 import sys
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import silence_watchdog_test as watchdog
 from ticket_kill_switch_test import WithdrawalFixture, STATES
 
 
 PROVIDER = r'''#!/usr/bin/env python3
-import json, os, pathlib, subprocess, sys, time
+import json, os, pathlib, select, signal, subprocess, sys
 root=pathlib.Path(os.environ['SILENCE_ROOT']); args=sys.argv[1:]
 if args[0] in ('auth','login'): print('{"loggedIn":true}'); sys.exit(0)
 if args[0]=='--help': print('--session-id --output-format --include-partial-messages'); sys.exit(0)
 if args[0]=='--version': print('fixture'); sys.exit(0)
 sys.stdin.read()
-def emit(event): print(json.dumps(event),flush=True)
-def message(kind, blocks): emit(dict(type=kind,message=dict(content=blocks)))
-def tool(key, name, inputs): message('assistant',[dict(type='tool_use',id=key,name=name,input=inputs)])
-with (root/'pids').open('a') as f: f.write(str(os.getpid())+'\n')
-mode=os.environ['SILENCE_MODE']; name=pathlib.Path(sys.argv[0]).name
-if mode=='inherited-stdout':
-    child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])
-    with (root/'pids').open('a') as f: f.write(str(child.pid)+'\n')
-else:
-    command=os.environ.get('FIX1_COMMAND','sleep 0.8')
-    background=mode.startswith('background')
-    if name=='codex': emit(dict(type='item.started',item=dict(id='bash',type='command_execution',command=command)))
-    else: tool('bash','Bash',dict(command=command,run_in_background=background))
-    child=subprocess.Popen([os.environ.get('FIX1_SHELL','/bin/bash'),'-lc',command])
-    with (root/'pids').open('a') as f: f.write(str(child.pid)+'\n')
-    if background:
-        message('user',[dict(type='tool_result',tool_use_id='bash',content='Command running in background with ID: task-1')])
-        tool('await','TaskOutput',dict(task_id='task-1',block=True,timeout=3000))
-    child.wait()
-    (root/'child-finished').touch()
-    if mode=='background-exit': time.sleep(3)
-    if background: message('user',[dict(type='tool_result',tool_use_id='await',content='Task task-1 completed')])
+ready, writer = os.pipe()
+code = 'import os, signal, sys; os.write(int(sys.argv[1]), b"r"); signal.pause()'
+child = subprocess.Popen([sys.executable, '-c', code, str(writer)], pass_fds=(writer,))
+os.close(writer)
+with (root/'pids').open('a') as f: f.write(str(os.getpid())+'\n'+str(child.pid)+'\n')
+try:
+    assert select.select([ready], [], [], 15)[0], 'inherited-pipe child never signalled ready'
+    assert os.read(ready, 1) == b'r'
+except BaseException:
+    child.kill(); child.wait(timeout=15); raise
+finally:
+    os.close(ready)
 result=dict(status='COMPLETE',value='finished')
-if name=='codex':
-    pathlib.Path(args[args.index('-o')+1]).write_text(json.dumps(result))
-    emit(dict(type='turn.completed',usage=dict(input_tokens=12,output_tokens=3)))
-else: emit(dict(type='result',result=json.dumps(result),structured_output=result))
+pathlib.Path(args[args.index('-o')+1]).write_text(json.dumps(result))
+print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=12,output_tokens=3))),flush=True)
 '''
 
 
@@ -61,38 +50,12 @@ class ProviderRegressions(unittest.TestCase):
         for name in ('claude', 'codex'):
             (self.bin/name).write_text(PROVIDER)
 
-    def test_shell_exec_keeps_child_allowance(self):
-        for runner in ('claude', 'codex'):
-            for shell in ('/bin/zsh', '/bin/bash'):
-                if not Path(shell).exists(): continue
-                for command in ('CI=1 sleep 0.8', 'env CI=1 sleep 0.8', 'cd / && sleep 0.8'):
-                    with self.subTest(runner=runner, shell=shell, command=command):
-                        self.configure(runner, silence=.25, child=1.5, wall=3)
-                        result, _, _ = self.run_provider('shell', code=None, FIX1_SHELL=shell, FIX1_COMMAND=command)
-                        self.assertEqual(0, result.returncode, 'shell exec lost its tool allowance: '+result.stderr)
-                        self.assertTrue((self.root/'child-finished').exists())
-                        (self.root/'child-finished').unlink()
-
-    def test_background_taskoutput_keeps_child_allowance(self):
-        self.configure('claude', silence=.25, child=1.5, wall=3)
-        result, _, _ = self.run_provider('background', code=None)
-        self.assertEqual(0, result.returncode, 'background Bash lost its tool allowance: '+result.stderr)
-        self.assertTrue((self.root/'child-finished').exists())
-
-    def test_background_exit_removes_allowance(self):
-        self.configure('claude', silence=.25, child=1.5, wall=3)
-        result, meta, _ = self.run_provider('background-exit', code=None, FIX1_COMMAND='sleep 0.6')
-        self.assertEqual(25,result.returncode,result.stderr)
-        self.assertTrue((self.root/'child-finished').exists(),'background child was stopped before finishing')
-        self.assertEqual('silence',meta['timeout_kind'])
-        self.assertLess(meta['duration_seconds'],1.3,'finished background child kept its allowance')
-
     def test_watchdog_off_inherited_stdout_preserves_success(self):
-        self.configure('codex', silence=0)
+        self.configure('codex', silence=0, wall=30)
         # Watchdog-off handling deliberately observes rather than owns this child.
         # Clean it here even when the baseline returns the erroneous 22.
         try:
-            result, meta, _ = self.run_provider('inherited-stdout', code=None)
+            result, meta, _ = self.run_provider('inherited-stdout', code=None, outer_timeout=45)
         finally:
             for raw in (self.root/'pids').read_text().splitlines():
                 try: os.kill(int(raw), signal.SIGKILL)
@@ -112,7 +75,128 @@ class ProviderRegressions(unittest.TestCase):
         self.assertEqual('complete',meta['outcome'])
 
 
+class Table:
+    def __init__(self):
+        self.rows = {100: (1, 'provider', False)}
+        self.argv = {100: ['provider']}
+
+    def snapshot(self): return dict(self.rows)
+    def args_env(self, pid): return self.argv[pid], []
+
+
+class AllowanceMatrix(unittest.TestCase):
+    def tracker(self, runner):
+        self.now = 0
+        self.table = Table()
+        with patch.object(watchdog.p.a, 'ProcessTable', return_value=self.table), \
+                patch.object(watchdog.p.a.ctypes, 'CDLL', return_value=Mock(prctl=Mock(return_value=0))):
+            self.owned = watchdog.p.a.OwnedProcesses()
+        self.owned.attach(100)
+        return watchdog.p.a.Activity(runner, .25, 1.5, clock=lambda: self.now)
+
+    @staticmethod
+    def message(activity, kind, blocks):
+        activity.line(json.dumps(dict(type=kind, message=dict(content=blocks))))
+
+    def tool(self, activity, command, background=False):
+        if activity.runner == 'codex':
+            activity.line(json.dumps(dict(type='item.started', item=dict(
+                id='bash', type='command_execution', command=command))))
+        else:
+            self.message(activity, 'assistant', [dict(type='tool_use', id='bash', name='Bash',
+                         input=dict(command=command, run_in_background=background))])
+
+    def test_shell_exec_keeps_child_allowance(self):
+        for runner in ('claude', 'codex'):
+            for shell in ('/bin/zsh', '/bin/bash'):
+                for command in ('CI=1 sleep 0.8', 'env CI=1 sleep 0.8', 'cd / && sleep 0.8'):
+                    for first_scan in ('shell', 'exec'):
+                        with self.subTest(runner=runner, shell=shell, command=command, first_scan=first_scan):
+                            activity = self.tracker(runner)
+                            self.tool(activity, command)
+                            self.table.rows[200] = (100, 'tool', False)
+                            self.table.argv[200] = ([shell, '-lc', command] if first_scan == 'shell'
+                                                    else ['sleep', '0.8'])
+                            self.owned.scan()
+                            self.now = .25
+                            self.assertFalse(activity.expired(self.owned), 'shell exec lost its tool allowance')
+                            self.table.argv[200] = ['sleep', '0.8']; self.owned.scan()
+                            self.now = .8
+                            self.assertFalse(activity.expired(self.owned), 'shell child was stopped before finishing')
+                            self.now = 1.499
+                            self.assertFalse(activity.expired(self.owned))
+                            self.now = 1.5
+                            self.assertTrue(activity.expired(self.owned), 'child allowance has no deadline')
+
+    def background(self):
+        activity = self.tracker('claude')
+        self.tool(activity, 'sleep 0.8', background=True)
+        self.table.rows[200] = (100, 'tool', False); self.table.argv[200] = ['sleep', '0.8']
+        self.owned.scan()
+        self.message(activity, 'user', [dict(type='tool_result', tool_use_id='bash',
+                     content='Command running in background with ID: task-1')])
+        self.message(activity, 'assistant', [dict(type='tool_use', id='await', name='TaskOutput',
+                     input=dict(task_id='task-1', block=True, timeout=3000))])
+        return activity
+
+    def test_background_taskoutput_keeps_child_allowance(self):
+        activity = self.background()
+        self.now = .8
+        self.assertFalse(activity.expired(self.owned), 'background Bash lost its tool allowance')
+        self.message(activity, 'user', [dict(type='tool_result', tool_use_id='await', content='Task task-1 completed')])
+        self.table.rows.pop(200); self.owned.scan()
+        self.assertFalse(activity.expired(self.owned), 'completion did not count as progress')
+        self.now = 1.05
+        self.assertTrue(activity.expired(self.owned))
+
+    def test_background_exit_removes_allowance(self):
+        activity = self.background()
+        self.now = .25
+        self.assertFalse(activity.expired(self.owned))
+        self.table.rows.pop(200); self.owned.scan()
+        self.now = .6
+        self.assertTrue(activity.expired(self.owned), 'finished background child kept its allowance')
+        self.assertNotIn('bash', activity.tools)
+        self.assertNotIn('bash', activity.background)
+
+    def test_silence_boundary_and_unmatched_children(self):
+        for runner in ('claude', 'codex'):
+            with self.subTest(runner=runner):
+                activity = self.tracker(runner)
+                self.tool(activity, 'sleep 0.8')
+                self.table.rows[200] = (100, 'unrelated', False); self.table.argv[200] = ['sleep', '30']
+                self.owned.scan()
+                self.now = .249
+                self.assertFalse(activity.expired(self.owned))
+                self.now = .25
+                self.assertTrue(activity.expired(self.owned), 'unmatched child extended the silence window')
+
+
 class ProcessIdentity(unittest.TestCase):
+    def test_native_table_observes_ready_child(self):
+        owned = watchdog.p.a.OwnedProcesses()
+        owned.attach(os.getpid())
+        code = "import sys; print('ready', flush=True); sys.stdin.read(1)"
+        command = 'CI=1 ' + shlex.join([sys.executable, '-c', code])
+        child = subprocess.Popen(['/bin/bash', '-lc', command], stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertTrue(select.select([child.stdout], [], [], 15)[0], 'child never signalled ready')
+            self.assertEqual('ready\n', child.stdout.readline())
+            now = [0]
+            activity = watchdog.p.a.Activity('codex', 3, 30, clock=lambda: now[0])
+            activity.line(json.dumps(dict(type='item.started', item=dict(
+                id='bash', type='command_execution', command=command))))
+            owned.scan(); now[0] = 4
+            self.assertFalse(activity.expired(owned), 'native process inspection lost the ready child')
+            child.communicate('x', timeout=15)
+            self.assertEqual(0, child.returncode)
+            owned.scan()
+            self.assertTrue(activity.expired(owned), 'exited native child kept its allowance')
+        finally:
+            if child.poll() is None: child.kill()
+            child.communicate(timeout=15)
+
     def test_exec_and_observed_descendants_keep_the_same_tool_identity(self):
         class Table:
             rows={100:(1,'provider',False)}

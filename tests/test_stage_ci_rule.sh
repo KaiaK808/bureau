@@ -21,7 +21,7 @@ trap 'rm -rf "$SB"' EXIT
 FAILS=0
 fail() { echo "FAIL $*" >&2; FAILS=$((FAILS + 1)); }
 
-git -C "$SB" init -q
+git -C "$SB" init -q; git -C "$SB" config maintenance.auto false
 git -C "$SB" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m 'test: stage base'
 CI_RULE_BASE=$(git -C "$SB" rev-parse HEAD)
 mkdir -p "$SB/bin" "$SB/evidence"

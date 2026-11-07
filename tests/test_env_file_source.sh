@@ -38,7 +38,7 @@ MAIN_KEY=lin_api_main_checkout_key_0001
 BRANCH_KEY=lin_api_branch_tracked_key_0002
 M="$SB/main checkout"; WT="$M/.worktrees/wt"
 mkdir -p "$M"
-git -C "$M" init -q -b main; git -C "$M" config user.email t@t; git -C "$M" config user.name t
+git -C "$M" init -q -b main; git -C "$M" config maintenance.auto false; git -C "$M" config user.email t@t; git -C "$M" config user.name t
 printf '.env\n.bureau.json\n.worktrees/\nscripts/\n' > "$M/.gitignore"
 git -C "$M" add .gitignore; git -C "$M" commit -q -m init
 cp -R "$SCRIPTS" "$M/scripts"

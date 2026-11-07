@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/scripts"
 cp "$ROOT/templates/scripts/bureau-tick.sh" "$ROOT/templates/scripts/bureau-supervision.py" "$ROOT/templates/scripts/bureau-evidence.py" "$TMP/scripts/"
-git -C "$TMP" init -q
+git -C "$TMP" init -q; git -C "$TMP" config maintenance.auto false
 cat > "$TMP/scripts/bureau-config.sh" <<'STUB'
 BUREAU_ENV_FILE=/nonexistent
 bureau_is_paused() { [ "${PAUSED:-0}" = 1 ]; }

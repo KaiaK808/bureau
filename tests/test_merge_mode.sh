@@ -32,7 +32,7 @@ set_mode() {  # $1 = JSON value for .agents.merge_mode, or "absent"
 REAL_CONFIG="$REPO_ROOT/templates/scripts/bureau-config.sh"
 CFG_DIR=$(mktemp -d -t bureau-test.mode.XXXXXXXX)
 trap 'rm -rf "$CFG_DIR"; teardown || true' EXIT
-git -C "$CFG_DIR" init -q
+git -C "$CFG_DIR" init -q; git -C "$CFG_DIR" config maintenance.auto false
 check_mode() {  # $1 = JSON value or absent, $2 = expected mode, $3 = warn|quiet
   if [ "$1" = absent ]; then echo '{"linear":{"teams":[{}]},"agents":{}}' > "$CFG_DIR/.bureau.json"
   else jq -n --argjson v "$1" '{linear:{teams:[{}]},agents:{merge_mode:$v}}' > "$CFG_DIR/.bureau.json"; fi
@@ -271,7 +271,7 @@ done
 # ── 5. bureau-status.sh --config shows the mode in effect and its source ──
 S=$(mktemp -d -t bureau-test.status.XXXXXXXX)
 trap 'rm -rf "$CFG_DIR" "$Q" "$S"; teardown || true' EXIT
-cp -R "$REPO_ROOT/templates/scripts" "$S/scripts"; git -C "$S" init -q
+cp -R "$REPO_ROOT/templates/scripts" "$S/scripts"; git -C "$S" init -q; git -C "$S" config maintenance.auto false
 status_rows() {  # $1 = jq edit on the base config; prints the merge_mode, merge and rebase rows
   jq -n '{linear:{teams:[{id:"t",key:"T",name:"Test",states:{build:"b",build_review:"br",merge:"m",done:"d"}}],labels:{lane2:{id:"l",name:"lane-2"}}},agents:{merge:true,rebase:true},repo:{}}' \
     | jq "$1" > "$S/.bureau.json"

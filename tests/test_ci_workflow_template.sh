@@ -84,7 +84,7 @@ assert_grep "resync documents hosted runner" 'runs-on: ubuntu-latest' "$REPO_ROO
 assert_grep "resync explains fork risk" 'fork-PR-RCE' "$REPO_ROOT/references/resync.md"
 TARGET="$(mktemp -d)"
 trap 'rm -rf "$TARGET"' EXIT
-git init -q "$TARGET"
+git init -q "$TARGET"; git -C "$TARGET" config maintenance.auto false
 if python3 "$REPO_ROOT/scripts/bureau_install.py" assets --repo "$TARGET" --scope ci --apply >/dev/null &&
    cmp -s "$CI_TEMPLATE" "$TARGET/.github/workflows/ci.yml"; then
   pass=$((pass + 1))

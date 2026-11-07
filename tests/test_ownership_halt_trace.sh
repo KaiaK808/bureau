@@ -225,7 +225,7 @@ pr5_new_repo
 printf finish > "$SB/probe-mode"
 pr5_worker EXP-7 "$WT"
 [ "$RC" = 0 ] || fail "8: the first run to register the worker ended $RC"
-rm -rf "$WT"; git init -q "$WT"
+rm -rf "$WT"; git init -q "$WT"; git -C "$WT" config maintenance.auto false
 printf s1 > "$SB/state"; : > "$SB/linear.log"
 pr5_worker EXP-7 "$WT"
 [ "$RC" = 21 ] || fail "8: a worker with a changed identity ended $RC, wanted 21"

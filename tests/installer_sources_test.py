@@ -38,6 +38,7 @@ class Target(unittest.TestCase):
         self.root = Path(temp.name)
         self.repo = self.root / "target repo"
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True, env=GIT_ENV)
+        git_maintenance.disable(self.repo)
 
     def install(self, *args, status=0, program=INSTALLER):
         proc = subprocess.run([sys.executable, str(program), *args, "--repo", str(self.repo)],
@@ -132,7 +133,7 @@ class IgnoredTemplateFileTests(Target):
             (source / ".gitignore").write_text((ROOT / ".gitignore").read_text()
                                                 + "templates/commands/draft-*.md\ntemplates/workflows/scratch.js\n")
         if git:
-            for args in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "release"], ["tag", "v9.9.9"]):
+            for args in (["init", "-q"], git_maintenance.OFF_CONFIG, ["add", "-A"], ["commit", "-qm", "release"], ["tag", "v9.9.9"]):
                 subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True, env=GIT_ENV)
         for relative in self.IGNORED:
             (source / relative).parent.mkdir(parents=True, exist_ok=True)

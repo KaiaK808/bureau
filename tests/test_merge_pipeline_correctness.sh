@@ -866,7 +866,7 @@ make_shepherd_merge_sandbox() {  # <name> — the merge sandbox plus the shepher
      "$REPO_ROOT/templates/scripts/bureau-process.py" \
      "$REPO_ROOT/templates/scripts/bureau-evidence.py" "$REPO_ROOT/templates/scripts/bureau-spec.py" \
      "$REPO_ROOT/templates/scripts/bureau-ticket.py" "$REPO_ROOT/templates/scripts/bureau-insights.sh" "$sb/scripts/"
-  git -C "$sb" init -q && git -C "$sb" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+  git -C "$sb" init -q; git -C "$sb" config maintenance.auto false && git -C "$sb" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   echo Merge > "$sb/stub_data/ticket_state"
   cat >> "$sb/scripts/bureau-config.sh" <<'SHEP_EOF'
 get_issue_state()   { cat "$STUB_DIR/ticket_state"; }

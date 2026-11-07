@@ -83,9 +83,9 @@ DETAIL='{"identifier":"VFY-901","title":"Ticket VFY-901","description":"d","labe
 new_repo() {
   rm -rf "$SB/repo" "$SB/origin.git"
   R="$SB/repo"
-  git init -q -b main "$R"; git -C "$R" config user.email t@bureau; git -C "$R" config user.name t
+  git init -q -b main "$R"; git -C "$R" config maintenance.auto false; git -C "$R" config user.email t@bureau; git -C "$R" config user.name t
   git -C "$R" commit -q --allow-empty -m init
-  git init -q --bare "$SB/origin.git"; git -C "$R" remote add origin "$SB/origin.git"; git -C "$R" push -q origin main
+  git init -q --bare "$SB/origin.git"; git -C "$SB/origin.git" config maintenance.auto false; git -C "$R" remote add origin "$SB/origin.git"; git -C "$R" push -q origin main
   HEAD_SHA=$(head_of VFY-901)
   BASE_SHA=$(git -C "$R" rev-parse main)
   mkdir -p "$R/scripts"; cp -R "$REPO_ROOT/templates/scripts/." "$R/scripts/"

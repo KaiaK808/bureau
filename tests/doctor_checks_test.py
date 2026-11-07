@@ -46,6 +46,7 @@ class Repo(unittest.TestCase):
         self.base = Path(temp.name).resolve()
         self.repo = self.base / 'main checkout'
         git(self.base, 'init', '-q', str(self.repo))
+        git_maintenance.disable(self.repo)
         self.write_config(BASE)
         subprocess.run([sys.executable, str(INSTALLER), 'assets', '--repo', str(self.repo), '--target', 'codex',
                         '--scope', 'interfaces', '--scope', 'scripts', '--apply'], check=True, stdout=subprocess.DEVNULL)
@@ -686,6 +687,7 @@ class WorktreeLinkTests(Repo):
         # A git directory kept outside the checkout: the stages make no links.
         separate = self.base / 'separate checkout'
         git(self.base, 'init', '-q', '--separate-git-dir', str(self.base / 'elsewhere.git'), str(separate))
+        git_maintenance.disable(separate)
         (separate / '.venv').mkdir()
         repo, self.repo = self.repo, separate
         self.write_config(BASE)
@@ -701,7 +703,7 @@ class WorktreeLinkTests(Repo):
         # A worktree of a bare repository has no main checkout either.
         self.repo = repo
         bare = self.base / 'bare.git'
-        git(self.base, 'clone', '-q', '--bare', str(repo), str(bare))
+        git(self.base, 'clone', *git_maintenance.CLONE_CONFIG, '-q', '--bare', str(repo), str(bare))
         worktree = self.base / 'bare worktree'
         git(bare, 'worktree', 'add', '-q', '--detach', str(worktree))
         self.repo = worktree; self.write_config(BASE); (worktree / '.venv').mkdir()

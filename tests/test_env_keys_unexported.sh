@@ -174,7 +174,7 @@ c1_no_secret() {
   done
 }
 D="$TMP/d"; mkdir -p "$D/scripts" "$TMP/dbin"; cp "$SCRIPTS"/bureau-config.sh "$SCRIPTS"/bureau-env.sh "$D/scripts/"
-git -C "$D" init -q -b main
+git -C "$D" init -q -b main; git -C "$D" config maintenance.auto false
 printf '{"linear":{"teams":[{"id":"t","key":"EXP","states":{}}],"labels":{}},"agents":{},"repo":{}}\n' > "$D/.bureau.json"
 c1_env_file "$D/.env"
 printf '%s\n' '#!/bin/bash' "cat > \"$TMP/curl.\$\$.stdin\"" "printf '%s' '{\"data\":{\"viewer\":{\"id\":\"u\"}}}'" \

@@ -14,7 +14,7 @@ trap 'rm -rf "$TMP"' EXIT
 REPO="$TMP/target repo"
 fail() { echo "FAIL $*" >&2; exit 1; }
 
-git init -q "$REPO"
+git init -q "$REPO"; git -C "$REPO" config maintenance.auto false
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/bureau_install.py" assets --target both \
   --scope interfaces --scope scripts --apply --repo "$REPO" >/dev/null
 printf '{"repo": {"specs_dir": "specs"}}\n' > "$REPO/.bureau.json"

@@ -34,6 +34,7 @@ class InstallationTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.repo = self.root / "target repo"
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        git_maintenance.disable(self.repo)
 
     def run_install(self, *args, status=0, program=INSTALLER, env=None):
         proc = subprocess.run([sys.executable, str(program), *args, "--repo", str(self.repo)],
@@ -178,6 +179,7 @@ class InstallationTests(unittest.TestCase):
         source = self.source_copy(self.root)
         shutil.copy(ROOT / ".gitignore", source / ".gitignore")
         self.git(source, "init", "-q")
+        git_maintenance.disable(source)
         self.git(source, "add", "-A")
         self.git(source, "commit", "-qm", "release")
         self.git(source, "tag", "-a", tag, "-m", tag)
@@ -282,6 +284,7 @@ class InstallationTests(unittest.TestCase):
         source, program = self.tagged_source()
         host = self.root / "host repo"
         self.git(self.root, "init", "-q", str(host))
+        git_maintenance.disable(host)
         (host / "f").write_text("x")
         self.git(host, "add", "-A")
         self.git(host, "commit", "-qm", "host")
@@ -308,6 +311,7 @@ class InstallationTests(unittest.TestCase):
         # Vendored inside another repository: that repository's commit says nothing about the template.
         host = self.root / "host repo"
         self.git(self.root, "init", "-q", str(host))
+        git_maintenance.disable(host)
         nested = self.source_copy(host / "vendor")
         self.git(host, "add", "-A")
         self.git(host, "commit", "-qm", "vendor bureau")

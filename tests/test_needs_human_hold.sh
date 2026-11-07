@@ -22,7 +22,7 @@ fail() { echo "FAIL $*" >&2; printf '  | rc=%s out=%s\n  | err=%s\n' "${RC:-}" "
 
 SB=$(mktemp -d -t bureau-test.nhhold.XXXXXXXX)
 trap 'rm -rf "$SB"' EXIT
-git -C "$SB" init -q
+git -C "$SB" init -q; git -C "$SB" config maintenance.auto false
 HOLD="$SB/.git/bureau/needs-human-held"
 # The picker as it was: the hold lines in pipeline_pick_next taken out again.
 mkdir -p "$SB/old"; cp "$SCRIPTS"/*.sh "$SCRIPTS/bureau-ticket.py" "$SCRIPTS/bureau-activity.py" "$SCRIPTS/bureau-runtime.py" "$SCRIPTS/bureau-process.py" "$SCRIPTS/bureau-evidence.py" "$SCRIPTS/bureau-spec.py" "$SB/old/"

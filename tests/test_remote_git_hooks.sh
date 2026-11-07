@@ -133,7 +133,7 @@ repo() {
     : > "$MARKS"; return 0
   fi
   mkdir -p "$r/.githooks"
-  git -C "$r" init -q -b main; git -C "$r" config user.email t@t; git -C "$r" config user.name t
+  git -C "$r" init -q -b main; git -C "$r" config maintenance.auto false; git -C "$r" config user.email t@t; git -C "$r" config user.name t
   for h in pre-push reference-transaction pre-commit post-checkout post-merge; do
     cat > "$r/.githooks/$h" <<EOF
 #!/bin/sh
@@ -148,10 +148,10 @@ EOF
   done
   printf '.bureau.json\n' > "$r/.git/info/exclude"
   git -C "$r" add -A; git -C "$r" commit -q -m init
-  git init -q --bare "$r.origin"; git -C "$r.origin" symbolic-ref HEAD refs/heads/main; git -C "$r" remote add origin "$r.origin"; git -C "$r" push -q origin main
+  git init -q --bare "$r.origin"; git -C "$r.origin" config maintenance.auto false; git -C "$r.origin" symbolic-ref HEAD refs/heads/main; git -C "$r" remote add origin "$r.origin"; git -C "$r" push -q origin main
   git -C "$r" fetch -q origin
   git -C "$r" config core.hooksPath .githooks
-  git clone -q "$r.origin" "$r.other"; git -C "$r.other" config user.email t@t; git -C "$r.other" config user.name t
+  git clone -c maintenance.auto=false -q "$r.origin" "$r.other"; git -C "$r.other" config user.email t@t; git -C "$r.other" config user.name t
   mkdir -p "$cache"; cp -Rp "$r" "$cache/r"; cp -Rp "$r.origin" "$cache/origin"; cp -Rp "$r.other" "$cache/other"
   : > "$MARKS"
 }
@@ -253,7 +253,7 @@ pr1_pass "4 without bureau-config.sh and BUREAU_CONFIG: hooks off"
 doctor_warnings() {
   local d="$TMP/doctor" at="$TMP/doctor" file=.gitattributes
   rm -rf "$d" "$TMP/doctor-wt"; mkdir -p "$d/scripts"; cp "$SCRIPTS"/bureau-doctor.py "$SCRIPTS"/bureau-adr.py "$SCRIPTS"/bureau-review.py "$SCRIPTS"/bureau-ticket.py "$SCRIPTS"/bureau-runtime.py "$SCRIPTS"/bureau-provider.py "$SCRIPTS"/bureau-process.py "$SCRIPTS"/bureau-activity.py "$SCRIPTS"/bureau-evidence.py "$SCRIPTS"/bureau-gates.py "$SCRIPTS"/bureau-spec.py "$SCRIPTS"/bureau-stage.md "$d/scripts/"
-  git -C "$d" init -q -b main; git -C "$d" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+  git -C "$d" init -q -b main; git -C "$d" config maintenance.auto false; git -C "$d" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
   jq -n --argjson repo "$1" '{version: 2, linear: {teams: [{id: "t", key: "EXP", states: {build: "s"}}]}, agents: {}, repo: $repo}' > "$d/.bureau.json"
   case "${3:-}" in nested|untracked) file=assets/.gitattributes ;; info) file=.git/info/attributes ;; esac
   if [ -n "${2:-}" ]; then mkdir -p "$(dirname "$d/$file")"; printf '%s\n' "$2" > "$d/$file"; fi
@@ -441,7 +441,7 @@ if [ -n "$GIT9_VERSION" ] && { [ "${GIT9_VERSION% *}" -gt 2 ] || [ "${GIT9_VERSI
     rm -rf "$TMP/tmpl9" "$TMP/clone9"; mkdir -p "$TMP/tmpl9"
     printf '[hook "fromtemplate"]\n\tcommand = %s post-checkout-template\n\tevent = post-checkout\n' "$R/tools/scan.sh" > "$TMP/tmpl9/config"
     out=$(cd "$R" && git9 run_case "9 $1 clone" env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" /bin/bash -c 'source "$1/bureau-config.sh"
-      git -c init.templateDir="$2" clone -q "$3" "$4"; echo "clone=$?"' _ "$SCRIPTS" "$TMP/tmpl9" "$R.origin" "$TMP/clone9" 2>&1)
+      git -c init.templateDir="$2" clone -c maintenance.auto=false -q "$3" "$4"; echo "clone=$?"' _ "$SCRIPTS" "$TMP/tmpl9" "$R.origin" "$TMP/clone9" 2>&1)
     if [ "$1" = '{"remote_git_runs_hooks":true}' ]; then
       case "$out" in *clone=0*) ;; *) fail "9 $1: the clone failed: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
     else
@@ -632,13 +632,14 @@ submodule_fixture() {
   else
     repo "$R"; operator_hooks "$R/.git/hooks"
     mkdir -p "$s"
-    git -C "$s" init -q -b main; git -C "$s" config user.email t@t; git -C "$s" config user.name t
+    git -C "$s" init -q -b main; git -C "$s" config maintenance.auto false; git -C "$s" config user.email t@t; git -C "$s" config user.name t
     probe_script "$s/probe.sh" sub-config-hook
     printf '[hook "probe"]\n\tcommand = %s/probe.sh pre-push\n\tevent = pre-push\n[hook "probetx"]\n\tcommand = %s/probe.sh reference-transaction\n\tevent = reference-transaction\n' "$s" "$s" > "$s/hooks.cfg"
     git -C "$s" add -A; git -C "$s" commit -q -m sub
-    git init -q --bare "$s.origin"; git -C "$s.origin" symbolic-ref HEAD refs/heads/main
+    git init -q --bare "$s.origin"; git -C "$s.origin" config maintenance.auto false; git -C "$s.origin" symbolic-ref HEAD refs/heads/main
     git -C "$s" push -q "$s.origin" main
     git -C "$R" -c core.hooksPath=/dev/null -c protocol.file.allow=always submodule -q add "$s.origin" sub
+    git -C "$R/sub" config maintenance.auto false
     git -C "$R" -c core.hooksPath=/dev/null commit -q -m 'add sub'
     git -C "$R" -c core.hooksPath=/dev/null push -q origin main
     git --git-dir="$m" config protocol.file.allow always
@@ -646,8 +647,9 @@ submodule_fixture() {
     git --git-dir="$m" config user.email t@t; git --git-dir="$m" config user.name t
     git -C "$R" config protocol.file.allow always
     git -C "$R" config push.recurseSubmodules on-demand
-    rm -rf "$R.other"; git -c protocol.file.allow=always clone -q --recurse-submodules "$R.origin" "$R.other" 2>/dev/null
+    rm -rf "$R.other"; git -c protocol.file.allow=always clone -c maintenance.auto=false -q --recurse-submodules "$R.origin" "$R.other" 2>/dev/null
     git -C "$R.other" config user.email t@t; git -C "$R.other" config user.name t
+    git -C "$R.other/sub" config maintenance.auto false
     git -C "$R.other/sub" config user.email t@t; git -C "$R.other/sub" config user.name t
     (cd "$R.other/sub" && echo up > up.txt && git add up.txt && git -c core.hooksPath=/dev/null commit -q -m up \
        && git -c core.hooksPath=/dev/null push -q origin HEAD:main) \
@@ -906,10 +908,10 @@ rm -rf "$TMP/tmpl11" "$TMP/clone11"; mkdir -p "$TMP/tmpl11"
 probe_script "$TMP/tmpl11-probe.sh" clone-template-hook
 printf '[hook "late"]\n\tcommand = %s late\n\tevent = post-checkout\n[hook "post-checkout"]\n\tcommand = true\n' "$TMP/tmpl11-probe.sh" > "$TMP/tmpl11/config"
 : > "$MARKS"
-out=$(bureau_git "git -c init.templateDir='$TMP/tmpl11' clone -q '$R.origin' '$TMP/clone11'; echo \"rc=\$?\"")
+out=$(bureau_git "git -c init.templateDir='$TMP/tmpl11' clone -c maintenance.auto=false -q '$R.origin' '$TMP/clone11'; echo \"rc=\$?\"")
 case "$out" in *"bureau git: refused 'git clone'"*rc=128*) ;; *) fail "11: Bureau's clone was not refused: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
 [ ! -e "$TMP/clone11" ] || fail "11: a refused clone created its directory"
-SCRIPTS="$TMP/noclone"; bureau_git "git -c init.templateDir='$TMP/tmpl11' clone -q '$R.origin' '$TMP/clone11'" >/dev/null; SCRIPTS="$SCRIPTS_REAL"
+SCRIPTS="$TMP/noclone"; bureau_git "git -c init.templateDir='$TMP/tmpl11' clone -c maintenance.auto=false -q '$R.origin' '$TMP/clone11'" >/dev/null; SCRIPTS="$SCRIPTS_REAL"
 [ -d "$TMP/clone11/.git" ] || fail "11 control g: the copy without the clone refusal did not clone"
 if [ "$GIT_NEW" = 1 ]; then grep -q '^clone-template-hook late gh=yes' <<< "$(marks)" || fail "11 control g: the clone template's hook did not run with the token: $(marks | tr '\n' ';')"; fi
 if [ "$GIT_NEW" = 0 ]; then

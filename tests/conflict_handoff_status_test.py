@@ -3,12 +3,15 @@
 # resolver cause: the later failure keeps its own cause (other), exit 17.
 import importlib.util, json, os, subprocess, sys, tempfile, uuid
 from pathlib import Path
+
+import git_maintenance
+
 scripts = (Path(__file__).resolve().parent.parent / "templates/scripts") if len(sys.argv) < 2 else Path(sys.argv[1]).resolve()
 spec = importlib.util.spec_from_file_location('handoff_evidence', scripts/'bureau-evidence.py')
 e = importlib.util.module_from_spec(spec); spec.loader.exec_module(e)
 with tempfile.TemporaryDirectory(prefix='bureau-test-handoff-') as directory:
     repo=Path(directory)
-    for args in [('init','-q','-b','main'),('config','user.name','Fixture'),('config','user.email','fixture@example.invalid'),('commit','-qm','fixture','--allow-empty')]:
+    for args in [('init','-q','-b','main'),git_maintenance.OFF_CONFIG,('config','user.name','Fixture'),('config','user.email','fixture@example.invalid'),('commit','-qm','fixture','--allow-empty')]:
         subprocess.run(['git','-C',str(repo),*args],check=True)
     (repo/'.bureau.json').write_text('{}')
     head=subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD'],text=True).strip()

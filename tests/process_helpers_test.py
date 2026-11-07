@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from process_helpers import (PIPELINE_TIMEOUT_SECONDS, communicate_until,
-                             process_group_running, process_running,
+                             process_group_running, process_running, running_processes,
                              wait_for_processes_exit)
 
 
@@ -41,7 +41,7 @@ class DeadlineWaits(unittest.TestCase):
         def sleep(seconds): now[0] += seconds
         with patch('process_helpers.time.monotonic', side_effect=lambda: now[0]), \
                 patch('process_helpers.time.sleep', side_effect=sleep), \
-                patch('process_helpers.process_running', side_effect=lambda pid: now[0] < .1):
+                patch('process_helpers.running_processes', side_effect=lambda pids: set(pids) if now[0] < .1 else set()):
             self.assertEqual(set(), wait_for_processes_exit({41, 42}, .2))
 
     def test_persistent_survivor_fails_with_one_budget_for_all_transports(self):
@@ -49,24 +49,24 @@ class DeadlineWaits(unittest.TestCase):
         def sleep(seconds): now[0] += seconds
         with patch('process_helpers.time.monotonic', side_effect=lambda: now[0]), \
                 patch('process_helpers.time.sleep', side_effect=sleep), \
-                patch('process_helpers.process_running', side_effect=lambda pid: pid == 42):
+                patch('process_helpers.running_processes', side_effect=lambda pids: set(pids) & {42}):
             self.assertEqual({42}, wait_for_processes_exit({41, 42}, .2))
         self.assertLessEqual(now[0], .2)
 
     def test_unreadable_transport_is_never_treated_as_exited(self):
         # A fixed clock: a paused runner must not reach the deadline before the probe.
         with patch('process_helpers.time.monotonic', return_value=0), \
-                patch('process_helpers.process_running', side_effect=PermissionError), \
+                patch('process_helpers.running_processes', side_effect=PermissionError), \
                 self.assertRaises(PermissionError):
             wait_for_processes_exit({42}, 1)
 
     def test_probe_cost_consumes_the_shared_deadline(self):
         now = [0]
-        def probe(pid):
+        def probe(pids):
             now[0] += .1
-            return True
+            return set(pids)
         with patch('process_helpers.time.monotonic', side_effect=lambda: now[0]), \
-                patch('process_helpers.process_running', side_effect=probe):
+                patch('process_helpers.running_processes', side_effect=probe):
             self.assertEqual(set(range(10)), wait_for_processes_exit(range(10), .2))
         self.assertLessEqual(now[0], .2)
 
@@ -229,9 +229,9 @@ class ProcessHelpers(unittest.TestCase):
     def test_ps_states_and_raced_exit(self):
         for state in ('Z', 'Z+', 'S', 'R+', 'T', 'D'):
             with self.subTest(state=state), patch('process_helpers.sys.platform', 'darwin'), \
-                    patch('process_helpers.subprocess.run', return_value=Mock(returncode=0, stdout=state)) as ps:
+                    patch('process_helpers.subprocess.run', return_value=Mock(returncode=0, stdout='42 '+state)) as ps:
                 self.assertEqual(bool(state) and not state.startswith('Z'), process_running(42))
-                self.assertEqual(['ps', '-o', 'stat=', '-p', '42'], ps.call_args.args[0])
+                self.assertEqual(['ps', '-o', 'pid=,stat=', '-p', '42'], ps.call_args.args[0])
         for code in (0, 1):
             with self.subTest(code=code), patch('process_helpers.sys.platform', 'freebsd'), \
                     patch('process_helpers.subprocess.run', return_value=Mock(returncode=code, stdout='', stderr='gone')), \
@@ -241,6 +241,48 @@ class ProcessHelpers(unittest.TestCase):
                 patch('process_helpers.subprocess.run', return_value=Mock(returncode=0, stdout='')), \
                 patch('process_helpers.os.kill', return_value=None), self.assertRaises(RuntimeError):
             process_running(42)  # Unreadable state must not hide a live writer.
+
+
+    def test_one_ps_snapshot_answers_every_pid_in_a_sweep(self):
+        pids = set(range(40, 140))
+        output = ''.join(f'{pid} {"Z" if pid % 2 else "S"}\n' for pid in pids)
+        with patch('process_helpers.sys.platform', 'darwin'), \
+                patch('process_helpers.subprocess.run', return_value=Mock(returncode=0, stdout=output)) as ps:
+            self.assertEqual(set(range(40, 140, 2)), running_processes(pids))
+        ps.assert_called_once()
+        self.assertEqual(','.join(map(str, sorted(pids))), ps.call_args.args[0][-1])
+        self.assertEqual(10, ps.call_args.kwargs['timeout'])
+
+    def test_ps_snapshot_timeout_retries_once_and_uses_the_result(self):
+        for grouped in (False, True):
+            output = '41 42 Z\n42 42 S\n' if grouped else '41 Z\n42 S\n'
+            snapshot = subprocess.CompletedProcess(['ps'], 0, output, '')
+            with self.subTest(grouped=grouped), patch('process_helpers.sys.platform', 'darwin'), \
+                    patch('process_helpers.os.killpg', return_value=None), \
+                    patch('process_helpers.subprocess.run',
+                          side_effect=[subprocess.TimeoutExpired('ps', 10), snapshot]) as ps:
+                if grouped:
+                    self.assertTrue(process_group_running(42))
+                else:
+                    self.assertEqual({42}, running_processes({41, 42}))
+            self.assertEqual(2, ps.call_count)
+            self.assertEqual(ps.call_args_list[0], ps.call_args_list[1])
+            self.assertEqual(10, ps.call_args.kwargs['timeout'])
+
+    def test_snapshot_failure_cannot_report_all_pids_exited(self):
+        for error in (PermissionError('ps unavailable'), subprocess.TimeoutExpired('ps', 10)):
+            with self.subTest(error=type(error).__name__), \
+                    patch('process_helpers.sys.platform', 'darwin'), \
+                    patch('process_helpers.subprocess.run', side_effect=error) as ps:
+                with self.assertRaises(type(error)):
+                    running_processes({41, 42})
+            self.assertEqual(2, ps.call_count)
+
+    def test_incomplete_snapshot_cannot_discard_a_live_pid(self):
+        with patch('process_helpers.sys.platform', 'darwin'), \
+                patch('process_helpers.subprocess.run', return_value=Mock(returncode=0, stdout='41 Z\n')), \
+                patch('process_helpers.os.kill', return_value=None), self.assertRaises(RuntimeError):
+            running_processes({41, 42})
 
 
 if __name__ == '__main__': unittest.main(verbosity=2)

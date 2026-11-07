@@ -194,7 +194,7 @@ pass "2 control: without -I the branch's module runs at both records"
 teardown || true
 T="$TMP/tick"; mkdir -p "$T/scripts"
 cp "$SCRIPTS/bureau-tick.sh" "$SCRIPTS/bureau-supervision.py" "$SCRIPTS/bureau-evidence.py" "$T/scripts/"
-git -C "$T" init -q
+git -C "$T" init -q; git -C "$T" config maintenance.auto false
 cat > "$T/scripts/bureau-config.sh" <<'STUB'
 BUREAU_ENV_FILE=/nonexistent
 bureau_is_paused() { return 1; }
@@ -230,7 +230,7 @@ pass "3 control: without -I the checkout's module runs at check and workspace"
 # bureau-app.sh doctor, status and setup start bureau-doctor.py and bureau-runtime.py, and
 # bureau-status.sh --config starts bureau-provider.py --describe for each enabled stage; the app
 # runs them in the checkout it works in.
-A="$TMP/app"; mkdir -p "$A"; cp -R "$SCRIPTS" "$A/scripts"; git -C "$A" init -q
+A="$TMP/app"; mkdir -p "$A"; cp -R "$SCRIPTS" "$A/scripts"; git -C "$A" init -q; git -C "$A" config maintenance.auto false
 jq -n '{linear:{teams:[{id:"t",key:"T",name:"Test",states:{build:"b",build_review:"br",merge:"m",done:"d"}}],labels:{lane2:{id:"l",name:"lane-2"}}},agents:{code_review:true},repo:{}}' > "$A/.bureau.json"
 shadow "$A"
 app() {  # $1: label

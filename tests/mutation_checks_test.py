@@ -13,11 +13,13 @@ import unittest
 from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
+import git_maintenance
+
 import process_helpers
-from process_helpers import process_running
+from process_helpers import process_running, running_processes
 from process_helpers_test import DeadlineWaits, ProcessHelpers
 from selected_cases import selected_cases
-from mutation_checks import (_run, baseline_fixture, caught_mutation, fixture_pids, historical_scripts,
+from mutation_checks import (_run, baseline_fixture, caught_mutation, fixture_pids, fixture_snapshot, historical_scripts,
                              linux_process_commands, linux_process_identity, macos_cwds, mutation_caught,
                              reap_adopted_fixtures, reaping_fixtures, restored_files, run, snapshot_files,
                              stop_fixtures)
@@ -114,9 +116,7 @@ def work():
     time.sleep(30)
 ''')
         self.assertEqual(124, self.control(allow_timeout=True).returncode)
-        for raw in pid.read_text().splitlines():
-            with self.subTest(pid=raw):
-                self.assertFalse(process_running(int(raw)))
+        self.assertFalse(running_processes(map(int, pid.read_text().splitlines())))
 
     def test_baseline_timeout_fails(self):
         self.baseline.write_text('import time\ndef work(): time.sleep(30)\n')
@@ -164,9 +164,7 @@ def work():
         self.assertEqual(124, result.returncode)
         self.assertLess(time.monotonic() - started, 8)
         self.assertIsNone(unrelated.poll(), 'timeout cleanup stopped an unrelated process')
-        for raw in pid.read_text().splitlines():
-            with self.subTest(pid=raw):
-                self.assertFalse(process_running(int(raw)))
+        self.assertFalse(running_processes(map(int, pid.read_text().splitlines())))
 
     def test_rejects_unbounded_deadlines_before_starting_any_process(self):
         for timeout in (None, float('inf'), float('nan'), 0, -1):
@@ -184,8 +182,20 @@ def work():
                 patch('mutation_checks.subprocess.run', return_value=Mock(stdout=output)) as ps:
             self.assertEqual({101, 103}, fixture_pids(self.root, cwds=lambda: {}))
         self.assertEqual(['ps', '-axo', 'pid=,command='], ps.call_args.args[0])
-        self.assertEqual(1, ps.call_args.kwargs['timeout'])
+        self.assertEqual(10, ps.call_args.kwargs['timeout'])
         self.assertTrue(ps.call_args.kwargs['check'])
+
+    def test_ps_timeout_retries_and_uses_successful_argv_snapshot(self):
+        output = subprocess.CompletedProcess(['ps'], 0, f'101 python {self.root}/child.py\n', '')
+        cwds = Mock(return_value={})
+        with patch('mutation_checks.sys.platform', 'darwin'), \
+                patch('mutation_checks.subprocess.run',
+                      side_effect=[subprocess.TimeoutExpired('ps', 10), output]) as ps:
+            self.assertEqual({101}, fixture_pids(self.root, cwds=cwds))
+        self.assertEqual(2, ps.call_count)
+        self.assertEqual(ps.call_args_list[0], ps.call_args_list[1])
+        self.assertEqual(10, ps.call_args.kwargs['timeout'])
+        cwds.assert_called_once_with()
 
     def test_macos_lsof_cwd_scan_parses_pid_fields_and_is_bounded(self):
         output = f'n/ignored\np101\nfcwd\nn{self.root}/with spaces\n'
@@ -194,7 +204,7 @@ def work():
             self.assertEqual({101: str(self.root/'with spaces'), 102: str(self.root)+'-sibling'},
                              macos_cwds())
         self.assertEqual(['lsof', '-nP', '-a', '-d', 'cwd', '-Fpn'], lsof.call_args.args[0])
-        self.assertEqual(1, lsof.call_args.kwargs['timeout'])
+        self.assertEqual(10, lsof.call_args.kwargs['timeout'])
         self.assertTrue(lsof.call_args.kwargs['check'])
 
     def test_macos_cwd_scan_reaps_argvless_descendant_and_preserves_sibling(self):
@@ -229,20 +239,67 @@ def work():
         self.assertEqual([101], reaped)
         self.assertIn(102, directories, 'cwd cleanup stopped an unrelated sibling')
 
+    def test_macos_cwd_timeout_retries_and_uses_successful_snapshot(self):
+        commands = Mock(return_value=f'101 python {self.root}/child.py\n')
+        output = subprocess.CompletedProcess(['lsof'], 0, f'p102\nn{self.root}/nested\n', '')
+        with patch('mutation_checks.sys.platform', 'darwin'), \
+                patch('mutation_checks.sys.stderr', new_callable=io.StringIO) as report, \
+                patch('mutation_checks.subprocess.run',
+                      side_effect=[subprocess.TimeoutExpired('lsof', 10), output]) as lsof:
+            snapshot = fixture_snapshot(commands=commands)
+            self.assertEqual({101, 102}, fixture_pids(self.root, snapshot=snapshot))
+            self.assertEqual({101, 102}, fixture_pids(self.root, snapshot=snapshot))
+        commands.assert_called_once_with()
+        self.assertEqual(2, lsof.call_count)
+        self.assertEqual(lsof.call_args_list[0], lsof.call_args_list[1])
+        self.assertEqual(10, lsof.call_args.kwargs['timeout'])
+        self.assertEqual('', report.getvalue())
+
     def test_macos_cwd_discovery_failure_reports_argv_fallback(self):
         for error in (FileNotFoundError('lsof unavailable'),
-                      subprocess.TimeoutExpired('lsof', 1),
+                      subprocess.TimeoutExpired('lsof', 10),
                       subprocess.CalledProcessError(1, 'lsof')):
+            commands = Mock(return_value=f'101 python {self.root}/child.py\n'
+                                        f'102 python {self.root}-sibling/child.py\n')
             with self.subTest(error=type(error).__name__), \
                     patch('mutation_checks.sys.platform', 'darwin'), \
-                    patch('mutation_checks.sys.stderr', new_callable=io.StringIO) as report:
-                found = fixture_pids(self.root,
-                                     commands=lambda: f'101 python {self.root}/child.py\n',
-                                     cwds=Mock(side_effect=error))
-                self.assertEqual({101}, found)
-                self.assertIn(str(self.root), report.getvalue())
-                self.assertIn(str(error), report.getvalue())
-                self.assertIn('falling back to argv matching', report.getvalue())
+                    patch('mutation_checks.sys.stderr', new_callable=io.StringIO) as report, \
+                    patch('mutation_checks.subprocess.run', side_effect=error) as lsof:
+                self.assertEqual({101}, fixture_pids(self.root, commands=commands))
+            commands.assert_called_once_with()
+            self.assertEqual(2, lsof.call_count)
+            self.assertEqual(f'fixture cwd discovery unavailable for {self.root}: {error}; '
+                             'falling back to argv matching\n', report.getvalue())
+
+    def test_argv_snapshot_failure_cannot_prove_ownership_or_start_a_run(self):
+        for error in (PermissionError('inspection unavailable'),
+                      subprocess.TimeoutExpired('ps', 10),
+                      subprocess.CalledProcessError(1, 'ps')):
+            with self.subTest(error=type(error).__name__), \
+                    patch('mutation_checks.sys.platform', 'darwin'), \
+                    patch('mutation_checks.subprocess.run', side_effect=error) as ps, \
+                    patch('mutation_checks.macos_cwds') as cwds, \
+                    patch('mutation_checks.subprocess.Popen') as start:
+                with self.assertRaises(type(error)):
+                    fixture_pids(self.root)
+                self.assertEqual(2, ps.call_count)
+                ps.reset_mock()
+                with self.assertRaises(type(error)):
+                    run(self.command, root=self.root)
+                self.assertEqual(2, ps.call_count)
+                cwds.assert_not_called()
+                start.assert_not_called()
+
+    def test_one_snapshot_answers_all_roots_without_more_process_scans(self):
+        sibling = self.root.with_name(self.root.name+'-sibling')
+        commands = Mock(return_value=f'101 python {self.root}/child.py\n102 python {sibling}/child.py\n')
+        cwds = Mock(return_value={103: str(self.root/'nested'), 104: str(sibling)})
+        with patch('mutation_checks.sys.platform', 'darwin'):
+            snapshot = fixture_snapshot(commands=commands, cwds=cwds)
+            self.assertEqual({101, 103}, fixture_pids(self.root, snapshot=snapshot))
+            self.assertEqual({102, 104}, fixture_pids(sibling, snapshot=snapshot))
+        commands.assert_called_once_with()
+        cwds.assert_called_once_with()
 
     @unittest.skipUnless(sys.platform == 'darwin', 'live macOS cwd discovery')
     def test_live_macos_cwd_cleanup_reaps_python_c_sleeper(self):
@@ -273,9 +330,7 @@ time.sleep(30)
             result = _run(command, env=None, timeout=1, root=self.root)
         self.assertEqual(124, result.returncode)
         self.assertIsNone(unrelated.poll(), 'cwd cleanup stopped an unrelated sibling')
-        for raw in pid.read_text().splitlines():
-            with self.subTest(pid=raw):
-                self.assertFalse(process_running(int(raw)))
+        self.assertFalse(running_processes(map(int, pid.read_text().splitlines())))
 
     def test_linux_scan_finds_cwd_without_a_matching_command(self):
         proc = self.root/'proc'; proc.mkdir()
@@ -526,41 +581,51 @@ def process_running(pid):
     def stop_recorded(path):
         if not path.exists():
             return
-        for raw in path.read_text().splitlines():
-            pid = int(raw)
+        pids = set(map(int, path.read_text().splitlines()))
+        for pid in pids:
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 continue
             except PermissionError as error:
                 raise AssertionError(f'could not kill fixture PID {pid}') from error
-            deadline = time.monotonic() + 3
-            while True:
-                try:
-                    os.waitpid(pid, os.WNOHANG)
-                except ChildProcessError:
-                    pass
-                if not process_running(pid):
-                    try: os.waitpid(pid, os.WNOHANG)
-                    except ChildProcessError: pass
-                    break
-                if time.monotonic() >= deadline:
-                    raise AssertionError(f'could not reap fixture PID {pid}')
-                time.sleep(.05)
+        try:
+            remaining = process_helpers.wait_for_processes_exit(pids, time.monotonic() + 3)
+        finally:
+            for pid in pids:
+                try: os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError: pass
+        if remaining:
+            raise AssertionError('could not reap fixture PIDs: ' + ', '.join(map(str, sorted(remaining))))
+
+    def test_recorded_cleanup_stops_every_pid_even_when_snapshot_fails(self):
+        path = self.root/'recorded-pids'; path.write_text('41\n42\n')
+        with patch('mutation_checks.os.kill') as kill, \
+                patch('mutation_checks.os.waitpid', side_effect=ChildProcessError) as reap, \
+                patch('mutation_checks.time.monotonic', return_value=0), \
+                patch('process_helpers.wait_for_processes_exit', side_effect=PermissionError) as inspect:
+            with self.assertRaises(PermissionError):
+                self.stop_recorded(path)
+        self.assertEqual({(41, signal.SIGKILL), (42, signal.SIGKILL)},
+                         {call.args for call in kill.call_args_list})
+        inspect.assert_called_once_with({41, 42}, 3)
+        self.assertEqual({(41, os.WNOHANG), (42, os.WNOHANG)}, {call.args for call in reap.call_args_list})
 
     def test_final_pipe_drain_timeout_is_bounded_and_preserves_output(self):
+        command = [sys.executable, '-c', 'import time; time.sleep(30)']
         communicate = subprocess.Popen.communicate
         calls = []
 
         def pipe_stays_open(child, *args, **kwargs):
-            calls.append(kwargs['timeout'])
-            if child.poll() is not None:
-                raise subprocess.TimeoutExpired(child.args, kwargs['timeout'],
-                                                output=b'partial stdout', stderr=b'partial stderr')
+            if child.args == command:
+                calls.append(kwargs['timeout'])
+                if child.poll() is not None:
+                    raise subprocess.TimeoutExpired(child.args, kwargs['timeout'],
+                                                    output=b'partial stdout', stderr=b'partial stderr')
             return communicate(child, *args, **kwargs)
 
         with patch.object(subprocess.Popen, 'communicate', pipe_stays_open):
-            result = run([sys.executable, '-c', 'import time; time.sleep(30)'], timeout=.1)
+            result = run(command, timeout=.1)
         self.assertEqual(124, result.returncode)
         self.assertEqual('partial stdout', result.stdout)
         self.assertIn('partial stderr', result.stderr)
@@ -653,7 +718,7 @@ def work():
         path = scripts/'subject.py'
         path.write_text('def work(): raise ValueError("historical mutation")\n')
         env = {**os.environ, 'GIT_CONFIG_GLOBAL':'/dev/null', 'GIT_CONFIG_NOSYSTEM':'1'}
-        for args in (('init','-q'), ('add','.'),
+        for args in (('init','-q'), git_maintenance.OFF_CONFIG, ('add','.'),
                      ('-c','user.name=fixture','-c','user.email=fixture@bureau','commit','-qm','old behavior')):
             subprocess.run(['git','-C',str(repo),*args], env=env, check=True, capture_output=True, timeout=5)
         path.write_text('from pathlib import Path\ndef work(): Path(__file__).with_name("companion").read_text()\n')

@@ -13,8 +13,11 @@ import sys
 import tempfile
 import time
 import unittest
-from process_helpers import process_running
+
 from unittest import mock
+
+import git_maintenance
+from process_helpers import process_running, running_processes
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_CONFLICT_TEST_SCRIPTS', ROOT / 'templates/scripts'))
@@ -33,6 +36,7 @@ class ConflictTests(unittest.TestCase):
         for key in ('BUREAU_DRY_RUN', 'BUREAU_RUN_ID', 'BUREAU_STAGE_ATTEMPT_ID', 'BUREAU_ACTIVE_ENTRY', 'BUREAU_CALLER_STOP'):
             self.env.pop(key, None)
         self.git('init', '-q', '-b', 'main')
+        git_maintenance.disable(self.repo)
         self.git('config', 'user.name', 'Bureau fixture'); self.git('config', 'user.email', 'fixture@bureau')
         self.write('.gitignore', '.cache/\nignored.txt\n')
         self.write('ignored.txt', 'private ignored sentinel\n')
@@ -51,6 +55,7 @@ assert all(Path(name).read_text() == expected for name in ('docs/site/page.html'
         self.commit('foundation')
         self.git('branch', 'feature')
         self.git('init', '--bare', '-q', str(self.root / 'origin.git'))
+        git_maintenance.disable(self.root / 'origin.git')
         self.git('remote', 'add', 'origin', str(self.root / 'origin.git'))
         self.generated = [{'globs': ['docs/site/*.html'], 'command': [sys.executable, 'render.py']}]
         self.settings = {'repo': {'test_command': f'{sys.executable} check.py',
@@ -804,8 +809,7 @@ _throttle_record() { :; }
         os.kill(executor, signal.SIGTERM)
         stdout, stderr = child.communicate(timeout=10)
         self.assertEqual(child.returncode, 17, stdout + stderr)
-        for pid in (generator, executor, child.pid):
-            self.assertFalse(process_running(pid))
+        self.assertFalse(running_processes((generator, executor, child.pid)))
         self.assertEqual(self.git('rev-parse', 'HEAD'), self.head)
         self.assertEqual(self.git('status', '--porcelain'), '')
         self.assertFalse((self.repo / '.git/MERGE_HEAD').exists())

@@ -16,7 +16,7 @@ SB=$(mktemp -d -t bureau-test.argv.XXXXXXXX)
 trap 'rm -rf "$SB"' EXIT
 fail() { echo "FAIL $*" >&2; exit 1; }
 
-git -C "$SB" init -q
+git -C "$SB" init -q; git -C "$SB" config maintenance.auto false
 cat > "$SB/.bureau.json" <<'EOF'
 {
   "linear": {

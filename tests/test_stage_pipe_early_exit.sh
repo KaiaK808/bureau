@@ -170,7 +170,7 @@ EOF
 chmod +x "$T/bin/gh"
 port_run() {  # <ignore|default> [old]
   rm -rf "$T/port" "$T/porttmp"; mkdir -p "$T/port/scripts" "$T/porttmp"
-  git -C "$T/port" init -q -b main
+  git -C "$T/port" init -q -b main; git -C "$T/port" config maintenance.auto false
   echo '{}' > "$T/port/.bureau.json"
   cp "$SCRIPTS"/*.sh "$T/port/scripts/"
   [ -z "${2:-}" ] || put_back "$T/port/scripts/upstream-port.sh" "$NEW_PORT" "$OLD_PORT"
