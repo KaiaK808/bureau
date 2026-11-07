@@ -40,7 +40,7 @@ def run(command, *, cwd, env):
         return subprocess.CompletedProcess(command, child.returncode, out, err)
 
 
-class LocalCommitsHoldTests(unittest.TestCase):
+class LocalCommitsFixture(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='bureau-local-commits-', dir=ROOT)
         self.addCleanup(temporary.cleanup)
@@ -115,6 +115,8 @@ bureau_overlap_resume() { merge_origin_main_or_abort; }
         self.assertIn('add_issue_label\tfixture\tneeds-human', calls)
         self.assertNotIn('move_issue', calls)
 
+
+class LocalCommitsHoldTests(LocalCommitsFixture):
     def test_qa_local_branch_ref_holds_without_moving_refs_or_files(self):
         commit = self.branch_only()
         before = self.git('status', '--porcelain')
@@ -458,37 +460,41 @@ reset_worktree "$3" qa-pipeline.sh test-branch
         self.assertFalse((driver.store.root / 'workers' / key).exists())
         self.assertIsNone(driver.skips[issue]['until'])
 
-    def test_tick_reports_blocked_and_preserves_exit_30(self):
+    def test_tick_reports_blocked_and_preserves_hold_exit(self):
         with (self.scripts / 'bureau-config.sh').open('a') as out:
             out.write('\n' + function(self.production, 'bureau_is_paused') + '\n'
                       + 'session_throttle_guard() { return 0; }\n')
-        (self.scripts / 'bureau-worker.sh').write_text('#!/bin/bash\nexit 30\n')
-        result = run(['bash', str(self.scripts / 'bureau-tick.sh'), '--stage', 'qa'], cwd=self.repo,
-                     env={**self.env, 'BUREAU_STUB_AGENT_ENABLED': 'qa',
-                          'BUREAU_STUB_PICKED_ISSUE': 'TEST-' + str(os.getpid()),
-                          'BUREAU_STUB_ISSUE_STATE': 'QA'})
-        self.assertEqual(result.returncode, 30, result.stdout + result.stderr)
-        record = json.loads((self.repo / 'logs/bureau-tick.json').read_text())
-        self.assertEqual((record['outcome'], record['exit_code'], record['stage']), ('blocked', 30, 'qa'))
-        self.assertEqual(json.loads(result.stdout), record)
+        for code in (30, 31):
+            with self.subTest(code=code):
+                (self.scripts / 'bureau-worker.sh').write_text('#!/bin/bash\nexit ' + str(code) + '\n')
+                result = run(['bash', str(self.scripts / 'bureau-tick.sh'), '--stage', 'qa'], cwd=self.repo,
+                             env={**self.env, 'BUREAU_STUB_AGENT_ENABLED': 'qa',
+                                  'BUREAU_STUB_PICKED_ISSUE': 'TEST-' + str(os.getpid()),
+                                  'BUREAU_STUB_ISSUE_STATE': 'QA'})
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                record = json.loads((self.repo / 'logs/bureau-tick.json').read_text())
+                self.assertEqual((record['outcome'], record['exit_code'], record['stage']), ('blocked', code, 'qa'))
+                self.assertEqual(json.loads(result.stdout), record)
 
     def test_hold_classification(self):
         with (self.scripts / 'bureau-config.sh').open('a') as out:
             out.write('\n' + function(self.production, 'exit_class') + '\n'
                       + function(self.production, 'shepherd_rc_action') + '\n')
-        result = run(['bash', '-euc', '''
-source "$1/bureau-config.sh"
-exit_class 30
-shepherd_rc_action 30
-bash "$1/bureau-insights.sh" 30
-''', str(self.scripts / 'fixture'), str(self.scripts)], cwd=self.repo, env=self.env)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines(), ['local-commits-held', 'halt', 'human_hold'])
         dispatch, driver = self.dispatcher()
-        with patch.object(dispatch.r.t, 'Ledger') as ledger:
-            ledger.return_value.call.return_value = None
-            driver.defer('fixture', 30, terminal_reason=None)
-        self.assertIsNone(driver.skips['fixture']['until'])
+        for code, klass in ((30, 'local-commits-held'), (31, 'open-pr-required')):
+            with self.subTest(code=code):
+                result = run(['bash', '-euc', '''
+source "$1/bureau-config.sh"
+exit_class "$2"
+shepherd_rc_action "$2"
+bash "$1/bureau-insights.sh" "$2"
+''', str(self.scripts / 'fixture'), str(self.scripts), str(code)], cwd=self.repo, env=self.env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), [klass, 'halt', 'human_hold'])
+                with patch.object(dispatch.r.t, 'Ledger') as ledger:
+                    ledger.return_value.call.return_value = None
+                    driver.defer('fixture', code, terminal_reason=None)
+                self.assertIsNone(driver.skips['fixture']['until'])
 
 
 if __name__ == '__main__':

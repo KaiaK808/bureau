@@ -245,7 +245,7 @@ fi
 # approval stops above still win; a wait cannot consume another PR 8 round.
 bureau_overlap_admit "$ISSUE" "$BRANCH"
 
-PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+PR_NUMBER=$(bureau_open_pr_number "$BRANCH") || exit $?
 if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
   echo "  ERROR: no PR found for branch $BRANCH"
   post_comment "$ISSUE" "❌ Code review aborted — no open PR for branch \`$BRANCH\`. Moving back to Build."

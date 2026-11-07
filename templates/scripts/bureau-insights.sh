@@ -17,7 +17,7 @@ bureau_insight_cause() {
     printf '%s\n' provider_error
   elif [ "$signal" = review_capped ]; then printf '%s\n' review_capped
   elif [ "$code" = 14 ] || [ "$signal" = gate_red ]; then printf '%s\n' gate_red
-  elif [ "$code" = 20 ] || [ "$code" = 25 ] || [ "$code" = 30 ] || [ "$signal" = human_hold ]; then printf '%s\n' human_hold
+  elif [ "$code" = 20 ] || [ "$code" = 25 ] || [ "$code" = 30 ] || [ "$code" = 31 ] || [ "$signal" = human_hold ]; then printf '%s\n' human_hold
   else printf '%s\n' other
   fi
 }
