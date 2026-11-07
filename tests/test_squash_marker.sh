@@ -32,11 +32,81 @@ git -C "$R" commit -q --allow-empty -m init
 git -C "$R" commit -q --allow-empty -m "old main commit [skip ci]"
 git -C "$R" push -q origin main
 
+mkdir -p "$FX/serial" "$FX/bin"
+cp "$SCRIPTS/bureau-env.sh" "$SCRIPTS/ci-skip-markers.txt" "$FX/serial/"
+python3 - "$SCRIPTS/squash-marker-check.sh" "$FX/serial/squash-marker-check.sh" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text()
+start = text.index('batch=$(mktemp ')
+end = text.index('\n  # The raw object:', start)
+text = text[:start] + '''for sha in $commits; do
+  count=$((count + 1))
+  if raw=$(git cat-file commit "$sha"); then :; else
+    not_checked "reading commit $sha failed (exit code $?)"
+  fi
+''' + text[end:]
+text = text.replace('done < "$batch/messages"', 'done')
+Path(sys.argv[2]).write_text(text)
+PY
+export SQUASH_REAL_GIT="$(command -v git)" SQUASH_BATCH_CALLS="$FX/batch.calls"
+cat > "$FX/bin/git" <<'EOF'
+#!/bin/bash
+if [ "$1" = cat-file ]; then
+  printf '%s\n' "$2" >> "$SQUASH_BATCH_CALLS"
+  if [ "${SQUASH_SCRATCH_ERROR:-}" = truncate-commits ]; then
+    batch=$(cat "$SQUASH_BATCH_PATH")
+    IFS= read -r sha < "$batch/commits"
+    printf '%s\n' "$sha" > "$batch/commits"
+  elif [ "${SQUASH_SCRATCH_ERROR:-}" = write-messages ]; then
+    batch=$(cat "$SQUASH_BATCH_PATH")
+    rm "$batch/messages"
+    mkdir "$batch/messages"
+  fi
+  if [ -n "${SQUASH_BATCH_ERROR:-}" ]; then
+    exec python3 - "$@" <<'PY'
+import os
+import subprocess
+import sys
+
+sha = subprocess.check_output([os.environ['SQUASH_REAL_GIT'], 'rev-parse', 'HEAD']).strip()
+mode = os.environ['SQUASH_BATCH_ERROR']
+raw = b'tree unused\n\nmessage\n'
+header = sha + b' commit ' + str(len(raw)).encode() + b'\n'
+if mode == 'exit': sys.exit(1)
+elif mode == 'missing': data = sha + b' missing\n'
+elif mode == 'type': data = header.replace(b'commit', b'blob') + raw + b'\n'
+elif mode == 'sha': data = b'0' * len(sha) + header[len(sha):] + raw + b'\n'
+elif mode == 'size': data = sha + b' commit invalid\n' + raw + b'\n'
+elif mode == 'truncated': data = header + raw[:-2]
+elif mode == 'separator': data = header + raw + b'x'
+elif mode == 'extra': data = header + raw + b'\nextra'
+elif mode == 'late-exit':
+    sys.stdout.buffer.write(header + raw + b'\n'); sys.exit(1)
+else: raise AssertionError(mode)
+sys.stdout.buffer.write(data)
+PY
+  fi
+fi
+exec "$SQUASH_REAL_GIT" "$@"
+EOF
+chmod +x "$FX/bin/git"
+
 check() {  # $1 = base (optional); runs the real script in $R under /bin/bash; sets OUT, RC
+  local serial_rc calls
+  : > "$SQUASH_BATCH_CALLS"
   set +e
-  OUT=$(cd "$R" && /bin/bash "$SCRIPTS/squash-marker-check.sh" "$@" 2>&1)
+  (cd "$R" && PATH="$FX/bin:$PATH" /bin/bash "$SCRIPTS/squash-marker-check.sh" "$@") > "$FX/current.out" 2>&1
   RC=$?
+  (cd "$R" && /bin/bash "$FX/serial/squash-marker-check.sh" "$@") > "$FX/serial.out" 2>&1
+  serial_rc=$?
   set -e
+  OUT=$(cat "$FX/current.out")
+  [ "$RC" = "$serial_rc" ] && cmp -s "$FX/current.out" "$FX/serial.out" || fail "batch changed output or exit code"
+  calls=$(wc -l < "$SQUASH_BATCH_CALLS" | tr -d ' ')
+  [ "$calls" -le 1 ] || fail "more than one cat-file call: $calls"
+  if [ "$calls" = 1 ]; then grep -qx -- --batch "$SQUASH_BATCH_CALLS" || fail "cat-file was not batched"; fi
 }
 probe() {  # a fresh branch off main with one commit: $1 = subject, $2 = body (optional)
   git -C "$R" checkout -q -B probe main
@@ -82,6 +152,98 @@ set +e; OUT=$(cd "$R" && /bin/bash "$FX/nolist/squash-marker-check.sh" 2>&1); RC
 [ "$RC" = 2 ] || fail "missing list: exit $RC, wanted 2"
 case "$OUT" in *"NOT CHECKED"*) ;; *) fail "missing list not reported as not checked" ;; esac
 echo "PASS an empty range is clean; a missing list or base is 'not checked' (exit 2), never clean"
+
+probe 'Unicode and quoted text' $'r\303\251sum\303\251\n\nlooks like a header: commit 0\n\nlast line'
+git -C "$R" commit -q --allow-empty -m 'second commit'
+check
+[ "$RC" = 0 ] && grep -qx -- --batch "$SQUASH_BATCH_CALLS" || fail "multi-commit range was not read in one batch"
+: > "$SQUASH_BATCH_CALLS"
+(cd "$R" && PATH="$FX/bin:$PATH" /bin/bash "$FX/serial/squash-marker-check.sh") > "$FX/control.out"
+[ "$(wc -l < "$SQUASH_BATCH_CALLS" | tr -d ' ')" = 2 ] || fail "counter missed serial cat-file calls"
+cmp -s "$FX/current.out" "$FX/control.out" || fail "serial counter control changed output"
+probe 'read-error probe'
+for mode in exit missing type sha size truncated separator extra late-exit; do
+  set +e
+  OUT=$(cd "$R" && PATH="$FX/bin:$PATH" SQUASH_BATCH_ERROR="$mode" /bin/bash "$SCRIPTS/squash-marker-check.sh" 2>&1)
+  RC=$?
+  set -e
+  [ "$RC" = 2 ] || fail "batch $mode: exit $RC, wanted 2"
+  case "$OUT" in *"NOT CHECKED"*) ;; *) fail "batch $mode passed as checked" ;; esac
+done
+echo "PASS batch output matches serial fixtures byte-for-byte; corrupt frames and read errors fail closed"
+
+export SQUASH_REAL_MKTEMP="$(command -v mktemp)" SQUASH_REAL_PYTHON="$(command -v python3)"
+export SQUASH_BATCH_PATH="$FX/batch.path"
+cat > "$FX/bin/mktemp" <<'EOF'
+#!/bin/bash
+[ -n "${SQUASH_SCRATCH_ERROR:-}" ] || exec "$SQUASH_REAL_MKTEMP" "$@"
+batch=$("$SQUASH_REAL_MKTEMP" "$@") || exit $?
+case "$SQUASH_SCRATCH_ERROR" in
+  create-messages) mkdir "$batch/messages" ;;
+  write-commits) mkdir "$batch/commits" ;;
+  write-objects) mkdir "$batch/objects" ;;
+esac
+printf '%s\n' "$batch" > "$SQUASH_BATCH_PATH"
+printf '%s\n' "$batch"
+EOF
+cat > "$FX/bin/python3" <<'EOF'
+#!/bin/bash
+[ -n "${SQUASH_SCRATCH_ERROR:-}" ] || exec "$SQUASH_REAL_PYTHON" "$@"
+[ "$SQUASH_SCRATCH_ERROR" != write-frames ] || exec 1>&-
+"$SQUASH_REAL_PYTHON" "$@" || exit $?
+batch=$(cat "$SQUASH_BATCH_PATH")
+case "$SQUASH_SCRATCH_ERROR" in
+  read-messages) rm "$batch/messages" ;;
+  truncate-messages) : > "$batch/messages" ;;
+  partial-messages) printf partial > "$batch/messages" ;;
+  cancel-*)
+    [ -s "$batch/commits" ] && [ -s "$batch/objects" ] && [ -s "$batch/messages" ] || exit 1
+    kill -s "${SQUASH_SCRATCH_ERROR#cancel-}" "$SQUASH_CHECK_PID" "$$"
+    ;;
+esac
+EOF
+chmod +x "$FX/bin/mktemp" "$FX/bin/python3"
+probe 'scratch-I/O probe'
+git -C "$R" commit -q --allow-empty -m 'second commit'
+for mode in read-messages truncate-messages partial-messages truncate-commits write-commits write-objects write-messages write-frames create-messages; do
+  if [ "$mode" = create-messages ]; then git -C "$R" checkout -q main; fi
+  set +e
+  OUT=$(cd "$R" && PATH="$FX/bin:$PATH" SQUASH_SCRATCH_ERROR="$mode" /bin/bash "$SCRIPTS/squash-marker-check.sh" 2>&1)
+  RC=$?
+  set -e
+  [ "$RC" = 2 ] || fail "scratch $mode: exit $RC, wanted 2"
+  case "$OUT" in *"NOT CHECKED"*) ;; *) fail "scratch $mode passed as checked" ;; esac
+  case "$OUT" in *"none carries"*) fail "scratch $mode reported clean" ;; esac
+  [ ! -e "$(cat "$SQUASH_BATCH_PATH")" ] || fail "scratch $mode left its batch directory"
+done
+echo "PASS scratch-file creation, writes, reads and truncated ranges fail closed and clean up"
+
+probe 'cancelled batch'
+python3 - "$R" "$FX/bin" "$SCRIPTS/squash-marker-check.sh" <<'PY'
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+
+for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    env = dict(os.environ, PATH=sys.argv[2] + os.pathsep + os.environ['PATH'],
+               SQUASH_SCRATCH_ERROR='cancel-' + sig.name[3:])
+    child = subprocess.Popen(['/bin/bash', '-c', 'export SQUASH_CHECK_PID=$$; exec /bin/bash "$1"',
+                              'check', sys.argv[3]], cwd=sys.argv[1], env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        out, err = child.communicate(timeout=10)
+    except BaseException:
+        try: os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+        child.communicate(timeout=5)
+        raise
+    assert child.returncode == 128 + sig, (sig.name, child.returncode, out, err)
+    batch = Path(Path(os.environ['SQUASH_BATCH_PATH']).read_text().strip())
+    assert not batch.exists(), (sig.name, 'batch directory remains', batch)
+print('PASS INT, TERM and HUP exit with 128+signal and remove the populated batch directory')
+PY
 
 # --- 2. the implement stage ----------------------------------------------------
 origin_messages() { git -C "$SANDBOX/.fake-origin.git" log --format=%B main..test-branch; }

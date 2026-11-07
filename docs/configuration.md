@@ -203,7 +203,6 @@ Cost logging is opt-in. Usage throttling uses an operator-provided signal for th
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `repo.branch_prefix` | string | `"feat"` | Prefix for spec branches (`feat/001-add-login`) |
-| `repo.commit_prefix` | string | `""` | Optional prefix for commit messages (`[EXP] feat(login): ...`) |
 | `repo.specs_dir` | string | `"specs"` | Spec directory inside the repository. The spec stage relocates the pinned helper's output here and persists the exact feature pointer |
 | `repo.adr_dir` | string | `"docs/adr"` | Directory of direct `NNNN-*.md` ADR files in both pinned trees; validated as a plain relative path. Git symlinks are not followed. Missing on both inputs supplies no context; base-only records are removal proposals |
 | `repo.base_branch` | string | `"main"` | Origin ref whose presence the spec allocator verifies after fetching all origin heads. Spec numbering considers every fetched origin branch, local branch and worktree. Disposable spec workers reset to a verified committed phase checkpoint or the configured origin base branch. For merge-only implement worker reuse, a nonempty valid branch name selects `origin/<base_branch>`; absent/invalid values use the symbolic `refs/remotes/origin/HEAD`, then `origin/main`. An unresolvable selected base disables the merge-only rule. Existing on-origin reuse needs no base. Spec workers still reset to committed checkpoints; other stage reset/merge policies are unchanged |

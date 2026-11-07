@@ -2,6 +2,7 @@
 """Read-only Bureau diagnostics and explicit additive configuration migration."""
 import argparse
 import copy
+from functools import lru_cache
 import hashlib
 import importlib.util
 import json
@@ -20,6 +21,7 @@ SCRIPTS = Path(__file__).resolve().parent
 STAGES = ('spec', 'spec_review', 'research', 'ux', 'copy', 'implement', 'qa', 'code_review', 'merge', 'rebase')
 
 
+@lru_cache(maxsize=None)
 def module(name):
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / ('bureau-' + name + '.py'))
     value = importlib.util.module_from_spec(spec); spec.loader.exec_module(value)

@@ -23,8 +23,8 @@
 # through a merge. Not the three-dot form: for a branch behind main it would
 # take main's own commits along.
 #
-# Read only: rev-parse, rev-list, cat-file. No file, no ref, no comment is
-# written, which also makes the script harmless in a dry run.
+# Read only: rev-parse, rev-list, cat-file. Repository files, refs and comments
+# stay unchanged, which also makes the script harmless in a dry run.
 #
 # Exit codes: 0 clean (also for an empty range), 3 at least one finding,
 # 2 not checked (list missing, unreadable or empty; base not resolvable; a
@@ -77,13 +77,48 @@ fi
 count=0
 n_findings=0
 report=""
+expected_count=0
 for sha in $commits; do
-  count=$((count + 1))
-  if raw=$(git cat-file commit "$sha"); then
-    :
-  else
-    not_checked "reading commit $sha failed (exit code $?)"
+  expected_count=$((expected_count + 1))
+done
+batch=$(mktemp -d -t bureau-squash.XXXXXXXX) || not_checked "creating batch directory failed"
+trap 'rm -rf "$batch"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+: > "$batch/messages" || not_checked "creating message scratch file failed"
+if [ -n "$commits" ]; then
+  printf '%s\n' "$commits" > "$batch/commits" || not_checked "writing revision list failed"
+  if git cat-file --batch < "$batch/commits" > "$batch/objects"; then :; else
+    not_checked "reading $RANGE failed (exit code $?)"
   fi
+  # Keep Git's byte lengths until every object and separator has been checked.
+  # Only then hand NUL-framed text to Bash, matching its old $(...) capture.
+  if bureau_without_secrets python3 -I - "$batch" <<'PY' > "$batch/messages"
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+try:
+    with (root / 'objects').open('rb') as stream:
+        for sha in (root / 'commits').read_bytes().splitlines():
+            header = stream.readline().rstrip(b'\n').split(b' ')
+            if len(header) != 3 or header[:2] != [sha, b'commit'] or not header[2].isdigit():
+                raise ValueError('invalid commit header')
+            size = int(header[2])
+            raw = stream.read(size)
+            if len(raw) != size or stream.read(1) != b'\n':
+                raise ValueError('incomplete commit object')
+            sys.stdout.buffer.write(sha + b'\0' + raw.replace(b'\0', b'').rstrip(b'\n') + b'\0')
+        if stream.read(1): raise ValueError('unexpected batch output')
+except (OSError, ValueError, OverflowError) as exc:
+    sys.exit(str(exc))
+PY
+  then :; else not_checked "reading $RANGE failed"; fi
+fi
+while IFS= read -r -d '' sha; do
+  count=$((count + 1))
+  IFS= read -r -d '' raw || not_checked "reading commit $sha failed"
 
   # The raw object: header lines, one truly empty line, the message. Header
   # lines of signed commits continue over lines that start with a space, so the
@@ -118,7 +153,8 @@ for sha in $commits; do
     done
     i=$((i + 1))
   done
-done
+done < "$batch/messages" || not_checked "reading $RANGE failed"
+[ "$count" -eq "$expected_count" ] || not_checked "reading $RANGE failed (expected $expected_count commits, read $count)"
 
 if [ "$n_findings" -eq 0 ]; then
   echo "squash-marker-check: $RANGE, $count commit(s) read, none carries an entry of scripts/ci-skip-markers.txt"

@@ -104,7 +104,8 @@ class DecisionTests(unittest.TestCase):
         assignments = '\n'.join(line for line in CONFIG.read_text().splitlines() if re.match(
             r'^BUREAU_(MAX_REVIEW_CYCLES|MAX_REVIEW_ROUNDS|REVIEW_MIN_SEVERITY)=', line))
         source = function(SCRIPTS / 'bureau-env.sh', 'bureau_number') + '\n' + function(CONFIG, '_bureau_config_number')
-        source += '\nbureau_get() { jq -r "$1" "$CONFIG_FILE"; }\n' + assignments
+        source += '\nBUREAU_CONFIG=$CONFIG_FILE\nbureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }\n'
+        source += function(CONFIG, '_bureau_load_config') + '\n_bureau_load_config\n' + assignments
         source += '\nprintf "%s:%s:%s" "$BUREAU_MAX_REVIEW_CYCLES" "$BUREAU_MAX_REVIEW_ROUNDS" "$BUREAU_REVIEW_MIN_SEVERITY"'
         rows = [({}, '3:4:BUG'), ({'max_review_cycles':0}, '0:1:BUG'), ({'max_review_cycles':2}, '2:3:BUG'),
                 ({'max_review_cycles':2, 'max_review_rounds':2}, '2:2:BUG'),

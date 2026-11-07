@@ -83,6 +83,10 @@ else
   fi
 fi
 
+_prefix=""
+if [ "$OVERLAP_GATE" != true ]; then
+  _prefix="${BUREAU_PATH_PREFIX_STRIP:-$(jq -r '.repo.path_prefix_strip // empty' "${BUREAU_CONFIG:-.bureau.json}" 2>/dev/null)}"
+fi
 t=0
 while [ "$t" -lt "$n_tasks" ]; do
   # Checked right before reading: extract_paths swallows a read error, so a
@@ -196,7 +200,6 @@ while [ "$t" -lt "$n_tasks" ]; do
       [ -z "$planned" ] && continue
       clean_planned="$planned"
       if [ "$OVERLAP_GATE" != true ]; then
-        _prefix="${BUREAU_PATH_PREFIX_STRIP:-$(jq -r '.repo.path_prefix_strip // empty' "${BUREAU_CONFIG:-.bureau.json}" 2>/dev/null)}"
         clean_planned="${planned#./}"
         clean_planned="${clean_planned#"$_prefix"}"
       fi

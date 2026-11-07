@@ -329,7 +329,7 @@ while true; do
     log="$LOG_DIR/queue-$log_name.log"
 
     if [ -f "$log" ]; then
-      last=$(grep -v '^---$' "$log" | grep -v '^$' | tail -1 || echo "")
+      last=$(tail -n 200 "$log" | grep -v '^---$' | grep -v '^$' | tail -1 || echo "")
       status=$(parse_status "$last")
       issue=$(parse_issue "$last")
       activity=$(echo "$last" | sed 's/\[.*\] //' | cut -c1-35)

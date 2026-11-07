@@ -180,6 +180,7 @@ STUB_EOF
     echo 'BUREAU_CONFIG="${BUREAU_CONFIG:-$PWD/.bureau.json}"'
     echo 'bureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }'
     sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REPO_ROOT/templates/scripts/bureau-config.sh"
+    sed -n 's/^      BUREAU_MERGE_MODE: \(.*\),$/BUREAU_MERGE_MODE=$(bureau_get '\''\1'\'')/p' "$REPO_ROOT/templates/scripts/bureau-config.sh"
     sed -n '/^# ── Merge policy (agents.merge_mode)/,/^# ── End of merge policy/p' "$REPO_ROOT/templates/scripts/bureau-config.sh"
   } >> "$sb/scripts/bureau-config.sh"
   # The hold check (bureau_human_hold, v3.1) runs for real on top of the label read,
