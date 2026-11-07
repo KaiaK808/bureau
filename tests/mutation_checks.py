@@ -1,5 +1,5 @@
 """Mutation controls require a green baseline and an explicit failure signal."""
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import ctypes
 import math
 import os
@@ -13,6 +13,8 @@ import tarfile
 import tempfile
 import threading
 import time
+
+from process_helpers import communicate_until
 
 
 DEFAULT_TIMEOUT = 300
@@ -275,8 +277,9 @@ def reaping_fixtures(root, child):
 
 
 @contextmanager
-def fixture_root():
-    with tempfile.TemporaryDirectory(prefix='bureau-mutation-run-') as directory:
+def fixture_root(root=None):
+    with (tempfile.TemporaryDirectory(prefix='bureau-mutation-run-') if root is None
+          else nullcontext(str(root))) as directory:
         if sys.platform.startswith('linux'):
             # Adopt detached orphans so the harness can waitpid after killing
             # them. Discovery still depends only on the unique root.
@@ -287,18 +290,19 @@ def fixture_root():
         yield root
 
 
-def run(command, *, env=None, timeout=DEFAULT_TIMEOUT):
+def run(command, *, env=None, timeout=DEFAULT_TIMEOUT, root=None, cwd=None):
     """Bound a test run, pipe draining and cleanup of its fixture root."""
     timeout = finite_timeout(timeout)
-    with fixture_root() as root:
-        return _run(command, env=env, timeout=timeout, root=root)
+    with fixture_root(root) as root:
+        return _run(command, env=env, timeout=timeout, root=root, cwd=cwd)
 
 
-def _run(command, *, env, timeout, root):
+def _run(command, *, env, timeout, root, cwd=None):
     environ = {**os.environ, **(env or {})}
     environ['PYTHONDONTWRITEBYTECODE'] = '1'
     environ['TMPDIR'] = str(root)
-    child = subprocess.Popen(command, env=environ, cwd=root, text=True, stdout=subprocess.PIPE,
+    deadline = time.monotonic() + timeout
+    child = subprocess.Popen(command, env=environ, cwd=cwd or root, text=True, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, start_new_session=True)
     observed = None
     cleaned = False
@@ -317,7 +321,7 @@ def _run(command, *, env, timeout, root):
         with reaping_fixtures(root, child) as observed:
             try:
                 try:
-                    out, err = child.communicate(timeout=timeout)
+                    out, err = communicate_until(child, deadline)
                     return subprocess.CompletedProcess(command, child.returncode, out, err)
                 except subprocess.TimeoutExpired:
                     stop_fixtures(root, child, observed=observed)

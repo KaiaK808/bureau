@@ -19,6 +19,8 @@ expected = sorted([*expected, future_test])
 with tempfile.TemporaryDirectory(prefix='bureau-test-shards. ') as directory:
     fixture = Path(directory)
     shutil.copy2(root / 'tests/run.sh', fixture / 'run.sh')
+    shutil.copy2(root / 'tests/run_test_files.py', fixture / 'run_test_files.py')
+    shutil.copy2(root / 'tests/process_helpers.py', fixture / 'process_helpers.py')
     shutil.copy2(root / 'tests/shard-weights.tsv', fixture / 'shard-weights.tsv')
     executed = fixture / 'executed'
     for name in expected:
@@ -30,6 +32,8 @@ with tempfile.TemporaryDirectory(prefix='bureau-test-shards. ') as directory:
     def run_harness(selector=None, runner_os='Linux', listing=True):
         env = os.environ.copy()
         env.pop('BUREAU_TEST_SHARD', None)
+        env.pop('BUREAU_TEST_TIMINGS', None)
+        env.pop('BUREAU_TEST_FILE_TIMEOUT', None)
         if selector is not None:
             env['BUREAU_TEST_SHARD'] = selector
         env['RUNNER_OS'] = runner_os

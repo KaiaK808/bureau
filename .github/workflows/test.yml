@@ -39,6 +39,7 @@ jobs:
     env:
       BUREAU_REQUIRE_LOCAL_SERVER: '1'
       BUREAU_TEST_SHARD: ${{ matrix.shard }}/${{ matrix.total }}
+      BUREAU_TEST_TIMINGS: ${{ github.workspace }}/test-timings.tsv
     defaults:
       run:
         shell: /bin/bash --noprofile --norc -eo pipefail {0}
@@ -88,3 +89,10 @@ jobs:
 
       - name: Run test harness
         run: PATH="/bin:$PATH" /bin/bash tests/run.sh
+
+      - name: Upload test timings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-timings-${{ matrix.os }}-${{ matrix.shard }}-of-${{ matrix.total }}
+          path: ${{ env.BUREAU_TEST_TIMINGS }}

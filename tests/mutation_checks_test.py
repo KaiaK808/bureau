@@ -47,6 +47,25 @@ if __name__ == '__main__': unittest.main()
                                originals={self.source:self.baseline.read_bytes()}, timeout=timeout,
                                **(expectation or {'expected':'AssertionError: mutated behavior'}))
 
+    def test_pipeline_supervision_keeps_existing_fixture_and_joins_detached_child(self):
+        cwd = self.root/'working'; cwd.mkdir()
+        pid_file = cwd/'child.pid'
+        self.test.write_text('''import os, subprocess, sys, time
+from pathlib import Path
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)', str(Path.cwd()/'owned')],
+                         start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+Path('child.pid').write_text(str(child.pid))
+print(Path.cwd())
+print('pipeline diagnostic', file=sys.stderr)
+''')
+        self.addCleanup(self.stop_recorded, pid_file)
+        completed = process_helpers.run_pipeline(self.command, root=self.root, cwd=cwd, env={})
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), str(cwd))
+        self.assertEqual(completed.stderr.strip(), 'pipeline diagnostic')
+        self.assertTrue(self.test.is_file(), 'the caller owns fixture directory removal')
+        self.assertFalse(process_running(int(pid_file.read_text())), 'detached descendant survived pipeline')
+
     def test_target_timeout_error_is_caught(self):
         # subprocess.run kills and joins this child before unittest reports ERROR.
         self.source.write_text('''import subprocess, sys
