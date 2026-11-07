@@ -1,0 +1,63 @@
+# Add a new or changed test when it depends on Bash 3.2 or BSD tools
+# (sed, date, stat, mktemp, grep); installation/resync, paths, symlinks or
+# worktree links; permissions/exec bits; process groups, signals, kill/reaping;
+# PTYs or native process discovery (ps, lsof, pgrep fallbacks); sandbox profiles;
+# or when it guards a macOS-only regression. Reasons describe the coverage,
+# rather than incidental fixture setup/cleanup in general integration tests.
+
+test_alert_throttle.sh # Shell timestamps, portable mktemp and linked Git common-directory paths.
+test_app_local_server.sh # Installed app action executes a local virtual environment through its path.
+test_codex_sandbox_gate_reader.sh # Bash 3.2 extraction and parsing of sandbox gate evidence.
+test_comment_cap.sh # BSD sed/byte counting and platform-dependent oversized argument failures.
+test_conflicts.sh # Permission/mode and symlink rollback; uncertain groups and interrupted generators.
+test_crosscheck.sh # Regression for associative arrays rejected by macOS /bin/bash 3.2.
+test_dispatcher.sh # Native shutdown, FIFO EOF, fork/signal races and zombie-provider reaping regression.
+test_doctor.sh # Installation discovery, symlinks, ignored paths and spaces in paths.
+test_doctor_checks.sh # Linked worktrees, recursive symlink/env searches and unreadable paths.
+test_env_arith_hardening.sh # Bash integer overflow, indirect expansion and caller-local numeric bindings.
+test_env_file_source.sh # Bash source/export semantics and stage/driver environment inheritance.
+test_env_keys_drivers.sh # Bash export inheritance at real driver/tool boundaries with BSD sed edits.
+test_env_keys_unexported.sh # Native child-environment inspection through macOS ps versus Linux procfs.
+test_env_malformed_names.sh # Bash 3.2 malformed imported names and macOS locale collation regression.
+test_env_read_safety.sh # Bash environment loading preserves literal values instead of sourcing them.
+test_env_shadowed_callers.sh # Bash 3.2 export-cache/caller-local regression using child-visible environments.
+test_env_snapshot_fail_closed.sh # Bash snapshot framing, caller-local failures and non-UTF-8 transport.
+test_env_snapshot_trust_locale.sh # System PATH interpreter trust, Bash hash lookup and macOS locale parity.
+test_escalation_log_format.sh # POSIX whitespace matching under BSD grep and UTC date formatting.
+test_hangup_stop.sh # PTY closure, SIGHUP, native ps and Bash 3.2 interrupted-child regression.
+test_implement_failed_pass_push.sh # Signal-time EXIT preservation when stderr is a closed pipe.
+test_implement_push_open_pr.sh # Deferred push survives PTY closure and Bash 3.2 SIGPIPE on stderr.
+test_installation.sh # Installer/resync, physical temp-root regression, symlinks and execute-bit repair.
+test_installer_sources.sh # Installer/resync honors source ignore rules and customized blocks in spaced paths.
+test_interrupt_grace.sh # Process-group termination, native ps and slow Bash EXIT traps.
+test_interrupted_run_resume.sh # Interrupted process leases and executable resume commands in spaced paths.
+test_linear_retry.sh # macOS local-server startup/reverse-DNS regression and transport teardown.
+test_model_argv.sh # Bash array/word-splitting preserves a hostile model value as one argument.
+test_model_conflicts.sh # Execute-bit changes and external-check background writers are rejected/reaped.
+test_mutation_checks.sh # Native lsof cwd discovery, ps fallback, zombies and detached-child cleanup.
+test_orchestrate_defaults.sh # Concurrent Bash lanes, isolated worktree paths and group cleanup.
+test_orchestrate_executor.sh # Executable lane dispatch and per-lane worktree directory isolation.
+test_pipe_early_exit.sh # Pipefail/SIGPIPE detection for short-reading grep, sed and other BSD tools.
+test_post_implement_launch_cancel.sh # Bash 3.2 fork/EXIT double-signal race and exact trap restoration.
+test_process_groups.sh # Native/injected macOS zombie EPERM, killpg, reaping and ownership holds.
+test_provider_adapter.sh # Sandbox permissions/scratch paths, PTYs, native timeout/cancel descendant cleanup.
+test_provider_untrusted_env.sh # Executable provider shims and child environment propagation across Bash/Python.
+test_remote_git_hooks.sh # Executable Git hooks, shell wrappers and hooks whose stdin never closes.
+test_run_deadlines.sh # Harness groups, TERM/KILL, orphan reaping and OS-specific deadlines.
+test_run_shards.sh # Bash 3.2 runner/manifest dispatch, OS-weighted partitions and workflow modes.
+test_shared_runtime.sh # Physical/symlinked worker regression, worktree links and interrupted nested processes.
+test_shepherd_worker_sigpipe.sh # Worker SIGHUP/SIGPIPE after the stdout reader closes.
+test_silence_watchdog.sh # macOS native process identities, detached descendants and signal cleanup.
+test_silence_watchdog_fix1.sh # Shell exec/background tool identity and live descendant ownership.
+test_silence_watchdog_negative_controls.sh # Controls for native process identity, detached writers and draining.
+test_spec_dir_stages.sh # Real stage path matching selects the ticket's directory among decoys.
+test_spec_dir_tiebreak.sh # Case-sensitive versus default macOS case-insensitive path matching.
+test_stage_pipe_early_exit.sh # Large stage pipes and Bash 3.2 write errors after an early reader exit.
+test_supervision.sh # Shell scheduler/date usage and executable stage dispatch.
+test_supervision_isolated.sh # Interpreter isolation from cwd/PYTHONPATH and portable BSD sed rewrites.
+test_tasks_matcher.sh # Bash branch/path resolver handles directory candidates without GNU-only tools.
+test_untrusted_env_bureau.sh # macOS credential-server startup regression and executable Git hook isolation.
+test_worktree_deps.sh # Dependency restore after worker reset, executable tools and paths with spaces.
+test_worktree_links.sh # Symlink restoration, clean safety, missing targets and dash/space paths.
+test_worktree_links_env.sh # Recursive symlink/loop handling differs between GNU find and BSD find.
+test_worktree_package_managers.sh # Executable dependency tools, symlink guards and worktree paths.

@@ -15,12 +15,38 @@ Do NOT file public issues for security vulnerabilities — see [SECURITY.md](SEC
 ## Send a PR
 
 - **Branch from `main`.** No forks-of-forks tangles.
-- **Run the tests before you push.** `bash tests/run.sh` must pass (the CI job runs exactly this). See `AGENTS.md` for the harness structure.
+- **Run the tests before you push.** `bash tests/run.sh` must pass. See `AGENTS.md` for the harness structure and the CI coverage below.
 - **One focused change per PR.** Rebrand + genericize + hero image was three PRs, not one. This is the norm.
 - **PR body follows the existing recent pattern** — Summary, What changed, Test plan, After merge. Look at any of the merged PRs for the shape.
 - **No new dependencies without a plan.** The shared runtime uses Bash, stdlib Python and a small JavaScript scheduler; keep dependencies explicit and minimal.
 - **Release notes travel with user-facing changes.** Add an entry under `Unreleased` in [CHANGELOG.md](CHANGELOG.md), including adoption actions, compatibility/default changes and relevant limitations. Update [the upgrade guide](docs/migration.md) when existing installs need a different command or conflict procedure. Do not invent a released version or mark pending work as shipped.
 - **Docs travel with code.** If you add a `.bureau.json` flag, it lands in `docs/configuration.md` in the same PR. If you add a script, it gets a header comment. This is enforced by review.
+
+## CI coverage
+
+Every pull request runs the complete Linux suite in four shards and the focused
+macOS manifest in two shards. Pushes to `main`, `release/**` branches and `v*`
+tags, the weekly Monday schedule and manual workflow dispatch run the complete
+macOS suite in six shards. Check names distinguish `focused` and `full` runs;
+every job uploads its timing records, including on failure.
+
+Add a new or changed test to [the macOS manifest](tests/macos-manifest.txt) when
+it depends on Bash 3.2, BSD sed/date/stat/mktemp/grep, installation/resync or path
+handling (including symlinks/worktree links), permissions/execute bits, process
+groups/signals/kill/reaping, PTYs/native process discovery (ps/lsof/pgrep fallbacks)
+or sandbox profiles, or guards a macOS-only regression. Give each entry a short
+reason based on the assertions it exercises. Incidental fixture cleanup alone
+does not make a general integration test a platform test.
+
+Run the focused selection locally with
+`BUREAU_TEST_MANIFEST=tests/macos-manifest.txt bash tests/run.sh`; append `--list`
+to inspect it. Manifest paths are relative to the invoking directory. Blank lines
+and comments are ignored; unknown entries or an empty manifest fail before any
+test runs. Filtering happens before optional `BUREAU_TEST_SHARD=i/n` balancing.
+Refresh weights from complete successful timing artifacts and recalculate the
+workflow's estimate when changing the manifest. The 56-entry manifest currently
+estimates 89.98 macOS runner-minutes, including four minutes of setup across two
+jobs; hosted queue time is separate.
 
 ## Releases
 

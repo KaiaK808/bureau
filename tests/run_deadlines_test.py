@@ -1,6 +1,7 @@
 """Deadlines and timing updates in private copies of the real test harness."""
 from contextlib import redirect_stdout
 import csv
+import inspect
 import io
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from process_helpers import process_running, wait_for_processes_exit
 import run_test_files as runner
@@ -29,7 +30,8 @@ class RunDeadlinesTests(unittest.TestCase):
         self.weights = self.fixture / 'shard-weights.tsv'
         self.weights.write_text('# test_file\tubuntu_seconds\tmacos_seconds\n')
         self.env = {key: value for key, value in os.environ.items()
-                    if key not in ('BUREAU_TEST_SHARD', 'BUREAU_TEST_TIMINGS', 'BUREAU_TEST_FILE_TIMEOUT')}
+                    if key not in ('BUREAU_TEST_SHARD', 'BUREAU_TEST_MANIFEST',
+                                   'BUREAU_TEST_TIMINGS', 'BUREAU_TEST_FILE_TIMEOUT')}
         self.env.update(BUREAU_TEST_FILE_TIMEOUT='1', TMPDIR=str(self.fixture))
         self.addCleanup(self.cleanup_groups)
 
@@ -48,6 +50,64 @@ class RunDeadlinesTests(unittest.TestCase):
                 except ProcessLookupError: pass
                 except PermissionError:
                     if process_running(int(path.read_text())): raise
+
+    def assert_permission_cleanup(self, stop, survives):
+        child = Mock(pid=12345, returncode=0)
+        now = [0.]
+        reaped = []
+        signals = []
+
+        def killpg(group, signum):
+            self.assertEqual(group, child.pid)
+            signals.append((signum, now[0]))
+            raise PermissionError('signal denied')
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        with patch.object(runner, 'stop_group', stop), \
+                patch.object(runner.subprocess, 'Popen', return_value=child), \
+                patch.object(runner, 'reap_group', side_effect=lambda child: reaped.append(child)), \
+                patch.object(runner.os, 'killpg', side_effect=killpg), \
+                patch.object(runner, 'process_group_running',
+                             side_effect=lambda group: survives or len(reaped) < 3), \
+                patch.object(runner.time, 'monotonic', side_effect=lambda: now[0]), \
+                patch.object(runner.time, 'sleep', side_effect=sleep):
+            log = io.StringIO()
+            outcome, elapsed = runner.run_file('test_probe.sh', 5, log)
+        self.assertEqual(outcome, 'FAIL' if survives else 'PASS', log.getvalue())
+        if survives:
+            self.assertIn(f'process group {child.pid} survived cleanup', log.getvalue())
+            self.assertEqual([signum for signum, _ in signals], [signal.SIGTERM, signal.SIGKILL])
+            self.assertAlmostEqual(signals[1][1], 1)
+            self.assertAlmostEqual(elapsed, 4)
+        else:
+            self.assertEqual(signals, [(signal.SIGTERM, 0)])
+            self.assertGreaterEqual(len(reaped), 4)
+            self.assertGreater(elapsed, 0)
+            self.assertLess(elapsed, 1)
+
+    def cleanup_mutant(self, old, new):
+        source = inspect.getsource(runner.stop_group)
+        self.assertEqual(source.count(old), 1)
+        namespace = {}
+        exec(source.replace(old, new), vars(runner), namespace)
+        return namespace['stop_group']
+
+    def test_cleanup_recovers_from_transient_permission_error_after_reaping(self):
+        self.assert_permission_cleanup(runner.stop_group, False)
+        immediate_raise = self.cleanup_mutant(
+            'except PermissionError:\n            pass',
+            'except PermissionError:\n            if process_group_running(child.pid):\n                raise')
+        with self.assertRaisesRegex(AssertionError, 'Runner cleanup failed: signal denied'):
+            self.assert_permission_cleanup(immediate_raise, False)
+
+    def test_cleanup_persistent_survivor_fails_after_kill_grace(self):
+        self.assert_permission_cleanup(runner.stop_group, True)
+        ignores_survivor = self.cleanup_mutant(
+            "raise RuntimeError(f'process group {child.pid} survived cleanup')", 'return')
+        with self.assertRaisesRegex(AssertionError, "'PASS' != 'FAIL'"):
+            self.assert_permission_cleanup(ignores_survivor, True)
 
     def test_timeout_and_background_cleanup_keep_output_and_continue(self):
         self.plant('child.py', '''import os, signal, time
