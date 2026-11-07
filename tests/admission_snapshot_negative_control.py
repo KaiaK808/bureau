@@ -44,7 +44,8 @@ with tempfile.TemporaryDirectory(prefix='bureau-admission-negative-') as directo
         path.write_text(code)
         result = mutation_caught(
             [sys.executable, str(ROOT / 'tests/file_overlap_test.py'), 'Fixture.' + name],
-            env={'BUREAU_OVERLAP_TEST_SCRIPTS': str(scripts)}, originals=originals)
+            env={'BUREAU_OVERLAP_TEST_SCRIPTS': str(scripts)}, originals=originals,
+            expected=diagnostics, expected_exit=1)
         assert result.returncode == 1, result.stdout + result.stderr
         assert 'FAIL: ' + name in result.stderr, result.stdout + result.stderr
         for diagnostic in diagnostics:

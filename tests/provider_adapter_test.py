@@ -16,6 +16,7 @@ import time
 import unittest
 import uuid
 from unittest.mock import Mock, patch
+from selected_cases import selected_cases
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPT=Path(os.environ.get('BUREAU_TEST_PROVIDER_SCRIPT',ROOT/'templates/scripts/bureau-provider.py'))
@@ -216,30 +217,32 @@ p.run=record_environment
         return store,disabled,records
 
     def test_optional_checkpoint_read_failures_do_not_abort_provider(self):
-        for error in ('OSError','PermissionError'):
-            for issue in ('TEAM-1','TEAM-2'):
-                for reuse_disabled in ('0','1'):
-                    with self.subTest(error=error,issue=issue,reuse_disabled=reuse_disabled):
-                        store,disabled,records=self.checkpoint_records()
-                        healthy={key:path.read_bytes() for key,path in records.items() if key != issue}
-                        result=self.run_wrapped_provider('''read=p.e.read
+        cases={error+':'+str(index)+':'+reuse_disabled:(error,issue,reuse_disabled)
+               for error in ('OSError','PermissionError') for index,issue in enumerate(('TEAM-1','TEAM-2'))
+               for reuse_disabled in ('0','1')}
+        for error,issue,reuse_disabled in selected_cases(cases,'BUREAU_TEST_CHECKPOINT_READ_CASES').values():
+            with self.subTest(error=error,issue=issue,reuse_disabled=reuse_disabled):
+                store,disabled,records=self.checkpoint_records()
+                healthy={key:path.read_bytes() for key,path in records.items() if key != issue}
+                result=self.run_wrapped_provider('''read=p.e.read
 def checkpoint_read(path,*args,**kwargs):
     if path.parent.name=='spec-checkpoints' and path.stem==os.environ['FAULT_TICKET']:
         raise getattr(__import__('builtins'),os.environ['FAULT_ERROR'])('fixture checkpoint read failure')
     return read(path,*args,**kwargs)
 p.e.read=checkpoint_read
 ''',BUREAU_CURRENT_ISSUE='TEAM-1',BUREAU_SPEC_CHECKPOINTS_DISABLED=reuse_disabled,
-                            FAULT_TICKET=issue,FAULT_ERROR=error)
-                        self.assertEqual(result.stdout.strip(),'final response')
-                        self.assertTrue((self.root/'argv.json').is_file(),'provider never ran')
-                        self.assertIn('checkpoint reuse disabled for '+issue,result.stderr)
-                        self.assertEqual([path.name for path in disabled.iterdir()],[issue+'.json'])
-                        self.assertEqual(json.loads((disabled/(issue+'.json')).read_text()),dict(issue=issue,reuse_disabled=True))
-                        self.assertEqual(healthy,{key:records[key].read_bytes() for key in healthy})
-                        self.assertEqual(self.receipts()[-1]['normalized_exit'],0)
+                    FAULT_TICKET=issue,FAULT_ERROR=error)
+                self.assertEqual(result.stdout.strip(),'final response')
+                self.assertTrue((self.root/'argv.json').is_file(),'provider never ran')
+                self.assertIn('checkpoint reuse disabled for '+issue,result.stderr)
+                self.assertEqual([path.name for path in disabled.iterdir()],[issue+'.json'])
+                self.assertEqual(json.loads((disabled/(issue+'.json')).read_text()),dict(issue=issue,reuse_disabled=True))
+                self.assertEqual(healthy,{key:records[key].read_bytes() for key in healthy})
+                self.assertEqual(self.receipts()[-1]['normalized_exit'],0)
 
     def test_optional_checkpoint_prune_failures_do_not_abort_provider(self):
-        for error in ('OSError','PermissionError'):
+        for error in selected_cases({name:name for name in ('OSError','PermissionError')},
+                                    'BUREAU_TEST_CHECKPOINT_PRUNE_ERRORS').values():
             with self.subTest(error=error):
                 store,disabled,records=self.checkpoint_records(expired=True)
                 result=self.run_wrapped_provider('''unlink=pathlib.Path.unlink

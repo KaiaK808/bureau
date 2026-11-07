@@ -17,6 +17,7 @@ import unittest
 from unittest.mock import patch
 
 import git_maintenance
+from selected_cases import selected_cases
 from process_helpers import process_running
 from governance_cases import (FENCED_GOVERNANCE, GOVERNANCE_FIRST,
                               COMMENT_HIDDEN_GOVERNANCE, COLUMN_ZERO_GOVERNANCE,
@@ -609,10 +610,15 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(json.loads(proc.stdout)['summary'],'Model PASS')
             Path(args.result).write_text(proc.stdout)
             return args
+        invalid={**FENCED_GOVERNANCE, **COMMENT_HIDDEN_GOVERNANCE, **COLUMN_ZERO_GOVERNANCE,
+                 **ROUND8_PROVIDER_INVALID, **ROUND9_PROVIDER_INVALID, **ROUND10_PROVIDER_INVALID}
+        valid={**GOVERNANCE_FIRST, **ROUND9_VALID, **ROUND10_VALID}
+        selected=selected_cases({**invalid, **valid},'BUREAU_TEST_GOVERNANCE_CASES')
         for stage,state,target in (('spec','s1','s2'),('spec_review','s2','s3')):
             self.state=state; self.moves=[]; self.comments=[]; run=self.prepare(stage)
             try:
-                for name,body in {**FENCED_GOVERNANCE, **COMMENT_HIDDEN_GOVERNANCE, **COLUMN_ZERO_GOVERNANCE, **ROUND8_PROVIDER_INVALID, **ROUND9_PROVIDER_INVALID, **ROUND10_PROVIDER_INVALID}.items():
+                for name,body in invalid.items():
+                    if name not in selected: continue
                     with self.subTest(stage=stage,case=name):
                         (specdir/'spec.md').write_text(body)
                         args=adapter_result(run)
@@ -626,7 +632,8 @@ class RuntimeTests(unittest.TestCase):
             finally:
                 self.store.release(run['run_id'])
             # Governance before code completes through the same real adapter.
-            for name, body in {**GOVERNANCE_FIRST, **ROUND9_VALID, **ROUND10_VALID}.items():
+            for name, body in valid.items():
+                if name not in selected: continue
                 with self.subTest(stage=stage,case=name,valid=True):
                     self.state=state; self.moves=[]; self.comments=[]; run=self.prepare(stage)
                     try:
