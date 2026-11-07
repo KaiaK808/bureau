@@ -1,5 +1,4 @@
 """Run selected shell tests with process-group deadlines and optional timings."""
-import ctypes
 import os
 from pathlib import Path
 import re
@@ -48,7 +47,7 @@ def timeout_override():
 
 
 def reap_group(child):
-    # Popen owns the leader; only reap adopted group members after it exits.
+    # Popen owns the leader; after it exits, reap any other direct child left in its group.
     if child.poll() is not None:
         while True:
             try:
@@ -109,10 +108,8 @@ def main(names):
     override = timeout_override()
     weights = read_weights(Path(__file__).with_name('shard-weights.tsv'))
     os_name = runner_os()
-    if sys.platform.startswith('linux'):
-        # Reap orphaned group members instead of relying on the CI container's init.
-        if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:
-            raise OSError('cannot adopt test descendants')
+    # No Linux subreaper: a terminated orphan adopted here stays a zombie until its
+    # file ends, so a test that kills its own orphan would still see it alive.
     timings = os.environ.get('BUREAU_TEST_TIMINGS')
     failed = []
     passed = 0

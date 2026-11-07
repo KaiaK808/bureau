@@ -100,6 +100,16 @@ echo background-started
                     for name in ('hang.group', 'child.group', 'child.pid', 'next-ran'):
                         (self.fixture / name).unlink(missing_ok=True)
 
+    def test_orphan_killed_by_its_test_disappears_while_the_test_runs(self):
+        self.plant('test_orphan.sh', '''( sleep 30 & echo $! > orphan.pid )
+pid=$(cat orphan.pid) && [ -n "$pid" ] && kill "$pid" || { echo "could not kill the orphan"; exit 2; }
+for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || exit 0; sleep 0.1; done
+echo "orphan $pid survived its kill"; exit 1
+''')
+        completed = self.harness(BUREAU_TEST_FILE_TIMEOUT='10')
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn('PASS  test_orphan.sh', completed.stdout)
+
     def test_invalid_deadlines_fail_before_running_tests(self):
         self.plant('test_probe.sh', 'echo ran > executed\n')
         for value in ('', '0', '-1', '1.5', '+1', ' 1', '1\n', 'no'):
