@@ -75,6 +75,7 @@ git fetch origin
 # spec-pipeline on the same branch.
 free_branch_from_other_worktrees "$BRANCH" "$(pwd)"
 if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+  bureau_guard_branch_reset "$BRANCH" || exit $?
   git checkout -B "$BRANCH" "origin/$BRANCH"
 elif git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
   git checkout "$BRANCH"

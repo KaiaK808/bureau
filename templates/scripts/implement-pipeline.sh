@@ -773,6 +773,7 @@ if [ -n "${BUREAU_RETAINED_MERGE_HEAD:-}" ]; then
   fi
   echo "  Retaining verified base-merge HEAD ${BUREAU_RETAINED_MERGE_HEAD:0:12} on $BRANCH."
 elif git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+  bureau_guard_branch_reset "$BRANCH" || exit $?
   git checkout -B "$BRANCH" "origin/$BRANCH"
 else
   git checkout "$BRANCH"

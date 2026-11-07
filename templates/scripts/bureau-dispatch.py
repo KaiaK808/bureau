@@ -239,7 +239,7 @@ class Dispatcher:
         self.skips[issue]['terminal_reason'] = terminal_reason
         if attempt is not None: self.skips[issue]['attempt'] = attempt
         r.save(self.path, self.skips)
-        if code not in (0, 2, 10, 16, 20, 23, 25, 26, 28, 29, 130):
+        if code not in (0, 2, 10, 16, 20, 23, 25, 26, 28, 29, 30, 130):
             try:
                 self.helpers.call('alert_telegram "$1" bureau-dispatch.py "$2" "dispatcher lane halted" || true\n'
                                   'if [ "$2" != 21 ]; then mark_needs_human "$1" dispatcher "$2" || true; fi', issue, str(code))

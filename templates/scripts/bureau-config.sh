@@ -3033,6 +3033,45 @@ free_branch_from_other_worktrees() {
   fi
 }
 
+# Check the target branch and its attached/detached HEAD before a reset.
+# A new worker has no HEAD yet; never substitute the driver's unrelated HEAD.
+bureau_guard_branch_reset() {
+  local branch="$1" wt="${2:-$PWD}" stage="${3:-$(basename "$0")}" repo="${REPO_DIR:-$PWD}"
+  local origin commits sha subject shas current issue="${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" rc
+  local refs=()
+  if [ -d "$wt" ]; then
+    repo="$wt"
+    current=$(git -C "$repo" branch --show-current) || return 24
+    if [ -z "$current" ] || [ "$current" = "$branch" ]; then refs+=(HEAD); fi
+  fi
+  origin=$(git -C "$repo" rev-parse --verify "refs/remotes/origin/$branch^{commit}") || return 24
+  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+    refs+=("refs/heads/$branch")
+  else
+    rc=$?; [ "$rc" = 1 ] || return 24
+  fi
+  [ "${#refs[@]}" != 0 ] || return 0
+  # --branches matches exclusions against short names, without refs/heads/.
+  commits=$(git -C "$repo" log --no-show-signature --format='%H %s' "${refs[@]}" \
+    --not "$origin" --remotes --exclude="$branch" --branches --) || return 24
+  [ -n "$commits" ] || return 0
+  if [ "${BUREAU_DROP_LOCAL_COMMITS:-0}" = 1 ]; then
+    echo "Dropping local-only commits before reset to origin/$branch (BUREAU_DROP_LOCAL_COMMITS=1):" >&2
+    printf '%s\n' "$commits" >&2
+    shas=$(printf '%s\n' "$commits" | cut -d' ' -f1 | paste -sd, -)
+    emit_event "event=local_commits_dropped" "stage=$stage" "issue=$issue" \
+      "branch=$branch" "workspace=$wt" "commits=$shas" || true
+    return 0
+  fi
+  echo "HOLD: local-only commits would be lost resetting to origin/$branch (exit 30):" >&2
+  while read -r sha subject; do printf '  %.12s %s\n' "$sha" "$subject" >&2; done <<< "$commits"
+  echo "Push these commits to origin/$branch, or explicitly drop them with BUREAU_DROP_LOCAL_COMMITS=1 for one run. Branch and worktree were left untouched." >&2
+  if [ -n "$issue" ]; then
+    ( mark_needs_human "$issue" "${stage%-pipeline.sh}" 30 decision "local-only commits require push or explicit drop" ) || true
+  fi
+  return 30
+}
+
 # Resolve the merge-only base after fetching. A syntactically valid configured
 # branch wins; otherwise use origin's symbolic default, then main. A chosen
 # but missing ref fails closed at resolution, never silently changes the base.
@@ -3076,6 +3115,13 @@ _bureau_worktree_reuse_state() {
   [ "$(_bureau_physical "$wt_common")" = "$(_bureau_physical "$common")" ] || return 1
   gitdir=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   [ "$(_bureau_physical "$gitdir")" != "$(_bureau_physical "$common")" ] || return 1
+  # Exit-30 recovery needs the same identity proof when only the branch ref is ahead.
+  if [ "${BUREAU_DROP_LOCAL_COMMITS:-0}" = 1 ] ||
+    jq -e '.exit_code == 30' "$common/bureau/preserved/$key.json" >/dev/null 2>&1; then
+    jq -e --arg ws "$wt" --arg branch "$branch" --arg issue "${BUREAU_CURRENT_ISSUE:-}" --arg gitdir "$gitdir" \
+      '.workspace == $ws and .reset_branch == $branch and .issue == $issue and .git_dir == $gitdir and .reason == "unfinished" and .exit_code == 30' \
+      "$common/bureau/preserved/$key.json" >/dev/null 2>&1 || return 1
+  fi
   [ -z "$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null || echo unreadable)" ] || return 1
   head=$(git -C "$wt" rev-parse --verify --quiet HEAD) || return 1
   [ -z "$expected" ] || [ "$head" = "$expected" ] || return 1
@@ -3083,6 +3129,8 @@ _bureau_worktree_reuse_state() {
   issue_head=$(git -C "$wt" rev-parse --verify --quiet "refs/remotes/origin/$branch^{commit}") || return 1
   if git -C "$wt" merge-base --is-ancestor "$head" "$issue_head" 2>/dev/null; then
     kind=on-origin
+  elif [ "${BUREAU_DROP_LOCAL_COMMITS:-0}" = 1 ]; then
+    kind=drop-local-commits
   else
     kind="base-merges"
     base_ref=$(_bureau_reuse_base_ref "$wt") || return 1
@@ -3150,6 +3198,8 @@ _bureau_reaccept_clean_worktree() {
       '.workspace == $ws and .branch == $branch and .issue == $issue and .reason == "unfinished" and (.exit_code == 22 or .exit_code == 23)' \
       "$common/bureau/preserved/$key.json" >/dev/null 2>&1 || return 1
     echo "Re-accepted the clean preserved worktree $wt: HEAD ${BUREAU_REUSE_HEAD:0:12} is ahead only by verified clean merges of ${BUREAU_REUSE_BASE_REF#refs/remotes/}; retaining HEAD without reset or clean." >&2
+  elif [ "$BUREAU_REUSE_KIND" = drop-local-commits ]; then
+    echo "Re-accepted the clean preserved worktree $wt: BUREAU_DROP_LOCAL_COMMITS=1 authorizes the guarded reset of its exit-30 local commits." >&2
   else
     echo "Re-accepted the clean preserved worktree $wt: no uncommitted or untracked changes and HEAD ${BUREAU_REUSE_HEAD:0:12} is on origin/$branch, so the reset loses nothing; registered it as a disposable worker again." >&2
   fi
@@ -3159,7 +3209,7 @@ _bureau_reaccept_clean_worktree() {
 # under .worktrees is not ownership; pre-existing directories are rejected.
 # A clean preserved non-spec worker can be reaccepted without loss.
 reset_worktree() {
-  local wt="$1" target_script="$2" target_branch="${3:-}" common registry key ref checkpoint retain_head=""
+  local wt="$1" target_script="$2" target_branch="${3:-}" common registry key ref checkpoint retain_head="" reset_rc
   export BUREAU_RETAINED_MERGE_HEAD=""
   BUREAU_RESET_REFUSAL=""; BUREAU_RESET_REFUSAL_HOLDER=""; BUREAU_RESET_REFUSAL_BRANCH=""
   [ "${BUREAU_WORKSPACE_MODE:-current}" = disposable ] || { echo "ERROR: reset requires disposable worker mode" >&2; return 21; }
@@ -3231,6 +3281,14 @@ reset_worktree() {
     ref="origin/$target_branch"
     git -C "$REPO_DIR" rev-parse --verify "$ref" >/dev/null || return 12
     free_branch_from_other_worktrees "$target_branch" "$wt" || return $?
+    bureau_guard_branch_reset "$target_branch" "$wt" "$target_script" || {
+      reset_rc=$?
+      if [ "$reset_rc" = 30 ] && [ -d "$wt" ]; then
+        rm -f "$registry/$key"
+        bureau_preserve_note "$wt" "$BUREAU_CURRENT_ISSUE" unfinished "$reset_rc" "$target_branch" || return 21
+      fi
+      return "$reset_rc"
+    }
   fi
   if [ ! -d "$wt" ]; then
     git -C "$REPO_DIR" worktree add --detach "$wt" "$ref" --quiet || return 21
@@ -3258,22 +3316,25 @@ reset_worktree() {
 # with its local hold when the label cannot be written) and posts one comment
 # that names the worktree and the way back. A cancelled run writes nothing.
 
-# bureau_preserve_note <worktree> <issue> <reason> [exit-code] — record why <worktree> lost
+# bureau_preserve_note <worktree> <issue> <reason> [exit-code] [reset-branch] — record why <worktree> lost
 # its disposable-worker registration (reason: interrupted, unfinished,
 # review-checkpoint): the run, the ticket, its branch. reset_worktree's refusal
 # reads it to name the owner. An ordinary reset removes it; retained merge-only
 # preparation keeps it so registration alone cannot authorize a later reset.
 # bureau-runtime.py writes the same record for an interrupted run.
 bureau_preserve_note() {
-  local wt="$1" issue="$2" reason="$3" code="${4:-null}" common key dir branch
+  local wt="$1" issue="$2" reason="$3" code="${4:-null}" common key dir branch gitdir=""
   wt=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt") || return 1
   common=$(bureau_common_dir) || return 1
   key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
   dir="$common/bureau/preserved"
   branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
+  if [ "$code" = 30 ]; then gitdir=$(git -C "$wt" rev-parse --absolute-git-dir) || return 1; fi
   mkdir -p "$dir" || return 1
   jq -n --arg run "${BUREAU_RUN_ID:-}" --arg issue "$issue" --arg ws "$wt" --arg branch "$branch" --arg reason "$reason" --argjson code "$code" \
-    '{run_id: $run, issue: $issue, workspace: $ws, branch: $branch, reason: $reason, exit_code: $code}' > "$dir/.$key.$$" \
+    --arg gitdir "$gitdir" --arg reset_branch "${5:-$branch}" \
+    '{run_id: $run, issue: $issue, workspace: $ws, branch: $branch, reason: $reason, exit_code: $code}
+     + (if $code == 30 then {git_dir: $gitdir, reset_branch: $reset_branch} else {} end)' > "$dir/.$key.$$" \
     && mv -f "$dir/.$key.$$" "$dir/$key.json"
 }
 
@@ -4080,6 +4141,7 @@ resolve_verdict_exit() {
 #   wait  28 spec-capacity-wait · 29 file-overlap-wait (quiet and cancellable)
 #   retry 10 linear-down · 16 provider-unauth (transient, throttled retry)
 # Everything else halts with an alert, unknown codes included.
+# Exit 30 (local-commits-held) requires a human; it must never retry.
 shepherd_rc_action() {
   case "${1:-}" in
     0|2)   echo "ok" ;;
@@ -4113,6 +4175,7 @@ exit_class() {
     27)  echo "linear-unusable" ;;
     28)  echo "spec-capacity-wait" ;;
     29)  echo "file-overlap-wait" ;;
+    30)  echo "local-commits-held" ;;
     124) echo "timeout" ;;
     130) echo "cancelled-run" ;;
     *)   echo "error-$1" ;;
