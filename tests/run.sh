@@ -10,6 +10,7 @@
 # test_spec_feature_json.sh and test_spec_capacity_consumers.sh.
 # Evidence/receipt/wait mutation controls: test_evidence_negative_controls.sh.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 
 if [ -n "${BUREAU_TEST_TIMINGS:-}" ]; then
   case "$BUREAU_TEST_TIMINGS" in
