@@ -88,6 +88,7 @@ test_linear_implement_matcher.sh	3	7
 test_linear_lists.sh	8	20
 test_linear_retry.sh	35	86
 test_linear_stages.sh	5	14
+test_local_commits_hold.sh	-	43
 test_marker_empty_body.sh	1	1
 test_merge_body.sh	1	1
 test_merge_dry_run_label.sh	1	2

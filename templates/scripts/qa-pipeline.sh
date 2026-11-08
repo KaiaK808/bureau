@@ -96,6 +96,7 @@ bureau_record_branch_pr "$BRANCH" || true
 git fetch origin
 free_branch_from_other_worktrees "$BRANCH" "$(pwd)"
 if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+  bureau_guard_branch_reset "$BRANCH" || exit $?
   git checkout -B "$BRANCH" "origin/$BRANCH"
 elif git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
   git checkout "$BRANCH"

@@ -170,6 +170,8 @@ run_script() {
     29) OVERLAP_WAIT=true
         OVERLAP_SKIPPED_ISSUE="$picked"
         echo "[$TIMESTAMP] $label — waiting for file overlap holders." | tee -a "$LOG_FILE" ;;
+    30) echo "[$TIMESTAMP] $label — held for a human: local-only commits (exit 30 / $klass)." | tee -a "$LOG_FILE"
+        alert_telegram "${picked:-none}" "$script" "$exit_code" "$label held ($klass); push or explicitly drop local commits" || true ;;
     *)
         if stop_before_merge_was_asked "$exit_code"; then
           # --no-merge: an approved ticket stopped at the reviewed boundary, as
