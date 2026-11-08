@@ -199,7 +199,6 @@ Generate the config file from all collected information:
   },
   "repo": {
     "branch_prefix": "feat",
-    "commit_prefix": "CLI",
     "specs_dir": "specs",
     "copy_voice_file": "docs/copy-voice.md",
     "path_prefix_strip": ""

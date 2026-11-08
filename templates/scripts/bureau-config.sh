@@ -358,72 +358,100 @@ bureau_stage_enter() {
 
 bureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }
 
-# Validate advisory risk settings before any stage can mutate state. The
-# renderer owns the defaults and validation; the tier itself has no authority.
-if jq -e '(.agents // {}) | has("risk_tier")' "$BUREAU_CONFIG" >/dev/null 2>&1; then
-  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-acceptance.py" --validate-config "$BUREAU_CONFIG" ) || exit 24
-fi
+# Read source-time settings in one checked call. Fixed keys and NUL framing
+# keep values out of shell code; strip trailing LFs just as $(bureau_get) did.
+# Numeric text is checked in jq before Bash can discard NULs or newlines.
+_bureau_load_config() {
+  local file name value rc _bureau_has_risk_tier
+  file=$(mktemp -t bureau-config.XXXXXXXX) || return $?
+  if jq -js '
+    def number:
+      if . == null then "default"
+      else (if type == "string" then . else tojson end)
+        | if (explode | all(. >= 48 and . <= 57)) then . else "invalid" end
+      end;
+    if length != 1 or (.[0] | type) != "object" then error("configuration must be one object") else .[0] end
+    | {
+      _bureau_has_risk_tier: ((.agents // {}) | has("risk_tier")),
+      BUREAU_TEAM_KEY: .linear.teams[0].key,
+      BUREAU_TEAM_NAME: .linear.teams[0].name,
+      BUREAU_STATE_TRIAGE: .linear.teams[0].states.triage,
+      BUREAU_STATE_SPEC: .linear.teams[0].states.spec,
+      BUREAU_STATE_SPEC_REVIEW: .linear.teams[0].states.spec_review,
+      BUREAU_STATE_DESIGN: .linear.teams[0].states.design,
+      BUREAU_STATE_BUILD: .linear.teams[0].states.build,
+      BUREAU_STATE_BUILD_REVIEW: .linear.teams[0].states.build_review,
+      BUREAU_STATE_DONE: .linear.teams[0].states.done,
+      # Optional states are empty when unconfigured.
+      BUREAU_STATE_QA: (.linear.teams[0].states.qa // ""),
+      BUREAU_STATE_COPY: (.linear.teams[0].states.copy // ""),
+      BUREAU_STATE_MERGE: (.linear.teams[0].states.merge // ""),
+      BUREAU_LABEL_LANE2: .linear.labels.lane2.id,
+      BUREAU_LABEL_LANE2_NAME: .linear.labels.lane2.name,
+      BUREAU_LABEL_NEEDS_COPY_NAME: (.linear.labels.needs_copy.name // ""),
+      BUREAU_COPY_VOICE_FILE: (.repo.copy_voice_file // ""),
+      BUREAU_POLL_INTERVAL: (.agents.poll_interval_minutes | number),
+      BUREAU_WORKBENCH_PANES: (.agents.workbench_panes | number),
+      BUREAU_PARALLEL_LANES: (.agents.parallel_lanes | number),
+      BUREAU_MAX_REVIEW_CYCLES: (.agents.max_review_cycles | number),
+      BUREAU_MAX_REVIEW_ROUNDS: (.agents.max_review_rounds | number),
+      BUREAU_REVIEW_MIN_SEVERITY: (.agents.review_min_severity | if . == null then "BUG" elif . == "BUG" or . == "MINOR" then . else "MINOR" end),
+      BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD: (.agents.code_review_sampling_threshold | number),
+      BUREAU_MAX_CONCURRENT_ISSUES: (.agents.max_concurrent_issues | number),
+      BUREAU_MERGE_STRATEGY: (.agents.merge_strategy // "squash"),
+      BUREAU_MERGE_MODE: (.agents.merge_mode | if . == null then "auto" elif . == "auto" or . == "manual" then . else tojson end),
+      BUREAU_BRANCH_PREFIX: (.repo.branch_prefix // "feat"),
+      BUREAU_SPECS_DIR: (.repo.specs_dir // "specs"),
+      BUREAU_PROJECTS: (.linear.projects // [] | join(","))
+    }
+    | to_entries[] | (.key, "\u0000", (.value | if type == "string" then gsub("\u0000"; "") else . end), "\u0000")
+  ' "$BUREAU_CONFIG" > "$file"; then :; else
+    rc=$?; rm -f "$file"; return "$rc"
+  fi
+  while IFS= read -r -d '' name; do
+    IFS= read -r -d '' value || { rm -f "$file"; return 1; }
+    while [[ "$value" = *$'\n' ]]; do value="${value%$'\n'}"; done
+    printf -v "$name" '%s' "$value" || { rm -f "$file"; return 1; }
+  done < "$file"
+  rm -f "$file"
+  # The renderer owns advisory risk validation; the tier has no authority.
+  if [ "$_bureau_has_risk_tier" = true ]; then
+    ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-acceptance.py" --validate-config "$BUREAU_CONFIG" ) || exit 24
+  fi
+}
+_bureau_load_config || exit $?
 
-# _bureau_config_number <path> <default> <min> <max>. Check the JSON text
-# before shell capture can discard NULs or trailing newlines. Absent/null keeps
-# the default; every other value goes through the same consumer-side guard.
+# _bureau_config_number <path> <default> <min> <max> [source-time value].
+# Live callers still read JSON; the loader already checked cached numeric text
+# before Bash could discard NULs or newlines. Absent/null keeps the default.
 _bureau_config_number() {
   local path="$1" default="$2" min="$3" max="$4" raw
-  raw=$(bureau_get "$path | if . == null then \"$default\" else (if type == \"string\" then . else tojson end) end
-    | if (explode | all(. >= 48 and . <= 57)) then . else \"invalid\" end" 2>/dev/null) || raw=invalid
+  if [ "$#" = 5 ]; then
+    raw="$5"
+    [ "$raw" != default ] || raw="$default"
+  else
+    raw=$(bureau_get "$path | if . == null then \"$default\" else (if type == \"string\" then . else tojson end) end
+      | if (explode | all(. >= 48 and . <= 57)) then . else \"invalid\" end" 2>/dev/null) || raw=invalid
+  fi
   bureau_number "$path" "$raw" "$default" "$min" "$max"
 }
 
-# Linear config
-BUREAU_TEAM_KEY=$(bureau_get '.linear.teams[0].key')
-BUREAU_TEAM_ID=$(bureau_get '.linear.teams[0].id')
-BUREAU_TEAM_NAME=$(bureau_get '.linear.teams[0].name')
-
-# States
-BUREAU_STATE_TRIAGE=$(bureau_get '.linear.teams[0].states.triage')
-BUREAU_STATE_SPEC=$(bureau_get '.linear.teams[0].states.spec')
-BUREAU_STATE_SPEC_REVIEW=$(bureau_get '.linear.teams[0].states.spec_review')
-BUREAU_STATE_DESIGN=$(bureau_get '.linear.teams[0].states.design')
-BUREAU_STATE_BUILD=$(bureau_get '.linear.teams[0].states.build')
-BUREAU_STATE_BUILD_REVIEW=$(bureau_get '.linear.teams[0].states.build_review')
-BUREAU_STATE_DONE=$(bureau_get '.linear.teams[0].states.done')
-# Optional states (empty string when not configured in .bureau.json).
-# qa slots between Build and Build Review. copy slots between Design and Build
-# (or between Spec Review and Build if no Design stage). merge slots between
-# Build Review and Done — opt-in waiting room for the gated merge agent.
-BUREAU_STATE_QA=$(bureau_get '.linear.teams[0].states.qa // empty')
-BUREAU_STATE_COPY=$(bureau_get '.linear.teams[0].states.copy // empty')
-BUREAU_STATE_MERGE=$(bureau_get '.linear.teams[0].states.merge // empty')
-
-# Labels
-BUREAU_LABEL_LANE2=$(bureau_get '.linear.labels.lane2.id')
-BUREAU_LABEL_LANE2_NAME=$(bureau_get '.linear.labels.lane2.name')
-BUREAU_LABEL_NEEDS_HUMAN=$(bureau_get '.linear.labels.needs_human.id')
-BUREAU_LABEL_NEEDS_UX=$(bureau_get '.linear.labels.needs_ux.id')
-BUREAU_LABEL_AI_IMPL=$(bureau_get '.linear.labels.ai_implementable.id')
-# Optional: copywriter gate. Absence → copy pipeline is disabled for this repo.
-BUREAU_LABEL_NEEDS_COPY_NAME=$(bureau_get '.linear.labels.needs_copy.name // empty')
-
-# Optional: path to a copy voice guide (markdown). Read by copy-pipeline.sh.
-BUREAU_COPY_VOICE_FILE=$(bureau_get '.repo.copy_voice_file // empty')
-
 # Agent config
-BUREAU_POLL_INTERVAL=$(_bureau_config_number .agents.poll_interval_minutes 30 1 10080)
+BUREAU_POLL_INTERVAL=$(_bureau_config_number .agents.poll_interval_minutes 30 1 10080 "$BUREAU_POLL_INTERVAL")
 # Seed fresh tick processes in poll-sized buckets: one configured periodic
 # tick advances one turn, rather than aliasing N tickets every N*10 seconds.
 # Persisted cursors take priority; this turn is only the refused-write fallback.
 _BUREAU_WAIT_SWEEP_TURN=$((_BUREAU_WAIT_SWEEP_TURN / (60 * BUREAU_POLL_INTERVAL)))
-BUREAU_WORKBENCH_PANES=$(_bureau_config_number .agents.workbench_panes 2 0 32)
+BUREAU_WORKBENCH_PANES=$(_bureau_config_number .agents.workbench_panes 2 0 32 "$BUREAU_WORKBENCH_PANES")
 # Process lanes, distinct from the in-flight ticket cap below. Batch orchestration
 # and the continuous dispatcher share this setting; CLI/env compatibility wins.
-BUREAU_PARALLEL_LANES=$(_bureau_config_number .agents.parallel_lanes 2 1 1000)
-BUREAU_MAX_REVIEW_CYCLES=$(_bureau_config_number .agents.max_review_cycles 3 0 1000)
-BUREAU_MAX_REVIEW_ROUNDS=$(_bureau_config_number .agents.max_review_rounds "$((BUREAU_MAX_REVIEW_CYCLES + 1))" 1 1001)
-BUREAU_REVIEW_MIN_SEVERITY=$(bureau_get '.agents.review_min_severity | if . == null then "BUG" elif . == "BUG" or . == "MINOR" then . else "MINOR" end')
+BUREAU_PARALLEL_LANES=$(_bureau_config_number .agents.parallel_lanes 2 1 1000 "$BUREAU_PARALLEL_LANES")
+BUREAU_MAX_REVIEW_CYCLES=$(_bureau_config_number .agents.max_review_cycles 3 0 1000 "$BUREAU_MAX_REVIEW_CYCLES")
+BUREAU_MAX_REVIEW_ROUNDS=$(_bureau_config_number .agents.max_review_rounds "$((BUREAU_MAX_REVIEW_CYCLES + 1))" 1 1001 "$BUREAU_MAX_REVIEW_ROUNDS")
 # Code-review diff size at which specialists switch from exhaustive to
 # critical-path sampling. Repos with mature CI / type-safety can review
 # bigger diffs exhaustively; legacy repos cap lower. Configurable per repo.
-BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD=$(_bureau_config_number .agents.code_review_sampling_threshold 500 0 10000000)
+BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD=$(_bureau_config_number .agents.code_review_sampling_threshold 500 0 10000000 "$BUREAU_CODE_REVIEW_SAMPLING_THRESHOLD")
 # How merge-pipeline closes the PR. Valid: squash | merge | rebase. Default
 # squash so shipped main never carries the in-development merge commits the
 # pipelines accumulate. Repos that want explicit merge-commit history (or
@@ -460,8 +488,7 @@ bureau_get_agent_model() {
 # Higher values bound parallelism without forbidding it. Only spec-pipeline
 # honours this; downstream stages keep operating on whatever's already in
 # flight so a cap of 1 doesn't deadlock the loop.
-BUREAU_MAX_CONCURRENT_ISSUES=$(_bureau_config_number .agents.max_concurrent_issues 0 0 1000)
-BUREAU_MERGE_STRATEGY=$(bureau_get '.agents.merge_strategy // "squash"')
+BUREAU_MAX_CONCURRENT_ISSUES=$(_bureau_config_number .agents.max_concurrent_issues 0 0 1000 "$BUREAU_MAX_CONCURRENT_ISSUES")
 case "$BUREAU_MERGE_STRATEGY" in
   squash|merge|rebase) ;;
   *)
@@ -487,7 +514,6 @@ esac
 # it must never switch automatic merging on. jq compares the raw value, so the
 # shell never sees a trailing newline it could strip. Read from .bureau.json
 # only, no env override. bureau-doctor.py applies the same rule.
-BUREAU_MERGE_MODE=$(bureau_get '.agents.merge_mode | if . == null then "auto" elif . == "auto" or . == "manual" then . else tojson end')
 case "$BUREAU_MERGE_MODE" in
   auto|manual) ;;
   *)
@@ -517,14 +543,6 @@ stop_before_merge_was_asked() {
   [ "${1:-}" = 20 ] && bureau_stop_requested
 }
 # ── End of merge policy ───────────────────────────────────────────────
-
-# Repo config
-BUREAU_BRANCH_PREFIX=$(bureau_get '.repo.branch_prefix // "feat"')
-BUREAU_COMMIT_PREFIX=$(bureau_get '.repo.commit_prefix // ""')
-BUREAU_SPECS_DIR=$(bureau_get '.repo.specs_dir // "specs"')
-
-# Projects filter (comma-separated UUIDs; empty = all projects in the team)
-BUREAU_PROJECTS=$(bureau_get '.linear.projects // [] | join(",")')
 
 # bureau_gh_pr_retry <pushed-branch> <verb> [args...]. Only for implement's
 # post-push PR step: keep stdout clean for the URL/number capture, retry HTTP
@@ -4697,26 +4715,6 @@ codex_sandbox_gate_only() {
               else .reason | startswith("SANDBOX_GATE:") end)
             end
         end
-    end' 2>/dev/null) || return 1
-  [ "$parsed" = true ]
-}
-
-# codex_qa_sandbox_gate_only RESULT: QA's NEEDS_HUMAN with string coverage_notes
-# beginning with SANDBOX_GATE:. The same strict single-object/envelope reading
-# as codex_sandbox_gate_only, below parse_claude_json for the stage harness.
-codex_qa_sandbox_gate_only() {
-  local parsed
-  parsed=$(printf '%s' "$1" | jq -ers '
-    if length != 1 or (.[0] | type) != "object" then false
-    else
-      .[0] | if has("result") then
-        if (.result | type) == "string" then .result | fromjson else null end
-      else . end
-      | if type != "object" then false
-        elif has("blockers") then false
-        elif .status != "NEEDS_HUMAN" then false
-        elif (.coverage_notes | type) != "string" then false
-        else .coverage_notes | startswith("SANDBOX_GATE:") end
     end' 2>/dev/null) || return 1
   [ "$parsed" = true ]
 }

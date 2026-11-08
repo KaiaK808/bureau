@@ -227,6 +227,7 @@ printf '#!/bin/bash\nexit "${STUB_RC:-20}"\n' > "$Q/scripts/bureau-worker.sh"
 {
   echo 'bureau_get() { jq -r "$1" "$Q/.bureau.json"; }'
   sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REAL_CONFIG"
+  sed -n 's/^      BUREAU_MERGE_MODE: \(.*\),$/BUREAU_MERGE_MODE=$(bureau_get '\''\1'\'')/p' "$REAL_CONFIG"
   sed -n '/^# ── Merge policy (agents.merge_mode)/,/^# ── End of merge policy/p' "$REAL_CONFIG"
   sed -n '/^exit_class() {/,/^}/p' "$REAL_CONFIG"
   sed -n '/^run_script() {/,/^}/p' "$REPO_ROOT/templates/scripts/queue-loop.sh"

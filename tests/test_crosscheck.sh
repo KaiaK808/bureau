@@ -81,11 +81,44 @@ export GH_STUB_TSV="$SB/prs.tsv"
 prs() { if [ "$#" -eq 0 ]; then : > "$GH_STUB_TSV"; else printf '%s\n' "$@" > "$GH_STUB_TSV"; fi; }
 
 # --- runners -----------------------------------------------------------------
+export CROSSCHECK_REAL_JQ="$(command -v jq)" CROSSCHECK_PREFIX_CALLS="$SB/prefix.calls"
+cat > "$SB/bin/jq" <<'EOF'
+#!/bin/bash
+for arg do
+  if [ "$arg" = '.repo.path_prefix_strip // empty' ]; then printf '.\n' >> "$CROSSCHECK_PREFIX_CALLS"; fi
+done
+exec "$CROSSCHECK_REAL_JQ" "$@"
+EOF
+chmod +x "$SB/bin/jq"
+mkdir -p "$SB/serial"
+cp "$SCRIPTS/bureau-config.sh" "$SCRIPTS/bureau-env.sh" "$SB/serial/"
+python3 - "$SCRIPTS/crosscheck-specs.sh" "$SB/serial/crosscheck-specs.sh" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text()
+start = text.index('_prefix=""\nif [ "$OVERLAP_GATE" != true ]; then\n')
+end = text.index('\nt=0', start)
+lookup = text[start:end].splitlines()[2].strip()
+text = text[:start] + text[end:]
+text = text.replace('        clean_planned="${planned#./}"', '        ' + lookup + '\n        clean_planned="${planned#./}"')
+Path(sys.argv[2]).write_text(text)
+PY
 xcheck() {  # run the real script under /bin/bash in the fixture; sets OUT and RC
+  local serial_rc
+  : > "$CROSSCHECK_PREFIX_CALLS"
   set +e
-  OUT=$(cd "$REPO" && PATH="$SB/bin:$PATH" /bin/bash "$SCRIPTS/crosscheck-specs.sh" "$@" 2>&1)
+  (cd "$REPO" && PATH="$SB/bin:$PATH" /bin/bash "$SCRIPTS/crosscheck-specs.sh" "$@") > "$SB/current.out" 2>&1
   RC=$?
+  PREFIX_READS=$(wc -l < "$CROSSCHECK_PREFIX_CALLS" | tr -d ' ')
+  : > "$CROSSCHECK_PREFIX_CALLS"
+  (cd "$REPO" && PATH="$SB/bin:$PATH" /bin/bash "$SB/serial/crosscheck-specs.sh" "$@") > "$SB/serial.out" 2>&1
+  serial_rc=$?
+  SERIAL_PREFIX_READS=$(wc -l < "$CROSSCHECK_PREFIX_CALLS" | tr -d ' ')
   set -e
+  OUT=$(cat "$SB/current.out")
+  [ "$PREFIX_READS" -le 1 ] || fail "prefix was read $PREFIX_READS times"
+  [ "$RC" = "$serial_rc" ] && cmp -s "$SB/current.out" "$SB/serial.out" || fail "hoisted prefix changed output or exit code"
 }
 last_line() { printf '%s\n' "$OUT" | awk 'NF { l = $0 } END { print l }'; }
 expect() {  # $1 = rc, $2 = result line, $3 = label
@@ -125,6 +158,7 @@ echo "PASS a conflict names PR, branch and file, exit 3"
 prs $'12\tfeat/zwei\tZwei' $'13\tfeat/drei/mit-slash\tDrei' $'14\tfeat/zwei\tZwei again'
 xcheck "$TASKS"
 expect 0 "CROSSCHECK RESULT: clean open=3 compared=3 paths=1 unchecked=-" "three clean PRs"
+[ "$PREFIX_READS" = 1 ] && [ "$SERIAL_PREFIX_READS" = 3 ] || fail "prefix counter did not distinguish the nested-loop control"
 echo "PASS three open PRs without overlap run through under /bin/bash and count as compared"
 
 prs

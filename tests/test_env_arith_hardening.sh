@@ -204,6 +204,8 @@ if _throttle_should_suppress fixture 3600; then printf suppress; else printf all
     # NUL/newline), before poll/pane/spec/review/throttle arithmetic consumes them.
     setting = function('_bureau_config_number')
     bootstrap = '_BUREAU_SCRIPTS_DIR=$1\nbureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }\n' + setting + '\n'
+    loader = function('_bureau_load_config')
+    if loader: bootstrap += loader + '\n_bureau_load_config\n'
     settings = [
         ('.agents.poll_interval_minutes', 'BUREAU_POLL_INTERVAL', 30, 1, 10080),
         ('.agents.workbench_panes', 'BUREAU_WORKBENCH_PANES', 2, 0, 32),

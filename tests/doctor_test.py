@@ -27,6 +27,18 @@ class DoctorTests(unittest.TestCase):
         self.path=self.repo/'.bureau.json';self.path.write_text(json.dumps(self.config))
         self.env=patch.dict(os.environ,{'BUREAU_CONFIG':str(self.path)});self.env.start();self.addCleanup(self.env.stop)
 
+    def test_cached_modules_keep_diagnostics_and_config_reads_live(self):
+        d.module.cache_clear()
+        before=d.diagnose(self.repo,'app')
+        with patch.object(d.importlib.util,'spec_from_file_location',wraps=d.importlib.util.spec_from_file_location) as load:
+            self.assertEqual(json.dumps(d.diagnose(self.repo,'app'),sort_keys=True),json.dumps(before,sort_keys=True))
+            load.assert_not_called()
+        self.config['agents']['merge_mode']='manual';self.path.write_text(json.dumps(self.config))
+        after=d.diagnose(self.repo,'app')
+        self.assertNotEqual(after,before)
+        with patch.object(d,'module',d.module.__wrapped__):
+            self.assertEqual(json.dumps(d.diagnose(self.repo,'app'),sort_keys=True),json.dumps(after,sort_keys=True))
+
     def test_preview_apply_backup_and_idempotence(self):
         before=self.path.read_bytes()
         result=d.migration(self.path); self.assertTrue(result['changed']);self.assertEqual(self.path.read_bytes(),before)

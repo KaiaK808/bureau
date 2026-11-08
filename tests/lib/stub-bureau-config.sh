@@ -52,7 +52,6 @@ _record() {
 
 # ── Constants ────────────────────────────────────────────────────────────
 BUREAU_TEAM_KEY="EXP"
-BUREAU_TEAM_ID="00000000-0000-0000-0000-000000000001"
 BUREAU_TEAM_NAME="Experimental"
 
 BUREAU_STATE_TRIAGE="state-triage"
@@ -68,9 +67,6 @@ BUREAU_STATE_MERGE="${BUREAU_STUB_STATE_MERGE:-}"  # set to "state-merge" to ena
 
 BUREAU_LABEL_LANE2="label-lane2"
 BUREAU_LABEL_LANE2_NAME="lane-2"
-BUREAU_LABEL_NEEDS_HUMAN="label-needs-human"
-BUREAU_LABEL_NEEDS_UX="label-needs-ux"
-BUREAU_LABEL_AI_IMPL="label-ai-impl"
 BUREAU_LABEL_NEEDS_COPY_NAME=""
 
 BUREAU_COPY_VOICE_FILE=""
@@ -84,7 +80,6 @@ BUREAU_MAX_CONCURRENT_ISSUES=0
 BUREAU_MERGE_STRATEGY="squash"
 
 BUREAU_BRANCH_PREFIX="feat"
-BUREAU_COMMIT_PREFIX=""
 BUREAU_SPECS_DIR="${SANDBOX}/specs"
 
 BUREAU_PROJECTS=""
