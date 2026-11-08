@@ -100,6 +100,7 @@ base = Path(sys.argv[2]); base.mkdir()
 origin, repo = base / 'origin.git', base / 'main checkout'
 def git(cwd, *a): subprocess.run(['git', '-C', str(cwd), *a], check=True, capture_output=True)
 git(base, 'init', '-q', '--bare', str(origin)); git(base, 'init', '-q', '-b', 'main', str(repo))
+git(origin, 'config', 'maintenance.auto', 'false'); git(repo, 'config', 'maintenance.auto', 'false')
 git(repo, 'config', 'user.name', 't'); git(repo, 'config', 'user.email', 't@t')
 git(repo, 'commit', '-q', '--allow-empty', '-m', 'init'); git(repo, 'remote', 'add', 'origin', str(origin)); git(repo, 'push', '-q', 'origin', 'main')
 store = r.Store(repo)

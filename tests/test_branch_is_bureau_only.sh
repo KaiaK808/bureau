@@ -39,13 +39,13 @@ cat > "$SANDBOX/.bureau.json" <<'EOF'
 EOF
 
 # Build a git sandbox with a bare origin so origin/main and origin/<branch> resolve.
-git -C "$SANDBOX" init -q -b main
+git -C "$SANDBOX" init -q -b main; git -C "$SANDBOX" config maintenance.auto false
 git -C "$SANDBOX" config user.email "test@bureau"
 git -C "$SANDBOX" config user.name  "Bureau Test"
 git -C "$SANDBOX" commit -q --allow-empty -m "init main"
 
 ORIGIN="$SANDBOX/.fake-origin.git"
-git init -q --bare "$ORIGIN"
+git init -q --bare "$ORIGIN"; git -C "$ORIGIN" config maintenance.auto false
 git -C "$SANDBOX" remote add origin "$ORIGIN"
 git -C "$SANDBOX" push -q origin main
 

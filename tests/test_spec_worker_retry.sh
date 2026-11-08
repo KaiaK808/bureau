@@ -79,7 +79,7 @@ for mode in local local-only local-ahead remote remote-rework fresh-worker diver
     local-only) git --git-dir="$SEED/.fake-origin.git" update-ref -d refs/heads/004-exp-910 ;;
     remote) git -C "$SEED" branch -D 004-exp-910 >/dev/null ;;
     remote-rework|diverged)
-      git clone -q --branch 004-exp-910 "$SEED/.fake-origin.git" "$SEED/reviewer"
+      git clone -c maintenance.auto=false -q --branch 004-exp-910 "$SEED/.fake-origin.git" "$SEED/reviewer"
       git -C "$SEED/reviewer" config user.email test@bureau
       git -C "$SEED/reviewer" config user.name Reviewer
       echo '# pushed review revisions' > "$SEED/reviewer/specs/004-exp-910/spec.md"

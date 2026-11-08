@@ -26,7 +26,7 @@ MAIN="$TMP/main"; WT="$TMP/wt"
 setup() {  # main checkout with installed deps, plus a fresh linked worktree cleaned like reset_worktree
   rm -rf "$MAIN" "$WT"
   mkdir -p "$MAIN"
-  git -C "$MAIN" init -q -b main
+  git -C "$MAIN" init -q -b main; git -C "$MAIN" config maintenance.auto false
   git -C "$MAIN" config user.email t@t; git -C "$MAIN" config user.name t
   printf '{"name":"p","version":"1.0.0"}\n' > "$MAIN/package.json"
   printf '{"lockfileVersion":3}\n'          > "$MAIN/package-lock.json"

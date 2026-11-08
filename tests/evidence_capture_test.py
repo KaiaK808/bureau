@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+import git_maintenance
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'templates/scripts'
 MERGE = Path(os.environ.get('BUREAU_TEST_MERGE_SCRIPT', SCRIPTS / 'merge-pipeline.sh'))
@@ -97,6 +99,7 @@ bureau_evidence() { echo unexpected-evidence; }
         helper = '\n'.join((function(SCRIPTS / 'qa-pipeline.sh', 'qa_run_gate'),
                             function(CONFIG, 'bureau_run_gate'), function(CONFIG, 'bureau_ticket_policy')))
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
+        git_maintenance.disable(self.root)
         for code in (0, 14):
             with self.subTest(code=code):
                 (self.root / 'qa.log').unlink(missing_ok=True)

@@ -54,7 +54,7 @@ no_secret() {
 repo() {
   local r="$1" h
   rm -rf "$r" "$r.origin"; mkdir -p "$r"
-  git -C "$r" init -q -b main; git -C "$r" config user.email t@t; git -C "$r" config user.name t
+  git -C "$r" init -q -b main; git -C "$r" config maintenance.auto false; git -C "$r" config user.email t@t; git -C "$r" config user.name t
   mkdir -p "$r/.githooks" "$r/.gitfilter"
   for h in pre-commit commit-msg post-checkout pre-push fsmonitor cred; do printf '#!/bin/sh\nexit 0\n' > "$r/.githooks/$h"; chmod +x "$r/.githooks/$h"; done
   printf '#!/bin/sh\ncat\n' > "$r/.gitfilter/clean.sh"
@@ -62,7 +62,7 @@ repo() {
   printf '.bureau.json\n.env\n' > "$r/.git/info/exclude"
   printf '{"repo":{}}\n' > "$r/.bureau.json"
   git -C "$r" add -A; git -C "$r" commit -q -m init
-  git init -q --bare "$r.origin"; git -C "$r" remote add origin "$r.origin"; git -C "$r" push -q origin main
+  git init -q --bare "$r.origin"; git -C "$r.origin" config maintenance.auto false; git -C "$r" remote add origin "$r.origin"; git -C "$r" push -q origin main
   git -C "$r" checkout -q -b feat
   for h in pre-commit commit-msg post-checkout pre-push; do
     printf '#!/bin/sh\n{ echo "--- run"; env; } >> "%s/%s.env"\ncat >/dev/null 2>&1 || true\nexit 0\n' "$MARKS" "$h" > "$r/.githooks/$h"

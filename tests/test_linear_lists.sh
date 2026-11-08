@@ -20,7 +20,7 @@ trap 'rm -rf "$SB"' EXIT
 unset BUREAU_CONFIG BUREAU_DRY_RUN 2>/dev/null || true
 fail() { echo "FAIL $*" >&2; printf '  | rc=%s out=%s calls=%s waits=%s\n  | err=%s\n' "${RC:-}" "${OUT:-}" "${CALLS:-}" "${WAITS:-}" "${ERR:-}" >&2; exit 1; }
 
-git -C "$SB" init -q
+git -C "$SB" init -q; git -C "$SB" config maintenance.auto false
 cat > "$SB/.bureau.json" <<'EOF'
 {
   "linear": {

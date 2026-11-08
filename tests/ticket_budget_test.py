@@ -10,7 +10,10 @@ import sys
 import tempfile
 import time
 import unittest
+
 import uuid
+
+import git_maintenance
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -185,6 +188,7 @@ class AdapterFixture(unittest.TestCase):
         for name in ('codex','claude'):
             path=self.bin/name; path.write_text(FAKE.replace('#!/usr/bin/env python3','#!'+sys.executable)); path.chmod(0o755)
         subprocess.run(['git','init','-q','-b','main',str(self.repo)],check=True)
+        git_maintenance.disable(self.repo)
         subprocess.run(['git','-C',str(self.repo),'-c','user.name=fixture','-c','user.email=test@example.invalid',
                         'commit','--allow-empty','-qm','foundation'],check=True)
         self.env = {k:v for k,v in os.environ.items() if not k.startswith('BUREAU_')}

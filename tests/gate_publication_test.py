@@ -7,7 +7,10 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+
 import uuid
+
+import git_maintenance
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,6 +31,7 @@ class PublicationTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name)
         self.git('init', '-q', '-b', 'main')
+        git_maintenance.disable(self.repo)
         self.git('config', 'user.name', 'Publication test')
         self.git('config', 'user.email', 'test@bureau.invalid')
         (self.repo / 'feature.py').write_text('original\n')

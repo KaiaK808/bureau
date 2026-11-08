@@ -40,7 +40,7 @@ chmod +x "$SB/bin/curl"
 
 new_repo() {  # <dir>
   mkdir -p "$1"
-  git -C "$1" init -q
+  git -C "$1" init -q; git -C "$1" config maintenance.auto false
   git -C "$1" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   cat > "$1/.bureau.json" <<'EOF'
 {

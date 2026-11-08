@@ -46,7 +46,7 @@ kind() { if [ -L "$1" ]; then echo "link:$(readlink "$1")"; elif [ -e "$1" ]; th
 setup() {
   unlock 2>/dev/null; rm -rf "$MAIN" "$WT"
   mkdir -p "$MAIN"
-  git -C "$MAIN" init -q -b main
+  git -C "$MAIN" init -q -b main; git -C "$MAIN" config maintenance.auto false
   git -C "$MAIN" config user.email t@t; git -C "$MAIN" config user.name t
   printf '%s\n' .env '.env.*' .envrc .ENV.Local 'config/.env.production' secrets conf upper '.Envs/prod' alias locked \
     'tools/.Envs/key' settings deep deeper .venv my.env env looped linkdir > "$MAIN/.gitignore"

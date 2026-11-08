@@ -242,6 +242,7 @@ class CheckpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             repo=Path(scratch)
             subprocess.run(['git','init','-q','-b','main',str(repo)],check=True)
+            git_maintenance.disable(repo)
             own=repo/'specs/001-team-1'; own.mkdir(parents=True)
             source='''import importlib.util, os, sys
 module=importlib.util.spec_from_file_location('spec_cli',sys.argv[1])
@@ -273,6 +274,7 @@ sys.exit(spec.main())
                     with self.subTest(method=method,error=error,code=code), tempfile.TemporaryDirectory() as scratch:
                         repo=Path(scratch)
                         subprocess.run(['git','init','-q','-b','main',str(repo)],check=True)
+                        git_maintenance.disable(repo)
                         (repo/'.bureau.json').write_text('{}')
                         args=argparse.Namespace(workspace=None,entry='spec-pipeline.sh',issue='TEAM-1',
                             command=['bash','-c','[ "$BUREAU_SPEC_CHECKPOINTS_DISABLED" = 1 ] && '
@@ -772,8 +774,7 @@ run_stage_for() {
 
     def advance_remote_feature(self):
         other=self.root/'another clone'
-        self.git('clone','-q','--branch','001-team-1',str(self.root/'origin.git'),str(other))
-        self.git(*git_maintenance.OFF_CONFIG,repo=other)
+        self.git('clone',*git_maintenance.CLONE_CONFIG,'-q','--branch','001-team-1',str(self.root/'origin.git'),str(other))
         self.git('config','user.name','Other maintainer',repo=other)
         self.git('config','user.email','other@invalid',repo=other)
         (other/'specs/001-team-1/clarification.md').write_text('Remote review clarification\n')

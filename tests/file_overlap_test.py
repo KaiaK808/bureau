@@ -14,9 +14,10 @@ import time
 import unittest
 from unittest.mock import patch
 
+import git_maintenance
 from process_helpers import (COMMAND_TIMEOUT_SECONDS, PIPELINE_TIMEOUT_SECONDS,
                              PROCESS_EXIT_TIMEOUT_SECONDS, communicate_until,
-                             process_running, wait_for_processes_exit)
+                             running_processes, wait_for_processes_exit)
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,6 +119,7 @@ class Fixture(unittest.TestCase):
         self.remote = self.root / 'origin.git'; self.bin = self.root / 'bin'; self.bin.mkdir()
         self.children = []; self.addCleanup(self.stop_children)
         self.run_cmd(['git', 'init', '-q', '--bare', str(self.remote)])
+        git_maintenance.disable(self.remote)
         self.g('init', '-q', '-b', 'main'); self.g('config', 'user.email', 'test@bureau'); self.g('config', 'user.name', 'Test')
         self.g('config','maintenance.auto','false'); self.g('config','gc.auto','0'); self.g('config','fetch.writeCommitGraph','false')
         self.g('remote', 'add', 'origin', str(self.remote))
@@ -150,7 +152,7 @@ class Fixture(unittest.TestCase):
             # Pipe closure can precede interpreter teardown on a loaded runner.
             # Audit every PID first: hundreds of historical transports can take
             # longer to inspect than the teardown grace itself on slow macOS CI.
-            pids = {pid for pid in pids if process_running(pid)}
+            pids = running_processes(pids)
             # Give potential survivors one shared grace, never one per PID.
             survivors = wait_for_processes_exit(pids, time.monotonic() + PROCESS_EXIT_TIMEOUT_SECONDS)
             self.assertFalse(survivors, 'fake transport survived fixture: '+str(sorted(survivors)))

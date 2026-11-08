@@ -40,6 +40,7 @@ if sys.argv[1] == '--self-check':
     with tempfile.TemporaryDirectory(prefix='bureau-internal-refs-') as scratch:
         root = Path(scratch).resolve()
         subprocess.run(['git', 'init', '-q', str(root)], check=True)
+        subprocess.run(['git', '-C', str(root), 'config', 'maintenance.auto', 'false'], check=True)
         (root/'.gitignore').write_text('__pycache__/\n*.pyc\nignored-tracked.txt\n')
         tracked = root/'templates/ignored-tracked.txt'
         tracked.parent.mkdir()

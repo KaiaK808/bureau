@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import git_maintenance
+
 import supervision_pipeline_test as fixture
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +42,7 @@ class MergeTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-review-merge-'); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.repo = self.root / 'repo'; self.repo.mkdir()
-        self.git('init', '-qb', 'main'); self.git('config', 'user.name', 'Test'); self.git('config', 'user.email', 'test@bureau')
+        self.git('init', '-qb', 'main'); git_maintenance.disable(self.repo); self.git('config', 'user.name', 'Test'); self.git('config', 'user.email', 'test@bureau')
         (self.repo / 'kept.txt').write_bytes(b'first\r\nsecond\nthird')
         (self.repo / 'deleted.txt').write_bytes(b'deleted base code\n')
         (self.repo / 'SPEC.md').write_text('Relevant contract.\n')

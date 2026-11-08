@@ -42,7 +42,7 @@ VERDICT_RC=$(jq -n --arg c "$(printf '%b' "$COMMENT")" '{verdict:"REQUEST_CHANGE
 
 # ── 1. the provider enforces the schema ────────────────────────────────────
 mkdir -p "$P/bin" "$P/repo"
-git -C "$P/repo" init -q
+git -C "$P/repo" init -q; git -C "$P/repo" config maintenance.auto false
 git -C "$P/repo" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m 'test: provider base'
 PROVIDER_BASE=$(git -C "$P/repo" rev-parse HEAD)
 cat > "$P/bin/claude" <<'EOF'

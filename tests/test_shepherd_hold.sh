@@ -109,7 +109,7 @@ chmod +x "$SB/bin/curl"
 new_repo() {
   REPO=$(mktemp -d "$SB/repo XXXXXXXX")
   mkdir -p "$REPO/scripts"
-  git -C "$REPO" init -q
+  git -C "$REPO" init -q; git -C "$REPO" config maintenance.auto false
   git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   cp "$SCRIPTS"/*.sh "$SCRIPTS"/*.py "$REPO/scripts/"
   cat > "$REPO/scripts/bureau-worker.sh" <<WORKER

@@ -43,7 +43,7 @@ warned() { case "$OUT" in *"$1"*) : ;; *) fail "$2: expected a warning containin
 setup() {
   rm -rf "$MAIN" "$WT" "$OUTSIDE"
   mkdir -p "$MAIN" "$OUTSIDE"
-  git -C "$MAIN" init -q -b main
+  git -C "$MAIN" init -q -b main; git -C "$MAIN" config maintenance.auto false
   git -C "$MAIN" config user.email t@t; git -C "$MAIN" config user.name t
   : > "$MAIN/.gitignore"
   local line
@@ -211,7 +211,7 @@ echo "PASS a parent that runs through a symlink inside the worktree is refused w
 
 # 15 · a bare repository has no main checkout: nothing is linked from its parent directory.
 rm -rf "$TMP/bare proj"; mkdir -p "$TMP/bare proj"
-git -C "$MAIN" clone -q --bare "$MAIN" "$TMP/bare proj/repo.git"
+git -C "$MAIN" clone -c maintenance.auto=false -q --bare "$MAIN" "$TMP/bare proj/repo.git"
 git -C "$TMP/bare proj/repo.git" worktree add -q "$TMP/bare proj/wt" main 2>/dev/null
 mkdir -p "$TMP/bare proj/.venv"
 links '[".venv"]'
@@ -223,7 +223,7 @@ echo "PASS a worktree of a bare repository gets no links"
 # 16 · a git directory kept outside the main checkout (--separate-git-dir): its parent is not
 # the main checkout, so nothing is linked from there, and the message says why.
 rm -rf "$TMP/sep"; mkdir -p "$TMP/sep"
-git init -q -b main --separate-git-dir "$TMP/sep/store.git" "$TMP/sep/main checkout"
+git init -q -b main --separate-git-dir "$TMP/sep/store.git" "$TMP/sep/main checkout"; git -C "$TMP/sep/main checkout" config maintenance.auto false
 git -C "$TMP/sep/main checkout" config user.email t@t; git -C "$TMP/sep/main checkout" config user.name t
 printf '.venv\n' > "$TMP/sep/main checkout/.gitignore"
 git -C "$TMP/sep/main checkout" add .gitignore; git -C "$TMP/sep/main checkout" commit -q -m init

@@ -16,6 +16,8 @@ import time
 import unittest
 import uuid
 from unittest.mock import Mock, patch
+
+import git_maintenance
 from selected_cases import selected_cases
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -1787,6 +1789,7 @@ p.Path.open=refuse_transcript_read
                 command=self.command()
                 if mode == 'runtime-timeout':
                     subprocess.run(['git','init','-q',str(self.root)],check=True)
+                    git_maintenance.disable(self.root)
                     env['BUREAU_CONFIG']=str(self.config)
                     command=[sys.executable,str(ROOT/'templates/scripts/bureau-runtime.py'),
                              '--repo',str(self.root),'exec','--issue','TEAM-123','--',*command]

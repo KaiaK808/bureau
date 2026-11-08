@@ -16,6 +16,17 @@ PIPELINE_TIMEOUT_SECONDS = 3 * COMMAND_TIMEOUT_SECONDS
 PROCESS_EXIT_TIMEOUT_SECONDS = 5
 
 
+def process_snapshot(command, *, check=False):
+    """Allow a loaded host one retry, with a finite budget for each scan."""
+    for attempt in range(2):
+        try:
+            return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  check=check, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            if attempt:
+                raise
+
+
 def communicate_until(child, deadline):
     """Drain both pipes and reap the leader within the caller's shared budget."""
     return child.communicate(timeout=max(0, deadline - time.monotonic()))
@@ -31,11 +42,9 @@ def wait_for_processes_exit(pids, deadline):
     """Return survivors after one shared deadline; inspection errors still fail."""
     remaining = set(pids)
     while remaining:
-        for pid in tuple(remaining):
-            if time.monotonic() >= deadline:
-                return remaining  # Uninspected PIDs are never assumed stopped.
-            if not process_running(pid):
-                remaining.remove(pid)
+        if time.monotonic() >= deadline:
+            return remaining  # Uninspected PIDs are never assumed stopped.
+        remaining = running_processes(remaining)
         if not remaining:
             break
         seconds = deadline - time.monotonic()
@@ -54,19 +63,36 @@ def process_running(pid):
         except (FileNotFoundError, ProcessLookupError):
             return False
         return state != 'Z'
-    result = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1)
-    state = result.stdout.strip()
-    if result.returncode or not state:
+    return pid in running_processes({pid})
+
+
+def running_processes(pids):
+    """Inspect a whole sweep with one bounded ps, rather than one per PID."""
+    pids = set(pids)
+    if not pids:
+        return set()
+    if sys.platform.startswith('linux'):
+        return {pid for pid in pids if process_running(pid)}
+    result = process_snapshot(['ps', '-o', 'pid=,stat=', '-p', ','.join(map(str, sorted(pids)))])
+    states = {}
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 2 or not fields[0].isdigit() or fields[1] == '?':
+            raise RuntimeError(f'ps returned an unreadable process state: {line!r}')
+        states[int(fields[0])] = fields[1]
+    for pid in pids - states.keys():
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
-            return False  # Including a PID that vanished while ps was reading.
+            continue  # Including a PID that vanished while ps was reading.
         if not result.returncode:
             raise RuntimeError(f'ps returned no state for running PID {pid}')
         raise subprocess.CalledProcessError(result.returncode, result.args,
                                             result.stdout, result.stderr)
-    return not state.startswith('Z')
+    if result.returncode and states:
+        raise subprocess.CalledProcessError(result.returncode, result.args,
+                                            result.stdout, result.stderr)
+    return {pid for pid in pids & states.keys() if not states[pid].startswith('Z')}
 
 
 def process_group_running(group):
@@ -109,8 +135,7 @@ def process_group_running(group):
         return not zombie_seen  # No visible members cannot prove zombie-only.
     zombie_seen = False
     try:
-        result = subprocess.run(['ps', '-axo', 'pid=,pgid=,stat='], text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=1)
+        result = process_snapshot(['ps', '-axo', 'pid=,pgid=,stat='], check=True)
         for line in result.stdout.splitlines():
             fields = line.split()
             if int(fields[1]) != group:

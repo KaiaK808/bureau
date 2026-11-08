@@ -20,8 +20,8 @@ REPO="$SB/repo"
 fail() { echo "FAIL $*" >&2; [ -n "${OUT:-}" ] && printf '%s\n' "$OUT" | sed 's/^/  | /' >&2; exit 1; }
 
 # --- fixture: a repo with an origin and four PR branches ---------------------
-git init -q --bare "$SB/origin.git"
-git init -q -b main "$REPO"
+git init -q --bare "$SB/origin.git"; git -C "$SB/origin.git" config maintenance.auto false
+git init -q -b main "$REPO"; git -C "$REPO" config maintenance.auto false
 git -C "$REPO" config user.email test@bureau
 git -C "$REPO" config user.name "Bureau Test"
 git -C "$REPO" remote add origin "$SB/origin.git"

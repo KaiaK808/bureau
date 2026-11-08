@@ -14,6 +14,8 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
+import git_maintenance
+
 sys.dont_write_bytecode = True
 SCRIPTS = Path(os.environ.get('BUREAU_TEST_GROUP_SCRIPTS', Path(__file__).resolve().parents[1] / 'templates/scripts'))
 
@@ -55,6 +57,7 @@ class ProcessGroupTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
+        git_maintenance.disable(self.root)
         self.control = self.root / '.git' / 'bureau'
         self.child = Mock(pid=123456, returncode=0)
         self.child.poll.return_value = 0

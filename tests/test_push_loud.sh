@@ -33,8 +33,8 @@ FN=$(sed -n '/^push_branch_loud() {/,/^}/p' "$REPO_ROOT/templates/scripts/implem
 [ -n "$FN" ] || fail "push_branch_loud not found in implement-pipeline.sh"
 D=$(mktemp -d -t bureau-test.push.XXXXXXXX)
 trap 'rm -rf "$D"' EXIT
-git init -q --bare "$D/origin.git"
-git init -q -b main "$D/repo"
+git init -q --bare "$D/origin.git"; git -C "$D/origin.git" config maintenance.auto false
+git init -q -b main "$D/repo"; git -C "$D/repo" config maintenance.auto false
 git -C "$D/repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 git -C "$D/repo" remote add origin "$D/origin.git"
 git -C "$D/repo" checkout -q --detach

@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 
 import git_maintenance
-from process_helpers import process_running
+from process_helpers import running_processes
 from ticket_kill_switch_test import WithdrawalFixture, STATES
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,6 +106,7 @@ class Watchdog(unittest.TestCase):
             path=self.bin/name; path.write_text(PROVIDER); path.chmod(0o755)
         (self.root/'writer.py').write_text(WRITER); (self.root/'pids').write_text('')
         subprocess.run(['git','init','-q',str(self.root)],check=True,env=self.env)
+        git_maintenance.disable(self.root)
         subprocess.run(['git','-C',str(self.root),'-c','user.name=Test','-c','user.email=test@bureau',
                         'commit','-qm','fixture','--allow-empty'],check=True,env=self.env)
         self.config=self.root/'config.json'; self.prompt=self.root/'prompt'; self.prompt.write_text('fixture')
@@ -122,18 +123,16 @@ class Watchdog(unittest.TestCase):
         return [sys.executable,str(SCRIPT),'--stage','implement','--repo',str(self.root),'--config',str(self.config),
                 '--prompt-file',str(self.prompt),'--schema',str(self.schema)]
 
-    def run_provider(self, mode='silent', code=25, **env):
+    def run_provider(self, mode='silent', code=25, outer_timeout=8, **env):
         started=time.monotonic()
-        result=subprocess.run(self.command(),capture_output=True,text=True,env={**self.env,'SILENCE_MODE':mode,**env},timeout=8)
+        result=subprocess.run(self.command(),capture_output=True,text=True,env={**self.env,'SILENCE_MODE':mode,**env},timeout=outer_timeout)
         if code is not None: self.assertEqual(code,result.returncode,result.stdout+result.stderr)
         metadata=json.loads(next((self.root/'logs').glob('*/result.json')).read_text())
         return result,metadata,time.monotonic()-started
 
     def no_survivors(self):
         live=[]
-        for raw in set((self.root/'pids').read_text().splitlines()):
-            pid=int(raw)
-            if not process_running(pid): continue
+        for pid in running_processes(map(int, (self.root/'pids').read_text().splitlines())):
             live.append(pid)
             try: os.kill(pid,signal.SIGKILL)
             except ProcessLookupError: pass
