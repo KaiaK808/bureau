@@ -28,13 +28,28 @@ class DispositionTests(unittest.TestCase):
         reports['correctness'] = fixture.specialist('correctness', [fixture.finding('Deferred detail', 'MINOR', file=path)])
         for role, report in reports.items():
             (directory / (role + '.txt')).write_text(json.dumps(report))
+        self.merge(directory)
+        return directory, reports
+
+    def merge(self, directory):
         completed = subprocess.run([sys.executable, str(fixture.SCRIPTS / 'bureau-review.py'), 'merge',
                                     '--directory', str(directory), '--base', self.f.base, '--head', self.f.head],
                                    cwd=self.f.repo, capture_output=True, text=True, timeout=10)
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        return directory, reports
 
-    def receipts(self, reports):
+    def supplemented_pair(self):
+        directory, reports = self.pair('current-round', 'independent.py')
+        late = {role: fixture.specialist(role) for role in self.f.m.ROLES}
+        late['security'] = fixture.specialist('security', [fixture.finding('Additional deferred detail', 'MINOR', file='late.py')])
+        impeccable = fixture.load('impeccable')
+        for role, report in reports.items():
+            (directory / (role + '.independent.txt')).write_text(json.dumps(report))
+            (directory / (role + '.late.txt')).write_text(json.dumps(late[role]))
+            (directory / (role + '.txt')).write_text(json.dumps(impeccable.supplement(directory, role, None)))
+        self.merge(directory)
+        return directory, {**reports, **{role + '_late': report for role, report in late.items()}}
+
+    def receipts(self, reports, inputs=False):
         paths = []
         for role, report in reports.items():
             original = self.f.root / ('provider-' + role)
@@ -45,13 +60,14 @@ class DispositionTests(unittest.TestCase):
                 issue='T-1', stage='code_review', phase=role, provider='codex', provider_exit=0,
                 normalized_exit=0, outcome='complete', start_head=self.f.head, end_head=self.f.head,
                 provider_logs=str(original), structured_result=None, insights_result=report,
+                review_inputs=dict(base=self.f.base, head=self.f.head, validation_head=self.f.head) if inputs else None,
                 usage=dict(input_tokens=1, output_tokens=1), total_cost_usd=0)))
         return {path: path.read_bytes() for path in paths}
 
-    def collect(self, directory):
+    def collect(self, directory, verdict='APPROVE'):
         completed = subprocess.run([sys.executable, str(fixture.SCRIPTS / 'bureau-evidence.py'),
                                     '--repo', str(self.f.repo), '--round', '1', '--min-severity', 'BUG',
-                                    '--provider-verdict', 'APPROVE', '--final-verdict', 'APPROVE',
+                                    '--provider-verdict', verdict, '--final-verdict', verdict,
                                     '--merge-metadata', str(directory / 'merge-metadata.json'),
                                     '--merge-result', str(directory / 'merged.json')],
                                    env={**os.environ, 'BUREAU_RUN_ID': self.run, 'BUREAU_STAGE_ATTEMPT_ID': self.attempt},
@@ -166,6 +182,56 @@ class DispositionTests(unittest.TestCase):
         receipt = json.loads(path.read_text())
         self.assertEqual((receipt['provider_exit'], receipt['normalized_exit'], receipt['outcome']), (0, 0, 'complete'))
         self.assertNotIn('review_report_sha256', receipt)
+
+    def test_late_reports_collect_dispositions_and_publish_complete_context(self):
+        current, reports = self.supplemented_pair()
+        receipts = self.receipts(reports, inputs=True)
+        completed = self.collect(current, 'REQUEST_CHANGES')
+        self.assertEqual(completed.stderr, '')
+        record = self.store._manifest(self.run)['attempts'][0]['review_round']
+        self.assertEqual(record['calls'], 6); self.assertEqual(record['usage']['input_tokens'], 6)
+        self.assertEqual({json.loads(value)['phase'] for value in receipts.values()}, set(reports))
+        for value in receipts.values():
+            receipt = json.loads(value)
+            self.assertEqual(receipt['review_report_sha256'], self.e.digest(reports[receipt['phase']]))
+        rows = [json.loads(line) for line in (self.store.root / 'review-dispositions.jsonl').read_text().splitlines()]
+        self.assertEqual({(r['disposition'], r['path']) for r in rows}, {('deferred', 'independent.py'), ('deferred', 'late.py')})
+        self.store.end_attempt(self.run, self.attempt, 0, self.f.head)
+        context = fixture.load('review-context')
+        result, floor, head = context.current_result(self.f.repo, self.store._manifest(self.run)['issue'],
+                                                   self.run, self.attempt, 1, 'REQUEST_CHANGES')
+        self.assertEqual(result, json.loads((current / 'merged.json').read_text()))
+        self.assertEqual((floor, head), ('BUG', self.f.head))
+
+    def test_late_and_independent_receipts_reject_tampering_and_missing_reports(self):
+        current, reports = self.supplemented_pair()
+        receipts = self.receipts(reports, inputs=True)
+        self.assertEqual(self.collect(current).stderr, '')
+        ledger = self.store.root / 'review-dispositions.jsonl'
+        retained = next(self.f.root.glob('provider-*/merged-review.json'))
+        before = ledger.read_bytes(), retained.read_bytes()
+        for phase in ('correctness', 'security_late'):
+            path = next(p for p, value in receipts.items() if json.loads(value)['phase'] == phase)
+            receipt = json.loads(receipts[path])
+            original = Path(receipt['provider_logs']) / 'final.txt'; original_bytes = original.read_bytes()
+            for fault in ('missing-digest', 'different-digest', 'tampered-original', 'missing-original', 'failed-call', 'foreign-inputs'):
+                with self.subTest(phase=phase, fault=fault):
+                    changed = json.loads(receipts[path])
+                    if fault == 'missing-digest': changed.pop('review_report_sha256')
+                    if fault == 'different-digest': changed['review_report_sha256'] = 'f' * 64
+                    if fault == 'tampered-original': original.write_text(json.dumps(fixture.specialist(reports[phase]['specialist'])))
+                    if fault == 'missing-original': original.unlink()
+                    if fault == 'failed-call': changed['normalized_exit'] = 22
+                    if fault == 'foreign-inputs': changed['review_inputs']['head'] = 'f' * 40
+                    path.write_text(json.dumps(changed))
+                    rejected = self.collect(current)
+                    self.assertIn('optional evidence unavailable or invalid', rejected.stderr)
+                    self.assertEqual((ledger.read_bytes(), retained.read_bytes()), before)
+                    path.write_bytes(receipts[path]); original.write_bytes(original_bytes)
+        duplicate = dict(receipt, provider_attempt_id=uuid.uuid4().hex, insights_result=reports[phase])
+        self.store.put_receipt(duplicate)
+        self.assertIn('optional evidence unavailable or invalid', self.collect(current).stderr)
+        self.assertEqual((ledger.read_bytes(), retained.read_bytes()), before)
 
 
 if __name__ == '__main__':

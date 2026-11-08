@@ -60,6 +60,7 @@ test_gate_number_rule.sh	3	4
 test_gate_publication.sh	1	4
 test_hangup_stop.sh	77	133
 test_headroom_wrap_invocation.sh	1	1
+test_impeccable.sh	-	112
 test_implement_failed_pass_push.sh	49	104
 test_implement_loop_cap_partial.sh	2	4
 test_implement_loop_complete.sh	2	6
