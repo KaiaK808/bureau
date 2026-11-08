@@ -3218,7 +3218,7 @@ _bureau_worktree_reuse_state() {
   if git -C "$wt" merge-base --is-ancestor "$head" "$issue_head" 2>/dev/null; then
     kind=on-origin
   elif [ "${BUREAU_DROP_LOCAL_COMMITS:-0}" = 1 ]; then
-    kind=drop-local-commits
+    kind="drop-local-commits"
   else
     kind="base-merges"
     base_ref=$(_bureau_reuse_base_ref "$wt") || return 1
