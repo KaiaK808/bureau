@@ -76,7 +76,9 @@ Flags:
   --no-tmux            Run inline in current shell (default: spawn tmux window).
   --no-merge           Halt before the Merge stage even if review approves.
   --from-stage NAME    Move ticket to NAME state first, then start shepherding.
-                       NAME ∈ triage|spec_review|design|build|qa|build_review|merge
+                       NAME ∈ triage|spec|spec_review|design|copy|build|qa|build_review|merge|done
+                       After Build: requires a branch on origin and an open PR
+                       before any claim or move; otherwise exit 31 with recovery commands.
   --respect-config     Honor .agents.<stage> toggles. Default: force all on.
   --worktree DIR       Build worktree dir (default: .worktrees/shepherd). Use a
                        per-ticket dir (e.g. .worktrees/shepherd-TEAM-123) so
@@ -374,10 +376,49 @@ if [ -n "$FROM_STAGE" ]; then
   esac
   if [ -z "$TARGET_STATE" ] || [ -z "$TARGET_NAME" ]; then
     echo "ERROR: --from-stage '$FROM_STAGE' has no matching state (looked up \$$TARGET_STATE_VAR)" >&2
-    echo "       Valid: triage, spec_review, design, copy, build, qa, build_review, merge" >&2
+    echo "       Valid: triage, spec, spec_review, design, copy, build, qa, build_review, merge, done" >&2
     exit 1
   fi
 fi
+
+_shepherd_from_stage_pr_check() {
+  local branch pr origin_rc=0 reason="" base
+  branch=$(get_issue_branch "$ISSUE") || {
+    origin_rc=$?
+    echo "ERROR: branch lookup failed for $ISSUE (exit $origin_rc); nothing claimed or moved." >&2
+    exit "$origin_rc"
+  }
+  if [ -z "$branch" ] || [[ "$branch" == -* ]] || ! git check-ref-format "refs/heads/$branch" >/dev/null 2>&1; then
+    echo "ERROR: no valid bureau-branch marker found for $ISSUE; nothing claimed or moved (exit 12)." >&2
+    exit 12
+  fi
+  if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null; then
+    pr=$(bureau_open_pr_number "$branch") || exit $?
+    [ -n "$pr" ] || reason="no open pull request"
+  else
+    origin_rc=$?
+    if [ "$origin_rc" != 2 ]; then
+      echo "ERROR: origin lookup failed for branch '$branch' (exit 18: gh-failed); nothing claimed or moved." >&2
+      exit 18
+    fi
+    reason="branch does not exist on origin; push it first"
+  fi
+  [ -n "$reason" ] || return 0
+  base=$(bureau_get '.repo.base_branch // "main"')
+  {
+    echo "HOLD: --from-stage $FROM_STAGE requires a pushed branch with an open PR: '$branch': $reason (exit 31: open-pr-required)."
+    echo "Nothing claimed or moved."
+    if [ "$origin_rc" = 2 ]; then
+      printf '  Push: '; printf '%q ' git push origin "$branch"; printf '\n'
+    fi
+    printf '  Open PR: '; printf '%q ' gh pr create --head "$branch" --base "$base" --draft --fill; printf '\n'
+    printf '  Restart: '; printf '%q ' "$0" "${ORIG_ARGS[@]}"; printf '\n'
+  } >&2
+  exit 31
+}
+case "${STAGE_KEY:-}" in
+  qa|build_review|merge|done) _shepherd_from_stage_pr_check ;;
+esac
 
 # Match move_issue's admission boundaries before the runtime claims ownership.
 # Admission itself requires an active ticket; an explicit start cannot bypass it.

@@ -144,6 +144,7 @@ test_session_throttle.sh	1	1
 test_shared_runtime.sh	220	323
 test_shepherd.sh	193	359
 test_shepherd_hold.sh	105	218
+test_shepherd_pr_preflight.sh	-	18
 test_shepherd_worker_sigpipe.sh	6	13
 test_silence_watchdog.sh	73	123
 test_silence_watchdog_fix1.sh	73	130

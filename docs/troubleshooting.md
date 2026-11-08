@@ -212,6 +212,19 @@ A stage or the shepherd stops with 21 when the run may not take the ticket or it
 
 Follow the comment (for an interrupted run, the steps under [`shepherd.sh` bailed mid-run](#shepherdsh-bailed-mid-run--how-to-resume)), remove `needs-human` and rerun.
 
+### Exit 31 (open-pr-required) — restart after a build gate failure
+
+Implement opens or updates the PR only after its gate passes. If it exits `14` and you fix the failing checks by hand, the pushed branch can still have no PR. QA does not open one; without the restart check it could finish before review exits `15` and moves the ticket back to Build.
+
+An actual shepherd run with `--from-stage qa`, `build_review`, `merge` or `done` now checks the ticket's `bureau-branch` marker, the branch on origin and its open PR before claiming ownership or writing to Linear. A missing pushed branch or open PR ends with `31`, prints the reason and the commands to recover, and runs no stage. Push any unpublished fixes, then run the printed command:
+
+```bash
+gh pr create --head <branch> --base <configured-base> --draft --fill
+scripts/shepherd.sh --no-tmux --from-stage qa <ISSUE>
+```
+
+The base is `repo.base_branch`, default `main`; the printed restart command preserves your original flags. An origin or GitHub lookup failure is `18`, not a missing-PR hold. The PR lookup retries transient errors with the same bounded policy as implement; fix authentication or wait for GitHub to recover and restart. Starts at Build or earlier are unchanged, and review retains its own exit-`15` check. Dry runs still print their route without this check.
+
 ### Exit 30 (local-commits-held) — unpublished commits before a reset
 
 Stage checkout and ticket-worker reset check `refs/heads/<branch>` and HEAD when detached or attached to that branch, excluding commits reachable from any remote ref or another local branch. Either tip can contain unpublished work, even when the other tip matches origin. The hold prints each short SHA and subject and preserves the refs and files.

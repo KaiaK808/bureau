@@ -544,19 +544,18 @@ stop_before_merge_was_asked() {
 }
 # ── End of merge policy ───────────────────────────────────────────────
 
-# bureau_gh_pr_retry <pushed-branch> <verb> [args...]. Only for implement's
-# post-push PR step: keep stdout clean for the URL/number capture, retry HTTP
-# 429/5xx and transport errors, and hold with 18 on failure. Other stages keep
-# their existing GitHub handling. Defaults: three retries, waiting 2/4/8 s;
+# _bureau_gh_pr_retry <branch> <verb> [args...]. Keep stdout clean for the
+# URL/number capture, retry HTTP 429/5xx and transport errors, return 18 on
+# failure. Defaults: three retries, waiting 2/4/8 s;
 # env/.env may set 0..5 retries and a 0..60 s initial wait (doubles, capped at 60).
-bureau_gh_pr_retry() {
+_bureau_gh_pr_retry() {
   local branch="$1"
   shift
   local retries wait attempt=1 output error_file
   retries=$(bureau_number BUREAU_IMPL_PR_RETRIES "${BUREAU_IMPL_PR_RETRIES:-3}" 3 0 5)
   wait=$(bureau_number BUREAU_IMPL_PR_RETRY_WAIT "${BUREAU_IMPL_PR_RETRY_WAIT:-2}" 2 0 60)
   error_file=$(mktemp -t bureau-gh-pr.XXXXXXXX) || {
-    echo "HOLD: branch '$branch' is pushed; only the PR step is incomplete. Re-run the implement stage (exit 18: gh-failed)." >&2
+    echo "gh pr $1: could not create an error file for branch '$branch' (exit 18)." >&2
     return 18
   }
   while :; do
@@ -583,8 +582,30 @@ bureau_gh_pr_retry() {
   done
   rm -f "$error_file"
   echo "gh pr $1 failed after $attempt attempt(s)." >&2
-  echo "HOLD: branch '$branch' is pushed; only the PR step is incomplete. Re-run the implement stage (exit 18: gh-failed)." >&2
   return 18
+}
+
+# Implement's post-push PR step retains its recovery message.
+bureau_gh_pr_retry() {
+  _bureau_gh_pr_retry "$@" || {
+    echo "HOLD: branch '$1' is pushed; only the PR step is incomplete. Re-run the implement stage (exit 18: gh-failed)." >&2
+    return 18
+  }
+}
+
+# An empty result confirms no open PR; a failed or malformed lookup is 18.
+bureau_open_pr_number() {
+  local number
+  number=$(_bureau_gh_pr_retry "$1" list --head "$1" --json number --jq '.[0].number') || {
+    echo "ERROR: PR lookup failed for branch '$1' (exit 18: gh-failed)." >&2
+    return 18
+  }
+  case "$number" in ''|null) return 0 ;; esac
+  if ! [[ "$number" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: PR lookup returned an invalid number for branch '$1' (exit 18: gh-failed)." >&2
+    return 18
+  fi
+  printf '%s\n' "$number"
 }
 
 # ── Linear fetches: check the answer, retry, else stop with our own code ──
@@ -4229,7 +4250,8 @@ resolve_verdict_exit() {
 #   wait  28 spec-capacity-wait · 29 file-overlap-wait (quiet and cancellable)
 #   retry 10 linear-down · 16 provider-unauth (transient, throttled retry)
 # Everything else halts with an alert, unknown codes included.
-# Exit 30 (local-commits-held) requires a human; it must never retry.
+# Exits 30 (local-commits-held) and 31 (open-pr-required) require a human;
+# neither may retry.
 shepherd_rc_action() {
   case "${1:-}" in
     0|2)   echo "ok" ;;
@@ -4264,6 +4286,7 @@ exit_class() {
     28)  echo "spec-capacity-wait" ;;
     29)  echo "file-overlap-wait" ;;
     30)  echo "local-commits-held" ;;
+    31)  echo "open-pr-required" ;;
     124) echo "timeout" ;;
     130) echo "cancelled-run" ;;
     *)   echo "error-$1" ;;
