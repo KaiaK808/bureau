@@ -3037,7 +3037,7 @@ free_branch_from_other_worktrees() {
 # A new worker has no HEAD yet; never substitute the driver's unrelated HEAD.
 bureau_guard_branch_reset() {
   local branch="$1" wt="${2:-$PWD}" stage="${3:-$(basename "$0")}" repo="${REPO_DIR:-$PWD}"
-  local origin commits sha subject shas current issue="${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" rc
+  local origin commits sha subject shas current issue="${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" rc owned
   local refs=()
   if [ -d "$wt" ]; then
     repo="$wt"
@@ -3055,6 +3055,94 @@ bureau_guard_branch_reset() {
   commits=$(git -C "$repo" log --no-show-signature --format='%H %s' "${refs[@]}" \
     --not "$origin" --remotes --exclude="$branch" --branches --) || return 24
   [ -n "$commits" ] || return 0
+  # Completed workers may leave unpublished stage commits or a detached review
+  # checkpoint. Exclude only their recorded heads, never later operator commits.
+  owned=$(bureau_without_secrets python3 -I - "$repo" "$branch" "$issue" "$origin" "$commits" <<'PY'
+import hashlib, json, re, subprocess, sys
+from pathlib import Path
+
+repo, branch, issue, origin, commits = sys.argv[1:]
+wanted = {line.split(' ', 1)[0] for line in commits.splitlines()}
+
+def git(workspace, *args):
+    return subprocess.check_output(['git', '-C', str(workspace), *args], text=True,
+                                   stderr=subprocess.DEVNULL, timeout=10).strip()
+
+def read(path):
+    try:
+        value = json.loads(path.read_text())
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+common = (Path(repo) / git(repo, 'rev-parse', '--git-common-dir')).resolve()
+root = common / 'bureau'
+
+def retained(workspace, head, gitdir=None):
+    workspace = Path(workspace).resolve()
+    key = hashlib.sha256(str(workspace).encode()).hexdigest()
+    actual = git(workspace, 'rev-parse', '--absolute-git-dir')
+    if gitdir is None:
+        gitdir = (root / 'workers' / key).read_text().strip()
+    return (actual == gitdir and Path(actual).resolve() != common
+            and (workspace / git(workspace, 'rev-parse', '--git-common-dir')).resolve() == common
+            and git(workspace, 'rev-parse', 'HEAD') == head
+            and not git(workspace, 'branch', '--show-current'))
+
+owned = set()
+for path in (root / 'preserved').glob('*.json'):
+    note = read(path)
+    checkpoint = read(root / 'review-checkpoints' / path.name)
+    head = checkpoint.get('head')
+    if (head not in wanted or note.get('issue') != issue or note.get('branch') != branch
+            or note.get('reason') != 'review-checkpoint' or not checkpoint.get('git_dir')):
+        continue
+    try:
+        workspace = note['workspace']
+        key = hashlib.sha256(str(Path(workspace).resolve()).encode()).hexdigest()
+        if (path.stem == key and retained(workspace, head, checkpoint['git_dir'])
+                and not git(workspace, 'status', '--porcelain')):
+            owned.add(head)
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        continue
+
+for path in (root / 'evidence/v1/runs').glob('*/manifest.json'):
+    record = read(path)
+    if record.get('issue') != issue or record.get('run_id') != path.parent.name:
+        continue
+    attempts = record.get('attempts')
+    if not isinstance(attempts, list) or any(not isinstance(a, dict) for a in attempts):
+        continue
+    workers = {a.get('attempt_id'): a for a in attempts if a.get('phase') == 'worker'
+               and a.get('normalized_exit') == 0 and a.get('ended_at') is not None}
+    for stage in attempts:
+        worker = workers.get(stage.get('parent_attempt_id'))
+        head, start = stage.get('final_head'), stage.get('start_head')
+        if (not worker or stage.get('phase') != 'stage' or stage.get('normalized_exit') != 0
+                or stage.get('ended_at') is None or head not in wanted
+                or worker.get('final_head') != head or worker.get('stage') != stage.get('stage')
+                or worker.get('workspace') != stage.get('workspace')
+                or not isinstance(start, str) or not re.fullmatch(r'[0-9a-f]{40,64}', start)):
+            continue
+        try:
+            if (retained(stage['workspace'], head)
+                    and not subprocess.run(['git', '-C', repo, 'merge-base', '--is-ancestor', start, origin],
+                                           stderr=subprocess.DEVNULL, timeout=10).returncode
+                    and not subprocess.run(['git', '-C', repo, 'merge-base', '--is-ancestor', start, head],
+                                           stderr=subprocess.DEVNULL, timeout=10).returncode):
+                owned.add(head)
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+            continue
+print('\n'.join(sorted(owned)))
+PY
+  ) || owned=""
+  if [ -n "$owned" ]; then
+    local excluded=("$origin")
+    for sha in $owned; do excluded+=("$sha"); done
+    commits=$(git -C "$repo" log --no-show-signature --format='%H %s' "${refs[@]}" \
+      --not "${excluded[@]}" --remotes --exclude="$branch" --branches --) || return 24
+    [ -n "$commits" ] || return 0
+  fi
   if [ "${BUREAU_DROP_LOCAL_COMMITS:-0}" = 1 ]; then
     echo "Dropping local-only commits before reset to origin/$branch (BUREAU_DROP_LOCAL_COMMITS=1):" >&2
     printf '%s\n' "$commits" >&2

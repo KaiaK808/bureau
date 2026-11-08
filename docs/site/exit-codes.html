@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="5767a3bb98371838755527f070e98a9cea0a49aa7033540d6fe45d004094654b">
+<meta name="bureau-source-sha256" content="e48383e095d971bc3d564b08a17f90cc33ddf27ede8f8bab8de34465249cb9ae">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -550,6 +550,17 @@ still apply. Discarded full SHAs are printed and recorded as
 <code>local_commits_dropped</code> in the existing
 <code>logs/events.jsonl</code> start/run event stream. Keep this
 override out of persistent configuration and driver environments.</p>
+<p>Recorded Bureau heads retain their existing lifecycle: a stopped
+review's validation merge remains in its clean detached checkpoint while
+a fresh worker resets the branch; a successful disposable worker's stage
+commits may reset at the next stage boundary. The guard binds review
+checkpoints to their preservation record, issue, branch and Git worktree
+identity. Successful worker/stage receipts must agree on workspace and
+final head, the registered worker must still be detached at that head,
+and the stage must start on history reachable from the ticket's current
+origin. Missing or mismatched records do not authorize a reset. Operator
+commits beyond either recorded head still hold with 30; commit messages
+and authors grant no exemption.</p>
 <h2 id="closed-terminal-stop-reasons">Closed terminal stop reasons</h2>
 <p>Ticket accounting refines existing exits with
 <code>terminal_reason</code>; it adds no exit code. The only values are
