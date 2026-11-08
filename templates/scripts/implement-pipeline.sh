@@ -15,6 +15,7 @@ unset CLAUDECODE 2>/dev/null || true
 REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
+source "$(dirname "$0")/bureau-impeccable.sh"
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 # BUREAU_ENV_FILE only, never ./.env: in a stage worktree that is a file the branch controls.
@@ -894,6 +895,12 @@ CLAUDE_EXIT=0
 TIMED_OUT_AFTER=0
 IMPL_RUNNER=$(resolve_runner_for_stage implement)
 IMPLEMENT_GATE_FEEDBACK=""
+IMPECCABLE_UI_ACTIVE=0
+if bureau_impeccable_ui "$SPEC_DIR_MATCH"; then IMPECCABLE_UI_ACTIVE=1; fi
+IMPECCABLE_GATE_BLOCKED=0
+IMPECCABLE_FEEDBACK=""
+IMPECCABLE_CONTEXT=""
+if [ "$IMPECCABLE_UI_ACTIVE" = 1 ]; then IMPECCABLE_CONTEXT=$(bureau_impeccable_policy); fi
 
 # agents.implement.push_each_iteration. true (the default): the branch is
 # pushed after every iteration and after the /goal run, as it always was.
@@ -996,7 +1003,7 @@ trap _push_on_exit EXIT
 #
 # Opt-in via .agents.use_goal_loop in .bureau.json (or BUREAU_USE_GOAL_LOOP=1).
 # When off, the bash for-loop below runs verbatim — rollback is one flag flip.
-if use_goal_loop_enabled; then
+if use_goal_loop_enabled && [ "$IMPECCABLE_UI_ACTIVE" = 0 ]; then
   echo "  /goal-driven implementation (use_goal_loop=true; iter loop disabled)"
   HEAD_BEFORE_RUN=$(git rev-parse HEAD)
 
@@ -1124,7 +1131,7 @@ end_timed_out() {
   exit 124
 }
 
-if ! use_goal_loop_enabled; then
+if ! use_goal_loop_enabled || [ "$IMPECCABLE_UI_ACTIVE" = 1 ]; then
 for (( i=1; i<=MAX_ITER; i++ )); do
   NOW_TS=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
   ELAPSED=$(( NOW_TS - START_TS ))
@@ -1189,10 +1196,12 @@ Pass $((i - 1)) of this stage was stopped at its time limit of ${TIMED_OUT_AFTER
 $SPEC_CONTEXT${LESSONS_CONTEXT:+
 $LESSONS_CONTEXT}
 $PROJECT_CONTEXT
-$DESIGN_CONTEXT
+$DESIGN_CONTEXT${IMPECCABLE_CONTEXT:+
+$IMPECCABLE_CONTEXT}
 $REVIEW_CONTEXT
 $TIMEOUT_NOTE${IMPLEMENT_GATE_FEEDBACK:+
-$IMPLEMENT_GATE_FEEDBACK}
+$IMPLEMENT_GATE_FEEDBACK}${IMPECCABLE_FEEDBACK:+
+$IMPECCABLE_FEEDBACK}
 
 Parent issue: $ISSUE — $ISSUE_TITLE
 $ISSUE_DESC
@@ -1317,6 +1326,15 @@ At the end of your work, emit a single fenced json block so the shell can summar
     ITER_LOG+="  $IMPLEMENT_GATE_FEEDBACK"$'\n'
   fi
 
+  if [ "$IMPECCABLE_UI_ACTIVE" = 1 ] && [ "$CLAUDE_EXIT" = 0 ]; then
+    bureau_impeccable_check mechanical
+    if [ "$IMPECCABLE_GATE_BLOCKED" = 0 ] && [ "$STATUS" = COMPLETE ]; then
+      bureau_impeccable_check all
+    fi
+    ITER_LOG+="  $IMPECCABLE_FEEDBACK"$'\n'
+    if [ "$IMPECCABLE_GATE_BLOCKED" = 1 ] && [ "$STATUS" = COMPLETE ]; then STATUS=PARTIAL; fi
+  fi
+
   LINE="iter $i: status=$STATUS tasks_done=$TASKS_DONE commits=$COMMITS_THIS_ITER"
   [ "$CLAUDE_EXIT" = 124 ] && LINE+=" (timed out after ${THIS_TIMEOUT}s)"
   echo "    $LINE"
@@ -1368,7 +1386,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
   # the previous rule): models would self-report "I considered review
   # items" without committing anything, which let them through. The
   # commit/task floor is enough.
-  if [ "$COMMITS_THIS_ITER" -eq 0 ] && [ "$TASKS_DONE" -eq 0 ]; then
+  if [ "$COMMITS_THIS_ITER" -eq 0 ] && [ "$TASKS_DONE" -eq 0 ] && [ "$IMPECCABLE_GATE_BLOCKED" = 0 ]; then
     case "$STATUS" in
       PARTIAL)
         # only force-park to STUCK when no iter has committed.
@@ -1472,6 +1490,15 @@ HEAD_BEFORE_HOOK=$(git rev-parse HEAD)
 run_post_implement_command
 if [ "$POST_IMPLEMENT_FAILED" = 1 ]; then
   STATUS="POST_IMPLEMENT_FAILED"
+fi
+
+if [ "$IMPECCABLE_UI_ACTIVE" = 1 ]; then
+  bureau_impeccable_check all
+  ITER_LOG+="  $IMPECCABLE_FEEDBACK"$'\n'
+  if [ "$IMPECCABLE_GATE_BLOCKED" = 1 ]; then
+    ITER_LOG+="  FIXES_NEEDED: address the Impeccable evidence above before hand-off."$'\n'
+    case "$STATUS" in COMPLETE|PARTIAL|CAP_TIME) STATUS=NEEDS_HUMAN ;; esac
+  fi
 fi
 
 check_squash_range origin/main

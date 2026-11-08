@@ -2,6 +2,7 @@
 """Install Bureau assets. Standard library only; preview unless --apply is set."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,24 @@ LEGACY_MARKER = re.compile(r"<!--\s*(?:end\s+)?bureau-init\s+managed\b[^\n]*", r
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def impeccable_status(repo):
+    path = repo / '.bureau.json'
+    try:
+        config = json.loads(path.read_text()) if path.is_file() else {}
+    except (OSError, ValueError):
+        return {'status': 'unavailable', 'reason': 'cannot read design configuration'}
+    if not isinstance(config, dict):
+        return None
+    design = config.get('design', {})
+    options = design.get('impeccable', {}) if isinstance(design, dict) else {}
+    if not isinstance(options, dict) or options.get('enabled') is not True:
+        return None
+    spec = importlib.util.spec_from_file_location('bureau_impeccable', ROOT / 'templates/scripts/bureau-impeccable.py')
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    return helper.verify(repo, config, os.environ.get('IMPECCABLE_BIN'))
 
 
 def destination(repo, relative):
@@ -647,12 +666,18 @@ def main():
             return subprocess.call(command)
         manifest = read_manifest(repo)
         targets = targets_for(args, manifest)
+        impeccable = impeccable_status(repo)
+        if impeccable is not None:
+            print('bureau-install: Impeccable ' + impeccable['status'] + ': ' + impeccable['reason'], file=sys.stderr)
         if args.action == "check":
             required = ["git", "python3", "jq", "curl"]
             if args.mode == "background":
                 required += targets + ["tmux"]
             missing = [tool for tool in required if not shutil.which(tool)]
-            print(json.dumps({"targets": targets, "mode": args.mode, "missing": missing}))
+            report = {"targets": targets, "mode": args.mode, "missing": missing}
+            if impeccable is not None:
+                report['impeccable'] = impeccable
+            print(json.dumps(report))
             return 1 if missing else 0
         if args.action == "speckit":
             return speckit(repo, args, manifest, targets)

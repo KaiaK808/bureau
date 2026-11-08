@@ -23,7 +23,8 @@ LOCK_TIMEOUT_SECONDS = .25
 KINDS = ('decision', 'dependency', 'compliance', 'resource', 'technical')
 TAGS = frozenset(('spec', 'spec_review', 'ux', 'copy', 'implement', 'qa', 'code_review', 'conflict_resolver', 'validation',
                   'merge', 'rebase', 'research', 'upstream_summary', 'specify', 'plan', 'tasks',
-                  'correctness', 'security', 'performance', 'verdict', 'finding_verifier', 'worker', 'stage', 'driver'))
+                  'correctness', 'security', 'performance', 'correctness_late', 'security_late', 'performance_late',
+                  'verdict', 'finding_verifier', 'worker', 'stage', 'driver'))
 ACTORS = frozenset(('maintainer', 'workspace-owner', 'ci-or-gate-owner', 'repository-maintainer',
                     'merge-worker', 'operator'))
 COMMAND_IDS = frozenset(('configured-command', 'repo.test_command', 'review.build', 'qa.test',
@@ -88,6 +89,7 @@ def observe(call, *args, **kwargs):
 
 USAGE_FIELDS = ('input_tokens', 'output_tokens', 'cached_input_tokens', 'cache_creation_input_tokens', 'total_cost_usd')
 REVIEW_PHASES = frozenset(('correctness', 'security', 'performance', 'verdict'))
+REVIEW_LATE_PHASES = frozenset(role + '_late' for role in REVIEW_PHASES - {'verdict'})
 
 
 def usage_metadata(metadata):
@@ -696,7 +698,7 @@ class Store:
         inputs = receipt.get('review_inputs')
         if value['stage'] == 'code_review' and isinstance(inputs, dict):
             value['review_inputs'] = {key: head(inputs.get(key)) for key in ('head', 'base', 'validation_head')}
-        if (value['stage'] == 'code_review' and value['phase'] in REVIEW_PHASES - {'verdict'}
+        if (value['stage'] == 'code_review' and value['phase'] in (REVIEW_PHASES - {'verdict'}) | REVIEW_LATE_PHASES
                 and value['normalized_exit'] == 0 and value['provider_exit'] == 0 and value['outcome'] == 'complete'):
             # Specialists have no verdict schema. Bind their parsed report
             # independently, before forwarding output, without retaining prose.
@@ -839,18 +841,20 @@ class Store:
                         and receipt.get('normalized_exit') == 0):
                     phases.add(receipt.get('phase'))
                     successful.append(receipt)
-                    if merge['mode'] == 'deterministic' and receipt.get('phase') in REVIEW_PHASES - {'verdict'}:
+                    if merge['mode'] == 'deterministic' and receipt.get('phase') in (REVIEW_PHASES - {'verdict'}) | REVIEW_LATE_PHASES:
                         role = receipt['phase']
                         if role in specialists: raise ValueError('ambiguous specialist receipts')
                         specialists[role] = receipt
             required = REVIEW_PHASES - {'verdict'} if merge['mode'] == 'deterministic' else REVIEW_PHASES
+            required_reports = required | REVIEW_LATE_PHASES if phases & REVIEW_LATE_PHASES else required
+            if phases & REVIEW_LATE_PHASES and not required_reports <= phases: raise ValueError('incomplete late specialist receipts')
             if not required <= phases: return
         if merge['mode'] == 'deterministic':
             # The caller may just have overwritten review_round.merge. Only
             # the successful receipts independently bind this round's inputs.
             expected = {role: receipt.get('review_report_sha256') for role, receipt in specialists.items()}
-            if (set(expected) != required or any(not isinstance(d, str) or not re.fullmatch(r'[a-f0-9]{64}', d) for d in expected.values())
-                    or merge.get('specialist_sha256') != expected):
+            if (set(expected) != required_reports
+                    or any(not isinstance(d, str) or not re.fullmatch(r'[a-f0-9]{64}', d) for d in expected.values())):
                 raise ValueError('foreign specialist reports')
             # Hashes alone would let a forged pair copy current input digests
             # onto obsolete findings. Rebuild just the findings from originals
@@ -864,12 +868,19 @@ class Store:
                 raise ValueError('unavailable specialist reports')
             refs = sorted({ref for report in reports.values() for finding in report.get('findings', [])
                            for ref in finding.get('adr_refs', [])})
+            if set(merge.get('specialist_sha256', {})) != set(review.ROLES): raise ValueError('foreign specialist reports')
             claims = []
             for role in review.ROLES:
                 report = review.load_specialist(review.encoded(reports[role]), role, refs)
+                if phases & REVIEW_LATE_PHASES:
+                    late = review.load_specialist(review.encoded(reports[role + '_late']), role, refs)
+                    report = review.module('impeccable').combine_reports(report, late)
+                if digest(report) != merge.get('specialist_sha256', {}).get(role):
+                    raise ValueError('foreign specialist reports')
                 claims.extend((role, review.readable_finding(finding, refs)) for finding in report['findings'])
             findings, _, _ = review.normalized(claims, None, None, check_anchors=False)
             inputs = [r.get('review_inputs') for r in specialists.values()]
+            if phases & REVIEW_LATE_PHASES and any(i != inputs[0] for i in inputs): raise ValueError('foreign review inputs')
             if all(isinstance(i, dict) and i.get('base') and i.get('head') for i in inputs):
                 if any(i != inputs[0] for i in inputs): raise ValueError('foreign review inputs')
                 findings.extend(review.configuration_findings(inputs[0]['base'], inputs[0]['head'], attempt['workspace']))
@@ -914,11 +925,12 @@ class Store:
                 receipt = read(self.root / relative, {})
                 if (receipt.get('run_id') == run and receipt.get('stage_attempt_id') == stage_attempt
                         and receipt.get('issue') == value['issue'] and receipt.get('stage') == 'code_review'
-                        and receipt.get('phase') in REVIEW_PHASES | {'finding_verifier'} and receipt.get('record_type') == 'receipt'
+                        and receipt.get('phase') in REVIEW_PHASES | REVIEW_LATE_PHASES | {'finding_verifier'} and receipt.get('record_type') == 'receipt'
                         and receipt.get('schema_version') == VERSION):
                     call_id = identifier(receipt['provider_attempt_id'])
                     if self.receipt_path(run, call_id) == self.root / relative: calls[call_id] = receipt
             required = REVIEW_PHASES - {'verdict'} if merge and merge.get('mode') == 'deterministic' else REVIEW_PHASES
+            if any(r['phase'] in REVIEW_LATE_PHASES for r in calls.values()): required |= REVIEW_LATE_PHASES
             complete = required <= {r['phase'] for r in calls.values()}
             planned_checks = sum(r['basis'] in ('pending', 'model', 'invalid_result') for r in merge['verifier']) if merge else 0
             complete = complete and sum(r['phase'] == 'finding_verifier' for r in calls.values()) >= planned_checks
