@@ -68,8 +68,7 @@ def stop_group(child):
             reap_group(child)
             return
         except PermissionError:
-            if process_group_running(child.pid):
-                raise
+            pass
         deadline = time.monotonic() + grace
         while True:
             reap_group(child)

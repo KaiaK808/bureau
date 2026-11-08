@@ -17,6 +17,15 @@ all file deadlines with a positive integer in seconds. Expiry prints `TIMEOUT`,
 sends TERM then KILL after one second, counts a failure and continues. Background
 group members are stopped even after a successful test.
 
+`BUREAU_TEST_MANIFEST=tests/macos-manifest.txt` selects the 56 focused macOS tests;
+unset or empty selects every entrypoint. Manifest paths resolve from the invoking
+directory. File names may have trailing `#` reason comments; blank/comment lines
+are ignored, unknown names and empty manifests fail. Selection precedes weighted
+sharding; `--list` shows the resulting files without running them. See
+[contributor CI coverage](../CONTRIBUTING.md#ci-coverage) for focused/full events
+and the rule for adding platform tests. Current weights estimate 89.98 macOS
+runner-minutes, including four minutes of setup across two jobs.
+
 Set `BUREAU_TEST_TIMINGS=timings.tsv` to record monotonic elapsed seconds (including
 group cleanup), outcome (`PASS`, `FAIL`, `TIMEOUT`) and OS (`Linux`, `macOS`). The
 path is relative to the invoking directory; each run replaces the file. CI uploads

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Test runner: discover tests/test_*.sh, run each in isolation, report pass/fail.
-# BUREAU_TEST_SHARD=i/n (1-based) selects a balanced share; unset runs all tests.
+# BUREAU_TEST_SHARD=i/n (1-based) selects a balanced share of the selected tests.
+# BUREAU_TEST_MANIFEST=path restricts discovery before sharding (names with # comments).
 # Sharding uses Python 3 and shard-weights.tsv; --list prints files without running.
 # BUREAU_TEST_FILE_TIMEOUT overrides weighted deadlines; BUREAU_TEST_TIMINGS saves TSV.
 # Runs locally and in CI (.github/workflows/test.yml).
@@ -16,10 +17,16 @@ if [ -n "${BUREAU_TEST_TIMINGS:-}" ]; then
     *) export BUREAU_TEST_TIMINGS="$PWD/$BUREAU_TEST_TIMINGS" ;;
   esac
 fi
+if [ -n "${BUREAU_TEST_MANIFEST:-}" ]; then
+  case "$BUREAU_TEST_MANIFEST" in
+    /*) ;;
+    *) export BUREAU_TEST_MANIFEST="$PWD/$BUREAU_TEST_MANIFEST" ;;
+  esac
+fi
 cd "$(dirname "$0")" || exit 1
 
 select_tests() {
-  if [ "${BUREAU_TEST_SHARD+x}" != x ]; then
+  if [ "${BUREAU_TEST_SHARD+x}" != x ] && [ -z "${BUREAU_TEST_MANIFEST:-}" ]; then
     for t in test_*.sh; do
       [ -f "$t" ] || continue
       printf '%s\n' "$t"
@@ -27,18 +34,37 @@ select_tests() {
     return 0
   fi
 
-  python3 - "$BUREAU_TEST_SHARD" <<'PY'
+  python3 - <<'PY'
+import os
 from pathlib import Path
 import re
 import sys
 
 from run_test_files import expected_seconds, read_weights, runner_os
 
-selector = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", sys.argv[1])
+files = sorted(p.name for p in Path('.').glob('test_*.sh') if p.is_file())
+manifest = os.environ.get('BUREAU_TEST_MANIFEST')
+if manifest:
+    try:
+        lines = Path(manifest).read_text().splitlines()
+    except (OSError, UnicodeError) as error:
+        sys.exit(f"BUREAU_TEST_MANIFEST: {error}")
+    names = {line.split('#', 1)[0].strip() for line in lines}
+    names.discard('')
+    unknown = names - set(files)
+    if unknown:
+        sys.exit('BUREAU_TEST_MANIFEST: unknown test files: ' + ', '.join(sorted(unknown)))
+    if not names:
+        sys.exit('BUREAU_TEST_MANIFEST: no test files selected')
+    files = sorted(names)
+
+if 'BUREAU_TEST_SHARD' not in os.environ:
+    print('\n'.join(files))
+    sys.exit(0)
+selector = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", os.environ['BUREAU_TEST_SHARD'])
 if selector is None:
     sys.exit("BUREAU_TEST_SHARD must be i/n with positive integers (1-based)")
 index, total = map(int, selector.groups())
-files = sorted(p.name for p in Path('.').glob('test_*.sh') if p.is_file())
 if not 1 <= index <= total <= len(files):
     sys.exit(f"BUREAU_TEST_SHARD requires 1 <= i <= n <= {len(files)} test files")
 
