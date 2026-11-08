@@ -27,6 +27,31 @@
         "type": "string"
       }
     },
+    "sibling_searches": {
+      "type": "array",
+      "description": "Optional searches keyed to fixed_review_items IDs. Counts and path lists cover other sites, excluding the original finding; reports never expand accepted scope.",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fixed_review_item": {"type": "string", "maxLength": 280},
+          "search": {"type": "string", "maxLength": 280},
+          "other_sites_found": {"type": "integer", "minimum": 0, "maximum": 100000},
+          "fixed_paths": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {"type": "string", "maxLength": 280}
+          },
+          "out_of_scope_paths": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {"type": "string", "maxLength": 280}
+          }
+        },
+        "required": ["fixed_review_item", "search", "other_sites_found", "fixed_paths", "out_of_scope_paths"]
+      }
+    },
     "notes": {
       "type": "object",
       "additionalProperties": false,

@@ -1,4 +1,5 @@
 """Complete findings reach both implement paths without argv/environment payloads."""
+import copy
 import importlib.util
 import json
 import os
@@ -7,11 +8,13 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'templates/scripts'
+GOAL_CUMULATIVE = 'Keep fixed_review_items and sibling_searches cumulative across all turns of this /goal run'
 
 
 def load(name):
@@ -52,6 +55,7 @@ n = int(counter.read_text()) + 1 if counter.exists() else 1
 counter.write_text(str(n))
 (repo / ('prompt-' + str(n) + '.txt')).write_text(prompt)
 midrun = os.environ.get('FIXTURE_HUMAN_AFTER_PASS') == '1'
+two_turns = os.environ.get('FIXTURE_GOAL_TWO_TURNS') == '1'
 if midrun and n == 1:
     path = repo / 'comments.json'
     value = json.loads(path.read_text())
@@ -59,17 +63,51 @@ if midrun and n == 1:
                                 'createdAt': '2026-10-31T12:01:00Z'})
     path.write_text(json.dumps(value))
 for path in repo.glob('specs/*/tasks.md'):
-    path.write_text(path.read_text().replace('[ ]', '[X]'))
+    path.write_text(path.read_text().replace('[ ]', '[X]', 1 if two_turns else -1))
 (repo / 'feature.txt').write_text('pass ' + str(n) + '\n')
+searches = None
+changed = []
+if os.environ.get('FIXTURE_SIBLING_SWEEP') == '1':
+    defect = "return record['value']"
+    matches = sorted(path for path in repo.glob('*.py') if defect in path.read_text())
+    tasks = next(repo.glob('specs/*/tasks.md')).read_text()
+    sweep = 'After fixing review findings, search the repository for the same defect pattern' in prompt
+    applied = []; outside = []
+    for path in matches:
+        if path.name == 'first.py' or (sweep and '`' + path.name + '`' in tasks):
+            path.write_text(path.read_text().replace(defect, "return record.get('value')"))
+            changed.append(path.name)
+            if path.name != 'first.py': applied.append(path.name)
+        elif sweep:
+            outside.append(path.name)
+    if sweep:
+        searches = [dict(fixed_review_item='review-fix', search=defect, other_sites_found=len(matches) - 1,
+                         fixed_paths=applied, out_of_scope_paths=outside)]
 if pathlib.Path(sys.argv[0]).name == 'claude':
-    subprocess.run(['git', 'add', 'feature.txt', 'specs'], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(['git', 'add', 'feature.txt', 'specs', *changed], check=True, stdout=subprocess.DEVNULL)
     subprocess.run(['git', 'commit', '-qm', 'fix: fixture progress\n\nBureau-Generated: true'], check=True)
-value = dict(status='PARTIAL' if midrun and n == 1 else 'COMPLETE', tasks_done=3, tasks_skipped=0,
+value = dict(status='PARTIAL' if two_turns or midrun and n == 1 else 'COMPLETE', tasks_done=1 if two_turns else 3, tasks_skipped=0,
              tasks_needs_human=0, fixed_review_items=[], notes=dict(needs_human=[], skipped=[], deviations=[]),
              prose_notes='Fixture work completed')
+if os.environ.get('FIXTURE_SIBLING_SWEEP') == '1':
+    value['fixed_review_items'] = ['review-fix']
+    if searches is not None: value['sibling_searches'] = searches
 if pathlib.Path(sys.argv[0]).name == 'codex':
     pathlib.Path(args[args.index('-o') + 1]).write_text(json.dumps(value))
     print(json.dumps({'type':'turn.completed', 'usage': {'input_tokens':1, 'output_tokens':1}}))
+elif two_turns:
+    first = value
+    for path in repo.glob('specs/*/tasks.md'):
+        path.write_text(path.read_text().replace('[ ]', '[X]'))
+    (repo / 'feature.txt').write_text('remaining task completed\n')
+    if pathlib.Path(sys.argv[0]).name == 'claude':
+        subprocess.run(['git', 'add', 'feature.txt', 'specs'], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(['git', 'commit', '-qm', 'test: finish remaining task'], check=True)
+    value = dict(first, status='COMPLETE', fixed_review_items=[], sibling_searches=[])
+    if 'Keep fixed_review_items and sibling_searches cumulative across all turns of this /goal run' in prompt:
+        value.update(fixed_review_items=first['fixed_review_items'], sibling_searches=first['sibling_searches'])
+    text = '\n'.join('```json\n' + json.dumps(turn) + '\n```' for turn in (first, value))
+    print(json.dumps({'type':'result', 'result':text, 'usage': {'input_tokens':1, 'output_tokens':1}}))
 else:
     print(json.dumps({'type':'result', 'result': json.dumps(value), 'structured_output':value,
                       'usage': {'input_tokens':1, 'output_tokens':1}}))
@@ -339,6 +377,100 @@ bureau_without_secrets() { "$@"; }
         prompt, _ = self.implement(runner='codex')
         self.all_messages(prompt)
 
+    def sibling_fixture(self, mode):
+        defect = "def read(record):\n    return record['value']\n"
+        (self.repo / 'first.py').write_text(defect)
+        (self.repo / 'second.py').write_text(defect if mode != 'none' else defect.replace("record['value']", "record.get('value')"))
+        tasks = self.repo / 'specs/001-test-branch/tasks.md'
+        tasks.write_text('- [ ] T001 Guard the read in `first.py`\n' +
+                         ('- [ ] T002 Guard the read in `second.py`\n' if mode == 'fix' else '') +
+                         ('- [ ] Finish remaining task\n' if self.env.get('FIXTURE_GOAL_TWO_TURNS') == '1' else ''))
+        self.git('add', '-f', 'first.py', 'second.py', 'specs')
+        self.git('commit', '-qm', 'test: repeated missing check')
+        self.git('push', '-q', 'origin', 'test-branch')
+        self.head = self.git('rev-parse', 'HEAD')
+        self.declared_paths = load('paths').inventory(self.repo, tasks.relative_to(self.repo).as_posix())['paths']
+        self.assertIsNotNone(self.declared_paths)
+        issue = self.store._manifest(self.run)['issue']
+        self.attempt = self.store.begin_attempt(self.run, issue, 'implement', 'stage', self.repo, self.head)
+        self.env.update(FIXTURE_SIBLING_SWEEP='1', BUREAU_IMPL_ITER_TIMEOUT='15', BUREAU_IMPL_TOTAL_TIMEOUT='120',
+                        BUREAU_RUN_ID=self.run, BUREAU_STAGE_ATTEMPT_ID=self.attempt, BUREAU_CURRENT_ISSUE=issue)
+        self.comments(['FIXES_NEEDED: review-fix: guard the missing value in first.py.'])
+
+    def sibling_sweep(self, mode, runner='claude', goal=False):
+        self.sibling_fixture(mode)
+        prompt, _ = self.implement(runner=runner, goal=goal)
+        self.assertIn("ticket's accepted scope", prompt)
+        self.assertIn("never expand the ticket's file scope or overlap claims", prompt)
+        receipts = list(self.store._records('runs/*/receipts/*.json', 'receipt'))
+        receipt = next(value for _, value in receipts if value['stage_attempt_id'] == self.attempt)
+        provider = load('provider')
+        result = provider.receipt_result(receipt)
+        self.assertIn('sibling_searches', result, 'the provider must report its sibling search')
+        self.assertEqual(result['fixed_review_items'], ['review-fix'])
+        search = result['sibling_searches'][0]
+        self.assertEqual(search, dict(fixed_review_item='review-fix', search="return record['value']",
+            other_sites_found=0 if mode == 'none' else 1,
+            fixed_paths=['second.py'] if mode == 'fix' else [],
+            out_of_scope_paths=['second.py'] if mode == 'outside' else []))
+        provider.validate(result, json.loads((SCRIPTS / 'bureau-implement.schema.json').read_text()))
+        self.assertIn("record.get('value')", (self.repo / 'first.py').read_text())
+        second = (self.repo / 'second.py').read_text()
+        self.assertIn("record['value']" if mode == 'outside' else "record.get('value')", second)
+        self.assertEqual(receipt.get('sibling_out_of_scope_paths'), ['second.py'] if mode == 'outside' else [])
+        self.assertNotIn('sibling_searches', receipt, 'search descriptions stay out of metadata evidence')
+        self.assertIsNone(receipt['structured_result'])
+        acceptance = load('acceptance')
+        before = self.git('status', '--porcelain'), (self.repo / 'specs/001-test-branch/tasks.md').read_text()
+        manifest = self.store._manifest(self.run); pr = manifest['pr']['number']
+        brief = acceptance.render(self.store, self.repo, manifest['issue'], pr,
+            self.git('rev-parse', 'HEAD'), f'https://github.com/test/repo/pull/{pr}', base=self.head,
+            spec=self.repo / 'specs/001-test-branch/spec.md')
+        if mode == 'outside':
+            self.assertIn('Reported out-of-scope sibling sites: `second.py`', brief.split('**Open points**')[1])
+            self.assertIn('ticket scope and overlap claims are unchanged', brief)
+            self.assertIn('Files outside declared scope:', brief)
+            self.assertNotIn('second.py', brief.split('**Result**')[1].split('**Test evidence**')[0])
+        else:
+            self.assertNotIn('Reported out-of-scope sibling sites:', brief)
+        self.assertEqual(before, (self.git('status', '--porcelain'), (self.repo / 'specs/001-test-branch/tasks.md').read_text()))
+        self.assertEqual(load('paths').inventory(self.repo, 'specs/001-test-branch/tasks.md')['paths'], self.declared_paths)
+        self.assertFalse((self.repo / '.git/bureau/admission').exists())
+
+    def test_sibling_sweep_fixes_both_files(self):
+        self.sibling_sweep('fix')
+
+    def test_sibling_sweep_codex_fixes_both_files(self):
+        self.sibling_sweep('fix', runner='codex')
+
+    def test_sibling_sweep_outside_scope_in_packet(self):
+        self.sibling_sweep('outside')
+
+    def test_sibling_sweep_goal_outside_scope_in_packet(self):
+        self.sibling_sweep('outside', goal=True)
+
+    def test_sibling_sweep_goal_two_turns_outside_scope_in_packet(self):
+        self.env['FIXTURE_GOAL_TWO_TURNS'] = '1'
+        self.sibling_sweep('outside', goal=True)
+        self.assertEqual((self.repo / 'cli-counter').read_text(), '1')
+        self.assertEqual(self.git('rev-list', '--count', self.head + '..HEAD'), '2')
+
+    def test_sibling_sweep_without_siblings(self):
+        self.sibling_sweep('none')
+
+    def test_sibling_sweep_goal_without_siblings(self):
+        self.sibling_sweep('none', goal=True)
+
+    def test_sibling_sweep_negative_control(self):
+        script = self.scripts / 'implement-pipeline.sh'
+        source = script.read_text()
+        marker = 'After fixing review findings, search the repository for the same defect pattern'
+        self.assertEqual(source.count(marker), 2)
+        script.write_text(source.replace(marker, 'Read adjacent files before writing'))
+        with self.assertRaisesRegex(AssertionError, 'the provider must report its sibling search'):
+            self.sibling_sweep('fix')
+        self.assertIn("record['value']", (self.repo / 'second.py').read_text())
+
     def test_real_capped_review_footer_binds_and_appends_all_1500_findings(self):
         self.published_review(count=1500)
         self.assertNotIn('\n```json\n', self.comment)
@@ -592,6 +724,139 @@ bureau_without_secrets() { "$@"; }
                 completed = self.refresh()
                 self.assertEqual(completed.stdout, self.baseline_context(note))
                 self.assertEqual(completed.stderr, '')
+
+
+class SiblingSearchContractTests(unittest.TestCase):
+    def setUp(self):
+        self.e = load('evidence'); self.provider = load('provider'); self.acceptance = load('acceptance')
+        self.schema = json.loads((SCRIPTS / 'bureau-implement.schema.json').read_text())
+        self.report = dict(fixed_review_item='review-fix', search='unchecked read', other_sites_found=1,
+                           fixed_paths=[], out_of_scope_paths=['second.py'])
+        self.result = dict(status='COMPLETE', tasks_done=1, tasks_skipped=0, tasks_needs_human=0,
+                           fixed_review_items=['review-fix'], sibling_searches=[self.report],
+                           notes=dict(needs_human=[], skipped=[], deviations=[]), prose_notes='')
+
+    def test_legacy_and_zero_match_results_remain_valid(self):
+        self.provider.validate(self.result, self.schema)
+        self.assertEqual(self.e.sibling_out_of_scope_paths(self.result), ['second.py'])
+        self.report.update(other_sites_found=0, out_of_scope_paths=[])
+        self.provider.validate(self.result, self.schema)
+        self.assertEqual(self.e.sibling_out_of_scope_paths(self.result), [])
+        del self.result['sibling_searches']
+        self.provider.validate(self.result, self.schema)
+        self.assertIsNone(self.e.sibling_out_of_scope_paths(self.result))
+
+    def test_schema_bounds_and_required_search_fields(self):
+        invalid = [dict(search='x' * 281), dict(fixed_review_item='x' * 281),
+                   dict(out_of_scope_paths=['second.py'] * 33), dict(fixed_paths=['x' * 281]),
+                   dict(out_of_scope_paths=['x' * 281]), dict(extra='unexpected'),
+                   dict(other_sites_found='one')]
+        for changes in invalid:
+            with self.subTest(changes=changes):
+                result = copy.deepcopy(self.result); result['sibling_searches'][0].update(changes)
+                with self.assertRaises(ValueError): self.provider.validate(result, self.schema)
+        del self.report['search']
+        with self.assertRaises(ValueError): self.provider.validate(self.result, self.schema)
+
+    def test_schema_report_count_boundary(self):
+        result = copy.deepcopy(self.result)
+        result['sibling_searches'] = [copy.deepcopy(self.report) for _ in range(32)]
+        self.provider.validate(result, self.schema)
+        result['sibling_searches'].append(copy.deepcopy(self.report))
+        with self.assertRaisesRegex(ValueError, 'result array too long'):
+            self.provider.validate(result, self.schema)
+        schema = copy.deepcopy(self.schema)
+        del schema['properties']['sibling_searches']['maxItems']
+        self.provider.validate(result, schema)
+
+    def test_projection_rejects_unbound_counts_and_malformed_reports(self):
+        invalid = [dict(fixed_review_item='not-fixed'), dict(other_sites_found=-1), dict(other_sites_found=True),
+                   dict(other_sites_found=100001), dict(other_sites_found=0), dict(fixed_paths=['second.py']),
+                   dict(search='x' * 281), dict(out_of_scope_paths=['second.py'] * 33),
+                   dict(fixed_paths=[None]), dict(out_of_scope_paths=['x' * 281])]
+        for changes in invalid:
+            with self.subTest(changes=changes):
+                result = copy.deepcopy(self.result); result['sibling_searches'][0].update(changes)
+                self.assertIsNone(self.e.sibling_out_of_scope_paths(result))
+
+    def packet(self, result):
+        with tempfile.TemporaryDirectory(prefix='bureau-sibling-', dir=ROOT) as directory:
+            repo = Path(directory); store = self.e.Store(repo / 'bureau'); head = 'a' * 40
+            run = uuid.uuid4().hex
+            store.begin_run(run, None, repo, head)
+            attempt = store.begin_attempt(run, None, 'implement', 'implement', repo, head)
+            path = store.put_receipt(dict(run_id=run, stage_attempt_id=attempt, provider_attempt_id=uuid.uuid4().hex,
+                stage='implement', phase='implement', provider='claude', normalized_exit=0, provider_exit=0,
+                start_head=head, end_head=head, insights_result=result))
+            receipt = json.loads(path.read_text())
+            return receipt, self.acceptance.sibling_open_points(None, [(path, receipt)], head)
+
+    def test_projection_filters_paths_individually(self):
+        filtered = ['templates/scripts/bureau-evidence.py', '../second.py', '/outside.py',
+                    'second.py\nprivate output', '`payload`']
+        for key in ('fixed_paths', 'out_of_scope_paths'):
+            for path in filtered:
+                with self.subTest(key=key, path=path):
+                    self.assertFalse(self.e.disposition_path(path))
+                    result = copy.deepcopy(self.result)
+                    result['sibling_searches'][0].update({key: [path] + (['second.py'] if key == 'out_of_scope_paths' else []),
+                                                        'other_sites_found': 2})
+                    self.provider.validate(result, self.schema)
+                    self.assertEqual(self.e.sibling_out_of_scope_paths(result), ['second.py'])
+                    receipt, points = self.packet(result)
+                    self.assertEqual(receipt['sibling_out_of_scope_paths'], ['second.py'])
+                    self.assertIn('`second.py`', points[0])
+                    self.assertNotIn(path, json.dumps(receipt))
+        self.report['out_of_scope_paths'] = filtered
+        self.report['other_sites_found'] = len(filtered)
+        self.assertEqual(self.e.sibling_out_of_scope_paths(self.result), [])
+
+    def goal_result(self, prompt):
+        with tempfile.TemporaryDirectory(prefix='bureau-sibling-goal-', dir=ROOT) as directory:
+            repo = Path(directory); spec = repo / 'specs/fixture'; spec.mkdir(parents=True)
+            (spec / 'tasks.md').write_text('- [ ] Guard `first.py`\n- [ ] Finish remaining task\n')
+            for name in ('first.py', 'second.py'):
+                (repo / name).write_text("def read(record):\n    return record['value']\n")
+            env = {**os.environ, 'FIXTURE_REVIEW': '0', 'FIXTURE_HUMAN_AFTER_PASS': '0',
+                   'FIXTURE_SIBLING_SWEEP': '1', 'FIXTURE_GOAL_TWO_TURNS': '1'}
+            completed = subprocess.run([sys.executable, '-c', CLI], cwd=repo, env=env,
+                                       input=prompt, capture_output=True, text=True, timeout=5)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            text = self.provider.claude_envelope(completed.stdout)['result']
+            turns = [json.loads(block) for block in re.findall(r'^```json\n(.*?)^```$', text, re.M | re.S)]
+            self.assertEqual(len(turns), 2)
+            self.assertEqual([turn['status'] for turn in turns], ['PARTIAL', 'COMPLETE'])
+            self.assertEqual(turns[0]['sibling_searches'], [dict(self.report, search="return record['value']")])
+            self.assertNotIn('[ ]', (spec / 'tasks.md').read_text())
+            result = self.provider.structured(text)
+            self.provider.validate(result, self.schema)
+            return result
+
+    def test_goal_retains_reports_through_a_turn_without_review_fixes(self):
+        source = (SCRIPTS / 'implement-pipeline.sh').read_text()
+        prompt = source.split('  IMPL_SYSTEM="', 1)[1].split('\n  GOAL_CONDITION=', 1)[0]
+        self.assertIn(GOAL_CUMULATIVE, prompt)
+        result = self.goal_result(prompt)
+        self.assertEqual(result['fixed_review_items'], ['review-fix'])
+        receipt, points = self.packet(result)
+        self.assertEqual(receipt['sibling_out_of_scope_paths'], ['second.py'])
+        self.assertIn('`second.py`', points[0])
+        result = self.goal_result(prompt.replace(GOAL_CUMULATIVE, 'Report only this turn'))
+        self.assertEqual(result['fixed_review_items'], [])
+        receipt, points = self.packet(result)
+        self.assertEqual(receipt['sibling_out_of_scope_paths'], [])
+        self.assertEqual(points, [], 'negative control must reproduce the lost open point')
+
+    def test_packet_ignores_failed_foreign_and_unsafe_receipts(self):
+        head = 'a' * 40
+        receipt = dict(stage='implement', normalized_exit=0, provider_exit=0, end_head=head,
+                       sibling_out_of_scope_paths=['second.py'])
+        self.assertIn('`second.py`', self.acceptance.sibling_open_points(None, [(None, receipt)], head)[0])
+        for changes in (dict(stage='qa'), dict(normalized_exit=22), dict(provider_exit=1), dict(end_head=None),
+                        dict(sibling_out_of_scope_paths=['../second.py']), dict(sibling_out_of_scope_paths='second.py'),
+                        dict(sibling_out_of_scope_paths=['second.py'] * 1025)):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.acceptance.sibling_open_points(None, [(None, {**receipt, **changes})], head), [])
 
 
 if __name__ == '__main__':
