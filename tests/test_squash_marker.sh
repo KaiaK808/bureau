@@ -198,7 +198,8 @@ case "$SQUASH_SCRATCH_ERROR" in
   partial-messages) printf partial > "$batch/messages" ;;
   cancel-*)
     [ -s "$batch/commits" ] && [ -s "$batch/objects" ] && [ -s "$batch/messages" ] || exit 1
-    kill -s "${SQUASH_SCRATCH_ERROR#cancel-}" "$SQUASH_CHECK_PID" "$$"
+    # The check leads its own process group; cancel its foreground children too.
+    kill -s "${SQUASH_SCRATCH_ERROR#cancel-}" -- "-$SQUASH_CHECK_PID"
     ;;
 esac
 EOF
