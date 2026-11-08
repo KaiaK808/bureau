@@ -606,6 +606,39 @@ p.run=lose_forward
             self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':{'gate_outside_sandbox':invalid}}}}))
             self.run_provider('--check',code=22)
 
+    def assert_verbatim_gate_brief(self,stage,expected=True):
+        self.run_provider('--stage',stage)
+        prompt=(self.root/'stdin.txt').read_text()
+        text='Run the configured test command verbatim as its own command from the repository root, with no wrapper, prefix, redirect or environment change.'
+        if expected:
+            self.assertIn(text,prompt)
+            self.assertIn('Set the working directory separately; do not prepend cd, env or unset.',prompt)
+            self.assertIn('command hash to match the configured command',prompt)
+        else: self.assertNotIn(text,prompt)
+
+    def test_nondelegated_codex_gate_briefs_require_verbatim_command(self):
+        for stage in ('implement','qa'):
+            for delegation in (None,False,True):
+                with self.subTest(stage=stage,delegation=delegation):
+                    codex={} if delegation is None else {'gate_outside_sandbox':delegation}
+                    self.config.write_text(json.dumps({'agents':{'runner':'codex','providers':{'codex':codex}}}))
+                    self.assert_verbatim_gate_brief(stage,delegation is not True)
+            self.config.write_text(json.dumps({'agents':{'runner':'claude'}}))
+            self.assert_verbatim_gate_brief(stage,False)
+
+    def test_verbatim_gate_brief_negative_control(self):
+        self.assert_verbatim_gate_brief('implement')
+        source=SCRIPT.read_text()
+        anchor="        elif options['stage'] in ('implement', 'qa'):\n            prompt += '\\nRun the configured test command verbatim"
+        self.assertEqual(source.count(anchor),1)
+        control=self.root/'control'
+        shutil.copytree(SCRIPT.parent,control)
+        (control/SCRIPT.name).write_text(source.replace(anchor,anchor.replace("elif options['stage'] in ('implement', 'qa'):",'elif False:')))
+        with patch(__name__+'.SCRIPT',control/SCRIPT.name):
+            for stage in ('implement','qa'):
+                with self.subTest(stage=stage), self.assertRaisesRegex(AssertionError,'not found'):
+                    self.assert_verbatim_gate_brief(stage)
+
     def test_delegated_gate_once_per_pass_with_filtered_receipt(self):
         schema=ROOT/'templates/scripts/bureau-implement.schema.json'
         value={**self.sandbox_result(), 'status':'COMPLETE', 'tasks_needs_human':0,

@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 import git_maintenance
@@ -132,6 +133,93 @@ class StageTimeoutTests(Repo):
         os.environ['BUREAU_STAGE_TIMEOUT'] = '600'
         text = self.warning(self.diagnose(self.config()))
         self.assertIn('spec 600 s', text); self.assertIn('code_review 600 s', text); self.assertIn('BUREAU_STAGE_TIMEOUT', text)
+
+
+class CodexGateDurationTests(Repo):
+    def record_gate(self, duration, at=10000, command=None, sandbox=False):
+        evidence = d.module('evidence'); store = d.module('provider').evidence_store(self.repo)
+        store.clock = lambda: at - duration
+        head = git(self.repo, 'rev-parse', 'HEAD').stdout.strip(); run = uuid.uuid4().hex
+        store.begin_run(run, None, self.repo, head)
+        owner = store.begin_attempt(run, None, 'implement', 'implement', self.repo, head)
+        command = BASE['repo']['test_command'] if command is None else command
+        digest = evidence.text_digest(command)
+        record = dict(attempt_id=uuid.uuid4().hex, gate_id=digest, command_id='repo.test_command', command_sha256=digest,
+                      head=head, end_head=head, normalized_exit=0, source='bureau.shell', environment='outside',
+                      abort=None, call_id_sha256=None, duration_seconds=duration, bytes=0,
+                      sha256=evidence.text_digest(''), stage_log=str(self.base / 'gate.log'))
+        if sandbox:
+            record.update(source='codex.command_execution', environment='sandbox', stage_log=None,
+                          call_id_sha256=evidence.text_digest('call'))
+            return store.put_receipt(dict(run_id=run, provider_attempt_id=uuid.uuid4().hex, stage_attempt_id=owner,
+                                          issue=None, stage='implement', phase='implement', provider='codex',
+                                          provider_exit=0, normalized_exit=0, outcome='complete', started_at=at-duration,
+                                          ended_at=at, start_head=head, end_head=head, gate_attempts=[record]))
+        _, reservation = store.reserve_gate_rerun(run, owner, head, command, digest, [])
+        record['attempt_id'] = reservation['attempt_id']
+        store.finish_gate_rerun(run, owner, reservation['attempt_id'], record)
+        return store.manifest_path(run)
+
+    def assert_warning(self, config, expected, repo=None):
+        result = self.diagnose(config, repo)
+        self.assertTrue(result['ok'], result); self.assertEqual(result['errors'], [])
+        found = [w for w in result['warnings'] if w.startswith('Codex full gate last took')]
+        self.assertEqual(len(found), 1 if expected else 0, found)
+        if found:
+            self.assertIn('600 s tool command limit', found[0])
+            self.assertIn('agents.providers.codex.gate_outside_sandbox', found[0]); self.assertIn('ADR 0013', found[0])
+        return found
+
+    def test_long_gate_warns_for_either_codex_stage_without_failing_or_writing(self):
+        self.record_gate(1320)
+        store = d.module('provider').evidence_store(self.repo)
+        before = {p.relative_to(store.root): p.read_bytes() for p in store.root.rglob('*') if p.is_file()}
+        for stage in ('implement', 'qa'):
+            for delegation in (None, False):
+                with self.subTest(stage=stage, delegation=delegation):
+                    config = self.config(implement=False, qa=False)
+                    config['agents'][stage] = {'runner': 'codex'}
+                    if delegation is not None: config['agents']['providers'] = {'codex': {'gate_outside_sandbox': delegation}}
+                    self.assertIn('1320 s', self.assert_warning(config, True)[0])
+        self.assertEqual({p.relative_to(store.root): p.read_bytes() for p in store.root.rglob('*') if p.is_file()}, before)
+
+    def test_delegation_claude_disabled_and_other_stages_do_not_warn(self):
+        self.record_gate(1320)
+        configs = [self.config(runner='codex', providers={'codex': {'gate_outside_sandbox': True}}),
+                   self.config(runner='claude', qa=True), self.config(implement=False, qa=False, research={'runner': 'codex'})]
+        for config in configs:
+            with self.subTest(agents=config['agents']): self.assert_warning(config, False)
+
+    def test_latest_matching_duration_wins_instead_of_longest_or_file_order(self):
+        self.record_gate(1320)
+        self.record_gate(600, at=11000, sandbox=True)
+        config = self.config(runner='codex', qa=True)
+        self.assert_warning(config, False)
+        self.record_gate(30, at=12000)
+        self.record_gate(1800, at=14000, command='another gate')
+        self.assert_warning(config, False)
+        self.record_gate(601, at=15000, sandbox=True)
+        self.assertIn('601 s', self.assert_warning(config, True)[0])
+
+    def test_missing_or_invalid_evidence_is_read_only_and_advisory(self):
+        config = self.config(runner='codex')
+        store = d.module('provider').evidence_store(self.repo)
+        self.assertFalse(store.root.exists()); self.assert_warning(config, False); self.assertFalse(store.root.exists())
+        path = self.record_gate(1320, sandbox=True)
+        original = json.loads(path.read_text())
+        for value in ('{', '[]', json.dumps({**original, 'gate_attempts': None})):
+            with self.subTest(value=value):
+                path.write_text(value); self.assert_warning(config, False); self.assertEqual(path.read_text(), value)
+        for duration in (None, True, '1320', -1, float('inf'), 10**400):
+            with self.subTest(duration=duration):
+                value = copy.deepcopy(original); value['gate_attempts'][0]['duration_seconds'] = duration
+                path.write_text(json.dumps(value)); self.assert_warning(config, False)
+        path.write_text(json.dumps(original))
+        read_text = Path.read_text
+        def unreadable(target, *args, **kwargs):
+            if target == path: raise PermissionError('fixture evidence unreadable')
+            return read_text(target, *args, **kwargs)
+        with patch.object(Path, 'read_text', unreadable): self.assert_warning(config, False)
 
 
 class CiGateTests(Repo):
