@@ -154,7 +154,7 @@ bureau_untrusted_env --check || exit 24
 # digests, sizes and command IDs/digests outside resets, without a log copy.
 mkdir -p logs
 QA_LOG_TS=$(date -u +%Y-%m-%dT%H-%M-%S)
-QA_LOG_PATH="logs/qa-$ISSUE-$QA_LOG_TS.log"
+QA_LOG_PATH="logs/qa-$ISSUE-$QA_LOG_TS-$$.log"
 
 QA_TMP=$(mktemp -d)
 QA_GATE_CONTEXT="$QA_TMP/gate-context.json"
@@ -174,16 +174,46 @@ bureau_archive_evidence_dir_log() {
     --end-head '' --command 'QA summary; gate results recorded separately' --command-id qa.summary || true
 }
 
-qa_run_gate() {
-  bureau_run_gate "$1" "$TEST_CMD" qa.test
+QA_FLAKE_LINE=""
+qa_note_flake() {
+  local line
+  line=$(printf '%s' "$1" | jq -r 'select(. != null) | "Flaky: passed on one rerun; failed tests: " + (.failed_tests | join(", ")) + (if .omitted > 0 then "; \(.omitted) more omitted" else "" end)' 2>/dev/null) || line=""
+  if [ -n "$line" ]; then
+    QA_FLAKE_LINE="${QA_FLAKE_LINE:+$QA_FLAKE_LINE
+}$line"
+    echo "  $line"
+  fi
 }
 
+qa_run_gate() {
+  local rc=0 flake
+  bureau_run_gate "$1" "$TEST_CMD" qa.test --qa-final || rc=$?
+  case "$rc" in 25|124|130) exit "$rc" ;; esac
+  if [ -r "$1.result.json" ] && flake=$(jq -ce '.flaky // empty' "$1.result.json" 2>/dev/null); then qa_note_flake "$flake"; fi
+  return "$rc"
+}
+
+qa_append_gate_log() {
+  local log="$1"
+  printf 'Gate log: %s\n' "$log"
+  cat "$log"
+  if [ -f "${log%.log}.retry.log" ]; then
+    printf '\nRerun log: %s\n' "${log%.log}.retry.log"
+    cat "${log%.log}.retry.log"
+  fi
+}
+
+mkdir -p "${QA_LOG_PATH%.log}"
+QA_INITIAL_LOG="${QA_LOG_PATH%.log}/initial.log"
+QA_INITIAL_RETRY_LOG="${QA_LOG_PATH%.log}/initial.retry.log"
+QA_FINAL_LOG="${QA_LOG_PATH%.log}/final.log"
+QA_COVERAGE_LOG="$QA_INITIAL_LOG"
 echo ""
 echo "Phase 1/3: initial test run (no Claude call)"
-if qa_run_gate "$QA_TMP/test1.log"; then
+if bureau_run_gate "$QA_INITIAL_LOG" "$TEST_CMD" qa.test; then
   echo "  Initial test run: PASSED"
   GREEN_ON_FIRST_TRY=true
-  { echo "=== Phase 1/3: initial test run (PASSED) ==="; cat "$QA_TMP/test1.log"; } > "$QA_LOG_PATH"
+  { echo "=== Phase 1/3: initial test run (PASSED) ==="; cat "$QA_INITIAL_LOG"; } > "$QA_LOG_PATH"
 else
   RC=$?
   echo "  Initial test run: FAILED (exit $RC) — retrying once before engaging Claude…"
@@ -195,33 +225,31 @@ else
   # real bugs that should land in needs-human. An installation parked on a
   # `running 0 tests` / `target failed` flake that passed cleanly on rerun.
   sleep 5
-  if qa_run_gate "$QA_TMP/test1.retry.log"; then
+  if bureau_run_gate "$QA_INITIAL_RETRY_LOG" "$TEST_CMD" qa.test; then
     echo "  Retry passed. First run was a flake."
     {
       echo "=== Phase 1/3: initial test run (FLAKE — exit $RC) ==="
-      cat "$QA_TMP/test1.log"
+      cat "$QA_INITIAL_LOG"
       echo
       echo "=== Phase 1/3 retry: PASSED ==="
-      cat "$QA_TMP/test1.retry.log"
+      cat "$QA_INITIAL_RETRY_LOG"
     } > "$QA_LOG_PATH"
     post_comment "$ISSUE" "ℹ️ qa-pipeline retry-1: initial test run exited $RC, retry passed — treating as flake. Full log: \`$QA_LOG_PATH\`."
-    # Replace test1.log with the passing retry so downstream coverage-check
-    # logic (Phase 2/3 with TASKS_FILE) reads the green output, not the flake.
-    cp "$QA_TMP/test1.retry.log" "$QA_TMP/test1.log"
+    QA_COVERAGE_LOG="$QA_INITIAL_RETRY_LOG"
     GREEN_ON_FIRST_TRY=true
   else
     echo "  Retry also failed — engaging Claude to diagnose."
     {
       echo "=== Phase 1/3: initial test run (exit $RC) ==="
-      cat "$QA_TMP/test1.log"
+      cat "$QA_INITIAL_LOG"
       echo
       echo "=== Phase 1/3 retry: also failed ==="
-      cat "$QA_TMP/test1.retry.log"
+      cat "$QA_INITIAL_RETRY_LOG"
     } > "$QA_LOG_PATH"
     GREEN_ON_FIRST_TRY=false
   fi
 fi
-TEST_LOG_TAIL=$(tail -n 80 "$QA_TMP/test1.log" 2>/dev/null || echo "")
+TEST_LOG_TAIL=$(tail -n 80 "$QA_COVERAGE_LOG" 2>/dev/null || echo "")
 
 echo ""
 echo "Phase 2/3: coverage / repair pass"
@@ -337,6 +365,7 @@ if [ -n "$QA_OUTSIDE_MODE" ]; then
   [ "$OUTSIDE_RC" = 0 ] || OUTSIDE_GATE='{"green":false,"logs":[]}'
   if [ "$QA_OUTSIDE_MODE" = reconcile ]; then QA_GATE_RECONCILE=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.eligible // false'); fi
   FINAL_GREEN=$(printf '%s' "$OUTSIDE_GATE" | jq -r '.green // false')
+  while IFS= read -r flake; do qa_note_flake "$flake"; done < <(printf '%s' "$OUTSIDE_GATE" | jq -c '.flakes[]?')
   : > "$QA_TMP/test2.log"
   while IFS= read -r gate_log; do
     [ -n "$gate_log" ] || continue
@@ -347,7 +376,7 @@ if [ -n "$QA_OUTSIDE_MODE" ]; then
       QA_GATE_RECONCILE=false
     fi
   done < <(printf '%s' "$OUTSIDE_GATE" | jq -r '.logs[]?')
-elif qa_run_gate "$QA_TMP/test2.log"; then
+elif qa_run_gate "$QA_FINAL_LOG"; then
   FINAL_GREEN=true
 else
   FINAL_GREEN=false
@@ -355,7 +384,7 @@ fi
 {
   echo
   echo "=== Phase 3/3: final test run ($([ "$FINAL_GREEN" = true ] && echo PASSED || echo FAILED)) ==="
-  cat "$QA_TMP/test2.log"
+  if [ -n "$QA_OUTSIDE_MODE" ]; then cat "$QA_TMP/test2.log"; else qa_append_gate_log "$QA_FINAL_LOG"; fi
 } >> "$QA_LOG_PATH"
 
 STATUS=$(parse_claude_json "$QA_RESULT" '.status // empty')
@@ -382,6 +411,9 @@ if [ "$FINAL_GREEN" = false ] && [ "$STATUS" = "GREEN" ]; then STATUS="RED"; fi
 
 # Comment-only projection; its failure must not change the status/routing above.
 SUMMARY=$(bureau_comment_projection "$(parse_claude_json "$QA_RESULT" '.coverage_notes // "no notes"')")
+if [ -n "$QA_FLAKE_LINE" ]; then SUMMARY="$QA_FLAKE_LINE
+
+$SUMMARY"; fi
 if [ -n "${QA_SANDBOX_GATE_LINE:-}" ]; then
   SUMMARY="$QA_SANDBOX_GATE_LINE
 

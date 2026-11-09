@@ -1,19 +1,140 @@
 #!/usr/bin/env python3
-"""Codex execution evidence and fail-closed configured-gate reconciliation.
+"""Execution evidence, assertion-only QA retries and configured-gate reconciliation.
 
 Imported by bureau-provider.py. Machine recovery uses typed references; the
 legacy prefix is a separate compatibility input. The store owns retry claims.
 """
 import hashlib
 import json
+import os
 from pathlib import Path
+import re
 import shlex
+import sys
 import time
 import uuid
 
 
 def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def qa_timeout():
+    value = os.environ.get('BUREAU_QA_TEST_TIMEOUT', '900')
+    return int(value) if re.fullmatch(r'[0-9]{1,5}', value) and 1 <= int(value) <= 86400 else 900
+
+
+def qa_test_output(path):
+    """Recognize complete assertion summaries; unfamiliar output fails closed."""
+    try:
+        if Path(path).stat().st_size > 8 * 1024 * 1024: return None
+        output = Path(path).read_text(encoding='utf-8')
+    except (OSError, UnicodeError): return None
+    output = re.sub(r'\x1b\[[0-9;]*m', '', output)
+    # Runner case labels and traceback frames are identities, not failure diagnostics.
+    diagnostics = re.sub(r'^\S+ \([^\n]+\) \.\.\. (?:ok|FAIL|skipped .*)$|'
+                         r'^\S+ (?:PASSED|FAILED|SKIPPED)(?:[ \t]+\[[ \t]*\d+%\])?[ \t]*$|'
+                         r'^FAIL: \S+ \([^\n]+\)$|^_+ \S+ _+$|'
+                         r'^[ \t]+File "[^\n]+", line \d+(?:, in [^\n]+)?$', '', output, flags=re.M)
+    diagnostics = re.sub(r'^\S+\.py:\d+:(?: in \S+[ \t]*$|[ \t]*)|'
+                         r'^[ \t>]*(?:async[ \t]+)?def[ \t]+\w+(?=[ \t]*\()', '', diagnostics, flags=re.M)
+    diagnostics = re.sub(r'^FAILED \S+(?: - |$)', '', diagnostics, flags=re.M)
+    if re.search(r'operation not permitted|permission denied|read-only file system|sandbox|\b(?:EPERM|EACCES|EROFS|ENOSPC)\b|'
+                 r'\b(?:EADDRINUSE|EADDRNOTAVAIL|ECONNREFUSED|ENETUNREACH|EAI_AGAIN)\b|'
+                 r'address already in use|connection refused|network is unreachable|name resolution|'
+                 r'no module named|command not found|no such file or directory|'
+                 r'timed? out|timeout|cleanup (?:failed|error)|teardown|tearDown|segmentation fault|'
+                 r'core dumped|fatal error|interrupted', diagnostics, re.I): return None
+    # unittest's terminal summary distinguishes assertion failures from errors.
+    summary = re.search(r'\nRan (\d+) tests? in [\d.]+s\s*\n\s*(OK(?: \([^\n]+\))?|FAILED \([^\n]+\))\s*\Z', output)
+    if summary:
+        counts = dict((key, int(value)) for key, value in re.findall(r'(\w+)=(\d+)', summary[2]))
+        if set(counts) - {'failures', 'skipped'}: return None
+        if summary[2].startswith('FAILED') != bool(counts.get('failures', 0)): return None
+        names = re.findall(r'^FAIL: (\S+) \(([^\n]+)\)$', output, re.M)
+        names = [owner if owner.endswith('.' + name) else owner + '.' + name for name, owner in names]
+        result = dict(runner='unittest', total=int(summary[1]), failed=counts.get('failures', 0),
+                      skipped=counts.get('skipped', 0), names=names)
+        cases = re.findall(r'^(\S+) \(([^\n]+)\) \.\.\. (?:ok|FAIL|skipped .*)$', output, re.M)
+        cases = [owner if owner.endswith('.' + name) else owner + '.' + name for name, owner in cases]
+    else:
+        summary = re.search(r'^(?:=+ )?((?:\d+ (?:failed|passed|skipped|deselected|errors?|warnings?|xfailed|xpassed)(?:, )?)+) in [\d.]+s(?: .*?)?\s*\Z', output, re.M)
+        if not summary: return None
+        counts = dict((key, int(value)) for value, key in re.findall(r'(\d+) (\w+)', summary[1]))
+        if set(counts) - {'failed', 'passed', 'skipped', 'deselected', 'warning', 'warnings'}: return None
+        failures = re.findall(r'^FAILED (\S+)(?: - ([^\n]*)|)$', output, re.M)
+        if any(not re.match(r'(?:AssertionError(?::|$)|assert\b)', reason) for _, reason in failures): return None
+        names = [name for name, _ in failures]
+        result = dict(runner='pytest', total=sum(counts.get(key, 0) for key in ('failed', 'passed', 'skipped')), failed=counts.get('failed', 0),
+                      skipped=counts.get('skipped', 0), names=names)
+        cases = re.findall(r'^(\S+) (?:PASSED|FAILED|SKIPPED)(?:\s+\[\s*\d+%\])?\s*$', output, re.M)
+    if (result['total'] <= 0 or result['total'] <= result['skipped']
+            or result['failed'] + result['skipped'] > result['total']
+            or result['failed'] != len(set(result['names'])) or len(result['names']) != len(set(result['names']))): return None
+    result['cases'] = cases if (len(cases) == len(set(cases)) == result['total']
+                               and set(result['names']) <= set(cases)) else None
+    return result
+
+
+def qa_retry_command(command, evidence):
+    """Select named cases only for simple, unambiguous native runner commands."""
+    try: args = shlex.split(command)
+    except ValueError: return command, False
+    if not args or any(re.search(r'[;&|<>`$\n]', arg) for arg in args): return command, False
+    prefix = 1 if Path(args[0]).name in ('pytest', 'pytest.exe') else 0
+    if len(args) >= 3 and re.fullmatch(r'python(?:3(?:\.\d+)?)?', Path(args[0]).name) and args[1] == '-m':
+        if args[2] == evidence['runner']: prefix = 3
+    if not prefix: return command, False
+    runner = Path(args[0]).name.removesuffix('.exe') if prefix == 1 else args[2]
+    if runner != evidence['runner']: return command, False
+    flags = {'-q', '-v', '-vv', '--disable-warnings', '--no-header'} if runner == 'pytest' else {'-q', '-v', '-b'}
+    tail = args[prefix:]
+    if any(arg.startswith('-') and arg not in flags for arg in tail): return command, False
+    if runner == 'unittest' and 'discover' in tail: return command, False
+    names = evidence['names']
+    if any(name.startswith('-') for name in names) or sum(map(len, names)) > 32768: return command, False
+    if runner == 'unittest' and any(not re.fullmatch(r'[\w.]+', name) for name in names): return command, False
+    return shlex.join(args[:prefix] + [arg for arg in tail if arg in flags] + names), True
+
+
+def qa_run_gate(execute, command, log, timeout, head, record):
+    """One visible retry, only after a completed run with named assertion failures."""
+    checked = head(); started = time.monotonic()
+    code, abort = execute(command, log)
+    elapsed = time.monotonic() - started
+    result = dict(logs=[str(log)], flaky=None)
+    record(log, command, code, checked, head(), None)
+    first = qa_test_output(log)
+    if (abort or code <= 0 or code >= 124 or elapsed >= timeout or not checked or checked != head()
+            or not first or not first['failed']): return code, abort, result
+    try: first_digest = hashlib.sha256(Path(log).read_bytes()).hexdigest()
+    except OSError: return code, abort, result
+    retry_command, selected = qa_retry_command(command, first)
+    retry_log = Path(log).with_name(Path(log).stem + '.retry.log')
+    print('QA: assertion failures; rerunning failed cases once.' if selected else
+          'QA: assertion failures; rerunning the whole gate once.', file=sys.stderr)
+    started = time.monotonic()
+    code, abort = execute(retry_command, retry_log)
+    elapsed = time.monotonic() - started
+    result['logs'].append(str(retry_log))
+    second = qa_test_output(retry_log)
+    if code == 0 and not abort:
+        try: unchanged = hashlib.sha256(Path(log).read_bytes()).hexdigest() == first_digest
+        except OSError: unchanged = False
+        covered = (second and second['runner'] == first['runner'] and not second['failed']
+                   and (second['total'] == first['failed'] if selected else
+                        first['cases'] and second['cases'] and set(first['cases']) <= set(second['cases']))
+                   and second['skipped'] == 0
+                   and elapsed < timeout and checked == head() and unchanged)
+        if covered:
+            result['flaky'] = dict(failed_tests=[name[:200] for name in first['names'][:20]],
+                                   omitted=max(0, len(first['names']) - 20),
+                                   first_sha256=first_digest)
+        else:
+            code = 1
+            with retry_log.open('a') as output: output.write('\nQA: rerun did not prove coverage of the first run.\n')
+    record(retry_log, retry_command, code, checked, head(), result['flaky'])
+    return code, abort, result
 
 
 def codex_schema(node):

@@ -420,7 +420,15 @@ def manifest_shape(value):
             raise ValueError('invalid receipt references')
         if not isinstance(attempt['gates'], list): raise ValueError('invalid gates')
         for gate in attempt['gates']:
-            shape(gate, 'kind head end_head command_id command_sha256 normalized_exit recorded_at bytes sha256')
+            shape({k:v for k,v in gate.items() if k != 'flaky'}, 'kind head end_head command_id command_sha256 normalized_exit recorded_at bytes sha256')
+            if 'flaky' in gate:
+                flaky = gate['flaky']
+                shape(flaky, 'failed_tests omitted first_sha256')
+                if (gate['kind'] != 'gate' or gate['normalized_exit'] != 0
+                        or not isinstance(flaky['failed_tests'], list) or not 1 <= len(flaky['failed_tests']) <= 20
+                        or any(not isinstance(name, str) or not 1 <= len(name) <= 200 for name in flaky['failed_tests'])
+                        or type(flaky['omitted']) is not int or flaky['omitted'] < 0
+                        or not re.fullmatch(r'[a-f0-9]{64}', flaky['first_sha256'])): raise ValueError('invalid flake')
             if gate['kind'] not in ('gate', 'artifact') or gate['command_id'] not in COMMAND_IDS: raise ValueError('invalid gate')
             if any(not re.fullmatch(r'[a-f0-9]{64}', gate[k]) for k in ('command_sha256', 'sha256')): raise ValueError('invalid gate digest')
             if type(gate['bytes']) is not int or gate['bytes'] < 0: raise ValueError('invalid gate size')
@@ -956,7 +964,7 @@ class Store:
         validate(result, schema)
         return result
 
-    def gate(self, run, attempt_id, path, checked_head, end_head, command, code, kind='gate', pr=None, command_id='configured-command'):
+    def gate(self, run, attempt_id, path, checked_head, end_head, command, code, kind='gate', pr=None, command_id='configured-command', flaky=None):
         if kind not in ('gate', 'artifact'): raise ValueError('unknown evidence kind')
         if kind == 'gate' and not head(checked_head): raise ValueError('cannot record a gate without its checked HEAD')
         if kind == 'artifact': checked_head, end_head, code = None, None, None
@@ -973,6 +981,7 @@ class Store:
                           command_id=command_id if command_id in COMMAND_IDS else 'configured-command',
                           command_sha256=text_digest(command), normalized_exit=code, recorded_at=self.clock(),
                           bytes=size, sha256=stream_digest.hexdigest())
+            if flaky is not None: record['flaky'] = flaky
             attempt['gates'].append(record)
             if pr is not None: attempt['pr'] = dict(number=pr_number(pr)); value['pr'] = attempt['pr']
             self._save_manifest(value)
