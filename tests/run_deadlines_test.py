@@ -51,6 +51,48 @@ class RunDeadlinesTests(unittest.TestCase):
                 except PermissionError:
                     if process_running(int(path.read_text())): raise
 
+    def test_template_imports_leave_no_bytecode_through_either_runner(self):
+        scripts = self.fixture / 'templates/scripts'
+        scripts.mkdir(parents=True)
+        shutil.copy2(ROOT / 'templates/scripts/bureau-paths.py', scripts / 'bureau-paths.py')
+        self.plant('import_template.py', '''import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('template_paths', 'templates/scripts/bureau-paths.py')
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+Path('imported').write_text(module.normalize('./src/file.py:12'))
+''')
+        self.plant('test_import.sh', '''set -eu
+[ "${PYTHONDONTWRITEBYTECODE:-}" = 1 ]
+python3 import_template.py
+''')
+        env = {key: value for key, value in self.env.items()
+               if key not in ('PYTHONDONTWRITEBYTECODE', 'PYTHONPYCACHEPREFIX')}
+        control = subprocess.run([sys.executable, 'import_template.py'], cwd=self.fixture, env=env,
+                                 text=True, capture_output=True, timeout=5)
+        self.assertEqual(control.returncode, 0, control.stdout + control.stderr)
+        self.assertTrue(list(scripts.rglob('*.pyc')), 'control import did not create bytecode')
+        shutil.rmtree(scripts / '__pycache__')
+
+        manifest = self.fixture / 'manifest.txt'
+        manifest.write_text('test_import.sh\n')
+        commands = (['/bin/bash', str(self.fixture / 'run.sh')],
+                    [sys.executable, '-I', str(self.fixture / 'run_test_files.py'), 'test_import.sh'])
+        for command in commands:
+            for inherited in (None, ''):
+                with self.subTest(runner=Path(command[-2]).name, inherited=inherited):
+                    run_env = {**env, 'BUREAU_TEST_MANIFEST': str(manifest)}
+                    if inherited is not None:
+                        run_env['PYTHONDONTWRITEBYTECODE'] = inherited
+                    (self.fixture / 'imported').unlink()
+                    completed = subprocess.run(command, cwd=self.fixture, env=run_env,
+                                               text=True, capture_output=True, timeout=15)
+                    self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                    self.assertIn('PASS  test_import.sh', completed.stdout)
+                    self.assertEqual((self.fixture / 'imported').read_text(), 'src/file.py')
+                    self.assertEqual(list(self.fixture.rglob('__pycache__')), [])
+                    self.assertEqual(list(self.fixture.rglob('*.pyc')), [])
+
     def assert_permission_cleanup(self, stop, survives):
         child = Mock(pid=12345, returncode=0)
         now = [0.]
