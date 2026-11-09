@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="8ea2bd9011477e88b66ed4dd5b695f9741d6efe59c64a4fbb1f34ef7b0de2e21">
+<meta name="bureau-source-sha256" content="38cc1ea941e0b5a1ddc79051d06fdeeffe5faeddef40e9ab40451546a6b025f4">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -18,10 +18,15 @@
 <main class="bhb-main"><h1
 id="bureau-v370--preserved-work-design-guidance-and-release-tooling">Bureau
 v3.7.0 — preserved work, design guidance and release tooling</h1>
-<p><strong>Release preparation · 2026-11-09 · source tag
-<code>v3.7.0</code>.</strong> v3.7.0 is a minor release on <a
-href="release-notes-v3.6.0.html">v3.6.0</a>. Tagging and GitHub Release
-publication remain separate maintainer operations.</p>
+<p><strong>Published release · 2026-11-09 · source tag
+<code>v3.7.0</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.7.0">GitHub
+Release</a> is published as latest. Annotated tag <code>v3.7.0</code>
+(tag object <code>02406d8</code>) points at merge commit
+<code>4366c91</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/135">#135</a>, merged on
+2026-11-09. v3.7.0 is a minor release on <a
+href="release-notes-v3.6.0.html">v3.6.0</a>.</p>
 <p>The release includes, in first-parent merge order: <a
 href="https://github.com/KaiaK808/bureau/pull/114">#114</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/115">#115</a>, <a
@@ -315,10 +320,10 @@ installation</h2>
 dispatcher and supervisor. Preserve unfinished work/local commits,
 custom scripts/interfaces, instructions, Spec Kit assets/constitution
 and shared runtime records. Compare installed drift and reconcile
-incident fixes before replacing assets. Select tag <code>v3.7.0</code>
-once published, refresh discovery, preview and resolve conflicts, then
-resync the <strong>complete scripts and interfaces scopes
-together</strong> in every adopting repository:</p>
+incident fixes before replacing assets. Select tag <code>v3.7.0</code>,
+refresh discovery, preview and resolve conflicts, then resync the
+<strong>complete scripts and interfaces scopes together</strong> in
+every adopting repository:</p>
 <pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
 <p>Use <code>$bureau-init</code> in Codex and retain the existing target
 selection. Include Impeccable helpers/pins even when disabled.
@@ -444,8 +449,14 @@ setting let the verifier pass differing trees; fixed with a regression
 case). The full local suite on macOS in two shards at
 <code>e31537e</code> passed 183 of 184 on the first pass;
 <code>test_squash_marker.sh</code> (the probe race above) passed on
-direct rerun. The full macOS CI result of the release pull request is
-recorded in the release record after publication.</p>
+direct rerun. CI on <a
+href="https://github.com/KaiaK808/bureau/pull/135">#135</a> at
+<code>a538849</code> passed all 16 jobs, including the full macOS suite.
+See the <a href="releases.html#validation-record">release record</a> for
+the push-run evidence-lock retries and follow-up.
+<code>python3 scripts/release_verify.py e31537e v3.7.0</code> passed,
+comparing that locally tested release branch head with the published
+tag.</p>
 <h2 id="known-limitations">Known limitations</h2>
 <ul>
 <li>Several tests are load-sensitive and can time out when the host runs

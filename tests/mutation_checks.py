@@ -307,13 +307,21 @@ def _run(command, *, env, timeout, root, cwd=None):
 
     def cleanup():
         nonlocal cleaned
-        if not cleaned:
-            cleaned = True
+        interrupted = None
+        while not cleaned:
             try:
-                stop_fixtures(root, child, observed=observed)
-            finally:
-                child.stdout.close()
-                child.stderr.close()
+                try:
+                    stop_fixtures(root, child, observed=observed)
+                finally:
+                    try:
+                        child.stdout.close()
+                    finally:
+                        child.stderr.close()
+                cleaned = True
+            except KeyboardInterrupt as error:
+                interrupted = error
+        if interrupted is not None:
+            raise interrupted
 
     try:
         with reaping_fixtures(root, child) as observed:

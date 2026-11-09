@@ -1,6 +1,6 @@
 # Bureau v3.7.0 — preserved work, design guidance and release tooling
 
-**Release preparation · 2026-11-09 · source tag `v3.7.0`.** v3.7.0 is a minor release on [v3.6.0](release-notes-v3.6.0.md). Tagging and GitHub Release publication remain separate maintainer operations.
+**Published release · 2026-11-09 · source tag `v3.7.0`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.7.0) is published as latest. Annotated tag `v3.7.0` (tag object `02406d8`) points at merge commit `4366c91` of [#135](https://github.com/KaiaK808/bureau/pull/135), merged on 2026-11-09. v3.7.0 is a minor release on [v3.6.0](release-notes-v3.6.0.md).
 
 The release includes, in first-parent merge order: [#114](https://github.com/KaiaK808/bureau/pull/114), [#115](https://github.com/KaiaK808/bureau/pull/115), [#116](https://github.com/KaiaK808/bureau/pull/116), [#119](https://github.com/KaiaK808/bureau/pull/119), [#117](https://github.com/KaiaK808/bureau/pull/117), [#118](https://github.com/KaiaK808/bureau/pull/118), [#121](https://github.com/KaiaK808/bureau/pull/121), [#120](https://github.com/KaiaK808/bureau/pull/120), [#122](https://github.com/KaiaK808/bureau/pull/122), [#123](https://github.com/KaiaK808/bureau/pull/123), [#124](https://github.com/KaiaK808/bureau/pull/124), [#125](https://github.com/KaiaK808/bureau/pull/125), [#126](https://github.com/KaiaK808/bureau/pull/126), [#127](https://github.com/KaiaK808/bureau/pull/127), [#128](https://github.com/KaiaK808/bureau/pull/128), [#129](https://github.com/KaiaK808/bureau/pull/129), [#131](https://github.com/KaiaK808/bureau/pull/131), [#130](https://github.com/KaiaK808/bureau/pull/130), [#132](https://github.com/KaiaK808/bureau/pull/132). This includes the v3.6.0 publication record in #114 and the accepted control-plane design in #115; neither adds a new runtime. The [changelog](../CHANGELOG.md#370---2026-11-09) is the consolidated change and upgrade record.
 
@@ -81,7 +81,7 @@ Both exits are human holds; update custom wrappers/classifiers together with run
 
 ## Upgrade an existing installation
 
-**From v3.6.0:** stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work/local commits, custom scripts/interfaces, instructions, Spec Kit assets/constitution and shared runtime records. Compare installed drift and reconcile incident fixes before replacing assets. Select tag `v3.7.0` once published, refresh discovery, preview and resolve conflicts, then resync the **complete scripts and interfaces scopes together** in every adopting repository:
+**From v3.6.0:** stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work/local commits, custom scripts/interfaces, instructions, Spec Kit assets/constitution and shared runtime records. Compare installed drift and reconcile incident fixes before replacing assets. Select tag `v3.7.0`, refresh discovery, preview and resolve conflicts, then resync the **complete scripts and interfaces scopes together** in every adopting repository:
 
 ```text
 /bureau-init --resync-interfaces --resync-scripts --target both
@@ -114,7 +114,7 @@ The third-wave records below follow merge order:
 | [#130](https://github.com/KaiaK808/bureau/pull/130), local-commits hold | Approved in round 5; rounds 4 and 5 were maintainer-approved exceptions. The fifth addressed the full suite's regression where Bureau-made local commits were held with 30, fixed by trusting heads Bureau's records prove it made. | 175/180 on the first pass; red files green on serial or direct rerun. | The first run failed only on lint shards (ShellCheck SC2100, an unquoted assignment); quoted, then green. |
 | [#132](https://github.com/KaiaK808/bureau/pull/132), post-Build PR prerequisite | Approved in round 1. | 173/179 on the first pass while stacked on #130; red files green on serial or direct rerun; touched tests green after the final rebase. | Green on the first run. |
 
-The release branch itself: Codex release review approved in round 2 (round 1 found that an inherited `GIT_LITERAL_PATHSPECS` setting let the verifier pass differing trees; fixed with a regression case). The full local suite on macOS in two shards at `e31537e` passed 183 of 184 on the first pass; `test_squash_marker.sh` (the probe race above) passed on direct rerun. The full macOS CI result of the release pull request is recorded in the release record after publication.
+The release branch itself: Codex release review approved in round 2 (round 1 found that an inherited `GIT_LITERAL_PATHSPECS` setting let the verifier pass differing trees; fixed with a regression case). The full local suite on macOS in two shards at `e31537e` passed 183 of 184 on the first pass; `test_squash_marker.sh` (the probe race above) passed on direct rerun. CI on [#135](https://github.com/KaiaK808/bureau/pull/135) at `a538849` passed all 16 jobs, including the full macOS suite. See the [release record](releases.md#validation-record) for the push-run evidence-lock retries and follow-up. `python3 scripts/release_verify.py e31537e v3.7.0` passed, comparing that locally tested release branch head with the published tag.
 
 ## Known limitations
 
