@@ -628,6 +628,8 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         prompt = system + '\n\n' + prompt + '\n\nDo not run git commit or git push. Leave changes for the Bureau shell executor. Mark completed tasks truthfully. If tests are denied by the environment, report the permission blocker separately from code failures.'
         if options.get('gate_outside_sandbox') and options['stage'] in ('implement', 'qa'):
             prompt += '\nBureau runs the configured full test gate outside the Codex sandbox after this pass and records its receipt and log as stage evidence. Do not run the full test gate yourself or ask to escape the sandbox for it; this takes precedence over instructions to rerun the suite. You may run focused tests. Report completed edits and every independent product, security or human blocker truthfully; pending Bureau validation alone is not a blocker. The next implementation brief includes the outside result and log; QA already includes the initial shell output. The outside gate decides the stage test outcome.'
+        elif options['stage'] in ('implement', 'qa'):
+            prompt += '\nRun the configured test command verbatim as its own command from the repository root, with no wrapper, prefix, redirect or environment change. Set the working directory separately; do not prepend cd, env or unset. Bureau needs the command hash to match the configured command for machine execution proof.'
     else:
         command = ['claude', '-p', '--output-format', 'stream-json' if options.get('silence_timeout_seconds') else 'json']
         if options.get('silence_timeout_seconds'): command += ['--verbose', '--include-partial-messages']

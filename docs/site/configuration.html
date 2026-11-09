@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9aedb1f64e8bd850531b0b403a16e69d471587157ecd20e451d1acef3f9334e4">
+<meta name="bureau-source-sha256" content="40bd201337cb2044cbeaa511383f61016dd51488bca8a8b8006356303787f62e">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1159,6 +1159,22 @@ errors/timeouts retain their existing handling and do not authorize a
 delegated check. Existing sandbox-only reruns remain available. See <a
 href="../adr/0013-codex-gate-delegation.md">ADR 0013</a> for the boundary
 and limits.</p>
+<p>Without delegation, Codex implementation and QA briefs require the
+configured test command verbatim as its own command from the repository
+root, with no wrapper, prefix, redirect or environment change, so
+machine execution proof can match its hash. Doctor warns when either
+enabled stage resolves to Codex and the latest valid duration for the
+current gate exceeds the 600-second Codex tool command limit
+(<code>CODEX_TOOL_LIMIT_SECONDS</code> in
+<code>bureau-doctor.py</code>). It reads retained execution receipts and
+completed outside rerun records in
+<code>&lt;git common dir&gt;/bureau/evidence/v1</code>; missing,
+unreadable or invalid measurements provide no estimate. This advisory
+never fails doctor or changes gate routing. Provider
+<code>timeout_seconds</code> bounds the whole provider call and does not
+raise the tool command limit; compare installed drift and resync scripts
+before enabling <code>agents.providers.codex.gate_outside_sandbox</code>
+for a long gate.</p>
 <p>Silence settings apply per creative provider call, alongside the
 existing hard timeout and implementation bounds; outside-gate commands
 retain their own wall-clock handling. Claude uses
