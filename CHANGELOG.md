@@ -6,6 +6,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ## [Unreleased]
 
+### Fixed
+
+- Both test runner entry points set `PYTHONDONTWRITEBYTECODE=1` for every test, including CI runs; isolated runner imports also avoid caches. The internal-reference guard retains its Git-tracked and non-ignored new-file inventory, so ignored bytecode cannot trigger publication failures and tracked violations still fail. **Upgrade:** update the source checkout; no asset resync or runtime compatibility change. Validation uses planted template imports through both runners and the guard's ignored-bytecode/tracked-file controls; the full suite and hosted CI remain maintainer checks.
+
 ### Documentation
 
 - Record the published v3.7.0 tag and merge commit, release CI results, evidence-lock retries and tested-tree verification; refresh install/upgrade markers and the static manual. Documentation only; update the source checkout for this record, with no adopting-repository resync or compatibility change. Validated with `tests/test_docs.sh` and `tests/test_no_internal_refs.sh`; release and CI facts are maintainer-supplied.
