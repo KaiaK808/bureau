@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f214ad76c614183a03ab236f65711053420bb64c5adf100a0b0a32c79d0b757d">
+<meta name="bureau-source-sha256" content="8ea2bd9011477e88b66ed4dd5b695f9741d6efe59c64a4fbb1f34ef7b0de2e21">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -438,6 +438,14 @@ serial or direct rerun; touched tests green after the final rebase.</td>
 </tr>
 </tbody>
 </table>
+<p>The release branch itself: Codex release review approved in round 2
+(round 1 found that an inherited <code>GIT_LITERAL_PATHSPECS</code>
+setting let the verifier pass differing trees; fixed with a regression
+case). The full local suite on macOS in two shards at
+<code>e31537e</code> passed 183 of 184 on the first pass;
+<code>test_squash_marker.sh</code> (the probe race above) passed on
+direct rerun. The full macOS CI result of the release pull request is
+recorded in the release record after publication.</p>
 <h2 id="known-limitations">Known limitations</h2>
 <ul>
 <li>Several tests are load-sensitive and can time out when the host runs

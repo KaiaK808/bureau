@@ -114,6 +114,8 @@ The third-wave records below follow merge order:
 | [#130](https://github.com/KaiaK808/bureau/pull/130), local-commits hold | Approved in round 5; rounds 4 and 5 were maintainer-approved exceptions. The fifth addressed the full suite's regression where Bureau-made local commits were held with 30, fixed by trusting heads Bureau's records prove it made. | 175/180 on the first pass; red files green on serial or direct rerun. | The first run failed only on lint shards (ShellCheck SC2100, an unquoted assignment); quoted, then green. |
 | [#132](https://github.com/KaiaK808/bureau/pull/132), post-Build PR prerequisite | Approved in round 1. | 173/179 on the first pass while stacked on #130; red files green on serial or direct rerun; touched tests green after the final rebase. | Green on the first run. |
 
+The release branch itself: Codex release review approved in round 2 (round 1 found that an inherited `GIT_LITERAL_PATHSPECS` setting let the verifier pass differing trees; fixed with a regression case). The full local suite on macOS in two shards at `e31537e` passed 183 of 184 on the first pass; `test_squash_marker.sh` (the probe race above) passed on direct rerun. The full macOS CI result of the release pull request is recorded in the release record after publication.
+
 ## Known limitations
 
 - Several tests are load-sensitive and can time out when the host runs other suites at the same time, including dispatcher, review-convergence and deadline cases. They pass on serial rerun; making them load-independent is recorded for the next release.
