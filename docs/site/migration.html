@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ae6edf2d1013b1817e540a56b81d406006a31dac41926a3090e618ecae445020">
+<meta name="bureau-source-sha256" content="b3e4ddabadc7000d69f0762b0b541723a8faca470c64a9e0bccd09ef400fc804">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -28,13 +28,14 @@ href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
 the v3.2 release candidate, v3.2.0, v3.2.1, the v3.3 release candidates,
-v3.3.0, v3.4.0, v3.4.1, v3.5.0 and v3.5.1 to <strong>Bureau
-v3.6.0</strong>, dated 2026-11-03 (prepared 2026-11-02), published as
-the latest <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">GitHub
-Release</a>. The commands below require the selected release's source
-skill. See the <a href="release-notes.html">v3.6.0 release notes</a>, the
-previous stable <a
+v3.3.0, v3.4.0, v3.4.1, v3.5.0, v3.5.1 and v3.6.0 to <strong>Bureau
+v3.7.0</strong>, dated 2026-11-09, in release preparation. Tagging and
+publication remain separate maintainer operations. The commands below
+require the selected release's source skill. See the <a
+href="release-notes.html">v3.7.0 release notes</a>, the previous stable <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">v3.6.0
+release</a> and its <a href="release-notes-v3.6.0.html">release notes</a>,
+the earlier <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.1">v3.5.1
 release</a> and its <a href="release-notes-v3.5.1.html">release notes</a>,
 the earlier <a
@@ -75,15 +76,16 @@ href="releases.html">release process</a>. A Bureau major version marks
 operational changes (v2.0.0: explicit worker ownership; v3: the
 exit-code contract, see <a href="#upgrade-to-v3">Upgrade to v3</a>); it
 does not require configuration schema v2. v3.1 through v3.4 keep that
-contract; v3.5 adds quiet waits 28/29 and requires coordinated
-consumers; see <a href="#upgrade-to-v31">Upgrade to v3.1</a>, <a
-href="#upgrade-to-v32">Upgrade to v3.2</a>, <a
+contract; v3.5 adds quiet waits 28/29 and v3.7 adds human holds 30/31,
+requiring coordinated consumers; see <a href="#upgrade-to-v31">Upgrade
+to v3.1</a>, <a href="#upgrade-to-v32">Upgrade to v3.2</a>, <a
 href="#upgrade-to-v33">Upgrade to v3.3</a>, <a
 href="#upgrade-to-v34">Upgrade to v3.4</a>, <a
 href="#upgrade-to-v341">Upgrade to v3.4.1</a>, <a
 href="#upgrade-to-v35">Upgrade to v3.5</a>, <a
-href="#upgrade-to-v351">Upgrade to v3.5.1</a> and <a
-href="#upgrade-to-v36">Upgrade to v3.6</a>.</p>
+href="#upgrade-to-v351">Upgrade to v3.5.1</a>, <a
+href="#upgrade-to-v36">Upgrade to v3.6</a> and <a
+href="#upgrade-to-v37">Upgrade to v3.7</a>.</p>
 <h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is
@@ -106,13 +108,14 @@ installed commit.</p>
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. Use a
 clean checkout to select the published release's exact tag
-(<code>v3.6.0</code> for this release, <code>v3.5.1</code> for the
-previous stable release, <code>v3.5.0</code>, <code>v3.4.1</code>,
+(<code>v3.7.0</code> once published for this release,
+<code>v3.6.0</code> for the previous stable release,
+<code>v3.5.1</code>, <code>v3.5.0</code>, <code>v3.4.1</code>,
 <code>v3.4.0</code>, <code>v3.3.0</code>, <code>v3.2.1</code>,
 <code>v3.2.0</code>, <code>v3.1.0</code>, <code>v3.0.2</code>,
 <code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
 earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.6.0 <span class="co"># or v3.5.1, v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.7.0 <span class="co"># once published; or v3.6.0, v3.5.1, v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -132,12 +135,115 @@ directory, keep it intact and install a separate official clone from the
 loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
+<h2 id="upgrade-to-v37">Upgrade to v3.7</h2>
+<p><strong>v3.7.0</strong>, dated <strong>2026-11-09</strong>, is a
+minor release on v3.6.0, in release preparation. Its <a
+href="release-notes.html">release notes</a> cover changes, configuration,
+validation and limitations. Exits 30 and 31 extend the v3 protocol;
+configuration schema versions, Spec Kit 1.2.2 and the app prepare/finish
+protocol remain.</p>
+<p><strong>From v3.6.0:</strong></p>
+<ol type="1">
+<li>Stop all shepherds, queue loops, dispatchers and supervisors.
+Preserve unfinished work, local commits, custom scripts/interfaces, user
+instructions, Spec Kit assets and the constitution. Keep shared
+ownership, admission, checkpoint, evidence, accounting, witness and
+process-hold records.</li>
+<li>Compare installed-script drift before replacing assets; reconcile
+incident fixes and customizations with the templates. Preserve a private
+backup and the previous source commit for rollback.</li>
+<li>Select tag <code>v3.7.0</code> once published using <a
+href="#select-the-source-release">the source-update steps</a>, and
+refresh skill discovery. Preview and resolve asset conflicts in each
+adopting repository.</li>
+<li>Resync the <strong>complete scripts and interfaces scopes
+together</strong>, including the Impeccable helpers and pin file even
+when the integration stays off. Keep the installation's existing target
+selection. In Claude use the command below; in Codex use
+<code>$bureau-init</code> with the same arguments. <code>--update</code>
+changes configuration only. Running shells retain loaded code; partial
+resync is incompatible.</li>
+<li>Update custom exit-code consumers for 30/31, inspect local commits
+and unfinished holds, and make the optional configuration choices below.
+Run <code>python3 scripts/bureau-doctor.py --mode background</code>,
+then restart all drivers together. Qualify a representative ticket
+before unattended dispatch.</li>
+</ol>
+<pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
+<p><strong>Exit 30 — <code>local-commits-held</code>:</strong> a stage
+checkout or disposable-worker reset would discard commits reachable only
+from the target branch or its attached/detached HEAD. Other local
+branches and remote refs count as retained reachability. Inspect the
+named commits and push work that must survive. Only after explicitly
+deciding to discard it, rerun once with
+<code>BUREAU_DROP_LOCAL_COMMITS=1</code>; never put that override in
+persistent configuration or driver environments. The override prints
+discarded full SHAs and records them in the existing event stream. Clean
+held workers can be recovered only with ownership and a preservation
+record matching the issue, target branch and worktree identity; older
+exit-30 records without that identity need explicit recovery. Exact
+recorded Bureau review checkpoints and successful worker-stage heads
+retain their established resume/stop behavior; author or commit-message
+resemblance is insufficient. See <a
+href="troubleshooting.html#exit-30-local-commits-held--unpublished-commits-before-a-reset">exit-30
+recovery</a>.</p>
+<p><strong>Exit 31 — <code>open-pr-required</code>:</strong> shepherd
+starts at QA, Build Review, Merge or Done require the ticket branch on
+origin and an open PR before any claim, label, state move or stage work.
+Push the branch if needed, use the printed PR creation command with
+<code>repo.base_branch</code> (default <code>main</code>), then rerun
+the exact printed restart command. This is a human hold, never an
+automatic retry. Lookup failures use 18; direct review retains 15 for a
+confirmed missing PR. Build and earlier starts keep their existing
+behavior. See <a
+href="troubleshooting.html#exit-31-open-pr-required--restart-after-a-build-gate-failure">exit-31
+recovery</a>.</p>
+<p><strong>Configuration:</strong> <code>repo.commit_prefix</code> was
+unused and can be deleted from <code>.bureau.json</code>; no replacement
+or migration is needed. <code>design.impeccable.enabled</code> defaults
+to <code>false</code>, with <code>skill_version: "4.8.0"</code> and
+<code>engine_version: "0.1.18"</code>; optional <code>skill_path</code>
+selects the local skill directory. Bureau never installs or downloads
+Impeccable, its hooks or its agents. Operators supply and verify the
+pinned tooling separately, with hooks disabled, and remove or disable
+any separately installed agents before enabling the integration.
+Omission keeps existing prompts/checks. Unavailable or failed detector
+measurements are never clean; adopting-repository pilots have not run.
+See <a href="configuration.html#designimpeccable">Impeccable
+configuration</a> for paths, pins, ignores and evidence behavior.</p>
+<p><strong>Contributors:</strong> pull requests run all Linux tests and
+the focused 56-entry macOS manifest in
+<code>tests/macos-manifest.txt</code>; main, release-branch and tag
+pushes, weekly schedules and manual dispatch keep the full macOS suite.
+Add platform-sensitive tests to the manifest with a reason; do not infer
+full macOS coverage from focused PR CI.
+<code>BUREAU_TEST_MANIFEST</code> filters before sharding, and
+deadlines/timing records are described in the <a
+href="../../tests/README.md">test harness</a>. The baseline report and
+release verifier run from the source checkout and need no asset resync.
+Use the <a href="releases.html#verify-the-tested-release-trees">release
+verification check</a> before tagging.</p>
+<p><strong>From v3.5.1:</strong> apply <a href="#upgrade-to-v36">Upgrade
+to v3.6</a>, including pinned review/QA instructions, complete
+helper/schema resync, Spec Kit helper-mode repair, dependency caches and
+accounting/process-hold preservation, before the v3.7 steps. From v3.5.0
+first apply <a href="#upgrade-to-v351">Upgrade to v3.5.1</a>; keep the
+earlier cumulative upgrade path for older installations.</p>
+<p><strong>Rollback:</strong> stop every driver and reconcile unfinished
+writers, local commits and holds. Select tag <code>v3.6.0</code> and
+restore its scripts and interfaces together, or restore the private
+backup (<a href="#rollback">rollback</a>). Disable/remove
+<code>design.impeccable</code> for the older runtime and restore
+compatible customizations and exit consumers. Retain
+preservation/evidence records for inspection; the older runtime cannot
+enforce exits 30/31. Rollback cannot undo commits, pushes, comments,
+labels or state moves.</p>
 <h2 id="upgrade-to-v36">Upgrade to v3.6</h2>
 <p><strong>v3.6.0</strong>, dated <strong>2026-11-03</strong> (prepared
-2026-11-02), is a minor release on v3.5.1, published as the latest <a
+2026-11-02), is a minor release on v3.5.1, published as a stable <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">GitHub
-Release</a>. Its <a href="release-notes.html">release notes</a> list
-themes, new files, settings, validation and limits. The v3.5 exit
+Release</a>. Its <a href="release-notes-v3.6.0.html">release notes</a>
+list themes, new files, settings, validation and limits. The v3.5 exit
 vocabulary, configuration schema versions, Spec Kit 1.2.2 pin and app
 prepare/finish protocol remain.</p>
 <p><strong>From v3.5.1:</strong> stop all shepherds, queue loops,
@@ -197,9 +303,9 @@ ticket ledgers, sibling admitted-attempt histories and
 href="configuration.html#ticket-run-budgets-and-trusted-progress">operator
 reset</a> after stopping drivers and reconciling ownership. Evidence
 pruning or ledger deletion cannot renew a witnessed allowance. Review <a
-href="release-notes.html#new-configuration-keys-and-defaults">all new
-defaults</a>, including mandatory sensitive-path rules in the advisory
-risk tier.</p>
+href="release-notes-v3.6.0.html#new-configuration-keys-and-defaults">all
+new defaults</a>, including mandatory sensitive-path rules in the
+advisory risk tier.</p>
 <p><strong>Dependencies and Spec Kit:</strong> provision pnpm/Yarn
 Classic and their offline caches in trusted setup before using those
 worker paths, and remove <code>node_modules</code> from
@@ -220,8 +326,8 @@ customizations, run
 drivers together and qualify a representative ticket before unattended
 dispatch. Live CLI/provider, package-manager/cache and adopting-runner
 qualification remains an operator check; the PR, integrated-suite and
-main CI results are in the <a href="release-notes.html#validation">release
-notes</a>.</p>
+main CI results are in the <a
+href="release-notes-v3.6.0.html#validation">release notes</a>.</p>
 <p><strong>From v3.4.1:</strong> follow <a
 href="#upgrade-to-v35">Upgrade to v3.5</a> and the <a
 href="release-notes-v3.5.0.html#upgrade-an-existing-installation">v3.5.0
@@ -1556,9 +1662,10 @@ native hook-name mapping and the helper guidance below.</p>
 branch, including numeric feature branches, <code>codex/*</code> and
 detached checkouts, resolve the issue's exact approved spec folder and
 always pass both variables:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
 <p>Replace both example values with the real approved feature and
 configured specs path. Use the same pair for every helper that consumes
 an existing feature. Fresh worktrees lack the ignored
@@ -1630,9 +1737,9 @@ href="stage-protocol.html">ownership/recovery protocol</a>.</li>
 conflicts</h2>
 <p>Run the helper from the refreshed source, with the adopting
 repository as the current directory:</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Preview writes nothing. Exit code <code>3</code> means at least one
 asset conflict. Even with <code>--apply</code>, <strong>one unresolved
 conflict prevents every file in that asset batch from being
@@ -1671,11 +1778,11 @@ unpacked archive or a copy inside another repository, is recorded as
 repository's commit is never used. A preview or an apply stopped by a
 conflict writes no source. The manifest stays at version <code>1</code>:
 installers without source recording still read it.</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
 <table>
 <thead>
 <tr>
@@ -1738,11 +1845,11 @@ do not describe an incomplete scripts upgrade as a working new
 runtime.</li>
 </ul>
 <p>Example for a single reviewed script replacement:</p>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
-<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
-<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
 <p>Other conflicts still block that example. Repeat
 <code>--overwrite</code> only for each reviewed path in the selected
 scope. There is no blanket force, skip-conflicts or automatic merge
@@ -1774,9 +1881,9 @@ migration</h2>
 <code>.bureau.json</code> or <code>.env</code>. Configuration version
 <code>2</code> is a schema version, not a Bureau release number. To
 adopt it, preview and then apply:</p>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
 <p>Migration retains existing IDs, labels, models, switches and
 extension keys. It makes the existing Claude runner default explicit
 when absent and adds <code>agents.model_compatibility: "v1"</code> when
