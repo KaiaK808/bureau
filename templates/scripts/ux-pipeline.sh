@@ -7,6 +7,7 @@ unset CLAUDECODE 2>/dev/null || true
 REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
+source "$(dirname "$0")/bureau-impeccable.sh"
 
 BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$SCRIPT_REPO/.env}"
 # BUREAU_ENV_FILE only, never ./.env: in a stage worktree that is a file the branch controls.
@@ -75,6 +76,7 @@ git fetch origin
 # Release the branch from any other worktree before attaching here.
 free_branch_from_other_worktrees "$BRANCH" "$(pwd)"
 if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+  bureau_guard_branch_reset "$BRANCH" || exit $?
   git checkout -B "$BRANCH" "origin/$BRANCH"
 elif git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
   git checkout "$BRANCH"
@@ -130,6 +132,13 @@ $PROJECT_DESC
 
 SPEC_CONTEXT=$(build_spec_context "$SPEC_DIR")
 NEGATIVE_CONSTRAINTS=$(build_negative_constraints)
+IMPECCABLE_UX_CONTEXT=""
+UX_WRITE_RULE="- Do NOT touch source files outside ${SPEC_DIR}; implementation happens later."
+if bureau_impeccable_ui "$SPEC_DIR"; then
+  IMPECCABLE_UX_CONTEXT=$(bureau_impeccable ux)
+  bureau_impeccable verify
+  [ -z "$IMPECCABLE_UX_CONTEXT" ] || UX_WRITE_RULE="- Write only ${SPEC_DIR} artifacts plus root PRODUCT.md and DESIGN.md as described above; implementation happens later."
+fi
 
 invalid_ux_result() {
   bureau_ticket_checkpoint "$ISSUE"
@@ -198,13 +207,14 @@ Stop conditions — emit \`design_status\` accordingly:
 - INCOMPLETE: any blocking open question (a UX-critical decision the spec is silent on). Pipeline routes to Spec, not Build.
 - COMPLETE: design.md fully populated, all open questions are non-blocking.
 
-$NEGATIVE_CONSTRAINTS
+$NEGATIVE_CONSTRAINTS${IMPECCABLE_UX_CONTEXT:+
+$IMPECCABLE_UX_CONTEXT}
 
 Role-specific:
 - Do NOT propose components from a library not already in package.json (or equivalent).
 - Do NOT override design tokens that are already pinned in the existing config.
 - Do NOT fabricate Figma links, screenshots, or URLs — cite repo file paths instead.
-- Do NOT touch source files outside ${SPEC_DIR}; implementation happens later.
+$UX_WRITE_RULE
 
 The Net-New Components section MUST include prop sketches so implementers consume them directly without re-deriving. Record questions and whether they block progress in Open Questions. At the end, emit a fenced json block:
 

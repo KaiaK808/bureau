@@ -114,7 +114,7 @@ tick_stage() {
       fi ;;
     2|28|29) OUTCOME=waiting ;;
     20) OUTCOME=stopped_for_review ;;
-    21|25|26) OUTCOME=blocked ;;
+    21|25|26|30|31) OUTCOME=blocked ;;
     *) OUTCOME=failed ;;
   esac
   write_result

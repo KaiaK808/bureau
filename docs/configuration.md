@@ -54,6 +54,48 @@ The runtime uses the first configured team. State IDs are authoritative; display
 
 File-overlap admission compares relevant issue membership, IDs, project IDs, state IDs/types and labels. Title, description and state display-name edits do not invalidate admission. The initial and final issue listings still page the whole team; only relevant issues require comment pagination. Execution ownership is refreshed after comment collection and before the final membership check; newly leased cross-project issues trigger a complete retry. If comments omit team issues, otherwise unrecognized PRs conservatively hold their diffs because their canonical markers may be outside the comment boundary. A complete comment map retains the existing PR provenance filter. Completeness is rechecked against the final unfiltered listing; new excluded issues force a full retry if PRs were skipped, so their diffs are reconsidered before any reservation is granted. Changed decision snapshots allow up to three admission attempts in both shepherd and dispatch runs; each attempt reruns the full locked gate and ticket checkpoint. Transport, incomplete-response and ownership failures are not retried by this admission loop; open-PR snapshot checks retain their existing behavior and exit 18.
 
+### `design.impeccable`
+
+Impeccable is optional local tooling. Omission or `enabled: false` preserves the existing UX, implement and review prompts and checks. Setup defaults to:
+
+```json
+{
+  "design": {
+    "impeccable": {
+      "enabled": false,
+      "skill_version": "4.8.0",
+      "engine_version": "0.1.18"
+    }
+  }
+}
+```
+
+Set `enabled: true` only after the operator places the pinned skill and engine. Optional `skill_path` names the skill directory containing `SKILL.md`, `reference/` and `scripts/`; relative paths resolve from `.bureau.json`, absolute paths and a symlink to the skill directory are supported. Without it, Bureau checks `.claude/skills/impeccable`, then `.agents/skills/impeccable`. The engine defaults to `scripts/bin/<os>-<arch>/impeccable` inside that skill; an operator's `IMPECCABLE_BIN` may select another binary with the same verified platform digest. macOS and Linux on arm64/x64 are supported.
+
+Bureau installs nothing from Impeccable. The operator can use a checkout or install it separately with `impeccable install --project --providers=claude --no-hooks -y`. **`--no-hooks` is required.** That installer downloads an unversioned bundle and can install four Claude agents even with hooks disabled: check the resulting version, remove or disable those agents separately, and do not enable its hooks. Bureau never installs or enables these hooks or agents, and stages do not use them. An npm package version alone does not pin the skill bundle. No third-party playbooks, references or binaries are vendored here, so no Apache-2.0 redistribution notice is added.
+
+The asset installer and `bureau_install.py check` verify the operator's local installation without executing it. `bureau-impeccable-pins.json` records the supported versions and skill-tree digest. The digest hashes a UTF-8 manifest sorted by POSIX relative path, each row `path<TAB>sha256(file bytes)<LF>`. It includes every regular file except `.git`, `.git/` and `scripts/bin/`; nested symlinks are rejected. The engine is hashed separately against the matching version/platform row in the skill's shipped `scripts/engine-checksums.txt`, which is itself covered by the tree digest. Missing files, changed content and unsupported pins report **unavailable** with a reason; setup and stages continue without treating that as a clean measurement. New upstream versions require new maintainer-reviewed pins; changing only the configured versions cannot bypass verification.
+
+UI tickets carry `needs-ux` (or the configured `linear.labels.needs_ux.name`) or have a spec `design.md`. Other tickets retain their existing behavior. For eligible tickets:
+
+- UX references the installed `shape`, `critique`, `craft-floor`, `init` and `document` Markdown paths. It reads root `PRODUCT.md` and `DESIGN.md`, creates missing documents using that guidance, preserves existing content and records project-rule overrides in `DESIGN.md`. Project rules win over floor defaults and bans. Unresolved decisions use the existing human-hold contract. These two root documents are permitted alongside the spec artifacts.
+- Implementation uses the bounded iteration loop, including when `use_goal_loop` is configured, so Bureau can check each returned pass. It scans changed `.html`, `.css`, `.scss`, `.sass`, `.less`, `.tsx`, `.jsx`, `.vue`, `.svelte`, `.astro`, `.ts` and `.js` files against `origin/main`, including untracked UI files. Mechanical feedback covers `quality` findings plus gradient text, glow rules, oversized headings and extreme tracking. The full deferred tier runs at attempted completion and after the last pass/post-implement hook. Identical source and ignore bytes reuse that attempt's full result; changed bytes require a fresh scan. Findings feed the next implementation pass. Unresolved findings at the cap remain draft and require a human to resume, with `FIXES_NEEDED` feedback carried in the summary. The final check also catches generated UI changes from the post-implement hook.
+- Review finishes and saves all three independent specialist judgements first. Only then does Bureau scan changed UI files from the pinned PR head and archive `impeccable.json` with the review artifacts. A separate late step lets each specialist assess findings as machine evidence against the pinned source and project rules. Additional findings and holds are combined with the original judgements; the late step cannot delete them. Machine warnings do not automatically determine review severity. Opted-in UI reviews do not reuse an earlier approval, because local tooling and ignores can have changed.
+
+Every engine invocation sets both `DO_NOT_TRACK=1` and `IMPECCABLE_NO_TELEMETRY=1`, sets `IMPECCABLE_BIN` to the verified binary, and executes that binary directly with `detect --json --no-config` and local file paths. Bureau uses private source snapshots, never URLs, Chrome scans, `live`, `install`, `update` or `check`. No launcher fallback or network is needed. Each detector run has a 30-second timeout; timeout cleanup kills and joins its process group. Exit 1, other execution errors and malformed JSON are **not measured**, never clean. A verified detector's failed measurement holds implementation; unavailable optional tooling is reported without failing the stage. Review includes unavailable/not-measured status in its evidence and comment, without inventing findings. No changed UI files is **not applicable**, not a clean scan.
+
+Native project, local and inline detector ignores are bypassed. Bureau accepts only the repository's `.impeccable/bureau-ignore.json` array with an exact file, one antipattern and a named nonempty reason:
+
+```json
+[
+  {"file": "src/brand.css", "antipattern": "overused-font", "reason": "Approved brand typography in DESIGN.md"}
+]
+```
+
+Directory/glob/rule-wide ignores, missing reasons and extra keys are rejected as not measured. Accepted ignores retain their reason in machine evidence. This bypasses native design-system context too; project-specific design rules remain the specialists' responsibility. Static detection cannot establish visual quality or replace rendered accessibility and interaction checks.
+
+**Upgrade:** compare installed script drift, resync the complete scripts scope (including both helpers and the pin file), and restart drivers together. Existing repositories stay off until explicitly enabled. Fake-detector tests require no downloads; an optional real-engine test runs only with `IMPECCABLE_BIN` set and checks the operator-supplied local binary. Live provider and adopting-repository qualification remains an operator check.
+
 ### `agents`
 
 Which pipelines run, how often they poll, how aggressive they are.

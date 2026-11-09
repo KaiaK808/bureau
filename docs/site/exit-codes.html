@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4f5996123c269e24c250bf5c47219e596954294ae0098d873aef03403af9a1a1">
+<meta name="bureau-source-sha256" content="217bfa16a52de6b29197a7c7d2bd402e40d055144757ee61cf5e79af513d724c">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -292,6 +292,34 @@ loop every 60 s. Guarded manual moves and shepherd
 is retained. Service/ownership failures keep their own codes.</td>
 </tr>
 <tr>
+<td><code>30</code></td>
+<td>local-commits-held</td>
+<td>Resetting a ticket branch to origin would discard commits reachable
+only from its local branch ref or attached/detached HEAD, excluding
+other local branches and all remote refs</td>
+<td>Human hold with <code>needs-human</code>, never an automatic retry
+or crash. Output names every commit and leaves the branch and checkout
+untouched. Push the commits or explicitly discard them for one run with
+<code>BUREAU_DROP_LOCAL_COMMITS=1</code>; see <a
+href="troubleshooting.html#exit-30-local-commits-held--unpublished-commits-before-a-reset">recovery</a>.</td>
+</tr>
+<tr>
+<td><code>31</code></td>
+<td>open-pr-required</td>
+<td>Shepherd <code>--from-stage qa</code>, <code>build_review</code>,
+<code>merge</code> or <code>done</code> needs a ticket branch on origin
+and an open PR</td>
+<td>Human hold before runtime ownership, labels, state moves or stages;
+nothing is claimed or written to Linear. Output names the branch,
+reason, PR creation command using <code>repo.base_branch</code> (default
+<code>main</code>) and exact restart command. Push the branch if needed,
+open its PR and restart. Git/origin or GitHub lookup failures return
+<code>18</code>, never <code>31</code>; a failed Linear branch read
+keeps its own code. See <a
+href="troubleshooting.html#exit-31-open-pr-required--restart-after-a-build-gate-failure">recovery
+after exit 14</a>.</td>
+</tr>
+<tr>
 <td><code>124</code></td>
 <td>timeout</td>
 <td>Provider exceeded time bound, or spec allocator lock acquisition
@@ -313,6 +341,17 @@ troubleshooting guide</td>
 </tr>
 </tbody>
 </table>
+<p>The shepherd's post-Build restart check and code review share the
+open-PR lookup and the bounded GitHub retry policy used by implement
+(<code>BUREAU_IMPL_PR_RETRIES</code> /
+<code>BUREAU_IMPL_PR_RETRY_WAIT</code>, defaults three retries after
+2/4/8 seconds). Authentication and other permanent errors stop
+immediately; exhausted transient retries and malformed PR numbers return
+<code>18</code>. Review still returns <code>15</code> and moves back to
+Build when a successful lookup confirms no open PR. Exit <code>31</code>
+is a human hold in the shepherd, queue, dispatcher and insights; the
+dispatcher keeps it without a retry deadline and the tick reports
+<code>blocked</code> with exit <code>31</code>.</p>
 <p>Successful mandatory background state reads use the same
 configured-ID withdrawal protocol as additional checkpoints: Done 0,
 cancelled/duplicate 26, other inactive IDs 25, never the stage-mismatch
@@ -522,6 +561,33 @@ advisory: ticket checkpoint exits
 <code>29</code>, silence <code>25</code> with
 <code>timeout_kind: silence</code>, review floors/rounds and dispatcher
 lane outcomes retain their existing meaning.</p>
+<p>Exit 30 is a separate human hold, retained without a retry deadline
+in the dispatcher skip store. The shepherd halts and alerts; the queue
+reports a hold and skips the human-labeled ticket; the tick reports
+<code>blocked</code> while preserving exit 30. Reset-time holds remove
+disposable-worker registration and write an <code>unfinished</code>
+preservation record before returning, so dispatcher reconciliation keeps
+the checkout and its HEAD reflog.
+<code>BUREAU_DROP_LOCAL_COMMITS=1</code> permits re-acceptance of a
+clean exit-30 worker with ownership and a preservation record matching
+its issue, target branch and Git worktree identity, then runs the
+guarded reset. Exit-30 records lacking that identity require explicit
+recovery. Existing cleanliness, ownership and retained-merge checks
+still apply. Discarded full SHAs are printed and recorded as
+<code>local_commits_dropped</code> in the existing
+<code>logs/events.jsonl</code> start/run event stream. Keep this
+override out of persistent configuration and driver environments.</p>
+<p>Recorded Bureau heads retain their existing lifecycle: a stopped
+review's validation merge remains in its clean detached checkpoint while
+a fresh worker resets the branch; a successful disposable worker's stage
+commits may reset at the next stage boundary. The guard binds review
+checkpoints to their preservation record, issue, branch and Git worktree
+identity. Successful worker/stage receipts must agree on workspace and
+final head, the registered worker must still be detached at that head,
+and the stage must start on history reachable from the ticket's current
+origin. Missing or mismatched records do not authorize a reset. Operator
+commits beyond either recorded head still hold with 30; commit messages
+and authors grant no exemption.</p>
 <h2 id="closed-terminal-stop-reasons">Closed terminal stop reasons</h2>
 <p>Ticket accounting refines existing exits with
 <code>terminal_reason</code>; it adds no exit code. The only values are

@@ -93,6 +93,8 @@ PY
   # copied above with every other file.
   sed -n -e '/^BUREAU_EXIT_LINEAR_UNUSABLE=/p' -e '/^halt_if_linear_unusable() {/,/^}/p' \
     -e '/^bureau_gh_pr_retry() {/,/^}/p' \
+    -e '/^_bureau_gh_pr_retry() {/,/^}/p' -e '/^bureau_open_pr_number() {/,/^}/p' \
+    -e '/^bureau_guard_branch_reset() {/,/^}/p' \
     -e '/^check_squash_range() {/,/^}/p' -e '/^comment_on_branch_pr() {/,/^}/p' \
     -e '/^restore_worktree_deps() {/,/^}/p' \
     -e '/^apply_build_failure() {/,/^}/p' -e '/^decide_review_verdict() {/,/^}/p' \

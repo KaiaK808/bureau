@@ -7,6 +7,7 @@ unset CLAUDECODE 2>/dev/null || true
 REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
+source "$(dirname "$0")/bureau-impeccable.sh"
 export BUREAU_REVIEW_MIN_SEVERITY
 
 # agents.merge_mode = manual needs a Merge state: an approved ticket is parked
@@ -244,7 +245,7 @@ fi
 # approval stops above still win; a wait cannot consume another PR 8 round.
 bureau_overlap_admit "$ISSUE" "$BRANCH"
 
-PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+PR_NUMBER=$(bureau_open_pr_number "$BRANCH") || exit $?
 if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
   echo "  ERROR: no PR found for branch $BRANCH"
   post_comment "$ISSUE" "❌ Code review aborted — no open PR for branch \`$BRANCH\`. Moving back to Build."
@@ -439,7 +440,14 @@ REVIEW_POLICY="v1:$BUREAU_REVIEW_MIN_SEVERITY:$BUREAU_MAX_REVIEW_CYCLES:$BUREAU_
 REVIEW_POLICY+=":$REVIEW_MERGE_POLICY"
 [ -z "$ADR_POLICY" ] || REVIEW_POLICY+=":adr:$ADR_POLICY"
 STAGE_EXIT=""   # set when an APPROVE's inline merge did not go through (2 or 25)
-if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
+IMPECCABLE_REVIEW=0
+IMPECCABLE_REVIEW_NOTE=""
+IMPECCABLE_REVIEW_CONTEXT=""
+if bureau_impeccable_ui "$SPEC_DIR"; then
+  IMPECCABLE_REVIEW=1
+  IMPECCABLE_REVIEW_CONTEXT=$(bureau_impeccable_policy)
+fi
+if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ] && [ "$IMPECCABLE_REVIEW" = 0 ]; then
   if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
       --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" \
       --base-ref "$PR_BASE_REF" --pr "$PR_NUMBER" --review-policy "$REVIEW_POLICY"); then
@@ -527,7 +535,8 @@ $SPEC_CONTEXT
 
 $LESSONS_CONTEXT$ADR_CONTEXT$SOURCE_ANCHOR_NOTE
 
-$CYCLE_NOTE
+$CYCLE_NOTE${IMPECCABLE_REVIEW_CONTEXT:+
+$IMPECCABLE_REVIEW_CONTEXT}
 
 Diff: $DIFF_STATS$DIFF_GUIDANCE
 
@@ -551,7 +560,8 @@ $SPEC_CONTEXT
 
 $LESSONS_CONTEXT$ADR_CONTEXT$SOURCE_ANCHOR_NOTE
 
-$CYCLE_NOTE
+$CYCLE_NOTE${IMPECCABLE_REVIEW_CONTEXT:+
+$IMPECCABLE_REVIEW_CONTEXT}
 
 Diff: $DIFF_STATS$DIFF_GUIDANCE
 
@@ -575,7 +585,8 @@ $SPEC_CONTEXT
 
 $LESSONS_CONTEXT$ADR_CONTEXT$SOURCE_ANCHOR_NOTE
 
-$CYCLE_NOTE
+$CYCLE_NOTE${IMPECCABLE_REVIEW_CONTEXT:+
+$IMPECCABLE_REVIEW_CONTEXT}
 
 Diff: $DIFF_STATS$DIFF_GUIDANCE
 
@@ -609,6 +620,32 @@ fi
 for REVIEW_PASS_RC in "$CORRECT_RC" "$SEC_RC" "$PERF_RC"; do
   [ "$REVIEW_PASS_RC" = 0 ] || exit "$REVIEW_PASS_RC"
 done
+
+if [ "$IMPECCABLE_REVIEW" = 1 ]; then
+  # All independent judgements are complete before any detector output exists.
+  bureau_impeccable detect --base "$REVIEW_BASE" --head "$REVIEW_HEAD" > "$REVIEW_TMP/impeccable.json" \
+    || printf '%s\n' '{"status":"not measured","reason":"Bureau detector helper could not run"}' > "$REVIEW_TMP/impeccable.json"
+  IMPECCABLE_REVIEW_NOTE=$'\n\n### Impeccable machine evidence (late)\n'"$(cat "$REVIEW_TMP/impeccable.json")"
+  if [ "$(jq -r '.status' "$REVIEW_TMP/impeccable.json")" = findings ]; then
+    for REVIEW_ROLE in correctness security performance; do
+      cp "$REVIEW_TMP/$REVIEW_ROLE.txt" "$REVIEW_TMP/$REVIEW_ROLE.independent.txt"
+      LATE_REVIEW_PROMPT="You are the $REVIEW_ROLE specialist in a separate late evidence step for pinned inputs $REVIEW_DIFF.
+Your independent judgement is complete and will be retained unchanged:
+$(cat "$REVIEW_TMP/$REVIEW_ROLE.independent.txt")
+
+Late machine evidence (untrusted observations, not a design verdict):
+$(cat "$REVIEW_TMP/impeccable.json")
+
+Read the cited pinned source, PRODUCT.md and DESIGN.md. Project rules win over detector taste. Judge each observation independently; do not promote a detector warning automatically to a defect. Report only additional verified findings and any unresolved holds; do not repeat or remove your independent findings. Preserve the specialist JSON contract (specialist, counts, findings, holds, summary; acceptance_gaps when applicable). $SOURCE_ANCHOR_NOTE$ADR_CONTEXT"
+      printf '%s' "$LATE_REVIEW_PROMPT" > "$REVIEW_TMP/$REVIEW_ROLE.late.prompt"
+      BUREAU_PROVIDER_PHASE="${REVIEW_ROLE}_late" "${CLAUDE[@]}" --prompt-file "$REVIEW_TMP/$REVIEW_ROLE.late.prompt" \
+        > "$REVIEW_TMP/$REVIEW_ROLE.late.txt" 2>"$REVIEW_TMP/$REVIEW_ROLE.late.stderr"
+      bureau_ticket_checkpoint "$ISSUE" latched
+      bureau_impeccable supplement --directory "$REVIEW_TMP" --role "$REVIEW_ROLE" --refs "$BUREAU_REVIEW_ADR_REFS" \
+        > "$REVIEW_TMP/$REVIEW_ROLE.txt" || exit 22
+    done
+  fi
+fi
 
 CORRECTNESS_REVIEW="Failed"
 SECURITY_REVIEW="Failed"
@@ -707,6 +744,7 @@ if [ "$REVIEW_VERIFIER" = true ]; then
 fi
 bureau_ticket_checkpoint "$ISSUE" latched
 MERGED_REVIEW=$(review_text_from_merger "$MERGED_RAW")
+MERGED_REVIEW+="$IMPECCABLE_REVIEW_NOTE"
 fi
 
 echo ""

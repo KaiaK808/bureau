@@ -142,6 +142,9 @@ Generate the config file from all collected information:
 ```json
 {
   "version": 2,
+  "design": {
+    "impeccable": {"enabled": false, "skill_version": "4.8.0", "engine_version": "0.1.18"}
+  },
   "linear": {
     "teams": [
       {
@@ -214,6 +217,8 @@ Use the legacy Claude runner default unless the user selected a different backgr
 
 
 ## Install Spec Kit and Bureau assets
+
+Impeccable is optional and off by default. Never install, download or enable its hooks or agents. If the operator opts in, use the installer's local verification report; missing or mismatched tooling stays unavailable without failing setup. The operator supplies the pinned installation with `--no-hooks`; stages do not use its agents. See [configuration](../docs/configuration.md#designimpeccable) for pins, paths and resync steps.
 
 Preview then apply the two operations below. Substitute the chosen target; include `--active-integration codex` or `claude` when selecting or switching the active integration. Read conflicts before applying; the resync reference explains adoption of existing files.
 

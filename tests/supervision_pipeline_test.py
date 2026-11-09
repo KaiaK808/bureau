@@ -303,6 +303,39 @@ class SupervisionPipelineTests(unittest.TestCase):
         self.assertTrue(all('bureau-supervision.py --repo '+str(self.repo/'.worktrees') in line and ' checkpoint T-1' in line for line in lines),lines)
         self.assertIn('argparse',[line.split()[0] for line in lines])
 
+    def stopped_validation_merge(self):
+        (self.repo/'main-change.txt').write_text('Concurrent main work\n')
+        self.git('add','main-change.txt');self.git('commit','-qm','feat: main advances');self.git('push','-q','origin','main')
+        first=self.run_tick(20);issue=first['issue']
+        return issue,json.loads((self.repo/'.git/bureau/review-stops.json').read_text())[issue]
+
+    def test_resumed_review_keeps_its_recorded_validation_merge(self):
+        issue,record=self.stopped_validation_merge()
+        preserved=Path(record['workspace']);checkpoint=record['reviewed_head']
+        subprocess.run(['python3','scripts/bureau-supervision.py','resume',issue],cwd=self.repo,env=self.env,
+                       check=True,stdout=subprocess.DEVNULL,timeout=30)
+        self.assertEqual(issue,self.run_tick(20)['issue'])
+        self.assertEqual(checkpoint,subprocess.check_output(['git','-C',str(preserved),'rev-parse','HEAD'],text=True).strip())
+        self.assertTrue(list(preserved.parent.glob(preserved.name+'.*')))
+
+    def test_resumed_review_checkpoint_does_not_exempt_operator_branch_commit(self):
+        issue,record=self.stopped_validation_merge()
+        preserved=Path(record['workspace']);checkpoint=record['reviewed_head'];branch=record['branch']
+        self.git('checkout','-q',branch)
+        self.assertEqual(checkpoint,self.git('rev-parse','HEAD'))
+        self.git('commit','-q','--allow-empty','-m','operator fix')
+        operator=self.git('rev-parse','HEAD');self.git('checkout','-q','main')
+        subprocess.run(['python3','scripts/bureau-supervision.py','resume',issue],cwd=self.repo,env=self.env,
+                       check=True,stdout=subprocess.DEVNULL,timeout=30)
+        count=len(self.models())
+        result=subprocess.run(['bash','scripts/bureau-tick.sh'],cwd=self.repo,env=self.env,capture_output=True,text=True,timeout=90)
+        self.assertEqual(30,result.returncode,result.stdout+result.stderr)
+        self.assertIn(operator[:12],result.stderr)
+        self.assertNotIn(checkpoint[:12],result.stderr)
+        self.assertEqual(operator,self.git('rev-parse','refs/heads/'+branch))
+        self.assertEqual(checkpoint,subprocess.check_output(['git','-C',str(preserved),'rev-parse','HEAD'],text=True).strip())
+        self.assertEqual(count,len(self.models()))
+
     def test_real_stages_stop_skip_notify_and_resume(self):
         first=self.run_tick(20); self.assertEqual(first['issue'],'T-1'); self.assertEqual(first['outcome'],'stopped_for_review')
         self.assertEqual(self.models(),['T-1']*3)

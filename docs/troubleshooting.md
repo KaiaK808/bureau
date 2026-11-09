@@ -212,6 +212,31 @@ A stage or the shepherd stops with 21 when the run may not take the ticket or it
 
 Follow the comment (for an interrupted run, the steps under [`shepherd.sh` bailed mid-run](#shepherdsh-bailed-mid-run--how-to-resume)), remove `needs-human` and rerun.
 
+### Exit 31 (open-pr-required) — restart after a build gate failure
+
+Implement opens or updates the PR only after its gate passes. If it exits `14` and you fix the failing checks by hand, the pushed branch can still have no PR. QA does not open one; without the restart check it could finish before review exits `15` and moves the ticket back to Build.
+
+An actual shepherd run with `--from-stage qa`, `build_review`, `merge` or `done` now checks the ticket's `bureau-branch` marker, the branch on origin and its open PR before claiming ownership or writing to Linear. A missing pushed branch or open PR ends with `31`, prints the reason and the commands to recover, and runs no stage. Push any unpublished fixes, then run the printed command:
+
+```bash
+gh pr create --head <branch> --base <configured-base> --draft --fill
+scripts/shepherd.sh --no-tmux --from-stage qa <ISSUE>
+```
+
+The base is `repo.base_branch`, default `main`; the printed restart command preserves your original flags. An origin or GitHub lookup failure is `18`, not a missing-PR hold. The PR lookup retries transient errors with the same bounded policy as implement; fix authentication or wait for GitHub to recover and restart. Starts at Build or earlier are unchanged, and review retains its own exit-`15` check. Dry runs still print their route without this check.
+
+### Exit 30 (local-commits-held) — unpublished commits before a reset
+
+Stage checkout and ticket-worker reset check `refs/heads/<branch>` and HEAD when detached or attached to that branch, excluding commits reachable from any remote ref or another local branch. Either tip can contain unpublished work, even when the other tip matches origin. The hold prints each short SHA and subject and preserves the refs and files.
+
+Bureau's recorded review checkpoints and successful disposable-worker stage heads follow their existing preservation/reset rules without an override. The exact head and worktree identity must still match the checkpoint or completed worker/stage receipts; successful stages must have started on the ticket's current origin history. A later operator commit still holds, including one made on the same branch ref or detached worker. Missing or stale records fail closed; inspect the named commits rather than changing their authors or messages.
+
+Inspect the named commits with `git show <sha>`. To keep them, put them on the ticket branch and push that branch to origin; when the two tips diverge, preserve both on recovery branches and integrate the wanted commits first. Fetch and compare again before retrying. To discard them deliberately, prefix just the intended stage or worker invocation with `BUREAU_DROP_LOCAL_COMMITS=1`. Full discarded SHAs are printed and retained in `logs/events.jsonl` as `local_commits_dropped`; no-override runs with no local-only commits stay unchanged.
+
+After resolving the commits, remove `needs-human` (or its local hold if labeling failed) and reconcile the dispatcher's held entry before restarting. Reset-time holds durably preserve existing workers through dispatcher cleanup; a later run re-accepts a clean worker after its HEAD is on origin. To discard held commits instead, use the one-run override on the same worker and ticket branch: ownership must be claimed, the checkout must be clean and its exit-30 preservation record must match the issue, target branch and Git worktree identity. Dirty workers and exit-30 records with missing or mismatched identity still refuse with 21; other failure records keep their existing re-acceptance rules. Do not export the override into a long-running driver or put it in `.env`.
+
+If a previous reset already lost a commit, inspect `git reflog show <branch>` and `git reflog show HEAD` in the original worktree, or use the full SHA from the drop event. Anchor the wanted commit immediately with `git branch <recovery-branch> <sha>`, inspect it, then integrate and push it. Reflogs and unreachable objects can expire; recover before pruning or garbage collection.
+
 ### Exit 124 (timeout) — a provider pass hit its time limit
 
 A provider call that runs past its limit is stopped: the adapter ends its process group, and the stage gets 124. A shell the agent started detached (Claude's Bash tool does so) is outside that group and can keep running for a while; see [provider runtime](provider-runtime.md). Before v3.2 the implement stage ended on the first such pass, although in the field the agent had usually finished, committed and pushed every task and was only polling CI until the limit killed it.

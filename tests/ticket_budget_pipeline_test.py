@@ -37,7 +37,8 @@ class DispatchBudget(DispatcherFixture):
 
 
 class WorkerProgress(WithdrawalFixture):
-    def test_stall_at_stage_boundary_preserves_and_releases_like_withdrawal(self):
+    def setUp(self):
+        super().setUp()
         self.config['agents']['ticket_progress']=dict(enabled=True)
         self.save_config()
         # Keep the actual stage entry/ownership wrappers; this fake turn changes
@@ -53,8 +54,11 @@ sed -i.bak 's/\\[ \\]/[X]/g' specs/*/tasks.md
 git add specs
 git commit -qm 'fixture activity'
 ''')
+
+    def test_stall_at_stage_boundary_preserves_and_releases_like_withdrawal(self):
         first=self.worker(); self.assertEqual(0,first.returncode,first.stdout+first.stderr)
         second=self.worker(); self.assertEqual(25,second.returncode,second.stdout+second.stderr)
+        self.assertNotIn('HOLD: local-only commits',second.stderr)
         self.assertIn('terminal_reason=stalled',second.stderr)
         issue=self.config['linear']['teams'][0]['key']+'-9'
         ledger=json.loads((self.common/'bureau/tickets'/(issue+'.json')).read_text())
@@ -65,10 +69,34 @@ git commit -qm 'fixture activity'
         self.assertEqual('fixture activity',self.git('-C',str(self.wt),'log','-1','--format=%s'))
         self.assertTrue(list((self.common/'bureau/preserved').glob('*.json')))
 
+    def operator_commit_holds(self,branch_only=False):
+        first=self.worker(); self.assertEqual(0,first.returncode,first.stdout+first.stderr)
+        recorded=self.git('-C',str(self.wt),'rev-parse','HEAD')
+        self.git('-C',str(self.wt),'commit','-q','--allow-empty','-m','operator fix')
+        operator=self.git('-C',str(self.wt),'rev-parse','HEAD')
+        if branch_only:
+            self.git('update-ref','refs/heads/'+self.branch,operator)
+            self.git('-C',str(self.wt),'checkout','-q','--detach',recorded)
+        second=self.worker(); self.assertEqual(30,second.returncode,second.stdout+second.stderr)
+        self.assertIn(operator[:12],second.stderr)
+        self.assertNotIn('terminal_reason=stalled',second.stderr)
+        self.assertEqual(recorded if branch_only else operator,self.git('-C',str(self.wt),'rev-parse','HEAD'))
+        if branch_only: self.assertEqual(operator,self.git('rev-parse','refs/heads/'+self.branch))
+        self.assertTrue((self.wt/'unfinished.txt').exists())
+        self.assert_released()
+
+    def test_completed_worker_receipt_does_not_exempt_operator_head(self):
+        self.operator_commit_holds()
+
+    def test_completed_worker_receipt_does_not_exempt_operator_branch_ref(self):
+        self.operator_commit_holds(branch_only=True)
+
 
 if __name__ == '__main__':
     suite=unittest.TestSuite([
         DispatchBudget('test_budget_halts_shepherd_lane_and_preserves_work'),
         DispatchBudget('test_under_budget_lane_retains_normal_handoff'),
-        WorkerProgress('test_stall_at_stage_boundary_preserves_and_releases_like_withdrawal')])
+        WorkerProgress('test_stall_at_stage_boundary_preserves_and_releases_like_withdrawal'),
+        WorkerProgress('test_completed_worker_receipt_does_not_exempt_operator_head'),
+        WorkerProgress('test_completed_worker_receipt_does_not_exempt_operator_branch_ref')])
     sys.exit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())
