@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="b3e4ddabadc7000d69f0762b0b541723a8faca470c64a9e0bccd09ef400fc804">
+<meta name="bureau-source-sha256" content="d23ada3622ef88241bfcfc3b5ba146f6f28f181c9367969c5c7e2b7306083602">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -29,10 +29,11 @@ legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
 the v3.2 release candidate, v3.2.0, v3.2.1, the v3.3 release candidates,
 v3.3.0, v3.4.0, v3.4.1, v3.5.0, v3.5.1 and v3.6.0 to <strong>Bureau
-v3.7.0</strong>, dated 2026-11-09, in release preparation. Tagging and
-publication remain separate maintainer operations. The commands below
-require the selected release's source skill. See the <a
-href="release-notes.html">v3.7.0 release notes</a>, the previous stable <a
+v3.7.0</strong>, dated 2026-11-09, published as the latest <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.7.0">GitHub
+Release</a>. The commands below require the selected release's source
+skill. See the <a href="release-notes.html">v3.7.0 release notes</a>, the
+previous stable <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">v3.6.0
 release</a> and its <a href="release-notes-v3.6.0.html">release notes</a>,
 the earlier <a
@@ -108,14 +109,13 @@ installed commit.</p>
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. Use a
 clean checkout to select the published release's exact tag
-(<code>v3.7.0</code> once published for this release,
-<code>v3.6.0</code> for the previous stable release,
-<code>v3.5.1</code>, <code>v3.5.0</code>, <code>v3.4.1</code>,
-<code>v3.4.0</code>, <code>v3.3.0</code>, <code>v3.2.1</code>,
-<code>v3.2.0</code>, <code>v3.1.0</code>, <code>v3.0.2</code>,
-<code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
-earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.7.0 <span class="co"># once published; or v3.6.0, v3.5.1, v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+(<code>v3.7.0</code> for this release, <code>v3.6.0</code> for the
+previous stable release, <code>v3.5.1</code>, <code>v3.5.0</code>,
+<code>v3.4.1</code>, <code>v3.4.0</code>, <code>v3.3.0</code>,
+<code>v3.2.1</code>, <code>v3.2.0</code>, <code>v3.1.0</code>,
+<code>v3.0.2</code>, <code>v3.0.1</code>, <code>v3.0.0</code> or
+<code>v2.0.0</code> for an earlier one):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.7.0 <span class="co"># or v3.6.0, v3.5.1, v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -137,11 +137,12 @@ merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
 <h2 id="upgrade-to-v37">Upgrade to v3.7</h2>
 <p><strong>v3.7.0</strong>, dated <strong>2026-11-09</strong>, is a
-minor release on v3.6.0, in release preparation. Its <a
-href="release-notes.html">release notes</a> cover changes, configuration,
-validation and limitations. Exits 30 and 31 extend the v3 protocol;
-configuration schema versions, Spec Kit 1.2.2 and the app prepare/finish
-protocol remain.</p>
+minor release on v3.6.0, published as the latest <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.7.0">GitHub
+Release</a>. Its <a href="release-notes.html">release notes</a> cover
+changes, configuration, validation and limitations. Exits 30 and 31
+extend the v3 protocol; configuration schema versions, Spec Kit 1.2.2
+and the app prepare/finish protocol remain.</p>
 <p><strong>From v3.6.0:</strong></p>
 <ol type="1">
 <li>Stop all shepherds, queue loops, dispatchers and supervisors.
@@ -152,7 +153,7 @@ process-hold records.</li>
 <li>Compare installed-script drift before replacing assets; reconcile
 incident fixes and customizations with the templates. Preserve a private
 backup and the previous source commit for rollback.</li>
-<li>Select tag <code>v3.7.0</code> once published using <a
+<li>Select tag <code>v3.7.0</code> using <a
 href="#select-the-source-release">the source-update steps</a>, and
 refresh skill discovery. Preview and resolve asset conflicts in each
 adopting repository.</li>
