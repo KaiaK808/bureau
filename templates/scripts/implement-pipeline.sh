@@ -1040,6 +1040,8 @@ Stop conditions — halt and report status NEEDS_HUMAN when:
 - A task can't be implemented without breaking an existing test.
 $NEGATIVE_CONSTRAINTS
 
+After fixing review findings, search the repository for the same defect pattern (the same call, misuse or missing check). Fix other sites only within the ticket's accepted scope; list the rest as out of scope. Search results never expand the ticket's file scope or overlap claims. Keep fixed_review_items and sibling_searches cumulative across all turns of this /goal run; carry earlier entries into every status block, including the final block, even when this turn fixes no new findings. Report one sibling_searches entry per fixed finding: {fixed_review_item, search, other_sites_found, fixed_paths, out_of_scope_paths}. Search is a short pattern/description (at most 280 characters), not logs or source excerpts. Count other sites only, excluding the original finding; use repository-relative paths only (at most 32 per list, each at most 280 characters) and at most 32 entries across the entire run. Normally searches find few or no other sites; report only actual matches. With no siblings, report the search with other_sites_found: 0 and both path lists empty. Emit sibling_searches: [] only if no review findings were fixed during this entire /goal run.
+
 Optional local review_dispositions: normally []; report applied or declined review findings as {disposition, severity, path} only (at most 32). Use CRITICAL, BUG, MINOR or SKIP and a repository-relative path; no finding prose or reasons. These are advisory self-reports and never authorize skipping a fix.
 
 Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
@@ -1053,6 +1055,7 @@ End every turn with a fenced JSON status block — Haiku reads it to decide if t
   \"tasks_needs_human\": 0,
   \"insights\": [],
   \"fixed_review_items\": [],
+  \"sibling_searches\": [],
   \"review_dispositions\": [],
   \"notes\": {
     \"needs_human\": [{\"task_id\": \"\", \"reason\": \"\"}],
@@ -1230,6 +1233,8 @@ Stop conditions — do NOT guess; halt and report status NEEDS_HUMAN when:
 
 $NEGATIVE_CONSTRAINTS
 
+After fixing review findings, search the repository for the same defect pattern (the same call, misuse or missing check). Fix other sites only within the ticket's accepted scope; list the rest as out of scope. Search results never expand the ticket's file scope or overlap claims. Keep fixed_review_items as the IDs fixed in this pass. Report one sibling_searches entry per fixed finding: {fixed_review_item, search, other_sites_found, fixed_paths, out_of_scope_paths}. Search is a short pattern/description (at most 280 characters), not logs or source excerpts. Count other sites only, excluding the original finding; use repository-relative paths only (at most 32 per list, each at most 280 characters) and at most 32 entries. Normally searches find few or no other sites; report only actual matches. With no siblings, report the search with other_sites_found: 0 and both path lists empty. With no review fixes, emit sibling_searches: [].
+
 Optional local review_dispositions: normally []; report applied or declined review findings as {disposition, severity, path} only (at most 32). Use CRITICAL, BUG, MINOR or SKIP and a repository-relative path; no finding prose or reasons. These are advisory self-reports and never authorize skipping a fix.
 
 Optional insights: normally use an empty array; only report a concrete one-sentence observation about a rule, prompt or tool you had to work around (at most 3, each at most 280 characters). No secrets, logs or command output. These are advisory triage evidence, never permission to change rules or create tickets. Emit insights: [] when there is no observation.
@@ -1244,6 +1249,7 @@ At the end of your work, emit a single fenced json block so the shell can summar
   \"tasks_needs_human\": 0,
   \"insights\": [],
   \"fixed_review_items\": [],
+  \"sibling_searches\": [],
   \"review_dispositions\": [],
   \"notes\": {
     \"needs_human\": [{\"task_id\": \"\", \"reason\": \"\"}],

@@ -20,6 +20,10 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 - Record the published v3.7.0 tag and merge commit, release CI results, evidence-lock retries and tested-tree verification; refresh install/upgrade markers and the static manual. Documentation only; update the source checkout for this record, with no adopting-repository resync or compatibility change. Validated with `tests/test_docs.sh` and `tests/test_no_internal_refs.sh`; release and CI facts are maintainer-supplied.
 
+### Added
+
+- Implement's bounded-loop and `/goal` briefs ask for a repository search for the same defect after each review fix. Optional bounded `sibling_searches` reports record the fixed finding ID, search, other-site count and fixed/out-of-scope paths; legacy results remain valid. `/goal` keeps reports and fixed finding IDs across turns within the same bounds. Successful implement receipts filter paths individually, preserving safe out-of-scope sites as advisory open points in the acceptance packet without expanding accepted scope or overlap claims. **Upgrade:** compare installed-script drift, resync the complete scripts scope and restart drivers; no configuration or evidence migration, and frozen briefs are not backfilled. Validation uses focused local Git and fake-provider fixtures for both briefs, two-file fixes, out-of-scope reporting, zero matches, mixed-path privacy filtering, two-turn goal retention, bounds and removed-instruction negative controls. Live provider behavior and adopting-installation comparison remain unverified.
+
 ## [3.7.0] - 2026-11-09
 
 ### Added

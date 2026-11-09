@@ -226,11 +226,11 @@ class LessonsTests(unittest.TestCase):
     def test_absent_lessons_keeps_base_prompt_bytes(self):
         out, err = self.context(tasks=None)
         self.assertEqual((out, err), ('', ''))
-        # Frozen complete prompt bytes from the pre-lessons baseline (the failure-insights head below this change).
-        cases = (('implement-pipeline.sh', 'IMPL_SYSTEM', 2605,
-                  'a8df77910fd04ae897de21df4854b97d167a59452e5b957ec5120527f2cd7767'),
-                 ('implement-pipeline.sh', 'PROMPT', 2806,
-                  'f15306427b58e3ba2c6d231efc5b9c25733b8e9420f6ae580bab9eb6cc5f96ce'),
+        # Frozen complete prompt bytes without lessons (refreshed when the implement briefs gained the sibling-site sweep).
+        cases = (('implement-pipeline.sh', 'IMPL_SYSTEM', 3794,
+                  'f691480752f73a7b51c9c35b6bb4a262f7bb5d4deb3b8d75a7d78d08eb3a3428'),
+                 ('implement-pipeline.sh', 'PROMPT', 3774,
+                  '91e7edd937f8e4f0b129596d093f18f6c07e5bc675e68ee5420dd801851b9cd8'),
                  ('qa-pipeline.sh', 'QA_RESULT', 1485,
                   '7714cd52d30505c96e37667b2df43e76900eb13bf9e23aaaa37747d1175fc543'))
         variables = ('ISSUE ISSUE_TITLE BRANCH SPEC_CONTEXT PROJECT_CONTEXT DESIGN_CONTEXT REVIEW_CONTEXT '

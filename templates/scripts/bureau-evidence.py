@@ -176,6 +176,27 @@ def disposition_path(value):
             and not unsafe_insight(value) and not LOG_INSIGHT.search(value))
 
 
+def sibling_out_of_scope_paths(result):
+    """Project only bounded paths from searches tied to fixed review items."""
+    if not isinstance(result, dict) or 'sibling_searches' not in result: return None
+    reports = result['sibling_searches']; fixed = result.get('fixed_review_items')
+    if not isinstance(reports, list) or len(reports) > 32 or not isinstance(fixed, list): return None
+    paths = set()
+    for report in reports:
+        if (not isinstance(report, dict) or set(report) != {'fixed_review_item', 'search', 'other_sites_found', 'fixed_paths', 'out_of_scope_paths'}
+                or not isinstance(report['fixed_review_item'], str) or not 0 < len(report['fixed_review_item']) <= 280
+                or report['fixed_review_item'] not in fixed
+                or not isinstance(report['search'], str) or not 0 < len(report['search']) <= 280
+                or type(report['other_sites_found']) is not int or not 0 <= report['other_sites_found'] <= 100000): return None
+        for key in ('fixed_paths', 'out_of_scope_paths'):
+            if (not isinstance(report[key], list) or len(report[key]) > 32
+                    or not all(isinstance(path, str) and len(path) <= 280 for path in report[key])): return None
+        applied = set(report['fixed_paths']); outside = set(report['out_of_scope_paths'])
+        if applied & outside or len(applied | outside) > report['other_sites_found']: return None
+        paths.update(path for path in outside if disposition_path(path))
+    return sorted(paths)
+
+
 def normalize_dispositions(value):
     if not isinstance(value, dict) or 'review_dispositions' not in value: return value
     items = value['review_dispositions']
@@ -697,6 +718,9 @@ class Store:
             if value[key] is not None and (not isinstance(value[key], str) or not Path(value[key]).is_absolute()):
                 raise ValueError('receipt needs an absolute provider pointer')
         value.update(start_head=head(receipt.get('start_head')), end_head=head(receipt.get('end_head')))
+        if value['stage'] == 'implement' and value['normalized_exit'] == 0 and value['provider_exit'] == 0:
+            outside = sibling_out_of_scope_paths(receipt.get('structured_result') or receipt.get('insights_result'))
+            if outside is not None: value['sibling_out_of_scope_paths'] = outside
         # Additive metadata only; legacy receipts have no timeout_kind. Never
         # infer silence from an interrupted review or an absent result/usage.
         if receipt.get('timeout_kind') in ('silence', 'wall-clock'):

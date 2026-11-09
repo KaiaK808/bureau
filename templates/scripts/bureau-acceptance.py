@@ -205,6 +205,22 @@ def spending(repo, issue, config, attempts, receipts, head, base):
     return result
 
 
+def sibling_open_points(repo, receipts, head):
+    outside = set(); ancestors = {head: True}
+    for _, receipt in receipts:
+        if receipt.get('stage') != 'implement' or receipt.get('normalized_exit') != 0 or receipt.get('provider_exit') != 0: continue
+        reported = receipt.get('sibling_out_of_scope_paths'); checked = e.head(receipt.get('end_head'))
+        if (not isinstance(reported, list) or len(reported) > 1024 or not checked
+                or not all(e.disposition_path(path) for path in reported)): continue
+        if checked not in ancestors:
+            try: git(repo, 'merge-base', '--is-ancestor', checked, head); ancestors[checked] = True
+            except (OSError, subprocess.SubprocessError): ancestors[checked] = False
+        if ancestors[checked]: outside.update(reported)
+    if not outside: return []
+    return ['- Reported out-of-scope sibling sites: ' + path_list(sorted(outside)) +
+            '. Advisory open points, not revalidated; ticket scope and overlap claims are unchanged.']
+
+
 def git(repo, *args):
     return git_bytes(repo, *args).decode().strip()
 
@@ -453,7 +469,7 @@ def render(store, repo, issue, pr, head, url, spec=None, base=None, verdict=None
         lines += ['- Review receipt/verdict for this HEAD: missing.']
         points += ['- Review blockers/known limits: missing.']
     lines += ['', '**Token usage**'] + spending(repo, issue, config, attempts, receipts, head, base)
-    lines += ['', '**Open points**'] + points
+    lines += ['', '**Open points**'] + points + sibling_open_points(repo, receipts, head)
     waits = [v for _, v in store._records('waits/*.json', 'wait', quarantine=False) if v['issue'] == issue and v['state'] == 'open']
     for wait in waits[:6]:
         stage = e.tag(wait['stage']) if isinstance(wait['stage'], str) else 'missing'
