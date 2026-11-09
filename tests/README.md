@@ -17,6 +17,12 @@ all file deadlines with a positive integer in seconds. Expiry prints `TIMEOUT`,
 sends TERM then KILL after one second, counts a failure and continues. Background
 group members are stopped even after a successful test.
 
+Both `tests/run.sh` and direct `tests/run_test_files.py` runs set
+`PYTHONDONTWRITEBYTECODE=1` for every test, keeping template imports free of
+bytecode caches. The internal-reference guard scans Git-tracked and non-ignored
+new files; ignored caches are excluded, while tracked files remain covered even
+when an ignore rule matches them.
+
 `BUREAU_TEST_MANIFEST=tests/macos-manifest.txt` selects the 56 focused macOS tests;
 unset or empty selects every entrypoint. Manifest paths resolve from the invoking
 directory. File names may have trailing `#` reason comments; blank/comment lines

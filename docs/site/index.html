@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="914438ae6990198eae6cfeab58e343f7e95c401471658d469841737027bd9ffd">
+<meta name="bureau-source-sha256" content="28be40682ed6820e13d043aa8aaaf93811b3684551c335ea557673ceabf3c574">
 <title>README · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -101,11 +101,14 @@ credentials out of tracked files; shell helpers call Linear's API
 directly.</p>
 <p><img src="../assets/hero.png" alt="Bureau archive chamber" /></p>
 <h2 id="install">Install</h2>
-<p>Keep one source clone at the published <code>v3.6.0</code> tag and
-expose it to the assistants you use. See <a
+<p>Keep one source clone at the published release tag
+<code>v3.7.0</code>, dated 2026-11-09, and expose it to the assistants
+you use. The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.7.0">GitHub
+Release</a> is published as latest. See <a
 href="releases.html#current-release-status">release status</a> for
 validation and limitations.</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.6.0 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone <span class="at">--branch</span> v3.7.0 <span class="at">--single-branch</span> https://github.com/KaiaK808/bureau.git <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills&quot;</span></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ln</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-init&quot;</span> <span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.agents/skills/bureau-init&quot;</span></span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Optional Claude Code entry point:</span></span>

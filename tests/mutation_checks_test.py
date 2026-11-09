@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from unittest.mock import Mock, patch
 
 import git_maintenance
@@ -395,6 +395,110 @@ time.sleep(30)
                          (stop.call_count, child.stdout.closed, child.stderr.closed))
         stop.assert_called_once_with(self.root, child, observed=None)
         child.communicate.assert_not_called()
+
+    def cleanup_control(self, fault, *, live=False):
+        recorded = self.root/'cleanup-pids'
+        if live:
+            fixture_pids(self.root)  # Refuse before spawning if inspection is denied.
+            self.addCleanup(self.stop_recorded, recorded)
+            sleeper = '''import os, signal, sys, time
+from pathlib import Path
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path(sys.argv[1]).write_text(sys.argv[2] + '\\n' + str(os.getpid()))
+time.sleep(30)
+'''
+            self.test.write_text(f'''import os, subprocess, sys, time
+from pathlib import Path
+script = Path(os.environ['TMPDIR'])/'sleeper.py'
+script.write_text({sleeper!r})
+subprocess.Popen([sys.executable, str(script), {str(recorded)!r}, str(os.getpid())],
+                 start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+time.sleep(30)
+''')
+        child = Mock(pid=100, stdout=io.StringIO(), stderr=io.StringIO())
+        roots, children, stopped, events = [], [], [], []
+        injected = False
+
+        def inject():
+            nonlocal injected
+            injected = True
+            if fault == 'stdout':
+                raise OSError('stdout close failed')
+            signal.raise_signal(signal.SIGINT)
+
+        def stop(root, child, **kwargs):
+            roots.append(root)
+            events.append('stop')
+            if fault == 'stop' and not injected:
+                inject()
+            if live:
+                stop_fixtures(root, child, **kwargs)
+            stopped.append(root)
+
+        def close(name, original):
+            events.append(name)
+            if fault == name and not injected:
+                inject()
+            original()
+
+        def interrupt(child, deadline):
+            children.append(child)
+            for name in ('stdout', 'stderr'):
+                pipe = getattr(child, name)
+                self.addCleanup(pipe.close)
+                stack.enter_context(patch.object(pipe, 'close',
+                                                side_effect=lambda name=name, original=pipe.close:
+                                                close(name, original)))
+            if live:
+                self.addCleanup(self.stop_child, child)
+                while not recorded.exists():
+                    self.assertLess(time.monotonic(), deadline, 'fixture never became ready')
+                    time.sleep(.01)
+            signal.raise_signal(signal.SIGINT)
+
+        with ExitStack() as stack:
+            handler = signal.signal(signal.SIGINT, signal.default_int_handler)
+            stack.callback(signal.signal, signal.SIGINT, handler)
+            stack.enter_context(patch('mutation_checks.tempfile.tempdir', str(self.root)))
+            if not live:
+                stack.enter_context(patch('mutation_checks.fixture_pids', return_value=set()))
+                stack.enter_context(patch('mutation_checks.reaping_fixtures', return_value=nullcontext()))
+                stack.enter_context(patch('mutation_checks.subprocess.Popen', return_value=child))
+            stack.enter_context(patch('mutation_checks.stop_fixtures', side_effect=stop))
+            stack.enter_context(patch('mutation_checks.communicate_until', side_effect=interrupt))
+            with (self.assertRaisesRegex(OSError, 'stdout close failed') if fault == 'stdout'
+                  else self.assertRaises(KeyboardInterrupt)):
+                run(self.command, timeout=5)
+        self.assertTrue(injected, 'cleanup never reached the injected failure')
+        self.assertTrue(roots)
+        self.assertTrue(all(not root.exists() for root in roots), 'fixture root survived cleanup')
+        if live:
+            self.assertFalse(running_processes(map(int, recorded.read_text().splitlines())),
+                             'fixture descendants survived cleanup')
+        self.assertTrue(stopped, 'fixture stop never finished')
+        if fault == 'stdout':
+            self.assertEqual(['stop', 'stdout', 'stderr'], events[:3],
+                             'stdout close failure skipped stderr in the first cleanup')
+        self.assertTrue(children[0].stdout.closed, 'stdout close never finished')
+        self.assertTrue(children[0].stderr.closed, 'stderr close never finished')
+
+    def test_cleanup_retries_a_second_interrupt_before_fixture_stop(self):
+        self.cleanup_control('stop')
+
+    def test_cleanup_retries_a_second_interrupt_before_stderr_close(self):
+        self.cleanup_control('stderr')
+
+    def test_cleanup_closes_stderr_after_stdout_close_fails(self):
+        self.cleanup_control('stdout')
+
+    def test_live_cleanup_retries_a_second_interrupt_before_fixture_stop(self):
+        self.cleanup_control('stop', live=True)
+
+    def test_live_cleanup_retries_a_second_interrupt_before_stderr_close(self):
+        self.cleanup_control('stderr', live=True)
+
+    def test_live_cleanup_closes_stderr_after_stdout_close_fails(self):
+        self.cleanup_control('stdout', live=True)
 
     def test_shutdown_reaps_a_zombie_after_the_last_observation_before_root_removal(self):
         observed, release = threading.Event(), threading.Event()
