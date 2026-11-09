@@ -32,7 +32,7 @@ See [setup prerequisites](references/setup.md) and [provider configuration](docs
 
 ## Install
 
-Keep one source clone at the selected release tag (`v3.7.0` once published) and expose it to the assistants you use. See [release status](docs/releases.md#current-release-status) for validation and limitations.
+Keep one source clone at the published release tag `v3.7.0`, dated 2026-11-09, and expose it to the assistants you use. The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.7.0) is published as latest. See [release status](docs/releases.md#current-release-status) for validation and limitations.
 
 ```sh
 git clone --branch v3.7.0 --single-branch https://github.com/KaiaK808/bureau.git "$HOME/bureau-init"
