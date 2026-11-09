@@ -10,6 +10,8 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 - Doctor warns when an enabled Codex implementation or QA stage without gate delegation has a latest recorded matching gate duration above the 600-second tool command limit, naming `agents.providers.codex.gate_outside_sandbox` and ADR 0013. Non-delegated Codex briefs require the configured command verbatim, without wrappers, prefixes, redirects or environment changes, so execution proof can match. **Upgrade:** compare installed drift, resync scripts and restart drivers; enable delegation for long gates. No evidence-schema or exit-code change; missing or invalid duration evidence supplies no estimate. Validation uses focused local doctor fixtures and fake-provider brief checks, including a removed-instruction negative control; live provider limits and adopter drift remain unverified.
 
+- Both test runner entry points set `PYTHONDONTWRITEBYTECODE=1` for every test, including CI runs; isolated runner imports also avoid caches. The internal-reference guard retains its Git-tracked and non-ignored new-file inventory, so ignored bytecode cannot trigger publication failures and tracked violations still fail. **Upgrade:** update the source checkout; no asset resync or runtime compatibility change. Validation uses planted template imports through both runners and the guard's ignored-bytecode/tracked-file controls; the full suite and hosted CI remain maintainer checks.
+
 ## [3.7.0] - 2026-11-09
 
 ### Added

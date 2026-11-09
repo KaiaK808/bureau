@@ -9,6 +9,7 @@ import tempfile
 import time
 
 # Also support the runner's isolated Python invocation.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from process_helpers import process_group_running
 
@@ -86,7 +87,8 @@ def stop_group(child):
 def run_file(name, timeout, log):
     started = time.monotonic()
     outcome = 'FAIL'
-    child = subprocess.Popen(['bash', name], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    child = subprocess.Popen(['bash', name], stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                             env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
     try:
         try:
             child.wait(timeout=max(0, started + timeout - time.monotonic()))
