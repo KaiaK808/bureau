@@ -87,7 +87,7 @@ refresh_review_context() {
     | jq -r --arg re "$pattern" '[.comments[] | select(.body | test($re))][0].body // empty' 2>/dev/null || echo "")
   if [ -n "$feedback" ] && [ "${#feedback}" -gt 20 ]; then
     # Only the selected review comment may be expanded. A human/QA note wins
-    # alone, with exactly the historical prompt bytes and no fallback warning.
+    # alone, with ordinary feedback keeping the historical bytes and no warning.
     case "${feedback%%$'\n'*}" in
       '🔄 Code Review'*'Changes Requested'*|'## Code Review'*'Changes Requested'*|'Code Review'*'Changes Requested'*|'🚫 Code review **BLOCKED** — needs human review.'*)
         if ! context=$(printf '%s' "$feedback" | ( bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review-context.py" \
@@ -100,6 +100,11 @@ refresh_review_context() {
     esac
     printf '\n--- Feedback to address (PRIORITY) ---\n%s\nAddress ALL fixes before remaining tasks.\n--- End feedback ---\n' "$feedback"
     [ -z "$context" ] || printf '\n%s\n' "$context"
+    case "$feedback" in
+      '🔄 QA: tests failing — routing back to Build.'*$'\nFlaky: passed on one rerun; failed tests: '*)
+        printf '\nIf inspection finds no product or harness defect and the unchanged configured gate passes, report COMPLETE without edits and note "no change needed, QA red looks flaky". A still-red gate or an independent blocker keeps its normal hold; never skip tests or invent a change to clear QA.\n'
+        ;;
+    esac
   fi
 }
 

@@ -392,6 +392,13 @@ def render(store, repo, issue, pr, head, url, spec=None, base=None, verdict=None
         code = gate['normalized_exit'] if type(gate['normalized_exit']) is int else 'missing'
         lines += [f'- {gate["command_id"]}: exit={code}, HEAD={checked}, end_HEAD={e.head(gate["end_head"]) or "missing"} ({status}), sha256={gate["sha256"]}; ' +
                   evidence_ref(store, path) + f', attempt `{attempt["attempt_id"]}`, gate {index}']
+    latest_flake = next((item for item in reversed(gates) if item[3].get('flaky')), None)
+    if latest_flake:
+        path, attempt, index, gate = latest_flake
+        flake = gate['flaky']
+        lines += ['- Flaky: passed on one rerun; failed tests: ' + ', '.join(flake['failed_tests']) +
+                  (f'; {flake["omitted"]} more omitted' if flake['omitted'] else '') + '; ' +
+                  evidence_ref(store, path) + f', attempt `{attempt["attempt_id"]}`, gate {index}.']
     if not gates: lines += ['- Gate records (exit/digest): missing.']
     if len(gates) > 8: lines += [f'- {len(gates) - 8} earlier gates omitted; see manifests.']
     lines += ['', '**Review evidence**',

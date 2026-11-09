@@ -418,7 +418,7 @@ class Ledger:
                                                            contract_sha256=self.contract_digest))
             atomic(self.path, value)
 
-    def execute_gate(self, repo, run, turn, command_id, command, path):
+    def execute_gate(self, repo, run, turn, command_id, command, path, qa_final=False):
         import importlib.util
         spec = importlib.util.spec_from_file_location('ticket_provider', Path(__file__).resolve().with_name('bureau-provider.py'))
         provider = importlib.util.module_from_spec(spec); spec.loader.exec_module(provider)
@@ -431,15 +431,32 @@ class Ledger:
         if command_id not in GATE_IDS or configured != [command]:
             raise ValueError('gate must execute the exact configured command')
         start = provider.current_head(repo)
-        # QA/review shell checks had no deadline. Provider call limits must
-        # never shorten their independent test execution window.
+        # Final QA has its own bound; other shell checks keep their test window.
         options = dict(timeout=None)
+        retry_qa = stage == 'qa' and qa_final
+        if retry_qa: options['timeout'] = provider.g.qa_timeout()
         try: options['untrusted_env'] = provider.untrusted_env_mode(self.config)
         except provider.UntrustedEnvError as exc: raise ValueError(str(exc)) from exc
-        code, abort = provider.outside_gate(options, repo, command, Path(path))
+        if retry_qa:
+            store = provider.evidence_store(repo)
+            def record(log, actual, code, checked, end, flaky):
+                if run and turn:
+                    provider.e.observe(store.gate, run, turn, log, checked, end, actual, code,
+                                       command_id=command_id, flaky=flaky)
+            try:
+                code, abort, result = provider.g.qa_run_gate(
+                    lambda actual, log: provider.outside_gate(options, repo, actual, log), command, Path(path),
+                    options['timeout'], lambda: provider.current_head(repo), record)
+            except provider.GateExecutionError as exc:
+                diagnostic(exc.reason)
+                return exc.code
+            atomic(Path(str(path) + '.result.json'), result)
+        else:
+            code, abort = provider.outside_gate(options, repo, command, Path(path))
         end = provider.current_head(repo)
         if not abort:
-            self._record_gate(run, turn, command_id, command, code, start, end, path)
+            self._record_gate(run, turn, command_id, command, code, start, end,
+                              result['logs'][-1] if retry_qa else path)
         return 128 - code if code < 0 else code
 
     def end_turn(self, turn, run):
@@ -471,6 +488,7 @@ def main():
     reset.add_argument('--acknowledge-accounting-loss', action='store_true', required=True)
     gate = sub.add_parser('execute-gate')
     for name in ('path', 'command', 'command-id'): gate.add_argument('--' + name, required=True)
+    gate.add_argument('--qa-final', action='store_true')
     args = parser.parse_args()
     try:
         repo = Path(args.repo).resolve(); ledger = Ledger(root_for(repo), args.issue, read_config(repo))
@@ -484,7 +502,7 @@ def main():
         elif args.action == 'reset': ledger.reset()
         elif args.action == 'execute-gate':
             return ledger.execute_gate(repo, run, os.environ.get('BUREAU_STAGE_ATTEMPT_ID'), args.command_id,
-                                       args.command, args.path)
+                                       args.command, args.path, args.qa_final)
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         diagnostic(str(exc)); return 24
