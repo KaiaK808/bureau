@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="894d472fa0720d11e098fd52140d26257186b381687abb94eac170b30e826d76">
+<meta name="bureau-source-sha256" content="8ea2bd9011477e88b66ed4dd5b695f9741d6efe59c64a4fbb1f34ef7b0de2e21">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -16,274 +16,187 @@
 <a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
 </nav></aside>
 <main class="bhb-main"><h1
-id="bureau-v360--review-isolation-evidence-and-bounded-runs">Bureau
-v3.6.0 — review isolation, evidence and bounded runs</h1>
-<p><strong>Stable release · 2026-11-03 · source tag <code>v3.6.0</code>
-· prepared 2026-11-02.</strong> The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">GitHub
-Release</a> is marked as latest and records the exact tagged commit,
-merge commit <code>85b41a7</code> of <a
-href="https://github.com/KaiaK808/bureau/pull/113">#113</a>. v3.6.0 is a
-minor release on <a href="release-notes-v3.5.1.html">v3.5.1</a>.</p>
-<p>The release includes <a
-href="https://github.com/KaiaK808/bureau/pull/96">#96</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/97">#97</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/100">#100</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/101">#101</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/102">#102</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/103">#103</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/104">#104</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/105">#105</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/106">#106</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/107">#107</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/108">#108</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/109">#109</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/110">#110</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/111">#111</a>, the
-<code>actions/checkout</code> 7.0.1 dependency update <a
-href="https://github.com/KaiaK808/bureau/pull/8">#8</a>, and <a
-href="https://github.com/KaiaK808/bureau/pull/112">#112</a> for review
-and QA configuration isolation. The v3 exit-code vocabulary,
-configuration schema versions and Spec Kit 1.2.2 pin stay in place.</p>
-<h2 id="what-changed-since-v351">What changed since v3.5.1</h2>
-<h3 id="review-and-qa-configuration-isolation">Review and QA
-configuration isolation</h3>
-<p>Code-review specialists, the fallback merger, the finding verifier,
-QA and their validation conflict repair exclude automatic project and
-local configuration. Claude starts with
-<code>--setting-sources user</code>, retaining the operator's user
-settings, authentication, endpoints, user instructions and plugins.
-Project agents, skills, commands, <code>.mcp.json</code> and hooks stay
-out through the adapter's isolation flags. Codex disables automatic
-project documents and hooks and ignores execpolicy rules while retaining
-Bureau's explicit sandbox, model and effort selections. Implement and
-other stages retain their existing configuration behavior.</p>
-<p>Trusted instruction files, <code>scripts/bureau-stage.md</code> and
-their recursive <code>@</code> imports come from pinned PR-base Git
-blobs and travel in system text. Nested instructions retain their
-directory scope. Import examples in fenced blocks and inline code spans
-are ignored. The checkout stays in place. Unsafe paths or contents,
-imports beyond five levels, or a complete instruction block above 256
-KiB stop with exit 24 before model launch. Direct review/QA adapter
-calls require a full pinned <code>BUREAU_PROVIDER_CONFIG_BASE</code>
-commit; a missing pin also exits 24. See <a
-href="provider-runtime.html">provider runtime</a>.</p>
-<p>Changes to protected agent configuration produce deterministic
-<code>AGENT_CONFIG</code> annotations under their own review heading and
-<code>human_merge</code> evidence dispositions. Protected paths include
-instruction files, <code>.claude/**</code>, <code>.codex/**</code>,
-<code>.agents/**</code>, root <code>.mcp.json</code>,
-<code>scripts/bureau-stage.md</code> and imported dependencies. These
-annotations ask the human merger to inspect the configuration change,
-are excluded from fixes and verification, and never change the
-verdict.</p>
-<p>QA pins the open PR's actual target before the relevant provider
-call, including optional validation conflict repair. A successful lookup
-that finds no open PR permits a fetched <code>origin/main</code> pin for
-an operator rerun or a branch before PR creation. Lookup, metadata and
-fetch errors stop with exit 18. Operators must provide working PR lookup
-and base-fetch access even when using the no-open-PR path.</p>
-<h3 id="evidence-packet-and-advisory-risk-tier">Evidence packet and
-advisory risk tier</h3>
-<p>The existing human-boundary acceptance brief gains stage verdicts and
-attempt IDs, CI check-run conclusion counts at its immutable HEAD, Git
-numstat and binary counts, files outside the committed task inventory,
-retained review rounds and cap, and per-stage/total tokens and estimated
-costs. Missing evidence is stated explicitly. CI collection failure
-renders <code>unavailable</code> and preserves the existing delivery,
-retry and deduplication path. Frozen PR/HEAD briefs retain their bodies;
-the extension has no backfill. See <a
-href="stage-protocol.html#acceptance-briefs-at-human-merge-boundaries">the
-packet contract</a> and <a
-href="../adr/0012-human-boundary-briefs-and-local-insights.md">ADR
-0012</a>.</p>
-<p>A mechanical <code>low</code>, <code>normal</code> or
-<code>high</code> risk tier accompanies those facts. Defaults classify
-docs/tests-only changes of at most 100 changed lines and five files as
-low when they contain no binary or sensitive path. A sensitive path or
-at least 1000 changed lines makes the tier high. Mandatory
-configuration, dependency, CI, environment and agent-path rules remain
-active when extra sensitive patterns are empty. The tier leaves routing,
-holds, verdicts and merge authority unchanged. Optional
-<code>agents.risk_tier</code> customizes thresholds and patterns;
-invalid settings exit 24 before stage mutations.</p>
-<h3 id="run-budget-and-cooperative-kill-switch">Run budget and
-cooperative kill switch</h3>
-<p>Optional ticket budgets limit cumulative tokens, provider attempts
-and summed provider wall time across stages, retries, checker/verifier
-calls, worktrees and driver restarts sharing one Git directory. Both
-budget and trusted-progress policies default off. Unknown token usage
-stays null and, with a token limit, stops at the next safe checkpoint
-unless <code>allow_unknown_usage: true</code> permits it; known lower
-bounds still apply. Call slots are reserved atomically before paid work.
-Token/time allowances can overshoot through calls already admitted.</p>
-<p>Budget exhaustion and opt-in progress stalls use the existing
-cooperative stop latch. Current writers finish and join; the next
-checkpoint prevents further ordinary provider work or publication,
-preserves unfinished work and releases ownership after writers finish.
-Confirmed ticket withdrawal keeps precedence. Stops latch before
-diagnostic output, so closed stderr cannot bypass preservation. Terminal
-reasons use the closed existing-exit mapping: <code>budget</code>,
-<code>timeout</code>, <code>watchdog</code>, <code>review_capped</code>,
-<code>human_hold</code>, <code>ticket_withdrawn</code> and
-<code>stalled</code>. See <a
-href="stage-protocol.html#ticket-budget-and-progress-stops">the stop
-protocol</a>.</p>
-<p>Trusted progress requires a new contract-bound fact proved by an
-actual runtime-executed green gate at unchanged HEAD. Provider reports,
-commits, checkboxes and repeated green checks add no progress. The
-default enabled policy stalls after two completed work-stage attempts
-without a new fact; quiet waits and incomplete or held stages spend no
-turns. An empty enabled contract supplies no qualifying facts.
-Customized QA/review wrappers must use <code>bureau_run_gate</code>;
-<code>bureau_record_gate</code> remains observational.</p>
-<p>Ticket ledgers, admitted-attempt histories and separate durable
-witnesses survive evidence pruning. Under an enabled policy, witnessed
-missing, empty or unreadable accounting holds with 25 /
-<code>budget</code>; other invalid mandatory accounting fails closed
-with 24. With both policies disabled, accounting failures warn without
-changing stage exits. Inspect and reconcile saved work and ownership
-before using the <a
-href="configuration.html#ticket-run-budgets-and-trusted-progress">explicit
-operator reset</a>. Deleting a ledger cannot renew an enabled
-allowance.</p>
-<h3
-id="process-group-termination-and-the-opt-in-outside-sandbox-gate">Process-group
-termination and the opt-in outside-sandbox gate</h3>
-<p>The shared <code>bureau-process.py</code> helper handles termination
-for providers, gates, conflict helpers, dispatch, runtime and
-post-implement hooks. Cancellation latches before cleanup and retains
-exit 130 and its log; timeouts retain 124 and their consumed
-reservation. Failed termination signals remain uncertain unless group
-absence is proved. A bounded two-second probe/reap loop handles macOS
-zombie-only groups; an exited leader alone cannot establish safe
-cleanup. The v3.5.1 macOS gate-cancellation limitation is addressed by
-these runtime and harness changes in <a
-href="https://github.com/KaiaK808/bureau/pull/105">#105</a> and <a
-href="https://github.com/KaiaK808/bureau/pull/106">#106</a>.</p>
-<p>Durable unfinished-process holds are written before spawning.
-Uncertain termination keeps holds, leases, branch registration and
-checkout state, blocks further publication and makes a restarted
-dispatcher refuse with 25 / <code>human_hold</code>. Determined
-timeout/cancellation exits survive. Operators must stop and inspect
-writers, reconcile work and explicitly remove the relevant holds before
-restarting. Post-implement launch creates its hold before forking; EXIT
-masks repeated signals and joins the hook before any preservation push.
-An unfinished fifteen-second drain retains the hold. See <a
-href="provider-runtime.html#codex-implementation-sandbox-gate">termination
-handling</a>.</p>
-<p>Opt-in <code>agents.providers.codex.gate_outside_sandbox: true</code>
-delegates the full configured gate after each successful Codex
-implementation pass and in QA's final phase to Bureau's existing
-filtered outside runner. Codex retains its editing sandbox and may run
-focused tests. Receipts and reservations bind the check to that pass,
-command and HEAD; final validation reuses it. Implementation receives
-the previous outside result in its next brief. Red completed
-implementation retains exit 14, red QA returns to Build, and independent
-blockers survive green tests. The default remains false. See <a
-href="../adr/0013-codex-gate-delegation.md">ADR 0013</a>.</p>
-<h3 id="review-merge-in-code-with-adr-citations">Review merge in code
-with ADR citations</h3>
-<p>The three specialists still run in parallel.
-<code>bureau-review.py</code> merges their complete schema-valid JSON
-findings in code when summaries contain only neutral printable ASCII. It
-deduplicates by path, inclusive range and normalized title, retaining
-highest severity, distinct detail, source anchors, ADR references and
-per-variant actionability. Structured human holds force BLOCK. Prose,
-fences, malformed output, non-ASCII summaries or severity/hold summary
-signals select the existing model merger. Zero tallies and negated
-signals also select fallback. Every readable finding, gap, hold and
-severity floor survives fallback; unreadable or uncertain output
-requires at least REQUEST_CHANGES. Shell security, build and cycle rules
-retain the final decision. See <a
-href="../adr/0011-independent-provider-review.md">ADR 0011</a> and <a
-href="review-merge-comparison.html">the fixture comparison</a>.</p>
-<p>Normal code merge uses three specialist calls; model fallback adds
-the verdict call. Optional source grounding defaults off;
-<code>required</code> adds BLOCK/25 for missing or invalid pinned
-base/head anchors. Parse/provider errors remain 22. The optional finding
-verifier is shadow-only and cannot change verdicts or floors. Claude
-admits up to eight tool-free checks with a 60-second limit each; Codex
-records unverifiable without launching a checker because its CLI lacks a
-supported all-tools-off switch. The revised review policy invalidates
-older reusable approvals.</p>
-<p>Opt-in ADR context compares pinned PR base and head. Only accepted
-ADRs with identical paths and blob IDs are settled decisions, including
-for known-limit exclusions. Added, changed or removed ADRs are proposals
-under review; citations never give them settled authority. Findings can
-cite included IDs through <code>adr_refs</code>. The ADR-off path
-retains the legacy merger schema, wire projection and digest. The new <a
-href="../../references/review-brief.md">external review brief</a> applies
-the same authority rule.</p>
-<p>Bounded PR/Linear comments carry a final run/stage/round/verdict
-footer. Implementation keeps the selected comment intact and appends
-that review's complete merged findings and dispositions only after
-matching completed evidence, receipts, digest and a reviewed head
-ancestral to its current HEAD. Older comments or unusable evidence
-retain comment-only feedback. Human and QA feedback keep their existing
-precedence. Normalized merged findings remain complete when the
-published comment is capped, and deferred/SKIP dispositions bind to the
-current specialist receipts in either merge mode.</p>
-<h3 id="test-harness-and-ci-robustness">Test harness and CI
-robustness</h3>
-<p>Fixtures now wait for recorded dispatcher processes within a
-deadline, account for zombies, retain stable process identities and
-clean up owned descendants on failure. Shared absolute deadlines cover
-slow pipeline setup, execution and teardown; survivor checks still
-reject live owned processes or unreadable owned state. Mutation controls
-validate the mutated setup and its baseline. Outcome fixtures include
-the classifier helper and assert persisted stage outcomes. These are
-test changes with no adopting-repository resync action.</p>
-<p>The public-reference check scans tracked and nonignored new files,
-including NUL-safe names, while excluding ignored bytecode. CI weights
-and fixtures account for long-running controls. The repository workflow
-updates <code>actions/checkout</code> from 7.0.0 to 7.0.1 in <a
-href="https://github.com/KaiaK808/bureau/pull/8">#8</a>. See <a
-href="#validation">validation</a> for the PR, integrated-suite and main
-CI results.</p>
-<h3 id="onboarding-and-spec-kit-helpers">Onboarding and Spec Kit
-helpers</h3>
-<p>App finish now prints the exact release/prepare recovery commands
-after trusted configuration changes and requires a regenerated result
-with the new run ID. Documentation explains repository-local Spec Kit
-discovery for both hosts and the
-repository-root/explicit-<code>SKILL.md</code> workaround.
-Documentation-only tickets can use a reviewed repository check selected
-through trusted <code>repo.test_command</code> before prepare and shared
-stages on the parent issue. There is no per-ticket test-command
-override. See <a href="recipes.html#documentation-only-tickets">onboarding
-recipes</a> and <a
-href="troubleshooting.html#configuration-changed-since-prepare">configuration-change
+id="bureau-v370--preserved-work-design-guidance-and-release-tooling">Bureau
+v3.7.0 — preserved work, design guidance and release tooling</h1>
+<p><strong>Release preparation · 2026-11-09 · source tag
+<code>v3.7.0</code>.</strong> v3.7.0 is a minor release on <a
+href="release-notes-v3.6.0.html">v3.6.0</a>. Tagging and GitHub Release
+publication remain separate maintainer operations.</p>
+<p>The release includes, in first-parent merge order: <a
+href="https://github.com/KaiaK808/bureau/pull/114">#114</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/115">#115</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/116">#116</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/119">#119</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/117">#117</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/118">#118</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/121">#121</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/120">#120</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/122">#122</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/123">#123</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/124">#124</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/125">#125</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/126">#126</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/127">#127</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/128">#128</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/129">#129</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/131">#131</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/130">#130</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/132">#132</a>. This
+includes the v3.6.0 publication record in #114 and the accepted
+control-plane design in #115; neither adds a new runtime. The <a
+href="../../CHANGELOG.md#370---2026-11-09">changelog</a> is the
+consolidated change and upgrade record.</p>
+<h2 id="what-changed-since-v360">What changed since v3.6.0</h2>
+<h3 id="preserve-local-work-before-stage-starts">Preserve local work
+before stage starts</h3>
+<p>Ticket-stage checkout and disposable-worker reset hold with
+<strong>30 / <code>local-commits-held</code></strong> before dropping
+commits reachable only from the target branch or its attached/detached
+HEAD. Other local branches and all remote refs count as retained
+reachability. The hold names each commit and leaves the branch and
+checkout intact. Push work that must survive; an explicit one-run
+<code>BUREAU_DROP_LOCAL_COMMITS=1</code> allows discarding it and
+prints/logs full discarded SHAs.</p>
+<p>Reset-time holds preserve the worker through dispatcher
+reconciliation; the tick reports <code>blocked</code> with exit 30.
+Recovering a clean held worker with the override still requires
+ownership and a preservation record matching the issue, target branch
+and worktree identity, including when only the branch ref retains
+unpublished commits. Older hold records without that identity require
+explicit recovery. Recorded Bureau review checkpoints and successful
+worker-stage heads keep their existing resume/stall behavior only when
+exact heads and worktree identities match; author or message resemblance
+does not exempt operator commits. See <a
+href="troubleshooting.html#exit-30-local-commits-held--unpublished-commits-before-a-reset">exit-30
 recovery</a>.</p>
-<p>Disposable workers gain frozen, offline, lifecycle-script-free pnpm
-and Yarn Classic dependency restoration inside their own worktree, with
-workspace-aware stamps and filtered child environments. Provision the
-manager and cache in trusted setup and remove <code>node_modules</code>
-from worktree links. Missing tools/cache, conflicting lockfiles or
-<code>packageManager</code>, modern Yarn and all Yarn PnP layouts fail
-with 24. npm retains its existing path. See <a
-href="configuration.html#node-repositories">Node repositories</a>.</p>
-<p>Spec Kit apply repairs execute bits on every safe regular
-<code>.sh</code> helper under <code>.specify/scripts/</code>, including
-restored helpers and partial initialization failures, without changing
-content. Restoration and mode repair are attempted independently;
-cleanup errors preserve the primary failure and make an otherwise
-successful apply fail. Preview renames <code>helper_mode_fixes</code> to
-<code>existing_helper_mode_drift</code>, reporting only existing
-non-executable helpers. The updated doctor identifies them. Run
-<code>--resync-speckit</code> to apply this repair; the 1.2.2 pin and
-customization guard remain.</p>
-<h3 id="architecture-recipe-documentation">Architecture recipe
-documentation</h3>
-<p>The <a
-href="recipes.html#architecture-recipe-adrs-before-the-first-build-ticket">architecture
-recipe</a> supplies copyable tickets for new and existing projects, ADR
-review tracking and an owner summary. New decisions stay proposed
-through review until the reviewed acceptance edit; derived records
-retain dated code evidence. Constitution reconciliation requires a
-separate owner-authorized ticket. Adapt the template and check script to
-the project. This recipe installs no new assets through
-<code>bureau-init</code>.</p>
+<p>Shepherd starts at QA, Build Review, Merge or Done require the ticket
+branch on origin and an open PR before any claim, label, Linear move or
+stage work. A confirmed missing prerequisite holds with <strong>31 /
+<code>open-pr-required</code></strong> and prints a PR creation command
+with the configured base plus the original restart command. Push/open
+the PR, then rerun that command. Lookup errors remain 18; direct review
+retains 15 for a confirmed missing PR. Build and earlier starts are
+unchanged. Review and shepherd share implement's bounded transient PR
+lookup retries. See <a
+href="troubleshooting.html#exit-31-open-pr-required--restart-after-a-build-gate-failure">exit-31
+recovery</a>.</p>
+<h3 id="optional-local-impeccable-guidance-and-evidence">Optional local
+Impeccable guidance and evidence</h3>
+<p>Per-repository <code>design.impeccable</code> is off by default. When
+enabled with verified local tooling, UX references the installed
+playbooks and preserves project rules in root
+<code>PRODUCT.md</code>/<code>DESIGN.md</code>; implementation feeds
+offline mechanical/deferred detector findings into its bounded loop.
+Review saves independent specialist judgements first, then considers
+detector findings as late machine evidence with separate receipts. Late
+evidence cannot erase the independent findings or holds.</p>
+<p>Bureau verifies skill <strong>4.8.0</strong> and engine
+<strong>0.1.18</strong> without downloading or installing Impeccable,
+its hooks or agents. Operators supply the pinned tooling separately with
+hooks disabled and remove/disable any separately installed agents. Local
+snapshots, disabled telemetry, exact reasoned ignores and resolved
+in-repository paths constrain measurement. Unavailable tooling is
+explicit; failed measurement and outside-repository findings never mean
+clean. Cancellation latches SIGINT/SIGTERM across launch until the
+engine can be killed and joined, then removes snapshots and restores
+handlers. Disabled integration preserves existing prompts and checks.
+See <a href="configuration.html#designimpeccable">configuration</a> for
+the complete contract.</p>
+<h3 id="provider-pr-and-admission-reliability">Provider, PR and
+admission reliability</h3>
+<p>Implementation retries transient post-push PR lookup, ready, view and
+create failures on both ready and draft paths. Defaults are three
+retries after 2/4/8 seconds; <code>BUREAU_IMPL_PR_RETRIES</code> and
+<code>BUREAU_IMPL_PR_RETRY_WAIT</code> provide bounded overrides. Failed
+lookup never implies no PR. Exhaustion holds with 18, identifies the
+pushed branch and asks the operator to rerun the stage before any
+hand-off.</p>
+<p>Provider classification reads terminal Codex/Claude errors and CLI
+stderr, excluding tool/agent text and MCP server authentication notices.
+Capacity/overload retains exit 23 and genuine CLI authentication failure
+retains 16. Retry policy and evidence schema remain unchanged.</p>
+<p>Read-only Codex runs keep the repository unwritable and gain a
+private writable scratch directory even with caller-supplied
+<code>TMPDIR</code>. Explicit CLI sandbox overrides prevent inherited
+writable roots/network settings from widening access; the prompt
+supplies a shell-quoted repository path for reads. Scratch cleanup
+covers completion, failure and stops. Optional per-run sandbox/command
+metadata needs no evidence schema migration; workspace-write and Claude
+behavior remain.</p>
+<p>File-overlap admission scopes Linear comments/snapshots to
+<code>linear.projects</code> while retaining candidates and issues with
+reservations, waiters, migration entries or leases. Title/description
+edits no longer invalidate snapshots; membership, state and label edits
+still do. Shepherd uses the dispatcher's three-attempt bound. Provenance
+and ownership are rechecked against the final unfiltered snapshot;
+uncertain cross-project PRs retain their diffs. State/reservation
+formats and exits remain unchanged.</p>
+<p>Shepherd <code>--from-stage</code> can move inactive/backlog tickets
+directly to ungated targets, respecting configured active states and
+strict withdrawal checks after the move. Gated targets refuse with 25
+before claiming or moving; operators first move the ticket into an
+active state. Linear read failures retain 10, and existing ownership,
+human-hold and budget/progress rules remain.</p>
+<h3 id="cheaper-startup-and-read-only-baseline-reporting">Cheaper
+startup and read-only baseline reporting</h3>
+<p>Pipeline startup uses one framed source-time <code>jq</code> read
+instead of 35 while preserving defaults, warnings and live lookups.
+Unused settings and the unused QA sandbox predicate are removed.
+<code>repo.commit_prefix</code> never affected behavior and can be
+deleted. Doctor caches helper imports, crosschecks resolve their prefix
+once, and the legacy dashboard reads only its last 200 log lines. Review
+merging/evidence reconstruction reuse imports per invocation without
+changing output, ordering, digests or exits. The CI-marker check batches
+commit-object reads with length and range checks, fails closed on
+read/scratch errors, and cleans up on INT/TERM/HUP.</p>
+<p>The source-only command
+<code>python3 -I scripts/bureau-baseline.py --repo PATH [--weeks N] [--format md|json]</code>
+reports retained weekly completions, abandonment, review rounds, costs,
+attribution and defect back-references with sources and missing
+measurements. Eligibility history and Triage entry stay unavailable
+rather than inferred. It needs local Git, authenticated <code>gh</code>
+and optional jq/Linear credentials; it installs no runtime assets. See
+<a href="../../CONTRIBUTING.md#weekly-baseline">the maintainer
+guide</a>.</p>
+<h3 id="contributor-tests-ci-and-release-checks">Contributor tests, CI
+and release checks</h3>
+<p>Pull requests run all Linux tests in four shards and the focused
+56-entry macOS manifest in two. Main, release-branch and tag pushes,
+weekly schedules and manual dispatch retain all six full macOS shards.
+<code>BUREAU_TEST_MANIFEST</code> filters before sharding and rejects
+invalid/empty selections. Platform-sensitive additions need a manifest
+entry and reason; focused PR CI is not full macOS coverage. See <a
+href="../../CONTRIBUTING.md#ci-coverage">contributor coverage</a>.</p>
+<p>Per-file process groups have weighted deadlines of at least ten
+minutes, TERM/KILL cleanup and explicit timeout results;
+<code>BUREAU_TEST_FILE_TIMEOUT</code> overrides them. Optional
+<code>BUREAU_TEST_TIMINGS</code> records duration/outcome/OS, and
+<code>tests/update_shard_weights.py</code> accepts successful records
+for the matching OS. Focused mutation controls require declared
+detection while ordinary positive runs keep complete matrices. Fixture
+hygiene adds injected clocks/process tables, readiness signals, batched
+PID audits, bounded inspection retries, disabled automatic Git
+maintenance and one-call runtime copies. The dispatcher shutdown fixture
+observes wrapper exit through a FIFO that closes under SIGKILL; the
+cancellation probe targets the populated check's isolated process
+group.</p>
+<p>The source-only <code>scripts/release_verify.py</code> compares two
+refs and rejects changes in <code>templates/</code>, <code>tests/</code>
+and <code>scripts/</code>, excluding only itself and
+<code>tests/test_release_verify.sh</code>. It prints differing paths and
+permits documentation-only changes. Use it between the release branch
+head that ran the full macOS suite and the candidate/tagged commit; see
+<a href="releases.html#verify-the-tested-release-trees">release
+verification</a>. It checks tree identity, not test results.</p>
+<h3 id="documentation-and-accepted-design">Documentation and accepted
+design</h3>
+<p>The README now starts from the Linear workflow, human merge/hold
+boundaries, isolation and requirements; the static manual gains a
+light/dark SVG. <a href="../adr/0014-control-plane.md">ADR 0014</a> is
+<code>accepted (design)</code>: one owning authority, transactional
+state/outbox and a supervised review-to-routing pilot. It has no
+implementation, cutover or upgrade action. The v3.6.0 notes are <a
+href="release-notes-v3.6.0.html">archived unchanged</a>.</p>
 <h2 id="new-files">New files</h2>
 <table>
 <thead>
@@ -294,393 +207,260 @@ the project. This recipe installs no new assets through
 </thead>
 <tbody>
 <tr>
-<td><code>templates/scripts/bureau-review-config.py</code></td>
-<td>Installed as <code>scripts/bureau-review-config.py</code>; pinned
-trusted instructions and deterministic configuration-change annotations.
-Included with <a
-href="https://github.com/KaiaK808/bureau/pull/112">#112</a>.</td>
+<td><code>templates/scripts/bureau-impeccable.py</code>,
+<code>bureau-impeccable.sh</code>,
+<code>bureau-impeccable-pins.json</code></td>
+<td>Installed by the complete scripts resync; local verification,
+detector integration and pinned tooling digests.</td>
 </tr>
 <tr>
-<td><code>templates/scripts/bureau-review.py</code></td>
-<td>Complete specialist merge, fallback floors, source anchors and
-shadow-verifier preparation.</td>
+<td><code>scripts/bureau-baseline.py</code></td>
+<td>Source-only read-only maintainer report.</td>
 </tr>
 <tr>
-<td><code>templates/scripts/bureau-specialist.schema.json</code>,
-<code>bureau-finding-verifier.schema.json</code></td>
-<td>Specialist and optional checker contracts; install with the review
-helper and pipelines.</td>
+<td><code>scripts/release_verify.py</code>,
+<code>tests/test_release_verify.sh</code></td>
+<td>Source-only release tree comparison and fixture test.</td>
 </tr>
 <tr>
-<td><code>templates/scripts/bureau-adr.py</code>,
-<code>bureau-review-adr.schema.json</code></td>
-<td>Bounded pinned ADR index and the enabled ADR result contract.</td>
+<td><code>tests/macos-manifest.txt</code>,
+<code>tests/run_test_files.py</code>,
+<code>tests/update_shard_weights.py</code>, fixture helpers</td>
+<td>Repository-only CI selection, deadlines, timing updates and fixture
+hygiene.</td>
 </tr>
 <tr>
-<td><code>templates/scripts/bureau-review-context.py</code></td>
-<td>Evidence-bound complete review feedback for implementation.</td>
-</tr>
-<tr>
-<td><code>templates/scripts/bureau-ticket.py</code></td>
-<td>Authoritative ticket budgets, admitted attempts, progress facts and
-operator inspection/reset.</td>
-</tr>
-<tr>
-<td><code>templates/scripts/bureau-process.py</code></td>
-<td>Shared bounded termination checks and durable unfinished-process
-holds.</td>
-</tr>
-<tr>
-<td><code>templates/scripts/bureau-worktree-deps.py</code></td>
-<td>Filtered offline pnpm/Yarn Classic dependency restoration.</td>
-</tr>
-<tr>
-<td><code>references/review-brief.md</code>,
-<code>docs/review-merge-comparison.md</code>,
-<code>docs/adr/0013-codex-gate-delegation.md</code></td>
-<td>External review brief, fixture comparison and delegation
-decision.</td>
-</tr>
-<tr>
-<td><code>docs/release-notes-v3.5.1.md</code>,
-<code>docs/site/release-notes-v3.5.1.html</code></td>
-<td>Archived previous-release notes and rendered manual page.</td>
-</tr>
-<tr>
-<td>Review, process, ticket-budget, dependency and onboarding fixtures
-under <code>tests/</code></td>
-<td>Repository-only regression tests, negative controls and legacy
-review fixtures; no installed runtime dependency.</td>
+<td><code>docs/adr/0014-control-plane.md</code>,
+<code>docs/release-notes-v3.6.0.md</code></td>
+<td>Accepted design and previous-release archive.</td>
 </tr>
 </tbody>
 </table>
-<p>All <code>templates/scripts/</code> additions install under
-<code>scripts/</code> through the complete scripts resync. New shared
-runtime records live below
-<code>&lt;git common dir&gt;/bureau/</code>:</p>
-<table>
-<thead>
-<tr>
-<th>State</th>
-<th>Retention and operator action</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>tickets/ISSUE.json</code>,
-<code>tickets/ISSUE.attempts.json</code>,
-<code>ticket-witnesses/ISSUE.json</code></td>
-<td>Accounting, admitted identities and durable witnesses outside
-prunable evidence; preserve across cleanup and reset only through the
-documented operator command.</td>
-</tr>
-<tr>
-<td><code>process-holds/</code></td>
-<td>Write-ahead unfinished-process records; inspect writers and remove
-holds explicitly after reconciliation.</td>
-</tr>
-<tr>
-<td>Existing <code>ticket-control/RUN_ID/stop-25</code> and dispatcher
-skip records</td>
-<td>Reused for budget/progress stops; reconcile the persisted hold
-before retrying.</td>
-</tr>
-</tbody>
-</table>
-<p>One new record lives outside the shared runtime directory: the
-retained <code>merged-review.json</code> sits in the provider attempt's
-log directory, by default <code>logs/provider-runs/</code> next to
-<code>.bureau.json</code> (override with
-<code>BUREAU_PROVIDER_LOG_DIR</code>). It holds the complete review
-prose outside the metadata-only evidence store and is needed for
-complete feedback expansion.</p>
-<h2 id="new-configuration-keys-and-defaults">New configuration keys and
-defaults</h2>
-<p>No configuration schema migration is required. Optional policies
-remain disabled until selected; the acceptance packet and risk
-classification apply at existing human boundaries without an enable
-switch. See <a href="configuration.html">configuration</a> for validation,
-complete pattern rules and progress contracts.</p>
+<h2 id="configuration-and-exit-code-changes">Configuration and exit-code
+changes</h2>
+<p>No configuration schema migration or Spec Kit pin change is required.
+Optional settings stay off until selected. See <a
+href="configuration.html#designimpeccable">configuration</a> and <a
+href="exit-codes.html">exit codes</a>.</p>
 <table>
 <thead>
 <tr>
 <th>Key</th>
-<th>Default</th>
+<th>Default / action</th>
 <th>Effect</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>agents.ticket_budget.tokens</code></td>
-<td>off (absent/null/0)</td>
-<td>Cumulative token allowance; positive integer enables it.</td>
+<td><code>repo.commit_prefix</code></td>
+<td>Delete if present; no replacement.</td>
+<td>Withdrawn unused setting.</td>
 </tr>
 <tr>
-<td><code>agents.ticket_budget.provider_calls</code></td>
-<td>off (absent/null/0)</td>
-<td>Cumulative admitted provider-attempt allowance.</td>
-</tr>
-<tr>
-<td><code>agents.ticket_budget.wall_seconds</code></td>
-<td>off (absent/null/0)</td>
-<td>Summed provider wall time; positive finite seconds.</td>
-</tr>
-<tr>
-<td><code>agents.ticket_budget.allow_unknown_usage</code></td>
+<td><code>design.impeccable.enabled</code></td>
 <td><code>false</code></td>
-<td>Explicitly permits unknown tokens while retaining null totals and
-known lower bounds.</td>
+<td>Enables local guidance/detection only when explicitly selected.</td>
 </tr>
 <tr>
-<td><code>agents.ticket_progress.enabled</code></td>
-<td><code>false</code></td>
-<td>Enables trusted-progress stops.</td>
+<td><code>design.impeccable.skill_version</code></td>
+<td><code>"4.8.0"</code></td>
+<td>Supported skill pin; local content must verify.</td>
 </tr>
 <tr>
-<td><code>agents.ticket_progress.max_non_improving_turns</code></td>
-<td><code>2</code></td>
-<td>Completed work stages without a new qualified fact before a
-stall.</td>
+<td><code>design.impeccable.engine_version</code></td>
+<td><code>"0.1.18"</code></td>
+<td>Supported engine pin and platform digest.</td>
 </tr>
 <tr>
-<td><code>agents.ticket_progress.contract</code></td>
-<td><code>{}</code></td>
-<td>Gate-bound fact IDs; an empty enabled contract cannot prove
-progress.</td>
-</tr>
-<tr>
-<td><code>agents.risk_tier.low_max_changed_lines</code></td>
-<td><code>100</code></td>
-<td>Inclusive low-tier line cap.</td>
-</tr>
-<tr>
-<td><code>agents.risk_tier.low_max_files</code></td>
-<td><code>5</code></td>
-<td>Inclusive low-tier file cap.</td>
-</tr>
-<tr>
-<td><code>agents.risk_tier.high_min_changed_lines</code></td>
-<td><code>1000</code></td>
-<td>Inclusive high-tier line threshold.</td>
-</tr>
-<tr>
-<td><code>agents.risk_tier.docs_patterns</code></td>
-<td><code>["docs/*", "**/docs/*", "*.md", "*.rst"]</code></td>
-<td>Replaces the docs-path defaults when supplied.</td>
-</tr>
-<tr>
-<td><code>agents.risk_tier.test_patterns</code></td>
-<td><code>["tests/*", "**/tests/*", "test/*", "**/test/*", "test_*.py", "*_test.py", "*.test.*", "*.spec.*"]</code></td>
-<td>Replaces the test-path defaults when supplied.</td>
-</tr>
-<tr>
-<td><code>agents.risk_tier.sensitive_patterns</code></td>
-<td><code>[]</code> plus mandatory built-ins</td>
-<td>Adds sensitive paths; built-ins remain mandatory.</td>
-</tr>
-<tr>
-<td><code>agents.review_grounding</code></td>
-<td><code>off</code></td>
-<td><code>required</code> blocks missing/invalid pinned source
-anchors.</td>
-</tr>
-<tr>
-<td><code>agents.finding_verifier.enabled</code></td>
-<td><code>false</code></td>
-<td>Bounded shadow checks; verdicts and floors remain unchanged.</td>
-</tr>
-<tr>
-<td><code>agents.review_adr_context</code></td>
-<td><code>false</code></td>
-<td>Enables the pinned ADR index and extended review schema.</td>
-</tr>
-<tr>
-<td><code>agents.review_adr_budget_bytes</code></td>
-<td><code>4096</code></td>
-<td>Whole-context UTF-8 byte budget; 0 omits the index.</td>
-</tr>
-<tr>
-<td><code>repo.adr_dir</code></td>
-<td><code>"docs/adr"</code></td>
-<td>Validated repository-relative ADR directory.</td>
-</tr>
-<tr>
-<td><code>agents.providers.codex.gate_outside_sandbox</code></td>
-<td><code>false</code></td>
-<td>Delegates implementation/QA full gates to the existing outside
-runner.</td>
+<td><code>design.impeccable.skill_path</code></td>
+<td>Absent</td>
+<td>Optional directory; otherwise check
+<code>.claude/skills/impeccable</code>, then
+<code>.agents/skills/impeccable</code>. Relative paths resolve from
+<code>.bureau.json</code>.</td>
 </tr>
 </tbody>
 </table>
-<p>Existing <code>BUREAU_REVIEW_MERGE_CAP_KB</code> stays at 60 KiB by
-default and now applies only to the model fallback; the code merge reads
-complete structured reports before that cap. Existing
-<code>agents.parallel_lanes</code> still supplies both dispatch and
-batch concurrency limits. Budget/progress settings add no separate batch
-limit or new exit code.</p>
+<table>
+<thead>
+<tr>
+<th>Exit</th>
+<th>Class</th>
+<th>Operator action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>30</code></td>
+<td><code>local-commits-held</code></td>
+<td>Inspect named commits and push them, or deliberately discard once
+with <code>BUREAU_DROP_LOCAL_COMMITS=1</code>; reconcile held-worker
+identity/ownership before recovery.</td>
+</tr>
+<tr>
+<td><code>31</code></td>
+<td><code>open-pr-required</code></td>
+<td>Push the ticket branch to origin, open its PR using the printed
+command and restart with the exact printed command.</td>
+</tr>
+</tbody>
+</table>
+<p>Both exits are human holds; update custom wrappers/classifiers
+together with runtime assets. Keep the one-run discard override out of
+persistent settings. Direct review still uses 15 for confirmed no PR;
+lookup failures use 18.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p><strong>From v3.5.1:</strong> stop all shepherds, queue loops,
-dispatchers and supervisors; preserve unfinished work, customized
-assets, user instructions, Spec Kit assets and the constitution. Compare
-installed-script drift before replacing assets. Select tag
-<code>v3.6.0</code> in the source skill checkout and refresh discovery
-using <a href="migration.html#select-the-source-release">the source-update
-instructions</a>. Preview and resolve conflicts through <a
-href="migration.html#preview-and-resolve-asset-conflicts">the migration
-guide</a>.</p>
-<p>Resync the <strong>complete scripts and interfaces scopes
-together</strong> in every adopting repository, including all new
-helpers and schemas; restart drivers only at the end, as the last step
-below. A running shell keeps its loaded code; partial
-helper/schema/pipeline updates are incompatible. Use the installation's
-existing target selection:</p>
+<p><strong>From v3.6.0:</strong> stop every shepherd, queue loop,
+dispatcher and supervisor. Preserve unfinished work/local commits,
+custom scripts/interfaces, instructions, Spec Kit assets/constitution
+and shared runtime records. Compare installed drift and reconcile
+incident fixes before replacing assets. Select tag <code>v3.7.0</code>
+once published, refresh discovery, preview and resolve conflicts, then
+resync the <strong>complete scripts and interfaces scopes
+together</strong> in every adopting repository:</p>
 <pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
-<p>Use <code>$bureau-init</code> for the same scopes in Codex.
-<code>--update</code> changes configuration only. Run
-<code>--resync-speckit</code> to repair helper modes while keeping the
-1.2.2 pin, customized content and active integration; update preview
-consumers to <code>existing_helper_mode_drift</code>.
-Interfaces/workflows retain their existing scope rules. See <a
-href="migration.html#upgrade-to-v36">Upgrade to v3.6</a>.</p>
-<p><strong>Default changes to inspect:</strong> review/QA configuration
-isolation and pinned trusted instructions, <code>AGENT_CONFIG</code>
-notes on agent-configuration changes (including an adopting-repository
-resync PR), QA's required successful PR lookup and base fetch,
-structured review merge/fallback, one fresh review for older approvals,
-complete evidence-backed implementation feedback, acceptance packets and
-process holds. A QA branch with no open PR must be confirmed by lookup
-before fetched <code>origin/main</code> is used. Direct adapter callers
-must supply the base pin. Update customized prompts/wrappers to the new
-specialist and trusted-context contracts.</p>
-<p><strong>Optional choices:</strong> leave ticket budgets, trusted
-progress, required source grounding, finding verification, ADR context
-and Codex gate delegation off until deliberately configured and
-qualified. Review the default risk patterns even without custom
-settings. Provision offline pnpm/Yarn Classic tools and caches before
-workers use them; keep <code>node_modules</code> out of worktree links.
-Inspect existing unfinished-process and
-<code>dispatch-termination.json</code> holds before restart. Preserve
-ticket accounting, witnesses, admission, numbering, checkpoint, evidence
-and dispatcher state; frozen briefs and legacy comment-only feedback
-receive no backfill. Run doctor, restart drivers together and qualify a
-representative ticket before unattended dispatch.</p>
-<p><strong>Restart last:</strong> after the resync, the setup above
-(customized wrappers, offline pnpm/Yarn Classic caches,
-<code>node_modules</code> out of worktree links) and the reconciliation
-of holds, run
-<code>python3 scripts/bureau-doctor.py --mode background</code>, then
-restart all drivers together. Enable optional keys only after that, and
-run doctor again after configuring them.</p>
-<p><strong>From v3.4.1:</strong> first apply the intervening
-requirements in the <a
-href="release-notes-v3.5.0.html#upgrade-an-existing-installation">v3.5.0
-notes</a> and <a
-href="release-notes-v3.5.1.html#upgrade-an-existing-installation">v3.5.1
-notes</a>, then follow the v3.6.0 steps above. These include Spec Kit
-1.2.2, coordinated exits 28/29, launcher overlap opt-in, changed
-manual-Merge capacity/review defaults, governance and state retention,
-plus the Spec Review/UX schemas and one fresh provider call for old
-waiting readiness records. From earlier versions follow <a
-href="migration.html#upgrade-to-v341">Upgrade to v3.4.1</a> and its
-earlier sections first.</p>
+<p>Use <code>$bureau-init</code> in Codex and retain the existing target
+selection. Include Impeccable helpers/pins even when disabled.
+<code>--update</code> changes configuration only; partial
+helper/pipeline updates are incompatible and running shells keep loaded
+code. Teach custom consumers exits 30/31, remove
+<code>repo.commit_prefix</code> if desired, and leave Impeccable off
+until separately provisioned and deliberately enabled. No state/evidence
+migration is required; older exit-30 records lacking identity still need
+explicit recovery. Run doctor, reconcile holds, restart drivers together
+and qualify a representative ticket before unattended use. Follow <a
+href="migration.html#upgrade-to-v37">Upgrade to v3.7</a>.</p>
+<p><strong>From v3.5.1:</strong> apply <a
+href="migration.html#upgrade-to-v36">Upgrade to v3.6</a> and its <a
+href="release-notes-v3.6.0.html#upgrade-an-existing-installation">archived
+notes</a> before these steps. Carry forward review/QA pins and schemas,
+Spec Kit helper-mode repair, offline dependency caches,
+accounting/witness and process-hold preservation. From earlier versions
+follow the migration guide's cumulative sections first.</p>
+<p><strong>Contributors:</strong> update the source checkout for the
+baseline report, focused macOS manifest, deadline/timing tools and
+release verifier; these source-only tools need no adopting-repository
+resync. Add platform-sensitive tests to the manifest with a reason.</p>
 <h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
-<p>Configuration versions 1 and 2, Bash 3.2+, Python 3.9+, the existing
-app prepare/finish protocol and the v3.5 exit vocabulary remain
-supported. The shared scheduler retains its Node 18+ requirement. Spec
-Kit stays pinned to 1.2.2. New optional settings need no migration.
-Automatic isolation requires provider flags accepted by the installed
-CLI; local fake-provider fixtures supply no live-CLI compatibility
-claim. Existing customized instructions, helpers and constitution
-content must survive the resync.</p>
-<p>To roll back, stop every driver and reconcile all unfinished writers
-and holds before restarting an older runtime. Select tag
-<code>v3.5.1</code> and restore its scripts and interfaces together, or
-restore the private backup (<a
-href="migration.html#rollback">rollback</a>); restore compatible
-configuration and customized assets. Retain the v3.6 accounting,
-witnesses, process holds and evidence separately for inspection because
-an older runtime cannot enforce the new policies. Rollback restores
-v3.5.1 review/configuration and termination behavior and cannot undo
-commits, pushes, comments, labels or state moves made in between.</p>
+<p>Configuration versions 1 and 2, Bash 3.2+, Python 3.9+, the Node 18+
+shared scheduler and Spec Kit 1.2.2 remain. Exits 30/31 require
+coordinated consumers. Impeccable is optional local tooling; Bureau does
+not install it. See the <a
+href="release-notes-v3.6.0.html#compatibility-and-rollback">v3.6.0
+archive</a> for the inherited configuration, isolation and accounting
+contracts.</p>
+<p>For rollback, stop all drivers and reconcile unfinished writers,
+local commits and holds; select <code>v3.6.0</code> and restore
+scripts/interfaces together or the private backup. Disable/remove the
+optional Impeccable settings and restore compatible
+customizations/consumers. Retain evidence and preservation records for
+inspection; an older runtime cannot enforce the new holds. Rollback
+cannot undo commits, pushes, comments, labels or state moves.</p>
 <h2 id="validation">Validation</h2>
-<p>The maintainer's release validation record reports every PR reviewed
-by Codex before push within at most three rounds, with two recorded
-maintainer exceptions: <a
-href="https://github.com/KaiaK808/bureau/pull/108">#108</a> took five
-rounds and <a
-href="https://github.com/KaiaK808/bureau/pull/112">#112</a> took four.
-Each PR's full local suite ran on macOS outside any sandbox before push,
-with failures rerun serially. CI on each PR is green; several macOS
-shards needed one rerun of failed jobs on tests the change does not
-touch. Release preparation changes documentation, plus three test
-repairs found by the integrated suite: an import that an integration
-merge dropped from the evidence negative-control script is restored, the
-process-group implement replay anchors at the gate-context reset that
-the implementation-feedback change moved, and the ticket-budget adapter
-fixture pins a provider base, which review and QA calls now require.</p>
-<p>The integrated release branch's full suite passed 171 of 174 on its
-first run on macOS; the two integration breaks above were fixed and
-<code>test_dispatcher.sh</code> passed on a serial rerun. Its first CI
-run timed out in the 1500-findings review fixture, where the review
-merge and the evidence collector take about 35 seconds each; the fixture
-now allows 600 seconds, a fourth test-only repair. The full suite then
-passed 174 of 174, and CI on <a
-href="https://github.com/KaiaK808/bureau/pull/113">#113</a> passed at
-<code>28f4720</code>. Main CI on the merge commit <code>85b41a7</code>:
-<a
-href="https://github.com/KaiaK808/bureau/actions/runs/41591725054">run
-41591725054</a>, green after one rerun of a failed Ubuntu job; the
-dispatcher shutdown fixture's one-second stop grace is too tight under
-load, and widening it is tracked for v3.7.</p>
-<p>The documentation preparation uses
-<code>bash tests/test_docs.sh</code> and
-<code>bash tests/test_no_internal_refs.sh</code>. See <a
-href="releases.html#current-release-status">current release
-status</a>.</p>
+<p>The maintainer's validation record states that every v3.7 pull
+request was built by Codex in its own worktree, independently reviewed
+read-only by Codex (at most three rounds unless the maintainer approved
+an exception), and had every touched test run outside the sandbox. The
+full local suite ran in two shards on macOS, followed by CI on the pull
+request; each was merged with a merge commit. Earlier waves (#114–#126)
+were each Codex-reviewed, suite-tested and CI-green before merge; their
+individual records remain in the pull request descriptions.</p>
+<p>The third-wave records below follow merge order:</p>
+<table>
+<thead>
+<tr>
+<th>PR</th>
+<th>Independent review</th>
+<th>Local full suite</th>
+<th>CI and additional evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/127">#127</a>,
+focused macOS manifest</td>
+<td>Approved in round 2.</td>
+<td>174/177 on the first pass under heavy host load; 177/177 after
+serial reruns of the three red files.</td>
+<td>Green on the first run. PR macOS cost measured at 79 runner-minutes
+across two jobs (2332 s and 2399 s), down from about 290; the full macOS
+run on main after the merge was green.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/128">#128</a>,
+small cleanups</td>
+<td>Approved in round 4; the maintainer-approved fourth round was
+limited to the squash-marker cancellation probe.</td>
+<td>171/175 on the first pass under load; 175/179 after rebase onto
+main, with every red file green on serial rerun.</td>
+<td>One Ubuntu shard rerun after the hosted runner lost communication
+with the server after 77 minutes in the test step; no test failure was
+recorded. Green after the rerun.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/129">#129</a>,
+fixture hygiene</td>
+<td>Approved in round 3.</td>
+<td>174/178 on the first pass; every red file green on serial
+rerun.</td>
+<td>Green on the first run.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/131">#131</a>,
+opt-in Impeccable</td>
+<td>Approved in round 4; the maintainer-approved fourth round was
+limited to the SIGINT launch guard.</td>
+<td>174/178 on the first pass; red files green on serial or direct
+rerun.</td>
+<td>Green on the first run. The detector test ran with a pinned real
+engine twice (20/20 cases, no skips) and without the engine.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/130">#130</a>,
+local-commits hold</td>
+<td>Approved in round 5; rounds 4 and 5 were maintainer-approved
+exceptions. The fifth addressed the full suite's regression where
+Bureau-made local commits were held with 30, fixed by trusting heads
+Bureau's records prove it made.</td>
+<td>175/180 on the first pass; red files green on serial or direct
+rerun.</td>
+<td>The first run failed only on lint shards (ShellCheck SC2100, an
+unquoted assignment); quoted, then green.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/132">#132</a>,
+post-Build PR prerequisite</td>
+<td>Approved in round 1.</td>
+<td>173/179 on the first pass while stacked on #130; red files green on
+serial or direct rerun; touched tests green after the final rebase.</td>
+<td>Green on the first run.</td>
+</tr>
+</tbody>
+</table>
+<p>The release branch itself: Codex release review approved in round 2
+(round 1 found that an inherited <code>GIT_LITERAL_PATHSPECS</code>
+setting let the verifier pass differing trees; fixed with a regression
+case). The full local suite on macOS in two shards at
+<code>e31537e</code> passed 183 of 184 on the first pass;
+<code>test_squash_marker.sh</code> (the probe race above) passed on
+direct rerun. The full macOS CI result of the release pull request is
+recorded in the release record after publication.</p>
 <h2 id="known-limitations">Known limitations</h2>
-<p>The v3.5.1 cancellation-exit limitation is removed from the active
-list because cancellation now survives process cleanup errors. Uncertain
-termination still requires operator inspection and explicit hold
-removal; it cannot authorize a green gate, publication or ownership
-release. Cross-platform fixture coverage and green PR CI leave live
-adopting-runner qualification outstanding.</p>
-<p>Isolation trusts the pinned base and the operator's retained user
-configuration. Instruction/import paths must be safe regular UTF-8 blobs
-within the repository; symlinks, submodules, escapes, excessive import
-depth and oversize context fail closed. Provider flags need live CLI
-qualification. Source grounding checks anchor identity; finding truth
-and reviewer quality remain unproved by fixture tests. ADR context is
-bounded prompt guidance and may omit records.</p>
-<p>Structured review accepts at most 8 MiB per specialist and 1024
-findings per role, with regular source blobs capped at 2 MiB. Shadow
-verification is capped at eight checks, 24 KiB request JSON and 8 KiB of
-whole pinned contracts, and has no enforced mode. Codex checks stay
-unverifiable without model launch. Model fallback retains its extra
-call. Large complete implementation feedback remains subject to the live
-provider's context window; an uncapped comment fallback can exceed a
-platform's publication limit.</p>
-<p>Evidence packets are frozen observations. Retention can expire review
-rounds; CI snapshots cover check runs and exclude legacy commit
-statuses. Cost coverage can be partial or unavailable and uses labeled
-legacy-log fallbacks. Sensitive-path classification is conservative and
-may need project-specific additions. None of these observations replaces
-the merge gate.</p>
-<p>When a fixture pipeline in <code>tests/file_overlap_test.py</code> is
-killed at its deadline, retained admission state can cause later
-readiness subcases to fail. The shared deadline adjustment leaves that
-cleanup issue open. Sandbox restrictions can limit native
-process-inspection checks.</p>
-<p>Budgets/progress coordinate only within one common Git directory and
-only for adapter-admitted calls. Already admitted work can overshoot
-token/time limits. Outside gates retain the outer runner's
-filesystem/network access; environment filtering cannot conceal
-same-account readable files. A process that clears its inherited
-ownership marker and detaches before observation can evade discovery.
-Live CLI, model-quality, package-manager/cache and adopting-repository
-qualification remain operator checks. Modern Yarn and PnP require a
-separately reviewed dependency setup. Architecture examples require
-adaptation and install no recipe assets automatically.</p></main>
+<ul>
+<li>Several tests are load-sensitive and can time out when the host runs
+other suites at the same time, including dispatcher, review-convergence
+and deadline cases. They pass on serial rerun; making them
+load-independent is recorded for the next release.</li>
+<li>The squash-marker cancellation probe can race under heavy load; it
+passes on rerun.</li>
+<li>The provider adapter's SIGHUP cases and the shepherd worker SIGPIPE
+test fail when the suite starts with SIGHUP ignored, for example under
+<code>nohup</code>. Run it from a normal shell or background job.</li>
+<li>Impeccable pilots in adopting repositories have not run yet. The
+integration is opt-in and off by default; <strong>not measured never
+counts as clean</strong>.</li>
+</ul></main>
 </div>
 </body>
 </html>

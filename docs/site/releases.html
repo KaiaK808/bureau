@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="61fb1479ecfbf6d3a04c300659bd9d1669f108ab40d2035c16279f7258168701">
+<meta name="bureau-source-sha256" content="9d72b556b57cec761ba828874b81fd8e95559b93e5691c7b0deee9a2f680e808">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,14 +24,158 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.6.0</strong>, the current
-stable release, dated <strong>2026-11-03</strong> (prepared 2026-11-02),
-a minor release on v3.5.1. Its <a
+<p>This source tree prepares <strong>Bureau v3.7.0</strong>, dated
+<strong>2026-11-09</strong>, a minor release on v3.6.0 with source tag
+<code>v3.7.0</code>. <strong>Release preparation:</strong> tagging and
+publication remain separate maintainer operations. The <a
+href="release-notes.html">release notes</a> and <a
+href="../../CHANGELOG.md#370---2026-11-09">changelog</a> cover, in
+first-parent merge order: <a
+href="https://github.com/KaiaK808/bureau/pull/114">#114</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/115">#115</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/116">#116</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/119">#119</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/117">#117</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/118">#118</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/121">#121</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/120">#120</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/122">#122</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/123">#123</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/124">#124</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/125">#125</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/126">#126</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/127">#127</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/128">#128</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/129">#129</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/131">#131</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/130">#130</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/132">#132</a>.</p>
+<p>Default changes preserve local-only commits before resets (exit 30),
+refuse post-Build shepherd starts without an origin branch/open PR (exit
+31), retry transient post-push PR operations, classify terminal provider
+failures, isolate read-only Codex scratch work and scope admission
+snapshots. Startup/evidence helpers reuse reads/imports; the unused
+<code>repo.commit_prefix</code> can be deleted. Impeccable guidance and
+offline evidence stay opt-in and off by default; Bureau never installs
+its tooling, hooks or agents. Source-only baseline reporting, focused
+macOS PR CI, deadlines/fixture hygiene and the release tree verifier
+support maintenance. ADR 0014 accepts a design, with no runtime
+implementation.</p>
+<p>From v3.6.0, stop all drivers, preserve unfinished work/local commits
+and customizations, compare installed drift, select tag
+<code>v3.7.0</code> once published, resync complete scripts and
+interfaces together, update exit consumers, run doctor and restart
+drivers together. From v3.5.1 first apply the cumulative v3.6
+requirements. Configuration schema versions and Spec Kit 1.2.2 remain;
+see <a href="migration.html#upgrade-to-v37">Upgrade to v3.7</a>.</p>
+<h3 id="validation-record">Validation record</h3>
+<p>The maintainer's validation record states that every v3.7 pull
+request was built by Codex in its own worktree, independently reviewed
+read-only by Codex (at most three rounds unless the maintainer approved
+an exception), and had every touched test run outside the sandbox. The
+full local suite ran in two shards on macOS, followed by CI on the pull
+request; each was merged with a merge commit. Earlier waves (#114–#126)
+were each Codex-reviewed, suite-tested and CI-green before merge; their
+individual records remain in the pull request descriptions.</p>
+<p>The third-wave records below follow merge order:</p>
+<table>
+<thead>
+<tr>
+<th>PR</th>
+<th>Independent review</th>
+<th>Local full suite</th>
+<th>CI and additional evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/127">#127</a>,
+focused macOS manifest</td>
+<td>Approved in round 2.</td>
+<td>174/177 on the first pass under heavy host load; 177/177 after
+serial reruns of the three red files.</td>
+<td>Green on the first run. PR macOS cost measured at 79 runner-minutes
+across two jobs (2332 s and 2399 s), down from about 290; the full macOS
+run on main after the merge was green.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/128">#128</a>,
+small cleanups</td>
+<td>Approved in round 4; the maintainer-approved fourth round was
+limited to the squash-marker cancellation probe.</td>
+<td>171/175 on the first pass under load; 175/179 after rebase onto
+main, with every red file green on serial rerun.</td>
+<td>One Ubuntu shard rerun after the hosted runner lost communication
+with the server after 77 minutes in the test step; no test failure was
+recorded. Green after the rerun.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/129">#129</a>,
+fixture hygiene</td>
+<td>Approved in round 3.</td>
+<td>174/178 on the first pass; every red file green on serial
+rerun.</td>
+<td>Green on the first run.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/131">#131</a>,
+opt-in Impeccable</td>
+<td>Approved in round 4; the maintainer-approved fourth round was
+limited to the SIGINT launch guard.</td>
+<td>174/178 on the first pass; red files green on serial or direct
+rerun.</td>
+<td>Green on the first run. The detector test ran with a pinned real
+engine twice (20/20 cases, no skips) and without the engine.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/130">#130</a>,
+local-commits hold</td>
+<td>Approved in round 5; rounds 4 and 5 were maintainer-approved
+exceptions. The fifth addressed the full suite's regression where
+Bureau-made local commits were held with 30, fixed by trusting heads
+Bureau's records prove it made.</td>
+<td>175/180 on the first pass; red files green on serial or direct
+rerun.</td>
+<td>The first run failed only on lint shards (ShellCheck SC2100, an
+unquoted assignment); quoted, then green.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/132">#132</a>,
+post-Build PR prerequisite</td>
+<td>Approved in round 1.</td>
+<td>173/179 on the first pass while stacked on #130; red files green on
+serial or direct rerun; touched tests green after the final rebase.</td>
+<td>Green on the first run.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="known-limitations">Known limitations</h3>
+<ul>
+<li>Several tests are load-sensitive and can time out when the host runs
+other suites at the same time, including dispatcher, review-convergence
+and deadline cases. They pass on serial rerun; making them
+load-independent is recorded for the next release.</li>
+<li>The squash-marker cancellation probe can race under heavy load; it
+passes on rerun.</li>
+<li>The provider adapter's SIGHUP cases and the shepherd worker SIGPIPE
+test fail when the suite starts with SIGHUP ignored, for example under
+<code>nohup</code>. Run it from a normal shell or background job.</li>
+<li>Impeccable pilots in adopting repositories have not run yet. The
+integration is opt-in and off by default; <strong>not measured never
+counts as clean</strong>.</li>
+</ul>
+<p>See the <a href="release-notes.html#known-limitations">full release
+notes</a> and <a href="#verify-the-tested-release-trees">release
+verification procedure</a>.</p>
+<h2 id="previous-stable-releases">Previous stable releases</h2>
+<p>The previous stable release is <strong>Bureau v3.6.0</strong>, dated
+<strong>2026-11-03</strong> (prepared 2026-11-02), a minor release on
+v3.5.1. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">GitHub
-Release</a> is marked as latest and records the exact tagged commit,
-merge commit <code>85b41a7</code> of <a
+Release</a> records the exact tagged commit, merge commit
+<code>85b41a7</code> of <a
 href="https://github.com/KaiaK808/bureau/pull/113">#113</a>. The <a
-href="release-notes.html">release notes</a> cover <a
+href="release-notes-v3.6.0.html">release notes</a> cover <a
 href="https://github.com/KaiaK808/bureau/pull/96">#96</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/97">#97</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/100">#100</a>, <a
@@ -110,8 +254,9 @@ coordinate only adapter-admitted calls within one common Git directory.
 Evidence packets are frozen observations with retention and
 partial-coverage limits. Offline dependency paths, provider flags and
 outside gates still need representative live qualification. See the <a
-href="release-notes.html#known-limitations">full limitations</a>.</p>
-<p>The previous stable release is <strong>Bureau v3.5.1</strong>, dated
+href="release-notes-v3.6.0.html#known-limitations">full
+limitations</a>.</p>
+<p>An earlier stable release is <strong>Bureau v3.5.1</strong>, dated
 <strong>2026-10-29</strong> (prepared 2026-10-28). Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.5.1">GitHub
 Release</a> records the exact tagged commit. Tagging and publication
@@ -587,8 +732,11 @@ publication is ready.</li>
 <li>Regenerate the HTML manual with
 <code>python3 scripts/render_docs.py</code> and run
 <code>bash tests/test_docs.sh</code>. Commit the release documentation,
-then wait for that exact commit's checks. The release tag must include
-its own notes.</li>
+then wait for that exact commit's checks. Record the release branch's
+own full local suite and full macOS CI results with their tested refs.
+Run <a href="#verify-the-tested-release-trees">release tree
+verification</a> against the final candidate and again against the tag.
+The release tag must include its own notes.</li>
 <li>Publish an annotated (or signed, when configured) tag on the
 verified commit and a GitHub Release with the same version. Push only
 that exact tag, never all local tags. Mark a candidate as a prerelease;
@@ -614,23 +762,47 @@ remote tag's peeled commit, the release flags and links, and
 installation from a fresh tag checkout. A tag/release is published only
 as an explicitly authorized release operation, not as a side effect of
 writing docs or updating a PR.</p>
+<h2 id="verify-the-tested-release-trees">Verify the tested release
+trees</h2>
+<p>After the release branch head has run the full macOS suite, record
+its exact ref/commit and the suite/CI results. Before tagging, compare
+that tested head with the final release candidate; after tagging, repeat
+with the tag's peeled commit. Run from the Bureau source checkout:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="bu">:</span> <span class="st">&quot;</span><span class="va">${BUREAU_TESTED_REF</span><span class="op">:?</span>Set the release branch head that ran the full macOS suite<span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="bu">:</span> <span class="st">&quot;</span><span class="va">${BUREAU_RELEASE_REF</span><span class="op">:?</span>Set the final release candidate commit or tag<span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> scripts/release_verify.py <span class="st">&quot;</span><span class="va">$BUREAU_TESTED_REF</span><span class="st">&quot;</span> <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE_REF</span><span class="st">&quot;</span></span></code></pre></div>
+<p>The stdlib-only verifier resolves both refs to trees and refuses any
+difference in <code>templates/</code>, <code>tests/</code> or
+<code>scripts/</code>, including additions, deletions and mode changes.
+It excludes only <code>scripts/release_verify.py</code> and
+<code>tests/test_release_verify.sh</code>, prints differing paths and
+fails on invalid refs or Git errors. Documentation-only changes pass;
+the verifier proves tree identity, not that tests ran. If protected
+paths differ, run the full checks on the new head and record a new
+tested ref before publishing. Review changes outside these paths
+separately, including workflows and references.</p>
+<p>Run <code>bash tests/test_release_verify.sh</code> for its
+temporary-repository regression test. It covers identical trees, a
+changed template, documentation-only edits, script/test changes,
+additions/deletions/modes, the two exclusions and invalid refs. Fixtures
+disable automatic Git maintenance and are removed after the test.</p>
 <h2 id="release-note-outline">Release-note outline</h2>
-<div class="sourceCode" id="cb2"><pre
-class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">## What changed</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>User-visible additions and fixes, with PR links.</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">## Upgrade from the previous release / legacy untagged install</span></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Update the source skill to this tag, refresh skill discovery, then run the stated resync scopes in each adopting repo.</span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Required dependencies/configuration changes; conflict resolution and backup instructions.</span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Changes that are optional, and defaults that affect dispatch or merging.</span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="fu">## Compatibility and rollback</span></span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Supported platforms/providers; legacy configuration behavior.</span>
-<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>How to preserve/restore customizations and unfinished work; external effects that rollback cannot undo.</span>
-<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="fu">## Validation and known limitations</span></span>
-<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Exact checks and live scenarios exercised on the release commit.</span>
-<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Remaining limitations and links to the acceptance record or follow-up issues.</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">## What changed</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>User-visible additions and fixes, with PR links.</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="fu">## Upgrade from the previous release / legacy untagged install</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Update the source skill to this tag, refresh skill discovery, then run the stated resync scopes in each adopting repo.</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Required dependencies/configuration changes; conflict resolution and backup instructions.</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Changes that are optional, and defaults that affect dispatch or merging.</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="fu">## Compatibility and rollback</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Supported platforms/providers; legacy configuration behavior.</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>How to preserve/restore customizations and unfinished work; external effects that rollback cannot undo.</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a><span class="fu">## Validation and known limitations</span></span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Exact checks and live scenarios exercised on the release commit.</span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Remaining limitations and links to the acceptance record or follow-up issues.</span></code></pre></div>
 <p>Bug reports should include the installed source tag/commit (or
 explicitly say unknown for a legacy copy), selected provider/CLI version
 and relevant doctor output with credentials removed. A config schema
