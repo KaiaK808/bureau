@@ -31,7 +31,7 @@ Inference: moving the full gate to the supervisor removes the nested execution b
 
 ## Consequences
 
-Operators must compare installation drift, resync the complete scripts scope and restart drivers before enabling. No evidence schema or exit vocabulary changes. Missing/mismatched evidence cannot yield green; false/absent leaves the existing briefs and execution flow intact.
+Operators must compare installation drift, resync the complete scripts scope and restart drivers before enabling. No evidence schema or exit vocabulary changes. Missing/mismatched evidence cannot yield green; false/absent retains sandbox-only recovery and briefs require the configured command verbatim, without wrappers or environment changes, for matching machine execution proof. Doctor warns, without failing, when the latest retained matching gate duration exceeds Codex's 600-second tool command limit and an enabled implementation or QA stage uses Codex without delegation. Provider call timeouts do not raise that tool limit; missing or invalid duration evidence supplies no estimate.
 
 ## Known limits
 

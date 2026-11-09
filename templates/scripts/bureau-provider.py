@@ -628,6 +628,8 @@ def _run(options, prompt, system, repo, evidence, schema=None):
         prompt = system + '\n\n' + prompt + '\n\nDo not run git commit or git push. Leave changes for the Bureau shell executor. Mark completed tasks truthfully. If tests are denied by the environment, report the permission blocker separately from code failures.'
         if options.get('gate_outside_sandbox') and options['stage'] in ('implement', 'qa'):
             prompt += '\nBureau runs the configured full test gate outside the Codex sandbox after this pass and records its receipt and log as stage evidence. Do not run the full test gate yourself or ask to escape the sandbox for it; this takes precedence over instructions to rerun the suite. You may run focused tests. Report completed edits and every independent product, security or human blocker truthfully; pending Bureau validation alone is not a blocker. The next implementation brief includes the outside result and log; QA already includes the initial shell output. The outside gate decides the stage test outcome.'
+        elif options['stage'] in ('implement', 'qa'):
+            prompt += '\nRun the configured test command verbatim as its own command from the repository root, with no wrapper, prefix, redirect or environment change. Set the working directory separately; do not prepend cd, env or unset. Bureau needs the command hash to match the configured command for machine execution proof.'
     else:
         command = ['claude', '-p', '--output-format', 'stream-json' if options.get('silence_timeout_seconds') else 'json']
         if options.get('silence_timeout_seconds'): command += ['--verbose', '--include-partial-messages']
@@ -1214,7 +1216,7 @@ def gate_action(args, config, options, repo):
         if not fresh['eligible'] or raw.get('head') != head or raw.get('commands') != fresh.get('commands'):
             return json.dumps(dict(eligible=False, green=False, reason='gate evidence changed before outside execution', logs=[]))
     run_id, owner = raw['run_id'], raw['stage_attempt_id']
-    logs = []; green = True; verified = True
+    logs = []; flakes = []; green = True; verified = True
     for command in fresh['commands']:
         reserved = e.observe(store.reserve_gate_rerun, run_id, owner, head, command, g.digest(command), fresh.get('gate_attempt_ids', []),
                              scope_sources=options.get('gate_outside_sandbox', False))
@@ -1232,7 +1234,23 @@ def gate_action(args, config, options, repo):
             started = time.monotonic()
             logs.append(str(log))
             try:
-                code, abort = outside_gate(options, repo, command, log)
+                if args.stage == 'qa' and args.gate_action == 'check':
+                    qa_options = dict(options, timeout=g.qa_timeout())
+                    def execute_qa(actual, path):
+                        try: return outside_gate(qa_options, repo, actual, path)
+                        finally:
+                            if qa_options.get('_gate_cancelled'): options['_gate_cancelled'] = True
+                    def record_qa(path, actual, code, checked, end, flaky):
+                        e.observe(store.gate, run_id, owner, path, checked, end, actual, code,
+                                  command_id='qa.test', flaky=flaky)
+                    code, abort, qa_result = g.qa_run_gate(
+                        execute_qa, command, log,
+                        qa_options['timeout'], lambda: current_head(repo), record_qa)
+                    logs.extend(qa_result['logs'][1:])
+                    if qa_result['flaky']: flakes.append(qa_result['flaky'])
+                    log = Path(qa_result['logs'][-1])
+                else:
+                    code, abort = outside_gate(options, repo, command, log)
             except GateExecutionError as exc:
                 if exc.code == 130: options['_gate_cancelled'] = True
                 if exc.uncertain: options['_gate_exit'] = exc.code
@@ -1255,6 +1273,15 @@ def gate_action(args, config, options, repo):
                 record = e.observe(store.finish_gate_rerun, run_id, owner, reservation['attempt_id'], record)
         elif record and isinstance(record.get('stage_log'), str):
             logs.append(record['stage_log'])
+            if args.stage == 'qa' and args.gate_action == 'check':
+                manifest = e.observe(store._manifest, run_id)
+                attempt = next((a for a in (manifest or {}).get('attempts', []) if a['attempt_id'] == owner), {})
+                for gate in attempt.get('gates', []):
+                    if gate.get('sha256') == record.get('sha256') and gate.get('flaky'):
+                        flakes.append(gate['flaky'])
+                        first_log = Path(record['stage_log']).with_name(Path(record['stage_log']).name.replace('.retry.log', '.log'))
+                        if str(first_log) != record['stage_log']: logs.insert(len(logs) - 1, str(first_log))
+                        break
         if not record or not store.valid_execution(record):
             green = False; verified = False; continue
         if claimed:
@@ -1267,7 +1294,7 @@ def gate_action(args, config, options, repo):
         verified = verified and record['head'] == head and record['end_head'] == head
         green = green and record['normalized_exit'] == 0 and record['head'] == head and record['end_head'] == head
     verified = verified and current_head(repo) == head
-    return json.dumps(dict(eligible=verified, green=green and verified, logs=logs,
+    return json.dumps(dict(eligible=verified, green=green and verified, logs=logs, flakes=flakes,
                            reason='outside gate green' if green and verified else 'outside gate red, aborted or incomplete'))
 
 

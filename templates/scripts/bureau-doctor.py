@@ -129,6 +129,46 @@ def template_source(manifest):
 # review call, and spec stages up to an hour over a few calls. Doctor warns below this.
 LONG_CALL_STAGES = ('spec', 'spec_review', 'ux', 'qa', 'code_review')
 LONG_CALL_MIN_SECONDS = 1800
+CODEX_TOOL_LIMIT_SECONDS = 600
+
+
+def codex_gate_duration_warning(repo, config, effective):
+    stages = [stage for stage in ('implement', 'qa') if stage in effective
+              and effective[stage]['runner'] == 'codex' and not effective[stage].get('gate_outside_sandbox')]
+    if not stages: return None
+    latest = None
+
+    def measured(record, at):
+        nonlocal latest
+        if not isinstance(record, dict) or not store.valid_execution(record) or record['command_sha256'] not in commands: return
+        if type(at) not in (int, float) or not math.isfinite(at): return
+        if latest is None or at >= latest[0]: latest = (at, record['duration_seconds'])
+
+    try:
+        gates = module('gates')
+        commands = {gates.digest(command) for stage in stages for command in gates.commands(config, repo, stage)}
+        if not commands: return None
+        store = module('provider').evidence_store(repo)
+        # Read metadata directly: store loaders can quarantine corrupt files or create a lock.
+        for pattern in ('runs/*/receipts/*.json', 'runs/*/manifest.json'):
+            for path in store.root.glob(pattern):
+                try:
+                    value = json.loads(path.read_text())
+                    if value.get('schema_version') != 1: continue
+                    if value.get('record_type') == 'receipt':
+                        for record in value.get('gate_attempts', []): measured(record, value.get('ended_at'))
+                    elif value.get('record_type') == 'manifest':
+                        for attempt in value.get('attempts', []):
+                            for rerun in attempt.get('gate_reruns', []):
+                                record = rerun.get('result')
+                                if isinstance(record, dict): measured(record, rerun['started_at'] + record['duration_seconds'])
+                except (OSError, ValueError, TypeError, AttributeError, KeyError, OverflowError): continue
+    except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError): return None
+    if latest is None or latest[1] <= CODEX_TOOL_LIMIT_SECONDS: return None
+    return ('Codex full gate last took ' + format(latest[1], 'g') + ' s, exceeding its ' + str(CODEX_TOOL_LIMIT_SECONDS)
+            + ' s tool command limit (' + ', '.join(stages) + '); enable agents.providers.codex.gate_outside_sandbox'
+            ' (ADR 0013: docs/adr/0013-codex-gate-delegation.md). Without delegation, a sandbox-denied gate may time out'
+            ' before matching execution proof is recorded, leaving the stage blocked with exit 24.')
 
 
 def stage_env_file(config_path):
@@ -536,6 +576,8 @@ def diagnose(repo, mode):
         warnings.append('Provider timeout below ' + str(LONG_CALL_MIN_SECONDS) + ' s per call: ' + ', '.join(short) + '. Spec, spec review, UX, QA and review calls'
                         ' often run 15 to 30 minutes and end with 124 when cut off; raise agents.<stage>.timeout_seconds or agents.providers.<runner>.timeout_seconds (default 3600)'
                         + ('; BUREAU_STAGE_TIMEOUT in the environment wins over both' if os.environ.get('BUREAU_STAGE_TIMEOUT') else ''))
+    gate_warning = codex_gate_duration_warning(repo, config, effective)
+    if gate_warning: warnings.append(gate_warning)
     if stage_env_file(path).is_file(): warnings.append('Doctor resolves JSON and process environment only; it does not execute .env (it reads only BUREAU_RUNNER_IMPLEMENT from it, for the repo.test_command warning). Source trusted overrides before running doctor for matching effective settings.')
     active = runtime.read(repo / '.specify/integration.json', {})
     manifest = runtime.read(repo / '.bureau-install.json', {})

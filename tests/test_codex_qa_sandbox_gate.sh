@@ -346,9 +346,9 @@ machine_setup red
 python3 - "$SCRIPTS_DIR/bureau-provider.py" <<'PY'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]);text=p.read_text();anchor='    return json.dumps(dict(eligible=verified, green=green and verified, logs=logs,'
+p=Path(sys.argv[1]);text=p.read_text();anchor='    verified = verified and current_head(repo) == head\n'
 assert text.count(anchor)==1
-p.write_text(text.replace(anchor,"    for log in logs: Path(log).unlink(missing_ok=True)\n"+anchor))
+p.write_text(text.replace(anchor,anchor+"    for log in logs: Path(log).unlink(missing_ok=True)\n"))
 PY
 run_pipeline qa-pipeline.sh TEAM-123
 assert_halted
@@ -437,9 +437,9 @@ EOF
 python3 - "$SCRIPTS_DIR/qa-pipeline.sh" <<'PY'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1]); text=p.read_text(); anchor='25|124|130)'
+p=Path(sys.argv[1]); text=p.read_text(); anchor='  case "$OUTSIDE_RC" in\n    25|124|130)'
 assert text.count(anchor)==1
-p.write_text(text.replace(anchor,'124|130)',1))
+p.write_text(text.replace(anchor,anchor.replace('25|124|130)', '124|130)'),1))
 PY
 run_pipeline qa-pipeline.sh TEAM-123
 if assert_eq 25 "$LAST_RC" 'uncertain QA gate stop' > "$SANDBOX/logs/control.log" 2>&1; then

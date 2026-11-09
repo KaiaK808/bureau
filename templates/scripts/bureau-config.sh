@@ -138,8 +138,9 @@ bureau_run_gate() {
   local rc=0 head
   head=$(git rev-parse HEAD 2>/dev/null) || head=""
   bureau_ticket_policy "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" execute-gate --path "$1" \
-    --command "$2" --command-id "$3" || rc=$?
-  bureau_record_gate "$1" "$head" "$2" "$rc" "$3" || true
+    --command "$2" --command-id "$3" "${@:4}" || rc=$?
+  # The final QA executor records each bounded attempt and any flake marker.
+  if [ "${4:-}" != --qa-final ]; then bureau_record_gate "$1" "$head" "$2" "$rc" "$3" || true; fi
   return "$rc"
 }
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9d72b556b57cec761ba828874b81fd8e95559b93e5691c7b0deee9a2f680e808">
+<meta name="bureau-source-sha256" content="36b0668560747d9a51ac93d81efa042a92dcfdad178643e371894ba35079888c">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,10 +24,14 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree prepares <strong>Bureau v3.7.0</strong>, dated
-<strong>2026-11-09</strong>, a minor release on v3.6.0 with source tag
-<code>v3.7.0</code>. <strong>Release preparation:</strong> tagging and
-publication remain separate maintainer operations. The <a
+<p>This source tree contains <strong>Bureau v3.7.0</strong>, published
+<strong>2026-11-09</strong>, a minor release on v3.6.0. Annotated tag
+<code>v3.7.0</code> (tag object <code>02406d8</code>) points at merge
+commit <code>4366c91</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/135">#135</a>, merged on
+2026-11-09. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.7.0">GitHub
+Release</a> is published as latest. The <a
 href="release-notes.html">release notes</a> and <a
 href="../../CHANGELOG.md#370---2026-11-09">changelog</a> cover, in
 first-parent merge order: <a
@@ -63,11 +67,11 @@ support maintenance. ADR 0014 accepts a design, with no runtime
 implementation.</p>
 <p>From v3.6.0, stop all drivers, preserve unfinished work/local commits
 and customizations, compare installed drift, select tag
-<code>v3.7.0</code> once published, resync complete scripts and
-interfaces together, update exit consumers, run doctor and restart
-drivers together. From v3.5.1 first apply the cumulative v3.6
-requirements. Configuration schema versions and Spec Kit 1.2.2 remain;
-see <a href="migration.html#upgrade-to-v37">Upgrade to v3.7</a>.</p>
+<code>v3.7.0</code>, resync complete scripts and interfaces together,
+update exit consumers, run doctor and restart drivers together. From
+v3.5.1 first apply the cumulative v3.6 requirements. Configuration
+schema versions and Spec Kit 1.2.2 remain; see <a
+href="migration.html#upgrade-to-v37">Upgrade to v3.7</a>.</p>
 <h3 id="validation-record">Validation record</h3>
 <p>The maintainer's validation record states that every v3.7 pull
 request was built by Codex in its own worktree, independently reviewed
@@ -149,6 +153,18 @@ serial or direct rerun; touched tests green after the final rebase.</td>
 </tr>
 </tbody>
 </table>
+<p>CI on <a href="https://github.com/KaiaK808/bureau/pull/135">#135</a>
+at <code>a538849</code> passed all 16 jobs, including the full macOS
+suite. Ubuntu shard 3/4 of the push run failed twice and passed on the
+third attempt. Both failures were evidence-lock timeouts
+(<code>evidence lock unavailable</code>) on GitHub-hosted runners, first
+in <code>test_shared_runtime.sh</code>, then in
+<code>test_acceptance_insights.sh</code>; the same shard of the pull
+request run was green. The follow-up is recorded for the next
+release.</p>
+<p><code>python3 scripts/release_verify.py e31537e v3.7.0</code> passed,
+comparing the release branch head that ran the full local suite with the
+published tag.</p>
 <h3 id="known-limitations">Known limitations</h3>
 <ul>
 <li>Several tests are load-sensitive and can time out when the host runs
