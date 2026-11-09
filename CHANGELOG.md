@@ -8,6 +8,8 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 ### Fixed
 
+- Mutation-harness cleanup retries Ctrl-C interruptions before propagating cancellation, records completion after fixture shutdown and both pipe closes, and attempts stderr closure even when stdout closure fails. Tests only; update the source checkout, with no asset resync or runtime compatibility change. Validation: focused fault-injection regressions and pre-fix negative controls; live descendant tests are blocked by sandbox process inspection, and Linux was not run.
+
 - Both test runner entry points set `PYTHONDONTWRITEBYTECODE=1` for every test, including CI runs; isolated runner imports also avoid caches. The internal-reference guard retains its Git-tracked and non-ignored new-file inventory, so ignored bytecode cannot trigger publication failures and tracked violations still fail. **Upgrade:** update the source checkout; no asset resync or runtime compatibility change. Validation uses planted template imports through both runners and the guard's ignored-bytecode/tracked-file controls; the full suite and hosted CI remain maintainer checks.
 
 ## [3.7.0] - 2026-11-09
