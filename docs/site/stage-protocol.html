@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4f3343f7e338f4bac0f364b7f9efc6b6af1c30c39f47f33e71a13c6b8659d000">
+<meta name="bureau-source-sha256" content="14100f414051e338956742b93634000b48d72a7c554a11cfb0c7075d978ce42d">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -250,8 +250,10 @@ gates or confirmed findings, bound to exact configured gate commands
 <code>review.build</code>). Only actual runtime execution, green at
 unchanged HEAD with recorded output, qualifies: QA/review use
 <code>bureau_run_gate</code> and recovery uses the outside-gate
-executor. Runtime-executed gates retain the earlier shell checks'
-unbounded test window; stage/provider <code>timeout_seconds</code> and
+executor. Final QA gates use their own 900-second bound per attempt
+(<code>BUREAU_QA_TEST_TIMEOUT</code>); Phase 1 and other
+runtime-executed gates retain their earlier unbounded test window.
+Stage/provider <code>timeout_seconds</code> and
 <code>BUREAU_STAGE_TIMEOUT</code> apply only to provider calls. The
 exposed proof-submission command is removed;
 <code>bureau_record_gate</code> is observational only. Provider results,
@@ -1412,13 +1414,22 @@ still requires commits beyond origin/main and its hook/squash-range
 checks; outside red/abort keeps NEEDS_HUMAN with the stage-log pointer.
 QA reuses its final outside run, reading that log into its normal QA
 log: green may hand off, red follows its rework route, and other holds
-stay NEEDS_HUMAN. A declared hold also survives a contradictory
-COMPLETE/GREEN. Evidence failures prevent recovery without inventing
-success; they remain observational for existing provider outcomes.
-Cancellation 130 is captured immediately after the runner returns and
-survives subsequent evidence read/write/validation failures. A local
-green result grants no merge permission; CI/current-base and manual
-merge boundaries remain in force.</p>
+stay NEEDS_HUMAN. Delegated QA checks use the independent QA test bound
+and may rerun once after a complete, named assertion failure; sandbox
+reconciliation itself remains a single execution. A passing assertion
+rerun records optional <code>flaky</code> metadata on the successful
+gate (<code>failed_tests</code>, at most 20 names of 200 characters;
+<code>omitted</code>; <code>first_sha256</code>), retains both logs and
+adds a line to the QA comment and acceptance brief. See the <a
+href="../../references/runtime-patterns.md#new-agents-qa-mechanical-and-copy-opt-in">QA
+runtime policy</a> for eligibility and coverage checks. A declared hold
+also survives a contradictory COMPLETE/GREEN. Evidence failures prevent
+recovery without inventing success; they remain observational for
+existing provider outcomes. Cancellation 130 is captured immediately
+after the runner returns and survives subsequent evidence
+read/write/validation failures. A local green result grants no merge
+permission; CI/current-base and manual merge boundaries remain in
+force.</p>
 <p>Adoption requires resyncing scripts/schemas together and restarting
 drivers after comparing local drift. Old prefix-only claims without
 execution proof now stay blocked. Metadata-only receipts remain
