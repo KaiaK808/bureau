@@ -46,6 +46,7 @@ sandbox_init() {
   # origin/$BRANCH` and `git checkout -B "$BRANCH" "origin/$BRANCH"` — both
   # require the branch to exist on origin.
   git -C "$SANDBOX" init -q -b main; git -C "$SANDBOX" config maintenance.auto false
+  git -C "$SANDBOX" config receive.autogc false
   git -C "$SANDBOX" config user.email "test@bureau"
   git -C "$SANDBOX" config user.name  "Bureau Test"
   git -C "$SANDBOX" commit -q --allow-empty -m "init"
@@ -54,6 +55,7 @@ sandbox_init() {
 
   local fake_origin="$SANDBOX/.fake-origin.git"
   git init -q --bare "$fake_origin"; git -C "$fake_origin" config maintenance.auto false
+  git -C "$fake_origin" config receive.autogc false
   git -C "$SANDBOX" remote add origin "$fake_origin"
   git -C "$SANDBOX" push -q origin main
   git -C "$SANDBOX" push -q origin "$branch"

@@ -246,7 +246,8 @@ class DispatcherFixture(unittest.TestCase):
         for name,body in [('curl',SERVICE),('gh',SERVICE),('claude',PROVIDER),('git',GIT)]:
             file=self.bin/name; file.write_text(body); file.chmod(0o755)
         self.g('init','-q','-b','main'); self.g('config','user.name','test'); self.g('config','user.email','test@bureau')
-        for key,value in [('maintenance.auto','false'),('gc.auto','0'),('fetch.writeCommitGraph','false')]: self.g('config',key,value)
+        git_maintenance.disable(self.repo)
+        for key,value in [('gc.auto','0'),('fetch.writeCommitGraph','false')]: self.g('config',key,value)
         (self.repo/'.gitignore').write_text('/scripts/\n.bureau.json\n.env\n.worktrees/\nlogs/\n')
         (self.repo/'pkg').mkdir(); (self.repo/'pkg/a.py').write_text('base\n'); (self.repo/'pkg/b.py').write_text('base\n'); (self.repo/'pkg/c.py').write_text('base\n')
         with zipfile.ZipFile(ROOT/'tests/fixtures/speckit-1.2.2.zip') as z:

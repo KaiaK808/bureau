@@ -50,7 +50,8 @@ class RuntimeTests(unittest.TestCase):
         # git maintenance off in the repository's own config: r.git and the stages run git with their
         # own environment (git_maintenance.py).
         repo.mkdir()
-        for args in [('init', '-q', '-b', 'main'), git_maintenance.OFF_CONFIG, ('config', 'user.name', 'Test'), ('config', 'user.email', 'test@example.invalid'),
+        r.git(repo, 'init', '-q', '-b', 'main'); git_maintenance.disable(repo)
+        for args in [('config', 'user.name', 'Test'), ('config', 'user.email', 'test@example.invalid'),
                      ('commit', '-q', '--allow-empty', '-m', 'init'), ('switch', '-q', '-c', 'feat/issue')]:
             r.git(repo, *args)
         return repo
@@ -58,7 +59,7 @@ class RuntimeTests(unittest.TestCase):
     def bare_origin(self, name='origin.git'):
         origin = Path(self.temp.name) / name
         subprocess.run(['git', 'init', '-q', '--bare', str(origin)], check=True)
-        subprocess.run(['git', '--git-dir', str(origin), *git_maintenance.OFF_CONFIG], check=True)  # for receive-pack behind a push
+        git_maintenance.disable(origin)  # for receive-pack behind a push
         return origin
 
     def test_fixture_repository_and_push_start_no_git_maintenance(self):
