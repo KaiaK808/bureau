@@ -19,7 +19,7 @@ Do NOT file public issues for security vulnerabilities — see [SECURITY.md](SEC
 - **One focused change per PR.** Rebrand + genericize + hero image was three PRs, not one. This is the norm.
 - **PR body follows the existing recent pattern** — Summary, What changed, Test plan, After merge. Look at any of the merged PRs for the shape.
 - **No new dependencies without a plan.** The shared runtime uses Bash, stdlib Python and a small JavaScript scheduler; keep dependencies explicit and minimal.
-- **Release notes travel with user-facing changes.** Add an entry under `Unreleased` in [CHANGELOG.md](CHANGELOG.md), including adoption actions, compatibility/default changes and relevant limitations. Update [the upgrade guide](docs/migration.md) when existing installs need a different command or conflict procedure. Do not invent a released version or mark pending work as shipped.
+- **Release notes travel with user-facing changes.** Add one `changes/unreleased/<slug>.md` fragment following [the fragment format](changes/README.md), including adoption actions, compatibility/default changes and relevant limitations; run `python3 scripts/changelog.py check`. Do not add entries directly under `Unreleased` in [CHANGELOG.md](CHANGELOG.md). Update [the upgrade guide](docs/migration.md) when existing installs need a different command or conflict procedure. Do not invent a released version or mark pending work as shipped.
 - **Docs travel with code.** If you add a `.bureau.json` flag, it lands in `docs/configuration.md` in the same PR. If you add a script, it gets a header comment. This is enforced by review.
 
 ## CI coverage
