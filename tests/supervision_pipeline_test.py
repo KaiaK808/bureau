@@ -162,7 +162,7 @@ class SupervisionPipelineTests(unittest.TestCase):
         self.repo = root/'repo'; self.repo.mkdir(parents=True)
         self.git('init','-q','-b','main'); self.git('config','user.email','test@bureau'); self.git('config','user.name','Bureau Test')
         # In the repository's own config, so the stages' git calls get it too (git_maintenance.py).
-        self.git(*git_maintenance.OFF_CONFIG)
+        git_maintenance.disable(self.repo)
         # The review build check runs repo.test_command in the worker; like a real Python
         # project, the fixture ignores the bytecode it writes.
         (self.repo/'.gitignore').write_text('.bureau.json\n.env\nlogs/\n.worktrees/\n__pycache__/\n')
@@ -172,7 +172,7 @@ class SupervisionPipelineTests(unittest.TestCase):
             shutil.copy(os.environ['BUREAU_TEST_TICK_SCRIPT'],self.repo/'scripts/bureau-tick.sh')
         self.git('add','.'); self.git('commit','-qm','test: fixture main')
         self.origin = root/'origin.git'; subprocess.run(['git','init','-q','--bare',str(self.origin)],check=True)
-        subprocess.run(['git','--git-dir',str(self.origin),*git_maintenance.OFF_CONFIG],check=True)  # for receive-pack behind a push
+        git_maintenance.disable(self.origin)  # for receive-pack behind a push
         self.git('remote','add','origin',str(self.origin)); self.git('push','-q','origin','main')
         for number in (1,2,3):
             self.git('checkout','-qb',f'{number:03d}-task','main')

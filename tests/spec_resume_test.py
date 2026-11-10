@@ -293,7 +293,7 @@ class SpecWorkerTests(unittest.TestCase):
         self.repo = self.root / 'repo'; self.repo.mkdir()
         self.wt = self.root / 'worker'; self.review_wt = self.root / 'review-worker'
         self.git('init', '-q', '-b', 'main')
-        self.git(*git_maintenance.OFF_CONFIG)
+        git_maintenance.disable(self.repo)
         self.git('config', 'user.name', 'Test'); self.git('config', 'user.email', 'test@invalid')
         shutil.copytree(SCRIPTS, self.repo / 'scripts')
         import zipfile
@@ -352,7 +352,7 @@ run_stage_for() {
         self.git('add', '.'); self.git('commit', '-qm', 'fixture runtime and pinned helpers')
         origin = self.root / 'origin.git'
         subprocess.run(['git', 'init', '-q', '--bare', str(origin)], check=True)
-        subprocess.run(['git', '--git-dir', str(origin), *git_maintenance.OFF_CONFIG], check=True)
+        git_maintenance.disable(origin)
         self.git('remote', 'add', 'origin', str(origin)); self.git('push', '-q', 'origin', 'main')
         self.env = {k:v for k,v in os.environ.items() if not k.startswith('BUREAU_')}
         self.env.update(BUREAU_CONFIG=str(self.repo / '.bureau.json'), SPEC_TEST_ROOT=str(self.root), PYTHONDONTWRITEBYTECODE='1')

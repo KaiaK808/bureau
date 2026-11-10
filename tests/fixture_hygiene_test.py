@@ -73,6 +73,14 @@ class FixtureHygiene(unittest.TestCase):
                     git_maintenance.require_disabled(repo)
                 git_maintenance.disable(repo)
                 git_maintenance.require_disabled(repo)
+                for key in ('maintenance.auto', 'receive.autogc'):
+                    for value in ('true', None):
+                        with self.subTest(key=key, value=value):
+                            args = [key, value] if value is not None else ['--unset', key]
+                            subprocess.run(['git', '-C', str(repo), 'config', *args], check=True, timeout=5)
+                            with self.assertRaisesRegex(AssertionError, key):
+                                git_maintenance.require_disabled(repo)
+                            git_maintenance.disable(repo)
 
     def test_clone_configuration_is_persisted_and_its_absence_is_detected(self):
         origin = self.root/'origin.git'

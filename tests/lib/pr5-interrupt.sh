@@ -120,8 +120,10 @@ pr5_new_repo() {
   REPO=$(mktemp -d "$SB/repo XXXXXXXX")
   local origin; origin=$(mktemp -d "$SB/origin-XXXXXXXX")
   git init -q --bare "$origin"; git -C "$origin" config maintenance.auto false
+  git -C "$origin" config receive.autogc false
   mkdir -p "$REPO/scripts"
   git -C "$REPO" init -q -b main; git -C "$REPO" config maintenance.auto false
+  git -C "$REPO" config receive.autogc false
   git -C "$REPO" config user.name t; git -C "$REPO" config user.email t@t
   printf '.env\n.bureau.json\n.worktrees/\n' > "$REPO/.gitignore"
   git -C "$REPO" add .gitignore; git -C "$REPO" commit -q -m init

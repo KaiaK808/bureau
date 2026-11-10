@@ -121,7 +121,7 @@ class Fixture(unittest.TestCase):
         self.run_cmd(['git', 'init', '-q', '--bare', str(self.remote)])
         git_maintenance.disable(self.remote)
         self.g('init', '-q', '-b', 'main'); self.g('config', 'user.email', 'test@bureau'); self.g('config', 'user.name', 'Test')
-        self.g('config','maintenance.auto','false'); self.g('config','gc.auto','0'); self.g('config','fetch.writeCommitGraph','false')
+        git_maintenance.disable(self.repo); self.g('config','gc.auto','0'); self.g('config','fetch.writeCommitGraph','false')
         self.g('remote', 'add', 'origin', str(self.remote))
         for name in ('pkg/a.py', 'pkg/b.py', 'lib/code.rb', 'cmd/tool/main.go', 'docs/site/page.html', 'CHANGELOG.md', 'README.md', 'Makefile', 'old name.py'):
             file = self.repo / name; file.parent.mkdir(parents=True, exist_ok=True); file.write_text('base\n')
