@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+python3 "$ROOT/scripts/changelog.py" check
 python3 - "$ROOT" <<'PY'
 import hashlib, html, pathlib, re, sys
 root=pathlib.Path(sys.argv[1]);site=root/'docs/site'

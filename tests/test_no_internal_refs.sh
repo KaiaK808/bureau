@@ -108,7 +108,7 @@ echo 'PASS reference matcher reports private keys and allows fixture data in tes
 python3 -I "$T/scan.py" all "$ROOT" "$ROOT/templates" || fail 'private ticket reference under templates/'
 echo 'PASS no private ticket references under templates/'
 
-PROSE=("$ROOT/CHANGELOG.md" "$ROOT/AGENTS.md" "$ROOT/README.md" "$ROOT/SECURITY.md" "$ROOT/CONTRIBUTING.md"
+PROSE=("$ROOT/CHANGELOG.md" "$ROOT/changes" "$ROOT/AGENTS.md" "$ROOT/README.md" "$ROOT/SECURITY.md" "$ROOT/CONTRIBUTING.md"
        "$ROOT"/docs/*.md "$ROOT"/references/*.md)
 python3 -I "$T/scan.py" all "$ROOT" "${PROSE[@]}" || fail 'private ticket reference in public prose'
 echo 'PASS no private ticket references in public prose'

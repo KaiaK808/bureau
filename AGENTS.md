@@ -58,6 +58,6 @@ The direction is not one arrow. **The template is ahead** on the v2 runtime (14 
 
 ## Shipping
 
-Use conventional commit prefixes. User-facing changes need an Unreleased changelog entry with upgrade actions and compatibility/validation limits. Follow docs/releases.md for release preparation; tagging/publishing is an explicit maintainer operation, separate from implementation or documentation edits. Keep shared maintenance rules here; CLAUDE.md imports this file. Document changed behavior alongside the templates and update contradictory runtime-pattern examples. Runtime scripts win over prose.
+Use conventional commit prefixes. User-facing changes need a `changes/unreleased/<slug>.md` fragment with upgrade actions and compatibility/validation limits; see changes/README.md for the format and run `python3 scripts/changelog.py check`. Do not add entries directly under Unreleased in CHANGELOG.md. Follow docs/releases.md for release preparation; tagging/publishing is an explicit maintainer operation, separate from implementation or documentation edits. Keep shared maintenance rules here; CLAUDE.md imports this file. Document changed behavior alongside the templates and update contradictory runtime-pattern examples. Runtime scripts win over prose.
 
 Keep new app/current-workspace operations distinct from disposable-worker resets. A task may start on a detached worktree outside `.worktrees/`, and the shared Git directory can contain user-owned checkouts. Never claim full Codex background support based solely on installation/discovery tests.
