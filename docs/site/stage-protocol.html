@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="14100f414051e338956742b93634000b48d72a7c554a11cfb0c7075d978ce42d">
+<meta name="bureau-source-sha256" content="985fc28a4b50ec790b18924aa759b60a8dfe3ef77c4f64d3e21b948362f114eb">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1715,8 +1715,14 @@ with no copy of the bad bytes. Unreadable records are skipped. Python
 and the common Bash evidence wrapper cap warnings at once per process;
 merge capture and review cleanup have their own protected diagnostics.
 ENOSPC, permission errors and lock contention leave work running.
-Evidence locks wait at most 250 ms. <code>waits</code> itself is
-read-only and skips invalid records without quarantining them.</p>
+Evidence lock acquisitions have a fixed 10-second wait budget; a timeout
+reports the elapsed wait as
+<code>evidence lock unavailable after 10.0 s</code> (actual elapsed time
+may be longer if the process is descheduled). Review artifact cleanup
+shares one 10-second budget across all its acquisitions, then skips the
+remaining artifacts with one warning naming their count and the
+exhausted budget. <code>waits</code> itself is read-only and skips
+invalid records without quarantining them.</p>
 <p>The sole mandatory evidence write is a receipt before forwarding a
 successful provider result. If that persistence fails, including when
 the protected store has no capacity for it, the adapter follows its

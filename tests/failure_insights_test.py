@@ -201,11 +201,11 @@ class StoreTests(unittest.TestCase):
         with patch.object(self.store, '_append_learning', side_effect=OSError('PRIVATE_FAILURE')):
             path = self.store.put_receipt(self.receipt(normalized_exit=0))
             self.assertEqual(json.loads(path.read_text())['normalized_exit'], 0)
-        with (self.store.root / 'guard').open('a') as lock:
+        with (self.store.root / 'guard').open('a') as lock, patch.object(e, 'LOCK_TIMEOUT_SECONDS', .1):
             fcntl.flock(lock, fcntl.LOCK_EX)
             started = time.monotonic()
             with self.assertRaises(TimeoutError): self.store._append_learning('insights.jsonl', [self.rows('insights.jsonl')[0]], ('provider_attempt_id',), self.run)
-            self.assertLess(time.monotonic() - started, 1)
+            self.assertLess(time.monotonic() - started, 5)  # the injected 0.1 s budget, not the 10 s default; generous for a loaded host
 
     def test_retention_caps_permissions_and_capacity_for_all_ledgers(self):
         self.store.put_receipt(self.receipt(structured_result=dict(insights=['The runner needed smaller work.'],
