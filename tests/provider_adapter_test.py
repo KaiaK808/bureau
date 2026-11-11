@@ -1224,7 +1224,8 @@ outputs=[subprocess.check_output(repo_git+shlex.split(command)[1:],text=True) fo
             with self.subTest(signal=signum):
                 (self.root/'ready').unlink(missing_ok=True)
                 proc=subprocess.Popen(self.command('--stage','code_review'),stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-                                      env={**self.env,'TMPDIR':str(self.root),'SLEEP':'10'})
+                                      env={**self.env,'TMPDIR':str(self.root),'SLEEP':'10'},
+                                      preexec_fn=lambda: signal.signal(signal.SIGHUP,signal.SIG_DFL))
                 try:
                     deadline=time.monotonic()+4
                     while not (self.root/'ready').exists() and time.monotonic()<deadline: time.sleep(.02)
@@ -1344,7 +1345,8 @@ p.subprocess.Popen=fail_popen
         self.env.pop('TMPDIR',None)
         for signum in ('SIGTERM','SIGINT','SIGHUP'):
             with self.subTest(signal=signum):
-                patch='''def interrupted_allocation(*args,**kwargs):
+                patch='''signal.signal(signal.SIGHUP,signal.SIG_DFL)
+def interrupted_allocation(*args,**kwargs):
     path=record_allocation(*args,**kwargs)
     os.kill(os.getpid(),getattr(signal,os.environ['ALLOCATION_SIGNAL']))
     return path

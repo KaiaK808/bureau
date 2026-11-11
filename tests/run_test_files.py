@@ -84,10 +84,17 @@ def stop_group(child):
     raise RuntimeError(f'process group {child.pid} survived cleanup')
 
 
+def reset_test_signals():
+    # Background shells and nohup can leave these ignored across exec.
+    for signum in (signal.SIGINT, signal.SIGQUIT, signal.SIGHUP):
+        signal.signal(signum, signal.SIG_DFL)
+
+
 def run_file(name, timeout, log):
     started = time.monotonic()
     outcome = 'FAIL'
     child = subprocess.Popen(['bash', name], stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                             preexec_fn=reset_test_signals,
                              env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
     try:
         try:
