@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9248107011bcfb190470b9031b7032dc27e4529faae66f7ff7c034c55101dce2">
+<meta name="bureau-source-sha256" content="433f2f7c48ab7a7b384535b0e8fcf3cde4a277a21ec7ab27e4f9ee367f876623">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -735,6 +735,11 @@ including a legacy repo without a manifest, a customized script, user
 instructions, constitution preservation and config migration/rollback.
 For runtime releases, include the full Linux/macOS suite and the
 appropriate live acceptance described in the release notes.</li>
+<li>Explicitly opt into one <a
+href="provider-runtime.html#live-injection-sample">live injection
+sample</a> on a scratch repository with a real provider. Record model
+obedience and Bureau's mechanical outcomes separately in the release
+notes. This manual check never runs in CI.</li>
 <li>Verify the adoption instructions against the selected commit. List
 each required resync scope, any configuration/provider changes, new
 dependencies, protected old worktrees and rollback limits. Include what
