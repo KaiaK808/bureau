@@ -505,14 +505,15 @@ def worktree_links(repo, config, checkout=None):
     return report, errors, warnings
 
 
-def claude_logged_in(provider, options, mode):
+def claude_logged_in(provider, options, mode, timeout=20):
     """`claude auth status --json` in the environment a Claude stage gets (its untrusted_env mode,
     CLAUDE_CONFIG_DIR from config_dir), as auth() in bureau-provider.py asks it before every call.
     Returns (logged_in, reason)."""
     if not shutil.which('claude'): return False, 'claude executable not found on PATH'
     try:
-        proc = subprocess.run(['claude', 'auth', 'status', '--json'], capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL,
+        proc = subprocess.run(['claude', 'auth', 'status', '--json'], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
                               env=provider.claude_env(options, env=provider.untrusted_env(os.environ, mode, 'claude')))
+    except subprocess.TimeoutExpired as exc: return False, 'login check timed out after ' + format(exc.timeout, 'g') + ' s'
     except (OSError, subprocess.SubprocessError) as exc: return False, 'claude auth status failed: ' + str(exc)
     try: logged = proc.returncode == 0 and json.loads(proc.stdout).get('loggedIn') is True
     except (ValueError, AttributeError): logged = False
@@ -540,6 +541,10 @@ def claude_config_dirs(config, effective, provider, warnings):
     for directory, (logged, reason) in checked.items():
         if not logged:
             stages = ', '.join(stage for stage, entry in report.items() if entry['config_dir'] == directory and entry['configured'])
+            if reason.startswith('login check timed out after '):
+                warnings.append('Claude ' + reason + '; login is unconfirmed; rerun the stage, and if it repeats check host load or the CLI'
+                                + ' (configuration directory ' + directory + '; stages: ' + stages + ')')
+                continue
             warnings.append('Claude is not logged in in the configuration directory ' + directory + ' (' + stages + '): ' + reason
                             + '; the stage ends with 16 before any call. Log in with CLAUDE_CONFIG_DIR=' + directory + ' claude')
     return report

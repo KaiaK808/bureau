@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="217bfa16a52de6b29197a7c7d2bd402e40d055144757ee61cf5e79af513d724c">
+<meta name="bureau-source-sha256" content="835511324285fba2e06e7dcdda4c640e276996582f9a22455f13d7aa8bef1531">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -119,7 +119,10 @@ run</td>
 <td><code>16</code></td>
 <td>provider-unauth</td>
 <td>Selected CLI missing or not authenticated</td>
-<td>Authenticate the selected Claude/Codex CLI</td>
+<td>Authenticate the selected Claude/Codex CLI. A
+<code>login-check-timeout</code> after 20 s plus one 60 s retry does not
+mean login is missing: rerun the stage; if it repeats, check host load
+or the CLI</td>
 </tr>
 <tr>
 <td><code>17</code></td>

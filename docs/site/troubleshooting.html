@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2c8ad475c1f2a6ef9534226729b140c9dfb5daedefb72b9f1e61a76d3bf8bda2">
+<meta name="bureau-source-sha256" content="65249d2aea84e6c5b54b7e1a2027876aae8d467a2e24aaa664ee50cd6e65d4cc">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1672,6 +1672,14 @@ Manually re-open the issue and route through Build Review.</p>
 <code>codex login status</code> and complete that provider's normal
 login flow. Bureau checks authentication without a probe generation.
 This is separate from the Linear API key used for ticket CRUD.</p>
+<p>If the login check times out after 20 s, Bureau retries once with a
+60 s limit. Two timeouts end with exit 16 and
+<code>login-check-timeout</code> after 80 s; the login itself was not
+found to be missing. Rerun the stage; if it repeats, check host load or
+the CLI. The shepherd and dispatcher use their existing sleep and retry
+behavior. Doctor reports its 20 s timeout as
+<code>login check timed out</code>, separately from a CLI response that
+does not confirm login.</p>
 <h3 id="headless-claude-calls-hang-or-timeout">Headless Claude calls
 hang or timeout</h3>
 <p>Inspect the adapter's preserved stdout/stderr and result metadata
