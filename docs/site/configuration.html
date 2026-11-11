@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="40bd201337cb2044cbeaa511383f61016dd51488bca8a8b8006356303787f62e">
+<meta name="bureau-source-sha256" content="eefe6f5272dbc6a0a76598eb73d3d967d98e64b27bd84f4b212baf6ac7f4e20c">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1407,6 +1407,54 @@ pause</td>
 </tbody>
 </table>
 <h3 id="repo"><code>repo</code></h3>
+<p><code>repo.changed_test_command</code> optionally measures
+fail-before-pass after QA's final gate passes. For example,
+<code>"changed_test_command": "python3 -m pytest -q {file}"</code> runs
+each changed test file once on HEAD and once at the merge base with the
+changed tests transplanted. The command comes only from
+<code>.bureau.json</code> at QA's pinned PR base, never the PR head. A
+provider-free run first checks the opt-in on startup-fetched main before
+resolving the actual PR base from those fetched refs; enable the setting
+on main to opt such runs in, including stacked PRs. No additional
+fetches are made. Use a simple command without shell control operators
+or substitutions. <code>{file}</code> must appear exactly once as a
+complete, unquoted shell word; Bureau substitutes a shell-quoted path
+prefixed with <code>./</code>, making leading dashes safe, and rejects
+filenames with newlines or control characters. Do not put quotes around
+the placeholder.</p>
+<p>Both runs use disposable detached worktrees with private Git
+registrations and the normal untrusted environment. If the pinned
+configuration has nonempty <code>repo.worktree_links</code>, every
+selected file is <code>not measured</code> with reason
+<code>repository uses worktree links</code>, and neither run starts:
+omitting linked inputs could manufacture an assertion failure, while
+applying them could write into the real checkout. Proof requires the
+same inputs on base and head. The whole measurement, including
+configuration reads, PR-base requests and setup, shares a 900-second
+budget (the existing <code>BUREAU_QA_TEST_TIMEOUT</code> override,
+1–86400 seconds), without shorter per-command limits. Cleanup removes
+both worktree back-pointers and prunes their private registrations
+first, including at the start of cancellation before waiting for process
+termination. Pruning and recursive deletion each allow up to 120
+seconds, giving large trees on slower disks room to finish. A filesystem
+cleanup timeout or error preserves completed results and reports
+<code>cleanup failed</code>; the brief notes the retained temporary
+directory. The next enabled check sweeps leftovers within the remaining
+measurement budget, allowing up to 120 seconds in total, with active
+checks and unfinished process holds protected. At most 20 added/modified
+test paths are measured in path order using
+<code>agents.risk_tier.test_patterns</code>; remaining paths are counted
+as omitted. Invalid or unavailable inputs/setup, incomplete or
+interrupted executions, unfamiliar failures and exhausted budgets never
+establish proof. Ordinary measurement failures are advisory and preserve
+QA's result only after confirming no mandatory hold or measurement-owned
+runtime state remains. Termination uncertainty or retained ownership
+stops measurement, records <code>not measured</code> with that reason,
+and follows the normal mandatory gate hold: QA exits 25 (or preserves
+timeout 124/cancellation 130), does not route GREEN, and retains
+ownership until the hold is explicitly resolved. An absent setting adds
+no test runs, record, GitHub requests or acceptance-brief text. Resync
+scripts together before opting in.</p>
 <table>
 <thead>
 <tr>

@@ -1,0 +1,3 @@
+[
+  "gh\tpr\tlist\t--head\ttest-branch\t--json\tnumber,url\t--jq\t.[0]"
+]

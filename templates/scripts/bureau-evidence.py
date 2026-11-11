@@ -167,6 +167,57 @@ def review_merge_shape(value):
             raise ValueError('invalid verification outcome')
 
 
+CHANGED_TEST_CLASSES = ('proves the change', 'does not prove the change', 'fails on both',
+                        'not runnable on base', 'not measured')
+CHANGED_TEST_REASONS = (None, 'unsafe path', 'invalid command template', 'invalid test patterns',
+                        'diff unavailable', 'worktree unavailable', 'test is not a regular file',
+                        'budget exhausted', 'interrupted', 'execution unavailable', 'head did not pass',
+                        'cleanup failed', 'outside gate termination uncertain', 'repository uses worktree links')
+
+
+def changed_test_class(base, head):
+    if 'not measured' in (base['status'], head['status']): return 'not measured'
+    if base['status'] == head['status'] == 'passed': return 'does not prove the change'
+    if base['status'] != 'passed' and head['status'] != 'passed': return 'fails on both'
+    if head['status'] != 'passed': return 'not measured'
+    return 'proves the change' if base['status'] == 'assertion failure' else 'not runnable on base'
+
+
+def changed_tests_shape(value):
+    shape(value, 'base head command_sha256 recorded_at files omitted reason')
+    if (value['base'] is not None and not head(value['base'])) or not head(value['head']):
+        raise ValueError('invalid changed-test HEAD')
+    if not isinstance(value['command_sha256'], str) or not re.fullmatch(r'[a-f0-9]{64}', value['command_sha256']):
+        raise ValueError('invalid changed-test command digest')
+    times(value, 'recorded_at')
+    if (value['recorded_at'] is None or type(value['omitted']) is not int or value['omitted'] < 0
+            or value['reason'] not in CHANGED_TEST_REASONS or value['base'] is None and value['reason'] is None
+            or not isinstance(value['files'], list) or len(value['files']) > 20):
+        raise ValueError('invalid changed-test measurement')
+    seen = set()
+    for row in value['files']:
+        shape(row, 'path base_result head_result class reason')
+        path = row['path']
+        if (not isinstance(path, str) or not 0 < len(path) <= 4096 or path.startswith('/')
+                or any(part in ('', '.', '..', '.git') for part in path.split('/')) or path in seen):
+            raise ValueError('invalid changed-test path')
+        seen.add(path)
+        for result in (row['base_result'], row['head_result']):
+            shape(result, 'status normalized_exit')
+            status, code = result['status'], result['normalized_exit']
+            if (status not in ('passed', 'assertion failure', 'failed', 'not measured')
+                    or code is not None and (type(code) is not int or not -255 <= code <= 255)
+                    or status == 'passed' and code != 0
+                    or status in ('assertion failure', 'failed') and (type(code) is not int or not 1 <= code < 124)):
+                raise ValueError('invalid changed-test result')
+        if (row['class'] != changed_test_class(row['base_result'], row['head_result'])
+                or row['reason'] not in CHANGED_TEST_REASONS
+                or (row['class'] == 'not measured') != (row['reason'] is not None)
+                or value['reason'] not in (None, 'cleanup failed') and row['class'] != 'not measured'
+                or re.search(r'[\x00-\x1f\x7f-\x9f]', path) and row['class'] != 'not measured'):
+            raise ValueError('invalid changed-test classification')
+
+
 def disposition_path(value):
     """Bounded repository-relative metadata, with the same best-effort privacy filter."""
     return (isinstance(value, str) and 0 < len(value) <= MAX_INSIGHT_LENGTH
@@ -433,7 +484,10 @@ def manifest_shape(value):
             if (not isinstance(attempt['outcome_signals'], list)
                     or any(s not in ('timeout', 'provider_error', 'review_capped', 'gate_red', 'human_hold') for s in attempt['outcome_signals'])):
                 raise ValueError('invalid outcome signals')
-        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications', 'review_round', 'outcome_signals')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
+        if 'changed_tests' in attempt:
+            if attempt['stage'] != 'qa': raise ValueError('changed-test evidence outside QA')
+            changed_tests_shape(attempt['changed_tests'])
+        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications', 'review_round', 'outcome_signals', 'changed_tests')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
         identifier(attempt['attempt_id'])
         if attempt['parent_attempt_id'] is not None: identifier(attempt['parent_attempt_id'])
         times(attempt, 'started_at ended_at')
@@ -539,6 +593,15 @@ class Store:
                     raise ValueError('invalid acceptance delivery')
                 if not isinstance(value['body'], str) or text_digest(value['body']) != value['body_sha256']:
                     raise ValueError('invalid acceptance digest')
+            if kind == 'manifest':
+                for attempt in value['attempts']:
+                    if attempt['stage'] != 'qa': continue
+                    try:
+                        optional = read(path.parent / 'changed-tests' / (attempt['attempt_id'] + '.json'))
+                        if optional is not None:
+                            changed_tests_shape(optional)
+                            attempt['changed_tests'] = optional
+                    except (OSError, ValueError, KeyError, TypeError): warn()
             return value
         except (ValueError, KeyError, TypeError, AttributeError):
             if quarantine: self._quarantine(path)
@@ -648,6 +711,10 @@ class Store:
         atomic(path, value)
 
     def _save_manifest(self, value):
+        # Older v1 readers reject unknown attempt fields. Keep the optional
+        # measurement in its sidecar and project it onto attempts when read.
+        value = dict(value, attempts=[{k:v for k,v in attempt.items() if k != 'changed_tests'}
+                                      for attempt in value['attempts']])
         self._write(self.manifest_path(value['run_id']), value)
 
     def _observe_ticket(self, issue, at, reopened=False):
@@ -1035,6 +1102,15 @@ class Store:
             if pr is not None: attempt['pr'] = dict(number=pr_number(pr)); value['pr'] = attempt['pr']
             self._save_manifest(value)
             return record
+
+    def changed_tests(self, run, attempt_id, record):
+        changed_tests_shape(record)
+        with self.guard():
+            value = self._manifest(run)
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == attempt_id)
+            if attempt['stage'] != 'qa': raise ValueError('changed-test evidence outside QA')
+            self._write(self.manifest_path(run).parent / 'changed-tests' / (identifier(attempt_id) + '.json'), record)
+        return record
 
     def valid_execution(self, record):
         try:

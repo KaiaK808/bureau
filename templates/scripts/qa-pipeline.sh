@@ -158,8 +158,13 @@ QA_LOG_PATH="logs/qa-$ISSUE-$QA_LOG_TS-$$.log"
 
 QA_TMP=$(mktemp -d)
 QA_GATE_CONTEXT="$QA_TMP/gate-context.json"
+QA_CHANGED_PID=""
 _qa_cleanup() {
   local rc=$?
+  if [ -n "${QA_CHANGED_PID:-}" ]; then
+    kill -TERM "$QA_CHANGED_PID" 2>/dev/null || true
+    wait "$QA_CHANGED_PID" 2>/dev/null || true
+  fi
   if [ -f "${QA_LOG_PATH:-}" ]; then bureau_archive_evidence_dir_log || true; fi
   # The full log is already in $QA_LOG_PATH when a needs-human arm ends with 25
   # because its label could not be written; nothing to keep there either.
@@ -386,6 +391,21 @@ fi
   echo "=== Phase 3/3: final test run ($([ "$FINAL_GREEN" = true ] && echo PASSED || echo FAILED)) ==="
   if [ -n "$QA_OUTSIDE_MODE" ]; then cat "$QA_TMP/test2.log"; else qa_append_gate_log "$QA_FINAL_LOG"; fi
 } >> "$QA_LOG_PATH"
+
+if [ "$FINAL_GREEN" = true ]; then
+  # Probe the trusted setting locally before doing any optional preparation.
+  # A provider-free run probes the same startup-fetched main that QA merged.
+  ( bureau_exec_runtime python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-changed-tests.py" \
+      --repo "$REPO_DIR" --base "$QA_BASE" --branch "$BRANCH" ) &
+  QA_CHANGED_PID=$!
+  trap 'exit 130' TERM INT HUP
+  CHANGED_RC=0
+  wait "$QA_CHANGED_PID" || CHANGED_RC=$?
+  QA_CHANGED_PID=""
+  trap - TERM INT HUP
+  # Advisory failures never change QA; safety and cancellation still do.
+  case "$CHANGED_RC" in 25|124|130) exit "$CHANGED_RC" ;; esac
+fi
 
 STATUS=$(parse_claude_json "$QA_RESULT" '.status // empty')
 [ -z "$STATUS" ] && STATUS=$([ "$FINAL_GREEN" = true ] && echo "GREEN" || echo "RED")

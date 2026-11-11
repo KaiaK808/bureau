@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "record_type": "manifest",
+  "run_id": "00000000000000000000000000000000",
+  "issue": null,
+  "workspace": ".",
+  "started_at": 1,
+  "ended_at": null,
+  "start_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "final_head": null,
+  "normalized_exit": null,
+  "pr": {
+    "number": 1
+  },
+  "attempts": [
+    {
+      "attempt_id": "11111111111111111111111111111111",
+      "parent_attempt_id": null,
+      "stage": "qa",
+      "phase": "stage",
+      "workspace": ".",
+      "started_at": 1,
+      "ended_at": null,
+      "start_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "final_head": null,
+      "normalized_exit": null,
+      "receipts": [],
+      "gates": [
+        {
+          "kind": "gate",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "end_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "command_id": "qa.test",
+          "command_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "normalized_exit": 0,
+          "recorded_at": 2,
+          "bytes": 1,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "pr": {
+        "number": 1
+      }
+    }
+  ]
+}
