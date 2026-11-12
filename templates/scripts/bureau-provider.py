@@ -249,14 +249,21 @@ def untrusted_env(environ, mode, runner=None):
             if not name.startswith(UNTRUSTED_HOST_PREFIXES) and keep(name) and not carries(value)}
 
 
-def auth(options):
+def auth(options, timeouts=(20, 60)):
     runner = options['runner']
     if not shutil.which(runner): raise AuthError(runner + ' executable is missing')
     cmd = ['claude', 'auth', 'status', '--json'] if runner == 'claude' else ['codex', 'login', 'status']
     # The login check runs in the environment the agent will get, so a
     # "clean" mode that drops the agent's login fails here, with 16.
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20,
-                          env=claude_env(options, env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)))
+    for timeout in timeouts:
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                                  env=claude_env(options, env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)))
+            break
+        except subprocess.TimeoutExpired: pass
+    else:
+        raise AuthError(runner + ' login-check-timeout after ' + format(sum(timeouts), 'g')
+                        + ' s; the login itself was not found to be missing; rerun the stage; if it repeats, check host load or the CLI')
     if proc.returncode != 0: raise AuthError(runner + ' is not authenticated')
     if runner == 'claude':
         try: logged = json.loads(proc.stdout).get('loggedIn') is True

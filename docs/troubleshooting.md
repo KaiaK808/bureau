@@ -556,6 +556,8 @@ Check the bureau-branch comment marker. If it points at a branch that was delete
 
 Exit 16 now covers the selected provider. Inspect `claude auth status --json` or `codex login status` and complete that provider's normal login flow. Bureau checks authentication without a probe generation. This is separate from the Linear API key used for ticket CRUD.
 
+If the login check times out after 20 s, Bureau retries once with a 60 s limit. Two timeouts end with exit 16 and `login-check-timeout` after 80 s; the login itself was not found to be missing. Rerun the stage; if it repeats, check host load or the CLI. The shepherd and dispatcher use their existing sleep and retry behavior. Doctor reports its 20 s timeout as `login check timed out`, separately from a CLI response that does not confirm login.
+
 ### Headless Claude calls hang or timeout
 
 Inspect the adapter's preserved stdout/stderr and result metadata before retrying; after a Claude timeout `stdout.log` is empty, and the transcript path in `result.json` shows what the call did (see [Exit 124](#exit-124-timeout--a-provider-pass-hit-its-time-limit)). Confirm provider login, network availability and the configured timeout. Exit 124 indicates the bound was reached, 130 cancellation, and 24 an environment/permission failure. The bound is `timeout_seconds` per provider call: 3600 s by default since v3.1 (900 s before), set per stage or per provider in `.bureau.json`; doctor warns when an enabled spec, spec review, UX, QA or review stage gets less than 1800 s. A retry requires inspection of interrupted ownership; avoid an unbounded probe or a permissions bypass as a diagnostic shortcut.

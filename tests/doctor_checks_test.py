@@ -845,9 +845,20 @@ class ClaudeConfigDirTests(Repo):
             self.assertIs(result['claude_config_dirs'][stage]['logged_in'], False)
             self.assertIn('did not report loggedIn true', result['claude_config_dirs'][stage]['reason'])
         found = self.warnings(result)
-        self.assertEqual(len(found), 1, found)
-        self.assertIn(str(self.lean) + ' (spec, implement, code_review)', found[0])
-        self.assertIn('CLAUDE_CONFIG_DIR=' + str(self.lean) + ' claude', found[0])
+        self.assertEqual(found, ['Claude is not logged in in the configuration directory ' + str(self.lean)
+                                + ' (spec, implement, code_review): claude auth status --json did not report loggedIn true (exit 0)'
+                                + '; the stage ends with 16 before any call. Log in with CLAUDE_CONFIG_DIR=' + str(self.lean) + ' claude'])
+
+    def test_login_timeout_warns_that_login_is_unconfirmed(self):
+        def run(command, *args, **kwargs):
+            if command[:3] == ['claude', 'auth', 'status']: raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+            return REAL_RUN(command, *args, **kwargs)
+        with patch.object(d.subprocess, 'run', side_effect=run):
+            result = self.diagnose(self.config(providers={'claude': {'config_dir': str(self.lean)}}))
+        found = [w for w in result['warnings'] if 'login check timed out' in w]
+        self.assertEqual(found, ['Claude login check timed out after 20 s; login is unconfirmed; rerun the stage, and if it repeats check host load or the CLI'
+                                + ' (configuration directory ' + str(self.lean) + '; stages: spec, implement, code_review)'])
+        self.assertEqual(self.warnings(result), [])
 
     def test_the_environment_override_wins_and_is_the_directory_checked(self):
         other = self.base / 'profiles' / 'other'; other.mkdir(); (other / 'logged-in').write_text('')

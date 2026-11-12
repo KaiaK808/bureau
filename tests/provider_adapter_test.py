@@ -2,7 +2,7 @@ import importlib.util
 import atexit
 import argparse
 import io
-from contextlib import nullcontext, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 import json
 import os
 from pathlib import Path
@@ -28,6 +28,7 @@ CODEX_TMP_PREFIX = os.environ.get('BUREAU_TEST_CODEX_TMP_PREFIX', 'bureau-codex-
 if CODEX_TMP_PREFIX != 'bureau-codex-':
     isolated = tempfile.TemporaryDirectory(prefix='bureau-pr7-provider-source-')
     atexit.register(isolated.cleanup)
+    shutil.copy(SCRIPT.with_name('bureau-doctor.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-evidence.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-gates.py'), isolated.name)
     shutil.copy(SCRIPT.with_name('bureau-review-config.py'), isolated.name)
@@ -45,6 +46,141 @@ CODEX_RECONNECT_ERRORS = '''{"type":"error","message":"Reconnecting... 1/5 (unex
 {"type":"error","message":"Reconnecting... 3/5 (unexpected status 503 Service Unavailable)"}
 '''
 CODEX_COMPLETED = '{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":3}}\n'
+
+
+class LoginCheckTests(unittest.TestCase):
+    def check_login(self, runner, mode, *, doctor=False, escape=False):
+        with tempfile.TemporaryDirectory(prefix='bureau login ') as temp:
+            root=Path(temp); bin_dir=root/'bin'; bin_dir.mkdir()
+            fake='#!'+sys.executable+'''
+import json, os, pathlib, sys, time
+root=pathlib.Path(__file__).resolve().parent.parent
+runner=pathlib.Path(sys.argv[0]).name
+assert sys.argv[1:] == (['auth','status','--json'] if runner == 'claude' else ['login','status'])
+with (root/'calls').open('a') as calls: calls.write(str(os.getpid())+'\\n')
+attempt=len((root/'calls').read_text().splitlines())
+(root/('ready-'+str(os.getpid()))).touch()
+mode=os.environ['FAKE_AUTH_MODE']
+if mode == 'hang' or (mode in ('retry','retry-missing') and attempt == 1):
+    while True: time.sleep(60)
+# A healthy CLI can pause after readiness, longer than either test deadline.
+time.sleep(.35)
+if mode in ('missing','retry-missing'): sys.exit(1)
+print(json.dumps({'loggedIn':mode != 'unconfirmed'}))
+'''
+            for name in ('claude','codex'):
+                path=bin_dir/name; path.write_text(fake); path.chmod(0o755)
+            config=root/'config.json'; config.write_text(json.dumps({'agents':{'runner':runner}}))
+            env={'PATH':str(bin_dir)+os.pathsep+os.defpath,'FAKE_AUTH_MODE':mode,'TMPDIR':str(root)}
+            children=[]; original_popen=subprocess.Popen; original_run=subprocess.run; original_auth=p.auth
+            def start(*args, **kwargs):
+                child=original_popen(*args, **kwargs); children.append(child)
+                # Short communicate deadlines apply only to intentional hangs.
+                ready=root/('ready-'+str(child.pid)); deadline=time.monotonic()+3
+                while not ready.exists() and time.monotonic()<deadline: time.sleep(.005)
+                self.assertTrue(ready.exists(),'fake login CLI did not reach its ready marker')
+                hangs=mode == 'hang' or (mode in ('retry','retry-missing') and len(children) == 1)
+                if not hangs: child.wait(timeout=5)
+                return child
+            def auth(options):
+                if escape:
+                    # Exercise the same entry point's generic handler without old source or a long wait.
+                    return subprocess.run([runner, *(['auth','status','--json'] if runner == 'claude' else ['login','status'])],
+                                          capture_output=True, text=True, timeout=.1)
+                return original_auth(options, timeouts=(.1,.2))
+            output=io.StringIO(); error=io.StringIO()
+            try:
+                with patch.dict(os.environ,env,clear=True), patch.object(subprocess,'Popen',side_effect=start), \
+                        patch.object(subprocess,'run',wraps=original_run) as run, patch.object(p,'auth',side_effect=auth), \
+                        patch.object(sys,'argv',[str(SCRIPT),'--stage','implement','--repo',str(root),'--config',str(config),'--check']), \
+                        redirect_stdout(output), redirect_stderr(error):
+                    if doctor:
+                        spec=importlib.util.spec_from_file_location('login_doctor',SCRIPT.with_name('bureau-doctor.py'))
+                        d=importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
+                        result=d.claude_logged_in(p,{'runner':runner},'default',timeout=.1)
+                    else: result=p.main()
+                for child in children:
+                    self.assertIsNotNone(child.poll(),'fake login CLI survived the check')
+                    with self.assertRaises(ProcessLookupError): os.kill(child.pid,0)
+                calls=(root/'calls').read_text().splitlines()
+                self.assertEqual(len(calls),len(children))
+                return result, output.getvalue(), error.getvalue(), [call.kwargs['timeout'] for call in run.call_args_list]
+            finally:
+                for child in children:
+                    if child.poll() is None: child.kill()
+                    child.wait(timeout=5)
+                    for stream in (child.stdin,child.stdout,child.stderr):
+                        if stream is not None: stream.close()
+
+    def test_first_timeout_then_login_allows_the_check_to_proceed(self):
+        for runner in ('claude','codex'):
+            with self.subTest(runner=runner):
+                code,out,err,limits=self.check_login(runner,'retry')
+                self.assertEqual((code,err),(0,''))
+                self.assertEqual(json.loads(out),{'runner':runner,'authenticated':True})
+                self.assertEqual(limits,[.1,.2])
+
+    def test_confirmed_login_needs_only_one_call(self):
+        for runner in ('claude','codex'):
+            with self.subTest(runner=runner):
+                code,out,err,limits=self.check_login(runner,'ready')
+                self.assertEqual((code,err),(0,''))
+                self.assertEqual(json.loads(out),{'runner':runner,'authenticated':True})
+                self.assertEqual(limits,[.1])
+
+    def test_two_timeouts_use_the_existing_auth_exit(self):
+        for runner in ('claude','codex'):
+            with self.subTest(runner=runner):
+                code,out,err,limits=self.check_login(runner,'hang')
+                self.assertEqual((code,out),(16,''))
+                for text in ('login-check-timeout','after 0.3 s','the login itself was not found to be missing',
+                             'rerun the stage; if it repeats, check host load or the CLI'):
+                    self.assertIn(text,err)
+                self.assertEqual(limits,[.1,.2])
+
+    def test_missing_login_is_not_retried(self):
+        for runner in ('claude','codex'):
+            with self.subTest(runner=runner):
+                code,out,err,limits=self.check_login(runner,'missing')
+                self.assertEqual((code,out,err),(16,'',runner+' is not authenticated\n'))
+                self.assertEqual(limits,[.1])
+        code,out,err,limits=self.check_login('claude','unconfirmed')
+        self.assertEqual((code,out,err),(16,'','Claude auth status did not confirm login\n'))
+        self.assertEqual(limits,[.1])
+
+    def test_missing_login_after_a_timeout_keeps_the_existing_message(self):
+        for runner in ('claude','codex'):
+            with self.subTest(runner=runner):
+                code,out,err,limits=self.check_login(runner,'retry-missing')
+                self.assertEqual((code,out,err),(16,'',runner+' is not authenticated\n'))
+                self.assertEqual(limits,[.1,.2])
+
+    def test_escaping_timeout_uses_the_same_entry_points_provider_error_exit(self):
+        for runner in ('claude','codex'):
+            with self.subTest(runner=runner):
+                code,out,err,limits=self.check_login(runner,'hang',escape=True)
+                self.assertEqual((code,out),(22,''))
+                self.assertIn('timed out',err)
+                self.assertNotIn('login-check-timeout',err)
+                self.assertEqual(limits,[.1])
+
+    def test_production_limits_remain_20_then_60_seconds(self):
+        for runner in ('claude','codex'):
+            with self.subTest(runner=runner), patch.object(p.shutil,'which',return_value=runner), \
+                    patch.object(subprocess,'run',side_effect=[subprocess.TimeoutExpired(runner,20),
+                        subprocess.CompletedProcess(runner,0,stdout='{"loggedIn":true}')]) as run:
+                p.auth({'runner':runner})
+                self.assertEqual([call.kwargs['timeout'] for call in run.call_args_list],[20,60])
+        with patch.object(p.shutil,'which',return_value='claude'), \
+                patch.object(subprocess,'run',side_effect=subprocess.TimeoutExpired('claude',60)), \
+                self.assertRaisesRegex(p.AuthError,'login-check-timeout after 80 s'):
+            p.auth({'runner':'claude'})
+
+    def test_doctor_timeout_has_its_own_reason(self):
+        result,out,err,limits=self.check_login('claude','hang',doctor=True)
+        self.assertEqual(result,(False,'login check timed out after 0.1 s'))
+        self.assertEqual((out,err),('',''))
+        self.assertEqual(limits,[.1])
 
 
 class ProviderTests(unittest.TestCase):
