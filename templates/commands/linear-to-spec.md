@@ -75,6 +75,7 @@ Use any tech stack information from:
 ### 5. Run speckit-tasks
 
 Invoke `/speckit-tasks` via the Skill tool to generate the task breakdown.
+In `tasks.md`, name every file or directory a task touches by its repository-relative path in backticks, with a trailing slash for directories; identifiers, labels and wording in backticks are not treated as files.
 
 ### 6. Create Linear sub-issues from tasks.md
 

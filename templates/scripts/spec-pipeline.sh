@@ -408,6 +408,7 @@ echo ""
 echo "Phase 3/5: tasks"
 if ! printf '%s' "$SPEC_CHECKPOINTS" | jq -e 'index("tasks") != null' >/dev/null; then
 BUREAU_PROVIDER_PHASE=tasks "${CLAUDE[@]}" "Read the file $SPECKIT_DIR/speckit-tasks/SKILL.md and follow its instructions exactly.
+In tasks.md, name every file or directory a task touches by its repository-relative path in backticks, with a trailing slash for directories; identifiers, labels and wording in backticks are not treated as files.
 Review and human feedback:
 $SPEC_FEEDBACK
 Work on the spec in $SPEC_DIR (and no other directory under $BUREAU_SPECS_DIR/)."

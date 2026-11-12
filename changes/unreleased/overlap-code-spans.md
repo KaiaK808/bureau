@@ -1,0 +1,3 @@
+section: Fixed
+
+- File-overlap inventories ignore code spans without a slash, backslash, period or known path name, preserve existing extraction of dotted names with spaces and unresolved paths, and record an optional ignored count; task-generation guidance names repository-relative paths explicitly. **Upgrade:** resync the scripts together; no configuration change. Validation: 20 comparisons with the previous extractor, dotted-span regression and filename-rule negative control, Python 3.9 syntax parsing, Bash syntax, rendered documentation source-hash/local-link checks and changelog validation.

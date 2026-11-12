@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="adb1d9182631e00f85ade34cf355deee8d2a60662d37a4239b854c892f9d7586">
+<meta name="bureau-source-sha256" content="5783e183eb3dce0ce0edf27bf82ed3c9e9d8e7dad4d44d7bb742a1723be7025c">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -483,13 +483,18 @@ SHA-256 and normalized paths in
 <code>&lt;git common dir&gt;/bureau/admission/v1.json</code>. App spec
 completion does the same. The extractor supports root and extensionless
 files, including bare dotfiles and standalone root references in
-mixed-path tasks, arbitrary language layouts and directory scopes. The
-root scope <code>.</code> overlaps every path; unresolved root spellings
-become unknown. Globs expand against the committed Git tree; unresolved
-globs, missing/ambiguous inventories, traversal and ambiguous
-extensionless references become unknown. Unknown scope overlaps the
-entire repository and can be admitted exclusively. The literal
-<code>repo.path_prefix_strip</code> applies once. Generated
+mixed-path tasks, arbitrary language layouts and directory scopes. Code
+spans without <code>/</code>, a backslash or any <code>.</code> are
+ignored unless they name a tracked file, tracked directory or recognized
+root name, directly or after normalization; path-shaped references that
+do not resolve still make the scope unknown. A new extensionless root
+file needs an explicit path form such as <code>./Procfile</code> to be
+reserved. The root scope <code>.</code> overlaps every path; unresolved
+root spellings become unknown. Globs expand against the committed Git
+tree; unresolved globs, missing/ambiguous inventories, traversal and
+ambiguous extensionless link destinations become unknown. Unknown scope
+overlaps the entire repository and can be admitted exclusively. The
+literal <code>repo.path_prefix_strip</code> applies once. Generated
 documentation and CHANGELOG paths remain ordinary conflicts even when
 another resolver can regenerate them. The advisory spec crosscheck uses
 this extractor and exact/directory matching only while the gate is
