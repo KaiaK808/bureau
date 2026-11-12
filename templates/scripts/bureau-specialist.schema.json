@@ -142,6 +142,15 @@
         "type": "string"
       }
     },
+    "questions": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
     "summary": {
       "type": "string"
     }

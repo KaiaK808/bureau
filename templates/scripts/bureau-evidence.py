@@ -124,9 +124,9 @@ def review_round_shape(value):
 
 def review_merge_shape(value):
     """Allowlist identities, counts and enums, never claim/source prose."""
-    optional = {'human_holds', 'verdict_floor', 'severity_counts', 'result_sha256', 'missing_acceptance_count', 'fixes_needed_count', 'fallback_reasons', 'specialist_sha256'}
+    optional = {'human_holds', 'human_questions', 'verdict_floor', 'severity_counts', 'result_sha256', 'missing_acceptance_count', 'fixes_needed_count', 'fallback_reasons', 'specialist_sha256'}
     shape({k:v for k,v in value.items() if k not in optional}, 'mode malformed_specialists grounding invalid_anchors anchor_checks verifier verifier_omitted critical_floor security_floor adr_refs')
-    for key in ('human_holds', 'missing_acceptance_count', 'fixes_needed_count'):
+    for key in ('human_holds', 'human_questions', 'missing_acceptance_count', 'fixes_needed_count'):
         if key in value and (type(value[key]) is not int or not 0 <= value[key] <= 3999999999): raise ValueError('invalid blocker count')
     if 'verdict_floor' in value and value['verdict_floor'] not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK'):
         raise ValueError('invalid specialist verdict floor')

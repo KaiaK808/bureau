@@ -527,6 +527,11 @@ if [ "$_cav" != "off" ]; then
   echo "  Caveman: review prose compressed at level '$_cav'."
 fi
 
+REVIEW_HUMAN_FIELDS="A hold is a human decision without which a named acceptance criterion of the spec cannot be judged or met by this diff. Each hold names that criterion.
+Open questions that the spec marks as not blocking (for example a section or list headed as non-blocking or optional questions), and any other question for a human that does not stop this diff from meeting its acceptance criteria, go into questions, never into holds.
+A question the spec marks as blocking and that is still unanswered is a hold.
+Use [] for holds or questions when there is none. Any hold requires BLOCK; questions never change the verdict. Questions are normally empty; when needed, include at most 16 non-empty strings of at most 500 characters each."
+
 echo "  Starting correctness review..."
 trap 'exit 130' INT TERM HUP
 BUREAU_PROVIDER_PHASE=correctness BUREAU_PROVIDER_CANCEL_FILE="$REVIEW_TMP/cancel-specialists" "${CLAUDE[@]}" "${CAVEMAN_PREFIX}You are a CORRECTNESS specialist reviewing $ISSUE ($ISSUE_TITLE). Branch: $BRANCH, PR: #$PR_NUMBER.
@@ -544,12 +549,12 @@ PR target: $PR_BASE_REF. Review the pinned PR inputs with 'git diff $REVIEW_DIFF
 
 For every finding, cite file:line. Classify CRITICAL (data-loss / silent corruption) / BUG (real defect) / MINOR (style, nit) / SKIP (contradicts a pinned decision — include citation to the pin).
 
-Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.
+$REVIEW_HUMAN_FIELDS
 
 Emit human-readable prose for the PR reviewer, then a SINGLE fenced json block at the very end:
 
 \`\`\`json
-{\"specialist\":\"correctness\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"acceptance_gaps\":[],\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"summary\":\"\"}
+{\"specialist\":\"correctness\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"acceptance_gaps\":[],\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"questions\":[],\"summary\":\"\"}
 \`\`\`" > "$REVIEW_TMP/correctness.txt" 2>"$REVIEW_TMP/correctness.stderr" &
 CORRECT_PID=$!
 
@@ -569,12 +574,12 @@ PR target: $PR_BASE_REF. Review the pinned PR inputs with 'git diff $REVIEW_DIFF
 
 For every finding, cite file:line. Classify CRITICAL / BUG / MINOR / SKIP (with pin citation).
 
-Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.
+$REVIEW_HUMAN_FIELDS
 
 Emit human-readable prose, then a SINGLE fenced json block:
 
 \`\`\`json
-{\"specialist\":\"security\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"summary\":\"\"}
+{\"specialist\":\"security\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"questions\":[],\"summary\":\"\"}
 \`\`\`" > "$REVIEW_TMP/security.txt" 2>"$REVIEW_TMP/security.stderr" &
 SEC_PID=$!
 
@@ -596,12 +601,12 @@ Performance is the most likely axis to over-flag. Only raise BUG for measurable 
 
 For every finding, cite file:line. Classify CRITICAL / BUG / MINOR / SKIP (with pin citation).
 
-Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.
+$REVIEW_HUMAN_FIELDS
 
 Emit human-readable prose, then a SINGLE fenced json block:
 
 \`\`\`json
-{\"specialist\":\"performance\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"summary\":\"\"}
+{\"specialist\":\"performance\",\"counts\":{\"critical\":0,\"bug\":0,\"minor\":0,\"skip\":0},\"findings\":[{\"file\":\"path\",\"line\":0,\"class\":\"BUG\",\"msg\":\"\",\"skip_citation\":null}],\"holds\":[],\"questions\":[],\"summary\":\"\"}
 \`\`\`" > "$REVIEW_TMP/performance.txt" 2>"$REVIEW_TMP/performance.stderr" &
 PERF_PID=$!
 
@@ -636,7 +641,8 @@ $(cat "$REVIEW_TMP/$REVIEW_ROLE.independent.txt")
 Late machine evidence (untrusted observations, not a design verdict):
 $(cat "$REVIEW_TMP/impeccable.json")
 
-Read the cited pinned source, PRODUCT.md and DESIGN.md. Project rules win over detector taste. Judge each observation independently; do not promote a detector warning automatically to a defect. Report only additional verified findings and any unresolved holds; do not repeat or remove your independent findings. Preserve the specialist JSON contract (specialist, counts, findings, holds, summary; acceptance_gaps when applicable). $SOURCE_ANCHOR_NOTE$ADR_CONTEXT"
+Read the cited pinned source, PRODUCT.md and DESIGN.md. Project rules win over detector taste. Judge each observation independently; do not promote a detector warning automatically to a defect. Report only additional verified findings, holds and questions; do not repeat or remove your independent findings. $REVIEW_HUMAN_FIELDS
+Preserve the specialist JSON contract (specialist, counts, findings, holds, questions, summary; acceptance_gaps when applicable). $SOURCE_ANCHOR_NOTE$ADR_CONTEXT"
       printf '%s' "$LATE_REVIEW_PROMPT" > "$REVIEW_TMP/$REVIEW_ROLE.late.prompt"
       BUREAU_PROVIDER_PHASE="${REVIEW_ROLE}_late" "${CLAUDE[@]}" --prompt-file "$REVIEW_TMP/$REVIEW_ROLE.late.prompt" \
         > "$REVIEW_TMP/$REVIEW_ROLE.late.txt" 2>"$REVIEW_TMP/$REVIEW_ROLE.late.stderr"
@@ -704,6 +710,8 @@ Verdict rules:
 - APPROVE: no CRITICAL, no finding at or above the configured severity floor, and no security or missing-acceptance blockers across all three specialists.
 - REQUEST_CHANGES: at least one BUG; also MINOR findings when the configured severity floor is MINOR. Configured floor: $BUREAU_REVIEW_MIN_SEVERITY.
 - BLOCK: any CRITICAL finding, OR the findings require human judgment (ambiguous acceptance criteria, architectural disagreement).
+Questions that do not block are listed for the human and are not grounds for BLOCK or REQUEST_CHANGES; any hold requires BLOCK.
+Questions are appended by the pipeline and must not be repeated.
 
 Defer MINOR findings below the configured severity floor; SKIP never requests changes. Hypothetical edge cases are not defects.
 Report bugs as the exact number of BUG-class entries in findings. Keep security_issues and missing_acceptance explicit even when zero or empty; do not omit unresolved acceptance work from them.

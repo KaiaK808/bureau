@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="5783e183eb3dce0ce0edf27bf82ed3c9e9d8e7dad4d44d7bb742a1723be7025c">
+<meta name="bureau-source-sha256" content="522b8eff3757a3d53dacdd7f1a73bdca48cbcbb594028d8e614da530a795749c">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1044,30 +1044,49 @@ duplicate claim details, specialist provenance, anchors and ADR IDs are
 retained. Actionable provenance is tracked per variant: a security SKIP
 cannot promote a correctness MINOR into the security floor. Normalized
 findings retain finding IDs, ranges and the complete anchor union, so
-metadata IDs remain traceable after temporary cleanup. Specialists
-report unresolved human decisions in <code>holds: ["reason"]</code>
-(empty when none); any structured hold forces BLOCK through convergence,
-including after fallback. Noncritical per-role counts must match their
-findings or select fallback; structured CRITICAL counts remain an
-independent floor, even when claim prose is unreadable. Every readable
-structured finding, acceptance gap, hold and severity-count floor from
-every specialist, including malformed ones, survives fallback.
-Completely unreadable or schema-invalid output and uncertain claims
-require at least REQUEST_CHANGES; a fallback APPROVE cannot clear that
-uncertainty. Pure JSON with neutral summaries, empty holds/findings/gaps
-and zero counts can approve deterministically; negated or zero-tally
-summaries can approve through the merger without invented floors. The
-helper supplies retained floors to the legacy result contract; shell
+metadata IDs remain traceable after temporary cleanup. Any structured
+hold forces BLOCK through convergence, including after fallback.
+Noncritical per-role counts must match their findings or select
+fallback; structured CRITICAL counts remain an independent floor, even
+when claim prose is unreadable. Every readable structured finding,
+acceptance gap, hold and severity-count floor from every specialist,
+including malformed ones, survives fallback. Completely unreadable or
+schema-invalid core output and uncertain claims require at least
+REQUEST_CHANGES; a fallback APPROVE cannot clear that uncertainty. Pure
+JSON with neutral summaries, empty holds/findings/gaps and zero counts
+can approve deterministically; negated or zero-tally summaries can
+approve through the merger without invented floors. The helper supplies
+retained floors to the legacy result contract; shell
 <code>review_convergence</code> and <code>decide_review_verdict</code>
 keep severity, security, build and cap decisions.</p>
 <p>A fixed findings template renders summaries, class groups, source
-anchors, fixes and human holds for both deterministic and fallback
-results. The outer comment preserves <code>Code Review v2</code>,
-<code>**Verdict**:</code>, <code>**Reviewed head**:</code> and
-<code>**Target**:</code>. <code>merge-pipeline.sh</code> and the
-dispatcher consume the review marker/verdict; <code>review_counts</code>
-consumes terminal <code>bureau-review-round</code> markers and legacy
-Changes Requested headers; <code>implement-pipeline.sh</code> consumes
+anchors, fixes, non-blocking questions and human holds for both
+deterministic and fallback results. A <code>holds</code> entry names the
+spec acceptance criterion that this diff cannot meet or let the reviewer
+judge without a human decision, including an unanswered question the
+spec marks as blocking; every hold still forces BLOCK. Optional
+<code>questions</code> (at most 16 non-empty strings of at most 500
+characters each per specialist report) carries questions the spec marks
+as non-blocking or optional and other human questions that do not
+prevent acceptance: they render as single-line list items between fixes
+and holds, survive fallback and are counted as
+<code>human_questions</code>, but never affect verdicts or routing;
+unreadable question values are ignored and reports may omit the field.
+Independent and late reports are validated separately before questions
+are deduplicated in first-seen order; the full union is retained for
+counts and evidence, while rendering shows at most 32 questions followed
+by an omitted count. Fallback receives specialist reports unchanged, and
+its model-written comment may repeat questions just as summaries,
+finding messages or holds, with no new publication safeguard. The
+pipeline appends the validated, escaped question section; reports that
+parse contribute questions on fallback, while completely unparseable
+reports contribute none. The outer comment preserves
+<code>Code Review v2</code>, <code>**Verdict**:</code>,
+<code>**Reviewed head**:</code> and <code>**Target**:</code>.
+<code>merge-pipeline.sh</code> and the dispatcher consume the review
+marker/verdict; <code>review_counts</code> consumes terminal
+<code>bureau-review-round</code> markers and legacy Changes Requested
+headers; <code>implement-pipeline.sh</code> consumes
 <code>Code Review.*Changes Requested</code>. These strings and round
 accounting are unchanged. Fallback retention applies even with grounding
 and the verifier disabled.</p>
