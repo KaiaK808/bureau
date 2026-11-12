@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 import uuid
 
 VERSION = 1
@@ -216,6 +217,89 @@ def changed_tests_shape(value):
                 or value['reason'] not in (None, 'cleanup failed') and row['class'] != 'not measured'
                 or re.search(r'[\x00-\x1f\x7f-\x9f]', path) and row['class'] != 'not measured'):
             raise ValueError('invalid changed-test classification')
+
+
+INTEGRITY_CHECKS = ('assertions', 'skips', 'imports')
+INTEGRITY_STATUSES = ('pass', 'flagged', 'unverifiable')
+INTEGRITY_REASONS = (None, 'diff unavailable', 'tree unavailable', 'invalid test patterns',
+                     'changed file limit exceeded', 'file size limit exceeded', 'budget exhausted',
+                     'unsafe path', 'file unavailable', 'Python parse error',
+                     'no recogniser for this file type', 'interrupted')
+INTEGRITY_KINDS = {
+    'assertions': ('assertions removed', 'assertion-like sites went down', 'test file deleted'),
+    'skips': ('new skip or disabled test',),
+    'imports': ('unresolved first-party import',),
+}
+INTEGRITY_FILE_REASONS = ('file size limit exceeded', 'unsafe path', 'file unavailable',
+                          'Python parse error', 'no recogniser for this file type')
+
+
+def integrity_path(path):
+    # Same rule as bureau-changed-tests.safe_path, without changing its contract.
+    return (isinstance(path, str) and 0 < len(path) <= 4096 and not path.startswith('/')
+            and all(part.lower() not in ('', '.', '..', '.git') for part in path.split('/'))
+            and not any(unicodedata.category(char).startswith('C') for char in path))
+
+
+def integrity_verdict(statuses):
+    return 'flagged' if 'flagged' in statuses else 'unverifiable' if 'unverifiable' in statuses else 'pass'
+
+
+def test_integrity_shape(value):
+    shape(value, 'base head recorded_at verdict checks findings omitted unverifiable_files reason')
+    if (value['base'] is not None and not head(value['base'])) or not head(value['head']):
+        raise ValueError('invalid test-integrity HEAD')
+    times(value, 'recorded_at')
+    def count(number):
+        if type(number) is not int or not 0 <= number <= 2**31 - 1:
+            raise ValueError('invalid test-integrity count')
+    count(value['omitted']); count(value['unverifiable_files'])
+    if value['recorded_at'] is None or value['reason'] not in INTEGRITY_REASONS:
+        raise ValueError('invalid test-integrity measurement')
+    shape(value['checks'], ' '.join(INTEGRITY_CHECKS))
+    fields = dict(assertions='removed', skips='added', imports='unresolved external')
+    for check, row in value['checks'].items():
+        shape(row, 'status files unverifiable reason ' + fields[check])
+        for key in ('files unverifiable ' + fields[check]).split(): count(row[key])
+        flags = row[fields[check].split()[0]]
+        if (row['status'] not in INTEGRITY_STATUSES or row['reason'] not in INTEGRITY_REASONS
+                or (row['status'] == 'flagged') != (flags > 0)
+                or row['status'] == 'unverifiable' and row['reason'] is None
+                or row['status'] == 'pass' and (row['reason'] is not None or row['unverifiable'])
+                or row['unverifiable'] > row['files']):
+            raise ValueError('invalid test-integrity check')
+    if (value['verdict'] != integrity_verdict([row['status'] for row in value['checks'].values()])
+            or (value['reason'] is None) != all(row['reason'] is None for row in value['checks'].values())
+            or value['base'] is None and value['verdict'] == 'pass'):
+        raise ValueError('invalid test-integrity verdict')
+    findings = value['findings']
+    if not isinstance(findings, list) or len(findings) > 40:
+        raise ValueError('invalid test-integrity findings')
+    for row in findings:
+        if not isinstance(row, dict): raise ValueError('invalid test-integrity finding')
+        check = row.get('check')
+        if check not in INTEGRITY_CHECKS: raise ValueError('invalid test-integrity finding check')
+        extra = ' base_count head_count' if check == 'assertions' else ' module' if check == 'imports' else ''
+        shape(row, 'check path line kind' + extra)
+        if (not integrity_path(row['path']) or
+                row['line'] is not None and (type(row['line']) is not int or not 1 <= row['line'] <= 2**31 - 1)
+                or row['kind'] not in INTEGRITY_KINDS[check] + INTEGRITY_FILE_REASONS):
+            raise ValueError('invalid test-integrity finding')
+        status = value['checks'][check]
+        if (row['kind'] in INTEGRITY_KINDS[check] and status['status'] != 'flagged'
+                or row['kind'] in INTEGRITY_FILE_REASONS and status['reason'] is None):
+            raise ValueError('inconsistent test-integrity finding')
+        if check == 'assertions':
+            for key in ('base_count', 'head_count'):
+                if row[key] is not None: count(row[key])
+            if row['kind'] in INTEGRITY_KINDS[check] and (
+                    row['base_count'] is None or row['head_count'] is None or row['base_count'] <= row['head_count']
+                    or row['kind'] == 'test file deleted' and (row['head_count'] != 0 or row['line'] is not None)):
+                raise ValueError('invalid removed assertion counts')
+        if check == 'imports' and row['module'] is not None and not integrity_path(row['module']):
+            raise ValueError('invalid unresolved module path')
+    if [row['path'] for row in findings] != sorted(row['path'] for row in findings):
+        raise ValueError('unsorted test-integrity findings')
 
 
 def disposition_path(value):
@@ -487,7 +571,10 @@ def manifest_shape(value):
         if 'changed_tests' in attempt:
             if attempt['stage'] != 'qa': raise ValueError('changed-test evidence outside QA')
             changed_tests_shape(attempt['changed_tests'])
-        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications', 'review_round', 'outcome_signals', 'changed_tests')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
+        if 'test_integrity' in attempt:
+            if attempt['stage'] != 'qa': raise ValueError('test-integrity evidence outside QA')
+            test_integrity_shape(attempt['test_integrity'])
+        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications', 'review_round', 'outcome_signals', 'changed_tests', 'test_integrity')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
         identifier(attempt['attempt_id'])
         if attempt['parent_attempt_id'] is not None: identifier(attempt['parent_attempt_id'])
         times(attempt, 'started_at ended_at')
@@ -602,6 +689,12 @@ class Store:
                             changed_tests_shape(optional)
                             attempt['changed_tests'] = optional
                     except (OSError, ValueError, KeyError, TypeError): warn()
+                    try:
+                        optional = read(path.parent / 'test-integrity' / (attempt['attempt_id'] + '.json'))
+                        if optional is not None:
+                            test_integrity_shape(optional)
+                            attempt['test_integrity'] = optional
+                    except (OSError, ValueError, KeyError, TypeError): warn()
             return value
         except (ValueError, KeyError, TypeError, AttributeError):
             if quarantine: self._quarantine(path)
@@ -713,7 +806,7 @@ class Store:
     def _save_manifest(self, value):
         # Older v1 readers reject unknown attempt fields. Keep the optional
         # measurement in its sidecar and project it onto attempts when read.
-        value = dict(value, attempts=[{k:v for k,v in attempt.items() if k != 'changed_tests'}
+        value = dict(value, attempts=[{k:v for k,v in attempt.items() if k not in ('changed_tests', 'test_integrity')}
                                       for attempt in value['attempts']])
         self._write(self.manifest_path(value['run_id']), value)
 
@@ -1110,6 +1203,15 @@ class Store:
             attempt = next(a for a in value['attempts'] if a['attempt_id'] == attempt_id)
             if attempt['stage'] != 'qa': raise ValueError('changed-test evidence outside QA')
             self._write(self.manifest_path(run).parent / 'changed-tests' / (identifier(attempt_id) + '.json'), record)
+        return record
+
+    def test_integrity(self, run, attempt_id, record):
+        test_integrity_shape(record)
+        with self.guard():
+            value = self._manifest(run)
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == attempt_id)
+            if attempt['stage'] != 'qa': raise ValueError('test-integrity evidence outside QA')
+            self._write(self.manifest_path(run).parent / 'test-integrity' / (identifier(attempt_id) + '.json'), record)
         return record
 
     def valid_execution(self, record):
