@@ -51,6 +51,69 @@ class RunDeadlinesTests(unittest.TestCase):
                 except PermissionError:
                     if process_running(int(path.read_text())): raise
 
+    def test_inherited_ignored_signals_are_reset_in_test_files(self):
+        self.plant('test_signals.sh', '''python3 - <<'PY'
+from pathlib import Path
+import signal
+states = [name + (' ignored' if signal.getsignal(getattr(signal, 'SIG' + name)) == signal.SIG_IGN
+                  else ' default') for name in ('INT', 'QUIT', 'HUP')]
+Path('dispositions').write_text('\\n'.join(states) + '\\n')
+assert not any(state.endswith(' ignored') for state in states), states
+PY
+''')
+        script = self.fixture / 'run_test_files.py'
+        source = script.read_text()
+        reset = 'preexec_fn=reset_test_signals,'
+        self.assertEqual(source.count(reset), 1)
+        for inherited in (('INT',), ('INT', 'QUIT', 'HUP')):
+            def dispositions():
+                for name in ('INT', 'QUIT', 'HUP'):
+                    signal.signal(getattr(signal, 'SIG' + name),
+                                  signal.SIG_IGN if name in inherited else signal.SIG_DFL)
+            for resets in (True, False):
+                script.write_text(source if resets else source.replace(reset, ''))
+                for command in (['/bin/bash', str(self.fixture / 'run.sh')],
+                                [sys.executable, '-I', str(script), 'test_signals.sh']):
+                    with self.subTest(inherited=inherited, resets=resets, runner=command[0]):
+                        completed = subprocess.run(command, cwd=self.fixture, env=self.env,
+                                                   preexec_fn=dispositions, text=True,
+                                                   capture_output=True, timeout=15)
+                        self.assertEqual(completed.returncode, 0 if resets else 1,
+                                         completed.stdout + completed.stderr)
+                        expected = [name + (' ignored' if not resets and name in inherited else ' default')
+                                    for name in ('INT', 'QUIT', 'HUP')]
+                        self.assertEqual((self.fixture / 'dispositions').read_text().splitlines(), expected)
+
+    def test_runner_ctrl_c_behavior_is_unchanged(self):
+        self.plant('test_probe.sh', 'exit 0\n')
+        script = self.fixture / 'run_test_files.py'
+        source = script.read_text()
+        # Send a real Ctrl-C at wait(), after the runner owns its test child.
+        wrapper = '''import os, runpy, signal, subprocess
+wait = subprocess.Popen.wait
+sent = False
+def interrupt(child, *args, **kwargs):
+    global sent
+    if not sent:
+        sent = True
+        os.kill(os.getpid(), signal.SIGINT)
+    return wait(child, *args, **kwargs)
+subprocess.Popen.wait = interrupt
+runpy.run_path('run_test_files.py', run_name='__main__')
+'''
+        for resets in (True, False):
+            script.write_text(source if resets else source.replace('preexec_fn=reset_test_signals,', ''))
+            for ignored in (False, True):
+                with self.subTest(resets=resets, ignored=ignored):
+                    completed = subprocess.run([sys.executable, '-c', wrapper, 'test_probe.sh'],
+                                               cwd=self.fixture, env=self.env, text=True,
+                                               capture_output=True, timeout=15,
+                                               preexec_fn=lambda: signal.signal(
+                                                   signal.SIGINT, signal.SIG_IGN if ignored else signal.SIG_DFL))
+                    self.assertEqual(completed.returncode, 0 if ignored else 130,
+                                     completed.stdout + completed.stderr)
+                    self.assertEqual('PASS  test_probe.sh' in completed.stdout, ignored)
+
     def test_template_imports_leave_no_bytecode_through_either_runner(self):
         scripts = self.fixture / 'templates/scripts'
         scripts.mkdir(parents=True)

@@ -227,12 +227,17 @@ import signal
 import subprocess
 import sys
 
+def reset_signals():
+    for signum in (signal.SIGINT, signal.SIGQUIT, signal.SIGHUP):
+        signal.signal(signum, signal.SIG_DFL)
+
 for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
     env = dict(os.environ, PATH=sys.argv[2] + os.pathsep + os.environ['PATH'],
                SQUASH_SCRATCH_ERROR='cancel-' + sig.name[3:])
     child = subprocess.Popen(['/bin/bash', '-c', 'export SQUASH_CHECK_PID=$$; exec /bin/bash "$1"',
                               'check', sys.argv[3]], cwd=sys.argv[1], env=env,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+                             preexec_fn=reset_signals)
     try:
         out, err = child.communicate(timeout=10)
     except BaseException:

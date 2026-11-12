@@ -19,7 +19,8 @@ with (sb/'err').open('w') as err:
     run = subprocess.Popen(
         ['bash', 'scripts/shepherd.sh', '--no-tmux', '--worktree',
          '.worktrees/shepherd-EXP-7', 'EXP-7'],
-        cwd=repo, stdout=subprocess.PIPE, stderr=err)
+        cwd=repo, stdout=subprocess.PIPE, stderr=err,
+        preexec_fn=lambda: signal.signal(signal.SIGHUP, signal.SIG_DFL))
     try:
         deadline = time.monotonic() + 30
         while not (sb/'probe-started').exists():

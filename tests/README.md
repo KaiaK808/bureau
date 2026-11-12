@@ -17,6 +17,11 @@ all file deadlines with a positive integer in seconds. Expiry prints `TIMEOUT`,
 sends TERM then KILL after one second, counts a failure and continues. Background
 group members are stopped even after a successful test.
 
+Test files start with default SIGINT, SIGQUIT and SIGHUP dispositions, so starting
+the suite in the background or under `nohup` no longer changes results. The
+runner's own Ctrl-C handling is unchanged: it exits 130 and stops the active test
+group when SIGINT is handled, and still ignores SIGINT if it inherited that setting.
+
 Both `tests/run.sh` and direct `tests/run_test_files.py` runs set
 `PYTHONDONTWRITEBYTECODE=1` for every test, keeping template imports free of
 bytecode caches. The internal-reference guard scans Git-tracked and non-ignored
