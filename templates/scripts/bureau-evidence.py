@@ -19,7 +19,7 @@ MAX_RUNS = 128
 RETENTION_SECONDS = 30 * 86400
 MAX_BYTES = 16 * 1024 * 1024
 MAX_RECORDS = 4096  # All files except the lock, including atomic staging leftovers.
-LOCK_TIMEOUT_SECONDS = .25
+LOCK_TIMEOUT_SECONDS = 10.0
 KINDS = ('decision', 'dependency', 'compliance', 'resource', 'technical')
 TAGS = frozenset(('spec', 'spec_review', 'ux', 'copy', 'implement', 'qa', 'code_review', 'conflict_resolver', 'validation',
                   'merge', 'rebase', 'research', 'upstream_summary', 'specify', 'plan', 'tasks',
@@ -464,17 +464,22 @@ class Store:
         self._observation_turn = 0
 
     @contextmanager
-    def guard(self):
+    def guard(self, deadline=None):
         private_dir(self.root.parent); private_dir(self.root)
         with os.fdopen(os.open(self.root / 'guard', os.O_CREAT | os.O_RDWR, 0o600), 'a') as lock:
-            deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+            started = time.monotonic()
+            deadline = min(started + LOCK_TIMEOUT_SECONDS, deadline) if deadline is not None else started + LOCK_TIMEOUT_SECONDS
             while True:
                 try:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
                 except BlockingIOError:
-                    if time.monotonic() >= deadline: raise TimeoutError('evidence lock unavailable')
-                    time.sleep(.01)
+                    now = time.monotonic()
+                    waited = now - started
+                    remaining = deadline - now
+                    if remaining <= 0:
+                        raise TimeoutError(f'evidence lock unavailable after {waited:.1f} s') from None
+                    time.sleep(min(.01, remaining))
             yield
 
     def manifest_path(self, run):
@@ -988,7 +993,27 @@ class Store:
         validate(result, schema)
         return result
 
-    def gate(self, run, attempt_id, path, checked_head, end_head, command, code, kind='gate', pr=None, command_id='configured-command', flaky=None):
+    def archive(self, run, attempt_id, directory, command):
+        paths = sorted(p for p in Path(directory).glob('*')
+                       if not p.name.startswith('.') and p.is_file() and not p.is_symlink())
+        # One cleanup budget, shared by every artifact's lock acquisition.
+        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        for index, path in enumerate(paths):
+            if time.monotonic() >= deadline: break
+            try:
+                self.gate(run, attempt_id, path, None, None, command, None, 'artifact',
+                          command_id='review.artifact', lock_deadline=deadline)
+            except TimeoutError:
+                break
+            except Exception:
+                warn()
+        else:
+            return
+        message = f'bureau evidence: WARN: skipped {len(paths) - index} artifacts: cleanup lock wait budget exhausted ({LOCK_TIMEOUT_SECONDS:.1f} s); work continues\n'
+        try: os.write(2, message.encode())
+        except OSError: pass
+
+    def gate(self, run, attempt_id, path, checked_head, end_head, command, code, kind='gate', pr=None, command_id='configured-command', flaky=None, lock_deadline=None):
         if kind not in ('gate', 'artifact'): raise ValueError('unknown evidence kind')
         if kind == 'gate' and not head(checked_head): raise ValueError('cannot record a gate without its checked HEAD')
         if kind == 'artifact': checked_head, end_head, code = None, None, None
@@ -998,7 +1023,7 @@ class Store:
                 block = source.read(65536)
                 if not block: break
                 size += len(block); stream_digest.update(block)
-        with self.guard():
+        with self.guard(deadline=lock_deadline):
             value = self._manifest(run)
             attempt = next(a for a in value['attempts'] if a['attempt_id'] == attempt_id)
             record = dict(kind=kind, head=head(checked_head), end_head=head(end_head),
@@ -1254,6 +1279,8 @@ def review_round_main():
     import argparse
     parser = argparse.ArgumentParser(description='Record metadata for the current review round')
     parser.add_argument('--repo', type=Path, required=True)
+    parser.add_argument('--archive', type=Path)
+    parser.add_argument('--command', default='')
     parser.add_argument('--round', type=int)
     parser.add_argument('--min-severity', choices=('BUG', 'MINOR'))
     parser.add_argument('--signal', choices=('timeout', 'provider_error', 'review_capped', 'gate_red', 'human_hold'))
@@ -1266,6 +1293,9 @@ def review_round_main():
     if not run or not attempt: return
     common = subprocess.check_output(['git', '-C', str(args.repo), 'rev-parse', '--git-common-dir'], text=True).strip()
     store = Store((args.repo / common).resolve() / 'bureau')
+    if args.archive:
+        store.archive(run, attempt, args.archive, args.command)
+        return
     if args.signal:
         store.outcome_signal(run, attempt, args.signal)
         return

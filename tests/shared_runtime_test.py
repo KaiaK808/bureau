@@ -1,11 +1,12 @@
 """Real local Git/ownership fixtures; only Linear traffic is replaced."""
 import argparse
 import hashlib
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 import importlib.util
 import io
 import json
 import os
+import select
 import shutil
 import signal
 from pathlib import Path
@@ -17,8 +18,9 @@ import unittest
 from unittest.mock import patch
 
 import git_maintenance
+from evidence_capture_test import function
 from selected_cases import selected_cases
-from process_helpers import process_running
+from process_helpers import COMMAND_TIMEOUT_SECONDS, process_running
 from governance_cases import (FENCED_GOVERNANCE, GOVERNANCE_FIRST,
                               COMMENT_HIDDEN_GOVERNANCE, COLUMN_ZERO_GOVERNANCE,
                               ROUND8_PROVIDER_INVALID, ROUND9_PROVIDER_INVALID, ROUND9_VALID,
@@ -404,13 +406,21 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(released.returncode,0,released.stderr)
         self.assertEqual(r.read(self.store.leases),{})
 
-    def front_exec(self, script, **env):
+    def front_exec(self, script, lock_timeout=None, **env):
         """The wrapper in front of a run (`bureau-runtime.py exec`, as shepherd.sh
         starts it) around `bash -c <script>`, which stands in for the shepherd;
         no signal reaches the wrapper."""
         env={**os.environ,'PY':sys.executable,'RUNTIME':str(SCRIPT),'REPO':str(self.repo),**env}
         env.pop('BUREAU_RUN_ID',None); env.pop('BUREAU_RUN_DEPTH',None)
-        return subprocess.run([sys.executable,str(SCRIPT),'--repo',str(self.repo),'exec','--issue','TEAM-1','--','bash','-c',script],
+        command=[sys.executable,str(SCRIPT)]
+        if lock_timeout is not None:
+            source='''import runpy,sys
+runtime=runpy.run_path(sys.argv.pop(1))
+runtime['e'].LOCK_TIMEOUT_SECONDS=float(sys.argv.pop(1))
+sys.exit(runtime['main']())
+'''
+            command=[sys.executable,'-c',source,str(SCRIPT),str(lock_timeout)]
+        return subprocess.run(command+['--repo',str(self.repo),'exec','--issue','TEAM-1','--','bash','-c',script],
                               env=env,capture_output=True,text=True,timeout=60)
 
     def release_run(self, run):
@@ -839,7 +849,7 @@ sys.exit(r.execute(repo, args, r.Store(repo)))
         finally: guard.chmod(0o600)
         with guard.open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX)
-            result=self.front_exec('echo locked-stage-ran; exit 22')
+            result=self.front_exec('echo locked-stage-ran; exit 22',lock_timeout=.1)
         self.assertEqual(result.returncode,22,result.stderr)
         self.assertEqual(result.stdout.strip(),'locked-stage-ran')
         self.assertEqual(result.stderr.count('bureau evidence: WARN:'),1)
@@ -1236,6 +1246,156 @@ bureau_sweep_waits
             self.assertEqual(r.execute(self.repo,args,self.store),18)
         manifest=max(self.manifests(),key=lambda v:v['started_at'])
         self.assertIsNone(manifest['attempts'][0]['start_head'])
+
+    @contextmanager
+    def evidence_lock_holder(self, evidence):
+        with evidence.guard(): pass
+        source='''import fcntl,sys
+with open(sys.argv[1],'a') as lock:
+    fcntl.flock(lock,fcntl.LOCK_EX)
+    print('locked',flush=True)
+    if sys.stdin.readline() != 'release\\n': raise ValueError('missing explicit lock release')
+    fcntl.flock(lock,fcntl.LOCK_UN)
+    print('released',flush=True)
+'''
+        holder=subprocess.Popen([sys.executable,'-c',source,str(evidence.root/'guard')],
+                                stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        try:
+            self.assertTrue(select.select([holder.stdout],[],[],COMMAND_TIMEOUT_SECONDS)[0],'lock holder did not start')
+            self.assertEqual(holder.stdout.readline(),b'locked\n')
+            yield holder
+        finally:
+            if holder.poll() is None: holder.kill()
+            holder.communicate(timeout=COMMAND_TIMEOUT_SECONDS)
+
+    def test_evidence_lock_waits_past_former_deadline(self):
+        evidence=r.e.Store(self.store.root)
+        with self.evidence_lock_holder(evidence) as holder:
+            started=None; released=False; flock=r.e.fcntl.flock; monotonic=time.monotonic
+            def clock():
+                nonlocal started
+                now=monotonic()
+                if started is None: started=now
+                return now
+            def release_after_contention(lock, flags):
+                nonlocal released
+                try: return flock(lock,flags)
+                except BlockingIOError:
+                    # Use the guard's start, so setup scheduling cannot shift the timer.
+                    if monotonic()-started >= .3:
+                        out,err=holder.communicate(input=b'release\n',timeout=COMMAND_TIMEOUT_SECONDS)
+                        self.assertEqual(holder.returncode,0,out+err)
+                        self.assertEqual(out,b'released\n',err)
+                        released=True
+                    raise
+            with patch.object(r.e.time,'monotonic',side_effect=clock), \
+                    patch.object(r.e.fcntl,'flock',side_effect=release_after_contention):
+                with evidence.guard():
+                    self.assertIsNotNone(started,'lock was never contended')
+                    self.assertGreaterEqual(monotonic()-started,.3)
+                    self.assertTrue(released,'holder did not explicitly release the lock')
+
+    def test_evidence_archive_shares_cleanup_lock_wait_budget(self):
+        evidence=r.e.Store(self.store.root)
+        folder=self.repo/'review outputs'; folder.mkdir()
+        for index in range(12): (folder/str(index)).write_text('artifact')
+        (folder/'.hidden').write_text('excluded')
+        (folder/'directory').mkdir(); (folder/'link').symlink_to(folder/'0')
+        for saved in (0,2):
+            with self.subTest(saved=saved):
+                run=format(saved+1,'032x')
+                evidence.begin_run(run,None,self.repo,None)
+                attempt=evidence.begin_attempt(run,None,'code_review','stage',self.repo,None)
+                now=[0.0]; acquisition=[None,0]; flock=r.e.fcntl.flock
+                def acquire(lock, flags):
+                    if lock is not acquisition[0]:
+                        acquisition[0]=lock; acquisition[1]+=1
+                    if acquisition[1]>saved or now[0]<.3*acquisition[1]: raise BlockingIOError()
+                    return flock(lock,flags)
+                def advance(seconds): now[0]+=seconds
+                with patch.object(r.e,'LOCK_TIMEOUT_SECONDS',1.0), \
+                        patch.object(r.e.time,'monotonic',side_effect=lambda:now[0]), \
+                        patch.object(r.e.time,'sleep',side_effect=advance), \
+                        patch.object(r.e.fcntl,'flock',side_effect=acquire), patch.object(r.e.os,'write') as warning:
+                    evidence.archive(run,attempt,folder,'review outputs')
+                self.assertLessEqual(now[0],1.01,'cleanup exceeded its shared lock wait budget')
+                self.assertEqual(acquisition[1],saved+1)
+                warning.assert_called_once_with(2,(
+                    f'bureau evidence: WARN: skipped {12-saved} artifacts: cleanup lock wait budget exhausted (1.0 s); work continues\n').encode())
+                manifest=r.read(evidence.manifest_path(run))
+                self.assertEqual(len(manifest['attempts'][0]['gates']),saved)
+
+    def test_review_cleanup_archive_timeout_preserves_stage_exit(self):
+        evidence=r.e.Store(self.store.root)
+        run='a'*32; evidence.begin_run(run,None,self.repo,None)
+        attempt=evidence.begin_attempt(run,None,'code_review','stage',self.repo,None)
+        scripts=self.repo/'cleanup scripts'; scripts.mkdir()
+        source=(SCRIPT.parent/'bureau-evidence.py').read_text()
+        self.assertEqual(source.count('LOCK_TIMEOUT_SECONDS = 10.0'),1)
+        (scripts/'bureau-evidence.py').write_text(source.replace('LOCK_TIMEOUT_SECONDS = 10.0','LOCK_TIMEOUT_SECONDS = .1'))
+        folder=self.repo/'review outputs'
+        helpers='\n'.join((function(ROOT/'templates/scripts/bureau-config.sh','bureau_archive_evidence'),
+                           function(ROOT/'templates/scripts/code-review-pipeline.sh','_review_cleanup')))
+        source='''set -euo pipefail
+bureau_without_secrets() { "$@"; }
+_review_stop_specialists() { :; }
+''' + helpers + '\ntrap _review_cleanup EXIT\nexit "$STAGE_EXIT"'
+        with self.evidence_lock_holder(evidence):
+            for code in (0,14,25,124):
+                with self.subTest(code=code):
+                    # Successful cleanup removes its directory; each exit gets a fresh one.
+                    folder.mkdir(exist_ok=True)
+                    for index in range(12): (folder/str(index)).write_text('artifact')
+                    env={**os.environ,'BUREAU_RUN_ID':run,'BUREAU_STAGE_ATTEMPT_ID':attempt,
+                         '_BUREAU_SCRIPTS_DIR':str(scripts),'REVIEW_TMP':str(folder),
+                         'BUREAU_DRY_RUN':'0','STAGE_EXIT':str(code)}
+                    proc=subprocess.Popen(['/bin/bash','-c',source],cwd=self.repo,env=env,
+                                          stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
+                    try:
+                        out,err=proc.communicate(timeout=COMMAND_TIMEOUT_SECONDS)
+                    finally:
+                        if proc.poll() is None:
+                            try: os.killpg(proc.pid,signal.SIGKILL)
+                            except ProcessLookupError: pass
+                        proc.communicate(timeout=COMMAND_TIMEOUT_SECONDS)
+                    self.assertEqual(proc.returncode,code,out+err)
+                    self.assertEqual(err.count('skipped 12 artifacts: cleanup lock wait budget exhausted (0.1 s)'),1,err)
+        self.assertEqual(r.read(evidence.manifest_path(run))['attempts'][0]['gates'],[])
+
+    def test_evidence_lock_timeout_names_elapsed_wait(self):
+        evidence=r.e.Store(self.store.root); budget=.1
+        for setup_delay,waited in ((0,.1),(.2,.1),(.2,.3)):
+            with self.subTest(setup_delay=setup_delay,waited=waited):
+                now=[0.0]; open_lock=r.e.os.open
+                def delayed_open(*args,**kwargs):
+                    lock=open_lock(*args,**kwargs); now[0]+=setup_delay
+                    return lock
+                def advance(seconds): now[0]+=waited
+                with patch.object(r.e,'LOCK_TIMEOUT_SECONDS',budget), \
+                        patch.object(r.e.os,'open',side_effect=delayed_open), \
+                        patch.object(r.e.time,'monotonic',side_effect=lambda:now[0]), \
+                        patch.object(r.e.time,'sleep',side_effect=advance), \
+                        patch.object(r.e.fcntl,'flock',side_effect=BlockingIOError):
+                    with self.assertRaises(TimeoutError) as error:
+                        with evidence.guard(): self.fail('contended lock was acquired')
+                self.assertEqual(str(error.exception),f'evidence lock unavailable after {waited:.1f} s')
+                self.assertAlmostEqual(now[0],setup_delay+waited)
+
+    def test_evidence_lock_timeout_is_bounded(self):
+        evidence=r.e.Store(self.store.root)
+        source='''import importlib.util,pathlib,sys
+spec=importlib.util.spec_from_file_location('e',sys.argv[1]); e=importlib.util.module_from_spec(spec); spec.loader.exec_module(e)
+e.LOCK_TIMEOUT_SECONDS=.1
+try:
+    with e.Store(pathlib.Path(sys.argv[2])).guard(): raise AssertionError('contended lock was acquired')
+except TimeoutError as error: print('TimeoutError: '+str(error))
+'''
+        with self.evidence_lock_holder(evidence) as holder:
+            result=subprocess.run([sys.executable,'-c',source,str(SCRIPT.parent/'bureau-evidence.py'),str(self.store.root)],
+                                  capture_output=True,text=True,timeout=COMMAND_TIMEOUT_SECONDS)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertRegex(result.stdout,r'^TimeoutError: evidence lock unavailable after [0-9]+\.[0-9] s\n$')
+            self.assertIsNone(holder.poll(),'holder released before the timeout')
 
     def test_parallel_attempt_updates_keep_all_receipts(self):
         evidence=r.e.Store(self.store.root); run='c'*32

@@ -162,11 +162,9 @@ bureau_acceptance_brief() {
 
 bureau_archive_evidence() {
   [ -n "${BUREAU_RUN_ID:-}" ] && [ -n "${BUREAU_STAGE_ATTEMPT_ID:-}" ] || return 0
-  local file
-  for file in "$1"/*; do
-    [ -f "$file" ] && [ ! -L "$file" ] || continue
-    bureau_evidence evidence-gate --kind artifact --path "$file" --head '' --end-head '' --command "$2" --command-id review.artifact || true
-  done
+  [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
+  ( bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" \
+      --archive "$1" --command "$2" ) || true
 }
 
 bureau_record_pr_url() {

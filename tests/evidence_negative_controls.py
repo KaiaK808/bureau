@@ -61,6 +61,30 @@ with tempfile.TemporaryDirectory(prefix='bureau evidence controls ') as scratch:
     provider.write_text(original)
 
     evidence=root/'bureau-evidence.py'; original_evidence=evidence.read_text()
+    anchor='LOCK_TIMEOUT_SECONDS = 10.0'
+    assert original_evidence.count(anchor)==1
+    evidence.write_text(original_evidence.replace(anchor,'LOCK_TIMEOUT_SECONDS = .25'))
+    rejected('shared_runtime_test.py',['RuntimeTests.test_evidence_lock_waits_past_former_deadline'],
+             {'BUREAU_TEST_RUNTIME_SCRIPT':str(root/'bureau-runtime.py')},'TimeoutError: evidence lock unavailable after')
+    print('PASS control: former evidence lock deadline fails the contention guard')
+    evidence.write_text(original_evidence)
+
+    anchor="raise TimeoutError(f'evidence lock unavailable after {waited:.1f} s') from None"
+    assert original_evidence.count(anchor)==1
+    evidence.write_text(original_evidence.replace(anchor,anchor.replace('waited:.1f','LOCK_TIMEOUT_SECONDS:.1f')))
+    rejected('shared_runtime_test.py',['RuntimeTests.test_evidence_lock_timeout_names_elapsed_wait'],
+             {'BUREAU_TEST_RUNTIME_SCRIPT':str(root/'bureau-runtime.py')},'evidence lock unavailable after 0.3 s')
+    print('PASS control: reporting the budget fails the elapsed-wait diagnostic guard')
+    evidence.write_text(original_evidence)
+
+    anchor="command_id='review.artifact', lock_deadline=deadline)"
+    assert original_evidence.count(anchor)==1
+    evidence.write_text(original_evidence.replace(anchor,anchor.replace('lock_deadline=deadline','lock_deadline=None')))
+    rejected('shared_runtime_test.py',['RuntimeTests.test_evidence_archive_shares_cleanup_lock_wait_budget'],
+             {'BUREAU_TEST_RUNTIME_SCRIPT':str(root/'bureau-runtime.py')},'cleanup exceeded its shared lock wait budget')
+    print('PASS control: fresh per-artifact deadlines fail the aggregate cleanup bound')
+    evidence.write_text(original_evidence)
+
     anchor="        value = read(path, {})\n        keys = ('run_id'"
     assert original_evidence.count(anchor)==1
     mixed=original_evidence.replace(anchor,"        if not path.exists(): path = next((self.root / 'runs').glob('*/receipts/*.json'))\n        value = read(path, {})\n        keys = ('run_id'",1)
@@ -273,4 +297,4 @@ with tempfile.TemporaryDirectory(prefix='bureau evidence controls ') as scratch:
     evidence.write_text(original_evidence)
 
 assert before=={name:hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
-print('Results: 23 negative controls detected; source hashes unchanged')
+print('Results: 26 negative controls detected; source hashes unchanged')
