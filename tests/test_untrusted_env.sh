@@ -58,7 +58,7 @@ case "$out" in *"after=$PR1_LINEAR $PR1_GH"*) ;; *) fail "1 default: the calling
 rm -f "$H"
 run_helper "$CLEAN_CFG" "export TZ=\"\$LINEAR_API_KEY\"; bureau_untrusted_env HOOK_VAR=from-caller sh -c '{ echo \"--- run\"; env; } > \"$H\"'" >/dev/null
 pr1_check_env "$H" "1 clean" clean 1 HOOK_VAR=from-caller
-stray=$(sed -n 's/=.*//p' "$H" | grep -vxE -- '--- run|PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_ALL|LC_CTYPE|TERM|TZ|CI|HOOK_VAR|PWD|SHLVL|_|OLDPWD|__CF_USER_TEXT_ENCODING' | tr '\n' ' ')
+stray=$(sed -n 's/=.*//p' "$H" | grep -vxE -- '--- run|PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_ALL|LC_CTYPE|TERM|TZ|CI|HOOK_VAR|PWD|SHLVL|_|OLDPWD|__CF_USER_TEXT_ENCODING|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT' | tr '\n' ' ')
 [ -z "$stray" ] || fail "1 clean: variables outside the clean list: $stray"
 if grep -q '^TZ=' "$H"; then fail "1 clean: a kept name carrying a secret's value was passed on"; fi
 # The clean list, pinned: every allowed name is set (to a harmless value) next to what an
@@ -70,7 +70,7 @@ run_helper "$CLEAN_CFG" "export PATH HOME USER=u LOGNAME=u SHELL=/bin/sh TMPDIR=
   SSH_AUTH_SOCK=/tmp/agent.sock AWS_SECRET_ACCESS_KEY=aws-probe NPM_TOKEN=npm-probe HTTPS_PROXY=http://proxy.invalid SSL_CERT_FILE=/tmp/ca.pem; \
   bureau_untrusted_env HOOK_VAR=from-caller /usr/bin/env > \"$H\"" >/dev/null
 got=$(sed -n 's/=.*//p' "$H" | grep -vxE 'PWD|SHLVL|_|OLDPWD|__CF_USER_TEXT_ENCODING' | LC_ALL=C sort | tr '\n' ' ')
-want="CI HOME HOOK_VAR LANG LC_ALL LC_CTYPE LOGNAME PATH SHELL TEMP TERM TMP TMPDIR TZ USER "
+want="CI GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT HOME HOOK_VAR LANG LC_ALL LC_CTYPE LOGNAME PATH SHELL TEMP TERM TMP TMPDIR TZ USER "
 [ "$got" = "$want" ] || fail "1 clean list: got [$got], wanted [$want]"
 pr1_pass "1 default drops the secrets and their copies, clean keeps only its list, the caller keeps its keys"
 
@@ -380,8 +380,8 @@ codex_run() {
   # child environment included (the child gets a copy of everything; run()
   # builds it as child_env so a Codex child can get its own TMPDIR).
   [ "${2:-}" != control ] || { pr1_passthrough "$SCRIPTS_DIR"
-    sed -i.bak -e "s/env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)/env=None/" \
-      -e "s/child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)/child_env = dict(os.environ)/" \
+    sed -i.bak -e "s/env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner, options.get('untrusted_git_credentials', 'off'))/env=None/" \
+      -e "s/child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner, options.get('untrusted_git_credentials', 'off'))/child_env = dict(os.environ)/" \
       "$SCRIPTS_DIR/bureau-provider.py"
     { [ "$(grep -c 'env=None' "$SCRIPTS_DIR/bureau-provider.py")" = 1 ] \
       && [ "$(grep -c 'child_env = dict(os.environ)' "$SCRIPTS_DIR/bureau-provider.py")" = 1 ]; } \

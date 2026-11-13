@@ -213,6 +213,7 @@ def measure(repo, pinned, config, template, started=None, head=None):
         if not usable: return record
         reason = 'worktree unavailable'
         options['untrusted_env'] = p.untrusted_env_mode(config)
+        options['untrusted_git_credentials'] = p.untrusted_git_credentials_mode(config)
         options['_gate_on_cancel'] = cancel
         common = (repo / os.fsdecode(git(repo, 'rev-parse', '--git-common-dir')).strip()).resolve()
         root = common / 'bureau'
@@ -351,6 +352,9 @@ def main():
         if code: p.note(summary)
         else: print(summary, flush=True)
         return code
+    except p.UntrustedEnvError as exc:
+        p.note('  Fail-before-pass: ' + str(exc))
+        return 24
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         p.note('  Fail-before-pass: not measured (evidence unavailable).')
         return code

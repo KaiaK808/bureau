@@ -228,13 +228,40 @@ def untrusted_env_mode(config):
                             + '); the agent was not started (24, environment-blocked)')
 
 
-def untrusted_env(environ, mode, runner=None):
+def untrusted_git_credentials_mode(config):
+    repo = config.get('repo')
+    if repo is None: return 'off'
+    if not isinstance(repo, dict): raise UntrustedEnvError('repo must be an object')
+    mode = repo.get('untrusted_git_credentials')
+    if mode is None: return 'off'
+    if isinstance(mode, str) and mode in ('off', 'keep'): return mode
+    raise UntrustedEnvError('repo.untrusted_git_credentials must be absent, "off" or "keep" (read: ' + json.dumps(mode)
+                            + '); the agent was not started (24, environment-blocked)')
+
+
+def untrusted_git_env(environ):
+    # Append the reset after inherited counted configuration. PARAMETERS can
+    # include helpers after that reset, so untrusted_env drops it entirely.
+    count = environ.get('GIT_CONFIG_COUNT', '0')
+    digits = count.lstrip('0') or '0'
+    if not re.fullmatch(r'[0-9]+', count) or len(digits) > 10 or int(digits) >= 2147483647:
+        environ = {name: value for name, value in environ.items()
+                   if not re.fullmatch(r'GIT_CONFIG_(KEY|VALUE)_[0-9]+', name)}
+        digits = '0'
+    index = int(digits)
+    result = {**environ, 'GIT_CONFIG_COUNT': str(index + 1), 'GIT_CONFIG_KEY_' + str(index): 'credential.helper',
+              'GIT_CONFIG_VALUE_' + str(index): '', 'GIT_TERMINAL_PROMPT': '0'}
+    return result
+
+
+def untrusted_env(environ, mode, runner=None, git_credentials='off'):
     # The environment for code the branch controls. "default": everything but
     # the listed secrets, BASH_ENV and ENV, BUREAU_ENV_FILE and BUREAU_CONFIG,
     # and any variable that carries one of the secrets' values (_carries). "clean": only UNTRUSTED_KEEP, plus, for an
     # agent, its own login and network variables, again without any value that
     # carries a secret. Both modes drop host pane variables, even if an agent
-    # keep prefix overlaps. The caller's environment is never changed.
+    # keep prefix overlaps. Both modes drop GIT_CONFIG_PARAMETERS and reset Git
+    # credential helpers unless explicitly kept. The caller's environment is never changed.
     carries = _carries(environ, UNTRUSTED_REMOVE)
     if mode == 'clean':
         prefixes = AGENT_KEEP_PREFIXES.get(runner, ())
@@ -245,8 +272,13 @@ def untrusted_env(environ, mode, runner=None):
             return name not in UNTRUSTED_REMOVE and name not in UNTRUSTED_STARTUP and name not in UNTRUSTED_PATHS
     else:
         raise UntrustedEnvError('unknown untrusted environment mode')
-    return {name: value for name, value in environ.items()
-            if not name.startswith(UNTRUSTED_HOST_PREFIXES) and keep(name) and not carries(value)}
+    result = {name: value for name, value in environ.items()
+              if not name.startswith(UNTRUSTED_HOST_PREFIXES) and keep(name) and not carries(value)}
+    if git_credentials == 'off':
+        result.pop('GIT_CONFIG_PARAMETERS', None)
+        result = untrusted_git_env(result)
+    elif git_credentials != 'keep': raise UntrustedEnvError('unknown untrusted Git credentials mode')
+    return result
 
 
 def auth(options, timeouts=(20, 60)):
@@ -258,7 +290,7 @@ def auth(options, timeouts=(20, 60)):
     for timeout in timeouts:
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                                  env=claude_env(options, env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)))
+                                  env=claude_env(options, env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner, options.get('untrusted_git_credentials', 'off'))))
             break
         except subprocess.TimeoutExpired: pass
     else:
@@ -713,7 +745,7 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     signal.signal(signal.SIGALRM, lambda signum, frame: kill(signal.SIGKILL))
     tempdir = None
     try:
-        child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)
+        child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner, options.get('untrusted_git_credentials', 'off'))
         child_env = claude_env(options, env=child_env)
         if shadow: child_env['CLAUDE_CODE_DISABLE_AUTO_MEMORY'] = '1'
         tempdir = codex_tmpdir(runner, child_env, repo, required=private_scratch)
@@ -992,7 +1024,7 @@ def remember_session_flag(cache, key, answer, source):
         except OSError: pass
 
 
-def claude_takes_session_id(cache, mode='default', environ=None):
+def claude_takes_session_id(cache, mode='default', environ=None, git_credentials='off'):
     # Whether the claude CLI on PATH takes --session-id, so a CLI without the
     # flag runs as before v3.2: without it. `claude --help` is asked once per
     # binary; the answer is kept in `cache` (the evidence directory's
@@ -1015,7 +1047,7 @@ def claude_takes_session_id(cache, mode='default', environ=None):
     except (OSError, ValueError): pass
     try:
         proc = subprocess.run([found, '--help'], capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL,
-                              env=untrusted_env(environ, mode, 'claude'))
+                              env=untrusted_env(environ, mode, 'claude', git_credentials))
     except (OSError, subprocess.SubprocessError) as exc: return False, 'claude --help failed: ' + str(exc)
     if proc.returncode != 0: return False, 'claude --help failed with exit ' + str(proc.returncode)
     answer = '--session-id' in proc.stdout
@@ -1126,6 +1158,8 @@ def outside_gate(options, repo, command, log):
         finally:
             if child: signal_group(child, signal.SIGKILL)
     try:
+        child_env = untrusted_env(os.environ, options['untrusted_env'],
+                                 git_credentials=options.get('untrusted_git_credentials', 'off'))
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             previous[sig] = signal.signal(sig, stop)
         with os.fdopen(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as output:
@@ -1133,7 +1167,7 @@ def outside_gate(options, repo, command, log):
             hold = pg.ProcessHold(evidence_store(repo).root.parent.parent, 'outside_gate', repo)
             child = subprocess.Popen(['/bin/bash', '--noprofile', '--norc', '-o', 'pipefail', '-c', command], cwd=repo,
                                      stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-                                     env=untrusted_env(os.environ, options['untrusted_env']), start_new_session=True)
+                                     env=child_env, start_new_session=True)
             if options.get('_gate_cancelled'): stop(None, None)
             try: code = child.wait(timeout=options['timeout'])
             except subprocess.TimeoutExpired:
@@ -1329,6 +1363,7 @@ def main():
         if args.describe: print(json.dumps(options)); return 0
         options['_ticket_config'] = config
         options['untrusted_env']=untrusted_env_mode(config)
+        options['untrusted_git_credentials']=untrusted_git_credentials_mode(config)
         repo=Path(args.repo).resolve()
         if args.gate_action:
             response = e.observe(gate_action, args, config, options, repo)
@@ -1347,7 +1382,8 @@ def main():
         evidence=base/uuid.uuid4().hex; evidence.mkdir(parents=True,mode=0o700)
         schema=Path(args.schema).resolve() if args.schema else None
         if options['runner']=='claude':
-            supported,options['session_note']=claude_takes_session_id(base/'.claude-cli.json',options['untrusted_env'])
+            supported,options['session_note']=claude_takes_session_id(base/'.claude-cli.json',options['untrusted_env'],
+                                                                    git_credentials=options['untrusted_git_credentials'])
             if supported: options['session_id']=str(uuid.uuid4())
         code,text,metadata=run(options,prompt,system,repo,evidence,schema)
         if options.get('session_id') and code not in (0,25,124,130) and claude_rejected_session_id(evidence):

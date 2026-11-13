@@ -248,6 +248,25 @@ python3 -c 'import json, os; print(json.dumps({k:v for k,v in os.environ.items()
         record = self.check_case(CASE.format(assertion='self.assertEqual(VALUE, 1)'), 'proves the change')
         self.assertEqual('assertion failure', record['files'][0]['base_result']['status'])
 
+    def test_invalid_base_credentials_stop_qa_before_changed_test_commands(self):
+        self.config['repo']['untrusted_git_credentials'] = 'off'
+        invalid = copy.deepcopy(self.config); invalid['repo']['untrusted_git_credentials'] = 'invalid'
+        self.write('.bureau.json', json.dumps(invalid)); self.git('add', '.bureau.json')
+        self.git('commit', '-qm', 'test: invalid pinned measurement credentials')
+        self.base = self.git('rev-parse', 'HEAD')
+        self.write('.bureau.json', json.dumps(self.config))
+        started = self.root / 'changed-command-started'
+        self.env['CHANGED_STARTED'] = str(started)
+        source = CASE.format(assertion='Path(__import__("os").environ["CHANGED_STARTED"]).touch(); self.assertEqual(VALUE, 1)')
+        self.publish({'tests/test_change.py':source})
+        with (self.scripts / 'bureau-config.sh').open('a') as out:
+            out.write('\nprecondition_runner() { bureau_untrusted_env --check; }\n')
+        record, _ = self.qa(expected=None, code=24)
+        self.assertIsNone(record)
+        self.assertIn('repo.untrusted_git_credentials', self.output)
+        self.assertFalse(started.exists())
+        self.assertFalse((self.repo / '.git/bureau/changed-tests').exists())
+
     def test_passing_base_proves_nothing_and_is_listed(self):
         self.check_case(CASE.format(assertion='self.assertIn(VALUE, (0, 1))'), 'does not prove the change')
 

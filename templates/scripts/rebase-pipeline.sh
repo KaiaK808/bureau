@@ -65,6 +65,7 @@ else
   set --
 fi
 
+bureau_untrusted_env --check || exit 24
 precondition_linear
 
 if [ -z "${BUREAU_STATE_MERGE:-}" ]; then

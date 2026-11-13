@@ -414,7 +414,7 @@ if [ "$FINAL_GREEN" = true ]; then
   QA_CHANGED_PID=""
   trap - TERM INT HUP
   # Advisory failures never change QA; safety and cancellation still do.
-  case "$CHANGED_RC" in 25|124|130) exit "$CHANGED_RC" ;; esac
+  case "$CHANGED_RC" in 24|25|124|130) exit "$CHANGED_RC" ;; esac
 fi
 
 if [ "$FINAL_GREEN" = true ]; then

@@ -356,6 +356,9 @@ bureau_secret_copy() {
 #       no secret's value), plus the NAME=VALUE pairs given before the command
 #       (the hook's BUREAU_ISSUE and BUREAU_BRANCH).
 #   Host pane names are also dropped from NAME=VALUE pairs in both wrappers.
+#   repo.untrusted_git_credentials absent, null or "off" resets Git credential
+#   helpers, drops GIT_CONFIG_PARAMETERS and disables terminal prompting in both
+#   modes; "keep" retains the previous behavior. Invalid values refuse with 24.
 #   Any other value, a .bureau.json jq cannot read, or no command: the command
 #   is not run, a message goes to stderr, and the function EXITS the calling
 #   shell with 24 (environment-blocked), so a stage never judges code it did
@@ -419,7 +422,8 @@ bureau_secret_copy() {
 
 # _bureau_env_build <mode> <names> <startup> — sets the array _BUREAU_ENV_ARGV
 # to the options /usr/bin/env needs: mode default|clean, names "seven",
-# "dotenv" or a list of names, startup 1 to remove BASH_ENV and ENV. Silent.
+# "dotenv" or a list of names, startup 1 to remove BASH_ENV and ENV. An optional
+# fourth argument "off" also fills _BUREAU_GIT_ENV_ARGV for branch code. Silent.
 _BUREAU_UNTRUSTED_PATHS='BUREAU_ENV_FILE BUREAU_CONFIG'
 _BUREAU_UNTRUSTED_HOST_PREFIXES='HERDR_'
 
@@ -427,10 +431,10 @@ _BUREAU_UNTRUSTED_HOST_PREFIXES='HERDR_'
 # and explicit wrapper assignments. Carrier detection below reads the real
 # exported environment, so callers need not reserve their own local names.
 # Keep the inventory in test_env_malformed_names.sh in step with new locals.
-_BUREAU_ENV_INTERNAL_NAMES='IFS _BUREAU_ENV_INTERNAL_NAMES _BUREAU_ENV_ARGV _BUREAU_ENV_PYTHON _BUREAU_GIT_HOOKS_ENV _BUREAU_GIT_HOOKS_OFF
+_BUREAU_ENV_INTERNAL_NAMES='IFS _BUREAU_ENV_INTERNAL_NAMES _BUREAU_ENV_ARGV _BUREAU_ENV_PYTHON _BUREAU_GIT_ENV_ARGV _BUREAU_GIT_HOOKS_ENV _BUREAU_GIT_HOOKS_OFF
 _BUREAU_UNTRUSTED_PATHS _BUREAU_UNTRUSTED_HOST_PREFIXES
-_beb_mode _beb_names _beb_startup _beb_name _beb_value _beb_exported _beb_long _beb_short _beb_entry _beb_snapshot _beb_locale
-_bec_secret _beh_prefix _bue_filter _bue_trace _bue_check _bue_mode _bue_name _bue_assign_re _bue_assign
+_beb_mode _beb_names _beb_startup _beb_git _beb_name _beb_value _beb_exported _beb_long _beb_short _beb_entry _beb_snapshot _beb_locale
+_bec_secret _beh_prefix _bue_filter _bue_trace _bue_check _bue_mode _bue_git_mode _bue_name _bue_assign_re _bue_assign
 _bws_trace _bws_assign_re _bws_assign _ber_trace _ber_names _ber_name _bgh_trace
 _bg_trace _bg_arg _bg_sub _bg_skip _bg_names _bg_lead _bg_mode _bg_dir _bg_unknown _bg_hooks _bg_hooks_env _bg_operator
 _bds_i _bds_n _brh_filter _brh_value _boh_common _boh_git _boh_rel
@@ -458,13 +462,13 @@ _bureau_env_build() {
   # leaves that cache intact. Its final empty record proves producer success.
   # Bash 3.2 rejects process substitution in POSIX mode; retain its existing
   # snapshot path there. Keep the syntax inside a literal eval for that parser.
-  if [ "$#" = 3 ] && { [ "${BASH_VERSINFO[0]}" -gt 3 ] || ! shopt -oq posix; }; then
-    if eval '_bureau_env_build "$@" snapshot 3< <(/usr/bin/env -0 && printf "\0")'; then return 0; fi
+  if [ "$#" -le 4 ] && { [ "${BASH_VERSINFO[0]}" -gt 3 ] || ! shopt -oq posix; }; then
+    if eval '_bureau_env_build "$1" "$2" "$3" "${4:-keep}" snapshot 3< <(/usr/bin/env -0 && printf "\0")'; then return 0; fi
     echo 'bureau environment: cannot open exported environment snapshot; command was not run (24, environment-blocked)' >&2
     exit 24
   fi
   local IFS=$' \t\n'
-  local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_name _beb_value _beb_entry _beb_snapshot _beb_exported
+  local _beb_mode="$1" _beb_names="$2" _beb_startup="$3" _beb_git="${4:-keep}" _beb_name _beb_value _beb_entry _beb_snapshot _beb_exported
   # A nonempty locale binding identifies Bash's effective LC_CTYPE. An empty
   # declared binding may be an uninitialized caller local hiding the locale
   # Bash still uses, so its identity is unknown. Do not infer equivalence from
@@ -482,6 +486,7 @@ _bureau_env_build() {
   local -a _beb_long
   _beb_long=(BUREAU_ENV_INPUT_V1 "$_beb_locale")
   _BUREAU_ENV_ARGV=()
+  _BUREAU_GIT_ENV_ARGV=()
   if [ -z "$_BUREAU_ENV_PYTHON" ]; then
     echo 'bureau environment: no trusted snapshot interpreter; command was not run (24, environment-blocked)' >&2
     exit 24
@@ -506,7 +511,7 @@ _bureau_env_build() {
   # opened above, before command substitution can change the export cache.
   _beb_snapshot=$({
     printf '%s\0' "${_beb_long[@]}" && {
-      if [ "${4:-}" = snapshot ]; then /bin/cat <&3
+      if [ "${!#}" = snapshot ]; then /bin/cat <&3
       else /usr/bin/env -0 && printf '\0'; fi
     }
   } | LC_ALL=C "$_BUREAU_ENV_PYTHON" -I -c '
@@ -515,7 +520,7 @@ import locale
 import re
 import sys
 
-mode, names, startup, internal, prefixes = sys.argv[1:]
+mode, names, startup, internal, prefixes, git_credentials = sys.argv[1:]
 names = [name.encode("ascii") for name in names.split()]
 internal = [name.encode("ascii") for name in internal.split()]
 prefixes = [name.encode("ascii") for name in prefixes.split()]
@@ -615,6 +620,7 @@ if mode == "clean":
               if name in allowed and not any(name.startswith(p) for p in prefixes) and not carries(value)]
 elif mode == "default":
     drops = names + ([b"BASH_ENV", b"ENV"] if startup == "1" else []) + internal
+    if git_credentials == "off": drops.append(b"GIT_CONFIG_PARAMETERS")
     result = [("u", name) for name in drops]
     for name, value in entries:
         if name in drops:
@@ -624,12 +630,29 @@ elif mode == "default":
             result.append(("u", name))
 else:
     sys.exit(24)
+if git_credentials == "off":
+    # Match untrusted_git_env in bureau-provider.py, using the filtered snapshot.
+    removed = {value for tag, value in result if tag == "u"}
+    filtered = {name: value for name, value in entries
+                if (mode == "clean" and name in allowed and not carries(value))
+                or (mode == "default" and name not in removed)}
+    count = filtered.get(b"GIT_CONFIG_COUNT", b"0")
+    digits = count.lstrip(b"0") or b"0"
+    if not re.fullmatch(b"[0-9]+", count) or len(digits) > 10 or int(digits) >= 2147483647:
+        if mode == "default":
+            result.extend(("u", name) for name in filtered
+                          if name == b"GIT_CONFIG_COUNT" or re.fullmatch(b"GIT_CONFIG_(KEY|VALUE)_[0-9]+", name))
+        digits = b"0"
+    index = int(digits)
+    updates = {b"GIT_CONFIG_COUNT": str(index + 1).encode(), b"GIT_CONFIG_KEY_%d" % index: b"credential.helper",
+               b"GIT_CONFIG_VALUE_%d" % index: b"", b"GIT_TERMINAL_PROMPT": b"0"}
+    result.extend(("g", name + b"=" + value) for name, value in updates.items())
 # ASCII-only tokens cannot undergo word splitting inside a name or globbing.
 # Reject NULs and malformed/truncated frames again on the consuming side.
 print("BUREAU_ENV_V1" + "".join(" " + tag + "".join("\\x%02x" % byte for byte in value)
                                 for tag, value in result) + " END")
 ' "$_beb_mode" "$_beb_names" "$_beb_startup" "$_BUREAU_ENV_INTERNAL_NAMES" \
-    "$_BUREAU_UNTRUSTED_HOST_PREFIXES" | {
+    "$_BUREAU_UNTRUSTED_HOST_PREFIXES" "$_beb_git" | {
     # A NUL in helper output must not silently disappear in $(...). Read once
     # through a pipe with NUL as the delimiter: only EOF (no NUL) is expected.
     if IFS= read -r -d '' _beb_snapshot; then exit 24
@@ -642,7 +665,7 @@ print("BUREAU_ENV_V1" + "".join(" " + tag + "".join("\\x%02x" % byte for byte in
     echo 'bureau environment: cannot read exported environment; command was not run (24, environment-blocked)' >&2
     exit 24
   }
-  _beb_exported='^BUREAU_ENV_V1( [ue](\\x(0[1-9a-f]|[1-9a-f][0-9a-f]))+)* END$'
+  _beb_exported='^BUREAU_ENV_V1( [ueg](\\x(0[1-9a-f]|[1-9a-f][0-9a-f]))+)* END$'
   if ! [[ $_beb_snapshot =~ $_beb_exported ]]; then
     echo 'bureau environment: invalid exported environment frame; command was not run (24, environment-blocked)' >&2
     exit 24
@@ -662,6 +685,13 @@ print("BUREAU_ENV_V1" + "".join(" " + tag + "".join("\\x%02x" % byte for byte in
           *) exit 24 ;;
         esac
         _BUREAU_ENV_ARGV+=("$_beb_entry") ;;
+      default:g|clean:g)
+        [ "$_beb_git" = off ] || exit 24
+        case "$_beb_entry" in
+          GIT_CONFIG_COUNT=*|GIT_CONFIG_KEY_*=credential.helper|GIT_CONFIG_VALUE_*=|GIT_TERMINAL_PROMPT=0) ;;
+          *) exit 24 ;;
+        esac
+        _BUREAU_GIT_ENV_ARGV+=("$_beb_entry") ;;
       *) exit 24 ;;
     esac
   done
@@ -679,12 +709,23 @@ _bureau_untrusted_env_mode() {
   fi
 }
 
+_bureau_untrusted_git_credentials_mode() {
+  local _bue_filter='.repo.untrusted_git_credentials | if . == null then "off" elif . == "off" or . == "keep" then . else "invalid: " + tojson end'
+  if declare -F bureau_get >/dev/null 2>&1; then
+    bureau_get "$_bue_filter"
+  elif [ -n "${BUREAU_CONFIG:-}" ]; then
+    jq -r "$_bue_filter" "$BUREAU_CONFIG"
+  else
+    printf 'off\n'
+  fi
+}
+
 bureau_untrusted_env() {
   case $- in
     (*x*) set +x; local _bue_trace=1 ;;
     (*) local _bue_trace=0 ;;
   esac
-  local _bue_check=0 _bue_mode _bue_name
+  local _bue_check=0 _bue_mode _bue_git_mode _bue_name
   local _bue_assign_re='^[A-Za-z_][A-Za-z0-9_]*='
   local -a _bue_assign
   _bue_assign=()
@@ -697,7 +738,18 @@ bureau_untrusted_env() {
     if [ "$_bue_check" = 1 ]; then return 24; fi
     exit 24
   fi
+  if ! _bue_git_mode=$(_bureau_untrusted_git_credentials_mode 2>&1) \
+     || { [ "$_bue_git_mode" != off ] && [ "$_bue_git_mode" != keep ]; }; then
+    echo "bureau_untrusted_env: repo.untrusted_git_credentials must be absent, \"off\" or \"keep\" (read: ${_bue_git_mode:-nothing}); the command was not run (24, environment-blocked)" >&2
+    if [ "$_bue_trace" = 1 ]; then set -x; fi
+    if [ "$_bue_check" = 1 ]; then return 24; fi
+    exit 24
+  fi
   if [ "$_bue_check" = 1 ]; then
+    (_bureau_env_build "$_bue_mode" seven 1 "$_bue_git_mode") || {
+      if [ "$_bue_trace" = 1 ]; then set -x; fi
+      return 24
+    }
     if [ "$_bue_trace" = 1 ]; then set -x; fi
     return 0
   fi
@@ -712,13 +764,13 @@ bureau_untrusted_env() {
     exit 24
   fi
 
-  _bureau_env_build "$_bue_mode" seven 1
+  _bureau_env_build "$_bue_mode" seven 1 "$_bue_git_mode"
   if [ "$_bue_mode" = default ]; then
     local IFS=$' \t\n'
     for _bue_name in $_BUREAU_UNTRUSTED_PATHS; do _BUREAU_ENV_ARGV+=(-u "$_bue_name"); done
   fi
   if [ "$_bue_trace" = 1 ]; then set -x; fi
-  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bue_assign[@]+"${_bue_assign[@]}"} "$@"
+  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bue_assign[@]+"${_bue_assign[@]}"} ${_BUREAU_GIT_ENV_ARGV[@]+"${_BUREAU_GIT_ENV_ARGV[@]}"} "$@"
 }
 
 bureau_without_secrets() {

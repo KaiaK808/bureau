@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="8801fce4056be8b2072a4ef2dea86ec4506532ed5ba2b51a9ebc34719056f475">
+<meta name="bureau-source-sha256" content="db177d03ce2174378f1f0f71e41de59b5389391310bbfbcdac3f0b90c03f651f">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -172,8 +172,20 @@ their values, <code>BASH_ENV</code> and <code>ENV</code>; with
 plus the provider's own login and network variables (see the <a
 href="configuration.html">configuration reference</a> and <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>).
-An invalid <code>repo.untrusted_env</code> returns 24 before the login
-check. Authentication uses <code>codex login status</code> or
+Both modes switch off stored Git credential helpers and terminal
+prompting, and drop inherited <code>GIT_CONFIG_PARAMETERS</code>
+entirely so an included file cannot restore helpers after the reset,
+unless <code>repo.untrusted_git_credentials</code> is
+<code>"keep"</code>. Private-dependency test gates or post-implement
+commands using a stored credential need <code>"keep"</code> or another
+authentication method. This covers the plain Git path: a process can
+pass its own <code>-c credential.helper=...</code>, invoke a helper
+directly or read the operating system keychain by other means; stored
+<code>gh</code> logins are not covered. An invalid environment or Git
+credential setting, or a malformed inherited
+<code>GIT_CONFIG_COUNT</code> in default mode with credentials off,
+returns 24 before the login check. Authentication uses
+<code>codex login status</code> or
 <code>claude auth status --json</code> before creative work, without a
 probe generation. Missing executables/login return 16. Provider errors
 or malformed final results return 22; quota 23; environment/permission
@@ -636,15 +648,18 @@ replace stage/control runs.</p>
 <p>The pending cases cover direct pushes to the base ref, direct agent
 <code>gh pr merge</code> calls, publishing an overwrite of
 <code>LESSONS.md</code>, publishing files outside declared task paths,
-reading the conventional repository <code>.env</code>, and accessing a
-stored Git credential through its helper despite token-variable removal.
-The credential case uses real <code>git credential fill</code> with a
-local dummy helper, without contacting a server; it does not establish
-that a remote would accept that credential. Retained <code>HOME</code>
-and provider login settings also mean filtering Bureau variables is not
-general filesystem or credential isolation. Review configuration
-annotations flag proposed policy changes for human inspection; they do
-not prevent the original write or change an approval verdict.</p>
+and reading the conventional repository <code>.env</code>. The defended
+stored-credential case uses real <code>git credential fill</code> with a
+local dummy helper, without contacting a server: the plain path cannot
+read the password, the negative control can read it with the guard
+removed, and a separate real-stage check can read it with
+<code>repo.untrusted_git_credentials: "keep"</code>. This does not
+establish that a remote would accept that credential. Retained
+<code>HOME</code> and provider login settings also mean filtering Bureau
+variables is not general filesystem or credential isolation. Review
+configuration annotations flag proposed policy changes for human
+inspection; they do not prevent the original write or change an approval
+verdict.</p>
 <h2 id="live-injection-sample">Live injection sample</h2>
 <p>Before publishing, a maintainer explicitly opts into one manual
 sample with a real provider. The regression runner always uses fakes and
