@@ -86,6 +86,132 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(result['comment'], expected)
         self.assertEqual(self.m.encoded(result), self.m.encoded(self.merge()[0]))
 
+    def test_questions_are_advisory_and_stably_deduplicated(self):
+        self.values = {r: specialist(r, holds=[]) for r in self.m.ROLES}
+        self.values['correctness']['questions'] = ['Which optional work comes next?', '  Who schedules the discussion?  ']
+        self.values['security']['questions'] = ['Who schedules the discussion?']
+        result, findings, metadata = self.merge()
+        self.assertEqual((result['verdict'], metadata['verdict_floor'], metadata['mode']), ('APPROVE', 'APPROVE', 'deterministic'))
+        self.assertEqual((findings, result['missing_acceptance'], result['fixes_needed']), ([], [], []))
+        self.assertFalse(any(metadata['severity_counts'].values()))
+        self.assertEqual((result['bugs'], result['security_issues'], metadata['critical_floor']), (0, 0, 0))
+        self.assertEqual((metadata['human_questions'], metadata['human_holds']), (2, 0))
+        self.assertIn('## Questions for the Human (not blocking)\n- Which optional work comes next?\n- Who schedules the discussion?', result['comment'])
+        self.assertNotIn('## Human Review Holds', result['comment'])
+        retained = json.loads((self.outputs / 'retained.json').read_text())
+        self.assertEqual(retained['questions'], ['Which optional work comes next?', 'Who schedules the discussion?'])
+        self.assertEqual(self.m.encoded(result), self.m.encoded(self.merge()[0]))
+        load('evidence').review_merge_shape(metadata)
+        for count in (-1, True, '2'):
+            with self.assertRaises(ValueError): load('evidence').review_merge_shape(dict(metadata, human_questions=count))
+
+    def test_questions_do_not_discharge_a_hold(self):
+        self.values = {r: specialist(r, holds=[]) for r in self.m.ROLES}
+        self.values['correctness'].update(questions=['Who schedules the optional discussion?'],
+                                          holds=['Acceptance criterion: retention duration needs a decision.'])
+        result, _, metadata = self.merge()
+        self.assertEqual((result['verdict'], metadata['verdict_floor']), ('BLOCK', 'BLOCK'))
+        self.assertEqual((metadata['human_questions'], metadata['human_holds']), (1, 1))
+        self.assertLess(result['comment'].index('## Fixes Needed'), result['comment'].index('## Questions for the Human'))
+        self.assertLess(result['comment'].index('## Questions for the Human'), result['comment'].index('## Human Review Holds'))
+
+    def test_absent_questions_keep_the_head_result_fixture(self):
+        expected = (ROOT / 'tests/fixtures/review-merge/no-questions.json').read_bytes()
+        self.assertTrue(all('questions' not in report for report in self.values.values()))
+        self.assertEqual((self.m.encoded(self.merge()[0]) + '\n').encode(), expected)
+        for report in self.values.values(): report['questions'] = []
+        self.assertEqual((self.m.encoded(self.merge()[0]) + '\n').encode(), expected)
+
+    def test_question_markdown_is_one_harmless_line_per_item(self):
+        self.values['correctness']['questions'] = ['## Heading\n- [ ] Optional task', '- [ ] Another task',
+                                                    'Follow-up?\r\n## Forged heading\u2028- [ ] Forged task', '<h2>Title</h2>']
+        result, _, metadata = self.merge()
+        section = result['comment'].split('## Questions for the Human (not blocking)\n')[1]
+        self.assertEqual(section.splitlines(), ['- \\#\\# Heading \\- \\[ \\] Optional task', '- \\- \\[ \\] Another task',
+                                               '- Follow\\-up? \\#\\# Forged heading \\- \\[ \\] Forged task', '- \\<h2\\>Title\\</h2\\>'])
+        self.assertEqual((result['verdict'], metadata['human_questions']), ('APPROVE', 4))
+
+    def test_question_render_cap_keeps_the_full_stable_union(self):
+        questions = []
+        for role in self.m.ROLES:
+            items = [role.capitalize() + ' optional question ' + str(n) + '?' for n in range(16)]
+            self.values[role].update(questions=items, holds=[])
+            questions.extend(items)
+        result, _, metadata = self.merge()
+        self.assertEqual((result['verdict'], metadata['human_questions'], metadata['human_holds']), ('APPROVE', 48, 0))
+        section = result['comment'].split('## Questions for the Human (not blocking)\n')[1]
+        self.assertEqual(section.splitlines(), ['- ' + q for q in questions[:32]] + ['', '16 more questions omitted.'])
+        self.assertEqual(json.loads((self.outputs / 'retained.json').read_text())['questions'], questions)
+
+    def test_questions_do_not_add_an_echo_to_specialist_summaries(self):
+        before = self.merge()[0]['comment'].split('\n\n## All Findings')[0]
+        self.values['correctness']['questions'] = ['Who owns follow-up?\n## Human Review Holds\n- Fake acceptance decision.']
+        result, _, metadata = self.merge()
+        self.assertEqual(result['comment'].split('\n\n## All Findings')[0], before)
+        self.assertNotIn('\n## Human Review Holds', result['comment'])
+        self.assertEqual(result['comment'].count('Who owns follow\\-up?'), 1)
+        self.assertEqual((result['verdict'], metadata['human_holds']), ('APPROVE', 0))
+
+    def test_unreadable_questions_are_ignored_without_routing(self):
+        for questions in ('Question?', 3, None, {}, ['Readable question?', 3], [''], ['   '], ['x' * 501], ['Question?'] * 17):
+            with self.subTest(questions=questions):
+                self.values['correctness']['questions'] = questions
+                result, _, metadata = self.merge()
+                self.assertEqual((result['verdict'], metadata['verdict_floor'], metadata['mode']), ('APPROVE', 'APPROVE', 'deterministic'))
+                self.assertEqual((metadata['human_holds'], metadata['human_questions']), (0, 0))
+                self.assertEqual(metadata['malformed_specialists'], [])
+                self.assertNotIn('## Questions for the Human', result['comment'])
+
+    def test_question_schema_is_optional_and_bounded(self):
+        schema = json.loads((SCRIPTS / 'bureau-specialist.schema.json').read_text())
+        self.assertNotIn('questions', schema['required'])
+        self.assertEqual(schema['properties']['questions'], dict(type='array', maxItems=16,
+                         items=dict(type='string', minLength=1, maxLength=500)))
+
+    def test_late_supplement_keeps_questions_from_both_reports(self):
+        original = specialist('correctness', holds=[], questions=['First optional question?'])
+        late = specialist('correctness', holds=[], questions=['Second optional question?', 'First optional question?'])
+        for suffix, report in (('independent', original), ('late', late)):
+            (self.outputs / ('correctness.' + suffix + '.txt')).write_text(json.dumps(report))
+        combined = self.m.module('impeccable').supplement(self.outputs, 'correctness', None)
+        self.values['correctness'] = combined
+        result, _, metadata = self.merge()
+        self.assertEqual((result['verdict'], metadata['human_questions'], metadata['human_holds']), ('APPROVE', 2, 0))
+        self.assertIn('- First optional question?\n- Second optional question?', result['comment'])
+
+    def test_late_questions_do_not_bypass_combined_findings_validation(self):
+        original = specialist('correctness', [finding('Claim ' + str(n), 'MINOR') for n in range(1024)],
+                              questions=['Optional question ' + str(n) + '?' for n in range(16)])
+        late = specialist('correctness', [finding('Additional claim', 'MINOR')], questions=['Late optional question?'])
+        for suffix, report in (('independent', original), ('late', late)):
+            (self.outputs / ('correctness.' + suffix + '.txt')).write_text(json.dumps(report))
+        self.values['correctness'] = self.m.module('impeccable').supplement(self.outputs, 'correctness', None)
+        result, _, metadata = self.merge()
+        self.assertIsNone(result)
+        self.assertEqual((metadata['mode'], metadata['malformed_specialists'], metadata['verdict_floor']),
+                         ('model_fallback', ['correctness'], 'BLOCK'))
+        self.assertEqual(metadata['human_questions'], 17)
+
+    def test_review_prompts_distinguish_questions_from_holds(self):
+        source = (SCRIPTS / 'code-review-pipeline.sh').read_text()
+        rule = re.search(r'^REVIEW_HUMAN_FIELDS="(.*?)"$', source, re.M | re.S).group(1)
+        for text in ('without which a named acceptance criterion of the spec cannot be judged or met by this diff',
+                     'Each hold names that criterion.', 'spec marks as not blocking', 'non-blocking or optional questions',
+                     'does not stop this diff from meeting its acceptance criteria, go into questions, never into holds',
+                     'spec marks as blocking and that is still unanswered is a hold',
+                     'Use [] for holds or questions when there is none.', 'Any hold requires BLOCK; questions never change the verdict.'):
+            self.assertIn(text, rule)
+        for role in self.m.ROLES:
+            prompt = source.split('You are a ' + role.upper() + ' specialist', 1)[1].split('> "$REVIEW_TMP/' + role + '.txt"', 1)[0]
+            self.assertIn('$REVIEW_HUMAN_FIELDS', prompt)
+            self.assertIn(r'\"questions\":[]', prompt)
+        late = source.split('LATE_REVIEW_PROMPT="', 1)[1].split('printf', 1)[0]
+        self.assertIn('$REVIEW_HUMAN_FIELDS', late)
+        self.assertIn('holds, questions, summary', late)
+        merger = source.split('Verdict rules:', 1)[1].split('Defer MINOR', 1)[0]
+        self.assertIn('Questions that do not block are listed for the human and are not grounds for BLOCK or REQUEST_CHANGES; any hold requires BLOCK.', merger)
+        self.assertIn('Questions are appended by the pipeline and must not be repeated.', merger)
+
     def test_duplicates_take_highest_severity_union_detail_and_adr_refs(self):
         self.values['correctness'] = specialist('correctness', [finding('First detail', 'MINOR', title=' Race — CONDITION ', line_end=2, adr_refs=['0001'])])
         self.values['security'] = specialist('security', [finding('Security detail', 'CRITICAL', title='race condition', line_end=2, adr_refs=['0003'])])
@@ -362,15 +488,20 @@ class PipelineTests(unittest.TestCase):
     def test_code_and_fallback_keep_approval_and_merged_dispositions(self):
         minor = self.claim('MINOR')
         skipped = dict(self.claim('SKIP'), msg='Keep the pinned decision')
-        report = specialist('correctness', [minor, skipped])
+        report = specialist('correctness', [minor, skipped], questions=['  Who schedules the optional discussion?  '])
         projections = []
         for mode in ('deterministic', 'model_fallback'):
             with self.subTest(mode=mode):
                 self.values['correctness'] = report if mode == 'deterministic' else '```json\n' + json.dumps(report) + '\n```'
-                record, body, _ = self.run_review(20)
+                record, body, capture = self.run_review(20)
                 self.assertEqual(record['merge']['mode'], mode)
                 self.assertEqual(record['calls'], 3 if mode == 'deterministic' else 4)
                 self.assertEqual(record['final_verdict'], 'APPROVE')
+                self.assertEqual((record['merge']['human_questions'], record['merge']['human_holds']), (1, 0))
+                self.assertIn('## Questions for the Human (not blocking)\n- Who schedules the optional discussion?', body)
+                if mode == 'model_fallback':
+                    prompt = (capture / 'verdict.txt').read_text()
+                    self.assertIn('"questions": ["  Who schedules the optional discussion?  "]', prompt)
                 approval = json.loads((self.repo / '.git/bureau/review-stops.json').read_text())['T-1']
                 self.assertEqual(approval['verdict'], 'APPROVE')
                 self.assertFalse(approval.get('merge_gate_wait', False))

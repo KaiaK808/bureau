@@ -374,11 +374,15 @@ os.execv(''' + repr(real_git) + ', [' + repr(real_git) + ', *sys.argv[1:]])\n')
         def normalize(raw):
             return raw.replace(self.git('rev-parse', 'origin/main').encode(), b'<BASE>').replace(
                 self.git('rev-parse', 'origin/001-task').encode(), b'<HEAD>')
+        source = (SCRIPTS / 'code-review-pipeline.sh').read_text()
+        human_fields = re.search(r'^REVIEW_HUMAN_FIELDS="(.*?)"$', source, re.M | re.S).group(1).encode()
         for phase, prompt in prompts.items():
-            # Common hold guidance changed for every review; ADR off still adds
+            # Common hold/question guidance changed for every review; ADR off adds
             # no context, citation instruction or extended merger contract.
-            prompt = prompt.replace(b'Set holds to an array of unresolved human decisions (ambiguous acceptance criteria, architectural disagreement); use [] only when none remain. Any hold requires BLOCK.\n\n', b'')
-            prompt = prompt.replace(b',"holds":[]', b'')
+            prompt = prompt.replace(human_fields + b'\n\n', b'')
+            prompt = prompt.replace(b',"holds":[],"questions":[]', b'')
+            prompt = prompt.replace(b'Questions that do not block are listed for the human and are not grounds for BLOCK or REQUEST_CHANGES; any hold requires BLOCK.\n', b'')
+            prompt = prompt.replace(b'Questions are appended by the pipeline and must not be repeated.\n', b'')
             # The adapter appends common scratch guidance for read-only Codex;
             # normalize only that exact sentence, keeping the legacy ADR check.
             repo = str((self.root / 'worker-1').resolve())

@@ -279,7 +279,7 @@ def combine_reports(original, late):
     result = {**original, 'findings': findings, 'summary': original['summary'] + ' Late evidence: ' + late['summary']}
     result['counts'] = {s.lower(): sum(f['class'] == s for f in findings) for s in ('CRITICAL', 'BUG', 'MINOR', 'SKIP')}
     result['counts']['critical'] = max(result['counts']['critical'], original['counts']['critical'], late['counts']['critical'])
-    for key in ('holds', 'acceptance_gaps'):
+    for key in ('holds', 'acceptance_gaps', 'questions'):
         if key in original or key in late:
             result[key] = list(dict.fromkeys(original.get(key, []) + late.get(key, [])))
     return result

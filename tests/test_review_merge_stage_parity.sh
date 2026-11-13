@@ -7,7 +7,7 @@ unset BUREAU_CALLER_STOP
 ISSUE=EXP-7
 
 for mode in code fallback; do
-  for boundary in stop pending blocked manual worker; do
+  for boundary in stop pending blocked manual worker questions hold; do
     sandbox_init "$ISSUE" test-branch
     printf 'change\n' > "$SANDBOX/change.txt"
     git -C "$SANDBOX" add change.txt
@@ -28,8 +28,26 @@ for mode in code fallback; do
       blocked) pr2_checks red; expected=25 ;;
       manual) export BUREAU_STUB_STATE_MERGE=state-merge; pr2_config '.agents.merge_mode = "manual"' ;;
       worker) export BUREAU_STUB_STATE_MERGE=state-merge BUREAU_STUB_AGENT_ENABLED=merge ;;
+      questions|hold)
+        export BUREAU_STUB_STATE_MERGE=state-merge
+        pr2_config '.agents.merge_mode = "manual"'
+        [ "$boundary" != hold ] || expected=25
+        python3 - "$FAKE_CLAUDE_CORRECTNESS_FIXTURE" "$boundary" <<'PY'
+import json
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]); text = path.read_text()
+wrapped = text.startswith('```json\n')
+if wrapped: text = text.split('\n', 1)[1].rsplit('\n```', 1)[0]
+report = json.loads(text)
+report['questions'] = ['Who schedules the optional discussion?']
+if sys.argv[2] == 'hold': report['holds'] = ['Acceptance criterion: retention duration needs a decision.']
+text = json.dumps(report)
+path.write_text('```json\n' + text + '\n```\n' if wrapped else text)
+PY
+        ;;
     esac
-    run_pipeline code-review-pipeline.sh "$ISSUE"
+    TMPDIR="$SANDBOX" run_pipeline code-review-pipeline.sh "$ISSUE"
     assert_eq "$expected" "$LAST_RC" "$mode/$boundary exit"
     expected_calls=3; [ "$mode" != fallback ] || expected_calls=4
     assert_eq "$expected_calls" "$(wc -l < "$FAKE_CLAUDE_LOG" | tr -d ' ')" "$mode/$boundary provider calls"
@@ -47,15 +65,31 @@ for mode in code fallback; do
           assert_calls_exclude $'add_issue_label\t'"$ISSUE"$'\tneeds-human'
         fi
         cp "$FAKE_CLAUDE_LOG" "$SANDBOX/first-calls.log"
-        run_pipeline code-review-pipeline.sh "$ISSUE"
+        TMPDIR="$SANDBOX" run_pipeline code-review-pipeline.sh "$ISSUE"
         assert_eq "$expected" "$LAST_RC" "$mode/$boundary retry exit"
         cmp "$SANDBOX/first-calls.log" "$FAKE_CLAUDE_LOG"
         ;;
-      manual|worker)
+      manual|worker|questions)
         assert_calls_include $'move_issue\t'"$ISSUE"$'\tstate-merge'
         assert_calls_exclude $'move_issue\t'"$ISSUE"$'\tstate-done'
         ;;
+      hold)
+        assert_calls_include $'add_issue_label\t'"$ISSUE"$'\tneeds-human'
+        assert_calls_exclude '^move_issue'
+        ;;
     esac
+    if [ "$boundary" = questions ] || [ "$boundary" = hold ]; then
+      python3 - "$PR2_GH/comments.json" "$boundary" <<'PY'
+import json
+from pathlib import Path
+import sys
+body = next(c['body'] for c in json.loads(Path(sys.argv[1]).read_text()) if '## Code Review v2' in c['body'])
+assert '## Questions for the Human (not blocking)\n- Who schedules the optional discussion?' in body
+blocked = sys.argv[2] == 'hold'
+assert ('**Verdict**: BLOCK' if blocked else '**Verdict**: APPROVE') in body
+assert ('## Human Review Holds' in body) == blocked
+PY
+    fi
     echo "PASS $mode/$boundary: exit $expected, approval and hand-off preserved"
     teardown
   done

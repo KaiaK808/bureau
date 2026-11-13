@@ -37,10 +37,13 @@ class DispositionTests(unittest.TestCase):
                                    cwd=self.f.repo, capture_output=True, text=True, timeout=10)
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def supplemented_pair(self):
+    def supplemented_pair(self, questions=(), late_questions=()):
         directory, reports = self.pair('current-round', 'independent.py')
         late = {role: fixture.specialist(role) for role in self.f.m.ROLES}
         late['security'] = fixture.specialist('security', [fixture.finding('Additional deferred detail', 'MINOR', file='late.py')])
+        if questions or late_questions:
+            reports['correctness']['questions'] = list(questions)
+            late['correctness']['questions'] = list(late_questions)
         impeccable = fixture.load('impeccable')
         for role, report in reports.items():
             (directory / (role + '.independent.txt')).write_text(json.dumps(report))
@@ -202,6 +205,29 @@ class DispositionTests(unittest.TestCase):
                                                    self.run, self.attempt, 1, 'REQUEST_CHANGES')
         self.assertEqual(result, json.loads((current / 'merged.json').read_text()))
         self.assertEqual((floor, head), ('BUG', self.f.head))
+
+    def test_late_questions_reconstruct_evidence_beyond_the_per_report_limit(self):
+        questions = ['Optional question ' + str(n) + '?' for n in range(16)]
+        current, reports = self.supplemented_pair(questions, ['Late optional question?'])
+        metadata = json.loads((current / 'merge-metadata.json').read_text())
+        result = json.loads((current / 'merged.json').read_text())
+        originals = {p: p.read_bytes() for p in current.glob('*.txt')}
+        receipts = self.receipts(reports, inputs=True)
+        self.assertEqual(self.collect(current).stderr, '')
+        self.assertEqual((result['verdict'], metadata['verdict_floor'], metadata['human_holds'], metadata['human_questions']),
+                         ('APPROVE', 'APPROVE', 0, 17))
+        section = result['comment'].split('## Questions for the Human (not blocking)\n')[1]
+        self.assertEqual(section.splitlines(), ['- ' + q for q in questions + ['Late optional question?']])
+        combined = json.loads((current / 'correctness.txt').read_text())
+        self.assertEqual(combined['questions'], questions + ['Late optional question?'])
+        self.assertEqual(metadata['specialist_sha256']['correctness'], self.e.digest(combined))
+        retained = next(self.f.root.glob('provider-*/merged-review.json'))
+        self.assertEqual(json.loads(retained.read_text())['result'], result)
+        self.assertEqual({p: p.read_bytes() for p in originals}, originals)
+        self.assertEqual({p: p.read_bytes() for p in receipts}, receipts)
+        for raw in receipts.values():
+            receipt = json.loads(raw)
+            self.assertEqual(receipt['review_report_sha256'], self.e.digest(reports[receipt['phase']]))
 
     def test_late_and_independent_receipts_reject_tampering_and_missing_reports(self):
         current, reports = self.supplemented_pair()

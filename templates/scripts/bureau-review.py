@@ -23,6 +23,7 @@ SEVERITY = {'CRITICAL': 0, 'BUG': 1, 'MINOR': 2, 'SKIP': 3}
 MAX_OUTPUT = 8 * 1024 * 1024
 # Bound repeated fix prose only; merged and normalized finding lists stay complete.
 MAX_RENDER_FIXES = 10
+MAX_RENDER_QUESTIONS = 32
 MAX_BLOB = 2 * 1024 * 1024
 MAX_VERIFY = 8
 MAX_REQUEST = 24576
@@ -170,6 +171,14 @@ def human_holds(value):
     return result
 
 
+def human_questions(value):
+    questions = value.get('questions', [])
+    schema = json.loads((SCRIPTS / 'bureau-specialist.schema.json').read_text())['properties']['questions']
+    try: module('provider').validate(questions, schema)
+    except (ValueError, TypeError): return []
+    return [q.strip() for q in questions if q.strip()]
+
+
 def readable_finding(raw, refs):
     """Keep readable claims even when another field violates the contract.
 
@@ -206,6 +215,8 @@ def validate_finding(finding, refs):
 def load_specialist(text, role, refs):
     # Legacy prose/fences are parsed only for retention on the fallback path.
     value = structured(text)
+    # Unreadable advisory questions cannot make an otherwise valid report fail.
+    if 'questions' in value: value['questions'] = human_questions(value)
     module('provider').validate(value, json.loads((SCRIPTS / 'bureau-specialist.schema.json').read_text()))
     if value['specialist'] != role: raise ValueError('wrong specialist')
     if any(type(n) is not int or not 0 <= n <= 999999999 for n in value['counts'].values()):
@@ -256,7 +267,7 @@ def normalized(findings, base, head, check_anchors=True):
     return result, checks, invalid
 
 
-def render(findings, summaries, gaps, holds=()):
+def render(findings, summaries, gaps, holds=(), questions=()):
     lines = ['## Specialist Summaries']
     lines += ['- ' + role.capitalize() + ': ' + summaries[role] for role in ROLES if role in summaries]
     lines += ['', '## All Findings']
@@ -278,13 +289,21 @@ def render(findings, summaries, gaps, holds=()):
     if len(fixes) > MAX_RENDER_FIXES:
         fixes = ['See the ' + str(len(fixes)) + ' CRITICAL, BUG and MINOR findings above for fixes.']
     lines += ['- ' + f for f in fixes + gaps] or ['None.']
+    if questions:
+        lines += ['', '## Questions for the Human (not blocking)']
+        # Keep the list template, but prevent question text from adding blocks.
+        lines += ['- ' + re.sub(r'([\\`*_{}\[\]<>()#+.!|~-])', r'\\\1', ' '.join(q.split()))
+                  for q in questions[:MAX_RENDER_QUESTIONS]]
+        if len(questions) > MAX_RENDER_QUESTIONS:
+            lines += ['', str(len(questions) - MAX_RENDER_QUESTIONS) + ' more questions omitted.']
     if holds: lines += ['', '## Human Review Holds'] + ['- ' + h for h in holds]
     return '\n'.join(lines)
 
 
 def merge(directory, base, head, refs):
-    values, failures, claims, checks, gaps, holds, summaries = {}, [], [], [], [], [], {}
+    values, failures, claims, checks, gaps, holds, questions, summaries = {}, [], [], [], [], [], [], {}
     fallback_reasons = {}
+    validated_questions = {}
     uncertain_claims = False
     counts = {s.lower(): 0 for s in SEVERITY}
     security_floor = 0
@@ -295,7 +314,15 @@ def merge(directory, base, head, refs):
             try:
                 if not pure_report(text): fallback_reasons[role] = 'non_json_report'
             except (ValueError, TypeError): fallback_reasons[role] = 'non_json_report'
-            values[role] = load_specialist(text, role, refs)
+            # Validate late reports separately, before aggregating their questions.
+            if (directory / (role + '.independent.txt')).is_file():
+                combined = module('impeccable').supplement(directory, role, refs)
+                validated_questions[role] = combined.get('questions', [])
+                core = dict(combined); core.pop('questions', None)
+                values[role] = load_specialist(encoded(core), role, refs)
+                if 'questions' in combined: values[role]['questions'] = combined['questions']
+            else:
+                values[role] = load_specialist(text, role, refs)
         except (OSError, ValueError, TypeError, KeyError):
             failures.append(role)
             fallback_reasons.setdefault(role, 'invalid_specialist')
@@ -306,6 +333,7 @@ def merge(directory, base, head, refs):
         try: raw = values.get(role) or structured(text)
         except (OSError, ValueError, TypeError): continue
         holds.extend(human_holds(raw))
+        questions.extend(validated_questions[role] if role in validated_questions else human_questions(raw))
         if isinstance(raw.get('summary'), str): summaries[role] = raw['summary']
         raw_gaps = raw.get('acceptance_gaps', [])
         if isinstance(raw_gaps, str): raw_gaps = [raw_gaps]
@@ -341,13 +369,14 @@ def merge(directory, base, head, refs):
     findings, _, _ = normalized(claims, base, head)
     invalid = sum(check['status'] != 'valid' for check in checks)
     for severity in counts: counts[severity] = max(counts[severity], sum(f['class'].lower() == severity for f in findings))
+    questions = list(dict.fromkeys(questions))
     metadata.update(invalid_anchors=invalid, anchor_checks=checks, critical_floor=counts['critical'],
                     security_floor=max(security_floor, sum('security' in f['actionable_specialists'] for f in findings)),
-                    severity_counts=counts, human_holds=len(holds),
+                    severity_counts=counts, human_holds=len(holds), human_questions=len(questions),
                     verdict_floor='BLOCK' if holds else 'REQUEST_CHANGES' if failures or uncertain_claims else 'APPROVE')
     metadata['adr_refs'] = sorted({ref for f in findings for ref in f.get('adr_refs', [])})
     gaps = sorted(set(gaps))
-    retained = dict(findings=findings, gaps=gaps, holds=holds, summaries=summaries)
+    retained = dict(findings=findings, gaps=gaps, holds=holds, questions=questions, summaries=summaries)
     (directory / 'retained.json').write_text(encoded(retained) + '\n')
     if fallback_reasons: return None, findings, metadata
     # Neutral input to the legacy shell contract, NOT a severity decision.
@@ -359,7 +388,7 @@ def merge(directory, base, head, refs):
     result = dict(verdict=metadata['verdict_floor'], bugs=sum(f['class'] == 'BUG' for f in findings), security_issues=metadata['security_floor'],
                   missing_acceptance=gaps, fixes_needed=[f['msg'] for f in findings if f['class'] in ('CRITICAL', 'BUG', 'MINOR')],
                   summary='Merged correctness, security and performance findings.',
-                  comment=render(findings, summaries, gaps, holds), findings=public)
+                  comment=render(findings, summaries, gaps, holds, questions), findings=public)
     metadata.update(invalid_anchors=invalid, anchor_checks=checks)
     return result, findings, metadata
 
@@ -500,7 +529,7 @@ def main():
         metadata['anchor_checks'].extend(checks)
         metadata['invalid_anchors'] += invalid
         metadata['adr_refs'] = sorted(set(metadata['adr_refs']) | {ref for f in findings for ref in f.get('adr_refs', [])})
-        result['comment'] += '\n\n' + render(findings, retained['summaries'], result['missing_acceptance'], retained['holds'])
+        result['comment'] += '\n\n' + render(findings, retained['summaries'], result['missing_acceptance'], retained['holds'], retained['questions'])
     # This class belongs to the deterministic shell merge, never a provider.
     # Add it after fallback validation/retention so no model can waive it.
     # It flags the human merge without changing verdicts, floors or fixes.
@@ -510,7 +539,7 @@ def main():
         result['findings'] = findings
         if metadata['mode'] == 'deterministic':
             retained = json.loads((directory / 'retained.json').read_text())
-            result['comment'] = render(findings, retained['summaries'], retained['gaps'], retained['holds'])
+            result['comment'] = render(findings, retained['summaries'], retained['gaps'], retained['holds'], retained['questions'])
         else:
             result['comment'] += '\n\n## Agent configuration changes\n\n### AGENT_CONFIG\n' + '\n'.join(
                 '- `' + f['file'] + ':0` — ' + f['msg'] for f in config_findings)
