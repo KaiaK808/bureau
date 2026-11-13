@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="522b8eff3757a3d53dacdd7f1a73bdca48cbcbb594028d8e614da530a795749c">
+<meta name="bureau-source-sha256" content="99d9da5829463bee7f0a8ef2c5cf7da43e2e171fb20b96994598515eb59dde58">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1566,6 +1566,48 @@ with older readers and writers. Invalid optional records are ignored
 without quarantining the manifest. Absent/false settings and older
 stores without the record keep the existing brief byte-for-byte. Resync
 the scripts scope together before enabling.</p>
+<p>When the pinned base enables <code>repo.task_completion_check</code>
+with the boolean <code>true</code>, QA compares each completed
+<code>[X]</code>/<code>[x]</code> task against the ticket diff after the
+green final gate and test integrity. It reads the ticket's
+<code>tasks.md</code> at pinned HEAD and the merge-base-to-HEAD diff
+from Git objects. The shared task-path extractor runs per task line with
+the pinned path prefix and both trees' tracked paths. A task is
+<code>verified</code> if a named path (or a file within a named
+directory) was added, changed, deleted or renamed; named paths without a
+matching change are <code>flagged</code>; absent, ambiguous or unsafe
+paths are <code>unverifiable</code>. Independently, a whole-word
+"test"/"tests" reference, case-insensitive, is <code>flagged</code> if
+no added/modified file matches the pinned
+<code>agents.risk_tier.test_patterns</code>, even with no usable path.
+Unchecked tasks are counted without a verdict. Overall, any flag wins;
+otherwise at least one verified task gives <code>pass</code>, and no
+verified task gives <code>unverifiable</code>. Unmeasured tasks remain
+unverifiable. The check is advisory and only proves that a named file
+changed, not that the task's work is correct; it changes no QA verdict,
+gate or routing. Helper failures print
+<code>Task completion: not measured.</code>; control exits 25, 124 and
+130 propagate as for test integrity.</p>
+<p>Each QA attempt may carry an optional <code>task_completion</code>
+record: base, head, tasks path, time, verdict,
+verified/flagged/unverifiable/unchecked counts, measurement reason,
+omitted count and at most 40 findings in task-line order. Findings
+contain only the line number, per-task verdict, fixed rule, up to 20
+safe named paths and an omitted-path count. No task text or file
+contents are retained. Limits are 200 changed paths, a 1 MiB tasks blob
+and 60 seconds total. Bytes live at
+<code>runs/RUN_ID/task-completion/ATTEMPT_ID.json</code> under the same
+store limits; on-disk v1 manifests remain unchanged and corrupt optional
+records are ignored without quarantining the manifest. The brief selects
+the latest record at its HEAD and adds <strong>Task completion</strong>
+after <strong>Test integrity</strong> (or the preceding test evidence
+block), before <strong>Review evidence</strong>. It shows
+<code>verdict; verified=N; flagged=N; unverifiable=N; unchecked=N; omitted=N.</code>,
+an optional fixed measurement reason, at most eight findings with
+encoded/truncated paths, and <code>N more.</code>. Missing, false or
+invalid settings add no record or brief text; invalid values print an
+invalid-setting summary. Resync the scripts scope together before
+enabling it on the trusted base.</p>
 <p><code>bureau-acceptance.py</code> renders a deterministic metadata
 package at manual review APPROVE (including its normal exit 0),
 requested review-stop (20), and shepherd's manual/requested stop already
