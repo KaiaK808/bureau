@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="eefe6f5272dbc6a0a76598eb73d3d967d98e64b27bd84f4b212baf6ac7f4e20c">
+<meta name="bureau-source-sha256" content="189b37cdda66df1b7041a20a110fbf0e0fb7c726317c7c7571f85a034f6d684d">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1455,6 +1455,66 @@ timeout 124/cancellation 130), does not route GREEN, and retains
 ownership until the hold is explicitly resolved. An absent setting adds
 no test runs, record, GitHub requests or acceptance-brief text. Resync
 scripts together before opting in.</p>
+<p><code>repo.test_integrity_check</code> optionally adds static
+evidence after the same green final QA gate, directly after
+fail-before-pass when both are enabled. Only the boolean
+<code>true</code> in <code>.bureau.json</code> at QA's pinned base
+enables it; absent or <code>false</code> adds no record or brief text,
+and other values are off with an invalid-setting summary. Provider-free
+runs use the same local main opt-in and fetched PR-base resolution as
+fail-before-pass. The helper reads committed Git objects at the merge
+base and HEAD, never imports or runs repository code, and creates no
+checkout or repository files. Evidence is stored separately under the
+Git common directory.</p>
+<p>For changed test paths matching the pinned
+<code>agents.risk_tier.test_patterns</code>, it counts assertion sites
+and newly added skip, exclusive-test and disabled-test markers. Python
+uses AST parsing. Named skip markers are recognised without requiring a
+call, including method values. Outside Python, JavaScript/TypeScript, Go
+test files, Rust and shell counts are lexical and symmetric: only
+whole-line comments starting with <code>//</code>, <code>#</code>,
+<code>/*</code> or <code>*</code> are removed (Rust attributes remain
+recognisable), then every token occurrence counts, including several on
+one line. Strings, regex literals, template literals, here-documents and
+inline or block-comment text are not distinguished from code. Removing a
+string or block comment containing an assertion token counts too, so
+these findings say "assertion-like sites went down" and are pointers for
+the reviewer; Python findings keep "assertions removed". These counts
+cannot judge whether an assertion became weaker in meaning. Assertion
+totals are compared by language family, so moving assertions between
+changed files or splitting a test preserves the total; an incomplete
+family cannot establish a clean comparison. Unsupported test types and
+unparseable Python are unverifiable. Import checks cover every changed
+Python or JavaScript/TypeScript file at HEAD, but judge only first-party
+imports: Python relative imports and absolute names rooted in a
+package/module in the HEAD tree, and lexically found
+JavaScript/TypeScript relative literal specifiers containing no
+backslash. Relative directory imports can resolve a repository-root
+<code>index.&lt;ext&gt;</code> in JavaScript/TypeScript. Relative
+imports that leave the repository in either language family and
+specifiers with backslashes are counted as external, not checked;
+escapes are not decoded. For Python
+<code>from &lt;package&gt; import name</code>, only the containing
+package is resolved, including a repository-root
+<code>__init__.py</code>; the imported name itself is not judged,
+including attributes, submodules and <code>*</code>, for relative and
+absolute imports alike. External packages are counted as not checked,
+and Python imports guarded by
+<code>ImportError</code>/<code>ModuleNotFoundError</code> or
+<code>TYPE_CHECKING</code> are excluded. Dynamic resolution, aliases and
+runtime search-path changes are outside this check.</p>
+<p>The scan allows 200 changed files, 1 MiB per file version and 60
+seconds in total. Exceeded bounds and unsafe paths make coverage
+unverifiable, never pass. Each check reports <code>pass</code>,
+<code>flagged</code> or <code>unverifiable</code>; any flag wins
+overall, then any unverifiable check, otherwise pass. At most 40
+findings are retained in path order, with omitted findings counted; no
+source contents, matched text or external package names are retained. A
+flag is evidence for the reviewer, never a block: it changes no QA
+verdict, gate, routing or exit code. A helper failure prints
+<code>Test integrity: not measured</code>; cancellation retains the
+existing QA cancellation protocol. Resync scripts together before opting
+in.</p>
 <table>
 <thead>
 <tr>

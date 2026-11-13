@@ -433,6 +433,22 @@ def render(store, repo, issue, pr, head, url, spec=None, base=None, verdict=None
             if len(path) > 280: path = path[:280] + '…'
             lines += [f'- `{path}`: {row["class"]}' + (f' ({row["reason"]})' if row['reason'] else '') + '.']
         if len(listed) > 8: lines += [f'- {len(listed) - 8} more.']
+    measured = [attempt['test_integrity'] for attempt, _ in attempts
+                if attempt['stage'] == 'qa' and attempt.get('test_integrity', {}).get('head') == head]
+    if measured:
+        record = max(measured, key=lambda item: item['recorded_at'])
+        checks = record['checks']
+        lines += ['', '**Test integrity**',
+                  f'- {record["verdict"]}; removed assertions={checks["assertions"]["removed"]}; '
+                  f'new skips={checks["skips"]["added"]}; unresolved imports={checks["imports"]["unresolved"]}; '
+                  f'unverifiable files={record["unverifiable_files"]}; omitted={record["omitted"]}.']
+        for row in record['findings'][:8]:
+            path = quote(row['path'].encode('utf-8', 'surrogateescape'), safe='/._-')
+            if len(path) > 280: path = path[:280] + '…'
+            line = ':' + str(row['line']) if row['line'] is not None else ''
+            lines += [f'- `{path}`{line}: {row["kind"]}']
+        more = record['omitted'] + max(0, len(record['findings']) - 8)
+        if more: lines += [f'- {more} more.']
     lines += ['', '**Review evidence**',
               f'- Final verdict: {verdict if verdict in ("APPROVE", "REQUEST_CHANGES", "BLOCK") else "missing"}; REVIEW_HEAD={e.head(review_head) or "missing"}.']
     agents = config.get('agents', {})

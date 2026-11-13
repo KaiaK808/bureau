@@ -159,11 +159,16 @@ QA_LOG_PATH="logs/qa-$ISSUE-$QA_LOG_TS-$$.log"
 QA_TMP=$(mktemp -d)
 QA_GATE_CONTEXT="$QA_TMP/gate-context.json"
 QA_CHANGED_PID=""
+QA_INTEGRITY_PID=""
 _qa_cleanup() {
   local rc=$?
   if [ -n "${QA_CHANGED_PID:-}" ]; then
     kill -TERM "$QA_CHANGED_PID" 2>/dev/null || true
     wait "$QA_CHANGED_PID" 2>/dev/null || true
+  fi
+  if [ -n "${QA_INTEGRITY_PID:-}" ]; then
+    kill -TERM "$QA_INTEGRITY_PID" 2>/dev/null || true
+    wait "$QA_INTEGRITY_PID" 2>/dev/null || true
   fi
   if [ -f "${QA_LOG_PATH:-}" ]; then bureau_archive_evidence_dir_log || true; fi
   # The full log is already in $QA_LOG_PATH when a needs-human arm ends with 25
@@ -405,6 +410,22 @@ if [ "$FINAL_GREEN" = true ]; then
   trap - TERM INT HUP
   # Advisory failures never change QA; safety and cancellation still do.
   case "$CHANGED_RC" in 25|124|130) exit "$CHANGED_RC" ;; esac
+fi
+
+if [ "$FINAL_GREEN" = true ]; then
+  ( bureau_exec_runtime python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-test-integrity.py" \
+      --repo "$REPO_DIR" --base "$QA_BASE" --branch "$BRANCH" ) &
+  QA_INTEGRITY_PID=$!
+  trap 'exit 130' TERM INT HUP
+  INTEGRITY_RC=0
+  wait "$QA_INTEGRITY_PID" || INTEGRITY_RC=$?
+  QA_INTEGRITY_PID=""
+  trap - TERM INT HUP
+  case "$INTEGRITY_RC" in
+    25|124|130) exit "$INTEGRITY_RC" ;;
+    0) ;;
+    *) echo "  Test integrity: not measured." ;;
+  esac
 fi
 
 STATUS=$(parse_claude_json "$QA_RESULT" '.status // empty')

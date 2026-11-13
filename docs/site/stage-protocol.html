@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="01240aed8929d79a0e2fdfca7cb3869a19d8b39fe1788342074e040eb5492918">
+<meta name="bureau-source-sha256" content="adb1d9182631e00f85ade34cf355deee8d2a60662d37a4239b854c892f9d7586">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1508,6 +1508,40 @@ uncertain outside-gate termination or an execution error retaining
 mandatory holds or measurement-owned runtime state records
 <code>not measured</code> and stops QA under a mandatory process hold,
 with exit 25 (or timeout 124/cancellation 130).</p>
+<p>When the pinned base enables <code>repo.test_integrity_check</code>,
+QA records a static <strong>Test integrity</strong> measurement after
+its final green gate, following fail-before-pass. The brief selects the
+latest record at its HEAD and inserts <strong>Test integrity</strong>
+after <strong>Fail-before-pass</strong>, or after <strong>Test
+evidence</strong> when that block is absent, before <strong>Review
+evidence</strong>. Its summary is
+<code>verdict; removed assertions=N; new skips=N; unresolved imports=N; unverifiable files=N; omitted=N.</code>,
+followed by at most eight findings as quoted path, HEAD line when
+available, and fixed finding kind, then <code>N more.</code> for the
+remainder. Assertion removals are net losses across changed files in
+each recognised language family, so a split or move with the same total
+is not flagged. Outside Python counts are lexical: findings say
+"assertion-like sites went down", including removed literal or comment
+text containing tokens; Python keeps "assertions removed". Skip counts
+cover added markers; imports judge first-party targets in HEAD's Git
+tree only. Static recognisers cannot rate assertion meaning or prove
+runtime import resolution. Coverage limits (200 files, 1 MiB per
+version, 60 seconds), unsafe paths, unsupported test types and Python
+parse errors are unverifiable. Any flag wins over unverifiable, which
+wins over pass. This evidence never changes QA's verdict or exit
+code.</p>
+<p>Each QA attempt may carry an optional <code>test_integrity</code>
+record: base, head, time, verdict, per-check statuses/counts/reasons,
+unverifiable-file and omitted counts, and at most 40 path-sorted
+findings. Findings retain only safe paths, HEAD lines or null, fixed
+kinds, assertion counts and safe unresolved module paths. No file
+contents, matched text or external package names enter the record. Bytes
+live at <code>runs/RUN_ID/test-integrity/ATTEMPT_ID.json</code> under
+the existing store limits; the on-disk v1 manifest remains compatible
+with older readers and writers. Invalid optional records are ignored
+without quarantining the manifest. Absent/false settings and older
+stores without the record keep the existing brief byte-for-byte. Resync
+the scripts scope together before enabling.</p>
 <p><code>bureau-acceptance.py</code> renders a deterministic metadata
 package at manual review APPROVE (including its normal exit 0),
 requested review-stop (20), and shepherd's manual/requested stop already
