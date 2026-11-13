@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d23ada3622ef88241bfcfc3b5ba146f6f28f181c9367969c5c7e2b7306083602">
+<meta name="bureau-source-sha256" content="916c0ce1412f0729317bcc9bcec9f07e7b7ad90db17bdcdd0fc6ee7516016889">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -87,6 +87,44 @@ href="#upgrade-to-v35">Upgrade to v3.5</a>, <a
 href="#upgrade-to-v351">Upgrade to v3.5.1</a>, <a
 href="#upgrade-to-v36">Upgrade to v3.6</a> and <a
 href="#upgrade-to-v37">Upgrade to v3.7</a>.</p>
+<h2 id="unreleased-move-an-existing-secrets-file">Unreleased: move an
+existing secrets file</h2>
+<p>Existing installations keep working with <code>.env</code> next to
+<code>.bureau.json</code>; nothing moves automatically. New setup uses
+<code>~/.config/bureau/&lt;repository directory name&gt;.env</code>
+outside the checkout. Moving blocks the conventional checkout
+<code>.env</code> path only: an agent with the user's permissions can
+still discover the file through a search, <code>.bureau.json</code> or
+Bureau's processes and read it. This release has no operating-system
+sandbox to prevent that.</p>
+<ol type="1">
+<li>Stop queue loops, shepherds and supervisors, and compare
+installed-script drift before resyncing the complete scripts scope.
+Running shells retain loaded code.</li>
+<li>Create <code>~/.config/bureau</code> if needed and set its mode to
+0700. Create <code>&lt;repository directory name&gt;.env</code> there
+with mode 0600, exclusively; if it already exists for another checkout
+of the same name, choose a distinct filename or explicitly agree to
+reuse it before changing anything. Move the old <code>.env</code>
+content, including the bureau-managed block and optional Telegram
+entries, into the selected file without printing credentials, then
+remove the old secrets from the checkout. Keep <code>.env.example</code>
+there.</li>
+<li>Set <code>repo.env_file</code> in <code>.bureau.json</code> to the
+chosen
+<code>~/.config/bureau/&lt;repository directory name&gt;.env</code>
+path. Absolute paths also work. Remove or update any launch-time
+<code>BUREAU_ENV_FILE</code> override: a non-empty override wins; a
+relative override still counts from <code>.bureau.json</code>'s
+directory.</li>
+<li>Restart loops and supervisors with the new configuration, then run
+<code>python3 scripts/bureau-doctor.py --mode background</code>. Doctor
+warns about a secrets file inside the main checkout or readable by group
+or others; an outside file with mode 0600 triggers neither warning.
+Invalid <code>repo.env_file</code> settings or missing selected files
+are errors (stages exit 24), with no fallback to the checkout's
+<code>.env</code>.</li>
+</ol>
 <h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is

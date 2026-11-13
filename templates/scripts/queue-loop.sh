@@ -12,7 +12,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 
-# Load .env (BUREAU_ENV_FILE, next to .bureau.json) for this loop's own Linear and
+# Load the resolved secrets file (BUREAU_ENV_FILE) for this loop's own Linear and
 # Telegram calls and its settings. The three secrets stay unexported (bureau-env.sh);
 # every stage reads .env itself.
 if [ -f "${BUREAU_ENV_FILE:-$REPO_DIR/.env}" ]; then

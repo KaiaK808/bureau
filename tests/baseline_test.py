@@ -286,6 +286,26 @@ runpy.run_path(program)['main'](now=now)
         self.assertFalse(report['sources']['linear']['available'])
         self.assertEqual(report['weeks'][0]['metrics']['tickets_abandoned']['status'], 'missing')
 
+    def test_linear_reads_the_resolved_secrets_file(self):
+        self.populated()
+        self.env.pop('LINEAR_API_KEY')
+        config_path = self.repo / '.bureau.json'
+        config = json.loads(config_path.read_text())
+        external = self.root / 'operator.env'
+        config['repo'] = dict(env_file=str(external))
+        config_path.write_text(json.dumps(config))
+        (self.repo / '.env').write_text('LINEAR_API_KEY=wrong-fixture-key\n')
+        for name, path in (('setting', external), ('override', self.repo / 'override.env')):
+            with self.subTest(source=name):
+                self.linear_key = 'synthetic-' + name + '-key'
+                path.write_text('LINEAR_API_KEY=' + self.linear_key + '\n'); path.chmod(0o600)
+                if name == 'override': self.env['BUREAU_ENV_FILE'] = path.name
+                self.sync()
+                before = tree_bytes(self.root)
+                report = self.report()
+                self.assertTrue(report['sources']['linear']['available'])
+                self.assertEqual(tree_bytes(self.root), before)
+
     def test_ticketless_provider_runs_preserve_ticket_measurements(self):
         self.populated()
         expected = self.report()['weeks'][0]

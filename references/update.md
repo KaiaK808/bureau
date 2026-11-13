@@ -2,6 +2,8 @@
 
 When the user requests `--update`:
 
+Resolve the secrets file as the stages do: non-empty process `BUREAU_ENV_FILE`, otherwise `repo.env_file`, otherwise `.env` next to `.bureau.json`. A relative process override counts from that JSON file's directory; `repo.env_file` must be absolute or start with `~/`. Do not create a checkout `.env` when the installation uses an external file. Moving outside blocks the conventional checkout path only; it does not stop a process with the user's permissions from discovering and reading the file. See [migration](../docs/migration.md#unreleased-move-an-existing-secrets-file).
+
 1. **Show current effective config first.** Run `bash scripts/bureau-status.sh --config` and display the output. This surfaces both `.bureau.json` values and the env-only knobs (`BUREAU_IMPL_*`, `BUREAU_SUPERVISOR_*`, `LINEAR_API_KEY` set/unset, etc.) the user might want to change.
 
 2. Ask: "What would you like to change?" Present these option groups:
@@ -10,17 +12,17 @@ When the user requests `--update`:
    - **Tuning** — poll interval, max review cycles, concurrency cap, sampling threshold, merge strategy (`.bureau.json` → `.agents.*`)
    - **Models** — provider defaults and per-stage overrides; select fields using the compatibility rules below
    - **Repo** — branch prefix, commit prefix, specs dir (`.bureau.json` → `.repo.*`)
-   - **Retry loop** — `BUREAU_IMPL_MAX_ITER`, `BUREAU_IMPL_ITER_TIMEOUT`, `BUREAU_IMPL_TOTAL_TIMEOUT` (`.env`, env-only)
-   - **Supervisor** — `supervisor.max_crashes`, `supervisor.stability_window` (`.bureau.json` OR `.env` — env overrides; ask which surface)
-   - **Runtime** — `BUREAU_DRY_RUN`, `BUREAU_SESSION_NAME` (`.env`, env-only)
+   - **Retry loop** — `BUREAU_IMPL_MAX_ITER`, `BUREAU_IMPL_ITER_TIMEOUT`, `BUREAU_IMPL_TOTAL_TIMEOUT` (resolved secrets file, env-only)
+   - **Supervisor** — `supervisor.max_crashes`, `supervisor.stability_window` (`.bureau.json` OR resolved secrets file — env overrides; ask which surface)
+   - **Runtime** — `BUREAU_DRY_RUN`, `BUREAU_SESSION_NAME` (resolved secrets file, env-only)
 
 3. **For the selected section, edit the right surface:**
    - JSON-backed values → modify `.bureau.json` in place. Preserve unrelated keys, preserve key ordering where possible.
-   - Env-only values → update `.env` inside the bureau-managed block (see below). **Never** delete or reorder unrelated entries (`LINEAR_API_KEY`, `TELEGRAM_BOT_TOKEN`, user-set vars).
+   - Env-only values → update the resolved secrets file inside the bureau-managed block (see below), wherever it is; preserve mode 0600. **Never** delete or reorder unrelated entries (`LINEAR_API_KEY`, `TELEGRAM_BOT_TOKEN`, user-set vars).
    - Model changes → inspect the selected runner and `agents.model_compatibility` first. Version 1 (including an absent version), and migrated configs retaining `model_compatibility: "v1"`, ignore generic model fields for Codex. Preserve those Claude settings. Use `agents.providers.codex.model` for a Codex default, or `BUREAU_CODEX_MODEL_<STAGE>` for a stage-specific Codex override. Provider-specific stage environment overrides also work for Claude. Only v2 model semantics allow `agents.<stage>.model` to select that stage's runner model; changing to those semantics is a separate explicit configuration choice, not a side effect of selecting a model. See [model precedence](../docs/provider-runtime.md).
    - Verify each changed stage with `python3 scripts/bureau-provider.py --stage STAGE --describe` in the same trusted environment used to launch it. Doctor and provider description do not load `.env`; account for its overrides without printing credentials. Confirm the resolved provider/model, and identify higher-priority settings when a changed default has no effect. This read-only check does not prove model access or invoke a model.
 
-4. **The bureau-managed block in `.env`:** Bureau-init manages env-only knobs inside delimited markers so the user can hand-edit secrets and other vars above the block freely.
+4. **The bureau-managed block in the resolved secrets file:** Bureau-init manages env-only knobs inside delimited markers so the user can hand-edit secrets and other vars above the block freely.
 
    ```
    # User-set entries (LINEAR_API_KEY, TELEGRAM_*, etc.) live above this line.

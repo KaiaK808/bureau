@@ -18,7 +18,7 @@ source "$(dirname "$0")/bureau-config.sh"
 # missing because they need LINEAR_API_KEY to function; bureau-status.sh just
 # *reports* on the environment, so missing .env is non-fatal — the report
 # will show those secrets as UNSET, which is the truth in that case.
-# BUREAU_ENV_FILE (the .env next to .bureau.json), never ./.env of whatever directory this runs in.
+# BUREAU_ENV_FILE, resolved by bureau-config.sh, never ./.env of whatever directory this runs in.
 if [ -f "${BUREAU_ENV_FILE:-$REPO_DIR/.env}" ]; then
   bureau_load_env --export "${BUREAU_ENV_FILE:-$REPO_DIR/.env}"
 fi

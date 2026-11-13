@@ -248,16 +248,19 @@
     "expected": {
       "exit_code": 0,
       "probe": {
-        "env_file_secret_available": true,
+        "env_file_secret_available": false,
         "linear_key_present": false
       },
       "calls_include": [],
       "calls_exclude": []
     },
-    "defence": "none",
+    "defence": "external-secrets-file",
     "stage": "implement",
-    "pending": {
-      "reason": "Removing variables and path hints does not prevent a provider with filesystem access from reading the repository .env."
+    "control_expected": {
+      "exit_code": 1,
+      "agent_started": false,
+      "calls_include": [],
+      "calls_exclude": ["^move_issue\\t"]
     }
   },
   {

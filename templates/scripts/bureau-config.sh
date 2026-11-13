@@ -45,15 +45,6 @@ _find_config() {
   fi
   BUREAU_CONFIG="$(cd "$(dirname "$BUREAU_CONFIG")" && pwd)/$(basename "$BUREAU_CONFIG")"
   export BUREAU_CONFIG
-  BUREAU_ENV_FILE="${BUREAU_ENV_FILE:-$(dirname "$BUREAU_CONFIG")/.env}"
-  # The .env every script reads (v3.2: never ./.env, which in a stage worktree is a file the
-  # branch controls). A relative value counts from the directory of .bureau.json, not from the
-  # working directory.
-  case "$BUREAU_ENV_FILE" in /*) ;; *) BUREAU_ENV_FILE="$(dirname "$BUREAU_CONFIG")/$BUREAU_ENV_FILE" ;; esac
-  # Exported, so the runs below this one read the same file: the runtime hands a relaunched stage
-  # the RESOLVED path of .bureau.json (config_for in bureau-runtime.py), and when .bureau.json is a
-  # link, its target's directory is not the one this script took the .env from (v3.2).
-  export BUREAU_ENV_FILE
 }
 _find_config
 # Capture the caller boundary separately from user-facing .env settings. An
@@ -361,7 +352,7 @@ bureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }
 # keep values out of shell code; strip trailing LFs just as $(bureau_get) did.
 # Numeric text is checked in jq before Bash can discard NULs or newlines.
 _bureau_load_config() {
-  local file name value rc _bureau_has_risk_tier
+  local file name value env_file _bureau_has_risk_tier
   file=$(mktemp -t bureau-config.XXXXXXXX) || return $?
   if jq -js '
     def number:
@@ -371,6 +362,10 @@ _bureau_load_config() {
       end;
     if length != 1 or (.[0] | type) != "object" then error("configuration must be one object") else .[0] end
     | {
+      env_file: (if (.repo | type) == "object" and (.repo | has("env_file")) then
+        .repo.env_file | if type == "string" and (startswith("/") or startswith("~/"))
+          and (contains("\u0000") | not) then . else error("invalid path") end
+        else "" end | . + "."),
       _bureau_has_risk_tier: ((.agents // {}) | has("risk_tier")),
       BUREAU_TEAM_KEY: .linear.teams[0].key,
       BUREAU_TEAM_NAME: .linear.teams[0].name,
@@ -404,8 +399,9 @@ _bureau_load_config() {
       BUREAU_PROJECTS: (.linear.projects // [] | join(","))
     }
     | to_entries[] | (.key, "\u0000", (.value | if type == "string" then gsub("\u0000"; "") else . end), "\u0000")
-  ' "$BUREAU_CONFIG" > "$file"; then :; else
-    rc=$?; rm -f "$file"; return "$rc"
+  ' "$BUREAU_CONFIG" > "$file" 2>/dev/null; then :; else
+    rm -f "$file"
+    echo 'ERROR: repo.env_file must be an absolute or ~/ path in valid .bureau.json' >&2; return 24
   fi
   while IFS= read -r -d '' name; do
     IFS= read -r -d '' value || { rm -f "$file"; return 1; }
@@ -413,6 +409,25 @@ _bureau_load_config() {
     printf -v "$name" '%s' "$value" || { rm -f "$file"; return 1; }
   done < "$file"
   rm -f "$file"
+  # The sentinel keeps trailing LFs in paths through the framed reader.
+  env_file="${env_file%.}"
+  if [ -z "${BUREAU_ENV_FILE:-}" ]; then
+    if [ -n "$env_file" ]; then
+      case "$env_file" in '~/'*) env_file=~/"${env_file#\~/}" ;; esac
+      [ -f "$env_file" ] || { echo "ERROR: repo.env_file file missing: $env_file" >&2; exit 24; }
+      BUREAU_ENV_FILE="$env_file"
+    else
+      BUREAU_ENV_FILE="$(dirname "$BUREAU_CONFIG")/.env"
+    fi
+  fi
+  # The .env every script reads (v3.2: never ./.env, which in a stage worktree is a file the
+  # branch controls). A relative value counts from the directory of .bureau.json, not from the
+  # working directory.
+  case "$BUREAU_ENV_FILE" in /*) ;; *) BUREAU_ENV_FILE="$(dirname "$BUREAU_CONFIG")/$BUREAU_ENV_FILE" ;; esac
+  # Exported, so the runs below this one read the same file: the runtime hands a relaunched stage
+  # the RESOLVED path of .bureau.json (config_for in bureau-runtime.py), and when .bureau.json is a
+  # link, its target's directory is not the one this script took the .env from (v3.2).
+  export BUREAU_ENV_FILE
   # The renderer owns advisory risk validation; the tier has no authority.
   if [ "$_bureau_has_risk_tier" = true ]; then
     ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-acceptance.py" --validate-config "$BUREAU_CONFIG" ) || exit 24

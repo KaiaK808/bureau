@@ -73,5 +73,12 @@
       "old": "if git_credentials == 'off':\n        result.pop('GIT_CONFIG_PARAMETERS', None)\n        result = untrusted_git_env(result)",
       "new": "if git_credentials == 'off':\n        pass"
     }
+  ],
+  "external-secrets-file": [
+    {
+      "file": "bureau-config.sh",
+      "old": "(.repo | type) == \"object\" and (.repo | has(\"env_file\"))",
+      "new": "false"
+    }
   ]
 }

@@ -286,7 +286,8 @@ class Inputs:
             # Discard inherited runtime controls and fault-file paths. The helper
             # parses .env without sourcing it; all paths below are positional args.
             environ = {k: v for k, v in os.environ.items() if not k.startswith('BUREAU_')}
-            environ.update(BUREAU_CONFIG=str(config), BUREAU_ENV_FILE=str(config.parent / '.env'),
+            if os.environ.get('BUREAU_ENV_FILE'): environ['BUREAU_ENV_FILE'] = os.environ['BUREAU_ENV_FILE']
+            environ.update(BUREAU_CONFIG=str(config),
                            BUREAU_DRY_RUN='1', _BUREAU_LINEAR_SINGLE_ATTEMPT='1',
                            _BUREAU_LINEAR_FAULT_FILE='', BUREAU_LINEAR_MAX_TIME='10',
                            BUREAU_LINEAR_CONNECT_TIMEOUT='5')
