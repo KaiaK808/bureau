@@ -1121,7 +1121,10 @@ def outside_gate(options, repo, command, log):
         # Latch before any kill or cleanup: cancellation survives their errors.
         options['_gate_cancelled'] = True
         outcome = 130, 'kill'
-        if child: signal_group(child, signal.SIGKILL)
+        try:
+            if options.get('_gate_on_cancel'): options['_gate_on_cancel']()
+        finally:
+            if child: signal_group(child, signal.SIGKILL)
     try:
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             previous[sig] = signal.signal(sig, stop)

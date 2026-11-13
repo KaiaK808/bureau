@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="985fc28a4b50ec790b18924aa759b60a8dfe3ef77c4f64d3e21b948362f114eb">
+<meta name="bureau-source-sha256" content="01240aed8929d79a0e2fdfca7cb3869a19d8b39fe1788342074e040eb5492918">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1473,6 +1473,41 @@ inspection paths before starting work.</p>
 evidence</h2>
 <h3 id="acceptance-briefs-at-human-merge-boundaries">Acceptance briefs
 at human merge boundaries</h3>
+<p>When QA's trusted base enables
+<code>repo.changed_test_command</code>, the brief adds
+<strong>Fail-before-pass</strong> directly after <strong>Test
+evidence</strong>. It selects the latest QA measurement at the brief
+HEAD and counts files as <code>proves the change</code>,
+<code>does not prove the change</code>, <code>fails on both</code>,
+<code>not runnable on base</code>, or <code>not measured</code>,
+followed by the omitted count. Proof requires a recognized assertion
+failure on base and a pass on head with the same inputs; base import,
+collection and compile errors are not proof. Repositories with nonempty
+<code>repo.worktree_links</code> in the pinned configuration skip both
+runs and report every selected file as <code>not measured</code>, with
+reason <code>repository uses worktree links</code>. Filesystem cleanup
+timeouts or errors preserve completed results with record reason
+<code>cleanup failed</code>; the block notes the retained temporary
+directory and the next enabled check retries cleanup. The block lists at
+most eight files from the other classes with their class and any
+measurement reason, followed by <code>N more</code>. Unusual path
+characters are percent-encoded and long displayed paths are truncated.
+The store carries one optional <code>changed_tests</code> object on each
+QA attempt's manifest view: merge base, head, command-template SHA-256,
+time, per-file base/head results, classifications/reasons and omitted
+count. Its bytes live at
+<code>runs/RUN_ID/changed-tests/ATTEMPT_ID.json</code>, under the
+existing run retention and capacity limits; the on-disk v1 manifest
+stays unchanged so older strict readers can still read and update gates.
+Invalid optional records are ignored without quarantining their
+manifest. No test contents, command text or raw output enter this
+record. Missing records in older stores remain valid and produce the
+same brief bytes as before. Resync the scripts scope together. Ordinary
+classifications change no QA result, routing or gate record; an
+uncertain outside-gate termination or an execution error retaining
+mandatory holds or measurement-owned runtime state records
+<code>not measured</code> and stops QA under a mandatory process hold,
+with exit 25 (or timeout 124/cancellation 130).</p>
 <p><code>bureau-acceptance.py</code> renders a deterministic metadata
 package at manual review APPROVE (including its normal exit 0),
 requested review-stop (20), and shepherd's manual/requested stop already

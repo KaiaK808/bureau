@@ -417,6 +417,22 @@ def render(store, repo, issue, pr, head, url, spec=None, base=None, verdict=None
                   evidence_ref(store, path) + f', attempt `{attempt["attempt_id"]}`, gate {index}.']
     if not gates: lines += ['- Gate records (exit/digest): missing.']
     if len(gates) > 8: lines += [f'- {len(gates) - 8} earlier gates omitted; see manifests.']
+    measured = [attempt['changed_tests'] for attempt, _ in attempts
+                if attempt['stage'] == 'qa' and attempt.get('changed_tests', {}).get('head') == head]
+    if measured:
+        record = max(measured, key=lambda item: item['recorded_at'])
+        counts = Counter(row['class'] for row in record['files'])
+        lines += ['', '**Fail-before-pass**', '- ' + '; '.join(f'{name}={counts[name]}' for name in e.CHANGED_TEST_CLASSES) +
+                  f'; omitted={record["omitted"]}.']
+        if record['reason'] == 'cleanup failed':
+            lines += ['- Cleanup incomplete: temporary directory retained for the next check.']
+        elif record['reason']: lines += ['- Not measured: ' + record['reason'] + '.']
+        listed = [row for row in record['files'] if row['class'] != 'proves the change']
+        for row in listed[:8]:
+            path = quote(row['path'].encode('utf-8', 'surrogateescape'), safe='/._-')
+            if len(path) > 280: path = path[:280] + '…'
+            lines += [f'- `{path}`: {row["class"]}' + (f' ({row["reason"]})' if row['reason'] else '') + '.']
+        if len(listed) > 8: lines += [f'- {len(listed) - 8} more.']
     lines += ['', '**Review evidence**',
               f'- Final verdict: {verdict if verdict in ("APPROVE", "REQUEST_CHANGES", "BLOCK") else "missing"}; REVIEW_HEAD={e.head(review_head) or "missing"}.']
     agents = config.get('agents', {})
