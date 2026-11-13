@@ -416,6 +416,39 @@ Upgrading an installation that disabled merge and rebase by hand (an early `exit
 
 ---
 
+## Require a person's approval of the exact commit
+
+An optional workflow is an accident guard against approval being carried silently to a later push. It records a person's approval as the commit status `bureau/human-approval` on one exact PR head SHA. It is independent of `agents.merge_mode`; Bureau's pipelines never invoke the status writer.
+
+Install or resync the `scripts` scope for `scripts/bureau-approval-status.py`, then preview and install the separate workflow scope:
+
+```sh
+python3 "$BUREAU_INIT_ROOT/scripts/bureau_install.py" assets --repo "$PWD" --scope approval
+python3 "$BUREAU_INIT_ROOT/scripts/bureau_install.py" assets --repo "$PWD" --scope approval --apply
+```
+
+The `approval` scope installs only `.github/workflows/bureau-approval.yml`. Existing scopes and defaults do not install it. Commit the script and workflow to the default branch and publish the allowed GitHub logins there in a tracked `.bureau.json`:
+
+```json
+{
+  "agents": {
+    "merge_approvers": ["merge-person", "second-person"]
+  }
+}
+```
+
+Keep local workspace IDs and credentials out of that tracked file. Use `BUREAU_CONFIG` to select a separate ignored runtime config when it contains private workspace settings, and keep its approver list aligned for doctor. An ignored local config cannot enable the feature: the script reads `.bureau.json` from the repository's default branch through the API, never from the PR or its checkout. Up to 20 logins are allowed; comparison ignores case. Absent or empty means off, and invalid or unreadable policy refuses approval. The sole trigger, `issue_comment` with action `created`, uses the default branch's workflow file. The job checks out only that branch, passes event values through environment variables and never runs PR code.
+
+In branch protection, require the exact context `bureau/human-approval`: GitHub then shows the missing status as expected and blocks a merge until that head is approved. Without branch protection requiring that context, nothing is shown on a new head and this feature does not block a merge. Doctor reminds you of this but never reads or changes branch protection. This change adds no context-specific check to Bureau's merge gate; its existing general CI/status checks remain as configured.
+
+An allowed person can create a PR comment whose entire first line is `/bureau approve <40-hex-sha>`, replacing the placeholder with the full current head SHA. Leading/trailing spaces and explanation on later lines are allowed. Short SHAs, extra words on that first line, edited comments and comments on ordinary issues do not count. Bots, a sender different from the author, closed/merged PRs, unlisted people and approvals of an older commit never succeed through this command.
+
+Approval sets success on that SHA with the person's login and a link to the comment. A new push leaves its new commit without the status; success on an old SHA is not copied, and pushes never write a status. The script reads the current head fresh from the API. A refused command leaves no trace on the commit and shows its reason in the workflow run's log. Other ignored events change nothing. GitHub API failures fail the workflow instead of reporting approval. The workflow's token needs permission to write statuses.
+
+**Limit:** This catches accidents; it does not stop someone who deliberately wants to bypass it. Other workflows in a PR can write the same commit status. Bureau and its agents act with the GitHub login its token belongs to; if that login is in `merge_approvers`, they could then approve on their own behalf. A separate account or token without that login is needed for the approval to mean a person. Doctor warns when `gh api user --jq .login` reveals that overlap and quietly skips the lookup when it cannot be read. An unforgeable form needs a separate Bureau identity and is a later change.
+
+---
+
 ## Tighter supervisor
 
 For long-running headless deployments, raise the give-up threshold so a transient flaky tick doesn't kill the pipeline:

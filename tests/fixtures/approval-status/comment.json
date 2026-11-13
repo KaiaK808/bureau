@@ -1,0 +1,13 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 42,
+    "pull_request": {"url": "https://api.github.com/repos/example/project/pulls/42"}
+  },
+  "comment": {
+    "body": "/bureau approve aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "user": {"login": "merge-person", "type": "User"},
+    "html_url": "https://github.com/example/project/pull/42#issuecomment-100"
+  },
+  "sender": {"login": "merge-person", "type": "User"}
+}

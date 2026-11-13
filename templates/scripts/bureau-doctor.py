@@ -56,6 +56,10 @@ def validate(config):
             if not isinstance(states, dict) or not states or any(not isinstance(v, str) for v in states.values()):
                 errors.append('Team states must map names to string IDs')
     agents = config['agents']
+    if 'merge_approvers' in agents:
+        try: module('approval-status').merge_approvers(config)
+        except ValueError as exc: errors.append(str(exc))
+        except FileNotFoundError: errors.append('Missing runtime asset: scripts/bureau-approval-status.py; resync scripts')
     if not isinstance(agents.get('providers', {}), dict): errors.append('agents.providers must be an object')
     elif any(not isinstance(v, dict) for v in agents.get('providers', {}).values()): errors.append('Each provider configuration must be an object')
     for stage in STAGES:
@@ -350,6 +354,25 @@ def ci_gate_without_workflows(repo, minimum):
             + ' (bureau_install.py assets --scope ci scaffolds one), or set agents.merge_require_green_ci to false for a repository without CI, or agents.merge_mode to manual')
 
 
+def approval_warnings(repo, config):
+    if 'merge_approvers' not in config.get('agents', {}): return []
+    approvers = module('approval-status').merge_approvers(config)
+    if not approvers: return []
+    warnings = []
+    if not (repo / '.github/workflows/bureau-approval.yml').is_file():
+        warnings.append('Human approval workflow is not installed; install assets --scope approval')
+    warnings.append('Branch protection must require the context bureau/human-approval for approvals to bind merges; doctor does not read or change branch protection.')
+    warnings.append("Exact-commit approval is an accident guard against approval carried to a later push. It does not stop deliberate bypass: a pull request workflow can write the same status, and agents using an approver's login can approve themselves. An unforgeable approval requires a separate Bureau identity.")
+    command = ['gh', 'api', 'user', '--jq', '.login']
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=10, env=module('provider').process_env(command))
+        login = proc.stdout.strip()
+        if proc.returncode == 0 and login.lower() in approvers:
+            warnings.append('Bureau and its agents act with the login ' + login + ' and could then approve on their own behalf. A separate account or token without that login is needed for the approval to mean a person.')
+    except (OSError, subprocess.TimeoutExpired, UnicodeError): pass
+    return warnings
+
+
 def uses_git_lfs(main):
     """True when an attributes file of the main checkout gives a pattern the Git LFS filter
     (filter=lfs, in any position among the pattern's attributes): its top-level .gitattributes, every
@@ -624,6 +647,7 @@ def diagnose(repo, mode):
         warnings.append('agents.merge_mode ' + json.dumps(raw_merge) + ' is not "auto" or "manual"; the pipelines fall closed to manual (no automatic merge or rebase)')
     if merge == 'manual' and not config['linear']['teams'][0].get('states', {}).get('merge'):
         errors.append('agents.merge_mode is manual but linear.teams[0].states.merge is not set: code review refuses with 24; configure the Merge state or set merge_mode to auto')
+    warnings.extend(approval_warnings(repo, config))
     require_ci = gate_switch(config['agents'], 'merge_require_green_ci', warnings)
     include_merge = config['agents'].get('max_concurrent_include_merge')
     if include_merge is not None and type(include_merge) is not bool:

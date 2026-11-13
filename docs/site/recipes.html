@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d51ba84c0a59946befabc0051f6b402dc0ef03c3b90422d305c40df118cb00c6">
+<meta name="bureau-source-sha256" content="30144f5c3f3e68322c6a70d1f6f1895bf15182eed52b3a013a7cd394b2774e03">
 <title>recipes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -514,19 +514,90 @@ a Merge state, then set <code>"merge_mode": "manual"</code> in
 the resync replaces the local block, and without the key automatic
 merging would be on again.</p>
 <hr />
+<h2 id="require-a-persons-approval-of-the-exact-commit">Require a
+person's approval of the exact commit</h2>
+<p>An optional workflow is an accident guard against approval being
+carried silently to a later push. It records a person's approval as the
+commit status <code>bureau/human-approval</code> on one exact PR head
+SHA. It is independent of <code>agents.merge_mode</code>; Bureau's
+pipelines never invoke the status writer.</p>
+<p>Install or resync the <code>scripts</code> scope for
+<code>scripts/bureau-approval-status.py</code>, then preview and install
+the separate workflow scope:</p>
+<div class="sourceCode" id="cb31"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_INIT_ROOT</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_INIT_ROOT</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval <span class="at">--apply</span></span></code></pre></div>
+<p>The <code>approval</code> scope installs only
+<code>.github/workflows/bureau-approval.yml</code>. Existing scopes and
+defaults do not install it. Commit the script and workflow to the
+default branch and publish the allowed GitHub logins there in a tracked
+<code>.bureau.json</code>:</p>
+<div class="sourceCode" id="cb32"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_approvers&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;merge-person&quot;</span><span class="ot">,</span> <span class="st">&quot;second-person&quot;</span><span class="ot">]</span></span>
+<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb32-5"><a href="#cb32-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Keep local workspace IDs and credentials out of that tracked file.
+Use <code>BUREAU_CONFIG</code> to select a separate ignored runtime
+config when it contains private workspace settings, and keep its
+approver list aligned for doctor. An ignored local config cannot enable
+the feature: the script reads <code>.bureau.json</code> from the
+repository's default branch through the API, never from the PR or its
+checkout. Up to 20 logins are allowed; comparison ignores case. Absent
+or empty means off, and invalid or unreadable policy refuses approval.
+The sole trigger, <code>issue_comment</code> with action
+<code>created</code>, uses the default branch's workflow file. The job
+checks out only that branch, passes event values through environment
+variables and never runs PR code.</p>
+<p>In branch protection, require the exact context
+<code>bureau/human-approval</code>: GitHub then shows the missing status
+as expected and blocks a merge until that head is approved. Without
+branch protection requiring that context, nothing is shown on a new head
+and this feature does not block a merge. Doctor reminds you of this but
+never reads or changes branch protection. This change adds no
+context-specific check to Bureau's merge gate; its existing general
+CI/status checks remain as configured.</p>
+<p>An allowed person can create a PR comment whose entire first line is
+<code>/bureau approve &lt;40-hex-sha&gt;</code>, replacing the
+placeholder with the full current head SHA. Leading/trailing spaces and
+explanation on later lines are allowed. Short SHAs, extra words on that
+first line, edited comments and comments on ordinary issues do not
+count. Bots, a sender different from the author, closed/merged PRs,
+unlisted people and approvals of an older commit never succeed through
+this command.</p>
+<p>Approval sets success on that SHA with the person's login and a link
+to the comment. A new push leaves its new commit without the status;
+success on an old SHA is not copied, and pushes never write a status.
+The script reads the current head fresh from the API. A refused command
+leaves no trace on the commit and shows its reason in the workflow run's
+log. Other ignored events change nothing. GitHub API failures fail the
+workflow instead of reporting approval. The workflow's token needs
+permission to write statuses.</p>
+<p><strong>Limit:</strong> This catches accidents; it does not stop
+someone who deliberately wants to bypass it. Other workflows in a PR can
+write the same commit status. Bureau and its agents act with the GitHub
+login its token belongs to; if that login is in
+<code>merge_approvers</code>, they could then approve on their own
+behalf. A separate account or token without that login is needed for the
+approval to mean a person. Doctor warns when
+<code>gh api user --jq .login</code> reveals that overlap and quietly
+skips the lookup when it cannot be read. An unforgeable form needs a
+separate Bureau identity and is a later change.</p>
+<hr />
 <h2 id="tighter-supervisor">Tighter supervisor</h2>
 <p>For long-running headless deployments, raise the give-up threshold so
 a transient flaky tick doesn't kill the pipeline:</p>
-<div class="sourceCode" id="cb31"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;supervisor&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_crashes&quot;</span><span class="fu">:</span> <span class="dv">10</span><span class="fu">,</span></span>
-<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;stability_window&quot;</span><span class="fu">:</span> <span class="dv">7200</span></span>
-<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb33"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;supervisor&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;max_crashes&quot;</span><span class="fu">:</span> <span class="dv">10</span><span class="fu">,</span></span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;stability_window&quot;</span><span class="fu">:</span> <span class="dv">7200</span></span>
+<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb33-6"><a href="#cb33-6" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Or override at launch:</p>
-<div class="sourceCode" id="cb32"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SUPERVISOR_MAX_CRASHES</span><span class="op">=</span>10 <span class="ex">./scripts/start-bureau-v2.sh</span></span></code></pre></div>
+<div class="sourceCode" id="cb34"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SUPERVISOR_MAX_CRASHES</span><span class="op">=</span>10 <span class="ex">./scripts/start-bureau-v2.sh</span></span></code></pre></div>
 <hr />
 <h2 id="memory-loop-logs--lessonsmd">Memory loop (logs →
 <code>LESSONS.md</code>)</h2>
@@ -542,8 +613,8 @@ two JSONL lines to <code>logs/events.jsonl</code> — one
 <code>issue</code>, <code>branch</code>, <code>exit_code</code>,
 <code>class</code>, <code>duration_s</code>. Queue-empty ticks emit
 nothing.</p>
-<div class="sourceCode" id="cb33"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;ts&quot;</span><span class="fu">:</span><span class="st">&quot;2000-01-01T00:00:00Z&quot;</span><span class="fu">,</span><span class="dt">&quot;event&quot;</span><span class="fu">:</span><span class="st">&quot;stage_end&quot;</span><span class="fu">,</span><span class="dt">&quot;mode&quot;</span><span class="fu">:</span><span class="st">&quot;all&quot;</span><span class="fu">,</span><span class="dt">&quot;stage&quot;</span><span class="fu">:</span><span class="st">&quot;code-review-pipeline.sh&quot;</span><span class="fu">,</span><span class="dt">&quot;issue&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-123&quot;</span><span class="fu">,</span><span class="dt">&quot;branch&quot;</span><span class="fu">:</span><span class="st">&quot;037-foo&quot;</span><span class="fu">,</span><span class="dt">&quot;exit_code&quot;</span><span class="fu">:</span><span class="dv">14</span><span class="fu">,</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span><span class="st">&quot;build-failed&quot;</span><span class="fu">,</span><span class="dt">&quot;duration_s&quot;</span><span class="fu">:</span><span class="dv">287</span><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb35"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;ts&quot;</span><span class="fu">:</span><span class="st">&quot;2000-01-01T00:00:00Z&quot;</span><span class="fu">,</span><span class="dt">&quot;event&quot;</span><span class="fu">:</span><span class="st">&quot;stage_end&quot;</span><span class="fu">,</span><span class="dt">&quot;mode&quot;</span><span class="fu">:</span><span class="st">&quot;all&quot;</span><span class="fu">,</span><span class="dt">&quot;stage&quot;</span><span class="fu">:</span><span class="st">&quot;code-review-pipeline.sh&quot;</span><span class="fu">,</span><span class="dt">&quot;issue&quot;</span><span class="fu">:</span><span class="st">&quot;TEAM-123&quot;</span><span class="fu">,</span><span class="dt">&quot;branch&quot;</span><span class="fu">:</span><span class="st">&quot;037-foo&quot;</span><span class="fu">,</span><span class="dt">&quot;exit_code&quot;</span><span class="fu">:</span><span class="dv">14</span><span class="fu">,</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span><span class="st">&quot;build-failed&quot;</span><span class="fu">,</span><span class="dt">&quot;duration_s&quot;</span><span class="fu">:</span><span class="dv">287</span><span class="fu">}</span></span></code></pre></div>
 <p><code>logs/</code> is gitignored. <code>events.jsonl</code> is
 append-only — truncate it manually if it grows large; there's no
 auto-rotation in v1.</p></li>

@@ -42,4 +42,6 @@ Resolve the exact approved spec directory before using existing-feature helpers 
 
 CI is opt-in and remains on `runs-on: ubuntu-latest`; preserve an existing workflow unless replacement is authorized. Do not switch public fork PR workflows to self-hosted runners (fork-PR-RCE).
 
+The separate opt-in `assets --scope approval` installs only `.github/workflows/bureau-approval.yml`; no existing scope or default includes it. Preview first, then add `--apply`. Install the decision script through the `scripts` scope and commit both assets to the default branch. See [exact-commit human approval](../docs/recipes.md#require-a-persons-approval-of-the-exact-commit) for the default-branch setting and required branch protection.
+
 Resync does not modify `.bureau.json` or `.env`, and each scope excludes unrelated assets. Re-run the preview to verify the final state and report retained local differences.

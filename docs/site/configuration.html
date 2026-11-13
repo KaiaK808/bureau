@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="189b37cdda66df1b7041a20a110fbf0e0fb7c726317c7c7571f85a034f6d684d">
+<meta name="bureau-source-sha256" content="599ea526ecd10ea0139e2f345ccde51607c175efaca89e718feb26fa0417f3d1">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -778,6 +778,26 @@ href="recipes.html#merge-by-hand">recipes</a></td>
 <td>One of <code>squash</code>, <code>merge</code>, <code>rebase</code>.
 Validated at config-load — invalid values fall back to
 <code>squash</code> with a warning</td>
+</tr>
+<tr>
+<td><code>agents.merge_approvers</code></td>
+<td>array of strings</td>
+<td>unset (off)</td>
+<td>Up to 20 GitHub logins, compared case-insensitively: 1–39 ASCII
+letters/digits with single interior hyphens. Absent or empty disables
+human approval; invalid values are doctor errors and the decision script
+refuses all events. The opt-in <code>approval</code> workflow reads this
+policy only from <code>.bureau.json</code> on the API's default branch.
+Allowed people approve the current head by
+<code>/bureau approve &lt;40-hex-sha&gt;</code>; a new push leaves its
+new commit without the status until someone approves it. Require
+<code>bureau/human-approval</code> in branch protection for it to bind
+merges. This is an accident guard against silently carrying approval to
+a later push, not a barrier to deliberate bypass: PR workflows can write
+the same status and agents using an allowed person's login can approve
+themselves. Bureau's pipelines never invoke the writer. An unforgeable
+form needs a separate Bureau identity and is a later change. See <a
+href="recipes.html#require-a-persons-approval-of-the-exact-commit">recipe</a></td>
 </tr>
 <tr>
 <td><code>agents.merge_require_green_ci</code></td>
