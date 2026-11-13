@@ -24,6 +24,7 @@
 #   - Per-call behaviour can be tuned via env vars:
 #       BUREAU_STUB_ADD_LABEL_RC=<n>   → add_issue_label returns <n> instead of 0
 #       BUREAU_STUB_ISSUE_STATE=<name> → get_issue_state returns this (default Build)
+#       BUREAU_STUB_TITLE / BUREAU_STUB_DESCRIPTION → ticket text (defaults unchanged)
 #       BUREAU_STUB_BRANCH=<name>      → branch returned by get_issue_branch_and_comments
 #       BUREAU_STUB_REVIEW_COMMENT=<text> → one comment with this body returned by
 #                                        get_issue_branch_and_comments (a rework's
@@ -138,7 +139,8 @@ get_issue_detail() {
   [ "${BUREAU_STUB_DETAIL_RC:-0}" = 0 ] || return "$BUREAU_STUB_DETAIL_RC"
   local labels_json="${BUREAU_STUB_LABELS:-[]}"
   jq -n --arg id "$1" --argjson labels "$labels_json" \
-    '{identifier:$id, title:"Test issue", description:"A test issue.",
+    --arg title "${BUREAU_STUB_TITLE-Test issue}" --arg description "${BUREAU_STUB_DESCRIPTION-A test issue.}" \
+    '{identifier:$id, title:$title, description:$description,
       project:{name:"Test project", description:""}, labels:$labels}'
 }
 

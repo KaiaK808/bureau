@@ -552,6 +552,23 @@ printf '\\nAFTER_PROVIDER\\n'
 
 
 class ConfigurationPathTests(unittest.TestCase):
+    def test_lessons_and_installed_stage_prompts_are_sensitive_but_specs_are_not(self):
+        f = review_fixture.MergeTests(); f.setUp(); self.addCleanup(f.doCleanups)
+        config = review_fixture.load('review-config')
+        prompts = {'scripts/bureau-stage.md', *(f'scripts/{name}-pipeline.sh' for name in
+                   ('spec', 'spec-review', 'ux', 'copy', 'implement', 'qa', 'code-review'))}
+        protected = {'LESSONS.md', *prompts}
+        ordinary = {'specs/001-task/spec.md', 'specs/001-task/plan.md', 'specs/001-task/tasks.md',
+                    'src/lessons.py', 'docs/LESSONS.md', 'scripts/test-gate.sh'}
+        for name in protected | ordinary:
+            path = f.repo/name; path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('Proposed change.\n')
+            self.assertEqual(config.sensitive(name), name in protected, name)
+        f.git('add', '.'); f.git('commit', '-qm', 'test: proposed stage policy')
+        findings = f.m.configuration_findings(f.head, f.git('rev-parse', 'HEAD'), f.repo)
+        self.assertEqual({row['file'] for row in findings}, protected)
+        self.assertEqual({row['class'] for row in findings}, {'AGENT_CONFIG'})
+
     def test_stage_dependencies_in_both_base_and_head_are_annotated(self):
         f = review_fixture.MergeTests(); f.setUp(); self.addCleanup(f.doCleanups)
         stage = f.repo/'scripts/bureau-stage.md'; stage.parent.mkdir()

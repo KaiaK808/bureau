@@ -2,7 +2,8 @@
 # Test harness for bureau-init pipeline scripts.
 #
 # Exports:
-#   sandbox_init <issue-id> <branch-name>  — set up an isolated sandbox dir,
+#   sandbox_init <issue-id> <branch-name> [parent-dir]
+#                                        — set up an isolated sandbox dir,
 #                                            git-init it, write fixture spec
 #                                            files, copy the pipeline + stub
 #                                            bureau-config into it, prep PATH.
@@ -37,28 +38,37 @@ copy_runtime_scripts() {
 sandbox_init() {
   local issue="${1:-EXP-1}"
   local branch="${2:-test-branch}"
+  local parent="${3:-${TMPDIR:-}}"
 
-  SANDBOX=$(mktemp -d -t bureau-test.XXXXXXXX)
+  [ -n "$parent" ] || parent=$(python3 -c 'import tempfile; print(tempfile.gettempdir())') || return
+  parent=$(cd "$parent" && pwd -P) || return
+  export GIT_CEILING_DIRECTORIES="$parent"
+  SANDBOX=$(mktemp -d "${parent%/}/bureau-test.XXXXXXXX") || return
   export SANDBOX
 
   # Real git repo + a bare origin so `git fetch origin` and `git push origin`
   # in the pipeline succeed. The pipeline does `git rev-parse --verify
   # origin/$BRANCH` and `git checkout -B "$BRANCH" "origin/$BRANCH"` — both
   # require the branch to exist on origin.
-  git -C "$SANDBOX" init -q -b main; git -C "$SANDBOX" config maintenance.auto false
-  git -C "$SANDBOX" config receive.autogc false
-  git -C "$SANDBOX" config user.email "test@bureau"
-  git -C "$SANDBOX" config user.name  "Bureau Test"
-  git -C "$SANDBOX" commit -q --allow-empty -m "init"
-  git -C "$SANDBOX" checkout -q -b "$branch"
-  git -C "$SANDBOX" commit -q --allow-empty -m "branch start on $branch"
-
   local fake_origin="$SANDBOX/.fake-origin.git"
-  git init -q --bare "$fake_origin"; git -C "$fake_origin" config maintenance.auto false
-  git -C "$fake_origin" config receive.autogc false
-  git -C "$SANDBOX" remote add origin "$fake_origin"
-  git -C "$SANDBOX" push -q origin main
-  git -C "$SANDBOX" push -q origin "$branch"
+  git -C "$SANDBOX" init -q -b main || return
+  [ "$(git -C "$SANDBOX" rev-parse --show-toplevel)" = "$SANDBOX" ] || return 1
+  git init -q --bare "$fake_origin" || return
+  [ "$(git -C "$fake_origin" rev-parse --absolute-git-dir)" = "$fake_origin" ] || return 1
+  git -C "$SANDBOX" remote add origin "$fake_origin" || return
+  [ "$(git -C "$SANDBOX" remote get-url origin)" = "$fake_origin" ] || return 1
+  [ "$(git -C "$SANDBOX" remote get-url --push origin)" = "$fake_origin" ] || return 1
+  git -C "$SANDBOX" config maintenance.auto false || return
+  git -C "$SANDBOX" config receive.autogc false || return
+  git -C "$fake_origin" config maintenance.auto false || return
+  git -C "$fake_origin" config receive.autogc false || return
+  git -C "$SANDBOX" config user.email "test@bureau" || return
+  git -C "$SANDBOX" config user.name  "Bureau Test" || return
+  git -C "$SANDBOX" commit -q --allow-empty -m "init" || return
+  git -C "$SANDBOX" checkout -q -b "$branch" || return
+  git -C "$SANDBOX" commit -q --allow-empty -m "branch start on $branch" || return
+  git -C "$SANDBOX" push -q origin main || return
+  git -C "$SANDBOX" push -q origin "$branch" || return
 
   # Spec dir with a tasks.md for the branch. The stages find it with the real
   # bureau_spec_dir_for_branch (exact name > unique slug > unique number), so
@@ -66,30 +76,30 @@ sandbox_init() {
   # no number: "test-branch" → "001-test-branch", "001-foo" → "001-foo".
   local spec_fixture="001-$branch"
   case "$branch" in [0-9][0-9][0-9]-*) spec_fixture="$branch" ;; esac
-  mkdir -p "$SANDBOX/specs/$spec_fixture"
-  cat > "$SANDBOX/specs/$spec_fixture/tasks.md" <<EOF
+  mkdir -p "$SANDBOX/specs/$spec_fixture" || return
+  cat > "$SANDBOX/specs/$spec_fixture/tasks.md" <<EOF || return
 # Test tasks
 - [ ] T001 Do the first thing
 - [ ] T002 Do the second thing
 - [ ] T003 Do the third thing
 EOF
-  mkdir -p "$SANDBOX/logs"
+  mkdir -p "$SANDBOX/logs" || return
 
   # Scripts dir with EVERY real pipeline + STUB bureau-config.sh on top.
   # Copy all so tests can target any pipeline without per-test wiring; the
   # stub bureau-config.sh wins because it's copied last under the same name.
   SCRIPTS_DIR="$SANDBOX/scripts"
-  mkdir -p "$SCRIPTS_DIR"
-  copy_runtime_scripts
-  cp "$LIB_DIR/stub-bureau-config.sh" "$SCRIPTS_DIR/bureau-config.sh"
+  mkdir -p "$SCRIPTS_DIR" || return
+  copy_runtime_scripts || return
+  cp "$LIB_DIR/stub-bureau-config.sh" "$SCRIPTS_DIR/bureau-config.sh" || return
   # Exercise the pinned upstream feature helper offline; providers remain faked.
-  python3 - "$REPO_ROOT/tests/fixtures/speckit-1.2.2.zip" "$SANDBOX/.specify" <<'PY'
+  python3 - "$REPO_ROOT/tests/fixtures/speckit-1.2.2.zip" "$SANDBOX/.specify" <<'PY' || return
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as archive:
     for name in ('scripts/bash/common.sh', 'scripts/bash/create-new-feature.sh'):
         archive.extract(name, sys.argv[2])
 PY
-  sed -n '/^parse_claude_json() {/,${p;}' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/parse-result.sh"
+  sed -n '/^parse_claude_json() {/,${p;}' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/parse-result.sh" || return
   # Helpers that decide, not fetch, run for real: the Linear halt, the squash-range guard
   # the dependency restore (a no-op without package.json) and the review's verdict floor and exit come from the real config, and the script and marker list the guard reads were
   # copied above with every other file.
@@ -105,29 +115,34 @@ PY
     -e '/^resolve_verdict_exit() {/,/^}/p' \
     -e '/^spec_admission_gate() {/,/^}/p' \
     -e '/^# ── Spec directory of a branch/,/^# ── End of spec directory of a branch/p' \
-    "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/real-helpers.sh"
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/real-helpers.sh" || return
   grep -q '^bureau_spec_dir_for_branch() {' "$SCRIPTS_DIR/real-helpers.sh" || { echo "harness: spec-dir matcher not found in bureau-config.sh" >&2; return 1; }
   sed -n '/^# File overlap admission\./,/^# Evidence is observational/{ /^# Evidence is observational/d; p; }' \
-    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh" || return
   grep -q '^bureau_overlap_admit() {' "$SCRIPTS_DIR/real-helpers.sh" || { echo "harness: file-overlap helper block not found in bureau-config.sh" >&2; return 1; }
   # A needs-human label that cannot be written is held locally; the hold helpers run for real
   # on top of the stub's add_issue_label and alert_telegram.
-  sed -n '/^# ── needs-human hold/,/^# ── End of needs-human hold/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
+  sed -n '/^# ── needs-human hold/,/^# ── End of needs-human hold/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh" || return
   sed -n -e '/^bureau_evidence() {/,/^}/p' -e '/^bureau_record_gate() {/,/^}/p' \
     -e '/^bureau_run_gate() {/,/^}/p' -e '/^bureau_ticket_policy() {/,/^}/p' \
     -e '/^bureau_archive_evidence() {/,/^}/p' -e '/^bureau_observe_waits() {/,/^}/p' -e '/^bureau_record_pr_url() {/,/^}/p' \
     -e '/^bureau_record_branch_pr() {/,/^}/p' -e '/^bureau_acceptance_brief() {/,/^}/p' \
-    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh" || return
   grep -q '^mark_needs_human() {' "$SCRIPTS_DIR/real-helpers.sh" || { echo "harness: needs-human hold block not found in bureau-config.sh" >&2; return 1; }
-  sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/stop-boundary.sh"
+  sed -n '/^# Capture the caller boundary/,/^BUREAU_RUNTIME=/{ /^BUREAU_RUNTIME=/d; p; }' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/stop-boundary.sh" || return
   # The merge policy (agents.merge_mode and the predicates built on it) runs for real
   # against the sandbox .bureau.json (none = {} = auto); tests set the mode there with jq.
-  sed -n 's/^      BUREAU_MERGE_MODE: \(.*\),$/BUREAU_MERGE_MODE=$(bureau_get '\''\1'\'')/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/merge-policy.sh"
-  sed -n '/^# ── Merge policy (agents.merge_mode)/,/^# ── End of merge policy/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/merge-policy.sh"
+  sed -n 's/^      BUREAU_MERGE_MODE: \(.*\),$/BUREAU_MERGE_MODE=$(bureau_get '\''\1'\'')/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/merge-policy.sh" || return
+  sed -n '/^# ── Merge policy (agents.merge_mode)/,/^# ── End of merge policy/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/merge-policy.sh" || return
   grep -q '^bureau_merge_is_manual() {' "$SCRIPTS_DIR/merge-policy.sh" || { echo "harness: merge policy block not found in bureau-config.sh" >&2; return 1; }
+  # Review posts through the production comment cap on top of the stub transport.
+  sed -n -e '/^BUREAU_COMMENT_MAX_BYTES=/p' -e '/^bureau_cap_comment() {/,/^}/p' \
+    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh" || return
+  grep -q '^bureau_cap_comment() {' "$SCRIPTS_DIR/real-helpers.sh" \
+    || { echo "harness: bureau_cap_comment not found in bureau-config.sh" >&2; return 1; }
 
   # Minimal .env in the sandbox cwd so the pipeline's `source .env` succeeds.
-  cat > "$SANDBOX/.env" <<'EOF'
+  cat > "$SANDBOX/.env" <<'EOF' || return
 LINEAR_API_KEY=test-key
 EOF
 
@@ -135,7 +150,7 @@ EOF
   STUB_PATH="$LIB_DIR/bin:$PATH"
 
   export FAKE_CLAUDE_BIN="$LIB_DIR/fake_claude.sh"
-  chmod +x "$FAKE_CLAUDE_BIN" "$LIB_DIR/bin/gh"
+  chmod +x "$FAKE_CLAUDE_BIN" "$LIB_DIR/bin/gh" || return
 
   # Pre-seed the stub's "picked issue" so pipeline_pick_next returns it.
   export BUREAU_STUB_PICKED_ISSUE="$issue"
@@ -238,20 +253,6 @@ teardown() {
 
 # Convenience: any test sourcing this file gets teardown on EXIT.
 trap 'teardown' EXIT
-
-# ── v3.1 review and merge outcomes: the comment cap runs for real ──────────
-# The review stage fits its PR comment to the size limit with bureau_cap_comment
-# (bureau-config.sh). sandbox_init above cuts the helpers that decide from the real
-# config; this wrapper adds the cap to them, so every harness review posts through
-# the production function.
-eval "$(declare -f sandbox_init | sed '1s/^sandbox_init /_harness_sandbox_init_before_comment_cap /')"
-sandbox_init() {
-  _harness_sandbox_init_before_comment_cap "$@" || return
-  sed -n -e '/^BUREAU_COMMENT_MAX_BYTES=/p' -e '/^bureau_cap_comment() {/,/^}/p' \
-    "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh"
-  grep -q '^bureau_cap_comment() {' "$SCRIPTS_DIR/real-helpers.sh" \
-    || { echo "harness: bureau_cap_comment not found in bureau-config.sh" >&2; return 1; }
-}
 
 # ── v3.1.0-rc.2: no process outlives its sandbox ───────────────────────────
 # teardown first stops every process that still runs a command of the sandbox, and says so

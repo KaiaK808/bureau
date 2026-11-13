@@ -1,0 +1,70 @@
+{
+  "untrusted-environment": [
+    {
+      "file": "bureau-config.sh",
+      "old": "if bureau_without_secrets python3 -I \"$(dirname \"$BUREAU_RUNTIME\")/bureau-provider.py\" \"${args[@]}\"; then rc=0; else rc=$?; fi",
+      "new": "if python3 -I \"$(dirname \"$BUREAU_RUNTIME\")/bureau-provider.py\" \"${args[@]}\"; then rc=0; else rc=$?; fi"
+    },
+    {
+      "file": "bureau-provider.py",
+      "old": "child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner)",
+      "new": "child_env = dict(os.environ)"
+    }
+  ],
+  "provider-schema": [
+    {
+      "file": "bureau-provider.py",
+      "old": "def validate(value, schema):\n",
+      "new": "def validate(value, schema):\n    return\n"
+    }
+  ],
+  "qa-final-gate": [
+    {
+      "file": "qa-pipeline.sh",
+      "old": "if [ \"$FINAL_GREEN\" = false ] && [ \"$STATUS\" = \"GREEN\" ]; then STATUS=\"RED\"; fi",
+      "new": ":"
+    }
+  ],
+  "review-build-floor": [
+    {
+      "file": "real-helpers.sh",
+      "old": "if [ \"$build_ok\" != \"true\" ]; then",
+      "new": "if false; then"
+    }
+  ],
+  "spec-shell-route": [
+    {
+      "file": "spec-pipeline.sh",
+      "old": "move_issue \"$ISSUE\" \"$BUREAU_STATE_SPEC_REVIEW\"",
+      "new": "move_issue \"$ISSUE\" \"$BUREAU_STATE_BUILD\""
+    }
+  ],
+  "squash-range": [
+    {
+      "file": "real-helpers.sh",
+      "old": "check_squash_range() {\n",
+      "new": "check_squash_range() {\n  SQUASH_CHECK=clean; SQUASH_REPORT=\"control: guard removed\"; return 0\n"
+    }
+  ],
+  "lessons-sensitive-path": [
+    {
+      "file": "bureau-review-config.py",
+      "old": "{'.mcp.json', 'LESSONS.md'}",
+      "new": "{'.mcp.json'}"
+    }
+  ],
+  "stage-sensitive-path": [
+    {
+      "file": "bureau-review-config.py",
+      "old": "or path in STAGE_PROMPTS)",
+      "new": "or path == STAGE)"
+    }
+  ],
+  "spec-governance": [
+    {
+      "file": "bureau-spec.py",
+      "old": "    try: text = Path(path).read_bytes().decode('utf-8')",
+      "new": "    return None\n    try: text = Path(path).read_bytes().decode('utf-8')"
+    }
+  ]
+}

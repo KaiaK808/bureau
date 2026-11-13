@@ -10,6 +10,8 @@ import subprocess
 INSTRUCTIONS = {'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'AGENTS.override.md'}
 DIRECTORIES = {'.claude', '.codex', '.agents'}
 STAGE = 'scripts/bureau-stage.md'
+STAGE_PROMPTS = {STAGE, *(f'scripts/{name}-pipeline.sh' for name in
+                        ('spec', 'spec-review', 'ux', 'copy', 'implement', 'qa', 'code-review'))}
 MAX_BYTES = 256 * 1024
 MAX_DEPTH = 5
 IMPORT = re.compile(r'''(?<![\w@])@(?:"([^"\n]+)"|'([^'\n]+)'|([^\s`<>\[\]{}()]+))''')
@@ -18,7 +20,7 @@ IMPORT = re.compile(r'''(?<![\w@])@(?:"([^"\n]+)"|'([^'\n]+)'|([^\s`<>\[\]{}()]+
 def sensitive(path):
     parts = PurePosixPath(path).parts
     return (PurePosixPath(path).name in INSTRUCTIONS or bool(DIRECTORIES.intersection(parts))
-            or path in ('.mcp.json', STAGE))
+            or path in {'.mcp.json', 'LESSONS.md'} or path in STAGE_PROMPTS)
 
 
 def without_code(text):
