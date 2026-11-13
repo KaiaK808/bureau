@@ -22,6 +22,9 @@ from process_helpers import (COMMAND_TIMEOUT_SECONDS, PIPELINE_TIMEOUT_SECONDS,
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(os.environ.get('BUREAU_OVERLAP_TEST_SCRIPTS', ROOT / 'templates/scripts'))
+NON_PATH_CODE = ('cards-overview', 'karte-1', '^SKIPPED', '+', 'Alle Karten anzeigen',
+                 '--no-merge', '-v', '$HOME', 'aria-label: Suche', 'TODO',
+                 'btn-primary', '#main', '200 OK')
 
 SERVICE = r'''#!/usr/bin/env python3
 import json, os, re, sys
@@ -455,6 +458,96 @@ touch "$BUREAU_TEST_STOP/UNEXPECTED"
         self.commit('plain task paths'); self.g('push','-q','origin',a[1]); self.g('checkout','-q','main')
         self.expect(0,self.cli('admit',a)); self.expect(29,self.cli('admit',b))
         self.assertEqual(self.store()['inventories'][a[0]]['paths'],['Makefile','README.md','Rakefile','lib/code.rb'])
+
+    def test_nonpath_code_spans_admit_next_to_disjoint_holder(self):
+        real=['pkg/a.py','lib/code.rb']
+        candidate=self.ticket(1,real+list(NON_PATH_CODE)); holder=self.ticket(2,['pkg/b.py'])
+        self.expect(0,self.cli('admit',holder))
+        self.expect(0,self.cli('admit',candidate))
+        store=self.store(); self.assertEqual(store['version'],1)
+        for key in ('inventories','reservations'):
+            scope=store[key][candidate[0]]
+            self.assertEqual(scope['paths'],sorted(real))
+            self.assertEqual(scope['unknown'],[])
+            self.assertEqual(scope['ignored'],len(NON_PATH_CODE))
+        tasks=self.root/'tasks.md'
+        tasks.write_text(self.g('show',candidate[1]+':specs/'+candidate[1]+'/tasks.md'))
+        result=self.expect(0,self.invoke([sys.executable,str(SCRIPTS/'bureau-paths.py'),str(tasks),'--repo',str(self.repo)]))
+        self.assertEqual(json.loads(result.stdout),dict(paths=sorted(real),unknown=[],ignored=len(NON_PATH_CODE)))
+
+    def test_path_shaped_code_spans_still_wait_when_unresolved(self):
+        holder=self.ticket(1,['pkg/b.py']); self.expect(0,self.cli('admit',holder))
+        paths=load('bureau-paths.py')
+        for number,token in enumerate(('../x','/etc/hosts','~/notes.md','$HOME/x',
+                                       r'pkg\a.py','missing/*.tsx','*.tsx','page?.tsx','[ab].tsx'),2):
+            with self.subTest(token=token):
+                result=paths.extract('Update `pkg/a.py` and `'+token+'`',['pkg/a.py','pkg/b.py'])
+                self.assertIsNone(result['paths'])
+                self.assertIn(('unresolved glob: ' if any(c in token for c in '*?[') else 'unresolved path: ')+token,result['unknown'])
+                self.assertEqual(result['ignored'],0)
+                candidate=self.ticket(number,['pkg/a.py',token])
+                wait=self.expect(29,self.cli('admit',candidate))
+                self.assertIn('unknown scope (repository-wide)',wait.stderr)
+                self.assertNotIn('ignored',wait.stderr)
+
+    def test_nonpath_link_destinations_keep_extensionless_ambiguity(self):
+        paths=load('bureau-paths.py')
+        for token in ('cards-overview','Procfile','./Procfile'):
+            with self.subTest(token=token):
+                result=paths.extract('Update `pkg/a.py` and [wording]('+token+')',['pkg/a.py'])
+                self.assertIsNone(result['paths'])
+                self.assertEqual(result['unknown'],['ambiguous extensionless reference: '+token.removeprefix('./')])
+                self.assertEqual(result['ignored'],0)
+        result=paths.extract('Update pkg/a.py and ./Procfile',['pkg/a.py'])
+        self.assertEqual(result['unknown'],['ambiguous extensionless reference: Procfile'])
+
+    def test_only_nonpath_code_spans_leave_unknown_inventory(self):
+        paths=load('bureau-paths.py')
+        result=paths.extract(' '.join('`'+token+'`' for token in NON_PATH_CODE),['pkg/a.py'])
+        self.assertEqual(result,dict(paths=None,unknown=['no paths recognized'],ignored=len(NON_PATH_CODE)))
+
+    def test_new_filename_shapes_and_directory_code_spans_are_reserved(self):
+        names=['page.tsx','.env','.gitignore','Dockerfile.dev','config.local.json','new-directory/']
+        candidate=self.ticket(1,names)
+        self.expect(0,self.cli('admit',candidate))
+        scope=self.store()['inventories'][candidate[0]]
+        self.assertEqual(scope['paths'],sorted(name.rstrip('/') for name in names))
+        self.assertEqual(scope['unknown'],[]); self.assertEqual(scope['ignored'],0)
+
+    def test_new_extensionless_root_code_span_requires_explicit_path(self):
+        paths=load('bureau-paths.py')
+        result=paths.extract('Update `pkg/a.py` and `Procfile`',['pkg/a.py'])
+        self.assertEqual(result,dict(paths=['pkg/a.py'],unknown=[],ignored=1))
+        for token in ('./Procfile',' ./Procfile '):
+            with self.subTest(token=token):
+                result=paths.extract('Update `pkg/a.py` and `'+token+'`',['pkg/a.py'])
+                self.assertEqual(result,dict(paths=['Procfile','pkg/a.py'],unknown=[],ignored=0))
+
+    def test_dotted_code_spans_with_spaces_keep_head_paths(self):
+        paths=load('bureau-paths.py')
+        for token,expected in (('new name.py',['name.py','new name.py','pkg/a.py']),
+                               ('Bitte warten.',['Bitte warten.','pkg/a.py'])):
+            with self.subTest(token=token):
+                result=paths.extract('Update `pkg/a.py` and `'+token+'`',['pkg/a.py'])
+                self.assertEqual(result,dict(paths=expected,unknown=[],ignored=0))
+
+    def test_normalized_tracked_code_spans_remain_paths(self):
+        paths=load('bureau-paths.py')
+        result=paths.extract('Update `Rakefile:12` and `repo/pkg` and `./Makefile`',
+                             ['Rakefile','pkg/a.py'],'repo/')
+        self.assertEqual(result,dict(paths=['Makefile','Rakefile','pkg'],unknown=[],ignored=0))
+        result=paths.extract('Update `pkg/a.py.`',['pkg/a.py'])
+        self.assertEqual(result,dict(paths=['pkg/a.py','pkg/a.py.'],unknown=[],ignored=0))
+
+    def test_ignored_count_is_optional_in_existing_store_records(self):
+        holder=self.ticket(1,['pkg/a.py','cards-overview']); candidate=self.ticket(2,['pkg/b.py'])
+        self.expect(0,self.cli('admit',holder))
+        store=self.store()
+        for key in ('inventories','reservations'):
+            self.assertEqual(store[key][holder[0]].pop('ignored'),1)
+        (self.repo/'.git/bureau/admission/v1.json').write_text(json.dumps(store))
+        self.expect(0,self.cli('admit',candidate))
+        self.assertEqual(self.store()['version'],1)
 
     def test_generated_docs_and_changelog_remain_conflicts(self):
         a=self.ticket(1,['docs/site/','CHANGELOG.md']); b=self.ticket(2,['docs/site/page.html']); c=self.ticket(3,['CHANGELOG.md'])

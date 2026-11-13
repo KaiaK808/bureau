@@ -34,36 +34,46 @@ def intersection(left, right):
 
 
 def extract(text, tracked, prefix=''):
-    # Paths in inline code and Markdown destinations are explicit. Bare paths
-    # are also common in tasks; no language/layout allow-list is used.
+    # Path-shaped inline code and Markdown destinations are explicit. Bare
+    # paths are also common in tasks; no language/layout allow-list is used.
     tracked = {name for name in tracked if name}
     directories = {'/'.join(name.split('/')[:i]) for name in tracked
                    for i in range(1, len(name.split('/')))}
     root_names = {'Makefile', 'Dockerfile', 'LICENSE', 'CHANGELOG'}
-    tokens = re.findall(r'`([^`\n]+)`', text)
-    tokens += re.findall(r'\]\(([^)\n]+)\)', text)
+    known = tracked | directories | root_names | {'.'}
+    code_spans = list(re.finditer(r'`([^`\n]+)`', text))
+    tokens = [(match.group(1), True) for match in code_spans]
+    tokens += [(token, False) for token in re.findall(r'\]\(([^)\n]+)\)', text)]
     # A standalone root reference must survive mixed-path extraction too.
     # Require whitespace boundaries so sentence punctuation is not a scope.
-    tokens += re.findall(r'(?<!\S)(?:\.(?:/\.)*/?|/)(?=$|[\s,;])', text)
-    tokens += [token.rstrip('.,;') for token in re.findall(
+    tokens += [(token, False) for token in re.findall(r'(?<!\S)(?:\.(?:/\.)*/?|/)(?=$|[\s,;])', text)]
+    # A complete code token is already handled with its source above.
+    tokens += [(match.group().rstrip('.,;'), False) for match in re.finditer(
         r'(?<![\w:/])(?:\.?[\w.*?\[\]-]+/)+[\w.*?\[\]/-]*'
         r'|(?<![\w/])\.?[\w-]+\.[A-Za-z][\w.-]*'
-        r'|(?<![\w/.-])\.[\w-]+(?:\.[\w-]+)*', text)]
-    tokens += [word for word in re.findall(r'(?<![\w/.-])[\w-]+(?![\w/-]|\.\w)', text)
+        r'|(?<![\w/.-])\.[\w-]+(?:\.[\w-]+)*', text)
+        if not any(span.start(1) <= match.start() and match.end() <= span.end(1)
+                   and match.group().rstrip('.,;') == span.group(1).strip() for span in code_spans)]
+    tokens += [(word, False) for word in re.findall(r'(?<![\w/.-])[\w-]+(?![\w/-]|\.\w)', text)
                if word in tracked or word in root_names]
-    paths, reasons = set(), []
+    paths, reasons, ignored = set(), [], 0
     commands = re.compile(r'^(?:npm|npx|pnpm|yarn|git|docker|python3?|pytest|uv|bash|sh|make|go|cargo|dotnet)\s')
-    for token in tokens:
+    for token, code in tokens:
         token = token.strip()
-        if token.startswith(('#', 'http://', 'https://')) or commands.match(token):
-            continue
-        # Code expressions and type names are not inventories. A lone,
-        # extensionless code token without a tracked match is ambiguous.
-        if re.search(r'[(){}=;|<>]', token):
-            continue
         try:
             path = normalize(token, prefix)
         except ValueError:
+            path = None
+        if code and not ('/' in token or '\\' in token or '.' in token
+                         or token in known or path in known):
+            ignored += 1
+            continue
+        if token.startswith(('#', 'http://', 'https://')) or commands.match(token):
+            continue
+        # Code expressions and type names are not inventories.
+        if re.search(r'[(){}=;|<>]', token):
+            continue
+        if path is None:
             reasons.append('unresolved path: ' + token)
             continue
         if any(c in path for c in '*?['):
@@ -71,13 +81,13 @@ def extract(text, tracked, prefix=''):
             if not matches:
                 reasons.append('unresolved glob: ' + path)
             paths.update(matches)
-        elif token.endswith('/') or '/' in path or '.' in path or path in tracked or path in directories or path in root_names:
+        elif token.endswith('/') or '/' in path or '.' in path or path in known or (code and token.startswith('./')):
             paths.add(path)
         else:
             reasons.append('ambiguous extensionless reference: ' + path)
     if not paths:
         reasons.append('no paths recognized')
-    return dict(paths=None if reasons else sorted(paths), unknown=sorted(set(reasons)))
+    return dict(paths=None if reasons else sorted(paths), unknown=sorted(set(reasons)), ignored=ignored)
 
 
 def git(repo, *args):
@@ -94,7 +104,7 @@ def git(repo, *args):
 def inventory(repo, tasks, prefix='', revision='HEAD', run_git=git):
     """A committed blob and complete tree, including new task-named paths."""
     record = dict(tasks=tasks, head=revision, tasks_commit=None, tasks_digest=None,
-                  paths=None, unknown=['missing or ambiguous tasks inventory'])
+                  paths=None, unknown=['missing or ambiguous tasks inventory'], ignored=0)
     if not tasks:
         return record
     try:
@@ -121,7 +131,7 @@ def main():
         tracked = [name for name in git(repo, 'ls-files', '-z').decode().split('\0') if name]
         result = extract(Path(args.tasks).read_text(), tracked, args.prefix)
     except (OSError, UnicodeError, subprocess.CalledProcessError):
-        result = dict(paths=None, unknown=['unreadable tasks or repository tree'])
+        result = dict(paths=None, unknown=['unreadable tasks or repository tree'], ignored=0)
     if args.lines:
         if result['paths'] is None:
             print('; '.join(result['unknown']), file=sys.stderr)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove the durable atomic reservation in a private runtime copy."""
+"""Remove reservation and path-shape guards in private runtime copies."""
 from pathlib import Path
 import shutil
 import sys
@@ -24,3 +24,14 @@ with tempfile.TemporaryDirectory(prefix='bureau-1748-negative-') as scratch:
                     env={'BUREAU_OVERLAP_TEST_SCRIPTS':str(scripts)},
                     originals=originals, expected='AssertionError: Lists differ: [0, 0] != [0, 29]', expected_exit=1)
     print('PASS negative control: removing atomic reservation admits both synchronized contenders; single-admission assertion fails')
+    path.write_bytes(originals[path])
+    path = scripts / 'bureau-paths.py'
+    code = path.read_text()
+    original = '        if code and not ('
+    assert code.count(original) == 1
+    path.write_text(code.replace(original, '        if False and not ('))
+    mutation_caught([sys.executable, str(ROOT/'tests/file_overlap_test.py'),
+                     'Fixture.test_nonpath_code_spans_admit_next_to_disjoint_holder'],
+                    env={'BUREAU_OVERLAP_TEST_SCRIPTS':str(scripts)}, originals=originals,
+                    expected=('29 != 0', 'unknown scope (repository-wide)'), expected_exit=1)
+    print('PASS negative control: treating non-path code as paths blocks disjoint admission with exit 29')
