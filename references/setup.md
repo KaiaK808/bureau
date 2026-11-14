@@ -149,7 +149,7 @@ Generate the config file from all collected information:
 {
   "version": 2,
   "design": {
-    "impeccable": {"enabled": false, "skill_version": "4.8.0", "engine_version": "0.1.18"}
+    "impeccable": {"enabled": false, "skill_version": "4.9.0", "engine_version": "0.1.23"}
   },
   "linear": {
     "teams": [

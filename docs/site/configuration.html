@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="11077333e39a44bdcfca034d034fe569e4befe44545301c30bd141619f0b8a7b">
+<meta name="bureau-source-sha256" content="557080e9b98d8f74049ac39fb539b7da8954f930cede4a49ba5281b3dfebba15">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -296,8 +296,8 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;design&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;impeccable&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;skill_version&quot;</span><span class="fu">:</span> <span class="st">&quot;4.8.0&quot;</span><span class="fu">,</span></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;engine_version&quot;</span><span class="fu">:</span> <span class="st">&quot;0.1.18&quot;</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;skill_version&quot;</span><span class="fu">:</span> <span class="st">&quot;4.9.0&quot;</span><span class="fu">,</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;engine_version&quot;</span><span class="fu">:</span> <span class="st">&quot;0.1.23&quot;</span></span>
 <span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
 <span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
 <span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
@@ -317,8 +317,11 @@ arm64/x64 are supported.</p>
 checkout or install it separately with
 <code>impeccable install --project --providers=claude --no-hooks -y</code>.
 <strong><code>--no-hooks</code> is required.</strong> That installer
-downloads an unversioned bundle and can install four Claude agents even
-with hooks disabled: check the resulting version, remove or disable
+downloads an unversioned bundle, so operators must install and verify
+the pinned skill <strong>4.9.0</strong> and engine
+<strong>0.1.23</strong>; upstream skill <strong>4.9.1</strong> and
+engine <strong>0.1.24</strong> are not supported by this release. It can
+install four Claude agents even with hooks disabled: remove or disable
 those agents separately, and do not enable its hooks. Bureau never
 installs or enables these hooks or agents, and stages do not use them.
 An npm package version alone does not pin the skill bundle. No
@@ -410,11 +413,21 @@ Static detection cannot establish visual quality or replace rendered
 accessibility and interaction checks.</p>
 <p><strong>Upgrade:</strong> compare installed script drift, resync the
 complete scripts scope (including both helpers and the pin file), and
-restart drivers together. Existing repositories stay off until
-explicitly enabled. Fake-detector tests require no downloads; an
-optional real-engine test runs only with <code>IMPECCABLE_BIN</code> set
-and checks the operator-supplied local binary. Live provider and
-adopting-repository qualification remains an operator check.</p>
+restart drivers together. When <code>design.impeccable.enabled</code> is
+<code>true</code>, install the pinned skill 4.9.0 and engine 0.1.23 as
+above, then set <code>design.impeccable.skill_version</code> to
+<code>"4.9.0"</code> and <code>design.impeccable.engine_version</code>
+to <code>"0.1.23"</code> in <code>.bureau.json</code> together with the
+scripts resync, or remove both keys to follow the pins. Until the local
+tooling and configuration match the pins, Bureau reports Impeccable as
+unavailable and stages continue without it. With Impeccable off, only
+the resync is needed: setup writes the new defaults, and an existing
+<code>.bureau.json</code> with old version values and
+<code>enabled: false</code> is unaffected. Fake-detector tests require
+no downloads; an optional real-engine test runs only with
+<code>IMPECCABLE_BIN</code> set and checks the operator-supplied local
+binary. Live provider and adopting-repository qualification remains an
+operator check.</p>
 <h3 id="agents"><code>agents</code></h3>
 <p>Which pipelines run, how often they poll, how aggressive they
 are.</p>

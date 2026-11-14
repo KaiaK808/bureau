@@ -34,14 +34,14 @@ def installation(root, scripts):
     for name in helper.REQUIRED:
         path = skill / name; path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('Fixture ' + name + '\n')
-    (skill / 'SKILL.md').write_text('---\nversion: 4.8.0\n---\nFixture guidance.\n')
-    (skill / 'scripts/VERSION').write_text('0.1.18\n')
+    (skill / 'SKILL.md').write_text('---\nversion: 4.9.0\n---\nFixture guidance.\n')
+    (skill / 'scripts/VERSION').write_text('0.1.23\n')
     system = {'Darwin': 'darwin', 'Linux': 'linux'}[helper.platform.system()]
     arch = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'x64', 'AMD64': 'x64'}[helper.platform.machine()]
     binary = skill / 'scripts/bin' / (system + '-' + arch) / 'impeccable'
     binary.parent.mkdir(parents=True)
     binary.write_bytes((FIXTURES / 'detector.py').read_bytes()); binary.chmod(0o755)
-    (skill / 'scripts/engine-checksums.txt').write_text('0.1.18 impeccable-' + system + '-' + arch + ' ' + helper.sha256(binary.read_bytes()) + '\n')
+    (skill / 'scripts/engine-checksums.txt').write_text('0.1.23 impeccable-' + system + '-' + arch + ' ' + helper.sha256(binary.read_bytes()) + '\n')
     pins = {**json.loads((SCRIPTS / 'bureau-impeccable-pins.json').read_text()), 'skill_tree_sha256': helper.tree_digest(skill)}
     (scripts / 'bureau-impeccable-pins.json').write_text(json.dumps(pins))
     return skill, binary
@@ -58,7 +58,7 @@ class ImpeccableTests(unittest.TestCase):
         self.skill, self.binary = installation(self.root, self.scripts)
         self.pin_patch = patch.object(helper, 'PINS', self.scripts / 'bureau-impeccable-pins.json')
         self.pin_patch.start(); self.addCleanup(self.pin_patch.stop)
-        self.config = {'design': {'impeccable': {'enabled': True, 'skill_version': '4.8.0', 'engine_version': '0.1.18',
+        self.config = {'design': {'impeccable': {'enabled': True, 'skill_version': '4.9.0', 'engine_version': '0.1.23',
                                                'skill_path': str(self.skill)}}}
         self.calls = self.root / 'detector-calls.jsonl'
         self.env_patch = patch.dict(os.environ, {**GIT_ENV, 'TMPDIR': str(self.root), 'FAKE_DETECTOR_CALLS': str(self.calls)}, clear=True)
@@ -90,6 +90,18 @@ class ImpeccableTests(unittest.TestCase):
         self.assertIn('PRODUCT.md', context); self.assertIn('DESIGN.md', context)
         self.assertIn('win over all floor defaults and bans', context)
         self.assertEqual(helper.verify(self.repo, self.config, str(self.binary))['status'], 'available')
+
+    def test_old_configured_pins_require_upgrade_only_when_enabled(self):
+        options = self.config['design']['impeccable']
+        options.update(skill_version='4.8.0', engine_version='0.1.18')
+        result = self.verify(); self.assertEqual(result['status'], 'unavailable', result)
+        self.assertEqual(result['reason'], 'unsupported pinned skill_version')
+        self.assertEqual(self.detect()['status'], 'not measured'); self.assertFalse(self.calls.exists())
+        options['enabled'] = False
+        self.assertEqual(self.verify()['status'], 'disabled')
+        options['enabled'] = True
+        del options['skill_version'], options['engine_version']
+        self.assertEqual(self.verify()['status'], 'available')
 
     def test_bad_engine_skill_missing_files_and_versions_are_unavailable(self):
         for target, changed, expected in [(self.binary, b'wrong', 'engine digest'),
