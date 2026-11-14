@@ -2,7 +2,7 @@
 
 When the user requests `--update`:
 
-Resolve the secrets file as the stages do: non-empty process `BUREAU_ENV_FILE`, otherwise `repo.env_file`, otherwise `.env` next to `.bureau.json`. A relative process override counts from that JSON file's directory; `repo.env_file` must be absolute or start with `~/`. Do not create a checkout `.env` when the installation uses an external file. Moving outside blocks the conventional checkout path only; it does not stop a process with the user's permissions from discovering and reading the file. See [migration](../docs/migration.md#unreleased-move-an-existing-secrets-file).
+Resolve the secrets file as the stages do: non-empty process `BUREAU_ENV_FILE`, otherwise `repo.env_file`, otherwise `.env` next to `.bureau.json`. A relative process override counts from that JSON file's directory; `repo.env_file` must be absolute or start with `~/`. Do not create a checkout `.env` when the installation uses an external file. Moving outside blocks the conventional checkout path only; it does not stop a process with the user's permissions from discovering and reading the file. See [migration](../docs/migration.md#move-the-secrets-file-outside-the-checkout).
 
 1. **Show current effective config first.** Run `bash scripts/bureau-status.sh --config` and display the output. This surfaces both `.bureau.json` values and the env-only knobs (`BUREAU_IMPL_*`, `BUREAU_SUPERVISOR_*`, `LINEAR_API_KEY` set/unset, etc.) the user might want to change.
 

@@ -1,3 +1,0 @@
-section: Fixed
-
-- Both test runner entry points set `PYTHONDONTWRITEBYTECODE=1` for every test, including CI runs; isolated runner imports also avoid caches. The internal-reference guard retains its Git-tracked and non-ignored new-file inventory, so ignored bytecode cannot trigger publication failures and tracked violations still fail. **Upgrade:** update the source checkout; no asset resync or runtime compatibility change. Validation uses planted template imports through both runners and the guard's ignored-bytecode/tracked-file controls; the full suite and hosted CI remain maintainer checks.

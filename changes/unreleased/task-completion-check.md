@@ -1,3 +1,0 @@
-section: Added
-
-- Optional advisory task completion evidence in QA compares completed tasks' named paths with the pinned ticket diff and flags test tasks without added or modified test files. Counts and bounded per-task rules appear in the acceptance brief without changing QA decisions. This proves only that a named file changed, not that the work is correct. **Upgrade:** resync the scripts scope together, then opt in with the boolean `repo.task_completion_check: true` on the trusted base; the default is off. Validation: local Git fixtures and a private comparison mutation checked task verdicts, pinned inputs, settings, bounded records, corruption rejection and acceptance rendering; QA integration checked advisory failures and control exits.
