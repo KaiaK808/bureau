@@ -413,7 +413,7 @@ _bureau_load_config() {
   env_file="${env_file%.}"
   if [ -z "${BUREAU_ENV_FILE:-}" ]; then
     if [ -n "$env_file" ]; then
-      case "$env_file" in '~/'*) env_file=~/"${env_file#\~/}" ;; esac
+      case "$env_file" in [~]/*) env_file=~/"${env_file#\~/}" ;; esac
       [ -f "$env_file" ] || { echo "ERROR: repo.env_file file missing: $env_file" >&2; exit 24; }
       BUREAU_ENV_FILE="$env_file"
     else
