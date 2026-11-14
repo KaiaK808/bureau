@@ -39,6 +39,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-config-test-') as scratch:
     shim.chmod(0o755)
     env = dict(os.environ, BUREAU_CONFIG=str(config), TMPDIR=scratch, REAL_JQ=shutil.which('jq'),
                JQ_COUNTER=str(counter), PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'])
+    env.pop('BUREAU_ENV_FILE', None)
 
     def run(value, names=(), code=probe, extra=()):
         config.write_text(json.dumps(value)); counter.write_text('')
@@ -53,6 +54,14 @@ with tempfile.TemporaryDirectory(prefix='bureau-config-test-') as scratch:
     result, negative = run(base, code=probe + '\njq -n null >/dev/null\n')
     assert result.returncode == 0 and negative > 1, 'counter missed an extra jq start'
     print('PASS source starts one jq; extra-start negative control exceeds the bound')
+
+    env_file = root / 'external secrets.env\n\n'; env_file.write_text('')
+    value = copy.deepcopy(base); value['repo']['env_file'] = str(env_file)
+    result, count = run(value, ['BUREAU_ENV_FILE'])
+    assert result.returncode == 0 and not result.stderr, result
+    assert result.stdout == os.fsencode(env_file) + b'\0', result
+    assert count == 1, ('external env file source-time jq upper bound', count)
+    print('PASS external env file preserves trailing newlines with one jq start')
 
     defaults = {var: str(default) for var, default, _, _ in numbers.values()}
     defaults.update(BUREAU_TEAM_KEY='TEAM', BUREAU_TEAM_NAME='Team', BUREAU_STATE_TRIAGE='null',

@@ -12,7 +12,7 @@ Reuse configuration and choices already given. Collect agent selection before ma
 
 Use **Linear MCP tools** for all discovery. Use the authenticated tools available in the current assistant — no API key needed.
 
-If MCP tools are not available (no Linear tools), fall back to `curl` + `LINEAR_API_KEY` from `.env`.
+If MCP tools are not available (no Linear tools), fall back to `curl` + `LINEAR_API_KEY` from the resolved secrets file described below.
 
 **Step 1a: Discover teams**
 
@@ -69,10 +69,15 @@ State type mapping for reference: Triage→triage, Spec/Spec Review/Design/Copy/
 
 The pipeline scripts use direct Linear API calls for fast, cheap operations (state validation, issue moves, cycle counting) instead of spawning model sessions. This needs an API key.
 
-Check if `LINEAR_API_KEY` is available:
+For a new installation, create `~/.config/bureau/<repository directory name>.env` outside the checkout. Create `~/.config/bureau` if needed and ensure its mode is 0700; create the file with mode 0600, using exclusive creation. If the file already exists, ask whether to reuse it or choose another filename for this checkout; never overwrite another checkout's file. Store the chosen path in `repo.env_file` using the `~/` form when writing `.bureau.json` in Phase 3, replacing the directory-name placeholder. Keep `.env.example` in the repository.
+
+This blocks the conventional checkout `.env` path only. The path is hidden from the agent's environment, but a process with the user's permissions can still search for the file, read `.bureau.json` or inspect Bureau's processes to find and read it; this release has no operating-system sandbox to block that read.
+
+Check if `LINEAR_API_KEY` is available in the chosen file (adjust this path if a different filename was selected):
 
 ```bash
-([ -f .env ] && grep -q LINEAR_API_KEY .env) && echo "KEY_FOUND" || echo "KEY_MISSING"
+BUREAU_SETUP_ENV_FILE="$HOME/.config/bureau/$(basename "$PWD").env"
+([ -f "$BUREAU_SETUP_ENV_FILE" ] && grep -q '^LINEAR_API_KEY=' "$BUREAU_SETUP_ENV_FILE") && echo "KEY_FOUND" || echo "KEY_MISSING"
 ```
 
 If missing, show this guide:
@@ -85,10 +90,11 @@ If missing, show this guide:
 > 1. Go to https://linear.app/settings/account/api
 > 2. Click "Create key", name it "bureau-pipeline"
 > 3. Copy the key (starts with `lin_api_`)
-> 4. Add it to `.env` in this repo:
+> 4. Add it to the chosen secrets file outside the checkout, keeping mode 0600:
 >    ```
->    echo 'LINEAR_API_KEY=lin_api_YOUR_KEY_HERE' >> .env
+>    LINEAR_API_KEY=lin_api_YOUR_KEY_HERE
 >    ```
+>    Put optional `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALERT_CHAT_ID` entries in the same file. Never print real credentials.
 >
 > The key is the same across all repos in your Linear workspace — you only create it once.
 
@@ -201,6 +207,7 @@ Generate the config file from all collected information:
     "pause_on_stale_data": false
   },
   "repo": {
+    "env_file": "~/.config/bureau/<repository directory name>.env",
     "branch_prefix": "feat",
     "specs_dir": "specs",
     "copy_voice_file": "docs/copy-voice.md",
@@ -237,7 +244,7 @@ Offer CI scaffolding when the target lacks CI: `assets --scope ci` previews `.gi
 
 Human approval is a separate opt-in: `assets --scope approval` previews only `.github/workflows/bureau-approval.yml`; add `--apply` to install it. No existing scope or default includes that workflow. The decision script comes from `scripts`; commit both assets and a tracked `.bureau.json` containing `agents.merge_approvers` to the default branch, without publishing local workspace IDs or credentials. Require `bureau/human-approval` in branch protection. See [the recipe](../docs/recipes.md#require-a-persons-approval-of-the-exact-commit), including the separate-account requirement when Bureau uses an allowed login. Keep the ordinary local `.bureau.json` ignored unless deliberately publishing that approval policy.
 
-Add `.bureau.json` (unless publishing the approval policy above), `.env`, `logs/`, and `.worktrees/` to the target's gitignore without removing existing entries. Create `.env.example` only if absent, with empty LINEAR_API_KEY and optional Telegram entries. Never copy or print real credentials. Shared app stages and background operation need the API key; authenticated Linear tools can serve discovery.
+Add `.bureau.json` (unless publishing the approval policy above), `.env`, `logs/`, and `.worktrees/` to the target's gitignore without removing existing entries; retain `.env` as protection for legacy or accidental local files. Create `.env.example` only if absent, with empty LINEAR_API_KEY and optional Telegram entries. Write the real keys only to the chosen external secrets file, never copy or print them. Shared app stages and background operation need the API key; authenticated Linear tools can serve discovery. A non-empty process `BUREAU_ENV_FILE` overrides `repo.env_file`; reconcile any launch override before starting Bureau.
 
 Validate JSON, run `bash -n scripts/*.sh` one file at a time, inspect installed targets and preview again to confirm no drift. Report installed interfaces, active Spec Kit integration, skipped conflicts and remaining prerequisites. Suggest `$speckit-constitution` in Codex or `/speckit-constitution` in Claude if the constitution is still a template. Do not overwrite a completed constitution.
 

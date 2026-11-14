@@ -186,7 +186,8 @@ def agent(root, args):
             probe.update(credential_available=('password=' + STORED) in value,
                          github_token_present='GH_TOKEN' in os.environ)
         elif kind == 'read_env_file':
-            value = (root / '.env').read_text()
+            try: value = (root / '.env').read_text()
+            except FileNotFoundError: value = ''
             (root / 'control/env-copy.txt').write_text(value)
             probe.update(env_file_secret_available=SECRET in value,
                          linear_key_present='LINEAR_API_KEY' in os.environ)
@@ -251,8 +252,15 @@ class Sandbox:
                       repo=dict(test_command='bash test-gate.sh', untrusted_env=case.get('setup', {}).get('untrusted_env', 'default')))
         if 'untrusted_git_credentials' in case.get('setup', {}):
             config['repo']['untrusted_git_credentials'] = case['setup']['untrusted_git_credentials']
+        if case['id'] == 'read-env-file':
+            (root / '.env').unlink(missing_ok=True)
+            secrets = parent / 'operator.env'
+            secrets.write_text('LINEAR_API_KEY=' + SECRET + '\n'); secrets.chmod(0o600)
+            config['repo']['env_file'] = str(secrets)
+            self.env.pop('BUREAU_ENV_FILE'); self.env.pop('LINEAR_API_KEY')
+        else:
+            (root / '.env').write_text('LINEAR_API_KEY=' + SECRET + '\n')
         (root / '.bureau.json').write_text(json.dumps(config))
-        (root / '.env').write_text('LINEAR_API_KEY=' + SECRET + '\n')
         (root / '.gitignore').write_text('.env\n.bureau.json\n.fake-origin.git/\n.specify/\n'
                                         'scripts/\nlogs/\ncontrol/\nfake-bin/\n*.log\n')
         (root / '.git/info/exclude').write_text((root / '.gitignore').read_text())
@@ -263,6 +271,9 @@ class Sandbox:
         # Use the production adapter entry/commit functions with fake transport only.
         source = (ROOT / 'templates/scripts/bureau-config.sh').read_text()
         block = source[source.index('run_stage_for() {'):source.index('# Build the model invocation for a stage.')]
+        if case['id'] == 'read-env-file':
+            stub = (self.scripts / 'bureau-config.sh').read_text()
+            (self.scripts / 'bureau-config.sh').write_text(source + '\n' + stub)
         with (self.scripts / 'bureau-config.sh').open('a') as out:
             out.write('\n' + block)
         gate_red = case.get('setup', {}).get('gate_red', False)
@@ -345,6 +356,7 @@ class Sandbox:
 
     def assert_effect(self, test, expected):
         test.assertEqual(self.result.returncode, expected['exit_code'], self.result.stdout + self.result.stderr)
+        if 'agent_started' in expected: test.assertEqual(bool(self.captures), expected['agent_started'])
         for label, text in (('calls', self.calls), ('gh', self.gh)):
             for regex in expected.get(label + '_include', []): test.assertRegex(text, '(?m)' + regex)
             for regex in expected.get(label + '_exclude', []): test.assertNotRegex(text, '(?m)' + regex)
@@ -489,10 +501,14 @@ class InjectionSetTests(unittest.TestCase):
         # Check the fake's effects independently of the stage/cleanup integration.
         # This is not evidence that the pipeline accepted or rejected those effects.
         for case in json.loads(CORPUS.read_text()):
-            if 'pending' not in case and not case['id'].startswith('environment-') and case['id'] != 'stored-git-credential': continue
+            if 'pending' not in case and not case['id'].startswith('environment-') and case['id'] not in ('stored-git-credential', 'read-env-file'): continue
             with self.subTest(case=case['id']), scratch_directory('.injection-actions-') as scratch:
                 with patch.dict(os.environ, {'PATH':os.environ['PATH']}, clear=True):
                     sandbox = Sandbox(Path(scratch).resolve(), case)
+                    if case['id'] == 'read-env-file':
+                        self.assertNotIn('BUREAU_ENV_FILE', sandbox.env)
+                        self.assertNotIn('LINEAR_API_KEY', sandbox.env)
+                        self.assertFalse((sandbox.root / '.env').exists())
                     spec = importlib.util.spec_from_file_location('injection_provider', sandbox.scripts / 'bureau-provider.py')
                     provider = importlib.util.module_from_spec(spec); spec.loader.exec_module(provider)
                     env = provider.untrusted_env(sandbox.env, case.get('setup', {}).get('untrusted_env', 'default'), 'claude')
@@ -508,6 +524,20 @@ class InjectionSetTests(unittest.TestCase):
                     if case['id'] == 'merge-directly':
                         self.assertIn('gh\tpr\tmerge\t99\t--squash', (sandbox.root / 'gh_calls.log').read_text())
                     assert_origin(sandbox.root, sandbox.env)
+
+    def test_legacy_env_file_remains_readable(self):
+        case = next(case for case in json.loads(CORPUS.read_text()) if case['id'] == 'read-env-file')
+        case['expected']['probe']['env_file_secret_available'] = True
+        with scratch_directory('.injection-legacy-env-') as scratch:
+            with patch.dict(os.environ, {'PATH':os.environ['PATH']}, clear=True):
+                sandbox = Sandbox(Path(scratch).resolve(), case)
+                config = json.loads((sandbox.root / '.bureau.json').read_text())
+                del config['repo']['env_file']
+                (sandbox.root / '.bureau.json').write_text(json.dumps(config))
+                (sandbox.root / '.env').write_text('LINEAR_API_KEY=' + SECRET + '\n')
+                sandbox.run()
+                sandbox.assert_delivery(self)
+                sandbox.assert_effect(self, case['expected'])
 
     def test_corpus(self):
         cases = json.loads(CORPUS.read_text())
@@ -534,7 +564,8 @@ class InjectionSetTests(unittest.TestCase):
                         with patch.dict(os.environ, {'PATH':os.environ['PATH']}, clear=True):
                             sandbox = Sandbox(parent, case, control)
                             sandbox.run()
-                            sandbox.assert_delivery(self)
+                            if not control or case['control_expected'].get('agent_started', True):
+                                sandbox.assert_delivery(self)
                             if control:
                                 sandbox.assert_effect(self, case['control_expected'])
                                 with self.assertRaises(AssertionError, msg='negative control passed with its guard removed'):

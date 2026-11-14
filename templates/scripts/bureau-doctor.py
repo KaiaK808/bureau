@@ -179,16 +179,23 @@ def codex_gate_duration_warning(repo, config, effective):
 
 
 def stage_env_file(config_path):
-    """The .env every stage reads, as _find_config in bureau-config.sh sets it (bureau-config.sh:40-44):
-    BUREAU_ENV_FILE, by default (unset or empty) the .env next to .bureau.json; a relative value counts
-    from the directory of .bureau.json, never from the working directory. Never ./.env of the checkout
-    doctor runs in: in a stage worktree that is a file the branch controls (v3.2). "The directory of
-    .bureau.json" is the one BUREAU_CONFIG names, as the stages take it (dirname, no link resolved):
-    config_for resolves an explicit BUREAU_CONFIG, so a .bureau.json that is a link would otherwise
-    point doctor at the directory of the link's target."""
+    """Match _find_config: process override, repo.env_file, then the adjacent .env.
+    Only a process override may be relative, counted from the directory BUREAU_CONFIG
+    names without resolving its link, just as the stages do."""
     explicit = os.environ.get('BUREAU_CONFIG')
     base = Path(os.path.abspath(explicit)).parent if explicit else config_path.parent
-    return base / (os.environ.get('BUREAU_ENV_FILE') or '.env')
+    override = os.environ.get('BUREAU_ENV_FILE')
+    config = json.loads(config_path.read_text())
+    repo = config.get('repo', {})
+    if isinstance(repo, dict) and 'env_file' in repo:
+        value = repo['env_file']
+        if not isinstance(value, str) or not value.startswith(('/', '~/')) or '\0' in value:
+            raise ValueError('repo.env_file must be an absolute or ~/ path in valid .bureau.json')
+        if override: return base / override
+        path = os.path.expanduser(value)
+        if not os.path.isfile(path): raise ValueError('repo.env_file file missing: ' + path)
+        return Path(path)
+    return base / (override or '.env')
 
 
 def stage_env_value(config_path, name):
@@ -494,7 +501,7 @@ def worktree_links(repo, config, checkout=None):
         if not path or path.startswith('/') or any(part.lower() in ('', '.', '..', '.git') for part in parts):
             errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' must be a plain relative path (no /, ., .., .git or empty component); stages skip it'); report.append(dict(path=entry, status='invalid')); continue
         if env_path(main, path):
-            errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is a .env file: stages would link the main checkout\'s secrets into every stage worktree, where pull-request code runs; remove it (the stages read .env from the main checkout)')
+            errors.append('repo.worktree_links entry ' + json.dumps(entry) + ' is a .env file: stages would link the main checkout\'s secrets into every stage worktree, where pull-request code runs; remove it (the stages read the resolved secrets file)')
             report.append(dict(path=path, status='env file')); continue
         if main is None:
             report.append(dict(path=path, status='no main checkout')); continue
@@ -584,6 +591,9 @@ def diagnose(repo, mode):
     repo = runtime.root_for(repo); path = runtime.config_for(repo); config = json.loads(path.read_text())
     errors = validate(config); warnings = []; effective = {}
     if not errors:
+        try: env_path = stage_env_file(path)
+        except (OSError, ValueError, RuntimeError) as exc: errors.append(str(exc))
+    if not errors:
         for stage in STAGES:
             if stage in ('merge', 'rebase') or not runtime.enabled(config, stage): continue
             try: effective[stage] = provider.configuration(stage, config, os.environ)
@@ -612,7 +622,7 @@ def diagnose(repo, mode):
                         + ('; BUREAU_STAGE_TIMEOUT in the environment wins over both' if os.environ.get('BUREAU_STAGE_TIMEOUT') else ''))
     gate_warning = codex_gate_duration_warning(repo, config, effective)
     if gate_warning: warnings.append(gate_warning)
-    if stage_env_file(path).is_file(): warnings.append('Doctor resolves JSON and process environment only; it does not execute .env (it reads only BUREAU_RUNNER_IMPLEMENT from it, for the repo.test_command warning). Source trusted overrides before running doctor for matching effective settings.')
+    if env_path.is_file(): warnings.append('Doctor resolves JSON and process environment only; it does not execute .env (it reads only BUREAU_RUNNER_IMPLEMENT from it, for the repo.test_command warning). Source trusted overrides before running doctor for matching effective settings.')
     active = runtime.read(repo / '.specify/integration.json', {})
     manifest = runtime.read(repo / '.bureau-install.json', {})
     drift = []
@@ -682,6 +692,12 @@ def diagnose(repo, mode):
     if remote_hooks is not None and type(remote_hooks) is not bool and remote_hooks != 'operator':
         warnings.append('repo.remote_git_runs_hooks ' + json.dumps(remote_hooks) + ' is not a JSON boolean or "operator"; Bureau counts it as false and runs its push, fetch and other remote git commands without the repository\'s hooks: only true runs them all, "operator" only those in the main checkout\'s own hooks directory')
     checkout = main_checkout(repo); main = checkout[0]
+    if env_path.is_file():
+        resolved = env_path.resolve()
+        if main is not None and (resolved == main.resolve() or main.resolve() in resolved.parents):
+            warnings.append('Secrets file is inside the main checkout, where an agent can read its conventional path; set repo.env_file to a file outside the checkout (this blocks only that conventional path, not discovery by a process with your permissions).')
+        if env_path.stat().st_mode & 0o044:
+            warnings.append('Secrets file is readable by group or others; use mode 0600.')
     if remote_mode == 'off' and main is not None and uses_git_lfs(main):
         warnings.append('repo.remote_git_runs_hooks is not true, but the main checkout uses Git LFS (filter=lfs in a .gitattributes file or in info/attributes): Bureau pushes without the repository\'s hooks, so the pre-push hook of git lfs does not upload the LFS objects and the remote lacks them; set repo.remote_git_runs_hooks to true, or to "operator" when git lfs install put its hooks in the main checkout\'s .git/hooks')
     if remote_mode == 'operator' and main is not None and uses_git_lfs(main) and not operator_pre_push(main):

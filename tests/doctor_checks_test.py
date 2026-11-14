@@ -394,6 +394,117 @@ class PushEachIterationTests(Repo):
                 self.assertTrue(result['ok'], result)
 
 
+class SecretsFileTests(Repo):
+    def setUp(self):
+        super().setUp()
+        os.environ.pop('BUREAU_ENV_FILE', None)
+        self.config_path = self.repo / '.bureau.json'
+        self.external = self.base / 'private' / 'operator.env'
+        self.external.parent.mkdir(mode=0o700)
+        self.external.write_text('LINEAR_API_KEY=external-fixture-key\n')
+        self.external.chmod(0o600)
+
+    def shell(self):
+        script = ('source "$1"; bureau_load_env "$BUREAU_ENV_FILE"; '
+                  'printf "%s\\n%s" "$BUREAU_ENV_FILE" "${LINEAR_API_KEY:-}"')
+        return subprocess.run(['/bin/bash', '-uc', script, 'probe',
+                               str(ROOT / 'templates/scripts/bureau-config.sh')],
+                              cwd=self.base, env={**os.environ, 'BUREAU_CONFIG': str(self.config_path)},
+                              capture_output=True, text=True, timeout=10)
+
+    def test_shell_and_doctor_resolve_the_same_file(self):
+        legacy = self.repo / '.env'
+        legacy.write_text('LINEAR_API_KEY=legacy-fixture-key\n')
+        cases = [('absolute', str(self.external), None, self.external),
+                 ('home', '~/private/operator.env', None, self.external),
+                 ('empty override', str(self.external), '', self.external),
+                 ('process absolute', str(self.base / 'missing.env'), str(legacy), legacy),
+                 ('process relative', str(self.external), '.env', legacy),
+                 ('legacy', None, None, legacy)]
+        for label, setting, override, expected in cases:
+            with self.subTest(case=label), patch.dict(os.environ, {'HOME': str(self.base)}):
+                config = self.config()
+                if setting is not None: config['repo']['env_file'] = setting
+                self.write_config(config)
+                if override is None: os.environ.pop('BUREAU_ENV_FILE', None)
+                else: os.environ['BUREAU_ENV_FILE'] = override
+                proc = self.shell()
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(proc.stdout.splitlines(), [str(expected),
+                    'legacy-fixture-key' if expected == legacy else 'external-fixture-key'])
+                self.assertEqual(d.stage_env_file(self.config_path), expected)
+                self.assertTrue(self.diagnose()['ok'])
+
+    def test_invalid_or_missing_setting_refuses_before_stage_work(self):
+        cases = [(value, override) for value in (42, '', 'relative.env', None, False, [], {}, '/invalid\0path')
+                 for override in (None, str(self.external))]
+        cases.append((str(self.base / 'missing.env'), None))
+        for value, override in cases:
+            with self.subTest(value=value, override=override), patch.dict(os.environ, {}):
+                if override is not None: os.environ['BUREAU_ENV_FILE'] = override
+                config = self.config(); config['repo']['env_file'] = value
+                self.write_config(config)
+                proc = self.shell()
+                self.assertEqual(proc.returncode, 24, proc.stderr)
+                self.assertEqual(proc.stdout, '')
+                self.assertIn('repo.env_file', proc.stderr)
+                result = self.diagnose()
+                self.assertFalse(result['ok'], result)
+                self.assertTrue(any('repo.env_file' in error for error in result['errors']), result)
+
+    def test_setting_refuses_file_suffixes_before_path_normalization(self):
+        (self.repo / '.env').write_text('LINEAR_API_KEY=legacy-fixture-key\n')
+        for prefix in (str(self.external), '~/private/operator.env'):
+            for suffix in ('/', '/.', '//', '//.', '/./'):
+                with self.subTest(prefix=prefix, suffix=suffix), patch.dict(os.environ, {'HOME': str(self.base)}):
+                    config = self.config(); config['repo']['env_file'] = prefix + suffix
+                    self.write_config(config)
+                    error = 'repo.env_file file missing: ' + str(self.external) + suffix
+                    proc = self.shell()
+                    self.assertEqual(proc.returncode, 24, proc.stderr)
+                    self.assertEqual(proc.stdout, '')
+                    self.assertEqual(proc.stderr, 'ERROR: ' + error + '\n')
+                    with self.assertRaises(ValueError) as raised: d.stage_env_file(self.config_path)
+                    self.assertEqual(str(raised.exception), error)
+                    result = self.diagnose()
+                    self.assertFalse(result['ok'], result)
+                    self.assertIn(error, result['errors'])
+
+    def test_unparseable_json_refuses_before_stage_work(self):
+        for text in ('{"repo":', '{}\n{}', ''):
+            with self.subTest(text=text):
+                self.config_path.write_text(text)
+                with self.assertRaises(ValueError): d.stage_env_file(self.config_path)
+                proc = self.shell()
+                self.assertEqual(proc.returncode, 24, proc.stderr)
+                self.assertEqual(proc.stdout, '')
+                self.assertIn('.bureau.json', proc.stderr)
+
+    def test_doctor_warns_for_checkout_paths_and_public_read_modes(self):
+        nested = self.repo / 'private' / 'operator.env'; nested.parent.mkdir()
+        nested.write_text('LINEAR_API_KEY=checkout-fixture-key\n')
+        outside_link = self.base / 'linked.env'; outside_link.symlink_to(nested)
+        inside_link = self.repo / 'linked.env'; inside_link.symlink_to(self.external)
+        sibling = self.base / (self.repo.name + ' sibling.env'); sibling.write_text('')
+        cases = [(nested, 0o600, True, False), (outside_link, 0o600, True, False),
+                 (inside_link, 0o600, False, False), (sibling, 0o600, False, False),
+                 (self.external, 0o600, False, False), (self.external, 0o644, False, True)]
+        for path, mode, inside, readable in cases:
+            with self.subTest(path=path.name, mode=oct(mode)):
+                path.chmod(mode)
+                config = self.config(); config['repo']['env_file'] = str(path)
+                result = self.diagnose(config)
+                self.assertTrue(result['ok'], result)
+                warnings = [w for w in result['warnings'] if w.startswith('Secrets file ')]
+                self.assertEqual(any('inside the main checkout' in w and 'repo.env_file' in w for w in warnings), inside, warnings)
+                self.assertEqual(any('readable by group or others' in w for w in warnings), readable, warnings)
+                self.assertEqual(len(warnings), int(inside) + int(readable), warnings)
+                self.assertNotIn('fixture-key', json.dumps(result))
+        legacy = self.repo / '.env'; legacy.write_text(''); legacy.chmod(0o600)
+        result = self.diagnose(self.config())
+        self.assertTrue(any('inside the main checkout' in w for w in result['warnings']), result)
+
+
 class TestCommandWarningTests(Repo):
     """repo.test_command is required only where implement runs on Codex: its completion runs the
     command as an independent check and stops with 24 without one (implement-pipeline.sh). v3.1
@@ -628,9 +739,13 @@ class TestCommandWarningTests(Repo):
             ('relative conf/bureau.env', 'conf/bureau.env', (), 'main-conf'),
             ('relative, missing next to .bureau.json', 'conf/bureau.env', ('main-conf',), 'env'),
             ('unset, no .env next to .bureau.json', None, ('main',), 'env'),
+            ('repo.env_file', None, (), 'elsewhere'),
         ]
         configs = {'exported': self.repo / '.bureau.json', 'found': None, 'link': linked / '.bureau.json'}
         for label, value, removed, main_source in cases:
+            config['repo'].pop('env_file', None)
+            if label == 'repo.env_file': config['repo']['env_file'] = str(elsewhere)
+            self.write_config(config)
             case_env = {} if value is None else {'BUREAU_ENV_FILE': value}
             for place in (self.repo, self.worktree):
                 for mode, named in configs.items():

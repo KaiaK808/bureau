@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="84fa5b6a21710607b60287a06eea516f63928c6fc4ffae8adb3c3b6d5667ded8">
+<meta name="bureau-source-sha256" content="11077333e39a44bdcfca034d034fe569e4befe44545301c30bd141619f0b8a7b">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -29,14 +29,34 @@ the pipeline scripts, set inline
 the operator's shell or read from the installation's
 <code>.env</code>.</li>
 </ul>
-<p>The pipeline scripts read the installation's <code>.env</code>
-selected by <code>BUREAU_ENV_FILE</code> (by default the
-<code>.env</code> next to <code>.bureau.json</code>). For a key accepted
-by the loader and defined in that file, <code>.env</code> wins over the
-process environment, including values exported in the operator's shell
-or set on the start line. For a key <code>.env</code> does not define,
-the environment value is used. Keys outside the loader's allow-list are
-ignored in <code>.env</code>.</p>
+<p>The pipeline scripts select the installation's secrets file in this
+order: a non-empty process <code>BUREAU_ENV_FILE</code>, otherwise
+<code>repo.env_file</code> in <code>.bureau.json</code>, otherwise
+<code>.env</code> next to <code>.bureau.json</code>. A relative process
+override counts from that JSON file's directory, without resolving a
+config symlink; <code>repo.env_file</code> must be an absolute path or
+start with <code>~/</code>, expanded with the invoking user's home. An
+invalid <code>repo.env_file</code>, or a missing file selected by it,
+refuses with exit 24, never falling back to the checkout's
+<code>.env</code>; doctor reports an error. New installations use
+<code>~/.config/bureau/&lt;repository directory name&gt;.env</code>,
+with directory mode 0700 and file mode 0600; existing installations keep
+their adjacent <code>.env</code> until moved. For a key accepted by the
+loader and defined in that file, the file wins over the process
+environment, including values exported in the operator's shell or set on
+the start line. For a key the file does not define, the environment
+value is used. Keys outside the loader's allow-list are ignored.</p>
+<p>Moving secrets outside the checkout blocks the conventional checkout
+<code>.env</code> path only. The path is hidden from the agent's
+environment, but a process with the user's permissions that searches for
+the file, reads <code>.bureau.json</code> or inspects Bureau's own
+processes can still find and read it. A real read block needs an
+operating-system sandbox, which this release does not have. Doctor warns
+when the resolved real path is inside the main checkout (including
+subdirectories) or when the file is readable by group or others; it
+never executes or prints the file's contents. See <a
+href="migration.html#unreleased-move-an-existing-secrets-file">move an
+existing installation</a>.</p>
 <p>For one run, use a per-stage key that <code>.env</code> does not
 define, or change or comment out the corresponding line in
 <code>.env</code> for that run and restore it afterwards. See the
@@ -1603,6 +1623,18 @@ file does not establish correctness</td>
 <td>Prefix for spec branches (<code>feat/001-add-login</code>)</td>
 </tr>
 <tr>
+<td><code>repo.env_file</code></td>
+<td>string</td>
+<td>adjacent <code>.env</code></td>
+<td>Secrets file, absolute or <code>~/</code>-prefixed; non-empty
+process <code>BUREAU_ENV_FILE</code> wins. New setup writes
+<code>~/.config/bureau/&lt;repository directory name&gt;.env</code>
+outside the checkout with mode 0600, in a directory with mode 0700.
+Invalid settings or missing selected files stop with 24. This blocks
+only the conventional checkout path; it is no filesystem sandbox (see
+the resolution and limits above)</td>
+</tr>
+<tr>
 <td><code>repo.specs_dir</code></td>
 <td>string</td>
 <td><code>"specs"</code></td>
@@ -2296,16 +2328,17 @@ separate <code>agents.max_concurrent_issues</code> ticket cap</td>
 <tr>
 <td><code>LINEAR_API_KEY</code></td>
 <td>Always (agents)</td>
-<td>Set in <code>.env</code>. The interactive <code>/bureau-init</code>
-works without it via MCP; the headless agents need direct GraphQL
-access. The scripts that read <code>.env</code> keep it in a shell
-variable they never export (v3.2) and hand it to <code>curl</code> on
-stdin, so the processes they start do not see it; a key that only the
-shell which starts Bureau sets, and not <code>.env</code>, is left as it
-is — Bureau does not change values from the operator's shell — so it
-reaches every process below that shell, Bureau's own children included;
-keeping the key only in <code>.env</code> closes this. The same holds
-for the two Telegram keys</td>
+<td>Set in the resolved secrets file (<code>repo.env_file</code> for new
+installations). The interactive <code>/bureau-init</code> works without
+it via MCP; the headless agents need direct GraphQL access. The scripts
+that read the file keep it in a shell variable they never export (v3.2)
+and hand it to <code>curl</code> on stdin, so the processes they start
+do not see it; a key that only the shell which starts Bureau sets, and
+not the secrets file, is left as it is — Bureau does not change values
+from the operator's shell — so it reaches every process below that
+shell, Bureau's own children included; keeping the key only in the
+secrets file closes this environment exposure. The same holds for the
+two Telegram keys</td>
 </tr>
 <tr>
 <td><code>BUREAU_LINEAR_RETRIES</code></td>
@@ -2889,20 +2922,19 @@ primary worktree. Keep the trusted private config out of commits</td>
 <tr>
 <td><code>BUREAU_ENV_FILE</code></td>
 <td>caller-dependent</td>
-<td>The <code>.env</code> every script reads its keys from
-(<code>bureau_load_env</code>, parsed, never sourced); default:
-<code>.env</code> in the directory of <code>.bureau.json</code>, the
-main checkout. A relative value counts from that directory (the one
-<code>BUREAU_CONFIG</code> names, a link not resolved), and every script
-exports the result, so a script the runtime relaunches reads the same
-file even when <code>.bureau.json</code> is a link (the runtime passes
-on its resolved path). Since v3.2 no script reads <code>./.env</code> of
-its working directory any more: a stage runs in the branch's worktree,
-where <code>./.env</code> would be a file the branch commits.
-<code>bureau-doctor.py</code> reads only
-<code>BUREAU_RUNNER_IMPLEMENT</code> from it (for the
-<code>repo.test_command</code> warning), from the same file by the same
-rule, also when it runs in a linked worktree; provider
+<td>Non-empty process override for the secrets file every script reads
+(<code>bureau_load_env</code>, parsed, never sourced); otherwise
+<code>repo.env_file</code>, otherwise <code>.env</code> in the directory
+of <code>.bureau.json</code>. A relative override counts from that
+directory (the one <code>BUREAU_CONFIG</code> names, a link not
+resolved). Every script exports the result, so runtime relaunches read
+the same file even through a config link. The path is removed from the
+agent's environment; moving the file outside blocks only the
+conventional checkout path, not discovery by code with the user's
+permissions. Since v3.2 no script reads <code>./.env</code> of its
+working directory any more. Doctor follows the same resolution, also in
+a linked worktree, and reads only <code>BUREAU_RUNNER_IMPLEMENT</code>
+for the <code>repo.test_command</code> warning; provider
 <code>--describe</code> does not read it</td>
 </tr>
 <tr>
