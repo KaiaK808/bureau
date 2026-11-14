@@ -257,6 +257,9 @@ def assets(repo, args, manifest, targets):
     if "ci" in scopes:
         inputs.add(ROOT / "templates/.github/workflows/ci.yml")
         candidates.append((".github/workflows/ci.yml", (ROOT / "templates/.github/workflows/ci.yml").read_bytes(), False, False, "ci"))
+    if "approval" in scopes:
+        inputs.add(ROOT / "templates/.github/workflows/bureau-approval.yml")
+        candidates.append((".github/workflows/bureau-approval.yml", (ROOT / "templates/.github/workflows/bureau-approval.yml").read_bytes(), False, False, "approval"))
 
     unknown = set(args.overwrite) - {item[0] for item in candidates}
     if unknown:
@@ -648,7 +651,7 @@ def main():
     parser.add_argument("action", choices=["assets", "speckit", "check", "doctor", "migrate"])
     parser.add_argument("--repo", default=".")
     parser.add_argument("--target", choices=["claude", "codex", "both"])
-    parser.add_argument("--scope", action="append", choices=["interfaces", "scripts", "workflows", "ci"])
+    parser.add_argument("--scope", action="append", choices=["interfaces", "scripts", "workflows", "ci", "approval"])
     parser.add_argument("--active-integration", choices=["claude", "codex"])
     parser.add_argument("--mode", choices=["interactive", "background"], default="interactive")
     parser.add_argument("--apply", action="store_true")

@@ -33,6 +33,8 @@ Manual installations need a configured Merge state and an operator to complete t
 
 Manual GitHub operations are outside Bureau's automated gate. A default-auto configuration permits the inline merge path even when the dedicated merge agent is disabled. Local tests and reviews do not substitute for the gate's current remote checks, and no gate can prevent all external changes after its final observation.
 
+The opt-in exact-commit approval workflow is an accident guard against approval being carried silently to a later push. It records `bureau/human-approval` for an allowed login's `/bureau approve <40-hex-sha>` comment on the current head, using `agents.merge_approvers` read from the default branch. The comment trigger runs the default branch's workflow file and checks out only that branch. A new push leaves its new commit without the status until someone approves it. Bureau's pipelines never invoke the writer. Branch protection must require the context, which Bureau does not inspect or change. This does not stop deliberate bypass: other PR workflows can write the same status, and Bureau agents using an allowed person's login can approve themselves. An unforgeable form needs a separate Bureau identity and is a later change. This extends the existing human-authority decision without changing merge modes or the merge gate; see `templates/scripts/bureau-approval-status.py`, `templates/.github/workflows/bureau-approval.yml` and [the recipe](../recipes.md#require-a-persons-approval-of-the-exact-commit).
+
 ## Reversal condition
 
 Replace this decision only if the authority default or available modes change deliberately, or a different merge mechanism demonstrably preserves the human boundary and equivalent current-head/current-base checks.

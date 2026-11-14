@@ -1,0 +1,29 @@
+name: Human approval
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  statuses: write
+  pull-requests: read
+  contents: read
+concurrency:
+  group: bureau-approval-${{ github.event.issue.number }}
+  cancel-in-progress: false
+jobs:
+  approval:
+    if: github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Comment events use the default-branch workflow; run only its code.
+      # Never execute the pull request's head or merge ref here.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - run: python3 scripts/bureau-approval-status.py --event-name "$BUREAU_EVENT_NAME" --event-path "$BUREAU_EVENT_PATH" --repo "$BUREAU_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUREAU_EVENT_NAME: ${{ github.event_name }}
+          BUREAU_EVENT_PATH: ${{ github.event_path }}
+          BUREAU_REPOSITORY: ${{ github.repository }}

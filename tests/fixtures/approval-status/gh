@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Canned approval API with recorded calls; unknown routes are test failures."""
+import base64
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+root = Path(os.environ['APPROVAL_FIXTURE'])
+state = json.loads((root / 'answers.json').read_text())
+args = sys.argv[1:]
+method, route, fields, query = None, None, {}, None
+try:
+    if args.pop(0) != 'api': raise ValueError()
+    while args:
+        arg = args.pop(0)
+        if arg == '--method': method = args.pop(0)
+        elif arg == '-f':
+            key, value = args.pop(0).split('=', 1)
+            if key in fields: raise ValueError()
+            fields[key] = value
+        elif arg == '--jq': query = args.pop(0)
+        elif route is None and not arg.startswith('-'): route = arg
+        else: raise ValueError()
+except (ValueError, IndexError):
+    (root / 'unknown.json').write_text(json.dumps(sys.argv[1:]))
+    sys.exit(1)
+
+method = method or ('POST' if fields else 'GET')
+call = dict(method=method, route=route, fields=fields, query=query)
+with (root / 'calls.jsonl').open('a') as out: out.write(json.dumps(call) + '\n')
+if route == state.get('fail_route'):
+    print('approval-test-secret', file=sys.stderr)
+    sys.exit(1)
+if route in state.get('responses', {}):
+    print(state['responses'][route])
+    sys.exit(0)
+
+def contents(config):
+    return dict(encoding='base64', content=base64.encodebytes(json.dumps(config).encode()).decode())
+
+answer = None
+if method == 'GET' and route == 'repos/example/project' and not fields and query is None:
+    answer = state['repository']
+elif method == 'GET' and route == 'repos/example/project/contents/.bureau.json' and query is None:
+    if fields == {'ref': 'stable'}: answer = contents(state['default_config'])
+    elif fields == {'ref': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}: answer = contents(state['head_config'])
+elif method == 'GET' and route == 'repos/example/project/pulls/42' and not fields and query is None:
+    answer = state['pull_request']
+elif method == 'GET' and route == 'user' and not fields and query == '.login':
+    print(state['login'])
+    sys.exit(0)
+elif (method == 'POST' and re.fullmatch(r'repos/example/project/statuses/[0-9a-f]{40}', route or '')
+      and query is None and fields.get('state') == 'success'):
+    path = root / 'posted-statuses.json'
+    posted = json.loads(path.read_text()) if path.exists() else {}
+    posted.setdefault(route.split('/')[-1], []).insert(0, fields)
+    path.write_text(json.dumps(posted))
+    answer = dict(state=fields.get('state'))
+if answer is None:
+    (root / 'unknown.json').write_text(json.dumps(call))
+    sys.exit(1)
+print(json.dumps(answer))
