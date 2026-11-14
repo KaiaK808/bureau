@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f900202a30d93587b8e662905fc9509512bbaeb5c45136cfe0c6b12d759616f8">
+<meta name="bureau-source-sha256" content="6f30be294eef53d2b53ac3a8367441e05d149a47965bdebf94eaba1427c72c3e">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -81,8 +81,9 @@ with a macOS gate suite and passing PR CI on its own head. The remote
 suite on <code>openclaw-01</code> became a gate on
 <strong>2026-11-14</strong>, after a first-pass <strong>191 of
 191</strong> on main <code>6205c6d</code>. The merged release content is
-on main <code>8af867d</code>; the release branch's own suites and CI
-remain to be run by the maintainer.</p>
+on main <code>8af867d</code>. Release candidate <code>45335d7</code>
+passed both gate suites; release CI and the tag comparison follow in the
+release record.</p>
 <table>
 <thead>
 <tr>
@@ -93,27 +94,33 @@ remain to be run by the maintainer.</p>
 <tbody>
 <tr>
 <td>Independent release review</td>
-<td>TBD</td>
+<td>Codex, read-only. Round 1 requested changes (an undefined variable
+in the migration commands; a stale mutation-test caveat in the
+changelog); both are fixed in <code>45335d7</code>. Round 2
+approved.</td>
 </tr>
 <tr>
 <td>macOS gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>45335d7</code>, two shards: 191 of 191 on the first pass
+(2026-11-14).</td>
 </tr>
 <tr>
 <td>Remote gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>openclaw-01</code>, a bundle of exactly <code>45335d7</code>,
+two shards: 191 of 191 on the first pass, no reruns (2026-11-14).</td>
 </tr>
 <tr>
 <td>Release CI jobs, runs and results</td>
-<td>TBD</td>
+<td>Recorded in the release record after publication.</td>
 </tr>
 <tr>
 <td>Final candidate/tag tested-tree comparison</td>
-<td>TBD</td>
+<td>Recorded in the release record after the tag.</td>
 </tr>
 <tr>
 <td>Manual live injection sample and adopter qualification</td>
-<td>TBD</td>
+<td>Pending the maintainer's decision; recorded in the release
+record.</td>
 </tr>
 </tbody>
 </table>

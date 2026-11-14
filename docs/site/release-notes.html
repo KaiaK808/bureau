@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f1c8fafdc0044d49c3b72dd32d6d132f9c5431878c4a12be66aaab819614814e">
+<meta name="bureau-source-sha256" content="bbfa8b00e352d10d2935fd5f75e7a54b74e4dbdc965b80c89bf10929f8dbc52a">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -596,8 +596,8 @@ release branch.</p>
 </tr>
 </tbody>
 </table>
-<p>The release branch's own validation remains to be run by the
-maintainer:</p>
+<p>The release branch's own validation, on release candidate
+<code>45335d7</code>:</p>
 <table>
 <thead>
 <tr>
@@ -608,27 +608,33 @@ maintainer:</p>
 <tbody>
 <tr>
 <td>Independent release review</td>
-<td>TBD</td>
+<td>Codex, read-only. Round 1 requested changes (an undefined variable
+in the migration commands; a stale mutation-test caveat in the
+changelog); both are fixed in <code>45335d7</code>. Round 2
+approved.</td>
 </tr>
 <tr>
 <td>macOS gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>45335d7</code>, two shards: 191 of 191 on the first pass
+(2026-11-14).</td>
 </tr>
 <tr>
 <td>Remote gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>openclaw-01</code>, a bundle of exactly <code>45335d7</code>,
+two shards: 191 of 191 on the first pass, no reruns (2026-11-14).</td>
 </tr>
 <tr>
 <td>Release CI jobs, runs and results</td>
-<td>TBD</td>
+<td>Recorded in the release record after publication.</td>
 </tr>
 <tr>
 <td>Final candidate/tag tested-tree comparison</td>
-<td>TBD</td>
+<td>Recorded in the release record after the tag.</td>
 </tr>
 <tr>
 <td>Manual live injection sample and adopter qualification</td>
-<td>TBD</td>
+<td>Pending the maintainer's decision; recorded in the release
+record.</td>
 </tr>
 </tbody>
 </table>
@@ -667,9 +673,9 @@ adoption of the new checks remain unverified. Impeccable
 adopting-repository pilots have not run. Fragment-level tests and
 hostile-input fakes cannot establish live resistance to every prompt
 injection.</li>
-<li>The release branch's own macOS and remote suites, CI, tested refs
-and final tree comparisons remain <code>TBD</code> until the maintainer
-runs them.</li>
+<li>Release CI, the final candidate/tag tree comparison and the manual
+live injection sample are recorded in the release record after
+publication.</li>
 </ul></main>
 </div>
 </body>

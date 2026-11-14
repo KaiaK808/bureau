@@ -155,16 +155,16 @@ The merged changes follow first-parent merge order:
 | [#155](https://github.com/KaiaK808/bureau/pull/155) | `92b449e` | Secrets file outside the checkout |
 | [#156](https://github.com/KaiaK808/bureau/pull/156) | `8af867d` | Impeccable skill 4.9.0 / engine 0.1.23 pins |
 
-The release branch's own validation remains to be run by the maintainer:
+The release branch's own validation, on release candidate `45335d7`:
 
 | Release check | Result / reference |
 |---|---|
-| Independent release review | TBD |
-| macOS gate suite and tested ref | TBD |
-| Remote gate suite and tested ref | TBD |
-| Release CI jobs, runs and results | TBD |
-| Final candidate/tag tested-tree comparison | TBD |
-| Manual live injection sample and adopter qualification | TBD |
+| Independent release review | Codex, read-only. Round 1 requested changes (an undefined variable in the migration commands; a stale mutation-test caveat in the changelog); both are fixed in `45335d7`. Round 2 approved. |
+| macOS gate suite and tested ref | `45335d7`, two shards: 191 of 191 on the first pass (2026-11-14). |
+| Remote gate suite and tested ref | `openclaw-01`, a bundle of exactly `45335d7`, two shards: 191 of 191 on the first pass, no reruns (2026-11-14). |
+| Release CI jobs, runs and results | Recorded in the release record after publication. |
+| Final candidate/tag tested-tree comparison | Recorded in the release record after the tag. |
+| Manual live injection sample and adopter qualification | Pending the maintainer's decision; recorded in the release record. |
 
 Before publication, record the exact tested refs and results, and run [release tree verification](releases.md#verify-the-tested-release-trees). The hostile-input corpus uses deterministic fakes; its manual live release-checklist sample remains a separate check. This release record creates no tag or release.
 
@@ -177,4 +177,4 @@ Before publication, record the exact tested refs and results, and run [release t
 - Pytest long tracebacks showing a test class instance named after a timeout, sandbox or teardown can suppress the assertion rerun. This fails safe: no rerun, QA stays red. Unfamiliar output also follows the ordinary failure path.
 - Several inherited tests remain load-sensitive. The signal-reset change addresses inherited ignored signals; it does not establish that every timing race is resolved.
 - Live provider behavior, adopter drift comparisons and representative adoption of the new checks remain unverified. Impeccable adopting-repository pilots have not run. Fragment-level tests and hostile-input fakes cannot establish live resistance to every prompt injection.
-- The release branch's own macOS and remote suites, CI, tested refs and final tree comparisons remain `TBD` until the maintainer runs them.
+- Release CI, the final candidate/tag tree comparison and the manual live injection sample are recorded in the release record after publication.

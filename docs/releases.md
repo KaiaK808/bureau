@@ -12,16 +12,16 @@ From v3.7.0, once published, stop drivers, preserve unfinished work and runtime 
 
 ### Validation record
 
-The maintainer's validation record states that each change was merged with a macOS gate suite and passing PR CI on its own head. The remote suite on `openclaw-01` became a gate on **2026-11-14**, after a first-pass **191 of 191** on main `6205c6d`. The merged release content is on main `8af867d`; the release branch's own suites and CI remain to be run by the maintainer.
+The maintainer's validation record states that each change was merged with a macOS gate suite and passing PR CI on its own head. The remote suite on `openclaw-01` became a gate on **2026-11-14**, after a first-pass **191 of 191** on main `6205c6d`. The merged release content is on main `8af867d`. Release candidate `45335d7` passed both gate suites; release CI and the tag comparison follow in the release record.
 
 | Release check | Result / reference |
 |---|---|
-| Independent release review | TBD |
-| macOS gate suite and tested ref | TBD |
-| Remote gate suite and tested ref | TBD |
-| Release CI jobs, runs and results | TBD |
-| Final candidate/tag tested-tree comparison | TBD |
-| Manual live injection sample and adopter qualification | TBD |
+| Independent release review | Codex, read-only. Round 1 requested changes (an undefined variable in the migration commands; a stale mutation-test caveat in the changelog); both are fixed in `45335d7`. Round 2 approved. |
+| macOS gate suite and tested ref | `45335d7`, two shards: 191 of 191 on the first pass (2026-11-14). |
+| Remote gate suite and tested ref | `openclaw-01`, a bundle of exactly `45335d7`, two shards: 191 of 191 on the first pass, no reruns (2026-11-14). |
+| Release CI jobs, runs and results | Recorded in the release record after publication. |
+| Final candidate/tag tested-tree comparison | Recorded in the release record after the tag. |
+| Manual live injection sample and adopter qualification | Pending the maintainer's decision; recorded in the release record. |
 
 See the [validation record](release-notes.md#validation), [known limitations](release-notes.md#known-limitations) and [release verification procedure](#verify-the-tested-release-trees). Stored `gh` logins remain available to branch-controlled code; this caveat was argued from the code and was not tested. Moving secrets outside the checkout blocks only the conventional path; processes with the user's permissions can still discover and read the file.
 
