@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="433f2f7c48ab7a7b384535b0e8fcf3cde4a277a21ec7ab27e4f9ee367f876623">
+<meta name="bureau-source-sha256" content="6f30be294eef53d2b53ac3a8367441e05d149a47965bdebf94eaba1427c72c3e">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,15 +24,125 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.7.0</strong>, published
-<strong>2026-11-09</strong>, a minor release on v3.6.0. Annotated tag
-<code>v3.7.0</code> (tag object <code>02406d8</code>) points at merge
-commit <code>4366c91</code> of <a
+<p>This source tree prepares <strong>Bureau v3.8.0</strong>, dated
+<strong>2026-11-14</strong>, a minor release on v3.7.0 with source tag
+<code>v3.8.0</code>. <strong>Release preparation:</strong> tagging and
+publication remain separate maintainer operations. The <a
+href="release-notes.html">release notes</a> and <a
+href="../../CHANGELOG.md#380---2026-11-14">changelog</a> cover, in
+first-parent merge order: <a
+href="https://github.com/KaiaK808/bureau/pull/133">#133</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/134">#134</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/139">#139</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/140">#140</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/136">#136</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/138">#138</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/141">#141</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/142">#142</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/137">#137</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/143">#143</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/144">#144</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/145">#145</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/146">#146</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/147">#147</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/148">#148</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/149">#149</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/150">#150</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/151">#151</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/152">#152</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/153">#153</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/154">#154</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/155">#155</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/156">#156</a>.</p>
+<p>The release adds opt-in advisory fail-before-pass, test integrity and
+task completion evidence, an exact-commit approval accident guard, an
+external secrets-file option, bounded QA assertion reruns, nonblocking
+review questions, sibling-defect searches and runtime/test fixes. Stored
+Git credential helpers are off by default for branch-controlled commands
+and agents; private-dependency commands may need
+<code>repo.untrusted_git_credentials: "keep"</code> or another
+authentication method. Askpass remains available. Impeccable pins change
+to skill 4.9.0 and engine 0.1.23; upstream 4.9.1 / 0.1.24 are
+unsupported.</p>
+<p>From v3.7.0, once published, stop drivers, preserve unfinished work
+and runtime records, compare installed drift, update the source and
+resync complete scripts and interfaces together. Enabled Impeccable
+installations separately install 4.9.0 / 0.1.23 and update or remove
+both version keys in <code>.bureau.json</code>. Existing secrets files
+keep working and can move outside the checkout; new installations use
+the external file. Approval needs its separate workflow scope,
+default-branch policy and required branch-protection status, and remains
+an accident guard with deliberate bypass possible. Review configuration
+and rollback actions in <a href="migration.html#from-v370">From v3.7.0</a>
+before restarting.</p>
+<h3 id="validation-record">Validation record</h3>
+<p>The maintainer's validation record states that each change was merged
+with a macOS gate suite and passing PR CI on its own head. The remote
+suite on <code>openclaw-01</code> became a gate on
+<strong>2026-11-14</strong>, after a first-pass <strong>191 of
+191</strong> on main <code>6205c6d</code>. The merged release content is
+on main <code>8af867d</code>. Release candidate <code>45335d7</code>
+passed both gate suites; release CI and the tag comparison follow in the
+release record.</p>
+<table>
+<thead>
+<tr>
+<th>Release check</th>
+<th>Result / reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Independent release review</td>
+<td>Codex, read-only. Round 1 requested changes (an undefined variable
+in the migration commands; a stale mutation-test caveat in the
+changelog); both are fixed in <code>45335d7</code>. Round 2
+approved.</td>
+</tr>
+<tr>
+<td>macOS gate suite and tested ref</td>
+<td><code>45335d7</code>, two shards: 191 of 191 on the first pass
+(2026-11-14).</td>
+</tr>
+<tr>
+<td>Remote gate suite and tested ref</td>
+<td><code>openclaw-01</code>, a bundle of exactly <code>45335d7</code>,
+two shards: 191 of 191 on the first pass, no reruns (2026-11-14).</td>
+</tr>
+<tr>
+<td>Release CI jobs, runs and results</td>
+<td>Recorded in the release record after publication.</td>
+</tr>
+<tr>
+<td>Final candidate/tag tested-tree comparison</td>
+<td>Recorded in the release record after the tag.</td>
+</tr>
+<tr>
+<td>Manual live injection sample and adopter qualification</td>
+<td>Pending the maintainer's decision; recorded in the release
+record.</td>
+</tr>
+</tbody>
+</table>
+<p>See the <a href="release-notes.html#validation">validation record</a>,
+<a href="release-notes.html#known-limitations">known limitations</a> and
+<a href="#verify-the-tested-release-trees">release verification
+procedure</a>. Stored <code>gh</code> logins remain available to
+branch-controlled code; this caveat was argued from the code and was not
+tested. Moving secrets outside the checkout blocks only the conventional
+path; processes with the user's permissions can still discover and read
+the file.</p>
+<h2 id="previous-stable-releases">Previous stable releases</h2>
+<h3 id="v370">v3.7.0</h3>
+<p>The previous stable release is <strong>Bureau v3.7.0</strong>,
+published <strong>2026-11-09</strong>, a minor release on v3.6.0.
+Annotated tag <code>v3.7.0</code> (tag object <code>02406d8</code>)
+points at merge commit <code>4366c91</code> of <a
 href="https://github.com/KaiaK808/bureau/pull/135">#135</a>, merged on
 2026-11-09. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.7.0">GitHub
 Release</a> is published as latest. The <a
-href="release-notes.html">release notes</a> and <a
+href="release-notes-v3.7.0.html">release notes</a> and <a
 href="../../CHANGELOG.md#370---2026-11-09">changelog</a> cover, in
 first-parent merge order: <a
 href="https://github.com/KaiaK808/bureau/pull/114">#114</a>, <a
@@ -72,7 +182,7 @@ update exit consumers, run doctor and restart drivers together. From
 v3.5.1 first apply the cumulative v3.6 requirements. Configuration
 schema versions and Spec Kit 1.2.2 remain; see <a
 href="migration.html#upgrade-to-v37">Upgrade to v3.7</a>.</p>
-<h3 id="validation-record">Validation record</h3>
+<h3 id="validation-record-1">Validation record</h3>
 <p>The maintainer's validation record states that every v3.7 pull
 request was built by Codex in its own worktree, independently reviewed
 read-only by Codex (at most three rounds unless the maintainer approved
@@ -180,11 +290,10 @@ test fail when the suite starts with SIGHUP ignored, for example under
 integration is opt-in and off by default; <strong>not measured never
 counts as clean</strong>.</li>
 </ul>
-<p>See the <a href="release-notes.html#known-limitations">full release
-notes</a> and <a href="#verify-the-tested-release-trees">release
+<p>See the <a href="release-notes-v3.7.0.html#known-limitations">full
+release notes</a> and <a href="#verify-the-tested-release-trees">release
 verification procedure</a>.</p>
-<h2 id="previous-stable-releases">Previous stable releases</h2>
-<p>The previous stable release is <strong>Bureau v3.6.0</strong>, dated
+<p>An earlier stable release is <strong>Bureau v3.6.0</strong>, dated
 <strong>2026-11-03</strong> (prepared 2026-11-02), a minor release on
 v3.5.1. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.6.0">GitHub

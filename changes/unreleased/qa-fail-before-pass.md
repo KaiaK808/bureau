@@ -1,3 +1,0 @@
-section: Added
-
-- Optional QA fail-before-pass evidence compares changed tests in isolated head/base trees without inherited Git context and reports bounded results in acceptance briefs; cleanup timeouts/errors preserve completed results and report leftovers for the next sweep, repositories with worktree links are not measured, and retained execution ownership keeps QA held. **Upgrade:** nothing to do unless you set repo.changed_test_command; resync scripts together before opting in. Validation: 39 targeted QA fixtures, one-second pruning/deletion delays, simulated cleanup timeouts/errors with next-start sweeping, three in-memory regression controls, an offline origin/main disabled QA/brief comparison, and documentation/changelog checks.
