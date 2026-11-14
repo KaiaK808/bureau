@@ -65,8 +65,8 @@ Impeccable is optional local tooling. Omission or `enabled: false` preserves the
   "design": {
     "impeccable": {
       "enabled": false,
-      "skill_version": "4.8.0",
-      "engine_version": "0.1.18"
+      "skill_version": "4.9.0",
+      "engine_version": "0.1.23"
     }
   }
 }
@@ -74,7 +74,7 @@ Impeccable is optional local tooling. Omission or `enabled: false` preserves the
 
 Set `enabled: true` only after the operator places the pinned skill and engine. Optional `skill_path` names the skill directory containing `SKILL.md`, `reference/` and `scripts/`; relative paths resolve from `.bureau.json`, absolute paths and a symlink to the skill directory are supported. Without it, Bureau checks `.claude/skills/impeccable`, then `.agents/skills/impeccable`. The engine defaults to `scripts/bin/<os>-<arch>/impeccable` inside that skill; an operator's `IMPECCABLE_BIN` may select another binary with the same verified platform digest. macOS and Linux on arm64/x64 are supported.
 
-Bureau installs nothing from Impeccable. The operator can use a checkout or install it separately with `impeccable install --project --providers=claude --no-hooks -y`. **`--no-hooks` is required.** That installer downloads an unversioned bundle and can install four Claude agents even with hooks disabled: check the resulting version, remove or disable those agents separately, and do not enable its hooks. Bureau never installs or enables these hooks or agents, and stages do not use them. An npm package version alone does not pin the skill bundle. No third-party playbooks, references or binaries are vendored here, so no Apache-2.0 redistribution notice is added.
+Bureau installs nothing from Impeccable. The operator can use a checkout or install it separately with `impeccable install --project --providers=claude --no-hooks -y`. **`--no-hooks` is required.** That installer downloads an unversioned bundle, so operators must install and verify the pinned skill **4.9.0** and engine **0.1.23**; upstream skill **4.9.1** and engine **0.1.24** are not supported by this release. It can install four Claude agents even with hooks disabled: remove or disable those agents separately, and do not enable its hooks. Bureau never installs or enables these hooks or agents, and stages do not use them. An npm package version alone does not pin the skill bundle. No third-party playbooks, references or binaries are vendored here, so no Apache-2.0 redistribution notice is added.
 
 The asset installer and `bureau_install.py check` verify the operator's local installation without executing it. `bureau-impeccable-pins.json` records the supported versions and skill-tree digest. The digest hashes a UTF-8 manifest sorted by POSIX relative path, each row `path<TAB>sha256(file bytes)<LF>`. It includes every regular file except `.git`, `.git/` and `scripts/bin/`; nested symlinks are rejected. The engine is hashed separately against the matching version/platform row in the skill's shipped `scripts/engine-checksums.txt`, which is itself covered by the tree digest. Missing files, changed content and unsupported pins report **unavailable** with a reason; setup and stages continue without treating that as a clean measurement. New upstream versions require new maintainer-reviewed pins; changing only the configured versions cannot bypass verification.
 
@@ -96,7 +96,7 @@ Native project, local and inline detector ignores are bypassed. Bureau accepts o
 
 Directory/glob/rule-wide ignores, missing reasons and extra keys are rejected as not measured. Accepted ignores retain their reason in machine evidence. This bypasses native design-system context too; project-specific design rules remain the specialists' responsibility. Static detection cannot establish visual quality or replace rendered accessibility and interaction checks.
 
-**Upgrade:** compare installed script drift, resync the complete scripts scope (including both helpers and the pin file), and restart drivers together. Existing repositories stay off until explicitly enabled. Fake-detector tests require no downloads; an optional real-engine test runs only with `IMPECCABLE_BIN` set and checks the operator-supplied local binary. Live provider and adopting-repository qualification remains an operator check.
+**Upgrade:** compare installed script drift, resync the complete scripts scope (including both helpers and the pin file), and restart drivers together. When `design.impeccable.enabled` is `true`, install the pinned skill 4.9.0 and engine 0.1.23 as above, then set `design.impeccable.skill_version` to `"4.9.0"` and `design.impeccable.engine_version` to `"0.1.23"` in `.bureau.json` together with the scripts resync, or remove both keys to follow the pins. Until the local tooling and configuration match the pins, Bureau reports Impeccable as unavailable and stages continue without it. With Impeccable off, only the resync is needed: setup writes the new defaults, and an existing `.bureau.json` with old version values and `enabled: false` is unaffected. Fake-detector tests require no downloads; an optional real-engine test runs only with `IMPECCABLE_BIN` set and checks the operator-supplied local binary. Live provider and adopting-repository qualification remains an operator check.
 
 ### `agents`
 
