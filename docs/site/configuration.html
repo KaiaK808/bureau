@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="599ea526ecd10ea0139e2f345ccde51607c175efaca89e718feb26fa0417f3d1">
+<meta name="bureau-source-sha256" content="d3c31db76d29c4fe599e223191753c29eb23539749060371a085e9ad9aafba22">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1535,6 +1535,41 @@ verdict, gate, routing or exit code. A helper failure prints
 <code>Test integrity: not measured</code>; cancellation retains the
 existing QA cancellation protocol. Resync scripts together before opting
 in.</p>
+<p><code>repo.task_completion_check</code> optionally adds <strong>Task
+completion</strong> evidence after the green final QA gate, following
+test integrity. Only the boolean <code>true</code> at the pinned base
+enables it; absent/<code>false</code> adds no record or brief text, and
+other values print
+<code>Task completion: not measured (invalid setting)</code>.
+Provider-free runs use the same fetched-main opt-in and actual PR-base
+resolution as the other checks. Tasks come from the ticket's committed
+<code>tasks.md</code> at HEAD; changes are compared between the merge
+base and pinned HEAD, never the working tree. No repository code runs
+and no checkout is created.</p>
+<p>Each checked Markdown task (<code>[X]</code> or <code>[x]</code>) is
+<code>verified</code> when a named repository path changed, including
+additions, deletions, renames and files within a named directory. The
+shared path extractor handles names, globs and
+<code>repo.path_prefix_strip</code>; absent or ambiguous paths are
+<code>unverifiable</code>. A task naming paths with no matching change
+is <code>flagged</code>. Independently, the whole word "test" or "tests"
+(case-insensitive) flags a task when no test file was added or modified,
+using the same pinned <code>agents.risk_tier.test_patterns</code> as
+fail-before-pass. That rule also applies to tasks with no usable path.
+Unchecked tasks are counted only. Any flag makes the overall verdict
+<code>flagged</code>; otherwise at least one verified task makes it
+<code>pass</code>, and no verified tasks makes it
+<code>unverifiable</code>. Tasks that cannot be measured because of
+input or coverage limits remain unverifiable.</p>
+<p>This check is advisory: it only proves that a named file changed, not
+that the task's work is correct. It changes no QA decision, routing or
+gate. Limits mirror static test integrity: 200 changed paths, 1 MiB for
+the tasks blob and 60 seconds overall. Records retain counts for all
+tasks and at most 40 rows in task-line order, with up to 20 safe named
+paths per row and omitted counts; no task text is stored. A helper
+failure prints <code>Task completion: not measured.</code>; control
+exits 25, 124 and 130 propagate. Resync scripts together before enabling
+the setting on the trusted base.</p>
 <table>
 <thead>
 <tr>
@@ -1545,6 +1580,22 @@ in.</p>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>repo.test_integrity_check</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Advisory static test integrity after green QA; only the boolean
+<code>true</code> at the pinned base enables it. See above for
+recognisers and bounds</td>
+</tr>
+<tr>
+<td><code>repo.task_completion_check</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Advisory completed-task comparison after test integrity; only the
+boolean <code>true</code> at the pinned base enables it. A changed named
+file does not establish correctness</td>
+</tr>
 <tr>
 <td><code>repo.branch_prefix</code></td>
 <td>string</td>

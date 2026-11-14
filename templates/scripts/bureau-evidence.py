@@ -302,6 +302,57 @@ def test_integrity_shape(value):
         raise ValueError('unsorted test-integrity findings')
 
 
+TASK_COMPLETION_REASONS = (None, 'diff unavailable', 'tree unavailable', 'file unavailable',
+                           'file size limit exceeded', 'unsafe path', 'invalid test patterns',
+                           'invalid path prefix', 'changed file limit exceeded', 'budget exhausted', 'interrupted')
+TASK_COMPLETION_RULES = {
+    'named path changed': 'verified', 'no named path changed': 'flagged', 'no test file changed': 'flagged',
+    'no paths recognized': 'unverifiable', 'ambiguous paths': 'unverifiable',
+    **{reason:'unverifiable' for reason in TASK_COMPLETION_REASONS if reason is not None},
+}
+
+
+def task_completion_verdict(counts):
+    return 'flagged' if counts['flagged'] else 'pass' if counts['verified'] else 'unverifiable'
+
+
+def task_completion_shape(value):
+    shape(value, 'base head tasks recorded_at verdict counts findings omitted reason')
+    if (value['base'] is not None and not head(value['base'])) or not head(value['head']):
+        raise ValueError('invalid task-completion HEAD')
+    times(value, 'recorded_at')
+    def count(number):
+        if type(number) is not int or not 0 <= number <= 2**31 - 1:
+            raise ValueError('invalid task-completion count')
+    shape(value['counts'], 'verified flagged unverifiable unchecked')
+    for number in (*value['counts'].values(), value['omitted']): count(number)
+    if (value['recorded_at'] is None or value['reason'] not in TASK_COMPLETION_REASONS
+            or value['tasks'] is not None and not integrity_path(value['tasks'])
+            or (value['base'] is None or value['tasks'] is None) and (value['reason'] is None or any(value['counts'].values()))
+            or value['verdict'] != task_completion_verdict(value['counts'])):
+        raise ValueError('invalid task-completion measurement')
+    findings = value['findings']; seen = {}; previous = 0
+    if not isinstance(findings, list) or len(findings) > 40:
+        raise ValueError('invalid task-completion findings')
+    for row in findings:
+        shape(row, 'line verdict rule paths omitted_paths')
+        count(row['line']); count(row['omitted_paths'])
+        rule, paths = row['rule'], row['paths']
+        if (row['line'] <= previous or rule not in TASK_COMPLETION_RULES
+                or row['verdict'] != TASK_COMPLETION_RULES[rule]
+                or not isinstance(paths, list) or len(paths) > 20 or not all(integrity_path(path) for path in paths)
+                or paths != sorted(set(paths)) or row['omitted_paths'] and len(paths) != 20
+                or rule in ('named path changed', 'no named path changed') and not paths
+                or rule not in ('named path changed', 'no named path changed', 'no test file changed') and paths
+                or rule in TASK_COMPLETION_REASONS and rule != 'unsafe path' and value['reason'] != rule):
+            raise ValueError('invalid task-completion finding')
+        previous = row['line']; seen[row['verdict']] = seen.get(row['verdict'], 0) + 1
+    counts = value['counts']
+    if (any(seen.get(key, 0) > counts[key] for key in ('verified', 'flagged', 'unverifiable'))
+            or sum(counts[key] for key in ('verified', 'flagged', 'unverifiable')) != len(findings) + value['omitted']):
+        raise ValueError('inconsistent task-completion counts')
+
+
 def disposition_path(value):
     """Bounded repository-relative metadata, with the same best-effort privacy filter."""
     return (isinstance(value, str) and 0 < len(value) <= MAX_INSIGHT_LENGTH
@@ -574,7 +625,10 @@ def manifest_shape(value):
         if 'test_integrity' in attempt:
             if attempt['stage'] != 'qa': raise ValueError('test-integrity evidence outside QA')
             test_integrity_shape(attempt['test_integrity'])
-        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications', 'review_round', 'outcome_signals', 'changed_tests', 'test_integrity')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
+        if 'task_completion' in attempt:
+            if attempt['stage'] != 'qa': raise ValueError('task-completion evidence outside QA')
+            task_completion_shape(attempt['task_completion'])
+        shape({k:v for k,v in attempt.items() if k not in ('gate_reruns', 'publications', 'review_round', 'outcome_signals', 'changed_tests', 'test_integrity', 'task_completion')}, 'attempt_id parent_attempt_id stage phase workspace started_at ended_at start_head final_head normalized_exit receipts gates pr')
         identifier(attempt['attempt_id'])
         if attempt['parent_attempt_id'] is not None: identifier(attempt['parent_attempt_id'])
         times(attempt, 'started_at ended_at')
@@ -695,6 +749,12 @@ class Store:
                             test_integrity_shape(optional)
                             attempt['test_integrity'] = optional
                     except (OSError, ValueError, KeyError, TypeError): warn()
+                    try:
+                        optional = read(path.parent / 'task-completion' / (attempt['attempt_id'] + '.json'))
+                        if optional is not None:
+                            task_completion_shape(optional)
+                            attempt['task_completion'] = optional
+                    except (OSError, ValueError, KeyError, TypeError): warn()
             return value
         except (ValueError, KeyError, TypeError, AttributeError):
             if quarantine: self._quarantine(path)
@@ -806,7 +866,7 @@ class Store:
     def _save_manifest(self, value):
         # Older v1 readers reject unknown attempt fields. Keep the optional
         # measurement in its sidecar and project it onto attempts when read.
-        value = dict(value, attempts=[{k:v for k,v in attempt.items() if k not in ('changed_tests', 'test_integrity')}
+        value = dict(value, attempts=[{k:v for k,v in attempt.items() if k not in ('changed_tests', 'test_integrity', 'task_completion')}
                                       for attempt in value['attempts']])
         self._write(self.manifest_path(value['run_id']), value)
 
@@ -1212,6 +1272,15 @@ class Store:
             attempt = next(a for a in value['attempts'] if a['attempt_id'] == attempt_id)
             if attempt['stage'] != 'qa': raise ValueError('test-integrity evidence outside QA')
             self._write(self.manifest_path(run).parent / 'test-integrity' / (identifier(attempt_id) + '.json'), record)
+        return record
+
+    def task_completion(self, run, attempt_id, record):
+        task_completion_shape(record)
+        with self.guard():
+            value = self._manifest(run)
+            attempt = next(a for a in value['attempts'] if a['attempt_id'] == attempt_id)
+            if attempt['stage'] != 'qa': raise ValueError('task-completion evidence outside QA')
+            self._write(self.manifest_path(run).parent / 'task-completion' / (identifier(attempt_id) + '.json'), record)
         return record
 
     def valid_execution(self, record):

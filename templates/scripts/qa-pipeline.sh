@@ -160,6 +160,7 @@ QA_TMP=$(mktemp -d)
 QA_GATE_CONTEXT="$QA_TMP/gate-context.json"
 QA_CHANGED_PID=""
 QA_INTEGRITY_PID=""
+QA_COMPLETION_PID=""
 _qa_cleanup() {
   local rc=$?
   if [ -n "${QA_CHANGED_PID:-}" ]; then
@@ -169,6 +170,10 @@ _qa_cleanup() {
   if [ -n "${QA_INTEGRITY_PID:-}" ]; then
     kill -TERM "$QA_INTEGRITY_PID" 2>/dev/null || true
     wait "$QA_INTEGRITY_PID" 2>/dev/null || true
+  fi
+  if [ -n "${QA_COMPLETION_PID:-}" ]; then
+    kill -TERM "$QA_COMPLETION_PID" 2>/dev/null || true
+    wait "$QA_COMPLETION_PID" 2>/dev/null || true
   fi
   if [ -f "${QA_LOG_PATH:-}" ]; then bureau_archive_evidence_dir_log || true; fi
   # The full log is already in $QA_LOG_PATH when a needs-human arm ends with 25
@@ -425,6 +430,22 @@ if [ "$FINAL_GREEN" = true ]; then
     25|124|130) exit "$INTEGRITY_RC" ;;
     0) ;;
     *) echo "  Test integrity: not measured." ;;
+  esac
+fi
+
+if [ "$FINAL_GREEN" = true ]; then
+  ( bureau_exec_runtime python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-task-completion.py" \
+      --repo "$REPO_DIR" --base "$QA_BASE" --branch "$BRANCH" --tasks "$TASKS_FILE" ) &
+  QA_COMPLETION_PID=$!
+  trap 'exit 130' TERM INT HUP
+  COMPLETION_RC=0
+  wait "$QA_COMPLETION_PID" || COMPLETION_RC=$?
+  QA_COMPLETION_PID=""
+  trap - TERM INT HUP
+  case "$COMPLETION_RC" in
+    25|124|130) exit "$COMPLETION_RC" ;;
+    0) ;;
+    *) echo "  Task completion: not measured." ;;
   esac
 fi
 

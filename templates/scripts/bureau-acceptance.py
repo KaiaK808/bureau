@@ -449,6 +449,25 @@ def render(store, repo, issue, pr, head, url, spec=None, base=None, verdict=None
             lines += [f'- `{path}`{line}: {row["kind"]}']
         more = record['omitted'] + max(0, len(record['findings']) - 8)
         if more: lines += [f'- {more} more.']
+    measured = [attempt['task_completion'] for attempt, _ in attempts
+                if attempt['stage'] == 'qa' and attempt.get('task_completion', {}).get('head') == head]
+    if measured:
+        record = max(measured, key=lambda item: item['recorded_at'])
+        counts = record['counts']
+        lines += ['', '**Task completion**',
+                  f'- {record["verdict"]}; verified={counts["verified"]}; flagged={counts["flagged"]}; '
+                  f'unverifiable={counts["unverifiable"]}; unchecked={counts["unchecked"]}; omitted={record["omitted"]}.']
+        if record['reason']: lines += ['- Unverifiable: ' + record['reason'] + '.']
+        for row in record['findings'][:8]:
+            names = []
+            for path in row['paths']:
+                path = quote(path.encode('utf-8', 'surrogateescape'), safe='/._-')
+                names.append('`' + (path[:280] + '…' if len(path) > 280 else path) + '`')
+            shown_paths = '; paths=' + ', '.join(names) if names else ''
+            if row['omitted_paths']: shown_paths += f'; {row["omitted_paths"]} paths omitted'
+            lines += [f'- task line {row["line"]}: {row["verdict"]} ({row["rule"]})' + shown_paths + '.']
+        more = record['omitted'] + max(0, len(record['findings']) - 8)
+        if more: lines += [f'- {more} more.']
     lines += ['', '**Review evidence**',
               f'- Final verdict: {verdict if verdict in ("APPROVE", "REQUEST_CHANGES", "BLOCK") else "missing"}; REVIEW_HEAD={e.head(review_head) or "missing"}.']
     agents = config.get('agents', {})
