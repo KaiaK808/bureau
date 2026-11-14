@@ -26,6 +26,11 @@
 # and shows the secret arriving, so no assertion can pass on a fixture that never carried one.
 set -uo pipefail
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+# Debian and Ubuntu build bash with SSH_SOURCE_BASHRC: a non-interactive bash that sees one of
+# these variables at a low shell level reads the bashrc files instead of BASH_ENV. Under a suite
+# started over ssh, check D's control (a bash that should read the branch's BASH_ENV) would then
+# prove nothing; without them every host reads BASH_ENV the same way.
+unset SSH_CLIENT SSH2_CLIENT SSH_CONNECTION
 source "$(dirname "$0")/lib/pr1-untrusted-env.sh"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPTS="$REPO_ROOT/templates/scripts"
