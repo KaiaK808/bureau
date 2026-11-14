@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.snapshot-trust-locale.') as
             for mode in ('default', 'clean'):
                 captured.unlink(missing_ok=True)
                 code = (setup + ' LINEAR_API_KEY="' + key + '"; export -n LINEAR_API_KEY; '
-                        'bureau_get() { printf "%s" ' + mode + '; }; '
+                        'bureau_get() { case "$1" in *untrusted_git_credentials*) printf off ;; *) printf "%s" ' + mode + ' ;; esac; }; '
                         'bureau_untrusted_env /usr/bin/env -0')
                 result = run(scripts, code, dict(base, CARRIER='prefix-' + key + '-suffix',
                              TZ='prefix-' + key + '-suffix', _BUREAU_ENV_PYTHON=str(fake)))
@@ -85,7 +85,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.snapshot-trust-locale.') as
         # same scope and effective locale as the wrapper call. Do not infer an
         # expected result from locale names or the helper's implementation.
         code = ('source "$1/bureau-env.sh"; '
-                'bureau_get() { printf "%s" ' + mode + '; }; '
+                'bureau_get() { case "$1" in *untrusted_git_credentials*) printf off ;; *) printf "%s" ' + mode + ' ;; esac; }; '
                 '_probe_key=$LINEAR_API_KEY; /usr/bin/true; '
                 '_probe() { ' + ('local ' + shadow + '; ' if shadow else '')
                 + ('local LINEAR_API_KEY; ' if hidden else '')
@@ -201,7 +201,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.snapshot-trust-locale.') as
                             env.update(LANG='zh_CN.GB2312', LINEAR_API_KEY=secret,
                                        CARRIER=carrier, TZ=carrier)
                             code = ('source "$1/bureau-env.sh"; '
-                                    'bureau_get() { printf "%s" ' + mode + '; }; '
+                                    'bureau_get() { case "$1" in *untrusted_git_credentials*) printf off ;; *) printf "%s" ' + mode + ' ;; esac; }; '
                                     'LC_ALL=' + effective + '; export -n LC_ALL; '
                                     '_probe_key=$LINEAR_API_KEY; '
                                     '_probe=$\'\\303\\244\\342\\202\\254\\360\\237\\230\\200\'; '

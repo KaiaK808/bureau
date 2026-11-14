@@ -2851,6 +2851,7 @@ log_escalation() {
 #   [ "$merge_rc" = 0 ] || exit "$merge_rc"
 merge_origin_main_or_abort() {
   local issue="$1" stage_label="$2" base_ref="${3:-origin/main}"
+  bureau_untrusted_env --check || return 24
   BUREAU_CONFLICT_REPAIRED_HEAD=""
   if [ "$#" -ge 3 ]; then
     [[ "$base_ref" =~ ^[0-9a-f]{40,64}$ ]] && git cat-file -e "$base_ref^{commit}" || return 18

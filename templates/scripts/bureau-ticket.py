@@ -435,7 +435,9 @@ class Ledger:
         options = dict(timeout=None)
         retry_qa = stage == 'qa' and qa_final
         if retry_qa: options['timeout'] = provider.g.qa_timeout()
-        try: options['untrusted_env'] = provider.untrusted_env_mode(self.config)
+        try:
+            options['untrusted_env'] = provider.untrusted_env_mode(self.config)
+            options['untrusted_git_credentials'] = provider.untrusted_git_credentials_mode(self.config)
         except provider.UntrustedEnvError as exc: raise ValueError(str(exc)) from exc
         if retry_qa:
             store = provider.evidence_store(repo)

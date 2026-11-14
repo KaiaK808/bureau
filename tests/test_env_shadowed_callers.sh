@@ -117,7 +117,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-test.shadowed-callers.') as dire
     for mode in ('default', 'clean'):
         env = dict(base, LANG='prefix\n' + key + '\nsuffix', ORDINARY='line one\nline two')
         code = ('source "$1/bureau-env.sh"; LINEAR_API_KEY="' + key + '"; '
-                'bureau_get() { printf "%s" "' + mode + '"; }; '
+                'bureau_get() { case "$1" in *untrusted_git_credentials*) printf off ;; *) printf "%s" "' + mode + '" ;; esac; }; '
                 '/usr/bin/true; _probe() { local LANG; bureau_untrusted_env /usr/bin/env; }; _probe')
         result = subprocess.run(['/bin/bash', '-uc', code, '_', str(scripts)], env=env,
                                 capture_output=True, text=True, timeout=15)

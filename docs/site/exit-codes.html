@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="835511324285fba2e06e7dcdda4c640e276996582f9a22455f13d7aa8bef1531">
+<meta name="bureau-source-sha256" content="24173b0884a018805618ce55f5cb282ab3321293ad75934d881ddbb7631cc478">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -223,8 +223,10 @@ configure the Merge state or set the mode to <code>auto</code> Also:
 <code>repo.untrusted_env</code> is not absent, <code>"default"</code> or
 <code>"clean"</code> — the provider check at the start of each model
 stage and every command from the branch (build check, QA runs, Codex
-completion test, app tests) refuse before anything runs; fix the
-value</td>
+completion test, app tests) refuse before anything runs; fix the value.
+Also: <code>repo.untrusted_git_credentials</code> is not absent,
+<code>null</code>, <code>"off"</code> or <code>"keep"</code>; fix the
+configuration before retrying</td>
 </tr>
 <tr>
 <td><code>25</code></td>

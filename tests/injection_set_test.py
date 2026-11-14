@@ -177,7 +177,11 @@ def agent(root, args):
             probe.update(bureau_secret_available=any(SECRET in value for value in os.environ.values()),
                          operator_variable_present='INJECTION_OPERATOR' in os.environ)
         elif kind == 'credential_probe':
-            value = command(['git', 'credential', 'fill'], root, input='protocol=https\nhost=offline\n\n')
+            # Keep the real agent environment: command() clears GIT_* for fixture setup.
+            result_probe = subprocess.run(['git', 'credential', 'fill'], cwd=root, input='protocol=https\nhost=offline\n\n',
+                                          capture_output=True, text=True, timeout=10)
+            if result_probe.returncode not in (0, 128): raise AssertionError('credential probe failed')
+            value = result_probe.stdout
             (root / 'control/credential.txt').write_text(value)
             probe.update(credential_available=('password=' + STORED) in value,
                          github_token_present='GH_TOKEN' in os.environ)
@@ -245,6 +249,8 @@ class Sandbox:
                                                 'spec':'Triage', 'spec_review':'Spec Review'}[stage]
         config = dict(agents=dict(runner='claude', providers=dict(claude=dict(timeout_seconds=10))),
                       repo=dict(test_command='bash test-gate.sh', untrusted_env=case.get('setup', {}).get('untrusted_env', 'default')))
+        if 'untrusted_git_credentials' in case.get('setup', {}):
+            config['repo']['untrusted_git_credentials'] = case['setup']['untrusted_git_credentials']
         (root / '.bureau.json').write_text(json.dumps(config))
         (root / '.env').write_text('LINEAR_API_KEY=' + SECRET + '\n')
         (root / '.gitignore').write_text('.env\n.bureau.json\n.fake-origin.git/\n.specify/\n'
@@ -468,11 +474,22 @@ class InjectionSetTests(unittest.TestCase):
                     self.assertEqual(source.count(mutation['old']), 1, 'mutation anchor changed')
                     self.assertNotEqual(mutation['old'], mutation['new'])
 
+    def test_stored_git_credential_opt_out(self):
+        case = next(case for case in json.loads(CORPUS.read_text()) if case['id'] == 'stored-git-credential')
+        case['setup'] = {'untrusted_git_credentials': 'keep'}
+        case['expected']['probe']['credential_available'] = True
+        with scratch_directory('.injection-credentials-') as scratch:
+            with patch.dict(os.environ, {'PATH':os.environ['PATH']}, clear=True):
+                sandbox = Sandbox(Path(scratch).resolve(), case)
+                sandbox.run()
+                sandbox.assert_delivery(self)
+                sandbox.assert_effect(self, case['expected'])
+
     def test_fake_action_fixtures(self):
         # Check the fake's effects independently of the stage/cleanup integration.
         # This is not evidence that the pipeline accepted or rejected those effects.
         for case in json.loads(CORPUS.read_text()):
-            if 'pending' not in case and not case['id'].startswith('environment-'): continue
+            if 'pending' not in case and not case['id'].startswith('environment-') and case['id'] != 'stored-git-credential': continue
             with self.subTest(case=case['id']), scratch_directory('.injection-actions-') as scratch:
                 with patch.dict(os.environ, {'PATH':os.environ['PATH']}, clear=True):
                     sandbox = Sandbox(Path(scratch).resolve(), case)

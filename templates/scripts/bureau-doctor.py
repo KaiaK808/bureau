@@ -72,6 +72,9 @@ def validate(config):
     except (ValueError, TypeError, AttributeError) as exc: errors.append(str(exc))
     if errors: return errors
     provider = module('provider')
+    for read_mode in (provider.untrusted_env_mode, provider.untrusted_git_credentials_mode):
+        try: read_mode(config)
+        except provider.UntrustedEnvError as exc: errors.append(str(exc))
     for stage in STAGES:
         try: provider.configuration(stage, config, {})
         except (ValueError, TypeError, AttributeError) as exc: errors.append(stage + ': ' + str(exc))
@@ -535,9 +538,10 @@ def claude_logged_in(provider, options, mode, timeout=20):
     if not shutil.which('claude'): return False, 'claude executable not found on PATH'
     try:
         proc = subprocess.run(['claude', 'auth', 'status', '--json'], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
-                              env=provider.claude_env(options, env=provider.untrusted_env(os.environ, mode, 'claude')))
+                              env=provider.claude_env(options, env=provider.untrusted_env(os.environ, mode, 'claude',
+                                                                                      options.get('untrusted_git_credentials', 'off'))))
     except subprocess.TimeoutExpired as exc: return False, 'login check timed out after ' + format(exc.timeout, 'g') + ' s'
-    except (OSError, subprocess.SubprocessError) as exc: return False, 'claude auth status failed: ' + str(exc)
+    except (OSError, subprocess.SubprocessError, provider.UntrustedEnvError) as exc: return False, 'claude auth status failed: ' + str(exc)
     try: logged = proc.returncode == 0 and json.loads(proc.stdout).get('loggedIn') is True
     except (ValueError, AttributeError): logged = False
     return logged, None if logged else 'claude auth status --json did not report loggedIn true (exit ' + str(proc.returncode) + ')'
@@ -550,6 +554,8 @@ def claude_config_dirs(config, effective, provider, warnings):
     ~/.claude), which is the operator's own setup and is not checked here."""
     try: mode = provider.untrusted_env_mode(config)
     except provider.UntrustedEnvError: mode = 'default'
+    try: git_credentials = provider.untrusted_git_credentials_mode(config)
+    except provider.UntrustedEnvError: git_credentials = 'off'
     report, checked = {}, {}
     for stage, options in effective.items():
         if options['runner'] != 'claude': continue
@@ -557,7 +563,7 @@ def claude_config_dirs(config, effective, provider, warnings):
         if not directory:
             inherited = os.environ.get('CLAUDE_CONFIG_DIR') or os.path.join(os.path.expanduser('~'), '.claude')
             report[stage] = dict(config_dir=inherited, configured=False, logged_in='not checked'); continue
-        if directory not in checked: checked[directory] = claude_logged_in(provider, options, mode)
+        if directory not in checked: checked[directory] = claude_logged_in(provider, {**options, 'untrusted_git_credentials': git_credentials}, mode)
         logged, reason = checked[directory]
         report[stage] = dict(config_dir=directory, configured=True, logged_in=logged)
         if not logged: report[stage]['reason'] = reason

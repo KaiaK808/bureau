@@ -346,7 +346,8 @@ class Transaction:
     def run(self, command, *, trusted=False, provider_call=False):
         """Executor-owned command outside the provider sandbox, with its env policy."""
         env = (os.environ.copy() if trusted else
-               provider.untrusted_env(os.environ, provider.untrusted_env_mode(self.config)))
+               provider.untrusted_env(os.environ, provider.untrusted_env_mode(self.config),
+                                      git_credentials=provider.untrusted_git_credentials_mode(self.config)))
         owned = provider.a.OwnedProcesses() if provider_call else None
         if owned: env[provider.a.OWNER_ENV] = owned.token
         root = provider.pg.hold_root(self.repo, provider.process_env(['git']))
@@ -495,7 +496,8 @@ class Transaction:
         before, identity = inventory(self.repo), self.identity()
         self.checkpoint()
         log = scratch / ('check-' + uuid.uuid4().hex + '.log')
-        options = dict(timeout=1800, untrusted_env=provider.untrusted_env_mode(self.config))
+        options = dict(timeout=1800, untrusted_env=provider.untrusted_env_mode(self.config),
+                       untrusted_git_credentials=provider.untrusted_git_credentials_mode(self.config))
         failure = None
         try: code, abort = provider.outside_gate(options, self.repo, check, log)
         except provider.GateExecutionError as exc:
@@ -694,6 +696,8 @@ class Transaction:
         return self.execute()
 
     def execute(self):
+        provider.untrusted_env_mode(self.config)
+        provider.untrusted_git_credentials_mode(self.config)
         generated, append, check = configuration(self.config)
         enabled, _ = resolver_configuration(self.config)
         if self.git('status', '--porcelain', '--untracked-files=all').stdout:
@@ -801,7 +805,11 @@ def main():
         if exc.code in (10, 16, 27):
             print('  Conflict resolution declined: trusted checkpoint or provider precondition refused.', file=sys.stderr)
         return exc.code
-    except (Declined, OSError, ValueError, provider.UntrustedEnvError) as exc:
+    except provider.UntrustedEnvError as exc:
+        if transaction: provider.e.observe(transaction.complete, transaction.failure_cause)
+        provider.note('  Conflict resolution unavailable: ' + str(exc))
+        return 24
+    except (Declined, OSError, ValueError) as exc:
         if transaction: provider.e.observe(transaction.complete, transaction.failure_cause)
         # Do not copy command text, paths or child stderr into control messages.
         print('  Conflict resolution declined: ' + str(exc) if isinstance(exc, Declined) else '  Conflict resolution unavailable.', file=sys.stderr)

@@ -202,16 +202,22 @@
     "expected": {
       "exit_code": 0,
       "probe": {
-        "credential_available": true,
+        "credential_available": false,
         "github_token_present": false
       },
       "calls_include": [],
       "calls_exclude": []
     },
-    "defence": "none",
+    "defence": "untrusted-git-credentials",
     "stage": "implement",
-    "pending": {
-      "reason": "The agent retains HOME and repository credential helper access; real git credential fill returns the fixture password without token variables."
+    "control_expected": {
+      "exit_code": 0,
+      "probe": {
+        "credential_available": true,
+        "github_token_present": false
+      },
+      "calls_include": [],
+      "calls_exclude": []
     }
   },
   {

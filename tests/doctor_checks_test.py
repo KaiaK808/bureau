@@ -75,6 +75,17 @@ class Repo(unittest.TestCase):
         return path
 
 
+class UntrustedGitCredentialsTests(unittest.TestCase):
+    def test_credential_setting_validation(self):
+        for value in (None, 'off', 'keep', '', 'OFF', True, 1, ['off'], {'mode': 'off'}):
+            with self.subTest(value=value):
+                config = copy.deepcopy(BASE)
+                config['repo']['untrusted_git_credentials'] = value
+                errors = d.validate(config)
+                self.assertEqual(any('repo.untrusted_git_credentials' in error for error in errors),
+                                 value not in (None, 'off', 'keep'))
+
+
 class GitMaintenanceTests(Repo):
     def test_commits_through_the_git_helper_start_no_git_maintenance(self):
         trace = self.base / 'trace2.json'

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d3c31db76d29c4fe599e223191753c29eb23539749060371a085e9ad9aafba22">
+<meta name="bureau-source-sha256" content="84fa5b6a21710607b60287a06eea516f63928c6fc4ffae8adb3c3b6d5667ded8">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1703,7 +1703,9 @@ login and network variables (<code>ANTHROPIC_*</code>,
 <code>OPENAI_*</code>, <code>CODEX_*</code> for Codex, the proxy
 variables, <code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>,
 <code>NODE_EXTRA_CA_CERTS</code>, <code>XDG_CONFIG_HOME</code>), a test
-command does not. Under <code>clean</code> a test command that needs
+command does not. Both modes also receive the Git credential variables
+described below unless <code>repo.untrusted_git_credentials</code> is
+<code>"keep"</code>. Under <code>clean</code> a test command that needs
 <code>CARGO_HOME</code>, <code>NVM_DIR</code>, <code>VIRTUAL_ENV</code>,
 an SSH agent, a registry token, a proxy (<code>HTTPS_PROXY</code>) or a
 private CA (<code>SSL_CERT_FILE</code>,
@@ -1738,6 +1740,37 @@ name anywhere below it or that cannot be searched completely is skipped
 with one warning line. Code running as the same user can still read
 files and other processes' environments; see <a
 href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
+</tr>
+<tr>
+<td><code>repo.untrusted_git_credentials</code></td>
+<td>string</td>
+<td><code>"off"</code></td>
+<td><code>credential.helper</code> lookup for the same branch-controlled
+commands and agent login checks as <code>repo.untrusted_env</code>.
+Absent, <code>null</code> or <code>"off"</code> resets the helper list
+through <code>GIT_CONFIG_COUNT</code> /
+<code>GIT_CONFIG_KEY_&lt;n&gt;=credential.helper</code> / an empty
+<code>GIT_CONFIG_VALUE_&lt;n&gt;</code> and sets
+<code>GIT_TERMINAL_PROMPT=0</code>, in both environment modes. Default
+mode preserves inherited counted pairs and appends the reset; clean mode
+inherits none. Inherited <code>GIT_CONFIG_PARAMETERS</code> is dropped
+entirely because an included file there can restore helpers after the
+reset. A malformed count or one with no room for the appended entry
+drops all inherited counted pairs and starts the reset at entry 0. An
+invalid setting refuses with <code>24</code>; doctor reports invalid
+settings as errors. <code>"keep"</code> adds nothing and restores the
+previous helper behavior. Test gates or post-implement commands that
+fetch private Git dependencies with a stored credential must set
+<code>"keep"</code> or use another authentication method. This switches
+off <code>credential.helper</code> lookup only. The reset does not
+change <code>GIT_ASKPASS</code>, <code>SSH_ASKPASS</code> or a
+configured <code>core.askPass</code>; they can still supply a password
+despite disabled terminal prompting, so operators who use askpass for
+private remotes keep that exposure. A process can supply its own
+<code>-c credential.helper=...</code>, invoke a helper directly or read
+the operating system keychain by other means. Stored <code>gh</code>
+logins are not covered. Bureau's own git and gh calls keep their
+existing credential environment.</td>
 </tr>
 <tr>
 <td><code>repo.remote_git_runs_hooks</code></td>
@@ -2035,10 +2068,15 @@ retry/network behavior is unchanged.</p>
 check and every install attempt inherit the configured
 <code>repo.untrusted_env</code> reduction. Default mode removes secrets
 and their carriers, startup/configuration paths, host pane variables and
-reserved filter names; clean mode keeps only its existing allowlist.
-Invalid modes stop before the helper starts. Any package-manager/cache
-settings needed by clean-mode workers must come from trusted
-configuration files rather than extra inherited variables.</p>
+reserved filter names; clean mode keeps its existing allowlist plus the
+Git credential reset variables. Both modes drop inherited
+<code>GIT_CONFIG_PARAMETERS</code> and switch off stored Git credential
+helpers unless <code>repo.untrusted_git_credentials</code> is
+<code>"keep"</code>; the limits and private-dependency upgrade action
+are described in the table above. Invalid modes stop before the helper
+starts. Any package-manager/cache settings needed by clean-mode workers
+must come from trusted configuration files rather than extra inherited
+variables.</p>
 <p>The shared Git directory holds logs and a manifest fingerprint stamp.
 It includes workspace <code>package.json</code> files, the selected
 lockfile and workspace/manager configuration visible to Git (tracked or

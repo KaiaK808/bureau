@@ -13,6 +13,7 @@ assertions below cannot pass on a fixture that never carried one.
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 from pathlib import Path
 import subprocess
@@ -49,6 +50,8 @@ PATHS = {'BUREAU_ENV_FILE': '/operator/checkout/.env', 'BUREAU_CONFIG': '/operat
 AGENT = {'ANTHROPIC_API_KEY': 'sk-ant-PROBE-agent-login', 'CLAUDE_CODE_OAUTH_TOKEN': 'PROBE_claude_oauth',
          'OPENAI_API_KEY': 'sk-openai-PROBE-agent-login', 'CODEX_HOME': '/tmp/codex-home-probe',
          'HTTPS_PROXY': 'http://proxy.invalid:3128'}
+GIT_OFF = {'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'credential.helper', 'GIT_CONFIG_VALUE_0': '',
+           'GIT_TERMINAL_PROMPT': '0'}
 
 FAKE = '#!' + sys.executable + '''
 import json, os, pathlib, sys
@@ -85,9 +88,10 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                     'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
                     'BUREAU_PROVIDER_LOG_DIR': str(self.root / 'evidence')}
 
-    def provider(self, runner, untrusted=None, *extra, code=0, env=None):
+    def provider(self, runner, untrusted=None, *extra, code=0, env=None, credentials=None):
         config = {'agents': {'runner': runner}}
         if untrusted is not None: config['repo'] = {'untrusted_env': untrusted}
+        if credentials is not None: config.setdefault('repo', {})['untrusted_git_credentials'] = credentials
         self.config.write_text(json.dumps(config))
         command = [sys.executable, str(SCRIPT), '--stage', 'implement', '--config', str(self.config),
                    '--repo', str(self.root), '--prompt-file', str(self.prompt), *extra]
@@ -99,6 +103,46 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         path = self.root / (runner + '.' + phase + '.json')
         self.assertTrue(path.exists(), runner + ' ' + phase + ' did not run')
         return json.loads(path.read_text())
+
+    def test_git_credentials_in_the_login_check_and_agent(self):
+        include = self.root / 'inherited.config'; include.write_text('')
+        inherited = {'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'credential.helper',
+                     'GIT_CONFIG_VALUE_0': 'inherited-helper', 'GIT_TERMINAL_PROMPT': '1',
+                     'GIT_CONFIG_PARAMETERS': shlex.quote('include.path=' + str(include))}
+        for runner in ('claude', 'codex'):
+            for mode in ('default', 'clean'):
+                for setting in (None, 'off', 'keep'):
+                    with self.subTest(runner=runner, mode=mode, setting=setting):
+                        self.provider(runner, mode, credentials=setting, env={**self.env, **inherited})
+                        expected = dict(inherited) if mode == 'default' else {}
+                        if setting != 'keep':
+                            expected.pop('GIT_CONFIG_PARAMETERS', None)
+                            index = '1' if mode == 'default' else '0'
+                            expected.update(GIT_CONFIG_COUNT=str(int(index) + 1), GIT_TERMINAL_PROMPT='0')
+                            expected.update({'GIT_CONFIG_KEY_' + index: 'credential.helper', 'GIT_CONFIG_VALUE_' + index: ''})
+                        for phase in ('auth', 'run'):
+                            seen = self.seen(runner, phase)
+                            self.assertEqual({k:v for k,v in seen.items() if k.startswith(('GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_'))
+                                              or k in ('GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_TERMINAL_PROMPT')}, expected)
+
+    def test_invalid_git_credentials_refuse_before_the_login_check(self):
+        for bad in ('', 'OFF', True, 1, ['off'], {'mode': 'off'}):
+            for mode in ('default', 'clean'):
+                with self.subTest(bad=bad, mode=mode):
+                    result = self.provider('claude', mode, credentials=bad, code=24)
+                    self.assertIn('repo.untrusted_git_credentials', result.stderr)
+                    self.assertFalse((self.root / 'claude.auth.json').exists())
+
+    def test_malformed_git_config_count_resets_before_the_login_check(self):
+        for runner in ('claude', 'codex'):
+            for mode in ('default', 'clean'):
+                with self.subTest(runner=runner, mode=mode):
+                    self.provider(runner, mode, env={**self.env, 'GIT_CONFIG_COUNT': '',
+                                                   'GIT_CONFIG_KEY_9': 'credential.helper', 'GIT_CONFIG_VALUE_9': 'inherited-helper'})
+                    for phase in ('auth', 'run'):
+                        seen = self.seen(runner, phase)
+                        self.assertEqual({k:v for k,v in seen.items() if k.startswith(('GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_'))
+                                          or k in GIT_OFF}, GIT_OFF)
 
     def assert_no_secret(self, seen, label):
         # assertTrue/assertFalse, never assertIn on the environment: a failure must name the
@@ -141,7 +185,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                     self.assertFalse('BUREAU_PROVIDER_LOG_DIR' in seen, 'clean kept a Bureau variable')
                     for name in PATHS: self.assertFalse(name in seen, 'clean kept ' + name)
                     for name in HOST: self.assertFalse(name in seen, 'clean kept ' + name)
-                    allowed = set(p.UNTRUSTED_KEEP) | set(p.AGENT_KEEP)
+                    allowed = set(p.UNTRUSTED_KEEP) | set(p.AGENT_KEEP) | set(GIT_OFF)
                     stray = [n for n in seen if n not in allowed and not n.startswith(p.AGENT_KEEP_PREFIXES[runner])
                              and not n.startswith('__CF') and n not in ('LC_CTYPE',)]
                     self.assertEqual(stray, [], runner + ' ' + phase + ' got variables outside the clean list')
@@ -155,7 +199,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
             for runner in (None, 'claude', 'codex'):
                 with self.subTest(mode=mode, runner=runner):
                     reduced = p.untrusted_env(environ, mode, runner)
-                    expected = {'LANG': 'C', 'PATH': '/bin'}
+                    expected = {'LANG': 'C', 'PATH': '/bin', **GIT_OFF}
                     if mode == 'default': expected.update(OPERATOR)
                     self.assertEqual(reduced, expected)
         self.assertEqual(environ, before)
@@ -168,7 +212,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                 # Even an overlapping agent allowlist must not override the host exclusion.
                 with patch.dict(p.AGENT_KEEP_PREFIXES, {runner: p.AGENT_KEEP_PREFIXES[runner] + ('HERDR_',)}):
                     self.assertEqual(p.untrusted_env(environ, 'clean', runner),
-                                     {note: 'keep_this_note', 'PATH': '/bin', 'LANG': 'C'})
+                                     {note: 'keep_this_note', 'PATH': '/bin', 'LANG': 'C', **GIT_OFF})
 
     def test_invalid_mode_refuses_before_any_agent_or_login_check(self):
         for bad in ('cleen', '', True, 1, ['clean'], {'mode': 'clean'}, 'clean\n'):
@@ -203,7 +247,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                                  'LINEAR_API_KEY': 'abc123', 'H': 'Authorization: abc123',
                                  'GH_TOKEN': '12345678', 'X': '12345678', 'Y': 'Bearer 12345678 end',
                                  'BASH_ENV': '/tmp/env.sh', 'ENV': '/tmp/env.sh', 'PATH': '/bin'}, 'default')
-        self.assertEqual(short, {'Z': 'x12345', 'PATH': '/bin'})
+        self.assertEqual(short, {'Z': 'x12345', 'PATH': '/bin', **GIT_OFF})
         self.assertEqual(p.COPY_MIN, 6)
 
     def test_bureau_git_and_gh_processes(self):
@@ -252,7 +296,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
             with self.subTest(mode=mode, runner=runner):
                 reduced = p.untrusted_env(environ, mode, runner)
                 for name in p.UNTRUSTED_REMOVE: self.assertFalse(name in reduced, name + ' was kept')
-        self.assertEqual(p.untrusted_env(environ, 'default'), {'PATH': '/bin', 'OTHER': 'v0-and-more'})
+        self.assertEqual(p.untrusted_env(environ, 'default'), {'PATH': '/bin', 'OTHER': 'v0-and-more', **GIT_OFF})
 
     def test_the_operator_paths_go_in_both_modes_and_stay_for_bureau_processes(self):
         environ = {**PATHS, **OPERATOR, 'PATH': '/bin'}
@@ -260,7 +304,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
             with self.subTest(mode=mode, runner=runner):
                 reduced = p.untrusted_env(environ, mode, runner)
                 for name in PATHS: self.assertFalse(name in reduced, name + ' was kept')
-        self.assertEqual(p.untrusted_env(environ, 'default'), {**OPERATOR, 'PATH': '/bin'})
+        self.assertEqual(p.untrusted_env(environ, 'default'), {**OPERATOR, 'PATH': '/bin', **GIT_OFF})
         # Bureau's own git and gh processes are not code the branch controls in this sense: they keep
         # them, as before (process_env is unchanged).
         for command in (['git', 'status'], ['git', 'push'], ['gh', 'pr', 'view']):
@@ -290,6 +334,229 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                        capture_output=True, check=True, timeout=30)
         seen = self.seen('claude', 'auth')
         for name, value in {**SECRETS, **ALIASES}.items(): self.assertEqual(seen.get(name), value)
+
+
+class GitCredentialEnvTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix='bureau git credentials '); self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.config = self.root / 'config.json'
+        self.env = dict(PATH=os.environ['PATH'], HOME=str(self.root), TMPDIR=str(self.root), LANG='C',
+                        GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
+        subprocess.run(['git', 'init', '-q', str(self.root)], env=self.env, check=True, timeout=10)
+
+    def configure(self, mode, setting=None):
+        config = {'repo': {'untrusted_env': mode, 'untrusted_git_credentials': setting}}
+        self.config.write_text(json.dumps(config))
+        return config
+
+    def shell(self, environ, code=0, command='bureau_untrusted_env /usr/bin/env -0'):
+        result = subprocess.run(['/bin/bash', '-c', 'source "$1"; ' + command, 'fixture',
+                                 str(SCRIPT.with_name('bureau-env.sh'))],
+                                env={**environ, 'BUREAU_CONFIG': str(self.config)}, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, code, result.stderr.decode())
+        return result
+
+    def builders(self, mode, setting=None, **inherited):
+        config = self.configure(mode, setting)
+        environ = {**self.env, **inherited}
+        reduced = p.untrusted_env(environ, mode, git_credentials=p.untrusted_git_credentials_mode(config))
+        raw = self.shell(environ).stdout.decode()
+        shell = dict(item.split('=', 1) for item in raw.split('\0') if item)
+        ignore = {'PWD', 'SHLVL', '_', 'OLDPWD', '__CF_USER_TEXT_ENCODING'}
+        self.assertEqual({k:v for k,v in shell.items() if k not in ignore}, reduced)
+        return (reduced, shell)
+
+    def test_ticket_gates_honor_git_credentials_setting(self):
+        spec = importlib.util.spec_from_file_location('ticket', SCRIPT.with_name('bureau-ticket.py'))
+        ticket = importlib.util.module_from_spec(spec); spec.loader.exec_module(ticket)
+        helper = self.root / '.git/helper'
+        helper.write_text('#!/bin/sh\ncat >/dev/null\nprintf "username=fixture\\npassword=stored-fixture\\n"\n')
+        helper.chmod(0o755)
+        subprocess.run(['git', '-C', str(self.root), 'config', 'credential.helper', '!' + shlex.quote(str(helper))],
+                       env=self.env, check=True, timeout=10)
+        command = "printf 'protocol=https\\nhost=offline\\n\\n' | git credential fill"
+        for command_id in ('review.build', 'qa.test'):
+            for mode in ('default', 'clean'):
+                for setting in (None, 'off', 'keep', 'invalid'):
+                    with self.subTest(command_id=command_id, mode=mode, setting=setting):
+                        config = self.configure(mode, setting)
+                        if setting is None: config['repo'].pop('untrusted_git_credentials')
+                        config['repo']['test_command'] = command
+                        ledger = ticket.Ledger.__new__(ticket.Ledger); ledger.config = config
+                        ledger.progress = dict(enabled=False)
+                        log = self.root / (command_id + '-' + mode + '-' + str(setting) + '.log')
+                        argv = ['bureau-ticket', '--repo', str(self.root), '--issue', 'fixture', 'execute-gate',
+                                '--command-id', command_id, '--command', command, '--path', str(log)]
+                        if command_id == 'qa.test': argv.append('--qa-final')
+                        with patch.dict(os.environ, {**self.env, 'GIT_TERMINAL_PROMPT': '0'}, clear=True), \
+                                patch.object(ticket, 'Ledger', return_value=ledger), \
+                                patch.object(ticket, 'diagnostic'), patch.object(sys, 'argv', argv):
+                            code = ticket.main()
+                        self.assertEqual(code, 24 if setting == 'invalid' else 0 if setting == 'keep' else 128)
+                        self.assertEqual(log.exists(), setting != 'invalid')
+                        if log.exists(): self.assertEqual('password=stored-fixture' in log.read_text(), setting == 'keep')
+                        self.assertEqual(list((self.root / '.git/bureau/process-holds').glob('*')), [])
+
+    def test_gate_runs_with_a_reset_for_malformed_counts_and_leaves_no_hold(self):
+        store = p.e.Store(self.root / '.git/bureau')
+        for mode in ('default', 'clean'):
+            with self.subTest(mode=mode):
+                log = self.root / ('gate-' + mode + '.log')
+                # Resolve the trusted evidence root before inheriting Git's unusable count.
+                with patch.dict(os.environ, {**self.env, 'GIT_CONFIG_COUNT': '',
+                                            'GIT_CONFIG_KEY_9': 'credential.helper', 'GIT_CONFIG_VALUE_9': 'inherited-helper'}, clear=True), \
+                        patch.object(p, 'evidence_store', return_value=store):
+                    self.assertEqual(p.outside_gate(dict(timeout=10, untrusted_env=mode), self.root, '/usr/bin/env -0', log), (0, None))
+                seen = dict(item.split('=', 1) for item in log.read_text().split('\0') if item)
+                self.assertEqual({k:v for k,v in seen.items() if k.startswith(('GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_'))
+                                  or k in GIT_OFF}, GIT_OFF)
+                self.assertEqual(list((self.root / '.git/bureau/process-holds').glob('*')), [])
+
+    def test_malformed_counts_in_both_builders(self):
+        pairs = {'GIT_CONFIG_KEY_0': 'credential.helper', 'GIT_CONFIG_VALUE_0': 'inherited-helper',
+                 'GIT_CONFIG_KEY_9': 'example.value', 'GIT_CONFIG_VALUE_9': 'stale-entry'}
+        for mode in ('default', 'clean'):
+            self.configure(mode, 'off')
+            for count in ('', 'nonnumeric', '-1', '1\n', '2147483647', '9' * 5000):
+                for inherited in ({}, pairs):
+                    environ = {**self.env, **inherited, 'GIT_CONFIG_COUNT': count, 'GIT_TERMINAL_PROMPT': '1'}
+                    for implementation in ('python', 'shell'):
+                        with self.subTest(mode=mode, count=count[:12], pairs=bool(inherited), implementation=implementation):
+                            if implementation == 'python': seen = p.untrusted_env(environ, mode)
+                            else: seen = dict(item.split('=', 1) for item in self.shell(environ).stdout.decode().split('\0') if item)
+                            self.assertEqual({k:v for k,v in seen.items() if k.startswith(('GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_'))
+                                              or k in GIT_OFF}, GIT_OFF)
+                            if implementation == 'shell': self.shell(environ, command='bureau_untrusted_env --check')
+
+    def test_conflict_entries_reject_invalid_settings_before_git(self):
+        spec = importlib.util.spec_from_file_location('conflicts', SCRIPT.with_name('bureau-conflicts.py'))
+        conflicts = importlib.util.module_from_spec(spec); spec.loader.exec_module(conflicts)
+        config = self.configure('default', 'invalid')
+        transaction = conflicts.Transaction(self.root, config, 'base', self.config)
+        with patch.object(transaction, 'git') as git:
+            with self.assertRaises(conflicts.provider.UntrustedEnvError): transaction.execute()
+        git.assert_not_called()
+        command = '''source "$1/bureau-config.sh"
+git() { printf GIT_RAN; return 1; }
+merge_origin_main_or_abort fixture Test
+'''
+        result = subprocess.run(['/bin/bash', '-c', command, 'fixture', str(SCRIPT.parent)],
+                                env={**self.env, 'BUREAU_CONFIG': str(self.config)}, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 24, result.stderr.decode())
+        self.assertNotIn(b'GIT_RAN', result.stdout)
+
+    def test_stage_preconditions_reject_invalid_git_credentials(self):
+        self.configure('default', 'invalid')
+        for stage in ('implement', 'qa', 'code_review'):
+            with self.subTest(stage=stage):
+                script = SCRIPT.with_name(stage.replace('_', '-') + '-pipeline.sh').read_text()
+                self.assertLess(script.index('\nprecondition_runner ' + stage + '\n'), script.index('\nbureau_stage_enter '))
+                result = self.shell(self.env, code=24, command='source "' + str(SCRIPT.with_name('bureau-config.sh')) +
+                                    '"; precondition_runner ' + stage + '; printf GATE_REACHED')
+                self.assertIn(b'repo.untrusted_git_credentials', result.stderr)
+                self.assertEqual(result.stdout, b'')
+        config = self.configure('default', 'invalid'); config['agents'] = dict(merge_mode='auto')
+        self.config.write_text(json.dumps(config))
+        env_file = self.root / 'operator.env'; env_file.write_text('LINEAR_API_KEY=fixture\n')
+        script = SCRIPT.with_name('rebase-pipeline.sh')
+        prefix = script.read_text().split('\nprecondition_linear\n', 1)[0]
+        result = subprocess.run(['/bin/bash', '-c', prefix + '\nprintf GATE_REACHED', str(script)],
+                                cwd=self.root, env={**self.env, 'BUREAU_CONFIG': str(self.config), 'BUREAU_ENV_FILE': str(env_file)},
+                                capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 24, result.stderr.decode())
+        self.assertIn(b'repo.untrusted_git_credentials', result.stderr)
+        self.assertNotIn(b'GATE_REACHED', result.stdout)
+
+    def test_inherited_pairs_and_parameters_in_both_builders(self):
+        value = "spaces, an apostrophe ' and !"
+        parameters = "'credential.helper=parameter-helper' 'credential.https://offline.helper=scoped-helper' " + "'example.value=" + value.replace("'", "'\\''") + "'"
+        for mode in ('default', 'clean'):
+            for env in self.builders(mode, GIT_CONFIG_COUNT='0001', GIT_CONFIG_KEY_0='credential.helper',
+                                     GIT_CONFIG_VALUE_0='inherited-helper', GIT_CONFIG_PARAMETERS=parameters):
+                index = '1' if mode == 'default' else '0'
+                self.assertEqual(env['GIT_CONFIG_COUNT'], str(int(index) + 1))
+                self.assertEqual(env['GIT_CONFIG_KEY_' + index], 'credential.helper')
+                self.assertEqual(env['GIT_CONFIG_VALUE_' + index], '')
+                self.assertEqual(env['GIT_TERMINAL_PROMPT'], '0')
+                self.assertNotIn('GIT_CONFIG_PARAMETERS', env)
+                if mode == 'default':
+                    self.assertEqual(env['GIT_CONFIG_VALUE_0'], 'inherited-helper')
+                else:
+                    self.assertNotIn('GIT_CONFIG_KEY_1', env)
+            for env in self.builders(mode, 'keep', GIT_CONFIG_PARAMETERS=parameters):
+                if mode == 'default': self.assertEqual(env['GIT_CONFIG_PARAMETERS'], parameters)
+                else: self.assertNotIn('GIT_CONFIG_PARAMETERS', env)
+
+    def test_real_git_resets_inherited_includes_in_both_builders(self):
+        helper = self.root / 'helper'
+        helper.write_text('#!/bin/sh\ncat >/dev/null\nprintf "username=fixture\\npassword=stored-fixture\\n"\n')
+        helper.chmod(0o755)
+        include = self.root / 'included.config'
+        subprocess.run(['git', 'config', '--file', str(include), 'credential.helper', '!' + shlex.quote(str(helper))],
+                       env=self.env, check=True, timeout=10)
+        sources = ({'GIT_CONFIG_PARAMETERS': shlex.quote('include.path=' + str(include))},
+                   {'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'include.path', 'GIT_CONFIG_VALUE_0': str(include)})
+        for inherited in sources:
+            for mode in ('default', 'clean'):
+                for setting in (None, 'off', 'keep'):
+                    with self.subTest(source=next(iter(inherited)), mode=mode, setting=setting):
+                        for env in self.builders(mode, setting, **inherited):
+                            if mode == 'default' and 'GIT_CONFIG_COUNT' in inherited:
+                                self.assertEqual(env['GIT_CONFIG_KEY_0'], 'include.path')
+                                self.assertEqual(env['GIT_CONFIG_VALUE_0'], str(include))
+                                self.assertEqual(env['GIT_CONFIG_COUNT'], '1' if setting == 'keep' else '2')
+                            env = {**env, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull,
+                                   'GIT_TERMINAL_PROMPT': '0'}
+                            result = subprocess.run(['git', '-C', str(self.root), 'credential', 'fill'], env=env,
+                                                    input='protocol=https\nhost=offline\n\n', capture_output=True, text=True, timeout=10)
+                            available = mode == 'default' and setting == 'keep'
+                            self.assertEqual(result.returncode, 0 if available else 128, result.stderr)
+                            self.assertEqual('password=stored-fixture' in result.stdout, available)
+
+    def test_real_git_resets_system_global_and_repository_helpers(self):
+        helper = self.root / 'helper'
+        helper.write_text('#!/bin/sh\ncat >/dev/null\nprintf "username=fixture\\npassword=stored-fixture\\n"\n')
+        helper.chmod(0o755)
+        configs = [self.root / 'system.config', self.root / '.gitconfig', self.root / '.git/config']
+        for path in configs:
+            subprocess.run(['git', 'config', '--file', str(path), 'credential.helper', '!' + shlex.quote(str(helper))],
+                           env=self.env, check=True, timeout=10)
+        baseline = {**self.env, 'GIT_CONFIG_SYSTEM': str(configs[0]), 'GIT_CONFIG_GLOBAL': str(configs[1]),
+                    'GIT_CONFIG_NOSYSTEM': '0'}
+        origins = subprocess.run(['git', '-C', str(self.root), 'config', '--show-origin', '--get-all', 'credential.helper'],
+                                 env=baseline, capture_output=True, text=True, check=True, timeout=10).stdout
+        for path in configs: self.assertIn('file:' + str(path.relative_to(self.root) if path == configs[2] else path), origins)
+        for mode in ('default', 'clean'):
+            for setting in (None, 'off', 'keep'):
+                for env in self.builders(mode, setting):
+                    # Reintroduce only fixture config paths so clean mode also reads all three scopes.
+                    env = {**env, 'GIT_CONFIG_SYSTEM': str(configs[0]), 'GIT_CONFIG_GLOBAL': str(configs[1]),
+                           'GIT_CONFIG_NOSYSTEM': '0'}
+                    result = subprocess.run(['git', '-C', str(self.root), 'credential', 'fill'], env=env,
+                                            input='protocol=https\nhost=offline\n\n', capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 0 if setting == 'keep' else 128)
+                    self.assertEqual('password=stored-fixture' in result.stdout, setting == 'keep')
+        # Bureau's own environment and shell git wrapper still use the stored helper.
+        self.assertEqual(p.process_env(['git', 'credential', 'fill'], self.env), self.env)
+        self.configure('default')
+        result = self.shell(self.env, command="printf 'protocol=https\\nhost=offline\\n\\n' | git -C \"$HOME\" credential fill")
+        self.assertIn(b'password=stored-fixture', result.stdout)
+
+    def test_invalid_shell_settings_refuse_including_check(self):
+        for mode in ('default', 'clean'):
+            for setting in ('', 'OFF', True, 1, ['off'], {'mode': 'off'}):
+                self.configure(mode, setting)
+                for command in ('bureau_untrusted_env /usr/bin/env', 'bureau_untrusted_env --check'):
+                    result = self.shell(self.env, code=24, command=command)
+                    self.assertIn(b'repo.untrusted_git_credentials', result.stderr)
+                    self.assertEqual(result.stdout, b'')
+        for mode in ('default', 'clean'):
+            inherited = {'GIT_CONFIG_COUNT': 'malformed', 'GIT_CONFIG_KEY_9': 'example.value',
+                         'GIT_CONFIG_VALUE_9': 'inherited-entry', 'GIT_TERMINAL_PROMPT': '1'}
+            for env in self.builders(mode, 'keep', **inherited):
+                self.assertEqual({k:v for k,v in env.items() if k.startswith(('GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_'))
+                                  or k in GIT_OFF}, inherited if mode == 'default' else {})
 
 
 if __name__ == '__main__':

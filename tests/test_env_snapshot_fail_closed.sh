@@ -98,7 +98,7 @@ sys.exit(7 if fault == 'complete_then_nonzero' else result.returncode)
     for fault in faults:
         for name, call in calls.items():
             mode = 'clean' if name == 'untrusted-clean' else 'default'
-            setup = 'source "$1/bureau-env.sh"\nbureau_get() { builtin printf "%s" ' + mode + '; }\n'
+            setup = 'source "$1/bureau-env.sh"\nbureau_get() { case "$1" in *untrusted_git_credentials*) builtin printf off ;; *) builtin printf "%s" ' + mode + ' ;; esac; }\n'
             target = scripts
             if fault == 'missing_python':
                 target = missing
@@ -140,7 +140,7 @@ sys.exit(7 if fault == 'complete_then_nonzero' else result.returncode)
     # Successful snapshots need no writable TMPDIR; retain child exit status,
     # multiline bytes and ordinary variables beside removal of the carrier.
     for mode in ('default', 'clean'):
-        code = ('source "$1/bureau-env.sh"\nbureau_get() { builtin printf "%s" ' + mode + '; }\n'
+        code = ('source "$1/bureau-env.sh"\nbureau_get() { case "$1" in *untrusted_git_credentials*) builtin printf off ;; *) builtin printf "%s" ' + mode + ' ;; esac; }\n'
                 'bureau_untrusted_env /usr/bin/env')
         result = subprocess.run(['/bin/bash', '-uc', code, '_', str(scripts)],
                                 env=dict(base, TMPDIR=str(temp / 'does-not-exist'),
