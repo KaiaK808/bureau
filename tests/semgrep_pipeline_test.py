@@ -184,6 +184,12 @@ real_git=$(command -v git)
 cat > "$PR2_GH/bin/git" <<EOF
 #!/bin/bash
 { printf 'git'; for a in "\$@"; do printf '\\t%s' "\$a"; done; printf '\\n'; } >> "\${SANDBOX:?}/git_calls.log"
+case " \$* " in
+  *" fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main ")
+    if [ -s "\$PR2_GH/git-fetch-hook" ]; then
+      python3 -I -B "\$(cat "\$PR2_GH/git-fetch-hook")" || exit "\$?"
+    fi ;;
+esac
 exec "$real_git" "\$@"
 EOF
 chmod +x "$PR2_GH/bin/git"
@@ -215,16 +221,16 @@ if CASE.startswith('base-'):
     # GitHub's base/CI gates can already be green for the new base; the scan is still stale.
     data['baseRefOid'] = commit
     (gh/'branch.json').write_text(json.dumps(dict(commit=dict(sha=commit))))
-elif CASE == 'head-during-scan':
-    parent = git('rev-parse', 'HEAD')
-    commit = git('--git-dir', str(repo/'.fake-origin.git'), 'commit-tree', git('rev-parse', 'HEAD^{tree}'),
-                 '-p', parent, '-m', 'test: PR head advances during scan')
-    git('--git-dir', str(repo/'.fake-origin.git'), 'update-ref', 'refs/heads/test-branch', commit)
+elif CASE.startswith('head-'):
+    (repo/'a.js').write_text('const fixed = 1;\n')
+    git('add', 'a.js'); git('commit', '-qm', 'test: fix PR head during scan')
+    commit = git('rev-parse', 'HEAD')
+    git('push', '-q', 'origin', 'test-branch')
     data['headRefOid'] = commit
 elif CASE.startswith('retarget-'):
     git('--git-dir', str(repo/'.fake-origin.git'), 'update-ref', 'refs/heads/release', data['baseRefOid'])
     data['baseRefName'] = 'release'  # Same commit, different policy authority.
-elif CASE == 'ci-during-scan':
+elif CASE.startswith('ci-'):
     (gh/'check_runs.json').write_text(json.dumps(dict(check_runs=[dict(name='ci', status='completed', conclusion='failure')])))
 else:
     raise AssertionError(CASE)
@@ -238,7 +244,18 @@ class MergePipelineTests(unittest.TestCase):
 
     def test_scan_input_changes_wait_for_a_new_scan_and_gates_run_after_scanning(self):
         self.merge_cases(('base-during-scan', 'head-during-scan', 'retarget-during-scan', 'ci-during-scan',
-                          'base-after-gates', 'retarget-after-gates'))
+                          'retarget-after-gates', 'ci-during-final-fetch', 'base-during-final-fetch'))
+
+    def test_retarget_during_last_fetch_precedes_final_identity_check(self):
+        self.merge_cases(('retarget-during-final-fetch',))
+
+    def test_stale_blocking_and_failed_scans_retry_and_marks_bind_to_scanned_head(self):
+        self.merge_cases(('head-blocking-during-scan', 'base-blocking-during-scan',
+                          'retarget-blocking-during-scan', 'head-failed-during-scan',
+                          'head-helper-failure-during-scan'))
+
+    def test_hold_mark_binds_to_scanned_head_instead_of_initial_gate_head(self):
+        self.merge_cases(('head-before-scan-hold',))
 
     def test_disabled_and_advisory_gh_git_calls_match_disabled_baseline(self):
         golden = json.loads((ROOT/'tests/fixtures/semgrep-disabled-merge.json').read_text())
@@ -269,18 +286,33 @@ if case=='advisory': config['review']['semgrep']['mode']='advisory'
 def git(*args):return subprocess.check_output(['git','-C',str(repo),*args],text=True).strip()
 (repo/'a.js').write_text('const safe = 1;\n');git('add','a.js');git('commit','-qm','test: safe head');git('push','-q','origin','test-branch')
 base=git('rev-parse','origin/main');head=git('rev-parse','HEAD')
+initial_head=head
+if 'blocking' in case or case=='head-before-scan-hold':
+    (repo/'a.js').write_text('eval(secretValue);\n');git('add','a.js');git('commit','-qm','test: blocking head');git('push','-q','origin','test-branch')
+    head=git('rev-parse','HEAD')
 m=f.load('semgrep',repo/'scripts/bureau-semgrep.py')
 if case in ('exact','changed','unavailable','isolation'):
     value=m.measure(repo,config,base,head,pr=99)
     assert value['receipt']['status']=='measured',value
     path=repo/'reviewed-receipt.json';path.write_text(json.dumps(value))
 (repo/'scanner-inputs.json').write_text(json.dumps(dict(head=head,base=base)))
-if case.endswith(('during-scan','after-gates')):
+if case.endswith(('during-scan','after-gates','during-final-fetch')):
     hook=repo/'concurrent-update.py'
     hook.write_text('REPO='+repr(str(repo))+'\nGH='+repr(os.environ['PR2_GH'])+'\nCASE='+repr(case)+
                    '\nGIT='+repr(shutil.which('git'))+'\n'+pathlib.Path(os.environ['SEMGREP_HOOK_SOURCE']).read_text())
     if case.endswith('during-scan'):
-        installed['settings'].write_text(json.dumps(dict(hook=str(hook))))
+        installed['settings'].write_text(json.dumps(dict(hook=str(hook), exit=2 if 'failed' in case else 0)))
+        if 'helper-failure' in case:
+            helper=repo/'scripts/bureau-semgrep.sh'
+            helper.write_text(helper.read_text()+"""\n# Fail the helper after the real scanner changed the inputs.
+eval "$(declare -f bureau_semgrep | sed '1s/bureau_semgrep/bureau_semgrep_original/')"
+bureau_semgrep() {
+  bureau_semgrep_original "$@" || return $?
+  [ "$1" != scan ] || return 24
+}
+""")
+    elif case.endswith('during-final-fetch'):
+        (pathlib.Path(os.environ['PR2_GH'])/'git-fetch-hook').write_text(str(hook))
     else:
         gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh'
         old='*/branches/*) out < "$D/branch.json" ;;'
@@ -301,6 +333,9 @@ if os.environ['SEMGREP_CASE']=='isolation': f.inject_isolation(repo/'scripts',in
 head=git('rev-parse','HEAD')
 (pathlib.Path(os.environ['PR2_GH'])/'comments.json').write_text(json.dumps([dict(body='## Code Review v2\n**Verdict**: APPROVE',createdAt='2026-01-01T00:00:00Z')]))
 pr=pathlib.Path(os.environ['PR2_GH'])/'pr.json';data=json.loads(pr.read_text());data.update(headRefOid=head,baseRefOid=base);pr.write_text(json.dumps(data))
+if case=='head-before-scan-hold':
+    data['headRefOid']=initial_head;pr.write_text(json.dumps(data))
+    (pathlib.Path(os.environ['PR2_GH'])/'move_head_after_reads').write_text('1 '+head)
 ''')
             collect.write_text(r'''import json,os,pathlib,re,sys
 repo=pathlib.Path(sys.argv[1]);gh=pathlib.Path(os.environ['PR2_GH'])
@@ -311,6 +346,8 @@ value=dict(code=os.environ['LAST_RC'],stdout=os.environ['LAST_STDOUT'],stderr=os
     scanned=json.loads((repo/'scanner-inputs.json').read_text()),
     hook_ran=(gh/'scan-hook-ran').exists(),
     hook_log=(repo/'concurrent-update.py.log').read_text() if (repo/'concurrent-update.py.log').exists() else '',
+    mark=json.loads((repo/'.git/bureau/merge-gate-waits.json').read_text()).get('TEAM-1') if (repo/'.git/bureau/merge-gate-waits.json').exists() else None,
+    calls=(repo/'calls.log').read_text() if (repo/'calls.log').exists() else '',
     gate_report=(repo/'merge-gate-report.txt').read_text() if (repo/'merge-gate-report.txt').exists() else '')
 pin=re.search(r'--match-head-commit\t([a-f0-9]{40,64})',value['gh_calls'])
 value['merge_head']=pin[1] if pin else None
@@ -333,20 +370,29 @@ pathlib.Path(os.environ['SEMGREP_RESULT']).write_text(json.dumps(value))
                     value=json.loads(result.read_text())
                     values.append(value)
                     expected = '0' if case in ('exact','off','disabled','advisory') else '25'
-                    if case.startswith(('base-','head-','retarget-')): expected = '2'
-                    if case.endswith(('during-scan','after-gates')):
-                        self.assertTrue(value['hook_ran'])
-                        self.assertEqual([r['status'] for r in value['receipts']], ['measured'],value['hook_log'])
+                    concurrent = case.endswith(('during-scan','after-gates','during-final-fetch'))
+                    if case.startswith(('base-','head-','retarget-')) and concurrent: expected = '2'
+                    if concurrent:
+                        self.assertTrue(value['hook_ran'], value['stdout']+'\n'+value['stderr']+'\n'+value['git_calls'])
+                        self.assertEqual([r['status'] for r in value['receipts']],
+                                         ['not_measured' if 'failed' in case else 'measured'], value['hook_log'])
                     self.assertEqual(value['code'],expected,value['stdout']+'\n'+value['stderr'])
-                    if case.endswith(('during-scan','after-gates')):
+                    if concurrent:
                         self.assertTrue(value['hook_ran'])
                         self.assertFalse(value['merged'])
                         self.assertNotIn('gh\tpr\tmerge',value['gh_calls'])
                         self.assertIn('Gate regressed between initial check and merge',value['stdout'])
-                        self.assertTrue(value['gate_report'].startswith('blocked\n' if case=='ci-during-scan' else 'not-yet\n'))
+                        self.assertTrue(value['gate_report'].startswith('blocked\n' if case.startswith('ci-') else 'not-yet\n'))
                         self.assertEqual(len(value['receipts']),1)
                         self.assertEqual(value['receipts'][0]['head'],value['scanned']['head'])
                         self.assertEqual(value['receipts'][0]['base'],value['scanned']['base'])
+                        self.assertNotIn('needs-human', value['calls'])
+                        self.assertEqual(value['mark']['head'], value['scanned']['head'])
+                    elif case=='head-before-scan-hold':
+                        self.assertFalse(value['merged'])
+                        self.assertEqual(value['mark']['outcome'], 'blocked')
+                        self.assertEqual(value['mark']['head'], value['receipts'][0]['head'])
+                        self.assertEqual(value['mark']['head'], value['scanned']['head'])
                     elif case in ('off','disabled','advisory'):
                         self.assertTrue(value['merged']);self.assertEqual(value['receipts'],[])
                     elif case!='exact':
@@ -365,6 +411,14 @@ pathlib.Path(os.environ['SEMGREP_RESULT']).write_text(json.dumps(value))
                         self.assertEqual(len(fetches),2)
                         self.assertEqual([arg for arg in fetches[-1] if arg.startswith('+refs/heads/')],
                                          ['+refs/heads/main:refs/remotes/origin/main'])
+                        # After the final gate's API read, only the one base-name
+                        # query and the pinned merge may touch GitHub; no git fetch.
+                        logged=value['gh_calls'].splitlines()
+                        last_api=max(i for i,line in enumerate(logged) if line.startswith('gh\tapi\t'))
+                        after_gates=logged[last_api+1:]
+                        self.assertEqual(len(after_gates), 2, after_gates)
+                        self.assertIn('--json\tbaseRefName\t--jq\t.baseRefName', after_gates[0])
+                        self.assertTrue(after_gates[1].startswith('gh\tpr\tmerge\t'))
         return values
 
 

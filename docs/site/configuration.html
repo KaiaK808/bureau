@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ffe57f7e36280e3a4c35346b140982b39c630e12b83f20c9dab43abab594fa22">
+<meta name="bureau-source-sha256" content="3baf06c37582ca59f4f70a57fe7beac7443379841cfa71760717aaf2b378db67">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -488,30 +488,49 @@ wheels, maps purelib/platlib payloads to site-packages and refuses
 unsupported installation schemes or path collisions. Review the lock,
 manifest and tool compatibility together before shipping them. The
 maintainer script is not installed in adopting repositories.</p>
-<p>Before execution Bureau compares every site-packages file, including
-<code>semgrep-core</code>, against that manifest. Changed, missing or
-additional files make the tool unavailable. Install metadata inside
-<code>*.dist-info</code> (<code>RECORD</code>, <code>INSTALLER</code>,
+<p>Before the interpreter probe and again before each scan side, Bureau
+compares every site-packages file, including <code>semgrep-core</code>,
+against that manifest. Changed, missing or additional files make the
+tool unavailable. Install metadata inside <code>*.dist-info</code>
+(<code>RECORD</code>, <code>INSTALLER</code>,
 <code>direct_url.json</code>, <code>REQUESTED</code> and uv's
 <code>uv_cache.json</code>) and adjacent <code>__pycache__</code>
-directories are excluded. Each interpreter call uses
-<code>-I -B -X pycache_prefix=&lt;fresh directory&gt;</code>; launcher
-scripts and adjacent bytecode are not used. A pre-verification
-interpreter probe also uses <code>-S</code>. The operator's system
-Python itself is trusted, outside the package manifest.</p>
+directories are excluded. The operator venv must contain exactly one
+<code>lib/python3.&lt;minor&gt;/site-packages</code> directory; its
+minor and the selected manifest's platform must match the interpreter
+probe. The operator's system Python itself is trusted, outside the
+package manifest.</p>
+<p>Every interpreter invocation, including the <code>-I -S</code> probe
+and each scan side, gets a fresh private shadow environment under the
+run's temporary directory. Bureau writes exactly two
+<code>pyvenv.cfg</code> lines:
+<code>home = &lt;base interpreter directory&gt;</code> and
+<code>include-system-site-packages = false</code>. The shadow's
+<code>bin</code> contains only <code>python</code>, a symlink to the
+resolved real path of the operator venv's <code>bin/python</code>; that
+base must be an absolute regular executable file. The shadow's
+<code>lib/python3.&lt;minor&gt;/site-packages</code> links to the
+verified operator site-packages. Bureau never executes the operator
+venv's own Python path or uses its <code>pyvenv.cfg</code> settings,
+including duplicate system-package settings. Each call uses
+<code>-I -B -X pycache_prefix=&lt;fresh directory&gt;</code>; the probe
+additionally uses <code>-S</code>. Operator launchers,
+executable-adjacent fallback helpers, system site-packages and adjacent
+bytecode are excluded from execution.</p>
 <p>Every scan and interpreter probe receives an allowlist environment:
 exactly <code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
 <code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code>,
 <code>TMPDIR</code>, <code>LANG=C.UTF-8</code>, <code>TZ=UTC</code>,
 <code>SEMGREP_SEND_METRICS=off</code>,
 <code>SEMGREP_ENABLE_VERSION_CHECK=0</code> and
-<code>DO_NOT_TRACK=1</code>. The venv's <code>bin</code> directory is
-excluded from PATH so unverified launchers and fallback helpers cannot
-be found there; the interpreter is always invoked by its absolute path.
-Provider keys, Bureau secrets, GitHub tokens and other Semgrep settings
-do not pass through. Runtime network denial is required for eligible
-scans: Linux uses a probed <code>unshare -rn</code> user/network
-namespace; macOS uses <code>sandbox-exec</code> with the shipped
+<code>DO_NOT_TRACK=1</code>. The operator venv's <code>bin</code>
+directory is excluded from PATH, and helpers resolving beside
+<code>sys.executable</code> see only the shadow's <code>python</code>;
+the interpreter is always invoked by its absolute shadow path. Provider
+keys, Bureau secrets, GitHub tokens and other Semgrep settings do not
+pass through. Runtime network denial is required for eligible scans:
+Linux uses a probed <code>unshare -rn</code> user/network namespace;
+macOS uses <code>sandbox-exec</code> with the shipped
 <code>bureau-scan-nonet.sb</code> profile denying <code>network*</code>.
 If isolation cannot run, the status is <strong>not_measured</strong>,
 with reason <code>network isolation unavailable</code>. Bureau never
@@ -578,19 +597,33 @@ the existing evidence archive. Retention keeps the newest 20 attempts
 per repository/tool plus PR-referenced attempts while their PR is open;
 an unreadable PR inventory conservatively keeps referenced attempts.</p>
 <p>Pin, settings and policy digests join approval reuse identity,
-independently of build-check reuse. Before the existing just-in-time
-merge gate recheck, blocking mode reads the PR head and current base
-ref/commit and runs Semgrep with receipt reuse for those inputs.
-Blocking findings, unavailable tooling and failed measurements refuse
-merge with the existing blocked gate outcome (25). The existing gate
-recheck then runs unchanged. After it passes, Bureau re-reads the PR
-base ref name and fetches only that base ref; merge requires the checked
-head to equal the scanned head, an unchanged base ref name and an
-unchanged base commit. Changed scan inputs abort with the
+independently of build-check reuse. The pin identity includes the shadow
+execution boundary, so receipts and approvals from the previous
+operator-venv invocation are not reused. Before the existing
+just-in-time merge gate recheck, blocking mode reads the PR head and
+current base ref/commit and runs Semgrep with receipt reuse for those
+inputs. After the scan, Bureau prepares the merge message, fetches the
+scanned base ref once more, requires its commit to equal the scanned
+base, and checks the current PR head and base ref name. This freshness
+check runs before applying blocking findings, unavailable tooling,
+failed measurements or receipt failures: changed inputs abort with the
 gate-regression report and retryable outcome (2), so the next tick
-measures the current inputs. Disabled and advisory modes add no GitHub
-or git calls. The older Code Review v2 verdict reader's head binding is
-unchanged by this scanner integration.</p>
+measures the current inputs. An unchanged blocking result refuses merge
+with the existing blocked outcome (25). The ticket kill-switch
+checkpoint stays the last step before the merge call, as in every mode.
+Semgrep gate marks bind to the scanned head, including when it differs
+from the initial gate's head.</p>
+<p>The existing just-in-time gates then run unchanged. After they pass,
+Bureau performs only one cheap <code>gh</code> read of the PR's base ref
+name and requires the checked <code>MERGE_HEAD</code> to equal the
+scanned head and the base ref name to be unchanged, then merges with
+<code>--match-head-commit</code> set to that scanned head. No fetch or
+merge-message read occurs after the final gates. A base advancing after
+the last fetch has the same race as the other gates; GitHub's head match
+protects against a subsequent push. Disabled and advisory merge
+behaviour and GitHub/git call logs remain unchanged. The older Code
+Review v2 verdict reader's head binding is unchanged by this scanner
+integration.</p>
 <p><strong>Upgrade:</strong> compare installed script drift, resync the
 entire scripts scope (including the shared helper, sandbox profile,
 rules, lock and platform manifests), and restart drivers together.

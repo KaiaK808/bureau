@@ -128,9 +128,37 @@ def probe_network(prefix, root, env):
         return False
 
 
-def python_argv(venv, cache, *args, no_site=False):
+def venv_site(venv):
+    # Infer the minor without executing Python or reading operator pyvenv.cfg.
+    sites = list((venv / 'lib').glob('python*/site-packages'))
+    if len(sites) != 1:
+        raise ValueError('venv must contain exactly one Python site-packages directory')
+    site = sites[0]
+    if (not re.fullmatch(r'python3\.(0|[1-9][0-9]*)', site.parent.name)
+            or not site.is_dir() or site.is_symlink() or site.parent.is_symlink()):
+        raise ValueError('venv site-packages does not match its interpreter')
+    return site, 'cp3' + site.parent.name.partition('.')[2]
+
+
+def python_argv(venv, invocation, *args, no_site=False):
+    # Neither executable-adjacent helpers nor operator venv settings may escape
+    # the wheel manifest. Each invocation gets a new, Bureau-owned environment.
+    base = (venv / 'bin/python').resolve(strict=True)
+    if (not base.is_absolute() or not base.is_file() or not os.access(base, os.X_OK)
+            or '\n' in str(base.parent) or '\r' in str(base.parent)):
+        raise ValueError('base interpreter must be an absolute regular executable file')
+    site, _ = venv_site(venv)
+    invocation.mkdir(mode=0o700)
+    shadow = invocation / 'shadow'
+    (shadow / 'bin').mkdir(mode=0o700, parents=True)
+    (shadow / 'bin/python').symlink_to(base)
+    (shadow / 'pyvenv.cfg').write_text('home = ' + str(base.parent) + '\ninclude-system-site-packages = false\n')
+    library = shadow / 'lib' / site.parent.name
+    library.mkdir(mode=0o700, parents=True)
+    (library / 'site-packages').symlink_to(site, target_is_directory=True)
+    cache = invocation / 'cache'
     cache.mkdir(mode=0o700)  # fresh, empty, never shared with another invocation
-    return [str(venv / 'bin/python'), '-I', '-B', '-X', 'pycache_prefix=' + str(cache),
+    return [str(shadow / 'bin/python'), '-I', '-B', '-X', 'pycache_prefix=' + str(cache),
             *(['-S'] if no_site else []), *args]
 
 
@@ -178,20 +206,41 @@ def verify_venv(venv, manifest_path, tool, version, system, arch, abi, manifest_
     if (not isinstance(files, dict) or not files or any(not relative(k) or excluded(k)
             or not isinstance(v, str) or not re.fullmatch(r'[0-9a-f]{64}', v) for k, v in files.items())):
         raise ValueError('invalid runtime manifest file set')
-    cfg = (venv / 'pyvenv.cfg').read_text()
-    if not re.search(r'^include-system-site-packages\s*=\s*false\s*$', cfg, re.M | re.I):
-        raise ValueError('venv must disable system site-packages')
-    # A second library directory could silently become an additional import path.
-    sites = list((venv / 'lib').glob('python*/site-packages'))
-    minor = abi[3:]
-    expected = venv / 'lib' / ('python3.' + minor) / 'site-packages'
-    if sites != [expected] or expected.is_symlink() or expected.parent.is_symlink():
+    expected, site_abi = venv_site(venv)
+    if site_abi != abi:
         raise ValueError('venv site-packages does not match its interpreter')
     actual = site_files(expected)
     if actual != files: raise ValueError('site-packages manifest mismatch (changed, missing or additional file)')
     if tool == 'semgrep' and not any(PurePosixPath(p).name == 'semgrep-core' for p in files):
         raise ValueError('manifest is missing semgrep-core')
     return manifest
+
+
+def verified_runtime(venv, manifests, tool, version):
+    """Select a manifest by verified bytes before even the isolated -S probe.
+
+    The operator interpreter can use another minor/architecture than Bureau's.
+    Its single library directory selects the ABI; the probe must then agree with
+    the matching shipped manifest's full platform, not the host Python's guess.
+    """
+    _, abi = venv_site(venv)
+    candidates = sorted(manifests.glob('bureau-' + tool + '-manifest-*-' + abi + '.json'))
+    system = {'Darwin': 'darwin', 'Linux': 'linux'}.get(platform.system(), 'unknown')
+    arch = {'aarch64': 'arm64', 'AMD64': 'x86_64'}.get(platform.machine(), platform.machine())
+    failure = 'missing manifest bureau-' + tool + '-manifest-' + system + '-' + arch + '-' + abi + '.json'
+    for path in candidates:
+        try:
+            header = json.loads(path.read_text())
+            system, arch = header['os'], header['arch']
+            if (system not in ('darwin', 'linux') or arch not in ('arm64', 'x86_64')
+                    or path.name != 'bureau-' + tool + '-manifest-' + system + '-' + arch + '-' + abi + '.json'):
+                raise ValueError('invalid runtime manifest platform')
+            manifest_sha = file_sha(path)
+            verify_venv(venv, path, tool, version, system, arch, abi, manifest_sha)
+            return path, manifest_sha, (system, arch, abi)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            failure = str(exc) if isinstance(exc, ValueError) else 'runtime manifest unreadable'
+    raise ValueError(failure)
 
 
 def identity(tool, head, base, pin_digest, settings_digest, policy_digest, **extra):

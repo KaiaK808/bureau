@@ -207,7 +207,9 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
     state = _state if _state is not None else scan.state_dir(repo)
     manifests = _manifests if _manifests is not None else SCRIPTS
     # Missing inputs still get an identity and durable, explicitly unavailable receipt.
-    pin = dict(version=VERSION, lock=scan.file_sha(SCRIPTS / 'bureau-semgrep-lock.txt'))
+    # Receipts produced through the old operator-venv execution boundary cannot
+    # be reused even when their wheel hashes, source and policy are unchanged.
+    pin = dict(version=VERSION, lock=scan.file_sha(SCRIPTS / 'bureau-semgrep-lock.txt'), execution='shadow-venv-v1')
     # Even an unavailable interpreter/isolation must invalidate an advisory
     # approval when the installed pin assets change; no unverified probe is needed.
     pin['manifests'] = []
@@ -243,12 +245,11 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
                 elif not probe(prefix, root, env):
                     status, reason = 'not_measured', 'network isolation unavailable'
                 else:
-                    system, arch, abi = scan.interpreter(venv, root, env, prefix)
-                    manifest_path = manifests / ('bureau-semgrep-manifest-' + system + '-' + arch + '-' + abi + '.json')
-                    pin['manifest'] = scan.file_sha(manifest_path) if manifest_path.is_file() else 'missing:' + manifest_path.name
                     try:
-                        scan.verify_venv(venv, manifest_path, 'semgrep', VERSION, system, arch, abi,
-                                         manifest_sha=pin['manifest'])
+                        manifest_path, pin['manifest'], expected = scan.verified_runtime(venv, manifests, 'semgrep', VERSION)
+                        system, arch, abi = scan.interpreter(venv, root, env, prefix)
+                        if (system, arch, abi) != expected:
+                            raise ValueError('runtime manifest platform or library minor does not match interpreter probe')
                     except (OSError, ValueError, TypeError, KeyError) as exc:
                         status, reason = 'unavailable', str(exc) if isinstance(exc, ValueError) else 'runtime manifest unreadable'
                     else:

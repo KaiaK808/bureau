@@ -30,19 +30,34 @@ def load(name, path=None):
 
 
 FAKE = r'''
-import json, os, pathlib, shutil, subprocess, sys, time
+import json, os, pathlib, shutil, site, subprocess, sys, time
 settings = json.loads(pathlib.Path(SETTINGS).read_text())
+# Model a system site directory without writing to the host's Python install.
+# CPython's effective venv configuration decides whether that prefix is enabled.
+if settings.get('system_site') and sys.base_prefix in site.PREFIXES:
+    site.addsitedir(settings['system_site'])
+    site.execsitecustomize()
 args = sys.argv[1:]
 files = args[args.index('--')+1:]
 record = dict(env=dict(os.environ), argv=args, python=sys.orig_argv if hasattr(sys, 'orig_argv') else [],
               files={p:pathlib.Path(p).read_text() for p in files}, cwd=os.getcwd(), marker='source',
               configs=[pathlib.Path(args[i+1]).read_text() for i,x in enumerate(args[:-1]) if x=='--config'],
               native=[str(p) for p in pathlib.Path('.').rglob('*') if '.semgrep' in str(p)],
-              cache_prefix=sys.pycache_prefix, cache_empty=not any(pathlib.Path(sys.pycache_prefix).rglob('*')))
+              cache_prefix=sys.pycache_prefix, cache_empty=not any(pathlib.Path(sys.pycache_prefix).rglob('*')),
+              prefix=sys.prefix, executable=sys.executable, base_prefix=sys.base_prefix,
+              executable_entries=sorted(os.listdir(os.path.dirname(sys.executable))),
+              site_paths=[p for p in sys.path if p.endswith('/site-packages')], site_prefixes=site.PREFIXES,
+              shadow_cfg=(pathlib.Path(sys.prefix)/'pyvenv.cfg').read_text(),
+              python_target=str(pathlib.Path(sys.executable).resolve()),
+              site_targets={p:str(pathlib.Path(p).resolve()) for p in sys.path if p.endswith('/site-packages')})
 if settings.get('lookup_helpers'):
-    record['helpers'] = {name:shutil.which(name) for name in ('semgrep-core-proprietary', 'semgrep')}
-    for binary in record['helpers'].values():
-        if binary: subprocess.run([binary], check=True)
+    record['helpers'] = {}
+    for name in ('semgrep-core-proprietary', 'semgrep', 'pysemgrep'):
+        adjacent = pathlib.Path(sys.executable).parent/name
+        found = dict(path=shutil.which(name), adjacent=str(adjacent) if adjacent.is_file() else None)
+        record['helpers'][name] = found
+        for binary in found.values():
+            if binary: subprocess.run([binary], check=True)
 with open(CALLS, 'a') as out: out.write(json.dumps(record)+'\n')
 if settings.get('sleep'): time.sleep(settings['sleep'])
 rows=[]
@@ -189,13 +204,17 @@ class SemgrepTests(unittest.TestCase):
         wrapped = [json.loads(s) for s in (self.root / 'wrapper-calls.jsonl').read_text().splitlines()]
         self.assertEqual(len(wrapped), 3)  # isolated interpreter probe plus both scan sides
         self.assertIn('-S',wrapped[0])
-        self.assertTrue(all(args[0] == str(self.fixture['venv'] / 'bin/python') for args in wrapped))
+        self.assertEqual(len({args[0] for args in wrapped}), 3, 'invocations shared a shadow')
+        for args in wrapped:
+            binary = Path(args[0])
+            self.assertEqual(binary.parts[-3:], ('shadow', 'bin', 'python'))
+            self.assertEqual(binary.parents[3], root)
         for args in wrapped[1:]:
             for flag in ('-I','-B','-X','-m'): self.assertIn(flag, args)
 
     def test_unverified_venv_helpers_are_neither_found_nor_executed(self):
         markers = []
-        for name in ('semgrep-core-proprietary', 'semgrep'):
+        for name in ('semgrep-core-proprietary', 'semgrep', 'pysemgrep'):
             marker = self.root / (name + '-executed'); markers.append(marker)
             binary = self.fixture['venv'] / 'bin' / name
             binary.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\n')
@@ -206,7 +225,79 @@ class SemgrepTests(unittest.TestCase):
         self.assertEqual(len(self.calls()), 2)
         self.assertFalse(any(marker.exists() for marker in markers), 'unverified venv helper executed')
         for call in self.calls():
-            self.assertEqual(call['helpers'], {'semgrep-core-proprietary':None, 'semgrep':None})
+            self.assertEqual(call['helpers'], {name:dict(path=None, adjacent=None)
+                for name in ('semgrep-core-proprietary', 'semgrep', 'pysemgrep')})
+
+    def test_shadow_prefix_has_only_python_and_the_verified_site(self):
+        value = self.measure()
+        self.assertEqual(value['receipt']['status'], 'measured', value)
+        for call in self.calls():
+            shadow = Path(call['prefix'])
+            site = shadow/'lib'/self.fixture['site'].parent.name/'site-packages'
+            self.assertEqual(shadow.name, 'shadow')
+            self.assertEqual(Path(call['executable']), shadow/'bin/python')
+            self.assertEqual(call['executable_entries'], ['python'])
+            self.assertEqual(call['site_paths'], [str(site)])
+            self.assertEqual(call['site_targets'], {str(site):str(self.fixture['site'])})
+            base = (self.fixture['venv']/'bin/python').resolve()
+            self.assertEqual(call['python_target'], str(base))
+            self.assertEqual(call['shadow_cfg'], 'home = '+str(base.parent)+'\ninclude-system-site-packages = false\n')
+
+    def test_receipts_from_operator_venv_execution_are_not_reused(self):
+        digest = self.s.digest
+        def legacy_digest(value):
+            if isinstance(value, dict) and 'version' in value and 'lock' in value:
+                value = {k:v for k,v in value.items() if k != 'execution'}
+            return digest(value)
+        with patch.object(self.s, 'digest', side_effect=legacy_digest):
+            prior = self.measure()
+        current = self.measure(reuse=True)
+        self.assertNotEqual(prior['receipt']['pin_digest'], current['receipt']['pin_digest'])
+        self.assertNotEqual(prior['receipt_path'], current['receipt_path'])
+        self.assertEqual(len(self.calls()), 4, 'receipt from the vulnerable boundary was reused')
+
+    def test_duplicate_operator_cfg_cannot_enable_system_startup(self):
+        system = self.root/'system-site-packages'; system.mkdir()
+        markers = []
+        for name in ('sitecustomize.py', 'system.pth'):
+            marker = self.root/(name+'-executed'); markers.append(marker)
+            (system/name).write_text('import pathlib; pathlib.Path('+repr(str(marker))+').touch()\n')
+        cfg = self.fixture['venv']/'pyvenv.cfg'
+        cfg.write_text(cfg.read_text()+'include-system-site-packages = true\n')
+        self.mode(system_site=str(system))
+        value = self.measure()
+        self.assertEqual(value['receipt']['status'], 'measured', value)
+        self.assertEqual(len(self.calls()), 2)
+        self.assertFalse(any(p.exists() for p in markers), 'unverified system startup executed')
+        for call in self.calls():
+            self.assertNotIn(call['base_prefix'], call['site_prefixes'])
+        # Execution also works without an operator config at all.
+        cfg.unlink()
+        self.assertEqual(self.measure()['receipt']['status'], 'measured')
+
+    def test_shadow_rejects_invalid_base_and_ambiguous_or_wrong_library_minor(self):
+        for kind in ('non-executable', 'directory'):
+            with self.subTest(kind=kind):
+                base = self.root/kind
+                if kind == 'directory': base.mkdir()
+                else: base.write_text('not executable'); base.chmod(0o600)
+                python = self.fixture['venv']/'bin/python'
+                original = python.readlink(); python.unlink(); python.symlink_to(base)
+                try:
+                    with self.assertRaisesRegex(ValueError, 'regular executable'):
+                        self.s.python_argv(self.fixture['venv'], self.root/('invalid-'+kind), '-c', 'pass')
+                finally:
+                    python.unlink(); python.symlink_to(original)
+        extra = self.fixture['venv']/'lib/python3.0/site-packages'; extra.mkdir(parents=True)
+        with patch.object(self.s, 'run_process', wraps=self.s.run_process) as run:
+            value = self.measure()
+        self.assertEqual(value['receipt']['status'], 'unavailable', value)
+        self.assertFalse(run.called)
+        shutil.rmtree(extra.parent)
+        with patch.object(self.s, 'interpreter', return_value=(self.fixture['system'], self.fixture['arch'], 'cp300')):
+            value = self.measure()
+        self.assertEqual(value['receipt']['status'], 'unavailable', value)
+        self.assertEqual(self.calls(), [])
 
     def test_network_probe_available_and_unavailable_without_host_dependency(self):
         for system in ('Linux','Darwin','unsupported'):
@@ -250,7 +341,10 @@ class SemgrepTests(unittest.TestCase):
                 else: extra.write_text('raise RuntimeError("untrusted")')
                 # A forged RECORD cannot confer authority.
                 (self.fixture['site'] / 'semgrep-1.183.0.dist-info/RECORD').write_text('updated to match tampering')
-                value = self.measure(); self.assertEqual(value['receipt']['status'], 'unavailable', value)
+                with patch.object(self.s, 'run_process', wraps=self.s.run_process) as run:
+                    value = self.measure()
+                self.assertEqual(value['receipt']['status'], 'unavailable', value)
+                self.assertFalse(run.called, 'interpreter probe preceded manifest verification')
                 self.assertEqual(self.calls(), [])
                 source.write_bytes(original); extra.unlink(missing_ok=True)
         marker=self.root/'unverified-startup-executed'
@@ -351,7 +445,7 @@ class SemgrepTests(unittest.TestCase):
                 self.assertFalse(receipt['blocking'])
                 for mock in (environment, prefix, probe, interpreter, verify, process, scanner):
                     mock.assert_not_called()
-                pin = dict(version=self.m.VERSION, lock=self.s.file_sha(SCRIPTS/'bureau-semgrep-lock.txt'),
+                pin = dict(version=self.m.VERSION, lock=self.s.file_sha(SCRIPTS/'bureau-semgrep-lock.txt'), execution='shadow-venv-v1',
                            manifests=[(p.name, self.s.file_sha(p)) for p in sorted(self.root.glob('bureau-semgrep-manifest-*.json'))])
                 self.assertEqual(receipt['pin_digest'], self.s.digest(pin))
                 self.assertEqual(self.calls(), [])
