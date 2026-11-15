@@ -98,6 +98,61 @@ Directory/glob/rule-wide ignores, missing reasons and extra keys are rejected as
 
 **Upgrade:** compare installed script drift, resync the complete scripts scope (including both helpers and the pin file), and restart drivers together. When `design.impeccable.enabled` is `true`, install the pinned skill 4.9.0 and engine 0.1.23 as above, then set `design.impeccable.skill_version` to `"4.9.0"` and `design.impeccable.engine_version` to `"0.1.23"` in `.bureau.json` together with the scripts resync, or remove both keys to follow the pins. Until the local tooling and configuration match the pins, Bureau reports Impeccable as unavailable and stages continue without it. With Impeccable off, only the resync is needed: setup writes the new defaults, and an existing `.bureau.json` with old version values and `enabled: false` is unaffected. Fake-detector tests require no downloads; an optional real-engine test runs only with `IMPECCABLE_BIN` set and checks the operator-supplied local binary. Live provider and adopting-repository qualification remains an operator check.
 
+### `review.semgrep`
+
+```json
+{
+  "review": {
+    "semgrep": {
+      "enabled": false,
+      "mode": "advisory",
+      "block_severity": "ERROR",
+      "extra_rules": null
+    }
+  }
+}
+```
+
+Semgrep CE is optional and off by default. Disabled review prompts, comments, verdicts and approval reuse identities are unchanged. Doctor and review validate all explicit values, including while disabled: `enabled` is boolean, `mode` is `advisory` or `blocking`, and `block_severity` is `INFO`, `WARNING` or `ERROR`. `extra_rules` is null or one plain repository-relative `.yml`/`.yaml` path; unknown keys and values are configuration errors. Extra rules and `.bureau/semgrep-ignore.json` are read only from the pinned PR base.
+
+The operator supplies a dedicated venv for **Semgrep 1.183.0**, selected by the process environment variable `BUREAU_SEMGREP_VENV`. The default is `<shared Git directory>/bureau/tools/semgrep/venv`, using the same state root as runtime ownership. Bureau installs or downloads nothing. Prepare the environment separately with the standard library `venv` module and install the locked wheels:
+
+```bash
+python3 -m venv --without-pip "$BUREAU_SEMGREP_VENV"
+uv pip install --python "$BUREAU_SEMGREP_VENV/bin/python" \
+  --require-hashes --only-binary :all: -r scripts/bureau-semgrep-lock.txt
+```
+
+Do not create it with `uv venv` or `virtualenv`: both add `_virtualenv.pth` and `_virtualenv.py` to `site-packages`, and verification rejects every file the manifest does not list. Bureau also needs a reviewed `bureau-semgrep-manifest-<os>-<arch>-cp<major><minor>.json` beside the runtime scripts that matches the venv's interpreter. Because some dependencies are compiled, every CPython minor needs its own manifest. This release ships `darwin-arm64-cp314` and `linux-x86_64-cp312`. With any other interpreter, an enabled scan reports **unavailable** and names the missing manifest. Missing venvs and missing/mismatched manifests never abort advisory review. There is no configurable version or manifest override.
+
+Maintainers generate a universal wheel-only lock for `semgrep==1.183.0` with `uv pip compile --universal --generate-hashes --only-binary :all:`. After selecting the complete wheel set for one OS, architecture and CPython minor, run `python3 scripts/semgrep_pin.py WHEEL_DIRECTORY --os linux --arch x86_64 --python cp312` in the Bureau source repository. The generator refuses any wheel hash absent from the lock. It hashes the payload files inside the locked wheels, maps purelib/platlib payloads to site-packages and refuses unsupported installation schemes or path collisions. Review the lock, manifest and tool compatibility together before shipping them. The maintainer script is not installed in adopting repositories.
+
+Before execution Bureau compares every site-packages file, including `semgrep-core`, against that manifest. Changed, missing or additional files make the tool unavailable. Install metadata inside `*.dist-info` (`RECORD`, `INSTALLER`, `direct_url.json`, `REQUESTED` and uv's `uv_cache.json`) and adjacent `__pycache__` directories are excluded. Each interpreter call uses `-I -B -X pycache_prefix=<fresh directory>`; launcher scripts and adjacent bytecode are not used. A pre-verification interpreter probe also uses `-S`. The operator's system Python itself is trusted, outside the package manifest.
+
+Every scan and interpreter probe receives an allowlist environment: fixed `PATH`, private `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `TMPDIR`, `LANG=C.UTF-8`, `TZ=UTC`, `SEMGREP_SEND_METRICS=off`, `SEMGREP_ENABLE_VERSION_CHECK=0` and `DO_NOT_TRACK=1`. Provider keys, Bureau secrets, GitHub tokens and other Semgrep settings do not pass through. Runtime network denial is required: Linux uses a probed `unshare -rn` user/network namespace; macOS uses `sandbox-exec` with the shipped `bureau-scan-nonet.sb` profile denying `network*`. If isolation cannot run, the status is **not_measured**, with reason `network isolation unavailable`. Bureau never falls back to an online scan.
+
+The scan uses private snapshots of changed Python, JavaScript and TypeScript files at pinned base and head, with explicit file lists. Bash remains covered by ShellCheck and shell boundary tests. Native `.semgrepignore`, `.semgrep.yml`, `.semgrep.yaml` and `.semgrep/` configuration is excluded and recorded in the snapshot manifest; git ignores and inline `nosemgrep` are disabled. `--no-rewrite-rule-ids` keeps authored rule IDs stable across private snapshot paths, so exact suppressions match. Only Bureau-authored rules ship, under Bureau's license; no Registry packs or engine binaries are vendored. The separately installed LGPL-2.1 engine runs as a separate program.
+
+Only new occurrences count toward the floor. Identity is rule ID, file and SHA-256 of matched lines with surrounding whitespace stripped per line. If a count rises from N to M, the surplus is new and the projection lists every head occurrence with that count note. Editing other lines leaves an existing finding existing; moving it to another file makes it new. Base-only suppressions require an exact file and rule ID with a named, nonempty reason:
+
+```json
+[
+  {"file": "src/legacy.py", "rule_id": "bureau.python.os-command", "reason": "Approved legacy maintenance boundary"}
+]
+```
+
+A suppression added by the PR cannot suppress that PR. Wildcards and reasonless suppressions fail measurement. The receipt distinguishes `findings_new`, `findings_existing` and `findings_suppressed`.
+
+Statuses are `measured`, `not_measured`, `unavailable`, `not_applicable` and `reduced_coverage`; every non-measured status names a reason. A measured result requires exit 0, valid JSON, no errors and coverage of every explicit target. Timeouts, skipped targets and tool/parse errors are not measured. An empty eligible set is not applicable, and Bureau then starts no Semgrep process. Semgrep does not emit reduced coverage: incomplete coverage is not measured. None of these statuses is rendered as clean.
+
+In advisory mode the scan reports evidence and review continues. Specialists finish their independent first pass before receiving the projection in the existing late step, for all three roles, even with Impeccable disabled. In blocking mode, new findings at the configured severity or higher, not-measured results and unavailable tooling lower APPROVE to REQUEST_CHANGES after the build fold and before the existing cycle/round caps. BLOCK stays BLOCK. The caps still escalate unresolved work for a human.
+
+Reports and receipts live in write-once attempts under `<state dir>/scans/semgrep/<identity digest>/<UTC timestamp-random suffix>/`. `report.json` retains raw tool JSON and snapshot metadata; `receipt.json` binds head, base, pin, settings and policy digests and the report hash; `projection.json` holds at most 20 findings with tool, rule ID, file, line, severity and count note. Matched source is never projected into comments. Receipt digests join the existing evidence archive. Retention keeps the newest 20 attempts per repository/tool plus PR-referenced attempts while their PR is open; an unreadable PR inventory conservatively keeps referenced attempts.
+
+Pin, settings and policy digests join approval reuse identity, independently of build-check reuse. Just before an automatic merge, after the existing gate recheck, blocking mode verifies a receipt for the final head and current base and reruns Semgrep when that identity has no valid durable receipt. Blocking findings, unavailable tooling and failed measurements refuse merge with the existing blocked gate outcome (25). The older Code Review v2 verdict reader's head binding is unchanged by this scanner integration.
+
+**Upgrade:** compare installed script drift, resync the entire scripts scope (including the shared helper, sandbox profile, rules, lock and platform manifests), and restart drivers together. Existing repositories stay off. Install the reviewed pinned venv and ensure network isolation works before opting into advisory mode; blocking is a separate project choice. Offline fake scanner tests cover the boundary and pipelines. The optional real-binary test runs only with `BUREAU_SEMGREP_VENV` set on GitHub-hosted Ubuntu; real pin, flag/rule compatibility and adopting-repository qualification require that separate validation.
+
 ### `agents`
 
 Which pipelines run, how often they poll, how aggressive they are.

@@ -1,0 +1,92 @@
+# Bureau-authored rules, under the repository license. No Registry rules.
+rules:
+  - id: bureau.python.subprocess-command
+    languages: [python]
+    severity: ERROR
+    message: Review shell execution or a string subprocess command.
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.$FUNC(..., shell=True, ...)
+          - pattern: subprocess.$FUNC("...", ...)
+          - pattern: subprocess.$FUNC(f"...", ...)
+          - patterns:
+              - pattern: subprocess.$FUNC($COMMAND, ...)
+              - metavariable-type:
+                  metavariable: $COMMAND
+                  type: str
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: ^(run|Popen|call|check_call|check_output|getoutput|getstatusoutput)$
+  - id: bureau.python.os-command
+    languages: [python]
+    severity: ERROR
+    message: Review shell execution through os.
+    pattern-either:
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+  - id: bureau.python.deserialize
+    languages: [python]
+    severity: ERROR
+    message: Review unsafe pickle or marshal deserialization.
+    pattern-either:
+      - pattern: pickle.load(...)
+      - pattern: pickle.loads(...)
+      - pattern: marshal.load(...)
+      - pattern: marshal.loads(...)
+  - id: bureau.python.yaml-load
+    languages: [python]
+    severity: ERROR
+    message: Use a safe YAML loader for untrusted data.
+    patterns:
+      - pattern: yaml.load(...)
+      - pattern-not: yaml.load(..., Loader=yaml.SafeLoader, ...)
+      - pattern-not: yaml.load(..., Loader=yaml.CSafeLoader, ...)
+      - pattern-not: yaml.load($DATA, yaml.SafeLoader)
+      - pattern-not: yaml.load($DATA, yaml.CSafeLoader)
+  - id: bureau.python.unverified-context
+    languages: [python]
+    severity: ERROR
+    message: Keep TLS certificate verification enabled.
+    pattern: ssl._create_unverified_context(...)
+  - id: bureau.python.verify-false
+    languages: [python]
+    severity: ERROR
+    message: Keep TLS certificate verification enabled.
+    pattern: $CALL(..., verify=False, ...)
+  - id: bureau.python.mktemp
+    languages: [python]
+    severity: WARNING
+    message: Use an atomically created temporary file.
+    pattern: tempfile.mktemp(...)
+  - id: bureau.javascript.exec-command
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Review shell commands built from templates or concatenation.
+    patterns:
+      - pattern-either:
+          - pattern: child_process.exec($CMD, ...)
+          - pattern: child_process.execSync($CMD, ...)
+      - metavariable-pattern:
+          metavariable: $CMD
+          pattern-either:
+            - pattern: $A + $B
+            - pattern: '`...`'
+  - id: bureau.javascript.dynamic-code
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Review dynamic code execution.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+  - id: bureau.javascript.reject-unauthorized
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Keep TLS certificate verification enabled.
+    pattern: '{..., rejectUnauthorized: false, ...}'
+  - id: bureau.javascript.node-tls
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Keep Node TLS certificate verification enabled.
+    pattern-either:
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = 0

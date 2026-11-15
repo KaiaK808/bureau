@@ -112,7 +112,9 @@ jobs:
             templates/scripts/bureau-config.sh \
             templates/scripts/implement-pipeline.sh \
             templates/scripts/qa-pipeline.sh \
-            templates/scripts/code-review-pipeline.sh
+            templates/scripts/code-review-pipeline.sh \
+            templates/scripts/merge-pipeline.sh \
+            templates/scripts/bureau-semgrep.sh
 
       - name: Run test harness
         run: PATH="/bin:$PATH" /bin/bash tests/run.sh

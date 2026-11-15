@@ -2,6 +2,14 @@
 
 Shell-based smoke tests for the pipeline scripts under `templates/scripts/`.
 
+## Offline scanner coverage
+
+`bash tests/test_semgrep.sh` checks the shared scanner boundary, synthetic-wheel manifest generation, explicit environment/argv, injected network isolation, bytecode tampering, occurrence-aware newness, base-only policy, durable receipts and projection bounds. It builds its own pip-free fake venv and manifest under `tempfile`; no downloads or provider credentials are needed.
+
+`bash tests/test_semgrep_pipeline.sh` uses the real review and merge stages with fake providers and GitHub. It checks the frozen disabled prompts/comment/verdict and reuse key, all three late-role receipts, the ordered blocking floor, reuse invalidation and final-head remeasurement/refusal. Tests inject the isolation probe only in temporary installed scripts; production has no test override in repository settings or the CLI. The frozen disabled fixture was captured from the unchanged parent runtime, with only fixture paths and Git/run IDs normalized.
+
+Both entrypoints are discovered by `tests/run.sh` and run in every full shard on macOS and Ubuntu; they are not in the focused macOS pull-request manifest, which keeps its runner-minute budget. Their sharding estimates use the runner's fallback until hosted timing records are available. The optional real Semgrep test requires `BUREAU_SEMGREP_VENV` and a GitHub-hosted Ubuntu runner; otherwise unittest reports a skip. It scans every shipped rule fixture through the production invocation and requires exactly the annotated `ruleid` lines to match and no `ok` line, then runs one scan through real network isolation. On macOS Python inserts `__CF_USER_TEXT_ENCODING` after exec even under `-I -S`: tests separately assert the exact environment passed to every process and the fake tool's environment, allowing only that OS-generated, non-inherited addition.
+
 ## Running
 
 ```bash

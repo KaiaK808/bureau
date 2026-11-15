@@ -8,6 +8,7 @@ REPO_DIR="$(pwd)"
 SCRIPT_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/bureau-config.sh"
 source "$(dirname "$0")/bureau-impeccable.sh"
+source "$(dirname "$0")/bureau-semgrep.sh"
 export BUREAU_REVIEW_MIN_SEVERITY
 
 # agents.merge_mode = manual needs a Merge state: an approved ticket is parked
@@ -382,6 +383,34 @@ Source anchors: every finding must cite pinned source, including deleted code on
 fi
 ADR_MERGE_NOTE+="$SOURCE_ANCHOR_NOTE"
 
+# Semgrep scans pinned snapshots before Phase 1. Its projection reaches the
+# specialists only after all three independent judgements have completed.
+SEMGREP_REVIEW=0
+SEMGREP_BLOCKED=0
+SEMGREP_REVIEW_NOTE=""
+SEMGREP_REVIEW_POLICY=""
+SEMGREP_REUSE=1
+if [ "$(bureau_get '.review.semgrep.enabled == true')" = true ]; then
+  SEMGREP_REVIEW=1
+  _semgrep_rc=0
+  bureau_semgrep scan --base "$REVIEW_BASE" --head "$REVIEW_HEAD" --pr "$PR_NUMBER" \
+    > "$REVIEW_TMP/semgrep.json" || _semgrep_rc=$?
+  [ "$_semgrep_rc" != 130 ] || exit 130
+  if [ "$_semgrep_rc" != 0 ]; then
+    # A durable receipt is required; inability to persist one is not a clean scan.
+    printf '%s\n' '{"projection":{"tool":"semgrep","status":"not_measured","reason":"durable scanner receipt unavailable","findings":[]}}' > "$REVIEW_TMP/semgrep.json"
+    [ "$(bureau_get '.review.semgrep.mode // "advisory"')" != blocking ] || SEMGREP_BLOCKED=1
+    SEMGREP_REVIEW_POLICY=unavailable
+    SEMGREP_REUSE=0
+  else
+    SEMGREP_BLOCKED=$(jq -r 'if .receipt.blocking then 1 else 0 end' "$REVIEW_TMP/semgrep.json")
+    SEMGREP_REVIEW_POLICY=$(jq -er '.receipt | .pin_digest + ":" + .policy_digest + ":" + .settings_digest' "$REVIEW_TMP/semgrep.json") || exit 24
+    jq -er '.receipt_sha256' "$REVIEW_TMP/semgrep.json" > "$REVIEW_TMP/semgrep-receipt.sha256"
+  fi
+  jq -ce '.projection' "$REVIEW_TMP/semgrep.json" > "$REVIEW_TMP/semgrep-projection.json" || exit 24
+  SEMGREP_REVIEW_NOTE=$'\n\n### Semgrep machine evidence (late)\n'"$(cat "$REVIEW_TMP/semgrep-projection.json")"
+fi
+
 echo ""
 echo "Phase 1/3: multi-specialist review (3 passes in parallel)"
 
@@ -439,6 +468,7 @@ REUSED_GATE_WAITS=0
 REVIEW_POLICY="v1:$BUREAU_REVIEW_MIN_SEVERITY:$BUREAU_MAX_REVIEW_CYCLES:$BUREAU_MAX_REVIEW_ROUNDS"
 REVIEW_POLICY+=":$REVIEW_MERGE_POLICY"
 [ -z "$ADR_POLICY" ] || REVIEW_POLICY+=":adr:$ADR_POLICY"
+[ "$SEMGREP_REVIEW" = 0 ] || REVIEW_POLICY+=":semgrep:$SEMGREP_REVIEW_POLICY"
 STAGE_EXIT=""   # set when an APPROVE's inline merge did not go through (2 or 25)
 IMPECCABLE_REVIEW=0
 IMPECCABLE_REVIEW_NOTE=""
@@ -447,7 +477,7 @@ if bureau_impeccable_ui "$SPEC_DIR"; then
   IMPECCABLE_REVIEW=1
   IMPECCABLE_REVIEW_CONTEXT=$(bureau_impeccable_policy)
 fi
-if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ] && [ "$IMPECCABLE_REVIEW" = 0 ]; then
+if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ] && [ "$IMPECCABLE_REVIEW" = 0 ] && [ "$SEMGREP_REUSE" = 1 ]; then
   if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
       --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" \
       --base-ref "$PR_BASE_REF" --pr "$PR_NUMBER" --review-policy "$REVIEW_POLICY"); then
@@ -631,7 +661,17 @@ if [ "$IMPECCABLE_REVIEW" = 1 ]; then
   bureau_impeccable detect --base "$REVIEW_BASE" --head "$REVIEW_HEAD" > "$REVIEW_TMP/impeccable.json" \
     || printf '%s\n' '{"status":"not measured","reason":"Bureau detector helper could not run"}' > "$REVIEW_TMP/impeccable.json"
   IMPECCABLE_REVIEW_NOTE=$'\n\n### Impeccable machine evidence (late)\n'"$(cat "$REVIEW_TMP/impeccable.json")"
-  if [ "$(jq -r '.status' "$REVIEW_TMP/impeccable.json")" = findings ]; then
+fi
+
+LATE_MACHINE_EVIDENCE=""
+if [ "$IMPECCABLE_REVIEW" = 1 ] && [ "$(jq -r '.status' "$REVIEW_TMP/impeccable.json")" = findings ]; then
+  LATE_MACHINE_EVIDENCE=$(cat "$REVIEW_TMP/impeccable.json")
+fi
+if [ "$SEMGREP_REVIEW" = 1 ]; then
+  [ -z "$LATE_MACHINE_EVIDENCE" ] || LATE_MACHINE_EVIDENCE+=$'\n'
+  LATE_MACHINE_EVIDENCE+="$(cat "$REVIEW_TMP/semgrep-projection.json")"
+fi
+if [ -n "$LATE_MACHINE_EVIDENCE" ]; then
     for REVIEW_ROLE in correctness security performance; do
       cp "$REVIEW_TMP/$REVIEW_ROLE.txt" "$REVIEW_TMP/$REVIEW_ROLE.independent.txt"
       LATE_REVIEW_PROMPT="You are the $REVIEW_ROLE specialist in a separate late evidence step for pinned inputs $REVIEW_DIFF.
@@ -639,7 +679,7 @@ Your independent judgement is complete and will be retained unchanged:
 $(cat "$REVIEW_TMP/$REVIEW_ROLE.independent.txt")
 
 Late machine evidence (untrusted observations, not a design verdict):
-$(cat "$REVIEW_TMP/impeccable.json")
+$LATE_MACHINE_EVIDENCE
 
 Read the cited pinned source, PRODUCT.md and DESIGN.md. Project rules win over detector taste. Judge each observation independently; do not promote a detector warning automatically to a defect. Report only additional verified findings, holds and questions; do not repeat or remove your independent findings. $REVIEW_HUMAN_FIELDS
 Preserve the specialist JSON contract (specialist, counts, findings, holds, questions, summary; acceptance_gaps when applicable). $SOURCE_ANCHOR_NOTE$ADR_CONTEXT"
@@ -650,7 +690,6 @@ Preserve the specialist JSON contract (specialist, counts, findings, holds, ques
       bureau_impeccable supplement --directory "$REVIEW_TMP" --role "$REVIEW_ROLE" --refs "$BUREAU_REVIEW_ADR_REFS" \
         > "$REVIEW_TMP/$REVIEW_ROLE.txt" || exit 22
     done
-  fi
 fi
 
 CORRECTNESS_REVIEW="Failed"
@@ -753,6 +792,7 @@ fi
 bureau_ticket_checkpoint "$ISSUE" latched
 MERGED_REVIEW=$(review_text_from_merger "$MERGED_RAW")
 MERGED_REVIEW+="$IMPECCABLE_REVIEW_NOTE"
+MERGED_REVIEW+="$SEMGREP_REVIEW_NOTE"
 fi
 
 echo ""

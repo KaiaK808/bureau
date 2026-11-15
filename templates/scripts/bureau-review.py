@@ -48,6 +48,7 @@ def sha(value):
 
 
 def settings(config):
+    if 'review' in config: module('semgrep').settings(config)
     agents = config.get('agents', {})
     grounding = agents.get('review_grounding', 'off')
     if grounding not in ('off', 'required'):

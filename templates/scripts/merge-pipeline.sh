@@ -653,6 +653,39 @@ if [ -n "$JIT_GATE_OUT" ]; then
   merge_gate_exit "$(printf '%s\n' "$JIT_GATE_OUT" | merge_gate_outcome)" "$JIT_GATE_OUT"
 fi
 
+# Blocking scanner evidence binds the final head, current PR base and all policy
+# digests independently of the existing Code Review v2 verdict reader above.
+if [ "$(bureau_get 'has("review")')" = true ]; then
+  # Load only for configured review settings, preserving the disabled legacy path.
+  source "$(dirname "$0")/bureau-semgrep.sh"
+  SEMGREP_SETTINGS=$(bureau_semgrep settings) || exit 24
+  if [ "$(printf '%s' "$SEMGREP_SETTINGS" | jq -r '.enabled and .mode == "blocking"')" = true ]; then
+    semgrep_merge_hold() {
+      printf '    %s\n' "$1"
+      merge_gate_exit blocked "$1"
+    }
+    _scan_refs=$(gh pr view "$PR_NUMBER" --json baseRefName,headRefName) \
+      || semgrep_merge_hold 'semgrep: current PR base unavailable'
+    _scan_base_ref=$(printf '%s' "$_scan_refs" | jq -er '.baseRefName | select(type == "string" and length > 0)') \
+      || semgrep_merge_hold 'semgrep: current PR base unavailable'
+    if [[ "$_scan_base_ref" == -* ]] || ! git check-ref-format "refs/heads/$_scan_base_ref" >/dev/null 2>&1; then
+      semgrep_merge_hold 'semgrep: unsafe PR base ref'
+    fi
+    git fetch --no-tags origin "+refs/heads/$_scan_base_ref:refs/remotes/origin/$_scan_base_ref" \
+      "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
+      || semgrep_merge_hold 'semgrep: pinned source unavailable'
+    _scan_base=$(git rev-parse --verify "refs/remotes/origin/$_scan_base_ref^{commit}") \
+      || semgrep_merge_hold 'semgrep: pinned base unavailable'
+    _semgrep_rc=0
+    SEMGREP_RESULT=$(bureau_semgrep scan --base "$_scan_base" --head "$MERGE_HEAD" --pr "$PR_NUMBER" --reuse) || _semgrep_rc=$?
+    [ "$_semgrep_rc" != 130 ] || exit 130
+    [ "$_semgrep_rc" = 0 ] || semgrep_merge_hold 'semgrep: durable scanner receipt unavailable'
+    if [ "$(printf '%s' "$SEMGREP_RESULT" | jq -r '.receipt.blocking')" != false ]; then
+      semgrep_merge_hold "semgrep: $(printf '%s' "$SEMGREP_RESULT" | jq -c '.projection')"
+    fi
+  fi
+fi
+
 # No --delete-branch: same reason code-review-pipeline.sh dropped it (commit
 # d812471). Inside .worktrees/queue-merge gh fails on detached HEAD or when
 # main is held by the primary worktree. Remote branch deletion belongs to the
