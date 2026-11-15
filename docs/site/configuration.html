@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3baf06c37582ca59f4f70a57fe7beac7443379841cfa71760717aaf2b378db67">
+<meta name="bureau-source-sha256" content="cd46d5d00100ab4a433f1a817307c5f48df62ec86b49b9f57a64f87df1d1c856">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -488,31 +488,44 @@ wheels, maps purelib/platlib payloads to site-packages and refuses
 unsupported installation schemes or path collisions. Review the lock,
 manifest and tool compatibility together before shipping them. The
 maintainer script is not installed in adopting repositories.</p>
-<p>Before the interpreter probe and again before each scan side, Bureau
-compares every site-packages file, including <code>semgrep-core</code>,
-against that manifest. Changed, missing or additional files make the
-tool unavailable. Install metadata inside <code>*.dist-info</code>
-(<code>RECORD</code>, <code>INSTALLER</code>,
-<code>direct_url.json</code>, <code>REQUESTED</code> and uv's
-<code>uv_cache.json</code>) and adjacent <code>__pycache__</code>
-directories are excluded. The operator venv must contain exactly one
+<p>Once per measurement, after selecting the manifest, Bureau copies
+site-packages into a private runtime under the run's
+<code>mkdtemp</code> directory (mode 0700). Every component from the
+operator venv root through
+<code>lib/python3.&lt;minor&gt;/site-packages</code> must be a real
+directory, checked with <code>lstat</code>; all entries inside must be
+regular files or real directories, including excluded entries. Bureau
+anchors traversal to directory descriptors, opens source files with
+<code>O_NOFOLLOW</code> and hashes the same reads it writes into the
+copy, preserving only the executable bit (files 0700 or 0600,
+directories 0700). It compares the copied file set, including
+<code>semgrep-core</code>, with the manifest before the interpreter
+probe, then re-hashes the private copy before each scan side. Changed,
+missing or additional files make the tool unavailable; changes to the
+operator tree after copying cannot affect execution. Install metadata
+inside <code>*.dist-info</code> (<code>RECORD</code>,
+<code>INSTALLER</code>, <code>direct_url.json</code>,
+<code>REQUESTED</code> and uv's <code>uv_cache.json</code>) and adjacent
+<code>__pycache__</code> directories are excluded from copied files and
+manifest comparison. The operator venv must contain exactly one
 <code>lib/python3.&lt;minor&gt;/site-packages</code> directory; its
 minor and the selected manifest's platform must match the interpreter
 probe. The operator's system Python itself is trusted, outside the
 package manifest.</p>
-<p>Every interpreter invocation, including the <code>-I -S</code> probe
-and each scan side, gets a fresh private shadow environment under the
-run's temporary directory. Bureau writes exactly two
+<p>The <code>-I -S</code> interpreter probe and both scan sides share
+one private shadow venv per measurement. Bureau writes exactly two
 <code>pyvenv.cfg</code> lines:
 <code>home = &lt;base interpreter directory&gt;</code> and
 <code>include-system-site-packages = false</code>. The shadow's
 <code>bin</code> contains only <code>python</code>, a symlink to the
 resolved real path of the operator venv's <code>bin/python</code>; that
 base must be an absolute regular executable file. The shadow's
-<code>lib/python3.&lt;minor&gt;/site-packages</code> links to the
-verified operator site-packages. Bureau never executes the operator
-venv's own Python path or uses its <code>pyvenv.cfg</code> settings,
-including duplicate system-package settings. Each call uses
+<code>lib/python3.&lt;minor&gt;/site-packages</code> is the verified
+private copy, a real directory preserving the package layout, including
+<code>semgrep/bin/libs</code> for resource-based core discovery. Bureau
+never executes the operator venv's own Python path or uses its
+<code>pyvenv.cfg</code> settings, including duplicate system-package
+settings. Each call uses
 <code>-I -B -X pycache_prefix=&lt;fresh directory&gt;</code>; the probe
 additionally uses <code>-S</code>. Operator launchers,
 executable-adjacent fallback helpers, system site-packages and adjacent
@@ -593,13 +606,19 @@ work for a human.</p>
 digests and the report hash; <code>projection.json</code> holds at most
 20 findings with tool, rule ID, file, line, severity and count note.
 Matched source is never projected into comments. Receipt digests join
-the existing evidence archive. Retention keeps the newest 20 attempts
-per repository/tool plus PR-referenced attempts while their PR is open;
-an unreadable PR inventory conservatively keeps referenced attempts.</p>
+the existing evidence archive. Every PR that produces or reuses an
+attempt adds an exclusively created <code>refs/pr-&lt;number&gt;</code>
+file under the retention lock, without rewriting the receipt; receipt
+validation ignores this reference directory. Retention keeps the newest
+20 attempts per repository/tool plus any attempt referenced by at least
+one open PR, including a replacement PR reusing evidence from a closed
+PR; an unreadable PR inventory conservatively keeps all referenced
+attempts. Legacy receipts also retain their original <code>pr</code>
+reference.</p>
 <p>Pin, settings and policy digests join approval reuse identity,
-independently of build-check reuse. The pin identity includes the shadow
-execution boundary, so receipts and approvals from the previous
-operator-venv invocation are not reused. Before the existing
+independently of build-check reuse. The pin identity includes the
+private-copy execution boundary, so receipts and approvals from earlier
+operator-linked runtimes are not reused. Before the existing
 just-in-time merge gate recheck, blocking mode reads the PR head and
 current base ref/commit and runs Semgrep with receipt reuse for those
 inputs. After the scan, Bureau prepares the merge message, fetches the

@@ -207,9 +207,9 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
     state = _state if _state is not None else scan.state_dir(repo)
     manifests = _manifests if _manifests is not None else SCRIPTS
     # Missing inputs still get an identity and durable, explicitly unavailable receipt.
-    # Receipts produced through the old operator-venv execution boundary cannot
+    # Receipts produced through an operator-linked execution boundary cannot
     # be reused even when their wheel hashes, source and policy are unchanged.
-    pin = dict(version=VERSION, lock=scan.file_sha(SCRIPTS / 'bureau-semgrep-lock.txt'), execution='shadow-venv-v1')
+    pin = dict(version=VERSION, lock=scan.file_sha(SCRIPTS / 'bureau-semgrep-lock.txt'), execution='private-runtime-v2')
     # Even an unavailable interpreter/isolation must invalidate an advisory
     # approval when the installed pin assets change; no unverified probe is needed.
     pin['manifests'] = []
@@ -232,11 +232,11 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
             # Never check or execute scanner prerequisites for an empty input set.
             if not any(files for _, files in sides.values()):
                 bound = scan.identity('semgrep', head, base, scan.digest(pin), settings_digest, policy_digest)
-                prior = scan.find_receipt(state, bound, options) if reuse else None
+                prior = scan.find_receipt(state, bound, options, pr=pr) if reuse else None
                 if prior: return prior
                 status, reason = 'not_applicable', 'no changed eligible Python, JavaScript or TypeScript files'
             else:
-                venv = Path(_venv or os.environ.get('BUREAU_SEMGREP_VENV') or state / 'tools/semgrep/venv').expanduser().resolve()
+                venv = Path(_venv or os.environ.get('BUREAU_SEMGREP_VENV') or state / 'tools/semgrep/venv').expanduser().absolute()
                 env = scan.environment(root, SWITCHES)
                 prefix = _prefix if _prefix is not None else scan.network_prefix()
                 probe = _probe or scan.probe_network
@@ -246,15 +246,16 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
                     status, reason = 'not_measured', 'network isolation unavailable'
                 else:
                     try:
-                        manifest_path, pin['manifest'], expected = scan.verified_runtime(venv, manifests, 'semgrep', VERSION)
-                        system, arch, abi = scan.interpreter(venv, root, env, prefix)
+                        runtime = root / 'shadow'
+                        manifest_path, pin['manifest'], expected = scan.verified_runtime(venv, manifests, 'semgrep', VERSION, runtime)
+                        system, arch, abi = scan.interpreter(runtime, root, env, prefix)
                         if (system, arch, abi) != expected:
                             raise ValueError('runtime manifest platform or library minor does not match interpreter probe')
                     except (OSError, ValueError, TypeError, KeyError) as exc:
                         status, reason = 'unavailable', str(exc) if isinstance(exc, ValueError) else 'runtime manifest unreadable'
                     else:
                         bound = scan.identity('semgrep', head, base, scan.digest(pin), settings_digest, policy_digest)
-                        prior = scan.find_receipt(state, bound, options) if reuse else None
+                        prior = scan.find_receipt(state, bound, options, pr=pr) if reuse else None
                         if prior: return prior
                         config_dir = root / 'rules'; config_dir.mkdir(mode=0o700)
                         paths = []
@@ -265,11 +266,11 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
                         for side, (directory, files) in sides.items():
                             if files:
                                 try:
-                                    scan.verify_venv(venv, manifest_path, 'semgrep', VERSION, system, arch, abi,
+                                    scan.verify_venv(runtime, manifest_path, 'semgrep', VERSION, system, arch, abi,
                                                      manifest_sha=pin['manifest'])
                                 except (OSError, ValueError, TypeError, KeyError) as exc:
                                     raise ArtifactUnavailable('runtime artifact changed before ' + side + ' scan') from exc
-                            raw = run_side(venv, prefix, root, env, side, directory, files, paths)
+                            raw = run_side(runtime, prefix, root, env, side, directory, files, paths)
                             report[side] = raw
                             if not files: findings[side] = []; continue
                             if raw['exit_code'] != 0: raise ValueError('Semgrep non-zero exit on ' + side)

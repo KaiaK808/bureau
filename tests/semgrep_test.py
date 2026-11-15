@@ -30,7 +30,7 @@ def load(name, path=None):
 
 
 FAKE = r'''
-import json, os, pathlib, shutil, site, subprocess, sys, time
+import importlib.resources, json, os, pathlib, shutil, site, subprocess, sys, time
 settings = json.loads(pathlib.Path(SETTINGS).read_text())
 # Model a system site directory without writing to the host's Python install.
 # CPython's effective venv configuration decides whether that prefix is enabled.
@@ -50,6 +50,14 @@ record = dict(env=dict(os.environ), argv=args, python=sys.orig_argv if hasattr(s
               shadow_cfg=(pathlib.Path(sys.prefix)/'pyvenv.cfg').read_text(),
               python_target=str(pathlib.Path(sys.executable).resolve()),
               site_targets={p:str(pathlib.Path(p).resolve()) for p in sys.path if p.endswith('/site-packages')})
+if settings.get('run_core'):
+    package = importlib.resources.files('semgrep')
+    core = package.joinpath('bin/semgrep-core')
+    record['core_output'] = subprocess.check_output([str(core)], text=True)
+    record['runtime_modes'] = {name:package.joinpath(name).stat().st_mode & 0o777
+                               for name in ('bin', 'bin/libs', 'bin/semgrep-core', 'bin/libs/core-data', '__init__.py')}
+    record['site_is_symlink'] = pathlib.Path(record['site_paths'][0]).is_symlink()
+    record['run_mode'] = pathlib.Path(os.environ['HOME']).parent.stat().st_mode & 0o777
 if settings.get('lookup_helpers'):
     record['helpers'] = {}
     for name in ('semgrep-core-proprietary', 'semgrep', 'pysemgrep'):
@@ -94,7 +102,10 @@ def fake_install(root, scripts):
     settings.write_text('{}')
     (package / 'console_scripts').mkdir(); (package / 'console_scripts/__init__.py').write_text('')
     (package / 'console_scripts/pysemgrep.py').write_text('SETTINGS=' + repr(str(settings)) + '\nCALLS=' + repr(str(calls)) + '\n' + FAKE)
-    (package / 'bin').mkdir(); (package / 'bin/semgrep-core').write_bytes(b'fixture core')
+    (package / 'bin/libs').mkdir(parents=True)
+    (package / 'bin/semgrep-core').write_text('#!/bin/sh\n/bin/cat "${0%/*}/libs/core-data"\n')
+    (package / 'bin/semgrep-core').chmod(0o751)
+    (package / 'bin/libs/core-data').write_text('verified core library\n')
     metadata = site / 'semgrep-1.183.0.dist-info'; metadata.mkdir()
     (metadata / 'METADATA').write_text('Version: 1.183.0\n')
     (metadata / 'RECORD').write_text('untrusted record\n')
@@ -204,11 +215,12 @@ class SemgrepTests(unittest.TestCase):
         wrapped = [json.loads(s) for s in (self.root / 'wrapper-calls.jsonl').read_text().splitlines()]
         self.assertEqual(len(wrapped), 3)  # isolated interpreter probe plus both scan sides
         self.assertIn('-S',wrapped[0])
-        self.assertEqual(len({args[0] for args in wrapped}), 3, 'invocations shared a shadow')
+        self.assertEqual(len({args[0] for args in wrapped}), 1, 'invocations did not share the private runtime')
+        self.assertEqual(len({args[args.index('-X')+1] for args in wrapped}), 3, 'invocations shared a bytecode cache')
         for args in wrapped:
             binary = Path(args[0])
             self.assertEqual(binary.parts[-3:], ('shadow', 'bin', 'python'))
-            self.assertEqual(binary.parents[3], root)
+            self.assertEqual(binary.parents[2], root)
         for args in wrapped[1:]:
             for flag in ('-I','-B','-X','-m'): self.assertIn(flag, args)
 
@@ -238,7 +250,7 @@ class SemgrepTests(unittest.TestCase):
             self.assertEqual(Path(call['executable']), shadow/'bin/python')
             self.assertEqual(call['executable_entries'], ['python'])
             self.assertEqual(call['site_paths'], [str(site)])
-            self.assertEqual(call['site_targets'], {str(site):str(self.fixture['site'])})
+            self.assertEqual(call['site_targets'], {str(site):str(site)})
             base = (self.fixture['venv']/'bin/python').resolve()
             self.assertEqual(call['python_target'], str(base))
             self.assertEqual(call['shadow_cfg'], 'home = '+str(base.parent)+'\ninclude-system-site-packages = false\n')
@@ -255,6 +267,108 @@ class SemgrepTests(unittest.TestCase):
         self.assertNotEqual(prior['receipt']['pin_digest'], current['receipt']['pin_digest'])
         self.assertNotEqual(prior['receipt_path'], current['receipt_path'])
         self.assertEqual(len(self.calls()), 4, 'receipt from the vulnerable boundary was reused')
+
+    def test_receipts_from_mutable_shadow_execution_are_not_reused(self):
+        digest = self.s.digest
+        def legacy_digest(value):
+            if isinstance(value, dict) and 'execution' in value:
+                value = {**value, 'execution':'shadow-venv-v1'}
+            return digest(value)
+        with patch.object(self.s, 'digest', side_effect=legacy_digest):
+            prior = self.measure()
+        current = self.measure(reuse=True)
+        self.assertNotEqual(prior['receipt']['pin_digest'], current['receipt']['pin_digest'])
+        self.assertNotEqual(prior['receipt_path'], current['receipt_path'])
+        self.assertEqual(len(self.calls()), 4)
+
+    def test_private_runtime_preserves_core_executable_and_resource_layout(self):
+        self.mode(run_core=True)
+        value = self.measure()
+        self.assertEqual(value['receipt']['status'], 'measured', value)
+        self.assertEqual(len(self.calls()), 2)
+        for call in self.calls():
+            self.assertEqual(call['core_output'], 'verified core library\n')
+            self.assertEqual(call['runtime_modes'], {'bin':0o700, 'bin/libs':0o700, 'bin/semgrep-core':0o700,
+                                                    'bin/libs/core-data':0o600, '__init__.py':0o600})
+            self.assertFalse(call['site_is_symlink'])
+            self.assertEqual(call['run_mode'], 0o700)
+
+    def test_operator_replacement_after_verification_cannot_execute(self):
+        marker = self.root/'operator-replacement-executed'
+        source = self.fixture['site']/'semgrep/console_scripts/pysemgrep.py'
+        before = source.read_text()
+        original = self.m.run_side
+        def replace(venv, prefix, root, env, side, directory, files, rules):
+            if side == 'base':
+                source.write_text('from pathlib import Path\nPath('+repr(str(marker))+').touch()\n'+before)
+            return original(venv, prefix, root, env, side, directory, files, rules)
+        with patch.object(self.m, 'run_side', side_effect=replace):
+            value = self.measure()
+        self.assertFalse(marker.exists(), 'operator replacement executed after artifact verification')
+        self.assertEqual(value['receipt']['status'], 'measured', value)
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_symlinked_venv_components_are_unavailable_before_execution(self):
+        for component in (self.fixture['venv'], self.fixture['venv']/'lib',
+                          self.fixture['site'].parent, self.fixture['site']):
+            with self.subTest(component=component):
+                self.fixture['calls'].unlink(missing_ok=True)
+                target = self.root/'retargeted-component'
+                component.rename(target)
+                component.symlink_to(target, target_is_directory=True)
+                try:
+                    with patch.object(self.s, 'run_process', wraps=self.s.run_process) as run:
+                        value = self.measure()
+                    self.assertEqual(value['receipt']['status'], 'unavailable', value)
+                    run.assert_not_called()
+                    self.assertEqual(self.calls(), [])
+                finally:
+                    component.unlink(); target.rename(component)
+
+    def test_symlinks_and_fifos_including_excluded_entries_are_unavailable(self):
+        for name in ('semgrep/intruder.py', 'semgrep/__pycache__/intruder.pyc',
+                     'semgrep-1.183.0.dist-info/direct_url.json'):
+            entry = self.fixture['site']/name; entry.parent.mkdir(exist_ok=True)
+            for kind in ('symlink', 'fifo'):
+                with self.subTest(name=name, kind=kind):
+                    if kind == 'symlink': entry.symlink_to(self.fixture['site']/'semgrep/__init__.py')
+                    else: os.mkfifo(entry)
+                    try:
+                        with patch.object(self.s, 'run_process', wraps=self.s.run_process) as run:
+                            value = self.measure()
+                        self.assertEqual(value['receipt']['status'], 'unavailable', value)
+                        run.assert_not_called()
+                        self.assertEqual(self.calls(), [])
+                    finally:
+                        entry.unlink()
+
+    def test_source_replaced_by_symlink_at_open_is_unavailable_without_execution(self):
+        source = self.fixture['site']/'semgrep/__init__.py'
+        outside = self.root/'outside-package.py'; outside.write_bytes(source.read_bytes())
+        inode = source.stat().st_ino
+        original_open, original_path_open = os.open, Path.open
+        swapped = False
+        def swap():
+            nonlocal swapped
+            if not swapped:
+                source.unlink(); source.symlink_to(outside)
+                swapped = True
+        def open_source(path, flags, mode=0o777, *, dir_fd=None):
+            if dir_fd is not None and path == source.name and os.lstat(path, dir_fd=dir_fd).st_ino == inode:
+                swap()
+            return original_open(path, flags, mode, dir_fd=dir_fd)
+        def open_path(path, *args, **kwargs):
+            # Also exercise the former path-based verifier as a negative control.
+            if path == source and args and args[0] == 'rb': swap()
+            return original_path_open(path, *args, **kwargs)
+        with patch.object(self.s.os, 'open', side_effect=open_source), \
+             patch.object(Path, 'open', open_path), \
+             patch.object(self.s, 'run_process', wraps=self.s.run_process) as run:
+            value = self.measure()
+        self.assertTrue(swapped, 'the source-open race was not exercised')
+        self.assertEqual(value['receipt']['status'], 'unavailable', value)
+        run.assert_not_called()
+        self.assertEqual(self.calls(), [])
 
     def test_duplicate_operator_cfg_cannot_enable_system_startup(self):
         system = self.root/'system-site-packages'; system.mkdir()
@@ -365,11 +479,24 @@ class SemgrepTests(unittest.TestCase):
         original=self.m.run_side
         def tamper(venv,prefix,root,env,side,directory,files,rules):
             result=original(venv,prefix,root,env,side,directory,files,rules)
-            if side=='base': (self.fixture['site']/'semgrep/__init__.py').write_text('# changed between scan sides\n')
+            if side=='base':
+                self.assertNotEqual(venv, self.fixture['venv'])
+                site, _ = self.s.venv_site(venv)
+                (site/'semgrep/__init__.py').write_text('# private copy changed between scan sides\n')
             return result
         with patch.object(self.m,'run_side',side_effect=tamper): value=self.measure()
         self.assertEqual(value['receipt']['status'],'unavailable')
         self.assertEqual([Path(c['cwd']).name for c in self.calls()],['base'])
+
+    def test_operator_tampering_between_sides_does_not_change_private_runtime(self):
+        original = self.m.run_side
+        def tamper(venv, prefix, root, env, side, directory, files, rules):
+            result = original(venv, prefix, root, env, side, directory, files, rules)
+            if side == 'base': (self.fixture['site']/'semgrep/__init__.py').write_text('# operator changed\n')
+            return result
+        with patch.object(self.m, 'run_side', side_effect=tamper): value = self.measure()
+        self.assertEqual(value['receipt']['status'], 'measured', value)
+        self.assertEqual([Path(c['cwd']).name for c in self.calls()], ['base', 'head'])
 
     def test_tampered_valid_header_adjacent_bytecode_never_executes(self):
         source = self.fixture['site'] / 'semgrep/console_scripts/pysemgrep.py'
@@ -445,7 +572,7 @@ class SemgrepTests(unittest.TestCase):
                 self.assertFalse(receipt['blocking'])
                 for mock in (environment, prefix, probe, interpreter, verify, process, scanner):
                     mock.assert_not_called()
-                pin = dict(version=self.m.VERSION, lock=self.s.file_sha(SCRIPTS/'bureau-semgrep-lock.txt'), execution='shadow-venv-v1',
+                pin = dict(version=self.m.VERSION, lock=self.s.file_sha(SCRIPTS/'bureau-semgrep-lock.txt'), execution='private-runtime-v2',
                            manifests=[(p.name, self.s.file_sha(p)) for p in sorted(self.root.glob('bureau-semgrep-manifest-*.json'))])
                 self.assertEqual(receipt['pin_digest'], self.s.digest(pin))
                 self.assertEqual(self.calls(), [])
@@ -528,6 +655,34 @@ class SemgrepTests(unittest.TestCase):
             self.s.retain(self.root/'retention/scans/semgrep', open_prs=[])
         self.assertEqual(len(list((self.root/'retention/scans/semgrep').glob('*/*/receipt.json'))),20)
 
+    def test_replacement_pr_reuse_retains_immutable_receipt_until_all_references_close(self):
+        for applicable in (True, False):
+            with self.subTest(applicable=applicable):
+                if not applicable: self.base = self.head
+                first = self.measure(pr=7)
+                receipt = Path(first['receipt_path']); before = receipt.read_bytes()
+                reused = self.measure(reuse=True, pr=8, open_prs=[8])
+                self.assertEqual(reused['receipt_path'], first['receipt_path'])
+                self.assertEqual(reused['receipt_sha256'], first['receipt_sha256'])
+                bound = {k:first['receipt'][k] for k in self.s.BOUND}; options = self.m.settings(self.config)
+                state = self.root/'state'; tool_root = state/'scans/semgrep'
+                for n in range(22):
+                    newer = {**bound, 'policy_digest':self.s.digest(dict(newer=n))}
+                    self.s.persist(state, newer, options, 'measured', None, {}, open_prs=[8])
+                self.assertTrue(receipt.exists(), 'open replacement PR lost its reused evidence')
+                self.assertEqual(receipt.read_bytes(), before, 'receipt was rewritten on reuse')
+                references = receipt.parent/'refs'
+                self.assertEqual(sorted(p.name for p in references.iterdir()), ['pr-7', 'pr-8'])
+                reference = references/'pr-8'; reference_time = reference.stat().st_mtime_ns
+                self.assertEqual(self.measure(reuse=True, pr=8)['receipt_path'], str(receipt))
+                self.assertEqual(reference.stat().st_mtime_ns, reference_time, 'reference was rewritten')
+                self.assertEqual(receipt.read_bytes(), before, 'receipt was rewritten on repeated reuse')
+                self.assertIsNotNone(self.s.validate_receipt(receipt, bound, options))
+                self.s.retain(tool_root, open_prs=None)
+                self.assertTrue(receipt.exists(), 'unknown inventory lost referenced evidence')
+                self.s.retain(tool_root, open_prs=[])
+                self.assertFalse(receipt.exists(), 'closed references prevented retention')
+
     def test_projection_bounded_and_never_contains_matches(self):
         (self.repo/'new.js').write_text('eval(secretValue);\n'*25); self.commit()
         value = self.measure(); projected = value['projection']
@@ -597,13 +752,15 @@ class RealBinaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='bureau-semgrep-real-') as tmp:
             root=Path(tmp); env=s.environment(root,m.SWITCHES); prefix=s.network_prefix()
             self.assertTrue(s.probe_network(prefix,root,env),'network isolation unavailable')
-            system,arch,abi=s.interpreter(env_path,root,env,prefix)
-            manifest=SCRIPTS/('bureau-semgrep-manifest-'+system+'-'+arch+'-'+abi+'.json')
-            s.verify_venv(env_path,manifest,'semgrep',m.VERSION,system,arch,abi)
+            runtime=root/'shadow'
+            manifest,manifest_sha,expected=s.verified_runtime(env_path,SCRIPTS,'semgrep',m.VERSION,runtime)
+            system,arch,abi=s.interpreter(runtime,root,env,prefix)
+            self.assertEqual((system,arch,abi),expected)
+            s.verify_venv(runtime,manifest,'semgrep',m.VERSION,system,arch,abi,manifest_sha)
             # Rule fixtures run through the production invocation: every ruleid line needs the
             # rule on the next line, every ok line forbids it, and nothing else may match.
             fixtures=ROOT/'tests/fixtures/semgrep'; names=sorted(p.name for p in fixtures.iterdir())
-            raw=m.run_side(env_path,prefix,root,env,'fixtures',fixtures,names,[SCRIPTS/'bureau-semgrep-rules.yml'])
+            raw=m.run_side(runtime,prefix,root,env,'fixtures',fixtures,names,[SCRIPTS/'bureau-semgrep-rules.yml'])
             self.assertEqual(raw['exit_code'],0,raw)
             got={(r['file'],r['line'],r['rule_id']) for r in m.parse_report(raw['json'],names,fixtures)}
             want,forbid=set(),set()
@@ -613,8 +770,8 @@ class RealBinaryTests(unittest.TestCase):
                     if match: (want if match.group(1)=='ruleid' else forbid).add((name,number+1,match.group(2)))
             self.assertTrue(want and forbid); self.assertEqual(got,want); self.assertFalse(got & forbid)
             snapshot=root/'head';snapshot.mkdir();(snapshot/'sample.py').write_text('import os\nos.system(user_input)\n')
-            s.verify_venv(env_path,manifest,'semgrep',m.VERSION,system,arch,abi)
-            raw=m.run_side(env_path,prefix,root,env,'head',snapshot,['sample.py'],[SCRIPTS/'bureau-semgrep-rules.yml'])
+            s.verify_venv(runtime,manifest,'semgrep',m.VERSION,system,arch,abi,manifest_sha)
+            raw=m.run_side(runtime,prefix,root,env,'head',snapshot,['sample.py'],[SCRIPTS/'bureau-semgrep-rules.yml'])
             self.assertEqual(raw['exit_code'],0,raw)
             self.assertTrue(m.parse_report(raw['json'],['sample.py'],snapshot))
 

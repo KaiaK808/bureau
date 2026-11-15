@@ -4,7 +4,7 @@
 The operator's system interpreter is trusted. Package RECORD files, entry-point
 launchers, repository configuration and adjacent bytecode are never trust anchors.
 """
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from functools import lru_cache
 import fcntl
@@ -17,6 +17,7 @@ import platform
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import uuid
@@ -130,35 +131,43 @@ def probe_network(prefix, root, env):
 
 def venv_site(venv):
     # Infer the minor without executing Python or reading operator pyvenv.cfg.
-    sites = list((venv / 'lib').glob('python*/site-packages'))
+    sites = []
+    with real_directory(venv) as root, real_directory('lib', dir_fd=root) as lib:
+        for name in sorted(os.listdir(lib)):
+            if not name.startswith('python'): continue
+            with real_directory(name, dir_fd=lib) as library:
+                try:
+                    mode = os.lstat('site-packages', dir_fd=library).st_mode
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISDIR(mode):
+                    raise ValueError('venv site-packages components must be real directories')
+                sites.append(venv / 'lib' / name / 'site-packages')
     if len(sites) != 1:
         raise ValueError('venv must contain exactly one Python site-packages directory')
     site = sites[0]
-    if (not re.fullmatch(r'python3\.(0|[1-9][0-9]*)', site.parent.name)
-            or not site.is_dir() or site.is_symlink() or site.parent.is_symlink()):
+    if not re.fullmatch(r'python3\.(0|[1-9][0-9]*)', site.parent.name):
         raise ValueError('venv site-packages does not match its interpreter')
     return site, 'cp3' + site.parent.name.partition('.')[2]
 
 
-def python_argv(venv, invocation, *args, no_site=False):
-    # Neither executable-adjacent helpers nor operator venv settings may escape
-    # the wheel manifest. Each invocation gets a new, Bureau-owned environment.
+def base_python(venv):
     base = (venv / 'bin/python').resolve(strict=True)
     if (not base.is_absolute() or not base.is_file() or not os.access(base, os.X_OK)
             or '\n' in str(base.parent) or '\r' in str(base.parent)):
         raise ValueError('base interpreter must be an absolute regular executable file')
-    site, _ = venv_site(venv)
+    return base
+
+
+def python_argv(venv, invocation, *args, no_site=False):
+    # The venv is the private, verified runtime; only the bytecode prefix is new
+    # for each invocation. Never link back to the operator's mutable packages.
+    base_python(venv)
+    venv_site(venv)
     invocation.mkdir(mode=0o700)
-    shadow = invocation / 'shadow'
-    (shadow / 'bin').mkdir(mode=0o700, parents=True)
-    (shadow / 'bin/python').symlink_to(base)
-    (shadow / 'pyvenv.cfg').write_text('home = ' + str(base.parent) + '\ninclude-system-site-packages = false\n')
-    library = shadow / 'lib' / site.parent.name
-    library.mkdir(mode=0o700, parents=True)
-    (library / 'site-packages').symlink_to(site, target_is_directory=True)
     cache = invocation / 'cache'
     cache.mkdir(mode=0o700)  # fresh, empty, never shared with another invocation
-    return [str(shadow / 'bin/python'), '-I', '-B', '-X', 'pycache_prefix=' + str(cache),
+    return [str(venv / 'bin/python'), '-I', '-B', '-X', 'pycache_prefix=' + str(cache),
             *(['-S'] if no_site else []), *args]
 
 
@@ -183,17 +192,76 @@ def excluded(name):
             (parts[-1] in METADATA and len(parts) > 1 and parts[-2].endswith('.dist-info')))
 
 
-def site_files(site):
+@contextmanager
+def real_directory(path, *, dir_fd=None):
+    if not stat.S_ISDIR(os.lstat(path, dir_fd=dir_fd).st_mode):
+        raise ValueError('site-packages components must be real directories')
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    try:
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def walk_site(descriptor, destination=None, prefix=''):
+    """Hash the same reads that populate the copy, anchored to real directories."""
     result = {}
-    for path in sorted(site.rglob('*')):
-        name = path.relative_to(site).as_posix()
-        if path.is_symlink(): raise ValueError('symlink in site-packages')
-        if path.is_file() and not excluded(name): result[name] = file_sha(path)
-        elif not path.is_dir() and not path.is_file(): raise ValueError('non-regular site-packages entry')
+    for entry in sorted(os.listdir(descriptor)):
+        name = prefix + entry
+        mode = os.lstat(entry, dir_fd=descriptor).st_mode
+        if stat.S_ISDIR(mode):
+            if destination is not None and '__pycache__' not in PurePosixPath(name).parts:
+                (destination / name).mkdir(mode=0o700)
+            # Even excluded directories must not hide symlinks or special files.
+            with real_directory(entry, dir_fd=descriptor) as child:
+                result.update(walk_site(child, destination, name + '/'))
+        elif stat.S_ISREG(mode):
+            if excluded(name): continue
+            # NONBLOCK prevents a regular-file-to-FIFO swap from hanging open().
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            with os.fdopen(os.open(entry, flags, dir_fd=descriptor), 'rb') as source:
+                mode = os.fstat(source.fileno()).st_mode
+                if not stat.S_ISREG(mode): raise ValueError('non-regular site-packages entry')
+                output = (destination / name).open('xb') if destination is not None else nullcontext()
+                with output as target:
+                    if target is not None: os.fchmod(target.fileno(), 0o700 if mode & 0o111 else 0o600)
+                    hashed = hashlib.sha256()
+                    for block in iter(lambda: source.read(65536), b''):
+                        hashed.update(block)
+                        if target is not None: target.write(block)
+                result[name] = hashed.hexdigest()
+        else:
+            raise ValueError('non-regular site-packages entry')
     return result
 
 
-def verify_venv(venv, manifest_path, tool, version, system, arch, abi, manifest_sha=None):
+def site_files(site):
+    with real_directory(site) as descriptor:
+        return walk_site(descriptor)
+
+
+def copy_runtime(venv, shadow):
+    site, _ = venv_site(venv)
+    base = base_python(venv)
+    shadow.mkdir(mode=0o700)
+    (shadow / 'bin').mkdir(mode=0o700)
+    (shadow / 'bin/python').symlink_to(base)
+    (shadow / 'pyvenv.cfg').write_text('home = ' + str(base.parent) + '\ninclude-system-site-packages = false\n')
+    library = shadow / 'lib'
+    library.mkdir(mode=0o700)
+    library = library / site.parent.name
+    library.mkdir(mode=0o700)
+    copied = library / 'site-packages'
+    copied.mkdir(mode=0o700)
+    # Keep descriptor anchors across the whole copy, so swapping any operator
+    # directory after lstat cannot redirect a later open through a symlink.
+    with real_directory(venv) as root, real_directory('lib', dir_fd=root) as lib, \
+            real_directory(site.parent.name, dir_fd=lib) as python, \
+            real_directory('site-packages', dir_fd=python) as source:
+        return walk_site(source, copied)
+
+
+def verify_venv(venv, manifest_path, tool, version, system, arch, abi, manifest_sha=None, copied_files=None):
     """Never execute the launcher or consult an installed RECORD file."""
     if not manifest_path.is_file(): raise ValueError('missing manifest ' + manifest_path.name)
     if manifest_sha is not None and file_sha(manifest_path) != manifest_sha:
@@ -209,14 +277,14 @@ def verify_venv(venv, manifest_path, tool, version, system, arch, abi, manifest_
     expected, site_abi = venv_site(venv)
     if site_abi != abi:
         raise ValueError('venv site-packages does not match its interpreter')
-    actual = site_files(expected)
+    actual = site_files(expected) if copied_files is None else copied_files
     if actual != files: raise ValueError('site-packages manifest mismatch (changed, missing or additional file)')
     if tool == 'semgrep' and not any(PurePosixPath(p).name == 'semgrep-core' for p in files):
         raise ValueError('manifest is missing semgrep-core')
     return manifest
 
 
-def verified_runtime(venv, manifests, tool, version):
+def verified_runtime(venv, manifests, tool, version, shadow):
     """Select a manifest by verified bytes before even the isolated -S probe.
 
     The operator interpreter can use another minor/architecture than Bureau's.
@@ -228,6 +296,7 @@ def verified_runtime(venv, manifests, tool, version):
     system = {'Darwin': 'darwin', 'Linux': 'linux'}.get(platform.system(), 'unknown')
     arch = {'aarch64': 'arm64', 'AMD64': 'x86_64'}.get(platform.machine(), platform.machine())
     failure = 'missing manifest bureau-' + tool + '-manifest-' + system + '-' + arch + '-' + abi + '.json'
+    copied = None
     for path in candidates:
         try:
             header = json.loads(path.read_text())
@@ -236,7 +305,13 @@ def verified_runtime(venv, manifests, tool, version):
                     or path.name != 'bureau-' + tool + '-manifest-' + system + '-' + arch + '-' + abi + '.json'):
                 raise ValueError('invalid runtime manifest platform')
             manifest_sha = file_sha(path)
-            verify_venv(venv, path, tool, version, system, arch, abi, manifest_sha)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            failure = str(exc) if isinstance(exc, ValueError) else 'runtime manifest unreadable'
+            continue
+        if copied is None:
+            copied = copy_runtime(venv, shadow)
+        try:
+            verify_venv(shadow, path, tool, version, system, arch, abi, manifest_sha, copied_files=copied)
             return path, manifest_sha, (system, arch, abi)
         except (OSError, ValueError, TypeError, KeyError) as exc:
             failure = str(exc) if isinstance(exc, ValueError) else 'runtime manifest unreadable'
@@ -287,6 +362,18 @@ def write_json(path, value):
         out.write(encoded(value) + '\n')
 
 
+def reference_pr(target, pr):
+    if pr is None: return
+    if type(pr) is not int or pr < 1: raise ValueError('invalid scan PR reference')
+    references = target / 'refs'
+    references.mkdir(mode=0o700, exist_ok=True)
+    try:
+        with (references / ('pr-' + str(pr))).open('x') as out:
+            os.fchmod(out.fileno(), 0o600)
+    except FileExistsError:
+        pass  # Each consuming PR is recorded once; receipts are never rewritten.
+
+
 def retain(root, open_prs=None):
     attempts = sorted((p for p in root.glob('*/*') if p.is_dir() and not p.is_symlink()),
                       key=lambda p: p.name, reverse=True)
@@ -294,8 +381,13 @@ def retain(root, open_prs=None):
         try:
             receipt = json.loads((path / 'receipt.json').read_text())
             pr = receipt.get('pr')
+            referenced = {pr} if pr is not None else set()  # Also retain legacy receipts.
+            for reference in (path / 'refs').glob('pr-*'):
+                match = re.fullmatch(r'pr-([1-9][0-9]*)', reference.name)
+                if match and reference.is_file() and not reference.is_symlink():
+                    referenced.add(int(match[1]))
             # Unknown open-PR inventory fails conservatively: keep referenced evidence.
-            if pr is not None and (open_prs is None or pr in open_prs): continue
+            if referenced and (open_prs is None or referenced.intersection(open_prs)): continue
             shutil.rmtree(path)
         except (OSError, ValueError):
             continue
@@ -324,6 +416,7 @@ def persist(state, bound, settings, status, reason, report, findings=(), *, new=
         projection_path = target / 'projection.json'
         write_json(projection_path, projected)
         receipt.update(projection_path=str(projection_path), projection_sha256=file_sha(projection_path))
+        reference_pr(target, pr)
         write_json(target / 'receipt.json', receipt)  # commit marker, written last
         retain(root, open_prs)
     return result(target, receipt, projected)
@@ -359,10 +452,13 @@ def validate_receipt(path, bound, settings):
         return None
 
 
-def find_receipt(state, bound, settings):
-    root = state / 'scans' / bound['tool'] / digest(bound)
-    for path in sorted(root.glob('*/receipt.json'), reverse=True):
-        value = validate_receipt(path, bound, settings)
-        if value and value['receipt']['status'] in ('measured', 'not_applicable'):
-            return value
+def find_receipt(state, bound, settings, pr=None):
+    root = state / 'scans' / bound['tool']
+    # Validation and the consuming reference must be atomic with retention.
+    with locked(root):
+        for path in sorted((root / digest(bound)).glob('*/receipt.json'), reverse=True):
+            value = validate_receipt(path, bound, settings)
+            if value and value['receipt']['status'] in ('measured', 'not_applicable'):
+                reference_pr(path.parent, pr)
+                return value
     return None
