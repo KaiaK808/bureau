@@ -650,7 +650,7 @@ prepare_merge_message() {
 }
 
 # Scan, finish network preparation, then run the just-in-time gates. Only one
-# cheap base-name read is allowed between those gates and the pinned merge.
+# cheap base-name/tip read is allowed between those gates and the pinned merge.
 SCAN_RECHECK=false
 SCAN_TOOLS=()
 if [ "$(bureau_get 'has("review")')" = true ]; then
@@ -747,14 +747,24 @@ if [ -n "$JIT_GATE_OUT" ]; then
 fi
 
 # No fetch or message preparation after the JIT gates. Their checked head and
-# this single base-name read must still match the scan; otherwise retry.
+# this single live base-name/tip read must still match the scan; otherwise retry.
 if [ "$SCAN_RECHECK" = true ]; then
-  [ "$MERGE_HEAD" = "$_scan_head" ] \
+  [ "$MERGE_HEAD" = "$SCANNED_HEAD" ] \
     || scanner_merge_retry "$_scan_tool: PR head changed during scan"
-  _merge_base_ref=$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName) \
+  # baseRef.target is the live branch tip; the PR's stored baseRefOid can lag
+  # behind it. One GraphQL read binds both the PR's base name and current tip.
+  _merge_base_json=$(gh api graphql \
+    -f query='query($url:URI!){resource(url:$url){... on PullRequest{baseRefName baseRef{target{oid}}}}}' \
+    -f url="$PR_URL") \
     || scanner_merge_retry "$_scan_tool: current PR base unavailable after gate recheck"
-  [ "$_merge_base_ref" = "$_scan_base_ref" ] \
+  _merge_base_ref=$(printf '%s' "$_merge_base_json" | jq -er 'select((.errors // []) == []) | .data.resource.baseRefName | select(type == "string" and length > 0)') \
+    || scanner_merge_retry "$_scan_tool: current PR base ref unavailable after gate recheck"
+  _merge_base_oid=$(printf '%s' "$_merge_base_json" | jq -er '.data.resource.baseRef.target.oid | select(type == "string" and test("^[0-9a-f]{40,64}$"))') \
+    || scanner_merge_retry "$_scan_tool: current PR base commit unavailable after gate recheck"
+  [ "$_merge_base_ref" = "$SCANNED_BASE_REF" ] \
     || scanner_merge_retry "$_scan_tool: PR base ref changed during scan or gate recheck"
+  [ "$_merge_base_oid" = "$SCANNED_BASE" ] \
+    || scanner_merge_retry "$_scan_tool: PR base commit changed during scan or gate recheck"
 fi
 
 # No --delete-branch: same reason code-review-pipeline.sh dropped it (commit

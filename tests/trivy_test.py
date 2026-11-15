@@ -432,6 +432,76 @@ class TrivyTests(unittest.TestCase):
                     self.write('pyproject.toml',text);self.commit()
                     self.assert_format_coverage(self.measure(),'pyproject.toml')
 
+    def test_toml_fallback_dynamic_optional_group_cannot_hide_names(self):
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        manifest='[project]\ndependencies = ["locked==1"]\n'
+        self.write('pyproject.toml',manifest)
+        self.write('uv.lock','version = 1\n[[package]]\nname = "locked"\n');self.commit();self.base=self.head
+        self.write('pyproject.toml',manifest+'[project.optional-dependencies]\ndynamic = ["missing==2"]\n');self.commit()
+        with patch.object(self.m,'tomllib',None):value=self.measure()
+        self.assertEqual(value['receipt']['status'],'reduced_coverage',value['projection'])
+        self.assertTrue(value['receipt']['blocking'])
+        self.assertIn('declared dependency missing from uv.lock: missing',value['receipt']['reason'])
+        report=json.loads(Path(value['receipt']['report_path']).read_text())
+        self.assertIn('uv.lock',{row['Target'] for row in report['head']['json']['Results']})
+
+    def test_toml_declared_name_parity_where_fallback_recognises_fixtures(self):
+        if self.m.tomllib is None:self.skipTest('stdlib tomllib requires Python 3.11+')
+        fixtures=[
+            ('[project]\ndynamic = ["version"]\ndependencies = ["Requests[security]>=2"]\n',False),
+            ('[project.optional-dependencies]\ndynamic = ["missing==2"]\n',False),
+            ('[project.optional-dependencies]\ndynamic = ["dependencies"]\ntest = ["pytest==8"]\n',False),
+            ('[project]\ndynamic = ["version"]\ndependencies = [\n "locked==1", # comment\n \'second>=2\',\n]\n'
+             '[project.optional-dependencies]\ndynamic = ["missing==2"]\n',False),
+            ('[tool.poetry.dependencies]\npython = "^3.9"\ndynamic = "*"\n'
+             '[tool.poetry.dev-dependencies]\ndev = "*"\n'
+             '[tool.poetry.group.dynamic.dependencies]\ncoverage = "*"\n'
+             '[tool.poetry.group.dynamic.metadata.dependencies]\nignored = "*"\n',False),
+            ('[tool.other]\ndynamic = ["ignored==1"]\n',False),
+            ('[[package]]\nname = "dynamic"\ndependencies = [\n { name = "transitive" },\n]\n'
+             '[[package]]\nname = "Second_Pkg"\n[package.metadata]\nname = "ignored"\n',True),
+            ('[project . optional-dependencies]\ndynamic = ["missing==2"]\n',False),
+            ('[tool.poetry.group."test.unit".dependencies]\ndynamic = "*"\n',False),
+        ]
+        recognised=0
+        for text,lock in fixtures:
+            with self.subTest(text=text,lock=lock):
+                expected=self.m.toml_names(text,lock=lock)
+                with patch.object(self.m,'tomllib',None):
+                    try:actual=self.m.toml_names(text,lock=lock)
+                    except ValueError:continue
+                recognised+=1
+                self.assertEqual(actual,expected)
+        self.assertEqual(recognised,7)
+
+    def test_case_variant_manifest_cannot_hide_an_unresolved_dependency(self):
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        self.write('package.json',json.dumps(dict(dependencies=dict(locked='^1'))))
+        self.write('package-lock.json',json.dumps(dict(packages={'':dict(dependencies=dict(locked='^1'))})))
+        self.commit();self.base=self.head
+        self.git('mv','package.json','case-rename.tmp');self.git('mv','case-rename.tmp','PACKAGE.JSON')
+        self.write('PACKAGE.JSON',json.dumps(dict(dependencies=dict(locked='^1',missing='^2'))));self.commit()
+        value=self.measure();self.assertEqual(value['receipt']['status'],'reduced_coverage',value['projection'])
+        self.assertTrue(value['receipt']['blocking'])
+        report=json.loads(Path(value['receipt']['report_path']).read_text())
+        self.assertTrue(any(row['file']=='PACKAGE.JSON' for row in report['inventory']['head']['issues']))
+        self.assertIn('package-lock.json',{row['Target'] for row in report['head']['json']['Results']})
+
+    def test_all_recognised_inventory_names_reduce_coverage_for_case_variants(self):
+        canonical=self.m.LOCKS | self.m.OTHER | {'package.json','pyproject.toml','go.mod','requirements.txt','requirements-dev.txt'}
+        for index,name in enumerate(sorted(canonical)):
+            for variant in (name.upper(),name.swapcase()):
+                with self.subTest(name=name,variant=variant):
+                    directory=self.root/('case-'+str(index));directory.mkdir(exist_ok=True)
+                    for path in directory.iterdir():path.unlink()
+                    (directory/variant).write_text('unrecognised fixture\n')
+                    self.assertTrue(self.m.inventory_name(variant))
+                    inv=self.m.inventory(directory)
+                    self.assertTrue(inv['applicable'])
+                    self.assertTrue(any(row['file']==variant for row in inv['issues']),inv)
+                    skipped=self.m.inventory(directory,skipped=[variant])
+                    self.assertTrue(any(row['file']==variant for row in skipped['issues']),skipped)
+
     def test_canonical_parser_policy_does_not_reuse_legacy_clean_receipt(self):
         self.blocking();self.write('requirements.txt','safe==1.0\n')
         self.write('package.json',json.dumps(dict(dependencies=dict(locked='^1',missing='^2'))))
@@ -444,7 +514,7 @@ class TrivyTests(unittest.TestCase):
             value['issues']=[]
             return value
         def legacy_digest(value):
-            if isinstance(value,dict) and 'inventory' in value:value={**value,'inventory':'v1'}
+            if isinstance(value,dict) and 'inventory' in value:value={**value,'inventory':'canonical-v2'}
             return digest(value)
         with patch.object(self.m,'inventory',side_effect=legacy_inventory),patch.object(self.s,'digest',side_effect=legacy_digest):
             old=self.measure()
@@ -578,6 +648,23 @@ class TrivyTests(unittest.TestCase):
         self.assertTrue(value['receipt']['blocking']);self.assertEqual(value['receipt']['findings_new'],0)
         self.assertEqual(value['projection']['findings_unclassified'],1)
         self.assertTrue(all('count_rose' not in row for row in value['projection']['findings']))
+
+    def test_base_failure_coverage_exception_cannot_waive_head_severity_floor(self):
+        self.blocking();self.git('rm','Dockerfile')
+        self.write('requirements.txt','safe==1.0; python_version >= "3.9"\n')
+        self.write(self.m.EXCEPTIONS,json.dumps([dict(kind='coverage',file='requirements.txt',owner='team',
+                   reason='accepted markers',expires='2099-01-01')]))
+        self.commit();self.base=self.head
+        self.write('new/requirements.txt','badpkg==1.0\n');self.commit()
+        for severity,threshold,blocked in (('HIGH','HIGH',True),('MEDIUM','HIGH',False),('CRITICAL','CRITICAL',True)):
+            with self.subTest(severity=severity,threshold=threshold):
+                self.config['qa']['trivy']['block_severity']=threshold;self.mode(bad_side='base',severity=severity)
+                value=self.measure();self.assertEqual(value['receipt']['status'],'reduced_coverage')
+                self.assertTrue(all(row['excepted'] and row['file']=='requirements.txt' for row in value['projection']['coverage']))
+                self.assertEqual(value['projection']['findings_unclassified'],1)
+                self.assertEqual(value['receipt']['findings_new'],0)
+                self.assertEqual(value['receipt']['blocking'],blocked,value['projection'])
+                self.assertEqual(value['receipt']['new_severities'],[severity])
 
     def test_private_cache_mutation_is_not_measured_operator_mutation_cannot_affect_it(self):
         run=self.m.run_side

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="793485c462e9efb46f3056337d2823beaea84d56910cebc8508e0fc0a34d0b0b">
+<meta name="bureau-source-sha256" content="3277b0520e9ce9e816a5affcb2fdb15c2059dc05ec2fe20c8b44a56f880a36e6">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -633,16 +633,19 @@ checkpoint stays the last step before the merge call, as in every mode.
 Semgrep gate marks bind to the scanned head, including when it differs
 from the initial gate's head.</p>
 <p>The existing just-in-time gates then run unchanged. After they pass,
-Bureau performs only one cheap <code>gh</code> read of the PR's base ref
-name and requires the checked <code>MERGE_HEAD</code> to equal the
-scanned head and the base ref name to be unchanged, then merges with
-<code>--match-head-commit</code> set to that scanned head. No fetch or
-merge-message read occurs after the final gates. A base advancing after
-the last fetch has the same race as the other gates; GitHub's head match
-protects against a subsequent push. Disabled and advisory merge
-behaviour and GitHub/git call logs remain unchanged. The older Code
-Review v2 verdict reader's head binding is unchanged by this scanner
-integration.</p>
+Bureau performs one cheap GraphQL read of the PR's base ref name and its
+live <code>baseRef.target.oid</code> branch tip. The checked
+<code>MERGE_HEAD</code>, base ref name and base commit must equal the
+scanned inputs; any mismatch or failed read retries with exit 2. Bureau
+then merges with <code>--match-head-commit</code> set to that scanned
+head. No fetch or merge-message read occurs after the final gates. The
+final read uses the live branch target because the PR's stored base OID
+can lag the branch tip; it catches a base advancing after the last fetch
+even when the final gates pass against the newer base. GitHub's head
+match protects against a subsequent head push. Disabled and advisory
+merge behaviour and GitHub/git call logs remain unchanged. The older
+Code Review v2 verdict reader's head binding is unchanged by this
+scanner integration.</p>
 <p><strong>Upgrade:</strong> compare installed script drift, resync the
 entire scripts scope (including the shared helper, sandbox profile,
 rules, lock and platform manifests), and restart drivers together.
@@ -792,9 +795,15 @@ both snapshots. If neither has eligible inputs, the result is
 checks npm package manifests with package-lock/npm-shrinkwrap, pnpm or
 Yarn locks; <code>requirements*.txt</code>; PEP 621/Poetry dependencies
 with uv/Poetry locks; Go module/sum files; Dockerfiles, Compose files
-and Terraform files. Missing locks, requirements that are not exactly
-pinned, absent result targets and direct dependency names missing from
-lock roots reduce coverage and name the affected file/package. Every
+and Terraform files. Manifest and lockfile discovery is
+case-insensitive, but non-canonical filename case (for example
+<code>PACKAGE.JSON</code>, <code>Package-Lock.json</code>,
+<code>REQUIREMENTS.TXT</code> or <code>PyProject.toml</code>) reduces
+coverage with reason <code>non-canonical inventory filename case</code>
+and names the file, on both case-sensitive and case-insensitive
+filesystems. Missing locks, requirements that are not exactly pinned,
+absent result targets and direct dependency names missing from lock
+roots reduce coverage and name the affected file/package. Every
 inventoried lockfile requires a matching result target, including
 <code>go.sum</code>; engines that omit a target reduce coverage rather
 than silently accepting an alias. Direct-name consistency for Go and
@@ -805,7 +814,9 @@ fail measurement. Other recognized ecosystem inputs are scanned and
 reported as having unchecked lockfile consistency. A base measurement
 failure produces <strong>reduced_coverage</strong>, reason
 <code>base not measured</code>, and head findings stay unclassified
-rather than being counted as new.</p>
+rather than being counted as new; their severities still enforce the
+blocking floor as new findings would, even when coverage exceptions
+waive every file's coverage gap.</p>
 <p>Lockfile consistency fails closed: the handwritten parsers accept
 only recognised tool-written forms, and unsupported syntax anywhere in a
 parsed file produces <strong>reduced_coverage</strong>, with the file
@@ -827,9 +838,11 @@ from those three dependency maps in <code>packages['']</code>. Python
 fallback requires bare table components such as
 <code>[project.optional-dependencies]</code> and bare assignment keys,
 rejecting spaces inside table names, quoted keys and dotted inline keys.
-Requirements accept exact pins, extras and whole-line or
-whitespace-prefixed inline comments; environment markers, line
-continuations and options such as <code>-r</code>, <code>-c</code>,
+Only <code>[project]</code> treats <code>dynamic</code> as metadata; an
+optional-dependency group named <code>dynamic</code> contributes
+declared dependency names. Requirements accept exact pins, extras and
+whole-line or whitespace-prefixed inline comments; environment markers,
+line continuations and options such as <code>-r</code>, <code>-c</code>,
 <code>-e</code> and <code>--hash</code> are not recognised and reduce
 coverage rather than supplying or hiding names.</p>
 <p>Vulnerability identity is
@@ -864,11 +877,13 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb9-1"><a href="
 on new findings at or above <code>block_severity</code>,
 <strong>not_measured</strong>, <strong>unavailable</strong>, or
 <strong>reduced_coverage</strong> without an active base coverage
-exception for every affected file. Coverage exceptions never suppress
-qualifying findings. <strong>not_applicable</strong> passes as
-explicitly not applicable. No unavailable, unmeasured or reduced result
-is described as clean. A blocking QA result keeps the ticket in QA with
-<code>needs-human</code> and exit 25.</p>
+exception for every affected file. Coverage exceptions waive only the
+named file's coverage gap and never suppress qualifying findings,
+including unclassified head findings after a failed base scan.
+<strong>not_applicable</strong> passes as explicitly not applicable. No
+unavailable, unmeasured or reduced result is described as clean. A
+blocking QA result keeps the ticket in QA with <code>needs-human</code>
+and exit 25.</p>
 <p>QA measures immediately before routing, after its commit/push and
 local checks, including the no-harness path; the enabled no-harness path
 first publishes any QA merge. Its receipt binds the head actually handed
@@ -881,9 +896,12 @@ merge message and fetches the base again. Before applying a blocking or
 failed result it re-checks head, base ref name and base commit; changed
 inputs retry with exit 2, with the gate mark bound to the scanned head.
 Both enabled scanners must measure the same inputs. After the final
-gates, only the existing single base-name read remains; there is no
-additional fetch. The ticket kill-switch checkpoint remains the last
-operation before the head-pinned merge in every merge strategy.</p>
+gates, one GraphQL read binds the current PR base ref name and live
+<code>baseRef.target.oid</code> branch tip to the scanned base, retrying
+with exit 2 on changed inputs or a failed read; there is no additional
+fetch. The live branch target is used because the PR's stored base OID
+can lag the branch tip. The ticket kill-switch checkpoint remains the
+last operation before the head-pinned merge in every merge strategy.</p>
 <p>Image scanning is not part of this release, and every projection
 carries that fixed qualification. The Trivy stage executes no builds or
 repository-controlled commands. The removed

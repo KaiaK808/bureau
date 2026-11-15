@@ -41,7 +41,7 @@ m=f.load('trivy',repo/'scripts/bureau-trivy.py')
 if case in ('exact','changed','unavailable','isolation','cache-digest','stale'):
     value=m.measure(repo,config,base,head,pr=99);assert value['receipt']['status']=='measured',value
 (repo/'scanner-inputs.json').write_text(json.dumps(dict(head=head,base=base)))
-if case.endswith(('during-scan','after-gates','during-final-fetch')):
+if case.endswith(('during-scan','after-gates','during-final-fetch','during-gates')):
     hook=repo/'concurrent-update.py'
     hook.write_text('REPO='+repr(str(repo))+'\nGH='+repr(os.environ['PR2_GH'])+'\nCASE='+repr(case)+
                     '\nGIT='+repr(shutil.which('git'))+'\n'+pathlib.Path(os.environ['TRIVY_HOOK_SOURCE']).read_text())
@@ -57,6 +57,15 @@ bureau_trivy() {
 """)
     elif case.endswith('during-final-fetch'):
         (pathlib.Path(os.environ['PR2_GH'])/'git-fetch-hook').write_text(str(hook))
+    elif case.endswith('during-gates'):
+        gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh';old='    if [ -n "$JSON" ]; then'
+        replacement='''+repr('''    if [ "$JSON" = baseRefOid ]; then
+      reads=$(( $(cat "$D/base_oid_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/base_oid_reads"
+      if [ "$reads" = 2 ]; then HOOK; fi
+    fi
+''')+r'''+old
+        assert gh.read_text().count(old)==1
+        gh.write_text(gh.read_text().replace(old,replacement.replace('HOOK',shlex.quote(sys.executable)+' -I -B '+shlex.quote(str(hook)))))
     else:
         gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh';old='*/branches/*) out < "$D/branch.json" ;;'
         replacement='''+repr('''*/branches/*)
@@ -115,7 +124,7 @@ class MergeTests(unittest.TestCase):
                     p=shared.run_group(['bash','-c',MERGE_RUNNER],cwd=ROOT,env={**env,'TRIVY_CASE':name},capture_output=True,text=True,timeout=90)
                     self.assertEqual(p.returncode,0,p.stdout+p.stderr)
                     value=json.loads(result.read_text());results.append(value)
-                    concurrent=name.endswith(('during-scan','after-gates','during-final-fetch'))
+                    concurrent=name.endswith(('during-scan','after-gates','during-final-fetch','during-gates'))
                     expected='0' if name in ('exact','off','disabled','advisory','negative-merge-guard') else '2' if concurrent and not name.startswith('ci-') else '25'
                     self.assertEqual(value['code'],expected,value['stdout']+'\n'+value['stderr']+'\n'+value['hook_log'])
                     self.assertEqual(value['merged'],expected=='0',value)
@@ -125,11 +134,15 @@ class MergeTests(unittest.TestCase):
                         self.assertNotIn('needs-human',value['calls'])
                         self.assertIn('Gate regressed',value['stdout'])
                         self.assertEqual(value['mark']['head'],value['scanned']['head'])
+                        if name in ('base-during-gates','base-after-gates'):
+                            self.assertIn('PR base commit changed',value['stdout'])
+                            self.assertNotIn('base_up_to_date: FAIL',value['stdout'])
                     elif name=='exact':
                         self.assertEqual(len(value['receipts']),1,'unchanged QA receipt must be reused')
-                        logged=value['gh_calls'].splitlines();last=max(i for i,row in enumerate(logged) if row.startswith('gh\tapi\t'))
+                        logged=value['gh_calls'].splitlines();last=max(i for i,row in enumerate(logged) if row.startswith('gh\tapi\t') and '/branches/' in row)
                         self.assertEqual(len(logged[last+1:]),2)
-                        self.assertIn('--json\tbaseRefName\t--jq\t.baseRefName',logged[last+1]);self.assertIn('--match-head-commit',logged[-1])
+                        self.assertTrue(logged[last+1].startswith('gh\tapi\tgraphql\t'))
+                        self.assertIn('baseRefName baseRef{target{oid}}',logged[last+1]);self.assertIn('--match-head-commit',logged[-1])
                         fetches=[row for row in value['git_calls'].splitlines() if '\tfetch\t--no-tags\torigin\t' in row];self.assertEqual(len(fetches),2)
                     elif name in ('changed','unavailable','isolation','cache-digest','stale'):
                         self.assertEqual(len(value['receipts']),2)
@@ -154,6 +167,9 @@ class MergeTests(unittest.TestCase):
             if line.strip().startswith('gh pr merge '):
                 previous=source[:source.index(line)].rstrip().splitlines()[-1]
                 self.assertEqual(previous.strip(),'bureau_ticket_checkpoint "$ISSUE"')
+
+    def test_base_commit_advancing_with_green_final_gates_retries(self):
+        self.cases(('base-during-gates','base-after-gates'))
 
     def test_disabled_and_advisory_match_frozen_call_baseline(self):
         golden=json.loads((ROOT/'tests/fixtures/semgrep-disabled-merge.json').read_text())

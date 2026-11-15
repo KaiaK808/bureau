@@ -43,6 +43,7 @@ NATIVE = {'trivy.yaml', 'trivy.yml', '.trivyignore', '.trivyignore.yaml', '.triv
 LOCKS = {'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'uv.lock', 'poetry.lock', 'go.sum'}
 OTHER = {'Cargo.toml', 'Cargo.lock', 'Gemfile', 'Gemfile.lock', 'composer.json', 'composer.lock',
          'pom.xml', 'build.gradle', 'build.gradle.kts', 'packages.lock.json'}
+CANONICAL_NAMES = {name.lower():name for name in LOCKS | OTHER | {'package.json', 'pyproject.toml', 'go.mod'}}
 
 
 class Unavailable(ValueError):
@@ -378,7 +379,7 @@ def fallback_toml_names(text, lock=False):
         if section == 'project' or section == 'project.optional-dependencies':
             if section == 'project' and key not in ('dependencies', 'dynamic'): continue
             items = strings(value)
-            if key == 'dynamic':
+            if section == 'project' and key == 'dynamic':
                 if 'dependencies' in items: raise ValueError('dynamic dependencies')
             else:
                 result.update(requirement_name(item) for item in items)
@@ -536,8 +537,8 @@ def lock_names(path):
 
 def inventory_name(name):
     path = PurePosixPath(name); leaf = path.name; lower = leaf.lower()
-    return (leaf in LOCKS | OTHER | {'package.json', 'pyproject.toml', 'go.mod'}
-            or bool(re.fullmatch(r'requirements[^/]*\.txt', leaf))
+    return (lower in CANONICAL_NAMES
+            or bool(re.fullmatch(r'requirements[^/]*\.txt', lower))
             or lower.startswith('dockerfile') or lower.endswith('.dockerfile')
             or bool(re.fullmatch(r'(?:docker-)?compose(?:[.-].+)?\.ya?ml', lower)) or path.suffix == '.tf')
 
@@ -556,13 +557,20 @@ def inventory(directory, skipped=()):
         except (OSError, ValueError, KeyError, TypeError, UnicodeError):
             issue(name, 'lockfile format not recognised')
     for name in sorted(all_names):
-        path = PurePosixPath(name); leaf = path.name; parent = path.parent
+        path = PurePosixPath(name); leaf = path.name; parent = path.parent; lower = leaf.lower()
         if leaf in OTHER:
             unchecked.append(name)
             targets.add(name)
         if name in skipped:
             if inventory_name(name):
                 issue(name, 'non-regular inventory input')
+            continue
+        # Do not rely on host case folding or the engine's filename discovery:
+        # every variant is inventory, but only canonical names are qualified.
+        if ((lower in CANONICAL_NAMES and leaf != CANONICAL_NAMES[lower])
+                or (re.fullmatch(r'requirements[^/]*\.txt', lower) and not re.fullmatch(r'requirements[^/]*\.txt', leaf))):
+            issue(name, 'non-canonical inventory filename case')
+            targets.add(name)
             continue
         if leaf in LOCKS:
             targets.add(name)
@@ -736,7 +744,7 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
         trees = dict(base=source.tree(repo, base), head=source.tree(repo, head))
         policy_bytes = source.blob(repo, trees['base'], EXCEPTIONS)
         policy_digest = scan.digest(dict(exceptions=None if policy_bytes is None else scan.sha(policy_bytes),
-                                         checks='embedded', inventory='canonical-v2', flags=FLAGS))
+                                         checks='embedded', inventory='canonical-v3', flags=FLAGS))
         with tempfile.TemporaryDirectory(prefix='bureau-trivy-') as temporary:
             root = Path(temporary).resolve()
             if any(inventory_name(name) and not native(name) for entries in trees.values() for name in entries):
@@ -797,7 +805,10 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
                 counts = compare(findings['base'] or [], findings['head'], ignores)
                 if findings['base'] is None:
                     extra['findings_unclassified'] = len(findings['head']) - counts['suppressed']
-                    counts.update(new=0, existing=0, severities=[])
+                    # Newness is unknown, but the empty-base comparison's
+                    # severities still enforce the floor. A coverage exception
+                    # cannot establish that any head finding already existed.
+                    counts.update(new=0, existing=0)
                     for row in counts['findings']: row.pop('count_rose', None)
                 for row in coverage:
                     row['excepted'] = any(item.get('kind') == 'coverage' and item['file'] == row['file'] for item in ignores)
