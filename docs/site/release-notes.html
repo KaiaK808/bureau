@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="bbfa8b00e352d10d2935fd5f75e7a54b74e4dbdc965b80c89bf10929f8dbc52a">
+<meta name="bureau-source-sha256" content="0734db099666943fb678a6d808f2200fcfa7a0ce972eabdd96a46a6296626d8f">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -18,10 +18,15 @@
 <main class="bhb-main"><h1
 id="bureau-v380--qa-evidence-approval-status-and-runtime-fixes">Bureau
 v3.8.0 — QA evidence, approval status and runtime fixes</h1>
-<p><strong>Release preparation · 2026-11-14 · source tag
-<code>v3.8.0</code>.</strong> v3.8.0 is a minor release on <a
-href="release-notes-v3.7.0.html">v3.7.0</a>. Tagging and GitHub Release
-publication remain separate maintainer operations.</p>
+<p><strong>Published release · 2026-11-14 · source tag
+<code>v3.8.0</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.8.0">GitHub
+Release</a> is published as latest. Annotated tag <code>v3.8.0</code>
+(tag object <code>1324764</code>) points at merge commit
+<code>74bc6b2</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/157">#157</a>, merged on
+2026-11-14. v3.8.0 is a minor release on <a
+href="release-notes-v3.7.0.html">v3.7.0</a>.</p>
 <p>The release includes, in first-parent merge order: <a
 href="https://github.com/KaiaK808/bureau/pull/133">#133</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/134">#134</a>, <a
@@ -402,15 +407,15 @@ findings introduce no verdict, routing or exit changes; existing
 process-safety holds remain mandatory.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p><strong>From v3.7.0, once v3.8.0 is published:</strong> stop every
-shepherd, queue loop, dispatcher and supervisor. Preserve unfinished
-work/local commits, custom scripts/interfaces, instructions, Spec Kit
-assets/constitution and shared ownership, checkpoint, evidence,
-accounting, witness and process-hold records. Compare installed drift
-and reconcile incident fixes before replacing assets. Select the
-published <code>v3.8.0</code> tag, refresh discovery, preview and
-resolve conflicts, then resync the <strong>complete scripts and
-interfaces scopes together</strong> in every adopting repository:</p>
+<p><strong>From v3.7.0:</strong> stop every shepherd, queue loop,
+dispatcher and supervisor. Preserve unfinished work/local commits,
+custom scripts/interfaces, instructions, Spec Kit assets/constitution
+and shared ownership, checkpoint, evidence, accounting, witness and
+process-hold records. Compare installed drift and reconcile incident
+fixes before replacing assets. Select the published <code>v3.8.0</code>
+tag, refresh discovery, preview and resolve conflicts, then resync the
+<strong>complete scripts and interfaces scopes together</strong> in
+every adopting repository:</p>
 <pre class="text"><code>/bureau-init --resync-interfaces --resync-scripts --target both</code></pre>
 <p>Use <code>$bureau-init</code> in Codex and retain the installation's
 existing target selection. <code>--update</code> changes configuration
@@ -625,24 +630,38 @@ two shards: 191 of 191 on the first pass, no reruns (2026-11-14).</td>
 </tr>
 <tr>
 <td>Release CI jobs, runs and results</td>
-<td>Recorded in the release record after publication.</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/157">#157</a> at
+<code>789c134</code>: the pull-request run passed 6 of 6 jobs (focused
+macOS, full Ubuntu) and the push run 10 of 10 (full macOS and Ubuntu).
+Main at <code>74bc6b2</code>: push run 10 of 10. Tag
+<code>v3.8.0</code>: the first push run passed 9 of 10; the full macOS
+shard 1 failed one load-sensitive dispatcher shutdown fixture
+(<code>test_shutdown_joins_writers_retains_leases_and_spares_unrelated_sentinel</code>),
+which the same tree passed on main, on #157 and in both gate suites. The
+rerun of that job passed, 10 of 10.</td>
 </tr>
 <tr>
 <td>Final candidate/tag tested-tree comparison</td>
-<td>Recorded in the release record after the tag.</td>
+<td><code>python3 scripts/release_verify.py 45335d7 v3.8.0</code>
+passed: <code>templates/</code>, <code>tests/</code> and
+<code>scripts/</code> are tree-identical between the tested candidate
+and the tag. The PR head <code>789c134</code> changed documentation only
+and has the same tree as the tag.</td>
 </tr>
 <tr>
 <td>Manual live injection sample and adopter qualification</td>
-<td>Pending the maintainer's decision; recorded in the release
-record.</td>
+<td>The manual live injection sample was not run for v3.8.0, by the
+maintainer's decision. One adopting installation resynced its complete
+scripts and interfaces scopes to the tag with no conflicts; doctor
+reported no errors and no drift. Representative ticket runs are not
+recorded.</td>
 </tr>
 </tbody>
 </table>
-<p>Before publication, record the exact tested refs and results, and run
-<a href="releases.html#verify-the-tested-release-trees">release tree
-verification</a>. The hostile-input corpus uses deterministic fakes; its
-manual live release-checklist sample remains a separate check. This
-release record creates no tag or release.</p>
+<p>See <a href="releases.html#verify-the-tested-release-trees">release
+tree verification</a> for the comparison procedure. The hostile-input
+corpus uses deterministic fakes; its manual live release-checklist
+sample was not run for this release.</p>
 <h2 id="known-limitations">Known limitations</h2>
 <ul>
 <li>A stored <code>gh</code> login remains available to
@@ -673,9 +692,10 @@ adoption of the new checks remain unverified. Impeccable
 adopting-repository pilots have not run. Fragment-level tests and
 hostile-input fakes cannot establish live resistance to every prompt
 injection.</li>
-<li>Release CI, the final candidate/tag tree comparison and the manual
-live injection sample are recorded in the release record after
-publication.</li>
+<li>The manual live injection sample was not run for v3.8.0, so
+resistance to hostile input rests on the deterministic corpus and fakes.
+The dispatcher shutdown fixture that failed once on the tag's CI remains
+load-sensitive.</li>
 </ul></main>
 </div>
 </body>

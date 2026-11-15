@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6f30be294eef53d2b53ac3a8367441e05d149a47965bdebf94eaba1427c72c3e">
+<meta name="bureau-source-sha256" content="f16ed2cc87ecd8754bb0eb80b469655358e537ae1dcc7dcda79dcd1909e90fc0">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,10 +24,14 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree prepares <strong>Bureau v3.8.0</strong>, dated
-<strong>2026-11-14</strong>, a minor release on v3.7.0 with source tag
-<code>v3.8.0</code>. <strong>Release preparation:</strong> tagging and
-publication remain separate maintainer operations. The <a
+<p>This source tree contains <strong>Bureau v3.8.0</strong>, published
+<strong>2026-11-14</strong>, a minor release on v3.7.0. Annotated tag
+<code>v3.8.0</code> (tag object <code>1324764</code>) points at merge
+commit <code>74bc6b2</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/157">#157</a>, merged on
+2026-11-14. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.8.0">GitHub
+Release</a> is published as latest. The <a
 href="release-notes.html">release notes</a> and <a
 href="../../CHANGELOG.md#380---2026-11-14">changelog</a> cover, in
 first-parent merge order: <a
@@ -64,17 +68,16 @@ and agents; private-dependency commands may need
 authentication method. Askpass remains available. Impeccable pins change
 to skill 4.9.0 and engine 0.1.23; upstream 4.9.1 / 0.1.24 are
 unsupported.</p>
-<p>From v3.7.0, once published, stop drivers, preserve unfinished work
-and runtime records, compare installed drift, update the source and
-resync complete scripts and interfaces together. Enabled Impeccable
-installations separately install 4.9.0 / 0.1.23 and update or remove
-both version keys in <code>.bureau.json</code>. Existing secrets files
-keep working and can move outside the checkout; new installations use
-the external file. Approval needs its separate workflow scope,
-default-branch policy and required branch-protection status, and remains
-an accident guard with deliberate bypass possible. Review configuration
-and rollback actions in <a href="migration.html#from-v370">From v3.7.0</a>
-before restarting.</p>
+<p>From v3.7.0, stop drivers, preserve unfinished work and runtime
+records, compare installed drift, update the source and resync complete
+scripts and interfaces together. Enabled Impeccable installations
+separately install 4.9.0 / 0.1.23 and update or remove both version keys
+in <code>.bureau.json</code>. Existing secrets files keep working and
+can move outside the checkout; new installations use the external file.
+Approval needs its separate workflow scope, default-branch policy and
+required branch-protection status, and remains an accident guard with
+deliberate bypass possible. Review configuration and rollback actions in
+<a href="migration.html#from-v370">From v3.7.0</a> before restarting.</p>
 <h3 id="validation-record">Validation record</h3>
 <p>The maintainer's validation record states that each change was merged
 with a macOS gate suite and passing PR CI on its own head. The remote
@@ -82,8 +85,8 @@ suite on <code>openclaw-01</code> became a gate on
 <strong>2026-11-14</strong>, after a first-pass <strong>191 of
 191</strong> on main <code>6205c6d</code>. The merged release content is
 on main <code>8af867d</code>. Release candidate <code>45335d7</code>
-passed both gate suites; release CI and the tag comparison follow in the
-release record.</p>
+passed both gate suites; release CI and the tag comparison are recorded
+below.</p>
 <table>
 <thead>
 <tr>
@@ -111,16 +114,31 @@ two shards: 191 of 191 on the first pass, no reruns (2026-11-14).</td>
 </tr>
 <tr>
 <td>Release CI jobs, runs and results</td>
-<td>Recorded in the release record after publication.</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/157">#157</a> at
+<code>789c134</code>: the pull-request run passed 6 of 6 jobs (focused
+macOS, full Ubuntu) and the push run 10 of 10 (full macOS and Ubuntu).
+Main at <code>74bc6b2</code>: push run 10 of 10. Tag
+<code>v3.8.0</code>: the first push run passed 9 of 10; the full macOS
+shard 1 failed one load-sensitive dispatcher shutdown fixture
+(<code>test_shutdown_joins_writers_retains_leases_and_spares_unrelated_sentinel</code>),
+which the same tree passed on main, on #157 and in both gate suites. The
+rerun of that job passed, 10 of 10.</td>
 </tr>
 <tr>
 <td>Final candidate/tag tested-tree comparison</td>
-<td>Recorded in the release record after the tag.</td>
+<td><code>python3 scripts/release_verify.py 45335d7 v3.8.0</code>
+passed: <code>templates/</code>, <code>tests/</code> and
+<code>scripts/</code> are tree-identical between the tested candidate
+and the tag. The PR head <code>789c134</code> changed documentation only
+and has the same tree as the tag.</td>
 </tr>
 <tr>
 <td>Manual live injection sample and adopter qualification</td>
-<td>Pending the maintainer's decision; recorded in the release
-record.</td>
+<td>The manual live injection sample was not run for v3.8.0, by the
+maintainer's decision. One adopting installation resynced its complete
+scripts and interfaces scopes to the tag with no conflicts; doctor
+reported no errors and no drift. Representative ticket runs are not
+recorded.</td>
 </tr>
 </tbody>
 </table>
