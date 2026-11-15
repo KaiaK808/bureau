@@ -176,7 +176,7 @@ jobs:
           PY
       - name: Refresh a job-local database outside the scan
         run: python3 -I -B templates/scripts/bureau-trivy.py refresh --cache-dir "$BUREAU_TRIVY_CACHE" --java
-      - name: Qualify every scan flag under network denial
+      - name: Qualify filesystem scan flags under network denial
         run: |
           # Only this ephemeral GitHub-hosted VM is configured for user namespaces.
           if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then

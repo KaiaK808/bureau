@@ -12,7 +12,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 
 try:
@@ -39,7 +38,7 @@ FLAGS = dict(
     refresh=['--skip-version-check', '--disable-telemetry'],
     config='--config', ignore='--ignorefile', cache='--cache-dir', format=['--format', 'json'],
     output='--output', scanners=['--scanners', 'vuln,misconfig'], timeout=['--timeout', '5m'],
-    input='--input', db='--download-db-only', java='--download-java-db-only')
+    db='--download-db-only', java='--download-java-db-only')
 NATIVE = {'trivy.yaml', 'trivy.yml', '.trivyignore', '.trivyignore.yaml', '.trivyignore.yml'}
 LOCKS = {'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'uv.lock', 'poetry.lock', 'go.sum'}
 OTHER = {'Cargo.toml', 'Cargo.lock', 'Gemfile', 'Gemfile.lock', 'composer.json', 'composer.lock',
@@ -60,7 +59,7 @@ def settings(config, repo=None):
     if not isinstance(qa, dict): raise ValueError('qa must be an object')
     raw = qa.get('trivy', {})
     defaults = dict(enabled=False, mode='advisory', cache_dir=None, max_db_age_hours=48,
-                    block_severity='HIGH', image_archive_command=None)
+                    block_severity='HIGH')
     if not isinstance(raw, dict) or set(raw) - set(defaults):
         raise ValueError('qa.trivy contains unknown keys or is not an object')
     options = {**defaults, **raw}
@@ -79,9 +78,6 @@ def settings(config, repo=None):
         cache = Path(path).expanduser().resolve()
         if cache == repo.resolve() or repo.resolve() in cache.parents:
             raise ValueError('qa.trivy.cache_dir must be outside the repository')
-    command = options['image_archive_command']
-    if command is not None and (not isinstance(command, str) or not command.strip() or '\0' in command):
-        raise ValueError('qa.trivy.image_archive_command must be null or a nonempty command')
     return options
 
 
@@ -315,6 +311,10 @@ def fallback_toml_names(text, lock=False):
             tail = tail[1:]
         return result
 
+    def poetry_group_dependencies(section):
+        # A group is one TOML key. Deeper metadata tables are not dependencies.
+        return re.fullmatch(r'''tool\.poetry\.group\.(?:[A-Za-z0-9_-]+|"[^"]+"|'[^']+')\.dependencies''', section)
+
     result, section, pending, balance = set(), '', '', 0
     for raw in text.split('\n'):
         line, depth = clean(raw)
@@ -326,11 +326,15 @@ def fallback_toml_names(text, lock=False):
             if balance < 0: raise ValueError('unsupported dependency array')
             if balance: continue
             line, pending = pending, ''
-        if line.startswith('[') and re.fullmatch(r'\[\[?[^\]]+\]\]?(?:\s*#.*)?', line):
-            section = line.split(']')[0].lstrip('[').strip()
-            if line.startswith('[[') and section.startswith(('project', 'tool.poetry')):
+        table = re.fullmatch(r'\[\[([^\[\]]+)\]\]|\[([^\[\]]+)\]', line)
+        if table:
+            section = (table[1] or table[2]).strip()
+            array_table = table[1] is not None
+            if array_table and section.startswith(('project', 'tool.poetry')):
                 raise ValueError('unsupported dependency array table')
-            if (('"' in section or "'" in section) and not re.fullmatch(r'''tool\.poetry\.group\.(?:"[^"]+"|'[^']+')\.dependencies''', section)):
+            if lock and section == 'package' and not array_table:
+                raise ValueError('lock packages must be array tables')
+            if (('"' in section or "'" in section) and not poetry_group_dependencies(section)):
                 raise ValueError('unsupported quoted TOML table')
             if (section.startswith(('tool.poetry.dependencies.', 'tool.poetry.dev-dependencies.'))
                     or section.startswith(('project.dependencies', 'project.optional-dependencies.'))
@@ -365,7 +369,7 @@ def fallback_toml_names(text, lock=False):
                 if 'dependencies' in items: raise ValueError('dynamic dependencies')
             else:
                 result.update(requirement_name(item) for item in items)
-        elif section in ('tool.poetry.dependencies', 'tool.poetry.dev-dependencies') or (section.startswith('tool.poetry.group.') and section.endswith('.dependencies')):
+        elif section in ('tool.poetry.dependencies', 'tool.poetry.dev-dependencies') or poetry_group_dependencies(section):
             match = re.match(r'''([A-Za-z0-9_.-]+|"[^"]+"|'[^']+')\s*=''', line)
             if not match: raise ValueError('unsupported Poetry dependency')
             name = match[1].strip('"\'')
@@ -378,7 +382,10 @@ def toml_names(text, lock=False):
     if tomllib is None: return fallback_toml_names(text, lock)
     value = tomllib.loads(text)
     if lock:
-        return {normalized(row['name']) for row in value.get('package', [])}
+        packages = value.get('package', [])
+        if not isinstance(packages, list) or any(not isinstance(row, dict) or not isinstance(row.get('name'), str) for row in packages):
+            raise ValueError('invalid lock package array')
+        return {normalized(row['name']) for row in packages}
     result = set()
     project = value.get('project', {})
     if not isinstance(project, dict): raise ValueError('invalid project table')
@@ -417,19 +424,23 @@ def js_names(value):
 
 
 def pnpm_names(text):
-    rows = text.split('\n'); result = set(); root_indent = None; table_indent = None
+    rows = text.split('\n'); result = set(); importer_indent = root_indent = table_indent = None
     # Only the root importer can prove direct dependency consistency.
     in_importers = False
     for raw in rows:
         line = raw.strip(); indent = len(raw) - len(raw.lstrip(' '))
         if not line or line.startswith('#'): continue
         if indent == 0:
-            in_importers = line == 'importers:'; root_indent = table_indent = None; continue
+            in_importers = line == 'importers:'; importer_indent = root_indent = table_indent = None; continue
         if not in_importers: continue
-        if re.fullmatch(r'''["']?\.["']?:''', line): root_indent = indent; continue
+        if importer_indent is None: importer_indent = indent
+        if indent <= importer_indent:
+            root_indent = table_indent = None
+            if indent == importer_indent and re.fullmatch(r'''(?:\.|"\."|'\.'):''', line): root_indent = indent
+            continue
         if root_indent is None: continue
-        if indent <= root_indent: root_indent = table_indent = None; continue
-        if line in ('dependencies:', 'devDependencies:', 'optionalDependencies:'):
+        if table_indent is not None and indent <= table_indent: table_indent = None
+        if indent == root_indent + 2 and line in ('dependencies:', 'devDependencies:', 'optionalDependencies:'):
             table_indent = indent; continue
         if table_indent is not None and indent == table_indent + 2:
             match = re.match(r'''(?:'([^']+)'|"([^"]+)"|([^:]+)):\s*(?:#.*)?$''', line)
@@ -543,7 +554,7 @@ def report_findings(value, directory, inv):
         if isinstance(name, str) and name.startswith(str(directory) + '/'):
             name = name[len(str(directory)) + 1:]
         if isinstance(name, str) and name.startswith('./'): name = name[2:]
-        # Image and OS results have a separate parser; fs targets must be files.
+        # Filesystem targets must be files in this snapshot.
         if not scan.relative(name) or not (directory / name).is_file(): raise ValueError('Trivy target outside snapshot')
         seen.add(name)
         for item in result.get('Vulnerabilities') or []:
@@ -598,17 +609,16 @@ def compare(base, head, ignores):
     return dict(findings=findings, severities=sorted(set(severities)), new=new, existing=existing, suppressed=suppressed)
 
 
-def scan_argv(binary, root, cache, side, target, image=False):
-    return [str(binary), 'image' if image else 'fs', *FLAGS['scan'], FLAGS['config'], str(root / 'empty.yaml'),
+def scan_argv(binary, root, cache, side, target):
+    return [str(binary), 'fs', *FLAGS['scan'], FLAGS['config'], str(root / 'empty.yaml'),
             FLAGS['ignore'], str(root / 'empty.ignore'), FLAGS['cache'], str(cache), *FLAGS['scanners'],
-            *FLAGS['format'], FLAGS['output'], str(root / (side + '.json')), *FLAGS['timeout'],
-            *([FLAGS['input'], str(target)] if image else [str(target)])]
+            *FLAGS['format'], FLAGS['output'], str(root / (side + '.json')), *FLAGS['timeout'], str(target)]
 
 
-def run_side(binary, pin, prefix, root, cache, env, side, directory, image=False):
+def run_side(binary, pin, prefix, root, cache, env, side, directory):
     require_binary(binary, pin)
     output = root / (side + '.json')
-    proc = scan.run_process([*prefix, *scan_argv(binary, root, cache, side, directory, image)],
+    proc = scan.run_process([*prefix, *scan_argv(binary, root, cache, side, directory)],
                             cwd=root, env=env, timeout=330)
     raw = output.read_text() if output.is_file() else ''
     try: value = json.loads(raw)
@@ -617,68 +627,14 @@ def run_side(binary, pin, prefix, root, cache, env, side, directory, image=False
 
 
 def cache_guard(cache, expected):
-    # An image build is an operator command in untrusted source. Its children
-    # are joined before this check; it cannot silently change the scan's DB or
-    # reintroduce external checks. Trivy's own non-DB analysis cache is dropped.
+    # Revalidate the private databases between scans and drop Trivy's own
+    # non-DB analysis cache so it cannot reintroduce external checks.
     for entry in cache.iterdir():
         if entry.name in ('db', 'java-db'): continue
         if entry.is_symlink(): entry.unlink()
         elif entry.is_dir(): shutil.rmtree(entry)
         else: entry.unlink()
     if scan.directory_files(cache) != expected: raise NotMeasured('private cache digest mismatch')
-
-
-def image_config(archive):
-    """Read only tar members; never extract an operator-produced image archive."""
-    with tarfile.open(archive, 'r:*') as bundle:
-        def read(name):
-            member = bundle.getmember(name)
-            if not member.isfile() or member.size > 16 * 1024 * 1024: raise ValueError('invalid image metadata')
-            return bundle.extractfile(member).read()
-        try:
-            manifest = json.loads(read('manifest.json'))
-            if len(manifest) != 1: raise ValueError('image archive must contain one image')
-            return 'sha256:' + scan.sha(read(manifest[0]['Config']))
-        except KeyError:
-            index = json.loads(read('index.json'))
-            if len(index['manifests']) != 1: raise ValueError('image archive must contain one image')
-            def blob(digest):
-                if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest): raise ValueError('invalid image digest')
-                data = read('blobs/sha256/' + digest.partition(':')[2])
-                if 'sha256:' + scan.sha(data) != digest: raise ValueError('image blob digest mismatch')
-                return json.loads(data)
-            manifest = blob(index['manifests'][0]['digest'])
-            digest = manifest['config']['digest']; blob(digest)
-            return digest
-
-
-def image_measure(command, binary, pin, prefix, root, cache, env, directory):
-    if command is None: return dict(status='not_configured', reason='image scan: not configured'), None, None
-    image = dict(status='not_measured', reason='image archive or scan unavailable')
-    archive_digest = config_digest = None
-    try:
-        archive = root / 'image.tar'
-        build_env = {**env, 'BUREAU_TRIVY_IMAGE_ARCHIVE':str(archive)}
-        proc = scan.run_process([*prefix, '/bin/bash', '-o', 'pipefail', '-c', command],
-                                cwd=directory, env=build_env, timeout=330)
-        if proc.returncode: return image, None, None
-        archive_digest, _ = scan.copy_regular(archive)
-        config_digest = image_config(archive)
-        image['raw'] = run_side(binary, pin, prefix, root, cache, env, 'image', archive, image=True)
-        value = image['raw']['json']
-        if image['raw']['exit_code'] or not isinstance(value, dict) or value.get('SchemaVersion') != 2 or not isinstance(value.get('Results'), list): return image, archive_digest, config_digest
-        # Image targets can describe an OS rather than a repository file. Bound
-        # their advisory projection independently and never use it for the floor.
-        rows = []
-        for result in value['Results']:
-            for key in ('Vulnerabilities', 'Misconfigurations'):
-                for item in result.get(key) or []:
-                    severity = item['Severity']; rule = item.get('VulnerabilityID') or item['ID']
-                    if severity not in LEVELS or not isinstance(rule, str) or len(rule) > 512: raise ValueError('invalid image finding')
-                    rows.append(dict(tool='trivy-image', rule_id=rule, file='image-archive', line=1, severity=severity))
-        image.update(status='measured', reason=None, findings=rows[:20], findings_total=len(rows), findings_omitted=max(0, len(rows) - 20))
-    except (OSError, ValueError, TypeError, KeyError, tarfile.TarError, subprocess.SubprocessError): pass
-    return image, archive_digest, config_digest
 
 
 def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
@@ -691,20 +647,17 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
     except OSError: pin_digest = scan.digest(dict(pins='missing', execution='private-binary-v1', platform=platform_key()))
     settings_digest = scan.digest(config.get('qa', {}).get('trivy', {}))
     policy_digest = scan.digest(dict(unreadable_policy=True))
-    db_digest = db_updated_at = image_digest = image_config_digest = None
+    db_digest = db_updated_at = None
     status, reason, report = 'not_measured', 'scan inputs unavailable', {}
     counts = dict(new=0, existing=0, suppressed=0, findings=[], severities=[])
     coverage, reduced_blocks = [], True
-    extra = dict(image=dict(status='not_configured', reason='image scan: not configured'),
-                 qualifications=['version-range consistency not checked', 'missing misconfiguration resource uses cause-lines hash'],
+    extra = dict(qualifications=['image scanning is not part of this release', 'version-range consistency not checked',
+                                'missing misconfiguration resource uses cause-lines hash'],
                  removed_native_config={}, removed_inline_ignores={})
-    if options['image_archive_command'] is not None:
-        extra['image'] = dict(status='not_measured', reason='image scan: not run')
     now = _now or datetime.now(timezone.utc)
     def bound():
         return scan.identity('trivy', head, base, pin_digest, settings_digest, policy_digest,
-                             db_digest=db_digest, db_updated_at=db_updated_at, image_digest=image_digest,
-                             image_config_digest=image_config_digest)
+                             db_digest=db_digest, db_updated_at=db_updated_at)
     try:
         trees = dict(base=source.tree(repo, base), head=source.tree(repo, head))
         policy_bytes = source.blob(repo, trees['base'], EXCEPTIONS)
@@ -741,11 +694,6 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
                 prefix = _prefix if _prefix is not None else scan.network_prefix()
                 if not (_probe or scan.probe_network)(prefix, root, env): raise NotMeasured('network isolation unavailable')
                 (root / 'empty.yaml').write_text(''); (root / 'empty.ignore').write_text('')
-                image, image_digest, image_config_digest = image_measure(options['image_archive_command'], binary, pin, prefix, root,
-                                                                        cache, env, sides['head'])
-                report['image'] = image
-                extra['image'] = {key:value for key, value in image.items() if key != 'raw'}
-                cache_guard(cache, cache_files)
                 prior = scan.find_receipt(state, bound(), options, pr, severity_map=LEVELS) if reuse else None
                 if prior:
                     # Expiry changes are time-dependent even when policy bytes
@@ -792,11 +740,6 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
     except subprocess.TimeoutExpired: status, reason = 'not_measured', 'Trivy or source snapshot timed out'
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, subprocess.SubprocessError):
         status, reason = 'not_measured', 'invalid policy, source snapshot or incomplete Trivy result'
-    # One shared twenty-finding budget, including advisory image findings.
-    if extra['image'].get('findings'):
-        budget = max(0, 20 - min(20, len(counts['findings'])))
-        extra['image']['findings'] = extra['image']['findings'][:budget]
-        extra['image']['findings_omitted'] = extra['image']['findings_total'] - len(extra['image']['findings'])
     for key in ('removed_native_config', 'removed_inline_ignores'):
         extra[key + '_omitted'] = {side:max(0, len(rows) - 20) for side, rows in extra[key].items()}
         extra[key] = {side:rows[:20] for side, rows in extra[key].items()}

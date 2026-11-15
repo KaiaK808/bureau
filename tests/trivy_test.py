@@ -2,7 +2,6 @@
 import copy
 from datetime import datetime, timedelta, timezone
 import importlib.util
-import io
 import json
 import os
 from pathlib import Path
@@ -10,7 +9,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -52,27 +50,24 @@ else:
     directory=pathlib.Path(args[-1]);side=pathlib.Path(args[args.index('--output')+1]).stem
     record['side']=side
     rows=[]
-    if '--input' in args:
-        rows=[dict(Target='fixture image', Vulnerabilities=[dict(VulnerabilityID='CVE-FIXTURE',PkgName='pkg',InstalledVersion='1',Severity='CRITICAL')])]
-    else:
-        record['files']={str(p.relative_to(directory)):p.read_text(errors='replace') for p in directory.rglob('*') if p.is_file()}
-        for name,text in record['files'].items():
-            leaf=pathlib.Path(name).name
-            if leaf in ('package-lock.json','npm-shrinkwrap.json','pnpm-lock.yaml','yarn.lock','uv.lock','poetry.lock','go.mod','go.sum') or leaf.startswith('requirements') or leaf.lower().startswith('dockerfile') or leaf.endswith(('.tf','.dockerfile')) or 'compose' in leaf:
-                result=dict(Target=name, Vulnerabilities=[], Misconfigurations=[])
-                if leaf.startswith('requirements'):
-                    for raw in text.split('\n'):
-                        if 'badpkg==' in raw:
-                            result['Vulnerabilities'].append(dict(VulnerabilityID='CVE-FIXTURE',PkgName='badpkg',InstalledVersion=raw.split('==')[1].strip(),Severity=options.get('severity','HIGH'),Description='private-source'))
-                if leaf=='Dockerfile' or leaf.endswith('.tf'):
-                    for line,raw in enumerate(text.split('\n'),1):
-                        if 'UNSAFE' in raw:
-                            result['Misconfigurations'].append(dict(ID='AVD-FIXTURE',Severity='HIGH',CauseMetadata=dict(StartLine=line,EndLine=line,Resource='' if options.get('no_resource') else raw.split('UNSAFE')[-1].strip()),Message='private-source'))
-                    if 'NOHEALTH' in text:
-                        # The real pinned release reports file-level checks without cause lines.
-                        result['Misconfigurations'].append(dict(ID='DS-0026',Severity='LOW',Status='FAIL',CauseMetadata=dict(Provider='Dockerfile',Service='general')))
-                        result['Misconfigurations'].append(dict(ID='DS-PASS',Severity='HIGH',Status='PASS',CauseMetadata=dict(Provider='Dockerfile',Service='general')))
-                if name!=options.get('missing'):rows.append(result)
+    record['files']={str(p.relative_to(directory)):p.read_text(errors='replace') for p in directory.rglob('*') if p.is_file()}
+    for name,text in record['files'].items():
+        leaf=pathlib.Path(name).name
+        if leaf in ('package-lock.json','npm-shrinkwrap.json','pnpm-lock.yaml','yarn.lock','uv.lock','poetry.lock','go.mod','go.sum') or leaf.startswith('requirements') or leaf.lower().startswith('dockerfile') or leaf.endswith(('.tf','.dockerfile')) or 'compose' in leaf:
+            result=dict(Target=name, Vulnerabilities=[], Misconfigurations=[])
+            if leaf.startswith('requirements'):
+                for raw in text.split('\n'):
+                    if 'badpkg==' in raw:
+                        result['Vulnerabilities'].append(dict(VulnerabilityID='CVE-FIXTURE',PkgName='badpkg',InstalledVersion=raw.split('==')[1].strip(),Severity=options.get('severity','HIGH'),Description='private-source'))
+            if leaf=='Dockerfile' or leaf.endswith('.tf'):
+                for line,raw in enumerate(text.split('\n'),1):
+                    if 'UNSAFE' in raw:
+                        result['Misconfigurations'].append(dict(ID='AVD-FIXTURE',Severity='HIGH',CauseMetadata=dict(StartLine=line,EndLine=line,Resource='' if options.get('no_resource') else raw.split('UNSAFE')[-1].strip()),Message='private-source'))
+                if 'NOHEALTH' in text:
+                    # The real pinned release reports file-level checks without cause lines.
+                    result['Misconfigurations'].append(dict(ID='DS-0026',Severity='LOW',Status='FAIL',CauseMetadata=dict(Provider='Dockerfile',Service='general')))
+                    result['Misconfigurations'].append(dict(ID='DS-PASS',Severity='HIGH',Status='PASS',CauseMetadata=dict(Provider='Dockerfile',Service='general')))
+            if name!=options.get('missing'):rows.append(result)
     value=dict(SchemaVersion=2,Results=rows)
     if side==options.get('bad_side'): value=dict(SchemaVersion=2)
     pathlib.Path(args[args.index('--output')+1]).write_text('bad json' if options.get('bad_json') else json.dumps(value))
@@ -134,13 +129,6 @@ def inject_isolation(scripts, fixture, available=True):
                     '\n\ndef probe_network(prefix, root, env): return '+repr(available)+'\n')
 
 
-def image_tar(path):
-    with tarfile.open(path,'w') as out:
-        for name,data in {'manifest.json':json.dumps([dict(Config='config.json',RepoTags=['fixture:latest'],Layers=[])]).encode(),
-                          'config.json':b'{"architecture":"amd64","os":"linux","rootfs":{"type":"layers","diff_ids":[]},"config":{}}'}.items():
-            member=tarfile.TarInfo(name);member.size=len(data);out.addfile(member,io.BytesIO(data))
-
-
 class TrivyTests(unittest.TestCase):
     def setUp(self):
         temporary=tempfile.TemporaryDirectory(prefix='bureau-trivy-test-');self.addCleanup(temporary.cleanup)
@@ -187,6 +175,7 @@ class TrivyTests(unittest.TestCase):
              patch.object(self.m,'snapshots',side_effect=AssertionError('empty inventory needs no snapshot copy')):
             value=self.measure()
         self.assertEqual(value['receipt']['status'],'not_applicable');self.assertFalse(value['receipt']['blocking']);self.assertEqual(self.calls(),[])
+        self.assertIn('image scanning is not part of this release',value['projection']['qualifications'])
 
     def test_digest_size_nonregular_and_missing_platform_never_execute(self):
         original=self.install['binary'].read_bytes()
@@ -219,6 +208,10 @@ class TrivyTests(unittest.TestCase):
         with patch.dict(os.environ,extra),patch.object(self.s,'run_process',wraps=self.s.run_process) as launch:
             value=self.measure()
         self.assertEqual(value['receipt']['status'],'measured',value)
+        self.assertIn('image scanning is not part of this release',value['projection']['qualifications'])
+        report=json.loads(Path(value['receipt']['report_path']).read_text())
+        for record in (value['receipt'],value['projection'],report):
+            self.assertFalse(any(key.startswith('image') for key in record))
         calls=self.calls();self.assertEqual(len(calls),2)
         for call,invocation in zip(calls,launch.call_args_list):
             env=call['env'];run=Path(env['HOME']).parent
@@ -340,17 +333,6 @@ class TrivyTests(unittest.TestCase):
         self.assertEqual(expired['receipt']['status'],'measured');self.assertEqual(expired['receipt']['findings_new'],1)
         self.assertTrue(expired['receipt']['blocking']);self.assertEqual(expired['receipt']['findings_suppressed'],0)
 
-    def test_image_archive_digest_config_binding_and_advisory_only(self):
-        self.write('requirements.txt','safe==1.0\n');self.commit();self.blocking()
-        self.assertEqual(self.measure()['projection']['image']['reason'],'image scan: not configured')
-        archive=self.root/'fixture.tar';image_tar(archive)
-        import shlex
-        self.config['qa']['trivy']['image_archive_command']='cp '+shlex.quote(str(archive))+' "$BUREAU_TRIVY_IMAGE_ARCHIVE"'
-        value=self.measure();self.assertEqual(value['receipt']['image_digest'],self.s.file_sha(archive))
-        self.assertTrue(value['receipt']['image_config_digest'].startswith('sha256:'));self.assertFalse(value['receipt']['blocking'])
-        self.assertEqual(value['projection']['image']['findings_total'],1)
-        call=self.calls()[-3];self.assertIn('--input',call['argv']);self.assertNotIn('DOCKER_HOST',call['env'])
-
     def test_inventory_ecosystems_stale_names_unpinned_and_outside_v1(self):
         directory=self.root/'inventory';directory.mkdir()
         fixtures=[('package.json',json.dumps(dict(dependencies={'@scope/a':'^1','missing':'^2'}))),
@@ -366,6 +348,62 @@ class TrivyTests(unittest.TestCase):
         self.assertEqual(self.m.lock_names(directory/'yarn.lock'),{'@scope/a','missing'})
         (directory/'poetry.lock').write_text('[[package]]\nname = "missing-py"\n')
         self.assertEqual(self.m.lock_names(directory/'poetry.lock'),{'missing-py'})
+
+    def test_pnpm_metadata_cannot_cover_an_unresolved_direct_dependency(self):
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        locked="lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      locked:\n        specifier: ^1\n        version: 1.0.0\n"
+        self.write('package.json',json.dumps(dict(dependencies=dict(locked='^1'))))
+        self.write('pnpm-lock.yaml',locked);self.commit();self.base=self.head
+        self.assertEqual(self.measure()['receipt']['status'],'measured')
+        self.write('package.json',json.dumps(dict(dependencies=dict(locked='^1',missing='^2'))))
+        for sibling in ('dependenciesMeta','peerDependenciesMeta'):
+            with self.subTest(sibling=sibling):
+                self.write('pnpm-lock.yaml',locked+'    '+sibling+':\n      missing:\n        injected: true\n')
+                self.commit();value=self.measure()
+                report=json.loads(Path(value['receipt']['report_path']).read_text())
+                self.assertIn('pnpm-lock.yaml',{row['Target'] for row in report['head']['json']['Results']})
+                self.assertEqual(value['receipt']['status'],'reduced_coverage',value['projection'])
+                self.assertIn('declared dependency missing from pnpm-lock.yaml: missing',value['receipt']['reason'])
+                self.assertTrue(value['receipt']['blocking'])
+
+    def test_pnpm_accepts_only_direct_dependency_tables_of_the_root_importer(self):
+        text="importers:\n  .:\n"
+        for table,name in (('dependencies','prod'),('devDependencies','dev'),('optionalDependencies','optional')):
+            text+='    '+table+':\n      '+name+':\n        version: 1.0.0\n'
+        text+='    dependenciesMeta:\n      nested:\n        dependencies:\n          metadata-only:\n            version: 1.0.0\n'
+        text+='  other:\n    dependencies:\n      other-only:\n        version: 1.0.0\n'
+        text+='    .:\n      dependencies:\n        nested-root-only:\n          version: 1.0.0\n'
+        text+='packages:\n  packages-only:\n    version: 1.0.0\n'
+        self.assertEqual(self.m.pnpm_names(text),{'prod','dev','optional'})
+
+    def test_other_lock_parsers_ignore_sibling_metadata_and_transitive_entries(self):
+        directory=self.root/'lock-scope';directory.mkdir()
+        npm=dict(packages={'':dict(dependencies=dict(locked='^1'),dependenciesMeta=dict(missing={})),
+                           'node_modules/missing':dict(version='2.0.0')},dependencies=dict(missing=dict(version='2.0.0')))
+        for name in ('package-lock.json','npm-shrinkwrap.json'):
+            (directory/name).write_text(json.dumps(npm))
+            self.assertEqual(self.m.lock_names(directory/name),{'locked'})
+        (directory/'yarn.lock').write_text('locked@^1:\n  version "1.0.0"\n  dependencies:\n    missing "^2"\n'
+                                         '__metadata:\n  "missing@^2":\n    version: 2.0.0\n')
+        self.assertEqual(self.m.lock_names(directory/'yarn.lock'),{'locked'})
+        text='[[package]]\nname = "locked"\n[package.metadata]\nname = "missing"\n[metadata]\nname = "other"\n'
+        self.assertEqual(self.m.toml_names(text,lock=True),{'locked'})
+        with patch.object(self.m,'tomllib',None):
+            self.assertEqual(self.m.toml_names(text,lock=True),{'locked'})
+
+    def test_toml_fallback_excludes_nested_poetry_group_tables(self):
+        text='[tool.poetry.group.dev.dependencies]\nlocked = "*"\n[tool.poetry.group.dev.metadata.dependencies]\nmissing = "*"\n'
+        self.assertEqual(self.m.toml_names(text),{'locked'})
+        with patch.object(self.m,'tomllib',None):
+            self.assertEqual(self.m.toml_names(text),{'locked'})
+
+    def test_toml_lock_requires_package_array_tables(self):
+        for header in ('[package]','[[package]','[package]]'):
+            with self.subTest(header=header):
+                text='[metadata]\nname = "other"\n'+header+'\nname = "missing"\n'
+                with self.assertRaises(ValueError):self.m.toml_names(text,lock=True)
+                with patch.object(self.m,'tomllib',None):
+                    with self.assertRaises(ValueError):self.m.toml_names(text,lock=True)
 
     def test_python39_toml_extras_multiline_optional_and_poetry_groups(self):
         text='[project]\ndependencies = [\n "requests[security]>=2", # inline comment\n "second>=1",\n]\n'
@@ -418,14 +456,6 @@ class TrivyTests(unittest.TestCase):
         with patch.object(self.m,'run_side',side_effect=private):value=self.measure()
         self.assertEqual(value['receipt']['status'],'not_measured');self.assertEqual(value['receipt']['reason'],'head not measured')
 
-    def test_image_and_fs_findings_share_one_bound(self):
-        self.write('requirements.txt','\n'.join('badpkg=='+str(i) for i in range(30))+'\n');self.commit()
-        archive=self.root/'image.tar';image_tar(archive)
-        import shlex
-        self.config['qa']['trivy']['image_archive_command']='cp '+shlex.quote(str(archive))+' "$BUREAU_TRIVY_IMAGE_ARCHIVE"'
-        value=self.measure();self.assertEqual(len(value['projection']['findings']),20)
-        self.assertEqual(value['projection']['image']['findings'],[]);self.assertEqual(value['projection']['image']['findings_omitted'],1)
-
     def test_missing_resource_and_trailing_ignore_keep_physical_lines(self):
         self.write('infra.tf','resource "example" "a" { # trivy:ignore:AVD-FIXTURE\n# UNSAFE resource\n}\n');self.commit()
         self.mode(no_resource=True);value=self.measure()
@@ -454,11 +484,20 @@ class TrivyTests(unittest.TestCase):
     def test_invalid_settings_doctor_and_inside_repo_cache(self):
         doctor=load('doctor');base=dict(linear=dict(teams=[dict(id='team',key='TEAM',states=dict(build='b'))]),agents={},repo={})
         for raw in (None,[],dict(enabled='true'),dict(mode='other'),dict(block_severity='ERROR'),dict(unknown=True),
-                    dict(max_db_age_hours=0),dict(max_db_age_hours=True),dict(cache_dir='relative'),dict(enabled=True),dict(image_archive_command='')):
+                    dict(max_db_age_hours=0),dict(max_db_age_hours=True),dict(cache_dir='relative'),dict(enabled=True)):
             config={**base,'qa':dict(trivy=raw)}
             with self.subTest(raw=raw):
                 with self.assertRaises(ValueError):self.m.settings(config)
                 self.assertTrue(any('trivy' in error for error in doctor.validate(config)))
+        for enabled in (False,True):
+            for command in (None,'','bash build-image.sh'):
+                with self.subTest(enabled=enabled,removed_setting=command):
+                    self.config['qa']['trivy'].update(enabled=enabled,image_archive_command=command)
+                    with patch.object(self.s,'run_process',side_effect=AssertionError('configuration must fail before execution')):
+                        with self.assertRaisesRegex(ValueError,'unknown keys'):self.measure()
+                    config={**base,**self.config}
+                    self.assertIn('qa.trivy contains unknown keys or is not an object',doctor.validate(config))
+        self.config['qa']['trivy'].pop('image_archive_command')
         self.config['qa']['trivy']['cache_dir']=str(self.repo/'cache')
         with self.assertRaisesRegex(ValueError,'outside'):self.measure()
 
@@ -474,7 +513,7 @@ class TrivyTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get('BUREAU_TRIVY_REAL_TEST')=='1','optional maintainer/hosted CI binary qualification')
 class RealBinaryTests(unittest.TestCase):
-    def test_pinned_offline_flags_lockfile_dockerfile_and_image_input(self):
+    def test_pinned_offline_flags_lockfile_and_dockerfile(self):
         m=load('trivy')
         with tempfile.TemporaryDirectory(prefix='bureau-trivy-real-') as temporary:
             root=Path(temporary).resolve();repo=root/'repo';repo.mkdir()
@@ -494,17 +533,6 @@ class RealBinaryTests(unittest.TestCase):
                 self.assertEqual(report[side]['exit_code'],0)
                 targets={r['Target'] for r in report[side]['json']['Results']}
                 self.assertTrue({'requirements.txt','Dockerfile'} <= targets,targets)
-            # Exercise image --input even though an empty-layer archive may have
-            # no OS packages. Every flag uses the same invocation builder.
-            private=root/'private';private.mkdir(mode=0o700)
-            binary,pin=m.verify_copy(Path(os.environ['BUREAU_TRIVY_BIN']),private,m.PINS)
-            cache,_,_,_=m.cache_snapshot(Path(os.environ['BUREAU_TRIVY_CACHE']),private,48)
-            (private/'empty.yaml').write_text('');(private/'empty.ignore').write_text('')
-            archive=private/'image.tar';image_tar(archive)
-            prefix=m.scan.network_prefix();allowed=m.scan.environment(private)
-            self.assertTrue(m.scan.probe_network(prefix,private,allowed))
-            raw=m.run_side(binary,pin,prefix,private,cache,allowed,'image',archive,image=True)
-            self.assertEqual(raw['exit_code'],0,raw);self.assertEqual(raw['json']['SchemaVersion'],2)
 
 
 if __name__=='__main__':unittest.main()

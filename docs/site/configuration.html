@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c7d07d0c212cbda64103fc94b03ed49a5a992baeca6b4707e8ca3d61d3f68574">
+<meta name="bureau-source-sha256" content="e0952462513e40b5d3ca4532ffac4f384fda56218383f0c5035a6182eb49eee3">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -662,23 +662,22 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb6-1"><a href="
 <span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;mode&quot;</span><span class="fu">:</span> <span class="st">&quot;advisory&quot;</span><span class="fu">,</span></span>
 <span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;cache_dir&quot;</span><span class="fu">:</span> <span class="kw">null</span><span class="fu">,</span></span>
 <span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_db_age_hours&quot;</span><span class="fu">:</span> <span class="dv">48</span><span class="fu">,</span></span>
-<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;block_severity&quot;</span><span class="fu">:</span> <span class="st">&quot;HIGH&quot;</span><span class="fu">,</span></span>
-<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;image_archive_command&quot;</span><span class="fu">:</span> <span class="kw">null</span></span>
-<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
-<p>Trivy is optional and off by default. Doctor and the Trivy helpers
-validate explicit settings even while disabled; unknown keys are errors.
-<code>enabled</code> is boolean, <code>mode</code> is
-<code>advisory</code> or <code>blocking</code>,
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;block_severity&quot;</span><span class="fu">:</span> <span class="st">&quot;HIGH&quot;</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Trivy is optional and off by default. V1 scans dependencies and
+configuration only; image scanning is not part of this release. Doctor
+and the Trivy helpers validate explicit settings even while disabled;
+unknown keys are errors. <code>enabled</code> is boolean,
+<code>mode</code> is <code>advisory</code> or <code>blocking</code>,
 <code>block_severity</code> is <code>UNKNOWN</code>, <code>LOW</code>,
 <code>MEDIUM</code>, <code>HIGH</code> or <code>CRITICAL</code>, and
 <code>max_db_age_hours</code> is a positive finite number. An enabled
 scan requires an absolute <code>cache_dir</code> outside the repository;
 <code>~/</code> is expanded. The runtime checks the resolved path too.
-<code>image_archive_command</code> is null or a nonempty trusted
-operator command. Disabled QA prompts, comments and routing, and
-disabled/advisory merge GitHub and Git call logs, are unchanged.</p>
+Disabled QA prompts, comments and routing, and disabled/advisory merge
+GitHub and Git call logs, are unchanged.</p>
 <p>Bureau ships metadata for <strong>Trivy 0.76.1</strong>, released
 <strong>2026-10-21</strong>, in
 <code>scripts/bureau-trivy-pins.json</code>. Only Linux x86_64 and macOS
@@ -730,7 +729,7 @@ effect.</p>
 outside every stage:</p>
 <div class="sourceCode" id="cb8"><pre
 class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-trivy.py refresh <span class="at">--cache-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_TRIVY_CACHE</span><span class="st">&quot;</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Include Java&#39;s DB when Java analysis or an image needs it:</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Include Java&#39;s DB when Java analysis needs it:</span></span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-trivy.py refresh <span class="at">--cache-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_TRIVY_CACHE</span><span class="st">&quot;</span> <span class="at">--java</span></span></code></pre></div>
 <p>The refresh destination must be empty or a Bureau-managed cache,
 outside the repository. Refresh first verifies and privately copies the
@@ -754,9 +753,9 @@ fail measurement.</p>
 <code>java-db/</code>; all external checks bundles and other cache
 content are removed. Misconfiguration checks therefore come from the
 pinned binary's embedded bundle, whose identity is the binary digest.
-The snapshot manifest records removals. Before filesystem scanning,
-including after an image build, Bureau re-checks the private database
-bytes and discards non-database cache content again.</p>
+The snapshot manifest records removals. Before each filesystem scan,
+Bureau re-checks the private database bytes and discards non-database
+cache content again.</p>
 <p>Every scanner execution, including refresh, receives only
 <code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
 <code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code>,
@@ -772,7 +771,7 @@ online execution. The refresh CLI is the sole networked scanner
 operation and is absent from the shell stage helper's allowed
 commands.</p>
 <p>All release-dependent flags live in <code>bureau-trivy.py</code>'s
-<code>FLAGS</code> table. Filesystem and advisory image scans use
+<code>FLAGS</code> table. Filesystem scans use
 <code>--offline-scan --skip-db-update --skip-java-db-update --skip-check-update --skip-vex-repo-update --skip-version-check --disable-telemetry</code>,
 explicit empty Bureau <code>--config</code> and
 <code>--ignorefile</code>, a private <code>--cache-dir</code>,
@@ -861,30 +860,23 @@ Both enabled scanners must measure the same inputs. After the final
 gates, only the existing single base-name read remains; there is no
 additional fetch. The ticket kill-switch checkpoint remains the last
 operation before the head-pinned merge in every merge strategy.</p>
-<p>An optional <code>image_archive_command</code> runs from the
-final-head snapshot under the same isolation and allowlist, with one
-extra variable, <code>BUREAU_TRIVY_IMAGE_ARCHIVE</code>, naming the path
-it must write. Produce one OCI or <code>docker save</code> tar archive
-there using already available build inputs. Bureau passes no Docker
-socket or inherited Docker settings to Trivy. The receipt binds the
-archive's SHA-256 and image configuration digest, and the image scan
-uses <code>image --input</code> plus the same offline flags. Image
-findings and build/scan failures are always advisory in v1, with no base
-comparison; an archive cannot prove the image came from the intended
-source. Unconfigured images are reported as
-<code>image scan: not configured</code>, never clean. Building is
-skipped too when the entire filesystem inventory is not applicable.</p>
+<p>Image scanning is not part of this release, and every projection
+carries that fixed qualification. The Trivy stage executes no builds or
+repository-controlled commands. The removed
+<code>qa.trivy.image_archive_command</code> key is unknown and causes a
+configuration error, including with <code>null</code> or while disabled;
+remove it from existing configurations. A follow-up will design an
+isolated, source-bound image build.</p>
 <p>The shared receipt store writes immutable <code>report.json</code>,
 <code>projection.json</code> and <code>receipt.json</code> attempts
 under
 <code>&lt;state dir&gt;/scans/trivy/&lt;identity digest&gt;/&lt;attempt id&gt;/</code>,
 binding full head/base commits, pin/settings/base-policy digests, cache
-digest/UpdatedAt, image archive/config digests and report/projection
-hashes. The projection has one budget of at most 20 findings across
-filesystem and image evidence, with explicit omitted counts, and bounded
-coverage/removal lists. Receipt hashes join existing QA/merge artifact
-evidence. Reuse re-verifies the current binary/cache and checks
-exception expiry; each consuming PR adds its own exclusive
+digest/UpdatedAt and report/projection hashes. The projection has a
+budget of at most 20 filesystem findings, with explicit omitted counts,
+and bounded coverage/removal lists. Receipt hashes join existing
+QA/merge artifact evidence. Reuse re-verifies the current binary/cache
+and checks exception expiry; each consuming PR adds its own exclusive
 <code>refs/pr-N</code> retention reference. Retention keeps the newest
 20 attempts plus those referenced by open PRs; unknown open-PR
 inventories keep referenced evidence conservatively.</p>
@@ -899,7 +891,7 @@ separately. Fake-binary tests run without downloads in the full test
 matrix. The separate real-binary job uses only GitHub-hosted
 <code>ubuntu-latest</code>, downloads the exact pinned release archive,
 checks archive and extracted-binary hashes before execution, refreshes a
-job-local cache and qualifies lockfile, Dockerfile and image-input flags
+job-local cache and qualifies lockfile and Dockerfile filesystem flags
 under <code>unshare -rn</code>. The job configures user namespaces only
 on that ephemeral hosted VM; it never selects a self-hosted fallback.
 Real-binary flag compatibility, embedded-check behavior, engine resource
