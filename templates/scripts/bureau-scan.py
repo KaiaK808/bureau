@@ -69,8 +69,8 @@ def state_dir(repo):
     return module('runtime').common_for(Path(repo)) / 'bureau'
 
 
-def environment(root, tool_dir, switches=None):
-    values = dict(PATH=str(tool_dir) + ':/usr/bin:/bin', LANG='C.UTF-8', TZ='UTC')
+def environment(root, switches=None):
+    values = dict(PATH='/usr/bin:/bin', LANG='C.UTF-8', TZ='UTC')
     for key, name in (('HOME', 'home'), ('XDG_CONFIG_HOME', 'config'),
                       ('XDG_CACHE_HOME', 'cache'), ('TMPDIR', 'tmp')):
         path = root / name

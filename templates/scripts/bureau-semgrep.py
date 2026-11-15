@@ -148,12 +148,12 @@ def parse_report(value, files, snapshot):
         name = path_name(raw['path'])
         rule, severity = raw['check_id'], raw['extra']['severity']
         start, end = raw['start']['line'], raw['end']['line']
-        lines = (snapshot / name).read_bytes().decode('utf-8').splitlines()
+        lines = (snapshot / name).read_bytes().split(b'\n')
         if (not isinstance(rule, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+', rule)
                 or severity not in scan.SEVERITY or type(start) is not int or type(end) is not int
                 or not 1 <= start <= end <= len(lines)):
             raise ValueError('malformed Semgrep finding')
-        match = '\n'.join(line.strip() for line in lines[start - 1:end])
+        match = '\n'.join(line.decode('utf-8').strip() for line in lines[start - 1:end])
         findings.append(dict(tool='semgrep', rule_id=rule, file=name, line=start, severity=severity,
                              match_sha256=scan.sha(match.encode())))
     return findings
@@ -205,7 +205,6 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
     if not options['enabled']: return None
     settings_digest = scan.digest(config.get('review', {}).get('semgrep', {}))
     state = _state if _state is not None else scan.state_dir(repo)
-    venv = Path(_venv or os.environ.get('BUREAU_SEMGREP_VENV') or state / 'tools/semgrep/venv').expanduser().resolve()
     manifests = _manifests if _manifests is not None else SCRIPTS
     # Missing inputs still get an identity and durable, explicitly unavailable receipt.
     pin = dict(version=VERSION, lock=scan.file_sha(SCRIPTS / 'bureau-semgrep-lock.txt'))
@@ -225,32 +224,37 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
         ignores = suppressions(ignore_bytes)
         with tempfile.TemporaryDirectory(prefix='bureau-semgrep-') as tmp:
             root = Path(tmp).resolve()
-            env = scan.environment(root, venv / 'bin', SWITCHES)
-            prefix = _prefix if _prefix is not None else scan.network_prefix()
-            probe = _probe or scan.probe_network
             sides, manifest = snapshots(repo, base, head, trees, root)
             report['snapshots'] = manifest
-            # Pin identity even when no eligible source exists. Never launch Semgrep on [].
-            if not (venv / 'bin/python').is_file():
-                status, reason = 'unavailable', 'Semgrep venv absent'
-            elif not probe(prefix, root, env):
-                status, reason = 'not_measured', 'network isolation unavailable'
+            # Applicability needs only source/policy and the shipped pin hashes.
+            # Never check or execute scanner prerequisites for an empty input set.
+            if not any(files for _, files in sides.values()):
+                bound = scan.identity('semgrep', head, base, scan.digest(pin), settings_digest, policy_digest)
+                prior = scan.find_receipt(state, bound, options) if reuse else None
+                if prior: return prior
+                status, reason = 'not_applicable', 'no changed eligible Python, JavaScript or TypeScript files'
             else:
-                system, arch, abi = scan.interpreter(venv, root, env, prefix)
-                manifest_path = manifests / ('bureau-semgrep-manifest-' + system + '-' + arch + '-' + abi + '.json')
-                pin['manifest'] = scan.file_sha(manifest_path) if manifest_path.is_file() else 'missing:' + manifest_path.name
-                try:
-                    scan.verify_venv(venv, manifest_path, 'semgrep', VERSION, system, arch, abi,
-                                     manifest_sha=pin['manifest'])
-                except (OSError, ValueError, TypeError, KeyError) as exc:
-                    status, reason = 'unavailable', str(exc) if isinstance(exc, ValueError) else 'runtime manifest unreadable'
+                venv = Path(_venv or os.environ.get('BUREAU_SEMGREP_VENV') or state / 'tools/semgrep/venv').expanduser().resolve()
+                env = scan.environment(root, SWITCHES)
+                prefix = _prefix if _prefix is not None else scan.network_prefix()
+                probe = _probe or scan.probe_network
+                if not (venv / 'bin/python').is_file():
+                    status, reason = 'unavailable', 'Semgrep venv absent'
+                elif not probe(prefix, root, env):
+                    status, reason = 'not_measured', 'network isolation unavailable'
                 else:
-                    bound = scan.identity('semgrep', head, base, scan.digest(pin), settings_digest, policy_digest)
-                    prior = scan.find_receipt(state, bound, options) if reuse else None
-                    if prior: return prior
-                    if not any(files for _, files in sides.values()):
-                        status, reason = 'not_applicable', 'no changed eligible Python, JavaScript or TypeScript files'
+                    system, arch, abi = scan.interpreter(venv, root, env, prefix)
+                    manifest_path = manifests / ('bureau-semgrep-manifest-' + system + '-' + arch + '-' + abi + '.json')
+                    pin['manifest'] = scan.file_sha(manifest_path) if manifest_path.is_file() else 'missing:' + manifest_path.name
+                    try:
+                        scan.verify_venv(venv, manifest_path, 'semgrep', VERSION, system, arch, abi,
+                                         manifest_sha=pin['manifest'])
+                    except (OSError, ValueError, TypeError, KeyError) as exc:
+                        status, reason = 'unavailable', str(exc) if isinstance(exc, ValueError) else 'runtime manifest unreadable'
                     else:
+                        bound = scan.identity('semgrep', head, base, scan.digest(pin), settings_digest, policy_digest)
+                        prior = scan.find_receipt(state, bound, options) if reuse else None
+                        if prior: return prior
                         config_dir = root / 'rules'; config_dir.mkdir(mode=0o700)
                         paths = []
                         for index, (_, data) in enumerate(rules):

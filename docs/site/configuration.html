@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="5cfdb443dd4254d880db070087ea152eaeabe6cd1781620f1cd1f1cc32912235">
+<meta name="bureau-source-sha256" content="ffe57f7e36280e3a4c35346b140982b39c630e12b83f20c9dab43abab594fa22">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -472,10 +472,10 @@ beside the runtime scripts that matches the venv's interpreter. Because
 some dependencies are compiled, every CPython minor needs its own
 manifest. This release ships <code>darwin-arm64-cp314</code> and
 <code>linux-x86_64-cp312</code>. With any other interpreter, an enabled
-scan reports <strong>unavailable</strong> and names the missing
-manifest. Missing venvs and missing/mismatched manifests never abort
-advisory review. There is no configurable version or manifest
-override.</p>
+scan with eligible files reports <strong>unavailable</strong> and names
+the missing manifest. Missing venvs and missing/mismatched manifests
+never abort advisory review. There is no configurable version or
+manifest override.</p>
 <p>Maintainers generate a universal wheel-only lock for
 <code>semgrep==1.183.0</code> with
 <code>uv pip compile --universal --generate-hashes --only-binary :all:</code>.
@@ -500,20 +500,22 @@ scripts and adjacent bytecode are not used. A pre-verification
 interpreter probe also uses <code>-S</code>. The operator's system
 Python itself is trusted, outside the package manifest.</p>
 <p>Every scan and interpreter probe receives an allowlist environment:
-fixed <code>PATH</code>, private <code>HOME</code>,
+exactly <code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
 <code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code>,
 <code>TMPDIR</code>, <code>LANG=C.UTF-8</code>, <code>TZ=UTC</code>,
 <code>SEMGREP_SEND_METRICS=off</code>,
 <code>SEMGREP_ENABLE_VERSION_CHECK=0</code> and
-<code>DO_NOT_TRACK=1</code>. Provider keys, Bureau secrets, GitHub
-tokens and other Semgrep settings do not pass through. Runtime network
-denial is required: Linux uses a probed <code>unshare -rn</code>
-user/network namespace; macOS uses <code>sandbox-exec</code> with the
-shipped <code>bureau-scan-nonet.sb</code> profile denying
-<code>network*</code>. If isolation cannot run, the status is
-<strong>not_measured</strong>, with reason
-<code>network isolation unavailable</code>. Bureau never falls back to
-an online scan.</p>
+<code>DO_NOT_TRACK=1</code>. The venv's <code>bin</code> directory is
+excluded from PATH so unverified launchers and fallback helpers cannot
+be found there; the interpreter is always invoked by its absolute path.
+Provider keys, Bureau secrets, GitHub tokens and other Semgrep settings
+do not pass through. Runtime network denial is required for eligible
+scans: Linux uses a probed <code>unshare -rn</code> user/network
+namespace; macOS uses <code>sandbox-exec</code> with the shipped
+<code>bureau-scan-nonet.sb</code> profile denying <code>network*</code>.
+If isolation cannot run, the status is <strong>not_measured</strong>,
+with reason <code>network isolation unavailable</code>. Bureau never
+falls back to an online scan.</p>
 <p>The scan uses private snapshots of changed Python, JavaScript and
 TypeScript files at pinned base and head, with explicit file lists. Bash
 remains covered by ShellCheck and shell boundary tests. Native
@@ -526,12 +528,16 @@ suppressions match. Only Bureau-authored rules ship, under Bureau's
 license; no Registry packs or engine binaries are vendored. The
 separately installed LGPL-2.1 engine runs as a separate program.</p>
 <p>Only new occurrences count toward the floor. Identity is rule ID,
-file and SHA-256 of matched lines with surrounding whitespace stripped
-per line. If a count rises from N to M, the surplus is new and the
-projection lists every head occurrence with that count note. Editing
-other lines leaves an existing finding existing; moving it to another
-file makes it new. Base-only suppressions require an exact file and rule
-ID with a named, nonempty reason:</p>
+file and SHA-256 of matched lines with surrounding whitespace, including
+a trailing CR, stripped per line. Snapshot bytes are split only at LF
+(<code>\n</code>), matching Semgrep's physical lines; vertical tabs and
+Unicode line separators inside comments cannot shift finding identities.
+Finding bounds are checked against that physical line count. If a count
+rises from N to M, the surplus is new and the projection lists every
+head occurrence with that count note. Editing other lines leaves an
+existing finding existing; moving it to another file makes it new.
+Base-only suppressions require an exact file and rule ID with a named,
+nonempty reason:</p>
 <div class="sourceCode" id="cb5"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ot">[</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">&quot;file&quot;</span><span class="fu">:</span> <span class="st">&quot;src/legacy.py&quot;</span><span class="fu">,</span> <span class="dt">&quot;rule_id&quot;</span><span class="fu">:</span> <span class="st">&quot;bureau.python.os-command&quot;</span><span class="fu">,</span> <span class="dt">&quot;reason&quot;</span><span class="fu">:</span> <span class="st">&quot;Approved legacy maintenance boundary&quot;</span><span class="fu">}</span></span>
@@ -545,10 +551,14 @@ reasonless suppressions fail measurement. The receipt distinguishes
 <code>reduced_coverage</code>; every non-measured status names a reason.
 A measured result requires exit 0, valid JSON, no errors and coverage of
 every explicit target. Timeouts, skipped targets and tool/parse errors
-are not measured. An empty eligible set is not applicable, and Bureau
-then starts no Semgrep process. Semgrep does not emit reduced coverage:
-incomplete coverage is not measured. None of these statuses is rendered
-as clean.</p>
+are not measured. Bureau builds the snapshots and decides applicability
+first: if neither side has eligible files, the result is
+<code>not_applicable</code> and passes blocking mode without checking
+the venv, isolation, interpreter or runtime manifest, or starting any
+scanner or probe. Its receipt still binds the version, lock hash and
+hashes of the shipped manifest files without executing them. Semgrep
+does not emit reduced coverage: incomplete coverage is not measured.
+None of these statuses is rendered as clean.</p>
 <p>In advisory mode the scan reports evidence and review continues.
 Specialists finish their independent first pass before receiving the
 projection in the existing late step, for all three roles, even with
@@ -568,12 +578,18 @@ the existing evidence archive. Retention keeps the newest 20 attempts
 per repository/tool plus PR-referenced attempts while their PR is open;
 an unreadable PR inventory conservatively keeps referenced attempts.</p>
 <p>Pin, settings and policy digests join approval reuse identity,
-independently of build-check reuse. Just before an automatic merge,
-after the existing gate recheck, blocking mode verifies a receipt for
-the final head and current base and reruns Semgrep when that identity
-has no valid durable receipt. Blocking findings, unavailable tooling and
-failed measurements refuse merge with the existing blocked gate outcome
-(25). The older Code Review v2 verdict reader's head binding is
+independently of build-check reuse. Before the existing just-in-time
+merge gate recheck, blocking mode reads the PR head and current base
+ref/commit and runs Semgrep with receipt reuse for those inputs.
+Blocking findings, unavailable tooling and failed measurements refuse
+merge with the existing blocked gate outcome (25). The existing gate
+recheck then runs unchanged. After it passes, Bureau re-reads the PR
+base ref name and fetches only that base ref; merge requires the checked
+head to equal the scanned head, an unchanged base ref name and an
+unchanged base commit. Changed scan inputs abort with the
+gate-regression report and retryable outcome (2), so the next tick
+measures the current inputs. Disabled and advisory modes add no GitHub
+or git calls. The older Code Review v2 verdict reader's head binding is
 unchanged by this scanner integration.</p>
 <p><strong>Upgrade:</strong> compare installed script drift, resync the
 entire scripts scope (including the shared helper, sandbox profile,

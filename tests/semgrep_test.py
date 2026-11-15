@@ -30,7 +30,7 @@ def load(name, path=None):
 
 
 FAKE = r'''
-import json, os, pathlib, sys, time
+import json, os, pathlib, shutil, subprocess, sys, time
 settings = json.loads(pathlib.Path(SETTINGS).read_text())
 args = sys.argv[1:]
 files = args[args.index('--')+1:]
@@ -39,12 +39,18 @@ record = dict(env=dict(os.environ), argv=args, python=sys.orig_argv if hasattr(s
               configs=[pathlib.Path(args[i+1]).read_text() for i,x in enumerate(args[:-1]) if x=='--config'],
               native=[str(p) for p in pathlib.Path('.').rglob('*') if '.semgrep' in str(p)],
               cache_prefix=sys.pycache_prefix, cache_empty=not any(pathlib.Path(sys.pycache_prefix).rglob('*')))
+if settings.get('lookup_helpers'):
+    record['helpers'] = {name:shutil.which(name) for name in ('semgrep-core-proprietary', 'semgrep')}
+    for binary in record['helpers'].values():
+        if binary: subprocess.run([binary], check=True)
 with open(CALLS, 'a') as out: out.write(json.dumps(record)+'\n')
 if settings.get('sleep'): time.sleep(settings['sleep'])
 rows=[]
 for name in files:
-    for line,text in enumerate(pathlib.Path(name).read_text().splitlines(),1):
-        if 'eval(' in text or 'UNSAFE(' in text:
+    for line,raw in enumerate(pathlib.Path(name).read_bytes().split(b'\n'),1):
+        text = raw.decode('utf-8').rstrip('\r')
+        if text.lstrip().startswith('#'): continue
+        if 'eval(' in text or 'UNSAFE(' in text or 'os.system(' in text:
             rows.append(dict(check_id='fake.rule',path=name,start=dict(line=line),end=dict(line=line),
                              extra=dict(severity=settings.get('severity','ERROR'),lines=text,message='private '+text)))
 value=dict(errors=[],results=rows,paths=dict(scanned=files))
@@ -55,6 +61,10 @@ if mode=='outside': value['paths']['scanned']=['../outside.py']
 if mode=='bad-result': value['results']=[{}]
 output=pathlib.Path(args[args.index('--output')+1])
 output.write_text('bad json' if mode=='json' else json.dumps(value))
+if settings.get('hook'):
+    hook = subprocess.run([sys.executable, '-I', '-B', settings['hook']], capture_output=True)
+    pathlib.Path(settings['hook'] + '.log').write_bytes(hook.stdout + hook.stderr)
+    if hook.returncode: sys.exit(hook.returncode)
 sys.exit(settings.get('exit',0))
 '''
 
@@ -152,7 +162,7 @@ class SemgrepTests(unittest.TestCase):
         calls = self.calls(); self.assertEqual(len(calls), 2)
         for side, call in zip(('base','head'), calls):
             env = call['env']; root = Path(env['HOME']).parent
-            expected = dict(PATH=str(self.fixture['venv'] / 'bin') + ':/usr/bin:/bin', LANG='C.UTF-8', TZ='UTC',
+            expected = dict(PATH='/usr/bin:/bin', LANG='C.UTF-8', TZ='UTC',
                             HOME=str(root/'home'), XDG_CONFIG_HOME=str(root/'config'),
                             XDG_CACHE_HOME=str(root/'cache'), TMPDIR=str(root/'tmp'), **self.m.SWITCHES)
             # macOS's system interpreter inserts this after exec, even under -I -S.
@@ -182,6 +192,21 @@ class SemgrepTests(unittest.TestCase):
         self.assertTrue(all(args[0] == str(self.fixture['venv'] / 'bin/python') for args in wrapped))
         for args in wrapped[1:]:
             for flag in ('-I','-B','-X','-m'): self.assertIn(flag, args)
+
+    def test_unverified_venv_helpers_are_neither_found_nor_executed(self):
+        markers = []
+        for name in ('semgrep-core-proprietary', 'semgrep'):
+            marker = self.root / (name + '-executed'); markers.append(marker)
+            binary = self.fixture['venv'] / 'bin' / name
+            binary.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\n')
+            binary.chmod(0o755)
+        self.mode(lookup_helpers=True)
+        value = self.measure()
+        self.assertEqual(value['receipt']['status'], 'measured', value)
+        self.assertEqual(len(self.calls()), 2)
+        self.assertFalse(any(marker.exists() for marker in markers), 'unverified venv helper executed')
+        for call in self.calls():
+            self.assertEqual(call['helpers'], {'semgrep-core-proprietary':None, 'semgrep':None})
 
     def test_network_probe_available_and_unavailable_without_host_dependency(self):
         for system in ('Linux','Darwin','unsupported'):
@@ -273,10 +298,69 @@ class SemgrepTests(unittest.TestCase):
         self.git('mv','a.js','other.js'); self.commit(); value = self.measure()['receipt']
         self.assertEqual((value['findings_new'],value['findings_existing']), (2,0))
 
+    def test_comment_separators_do_not_shift_physical_finding_lines(self):
+        for separator in (b'\x0b', '\u2028'.encode('utf-8')):
+            with self.subTest(separator=separator):
+                source = self.repo / 'physical.py'
+                source.write_bytes(b'# header\nos.system(old_input)\n')
+                self.commit(); self.base = self.head
+                source.write_bytes(b'#' + separator + b'os.system(old_input)\nos.system(new_input)\n')
+                self.commit()
+                value = self.measure(); receipt = value['receipt']
+                self.assertEqual(receipt['status'], 'measured', value)
+                self.assertEqual((receipt['findings_new'], receipt['findings_existing']), (1,0))
+                self.assertEqual([row['line'] for row in value['projection']['findings']], [2])
+                report = json.loads(Path(receipt['report_path']).read_text())
+                self.assertEqual([row['start']['line'] for row in report['head']['json']['results']], [2])
+
+    def test_physical_lines_keep_crlf_normalization_and_bounds_check(self):
+        snapshot = self.root / 'physical'; snapshot.mkdir()
+        (snapshot / 'a.py').write_bytes(b'#\x0bdecoy\n  os.system(input)  \r\n')
+        row = dict(check_id='fake.rule', path='a.py', start=dict(line=2), end=dict(line=2),
+                   extra=dict(severity='ERROR'))
+        report = dict(errors=[], results=[row], paths=dict(scanned=['a.py']))
+        findings = self.m.parse_report(report, ['a.py'], snapshot)
+        self.assertEqual(findings[0]['match_sha256'], self.s.sha(b'os.system(input)'))
+        row['end']['line'] = 4
+        with self.assertRaisesRegex(ValueError, 'malformed Semgrep finding'):
+            self.m.parse_report(report, ['a.py'], snapshot)
+
     def test_empty_eligible_set_no_semgrep_call(self):
         self.head = self.base
         value = self.measure()['receipt']; self.assertEqual(value['status'], 'not_applicable')
         self.assertEqual(self.calls(), [])
+
+    def test_empty_eligible_set_needs_no_venv_isolation_or_runtime_verification(self):
+        self.base = self.head
+        (self.repo / 'README.md').write_text('Only documentation changed.\n'); self.commit()
+        self.config['review']['semgrep']['mode'] = 'blocking'
+        for unavailable in ('venv', 'isolation'):
+            with self.subTest(unavailable=unavailable), \
+                 patch.object(self.s, 'environment') as environment, \
+                 patch.object(self.s, 'network_prefix') as prefix, \
+                 patch.object(self.s, 'probe_network', return_value=False) as probe, \
+                 patch.object(self.s, 'interpreter') as interpreter, \
+                 patch.object(self.s, 'verify_venv') as verify, \
+                 patch.object(self.s, 'run_process') as process, \
+                 patch.object(self.m, 'run_side') as scanner:
+                value = self.m.measure(self.repo, self.config, self.base, self.head, _state=self.root/'state',
+                    _venv=self.root/'absent-venv' if unavailable == 'venv' else self.fixture['venv'],
+                    _manifests=self.root)
+                receipt = value['receipt']
+                self.assertEqual(receipt['status'], 'not_applicable', value)
+                self.assertFalse(receipt['blocking'])
+                for mock in (environment, prefix, probe, interpreter, verify, process, scanner):
+                    mock.assert_not_called()
+                pin = dict(version=self.m.VERSION, lock=self.s.file_sha(SCRIPTS/'bureau-semgrep-lock.txt'),
+                           manifests=[(p.name, self.s.file_sha(p)) for p in sorted(self.root.glob('bureau-semgrep-manifest-*.json'))])
+                self.assertEqual(receipt['pin_digest'], self.s.digest(pin))
+                self.assertEqual(self.calls(), [])
+                self.assertFalse((self.root/'wrapper-calls.jsonl').exists())
+                if unavailable == 'venv':
+                    first_pin = receipt['pin_digest']
+                    path = self.fixture['manifest']; path.write_text(path.read_text() + '\n')
+                else:
+                    self.assertNotEqual(receipt['pin_digest'], first_pin)
 
     def test_incomplete_output_nonzero_json_errors_and_skipped_are_not_measured(self):
         for mode in ('skipped','errors','outside','bad-result','json','exit'):
@@ -417,7 +501,7 @@ class RealBinaryTests(unittest.TestCase):
     def test_rules_and_one_isolated_scan(self):
         m=load('semgrep'); s=m.scan; env_path=Path(os.environ['BUREAU_SEMGREP_VENV']).resolve()
         with tempfile.TemporaryDirectory(prefix='bureau-semgrep-real-') as tmp:
-            root=Path(tmp); env=s.environment(root,env_path/'bin',m.SWITCHES); prefix=s.network_prefix()
+            root=Path(tmp); env=s.environment(root,m.SWITCHES); prefix=s.network_prefix()
             self.assertTrue(s.probe_network(prefix,root,env),'network isolation unavailable')
             system,arch,abi=s.interpreter(env_path,root,env,prefix)
             manifest=SCRIPTS/('bureau-semgrep-manifest-'+system+'-'+arch+'-'+abi+'.json')

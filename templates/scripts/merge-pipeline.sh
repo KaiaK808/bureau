@@ -633,6 +633,43 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
+# Measure blocking scanner inputs before the just-in-time gates: scanning can
+# take minutes. The cheap check after those gates binds the merge to this scan.
+SEMGREP_RECHECK=false
+if [ "$(bureau_get 'has("review")')" = true ]; then
+  # Load only for configured review settings, preserving the disabled legacy path.
+  source "$(dirname "$0")/bureau-semgrep.sh"
+  SEMGREP_SETTINGS=$(bureau_semgrep settings) || exit 24
+  if [ "$(printf '%s' "$SEMGREP_SETTINGS" | jq -r '.enabled and .mode == "blocking"')" = true ]; then
+    semgrep_merge_hold() {
+      printf '    %s\n' "$1"
+      merge_gate_exit blocked "$1"
+    }
+    _scan_head=$(pr_head_sha "$PR_NUMBER")
+    [ -n "$_scan_head" ] || semgrep_merge_hold 'semgrep: current PR head unavailable'
+    _scan_refs=$(gh pr view "$PR_NUMBER" --json baseRefName,headRefName) \
+      || semgrep_merge_hold 'semgrep: current PR base unavailable'
+    _scan_base_ref=$(printf '%s' "$_scan_refs" | jq -er '.baseRefName | select(type == "string" and length > 0)') \
+      || semgrep_merge_hold 'semgrep: current PR base unavailable'
+    if [[ "$_scan_base_ref" == -* ]] || ! git check-ref-format "refs/heads/$_scan_base_ref" >/dev/null 2>&1; then
+      semgrep_merge_hold 'semgrep: unsafe PR base ref'
+    fi
+    git fetch --no-tags origin "+refs/heads/$_scan_base_ref:refs/remotes/origin/$_scan_base_ref" \
+      "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
+      || semgrep_merge_hold 'semgrep: pinned source unavailable'
+    _scan_base=$(git rev-parse --verify "refs/remotes/origin/$_scan_base_ref^{commit}") \
+      || semgrep_merge_hold 'semgrep: pinned base unavailable'
+    _semgrep_rc=0
+    SEMGREP_RESULT=$(bureau_semgrep scan --base "$_scan_base" --head "$_scan_head" --pr "$PR_NUMBER" --reuse) || _semgrep_rc=$?
+    [ "$_semgrep_rc" != 130 ] || exit 130
+    [ "$_semgrep_rc" = 0 ] || semgrep_merge_hold 'semgrep: durable scanner receipt unavailable'
+    if [ "$(printf '%s' "$SEMGREP_RESULT" | jq -r '.receipt.blocking')" != false ]; then
+      semgrep_merge_hold "semgrep: $(printf '%s' "$SEMGREP_RESULT" | jq -c '.projection')"
+    fi
+    SEMGREP_RECHECK=true
+  fi
+fi
+
 # Just-in-time gate recheck. Closes the race between the initial gate query
 # (potentially seconds-to-minutes ago) and the merge call. Most importantly
 # this re-checks pr_base_is_current — the prior tick's merge of a different
@@ -653,37 +690,26 @@ if [ -n "$JIT_GATE_OUT" ]; then
   merge_gate_exit "$(printf '%s\n' "$JIT_GATE_OUT" | merge_gate_outcome)" "$JIT_GATE_OUT"
 fi
 
-# Blocking scanner evidence binds the final head, current PR base and all policy
-# digests independently of the existing Code Review v2 verdict reader above.
-if [ "$(bureau_get 'has("review")')" = true ]; then
-  # Load only for configured review settings, preserving the disabled legacy path.
-  source "$(dirname "$0")/bureau-semgrep.sh"
-  SEMGREP_SETTINGS=$(bureau_semgrep settings) || exit 24
-  if [ "$(printf '%s' "$SEMGREP_SETTINGS" | jq -r '.enabled and .mode == "blocking"')" = true ]; then
-    semgrep_merge_hold() {
-      printf '    %s\n' "$1"
-      merge_gate_exit blocked "$1"
-    }
-    _scan_refs=$(gh pr view "$PR_NUMBER" --json baseRefName,headRefName) \
-      || semgrep_merge_hold 'semgrep: current PR base unavailable'
-    _scan_base_ref=$(printf '%s' "$_scan_refs" | jq -er '.baseRefName | select(type == "string" and length > 0)') \
-      || semgrep_merge_hold 'semgrep: current PR base unavailable'
-    if [[ "$_scan_base_ref" == -* ]] || ! git check-ref-format "refs/heads/$_scan_base_ref" >/dev/null 2>&1; then
-      semgrep_merge_hold 'semgrep: unsafe PR base ref'
-    fi
-    git fetch --no-tags origin "+refs/heads/$_scan_base_ref:refs/remotes/origin/$_scan_base_ref" \
-      "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
-      || semgrep_merge_hold 'semgrep: pinned source unavailable'
-    _scan_base=$(git rev-parse --verify "refs/remotes/origin/$_scan_base_ref^{commit}") \
-      || semgrep_merge_hold 'semgrep: pinned base unavailable'
-    _semgrep_rc=0
-    SEMGREP_RESULT=$(bureau_semgrep scan --base "$_scan_base" --head "$MERGE_HEAD" --pr "$PR_NUMBER" --reuse) || _semgrep_rc=$?
-    [ "$_semgrep_rc" != 130 ] || exit 130
-    [ "$_semgrep_rc" = 0 ] || semgrep_merge_hold 'semgrep: durable scanner receipt unavailable'
-    if [ "$(printf '%s' "$SEMGREP_RESULT" | jq -r '.receipt.blocking')" != false ]; then
-      semgrep_merge_hold "semgrep: $(printf '%s' "$SEMGREP_RESULT" | jq -c '.projection')"
-    fi
-  fi
+# The gates passed after scanning. Re-read only the base ref/commit and require
+# all merge inputs to match the receipt; changed inputs are retried next tick.
+if [ "$SEMGREP_RECHECK" = true ]; then
+  semgrep_merge_retry() {
+    echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"
+    printf '    %s\n' "$1"
+    merge_gate_exit not-yet "$1"
+  }
+  [ "$MERGE_HEAD" = "$_scan_head" ] \
+    || semgrep_merge_retry 'semgrep: PR head changed during scan'
+  _merge_base_ref=$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName) \
+    || semgrep_merge_retry 'semgrep: current PR base unavailable after gate recheck'
+  [ "$_merge_base_ref" = "$_scan_base_ref" ] \
+    || semgrep_merge_retry 'semgrep: PR base ref changed during scan or gate recheck'
+  git fetch --no-tags origin "+refs/heads/$_merge_base_ref:refs/remotes/origin/$_merge_base_ref" \
+    || semgrep_merge_retry 'semgrep: current base unavailable after gate recheck'
+  _merge_base=$(git rev-parse --verify "refs/remotes/origin/$_merge_base_ref^{commit}") \
+    || semgrep_merge_retry 'semgrep: current base commit unavailable after gate recheck'
+  [ "$_merge_base" = "$_scan_base" ] \
+    || semgrep_merge_retry 'semgrep: PR base commit changed during scan or gate recheck'
 fi
 
 # No --delete-branch: same reason code-review-pipeline.sh dropped it (commit
