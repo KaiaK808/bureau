@@ -11,7 +11,7 @@ bureau_impeccable_ui() {
 }
 
 bureau_impeccable() {
-  ( bureau_without_secrets python3 -I "$_BUREAU_IMPECCABLE_DIR/bureau-impeccable.py" "$1" \
+  ( bureau_without_secrets python3 -I -B "$_BUREAU_IMPECCABLE_DIR/bureau-impeccable.py" "$1" \
       --repo "$PWD" --config "${BUREAU_CONFIG:-$SCRIPT_REPO/.bureau.json}" "${@:2}" )
 }
 

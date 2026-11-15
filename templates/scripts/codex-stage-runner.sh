@@ -21,9 +21,9 @@ done
 ARGS=(--stage implement --prompt-file -)
 [ -n "$SCHEMA" ] && ARGS+=(--schema "$SCHEMA")
 if [ "$#" = 1 ]; then
-  printf '%s' "$1" | bureau_without_secrets python3 -I "$SCRIPT_DIR/bureau-provider.py" "${ARGS[@]}"
+  printf '%s' "$1" | bureau_without_secrets python3 -I -B "$SCRIPT_DIR/bureau-provider.py" "${ARGS[@]}"
 elif [ "$#" = 0 ]; then
-  bureau_without_secrets python3 -I "$SCRIPT_DIR/bureau-provider.py" "${ARGS[@]}"
+  bureau_without_secrets python3 -I -B "$SCRIPT_DIR/bureau-provider.py" "${ARGS[@]}"
 else
   echo 'Expected one prompt or stdin' >&2; exit 2
 fi

@@ -134,7 +134,7 @@ else
 fi
 # The worker's cleanup line, as it runs: in the stage worktree, next to the branch's modules.
 line=$(grep -F "key=\$(python3" "$SCRIPTS/bureau-worker.sh" | sed 's/^ *//')
-case "$line" in *'python3 -I -c'*) ;; *) fail "A: the worker's registry key line is not found or not isolated: $line" ;; esac
+case "$line" in *'python3 -I -B -c'*) ;; *) fail "A: the worker's registry key line is not found or not isolated: $line" ;; esac
 key=$(cd "$R" && WORKTREE="$R" && env "${PROBES[@]}" /bin/bash -c "$line"' && echo "$key"')
 [[ "$key" =~ ^[0-9a-f]{64}$ ]] || fail "A: the worker's registry key was not computed: $key"
 [ ! -e "$MARKS/shadow.log" ] || fail "A: the branch's Python module ran in the worker's cleanup line"
@@ -152,7 +152,7 @@ pr1_pass "A+B: branch hooks, filter and Python modules run without the secrets; 
 # Control: the v3.0.2 forms (no git function, python3 - without -I and without the reduction).
 repo "$R"; printf 'work\n' > "$R/work.txt"
 OLD="$TMP/old-scripts"; rm -rf "$OLD"; cp -R "$SCRIPTS" "$OLD"
-sed -i.bak -e 's/bureau_without_secrets python3 -I - /python3 - /' "$OLD/bureau-config.sh"
+sed -i.bak -e 's/bureau_without_secrets python3 -I -B - /python3 -B - /' "$OLD/bureau-config.sh"
 out=$(stage "$OLD" 'unset -f git; commit_stage_changes qa EXP-2 >/dev/null 2>&1; echo "commit=$?"')
 grep -q "$PR1_LINEAR" "$MARKS/shadow.log" 2>/dev/null || fail "A control: without -I the branch's subprocess.py should have run with the key"
 repo "$R"; printf 'work\n' > "$R/work.txt"
@@ -178,7 +178,7 @@ case "$out" in *provider-ok*check-ok*) ;; *) fail "C: run_stage_for or precondit
  printf 'a prompt' | env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" bash "$PROV/codex-stage-runner.sh" >/dev/null 2>&1)
 [ "$(grep -c '^--- run$' "$MARKS/provider.env" 2>/dev/null)" = 4 ] || fail "C: expected four provider starts (run_stage_for, precondition_runner, codex-stage-runner.sh twice)"
 no_secret "$MARKS/provider.env" "C provider"
-sed -i.bak -e 's/bureau_without_secrets python3 -I "\$(dirname/python3 "$(dirname/' "$PROV/bureau-config.sh"
+sed -i.bak -e 's/bureau_without_secrets python3 -I -B "\$(dirname/python3 -B "$(dirname/' "$PROV/bureau-config.sh"
 rm -f "$MARKS/provider.env"
 stage "$PROV" 'run_stage_for spec "a prompt"' >/dev/null
 grep -qF "LINEAR_API_KEY=$PR1_LINEAR" "$MARKS/provider.env" 2>/dev/null || fail "C control: the v3.0.2 launch should have handed the provider the key"

@@ -69,8 +69,8 @@ strip_isolation() {
   local f
   for f in "$1"/code-review-pipeline.sh "$1"/bureau-tick.sh "$1"/bureau-worker.sh; do
     [ -f "$f" ] || continue
-    sed -i.bak -E 's/python3 -I ([^ ]*bureau-supervision\.py)/python3 \1/' "$f"; rm -f "$f.bak"
-    ! grep -qE 'python3 -I [^ ]*bureau-supervision\.py' "$f" || { echo "control: -I is still in $f" >&2; exit 1; }
+    sed -i.bak -E 's/python3 -I -B ([^ ]*bureau-supervision\.py)/python3 -B \1/' "$f"; rm -f "$f.bak"
+    ! grep -qE 'python3 -I .*bureau-supervision\.py' "$f" || { echo "control: -I is still in $f" >&2; exit 1; }
   done
 }
 # review: the real review stage with an empty PYTHONPATH entry; the harness runs it in the sandbox.
@@ -85,7 +85,11 @@ new_sandbox() {
   sandbox_init "$ISSUE" test-branch
   printf 'change\n' > "$SANDBOX/change.txt"
   shadow "$SANDBOX"
-  git -C "$SANDBOX" add change.txt $(for m in $SHADOWED; do printf '%s.py ' "$m"; done)
+  local m
+  local -a paths
+  paths=(change.txt)
+  for m in $SHADOWED; do paths+=("$m.py"); done
+  git -C "$SANDBOX" add -- "${paths[@]}"
   git -C "$SANDBOX" commit -q -m 'the pull request, with modules named like the standard library'
   git -C "$SANDBOX" push -q origin test-branch
   cat > "$SANDBOX/approve.txt" <<'EOF'
@@ -246,8 +250,8 @@ rm -f "$MARK"
 app isolated
 marker_empty "4 (bureau-app.sh doctor, status, setup; bureau-status.sh --config)"
 pass "4 the app actions and the status report import nothing from the checkout"
-sed -i.bak -E 's/python3 -I ("\$SCRIPT_DIR\/bureau-)/python3 \1/' "$A/scripts/bureau-app.sh"
-sed -i.bak -E 's/python3 -I ("\$\(dirname "\$BUREAU_RUNTIME"\)\/bureau-provider\.py")/python3 \1/' "$A/scripts/bureau-status.sh"
+sed -i.bak -E 's/python3 -I -B ("\$SCRIPT_DIR\/bureau-)/python3 -B \1/' "$A/scripts/bureau-app.sh"
+sed -i.bak -E 's/python3 -I -B ("\$\(dirname "\$BUREAU_RUNTIME"\)\/bureau-provider\.py")/python3 -B \1/' "$A/scripts/bureau-status.sh"
 rm -f "$A"/scripts/*.bak
 ! grep -qE 'python3 -I' "$A/scripts/bureau-app.sh" "$A/scripts/bureau-status.sh" || { echo "control: -I is still in the app or status script" >&2; exit 1; }
 app control

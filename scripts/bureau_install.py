@@ -303,8 +303,9 @@ def assets(repo, args, manifest, targets):
     manifest_path = destination(repo, MANIFEST)
     ignore_path = destination(repo, ".gitignore")
     ignore = ignore_path.read_bytes() if ignore_path.exists() else b""
-    if MANIFEST not in ignore.decode().splitlines():
-        ignore = ignore.rstrip(b"\n") + b"\n" + MANIFEST.encode() + b"\n"
+    for entry in (MANIFEST, "scripts/__pycache__/"):
+        if entry not in ignore.decode().splitlines():
+            ignore = ignore.rstrip(b"\n") + b"\n" + entry.encode() + b"\n"
     for path, data, executable in writes:
         atomic_write(path, data, executable)
     updated = dict(manifest)

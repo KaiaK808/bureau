@@ -2,8 +2,8 @@
   "untrusted-environment": [
     {
       "file": "bureau-config.sh",
-      "old": "if bureau_without_secrets python3 -I \"$(dirname \"$BUREAU_RUNTIME\")/bureau-provider.py\" \"${args[@]}\"; then rc=0; else rc=$?; fi",
-      "new": "if python3 -I \"$(dirname \"$BUREAU_RUNTIME\")/bureau-provider.py\" \"${args[@]}\"; then rc=0; else rc=$?; fi"
+      "old": "if bureau_without_secrets python3 -I -B \"$(dirname \"$BUREAU_RUNTIME\")/bureau-provider.py\" \"${args[@]}\"; then rc=0; else rc=$?; fi",
+      "new": "if python3 -I -B \"$(dirname \"$BUREAU_RUNTIME\")/bureau-provider.py\" \"${args[@]}\"; then rc=0; else rc=$?; fi"
     },
     {
       "file": "bureau-provider.py",

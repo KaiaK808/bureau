@@ -4,6 +4,10 @@ When the pipeline misbehaves, start here. Start with `python3 scripts/bureau-doc
 
 ---
 
+## Tracked Python bytecode
+
+If doctor reports tracked files under `scripts/__pycache__/`, compare local runtime drift, resync the scripts scope, restart stage drivers, then run `git rm --cached -r -- scripts/__pycache__/` once and commit that removal. Resync adds the ignore rule but cannot remove an existing tracked cache. A stage that encounters pre-staged Bureau bytecode refuses with exit 24 without changing the index; inspect and unstage those paths before retrying the stage.
+
 ## Setup
 
 ### `MISSING: <tool>` at Phase 0

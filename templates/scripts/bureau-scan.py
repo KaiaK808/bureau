@@ -78,6 +78,7 @@ def environment(root, switches=None):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
         values[key] = str(path)
     values.update(switches or {})
+    values['PYTHONDONTWRITEBYTECODE'] = '1'
     return values
 
 

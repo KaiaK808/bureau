@@ -294,7 +294,7 @@ class SupervisionPipelineTests(unittest.TestCase):
         self.assertFalse(mark.exists(),mark.read_text() if mark.exists() else '')
         # Control: the v3.1 checkpoint call, without -I, imports the branch's modules in the worktree.
         worker=self.repo/'scripts/bureau-worker.sh'; text=worker.read_text()
-        isolated='python3 -I "$SCRIPT_DIR/bureau-supervision.py" --repo "$WORKTREE" checkpoint'
+        isolated='python3 -I -B "$SCRIPT_DIR/bureau-supervision.py" --repo "$WORKTREE" checkpoint'
         self.assertEqual(text.count(isolated),1); worker.write_text(text.replace(isolated,isolated.replace(' -I','')))
         subprocess.run(['python3','-I','scripts/bureau-supervision.py','resume','T-1'],cwd=self.repo,env=self.env,check=True,stdout=subprocess.DEVNULL)
         second=self.run_tick(20,empty_entry); self.assertEqual((second['issue'],second['outcome']),('T-1','stopped_for_review'))

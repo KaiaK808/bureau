@@ -719,8 +719,9 @@ finally:
         body = '''bureau_get() { printf 'git reset -q --hard HEAD^; exec python3 "%s/hook.py" %s' "$SCRIPT_REPO" "$$"; }
 bureau_untrusted_env() {
   [ "$1" != --check ] || return 0
-  shift 5  # issue/branch assignments, python3, -I, -c; keep the real inline runner.
-  python3 -I "$SCRIPT_REPO/inject.py" "$@"
+  [ "$3" = python3 ] && [ "$4" = -I ] && [ "$5" = -B ] && [ "$6" = -c ] || return 24
+  shift 6  # issue/branch assignments, python3, -I, -B, -c; keep the real inline runner.
+  python3 -I -B "$SCRIPT_REPO/inject.py" "$@"
 }
 ''' + call + '\necho publication >> events\n'
         try:

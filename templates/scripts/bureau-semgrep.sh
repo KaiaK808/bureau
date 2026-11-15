@@ -12,7 +12,7 @@ bureau_semgrep() {
       | jq -sce 'if length > 0 and all(.[]; type == "array" and all(.[]; (.number | type) == "number")) then [.[][] | .number] else error("invalid inventory") end') \
       || open_prs=null
   fi
-  result=$(bureau_without_secrets python3 -I "$_BUREAU_SEMGREP_DIR/bureau-semgrep.py" "$command" \
+  result=$(bureau_without_secrets python3 -I -B "$_BUREAU_SEMGREP_DIR/bureau-semgrep.py" "$command" \
       --repo "$PWD" --config "${BUREAU_CONFIG:-$SCRIPT_REPO/.bureau.json}" --open-prs "$open_prs" "$@") || rc=$?
   [ "$rc" = 0 ] || return "$rc"
   if [ "$command" = scan ] && [ -n "${BUREAU_RUN_ID:-}" ] && [ -n "${BUREAU_STAGE_ATTEMPT_ID:-}" ]; then

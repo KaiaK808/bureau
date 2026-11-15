@@ -15,6 +15,8 @@ import time
 import unicodedata
 import uuid
 
+sys.dont_write_bytecode = True
+
 VERSION = 1
 MAX_RUNS = 128
 RETENTION_SECONDS = 30 * 86400

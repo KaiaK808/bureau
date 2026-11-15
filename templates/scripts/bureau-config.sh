@@ -72,7 +72,7 @@ bureau_overlap() {
     *) echo 'ERROR: agents.file_overlap_gate must be a boolean' >&2; return 24 ;;
   esac
   local overlap_rc=0
-  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-admission.py" --repo "$PWD" "$@" ) || overlap_rc=$?
+  ( bureau_exec_runtime python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-admission.py" --repo "$PWD" "$@" ) || overlap_rc=$?
   # Admission runs in a child. Consume its withdrawal in THIS shell, including
   # Done's successful exit, before a caller can continue into a Build mutation.
   if [ "$1" = admit ]; then bureau_ticket_checkpoint "$2" strict; fi
@@ -105,7 +105,7 @@ bureau_evidence() {
   elif [ -n "${BUREAU_CONFIG:-}" ] && configured_repo=$(git -C "$(dirname "$BUREAU_CONFIG")" rev-parse --show-toplevel 2>/dev/null); then
     evidence_repo="$configured_repo"
   fi
-  evidence_warning=$(bureau_without_secrets python3 -I "$BUREAU_RUNTIME" --repo "$evidence_repo" "$@" 2>&1 >/dev/null) \
+  evidence_warning=$(bureau_without_secrets python3 -I -B "$BUREAU_RUNTIME" --repo "$evidence_repo" "$@" 2>&1 >/dev/null) \
     || evidence_warning=unavailable
   if [ -n "$evidence_warning" ] && [ "${_BUREAU_EVIDENCE_WARNED:-0}" != 1 ]; then
     _BUREAU_EVIDENCE_WARNED=1
@@ -143,7 +143,7 @@ bureau_acceptance_brief() {
   bureau_ticket_checkpoint "$issue"
   shift 2
   spec_dir=$(bureau_spec_dir_for_branch "$branch" 2>/dev/null) || spec_dir=""
-  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-acceptance.py" --repo "$PWD" \
+  ( bureau_exec_runtime python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-acceptance.py" --repo "$PWD" \
       --issue "$issue" --branch "$branch" --spec "${spec_dir:+$spec_dir/spec.md}" \
       --config-script "$_BUREAU_SCRIPTS_DIR/bureau-config.sh" --publish "$@" ) || brief_rc=$?
   [ "$brief_rc" != 130 ] || exit 130
@@ -154,7 +154,7 @@ bureau_acceptance_brief() {
 bureau_archive_evidence() {
   [ -n "${BUREAU_RUN_ID:-}" ] && [ -n "${BUREAU_STAGE_ATTEMPT_ID:-}" ] || return 0
   [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
-  ( bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" \
+  ( bureau_without_secrets python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" \
       --archive "$1" --command "$2" ) || true
 }
 
@@ -201,7 +201,7 @@ unset _BUREAU_TICKET_OWN_DONE _BUREAU_TICKET_STOPPED _BUREAU_TICKET_WARNED
 bureau_ticket_policy() {
   local issue="$1"; shift
   [ -n "$issue" ] && [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
-  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-ticket.py" --repo "$PWD" --issue "$issue" "$@"
+  bureau_without_secrets python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-ticket.py" --repo "$PWD" --issue "$issue" "$@"
 }
 
 bureau_ticket_reason() {
@@ -343,7 +343,7 @@ bureau_stage_enter() {
   [ "${BUREAU_DRY_RUN:-0}" = 1 ] && { echo "[DRY_RUN] stage $(basename "$0") issue=$issue"; exit 0; }
   if [ "$#" = 0 ]; then set -- "$issue"; fi
   # Without the .env keys the relaunched stage reads back itself (bureau-env.sh).
-  bureau_exec_runtime python3 -I "$BUREAU_RUNTIME" --repo "$PWD" exec --issue "$issue" --entry "$0" -- bash "$0" "$@"
+  bureau_exec_runtime python3 -I -B "$BUREAU_RUNTIME" --repo "$PWD" exec --issue "$issue" --entry "$0" -- bash "$0" "$@"
 }
 
 bureau_get() { jq -r "$1" "$BUREAU_CONFIG"; }
@@ -430,7 +430,7 @@ _bureau_load_config() {
   export BUREAU_ENV_FILE
   # The renderer owns advisory risk validation; the tier has no authority.
   if [ "$_bureau_has_risk_tier" = true ]; then
-    ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-acceptance.py" --validate-config "$BUREAU_CONFIG" ) || exit 24
+    ( bureau_exec_runtime python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-acceptance.py" --validate-config "$BUREAU_CONFIG" ) || exit 24
   fi
 }
 _bureau_load_config || exit $?
@@ -1065,7 +1065,7 @@ run_stage_for() {
   [ -z "${BUREAU_PROVIDER_CANCEL_FILE:-}" ] || args+=(--cancel-file "$BUREAU_PROVIDER_CANCEL_FILE")
   # The provider needs none of the Bureau secrets: it starts without them, so
   # the agent's parent process does not hold them either (bureau-env.sh).
-  if bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" "${args[@]}"; then rc=0; else rc=$?; fi
+  if bureau_without_secrets python3 -I -B "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" "${args[@]}"; then rc=0; else rc=$?; fi
   rm -rf "$temp"
   [ "$rc" != 130 ] || exit 130
   bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
@@ -1094,7 +1094,7 @@ bureau_silence_hold() {
 }
 
 precondition_runner() {
-  bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" --stage "$1" --config "$BUREAU_CONFIG" --check >/dev/null || exit $?
+  bureau_without_secrets python3 -I -B "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" --stage "$1" --config "$BUREAU_CONFIG" --check >/dev/null || exit $?
 }
 
 commit_codex_changes() {
@@ -1104,40 +1104,46 @@ commit_codex_changes() {
 
 # Include newly created files as well as tracked changes. Keep local config,
 # credentials and evidence out of executor-authored commits.
+# Optional arguments after stage/issue: gate context, subject, --allow-empty.
+# Installed helper caches stay local even before an adopter resyncs its ignore.
 commit_stage_changes() {
-  [ -n "$(git status --porcelain)" ] || return 0
+  [ "${5:-}" = --allow-empty ] || [ -n "$(git status --porcelain)" ] || return 0
   # An earlier tool may have staged private files already. Excluding them from
   # our `git add` list alone would still include them in the final commit.
   # Refuse without changing the index, leaving the operator's staged work intact.
-  bureau_without_secrets python3 -I - <<'PY_STAGED' || return $?
+  bureau_without_secrets python3 -I -B - <<'PY_STAGED' || return $?
 import subprocess, sys
 names = subprocess.check_output(['git', 'diff', '--cached', '--name-only', '--no-renames', '-z']).split(b'\0')
 private = [p for p in names if p in (b'.env', b'.bureau.json', b'.bureau-install.json') or p.startswith(b'logs/')]
 if private:
     print('Refusing to commit staged private Bureau files; inspect and unstage them before retrying.', file=sys.stderr)
     sys.exit(24)
+if any(p.startswith(b'scripts/__pycache__/') for p in names):
+    print('Refusing to commit staged Bureau bytecode; unstage scripts/__pycache__/ before retrying.', file=sys.stderr)
+    sys.exit(24)
 PY_STAGED
   local paths publication_before publication_after
   paths=$(mktemp)
-  bureau_without_secrets python3 -I - "$paths" <<'PY_PATHS'
+  bureau_without_secrets python3 -I -B - "$paths" <<'PY_PATHS'
 import subprocess, sys
 from pathlib import Path
 names = subprocess.check_output(['git', 'ls-files', '-z', '--modified', '--deleted', '--others', '--exclude-standard']).split(b'\0')
-keep = [p for p in names if p and p not in (b'.env', b'.bureau.json', b'.bureau-install.json') and not p.startswith(b'logs/')]
+keep = [p for p in names if p and p not in (b'.env', b'.bureau.json', b'.bureau-install.json')
+        and not p.startswith((b'logs/', b'scripts/__pycache__/'))]
 Path(sys.argv[1]).write_bytes(b'\0'.join(keep) + (b'\0' if keep else b''))
 PY_PATHS
   if [ -s "$paths" ]; then
     GIT_LITERAL_PATHSPECS=1 git add -A --pathspec-from-file="$paths" --pathspec-file-nul
   fi
   rm -f "$paths"
-  if ! git diff --cached --quiet; then
+  if ! git diff --cached --quiet || [ "${5:-}" = --allow-empty ]; then
     publication_before=$(git rev-parse HEAD)
-    git commit -m "$2: Bureau $1 changes" -m "Bureau-Generated: true" || return $?
+    git commit ${5:+"$5"} -m "${4:-$2: Bureau $1 changes}" -m "Bureau-Generated: true" || return $?
     publication_after=$(git rev-parse HEAD)
     # Optional gate recovery accepts only this executor's verified one-hop
     # publication, linked to the exact provider/stage attempt in its context.
     if [ -n "${3:-}" ] && [ "$(resolve_runner_for_stage "$1")" = codex ]; then
-      bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
+      bureau_without_secrets python3 -I -B "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
         --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action publish --gate-context "$3" \
         --publication-before "$publication_before" --publication-after "$publication_after" >/dev/null || true
     fi
@@ -1382,7 +1388,7 @@ move_issue() {
   if [ "$state_id" = "${BUREAU_STATE_SPEC:-_unset_}" ] && [ "${BUREAU_MAX_CONCURRENT_ISSUES:-0}" -gt 0 ] \
      && [ "${BUREAU_SPEC_ADMISSION_LOCKED:-0}" != 1 ]; then
     local admission_rc=0
-    ( BUREAU_EXPECTED_STATE_ID="${BUREAU_EXPECTED_STATE_ID:-}" bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-dispatch.py" --repo "$PWD" spec-start "$ref" ) || admission_rc=$?
+    ( BUREAU_EXPECTED_STATE_ID="${BUREAU_EXPECTED_STATE_ID:-}" bureau_exec_runtime python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-dispatch.py" --repo "$PWD" spec-start "$ref" ) || admission_rc=$?
     [ "$admission_rc" != 130 ] || exit 130
     bureau_ticket_checkpoint "$ref" strict
     [ "$admission_rc" = 0 ] || return "$admission_rc"
@@ -1452,7 +1458,7 @@ move_issue() {
 # <max-bytes> bytes.
 BUREAU_COMMENT_MAX_BYTES=60000
 bureau_cap_comment() {
-  printf '%s' "$1" | python3 -I -c '
+  printf '%s' "$1" | python3 -I -B -c '
 import sys
 limit = int(sys.argv[1])
 data = sys.stdin.buffer.read().decode("utf-8", "replace").encode("utf-8")
@@ -2885,7 +2891,7 @@ merge_origin_main_or_abort() {
   # This executor transaction grants neither review approval nor a reusable gate.
   local merge_rc=0 result_file
   result_file=$(mktemp) || return 24
-  ( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
+  ( bureau_exec_runtime python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
       --repo "$PWD" --config "$BUREAU_CONFIG" --base "$base_ref" --issue "$issue" --result-file "$result_file" ) || merge_rc=$?
   local transaction_rc="$merge_rc"
   # A confirmed stop rolls back; uncertain termination preserves the checkout
@@ -3058,7 +3064,7 @@ free_branch_from_other_worktrees() {
   [ -z "$branch" ] && return 0
   # Git lists physical paths; callers can use a symlinked checkout (including
   # macOS /tmp). Resolve even a not-yet-created worker before comparing owners.
-  keep_wt=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$keep_wt") || return 21
+  keep_wt=$(python3 -I -B -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$keep_wt") || return 21
   other=$(git worktree list --porcelain | awk -v b="refs/heads/$branch" -v keep="$keep_wt" '
     /^worktree / { wt=substr($0, 10); next }
     /^branch / { if (substr($0, 8) == b && wt != keep) print wt }')
@@ -3093,7 +3099,7 @@ bureau_guard_branch_reset() {
   [ -n "$commits" ] || return 0
   # Completed workers may leave unpublished stage commits or a detached review
   # checkpoint. Exclude only their recorded heads, never later operator commits.
-  owned=$(bureau_without_secrets python3 -I - "$repo" "$branch" "$issue" "$origin" "$commits" <<'PY'
+  owned=$(bureau_without_secrets python3 -I -B - "$repo" "$branch" "$issue" "$origin" "$commits" <<'PY'
 import hashlib, json, re, subprocess, sys
 from pathlib import Path
 
@@ -3338,10 +3344,10 @@ reset_worktree() {
   BUREAU_RESET_REFUSAL=""; BUREAU_RESET_REFUSAL_HOLDER=""; BUREAU_RESET_REFUSAL_BRANCH=""
   [ "${BUREAU_WORKSPACE_MODE:-current}" = disposable ] || { echo "ERROR: reset requires disposable worker mode" >&2; return 21; }
   [ -n "${BUREAU_RUN_ID:-}" ] || { echo "ERROR: reset requires an ownership claim" >&2; return 21; }
-  wt=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt")
+  wt=$(python3 -I -B -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt")
   BUREAU_RESET_REFUSAL_WORKTREE="$wt"
   # A check that a signal ended is no refusal: it leaves no trace on the ticket.
-  python3 -I "$BUREAU_RUNTIME" --repo "$REPO_DIR" assert-owner --issue "${BUREAU_CURRENT_ISSUE:?missing issue claim}" --workspace "$wt" --run "$BUREAU_RUN_ID" \
+  python3 -I -B "$BUREAU_RUNTIME" --repo "$REPO_DIR" assert-owner --issue "${BUREAU_CURRENT_ISSUE:?missing issue claim}" --workspace "$wt" --run "$BUREAU_RUN_ID" \
     || { [ "$?" -gt 128 ] || BUREAU_RESET_REFUSAL=not-owner; return 21; }
   common=$(git -C "$REPO_DIR" rev-parse --git-common-dir)
   case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
@@ -3386,7 +3392,7 @@ reset_worktree() {
     ref="origin/$(bureau_get '.repo.base_branch // "main"')"
     checkpoint=null
     if [ "${BUREAU_SPEC_CHECKPOINTS_DISABLED:-0}" != 1 ]; then
-      if ! checkpoint=$(bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-spec.py" --repo "$REPO_DIR" reset-target "$BUREAU_CURRENT_ISSUE" --specs-dir "$BUREAU_SPECS_DIR"); then
+      if ! checkpoint=$(bureau_without_secrets python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-spec.py" --repo "$REPO_DIR" reset-target "$BUREAU_CURRENT_ISSUE" --specs-dir "$BUREAU_SPECS_DIR"); then
         echo 'WARN: spec checkpoint unavailable; using a fresh reset.' >&2
         export BUREAU_SPEC_FORCE_FRESH=1 BUREAU_SPEC_CHECKPOINTS_DISABLED=1
         checkpoint=null
@@ -3448,7 +3454,7 @@ reset_worktree() {
 # bureau-runtime.py writes the same record for an interrupted run.
 bureau_preserve_note() {
   local wt="$1" issue="$2" reason="$3" code="${4:-null}" common key dir branch gitdir=""
-  wt=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt") || return 1
+  wt=$(python3 -I -B -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$wt") || return 1
   common=$(bureau_common_dir) || return 1
   key=$(printf '%s' "$wt" | shasum -a 256 | cut -d' ' -f1)
   dir="$common/bureau/preserved"
@@ -3696,7 +3702,7 @@ restore_worktree_deps() {
   if [ -f "$wt/pnpm-lock.yaml" ] || [ -f "$wt/yarn.lock" ]; then
     # Filter before Python starts: its Git and package-manager children must
     # inherit the same default/clean boundary as other branch-controlled code.
-    bureau_untrusted_env python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-worktree-deps.py" "$wt"
+    bureau_untrusted_env python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-worktree-deps.py" "$wt"
     return $?
   fi
   [ -f "$wt/package-lock.json" ] || return 0
@@ -3892,7 +3898,7 @@ _bureau_link_worktree_path() {
   esac
   # The resolved path, relative to the main checkout (a target outside it keeps
   # the components after the common part); prints its first .env* component.
-  target=$(python3 -I -c '
+  target=$(python3 -I -B -c '
 import os, sys
 main = os.path.realpath(sys.argv[1])
 rel = os.path.relpath(os.path.realpath(os.path.join(sys.argv[1], sys.argv[2])), main)
@@ -4071,7 +4077,7 @@ bureau_review_evidence() {
     set -- --merge-metadata "$REVIEW_TMP/merge-metadata.json" "$@"
     [ ! -f "$REVIEW_TMP/merged.json" ] || set -- --merge-result "$REVIEW_TMP/merged.json" "$@"
   fi
-  ( bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" \
+  ( bureau_without_secrets python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" \
       --round "$REVIEW_ROUND" --min-severity "$BUREAU_REVIEW_MIN_SEVERITY" "$@" ) || true
   return 0
 }
@@ -4080,7 +4086,7 @@ bureau_review_evidence() {
 bureau_outcome_signal() {
   [ "${BUREAU_DRY_RUN:-0}" != 1 ] || return 0
   if [ "$1" = review_capped ]; then bureau_ticket_reason "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}" review_capped 25; fi
-  ( bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" --signal "$1" ) || true
+  ( bureau_without_secrets python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-evidence.py" --repo "$PWD" --signal "$1" ) || true
   return 0
 }
 
@@ -4564,7 +4570,7 @@ merge_gate_waits() {
     poll=$((poll * 60))
   fi
   first=$(( 2 * poll )); [ "$first" -ge 300 ] || first=300
-  if ! out=$(python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-supervision.py" --repo "$(dirname "${BUREAU_CONFIG:-./x}")" \
+  if ! out=$(python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-supervision.py" --repo "$(dirname "${BUREAU_CONFIG:-./x}")" \
       gate-waits --stage "$stage" --first "$first" --cap "$cap" 2>&1); then
     echo "pick: WARN: the merge gate waits could not be read (${out##*$'\n'}); no ticket is held back" >&2
     return 0
@@ -4790,7 +4796,7 @@ build_lessons_context() {
   [ -f LESSONS.md ] || return 0
   local args=(--stage "${1:-spec}" --spec-dir "${2:-}" --config "$BUREAU_CONFIG")
   [ "$#" -lt 3 ] || args+=(--diff "$3")
-  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-lessons.py" "${args[@]}" || {
+  bureau_without_secrets python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-lessons.py" "${args[@]}" || {
     ( echo 'bureau lessons: WARN: optional lesson helper unavailable; continuing without lessons' >&2 ) || true
   }
   return 0
@@ -4800,7 +4806,7 @@ build_lessons_context() {
 # reuse-policy digest. Read only local Git objects, never live checkout files.
 # Explicit opt-in failures stop review with 24 instead of inventing context.
 build_review_adr_context() {
-  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-adr.py" --config "$BUREAU_CONFIG" --base "$1" --head "$2"
+  bureau_without_secrets python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-adr.py" --config "$BUREAU_CONFIG" --base "$1" --head "$2"
 }
 
 # build_negative_constraints: shared "Do NOT" block injected into prompts that
@@ -4848,7 +4854,7 @@ parse_claude_json() {
 # fall back to the raw result. Plain legacy prose keeps its existing contract.
 bureau_comment_projection() {
   local projected
-  projected=$(printf '%s' "$1" | python3 -I -c '
+  projected=$(printf '%s' "$1" | python3 -I -B -c '
 import json, re, sys
 omitted = "[Structured result omitted: comment projection unavailable.]"
 insight_key = re.compile(r"(?i)\b[\x22\x27]?(?:insights|review_dispositions)[\x22\x27]?\s*[:=]")
@@ -4920,13 +4926,13 @@ codex_sandbox_gate_only() {
 # Both compatibility prefixes and machine-linked blockers use the same planner,
 # reservation and runner. JSON travels on stdin, never in shell command text.
 codex_gate_plan() {
-  printf '%s' "$2" | bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
+  printf '%s' "$2" | bureau_without_secrets python3 -I -B "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
     --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action plan --gate-context "$3"
 }
 
 codex_gate_run() {
   bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
-  printf '%s' "$2" | bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
+  printf '%s' "$2" | bureau_without_secrets python3 -I -B "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
     --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action run
 }
 
@@ -4936,6 +4942,6 @@ codex_gate_outside_enabled() {
 
 codex_gate_check() {
   bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
-  printf '%s' "$2" | bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
+  printf '%s' "$2" | bureau_without_secrets python3 -I -B "$(dirname "$BUREAU_RUNTIME")/bureau-provider.py" \
     --stage "$1" --repo "$PWD" --config "$BUREAU_CONFIG" --gate-action check --gate-context "$3" --gate-source-head "${4:-}"
 }

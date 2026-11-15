@@ -205,7 +205,7 @@ if [ "$(resolve_runner_for_stage spec)" = codex ]; then SPECKIT_DIR=.agents/skil
 # covers inspection and persistence; fetch uses Bureau's normal git wrapper.
 SPEC_BASE=$(bureau_get '.repo.base_branch // "main"')
 git fetch --prune --no-tags origin '+refs/heads/*:refs/remotes/origin/*' || exit 18
-RESERVATION=$(python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$REPO_DIR" \
+RESERVATION=$(python3 -I -B "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$REPO_DIR" \
   reserve-spec-number "$ISSUE" --specs-dir "$BUREAU_SPECS_DIR" --base "$SPEC_BASE") || {
   RESERVATION_RC=$?
   [ "$RESERVATION_RC" != 124 ] || exit 124
@@ -309,7 +309,7 @@ SPEC_INPUT=$(printf '%s\0%s\0%s' "$ISSUE_DETAIL" "$SPEC_COMMENTS" "$RESEARCH_CON
      select((contains("<!-- bureau-research:") or test("^(<!-- bureau-branch:|❌ Spec pipeline|✅ Spec review)")) | not)]}')
 SPEC_FEEDBACK=$(printf '%s' "$SPEC_INPUT" | jq -r '.feedback | join("\n\n")')
 SPEC_CHECKPOINTS='[]'
-if [ "${BUREAU_SPEC_CHECKPOINTS_DISABLED:-0}" != 1 ] && SPEC_CHECKPOINTS=$(printf '%s' "$SPEC_INPUT" | bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" \
+if [ "${BUREAU_SPEC_CHECKPOINTS_DISABLED:-0}" != 1 ] && SPEC_CHECKPOINTS=$(printf '%s' "$SPEC_INPUT" | bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-spec.py" \
   --repo "$REPO_DIR" begin "$ISSUE" --specs-dir "$BUREAU_SPECS_DIR" --directory "$ALLOCATED_DIR" --number "$SPEC_NUMBER"); then
   :
 else
@@ -323,10 +323,10 @@ _spec_checkpoint_complete() {
   local checkpoint_rc phase_commit
   # Commit even when optional checkpoint storage is unavailable. Only this
   # reserved feature directory is included; provider-staged unrelated files stay out.
-  phase_commit=$(bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" commit-phase "$ISSUE" "$1" \
+  phase_commit=$(bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" commit-phase "$ISSUE" "$1" \
     --specs-dir "$BUREAU_SPECS_DIR" --directory "$ALLOCATED_DIR") || return 24
   [ "${BUREAU_SPEC_CHECKPOINTS_DISABLED:-0}" != 1 ] || return 0
-  if bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" complete "$ISSUE" "$1" --commit "$phase_commit"; then
+  if bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" complete "$ISSUE" "$1" --commit "$phase_commit"; then
     return 0
   else
     checkpoint_rc=$?
@@ -441,13 +441,9 @@ if [ "$BRANCH" = "main" ] || [ -z "$BRANCH" ]; then
   exit 11
 fi
 
-git add -A
 # Trailer makes the commit recognizable to branch_is_bureau_only without
 # relying on the subject-line regex fallback.
-git commit 2>/dev/null \
-  -m "$ISSUE: spec artifacts" \
-  -m "Bureau-Generated: true" \
-  || true
+commit_stage_changes spec "$ISSUE" "" "$ISSUE: spec artifacts"
 if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
   echo "  [DRY_RUN] would: git push -u origin HEAD ($BRANCH)"
 else

@@ -41,7 +41,7 @@ TOTAL_TIMEOUT=$(bureau_number BUREAU_IMPL_TOTAL_TIMEOUT "${BUREAU_IMPL_TOTAL_TIM
 _implement_process_checkpoint() {
   local code="${1:-25}" common rc
   common=$(git rev-parse --git-common-dir) || return $?
-  if python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-process.py" --root "$common/bureau" --run "${BUREAU_RUN_ID:-}" --exit-code "$code"; then
+  if python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-process.py" --root "$common/bureau" --run "${BUREAU_RUN_ID:-}" --exit-code "$code"; then
     return 0
   else
     rc=$?
@@ -90,7 +90,7 @@ refresh_review_context() {
     # alone, with ordinary feedback keeping the historical bytes and no warning.
     case "${feedback%%$'\n'*}" in
       '🔄 Code Review'*'Changes Requested'*|'## Code Review'*'Changes Requested'*|'Code Review'*'Changes Requested'*|'🚫 Code review **BLOCKED** — needs human review.'*)
-        if ! context=$(printf '%s' "$feedback" | ( bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review-context.py" \
+        if ! context=$(printf '%s' "$feedback" | ( bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-review-context.py" \
           --repo "$PWD" --issue "$issue" )); then
           context=""
           # Contain SIGPIPE too: a closed stderr must not abort this shell.
@@ -262,7 +262,7 @@ _close_post_implement_hold() {
   [ -n "$POST_IMPLEMENT_HOLD_FILE" ] || return 0
   # Called only after wait (or when no job was launched). An adopted hold
   # without a stopped receipt stays on disk for the existing checkpoint.
-  python3 -I -c '
+  python3 -I -B -c '
 import runpy, sys
 pg = runpy.run_path(sys.argv[1])
 if not pg["ProcessHold"].complete_join(sys.argv[2]):
@@ -525,7 +525,7 @@ command: ${cmd}"
   # The durable record precedes the fork, environment setup and Python startup.
   # Unlock the creator's handle; the runner adopts this same record, never a
   # second hold. Only a completed wrapper join may remove it.
-  if ! POST_IMPLEMENT_HOLD_FILE=$(python3 -I -c '
+  if ! POST_IMPLEMENT_HOLD_FILE=$(python3 -I -B -c '
 import runpy, sys
 from pathlib import Path
 pg = runpy.run_path(sys.argv[1])
@@ -549,7 +549,7 @@ command: ${cmd}"
     trap ':' HUP INT TERM
     [ ! -e "$POST_IMPLEMENT_CANCEL_FILE" ] || exit 143
     # The runner checks again after the environment wrapper finishes setup.
-    bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" "$POST_IMPLEMENT_HOLD_FILE"
+    bureau_untrusted_env BUREAU_ISSUE="$ISSUE" BUREAU_BRANCH="$BRANCH" python3 -I -B -c "$_POST_IMPLEMENT_RUNNER" "$limit" "$cmd" "$status_file" "$_BUREAU_SCRIPTS_DIR" "$POST_IMPLEMENT_HOLD_FILE"
   ) >"$log" 2>&1 &
   POST_IMPLEMENT_RUNNER_PID=$!
   POST_IMPLEMENT_LAUNCH_MARKER=""

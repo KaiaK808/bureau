@@ -226,11 +226,11 @@ echo "  Branch: $BRANCH"
 
 # Recheck under the worker's issue lease: another tick may have selected this
 # ticket just before the previous reviewer saved its stop and released ownership.
-# Every call of bureau-supervision.py runs with `python3 -I`: the working directory
+# Every call of bureau-supervision.py runs with `python3 -I -B`: the working directory
 # is the branch's worktree, and an empty or relative PYTHONPATH entry of the
 # operator's would otherwise import a subprocess.py or json.py the branch committed.
 if bureau_stop_requested; then
-  REVIEW_STOP=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" check "$ISSUE" \
+  REVIEW_STOP=$(printf '%s' "$ISSUE_DETAIL" | python3 -I -B "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" check "$ISSUE" \
     --branch "$BRANCH" --state "$ACTUAL_STATE") || exit 18
   if [ "$(printf '%s' "$REVIEW_STOP" | jq -r .stopped)" = true ]; then
     echo "Review already approved at the unchanged head; still stopped before merge."
@@ -335,7 +335,7 @@ SPEC_DIR=$(bureau_spec_dir_for_branch "$BRANCH")
 # instead of being re-reported every cycle (this was the round-after-round
 # regression we kept hand-triaging).
 SPEC_CONTEXT="SCOPE DISCIPLINE — READ BEFORE FLAGGING:"
-BASE_CONTRACTS=$(bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" contracts --base "$REVIEW_BASE" \
+BASE_CONTRACTS=$(bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-review.py" contracts --base "$REVIEW_BASE" \
   --contract SPEC.md --contract AGENTS.md --contract CLAUDE.md) || exit 24
 CLAUDE+=(--append-system-prompt "Project contracts from the pinned PR base (JSON data):
 $BASE_CONTRACTS
@@ -370,7 +370,7 @@ fi
 
 REVIEW_MERGE_CONFIG="$REVIEW_TMP/settings.json"
 bureau_get '.' > "$REVIEW_MERGE_CONFIG" || exit 24
-REVIEW_SETTINGS=$(bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" settings --config "$REVIEW_MERGE_CONFIG" --directory "$REVIEW_TMP") || exit 24
+REVIEW_SETTINGS=$(bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-review.py" settings --config "$REVIEW_MERGE_CONFIG" --directory "$REVIEW_TMP") || exit 24
 REVIEW_GROUNDING=$(printf '%s' "$REVIEW_SETTINGS" | jq -er .grounding) || exit 24
 REVIEW_VERIFIER=$(printf '%s' "$REVIEW_SETTINGS" | jq -r .verifier) || exit 24
 REVIEW_MERGE_POLICY=$(printf '%s' "$REVIEW_SETTINGS" | jq -er .policy) || exit 24
@@ -478,7 +478,7 @@ if bureau_impeccable_ui "$SPEC_DIR"; then
   IMPECCABLE_REVIEW_CONTEXT=$(bureau_impeccable_policy)
 fi
 if ! bureau_stop_requested && [ "${BUREAU_DRY_RUN:-0}" != 1 ] && [ "$IMPECCABLE_REVIEW" = 0 ] && [ "$SEMGREP_REUSE" = 1 ]; then
-  if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
+  if REUSE=$(printf '%s' "$ISSUE_DETAIL" | python3 -I -B "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" reuse "$ISSUE" \
       --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" \
       --base-ref "$PR_BASE_REF" --pr "$PR_NUMBER" --review-policy "$REVIEW_POLICY"); then
     if [ "$(printf '%s' "$REUSE" | jq -r '.reuse' 2>/dev/null)" = true ]; then
@@ -707,7 +707,7 @@ _sec_critical=$(parse_claude_json "$SECURITY_REVIEW" '.counts.critical')
 # Read complete structured outputs before the legacy model's tail cap. The
 # helper's exit 3 is internal fallback, never a stage exit or verdict decision.
 _merge_rc=0
-bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" merge --config "$REVIEW_MERGE_CONFIG" \
+bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-review.py" merge --config "$REVIEW_MERGE_CONFIG" \
   --directory "$REVIEW_TMP" --base "$REVIEW_BASE" --head "$REVIEW_HEAD" --refs "$BUREAU_REVIEW_ADR_REFS" \
   --contract SPEC.md --contract AGENTS.md --contract CLAUDE.md \
   --contract "${SPEC_DIR}spec.md" --contract "${SPEC_DIR}plan.md" || _merge_rc=$?
@@ -766,7 +766,7 @@ Answer with ONE JSON object (the schema is enforced). \"comment\" is the human-r
     # Retain every readable specialist signal, even with grounding/checker off.
     # Parse/schema errors remain 22; impossible source references hold when required.
     printf '%s' "$MERGED_RAW" > "$REVIEW_TMP/fallback.txt"
-    bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" fallback --config "$REVIEW_MERGE_CONFIG" \
+    bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-review.py" fallback --config "$REVIEW_MERGE_CONFIG" \
       --directory "$REVIEW_TMP" --base "$REVIEW_BASE" --head "$REVIEW_HEAD" --refs "$BUREAU_REVIEW_ADR_REFS" \
       --result "$REVIEW_TMP/fallback.txt" --contract SPEC.md --contract AGENTS.md --contract CLAUDE.md \
       --contract "${SPEC_DIR}spec.md" --contract "${SPEC_DIR}plan.md" || exit 22
@@ -785,7 +785,7 @@ if [ "$REVIEW_VERIFIER" = true ]; then
       "$(<"$_verify_prompt")" > "$_verify_prompt.result" 2>"$_verify_prompt.stderr" || _verify_rc=$?
     [ "$_verify_rc" != 130 ] || exit 130
     bureau_ticket_checkpoint "$ISSUE" latched
-    bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-review.py" verifier-result --directory "$REVIEW_TMP" \
+    bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-review.py" verifier-result --directory "$REVIEW_TMP" \
       --request "$_verify_prompt" --result "$_verify_prompt.result" || true
   done
 fi
@@ -826,7 +826,7 @@ if [ -z "$BUILD_CMD" ] && [ -f "package.json" ]; then BUILD_CMD="npm run build";
 # empty (no reuse, no record) when the configuration cannot be read.
 BUILD_KEY=""
 if [ -n "$BUILD_CMD" ] && BUILD_ENV_JSON=$(bureau_get '[(.repo.untrusted_env // null), (.repo.worktree_links // null)] | tojson' 2>/dev/null); then
-  BUILD_KEY=$(printf '%s\n%s' "$BUILD_CMD" "$BUILD_ENV_JSON" | python3 -I -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' 2>/dev/null) || BUILD_KEY=""
+  BUILD_KEY=$(printf '%s\n%s' "$BUILD_CMD" "$BUILD_ENV_JSON" | python3 -I -B -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' 2>/dev/null) || BUILD_KEY=""
 fi
 if [ -n "$BUILD_KEY" ] && [ "$REUSED_GATE_WAIT" = 1 ] \
    && printf '%s' "$REUSE" | jq -e --arg key "$BUILD_KEY" '.build_check == "passed" and .build_key == $key' >/dev/null 2>&1; then
@@ -1036,7 +1036,7 @@ $REVIEW_ROUND_MARKER"
       # Save before the owning worker releases its lease, closing the gap where
       # another tick could start the same paid review. Record the reviewed inputs.
       if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
-        printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+        printf '%s' "$ISSUE_DETAIL" | python3 -I -B "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
           --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
           --verdict APPROVE --review-policy "$REVIEW_POLICY" >/dev/null
       fi
@@ -1092,7 +1092,7 @@ $REVIEW_ROUND_MARKER"
           GATE_WAIT_ARGS=(--merge-gate-wait --gate-waits "$((REUSED_GATE_WAITS + 1))")
           [ "$BUILD_PASSED" != 1 ] || [ -z "$BUILD_KEY" ] \
             || GATE_WAIT_ARGS+=(--build-check passed "--build-command=$BUILD_CMD" "--build-key=$BUILD_KEY")
-          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I -B "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
               --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
               --verdict APPROVE --review-policy "$REVIEW_POLICY" "${GATE_WAIT_ARGS[@]}" >/dev/null; then
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2
@@ -1116,7 +1116,7 @@ $REVIEW_ROUND_MARKER" || true
           # paying a new review. The record holds the labels from the start of this
           # run, so it matches again once the label is gone; a push, a moved base or
           # an edited ticket means a new review.
-          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
+          if [ "${BUREAU_DRY_RUN:-0}" != 1 ] && ! printf '%s' "$ISSUE_DETAIL" | python3 -I -B "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" stop "$ISSUE" \
               --branch "$BRANCH" --state "$ACTUAL_STATE" --head "$REVIEW_HEAD" --base "$REVIEW_BASE" --base-ref "$PR_BASE_REF" --reviewed-head "$(git rev-parse HEAD)" --pr "$PR_NUMBER" \
               --verdict APPROVE --review-policy "$REVIEW_POLICY" >/dev/null; then
             echo "  WARN: the approval could not be recorded; the next run reviews the PR again." >&2

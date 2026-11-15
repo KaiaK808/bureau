@@ -74,7 +74,7 @@ tick_stage() {
       if ! DETAIL=$(get_issue_detail "$ISSUE"); then
         RC=10; OUTCOME=failed; write_result; exit "$RC"
       fi
-      if ! STOP=$(printf '%s' "$DETAIL" | python3 -I scripts/bureau-supervision.py check "$ISSUE" --branch "$BRANCH" --state "$BEFORE"); then
+      if ! STOP=$(printf '%s' "$DETAIL" | python3 -I -B scripts/bureau-supervision.py check "$ISSUE" --branch "$BRANCH" --state "$BEFORE"); then
         RC=18; OUTCOME=failed; write_result; exit "$RC"
       fi
       if [ "$(printf '%s' "$STOP" | jq -r .stopped)" = true ]; then
@@ -92,7 +92,7 @@ tick_stage() {
       OUTCOME=waiting; RC=23; write_result; exit 0
     fi ;;
   esac
-  if ! WORKTREE=$(python3 -I scripts/bureau-supervision.py workspace "$ISSUE" --stage "$stage" | jq -r .workspace); then
+  if ! WORKTREE=$(python3 -I -B scripts/bureau-supervision.py workspace "$ISSUE" --stage "$stage" | jq -r .workspace); then
     RC=21; OUTCOME=blocked; write_result; exit "$RC"
   fi
   if bash scripts/bureau-worker.sh "$ISSUE" "$pipeline" "$WORKTREE" "$BRANCH" >&2; then RC=0; else RC=$?; fi

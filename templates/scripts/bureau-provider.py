@@ -165,7 +165,7 @@ REMOTE_GIT = ('push', 'fetch', 'pull', 'ls-remote', 'clone', 'remote', 'submodul
 GIT_VALUE_OPTIONS = ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env',
                      '--attr-source', '--shallow-file')
 UNTRUSTED_KEEP = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
-                  'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI')
+                  'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI', 'PYTHONDONTWRITEBYTECODE')
 # Under "clean" the agent CLI also keeps its own login and network settings;
 # without them it cannot authenticate or reach its API. Cloud-provider logins
 # (Bedrock, Vertex) are not kept: stay on the default for those.
@@ -278,6 +278,9 @@ def untrusted_env(environ, mode, runner=None, git_credentials='off'):
         result.pop('GIT_CONFIG_PARAMETERS', None)
         result = untrusted_git_env(result)
     elif git_credentials != 'keep': raise UntrustedEnvError('unknown untrusted Git credentials mode')
+    # A provider, configured gate or repository tool may import installed
+    # Bureau helpers. Apply after filtering, including clean mode.
+    result['PYTHONDONTWRITEBYTECODE'] = '1'
     return result
 
 

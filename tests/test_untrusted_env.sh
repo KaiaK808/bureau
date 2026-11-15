@@ -58,7 +58,7 @@ case "$out" in *"after=$PR1_LINEAR $PR1_GH"*) ;; *) fail "1 default: the calling
 rm -f "$H"
 run_helper "$CLEAN_CFG" "export TZ=\"\$LINEAR_API_KEY\"; bureau_untrusted_env HOOK_VAR=from-caller sh -c '{ echo \"--- run\"; env; } > \"$H\"'" >/dev/null
 pr1_check_env "$H" "1 clean" clean 1 HOOK_VAR=from-caller
-stray=$(sed -n 's/=.*//p' "$H" | grep -vxE -- '--- run|PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_ALL|LC_CTYPE|TERM|TZ|CI|HOOK_VAR|PWD|SHLVL|_|OLDPWD|__CF_USER_TEXT_ENCODING|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT' | tr '\n' ' ')
+stray=$(sed -n 's/=.*//p' "$H" | grep -vxE -- '--- run|PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_ALL|LC_CTYPE|TERM|TZ|CI|PYTHONDONTWRITEBYTECODE|HOOK_VAR|PWD|SHLVL|_|OLDPWD|__CF_USER_TEXT_ENCODING|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_TERMINAL_PROMPT' | tr '\n' ' ')
 [ -z "$stray" ] || fail "1 clean: variables outside the clean list: $stray"
 if grep -q '^TZ=' "$H"; then fail "1 clean: a kept name carrying a secret's value was passed on"; fi
 # The clean list, pinned: every allowed name is set (to a harmless value) next to what an
@@ -70,7 +70,7 @@ run_helper "$CLEAN_CFG" "export PATH HOME USER=u LOGNAME=u SHELL=/bin/sh TMPDIR=
   SSH_AUTH_SOCK=/tmp/agent.sock AWS_SECRET_ACCESS_KEY=aws-probe NPM_TOKEN=npm-probe HTTPS_PROXY=http://proxy.invalid SSL_CERT_FILE=/tmp/ca.pem; \
   bureau_untrusted_env HOOK_VAR=from-caller /usr/bin/env > \"$H\"" >/dev/null
 got=$(sed -n 's/=.*//p' "$H" | grep -vxE 'PWD|SHLVL|_|OLDPWD|__CF_USER_TEXT_ENCODING' | LC_ALL=C sort | tr '\n' ' ')
-want="CI GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT HOME HOOK_VAR LANG LC_ALL LC_CTYPE LOGNAME PATH SHELL TEMP TERM TMP TMPDIR TZ USER "
+want="CI GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT HOME HOOK_VAR LANG LC_ALL LC_CTYPE LOGNAME PATH PYTHONDONTWRITEBYTECODE SHELL TEMP TERM TMP TMPDIR TZ USER "
 [ "$got" = "$want" ] || fail "1 clean list: got [$got], wanted [$want]"
 pr1_pass "1 default drops the secrets and their copies, clean keeps only its list, the caller keeps its keys"
 
@@ -375,7 +375,7 @@ codex_run() {
   sed -n '/^run_stage_for() {/,/^# Build the model invocation/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/bureau-config.sh"
   printf 'BUREAU_RUNTIME="$(dirname "$0")/bureau-runtime.py"\n' >> "$SCRIPTS_DIR/bureau-config.sh"
   # Control: the v3.0.2 launch of the provider too (before the fix round it inherited everything).
-  [ "${2:-}" != control ] || sed -i.bak 's/bureau_without_secrets python3 -I "\$(dirname/python3 "$(dirname/' "$SCRIPTS_DIR/bureau-config.sh"
+  [ "${2:-}" != control ] || sed -i.bak 's/bureau_without_secrets python3 -I -B "\$(dirname/python3 -B "$(dirname/' "$SCRIPTS_DIR/bureau-config.sh"
   # Control: the v3.0.2 behaviour at every site, the adapter's login check and
   # child environment included (the child gets a copy of everything; run()
   # builds it as child_env so a Codex child can get its own TMPDIR).

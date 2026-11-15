@@ -2,10 +2,12 @@
 # Small terminal actions for an adopting project; no nested model invocation.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=templates/scripts/bureau-env.sh
+source "$SCRIPT_DIR/bureau-env.sh"
 case "${1:-status}" in
-  doctor) exec python3 -I "$SCRIPT_DIR/bureau-doctor.py" ;;
-  status) exec python3 -I "$SCRIPT_DIR/bureau-runtime.py" status ;;
-  setup) exec python3 -I "$SCRIPT_DIR/bureau-runtime.py" setup ;;
+  doctor) exec python3 -I -B "$SCRIPT_DIR/bureau-doctor.py" ;;
+  status) exec python3 -I -B "$SCRIPT_DIR/bureau-runtime.py" status ;;
+  setup) exec python3 -I -B "$SCRIPT_DIR/bureau-runtime.py" setup ;;
   check)
     source "$SCRIPT_DIR/bureau-config.sh"
     jq -e '(.linear.teams | type == "array" and length > 0) and (.repo | type == "object")' "$BUREAU_CONFIG" >/dev/null

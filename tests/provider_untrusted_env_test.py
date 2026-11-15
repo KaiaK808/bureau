@@ -199,7 +199,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
             for runner in (None, 'claude', 'codex'):
                 with self.subTest(mode=mode, runner=runner):
                     reduced = p.untrusted_env(environ, mode, runner)
-                    expected = {'LANG': 'C', 'PATH': '/bin', **GIT_OFF}
+                    expected = {'LANG': 'C', 'PATH': '/bin', **GIT_OFF, 'PYTHONDONTWRITEBYTECODE': '1'}
                     if mode == 'default': expected.update(OPERATOR)
                     self.assertEqual(reduced, expected)
         self.assertEqual(environ, before)
@@ -212,7 +212,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                 # Even an overlapping agent allowlist must not override the host exclusion.
                 with patch.dict(p.AGENT_KEEP_PREFIXES, {runner: p.AGENT_KEEP_PREFIXES[runner] + ('HERDR_',)}):
                     self.assertEqual(p.untrusted_env(environ, 'clean', runner),
-                                     {note: 'keep_this_note', 'PATH': '/bin', 'LANG': 'C', **GIT_OFF})
+                                     {note: 'keep_this_note', 'PATH': '/bin', 'LANG': 'C', **GIT_OFF, 'PYTHONDONTWRITEBYTECODE': '1'})
 
     def test_invalid_mode_refuses_before_any_agent_or_login_check(self):
         for bad in ('cleen', '', True, 1, ['clean'], {'mode': 'clean'}, 'clean\n'):
@@ -247,7 +247,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
                                  'LINEAR_API_KEY': 'abc123', 'H': 'Authorization: abc123',
                                  'GH_TOKEN': '12345678', 'X': '12345678', 'Y': 'Bearer 12345678 end',
                                  'BASH_ENV': '/tmp/env.sh', 'ENV': '/tmp/env.sh', 'PATH': '/bin'}, 'default')
-        self.assertEqual(short, {'Z': 'x12345', 'PATH': '/bin', **GIT_OFF})
+        self.assertEqual(short, {'Z': 'x12345', 'PATH': '/bin', **GIT_OFF, 'PYTHONDONTWRITEBYTECODE': '1'})
         self.assertEqual(p.COPY_MIN, 6)
 
     def test_bureau_git_and_gh_processes(self):
@@ -281,7 +281,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         self.assertEqual(p.UNTRUSTED_PATHS, ('BUREAU_ENV_FILE', 'BUREAU_CONFIG'))
         self.assertEqual(p.UNTRUSTED_HOST_PREFIXES, ('HERDR_',))
         self.assertEqual(p.UNTRUSTED_KEEP, ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
-                                            'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI'))
+                                            'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'CI', 'PYTHONDONTWRITEBYTECODE'))
         self.assertEqual(p.AGENT_KEEP_PREFIXES, {'claude': ('ANTHROPIC_', 'CLAUDE_', 'HEADROOM_'), 'codex': ('OPENAI_', 'CODEX_')})
         self.assertEqual(p.AGENT_KEEP, ('HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy',
                                         'no_proxy', 'all_proxy', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
@@ -296,7 +296,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
             with self.subTest(mode=mode, runner=runner):
                 reduced = p.untrusted_env(environ, mode, runner)
                 for name in p.UNTRUSTED_REMOVE: self.assertFalse(name in reduced, name + ' was kept')
-        self.assertEqual(p.untrusted_env(environ, 'default'), {'PATH': '/bin', 'OTHER': 'v0-and-more', **GIT_OFF})
+        self.assertEqual(p.untrusted_env(environ, 'default'), {'PATH': '/bin', 'OTHER': 'v0-and-more', **GIT_OFF, 'PYTHONDONTWRITEBYTECODE': '1'})
 
     def test_the_operator_paths_go_in_both_modes_and_stay_for_bureau_processes(self):
         environ = {**PATHS, **OPERATOR, 'PATH': '/bin'}
@@ -304,7 +304,7 @@ class UntrustedEnvProviderTests(unittest.TestCase):
             with self.subTest(mode=mode, runner=runner):
                 reduced = p.untrusted_env(environ, mode, runner)
                 for name in PATHS: self.assertFalse(name in reduced, name + ' was kept')
-        self.assertEqual(p.untrusted_env(environ, 'default'), {**OPERATOR, 'PATH': '/bin', **GIT_OFF})
+        self.assertEqual(p.untrusted_env(environ, 'default'), {**OPERATOR, 'PATH': '/bin', **GIT_OFF, 'PYTHONDONTWRITEBYTECODE': '1'})
         # Bureau's own git and gh processes are not code the branch controls in this sense: they keep
         # them, as before (process_env is unchanged).
         for command in (['git', 'status'], ['git', 'push'], ['gh', 'pr', 'view']):

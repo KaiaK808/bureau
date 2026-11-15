@@ -102,7 +102,7 @@ while true; do
 
   LAUNCHING=1
   if [ "$WAITING_FOR_LOCK" = 1 ]; then
-    python3 -I "$REPO_DIR/scripts/bureau-dispatch.py" --repo "$REPO_DIR" wait >>"$QUEUE_LOG" 2>&1 &
+    python3 -I -B "$REPO_DIR/scripts/bureau-dispatch.py" --repo "$REPO_DIR" wait >>"$QUEUE_LOG" 2>&1 &
   elif [ "$MODE_LABEL" = dispatch ]; then
     "$REPO_DIR/scripts/queue-loop.sh" "$@" >>"$QUEUE_LOG" 2>&1 &
   else

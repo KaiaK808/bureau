@@ -242,8 +242,7 @@ case "$DESIGN_STATUS" in
 esac
 DESIGN_SUMMARY=$(bureau_comment_projection "$(parse_claude_json "$UX_RESULT" '.summary // ""')")
 
-git add -A
-git commit -m "$ISSUE: design artifacts" -m "Bureau-Generated: true" --allow-empty || true
+commit_stage_changes ux "$ISSUE" "" "$ISSUE: design artifacts" --allow-empty
 if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
   echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
 else

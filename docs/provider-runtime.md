@@ -60,6 +60,12 @@ QA, spec review and copy publish newly created files as well as tracked edits th
 
 Validation currently uses fake executors and real local Git/test commands. Run a representative live ticket in an adopting repository before relying on unattended Codex or mixed-provider operation.
 
+## Python bytecode
+
+Stages export `PYTHONDONTWRITEBYTECODE=1` for their children, including provider commands and configured gates under `repo.untrusted_env: "clean"`. Bureau’s isolated Python calls also pass `-B`, because `-I` ignores Python environment variables, and sibling importers set `sys.dont_write_bytecode = True` before loading helpers. Installer applies, including scoped resyncs, add `scripts/__pycache__/` to the adopting repository’s `.gitignore` without duplicating the entry. Shell stage commits exclude this directory even when it is not ignored or was already tracked; pre-staged cache paths refuse with exit 24 and leave the index unchanged. Spec checkpoint commits select only their reserved feature directory.
+
+**Upgrade:** compare installation drift, resync the scripts scope and restart stage drivers. If a cache is already tracked, run `git rm --cached -r -- scripts/__pycache__/` once and commit the removal; the ignore rule cannot untrack it. Doctor warns until the tracked paths are removed. The fixture regression tests exercise entry points, review evidence and provider gates without a model or network; they do not identify the writer of a historical adopting-repository commit.
+
 ## Ticket accounting
 
 Optional `agents.ticket_budget` bounds a ticket's total tokens, provider calls and summed provider wall time across stages and reruns. Every adapter call, including checker/verifier phases, reserves an attempt before starting and finalizes it from actual provider output even if structured validation fails. Unknown usage stays null and stops a token-budgeted ticket at the next cooperative checkpoint unless explicitly allowed. Accounting is independent of cost tracking. Provider wall/silence timeouts retain 124/25 and the closed reasons `timeout`/`watchdog`. See [configuration](configuration.md#ticket-run-budgets-and-trusted-progress) and [the stop protocol](stage-protocol.md#ticket-budget-and-progress-stops).
