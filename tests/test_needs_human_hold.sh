@@ -245,6 +245,8 @@ arm() {  # $1 = code block, $2 = label rc; sets ARM_OUT ARM_RC
     merge_origin_main_or_abort() { return 1; }
     ISSUE=EXP-300 BRANCH=test-branch STATUS=NEEDS_HUMAN DESIGN_STATUS=NEEDS_HUMAN SUMMARY=s
     QA_LOG_PATH=l QA_ESCALATION_REASON=r DESIGN_SUMMARY=d PR_NUMBER=7 MERGED_REVIEW=m REVIEW_CYCLE_COUNT=1 FINAL_GREEN=true
+    # The QA tail starts after qa_trivy_final, which always sets this flag in the real script.
+    QA_TRIVY_BLOCKED=0
     $1
     echo ARM-CONTINUED" "$SCRIPTS_DIR/arm.sh" 2>&1)
   ARM_RC=$?
@@ -359,6 +361,9 @@ grep -q '^log_escalation	EXP-300	qa' "$SANDBOX/calls.log" || fail "QA: a written
 arm "$QA" 1; expect "QA needs-human, label failed" 25 yes
 grep -q '^log_escalation' "$SANDBOX/calls.log" && fail "QA: escalation logged although the label failed"
 grep -q '^post_comment	EXP-300' "$SANDBOX/calls.log" || fail "QA: the comment must still go out"
+# A blocking Trivy result ends non-zero even when the needs-human label was written.
+arm "QA_TRIVY_BLOCKED=1
+$QA" 0; expect "QA needs-human, Trivy blocked, label written" 25 no
 
 UX=$(tail_from "$SCRIPTS/ux-pipeline.sh" 'case "$DESIGN_STATUS" in')
 case "$UX" in *needs[-_]human*) ;; *) fail "the UX routing block is not where it was" ;; esac
