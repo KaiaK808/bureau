@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "tool": "trivy",
+  "version": "0.76.1",
+  "release_date": "2026-10-21",
+  "signing_identity": "https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v0.76.1",
+  "signing_issuer": "https://token.actions.githubusercontent.com",
+  "platforms": {
+    "linux-x86_64": {
+      "archive": "trivy_0.76.1_Linux-64bit.tar.gz",
+      "archive_sha256": "c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0",
+      "binary_sha256": "d1dfca6ae10a1ad4540bb94e64f0510077c47008920a9b554986b39dca573d83",
+      "binary_size": 176029856
+    },
+    "darwin-arm64": {
+      "archive": "trivy_0.76.1_macOS-ARM64.tar.gz",
+      "archive_sha256": "11a9b6cd2752011b54f01ea4bd0dbfa9f0c41dc6538d5a3f9d23955f471bf4e5",
+      "binary_sha256": "5c03401caf9d3cc04d9e0c7f3abd102e97518e8237465cce702162b605535e8d",
+      "binary_size": 168234370
+    }
+  }
+}

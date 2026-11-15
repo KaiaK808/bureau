@@ -157,6 +157,86 @@ The existing just-in-time gates then run unchanged. After they pass, Bureau perf
 
 **Upgrade:** compare installed script drift, resync the entire scripts scope (including the shared helper, sandbox profile, rules, lock and platform manifests), and restart drivers together. Existing repositories stay off. Install the reviewed pinned venv and ensure network isolation works before opting into advisory mode; blocking is a separate project choice. Offline fake scanner tests cover the boundary and pipelines. The optional real-binary test runs only with `BUREAU_SEMGREP_VENV` set on GitHub-hosted Ubuntu; real pin, flag/rule compatibility and adopting-repository qualification require that separate validation.
 
+### `qa.trivy`
+
+```json
+{
+  "qa": {
+    "trivy": {
+      "enabled": false,
+      "mode": "advisory",
+      "cache_dir": null,
+      "max_db_age_hours": 48,
+      "block_severity": "HIGH",
+      "image_archive_command": null
+    }
+  }
+}
+```
+
+Trivy is optional and off by default. Doctor and the Trivy helpers validate explicit settings even while disabled; unknown keys are errors. `enabled` is boolean, `mode` is `advisory` or `blocking`, `block_severity` is `UNKNOWN`, `LOW`, `MEDIUM`, `HIGH` or `CRITICAL`, and `max_db_age_hours` is a positive finite number. An enabled scan requires an absolute `cache_dir` outside the repository; `~/` is expanded. The runtime checks the resolved path too. `image_archive_command` is null or a nonempty trusted operator command. Disabled QA prompts, comments and routing, and disabled/advisory merge GitHub and Git call logs, are unchanged.
+
+Bureau ships metadata for **Trivy 0.76.1**, released **2026-10-21**, in `scripts/bureau-trivy-pins.json`. Only Linux x86_64 and macOS arm64 have reviewed archive and extracted-binary pins; other platforms report **unavailable** with the missing platform pin named. The operator supplies a regular executable with `BUREAU_TRIVY_BIN`; the fallback is `<shared Git directory>/bureau/tools/trivy/trivy`. Bureau does not install or download a scanner. There is no version, digest or executable override in repository configuration. Never use the Trivy GitHub Action, setup-trivy or a Docker image as this scanner's distribution mechanism.
+
+Before a pin is reviewed, select a release at least two weeks old and newer than every published advisory fix, verify its checksums file and both release archives against their Sigstore bundles, compare archive hashes to that verified checksums file, and hash the extracted regular `trivy` binary separately. For this pin the expected keyless identity and issuer are exact, including the release tag:
+
+```bash
+identity='https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v0.76.1'
+issuer='https://token.actions.githubusercontent.com'
+cosign verify-blob \
+  --bundle trivy_0.76.1_checksums.txt.sigstore.json \
+  --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+  trivy_0.76.1_checksums.txt
+for archive in trivy_0.76.1_Linux-64bit.tar.gz trivy_0.76.1_macOS-ARM64.tar.gz; do
+  cosign verify-blob --bundle "$archive.sigstore.json" \
+    --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$archive"
+  shasum -a 256 "$archive"
+done
+```
+
+Compare those archive hashes with `trivy_0.76.1_checksums.txt` before extraction, then record each extracted binary's SHA-256 and byte size in the pin file alongside the archive name/hash, version, release date, signing identity and issuer. Verify all of these in the pin review; a version string alone is never an execution trust anchor. The shipped pin was maintainer-verified through that procedure. Neither the signature assets nor scanner binaries are vendored.
+
+Each measurement creates a private `mkdtemp` directory with mode 0700, opens the operator binary with `O_NOFOLLOW | O_NONBLOCK`, refuses non-regular files, and hashes the same read that populates its private copy. Only that copy can execute after its digest and size match the platform pin. Its mode-0700 directory contains only `trivy`; no operator-adjacent helper can resolve there. Bureau re-hashes the private binary before each execution. Changes to the operator path after the copy have no effect.
+
+The operator refreshes the database separately, with network access, outside every stage:
+
+```bash
+python3 -I -B scripts/bureau-trivy.py refresh --cache-dir "$BUREAU_TRIVY_CACHE"
+# Include Java's DB when Java analysis or an image needs it:
+python3 -I -B scripts/bureau-trivy.py refresh --cache-dir "$BUREAU_TRIVY_CACHE" --java
+```
+
+The refresh destination must be empty or a Bureau-managed cache, outside the repository. Refresh first verifies and privately copies the pinned binary, downloads into a fresh private directory using `--download-db-only` and optionally `--download-java-db-only`, with `--disable-telemetry --skip-version-check`, then replaces the operator cache only after successful metadata/content checks. A failed download leaves the previous cache intact. `bureau-trivy-cache.json` records `Version`, `UpdatedAt`, `NextUpdate` and `DownloadedAt` per database, every cache file's hash, and the digest of that complete file inventory, including any external checks bundle. Scans copy and hash the same reads, require agreement with the record and database metadata, and judge freshness using **UpdatedAt**, never DownloadedAt. A changed cache is **not_measured**; downloading old data again cannot make it fresh. Future timestamps and unreadable/non-regular cache inputs also fail measurement.
+
+The scan cache retains only `db/` and optional `java-db/`; all external checks bundles and other cache content are removed. Misconfiguration checks therefore come from the pinned binary's embedded bundle, whose identity is the binary digest. The snapshot manifest records removals. Before filesystem scanning, including after an image build, Bureau re-checks the private database bytes and discards non-database cache content again.
+
+Every scanner execution, including refresh, receives only `PATH=/usr/bin:/bin`, private `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `TMPDIR`, `LANG=C.UTF-8` and `TZ=UTC`. No caller `TRIVY_*`, provider secret, GitHub token or Docker connection setting passes through. Every scan runs under runtime network denial: probed `unshare -rn` on Linux or `sandbox-exec` with `bureau-scan-nonet.sb` denying `network*` on macOS. Isolation failure is **not_measured**, reason `network isolation unavailable`; scans never fall back to online execution. The refresh CLI is the sole networked scanner operation and is absent from the shell stage helper's allowed commands.
+
+All release-dependent flags live in `bureau-trivy.py`'s `FLAGS` table. Filesystem and advisory image scans use `--offline-scan --skip-db-update --skip-java-db-update --skip-check-update --skip-vex-repo-update --skip-version-check --disable-telemetry`, explicit empty Bureau `--config` and `--ignorefile`, a private `--cache-dir`, `--scanners vuln,misconfig`, `--format json --output`, and `--timeout 5m`. Filesystem scans run from a separate private working directory against snapshots of the pinned base and final head. Native `trivy.yaml`, `trivy.yml`, `.trivyignore`, `.trivyignore.yaml` and `.trivyignore.yml` files are removed throughout both snapshots. IaC `trivy:ignore:` comment lines are blanked, and trailing ignore comments are stripped while preserving code and LF coordinates; paths and line numbers are projected. This neutralization does not depend on an engine flag.
+
+Before checking the binary, cache or isolation, Bureau inventories both snapshots. If neither has eligible inputs, the result is **not_applicable**, with no scanner or probe execution. V1 checks npm package manifests with package-lock/npm-shrinkwrap, pnpm or Yarn locks; `requirements*.txt`; PEP 621/Poetry dependencies with uv/Poetry locks; Go module/sum files; Dockerfiles, Compose files and Terraform files. Missing locks, requirements that are not exactly pinned, absent result targets and direct dependency names missing from lock roots reduce coverage and name the affected file/package. Every inventoried lockfile requires a matching result target, including `go.sum`; engines that omit a target reduce coverage rather than silently accepting an alias. Direct-name consistency for Go and ecosystems outside the JS/Python set is explicitly reported as unchecked. Version ranges are not compared in v1. Snapshot blobs are limited to 32 MiB per file and base policy to 1 MB; oversized inputs fail measurement. Python 3.9/3.10 uses a conservative name-only TOML reader; unsupported relevant syntax reduces coverage rather than assuming consistency. Other recognized ecosystem inputs are scanned and reported as having unchecked lockfile consistency. A base measurement failure produces **reduced_coverage**, reason `base not measured`, and head findings stay unclassified rather than being counted as new.
+
+Vulnerability identity is `(Target, VulnerabilityID, PkgName, InstalledVersion)`. Misconfiguration identity is `(Target, ID, CauseMetadata.Resource, SHA-256 of normalized cause lines)`; bytes are split on LF only and whitespace is stripped per line. When Resource is missing, the cause-lines hash carries that part of identity and the projection names the affected check/file. Only checks with status `FAIL` count. File-level checks that the pinned release reports without cause lines (for example `DS-0026`, a Dockerfile without `HEALTHCHECK`) use a fixed file-level marker in place of the cause-lines hash and are projected with line 0. Newness is occurrence-aware: if an identity's head count exceeds its base count, only the surplus is new. Moving a vulnerable package to another manifest, changing its installed version or introducing another unsafe resource creates a distinct occurrence. Matched source, descriptions and raw scanner diagnostics never enter comments.
+
+Only the pinned base's `.bureau/trivy-exceptions.json` can suppress findings or waive reduced coverage. Entries require exact selectors, an owner, a reason and an ISO date or timezone-aware timestamp in `expires`; a date expires at the start of that UTC date. Multiple finding selectors are conjunctive. Wildcards and malformed entries fail measurement, expired entries have no effect, and a PR cannot suppress itself by adding an exception:
+
+```json
+[
+  {"id":"CVE-EXAMPLE","package":"legacy-package","file":"requirements.txt","owner":"security-team","reason":"Accepted temporarily","expires":"2027-01-01"},
+  {"kind":"coverage","file":"legacy/package.json","owner":"platform-team","reason":"Lockfile migration scheduled","expires":"2027-01-01"}
+]
+```
+
+Advisory mode reports every status and continues. Blocking mode holds on new findings at or above `block_severity`, **not_measured**, **unavailable**, or **reduced_coverage** without an active base coverage exception for every affected file. Coverage exceptions never suppress qualifying findings. **not_applicable** passes as explicitly not applicable. No unavailable, unmeasured or reduced result is described as clean. A blocking QA result keeps the ticket in QA with `needs-human` and exit 25.
+
+QA measures immediately before routing, after its commit/push and local checks, including the no-harness path; the enabled no-harness path first publishes any QA merge. Its receipt binds the head actually handed onward. If a repository has no QA state, blocking mode still guarantees measurement through merge: the merge pipeline requires a valid final-head receipt and measures when absent or changed. Before the existing just-in-time gates, the shared Semgrep/Trivy merge code reads head and current base ref/commit, measures with reuse, prepares the merge message and fetches the base again. Before applying a blocking or failed result it re-checks head, base ref name and base commit; changed inputs retry with exit 2, with the gate mark bound to the scanned head. Both enabled scanners must measure the same inputs. After the final gates, only the existing single base-name read remains; there is no additional fetch. The ticket kill-switch checkpoint remains the last operation before the head-pinned merge in every merge strategy.
+
+An optional `image_archive_command` runs from the final-head snapshot under the same isolation and allowlist, with one extra variable, `BUREAU_TRIVY_IMAGE_ARCHIVE`, naming the path it must write. Produce one OCI or `docker save` tar archive there using already available build inputs. Bureau passes no Docker socket or inherited Docker settings to Trivy. The receipt binds the archive's SHA-256 and image configuration digest, and the image scan uses `image --input` plus the same offline flags. Image findings and build/scan failures are always advisory in v1, with no base comparison; an archive cannot prove the image came from the intended source. Unconfigured images are reported as `image scan: not configured`, never clean. Building is skipped too when the entire filesystem inventory is not applicable.
+
+The shared receipt store writes immutable `report.json`, `projection.json` and `receipt.json` attempts under `<state dir>/scans/trivy/<identity digest>/<attempt id>/`, binding full head/base commits, pin/settings/base-policy digests, cache digest/UpdatedAt, image archive/config digests and report/projection hashes. The projection has one budget of at most 20 findings across filesystem and image evidence, with explicit omitted counts, and bounded coverage/removal lists. Receipt hashes join existing QA/merge artifact evidence. Reuse re-verifies the current binary/cache and checks exception expiry; each consuming PR adds its own exclusive `refs/pr-N` retention reference. Retention keeps the newest 20 attempts plus those referenced by open PRs; unknown open-PR inventories keep referenced evidence conservatively.
+
+**Upgrade:** compare installed script drift, resync the full scripts scope including `bureau-trivy.py`, `bureau-trivy.sh`, `bureau-trivy-pins.json`, `bureau-scan.py` and the sandbox profile, then restart drivers together. Existing configurations stay disabled. Supply the verified pinned binary, refresh an external cache and qualify isolation on the target host before enabling advisory mode; enable blocking separately. Fake-binary tests run without downloads in the full test matrix. The separate real-binary job uses only GitHub-hosted `ubuntu-latest`, downloads the exact pinned release archive, checks archive and extracted-binary hashes before execution, refreshes a job-local cache and qualifies lockfile, Dockerfile and image-input flags under `unshare -rn`. The job configures user namespaces only on that ephemeral hosted VM; it never selects a self-hosted fallback. Real-binary flag compatibility, embedded-check behavior, engine resource metadata and adopting-repository validation remain separate qualification steps until that job or a maintainer run succeeds.
+
 ### `agents`
 
 Which pipelines run, how often they poll, how aggressive they are.

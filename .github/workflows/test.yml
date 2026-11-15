@@ -114,7 +114,8 @@ jobs:
             templates/scripts/qa-pipeline.sh \
             templates/scripts/code-review-pipeline.sh \
             templates/scripts/merge-pipeline.sh \
-            templates/scripts/bureau-semgrep.sh
+            templates/scripts/bureau-semgrep.sh \
+            templates/scripts/bureau-trivy.sh
 
       - name: Run test harness
         run: PATH="/bin:$PATH" /bin/bash tests/run.sh
@@ -125,3 +126,61 @@ jobs:
         with:
           name: test-timings-${{ matrix.os }}-${{ matrix.shard }}-of-${{ matrix.total }}
           path: ${{ env.BUREAU_TEST_TIMINGS }}
+
+  trivy-real:
+    name: Pinned Trivy offline qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      BUREAU_TRIVY_REAL_TEST: '1'
+    defaults:
+      run:
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # pinned by SHA, same as the test job
+      - name: Job-local binary and cache paths
+        # The runner context is not available in job-level env; export the paths instead.
+        run: |
+          echo "BUREAU_TRIVY_BIN=$RUNNER_TEMP/bureau-trivy-bin/trivy" >> "$GITHUB_ENV"
+          echo "BUREAU_TRIVY_CACHE=$RUNNER_TEMP/bureau-trivy-cache" >> "$GITHUB_ENV"
+      - name: Download and verify the pinned release bytes
+        run: |
+          archive="$RUNNER_TEMP/trivy_0.76.1_Linux-64bit.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz \
+            --output "$archive"
+          python3 -I -B - "$archive" <<'PY'
+          import hashlib, json, os, pathlib, shutil, sys, tarfile
+          pins = json.loads(pathlib.Path('templates/scripts/bureau-trivy-pins.json').read_text())
+          assert pins['version'] == '0.76.1'
+          pin = pins['platforms']['linux-x86_64']
+          archive = pathlib.Path(sys.argv[1])
+          assert archive.name == pin['archive']
+          def digest(path):
+              with path.open('rb') as source:
+                  hashed = hashlib.sha256()
+                  for block in iter(lambda: source.read(65536), b''): hashed.update(block)
+              return hashed.hexdigest()
+          assert digest(archive) == pin['archive_sha256'], 'archive digest mismatch'
+          binary = pathlib.Path(os.environ['BUREAU_TRIVY_BIN'])
+          binary.parent.mkdir(mode=0o700)
+          with tarfile.open(archive, 'r:gz') as bundle:
+              member = bundle.getmember('trivy')
+              assert member.isfile() and member.size == pin['binary_size']
+              with bundle.extractfile(member) as source, binary.open('xb') as output:
+                  shutil.copyfileobj(source, output)
+          assert digest(binary) == pin['binary_sha256'], 'binary digest mismatch'
+          assert binary.stat().st_size == pin['binary_size']
+          binary.chmod(0o700)
+          PY
+      - name: Refresh a job-local database outside the scan
+        run: python3 -I -B templates/scripts/bureau-trivy.py refresh --cache-dir "$BUREAU_TRIVY_CACHE" --java
+      - name: Qualify every scan flag under network denial
+        run: |
+          # Only this ephemeral GitHub-hosted VM is configured for user namespaces.
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          unshare -rn -- /usr/bin/true
+          bash tests/test_trivy.sh RealBinaryTests

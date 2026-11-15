@@ -39,6 +39,40 @@ qa_pin_base() {
   export BUREAU_PROVIDER_CONFIG_BASE="$QA_BASE"
 }
 
+qa_trivy_final() {
+  QA_TRIVY_NOTE=""
+  QA_TRIVY_BLOCKED=0
+  [ "$(bureau_get '.qa | type == "object" and has("trivy")')" = true ] || return 0
+  source "$(dirname "$0")/bureau-trivy.sh"
+  local options result rc=0 head
+  options=$(bureau_trivy settings) || exit 24
+  [ "$(printf '%s' "$options" | jq -r '.enabled')" = true ] || return 0
+  # The no-harness arm can also have a QA merge to publish. Disabled QA keeps
+  # its original path; every enabled measurement uses the published final head.
+  if [ "${1:-}" = --publish ]; then
+    if [ "${BUREAU_DRY_RUN:-0}" = 1 ]; then
+      echo "  [DRY_RUN] would: git push origin HEAD ($BRANCH)"
+    else
+      bureau_ticket_checkpoint "$ISSUE"
+      git push origin HEAD || exit 18
+    fi
+  fi
+  qa_pin_base || exit $?
+  head=$(git rev-parse --verify HEAD) || exit 24
+  local args=(--base "$QA_BASE" --head "$head" --reuse)
+  if [[ "${QA_PR:-}" =~ ^[1-9][0-9]*$ ]]; then args+=(--pr "$QA_PR"); fi
+  result=$(bureau_trivy scan "${args[@]}") || rc=$?
+  [ "$rc" != 130 ] || exit 130
+  if [ "$rc" != 0 ]; then
+    QA_TRIVY_NOTE='{"tool":"trivy","status":"not_measured","reason":"durable scanner receipt unavailable","findings":[]}'
+    [ "$(printf '%s' "$options" | jq -r '.mode')" != blocking ] || QA_TRIVY_BLOCKED=1
+  else
+    QA_TRIVY_NOTE=$(printf '%s' "$result" | jq -ce '.projection') || exit 24
+    [ "$(printf '%s' "$result" | jq -r '.receipt.blocking')" = false ] || QA_TRIVY_BLOCKED=1
+  fi
+  QA_TRIVY_NOTE=$'\n\n### Trivy machine evidence\n'"$QA_TRIVY_NOTE"
+}
+
 precondition_linear
 precondition_runner qa
 
@@ -137,8 +171,14 @@ detect_test_cmd() {
 
 TEST_CMD=$(detect_test_cmd)
 if [ -z "$TEST_CMD" ]; then
+  qa_trivy_final --publish
+  if [ "$QA_TRIVY_BLOCKED" = 1 ]; then
+    mark_needs_human "$ISSUE" qa || true
+    post_comment "$ISSUE" "🚫 QA: Trivy requires human review.$QA_TRIVY_NOTE"
+    exit 25
+  fi
   echo "  No test harness detected — skipping QA. Moving straight to Build Review."
-  post_comment "$ISSUE" "ℹ️ QA pipeline: no test harness detected in this repo. Skipping QA and moving to Build Review."
+  post_comment "$ISSUE" "ℹ️ QA pipeline: no test harness detected in this repo. Skipping QA and moving to Build Review.$QA_TRIVY_NOTE"
   move_issue "$ISSUE" "$BUREAU_STATE_BUILD_REVIEW"
   exit 0
 fi
@@ -504,6 +544,14 @@ $SUMMARY"
   comment_on_branch_pr "$BRANCH" "$SQUASH_REPORT"
 fi
 
+# Last measurement, after QA's commit/push and all local checks, before routing.
+qa_trivy_final
+SUMMARY+="$QA_TRIVY_NOTE"
+if [ "$QA_TRIVY_BLOCKED" = 1 ]; then
+  STATUS=NEEDS_HUMAN
+  QA_ESCALATION_REASON="Trivy blocking evidence or incomplete measurement"
+fi
+
 NEEDS_HUMAN_UNMARKED=0
 case "$STATUS" in
   GREEN)
@@ -556,3 +604,4 @@ echo "════════════════════════�
 # success to the driver: the local hold keeps the queue away, the
 # non-zero exit stops a shepherd.
 if [ "$NEEDS_HUMAN_UNMARKED" = 1 ]; then exit 25; fi
+if [ "$QA_TRIVY_BLOCKED" = 1 ]; then exit 25; fi
