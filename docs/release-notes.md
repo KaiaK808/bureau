@@ -1,6 +1,6 @@
 # Bureau v3.8.0 — QA evidence, approval status and runtime fixes
 
-**Release preparation · 2026-11-14 · source tag `v3.8.0`.** v3.8.0 is a minor release on [v3.7.0](release-notes-v3.7.0.md). Tagging and GitHub Release publication remain separate maintainer operations.
+**Published release · 2026-11-14 · source tag `v3.8.0`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.8.0) is published as latest. Annotated tag `v3.8.0` (tag object `1324764`) points at merge commit `74bc6b2` of [#157](https://github.com/KaiaK808/bureau/pull/157), merged on 2026-11-14. v3.8.0 is a minor release on [v3.7.0](release-notes-v3.7.0.md).
 
 The release includes, in first-parent merge order: [#133](https://github.com/KaiaK808/bureau/pull/133), [#134](https://github.com/KaiaK808/bureau/pull/134), [#139](https://github.com/KaiaK808/bureau/pull/139), [#140](https://github.com/KaiaK808/bureau/pull/140), [#136](https://github.com/KaiaK808/bureau/pull/136), [#138](https://github.com/KaiaK808/bureau/pull/138), [#141](https://github.com/KaiaK808/bureau/pull/141), [#142](https://github.com/KaiaK808/bureau/pull/142), [#137](https://github.com/KaiaK808/bureau/pull/137), [#143](https://github.com/KaiaK808/bureau/pull/143), [#144](https://github.com/KaiaK808/bureau/pull/144), [#145](https://github.com/KaiaK808/bureau/pull/145), [#146](https://github.com/KaiaK808/bureau/pull/146), [#147](https://github.com/KaiaK808/bureau/pull/147), [#148](https://github.com/KaiaK808/bureau/pull/148), [#149](https://github.com/KaiaK808/bureau/pull/149), [#150](https://github.com/KaiaK808/bureau/pull/150), [#151](https://github.com/KaiaK808/bureau/pull/151), [#152](https://github.com/KaiaK808/bureau/pull/152), [#153](https://github.com/KaiaK808/bureau/pull/153), [#154](https://github.com/KaiaK808/bureau/pull/154), [#155](https://github.com/KaiaK808/bureau/pull/155), [#156](https://github.com/KaiaK808/bureau/pull/156). All changes are merged. The [changelog](../CHANGELOG.md#380---2026-11-14) collects the 22 release fragments; the CI dependency update in #137 is also included.
 
@@ -105,7 +105,7 @@ Provider login timeouts retain retryable exit 16. Advisory QA findings introduce
 
 ## Upgrade an existing installation
 
-**From v3.7.0, once v3.8.0 is published:** stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work/local commits, custom scripts/interfaces, instructions, Spec Kit assets/constitution and shared ownership, checkpoint, evidence, accounting, witness and process-hold records. Compare installed drift and reconcile incident fixes before replacing assets. Select the published `v3.8.0` tag, refresh discovery, preview and resolve conflicts, then resync the **complete scripts and interfaces scopes together** in every adopting repository:
+**From v3.7.0:** stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work/local commits, custom scripts/interfaces, instructions, Spec Kit assets/constitution and shared ownership, checkpoint, evidence, accounting, witness and process-hold records. Compare installed drift and reconcile incident fixes before replacing assets. Select the published `v3.8.0` tag, refresh discovery, preview and resolve conflicts, then resync the **complete scripts and interfaces scopes together** in every adopting repository:
 
 ```text
 /bureau-init --resync-interfaces --resync-scripts --target both
@@ -162,11 +162,11 @@ The release branch's own validation, on release candidate `45335d7`:
 | Independent release review | Codex, read-only. Round 1 requested changes (an undefined variable in the migration commands; a stale mutation-test caveat in the changelog); both are fixed in `45335d7`. Round 2 approved. |
 | macOS gate suite and tested ref | `45335d7`, two shards: 191 of 191 on the first pass (2026-11-14). |
 | Remote gate suite and tested ref | `openclaw-01`, a bundle of exactly `45335d7`, two shards: 191 of 191 on the first pass, no reruns (2026-11-14). |
-| Release CI jobs, runs and results | Recorded in the release record after publication. |
-| Final candidate/tag tested-tree comparison | Recorded in the release record after the tag. |
-| Manual live injection sample and adopter qualification | Pending the maintainer's decision; recorded in the release record. |
+| Release CI jobs, runs and results | [#157](https://github.com/KaiaK808/bureau/pull/157) at `789c134`: the pull-request run passed 6 of 6 jobs (focused macOS, full Ubuntu) and the push run 10 of 10 (full macOS and Ubuntu). Main at `74bc6b2`: push run 10 of 10. Tag `v3.8.0`: the first push run passed 9 of 10; the full macOS shard 1 failed one load-sensitive dispatcher shutdown fixture (`test_shutdown_joins_writers_retains_leases_and_spares_unrelated_sentinel`), which the same tree passed on main, on #157 and in both gate suites. The rerun of that job passed, 10 of 10. |
+| Final candidate/tag tested-tree comparison | `python3 scripts/release_verify.py 45335d7 v3.8.0` passed: `templates/`, `tests/` and `scripts/` are tree-identical between the tested candidate and the tag. The PR head `789c134` changed documentation only and has the same tree as the tag. |
+| Manual live injection sample and adopter qualification | The manual live injection sample was not run for v3.8.0, by the maintainer's decision. One adopting installation resynced its complete scripts and interfaces scopes to the tag with no conflicts; doctor reported no errors and no drift. Representative ticket runs are not recorded. |
 
-Before publication, record the exact tested refs and results, and run [release tree verification](releases.md#verify-the-tested-release-trees). The hostile-input corpus uses deterministic fakes; its manual live release-checklist sample remains a separate check. This release record creates no tag or release.
+See [release tree verification](releases.md#verify-the-tested-release-trees) for the comparison procedure. The hostile-input corpus uses deterministic fakes; its manual live release-checklist sample was not run for this release.
 
 ## Known limitations
 
@@ -177,4 +177,4 @@ Before publication, record the exact tested refs and results, and run [release t
 - Pytest long tracebacks showing a test class instance named after a timeout, sandbox or teardown can suppress the assertion rerun. This fails safe: no rerun, QA stays red. Unfamiliar output also follows the ordinary failure path.
 - Several inherited tests remain load-sensitive. The signal-reset change addresses inherited ignored signals; it does not establish that every timing race is resolved.
 - Live provider behavior, adopter drift comparisons and representative adoption of the new checks remain unverified. Impeccable adopting-repository pilots have not run. Fragment-level tests and hostile-input fakes cannot establish live resistance to every prompt injection.
-- Release CI, the final candidate/tag tree comparison and the manual live injection sample are recorded in the release record after publication.
+- The manual live injection sample was not run for v3.8.0, so resistance to hostile input rests on the deterministic corpus and fakes. The dispatcher shutdown fixture that failed once on the tag's CI remains load-sensitive.
