@@ -633,6 +633,87 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
+# Prepare the merge message early for blocking scans. The legacy path still
+# reads it at the merge call; neither disabled nor advisory adds any I/O.
+MERGE_MESSAGE_READY=false
+prepare_merge_message() {
+  [ "$MERGE_MESSAGE_READY" != true ] || return 0
+  local _json _title _body
+  _json=$(gh pr view "$PR_NUMBER" --json title,body) || return 1
+  _title=$(printf '%s' "$_json" | jq -r '.title') || return 1
+  _body=$(printf '%s' "$_json" | jq -j '.body // ""' && printf x) || return 1
+  _body=${_body%x}
+  MERGE_SUBJECT=$(sanitize_ci_markers "$_title")
+  MERGE_BODY=$(build_merge_body "$_title" "$_body" && printf x) || return 1
+  MERGE_BODY=${MERGE_BODY%x}
+  MERGE_MESSAGE_READY=true
+}
+
+# Scan, finish network preparation, then run the just-in-time gates. Only one
+# cheap base-name read is allowed between those gates and the pinned merge.
+SEMGREP_RECHECK=false
+if [ "$(bureau_get 'has("review")')" = true ]; then
+  # Load only for configured review settings, preserving the disabled legacy path.
+  source "$(dirname "$0")/bureau-semgrep.sh"
+  SEMGREP_SETTINGS=$(bureau_semgrep settings) || exit 24
+  if [ "$(printf '%s' "$SEMGREP_SETTINGS" | jq -r '.enabled and .mode == "blocking"')" = true ]; then
+    semgrep_merge_retry() {
+      GATE_HEAD="${_scan_head:-}"
+      echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"
+      printf '    %s\n' "$1"
+      merge_gate_exit not-yet "$1"
+    }
+    semgrep_merge_hold() {
+      GATE_HEAD="${_scan_head:-}"
+      printf '    %s\n' "$1"
+      merge_gate_exit blocked "$1"
+    }
+    _scan_head=$(pr_head_sha "$PR_NUMBER")
+    [ -n "$_scan_head" ] || semgrep_merge_hold 'semgrep: current PR head unavailable'
+    _scan_refs=$(gh pr view "$PR_NUMBER" --json baseRefName,headRefName) \
+      || semgrep_merge_hold 'semgrep: current PR base unavailable'
+    _scan_base_ref=$(printf '%s' "$_scan_refs" | jq -er '.baseRefName | select(type == "string" and length > 0)') \
+      || semgrep_merge_hold 'semgrep: current PR base unavailable'
+    if [[ "$_scan_base_ref" == -* ]] || ! git check-ref-format "refs/heads/$_scan_base_ref" >/dev/null 2>&1; then
+      semgrep_merge_hold 'semgrep: unsafe PR base ref'
+    fi
+    git fetch --no-tags origin "+refs/heads/$_scan_base_ref:refs/remotes/origin/$_scan_base_ref" \
+      "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
+      || semgrep_merge_hold 'semgrep: pinned source unavailable'
+    _scan_base=$(git rev-parse --verify "refs/remotes/origin/$_scan_base_ref^{commit}") \
+      || semgrep_merge_hold 'semgrep: pinned base unavailable'
+    _semgrep_rc=0
+    SEMGREP_RESULT=$(bureau_semgrep scan --base "$_scan_base" --head "$_scan_head" --pr "$PR_NUMBER" --reuse) || _semgrep_rc=$?
+    [ "$_semgrep_rc" != 130 ] || exit 130
+
+    # A stale failure must retry just like a stale pass: do not hold a fixed PR
+    # for an older head's findings, unavailable tooling or failed receipt write.
+    # This last fetch must precede the JIT gates, including their CI/hold reads.
+    case "$BUREAU_MERGE_STRATEGY" in
+      squash|merge) prepare_merge_message || semgrep_merge_retry 'semgrep: merge message unavailable before gate recheck' ;;
+    esac
+    git fetch --no-tags origin "+refs/heads/$_scan_base_ref:refs/remotes/origin/$_scan_base_ref" \
+      || semgrep_merge_retry 'semgrep: current base unavailable after scan'
+    _current_base=$(git rev-parse --verify "refs/remotes/origin/$_scan_base_ref^{commit}") \
+      || semgrep_merge_retry 'semgrep: current base commit unavailable after scan'
+    [ "$_current_base" = "$_scan_base" ] \
+      || semgrep_merge_retry 'semgrep: PR base commit changed during scan'
+    _current_head=$(pr_head_sha "$PR_NUMBER")
+    [ "$_current_head" = "$_scan_head" ] \
+      || semgrep_merge_retry 'semgrep: PR head changed during scan'
+    _current_base_ref=$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName) \
+      || semgrep_merge_retry 'semgrep: current PR base unavailable after scan'
+    [ "$_current_base_ref" = "$_scan_base_ref" ] \
+      || semgrep_merge_retry 'semgrep: PR base ref changed during scan'
+
+    [ "$_semgrep_rc" = 0 ] || semgrep_merge_hold 'semgrep: durable scanner receipt unavailable'
+    if [ "$(printf '%s' "$SEMGREP_RESULT" | jq -r '.receipt.blocking')" != false ]; then
+      semgrep_merge_hold "semgrep: $(printf '%s' "$SEMGREP_RESULT" | jq -c '.projection')"
+    fi
+    SEMGREP_RECHECK=true
+  fi
+fi
+
 # Just-in-time gate recheck. Closes the race between the initial gate query
 # (potentially seconds-to-minutes ago) and the merge call. Most importantly
 # this re-checks pr_base_is_current — the prior tick's merge of a different
@@ -651,6 +732,17 @@ if [ -n "$JIT_GATE_OUT" ]; then
   echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"
   printf '    %s\n' "$JIT_GATE_OUT"
   merge_gate_exit "$(printf '%s\n' "$JIT_GATE_OUT" | merge_gate_outcome)" "$JIT_GATE_OUT"
+fi
+
+# No fetch or message preparation after the JIT gates. Their checked head and
+# this single base-name read must still match the scan; otherwise retry.
+if [ "$SEMGREP_RECHECK" = true ]; then
+  [ "$MERGE_HEAD" = "$_scan_head" ] \
+    || semgrep_merge_retry 'semgrep: PR head changed during scan'
+  _merge_base_ref=$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName) \
+    || semgrep_merge_retry 'semgrep: current PR base unavailable after gate recheck'
+  [ "$_merge_base_ref" = "$_scan_base_ref" ] \
+    || semgrep_merge_retry 'semgrep: PR base ref changed during scan or gate recheck'
 fi
 
 # No --delete-branch: same reason code-review-pipeline.sh dropped it (commit
@@ -677,16 +769,10 @@ fi
 _merge_pr() {
   case "$BUREAU_MERGE_STRATEGY" in
     squash|merge)
-      local _json _title _body _subject _mbody
-      _json=$(gh pr view "$PR_NUMBER" --json title,body) || return 1
-      _title=$(printf '%s' "$_json" | jq -r '.title') || return 1
-      _body=$(printf '%s' "$_json" | jq -j '.body // ""' && printf x) || return 1
-      _body=${_body%x}
-      _subject=$(sanitize_ci_markers "$_title")
-      _mbody=$(build_merge_body "$_title" "$_body" && printf x) || return 1
-      _mbody=${_mbody%x}
+      prepare_merge_message || return 1
+      # The kill-switch checkpoint stays the last step before the irreversible merge.
       bureau_ticket_checkpoint "$ISSUE"
-      gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" --subject "$_subject" --body "$_mbody"
+      gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" --subject "$MERGE_SUBJECT" --body "$MERGE_BODY"
       ;;
     *)
       bureau_ticket_checkpoint "$ISSUE"

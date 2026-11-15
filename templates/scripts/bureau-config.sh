@@ -4109,7 +4109,9 @@ bureau_outcome_signal() {
 #   5. build     a build that is not green folds through apply_build_failure (BLOCK stays
 #                BLOCK). The review text says the pipeline cannot tell a red build caused by
 #                the code from one caused by the environment.
-#   6. cap       last, so it also sees a REQUEST_CHANGES the build fold produced: at or past
+#   6. semgrep   an enabled blocking receipt lowers APPROVE to REQUEST_CHANGES.
+#                Unavailable/not-measured holds too; BLOCK stays BLOCK.
+#   7. cap       last, so it also sees a REQUEST_CHANGES the build fold produced: at or past
 #                max_review_cycles it escalates to BLOCK. It used to run before the fold, so
 #                "reviewers approve, build red" never met the cap and went round forever
 #                in an installation. A cycle count or cap that is not a count
@@ -4163,6 +4165,13 @@ decide_review_verdict() {
       notes+="build${sep}${sep}BUILD FAILURE: Must be fixed. The pipeline cannot tell a failure caused by the code from one caused by the environment (dependencies, network, services)."$'\n'
     fi
   fi
+
+  if [ "${SEMGREP_BLOCKED:-0}" = 1 ] && [ "$verdict" = APPROVE ]; then
+    notes+="semgrep${sep}${sep}SEMGREP FLOOR: new findings at the configured severity or an unavailable measurement require changes. Downgraded APPROVE to REQUEST_CHANGES."$'\n'
+    verdict=REQUEST_CHANGES
+  fi
+  # The build-only cap explanation is inaccurate when the scanner also holds.
+  if [ "${SEMGREP_BLOCKED:-0}" = 1 ] && [ "$verdict" = REQUEST_CHANGES ]; then before=REQUEST_CHANGES; fi
 
   if [ "$verdict" = "REQUEST_CHANGES" ]; then
     if ! cycles_count=$(_review_count "$cycles") || ! max_count=$(_review_count "$max"); then

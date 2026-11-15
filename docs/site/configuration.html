@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="dbee2cb55133ccda07d465dcffe64c81680b0a0796ef4559aca4ee4718e4936e">
+<meta name="bureau-source-sha256" content="cd46d5d00100ab4a433f1a817307c5f48df62ec86b49b9f57a64f87df1d1c856">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -428,6 +428,231 @@ no downloads; an optional real-engine test runs only with
 <code>IMPECCABLE_BIN</code> set and checks the operator-supplied local
 binary. Live provider and adopting-repository qualification remains an
 operator check.</p>
+<h3 id="reviewsemgrep"><code>review.semgrep</code></h3>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;review&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;semgrep&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;mode&quot;</span><span class="fu">:</span> <span class="st">&quot;advisory&quot;</span><span class="fu">,</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;block_severity&quot;</span><span class="fu">:</span> <span class="st">&quot;ERROR&quot;</span><span class="fu">,</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;extra_rules&quot;</span><span class="fu">:</span> <span class="kw">null</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Semgrep CE is optional and off by default. Disabled review prompts,
+comments, verdicts and approval reuse identities are unchanged. Doctor
+and review validate all explicit values, including while disabled:
+<code>enabled</code> is boolean, <code>mode</code> is
+<code>advisory</code> or <code>blocking</code>, and
+<code>block_severity</code> is <code>INFO</code>, <code>WARNING</code>
+or <code>ERROR</code>. <code>extra_rules</code> is null or one plain
+repository-relative <code>.yml</code>/<code>.yaml</code> path; unknown
+keys and values are configuration errors. Extra rules and
+<code>.bureau/semgrep-ignore.json</code> are read only from the pinned
+PR base.</p>
+<p>The operator supplies a dedicated venv for <strong>Semgrep
+1.183.0</strong>, selected by the process environment variable
+<code>BUREAU_SEMGREP_VENV</code>. The default is
+<code>&lt;shared Git directory&gt;/bureau/tools/semgrep/venv</code>,
+using the same state root as runtime ownership. Bureau installs or
+downloads nothing. Prepare the environment separately with the standard
+library <code>venv</code> module and install the locked wheels:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-m</span> venv <span class="at">--without-pip</span> <span class="st">&quot;</span><span class="va">$BUREAU_SEMGREP_VENV</span><span class="st">&quot;</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install <span class="at">--python</span> <span class="st">&quot;</span><span class="va">$BUREAU_SEMGREP_VENV</span><span class="st">/bin/python&quot;</span> <span class="dt">\</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--require-hashes</span> <span class="at">--only-binary</span> :all: <span class="at">-r</span> scripts/bureau-semgrep-lock.txt</span></code></pre></div>
+<p>Do not create it with <code>uv venv</code> or
+<code>virtualenv</code>: both add <code>_virtualenv.pth</code> and
+<code>_virtualenv.py</code> to <code>site-packages</code>, and
+verification rejects every file the manifest does not list. Bureau also
+needs a reviewed
+<code>bureau-semgrep-manifest-&lt;os&gt;-&lt;arch&gt;-cp&lt;major&gt;&lt;minor&gt;.json</code>
+beside the runtime scripts that matches the venv's interpreter. Because
+some dependencies are compiled, every CPython minor needs its own
+manifest. This release ships <code>darwin-arm64-cp314</code> and
+<code>linux-x86_64-cp312</code>. With any other interpreter, an enabled
+scan with eligible files reports <strong>unavailable</strong> and names
+the missing manifest. Missing venvs and missing/mismatched manifests
+never abort advisory review. There is no configurable version or
+manifest override.</p>
+<p>Maintainers generate a universal wheel-only lock for
+<code>semgrep==1.183.0</code> with
+<code>uv pip compile --universal --generate-hashes --only-binary :all:</code>.
+After selecting the complete wheel set for one OS, architecture and
+CPython minor, run
+<code>python3 scripts/semgrep_pin.py WHEEL_DIRECTORY --os linux --arch x86_64 --python cp312</code>
+in the Bureau source repository. The generator refuses any wheel hash
+absent from the lock. It hashes the payload files inside the locked
+wheels, maps purelib/platlib payloads to site-packages and refuses
+unsupported installation schemes or path collisions. Review the lock,
+manifest and tool compatibility together before shipping them. The
+maintainer script is not installed in adopting repositories.</p>
+<p>Once per measurement, after selecting the manifest, Bureau copies
+site-packages into a private runtime under the run's
+<code>mkdtemp</code> directory (mode 0700). Every component from the
+operator venv root through
+<code>lib/python3.&lt;minor&gt;/site-packages</code> must be a real
+directory, checked with <code>lstat</code>; all entries inside must be
+regular files or real directories, including excluded entries. Bureau
+anchors traversal to directory descriptors, opens source files with
+<code>O_NOFOLLOW</code> and hashes the same reads it writes into the
+copy, preserving only the executable bit (files 0700 or 0600,
+directories 0700). It compares the copied file set, including
+<code>semgrep-core</code>, with the manifest before the interpreter
+probe, then re-hashes the private copy before each scan side. Changed,
+missing or additional files make the tool unavailable; changes to the
+operator tree after copying cannot affect execution. Install metadata
+inside <code>*.dist-info</code> (<code>RECORD</code>,
+<code>INSTALLER</code>, <code>direct_url.json</code>,
+<code>REQUESTED</code> and uv's <code>uv_cache.json</code>) and adjacent
+<code>__pycache__</code> directories are excluded from copied files and
+manifest comparison. The operator venv must contain exactly one
+<code>lib/python3.&lt;minor&gt;/site-packages</code> directory; its
+minor and the selected manifest's platform must match the interpreter
+probe. The operator's system Python itself is trusted, outside the
+package manifest.</p>
+<p>The <code>-I -S</code> interpreter probe and both scan sides share
+one private shadow venv per measurement. Bureau writes exactly two
+<code>pyvenv.cfg</code> lines:
+<code>home = &lt;base interpreter directory&gt;</code> and
+<code>include-system-site-packages = false</code>. The shadow's
+<code>bin</code> contains only <code>python</code>, a symlink to the
+resolved real path of the operator venv's <code>bin/python</code>; that
+base must be an absolute regular executable file. The shadow's
+<code>lib/python3.&lt;minor&gt;/site-packages</code> is the verified
+private copy, a real directory preserving the package layout, including
+<code>semgrep/bin/libs</code> for resource-based core discovery. Bureau
+never executes the operator venv's own Python path or uses its
+<code>pyvenv.cfg</code> settings, including duplicate system-package
+settings. Each call uses
+<code>-I -B -X pycache_prefix=&lt;fresh directory&gt;</code>; the probe
+additionally uses <code>-S</code>. Operator launchers,
+executable-adjacent fallback helpers, system site-packages and adjacent
+bytecode are excluded from execution.</p>
+<p>Every scan and interpreter probe receives an allowlist environment:
+exactly <code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
+<code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code>,
+<code>TMPDIR</code>, <code>LANG=C.UTF-8</code>, <code>TZ=UTC</code>,
+<code>SEMGREP_SEND_METRICS=off</code>,
+<code>SEMGREP_ENABLE_VERSION_CHECK=0</code> and
+<code>DO_NOT_TRACK=1</code>. The operator venv's <code>bin</code>
+directory is excluded from PATH, and helpers resolving beside
+<code>sys.executable</code> see only the shadow's <code>python</code>;
+the interpreter is always invoked by its absolute shadow path. Provider
+keys, Bureau secrets, GitHub tokens and other Semgrep settings do not
+pass through. Runtime network denial is required for eligible scans:
+Linux uses a probed <code>unshare -rn</code> user/network namespace;
+macOS uses <code>sandbox-exec</code> with the shipped
+<code>bureau-scan-nonet.sb</code> profile denying <code>network*</code>.
+If isolation cannot run, the status is <strong>not_measured</strong>,
+with reason <code>network isolation unavailable</code>. Bureau never
+falls back to an online scan.</p>
+<p>The scan uses private snapshots of changed Python, JavaScript and
+TypeScript files at pinned base and head, with explicit file lists. Bash
+remains covered by ShellCheck and shell boundary tests. Native
+<code>.semgrepignore</code>, <code>.semgrep.yml</code>,
+<code>.semgrep.yaml</code> and <code>.semgrep/</code> configuration is
+excluded and recorded in the snapshot manifest; git ignores and inline
+<code>nosemgrep</code> are disabled. <code>--no-rewrite-rule-ids</code>
+keeps authored rule IDs stable across private snapshot paths, so exact
+suppressions match. Only Bureau-authored rules ship, under Bureau's
+license; no Registry packs or engine binaries are vendored. The
+separately installed LGPL-2.1 engine runs as a separate program.</p>
+<p>Only new occurrences count toward the floor. Identity is rule ID,
+file and SHA-256 of matched lines with surrounding whitespace, including
+a trailing CR, stripped per line. Snapshot bytes are split only at LF
+(<code>\n</code>), matching Semgrep's physical lines; vertical tabs and
+Unicode line separators inside comments cannot shift finding identities.
+Finding bounds are checked against that physical line count. If a count
+rises from N to M, the surplus is new and the projection lists every
+head occurrence with that count note. Editing other lines leaves an
+existing finding existing; moving it to another file makes it new.
+Base-only suppressions require an exact file and rule ID with a named,
+nonempty reason:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ot">[</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">&quot;file&quot;</span><span class="fu">:</span> <span class="st">&quot;src/legacy.py&quot;</span><span class="fu">,</span> <span class="dt">&quot;rule_id&quot;</span><span class="fu">:</span> <span class="st">&quot;bureau.python.os-command&quot;</span><span class="fu">,</span> <span class="dt">&quot;reason&quot;</span><span class="fu">:</span> <span class="st">&quot;Approved legacy maintenance boundary&quot;</span><span class="fu">}</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ot">]</span></span></code></pre></div>
+<p>A suppression added by the PR cannot suppress that PR. Wildcards and
+reasonless suppressions fail measurement. The receipt distinguishes
+<code>findings_new</code>, <code>findings_existing</code> and
+<code>findings_suppressed</code>.</p>
+<p>Statuses are <code>measured</code>, <code>not_measured</code>,
+<code>unavailable</code>, <code>not_applicable</code> and
+<code>reduced_coverage</code>; every non-measured status names a reason.
+A measured result requires exit 0, valid JSON, no errors and coverage of
+every explicit target. Timeouts, skipped targets and tool/parse errors
+are not measured. Bureau builds the snapshots and decides applicability
+first: if neither side has eligible files, the result is
+<code>not_applicable</code> and passes blocking mode without checking
+the venv, isolation, interpreter or runtime manifest, or starting any
+scanner or probe. Its receipt still binds the version, lock hash and
+hashes of the shipped manifest files without executing them. Semgrep
+does not emit reduced coverage: incomplete coverage is not measured.
+None of these statuses is rendered as clean.</p>
+<p>In advisory mode the scan reports evidence and review continues.
+Specialists finish their independent first pass before receiving the
+projection in the existing late step, for all three roles, even with
+Impeccable disabled. In blocking mode, new findings at the configured
+severity or higher, not-measured results and unavailable tooling lower
+APPROVE to REQUEST_CHANGES after the build fold and before the existing
+cycle/round caps. BLOCK stays BLOCK. The caps still escalate unresolved
+work for a human.</p>
+<p>Reports and receipts live in write-once attempts under
+<code>&lt;state dir&gt;/scans/semgrep/&lt;identity digest&gt;/&lt;UTC timestamp-random suffix&gt;/</code>.
+<code>report.json</code> retains raw tool JSON and snapshot metadata;
+<code>receipt.json</code> binds head, base, pin, settings and policy
+digests and the report hash; <code>projection.json</code> holds at most
+20 findings with tool, rule ID, file, line, severity and count note.
+Matched source is never projected into comments. Receipt digests join
+the existing evidence archive. Every PR that produces or reuses an
+attempt adds an exclusively created <code>refs/pr-&lt;number&gt;</code>
+file under the retention lock, without rewriting the receipt; receipt
+validation ignores this reference directory. Retention keeps the newest
+20 attempts per repository/tool plus any attempt referenced by at least
+one open PR, including a replacement PR reusing evidence from a closed
+PR; an unreadable PR inventory conservatively keeps all referenced
+attempts. Legacy receipts also retain their original <code>pr</code>
+reference.</p>
+<p>Pin, settings and policy digests join approval reuse identity,
+independently of build-check reuse. The pin identity includes the
+private-copy execution boundary, so receipts and approvals from earlier
+operator-linked runtimes are not reused. Before the existing
+just-in-time merge gate recheck, blocking mode reads the PR head and
+current base ref/commit and runs Semgrep with receipt reuse for those
+inputs. After the scan, Bureau prepares the merge message, fetches the
+scanned base ref once more, requires its commit to equal the scanned
+base, and checks the current PR head and base ref name. This freshness
+check runs before applying blocking findings, unavailable tooling,
+failed measurements or receipt failures: changed inputs abort with the
+gate-regression report and retryable outcome (2), so the next tick
+measures the current inputs. An unchanged blocking result refuses merge
+with the existing blocked outcome (25). The ticket kill-switch
+checkpoint stays the last step before the merge call, as in every mode.
+Semgrep gate marks bind to the scanned head, including when it differs
+from the initial gate's head.</p>
+<p>The existing just-in-time gates then run unchanged. After they pass,
+Bureau performs only one cheap <code>gh</code> read of the PR's base ref
+name and requires the checked <code>MERGE_HEAD</code> to equal the
+scanned head and the base ref name to be unchanged, then merges with
+<code>--match-head-commit</code> set to that scanned head. No fetch or
+merge-message read occurs after the final gates. A base advancing after
+the last fetch has the same race as the other gates; GitHub's head match
+protects against a subsequent push. Disabled and advisory merge
+behaviour and GitHub/git call logs remain unchanged. The older Code
+Review v2 verdict reader's head binding is unchanged by this scanner
+integration.</p>
+<p><strong>Upgrade:</strong> compare installed script drift, resync the
+entire scripts scope (including the shared helper, sandbox profile,
+rules, lock and platform manifests), and restart drivers together.
+Existing repositories stay off. Install the reviewed pinned venv and
+ensure network isolation works before opting into advisory mode;
+blocking is a separate project choice. Offline fake scanner tests cover
+the boundary and pipelines. The optional real-binary test runs only with
+<code>BUREAU_SEMGREP_VENV</code> set on GitHub-hosted Ubuntu; real pin,
+flag/rule compatibility and adopting-repository qualification require
+that separate validation.</p>
 <h3 id="agents"><code>agents</code></h3>
 <p>Which pipelines run, how often they poll, how aggressive they
 are.</p>
@@ -1273,30 +1498,30 @@ trusted progress</h3>
 for the issue in the same common Git directory, across stages,
 checker/verifier phases, worktrees, shepherd runs and dispatcher
 restarts:</p>
-<div class="sourceCode" id="cb3"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_budget&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;tokens&quot;</span><span class="fu">:</span> <span class="dv">200000</span><span class="fu">,</span></span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;provider_calls&quot;</span><span class="fu">:</span> <span class="dv">20</span><span class="fu">,</span></span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;wall_seconds&quot;</span><span class="fu">:</span> <span class="dv">14400</span><span class="fu">,</span></span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;allow_unknown_usage&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
-<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">},</span></span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_progress&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
-<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_non_improving_turns&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>
-<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;contract&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;fulfilled_requirements&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;required-behavior&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
-<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
-<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;qualified_gates&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb3-17"><a href="#cb3-17" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;acceptance&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
-<span id="cb3-18"><a href="#cb3-18" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
-<span id="cb3-19"><a href="#cb3-19" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;confirmed_findings&quot;</span><span class="fu">:</span> <span class="fu">{}</span></span>
-<span id="cb3-20"><a href="#cb3-20" aria-hidden="true" tabindex="-1"></a>      <span class="fu">}</span></span>
-<span id="cb3-21"><a href="#cb3-21" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb3-22"><a href="#cb3-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_budget&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;tokens&quot;</span><span class="fu">:</span> <span class="dv">200000</span><span class="fu">,</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;provider_calls&quot;</span><span class="fu">:</span> <span class="dv">20</span><span class="fu">,</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;wall_seconds&quot;</span><span class="fu">:</span> <span class="dv">14400</span><span class="fu">,</span></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;allow_unknown_usage&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">},</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_progress&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_non_improving_turns&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;contract&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;fulfilled_requirements&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;required-behavior&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;qualified_gates&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;acceptance&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;confirmed_findings&quot;</span><span class="fu">:</span> <span class="fu">{}</span></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a>      <span class="fu">}</span></span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb6-23"><a href="#cb6-23" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Each dimension is independently optional; absent/null/0 disables it.
 Wrong types, unknown keys, negative/nonfinite limits or invalid
 contracts refuse execution with 24. Tokens/calls require integers; wall
@@ -2042,18 +2267,18 @@ configuration migration is required; existing installations retain the
 legacy rules.</p>
 <p>For Bureau's generated manual, cover <strong>every</strong> output of
 the renderer, which requires Pandoc:</p>
-<div class="sourceCode" id="cb4"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>A configured repair requires an explicit
 <code>repo.test_command</code> containing a command; whitespace-only or
 comment-only strings decline, and there is no inferred fallback.
@@ -2223,18 +2448,18 @@ or 2), and an explicit nonblank, non-comment
 <code>timeout_seconds</code> and silence-watchdog options apply through
 <code>run_stage_for conflict_resolver</code>; there is no separate
 provider integration. Invalid resolver configuration fails closed.</p>
-<div class="sourceCode" id="cb5"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
-<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
-<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
-<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
-<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>All conflict-stage environment overrides are optional and unset by
 default: <code>BUREAU_RUNNER_CONFLICT_RESOLVER</code>,
 <code>BUREAU_MODEL_CONFLICT_RESOLVER</code>,
@@ -2997,19 +3222,19 @@ supporting it. The tier changes no routing, holds, verdicts or merges; a
 human merges every PR. It does not enable automatic merging or change
 <code>agents.merge_mode</code>. Omitting <code>agents.risk_tier</code>
 uses these defaults:</p>
-<div class="sourceCode" id="cb6"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;risk_tier&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">100</span><span class="fu">,</span></span>
-<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_files&quot;</span><span class="fu">:</span> <span class="dv">5</span><span class="fu">,</span></span>
-<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;high_min_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">1000</span><span class="fu">,</span></span>
-<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;docs_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.md&quot;</span><span class="ot">,</span> <span class="st">&quot;*.rst&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;test_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test_*.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*_test.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*.test.*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.spec.*&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;sensitive_patterns&quot;</span><span class="fu">:</span> <span class="ot">[]</span></span>
-<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;risk_tier&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">100</span><span class="fu">,</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_files&quot;</span><span class="fu">:</span> <span class="dv">5</span><span class="fu">,</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;high_min_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">1000</span><span class="fu">,</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;docs_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.md&quot;</span><span class="ot">,</span> <span class="st">&quot;*.rst&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;test_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test_*.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*_test.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*.test.*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.spec.*&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;sensitive_patterns&quot;</span><span class="fu">:</span> <span class="ot">[]</span></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Changed lines means insertions plus deletions in
 <code>base..HEAD</code>. Low requires at least one changed path, every
 path matching the docs/tests lists, at most 100 changed lines and 5

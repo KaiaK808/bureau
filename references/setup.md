@@ -151,6 +151,9 @@ Generate the config file from all collected information:
   "design": {
     "impeccable": {"enabled": false, "skill_version": "4.9.0", "engine_version": "0.1.23"}
   },
+  "review": {
+    "semgrep": {"enabled": false, "mode": "advisory", "block_severity": "ERROR", "extra_rules": null}
+  },
   "linear": {
     "teams": [
       {
