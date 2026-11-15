@@ -376,6 +376,142 @@ class TrivyTests(unittest.TestCase):
         text+='packages:\n  packages-only:\n    version: 1.0.0\n'
         self.assertEqual(self.m.pnpm_names(text),{'prod','dev','optional'})
 
+    def assert_format_coverage(self, value, name):
+        self.assertEqual(value['receipt']['status'],'reduced_coverage',value['projection'])
+        self.assertTrue(value['receipt']['blocking'])
+        self.assertIn('lockfile format not recognised',value['receipt']['reason'])
+        self.assertIn(name,value['receipt']['reason'])
+        report=json.loads(Path(value['receipt']['report_path']).read_text())
+        self.assertTrue(any(row['file']==name and 'lockfile format not recognised' in row['reason']
+                            for row in report['inventory']['head']['issues']))
+        # The scanner did report the lock/requirements target: this gap is the
+        # consistency parser's decision, not a missing-result false positive.
+        if name!='package.json' and name!='pyproject.toml':
+            self.assertIn(name,{row['Target'] for row in report['head']['json']['Results']})
+
+    def check_parser_formats(self, fixtures, name, unrecognised):
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        for path,text in fixtures.items():self.write(path,text)
+        self.commit();self.base=self.head
+        value=self.measure()
+        self.assertEqual(value['receipt']['status'],'measured',value['projection'])
+        self.assertFalse(value['receipt']['blocking'])
+        for text in unrecognised:
+            with self.subTest(file=name,text=text):
+                self.write(name,text);self.commit()
+                self.assert_format_coverage(self.measure(),name)
+
+    def test_round2_pnpm_irregular_indentation_cannot_promote_metadata(self):
+        canonical="lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      locked:\n        specifier: ^1\n        version: 1.0.0\n"
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        self.write('package.json',json.dumps(dict(dependencies=dict(locked='^1'))))
+        self.write('pnpm-lock.yaml',canonical);self.commit();self.base=self.head
+        self.assertEqual(self.measure()['receipt']['status'],'measured')
+        self.write('package.json',json.dumps(dict(dependencies=dict(locked='^1',missing='^2'))))
+        self.write('pnpm-lock.yaml',"lockfileVersion: '9.0'\nimporters:\n  .:\n   dependencies:\n    locked:\n     specifier: ^1\n     version: 1.0.0\n   dependenciesMeta:\n    dependencies:\n      locked:\n        injected: true\n      missing:\n        injected: true\n")
+        self.commit();self.assert_format_coverage(self.measure(),'pnpm-lock.yaml')
+
+    def test_round2_yarn_header_comment_cannot_supply_a_selector(self):
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        self.write('package.json',json.dumps(dict(dependencies=dict(locked='^1'))))
+        self.write('yarn.lock','"locked@npm:^1":\n  version: 1.0.0\n');self.commit();self.base=self.head
+        self.assertEqual(self.measure()['receipt']['status'],'measured')
+        self.write('package.json',json.dumps(dict(dependencies=dict(locked='^1',missing='^2'))))
+        self.write('yarn.lock','"locked@npm:^1": # , missing@npm:^2:\n  version: 1.0.0\n')
+        self.commit();self.assert_format_coverage(self.measure(),'yarn.lock')
+
+    def test_round2_toml_fallback_spaced_tables_cannot_hide_names(self):
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        self.write('pyproject.toml','[project]\ndependencies = ["locked==1"]\n')
+        self.write('uv.lock','version = 1\n[[package]]\nname = "locked"\n');self.commit();self.base=self.head
+        with patch.object(self.m,'tomllib',None):
+            self.assertEqual(self.measure()['receipt']['status'],'measured')
+            for text in ('[tool . poetry . dependencies]\nmissing = "1"\n',
+                         '[project . optional-dependencies]\ntest = ["missing==1"]\n'):
+                with self.subTest(text=text):
+                    self.write('pyproject.toml',text);self.commit()
+                    self.assert_format_coverage(self.measure(),'pyproject.toml')
+
+    def test_canonical_parser_policy_does_not_reuse_legacy_clean_receipt(self):
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        self.write('package.json',json.dumps(dict(dependencies=dict(locked='^1',missing='^2'))))
+        self.write('yarn.lock','"locked@npm:^1": # , missing@npm:^2:\n  version: 1.0.0\n')
+        self.commit();self.base=self.head
+        inventory,digest=self.m.inventory,self.s.digest
+        def legacy_inventory(*args):
+            value=inventory(*args)
+            # Reproduce the pre-hardening receipt, whose parser missed the gap.
+            value['issues']=[]
+            return value
+        def legacy_digest(value):
+            if isinstance(value,dict) and 'inventory' in value:value={**value,'inventory':'v1'}
+            return digest(value)
+        with patch.object(self.m,'inventory',side_effect=legacy_inventory),patch.object(self.s,'digest',side_effect=legacy_digest):
+            old=self.measure()
+        self.assertEqual(old['receipt']['status'],'measured');self.assertFalse(old['receipt']['blocking'])
+        current=self.measure(reuse=True)
+        self.assertNotEqual(old['receipt_path'],current['receipt_path'])
+        self.assertEqual(len(self.calls()),4)
+        self.assert_format_coverage(current,'yarn.lock')
+
+    def test_pnpm_canonical_keys_and_unrecognised_file_syntax(self):
+        canonical="lockfileVersion: '9.0'\nimporters:\n  '.':\n    \"dependencies\":\n      locked:\n        specifier: ^1\n        version: 1.0.0\n"
+        self.check_parser_formats({'package.json':json.dumps(dict(dependencies=dict(locked='^1'))),
+                                   'pnpm-lock.yaml':canonical},'pnpm-lock.yaml',[
+            canonical+'packages:\n   unrelated:\n    version: 1.0.0\n',
+            canonical+'packages:\n\tunrelated: {}\n',
+            canonical+'packages:\n    unrelated: {}\n',
+            canonical+'  other: {dependencies: {missing: 2}}\n',
+            canonical+'  other:\n    dependencies: [missing]\n',
+            canonical+'  ? missing\n  : value\n',
+            canonical+'  other: &alias\n    dependencies: {}\n',
+            canonical+'  .:\n    dependencies:\n      missing:\n        version: 2.0.0\n'])
+
+    def test_yarn_canonical_selectors_and_unrecognised_headers(self):
+        canonical='# yarn lockfile v1\n"@scope/a@^1", "@scope/a@^2":\n  version "1.0"\nlocked@^1:\n  version "1.0"\n'
+        self.check_parser_formats({'package.json':json.dumps(dict(dependencies={'locked':'^1','@scope/a':'^1'})),
+                                   'yarn.lock':canonical},'yarn.lock',[
+            canonical+'missing@^2: trailing\n',canonical+'missing@^2: # comment\n',
+            canonical+'"missing@^2#fragment":\n',canonical+'  # indented comment\n',
+            canonical+'unexpected-top-level-text\n',canonical+'missing@^2, :\n'])
+
+    def test_json_manifest_and_lock_canonical_roots_and_unrecognised_forms(self):
+        manifest=json.dumps(dict(dependencies=dict(locked='^1'),devDependencies=dict(dev='^2'),optionalDependencies=dict(opt='^3')))
+        lock=json.dumps(dict(packages={'':dict(dependencies=dict(locked='^1'),devDependencies=dict(dev='^2'),optionalDependencies=dict(opt='^3'))}))
+        self.check_parser_formats({'package.json':manifest,'package-lock.json':lock},'package.json',
+                                  [manifest+' # comment','{"dependencies": ["locked"]}'])
+        self.write('package.json',manifest)
+        self.check_parser_formats({'package.json':manifest,'package-lock.json':lock},'package-lock.json',
+                                  [lock+' trailing','{"packages": []}','{"dependencies": {"locked": "^1"}}'])
+
+    def test_toml_canonical_and_unrecognised_syntax_with_and_without_tomllib(self):
+        manifest='[project]\ndependencies = ["locked==1"]\n[project.optional-dependencies]\ntest = ["pytest==8"]\n[tool.poetry.group.dev.dependencies]\ncoverage = "*"\n'
+        lock='version = 1\n[[package]]\nname = "locked"\n[[package]]\nname = "pytest"\n[[package]]\nname = "coverage"\n'
+        fixtures={'pyproject.toml':manifest,'uv.lock':lock}
+        self.check_parser_formats(fixtures,'uv.lock',[lock+'[package\n'])
+        with patch.object(self.m,'tomllib',None):
+            self.check_parser_formats(fixtures,'pyproject.toml',[
+                manifest+'[tool . poetry . dependencies]\nmissing = "1"\n',
+                manifest+'[project.optional-dependencies]\n"hidden" = ["missing==1"]\n',
+                '[project]\ndependencies.hidden = ["missing==1"]\n',
+                '[tool.poetry.dependencies]\nmissing.extra = "1"\n',
+                '[tool.poetry.group."test.unit".dependencies]\nmissing = "1"\n'])
+            self.write('pyproject.toml',manifest)
+            self.check_parser_formats(fixtures,'uv.lock',[
+                lock+'[[ package ]]\nname = "missing"\n',lock+'[[package]]\nversion = "1"\n',
+                'package = [{ name = "locked" }]\n',lock+'[[package]]\nname = \'missing"\n'])
+
+    def test_requirements_canonical_pins_and_unrecognised_options(self):
+        canonical='# -r fake.txt\nlocked[extra]==1.2.3 # comment missing==2\nsecond==2.0\n'
+        self.assertEqual(self.m.requirements_names(canonical),{'locked','second'})
+        self.check_parser_formats({'requirements.txt':canonical},'requirements.txt',[
+            canonical+'-r other.txt\n',canonical+'-c other.txt\n',canonical+'-e ./missing\n',
+            canonical+'--hash=sha256:abcd\n',canonical+'--hash=sha256:abcd missing==2\n',
+            canonical+'locked==1.2.3 --hash=sha256:abcd missing==2\n',
+            canonical+'locked==1.2.3 \\\n  missing==2\n',
+            canonical+'locked==1.2.3; python_version < "3.10"\n',
+            canonical+'locked==1.2.3 missing==2\n'])
+
     def test_other_lock_parsers_ignore_sibling_metadata_and_transitive_entries(self):
         directory=self.root/'lock-scope';directory.mkdir()
         npm=dict(packages={'':dict(dependencies=dict(locked='^1'),dependenciesMeta=dict(missing={})),
@@ -386,7 +522,7 @@ class TrivyTests(unittest.TestCase):
         (directory/'yarn.lock').write_text('locked@^1:\n  version "1.0.0"\n  dependencies:\n    missing "^2"\n'
                                          '__metadata:\n  "missing@^2":\n    version: 2.0.0\n')
         self.assertEqual(self.m.lock_names(directory/'yarn.lock'),{'locked'})
-        text='[[package]]\nname = "locked"\n[package.metadata]\nname = "missing"\n[metadata]\nname = "other"\n'
+        text='[[package]]\nname = "locked"\ndependencies = [\n { name = "transitive" },\n]\n[package.metadata]\nname = "missing"\n[metadata]\nname = "other"\n'
         self.assertEqual(self.m.toml_names(text,lock=True),{'locked'})
         with patch.object(self.m,'tomllib',None):
             self.assertEqual(self.m.toml_names(text,lock=True),{'locked'})
@@ -407,11 +543,14 @@ class TrivyTests(unittest.TestCase):
 
     def test_python39_toml_extras_multiline_optional_and_poetry_groups(self):
         text='[project]\ndependencies = [\n "requests[security]>=2", # inline comment\n "second>=1",\n]\n'
-        text+='[project.optional-dependencies]\ntest = ["pytest==8"]\n[tool.poetry.group."test.unit".dependencies]\ncoverage = "*"\n'
+        text+='[project.optional-dependencies]\ntest = ["pytest==8"]\n[tool.poetry.group.test_unit.dependencies]\ncoverage = "*"\n'
         expected={'requests','second','pytest','coverage'}
         self.assertEqual(self.m.toml_names(text),expected)
+        quoted=text.replace('group.test_unit','group."test.unit"')
+        if self.m.tomllib is not None:self.assertEqual(self.m.toml_names(quoted),expected)
         with patch.object(self.m,'tomllib',None):
             self.assertEqual(self.m.toml_names(text),expected)
+            with self.assertRaises(ValueError):self.m.toml_names(quoted)
             with self.assertRaises(ValueError):self.m.toml_names('[project]\ndependencies = [broken]\n')
 
     def test_malformed_shapes_and_unsupported_toml_fail_closed(self):

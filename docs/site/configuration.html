@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e0952462513e40b5d3ca4532ffac4f384fda56218383f0c5035a6182eb49eee3">
+<meta name="bureau-source-sha256" content="793485c462e9efb46f3056337d2823beaea84d56910cebc8508e0fc0a34d0b0b">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -801,13 +801,37 @@ than silently accepting an alias. Direct-name consistency for Go and
 ecosystems outside the JS/Python set is explicitly reported as
 unchecked. Version ranges are not compared in v1. Snapshot blobs are
 limited to 32 MiB per file and base policy to 1 MB; oversized inputs
-fail measurement. Python 3.9/3.10 uses a conservative name-only TOML
-reader; unsupported relevant syntax reduces coverage rather than
-assuming consistency. Other recognized ecosystem inputs are scanned and
+fail measurement. Other recognized ecosystem inputs are scanned and
 reported as having unchecked lockfile consistency. A base measurement
 failure produces <strong>reduced_coverage</strong>, reason
 <code>base not measured</code>, and head findings stay unclassified
 rather than being counted as new.</p>
+<p>Lockfile consistency fails closed: the handwritten parsers accept
+only recognised tool-written forms, and unsupported syntax anywhere in a
+parsed file produces <strong>reduced_coverage</strong>, with the file
+named and reason <code>lockfile format not recognised</code>, never a
+clean measurement. This also holds in blocking mode, where an unexcepted
+coverage gap blocks. Locks are validated even without a matching
+manifest. The parser policy is part of receipt identity, so receipts
+from before this hardening are remeasured. pnpm requires two-space
+indentation steps, no tabs or level jumps, plain or quoted mapping keys
+and no flow syntax in importers; only direct keys in the root importer's
+<code>dependencies</code>, <code>devDependencies</code> and
+<code>optionalDependencies</code> maps count. Apart from its reserved
+<code>__metadata</code> map, Yarn requires complete comma-separated
+selector headers ending at their final colon, without <code>#</code> or
+trailing text; comments must be whole top-level lines. JSON manifests
+and npm locks use the JSON parser, and npm lock root names come only
+from those three dependency maps in <code>packages['']</code>. Python
+3.11+ uses <code>tomllib</code>; the conservative Python 3.9/3.10
+fallback requires bare table components such as
+<code>[project.optional-dependencies]</code> and bare assignment keys,
+rejecting spaces inside table names, quoted keys and dotted inline keys.
+Requirements accept exact pins, extras and whole-line or
+whitespace-prefixed inline comments; environment markers, line
+continuations and options such as <code>-r</code>, <code>-c</code>,
+<code>-e</code> and <code>--hash</code> are not recognised and reduce
+coverage rather than supplying or hiding names.</p>
 <p>Vulnerability identity is
 <code>(Target, VulnerabilityID, PkgName, InstalledVersion)</code>.
 Misconfiguration identity is

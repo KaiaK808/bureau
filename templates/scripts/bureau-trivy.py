@@ -313,9 +313,10 @@ def fallback_toml_names(text, lock=False):
 
     def poetry_group_dependencies(section):
         # A group is one TOML key. Deeper metadata tables are not dependencies.
-        return re.fullmatch(r'''tool\.poetry\.group\.(?:[A-Za-z0-9_-]+|"[^"]+"|'[^']+')\.dependencies''', section)
+        return re.fullmatch(r'tool\.poetry\.group\.[A-Za-z0-9_-]+\.dependencies', section)
 
     result, section, pending, balance = set(), '', '', 0
+    package_seen = package_named = False
     for raw in text.split('\n'):
         line, depth = clean(raw)
         line = line.strip()
@@ -328,53 +329,63 @@ def fallback_toml_names(text, lock=False):
             line, pending = pending, ''
         table = re.fullmatch(r'\[\[([^\[\]]+)\]\]|\[([^\[\]]+)\]', line)
         if table:
-            section = (table[1] or table[2]).strip()
+            section = table[1] or table[2]
+            # Do not normalise an unfamiliar table into a familiar one, or
+            # silently skip it. Only the tool-written bare dotted form is read.
+            if not re.fullmatch(r'[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*', section):
+                raise ValueError('unsupported TOML table name')
             array_table = table[1] is not None
             if array_table and section.startswith(('project', 'tool.poetry')):
                 raise ValueError('unsupported dependency array table')
             if lock and section == 'package' and not array_table:
                 raise ValueError('lock packages must be array tables')
-            if (('"' in section or "'" in section) and not poetry_group_dependencies(section)):
-                raise ValueError('unsupported quoted TOML table')
+            if lock and section == 'package':
+                if package_seen and not package_named: raise ValueError('lock package lacks name')
+                package_seen, package_named = True, False
+            if lock and section.startswith('package.') and not package_seen:
+                raise ValueError('lock metadata without package array')
             if (section.startswith(('tool.poetry.dependencies.', 'tool.poetry.dev-dependencies.'))
                     or section.startswith(('project.dependencies', 'project.optional-dependencies.'))
                     or (section.startswith('tool.poetry.group.') and '.dependencies.' in section)):
                 raise ValueError('unsupported nested dependency table')
             continue
         if line.startswith('['): raise ValueError('unsupported TOML table')
-        if '=' in line:
-            key = line.split('=', 1)[0].strip()
-            if (key.startswith(('"', "'")) or (section == '' and key.startswith(('project', 'tool')))
-                    or (section == 'tool' and key.startswith('poetry'))
-                    or (section == 'tool.poetry' and key.startswith(('dependencies', 'dev-dependencies', 'group')))
-                    or (section == 'project' and key.startswith(('dependencies.', 'optional-dependencies')))
-                    or (section == 'tool.poetry.group')
-                    or (section.startswith('tool.poetry.group.') and not section.endswith('.dependencies') and key != 'optional')):
-                raise ValueError('unsupported TOML dependency key or inline table')
+        if '=' not in line: raise ValueError('unsupported TOML assignment')
+        key, value = (part.strip() for part in line.split('=', 1))
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', key):
+            raise ValueError('unsupported TOML key')
+        if ((section == '' and key.startswith(('project', 'tool')))
+                or (section == 'tool' and key.startswith('poetry'))
+                or (section == 'tool.poetry' and key.startswith(('dependencies', 'dev-dependencies', 'group')))
+                or (section == 'project' and key.startswith('optional-dependencies'))
+                or (section == 'tool.poetry.group')
+                or (section.startswith('tool.poetry.group.') and not section.endswith('.dependencies') and key != 'optional')):
+            raise ValueError('unsupported TOML dependency key or inline table')
+        # Canonical uv/Poetry locks also contain multiline arrays of dependency
+        # metadata. Consume their full extent without treating entries as keys.
+        if depth > 0 and value.startswith('['):
+            pending, balance = line, depth
+            continue
         if lock:
-            if section == 'package' and re.match(r'name\s*=', line):
-                match = re.match(r'''name\s*=\s*["']([^"']+)["']''', line)
+            if section == '' and key == 'package': raise ValueError('unsupported inline lock packages')
+            if section == 'package' and key == 'name':
+                if package_named: raise ValueError('duplicate lock package name')
+                match = re.fullmatch(r'''(["'])([A-Za-z0-9][A-Za-z0-9._-]*)\1''', value)
                 if not match: raise ValueError('unsupported lock package name')
-                result.add(normalized(match[1]))
+                result.add(normalized(match[2]))
+                package_named = True
             continue
         if section == 'project' or section == 'project.optional-dependencies':
-            if '=' not in line: continue
-            key, value = line.split('=', 1)
-            if section == 'project' and key.strip() not in ('dependencies', 'dynamic'): continue
-            _, balance = clean(value)
-            if balance:
-                pending = line; continue
+            if section == 'project' and key not in ('dependencies', 'dynamic'): continue
             items = strings(value)
-            if key.strip() == 'dynamic':
+            if key == 'dynamic':
                 if 'dependencies' in items: raise ValueError('dynamic dependencies')
             else:
                 result.update(requirement_name(item) for item in items)
         elif section in ('tool.poetry.dependencies', 'tool.poetry.dev-dependencies') or poetry_group_dependencies(section):
-            match = re.match(r'''([A-Za-z0-9_.-]+|"[^"]+"|'[^']+')\s*=''', line)
-            if not match: raise ValueError('unsupported Poetry dependency')
-            name = match[1].strip('"\'')
-            if name.lower() != 'python': result.add(normalized(name))
+            if key.lower() != 'python': result.add(normalized(key))
     if pending: raise ValueError('incomplete dependency array')
+    if lock and package_seen and not package_named: raise ValueError('lock package lacks name')
     return result
 
 
@@ -424,28 +435,88 @@ def js_names(value):
 
 
 def pnpm_names(text):
-    rows = text.split('\n'); result = set(); importer_indent = root_indent = table_indent = None
-    # Only the root importer can prove direct dependency consistency.
-    in_importers = False
-    for raw in rows:
-        line = raw.strip(); indent = len(raw) - len(raw.lstrip(' '))
+    # Validate the entire file before returning any names. A path stack keeps
+    # metadata and other importers out of the root's three dependency maps.
+    mapping = re.compile(r'''('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[A-Za-z0-9_./][A-Za-z0-9_@./()+~^<>=!*-]*):(?: (.*))?$''')
+    stack, root_keys, result = [], set(), set()
+    for raw in text.split('\n'):
+        indent = len(raw) - len(raw.lstrip(' '))
+        if '\t' in raw or indent % 2: raise ValueError('unsupported pnpm indentation')
+        line = raw[indent:]
+        level = indent // 2
+        if level > len(stack): raise ValueError('unsupported pnpm indentation jump')
         if not line or line.startswith('#'): continue
-        if indent == 0:
-            in_importers = line == 'importers:'; importer_indent = root_indent = table_indent = None; continue
-        if not in_importers: continue
-        if importer_indent is None: importer_indent = indent
-        if indent <= importer_indent:
-            root_indent = table_indent = None
-            if indent == importer_indent and re.fullmatch(r'''(?:\.|"\."|'\.'):''', line): root_indent = indent
+        del stack[level:]
+        if stack and not stack[-1]['nested']: raise ValueError('unsupported pnpm scalar nesting')
+        parents = [row['key'] for row in stack]
+        importer = parents[:1] == ['importers']
+        if importer and any(char in line for char in '{}[]'):
+            raise ValueError('unsupported pnpm importer flow syntax')
+        if line.startswith('- '):
+            if not stack or importer: raise ValueError('unsupported pnpm sequence')
+            stack.append(dict(key=None, nested=False, keys=set()))
             continue
-        if root_indent is None: continue
-        if table_indent is not None and indent <= table_indent: table_indent = None
-        if indent == root_indent + 2 and line in ('dependencies:', 'devDependencies:', 'optionalDependencies:'):
-            table_indent = indent; continue
-        if table_indent is not None and indent == table_indent + 2:
-            match = re.match(r'''(?:'([^']+)'|"([^"]+)"|([^:]+)):\s*(?:#.*)?$''', line)
-            if not match: raise ValueError('unsupported pnpm dependency key')
-            result.add(next(item for item in match.groups() if item is not None))
+        match = mapping.fullmatch(line)
+        if not match: raise ValueError('unsupported pnpm mapping key')
+        key, value = match.groups()
+        if key.startswith('"'): key = json.loads(key)
+        elif key.startswith("'"): key = key[1:-1].replace("''", "'")
+        siblings = stack[-1]['keys'] if stack else root_keys
+        if key in siblings: raise ValueError('duplicate pnpm mapping key')
+        siblings.add(key)
+        if value and (value[0] in '&*!|>' or value.startswith('#')):
+            raise ValueError('unsupported pnpm scalar')
+        if not parents and key == 'importers' and value is not None:
+            raise ValueError('unsupported pnpm importers map')
+        if len(parents) == 3 and parents[:2] == ['importers', '.'] and parents[2] in (
+                'dependencies', 'devDependencies', 'optionalDependencies'):
+            result.update(js_names(dict(dependencies={key: ''})))
+        stack.append(dict(key=key, nested=value is None, keys=set()))
+    if 'importers' not in root_keys: raise ValueError('pnpm lock lacks importers map')
+    return result
+
+
+def yarn_names(text):
+    result = set()
+    selector = re.compile(r'''"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s,\[\]{}"']+''')
+    for line in text.split('\n'):
+        if not line or line.startswith('#'): continue
+        if line[0].isspace():
+            if line.lstrip().startswith('#'): raise ValueError('unsupported indented Yarn comment')
+            continue
+        # In particular, never strip a trailing comment before validating the
+        # complete header: it could otherwise contribute a fake selector.
+        if '#' in line or not line.endswith(':'): raise ValueError('unsupported Yarn header')
+        if line == '__metadata:': continue  # Berry's tool-written metadata map.
+        tail = line[:-1]
+        if not tail: raise ValueError('empty Yarn header')
+        while tail:
+            match = selector.match(tail)
+            if not match: raise ValueError('unsupported Yarn selector')
+            value = match[0]
+            if value.startswith('"'): value = json.loads(value)
+            elif value.startswith("'"): value = value[1:-1].replace("''", "'")
+            name = re.fullmatch(r'((?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+)@[^\r\n]+', value)
+            if not name: raise ValueError('unsupported Yarn selector name')
+            result.add(name[1])
+            tail = tail[match.end():]
+            if not tail: break
+            if not tail.startswith(', ') or not tail[2:]: raise ValueError('unsupported Yarn selector separator')
+            tail = tail[2:]
+    return result
+
+
+def requirements_names(text):
+    result = set()
+    for raw in text.split('\n'):
+        # pip's inline comments start at whitespace followed by '#'. Nothing
+        # in a comment contributes a name. More complex pip syntax is a gap,
+        # including continuations, markers and all options (also --hash).
+        line = re.split(r'\s+#', raw, maxsplit=1)[0].strip()
+        if not line or line.startswith('#'): continue
+        match = re.fullmatch(r'([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+)*\])?\s*==\s*[A-Za-z0-9][A-Za-z0-9.!+_-]*', line)
+        if not match: raise ValueError('requirements dependency is not exactly pinned or uses unsupported syntax')
+        result.add(normalized(match[1]))
     return result
 
 
@@ -459,12 +530,7 @@ def lock_names(path):
         if root is None: raise ValueError('lockfile lacks root packages entry')
         return js_names(root)
     if path.name == 'pnpm-lock.yaml': return pnpm_names(text)
-    if path.name == 'yarn.lock':
-        result = set()
-        for line in text.split('\n'):
-            if line and not line[0].isspace() and not line.startswith('#') and line.endswith(':'):
-                for match in re.finditer(r'(?:^|,\s*)["\']?(@?[^@,"\s]+(?:/[^@,"\s]+)?)@', line): result.add(match[1])
-        return result
+    if path.name == 'yarn.lock': return yarn_names(text)
     return toml_names(text, lock=True)
 
 
@@ -481,6 +547,14 @@ def inventory(directory, skipped=()):
     all_names = names | set(skipped)
     targets, issues, unchecked = set(), [], []
     def issue(name, reason): issues.append(dict(file=name, reason=reason))
+    parsed_locks = {}
+    # Validate locks independently of manifests, once per file. Never let one
+    # unreadable lock hide a second lock's stale names or report a clean orphan.
+    for name in sorted(names - set(skipped)):
+        if PurePosixPath(name).name not in LOCKS - {'go.sum'}: continue
+        try: parsed_locks[name] = lock_names(directory / name)
+        except (OSError, ValueError, KeyError, TypeError, UnicodeError):
+            issue(name, 'lockfile format not recognised')
     for name in sorted(all_names):
         path = PurePosixPath(name); leaf = path.name; parent = path.parent
         if leaf in OTHER:
@@ -495,24 +569,24 @@ def inventory(directory, skipped=()):
         if leaf == 'package.json' or leaf == 'pyproject.toml':
             candidates = ('package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock') if leaf == 'package.json' else ('uv.lock', 'poetry.lock')
             locks = [str(parent / candidate) for candidate in candidates if str(parent / candidate) in names]
-            if not locks: issue(name, 'manifest without lockfile'); continue
             try:
                 declared = js_names(json.loads((directory / name).read_text())) if leaf == 'package.json' else toml_names((directory / name).read_text())
-                for lock in locks:
-                    for missing in sorted(declared - lock_names(directory / lock)):
-                        issue(name, 'declared dependency missing from ' + lock + ': ' + missing)
-            except (OSError, ValueError, KeyError, TypeError, UnicodeError): issue(name, 'lockfile consistency not measured')
+            except (OSError, ValueError, KeyError, TypeError, UnicodeError):
+                issue(name, 'lockfile format not recognised'); continue
+            if not locks: issue(name, 'manifest without lockfile'); continue
+            for lock in locks:
+                if lock not in parsed_locks: continue
+                for missing in sorted(declared - parsed_locks[lock]):
+                    issue(name, 'declared dependency missing from ' + lock + ': ' + missing)
         elif leaf == 'go.mod':
             targets.add(name)
             if str(parent / 'go.sum') not in names: issue(name, 'manifest without lockfile')
             unchecked.append(name)
         elif re.fullmatch(r'requirements[^/]*\.txt', leaf):
             targets.add(name)
-            for raw in (directory / name).read_text().split('\n'):
-                raw = raw.strip()
-                if not raw or raw.startswith('#') or raw.startswith('--hash='): continue
-                if not re.match(r'^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[^\]]+\])?\s*==\s*[^\s*;,]+(?:\s|;|$)', raw):
-                    issue(name, 'requirements dependency is not exactly pinned'); break
+            try: requirements_names((directory / name).read_text())
+            except (OSError, ValueError, UnicodeError):
+                issue(name, 'lockfile format not recognised: requirements dependency is not exactly pinned or uses unsupported syntax')
         elif (leaf.lower().startswith('dockerfile') or leaf.lower().endswith('.dockerfile')
               or re.fullmatch(r'(?:docker-)?compose(?:[.-].+)?\.ya?ml', leaf.lower())
               or path.suffix == '.tf'):
@@ -662,7 +736,7 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
         trees = dict(base=source.tree(repo, base), head=source.tree(repo, head))
         policy_bytes = source.blob(repo, trees['base'], EXCEPTIONS)
         policy_digest = scan.digest(dict(exceptions=None if policy_bytes is None else scan.sha(policy_bytes),
-                                         checks='embedded', inventory='v1', flags=FLAGS))
+                                         checks='embedded', inventory='canonical-v2', flags=FLAGS))
         with tempfile.TemporaryDirectory(prefix='bureau-trivy-') as temporary:
             root = Path(temporary).resolve()
             if any(inventory_name(name) and not native(name) for entries in trees.values() for name in entries):
