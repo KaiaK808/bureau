@@ -71,6 +71,9 @@ def validate(config):
     except (ValueError, TypeError, AttributeError) as exc: errors.append(str(exc))
     try: module('review').settings(config)
     except (ValueError, TypeError, AttributeError) as exc: errors.append(str(exc))
+    if 'qa' in config:
+        try: module('trivy').settings(config)
+        except (ValueError, TypeError, AttributeError) as exc: errors.append(str(exc))
     if errors: return errors
     provider = module('provider')
     for read_mode in (provider.untrusted_env_mode, provider.untrusted_git_credentials_mode):

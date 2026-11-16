@@ -330,6 +330,10 @@ case "$QA_BLOCK" in
   *) fail "the QA routing block no longer has the expected shape" ;;
 esac
 ROUTING_ONLY=$(printf '%s\n' "$QA_BLOCK" | awk '/^case "\$STATUS" in$/ { f = 1 } f { print }')
+# The block calls the final Trivy measurement; the real function takes its disabled path here
+# (the fixture configures no qa.trivy) and sets the flag the routing reads.
+QA_TRIVY_FN=$(sed -n '/^qa_trivy_final() {$/,/^}$/p' "$SCRIPTS/qa-pipeline.sh")
+case "$QA_TRIVY_FN" in *'QA_TRIVY_BLOCKED=0'*) ;; *) fail "qa_trivy_final is not where it was" ;; esac
 QA_ESCALATION_DEFAULT='QA_ESCALATION_REASON="QA flagged NEEDS_HUMAN"'
 
 mkdir -p "$FX/bin"
@@ -347,6 +351,7 @@ qa_route() {  # $1 = block to run; the branch under test is checked out in $R
     add_issue_label() { printf 'add_issue_label %s %s\n' \"\$1\" \"\$2\" >> '$FX/qa.log'; }
     log_escalation()  { printf 'log_escalation %s\n' \"\$4\" >> '$FX/qa.log'; }
     ISSUE=EXP-7 BRANCH=probe STATUS=GREEN SUMMARY='suite green' QA_LOG_PATH=logs/qa.log
+    $QA_TRIVY_FN
     $1
   " 2>&1)
   RC=$?

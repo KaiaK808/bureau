@@ -59,6 +59,65 @@ def file_sha(path):
     return result.hexdigest()
 
 
+def copy_regular(source, target=None):
+    """Hash exactly the copied bytes; never follow a final symlink or open a FIFO."""
+    with os.fdopen(os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as reader:
+        if not stat.S_ISREG(os.fstat(reader.fileno()).st_mode):
+            raise ValueError('scanner input must be a regular file')
+        hashed, size = hashlib.sha256(), 0
+        with target.open('xb') if target is not None else nullcontext() as writer:
+            if writer is not None: os.fchmod(writer.fileno(), 0o600)
+            for block in iter(lambda: reader.read(65536), b''):
+                hashed.update(block)
+                size += len(block)
+                if writer is not None: writer.write(block)
+    return hashed.hexdigest(), size
+
+
+def verified_binary(source, directory, expected, name):
+    """Only the private copy is executable, and its directory has no helpers."""
+    directory.mkdir(mode=0o700)
+    if not relative(name) or '/' in name: raise ValueError('invalid scanner executable name')
+    binary = directory / name
+    actual, size = copy_regular(source, binary)
+    if actual != expected['binary_sha256'] or size != expected['binary_size']:
+        raise ValueError('scanner binary digest or size mismatch')
+    binary.chmod(0o700)
+    return binary
+
+
+def directory_files(source, destination=None, *, exclude=()):
+    """Digest/copy an entire regular-file tree using anchored directory handles."""
+    def walk(descriptor, prefix=''):
+        files = {}
+        for entry in sorted(os.listdir(descriptor)):
+            name = prefix + entry
+            if name in exclude: continue
+            mode = os.lstat(entry, dir_fd=descriptor).st_mode
+            if stat.S_ISDIR(mode):
+                if destination is not None: (destination / name).mkdir(mode=0o700)
+                with real_directory(entry, dir_fd=descriptor) as child:
+                    files.update(walk(child, name + '/'))
+            elif stat.S_ISREG(mode):
+                flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                with os.fdopen(os.open(entry, flags, dir_fd=descriptor), 'rb') as reader:
+                    if not stat.S_ISREG(os.fstat(reader.fileno()).st_mode):
+                        raise ValueError('non-regular cache input')
+                    hashed = hashlib.sha256()
+                    with (destination / name).open('xb') if destination is not None else nullcontext() as writer:
+                        if writer is not None: os.fchmod(writer.fileno(), 0o600)
+                        for block in iter(lambda: reader.read(65536), b''):
+                            hashed.update(block)
+                            if writer is not None: writer.write(block)
+                files[name] = hashed.hexdigest()
+            else:
+                raise ValueError('non-regular cache input')
+        return files
+    if destination is not None: destination.mkdir(mode=0o700)
+    with real_directory(source) as descriptor:
+        return walk(descriptor)
+
+
 def relative(path):
     return (isinstance(path, str) and bool(path) and not path.startswith(('/', '~', '-'))
             and '\\' not in path and ':' not in path and not any(ord(c) < 32 for c in path)
@@ -68,6 +127,32 @@ def relative(path):
 def state_dir(repo):
     # The same shared-Git directory as runtime.Store, including linked worktrees.
     return module('runtime').common_for(Path(repo)) / 'bureau'
+
+
+def git(repo, *args):
+    return subprocess.check_output(['git', '--no-replace-objects', '-C', str(repo), *args],
+        stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
+        env={**module('runtime').process_env(['git']), 'GIT_NO_LAZY_FETCH': '1', 'GIT_OPTIONAL_LOCKS': '0'})
+
+
+def tree(repo, commit):
+    if not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', commit): raise ValueError('full pinned commits required')
+    entries = {}
+    for row in git(repo, 'ls-tree', '-rz', commit).split(b'\0'):
+        if row:
+            metadata, name = row.split(b'\t', 1)
+            entries[name.decode('utf-8')] = metadata.decode('ascii').split()
+    return entries
+
+
+def blob(repo, entries, name, limit=1000000):
+    item = entries.get(name)
+    if item is None: return None
+    if not relative(name) or item[0] not in ('100644', '100755') or item[1] != 'blob':
+        raise ValueError('non-regular scan or policy input')
+    if int(git(repo, 'cat-file', '-s', item[2])) > limit:
+        raise ValueError('scan or policy input exceeds size limit')
+    return git(repo, 'cat-file', 'blob', item[2])
 
 
 def environment(root, switches=None):
@@ -328,11 +413,12 @@ def identity(tool, head, base, pin_digest, settings_digest, policy_digest, **ext
     return result
 
 
-def blocking(settings, status, severities=(), reduced_blocks=True):
+def blocking(settings, status, severities=(), reduced_blocks=True, severity_map=None):
+    levels = SEVERITY if severity_map is None else severity_map
     if settings['mode'] != 'blocking': return False
     if status in ('not_measured', 'unavailable'): return True
-    if status == 'reduced_coverage': return reduced_blocks
-    return status == 'measured' and any(SEVERITY[s] >= SEVERITY[settings['block_severity']] for s in severities)
+    if status == 'reduced_coverage' and reduced_blocks: return True
+    return status in ('measured', 'reduced_coverage') and any(levels[s] >= levels[settings['block_severity']] for s in severities)
 
 
 def projection(receipt, findings):
@@ -395,7 +481,8 @@ def retain(root, open_prs=None):
 
 
 def persist(state, bound, settings, status, reason, report, findings=(), *, new=0, existing=0,
-            suppressed=0, severities=(), pr=None, open_prs=None):
+            suppressed=0, severities=(), pr=None, open_prs=None, severity_map=None,
+            reduced_blocks=True, projection_extra=None):
     if status not in STATUSES or (status != 'measured' and not reason):
         raise ValueError('scan status requires a named reason')
     root = state / 'scans' / bound['tool']
@@ -410,10 +497,13 @@ def persist(state, bound, settings, status, reason, report, findings=(), *, new=
         write_json(report_path, report)
         receipt = dict(schema_version=1, **bound, identity_digest=key, status=status,
                        findings_new=new, findings_existing=existing, findings_suppressed=suppressed,
-                       new_severities=list(severities), blocking=blocking(settings, status, severities),
+                       new_severities=list(severities), blocking=blocking(settings, status, severities, reduced_blocks, severity_map),
                        report_sha256=file_sha(report_path), report_path=str(report_path), pr=pr)
         if status != 'measured': receipt['reason'] = reason
         projected = projection(receipt, list(findings))
+        if projection_extra:
+            if set(projected).intersection(projection_extra): raise ValueError('projection field collision')
+            projected.update(projection_extra)
         projection_path = target / 'projection.json'
         write_json(projection_path, projected)
         receipt.update(projection_path=str(projection_path), projection_sha256=file_sha(projection_path))
@@ -428,7 +518,7 @@ def result(target, receipt, projected):
                 receipt_sha256=file_sha(target / 'receipt.json'), projection=projected)
 
 
-def validate_receipt(path, bound, settings):
+def validate_receipt(path, bound, settings, severity_map=None):
     try:
         if path.is_symlink() or path.parent.is_symlink(): return None
         receipt = json.loads(path.read_text())
@@ -440,8 +530,9 @@ def validate_receipt(path, bound, settings):
         for field in ('findings_new', 'findings_existing', 'findings_suppressed'):
             if type(receipt.get(field)) is not int or receipt[field] < 0: return None
         severities = receipt.get('new_severities')
-        if not isinstance(severities, list) or any(s not in SEVERITY for s in severities): return None
-        if type(receipt.get('blocking')) is not bool or receipt['blocking'] != blocking(settings, receipt['status'], severities):
+        levels = SEVERITY if severity_map is None else severity_map
+        if not isinstance(severities, list) or any(s not in levels for s in severities): return None
+        if type(receipt.get('blocking')) is not bool or receipt['blocking'] != blocking(settings, receipt['status'], severities, severity_map=levels):
             return None
         for stem in ('report', 'projection'):
             target = path.with_name(stem + '.json')
@@ -453,12 +544,12 @@ def validate_receipt(path, bound, settings):
         return None
 
 
-def find_receipt(state, bound, settings, pr=None):
+def find_receipt(state, bound, settings, pr=None, severity_map=None):
     root = state / 'scans' / bound['tool']
     # Validation and the consuming reference must be atomic with retention.
     with locked(root):
         for path in sorted((root / digest(bound)).glob('*/receipt.json'), reverse=True):
-            value = validate_receipt(path, bound, settings)
+            value = validate_receipt(path, bound, settings, severity_map)
             if value and value['receipt']['status'] in ('measured', 'not_applicable'):
                 reference_pr(path.parent, pr)
                 return value
