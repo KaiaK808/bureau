@@ -76,7 +76,13 @@ case "${1:-}:${2:-}" in
     jq '.state = "MERGED"' "$D/pr.json" > "$D/pr.json.tmp" && mv "$D/pr.json.tmp" "$D/pr.json" ;;
   api:*)
     case "$2" in
-      graphql) out < "$D/threads.json" ;;
+      graphql)
+        case " $* " in
+          *'baseRef{target{oid}}'*)
+            jq -n --slurpfile pr "$D/pr.json" --slurpfile branch "$D/branch.json" \
+              '{data: {resource: {baseRefName: $pr[0].baseRefName, baseRef: {target: {oid: $branch[0].commit.sha}}}}}' | out ;;
+          *) out < "$D/threads.json" ;;
+        esac ;;
       */commits/*/check-runs) cat "$D/check_runs.json" ;;
       */commits/*/status) [ ! -e "$D/fail_status" ] || { echo "HTTP 502" >&2; exit 1; }; out < "$D/status.json" ;;
       */git/commits/*) [ -s "$D/commit.json" ] || exit 1; out < "$D/commit.json" ;;

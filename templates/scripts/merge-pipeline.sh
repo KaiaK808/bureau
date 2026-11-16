@@ -650,69 +650,81 @@ prepare_merge_message() {
 }
 
 # Scan, finish network preparation, then run the just-in-time gates. Only one
-# cheap base-name read is allowed between those gates and the pinned merge.
-SEMGREP_RECHECK=false
+# cheap base-name/tip read is allowed between those gates and the pinned merge.
+SCAN_RECHECK=false
+SCAN_TOOLS=()
 if [ "$(bureau_get 'has("review")')" = true ]; then
-  # Load only for configured review settings, preserving the disabled legacy path.
   source "$(dirname "$0")/bureau-semgrep.sh"
   SEMGREP_SETTINGS=$(bureau_semgrep settings) || exit 24
-  if [ "$(printf '%s' "$SEMGREP_SETTINGS" | jq -r '.enabled and .mode == "blocking"')" = true ]; then
-    semgrep_merge_retry() {
-      GATE_HEAD="${_scan_head:-}"
-      echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"
-      printf '    %s\n' "$1"
-      merge_gate_exit not-yet "$1"
-    }
-    semgrep_merge_hold() {
-      GATE_HEAD="${_scan_head:-}"
-      printf '    %s\n' "$1"
-      merge_gate_exit blocked "$1"
-    }
-    _scan_head=$(pr_head_sha "$PR_NUMBER")
-    [ -n "$_scan_head" ] || semgrep_merge_hold 'semgrep: current PR head unavailable'
-    _scan_refs=$(gh pr view "$PR_NUMBER" --json baseRefName,headRefName) \
-      || semgrep_merge_hold 'semgrep: current PR base unavailable'
-    _scan_base_ref=$(printf '%s' "$_scan_refs" | jq -er '.baseRefName | select(type == "string" and length > 0)') \
-      || semgrep_merge_hold 'semgrep: current PR base unavailable'
-    if [[ "$_scan_base_ref" == -* ]] || ! git check-ref-format "refs/heads/$_scan_base_ref" >/dev/null 2>&1; then
-      semgrep_merge_hold 'semgrep: unsafe PR base ref'
-    fi
-    git fetch --no-tags origin "+refs/heads/$_scan_base_ref:refs/remotes/origin/$_scan_base_ref" \
-      "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
-      || semgrep_merge_hold 'semgrep: pinned source unavailable'
-    _scan_base=$(git rev-parse --verify "refs/remotes/origin/$_scan_base_ref^{commit}") \
-      || semgrep_merge_hold 'semgrep: pinned base unavailable'
-    _semgrep_rc=0
-    SEMGREP_RESULT=$(bureau_semgrep scan --base "$_scan_base" --head "$_scan_head" --pr "$PR_NUMBER" --reuse) || _semgrep_rc=$?
-    [ "$_semgrep_rc" != 130 ] || exit 130
-
-    # A stale failure must retry just like a stale pass: do not hold a fixed PR
-    # for an older head's findings, unavailable tooling or failed receipt write.
-    # This last fetch must precede the JIT gates, including their CI/hold reads.
-    case "$BUREAU_MERGE_STRATEGY" in
-      squash|merge) prepare_merge_message || semgrep_merge_retry 'semgrep: merge message unavailable before gate recheck' ;;
-    esac
-    git fetch --no-tags origin "+refs/heads/$_scan_base_ref:refs/remotes/origin/$_scan_base_ref" \
-      || semgrep_merge_retry 'semgrep: current base unavailable after scan'
-    _current_base=$(git rev-parse --verify "refs/remotes/origin/$_scan_base_ref^{commit}") \
-      || semgrep_merge_retry 'semgrep: current base commit unavailable after scan'
-    [ "$_current_base" = "$_scan_base" ] \
-      || semgrep_merge_retry 'semgrep: PR base commit changed during scan'
-    _current_head=$(pr_head_sha "$PR_NUMBER")
-    [ "$_current_head" = "$_scan_head" ] \
-      || semgrep_merge_retry 'semgrep: PR head changed during scan'
-    _current_base_ref=$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName) \
-      || semgrep_merge_retry 'semgrep: current PR base unavailable after scan'
-    [ "$_current_base_ref" = "$_scan_base_ref" ] \
-      || semgrep_merge_retry 'semgrep: PR base ref changed during scan'
-
-    [ "$_semgrep_rc" = 0 ] || semgrep_merge_hold 'semgrep: durable scanner receipt unavailable'
-    if [ "$(printf '%s' "$SEMGREP_RESULT" | jq -r '.receipt.blocking')" != false ]; then
-      semgrep_merge_hold "semgrep: $(printf '%s' "$SEMGREP_RESULT" | jq -c '.projection')"
-    fi
-    SEMGREP_RECHECK=true
-  fi
+  if [ "$(printf '%s' "$SEMGREP_SETTINGS" | jq -r '.enabled and .mode == "blocking"')" = true ]; then SCAN_TOOLS+=(semgrep); fi
 fi
+if [ "$(bureau_get '.qa | type == "object" and has("trivy")')" = true ]; then
+  source "$(dirname "$0")/bureau-trivy.sh"
+  TRIVY_SETTINGS=$(bureau_trivy settings) || exit 24
+  if [ "$(printf '%s' "$TRIVY_SETTINGS" | jq -r '.enabled and .mode == "blocking"')" = true ]; then SCAN_TOOLS+=(trivy); fi
+fi
+scanner_merge_retry() {
+  GATE_HEAD="${_scan_head:-}"
+  echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"
+  printf '    %s\n' "$1"
+  merge_gate_exit not-yet "$1"
+}
+scanner_merge_hold() {
+  GATE_HEAD="${_scan_head:-}"
+  printf '    %s\n' "$1"
+  merge_gate_exit blocked "$1"
+}
+for _scan_tool in "${SCAN_TOOLS[@]+"${SCAN_TOOLS[@]}"}"; do
+  _scan_head=$(pr_head_sha "$PR_NUMBER")
+  [ -n "$_scan_head" ] || scanner_merge_hold "$_scan_tool: current PR head unavailable"
+  _scan_refs=$(gh pr view "$PR_NUMBER" --json baseRefName,headRefName) \
+    || scanner_merge_hold "$_scan_tool: current PR base unavailable"
+  _scan_base_ref=$(printf '%s' "$_scan_refs" | jq -er '.baseRefName | select(type == "string" and length > 0)') \
+    || scanner_merge_hold "$_scan_tool: current PR base unavailable"
+  if [[ "$_scan_base_ref" == -* ]] || ! git check-ref-format "refs/heads/$_scan_base_ref" >/dev/null 2>&1; then
+    scanner_merge_hold "$_scan_tool: unsafe PR base ref"
+  fi
+  git fetch --no-tags origin "+refs/heads/$_scan_base_ref:refs/remotes/origin/$_scan_base_ref" \
+    "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
+    || scanner_merge_hold "$_scan_tool: pinned source unavailable"
+  _scan_base=$(git rev-parse --verify "refs/remotes/origin/$_scan_base_ref^{commit}") \
+    || scanner_merge_hold "$_scan_tool: pinned base unavailable"
+  if [ "$SCAN_RECHECK" = true ] && { [ "$_scan_head" != "$SCANNED_HEAD" ] || [ "$_scan_base_ref" != "$SCANNED_BASE_REF" ] || [ "$_scan_base" != "$SCANNED_BASE" ]; }; then
+    scanner_merge_retry "$_scan_tool: scanner inputs changed between measurements"
+  fi
+  _scanner_rc=0
+  SCANNER_RESULT=$("bureau_$_scan_tool" scan --base "$_scan_base" --head "$_scan_head" --pr "$PR_NUMBER" --reuse) || _scanner_rc=$?
+  [ "$_scanner_rc" != 130 ] || exit 130
+
+  # A stale failure must retry just like a stale pass: do not hold a fixed PR
+  # for an older head's findings, unavailable tooling or failed receipt write.
+  # This last fetch must precede the JIT gates, including their CI/hold reads.
+  case "$BUREAU_MERGE_STRATEGY" in
+    squash|merge) prepare_merge_message || scanner_merge_retry "$_scan_tool: merge message unavailable before gate recheck" ;;
+  esac
+  git fetch --no-tags origin "+refs/heads/$_scan_base_ref:refs/remotes/origin/$_scan_base_ref" \
+    || scanner_merge_retry "$_scan_tool: current base unavailable after scan"
+  _current_base=$(git rev-parse --verify "refs/remotes/origin/$_scan_base_ref^{commit}") \
+    || scanner_merge_retry "$_scan_tool: current base commit unavailable after scan"
+  [ "$_current_base" = "$_scan_base" ] \
+    || scanner_merge_retry "$_scan_tool: PR base commit changed during scan"
+  _current_head=$(pr_head_sha "$PR_NUMBER")
+  [ "$_current_head" = "$_scan_head" ] \
+    || scanner_merge_retry "$_scan_tool: PR head changed during scan"
+  _current_base_ref=$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName) \
+    || scanner_merge_retry "$_scan_tool: current PR base unavailable after scan"
+  [ "$_current_base_ref" = "$_scan_base_ref" ] \
+    || scanner_merge_retry "$_scan_tool: PR base ref changed during scan"
+
+  [ "$_scanner_rc" = 0 ] || scanner_merge_hold "$_scan_tool: durable scanner receipt unavailable"
+  if [ "$(printf '%s' "$SCANNER_RESULT" | jq -r '.receipt.blocking')" != false ]; then
+    scanner_merge_hold "$_scan_tool: $(printf '%s' "$SCANNER_RESULT" | jq -c '.projection')"
+  fi
+  SCAN_RECHECK=true
+  SCANNED_HEAD="$_scan_head"
+  SCANNED_BASE_REF="$_scan_base_ref"
+  SCANNED_BASE="$_scan_base"
+done
 
 # Just-in-time gate recheck. Closes the race between the initial gate query
 # (potentially seconds-to-minutes ago) and the merge call. Most importantly
@@ -735,14 +747,24 @@ if [ -n "$JIT_GATE_OUT" ]; then
 fi
 
 # No fetch or message preparation after the JIT gates. Their checked head and
-# this single base-name read must still match the scan; otherwise retry.
-if [ "$SEMGREP_RECHECK" = true ]; then
-  [ "$MERGE_HEAD" = "$_scan_head" ] \
-    || semgrep_merge_retry 'semgrep: PR head changed during scan'
-  _merge_base_ref=$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName) \
-    || semgrep_merge_retry 'semgrep: current PR base unavailable after gate recheck'
-  [ "$_merge_base_ref" = "$_scan_base_ref" ] \
-    || semgrep_merge_retry 'semgrep: PR base ref changed during scan or gate recheck'
+# this single live base-name/tip read must still match the scan; otherwise retry.
+if [ "$SCAN_RECHECK" = true ]; then
+  [ "$MERGE_HEAD" = "$SCANNED_HEAD" ] \
+    || scanner_merge_retry "$_scan_tool: PR head changed during scan"
+  # baseRef.target is the live branch tip; the PR's stored baseRefOid can lag
+  # behind it. One GraphQL read binds both the PR's base name and current tip.
+  _merge_base_json=$(gh api graphql \
+    -f query='query($url:URI!){resource(url:$url){... on PullRequest{baseRefName baseRef{target{oid}}}}}' \
+    -f url="$PR_URL") \
+    || scanner_merge_retry "$_scan_tool: current PR base unavailable after gate recheck"
+  _merge_base_ref=$(printf '%s' "$_merge_base_json" | jq -er 'select((.errors // []) == []) | .data.resource.baseRefName | select(type == "string" and length > 0)') \
+    || scanner_merge_retry "$_scan_tool: current PR base ref unavailable after gate recheck"
+  _merge_base_oid=$(printf '%s' "$_merge_base_json" | jq -er '.data.resource.baseRef.target.oid | select(type == "string" and test("^[0-9a-f]{40,64}$"))') \
+    || scanner_merge_retry "$_scan_tool: current PR base commit unavailable after gate recheck"
+  [ "$_merge_base_ref" = "$SCANNED_BASE_REF" ] \
+    || scanner_merge_retry "$_scan_tool: PR base ref changed during scan or gate recheck"
+  [ "$_merge_base_oid" = "$SCANNED_BASE" ] \
+    || scanner_merge_retry "$_scan_tool: PR base commit changed during scan or gate recheck"
 fi
 
 # No --delete-branch: same reason code-review-pipeline.sh dropped it (commit

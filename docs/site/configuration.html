@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="cd46d5d00100ab4a433f1a817307c5f48df62ec86b49b9f57a64f87df1d1c856">
+<meta name="bureau-source-sha256" content="3277b0520e9ce9e816a5affcb2fdb15c2059dc05ec2fe20c8b44a56f880a36e6">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -633,16 +633,19 @@ checkpoint stays the last step before the merge call, as in every mode.
 Semgrep gate marks bind to the scanned head, including when it differs
 from the initial gate's head.</p>
 <p>The existing just-in-time gates then run unchanged. After they pass,
-Bureau performs only one cheap <code>gh</code> read of the PR's base ref
-name and requires the checked <code>MERGE_HEAD</code> to equal the
-scanned head and the base ref name to be unchanged, then merges with
-<code>--match-head-commit</code> set to that scanned head. No fetch or
-merge-message read occurs after the final gates. A base advancing after
-the last fetch has the same race as the other gates; GitHub's head match
-protects against a subsequent push. Disabled and advisory merge
-behaviour and GitHub/git call logs remain unchanged. The older Code
-Review v2 verdict reader's head binding is unchanged by this scanner
-integration.</p>
+Bureau performs one cheap GraphQL read of the PR's base ref name and its
+live <code>baseRef.target.oid</code> branch tip. The checked
+<code>MERGE_HEAD</code>, base ref name and base commit must equal the
+scanned inputs; any mismatch or failed read retries with exit 2. Bureau
+then merges with <code>--match-head-commit</code> set to that scanned
+head. No fetch or merge-message read occurs after the final gates. The
+final read uses the live branch target because the PR's stored base OID
+can lag the branch tip; it catches a base advancing after the last fetch
+even when the final gates pass against the newer base. GitHub's head
+match protects against a subsequent head push. Disabled and advisory
+merge behaviour and GitHub/git call logs remain unchanged. The older
+Code Review v2 verdict reader's head binding is unchanged by this
+scanner integration.</p>
 <p><strong>Upgrade:</strong> compare installed script drift, resync the
 entire scripts scope (including the shared helper, sandbox profile,
 rules, lock and platform manifests), and restart drivers together.
@@ -653,6 +656,289 @@ the boundary and pipelines. The optional real-binary test runs only with
 <code>BUREAU_SEMGREP_VENV</code> set on GitHub-hosted Ubuntu; real pin,
 flag/rule compatibility and adopting-repository qualification require
 that separate validation.</p>
+<h3 id="qatrivy"><code>qa.trivy</code></h3>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;qa&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;trivy&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;mode&quot;</span><span class="fu">:</span> <span class="st">&quot;advisory&quot;</span><span class="fu">,</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;cache_dir&quot;</span><span class="fu">:</span> <span class="kw">null</span><span class="fu">,</span></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_db_age_hours&quot;</span><span class="fu">:</span> <span class="dv">48</span><span class="fu">,</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;block_severity&quot;</span><span class="fu">:</span> <span class="st">&quot;HIGH&quot;</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Trivy is optional and off by default. V1 scans dependencies and
+configuration only; image scanning is not part of this release. Doctor
+and the Trivy helpers validate explicit settings even while disabled;
+unknown keys are errors. <code>enabled</code> is boolean,
+<code>mode</code> is <code>advisory</code> or <code>blocking</code>,
+<code>block_severity</code> is <code>UNKNOWN</code>, <code>LOW</code>,
+<code>MEDIUM</code>, <code>HIGH</code> or <code>CRITICAL</code>, and
+<code>max_db_age_hours</code> is a positive finite number. An enabled
+scan requires an absolute <code>cache_dir</code> outside the repository;
+<code>~/</code> is expanded. The runtime checks the resolved path too.
+Disabled QA prompts, comments and routing, and disabled/advisory merge
+GitHub and Git call logs, are unchanged.</p>
+<p>Bureau ships metadata for <strong>Trivy 0.76.1</strong>, released
+<strong>2026-10-21</strong>, in
+<code>scripts/bureau-trivy-pins.json</code>. Only Linux x86_64 and macOS
+arm64 have reviewed archive and extracted-binary pins; other platforms
+report <strong>unavailable</strong> with the missing platform pin named.
+The operator supplies a regular executable with
+<code>BUREAU_TRIVY_BIN</code>; the fallback is
+<code>&lt;shared Git directory&gt;/bureau/tools/trivy/trivy</code>.
+Bureau does not install or download a scanner. There is no version,
+digest or executable override in repository configuration. Never use the
+Trivy GitHub Action, setup-trivy or a Docker image as this scanner's
+distribution mechanism.</p>
+<p>Before a pin is reviewed, select a release at least two weeks old and
+newer than every published advisory fix, verify its checksums file and
+both release archives against their Sigstore bundles, compare archive
+hashes to that verified checksums file, and hash the extracted regular
+<code>trivy</code> binary separately. For this pin the expected keyless
+identity and issuer are exact, including the release tag:</p>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="va">identity</span><span class="op">=</span><span class="st">&#39;https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v0.76.1&#39;</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="va">issuer</span><span class="op">=</span><span class="st">&#39;https://token.actions.githubusercontent.com&#39;</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="ex">cosign</span> verify-blob <span class="dt">\</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--bundle</span> trivy_0.76.1_checksums.txt.sigstore.json <span class="dt">\</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--certificate-identity</span> <span class="st">&quot;</span><span class="va">$identity</span><span class="st">&quot;</span> <span class="at">--certificate-oidc-issuer</span> <span class="st">&quot;</span><span class="va">$issuer</span><span class="st">&quot;</span> <span class="dt">\</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>  trivy_0.76.1_checksums.txt</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> archive <span class="kw">in</span> trivy_0.76.1_Linux-64bit.tar.gz trivy_0.76.1_macOS-ARM64.tar.gz<span class="kw">;</span> <span class="cf">do</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>  <span class="ex">cosign</span> verify-blob <span class="at">--bundle</span> <span class="st">&quot;</span><span class="va">$archive</span><span class="st">.sigstore.json&quot;</span> <span class="dt">\</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>    <span class="at">--certificate-identity</span> <span class="st">&quot;</span><span class="va">$identity</span><span class="st">&quot;</span> <span class="at">--certificate-oidc-issuer</span> <span class="st">&quot;</span><span class="va">$issuer</span><span class="st">&quot;</span> <span class="st">&quot;</span><span class="va">$archive</span><span class="st">&quot;</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>  <span class="ex">shasum</span> <span class="at">-a</span> 256 <span class="st">&quot;</span><span class="va">$archive</span><span class="st">&quot;</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="cf">done</span></span></code></pre></div>
+<p>Compare those archive hashes with
+<code>trivy_0.76.1_checksums.txt</code> before extraction, then record
+each extracted binary's SHA-256 and byte size in the pin file alongside
+the archive name/hash, version, release date, signing identity and
+issuer. Verify all of these in the pin review; a version string alone is
+never an execution trust anchor. The shipped pin was maintainer-verified
+through that procedure. Neither the signature assets nor scanner
+binaries are vendored.</p>
+<p>Each measurement creates a private <code>mkdtemp</code> directory
+with mode 0700, opens the operator binary with
+<code>O_NOFOLLOW | O_NONBLOCK</code>, refuses non-regular files, and
+hashes the same read that populates its private copy. Only that copy can
+execute after its digest and size match the platform pin. Its mode-0700
+directory contains only <code>trivy</code>; no operator-adjacent helper
+can resolve there. Bureau re-hashes the private binary before each
+execution. Changes to the operator path after the copy have no
+effect.</p>
+<p>The operator refreshes the database separately, with network access,
+outside every stage:</p>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-trivy.py refresh <span class="at">--cache-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_TRIVY_CACHE</span><span class="st">&quot;</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Include Java&#39;s DB when Java analysis needs it:</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-trivy.py refresh <span class="at">--cache-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_TRIVY_CACHE</span><span class="st">&quot;</span> <span class="at">--java</span></span></code></pre></div>
+<p>The refresh destination must be empty or a Bureau-managed cache,
+outside the repository. Refresh first verifies and privately copies the
+pinned binary, downloads into a fresh private directory using
+<code>--download-db-only</code> and optionally
+<code>--download-java-db-only</code>, with
+<code>--disable-telemetry --skip-version-check</code>, then replaces the
+operator cache only after successful metadata/content checks. A failed
+download leaves the previous cache intact.
+<code>bureau-trivy-cache.json</code> records <code>Version</code>,
+<code>UpdatedAt</code>, <code>NextUpdate</code> and
+<code>DownloadedAt</code> per database, every cache file's hash, and the
+digest of that complete file inventory, including any external checks
+bundle. Scans copy and hash the same reads, require agreement with the
+record and database metadata, and judge freshness using
+<strong>UpdatedAt</strong>, never DownloadedAt. A changed cache is
+<strong>not_measured</strong>; downloading old data again cannot make it
+fresh. Future timestamps and unreadable/non-regular cache inputs also
+fail measurement.</p>
+<p>The scan cache retains only <code>db/</code> and optional
+<code>java-db/</code>; all external checks bundles and other cache
+content are removed. Misconfiguration checks therefore come from the
+pinned binary's embedded bundle, whose identity is the binary digest.
+The snapshot manifest records removals. Before each filesystem scan,
+Bureau re-checks the private database bytes and discards non-database
+cache content again.</p>
+<p>Every scanner execution, including refresh, receives only
+<code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
+<code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code>,
+<code>TMPDIR</code>, <code>LANG=C.UTF-8</code> and <code>TZ=UTC</code>.
+No caller <code>TRIVY_*</code>, provider secret, GitHub token or Docker
+connection setting passes through. Every scan runs under runtime network
+denial: probed <code>unshare -rn</code> on Linux or
+<code>sandbox-exec</code> with <code>bureau-scan-nonet.sb</code> denying
+<code>network*</code> on macOS. Isolation failure is
+<strong>not_measured</strong>, reason
+<code>network isolation unavailable</code>; scans never fall back to
+online execution. The refresh CLI is the sole networked scanner
+operation and is absent from the shell stage helper's allowed
+commands.</p>
+<p>All release-dependent flags live in <code>bureau-trivy.py</code>'s
+<code>FLAGS</code> table. Filesystem scans use
+<code>--offline-scan --skip-db-update --skip-java-db-update --skip-check-update --skip-vex-repo-update --skip-version-check --disable-telemetry</code>,
+explicit empty Bureau <code>--config</code> and
+<code>--ignorefile</code>, a private <code>--cache-dir</code>,
+<code>--scanners vuln,misconfig</code>,
+<code>--format json --output</code>, and <code>--timeout 5m</code>.
+Filesystem scans run from a separate private working directory against
+snapshots of the pinned base and final head. Native
+<code>trivy.yaml</code>, <code>trivy.yml</code>,
+<code>.trivyignore</code>, <code>.trivyignore.yaml</code> and
+<code>.trivyignore.yml</code> files are removed throughout both
+snapshots. IaC <code>trivy:ignore:</code> comment lines are blanked, and
+trailing ignore comments are stripped while preserving code and LF
+coordinates; paths and line numbers are projected. This neutralization
+does not depend on an engine flag.</p>
+<p>Before checking the binary, cache or isolation, Bureau inventories
+both snapshots. If neither has eligible inputs, the result is
+<strong>not_applicable</strong>, with no scanner or probe execution. V1
+checks npm package manifests with package-lock/npm-shrinkwrap, pnpm or
+Yarn locks; <code>requirements*.txt</code>; PEP 621/Poetry dependencies
+with uv/Poetry locks; Go module/sum files; Dockerfiles, Compose files
+and Terraform files. Manifest and lockfile discovery is
+case-insensitive, but non-canonical filename case (for example
+<code>PACKAGE.JSON</code>, <code>Package-Lock.json</code>,
+<code>REQUIREMENTS.TXT</code> or <code>PyProject.toml</code>) reduces
+coverage with reason <code>non-canonical inventory filename case</code>
+and names the file, on both case-sensitive and case-insensitive
+filesystems. Missing locks, requirements that are not exactly pinned,
+absent result targets and direct dependency names missing from lock
+roots reduce coverage and name the affected file/package. Every
+inventoried lockfile requires a matching result target, including
+<code>go.sum</code>; engines that omit a target reduce coverage rather
+than silently accepting an alias. Direct-name consistency for Go and
+ecosystems outside the JS/Python set is explicitly reported as
+unchecked. Version ranges are not compared in v1. Snapshot blobs are
+limited to 32 MiB per file and base policy to 1 MB; oversized inputs
+fail measurement. Other recognized ecosystem inputs are scanned and
+reported as having unchecked lockfile consistency. A base measurement
+failure produces <strong>reduced_coverage</strong>, reason
+<code>base not measured</code>, and head findings stay unclassified
+rather than being counted as new; their severities still enforce the
+blocking floor as new findings would, even when coverage exceptions
+waive every file's coverage gap.</p>
+<p>Lockfile consistency fails closed: the handwritten parsers accept
+only recognised tool-written forms, and unsupported syntax anywhere in a
+parsed file produces <strong>reduced_coverage</strong>, with the file
+named and reason <code>lockfile format not recognised</code>, never a
+clean measurement. This also holds in blocking mode, where an unexcepted
+coverage gap blocks. Locks are validated even without a matching
+manifest. The parser policy is part of receipt identity, so receipts
+from before this hardening are remeasured. pnpm requires two-space
+indentation steps, no tabs or level jumps, plain or quoted mapping keys
+and no flow syntax in importers; only direct keys in the root importer's
+<code>dependencies</code>, <code>devDependencies</code> and
+<code>optionalDependencies</code> maps count. Apart from its reserved
+<code>__metadata</code> map, Yarn requires complete comma-separated
+selector headers ending at their final colon, without <code>#</code> or
+trailing text; comments must be whole top-level lines. JSON manifests
+and npm locks use the JSON parser, and npm lock root names come only
+from those three dependency maps in <code>packages['']</code>. Python
+3.11+ uses <code>tomllib</code>; the conservative Python 3.9/3.10
+fallback requires bare table components such as
+<code>[project.optional-dependencies]</code> and bare assignment keys,
+rejecting spaces inside table names, quoted keys and dotted inline keys.
+Only <code>[project]</code> treats <code>dynamic</code> as metadata; an
+optional-dependency group named <code>dynamic</code> contributes
+declared dependency names. Requirements accept exact pins, extras and
+whole-line or whitespace-prefixed inline comments; environment markers,
+line continuations and options such as <code>-r</code>, <code>-c</code>,
+<code>-e</code> and <code>--hash</code> are not recognised and reduce
+coverage rather than supplying or hiding names.</p>
+<p>Vulnerability identity is
+<code>(Target, VulnerabilityID, PkgName, InstalledVersion)</code>.
+Misconfiguration identity is
+<code>(Target, ID, CauseMetadata.Resource, SHA-256 of normalized cause lines)</code>;
+bytes are split on LF only and whitespace is stripped per line. When
+Resource is missing, the cause-lines hash carries that part of identity
+and the projection names the affected check/file. Only checks with
+status <code>FAIL</code> count. File-level checks that the pinned
+release reports without cause lines (for example <code>DS-0026</code>, a
+Dockerfile without <code>HEALTHCHECK</code>) use a fixed file-level
+marker in place of the cause-lines hash and are projected with line 0.
+Newness is occurrence-aware: if an identity's head count exceeds its
+base count, only the surplus is new. Moving a vulnerable package to
+another manifest, changing its installed version or introducing another
+unsafe resource creates a distinct occurrence. Matched source,
+descriptions and raw scanner diagnostics never enter comments.</p>
+<p>Only the pinned base's <code>.bureau/trivy-exceptions.json</code> can
+suppress findings or waive reduced coverage. Entries require exact
+selectors, an owner, a reason and an ISO date or timezone-aware
+timestamp in <code>expires</code>; a date expires at the start of that
+UTC date. Multiple finding selectors are conjunctive. Wildcards and
+malformed entries fail measurement, expired entries have no effect, and
+a PR cannot suppress itself by adding an exception:</p>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ot">[</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">&quot;id&quot;</span><span class="fu">:</span><span class="st">&quot;CVE-EXAMPLE&quot;</span><span class="fu">,</span><span class="dt">&quot;package&quot;</span><span class="fu">:</span><span class="st">&quot;legacy-package&quot;</span><span class="fu">,</span><span class="dt">&quot;file&quot;</span><span class="fu">:</span><span class="st">&quot;requirements.txt&quot;</span><span class="fu">,</span><span class="dt">&quot;owner&quot;</span><span class="fu">:</span><span class="st">&quot;security-team&quot;</span><span class="fu">,</span><span class="dt">&quot;reason&quot;</span><span class="fu">:</span><span class="st">&quot;Accepted temporarily&quot;</span><span class="fu">,</span><span class="dt">&quot;expires&quot;</span><span class="fu">:</span><span class="st">&quot;2027-01-01&quot;</span><span class="fu">}</span><span class="ot">,</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">&quot;kind&quot;</span><span class="fu">:</span><span class="st">&quot;coverage&quot;</span><span class="fu">,</span><span class="dt">&quot;file&quot;</span><span class="fu">:</span><span class="st">&quot;legacy/package.json&quot;</span><span class="fu">,</span><span class="dt">&quot;owner&quot;</span><span class="fu">:</span><span class="st">&quot;platform-team&quot;</span><span class="fu">,</span><span class="dt">&quot;reason&quot;</span><span class="fu">:</span><span class="st">&quot;Lockfile migration scheduled&quot;</span><span class="fu">,</span><span class="dt">&quot;expires&quot;</span><span class="fu">:</span><span class="st">&quot;2027-01-01&quot;</span><span class="fu">}</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="ot">]</span></span></code></pre></div>
+<p>Advisory mode reports every status and continues. Blocking mode holds
+on new findings at or above <code>block_severity</code>,
+<strong>not_measured</strong>, <strong>unavailable</strong>, or
+<strong>reduced_coverage</strong> without an active base coverage
+exception for every affected file. Coverage exceptions waive only the
+named file's coverage gap and never suppress qualifying findings,
+including unclassified head findings after a failed base scan.
+<strong>not_applicable</strong> passes as explicitly not applicable. No
+unavailable, unmeasured or reduced result is described as clean. A
+blocking QA result keeps the ticket in QA with <code>needs-human</code>
+and exit 25.</p>
+<p>QA measures immediately before routing, after its commit/push and
+local checks, including the no-harness path; the enabled no-harness path
+first publishes any QA merge. Its receipt binds the head actually handed
+onward. If a repository has no QA state, blocking mode still guarantees
+measurement through merge: the merge pipeline requires a valid
+final-head receipt and measures when absent or changed. Before the
+existing just-in-time gates, the shared Semgrep/Trivy merge code reads
+head and current base ref/commit, measures with reuse, prepares the
+merge message and fetches the base again. Before applying a blocking or
+failed result it re-checks head, base ref name and base commit; changed
+inputs retry with exit 2, with the gate mark bound to the scanned head.
+Both enabled scanners must measure the same inputs. After the final
+gates, one GraphQL read binds the current PR base ref name and live
+<code>baseRef.target.oid</code> branch tip to the scanned base, retrying
+with exit 2 on changed inputs or a failed read; there is no additional
+fetch. The live branch target is used because the PR's stored base OID
+can lag the branch tip. The ticket kill-switch checkpoint remains the
+last operation before the head-pinned merge in every merge strategy.</p>
+<p>Image scanning is not part of this release, and every projection
+carries that fixed qualification. The Trivy stage executes no builds or
+repository-controlled commands. The removed
+<code>qa.trivy.image_archive_command</code> key is unknown and causes a
+configuration error, including with <code>null</code> or while disabled;
+remove it from existing configurations. A follow-up will design an
+isolated, source-bound image build.</p>
+<p>The shared receipt store writes immutable <code>report.json</code>,
+<code>projection.json</code> and <code>receipt.json</code> attempts
+under
+<code>&lt;state dir&gt;/scans/trivy/&lt;identity digest&gt;/&lt;attempt id&gt;/</code>,
+binding full head/base commits, pin/settings/base-policy digests, cache
+digest/UpdatedAt and report/projection hashes. The projection has a
+budget of at most 20 filesystem findings, with explicit omitted counts,
+and bounded coverage/removal lists. Receipt hashes join existing
+QA/merge artifact evidence. Reuse re-verifies the current binary/cache
+and checks exception expiry; each consuming PR adds its own exclusive
+<code>refs/pr-N</code> retention reference. Retention keeps the newest
+20 attempts plus those referenced by open PRs; unknown open-PR
+inventories keep referenced evidence conservatively.</p>
+<p><strong>Upgrade:</strong> compare installed script drift, resync the
+full scripts scope including <code>bureau-trivy.py</code>,
+<code>bureau-trivy.sh</code>, <code>bureau-trivy-pins.json</code>,
+<code>bureau-scan.py</code> and the sandbox profile, then restart
+drivers together. Existing configurations stay disabled. Supply the
+verified pinned binary, refresh an external cache and qualify isolation
+on the target host before enabling advisory mode; enable blocking
+separately. Fake-binary tests run without downloads in the full test
+matrix. The separate real-binary job uses only GitHub-hosted
+<code>ubuntu-latest</code>, downloads the exact pinned release archive,
+checks archive and extracted-binary hashes before execution, refreshes a
+job-local cache and qualifies lockfile and Dockerfile filesystem flags
+under <code>unshare -rn</code>. The job configures user namespaces only
+on that ephemeral hosted VM; it never selects a self-hosted fallback.
+Real-binary flag compatibility, embedded-check behavior, engine resource
+metadata and adopting-repository validation remain separate
+qualification steps until that job or a maintainer run succeeds.</p>
 <h3 id="agents"><code>agents</code></h3>
 <p>Which pipelines run, how often they poll, how aggressive they
 are.</p>
@@ -1498,30 +1784,30 @@ trusted progress</h3>
 for the issue in the same common Git directory, across stages,
 checker/verifier phases, worktrees, shepherd runs and dispatcher
 restarts:</p>
-<div class="sourceCode" id="cb6"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_budget&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;tokens&quot;</span><span class="fu">:</span> <span class="dv">200000</span><span class="fu">,</span></span>
-<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;provider_calls&quot;</span><span class="fu">:</span> <span class="dv">20</span><span class="fu">,</span></span>
-<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;wall_seconds&quot;</span><span class="fu">:</span> <span class="dv">14400</span><span class="fu">,</span></span>
-<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;allow_unknown_usage&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
-<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">},</span></span>
-<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_progress&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
-<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_non_improving_turns&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>
-<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;contract&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;fulfilled_requirements&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;required-behavior&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
-<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
-<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;qualified_gates&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;acceptance&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
-<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
-<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;confirmed_findings&quot;</span><span class="fu">:</span> <span class="fu">{}</span></span>
-<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a>      <span class="fu">}</span></span>
-<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb6-23"><a href="#cb6-23" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_budget&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;tokens&quot;</span><span class="fu">:</span> <span class="dv">200000</span><span class="fu">,</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;provider_calls&quot;</span><span class="fu">:</span> <span class="dv">20</span><span class="fu">,</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;wall_seconds&quot;</span><span class="fu">:</span> <span class="dv">14400</span><span class="fu">,</span></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;allow_unknown_usage&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">},</span></span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_progress&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_non_improving_turns&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;contract&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;fulfilled_requirements&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;required-behavior&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;qualified_gates&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;acceptance&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;confirmed_findings&quot;</span><span class="fu">:</span> <span class="fu">{}</span></span>
+<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a>      <span class="fu">}</span></span>
+<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb10-22"><a href="#cb10-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb10-23"><a href="#cb10-23" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Each dimension is independently optional; absent/null/0 disables it.
 Wrong types, unknown keys, negative/nonfinite limits or invalid
 contracts refuse execution with 24. Tokens/calls require integers; wall
@@ -2267,18 +2553,18 @@ configuration migration is required; existing installations retain the
 legacy rules.</p>
 <p>For Bureau's generated manual, cover <strong>every</strong> output of
 the renderer, which requires Pandoc:</p>
-<div class="sourceCode" id="cb7"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>A configured repair requires an explicit
 <code>repo.test_command</code> containing a command; whitespace-only or
 comment-only strings decline, and there is no inferred fallback.
@@ -2448,18 +2734,18 @@ or 2), and an explicit nonblank, non-comment
 <code>timeout_seconds</code> and silence-watchdog options apply through
 <code>run_stage_for conflict_resolver</code>; there is no separate
 provider integration. Invalid resolver configuration fails closed.</p>
-<div class="sourceCode" id="cb8"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
-<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
-<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>All conflict-stage environment overrides are optional and unset by
 default: <code>BUREAU_RUNNER_CONFLICT_RESOLVER</code>,
 <code>BUREAU_MODEL_CONFLICT_RESOLVER</code>,
@@ -3222,19 +3508,19 @@ supporting it. The tier changes no routing, holds, verdicts or merges; a
 human merges every PR. It does not enable automatic merging or change
 <code>agents.merge_mode</code>. Omitting <code>agents.risk_tier</code>
 uses these defaults:</p>
-<div class="sourceCode" id="cb9"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;risk_tier&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">100</span><span class="fu">,</span></span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_files&quot;</span><span class="fu">:</span> <span class="dv">5</span><span class="fu">,</span></span>
-<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;high_min_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">1000</span><span class="fu">,</span></span>
-<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;docs_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.md&quot;</span><span class="ot">,</span> <span class="st">&quot;*.rst&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;test_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test_*.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*_test.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*.test.*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.spec.*&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;sensitive_patterns&quot;</span><span class="fu">:</span> <span class="ot">[]</span></span>
-<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;risk_tier&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">100</span><span class="fu">,</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_files&quot;</span><span class="fu">:</span> <span class="dv">5</span><span class="fu">,</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;high_min_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">1000</span><span class="fu">,</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;docs_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.md&quot;</span><span class="ot">,</span> <span class="st">&quot;*.rst&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;test_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test_*.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*_test.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*.test.*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.spec.*&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;sensitive_patterns&quot;</span><span class="fu">:</span> <span class="ot">[]</span></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Changed lines means insertions plus deletions in
 <code>base..HEAD</code>. Low requires at least one changed path, every
 path matching the docs/tests lists, at most 100 changed lines and 5
