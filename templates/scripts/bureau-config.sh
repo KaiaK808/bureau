@@ -1108,29 +1108,34 @@ commit_codex_changes() {
 # Installed helper caches stay local even before an adopter resyncs its ignore.
 commit_stage_changes() {
   [ "${5:-}" = --allow-empty ] || [ -n "$(git status --porcelain)" ] || return 0
+  # Disposable checkouts can omit scripts/; load beside the active runtime.
+  local cache_rule
+  cache_rule="$(dirname "${BUREAU_RUNTIME:-scripts/bureau-runtime.py}")/bureau-paths.py"
   # An earlier tool may have staged private files already. Excluding them from
   # our `git add` list alone would still include them in the final commit.
   # Refuse without changing the index, leaving the operator's staged work intact.
-  bureau_without_secrets python3 -I -B - <<'PY_STAGED' || return $?
-import subprocess, sys
+  bureau_without_secrets python3 -I -B - "$cache_rule" <<'PY_STAGED' || return $?
+import runpy, subprocess, sys
+is_helper_cache = runpy.run_path(sys.argv[1])['is_helper_cache']
 names = subprocess.check_output(['git', 'diff', '--cached', '--name-only', '--no-renames', '-z']).split(b'\0')
 private = [p for p in names if p in (b'.env', b'.bureau.json', b'.bureau-install.json') or p.startswith(b'logs/')]
 if private:
     print('Refusing to commit staged private Bureau files; inspect and unstage them before retrying.', file=sys.stderr)
     sys.exit(24)
-if any(p.lower().startswith(b'scripts/__pycache__/') for p in names):
+if any(is_helper_cache('.', p) for p in names):
     print('Refusing to commit staged Bureau bytecode; unstage scripts/__pycache__/ before retrying.', file=sys.stderr)
     sys.exit(24)
 PY_STAGED
   local paths publication_before publication_after
   paths=$(mktemp)
-  bureau_without_secrets python3 -I -B - "$paths" <<'PY_PATHS'
-import subprocess, sys
+  bureau_without_secrets python3 -I -B - "$paths" "$cache_rule" <<'PY_PATHS'
+import runpy, subprocess, sys
 from pathlib import Path
+is_helper_cache = runpy.run_path(sys.argv[2])['is_helper_cache']
 names = subprocess.check_output(['git', 'ls-files', '-z', '--modified', '--deleted', '--others', '--exclude-standard']).split(b'\0')
 keep = [p for p in names if p and p not in (b'.env', b'.bureau.json', b'.bureau-install.json')
         and not p.startswith(b'logs/')
-        and not p.lower().startswith(b'scripts/__pycache__/')]
+        and not is_helper_cache('.', p)]
 Path(sys.argv[1]).write_bytes(b'\0'.join(keep) + (b'\0' if keep else b''))
 PY_PATHS
   if [ -s "$paths" ]; then

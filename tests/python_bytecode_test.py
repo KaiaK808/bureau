@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shlex
 import shutil
 import subprocess
@@ -12,7 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'templates/scripts'
-CACHE_IGNORE = '[sS][cC][rR][iI][pP][tT][sS]/__[pP][yY][cC][aA][cC][hH][eE]__/'
+CACHE_IGNORE = 'scripts/__pycache__/'
 GIT_ENV = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1',
            'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
            'GIT_CONFIG_COUNT': '3', 'GIT_CONFIG_KEY_0': 'maintenance.auto', 'GIT_CONFIG_VALUE_0': 'false',
@@ -30,6 +31,7 @@ class BytecodeTests(unittest.TestCase):
         self.repo.mkdir()
         self.scripts = self.repo / 'scripts'
         shutil.copytree(SCRIPTS, self.scripts, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        self.case_sensitive = not (self.repo / 'Scripts').exists()
         self.env = dict(GIT_ENV)
         for name in list(self.env):
             if name.startswith('BUREAU_') or name in ('BASH_ENV', 'ENV', 'GIT_DIR', 'GIT_WORK_TREE',
@@ -64,6 +66,47 @@ class BytecodeTests(unittest.TestCase):
         caches = sorted(str(p.relative_to(self.repo)) for p in self.scripts.rglob('*')
                         if p.name == '__pycache__' or '__pycache__' in p.parts)
         self.assertEqual(caches, [], 'bytecode writer: ' + call + ': ' + ', '.join(caches))
+
+    def require_filesystem(self, *, case_sensitive):
+        if self.case_sensitive != case_sensitive:
+            needed = 'case-sensitive' if case_sensitive else 'case-insensitive'
+            actual = 'case-sensitive' if self.case_sensitive else 'case-insensitive'
+            self.skipTest('requires a ' + needed + ' filesystem; fixture volume is ' + actual)
+
+    def helper_cache(self):
+        return runpy.run_path(str(self.scripts / 'bureau-paths.py'))['is_helper_cache']
+
+    def exact_only_cache_control(self):
+        path = self.scripts / 'bureau-paths.py'
+        text = path.read_text()
+        anchor = "return os.path.samefile(Path(repo).joinpath(*parts[:2]), Path(repo) / 'scripts/__pycache__')"
+        self.assertEqual(text.count(anchor), 1)
+        path.write_text(text.replace(anchor, 'return False'))
+
+    def folded_cache_control(self):
+        path = self.scripts / 'bureau-paths.py'
+        text = path.read_text()
+        anchor = "if parts[:2] == ['scripts', '__pycache__']:"
+        self.assertEqual(text.count(anchor), 1)
+        path.write_text(text.replace(anchor, "if [part.lower() for part in parts[:2]] == ['scripts', '__pycache__']:"))
+
+    def test_missing_cache_directories_match_only_exact_components(self):
+        match = self.helper_cache()
+        for present in (False, True):
+            with self.subTest(directory_exists=present):
+                if present:
+                    (self.scripts / '__pycache__').mkdir()
+                self.assertTrue(match(self.repo, b'scripts/__pycache__/x.pyc'))
+                self.assertTrue(match(self.repo, b'scripts/__pycache__'))
+                if not present:
+                    self.assertFalse(match(self.repo, b'Scripts/__PyCaChE__/x.pyc'))
+                self.assertFalse(match(self.repo, b'application/__pycache__/x.pyc'))
+                self.assertFalse(match(self.repo, b'scripts/__pycache__-fixture/x.pyc'))
+                self.assertFalse(match(self.repo, b'scripts'))
+                self.assertFalse(match(self.repo, b''))
+        (self.scripts / '__pycache__').rmdir()
+        self.assertTrue(match(self.repo, b'scripts/__pycache__/deleted.pyc'))
+        self.assertFalse(match(self.repo, b'Scripts/__PyCaChE__/deleted.pyc'))
 
     def test_stage_python_entry_points_and_provider_commands(self):
         # Include every shipped Python entry point, even ones reached indirectly
@@ -221,11 +264,10 @@ print(json.dumps(dict(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=attempt)))
         return self.run_command(['/bin/bash', '-c', shell], status=status)
 
     def check_stage_commits_exclude_cache(self, directory):
-        cache = self.repo / directory / 'bureau-spec.cpython-test.pyc'
+        cache = self.repo / directory / 'x.pyc'
         cache.parent.mkdir(parents=True)
         cache.write_bytes(b'old cache\0')
-        # Stage the exact spelling even on macOS; Linux must exercise the same
-        # index paths without relying on a case-insensitive filesystem.
+        # Preserve the supplied spelling in Git's index even on macOS.
         self.run_command(['git', '-c', 'core.ignorecase=false', 'add', '--', str(cache.relative_to(self.repo))])
         self.run_command(['git', 'commit', '-qm', 'test: previously tracked cache'])
         for stage in ('spec', 'spec_review', 'ux', 'copy', 'implement', 'qa'):
@@ -236,7 +278,8 @@ print(json.dumps(dict(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=attempt)))
             self.commit_stage(stage)
             changed = self.run_command(['git', 'diff', '--name-only', '-z', before, 'HEAD']).stdout.split('\0')
             self.assertIn('source.txt', changed)
-            self.assertFalse(any(path.lower().startswith('scripts/__pycache__/') for path in changed), (stage, changed))
+            self.assertNotIn(str(cache.relative_to(self.repo)), changed, (stage, changed))
+            self.assertNotIn(str(fresh.relative_to(self.repo)), changed, (stage, changed))
             self.assertEqual(self.run_command(['git', 'show', 'HEAD:' + str(cache.relative_to(self.repo))]).stdout,
                              'old cache\0')
             self.assertEqual(self.run_command(['git', 'diff', '--cached', '--name-only']).stdout, '')
@@ -245,6 +288,8 @@ print(json.dumps(dict(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=attempt)))
         self.check_stage_commits_exclude_cache('scripts/__pycache__')
 
     def test_stage_commits_exclude_case_variant_cache(self):
+        self.require_filesystem(case_sensitive=False)
+        self.assertTrue(os.path.samefile(self.scripts, self.repo / 'Scripts'))
         self.check_stage_commits_exclude_cache('Scripts/__PyCaChE__')
 
     def test_ux_preserves_empty_artifact_commit(self):
@@ -256,7 +301,7 @@ print(json.dumps(dict(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=attempt)))
         self.assertEqual(self.run_command(['git', 'diff', '--name-only', self.head, 'HEAD']).stdout, '')
 
     def check_pre_staged_cache_refuses(self, directory):
-        cache = self.repo / directory / 'already-staged.pyc'
+        cache = self.repo / directory / 'x.pyc'
         cache.parent.mkdir(parents=True); cache.write_bytes(b'cache\0')
         (self.repo / 'source.txt').write_text('stage me too\n')
         self.run_command(['git', 'add', '--', 'source.txt'])
@@ -273,7 +318,75 @@ print(json.dumps(dict(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=attempt)))
         self.check_pre_staged_cache_refuses('scripts/__pycache__')
 
     def test_pre_staged_case_variant_cache_refuses_without_mutating_index(self):
+        self.require_filesystem(case_sensitive=False)
         self.check_pre_staged_cache_refuses('Scripts/__PyCaChE__')
+
+    def test_pre_staged_deleted_cache_refuses_without_mutating_index(self):
+        cache = self.scripts / '__pycache__/x.pyc'
+        cache.parent.mkdir(); cache.write_bytes(b'old cache\0')
+        self.run_command(['git', 'add', '--', 'scripts/__pycache__/x.pyc'])
+        self.run_command(['git', 'commit', '-qm', 'test: previously tracked cache'])
+        before_head = self.run_command(['git', 'rev-parse', 'HEAD']).stdout
+        shutil.rmtree(cache.parent)
+        self.run_command(['git', 'add', '-u'])
+        before_index = self.run_command(['git', 'write-tree']).stdout
+        self.commit_stage(status=24)
+        self.assertEqual(self.run_command(['git', 'write-tree']).stdout, before_index)
+        self.assertEqual(self.run_command(['git', 'rev-parse', 'HEAD']).stdout, before_head)
+
+    def install_scripts(self, target='codex'):
+        self.run_command([sys.executable, '-I', '-B', str(ROOT / 'scripts/bureau_install.py'), 'assets',
+                          '--repo', str(self.repo), '--target', target, '--scope', 'scripts', '--apply'])
+
+    def check_separate_application_cache_commits(self, *, pre_staged):
+        self.require_filesystem(case_sensitive=True)
+        cache = self.repo / 'Scripts/__pycache__/golden.pyc'
+        cache.parent.mkdir(parents=True); cache.write_bytes(b'fixture\0')
+        (self.scripts / '__pycache__').mkdir()
+        self.assertFalse(os.path.samefile(self.scripts / '__pycache__', cache.parent))
+        self.run_command(['git', 'add', '--', 'Scripts/__pycache__/golden.pyc', '.gitignore'])
+        self.run_command(['git', 'commit', '-qm', 'test: application fixture'])
+        for stage in ('spec', 'spec_review', 'ux', 'copy', 'implement', 'qa'):
+            before = self.run_command(['git', 'rev-parse', 'HEAD']).stdout.strip()
+            cache.write_bytes(stage.encode() + b'\0')
+            fresh = cache.with_name(stage + '.pyc'); fresh.write_bytes(b'new fixture\0')
+            self.run_command(['git', 'check-ignore', '-q', str(fresh.relative_to(self.repo))], status=1)
+            (self.repo / 'source.txt').write_text(stage + '\n')
+            if pre_staged:
+                self.run_command(['git', 'add', '--', 'Scripts/__pycache__/golden.pyc'])
+            self.commit_stage(stage)
+            changed = self.run_command(['git', 'diff', '--name-only', '-z', before, 'HEAD']).stdout.split('\0')
+            self.assertIn('Scripts/__pycache__/golden.pyc', changed, stage)
+            self.assertIn(str(fresh.relative_to(self.repo)), changed, stage)
+            self.assertIn('source.txt', changed, stage)
+            self.assertEqual(self.run_command(['git', 'show', 'HEAD:Scripts/__pycache__/golden.pyc']).stdout,
+                             stage + '\0')
+            self.assertEqual(self.run_command(['git', 'diff', '--cached', '--name-only']).stdout, '')
+
+    def test_separate_application_cache_commits_normally(self):
+        self.require_filesystem(case_sensitive=True)
+        self.install_scripts()
+        self.check_separate_application_cache_commits(pre_staged=False)
+
+    def test_pre_staged_separate_application_cache_commits_normally(self):
+        self.require_filesystem(case_sensitive=True)
+        self.install_scripts()
+        self.check_separate_application_cache_commits(pre_staged=True)
+
+    def test_separate_application_cache_filter_negative_control(self):
+        self.require_filesystem(case_sensitive=True)
+        # Install before mutating the copy so resync cannot repair the control.
+        self.install_scripts()
+        self.folded_cache_control()
+        with self.assertRaises(AssertionError):
+            self.check_separate_application_cache_commits(pre_staged=False)
+
+    def test_separate_application_cache_pre_staged_negative_control(self):
+        self.require_filesystem(case_sensitive=True)
+        self.install_scripts()
+        self.folded_cache_control()
+        with self.assertRaises(AssertionError):
+            self.check_separate_application_cache_commits(pre_staged=True)
 
     def test_spec_phase_checkpoint_commits_only_reserved_artifacts(self):
         branch = '001-t-1'
@@ -294,7 +407,7 @@ print(json.dumps(dict(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=attempt)))
     def test_commit_exclusion_negative_control(self):
         path = self.scripts / 'bureau-config.sh'
         text = path.read_text()
-        anchor = "and not p.lower().startswith(b'scripts/__pycache__/')]"
+        anchor = "and not is_helper_cache('.', p)]"
         self.assertEqual(text.count(anchor), 1)
         path.write_text(text.replace(anchor, ']'))
         with self.assertRaises(AssertionError):
@@ -305,32 +418,26 @@ print(json.dumps(dict(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=attempt)))
     def test_pre_staged_guard_negative_control(self):
         path = self.scripts / 'bureau-config.sh'
         text = path.read_text()
-        anchor = "if any(p.lower().startswith(b'scripts/__pycache__/') for p in names):"
+        anchor = "if any(is_helper_cache('.', p) for p in names):"
         self.assertEqual(text.count(anchor), 1)
         path.write_text(text.replace(anchor, 'if False:'))
         with self.assertRaises(AssertionError):
             self.test_pre_staged_cache_refuses_without_mutating_index()
 
     def test_case_variant_commit_filter_negative_control(self):
-        path = self.scripts / 'bureau-config.sh'
-        text = path.read_text()
-        anchor = "and not p.lower().startswith(b'scripts/__pycache__/')]"
-        self.assertEqual(text.count(anchor), 1)
-        path.write_text(text.replace(anchor, anchor.replace('p.lower()', 'p')))
+        self.require_filesystem(case_sensitive=False)
+        self.exact_only_cache_control()
         with self.assertRaises(AssertionError):
             self.test_stage_commits_exclude_case_variant_cache()
         self.assertIn('Scripts/__PyCaChE__/new\ncache.pyc', self.run_command(
             ['git', 'ls-files', '-z', '--', 'Scripts/__PyCaChE__/']).stdout.split('\0'))
 
     def test_case_variant_pre_staged_guard_negative_control(self):
-        path = self.scripts / 'bureau-config.sh'
-        text = path.read_text()
-        anchor = "if any(p.lower().startswith(b'scripts/__pycache__/') for p in names):"
-        self.assertEqual(text.count(anchor), 1)
-        path.write_text(text.replace(anchor, anchor.replace('p.lower()', 'p')))
+        self.require_filesystem(case_sensitive=False)
+        self.exact_only_cache_control()
         with self.assertRaises(AssertionError):
             self.test_pre_staged_case_variant_cache_refuses_without_mutating_index()
-        self.assertIn('Scripts/__PyCaChE__/already-staged.pyc',
+        self.assertIn('Scripts/__PyCaChE__/x.pyc',
                       self.run_command(['git', 'ls-tree', '-r', '--name-only', 'HEAD']).stdout.splitlines())
 
     def test_installer_resync_ignore_is_idempotent_and_has_negative_control(self):
@@ -354,7 +461,7 @@ print(json.dumps(dict(BUREAU_RUN_ID=run, BUREAU_STAGE_ATTEMPT_ID=attempt)))
         code = '''import pathlib, sys
 path = pathlib.Path(sys.argv[1])
 source = path.read_text()
-anchor = '(MANIFEST, "[sS][cC][rR][iI][pP][tT][sS]/__[pP][yY][cC][aA][cC][hH][eE]__/")'
+anchor = '(MANIFEST, "scripts/__pycache__/")'
 assert source.count(anchor) == 1
 sys.argv = sys.argv[1:]
 exec(compile(source.replace(anchor, '(MANIFEST,)'), str(path), 'exec'),
@@ -364,33 +471,25 @@ exec(compile(source.replace(anchor, '(MANIFEST,)'), str(path), 'exec'),
         with self.assertRaises(AssertionError):
             self.assertIn(CACHE_IGNORE, ignore.read_text().splitlines())
 
-    def test_installer_ignore_covers_case_variants_independently_of_core_ignorecase(self):
+    def test_installer_ignore_preserves_separate_application_cache_with_negative_control(self):
+        self.require_filesystem(case_sensitive=True)
         ignore = self.repo / '.gitignore'
         ignore.write_text('user-rule\nscripts/__pycache__/\n')
-        probe = 'sCrIpTs/__PyCaChE__/probe.pyc'
-        # The old literal rule depends on core.ignorecase. Command-local
-        # overrides demonstrate both modes without changing any Git config.
-        self.run_command(['git', '-c', 'core.ignorecase=true', 'check-ignore', '-q', probe])
-        self.run_command(['git', '-c', 'core.ignorecase=false', 'check-ignore', '-q', probe], status=1)
-        install = [sys.executable, '-I', '-B', str(ROOT / 'scripts/bureau_install.py'), 'assets',
-                   '--repo', str(self.repo), '--target', 'codex', '--scope', 'scripts', '--apply']
+        probe = 'Scripts/__pycache__/golden.pyc'
         for _ in range(2):
-            self.run_command(install)
+            self.install_scripts()
         lines = ignore.read_text().splitlines()
         self.assertEqual(lines.count(CACHE_IGNORE), 1)
-        self.assertIn('scripts/__pycache__/', lines)  # Preserve the adopter's old rule.
         self.assertIn('user-rule', lines)
-        for mode in ('true', 'false'):
-            self.run_command(['git', '-c', 'core.ignorecase=' + mode, 'check-ignore', '-q', probe])
-            self.run_command(['git', '-c', 'core.ignorecase=' + mode, 'check-ignore', '-q',
-                              'application/__pycache__/probe.pyc'], status=1)
-        # Restore just the old rule: the mixed-case check must turn red again.
-        ignore.write_text('\n'.join(line for line in lines if line != CACHE_IGNORE) + '\n')
+        self.run_command(['git', 'check-ignore', '-q', 'scripts/__pycache__/probe.pyc'])
+        self.run_command(['git', 'check-ignore', '-q', probe], status=1)
+        # Restore round 2's overbroad rule: a distinct fixture becomes hidden.
+        ignore.write_text(ignore.read_text() + '[sS][cC][rR][iI][pP][tT][sS]/__[pP][yY][cC][aA][cC][hH][eE]__/\n')
         with self.assertRaises(AssertionError):
-            self.run_command(['git', '-c', 'core.ignorecase=false', 'check-ignore', '-q', probe])
+            self.run_command(['git', 'check-ignore', '-q', probe], status=1)
 
     def check_doctor_tracked_cache(self, directory):
-        cache = self.repo / directory / 'bureau-spec.pyc'
+        cache = self.repo / directory / 'x.pyc'
         cache.parent.mkdir(parents=True); cache.write_bytes(b'cache\0')
         command = ['bureau-doctor.py', '--repo', str(self.repo)]
         def warnings():
@@ -402,29 +501,50 @@ exec(compile(source.replace(anchor, '(MANIFEST,)'), str(path), 'exec'),
         # The warning is required even when a resync already added the ignore.
         (self.repo / '.gitignore').write_text('scripts/__pycache__/\n')
         self.assertTrue(any('git rm --cached' in warning for warning in warnings()))
+        if directory == 'scripts/__pycache__':
+            shutil.rmtree(cache.parent)
+            self.assertTrue(any('git rm --cached' in warning for warning in warnings()))
+            cache.parent.mkdir(); cache.write_bytes(b'cache\0')
         path = self.scripts / 'bureau-doctor.py'
         text = path.read_text(); self.assertEqual(text.count('    if any(tracked_cache):'), 1)
         path.write_text(text.replace('    if any(tracked_cache):', '    if False:'))
         with self.assertRaises(AssertionError):
             self.assertTrue(any('git rm --cached' in warning for warning in warnings()))
-        self.run_command(['git', 'rm', '--cached', '-r', '--', ':(icase)scripts/__pycache__/'])
+        warning = next(w for w in found if 'git rm --cached' in w)
+        cleanup = warning.split('then run ', 1)[1].split(' once and commit', 1)[0]
+        self.run_command(shlex.split(cleanup))
         self.assertTrue(cache.is_file())
-        self.assertEqual(self.run_command(['git', 'ls-files', '-z', '--', ':(icase)scripts/__pycache__/']).stdout, '')
+        self.assertEqual(self.run_command(['git', 'ls-files', '-z', '--', ':(literal)' + directory + '/']).stdout, '')
 
     def test_doctor_warns_only_for_tracked_cache_with_negative_control(self):
         self.check_doctor_tracked_cache('scripts/__pycache__')
 
     def test_doctor_warns_for_case_variant_tracked_cache(self):
+        self.require_filesystem(case_sensitive=False)
         self.check_doctor_tracked_cache('Scripts/__PyCaChE__')
 
     def test_doctor_case_variant_negative_control(self):
-        path = self.scripts / 'bureau-doctor.py'
-        text = path.read_text()
-        anchor = "'--', ':(icase)scripts/__pycache__/'"
-        self.assertEqual(text.count(anchor), 1)
-        path.write_text(text.replace(anchor, "'--', 'scripts/__pycache__/'"))
+        self.require_filesystem(case_sensitive=False)
+        self.exact_only_cache_control()
         with self.assertRaises(AssertionError):
             self.test_doctor_warns_for_case_variant_tracked_cache()
+
+    def test_doctor_ignores_separate_application_cache(self):
+        self.require_filesystem(case_sensitive=True)
+        cache = self.repo / 'Scripts/__pycache__/golden.pyc'
+        cache.parent.mkdir(parents=True); cache.write_bytes(b'fixture\0')
+        (self.scripts / '__pycache__').mkdir()
+        self.assertFalse(os.path.samefile(self.scripts / '__pycache__', cache.parent))
+        self.run_command(['git', 'add', '--', str(cache.relative_to(self.repo))])
+        self.run_command(['git', 'commit', '-qm', 'test: application fixture'])
+        warnings = json.loads(self.python('bureau-doctor.py', '--repo', str(self.repo)).stdout)['warnings']
+        self.assertFalse(any('git rm --cached' in w for w in warnings), warnings)
+
+    def test_doctor_separate_application_cache_negative_control(self):
+        self.require_filesystem(case_sensitive=True)
+        self.folded_cache_control()
+        with self.assertRaises(AssertionError):
+            self.test_doctor_ignores_separate_application_cache()
 
     def test_shell_environment_and_isolated_python_negative_controls(self):
         importer = ("import importlib.util; from pathlib import Path; "

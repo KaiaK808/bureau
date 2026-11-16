@@ -303,9 +303,7 @@ def assets(repo, args, manifest, targets):
     manifest_path = destination(repo, MANIFEST)
     ignore_path = destination(repo, ".gitignore")
     ignore = ignore_path.read_bytes() if ignore_path.exists() else b""
-    # Bracket pairs also cover existing Scripts/ directories when the adopter
-    # has core.ignorecase=false; preserve any older literal ignore entry.
-    for entry in (MANIFEST, "[sS][cC][rR][iI][pP][tT][sS]/__[pP][yY][cC][aA][cC][hH][eE]__/"):
+    for entry in (MANIFEST, "scripts/__pycache__/"):
         if entry not in ignore.decode().splitlines():
             ignore = ignore.rstrip(b"\n") + b"\n" + entry.encode() + b"\n"
     for path, data, executable in writes:

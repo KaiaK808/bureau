@@ -346,7 +346,7 @@ class ApprovalIntegration(Fixture):
         files = {str(p.relative_to(repo)) for p in repo.rglob('*') if p.is_file() and '.git' not in p.relative_to(repo).parts}
         self.assertEqual(files, {'.bureau-install.json', '.gitignore', '.github/workflows/bureau-approval.yml'})
         self.assertEqual((repo / '.gitignore').read_text().split(),
-                         ['.bureau-install.json', '[sS][cC][rR][iI][pP][tT][sS]/__[pP][yY][cC][aA][cC][hH][eE]__/'])
+                         ['.bureau-install.json', 'scripts/__pycache__/'])
         self.assertEqual((repo / '.github/workflows/bureau-approval.yml').read_bytes(), WORKFLOW.read_bytes())
         manifest = json.loads((repo / '.bureau-install.json').read_text())
         self.assertEqual(set(manifest['files']), {'.github/workflows/bureau-approval.yml'})

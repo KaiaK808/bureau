@@ -4,10 +4,28 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
+
+
+def is_helper_cache(repo, path):
+    """Match the installed cache by exact components or filesystem identity.
+
+    All installer targets put helpers in scripts/. Missing directories (for
+    example staged deletions) can only be identified by the exact spelling.
+    """
+    parts = os.fsdecode(path).split('/')
+    if len(parts) < 2:
+        return False
+    if parts[:2] == ['scripts', '__pycache__']:
+        return True
+    try:
+        return os.path.samefile(Path(repo).joinpath(*parts[:2]), Path(repo) / 'scripts/__pycache__')
+    except OSError:
+        return False
 
 
 def normalize(value, prefix=''):
