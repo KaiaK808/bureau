@@ -108,6 +108,16 @@ class BytecodeTests(unittest.TestCase):
         self.assertTrue(match(self.repo, b'scripts/__pycache__/deleted.pyc'))
         self.assertFalse(match(self.repo, b'Scripts/__PyCaChE__/deleted.pyc'))
 
+    def test_directory_identity_matches_on_every_filesystem_with_negative_control(self):
+        # A symlinked alias exercises the samefile branch on case-sensitive
+        # Linux CI too, where the case-variant tests skip.
+        (self.scripts / '__pycache__').mkdir()
+        (self.repo / 'helpers-alias').symlink_to('scripts', target_is_directory=True)
+        self.assertTrue(self.helper_cache()(self.repo, b'helpers-alias/__pycache__/x.pyc'))
+        self.assertFalse(self.helper_cache()(self.repo, b'helpers-alias/other/x.pyc'))
+        self.exact_only_cache_control()
+        self.assertFalse(self.helper_cache()(self.repo, b'helpers-alias/__pycache__/x.pyc'))
+
     def test_stage_python_entry_points_and_provider_commands(self):
         # Include every shipped Python entry point, even ones reached indirectly
         # by the provider (gates), scanner wrappers and doctor.
