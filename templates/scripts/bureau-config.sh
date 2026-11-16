@@ -1118,7 +1118,7 @@ private = [p for p in names if p in (b'.env', b'.bureau.json', b'.bureau-install
 if private:
     print('Refusing to commit staged private Bureau files; inspect and unstage them before retrying.', file=sys.stderr)
     sys.exit(24)
-if any(p.startswith(b'scripts/__pycache__/') for p in names):
+if any(p.lower().startswith(b'scripts/__pycache__/') for p in names):
     print('Refusing to commit staged Bureau bytecode; unstage scripts/__pycache__/ before retrying.', file=sys.stderr)
     sys.exit(24)
 PY_STAGED
@@ -1129,7 +1129,8 @@ import subprocess, sys
 from pathlib import Path
 names = subprocess.check_output(['git', 'ls-files', '-z', '--modified', '--deleted', '--others', '--exclude-standard']).split(b'\0')
 keep = [p for p in names if p and p not in (b'.env', b'.bureau.json', b'.bureau-install.json')
-        and not p.startswith((b'logs/', b'scripts/__pycache__/'))]
+        and not p.startswith(b'logs/')
+        and not p.lower().startswith(b'scripts/__pycache__/')]
 Path(sys.argv[1]).write_bytes(b'\0'.join(keep) + (b'\0' if keep else b''))
 PY_PATHS
   if [ -s "$paths" ]; then

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9acdf0cd8306b851a0a580e6ef6c27689cad7481458cf1c7ad996ba6a0528be2">
+<meta name="bureau-source-sha256" content="065596822ed85c8dfd317cb37bba2f2d953085ee483e192e03ff6424d3ed0a9a">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,13 +24,15 @@ making remote calls.</p>
 <hr />
 <h2 id="tracked-python-bytecode">Tracked Python bytecode</h2>
 <p>If doctor reports tracked files under
-<code>scripts/__pycache__/</code>, compare local runtime drift, resync
+<code>scripts/__pycache__/</code> (including case variants such as
+<code>Scripts/__PyCaChE__/</code>), compare local runtime drift, resync
 the scripts scope, restart stage drivers, then run
-<code>git rm --cached -r -- scripts/__pycache__/</code> once and commit
-that removal. Resync adds the ignore rule but cannot remove an existing
-tracked cache. A stage that encounters pre-staged Bureau bytecode
-refuses with exit 24 without changing the index; inspect and unstage
-those paths before retrying the stage.</p>
+<code>git rm --cached -r -- ':(icase)scripts/__pycache__/'</code> once
+and commit that removal. Resync adds a case-insensitive ignore rule
+independent of <code>core.ignorecase</code> but cannot remove an
+existing tracked cache. A stage that encounters pre-staged Bureau
+bytecode refuses with exit 24 without changing the index; inspect and
+unstage those paths before retrying the stage.</p>
 <h2 id="setup">Setup</h2>
 <h3 id="missing-tool-at-phase-0"><code>MISSING: &lt;tool&gt;</code> at
 Phase 0</h3>

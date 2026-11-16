@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="10b28166cb85c41856b30f552f92154763bcf694f1e1ac6b2a9237218342a38a">
+<meta name="bureau-source-sha256" content="9562170dfcd0c7313448ca038e30ec65174b4c04718f4a794c5bdc7ba955d340">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -390,20 +390,23 @@ children, including provider commands and configured gates under
 also pass <code>-B</code>, because <code>-I</code> ignores Python
 environment variables, and sibling importers set
 <code>sys.dont_write_bytecode = True</code> before loading helpers.
-Installer applies, including scoped resyncs, add
-<code>scripts/__pycache__/</code> to the adopting repository’s
-<code>.gitignore</code> without duplicating the entry. Shell stage
-commits exclude this directory even when it is not ignored or was
-already tracked; pre-staged cache paths refuse with exit 24 and leave
-the index unchanged. Spec checkpoint commits select only their reserved
-feature directory.</p>
+Installer applies, including scoped resyncs, add a case-insensitive rule
+for <code>scripts/__pycache__/</code> to the adopting repository’s
+<code>.gitignore</code> without duplicating the entry. Its bracket pairs
+cover either spelling of each letter regardless of
+<code>core.ignorecase</code>; existing literal rules are preserved.
+Shell stage commits exclude this directory in any letter case even when
+it is not ignored or was already tracked; pre-staged cache paths refuse
+with exit 24 and leave the index unchanged. Spec checkpoint commits
+select only their reserved feature directory.</p>
 <p><strong>Upgrade:</strong> compare installation drift, resync the
 scripts scope and restart stage drivers. If a cache is already tracked,
-run <code>git rm --cached -r -- scripts/__pycache__/</code> once and
-commit the removal; the ignore rule cannot untrack it. Doctor warns
-until the tracked paths are removed. The fixture regression tests
-exercise entry points, review evidence and provider gates without a
-model or network; they do not identify the writer of a historical
+run <code>git rm --cached -r -- ':(icase)scripts/__pycache__/'</code>
+once and commit the removal; this also selects case variants such as
+<code>Scripts/__PyCaChE__/</code>. The ignore rule cannot untrack files.
+Doctor warns until the tracked paths are removed. The fixture regression
+tests exercise entry points, review evidence and provider gates without
+a model or network; they do not identify the writer of a historical
 adopting-repository commit.</p>
 <h2 id="ticket-accounting">Ticket accounting</h2>
 <p>Optional <code>agents.ticket_budget</code> bounds a ticket's total
