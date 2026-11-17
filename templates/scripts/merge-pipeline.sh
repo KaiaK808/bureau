@@ -12,7 +12,8 @@
 #   4. PR base SHA == origin/<base-ref> HEAD     (NRSR: pr_base_is_current,
 #                                                  catches mergeStateStatus's
 #                                                  async-cache race)
-#   5. Latest "Code Review v2" verdict on the PR was APPROVE / AUTO_APPROVE
+#   5. Latest unedited "Code Review v2" APPROVE / AUTO_APPROVE names this head
+#      and the current base branch (the reviewed base SHA may have advanced)
 #   6. No `needs-human`, `blocked`, or `wip` label on the PR
 #   7. Zero unresolved review threads (GraphQL: pullRequest.reviewThreads)
 #
@@ -47,7 +48,9 @@
 # stage resolves) and `25` when a gate is decided against the merge (a failing
 # check, a check queued past agents.merge_ci_queued_grace_seconds that no runner
 # took, conflicts nothing here resolves, a stale base, no APPROVE, unresolved
-# threads, a PR that is not open). A shepherd that sets
+# threads, a PR that is not open). A stale approval instead returns the ticket
+# to Build Review with exit 20 and a `refreshed` report, without needs-human.
+# A shepherd that sets
 # BUREAU_MERGE_GATE_REPORT gets the outcome and the gate lines in that file.
 # The merge stage's own run (not the inline merge, not a dry run) also marks a gate
 # that ended with 2 or 25 for the head it judged (merge_gate_mark, v3.2): while that
@@ -224,18 +227,20 @@ evaluate_merge_gates() {
   # <head-sha>: the head commit this evaluation is about; CI is judged on it and the
   # merge is pinned to it (--match-head-commit). An empty one cannot be pinned: not yet.
   local pr="$1" head="${2:-}"
-  local _pr_data _pr_state _merge_state _labels_csv _pr_read=ok
+  local _pr_data _pr_state _merge_state _labels_csv _base_ref _pr_read=ok
   # A read that fails is not a verdict about the PR: it becomes a *_read line,
   # which merge_gate_outcome counts as "not yet", never as "PR not open" or
   # "no APPROVE".
-  if ! _pr_data=$(gh pr view "$pr" --json state,mergeStateStatus,labels 2>/dev/null) \
-     || ! _pr_state=$(printf '%s' "$_pr_data" | jq -er '.state | strings') ; then
+  if ! _pr_data=$(gh pr view "$pr" --json state,mergeStateStatus,labels,baseRefName 2>/dev/null) \
+     || ! _pr_state=$(printf '%s' "$_pr_data" | jq -er '.state | strings') \
+     || ! _base_ref=$(printf '%s' "$_pr_data" | jq -er '.baseRefName | strings | select(length > 0)'); then
     _pr_read=failed; _pr_data='{}'; _pr_state=""
   fi
   _merge_state=$(printf '%s' "$_pr_data" | jq -r '.mergeStateStatus // ""' 2>/dev/null || true)
   _labels_csv=$(printf '%s' "$_pr_data" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null || true)
 
-  local owner_repo owner repo unresolved verdict _review_body _threads_read=ok _verdict_read=ok
+  local owner_repo owner repo unresolved verdict _review_body _review_comment _review_id _review_edit
+  local _threads_read=ok _verdict_read=ok
   owner_repo=$(_bureau_gh_owner_repo)
   owner="${owner_repo%/*}"
   repo="${owner_repo#*/}"
@@ -246,12 +251,24 @@ evaluate_merge_gates() {
       | jq -e '.data.repository.pullRequest.reviewThreads.nodes | [.[] | select(.isResolved == false)] | length' 2>/dev/null); then
     _threads_read=failed; unresolved=0
   fi
-  if _review_body=$(gh pr view "$pr" --json comments \
-      --jq '[.comments[] | select(.body | test("Code Review v2"))] | sort_by(.createdAt) | last | .body // ""' 2>/dev/null); then
+  if _review_comment=$(gh pr view "$pr" --json comments \
+      --jq '[.comments[] | select(.body | test("Code Review v2"))] | sort_by(.createdAt) | last // {body:""}' 2>/dev/null) \
+      && _review_body=$(printf '%s' "$_review_comment" | jq -er '.body | strings'); then
     verdict=$(printf '%s\n' "$_review_body" \
       | grep -oE '\*\*Verdict\*\*[[:space:]]*:[[:space:]]*[A-Z_]+' \
       | grep -oE 'APPROVE|AUTO_APPROVE|REQUEST_CHANGES|BLOCK' \
       | sed -n 1p || true)
+    if [[ "$verdict" =~ ^(APPROVE|AUTO_APPROVE)$ ]]; then
+      # gh's comment projection omits lastEditedAt. Read that exact node, never
+      # another approval, and compare its body too to catch an edit between reads.
+      if ! _review_id=$(printf '%s' "$_review_comment" | jq -er '.id | strings | select(length > 0)') \
+         || ! _review_edit=$(gh api graphql \
+           -f query='query($id:ID!){node(id:$id){... on IssueComment{body lastEditedAt}}}' \
+           -f id="$_review_id" 2>/dev/null \
+           | jq -ce 'select((.errors // []) == []) | .data.node | select(has("lastEditedAt") and (.body | type == "string"))' 2>/dev/null); then
+        _verdict_read=failed
+      fi
+    fi
   else
     _verdict_read=failed; verdict=""
   fi
@@ -267,7 +284,7 @@ evaluate_merge_gates() {
   local _blockers=()
   [ -n "$head" ] || _blockers+=("head_read: the PR's head commit could not be read")
   if [ "$_pr_read" = failed ]; then
-    _blockers+=("pr_read: the PR's state, mergeStateStatus and labels could not be read")
+    _blockers+=("pr_read: the PR's state, mergeStateStatus, labels and base branch could not be read")
   else
     [ "$_pr_state" = "OPEN" ]      || _blockers+=("pr_state: PR state=$_pr_state (need OPEN)")
     if [ "$_merge_state" = "DIRTY" ] && merge_dirty_is_rebasable; then
@@ -281,6 +298,35 @@ evaluate_merge_gates() {
     _blockers+=("verdict_read: the PR's review comments could not be read")
   elif ! [[ "$verdict" =~ ^(APPROVE|AUTO_APPROVE)$ ]]; then
     _blockers+=("verdict: latest Code Review v2 verdict=${verdict:-none}")
+  elif [ -n "$head" ] && [ "$_pr_read" = ok ]; then
+    local _head_line _target_line _approved_head _approved_base _binding_error=""
+    local _head_pattern='^\*\*Reviewed head\*\*: `([0-9a-f]{40})`$'
+    local _target_pattern='^\*\*Target\*\*: `([^`]+)` at `([0-9a-f]{40})`$'
+    # Whole-line matching rejects missing, malformed and duplicate lines,
+    # including one valid line next to a second malformed candidate.
+    _head_line=$(printf '%s\n' "$_review_body" | sed -n '/^\*\*Reviewed head\*\*/p')
+    _target_line=$(printf '%s\n' "$_review_body" | sed -n '/^\*\*Target\*\*/p')
+    if [[ "$_head_line" =~ $_head_pattern ]]; then
+      _approved_head="${BASH_REMATCH[1]}"
+    else
+      _binding_error="Reviewed head line missing, malformed or duplicated (current head $head)"
+    fi
+    if [[ "$_target_line" =~ $_target_pattern ]]; then
+      _approved_base="${BASH_REMATCH[1]}"
+    else
+      _binding_error="${_binding_error:+$_binding_error; }Target line missing, malformed or duplicated (current head $head, base $_base_ref)"
+    fi
+    if [ -z "$_binding_error" ]; then
+      if [ "$(printf '%s' "$_review_edit" | jq -r '.lastEditedAt')" != null ] \
+         || [ "$(printf '%s' "$_review_edit" | jq -r '.body')" != "$_review_body" ]; then
+        _binding_error="selected approval comment was edited (approved head $_approved_head, current head $head)"
+      elif [ "$_approved_head" != "$head" ]; then
+        _binding_error="approved head $_approved_head differs from current head $head"
+      elif [ "$_approved_base" != "$_base_ref" ]; then
+        _binding_error="approved Target branch $_approved_base differs from current base branch $_base_ref (approved head $_approved_head, current head $head)"
+      fi
+    fi
+    [ -z "$_binding_error" ] || _blockers+=("approval_binding: $_binding_error; fresh Build Review required")
   fi
   if [ "$_threads_read" = failed ]; then
     _blockers+=("threads_read: the PR's review threads could not be read")
@@ -431,6 +477,46 @@ merge_gate_mark() {
     || echo "  WARN: could not mark the merge gate wait of $ISSUE; the merge picker takes it again on its next poll" >&2
 }
 
+# A stale approval is ordinary fresh-review work, like our own base refresh.
+# Reuse the gate comment key, so repeated runs at this head do not post again.
+# Both gate passes and both callers take this path; no wait mark or human hold.
+refresh_stale_approval() {
+  local gates="$1" lines body last_body last_key current_key
+  lines=$(printf '%s\n' "$gates" | sed -n 's/^approval_binding: /- /p')
+  [ -n "$lines" ] || return 0
+  printf '  %s\n' "$gates"
+  if [ "$DRY_RUN" = true ]; then
+    echo '  [dry-run] would return the ticket to Build Review for a fresh review (exit 20).'
+    exit 0
+  fi
+  body="🛑 **Bureau merge gate** — PR #$PR_NUMBER needs a fresh Code Review.
+
+Outcome: refreshed — fresh Build Review required
+
+$lines
+
+The approval does not bind the current PR head and target. Nothing was merged; a fresh review is needed."
+  if ! last_body=$(gh pr view "$PR_NUMBER" --json comments \
+      --jq '[.comments[] | select(.body | test("Bureau merge gate"))] | sort_by(.createdAt) | last | .body // ""'); then
+    merge_gate_exit not-yet "verdict_read: the PR's review comments could not be read"
+  fi
+  last_key=$(merge_gate_key "$(sed -n 's/^Outcome: \([a-z-]*\).*/\1/p' <<< "$last_body" | sed -n 1p)" "$last_body")
+  current_key=$(merge_gate_key refreshed "$lines")
+  bureau_ticket_checkpoint "$ISSUE" strict
+  move_issue "$ISSUE" "$BUREAU_STATE_BUILD_REVIEW"
+  if [ "$current_key" != "$last_key" ]; then
+    gh pr comment "$PR_NUMBER" --body "$body" || true
+  else
+    echo '  Stale approval unchanged since last bot comment — skipping post.'
+  fi
+  merge_gate_mark clear
+  if [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ]; then
+    printf 'refreshed\n%s\n' "$gates" > "$BUREAU_MERGE_GATE_REPORT"
+  fi
+  echo '  Stale approval — fresh Build Review required (exit 20).'
+  exit 20
+}
+
 # pr_head_sha <pr>: the PR's current head commit, or nothing when it cannot be read.
 pr_head_sha() {
   local sha
@@ -453,6 +539,7 @@ merge_record_gate() {
   fi
   if [ -n "$2" ]; then
     if [ "$(printf '%s\n' "$2" | merge_gate_outcome)" = not-yet ]; then rc=2; else rc=25; fi
+    case "$2" in "approval_binding: "*|*$'\n'"approval_binding: "*) rc=20 ;; esac
   fi
   [[ "$1" =~ ^[0-9a-f]{40,64}$ ]] || kind=artifact
   bureau_evidence evidence-gate --kind "$kind" --path "$file" --head "$1" --end-head "$1" \
@@ -511,6 +598,7 @@ refresh_owned_merge_base() {
 GATE_HEAD=$(pr_head_sha "$PR_NUMBER")
 GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$GATE_HEAD" || true)
 merge_record_gate "$GATE_HEAD" "$GATE_OUT" || true
+refresh_stale_approval "$GATE_OUT"
 refresh_owned_merge_base "$GATE_OUT"
 echo ""
 echo "  ── Gate report ──"
@@ -740,6 +828,7 @@ MERGE_HEAD=$(pr_head_sha "$PR_NUMBER")
 GATE_HEAD="$MERGE_HEAD"
 JIT_GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$MERGE_HEAD" || true)
 merge_record_gate "$MERGE_HEAD" "$JIT_GATE_OUT" || true
+refresh_stale_approval "$JIT_GATE_OUT"
 refresh_owned_merge_base "$JIT_GATE_OUT"
 if [ -n "$JIT_GATE_OUT" ]; then
   echo "  Gate regressed between initial check and merge — aborting (will re-evaluate next tick):"

@@ -37,7 +37,7 @@ new_sandbox() {
   export BUREAU_STUB_STATE_MERGE=state-merge BUREAU_STUB_AGENT_ENABLED=merge BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0
   pr2_gate_setup
   # The review's APPROVE the gate reads.
-  jq -n '[{createdAt: "2026-09-29T09:00:00Z", body: "## Code Review v2 — EXP-802\n\n**Verdict**: APPROVE"}]' > "$PR2_GH/comments.json"
+  pr2_approval
 }
 gate() {  # runs the merge stage; sets LAST_RC, OUTCOME and LINES
   export BUREAU_MERGE_GATE_REPORT="$SANDBOX/gate.report"
@@ -260,5 +260,128 @@ echo 1111111111111111111111111111111111111111 > "$PR2_GH/move_head_on_merge"
 gate
 [ "$LAST_RC" = 0 ] && pr2_merged || fail "negative control: the unpinned merge should merge the moved head (rc $LAST_RC)"
 echo 'PASS negative controls: v3.0.2 keeps the CI gate under false, waits forever without checks, merges without checks under "abc", and merges a head that moved after the gate'
+
+# Each binding scenario uses the real merge stage, real local commits and a
+# file-only origin. Repeat the identical assertions with binding reverted in
+# that sandbox's runtime; they must fail. Compatibility cases pair their
+# unchanged behaviour with a stale-head probe, since old code also passes the
+# compatibility assertion alone.
+binding_refreshed() {
+  [ "$LAST_RC" = 20 ] && [ "$OUTCOME" = refreshed ] && ! pr2_merged \
+    && grep -q '^approval_binding: ' <<< "$LINES" \
+    && grep -q $'move_issue\t'"$ISSUE"$'\tstate-build-review' "$SANDBOX/calls.log" \
+    && ! grep -q $'add_issue_label\t'"$ISSUE"$'\tneeds-human' "$SANDBOX/calls.log" \
+    && { [ ! -f "$SANDBOX/.git/bureau/merge-gate-waits.json" ] \
+      || jq -e --arg i "$ISSUE" 'has($i) | not' "$SANDBOX/.git/bureau/merge-gate-waits.json" >/dev/null; }
+}
+binding_gate_comments() { jq '[.[] | select(.body | test("Bureau merge gate"))] | length' "$PR2_GH/comments.json"; }
+binding_case() {
+  local scenario="$1" control="$2" approved current
+  new_sandbox
+  [ "$control" != reverted ] || pr2_revert_approval_binding
+  approved=$(jq -r .headRefOid "$PR2_GH/pr.json")
+  case "$scenario" in
+    dedicated)
+      pr2_push_head
+      current=$(jq -r .headRefOid "$PR2_GH/pr.json")
+      gate; binding_refreshed || return 1
+      grep -qF "approved head $approved differs from current head $current" <<< "$LINES" || return 1
+      [ "$(binding_gate_comments)" = 1 ] || return 1
+      gate; binding_refreshed || return 1
+      [ "$(binding_gate_comments)" = 1 ] || return 1
+      ;;
+    jit)
+      printf 'source "%s"\npr2_push_head\n' "$LIB_DIR/pr2-gate.sh" > "$SANDBOX/push-head.sh"
+      echo "$SANDBOX/push-head.sh" > "$PR2_GH/after_initial_head"
+      gate; binding_refreshed || return 1
+      grep -q 'all gates PASS' <<< "$LAST_STDOUT" || return 1
+      [ "$(pr2_gate_reads)" = 2 ] || return 1
+      current=$(jq -r .headRefOid "$PR2_GH/pr.json")
+      grep -qF "approved head $approved differs from current head $current" <<< "$LINES" || return 1
+      ;;
+    newest)
+      pr2_push_head; pr2_approval
+      # Deliberately reverse array order: createdAt, not list order, decides.
+      jq --arg h "$approved" '. + [(.[] | .id="newest" | .createdAt="2026-09-29T09:01:00Z" |
+          .body |= sub("\\*\\*Reviewed head\\*\\*: `[^`]+`"; "**Reviewed head**: `" + $h + "`"))] | reverse' \
+        "$PR2_GH/comments.json" > "$PR2_GH/comments.tmp" && mv "$PR2_GH/comments.tmp" "$PR2_GH/comments.json"
+      gate; binding_refreshed || return 1
+      grep -qF "approved head $approved differs" <<< "$LINES" || return 1
+      ;;
+    retarget)
+      git -C "$SANDBOX" push -q origin 'origin/main:refs/heads/release'
+      jq '.baseRefName="release"' "$PR2_GH/pr.json" > "$PR2_GH/pr.tmp" && mv "$PR2_GH/pr.tmp" "$PR2_GH/pr.json"
+      gate; binding_refreshed || return 1
+      grep -q 'approved Target branch main differs from current base branch release' <<< "$LINES" || return 1
+      ;;
+    missing)
+      jq '.[0].body |= (split("\n") | map(select(startswith("**Reviewed head**") | not)) | join("\n"))' \
+        "$PR2_GH/comments.json" > "$PR2_GH/comments.tmp" && mv "$PR2_GH/comments.tmp" "$PR2_GH/comments.json"
+      gate; binding_refreshed || return 1
+      grep -q 'Reviewed head line missing' <<< "$LINES" || return 1
+      ;;
+    matching|advanced-base|auto-approve)
+      [ "$scenario" != auto-approve ] || pr2_approval AUTO_APPROVE
+      if [ "$scenario" = advanced-base ]; then
+        current=$(git -C "$SANDBOX" rev-parse HEAD)
+        git -C "$SANDBOX" push -q origin 'HEAD:refs/heads/main'
+        jq --arg h "$current" '.baseRefOid=$h' "$PR2_GH/pr.json" > "$PR2_GH/pr.tmp" && mv "$PR2_GH/pr.tmp" "$PR2_GH/pr.json"
+        jq -n --arg h "$current" '{commit:{sha:$h}}' > "$PR2_GH/branch.json"
+      fi
+      gate
+      [ "$LAST_RC" = 0 ] && pr2_merged || return 1
+      grep -q -- '--match-head-commit'$'\t'"$approved" "$SANDBOX/gh_calls.log" || return 1
+      # The same approval must stop covering the next pushed commit.
+      pr2_push_head; gate; binding_refreshed || return 1
+      ;;
+    comments-read|head-read|metadata-read)
+      pr2_push_head
+      case "$scenario" in
+        comments-read) touch "$PR2_GH/fail_comments_read" ;;
+        head-read) touch "$PR2_GH/fail_head_read" ;;
+        metadata-read) touch "$PR2_GH/fail_comment_metadata" ;;
+      esac
+      gate
+      [ "$LAST_RC" = 2 ] && [ "$OUTCOME" = not-yet ] && ! pr2_merged || return 1
+      ! grep -qE '^(move_issue|add_issue_label)' "$SANDBOX/calls.log" || return 1
+      grep -qE '^(verdict_read|head_read): ' <<< "$LINES" || return 1
+      rm -f "$PR2_GH/fail_comments_read" "$PR2_GH/fail_head_read" "$PR2_GH/fail_comment_metadata"
+      gate; binding_refreshed || return 1
+      ;;
+  esac
+}
+for scenario in dedicated jit newest retarget missing matching advanced-base auto-approve comments-read head-read metadata-read; do
+  binding_case "$scenario" current || fail "binding $scenario: rc $LAST_RC outcome $OUTCOME: $LINES"
+  if binding_case "$scenario" reverted; then fail "binding $scenario: negative control stayed green"; fi
+  [ "$LAST_RC" = 0 ] && pr2_merged || fail "binding $scenario: negative control failed before the unsafe merge"
+  echo "PASS binding $scenario; identical assertions reject the private copy with binding reverted"
+done
+
+# Exact writer syntax and unedited identity are required even when all hashes
+# happen to name the current commit. No ambiguous comment can supply a binding.
+for malformed in duplicate-head duplicate-target malformed-extra-target missing-target short-head bad-target-sha whitespace edited; do
+  new_sandbox
+  python3 - "$PR2_GH/comments.json" "$malformed" <<'PY'
+import json, sys
+from pathlib import Path
+p=Path(sys.argv[1]); rows=json.loads(p.read_text()); row=rows[0]; lines=row['body'].splitlines(); kind=sys.argv[2]
+head=next(s for s in lines if s.startswith('**Reviewed head**'))
+target=next(s for s in lines if s.startswith('**Target**'))
+if kind=='duplicate-head': lines.append(head)
+elif kind=='duplicate-target': lines.append(target)
+elif kind=='malformed-extra-target': lines.append('**Target**: malformed')
+elif kind=='missing-target': lines.remove(target)
+elif kind=='short-head': lines[lines.index(head)]=head[:-2]+'`'
+elif kind=='bad-target-sha': lines[lines.index(target)]=target[:-2]+'z`'
+elif kind=='whitespace': lines[lines.index(head)]=head+' '
+elif kind=='edited': row['lastEditedAt']='2026-09-29T09:01:00Z'
+row['body']='\n'.join(lines); p.write_text(json.dumps(rows))
+PY
+  gate; binding_refreshed || fail "strict binding $malformed: rc $LAST_RC: $LINES"
+  pr2_revert_approval_binding
+  gate
+  [ "$LAST_RC" = 0 ] && pr2_merged || fail "strict binding $malformed: negative control did not merge"
+  echo "PASS strict binding $malformed; private reverted copy merges it"
+done
 
 echo 'OK test_merge_gate_switches'

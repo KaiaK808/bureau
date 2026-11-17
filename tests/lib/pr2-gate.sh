@@ -49,6 +49,7 @@ case "${1:-}:${2:-}" in
     esac ;;
   pr:view)
     if [ "$JSON" = headRefOid ] && [ -e "$D/fail_head_read" ]; then echo "HTTP 502" >&2; exit 1; fi
+    if [ "$JSON" = comments ] && [ -e "$D/fail_comments_read" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ -n "$JSON" ]; then
       pr_doc | jq --arg f "$JSON" '. as $pr | reduce ($f | split(",")[]) as $k ({}; .[$k] = $pr[$k])' | out
     else
@@ -60,10 +61,16 @@ case "${1:-}:${2:-}" in
       if [ "$reads" = "$after" ]; then
         jq --arg h "$sha" '.headRefOid = $h' "$D/pr.json" > "$D/pr.json.tmp" && mv "$D/pr.json.tmp" "$D/pr.json"
       fi
+    fi
+    if [ "$JSON" = headRefOid ] && [ -s "$D/after_initial_head" ]; then
+      hook=$(cat "$D/after_initial_head"); rm "$D/after_initial_head"; bash "$hook" || exit $?
     fi ;;
   pr:comment)
     jq --arg b "$BODY" --arg t "2026-09-29T10:$(printf '%02d' "$(jq length "$D/comments.json")"):00Z" \
-      '. + [{createdAt: $t, body: $b}]' "$D/comments.json" > "$D/comments.json.tmp" && mv "$D/comments.json.tmp" "$D/comments.json" ;;
+      '. + [{id: ("comment-" + (length | tostring)), createdAt: $t, lastEditedAt: null, body: $b}]' "$D/comments.json" > "$D/comments.json.tmp" && mv "$D/comments.json.tmp" "$D/comments.json"
+    if [[ "$BODY" == *'Code Review v2'* ]] && [ -s "$D/on_review_comment" ]; then
+      hook=$(cat "$D/on_review_comment"); rm "$D/on_review_comment"; bash "$hook" || exit $?
+    fi ;;
   pr:merge)
     if [ -s "$D/move_head_on_merge" ]; then
       jq --arg h "$(cat "$D/move_head_on_merge")" '.headRefOid = $h' "$D/pr.json" > "$D/pr.json.tmp" && mv "$D/pr.json.tmp" "$D/pr.json"
@@ -78,6 +85,10 @@ case "${1:-}:${2:-}" in
     case "$2" in
       graphql)
         case " $* " in
+          *'node(id:$id)'*)
+            [ ! -e "$D/fail_comment_metadata" ] || { echo "HTTP 502" >&2; exit 1; }
+            id=""; for a in "$@"; do case "$a" in id=*) id=${a#id=} ;; esac; done
+            jq --arg id "$id" '{data: {node: ([.[] | select(.id == $id) | {body, lastEditedAt}] | first)}}' "$D/comments.json" | out ;;
           *'baseRef{target{oid}}'*)
             jq -n --slurpfile pr "$D/pr.json" --slurpfile branch "$D/branch.json" \
               '{data: {resource: {baseRefName: $pr[0].baseRefName, baseRef: {target: {oid: $branch[0].commit.sha}}}}}' | out ;;
@@ -131,6 +142,41 @@ DATE
   echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' > "$PR2_GH/threads.json"
   pr2_checks green
   pr2_head_age 60
+}
+
+# Publish exactly the binding lines emitted by the review stage, including for
+# the legacy AUTO_APPROVE verdict that the merge gate still accepts.
+pr2_approval() {
+  jq -n --slurpfile pr "$PR2_GH/pr.json" --arg verdict "${1:-APPROVE}" \
+    '[{id: "approval", createdAt: "2026-09-29T09:00:00Z", lastEditedAt: null,
+       body: ("## Code Review v2\n\n**Verdict**: " + $verdict +
+         "\n**Reviewed head**: `" + $pr[0].headRefOid + "`\n**Target**: `" +
+         $pr[0].baseRefName + "` at `" + $pr[0].baseRefOid + "`")}]' > "$PR2_GH/comments.json"
+}
+
+# Revert only approval binding in a private runtime copy. The same assertions
+# must then reject the old behaviour; no checked-in runtime is changed.
+pr2_revert_approval_binding() {
+  python3 - "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]); source = p.read_text()
+start = '  elif [ -n "$head" ] && [ "$_pr_read" = ok ]; then\n'
+end = '\n  fi\n  if [ "$_threads_read" = failed ]; then'
+assert source.count(start) == 1
+i = source.index(start); j = source.index(end, i)
+p.write_text(source[:i] + source[j:])
+PY
+}
+
+# An actual normal push to the sandbox's file-only origin, then the GitHub
+# double observes that remote head. Keep the published approval unchanged.
+pr2_push_head() {
+  local head
+  git -C "$SANDBOX" commit -q --allow-empty -m 'test: next head'
+  git -C "$SANDBOX" push -q origin "HEAD:refs/heads/${BUREAU_STUB_BRANCH:-test-branch}"
+  head=$(git -C "$SANDBOX" rev-parse HEAD)
+  jq --arg h "$head" '.headRefOid = $h' "$PR2_GH/pr.json" > "$PR2_GH/pr.json.tmp" && mv "$PR2_GH/pr.json.tmp" "$PR2_GH/pr.json"
 }
 
 # pr2_checks none|pending|green|red — the check runs on the PR head.

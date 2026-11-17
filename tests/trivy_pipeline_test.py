@@ -83,10 +83,13 @@ if case=='cache-digest':(installed['cache']/'db/trivy.db').write_bytes(b'changed
 if case=='stale':f.make_cache(installed['cache'],age=72)
 head=git('rev-parse','HEAD')
 gh=pathlib.Path(os.environ['PR2_GH'])
-(gh/'comments.json').write_text(json.dumps([dict(body='## Code Review v2\n**Verdict**: APPROVE',createdAt='2026-01-01T00:00:00Z')]))
+(gh/'comments.json').write_text(json.dumps([dict(id='approval',lastEditedAt=None,body=f'## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`',createdAt='2026-01-01T00:00:00Z')]))
 pr=gh/'pr.json';data=json.loads(pr.read_text());data.update(headRefOid=head,baseRefOid=base);pr.write_text(json.dumps(data))
 if case=='head-before-scan-hold':
-    data['headRefOid']=initial_head;pr.write_text(json.dumps(data));(gh/'move_head_after_reads').write_text('1 '+head)
+    data['headRefOid']=initial_head;pr.write_text(json.dumps(data))
+    comments=gh/'comments.json';rows=json.loads(comments.read_text())
+    rows[0]['body']=rows[0]['body'].replace(f'**Reviewed head**: `{head}`',f'**Reviewed head**: `{initial_head}`');comments.write_text(json.dumps(rows))
+    (gh/'move_head_after_reads').write_text('1 '+head)
 if case=='negative-merge-guard':
     p=repo/'scripts/merge-pipeline.sh';text=p.read_text();text=text.replace('if [ "$(bureau_get \'.qa | type == "object" and has("trivy")\')" = true ]; then','if false; then');p.write_text(text)
 '''

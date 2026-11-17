@@ -265,6 +265,35 @@ out=$(shepherd_passes 25 merge-pipeline.sh)
 grep -q 'merge-halt is blocked' <<< "$out" || fail "6: the merge stage's blocked gate changed: $out"
 echo 'PASS 6 the shepherd waits its budget on the review stage not-yet; a blocked review halts through the general handling'
 
+# A real review publishes approval of A; another normal push lands B before
+# its inline merge. Both the review caller and a repeated inline gate return
+# fresh-review work, without a human hold, approval reuse or duplicate comment.
+inline_binding_case() {
+  local control="$1" approved current
+  new_sandbox
+  [ "$control" != reverted ] || pr2_revert_approval_binding
+  approved=$(jq -r .headRefOid "$PR2_GH/pr.json")
+  printf 'source "%s"\npr2_push_head\n' "$LIB_DIR/pr2-gate.sh" > "$SANDBOX/push-head.sh"
+  echo "$SANDBOX/push-head.sh" > "$PR2_GH/on_review_comment"
+  export BUREAU_MERGE_GATE_REPORT="$SANDBOX/caller-gate.report"
+  review
+  unset BUREAU_MERGE_GATE_REPORT
+  current=$(jq -r .headRefOid "$PR2_GH/pr.json")
+  [ "$LAST_RC" = 20 ] && ! pr2_merged && ! labeled_human || return 1
+  [ "$(head -n 1 "$SANDBOX/caller-gate.report")" = refreshed ] || return 1
+  grep -qF "approved head $approved differs from current head $current" "$SANDBOX/caller-gate.report" || return 1
+  grep -q $'move_issue\t'"$ISSUE"$'\tstate-build-review' "$SANDBOX/calls.log" || return 1
+  [ -z "$(record)" ] || return 1
+  [ "$(jq '[.[] | select(.body | test("Bureau merge gate"))] | length' "$PR2_GH/comments.json")" = 1 ] || return 1
+  BUREAU_INLINE_MERGE=1 run_pipeline merge-pipeline.sh "$ISSUE"
+  [ "$LAST_RC" = 20 ] && ! pr2_merged && ! labeled_human || return 1
+  [ "$(jq '[.[] | select(.body | test("Bureau merge gate"))] | length' "$PR2_GH/comments.json")" = 1 ] || return 1
+}
+inline_binding_case current || fail "inline binding: rc $LAST_RC"
+if inline_binding_case reverted; then fail 'inline binding: negative control stayed green'; fi
+[ "$LAST_RC" = 0 ] && pr2_merged || fail 'inline binding: negative control failed before the unsafe merge'
+echo 'PASS inline binding: real review of A followed by pushed B returns 20/refreshed once; identical assertions reject reverted binding'
+
 # ── Negative control: the v3.0.2 inline call ───────────────────────────────
 new_sandbox
 python3 - "$SCRIPTS_DIR/code-review-pipeline.sh" "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'

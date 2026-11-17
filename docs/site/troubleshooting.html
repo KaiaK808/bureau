@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="8bd55c494e964260ccb6acdb69027eeb049dc8ddf1caaab743fd5d52cb367fa1">
+<meta name="bureau-source-sha256" content="2af406fb8c391463c1bf9aa1984c0be38ade48ff8fb7dff2633daa1ef993b343">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1025,12 +1025,10 @@ not establish a passing acceptance gate.</li>
 <h2 id="stage-specific-failures">Stage-specific failures</h2>
 <h3 id="merge-gate-refuses-to-merge-a-pr-that-looks-green">Merge gate
 refuses to merge a PR that looks green</h3>
-<p><code>merge-pipeline.sh</code> enforces THREE independent gates:
-<code>pr_ci_is_green</code> (all check-runs completed + success),
-<code>pr_base_is_current</code>
-(<code>baseRefOid == origin/main HEAD</code>), and
-<code>mergeStateStatus == CLEAN</code> (GitHub's own answer). All three
-must pass.</p>
+<p><code>merge-pipeline.sh</code> independently checks CI on the current
+PR head, the current PR base, GitHub's <code>mergeStateStatus</code>,
+the latest Code Review v2 approval and its head/target binding, hold
+labels and unresolved threads. Every gate must pass.</p>
 <p>To diagnose:</p>
 <div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> pr view <span class="op">&lt;</span>N<span class="op">&gt;</span> --json statusCheckRollup,baseRefOid,mergeStateStatus</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch origin <span class="kw">&amp;&amp;</span> <span class="fu">git</span> rev-parse origin/main</span></code></pre></div>
@@ -1048,6 +1046,28 @@ an in-progress check</strong>: wait or fix the failing check</li>
 actual head checks and current base state, and repeats the gates just
 before merging. Background review of a stacked PR uses its actual PR
 base; that does not weaken the separate merge gate.</p>
+<p><strong><code>approval_binding</code> blocker:</strong> the latest
+Code Review v2 comment must be unedited and contain exactly one
+<code>**Reviewed head**: `&lt;40 lowercase hex characters&gt;`</code>
+line and one
+<code>**Target**: `&lt;base branch&gt;` at `&lt;40 lowercase hex characters&gt;`</code>
+line. The reviewed head must equal the commit checked by CI and passed
+to <code>--match-head-commit</code>; the target branch must equal the
+PR's current base branch. Bureau never falls back to an older approval.
+APPROVE and AUTO_APPROVE follow the same rule. The recorded target SHA
+is checked for format, but may differ from today's base SHA; the
+existing base/CI gates still apply.</p>
+<p>A push after approval, a retargeted PR, missing/ambiguous lines or an
+edited approval returns the ticket to Build Review with exit
+<code>20</code> and a <code>refreshed</code> gate report. The gate
+comment names both heads or the invalid line and requests a fresh
+review. Repeating the same stale approval posts no second comment and
+creates no <code>needs-human</code> label or merge wait. A failed
+comment, edit-metadata or head read stays <code>not-yet</code>/exit
+<code>2</code>; it does not invalidate the approval or route the ticket.
+<strong>Upgrade:</strong> after comparing installed drift and resyncing
+the complete scripts scope, a PR approved before the upgrade whose
+comment lacks these lines needs one fresh review.</p>
 <p>The stage tells its caller which kind of refusal it was: exit
 <code>2</code> when the gate is not yet decided (a check still running
 or not started, GitHub still computing <code>mergeStateStatus</code>, a

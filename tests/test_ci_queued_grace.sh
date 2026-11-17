@@ -70,7 +70,7 @@ merge_sandbox() {
   new_sandbox
   export BUREAU_STUB_STATE_MERGE=state-merge BUREAU_STUB_AGENT_ENABLED=merge
   # The review's APPROVE the gate reads.
-  jq -n '[{createdAt: "2026-09-29T09:00:00Z", body: "## Code Review v2 — EXP-803\n\n**Verdict**: APPROVE"}]' > "$PR2_GH/comments.json"
+  pr2_approval
 }
 gate() {  # runs the merge stage; sets LAST_RC, OUTCOME and LINES
   export BUREAU_MERGE_GATE_REPORT="$SANDBOX/gate.report"

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="24173b0884a018805618ce55f5cb282ab3321293ad75934d881ddbb7631cc478">
+<meta name="bureau-source-sha256" content="0b5871ee645c517eaa00465d26462b5536d9623f2c75e54756b533fc935f9ed2">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -163,10 +163,10 @@ use defaults). Permanent errors hold without retry.</td>
 <td>Review boundary or intentional stage handoff</td>
 <td>Expected with <code>--no-merge</code>, from shepherd at manual
 Merge, and for a disabled stage under <code>--respect-config</code>.
-Those handoffs are quiet. Dispatcher base refresh uses
-<code>refreshed</code> metadata to require fresh review; it never
-reports merge success. Other stage-result 20 exits can alert in
-standalone shepherd</td>
+Those handoffs are quiet. Stale merge approval and dispatcher base
+refresh use <code>refreshed</code> metadata to return to Build Review
+without a human hold; it never reports merge success. Other stage-result
+20 exits can alert in standalone shepherd</td>
 </tr>
 <tr>
 <td><code>21</code></td>

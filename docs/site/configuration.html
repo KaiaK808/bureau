@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="178a19e4ace12f029b9cfdc58d8bed794f5cf9862f9ed9f92bda9df4b3e6e009">
+<meta name="bureau-source-sha256" content="11c228a6654f434b264820299c1c415318e2a660c82a1524496d8fcf5eab5684">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -664,9 +664,9 @@ final read uses the live branch target because the PR's stored base OID
 can lag the branch tip; it catches a base advancing after the last fetch
 even when the final gates pass against the newer base. GitHub's head
 match protects against a subsequent head push. Disabled and advisory
-merge behaviour and GitHub/git call logs remain unchanged. The older
-Code Review v2 verdict reader's head binding is unchanged by this
-scanner integration.</p>
+merge behaviour and GitHub/git call logs remain unchanged. The merge
+approval binding described below applies independently of scanner
+receipts, in every scanner mode.</p>
 <p><strong>Upgrade:</strong> compare installed script drift and resync
 the entire scripts scope (including the shared helper, sandbox profile,
 rules, lock and platform manifests). Existing repositories stay off.
@@ -1401,8 +1401,10 @@ stage ends with its outcome: Done after a merge, <code>2</code> with the
 approval kept for the next run when the gate is not yet decided (while
 other tickets wait, the queue picks it after them for a while, see
 <code>agents.merge_gate_recheck_seconds</code>), <code>25</code> and
-<code>needs-human</code> when it is blocked. <code>manual</code>: a
-human — the merge and rebase agents are off,
+<code>needs-human</code> when it is blocked, or
+<code>20</code>/<code>refreshed</code> back to Build Review when the
+published approval no longer binds the current head and base branch.
+<code>manual</code>: a human — the merge and rebase agents are off,
 <code>merge-pipeline.sh</code> and <code>rebase-pipeline.sh</code> exit
 <code>2</code> before any Linear, gh or git call, the review stage parks
 an APPROVE in the Merge state, and the shepherd ends its run at Merge
@@ -3512,6 +3514,29 @@ repo whose defaults don't match.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="merge-approval-binding">Merge approval binding</h3>
+<p>Both automatic merge routes require the latest comment containing
+<code>Code Review v2</code> to carry <code>**Verdict**: APPROVE</code>
+or <code>AUTO_APPROVE</code> and exactly one of each binding line:</p>
+<pre class="text"><code>**Reviewed head**: `&lt;full 40-character lowercase hex SHA&gt;`
+**Target**: `&lt;base branch&gt;` at `&lt;full 40-character lowercase hex SHA&gt;`</code></pre>
+<p>On both gate passes, the reviewed head must equal the head used for
+CI and <code>--match-head-commit</code>, and the target branch must
+equal the PR's current base branch. The recorded target SHA is validated
+as a full SHA but may differ from the current base SHA; existing CI/base
+gates still apply. Edited comments, duplicate or malformed lines and
+missing bindings are stale approvals. Bureau comments once per unchanged
+blocker, moves the ticket to Build Review and returns the existing
+<code>20</code>/<code>refreshed</code> handoff, without
+<code>needs-human</code> or a merge wait. Comment or head read failures
+remain <code>*_read</code>/not-yet (<code>2</code>). The inline caller
+forwards the same report and exit.</p>
+<p><strong>Upgrade:</strong> compare installed script drift, resync the
+complete scripts scope and restart drivers. A PR approved before the
+upgrade whose verdict comment lacks these lines gets one fresh review.
+This check binds the published comment; it adds no approval store or
+policy hash. See <a
+href="troubleshooting.html#merge-gate-refuses-to-merge-a-pr-that-looks-green">troubleshooting</a>.</p>
 <h3 id="code-review-internals">Code-review internals</h3>
 <table>
 <thead>
@@ -3614,19 +3639,19 @@ supporting it. The tier changes no routing, holds, verdicts or merges; a
 human merges every PR. It does not enable automatic merging or change
 <code>agents.merge_mode</code>. Omitting <code>agents.risk_tier</code>
 uses these defaults:</p>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;risk_tier&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">100</span><span class="fu">,</span></span>
-<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_files&quot;</span><span class="fu">:</span> <span class="dv">5</span><span class="fu">,</span></span>
-<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;high_min_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">1000</span><span class="fu">,</span></span>
-<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;docs_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.md&quot;</span><span class="ot">,</span> <span class="st">&quot;*.rst&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;test_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test_*.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*_test.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*.test.*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.spec.*&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;sensitive_patterns&quot;</span><span class="fu">:</span> <span class="ot">[]</span></span>
-<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;risk_tier&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">100</span><span class="fu">,</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_files&quot;</span><span class="fu">:</span> <span class="dv">5</span><span class="fu">,</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;high_min_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">1000</span><span class="fu">,</span></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;docs_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.md&quot;</span><span class="ot">,</span> <span class="st">&quot;*.rst&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;test_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test_*.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*_test.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*.test.*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.spec.*&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;sensitive_patterns&quot;</span><span class="fu">:</span> <span class="ot">[]</span></span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb14-12"><a href="#cb14-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Changed lines means insertions plus deletions in
 <code>base..HEAD</code>. Low requires at least one changed path, every
 path matching the docs/tests lists, at most 100 changed lines and 5
