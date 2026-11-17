@@ -4,6 +4,10 @@ When the pipeline misbehaves, start here. Start with `python3 scripts/bureau-doc
 
 ---
 
+## Tracked Python bytecode
+
+If doctor reports tracked files under the installed `scripts/__pycache__/`, compare local runtime drift, resync the scripts scope, restart stage drivers, then run doctor's cleanup command once and commit that removal. Doctor and staging match exact `scripts/__pycache__` path components, plus any directory that `os.path.samefile` identifies as that installed cache (such as `Scripts/__PyCaChE__/` on a case-insensitive volume). Missing directories match only the exact spelling. A separate application's `Scripts/__pycache__/` on a case-sensitive filesystem remains application content. Resync adds the literal `scripts/__pycache__/` ignore rule but cannot remove an existing tracked cache; doctor's cleanup uses only the matched literal directories. A stage that encounters pre-staged Bureau bytecode refuses with exit 24 without changing the index; inspect and unstage those paths before retrying the stage.
+
 ## Setup
 
 ### `MISSING: <tool>` at Phase 0

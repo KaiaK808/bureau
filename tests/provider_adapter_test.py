@@ -1414,7 +1414,8 @@ p.subprocess.Popen=fail_popen
                 self.assertEqual((self.root/'cwd.txt').read_text(),str(self.root))
                 child=json.loads((self.root/'codex-env.json').read_text())
                 for name in ('TMPDIR','TMP','TEMP'): self.assertEqual(child[name],str(caller))
-                self.assertEqual(child['PYTHONDONTWRITEBYTECODE'],'0')
+                # The shared stage policy normalizes this even in workspace-write.
+                self.assertEqual(child['PYTHONDONTWRITEBYTECODE'],'1')
                 self.assertTrue(caller.is_dir())
                 self.assertNotIn('private scratch area',(self.root/'stdin.txt').read_text())
 

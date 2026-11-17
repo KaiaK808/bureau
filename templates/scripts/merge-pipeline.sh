@@ -421,11 +421,11 @@ merge_gate_exit() {
 merge_gate_mark() {
   [ "${BUREAU_INLINE_MERGE:-0}" != 1 ] && [ "$DRY_RUN" != true ] || return 0
   if [ "$1" = clear ]; then
-    python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" merge-wait "$ISSUE" --clear >/dev/null 2>&1 || true
+    python3 -I -B "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" merge-wait "$ISSUE" --clear >/dev/null 2>&1 || true
     return 0
   fi
   [ -n "${GATE_HEAD:-}" ] || return 0
-  python3 -I "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" merge-wait "$ISSUE" \
+  python3 -I -B "$SCRIPT_REPO/scripts/bureau-supervision.py" --repo "$PWD" merge-wait "$ISSUE" \
       --branch "$BRANCH" --head "$GATE_HEAD" --outcome "$1" >/dev/null \
     || echo "  WARN: could not mark the merge gate wait of $ISSUE; the merge picker takes it again on its next poll" >&2
 }

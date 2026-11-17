@@ -114,7 +114,7 @@ if [ -z "$SPEC_DIR" ]; then
   exit 13
 fi
 if [ ! -f "${SPEC_DIR}tasks.md" ]; then
-  bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" invalidate "$ISSUE" tasks --reason missing-tasks \
+  bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" invalidate "$ISSUE" tasks --reason missing-tasks \
     || echo 'WARN: checkpoint invalidation unavailable; missing tasks still require re-work.' >&2
   echo "  ERROR: No spec artifacts found"
   post_comment "$ISSUE" "❌ Spec review aborted — no tasks.md found on branch \`$BRANCH\`. Moving back to Spec for re-work."
@@ -184,7 +184,7 @@ case "$REVIEW_STATUS" in
 esac
 # The model cannot waive the document contract. Check after its allowed edits.
 GOVERNANCE_ERROR=""
-if ! GOVERNANCE_ERROR=$(bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" validate "${SPEC_DIR}spec.md" 2>&1); then
+if ! GOVERNANCE_ERROR=$(bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-spec.py" validate "${SPEC_DIR}spec.md" 2>&1); then
   REVIEW_STATUS="FAIL"
 fi
 
@@ -218,7 +218,7 @@ fi
 
 case "$REVIEW_STATUS" in
   FAIL)
-    bureau_without_secrets python3 -I "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" invalidate "$ISSUE" specify --reason spec-review-failed \
+    bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-spec.py" --repo "$REPO_DIR" invalidate "$ISSUE" specify --reason spec-review-failed \
       || echo 'WARN: checkpoint invalidation unavailable; FAIL feedback still requires fresh specify.' >&2
     echo "  Spec review FAILED — moving back to Spec"
     post_comment "$ISSUE" "❌ Spec review: **FAIL**

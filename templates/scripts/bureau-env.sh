@@ -72,6 +72,9 @@
 # script starts (BASH_FUNC_git%% and the rest), and every later assignment with
 # it. Off before anything is defined; bureau_load_env switches it off again.
 set +a
+# All stage children, including repository tooling, inherit this policy.
+# Isolated Python (-I) ignores it, so Bureau's own calls also pass -B.
+export PYTHONDONTWRITEBYTECODE=1
 
 # Resolve the snapshot interpreter at library load, before reading keys or
 # entering branch-controlled directories. Bash 3.2's command -p/-v and type -P
@@ -269,9 +272,9 @@ bureau_load_env() {
 
     printf -v "$_be_name" '%s' "$_be_value"
     if bureau_env_key_secret "$_be_name"; then
-      export -n "$_be_name"
+      export -n "${_be_name?}"
     elif [ "$_be_export" = 1 ]; then
-      export "$_be_name"
+      export "${_be_name?}"
     fi
   done < "$_be_file"
 
@@ -306,7 +309,7 @@ bureau_secret_copy() {
     exit 1
   fi
   printf -v "$1" '%s' "${!2:-}"
-  export -n "$1"
+  export -n "${1?}"
   if [ "$_bsc_trace" = 1 ]; then set -x; fi
   return 0
 }
@@ -352,9 +355,10 @@ bureau_secret_copy() {
 #       Everything else stays, so test commands keep their toolchain
 #       variables (cargo, nvm, pyenv, a virtualenv).
 #     "clean" — `env -i` with only PATH HOME USER LOGNAME SHELL TMPDIR TEMP
-#       TMP LANG LC_ALL LC_CTYPE TERM TZ CI (those that are exported and carry
+#       TMP LANG LC_ALL LC_CTYPE TERM TZ CI PYTHONDONTWRITEBYTECODE (exported and carrying
 #       no secret's value), plus the NAME=VALUE pairs given before the command
 #       (the hook's BUREAU_ISSUE and BUREAU_BRANCH).
+#   Both wrappers force PYTHONDONTWRITEBYTECODE=1 after filtering, even in clean mode.
 #   Host pane names are also dropped from NAME=VALUE pairs in both wrappers.
 #   repo.untrusted_git_credentials absent, null or "off" resets Git credential
 #   helpers, drops GIT_CONFIG_PARAMETERS and disables terminal prompting in both
@@ -514,7 +518,7 @@ _bureau_env_build() {
       if [ "${!#}" = snapshot ]; then /bin/cat <&3
       else /usr/bin/env -0 && printf '\0'; fi
     }
-  } | LC_ALL=C "$_BUREAU_ENV_PYTHON" -I -c '
+  } | LC_ALL=C "$_BUREAU_ENV_PYTHON" -I -B -c '
 import ctypes
 import locale
 import re
@@ -615,7 +619,7 @@ def carries(value):
     return any(key in value for key in long) or value in short
 
 if mode == "clean":
-    allowed = b"PATH HOME USER LOGNAME SHELL TMPDIR TEMP TMP LANG LC_ALL LC_CTYPE TERM TZ CI".split()
+    allowed = b"PATH HOME USER LOGNAME SHELL TMPDIR TEMP TMP LANG LC_ALL LC_CTYPE TERM TZ CI PYTHONDONTWRITEBYTECODE".split()
     result = [("e", name + b"=" + value) for name, value in entries
               if name in allowed and not any(name.startswith(p) for p in prefixes) and not carries(value)]
 elif mode == "default":
@@ -681,7 +685,7 @@ print("BUREAU_ENV_V1" + "".join(" " + tag + "".join("\\x%02x" % byte for byte in
         _BUREAU_ENV_ARGV+=(-u "$_beb_entry") ;;
       clean:e)
         case "$_beb_entry" in
-          PATH=*|HOME=*|USER=*|LOGNAME=*|SHELL=*|TMPDIR=*|TEMP=*|TMP=*|LANG=*|LC_ALL=*|LC_CTYPE=*|TERM=*|TZ=*|CI=*) ;;
+          PATH=*|HOME=*|USER=*|LOGNAME=*|SHELL=*|TMPDIR=*|TEMP=*|TMP=*|LANG=*|LC_ALL=*|LC_CTYPE=*|TERM=*|TZ=*|CI=*|PYTHONDONTWRITEBYTECODE=*) ;;
           *) exit 24 ;;
         esac
         _BUREAU_ENV_ARGV+=("$_beb_entry") ;;
@@ -770,7 +774,7 @@ bureau_untrusted_env() {
     for _bue_name in $_BUREAU_UNTRUSTED_PATHS; do _BUREAU_ENV_ARGV+=(-u "$_bue_name"); done
   fi
   if [ "$_bue_trace" = 1 ]; then set -x; fi
-  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bue_assign[@]+"${_bue_assign[@]}"} ${_BUREAU_GIT_ENV_ARGV[@]+"${_BUREAU_GIT_ENV_ARGV[@]}"} "$@"
+  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bue_assign[@]+"${_bue_assign[@]}"} ${_BUREAU_GIT_ENV_ARGV[@]+"${_BUREAU_GIT_ENV_ARGV[@]}"} PYTHONDONTWRITEBYTECODE=1 "$@"
 }
 
 bureau_without_secrets() {
@@ -792,7 +796,7 @@ bureau_without_secrets() {
   fi
   _bureau_env_build default seven 1
   if [ "$_bws_trace" = 1 ]; then set -x; fi
-  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bws_assign[@]+"${_bws_assign[@]}"} "$@"
+  /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" ${_bws_assign[@]+"${_bws_assign[@]}"} PYTHONDONTWRITEBYTECODE=1 "$@"
 }
 
 # _bureau_remote_git_hooks_mode — prints how Bureau's remote git commands treat
@@ -1077,5 +1081,5 @@ bureau_exec_runtime() {
   done
   _bureau_env_build default "$_ber_names" 1
   if [ "$_ber_trace" = 1 ]; then set -x; fi
-  exec /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" "$@"
+  exec /usr/bin/env "${_BUREAU_ENV_ARGV[@]}" PYTHONDONTWRITEBYTECODE=1 "$@"
 }

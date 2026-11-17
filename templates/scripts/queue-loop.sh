@@ -38,10 +38,10 @@ if [ "${#POSITIONAL[@]}" -gt 0 ]; then set -- "${POSITIONAL[@]}"; else set --; f
 # must reach dispatch too. Legacy stage pollers share a lock that excludes it.
 if [ "${1:-}" = dispatch ]; then
   _dispatch_minutes=$(bureau_number agents.poll_interval_minutes "${2:-$BUREAU_POLL_INTERVAL}" 30 1 10080)
-  bureau_exec_runtime python3 -I "$REPO_DIR/scripts/bureau-dispatch.py" --repo "$REPO_DIR" run --poll-seconds "$((_dispatch_minutes * 60))"
+  bureau_exec_runtime python3 -I -B "$REPO_DIR/scripts/bureau-dispatch.py" --repo "$REPO_DIR" run --poll-seconds "$((_dispatch_minutes * 60))"
 fi
 if [ "${BUREAU_POLLER_LOCKED:-0}" != 1 ]; then
-  bureau_exec_runtime python3 -I "$REPO_DIR/scripts/bureau-dispatch.py" --repo "$REPO_DIR" poller -- bash "$0" "$@"
+  bureau_exec_runtime python3 -I -B "$REPO_DIR/scripts/bureau-dispatch.py" --repo "$REPO_DIR" poller -- bash "$0" "$@"
 fi
 
 MODE="${1:-all}"

@@ -53,7 +53,7 @@ extract_paths() {
   fi
   local prefix
   prefix="${BUREAU_PATH_PREFIX_STRIP:-$(bureau_get '.repo.path_prefix_strip // empty')}"
-  bureau_without_secrets python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-paths.py" "$1" --repo "$PWD" --prefix "$prefix" --lines
+  bureau_without_secrets python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-paths.py" "$1" --repo "$PWD" --prefix "$prefix" --lines
 }
 
 # ── Planned paths — read before the PR list, so every outcome can count them ──

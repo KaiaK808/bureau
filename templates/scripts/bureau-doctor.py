@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import sys
 import subprocess
@@ -641,6 +642,13 @@ def diagnose(repo, mode):
                 content = content[content.index(begin):content.index(end) + len(end)] + b'\n'
         if not target.is_file() or hashlib.sha256(content).hexdigest() != expected: drift.append(name)
     if drift: warnings.append('Installed files have drift; review before resync')
+    tracked = subprocess.check_output(['git', '-C', str(repo), 'ls-files', '-z'],
+                                     env=provider.process_env(['git'])).split(b'\0')
+    tracked_cache = [p for p in tracked if p and module('paths').is_helper_cache(repo, p)]
+    if any(tracked_cache):
+        directories = sorted({b'/'.join(p.split(b'/')[:2]) for p in tracked_cache})
+        cleanup = 'git rm --cached -r -- ' + ' '.join(shlex.quote(':(literal)' + os.fsdecode(p)) for p in directories)
+        warnings.append("Bureau Python bytecode is tracked under scripts/__pycache__/; resync, then run " + cleanup + " once and commit the removal. Ignoring files does not untrack them.")
     source = template_source(manifest)
     if source['status'] == 'stale': warnings.append('Recorded template source is stale: ' + source['reason'])
     interfaces = {}

@@ -215,7 +215,7 @@ class TrivyTests(unittest.TestCase):
         calls=self.calls();self.assertEqual(len(calls),2)
         for call,invocation in zip(calls,launch.call_args_list):
             env=call['env'];run=Path(env['HOME']).parent
-            expected=dict(PATH='/usr/bin:/bin',LANG='C.UTF-8',TZ='UTC',HOME=str(run/'home'),XDG_CONFIG_HOME=str(run/'config'),XDG_CACHE_HOME=str(run/'cache'),TMPDIR=str(run/'tmp'))
+            expected=dict(PATH='/usr/bin:/bin',LANG='C.UTF-8',TZ='UTC',HOME=str(run/'home'),XDG_CONFIG_HOME=str(run/'config'),XDG_CACHE_HOME=str(run/'cache'),TMPDIR=str(run/'tmp'),PYTHONDONTWRITEBYTECODE='1')
             self.assertEqual(invocation.kwargs['env'],expected)
             observed=dict(env);observed.pop('__CF_USER_TEXT_ENCODING',None);self.assertEqual(observed,expected)
             self.assertEqual(invocation.args[0][:len(self.install['prefix'])],self.install['prefix'])

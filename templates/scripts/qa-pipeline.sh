@@ -166,7 +166,7 @@ TASKS_FILE=""
 detect_test_cmd() {
   local configured
   configured=$(bureau_get '.repo.test_command // empty')
-  printf '%s' "$configured" | bureau_without_secrets python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-gates.py"
+  printf '%s' "$configured" | bureau_without_secrets python3 -I -B "$(dirname "$BUREAU_RUNTIME")/bureau-gates.py"
 }
 
 TEST_CMD=$(detect_test_cmd)
@@ -445,7 +445,7 @@ fi
 if [ "$FINAL_GREEN" = true ]; then
   # Probe the trusted setting locally before doing any optional preparation.
   # A provider-free run probes the same startup-fetched main that QA merged.
-  ( bureau_exec_runtime python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-changed-tests.py" \
+  ( bureau_exec_runtime python3 -I -B "$(dirname "$BUREAU_RUNTIME")/bureau-changed-tests.py" \
       --repo "$REPO_DIR" --base "$QA_BASE" --branch "$BRANCH" ) &
   QA_CHANGED_PID=$!
   trap 'exit 130' TERM INT HUP
@@ -458,7 +458,7 @@ if [ "$FINAL_GREEN" = true ]; then
 fi
 
 if [ "$FINAL_GREEN" = true ]; then
-  ( bureau_exec_runtime python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-test-integrity.py" \
+  ( bureau_exec_runtime python3 -I -B "$(dirname "$BUREAU_RUNTIME")/bureau-test-integrity.py" \
       --repo "$REPO_DIR" --base "$QA_BASE" --branch "$BRANCH" ) &
   QA_INTEGRITY_PID=$!
   trap 'exit 130' TERM INT HUP
@@ -474,7 +474,7 @@ if [ "$FINAL_GREEN" = true ]; then
 fi
 
 if [ "$FINAL_GREEN" = true ]; then
-  ( bureau_exec_runtime python3 -I "$(dirname "$BUREAU_RUNTIME")/bureau-task-completion.py" \
+  ( bureau_exec_runtime python3 -I -B "$(dirname "$BUREAU_RUNTIME")/bureau-task-completion.py" \
       --repo "$REPO_DIR" --base "$QA_BASE" --branch "$BRANCH" --tasks "$TASKS_FILE" ) &
   QA_COMPLETION_PID=$!
   trap 'exit 130' TERM INT HUP

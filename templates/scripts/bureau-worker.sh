@@ -19,7 +19,7 @@ if [ "${BUREAU_DRY_RUN:-0}" = 1 ]; then
   exit 0
 fi
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
-  bureau_exec_runtime python3 -I "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" "$@"
+  bureau_exec_runtime python3 -I -B "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" "$@"
 fi
 export BUREAU_WORKSPACE_MODE=disposable
 # A signal (the runtime forwards Ctrl-C and SIGTERM to this process group, and
@@ -63,7 +63,7 @@ _worker_cleanup() {
   case "$common" in /*) ;; *) common="$REPO_DIR/$common" ;; esac
   # An uncertain gate can still write. Keep its branch and registration too;
   # a failed coordination read also refuses all automatic worktree cleanup.
-  python3 -I "$SCRIPT_DIR/bureau-process.py" --root "$common/bureau" --run "${BUREAU_RUN_ID:-}" || exit "$rc"
+  python3 -I -B "$SCRIPT_DIR/bureau-process.py" --root "$common/bureau" --run "${BUREAU_RUN_ID:-}" || exit "$rc"
   branch=$(git -C "$WORKTREE" branch --show-current)
   if [ -n "$branch" ]; then
     ahead=$(git -C "$WORKTREE" rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 1)
@@ -76,7 +76,7 @@ _worker_cleanup() {
     return
   fi
   if { [ "$rc" != 0 ] || bureau_ticket_stopped; } && { [ -n "$(git -C "$WORKTREE" status --porcelain)" ] || [ "$ahead" != 0 ]; }; then
-    key=$(python3 -I -c 'import hashlib, pathlib, sys; print(hashlib.sha256(str(pathlib.Path(sys.argv[1]).resolve()).encode()).hexdigest())' "$WORKTREE")
+    key=$(python3 -I -B -c 'import hashlib, pathlib, sys; print(hashlib.sha256(str(pathlib.Path(sys.argv[1]).resolve()).encode()).hexdigest())' "$WORKTREE")
     rm -f "$common/bureau/workers/$key"
     # A successful stopped review can leave only its local validation merge.
     # Keep that clean checkpoint (HEAD and files), but release this worker's own
@@ -86,7 +86,7 @@ _worker_cleanup() {
     if [ "$rc" = 20 ] && [ "$PIPELINE" = code-review-pipeline.sh ] && [ -z "$(git -C "$WORKTREE" status --porcelain)" ]; then
       bureau_preserve_note "$WORKTREE" "$ISSUE" review-checkpoint || true
       git -C "$WORKTREE" checkout --detach --quiet || return
-      python3 -I "$SCRIPT_DIR/bureau-supervision.py" --repo "$WORKTREE" checkpoint "$ISSUE" >/dev/null || return
+      python3 -I -B "$SCRIPT_DIR/bureau-supervision.py" --repo "$WORKTREE" checkpoint "$ISSUE" >/dev/null || return
       echo "Preserved stopped review checkpoint in $WORKTREE; future work uses another checkout." >&2
     else
       if [ "$rc" = 130 ]; then bureau_preserve_note "$WORKTREE" "$ISSUE" interrupted || true

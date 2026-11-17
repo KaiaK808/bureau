@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3277b0520e9ce9e816a5affcb2fdb15c2059dc05ec2fe20c8b44a56f880a36e6">
+<meta name="bureau-source-sha256" content="9e3373a3d087ac4f671a6e76e95bdaf572858dad18552ad01ba87c7c27effcb2">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -2252,12 +2252,13 @@ clean-mode allowlist still applies. <code>"clean"</code>: only
 <code>LOGNAME</code>, <code>SHELL</code>, <code>TMPDIR</code>,
 <code>TEMP</code>, <code>TMP</code>, <code>LANG</code>,
 <code>LC_ALL</code>, <code>LC_CTYPE</code>, <code>TERM</code>,
-<code>TZ</code>, <code>CI</code> (plus <code>BUREAU_ISSUE</code> and
-<code>BUREAU_BRANCH</code> for the hook); an agent also keeps its own
-login and network variables (<code>ANTHROPIC_*</code>,
-<code>CLAUDE_*</code>, <code>HEADROOM_*</code> for Claude,
-<code>OPENAI_*</code>, <code>CODEX_*</code> for Codex, the proxy
-variables, <code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>,
+<code>TZ</code>, <code>CI</code>, <code>PYTHONDONTWRITEBYTECODE</code>
+(plus <code>BUREAU_ISSUE</code> and <code>BUREAU_BRANCH</code> for the
+hook); an agent also keeps its own login and network variables
+(<code>ANTHROPIC_*</code>, <code>CLAUDE_*</code>,
+<code>HEADROOM_*</code> for Claude, <code>OPENAI_*</code>,
+<code>CODEX_*</code> for Codex, the proxy variables,
+<code>SSL_CERT_FILE</code>, <code>SSL_CERT_DIR</code>,
 <code>NODE_EXTRA_CA_CERTS</code>, <code>XDG_CONFIG_HOME</code>), a test
 command does not. Both modes also receive the Git credential variables
 described below unless <code>repo.untrusted_git_credentials</code> is
@@ -2295,7 +2296,9 @@ passes through such a name (<code>alias/key</code> with
 name anywhere below it or that cannot be searched completely is skipped
 with one warning line. Code running as the same user can still read
 files and other processes' environments; see <a
-href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a></td>
+href="../../SECURITY.md#code-from-the-branch-and-bureau-secrets">SECURITY.md</a>
+Bureau always sets <code>PYTHONDONTWRITEBYTECODE=1</code> after
+filtering, including clean mode.</td>
 </tr>
 <tr>
 <td><code>repo.untrusted_git_credentials</code></td>

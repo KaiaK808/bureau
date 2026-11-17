@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="65249d2aea84e6c5b54b7e1a2027876aae8d467a2e24aaa664ee50cd6e65d4cc">
+<meta name="bureau-source-sha256" content="8bd55c494e964260ccb6acdb69027eeb049dc8ddf1caaab743fd5d52cb367fa1">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -22,6 +22,22 @@
 config provenance, interfaces, effective providers and drift without
 making remote calls.</p>
 <hr />
+<h2 id="tracked-python-bytecode">Tracked Python bytecode</h2>
+<p>If doctor reports tracked files under the installed
+<code>scripts/__pycache__/</code>, compare local runtime drift, resync
+the scripts scope, restart stage drivers, then run doctor's cleanup
+command once and commit that removal. Doctor and staging match exact
+<code>scripts/__pycache__</code> path components, plus any directory
+that <code>os.path.samefile</code> identifies as that installed cache
+(such as <code>Scripts/__PyCaChE__/</code> on a case-insensitive
+volume). Missing directories match only the exact spelling. A separate
+application's <code>Scripts/__pycache__/</code> on a case-sensitive
+filesystem remains application content. Resync adds the literal
+<code>scripts/__pycache__/</code> ignore rule but cannot remove an
+existing tracked cache; doctor's cleanup uses only the matched literal
+directories. A stage that encounters pre-staged Bureau bytecode refuses
+with exit 24 without changing the index; inspect and unstage those paths
+before retrying the stage.</p>
 <h2 id="setup">Setup</h2>
 <h3 id="missing-tool-at-phase-0"><code>MISSING: &lt;tool&gt;</code> at
 Phase 0</h3>

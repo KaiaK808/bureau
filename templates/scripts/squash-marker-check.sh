@@ -94,7 +94,7 @@ if [ -n "$commits" ]; then
   fi
   # Keep Git's byte lengths until every object and separator has been checked.
   # Only then hand NUL-framed text to Bash, matching its old $(...) capture.
-  if bureau_without_secrets python3 -I - "$batch" <<'PY' > "$batch/messages"
+  if bureau_without_secrets python3 -I -B - "$batch" <<'PY' > "$batch/messages"
 from pathlib import Path
 import sys
 

@@ -48,7 +48,7 @@ def mutations():
          "try: os.killpg(group, signum)\n    except ProcessLookupError as exc: raise TerminationUncertain('injected ESRCH rejection') from exc",
          'test_outside_esrch_preserves_success_timeout_and_cancellation_and_clears_hold', 'GateExecutionError'),
         ('worker worktree preserved', 'bureau-worker.sh',
-         '  python3 -I "$SCRIPT_DIR/bureau-process.py" --root "$common/bureau" --run "${BUREAU_RUN_ID:-}" || exit "$rc"',
+         '  python3 -I -B "$SCRIPT_DIR/bureau-process.py" --root "$common/bureau" --run "${BUREAU_RUN_ID:-}" || exit "$rc"',
          '  :', 'test_worker_cleanup_keeps_uncertain_gate_branch_and_registration', "'' != 'fixture-work'"),
     ]
     for label, name, old, new, test, signature in cases:

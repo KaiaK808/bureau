@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="db177d03ce2174378f1f0f71e41de59b5389391310bbfbcdac3f0b90c03f651f">
+<meta name="bureau-source-sha256" content="9562170dfcd0c7313448ca038e30ec65174b4c04718f4a794c5bdc7ba955d340">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -383,6 +383,31 @@ unpublished result.</p>
 <p>Validation currently uses fake executors and real local Git/test
 commands. Run a representative live ticket in an adopting repository
 before relying on unattended Codex or mixed-provider operation.</p>
+<h2 id="python-bytecode">Python bytecode</h2>
+<p>Stages export <code>PYTHONDONTWRITEBYTECODE=1</code> for their
+children, including provider commands and configured gates under
+<code>repo.untrusted_env: "clean"</code>. Bureau’s isolated Python calls
+also pass <code>-B</code>, because <code>-I</code> ignores Python
+environment variables, and sibling importers set
+<code>sys.dont_write_bytecode = True</code> before loading helpers.
+Installer applies, including scoped resyncs, add a case-insensitive rule
+for <code>scripts/__pycache__/</code> to the adopting repository’s
+<code>.gitignore</code> without duplicating the entry. Its bracket pairs
+cover either spelling of each letter regardless of
+<code>core.ignorecase</code>; existing literal rules are preserved.
+Shell stage commits exclude this directory in any letter case even when
+it is not ignored or was already tracked; pre-staged cache paths refuse
+with exit 24 and leave the index unchanged. Spec checkpoint commits
+select only their reserved feature directory.</p>
+<p><strong>Upgrade:</strong> compare installation drift, resync the
+scripts scope and restart stage drivers. If a cache is already tracked,
+run <code>git rm --cached -r -- ':(icase)scripts/__pycache__/'</code>
+once and commit the removal; this also selects case variants such as
+<code>Scripts/__PyCaChE__/</code>. The ignore rule cannot untrack files.
+Doctor warns until the tracked paths are removed. The fixture regression
+tests exercise entry points, review evidence and provider gates without
+a model or network; they do not identify the writer of a historical
+adopting-repository commit.</p>
 <h2 id="ticket-accounting">Ticket accounting</h2>
 <p>Optional <code>agents.ticket_budget</code> bounds a ticket's total
 tokens, provider calls and summed provider wall time across stages and

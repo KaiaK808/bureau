@@ -135,11 +135,11 @@ if [ -n "$WORKTREE_OVERRIDE" ]; then
   # A disposable worker needs a worktree of its own. The main checkout (or the
   # checkout the shepherd runs from) is never reset: the stage would stop with
   # 21 and the halt would ask to drop a checkout nobody may drop (v3.1.0-rc.2).
-  _wt_real=$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$WORKTREE_OVERRIDE")
+  _wt_real=$(python3 -I -B -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$WORKTREE_OVERRIDE")
   _main=$(git -C "$REPO_DIR" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p' || true)
   for _co in "$_main" "$(git -C "$REPO_DIR" rev-parse --show-toplevel 2>/dev/null || true)"; do
     [ -n "$_co" ] || continue
-    if [ "$_wt_real" = "$(python3 -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$_co")" ]; then
+    if [ "$_wt_real" = "$(python3 -I -B -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$_co")" ]; then
       echo "ERROR: --worktree $WORKTREE_OVERRIDE is the checkout $_co; the shepherd needs a worktree of its own (e.g. --worktree .worktrees/shepherd-${ISSUE:-TEAM-123})" >&2
       exit 1
     fi
@@ -456,7 +456,7 @@ fi
 [ "$NO_MERGE" = 1 ] && export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
 WORKTREE="${WORKTREE_OVERRIDE:-$REPO_DIR/.worktrees/shepherd}"
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
-  bureau_exec_runtime python3 -I "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" --no-tmux "${ORIG_ARGS[@]}"
+  bureau_exec_runtime python3 -I -B "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" --no-tmux "${ORIG_ARGS[@]}"
 fi
 
 # The fault class a stage leaves behind when it gives up on Linear (exit

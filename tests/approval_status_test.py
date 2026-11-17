@@ -33,6 +33,19 @@ def load(name, path):
     return value
 
 
+def script_texts(root):
+    """Scan tracked and new source text, excluding ignored debris and binaries."""
+    names = subprocess.check_output(['git', '-C', str(root), 'ls-files', '--cached', '--others',
+                                     '--exclude-standard', '-z', '--', 'templates/scripts'])
+    for name in sorted(set(names.split(b'\0')) - {b''}):
+        path = root / os.fsdecode(name)
+        if not path.is_file(): continue
+        data = path.read_bytes()
+        if b'\0' in data: continue
+        text = data.decode('utf-8', errors='surrogateescape')
+        yield path, text
+
+
 def workflow_yaml(text):
     """Parse the template's restricted YAML subset, with no optional YAML dependency.
 
@@ -332,7 +345,8 @@ class ApprovalIntegration(Fixture):
         self.install(repo, '--scope', 'approval', '--apply')
         files = {str(p.relative_to(repo)) for p in repo.rglob('*') if p.is_file() and '.git' not in p.relative_to(repo).parts}
         self.assertEqual(files, {'.bureau-install.json', '.gitignore', '.github/workflows/bureau-approval.yml'})
-        self.assertEqual((repo / '.gitignore').read_text().split(), ['.bureau-install.json'])
+        self.assertEqual((repo / '.gitignore').read_text().split(),
+                         ['.bureau-install.json', 'scripts/__pycache__/'])
         self.assertEqual((repo / '.github/workflows/bureau-approval.yml').read_bytes(), WORKFLOW.read_bytes())
         manifest = json.loads((repo / '.bureau-install.json').read_text())
         self.assertEqual(set(manifest['files']), {'.github/workflows/bureau-approval.yml'})
@@ -467,11 +481,63 @@ class ApprovalStructure(unittest.TestCase):
         self.assertEqual(states[0].value, 'success')
 
     def test_only_workflow_script_can_write_statuses_and_no_pipeline_calls_it(self):
-        for path in (ROOT / 'templates/scripts').rglob('*'):
-            if not path.is_file() or path == SCRIPT: continue
-            text = path.read_text()
+        for path, text in script_texts(ROOT):
+            if path == SCRIPT: continue
             if path.name.endswith('-pipeline.sh'): self.assertNotIn(SCRIPT.name, text, str(path))
             self.assertNotRegex(text, r'/statuses(?:/|[\s\x27\"])', str(path))
+
+    def test_script_text_inventory_skips_ignored_cache_and_binary_but_reads_tracked_text(self):
+        temporary = tempfile.TemporaryDirectory(prefix='bureau-approval-inventory-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True, env=self.env)
+        (self.root / '.gitignore').write_text('__pycache__/\ntracked.txt\n')
+        scripts = self.root / 'templates/scripts'; scripts.mkdir(parents=True)
+        cache = scripts / '__pycache__/x.pyc'; cache.parent.mkdir()
+        # Deliberately readable: ignore handling, rather than decode failure,
+        # must prevent this leftover cache from participating in the scan.
+        cache.write_text('/statuses/\n')
+        (scripts / 'binary.dat').write_bytes(b'\0/statuses/\xff')
+        legacy = scripts / 'legacy.sh'
+        legacy_bytes = b'#!/bin/bash\n# caf\xe9\ncurl -X POST https://example.invalid/statuses/head\n'
+        legacy.write_bytes(legacy_bytes)
+        subprocess.run(['/bin/bash', '-n', str(legacy)], check=True, env=self.env)
+        tracked = scripts / 'tracked.txt'; tracked.write_text('tracked text\n')
+        subprocess.run(['git', '-C', str(self.root), 'add', '-f', 'templates/scripts/tracked.txt',
+                        'templates/scripts/binary.dat', 'templates/scripts/legacy.sh'],
+                       check=True, env=self.env)
+        fresh = scripts / 'new.txt'; fresh.write_text('new text\n')
+        texts = dict(script_texts(self.root))
+        self.assertIn(legacy, texts)
+        self.assertEqual(texts[legacy].encode('utf-8', errors='surrogateescape'), legacy_bytes)
+        self.assertEqual(texts, {tracked: 'tracked text\n', fresh: 'new text\n',
+                                legacy: legacy_bytes.decode('utf-8', errors='surrogateescape')})
+        # The audit must catch the ASCII POST despite the Latin-1 comment;
+        # the readable ignored cache and NUL-containing binary stay excluded.
+        with self.assertRaisesRegex(AssertionError, 'legacy.sh'):
+            for path, text in script_texts(self.root):
+                self.assertNotRegex(text, r'/statuses(?:/|[\s\x27\"])', str(path))
+        legacy.write_bytes(b'#!/bin/bash\n# caf\xe9\n')
+        # Negative control: an ignored name already tracked by Git stays in
+        # scope, and a real status-writing text change still fails the check.
+        tracked.write_text('/statuses/\n')
+        with self.assertRaises(AssertionError):
+            for path, text in script_texts(self.root):
+                self.assertNotRegex(text, r'/statuses(?:/|[\s\x27\"])', str(path))
+
+    def test_non_utf8_inventory_negative_control(self):
+        source = Path(__file__).read_text()
+        start = source.index('def script_texts(')
+        source = source[start:source.index('\ndef workflow_yaml(', start)]
+        anchor = "text = data.decode('utf-8', errors='surrogateescape')"
+        self.assertEqual(source.count(anchor), 1)
+        namespace = dict(globals())
+        exec(compile(source.replace(anchor, "try: text = data.decode('utf-8')\n        except UnicodeDecodeError: continue"),
+                     '<utf8-only inventory>', 'exec'), namespace)
+        with patch(__name__ + '.script_texts', namespace['script_texts']):
+            with self.assertRaisesRegex(AssertionError, 'legacy.sh'):
+                self.test_script_text_inventory_skips_ignored_cache_and_binary_but_reads_tracked_text()
 
 
 if __name__ == '__main__':

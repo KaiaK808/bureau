@@ -157,7 +157,7 @@ REBASE_RC=0
 REBASE_RESULT=$(mktemp) || REBASE_RESULT=""
 REBASE_RESULT_ARGS=()
 [ -z "$REBASE_RESULT" ] || REBASE_RESULT_ARGS+=(--failure-result-file "$REBASE_RESULT")
-( bureau_exec_runtime python3 -I "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
+( bureau_exec_runtime python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-conflicts.py" \
     --repo "$PWD" --config "$BUREAU_CONFIG" --base "$REBASE_BASE" --issue "$ISSUE" --operation rebase \
     "${REBASE_RESULT_ARGS[@]+"${REBASE_RESULT_ARGS[@]}"}" ) || REBASE_RC=$?
 bureau_conflict_failure_signal "$REBASE_RC" "$REBASE_RESULT"

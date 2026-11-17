@@ -51,12 +51,12 @@ sys.exit(7 if fault == 'complete_then_nonzero' else result.returncode)
     missing = temp / 'missing'
     injected.mkdir()
     missing.mkdir()
-    invocation = '} | LC_ALL=C "$_BUREAU_ENV_PYTHON" -I -c'
+    invocation = '} | LC_ALL=C "$_BUREAU_ENV_PYTHON" -I -B -c'
     assert source.count(invocation) == 1, 'snapshot helper invocation changed'
     # Inject at the absolute invocation boundary, keeping the actual parser.
     # A python3 shell function/PATH double must no longer intercept secrets.
     (injected / 'bureau-env.sh').write_text(source.replace(
-        invocation, '} | LC_ALL=C "$PROBE_PYTHON" "$SNAPSHOT_PROXY" "$SNAPSHOT_FAULT" -I -c'))
+        invocation, '} | LC_ALL=C "$PROBE_PYTHON" "$SNAPSHOT_PROXY" "$SNAPSHOT_FAULT" -I -B -c'))
     resolver = 'builtin type -P python3'
     assert source.count(resolver) == 1, 'trusted interpreter resolver changed'
     (missing / 'bureau-env.sh').write_text(source.replace(resolver, 'builtin false'))

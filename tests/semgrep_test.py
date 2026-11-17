@@ -188,7 +188,7 @@ class SemgrepTests(unittest.TestCase):
         calls = self.calls(); self.assertEqual(len(calls), 2)
         for side, call in zip(('base','head'), calls):
             env = call['env']; root = Path(env['HOME']).parent
-            expected = dict(PATH='/usr/bin:/bin', LANG='C.UTF-8', TZ='UTC',
+            expected = dict(PATH='/usr/bin:/bin', LANG='C.UTF-8', TZ='UTC', PYTHONDONTWRITEBYTECODE='1',
                             HOME=str(root/'home'), XDG_CONFIG_HOME=str(root/'config'),
                             XDG_CACHE_HOME=str(root/'cache'), TMPDIR=str(root/'tmp'), **self.m.SWITCHES)
             # macOS's system interpreter inserts this after exec, even under -I -S.

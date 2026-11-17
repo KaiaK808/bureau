@@ -104,6 +104,7 @@ PY
   # the dependency restore (a no-op without package.json) and the review's verdict floor and exit come from the real config, and the script and marker list the guard reads were
   # copied above with every other file.
   sed -n -e '/^BUREAU_EXIT_LINEAR_UNUSABLE=/p' -e '/^halt_if_linear_unusable() {/,/^}/p' \
+    -e '/^commit_stage_changes() {/,/^}/p' \
     -e '/^bureau_gh_pr_retry() {/,/^}/p' \
     -e '/^_bureau_gh_pr_retry() {/,/^}/p' -e '/^bureau_open_pr_number() {/,/^}/p' \
     -e '/^bureau_guard_branch_reset() {/,/^}/p' \
