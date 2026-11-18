@@ -59,7 +59,7 @@ bureau_trivy() {
         (pathlib.Path(os.environ['PR2_GH'])/'git-fetch-hook').write_text(str(hook))
     elif case.endswith('during-gates'):
         gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh';old='    if [ -n "$JSON" ]; then'
-        replacement='''+repr('''    if [ "$JSON" = baseRefOid ]; then
+        replacement='''+repr('''    if [ "$JSON" = state,mergeStateStatus,labels,baseRefName,baseRefOid ]; then
       reads=$(( $(cat "$D/base_oid_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/base_oid_reads"
       if [ "$reads" = 2 ]; then HOOK; fi
     fi
@@ -67,12 +67,10 @@ bureau_trivy() {
         assert gh.read_text().count(old)==1
         gh.write_text(gh.read_text().replace(old,replacement.replace('HOOK',shlex.quote(sys.executable)+' -I -B '+shlex.quote(str(hook)))))
     else:
-        gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh';old='*/branches/*) out < "$D/branch.json" ;;'
-        replacement='''+repr('''*/branches/*)
-        out < "$D/branch.json"
-        reads=$(( $(cat "$D/base_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/base_reads"
-        if [ "$reads" = 2 ]; then HOOK; fi ;;
-''')+r'''
+        gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh';old='        retarget_after_read base-tip ;;'
+        replacement='''+repr('''        reads=$(( $(cat "$D/base_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/base_reads"
+        if [ "$reads" = 2 ]; then HOOK; fi
+''')+r'''+old
         assert gh.read_text().count(old)==1
         gh.write_text(gh.read_text().replace(old,replacement.replace('HOOK',shlex.quote(sys.executable)+' -I -B '+shlex.quote(str(hook)))))
 if case=='changed':
@@ -129,14 +127,19 @@ class MergeTests(unittest.TestCase):
                     value=json.loads(result.read_text());results.append(value)
                     concurrent=name.endswith(('during-scan','after-gates','during-final-fetch','during-gates'))
                     expected='0' if name in ('exact','off','disabled','advisory','negative-merge-guard') else '2' if concurrent and not name.startswith('ci-') else '25'
+                    if name=='retarget-after-gates': expected='20'
                     self.assertEqual(value['code'],expected,value['stdout']+'\n'+value['stderr']+'\n'+value['hook_log'])
                     self.assertEqual(value['merged'],expected=='0',value)
                     if concurrent:
                         self.assertTrue(value['hook_ran'],value)
                         self.assertEqual(len(value['receipts']),1)
                         self.assertNotIn('needs-human',value['calls'])
-                        self.assertIn('Gate regressed',value['stdout'])
-                        self.assertEqual(value['mark']['head'],value['scanned']['head'])
+                        if expected=='20':
+                            self.assertIn('approved Target branch main differs from current base branch release',value['stdout'])
+                            self.assertIsNone(value['mark'])
+                        else:
+                            self.assertIn('Gate regressed',value['stdout'])
+                            self.assertEqual(value['mark']['head'],value['scanned']['head'])
                         if name in ('base-during-gates','base-after-gates'):
                             self.assertIn('PR base commit changed',value['stdout'])
                             self.assertNotIn('base_up_to_date: FAIL',value['stdout'])
@@ -166,10 +169,8 @@ class MergeTests(unittest.TestCase):
     def test_final_gates_follow_fetch_single_base_read_and_checkpoint(self):
         self.cases(('retarget-after-gates','ci-during-final-fetch','base-during-final-fetch','retarget-during-final-fetch'))
         source=(ROOT/'templates/scripts/merge-pipeline.sh').read_text()
-        for line in source.splitlines():
-            if line.strip().startswith('gh pr merge '):
-                previous=source[:source.index(line)].rstrip().splitlines()[-1]
-                self.assertEqual(previous.strip(),'bureau_ticket_checkpoint "$ISSUE"')
+        merge=source.split('\n_merge_pr() {\n',1)[1].split('\n}',1)[0]
+        self.assertIn('  bureau_ticket_checkpoint "$ISSUE"\n  if [ "$SCAN_RECHECK" = true ]; then\n',merge)
 
     def test_base_commit_advancing_with_green_final_gates_retries(self):
         self.cases(('base-during-gates','base-after-gates'))

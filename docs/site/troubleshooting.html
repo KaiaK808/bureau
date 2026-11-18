@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2af406fb8c391463c1bf9aa1984c0be38ade48ff8fb7dff2633daa1ef993b343">
+<meta name="bureau-source-sha256" content="f61bd9d35e6421e9cef1526253abf2f97621b5bc7c597efd4f833ff5cc277466">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1030,15 +1030,15 @@ PR head, the current PR base, GitHub's <code>mergeStateStatus</code>,
 the latest Code Review v2 approval and its head/target binding, hold
 labels and unresolved threads. Every gate must pass.</p>
 <p>To diagnose:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> pr view <span class="op">&lt;</span>N<span class="op">&gt;</span> --json statusCheckRollup,baseRefOid,mergeStateStatus</span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch origin <span class="kw">&amp;&amp;</span> <span class="fu">git</span> rev-parse origin/main</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> pr view <span class="op">&lt;</span>N<span class="op">&gt;</span> --json statusCheckRollup,baseRefName,baseRefOid,mergeStateStatus</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch origin <span class="kw">&amp;&amp;</span> <span class="fu">git</span> rev-parse <span class="st">&quot;origin/&lt;baseRefName&gt;&quot;</span></span></code></pre></div>
 <ul>
 <li><strong><code>mergeStateStatus</code> isn't CLEAN</strong>: usually
 <code>BEHIND</code> (need to rebase) or <code>BLOCKED</code> (missing
 review approval)</li>
-<li><strong><code>baseRefOid</code> doesn't match
-<code>origin/main</code></strong>: main has moved since the PR opened.
-Rebase.</li>
+<li><strong><code>baseRefOid</code> differs from the current tip of
+<code>baseRefName</code></strong>. Rebase onto the current base
+branch.</li>
 <li><strong><code>statusCheckRollup</code> has a <code>FAILURE</code> or
 an in-progress check</strong>: wait or fix the failing check</li>
 </ul>
@@ -1046,28 +1046,32 @@ an in-progress check</strong>: wait or fix the failing check</li>
 actual head checks and current base state, and repeats the gates just
 before merging. Background review of a stacked PR uses its actual PR
 base; that does not weaken the separate merge gate.</p>
-<p><strong><code>approval_binding</code> blocker:</strong> the latest
-Code Review v2 comment must be unedited and contain exactly one
+<p>For an <strong><code>approval_binding</code></strong> blocker,
+inspect the newest PR comment containing the <code>Code Review v2</code>
+heading, which Bureau selects with
+<code>gh pr view --json comments</code> as before. The new binding
+requires that an unedited <code>APPROVE</code> or
+<code>AUTO_APPROVE</code> comment contain exactly one
 <code>**Reviewed head**: `&lt;40 lowercase hex characters&gt;`</code>
 line and one
 <code>**Target**: `&lt;base branch&gt;` at `&lt;40 lowercase hex characters&gt;`</code>
 line. The reviewed head must equal the commit checked by CI and passed
-to <code>--match-head-commit</code>; the target branch must equal the
-PR's current base branch. Bureau never falls back to an older approval.
-APPROVE and AUTO_APPROVE follow the same rule. The recorded target SHA
-is checked for format, but may differ from today's base SHA; the
-existing base/CI gates still apply.</p>
-<p>A push after approval, a retargeted PR, missing/ambiguous lines or an
-edited approval returns the ticket to Build Review with exit
-<code>20</code> and a <code>refreshed</code> gate report. The gate
-comment names both heads or the invalid line and requests a fresh
-review. Repeating the same stale approval posts no second comment and
-creates no <code>needs-human</code> label or merge wait. A failed
-comment, edit-metadata or head read stays <code>not-yet</code>/exit
-<code>2</code>; it does not invalidate the approval or route the ticket.
-<strong>Upgrade:</strong> after comparing installed drift and resyncing
-the complete scripts scope, a PR approved before the upgrade whose
-comment lacks these lines needs one fresh review.</p>
+to <code>--match-head-commit</code>. The target branch must equal the
+PR's base in each gate pass and in the final read just before the merge.
+The recorded target SHA may differ from today's base SHA, subject to the
+separate base freshness and CI gates.</p>
+<p>An approval for a previous head or target, a missing or ambiguous
+binding line, or an edited approval returns the ticket to Build Review
+with exit <code>20</code> and a <code>refreshed</code> gate report. The
+gate comment names the differing heads or branches or describes the
+invalid line, once per unchanged blocker. The ticket gets fresh review
+without <code>needs-human</code> or a merge wait. A failed comment,
+edit-metadata, head or base read gives <code>2</code> when there are
+only undecided blockers. A definitive blocker in the same pass, such as
+a failing CI check, takes precedence and gives <code>25</code>. After
+comparing installed drift and resyncing the complete scripts scope, a PR
+approved before the upgrade whose comment lacks the binding lines needs
+one fresh review.</p>
 <p>The stage tells its caller which kind of refusal it was: exit
 <code>2</code> when the gate is not yet decided (a check still running
 or not started, GitHub still computing <code>mergeStateStatus</code>, a

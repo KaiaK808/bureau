@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="11c228a6654f434b264820299c1c415318e2a660c82a1524496d8fcf5eab5684">
+<meta name="bureau-source-sha256" content="e58b8631c027fae24c92fdb8f34db2c0a8f0cf41aa24e4ffea785e0a09b2fb82">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -649,24 +649,20 @@ check runs before applying blocking findings, unavailable tooling,
 failed measurements or receipt failures: changed inputs abort with the
 gate-regression report and retryable outcome (2), so the next tick
 measures the current inputs. An unchanged blocking result refuses merge
-with the existing blocked outcome (25). The ticket kill-switch
-checkpoint stays the last step before the merge call, as in every mode.
-Semgrep gate marks bind to the scanned head, including when it differs
-from the initial gate's head.</p>
-<p>The existing just-in-time gates then run unchanged. After they pass,
-Bureau performs one cheap GraphQL read of the PR's base ref name and its
-live <code>baseRef.target.oid</code> branch tip. The checked
-<code>MERGE_HEAD</code>, base ref name and base commit must equal the
-scanned inputs; any mismatch or failed read retries with exit 2. Bureau
-then merges with <code>--match-head-commit</code> set to that scanned
-head. No fetch or merge-message read occurs after the final gates. The
-final read uses the live branch target because the PR's stored base OID
-can lag the branch tip; it catches a base advancing after the last fetch
-even when the final gates pass against the newer base. GitHub's head
-match protects against a subsequent head push. Disabled and advisory
-merge behaviour and GitHub/git call logs remain unchanged. The merge
-approval binding described below applies independently of scanner
-receipts, in every scanner mode.</p>
+with the existing blocked outcome (25). Semgrep gate marks bind to the
+scanned head, including when it differs from the initial gate's
+head.</p>
+<p>After the just-in-time gates pass, Bureau checks the ticket kill
+switch and makes one GraphQL read of the PR's base branch and its live
+<code>baseRef.target.oid</code> tip. If the branch differs from the
+approved Target, Bureau returns to Build Review with exit
+<code>20</code>. A failed read or a difference from the scanned head,
+base branch or base commit retries with exit <code>2</code>. Bureau
+merges with <code>--match-head-commit</code> set to the scanned head.
+The live tip catches base advancement after the last fetch even when the
+final gates passed against a newer base. Blocking mode completes all
+fetches and merge-message preparation before the final gates. The
+approval binding and final target check apply in every scanner mode.</p>
 <p><strong>Upgrade:</strong> compare installed script drift and resync
 the entire scripts scope (including the shared helper, sandbox profile,
 rules, lock and platform manifests). Existing repositories stay off.
@@ -3515,27 +3511,44 @@ repo whose defaults don't match.</p>
 </tbody>
 </table>
 <h3 id="merge-approval-binding">Merge approval binding</h3>
-<p>Both automatic merge routes require the latest comment containing
-<code>Code Review v2</code> to carry <code>**Verdict**: APPROVE</code>
-or <code>AUTO_APPROVE</code> and exactly one of each binding line:</p>
+<p>Both automatic merge routes use
+<code>gh pr view --json comments</code> to select the newest PR comment
+containing the <code>Code Review v2</code> heading, as before. The gate
+now binds an <code>APPROVE</code> or <code>AUTO_APPROVE</code> verdict
+in that comment to the head and target named in these two lines. Each
+line must appear exactly once.</p>
 <pre class="text"><code>**Reviewed head**: `&lt;full 40-character lowercase hex SHA&gt;`
 **Target**: `&lt;base branch&gt;` at `&lt;full 40-character lowercase hex SHA&gt;`</code></pre>
 <p>On both gate passes, the reviewed head must equal the head used for
-CI and <code>--match-head-commit</code>, and the target branch must
-equal the PR's current base branch. The recorded target SHA is validated
-as a full SHA but may differ from the current base SHA; existing CI/base
-gates still apply. Edited comments, duplicate or malformed lines and
-missing bindings are stale approvals. Bureau comments once per unchanged
-blocker, moves the ticket to Build Review and returns the existing
-<code>20</code>/<code>refreshed</code> handoff, without
-<code>needs-human</code> or a merge wait. Comment or head read failures
-remain <code>*_read</code>/not-yet (<code>2</code>). The inline caller
-forwards the same report and exit.</p>
-<p><strong>Upgrade:</strong> compare installed script drift, resync the
-complete scripts scope and restart drivers. A PR approved before the
-upgrade whose verdict comment lacks these lines gets one fresh review.
-This check binds the published comment; it adds no approval store or
-policy hash. See <a
+CI and <code>--match-head-commit</code>. Each pass reads the PR's base
+branch and base OID together. The approval checks its Target against
+that branch, and the base freshness gate checks the OID against the live
+tip of the same branch. The recorded target SHA must have the format
+shown above and may differ from the current base SHA. The CI and base
+freshness gates still apply.</p>
+<p>Both routes read the live base branch again immediately before
+<code>gh pr merge</code>, after preparing the message and checking the
+ticket. A mismatch with the approved Target follows the stale-approval
+path. GitHub enforces the expected head through
+<code>--match-head-commit</code> and offers no expected-base option. A
+retarget after the final read and before GitHub applies the merge
+remains an accepted limit.</p>
+<p>An edited comment, a missing, malformed or duplicate binding line, or
+a binding that names a different head or target requires fresh Build
+Review. Bureau moves the ticket there, leaves one gate comment per
+unchanged blocker and returns <code>20</code> with a
+<code>refreshed</code> report, without setting <code>needs-human</code>
+or saving a merge wait. The inline caller forwards the report and exit
+code.</p>
+<p>For ordinary gate refusals, a definitive blocker such as a failing CI
+check takes precedence over failed reads in the same pass and returns
+<code>25</code>. A pass with only undecided blockers returns
+<code>2</code>, as does a failed final base read after both passes
+cleared.</p>
+<p><strong>Upgrade</strong> by comparing installed script drift,
+resyncing the complete scripts scope and restarting drivers. A PR
+approved before the upgrade whose verdict comment lacks these lines gets
+one fresh review. See <a
 href="troubleshooting.html#merge-gate-refuses-to-merge-a-pr-that-looks-green">troubleshooting</a>.</p>
 <h3 id="code-review-internals">Code-review internals</h3>
 <table>

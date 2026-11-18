@@ -321,7 +321,7 @@ bureau_semgrep() {
         # reads either OID, so that gate observes B consistently and passes.
         gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh'
         old='    if [ -n "$JSON" ]; then'
-        replacement=r"""    if [ "$JSON" = baseRefOid ]; then
+        replacement=r"""    if [ "$JSON" = state,mergeStateStatus,labels,baseRefName,baseRefOid ]; then
       reads=$(( $(cat "$D/base_oid_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/base_oid_reads"
       if [ "$reads" = 2 ]; then HOOK; fi
     fi
@@ -331,12 +331,10 @@ bureau_semgrep() {
         gh.write_text(gh.read_text().replace(old,replacement.replace('HOOK',shlex.quote(sys.executable)+' -I -B '+shlex.quote(str(hook)))))
     else:
         gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh'
-        old='*/branches/*) out < "$D/branch.json" ;;'
-        replacement=r"""*/branches/*)
-        out < "$D/branch.json"
-        reads=$(( $(cat "$D/base_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/base_reads"
-        if [ "$reads" = 2 ]; then HOOK; fi ;;
-"""
+        old='        retarget_after_read base-tip ;;'
+        replacement=r"""        reads=$(( $(cat "$D/base_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/base_reads"
+        if [ "$reads" = 2 ]; then HOOK; fi
+"""+old
         assert gh.read_text().count(old)==1
         import shlex
         gh.write_text(gh.read_text().replace(old,replacement.replace('HOOK',shlex.quote(sys.executable)+' -I -B '+shlex.quote(str(hook)))))
@@ -390,6 +388,7 @@ pathlib.Path(os.environ['SEMGREP_RESULT']).write_text(json.dumps(value))
                     expected = '0' if case in ('exact','off','disabled','advisory') else '25'
                     concurrent = case.endswith(('during-scan','after-gates','during-final-fetch','during-gates'))
                     if case.startswith(('base-','head-','retarget-')) and concurrent: expected = '2'
+                    if case == 'retarget-after-gates': expected = '20'
                     if concurrent:
                         self.assertTrue(value['hook_ran'], value['stdout']+'\n'+value['stderr']+'\n'+value['git_calls'])
                         self.assertEqual([r['status'] for r in value['receipts']],
@@ -399,13 +398,18 @@ pathlib.Path(os.environ['SEMGREP_RESULT']).write_text(json.dumps(value))
                         self.assertTrue(value['hook_ran'])
                         self.assertFalse(value['merged'])
                         self.assertNotIn('gh\tpr\tmerge',value['gh_calls'])
-                        self.assertIn('Gate regressed between initial check and merge',value['stdout'])
-                        self.assertTrue(value['gate_report'].startswith('blocked\n' if case.startswith('ci-') else 'not-yet\n'))
+                        if expected == '20':
+                            self.assertTrue(value['gate_report'].startswith('refreshed\napproval_binding: '))
+                            self.assertIn('approved Target branch main differs from current base branch release',value['gate_report'])
+                            self.assertIsNone(value['mark'])
+                        else:
+                            self.assertIn('Gate regressed between initial check and merge',value['stdout'])
+                            self.assertTrue(value['gate_report'].startswith('blocked\n' if case.startswith('ci-') else 'not-yet\n'))
+                            self.assertEqual(value['mark']['head'], value['scanned']['head'])
                         self.assertEqual(len(value['receipts']),1)
                         self.assertEqual(value['receipts'][0]['head'],value['scanned']['head'])
                         self.assertEqual(value['receipts'][0]['base'],value['scanned']['base'])
                         self.assertNotIn('needs-human', value['calls'])
-                        self.assertEqual(value['mark']['head'], value['scanned']['head'])
                         if case in ('base-during-gates','base-after-gates'):
                             self.assertIn('PR base commit changed',value['stdout'])
                             self.assertNotIn('base_up_to_date: FAIL',value['stdout'])

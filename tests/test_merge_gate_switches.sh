@@ -252,7 +252,7 @@ python3 - "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'
 import sys
 p = sys.argv[1]; src = open(p).read()
 old = ' --match-head-commit "$MERGE_HEAD"'
-assert src.count(old) == 2, 'pinned merge calls not found'
+assert src.count(old) == 1, 'pinned merge call not found'
 open(p, 'w').write(src.replace(old, ''))
 PY
 touch "$PR2_GH/allow_unpinned"
@@ -276,9 +276,12 @@ binding_refreshed() {
 }
 binding_gate_comments() { jq '[.[] | select(.body | test("Bureau merge gate"))] | length' "$PR2_GH/comments.json"; }
 binding_case() {
-  local scenario="$1" control="$2" approved current
+  local scenario="$1" control="$2" approved current reviewed_base
   new_sandbox
-  [ "$control" != reverted ] || pr2_revert_approval_binding
+  case "$control" in
+    reverted) pr2_revert_approval_binding ;;
+    snapshot) pr2_revert_merge_base_fix snapshot ;;
+  esac
   approved=$(jq -r .headRefOid "$PR2_GH/pr.json")
   case "$scenario" in
     dedicated)
@@ -323,7 +326,9 @@ binding_case() {
     matching|advanced-base|auto-approve)
       [ "$scenario" != auto-approve ] || pr2_approval AUTO_APPROVE
       if [ "$scenario" = advanced-base ]; then
+        reviewed_base=$(jq -r .baseRefOid "$PR2_GH/pr.json")
         current=$(git -C "$SANDBOX" rev-parse HEAD)
+        [ "$current" != "$reviewed_base" ] || return 1
         git -C "$SANDBOX" push -q origin 'HEAD:refs/heads/main'
         jq --arg h "$current" '.baseRefOid=$h' "$PR2_GH/pr.json" > "$PR2_GH/pr.tmp" && mv "$PR2_GH/pr.tmp" "$PR2_GH/pr.json"
         jq -n --arg h "$current" '{commit:{sha:$h}}' > "$PR2_GH/branch.json"
@@ -331,6 +336,10 @@ binding_case() {
       gate
       [ "$LAST_RC" = 0 ] && pr2_merged || return 1
       grep -q -- '--match-head-commit'$'\t'"$approved" "$SANDBOX/gh_calls.log" || return 1
+      if [ "$scenario" = advanced-base ]; then
+        grep -qF "Target**: \`main\` at \`$reviewed_base\`" "$PR2_GH/comments.json" || return 1
+        ! grep -q $'\t--json\tbaseRefOid\t' "$SANDBOX/gh_calls.log" || return 1
+      fi
       # The same approval must stop covering the next pushed commit.
       pr2_push_head; gate; binding_refreshed || return 1
       ;;
@@ -345,6 +354,12 @@ binding_case() {
       [ "$LAST_RC" = 2 ] && [ "$OUTCOME" = not-yet ] && ! pr2_merged || return 1
       ! grep -qE '^(move_issue|add_issue_label)' "$SANDBOX/calls.log" || return 1
       grep -qE '^(verdict_read|head_read): ' <<< "$LINES" || return 1
+      if [ "$scenario" = comments-read ]; then
+        pr2_checks red; gate
+        [ "$LAST_RC" = 25 ] && [ "$OUTCOME" = blocked ] && ! pr2_merged || return 1
+        grep -q '^verdict_read: ' <<< "$LINES" && grep -q '^ci_green: ci: failing check' <<< "$LINES" || return 1
+        pr2_checks green
+      fi
       rm -f "$PR2_GH/fail_comments_read" "$PR2_GH/fail_head_read" "$PR2_GH/fail_comment_metadata"
       gate; binding_refreshed || return 1
       ;;
@@ -356,6 +371,85 @@ for scenario in dedicated jit newest retarget missing matching advanced-base aut
   [ "$LAST_RC" = 0 ] && pr2_merged || fail "binding $scenario: negative control failed before the unsafe merge"
   echo "PASS binding $scenario; identical assertions reject the private copy with binding reverted"
 done
+if binding_case advanced-base snapshot; then fail 'advanced base: split base reads stayed green'; fi
+[ "$LAST_RC" = 0 ] && pr2_merged && grep -q $'\t--json\tbaseRefOid\t' "$SANDBOX/gh_calls.log" \
+  || fail 'advanced base: split-read control did not re-read the PR base OID'
+echo 'PASS advanced base: the approved branch remains eligible with a newer SHA; split-read control takes the OID from a separate read'
+
+# Observe both the routed outcome and the exact branch used for freshness.
+# Retarget either after the second gate snapshot or during merge-message
+# preparation after both passes. The PR's head stays the same.
+retarget_refreshed() {
+  binding_refreshed \
+    && grep -q 'approved Target branch main differs from current base branch release' <<< "$LINES" \
+    && ! grep -q $'^gh\tpr\tmerge\t' "$SANDBOX/gh_calls.log" \
+    && [ "$(binding_gate_comments)" = 1 ]
+}
+retarget_case() {
+  local read_kind="$1" control="$2" read_count=1
+  new_sandbox
+  [ "$control" = current ] || pr2_revert_merge_base_fix "$control"
+  [ "$read_kind" != gate-snapshot ] || read_count=2
+  pr2_retarget_after_read "$read_kind" "$read_count"
+  gate
+  retarget_refreshed || return 1
+  [ "$(grep -c '/branches/main' "$SANDBOX/gh_calls.log")" = 2 ] || return 1
+  ! grep -q '/branches/release' "$SANDBOX/gh_calls.log" || return 1
+  gate; retarget_refreshed
+}
+for scenario in gate-snapshot merge-message; do
+  retarget_case "$scenario" current || fail "retarget after $scenario: rc $LAST_RC outcome $OUTCOME: $LINES"
+  control=target
+  [ "$scenario" != gate-snapshot ] || control=both
+  if retarget_case "$scenario" "$control"; then fail "retarget after $scenario: negative control stayed green"; fi
+  [ "$LAST_RC" = 0 ] && pr2_merged && [ "$(jq -r .baseRefName "$PR2_GH/pr.json")" = release ] \
+    || fail "retarget after $scenario: negative control failed before the unsafe merge"
+  echo "PASS retarget after $scenario: 20/refreshed once; private reverted copy merges into release"
+done
+if retarget_case gate-snapshot snapshot; then fail 'retarget during the final gate: split base reads stayed green'; fi
+retarget_refreshed && grep -q '/branches/release' "$SANDBOX/gh_calls.log" \
+  || fail 'retarget during the final gate: the split-read control did not judge the wrong branch'
+echo 'PASS retarget during the final gate: freshness uses the same base as approval binding; split-read control judges release'
+
+# The late check runs inside the merge conditional. A failed Linear transition
+# there still propagates its error and cannot announce a completed handoff.
+late_transition_failure() {
+  local control="$1"
+  new_sandbox
+  pr2_retarget_after_read merge-message 1
+  printf '\nmove_issue() { return 27; }\n' >> "$SCRIPTS_DIR/bureau-config.sh"
+  if [ "$control" = reverted ]; then
+    python3 - "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]); source = p.read_text()
+move = '  move_issue "$ISSUE" "$BUREAU_STATE_BUILD_REVIEW"'
+assert source.count(move + ' || exit $?\n') == 1
+p.write_text(source.replace(move + ' || exit $?\n', move + '\n'))
+PY
+  fi
+  gate
+  [ "$LAST_RC" = 27 ] && [ -z "$OUTCOME" ] && ! pr2_merged && [ "$(binding_gate_comments)" = 0 ]
+}
+late_transition_failure current || fail "late transition failure: rc $LAST_RC outcome $OUTCOME: $LINES"
+if late_transition_failure reverted; then fail 'late transition failure: negative control stayed green'; fi
+[ "$LAST_RC" = 20 ] && [ "$OUTCOME" = refreshed ] && ! pr2_merged && [ "$(binding_gate_comments)" = 1 ] \
+  || fail 'late transition failure: reverted copy did not falsely announce a handoff'
+echo 'PASS late transition failure: propagates exit 27; private reverted copy announces a handoff'
+
+live_base_read_failure() {
+  gate
+  [ "$LAST_RC" = 2 ] && [ "$OUTCOME" = not-yet ] && ! pr2_merged \
+    && grep -q '^pr_read: .*base branch could not be read before merge' <<< "$LINES" \
+    && ! grep -qE '^(move_issue|add_issue_label)' "$SANDBOX/calls.log"
+}
+new_sandbox
+touch "$PR2_GH/fail_live_base_read"
+live_base_read_failure || fail "final base read failure: rc $LAST_RC outcome $OUTCOME: $LINES"
+pr2_revert_merge_base_fix target
+if live_base_read_failure; then fail 'final base read failure: negative control stayed green'; fi
+[ "$LAST_RC" = 0 ] && pr2_merged || fail 'final base read failure: reverted copy did not merge'
+echo 'PASS failed final base read: 2/not-yet; private reverted copy merges'
 
 # Exact writer syntax and unedited identity are required even when all hashes
 # happen to name the current commit. No ambiguous comment can supply a binding.

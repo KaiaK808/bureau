@@ -12,7 +12,7 @@
 #   4. PR base SHA == origin/<base-ref> HEAD     (NRSR: pr_base_is_current,
 #                                                  catches mergeStateStatus's
 #                                                  async-cache race)
-#   5. Latest unedited "Code Review v2" APPROVE / AUTO_APPROVE names this head
+#   5. The newest "Code Review v2" comment is unedited and approves this head
 #      and the current base branch (the reviewed base SHA may have advanced)
 #   6. No `needs-human`, `blocked`, or `wip` label on the PR
 #   7. Zero unresolved review threads (GraphQL: pullRequest.reviewThreads)
@@ -34,7 +34,8 @@
 # default; configurable via .agents.merge_strategy in .bureau.json), pinned with
 # --match-head-commit to the head the just-in-time gate checked (a push in
 # between makes GitHub refuse it; the stage then ends with 2), with a
-# sanitised --subject/--body for squash and merge (merge-body.sh). Deliberately
+# sanitised --subject/--body for squash and merge (merge-body.sh). Re-read the
+# base immediately before the merge and require the approved Target. Deliberately
 # no --delete-branch and no --auto: see code-review-pipeline.sh:314-322 for the
 # worktree/detached-HEAD rationale; --auto would queue the merge for later, we
 # want loud immediate failure if a gate slipped between the check and the call.
@@ -215,23 +216,29 @@ if [ "$PR_STATE" = "MERGED" ]; then
   exit 0
 fi
 
-# evaluate_merge_gates: run every gate against fresh GitHub data. Prints
-# "FAIL: ..." lines to stdout for each failed gate, returns 0 if all pass.
+# Keep the mismatch diagnostic identical across gate passes and the live base
+# check so refresh_stale_approval recognizes an unchanged blocker.
+approval_target_mismatch() {
+  printf 'approved Target branch %s differs from current base branch %s (reviewed head %s)' "$1" "$2" "$3"
+}
+
+# evaluate_merge_gates: run every gate against fresh GitHub data. On success,
+# print the approved Target branch. On failure, print the "gate: message" rows.
 # Called twice: once at the top of the pipeline (to render the gate report
-# and decide whether to attempt the merge), and again immediately before
-# `gh pr merge` (just-in-time recheck — closes the race between the initial
-# query and the merge call).
+# and decide whether to attempt the merge), and again just before the merge
+# call and its final live base check.
 #
 # Output rows are stable so the bot's idempotent-comment logic can diff them.
 evaluate_merge_gates() {
   # <head-sha>: the head commit this evaluation is about; CI is judged on it and the
   # merge is pinned to it (--match-head-commit). An empty one cannot be pinned: not yet.
   local pr="$1" head="${2:-}"
-  local _pr_data _pr_state _merge_state _labels_csv _base_ref _pr_read=ok
+  local _pr_data _pr_state _merge_state _labels_csv _base_ref _base_oid _pr_read=ok
+  local _approved_base=""
   # A read that fails is not a verdict about the PR: it becomes a *_read line,
   # which merge_gate_outcome counts as "not yet", never as "PR not open" or
   # "no APPROVE".
-  if ! _pr_data=$(gh pr view "$pr" --json state,mergeStateStatus,labels,baseRefName 2>/dev/null) \
+  if ! _pr_data=$(gh pr view "$pr" --json state,mergeStateStatus,labels,baseRefName,baseRefOid 2>/dev/null) \
      || ! _pr_state=$(printf '%s' "$_pr_data" | jq -er '.state | strings') \
      || ! _base_ref=$(printf '%s' "$_pr_data" | jq -er '.baseRefName | strings | select(length > 0)'); then
     _pr_read=failed; _pr_data='{}'; _pr_state=""
@@ -299,7 +306,7 @@ evaluate_merge_gates() {
   elif ! [[ "$verdict" =~ ^(APPROVE|AUTO_APPROVE)$ ]]; then
     _blockers+=("verdict: latest Code Review v2 verdict=${verdict:-none}")
   elif [ -n "$head" ] && [ "$_pr_read" = ok ]; then
-    local _head_line _target_line _approved_head _approved_base _binding_error=""
+    local _head_line _target_line _approved_head _binding_error=""
     local _head_pattern='^\*\*Reviewed head\*\*: `([0-9a-f]{40})`$'
     local _target_pattern='^\*\*Target\*\*: `([^`]+)` at `([0-9a-f]{40})`$'
     # Whole-line matching rejects missing, malformed and duplicate lines,
@@ -323,7 +330,7 @@ evaluate_merge_gates() {
       elif [ "$_approved_head" != "$head" ]; then
         _binding_error="approved head $_approved_head differs from current head $head"
       elif [ "$_approved_base" != "$_base_ref" ]; then
-        _binding_error="approved Target branch $_approved_base differs from current base branch $_base_ref (approved head $_approved_head, current head $head)"
+        _binding_error=$(approval_target_mismatch "$_approved_base" "$_base_ref" "$head")
       fi
     fi
     [ -z "$_binding_error" ] || _blockers+=("approval_binding: $_binding_error; fresh Build Review required")
@@ -351,8 +358,9 @@ evaluate_merge_gates() {
     _err=$(pr_ci_is_green "$pr" "$head" 2>&1 >/dev/null) \
       || _blockers+=("ci_green: $_err")
   fi
-  if [ "$_require_uptodate" != "false" ]; then
-    _err=$(pr_base_is_current "$pr" 2>&1 >/dev/null) \
+  if [ "$_require_uptodate" != "false" ] && [ "$_pr_read" = ok ]; then
+    _base_oid=$(printf '%s' "$_pr_data" | jq -er '.baseRefOid | strings | select(length > 0)') || _base_oid=""
+    _err=$(pr_base_is_current "$pr" "$_base_ref" "$_base_oid" 2>&1 >/dev/null) \
       || _blockers+=("base_current: $_err")
   fi
 
@@ -360,7 +368,7 @@ evaluate_merge_gates() {
     printf '%s\n' "${_blockers[@]}"
     return 1
   fi
-  return 0
+  printf '%s\n' "$_approved_base"
 }
 
 # merge_gate_required <agents key>: prints false when .agents.<key> is the JSON
@@ -479,10 +487,11 @@ merge_gate_mark() {
 
 # A stale approval is ordinary fresh-review work, like our own base refresh.
 # Reuse the gate comment key, so repeated runs at this head do not post again.
-# Both gate passes and both callers take this path; no wait mark or human hold.
+# Both gate passes and the final base re-read use this path.
+# The final check runs in _merge_pr's if condition, which suspends errexit.
 refresh_stale_approval() {
   local gates="$1" lines body last_body last_key current_key
-  lines=$(printf '%s\n' "$gates" | sed -n 's/^approval_binding: /- /p')
+  lines=$(printf '%s\n' "$gates" | sed -n 's/^approval_binding: /- /p') || exit $?
   [ -n "$lines" ] || return 0
   printf '  %s\n' "$gates"
   if [ "$DRY_RUN" = true ]; then
@@ -500,10 +509,10 @@ The approval does not bind the current PR head and target. Nothing was merged; a
       --jq '[.comments[] | select(.body | test("Bureau merge gate"))] | sort_by(.createdAt) | last | .body // ""'); then
     merge_gate_exit not-yet "verdict_read: the PR's review comments could not be read"
   fi
-  last_key=$(merge_gate_key "$(sed -n 's/^Outcome: \([a-z-]*\).*/\1/p' <<< "$last_body" | sed -n 1p)" "$last_body")
-  current_key=$(merge_gate_key refreshed "$lines")
+  last_key=$(merge_gate_key "$(sed -n 's/^Outcome: \([a-z-]*\).*/\1/p' <<< "$last_body" | sed -n 1p)" "$last_body") || exit $?
+  current_key=$(merge_gate_key refreshed "$lines") || exit $?
   bureau_ticket_checkpoint "$ISSUE" strict
-  move_issue "$ISSUE" "$BUREAU_STATE_BUILD_REVIEW"
+  move_issue "$ISSUE" "$BUREAU_STATE_BUILD_REVIEW" || exit $?
   if [ "$current_key" != "$last_key" ]; then
     gh pr comment "$PR_NUMBER" --body "$body" || true
   else
@@ -511,7 +520,7 @@ The approval does not bind the current PR head and target. Nothing was merged; a
   fi
   merge_gate_mark clear
   if [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ]; then
-    printf 'refreshed\n%s\n' "$gates" > "$BUREAU_MERGE_GATE_REPORT"
+    printf 'refreshed\n%s\n' "$gates" > "$BUREAU_MERGE_GATE_REPORT" || exit $?
   fi
   echo '  Stale approval — fresh Build Review required (exit 20).'
   exit 20
@@ -596,7 +605,9 @@ refresh_owned_merge_base() {
 
 # Initial gate evaluation (renders report, may post blocker comment).
 GATE_HEAD=$(pr_head_sha "$PR_NUMBER")
-GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$GATE_HEAD" || true)
+if GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$GATE_HEAD"); then
+  GATE_OUT=""
+fi
 merge_record_gate "$GATE_HEAD" "$GATE_OUT" || true
 refresh_stale_approval "$GATE_OUT"
 refresh_owned_merge_base "$GATE_OUT"
@@ -722,8 +733,8 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
-# Prepare the merge message early for blocking scans. The legacy path still
-# reads it at the merge call; neither disabled nor advisory adds any I/O.
+# Prepare the merge message early for blocking scans. The other modes still
+# read it at the merge call.
 MERGE_MESSAGE_READY=false
 prepare_merge_message() {
   [ "$MERGE_MESSAGE_READY" != true ] || return 0
@@ -826,7 +837,10 @@ done
 # call makes GitHub refuse the merge instead of merging a head no gate has seen.
 MERGE_HEAD=$(pr_head_sha "$PR_NUMBER")
 GATE_HEAD="$MERGE_HEAD"
-JIT_GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$MERGE_HEAD" || true)
+if JIT_GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$MERGE_HEAD"); then
+  APPROVED_BASE="$JIT_GATE_OUT"
+  JIT_GATE_OUT=""
+fi
 merge_record_gate "$MERGE_HEAD" "$JIT_GATE_OUT" || true
 refresh_stale_approval "$JIT_GATE_OUT"
 refresh_owned_merge_base "$JIT_GATE_OUT"
@@ -836,25 +850,11 @@ if [ -n "$JIT_GATE_OUT" ]; then
   merge_gate_exit "$(printf '%s\n' "$JIT_GATE_OUT" | merge_gate_outcome)" "$JIT_GATE_OUT"
 fi
 
-# No fetch or message preparation after the JIT gates. Their checked head and
-# this single live base-name/tip read must still match the scan; otherwise retry.
+# Blocking scans used the prepared message. Verify the checked head here and
+# the scanned base in the same final read as the approval target check.
 if [ "$SCAN_RECHECK" = true ]; then
   [ "$MERGE_HEAD" = "$SCANNED_HEAD" ] \
     || scanner_merge_retry "$_scan_tool: PR head changed during scan"
-  # baseRef.target is the live branch tip; the PR's stored baseRefOid can lag
-  # behind it. One GraphQL read binds both the PR's base name and current tip.
-  _merge_base_json=$(gh api graphql \
-    -f query='query($url:URI!){resource(url:$url){... on PullRequest{baseRefName baseRef{target{oid}}}}}' \
-    -f url="$PR_URL") \
-    || scanner_merge_retry "$_scan_tool: current PR base unavailable after gate recheck"
-  _merge_base_ref=$(printf '%s' "$_merge_base_json" | jq -er 'select((.errors // []) == []) | .data.resource.baseRefName | select(type == "string" and length > 0)') \
-    || scanner_merge_retry "$_scan_tool: current PR base ref unavailable after gate recheck"
-  _merge_base_oid=$(printf '%s' "$_merge_base_json" | jq -er '.data.resource.baseRef.target.oid | select(type == "string" and test("^[0-9a-f]{40,64}$"))') \
-    || scanner_merge_retry "$_scan_tool: current PR base commit unavailable after gate recheck"
-  [ "$_merge_base_ref" = "$SCANNED_BASE_REF" ] \
-    || scanner_merge_retry "$_scan_tool: PR base ref changed during scan or gate recheck"
-  [ "$_merge_base_oid" = "$SCANNED_BASE" ] \
-    || scanner_merge_retry "$_scan_tool: PR base commit changed during scan or gate recheck"
 fi
 
 # No --delete-branch: same reason code-review-pipeline.sh dropped it (commit
@@ -879,18 +879,43 @@ fi
 # `${…%x}`) so its trailing newlines survive command substitution while the
 # producer's exit code still propagates.
 _merge_pr() {
+  local _merge_base_json _merge_base_ref _merge_base_oid
+  local message_args=()
   case "$BUREAU_MERGE_STRATEGY" in
     squash|merge)
       prepare_merge_message || return 1
-      # The kill-switch checkpoint stays the last step before the irreversible merge.
-      bureau_ticket_checkpoint "$ISSUE"
-      gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" --subject "$MERGE_SUBJECT" --body "$MERGE_BODY"
-      ;;
-    *)
-      bureau_ticket_checkpoint "$ISSUE"
-      gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD"
+      message_args=(--subject "$MERGE_SUBJECT" --body "$MERGE_BODY")
       ;;
   esac
+  # Finish message preparation and the ticket checkpoint before the final base
+  # re-read. GitHub pins the head, but offers no expected-base option.
+  bureau_ticket_checkpoint "$ISSUE"
+  if [ "$SCAN_RECHECK" = true ]; then
+    # baseRef.target is the live branch tip; the PR's stored baseRefOid can lag.
+    _merge_base_json=$(gh api graphql \
+      -f query='query($url:URI!){resource(url:$url){... on PullRequest{baseRefName baseRef{target{oid}}}}}' \
+      -f url="$PR_URL") \
+      || scanner_merge_retry "$_scan_tool: current PR base unavailable after gate recheck"
+    _merge_base_ref=$(printf '%s' "$_merge_base_json" | jq -er 'select((.errors // []) == []) | .data.resource.baseRefName | select(type == "string" and length > 0)') \
+      || scanner_merge_retry "$_scan_tool: current PR base ref unavailable after gate recheck"
+  else
+    if ! _merge_base_ref=$(gh pr view "$PR_NUMBER" --json baseRefName --jq '.baseRefName | strings | select(length > 0)' 2>/dev/null) \
+       || [ -z "$_merge_base_ref" ]; then
+      merge_gate_exit not-yet "pr_read: the PR's base branch could not be read before merge"
+    fi
+  fi
+  if [ "$_merge_base_ref" != "$APPROVED_BASE" ]; then
+    refresh_stale_approval "approval_binding: $(approval_target_mismatch "$APPROVED_BASE" "$_merge_base_ref" "$MERGE_HEAD"); fresh Build Review required"
+  fi
+  if [ "$SCAN_RECHECK" = true ]; then
+    [ "$_merge_base_ref" = "$SCANNED_BASE_REF" ] \
+      || scanner_merge_retry "$_scan_tool: PR base ref changed during scan or gate recheck"
+    _merge_base_oid=$(printf '%s' "$_merge_base_json" | jq -er '.data.resource.baseRef.target.oid | select(type == "string" and test("^[0-9a-f]{40,64}$"))') \
+      || scanner_merge_retry "$_scan_tool: current PR base commit unavailable after gate recheck"
+    [ "$_merge_base_oid" = "$SCANNED_BASE" ] \
+      || scanner_merge_retry "$_scan_tool: PR base commit changed during scan or gate recheck"
+  fi
+  gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" ${message_args[@]+"${message_args[@]}"}
 }
 
 bureau_stop_requested && exit 20

@@ -294,6 +294,30 @@ if inline_binding_case reverted; then fail 'inline binding: negative control sta
 [ "$LAST_RC" = 0 ] && pr2_merged || fail 'inline binding: negative control failed before the unsafe merge'
 echo 'PASS inline binding: real review of A followed by pushed B returns 20/refreshed once; identical assertions reject reverted binding'
 
+# A real review approves main. After both gate passes, the target moves while
+# the merge message is prepared. The approved head remains the same.
+inline_retarget_case() {
+  local control="$1"
+  new_sandbox
+  [ "$control" = current ] || pr2_revert_merge_base_fix target
+  pr2_retarget_after_read merge-message 1
+  export BUREAU_MERGE_GATE_REPORT="$SANDBOX/caller-gate.report"
+  review
+  unset BUREAU_MERGE_GATE_REPORT
+  [ "$LAST_RC" = 20 ] && ! pr2_merged && ! labeled_human || return 1
+  [ "$(head -n 1 "$SANDBOX/caller-gate.report")" = refreshed ] || return 1
+  grep -q '^approval_binding: approved Target branch main differs from current base branch release' "$SANDBOX/caller-gate.report" || return 1
+  grep -q $'move_issue\t'"$ISSUE"$'\tstate-build-review' "$SANDBOX/calls.log" || return 1
+  ! grep -q $'^gh\tpr\tmerge\t' "$SANDBOX/gh_calls.log" || return 1
+  [ -z "$(record)" ] || return 1
+  [ "$(jq '[.[] | select(.body | test("Bureau merge gate"))] | length' "$PR2_GH/comments.json")" = 1 ]
+}
+inline_retarget_case current || fail "inline retarget after final gate: rc $LAST_RC"
+if inline_retarget_case reverted; then fail 'inline retarget after final gate: negative control stayed green'; fi
+[ "$LAST_RC" = 0 ] && pr2_merged && [ "$(jq -r .baseRefName "$PR2_GH/pr.json")" = release ] \
+  || fail 'inline retarget after final gate: negative control failed before the unsafe merge'
+echo 'PASS inline retarget after final gate: 20/refreshed, one gate comment, no needs-human; private reverted copy merges into release'
+
 # ── Negative control: the v3.0.2 inline call ───────────────────────────────
 new_sandbox
 python3 - "$SCRIPTS_DIR/code-review-pipeline.sh" "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'

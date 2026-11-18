@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0b5871ee645c517eaa00465d26462b5536d9623f2c75e54756b533fc935f9ed2">
+<meta name="bureau-source-sha256" content="0cf8cce5367adf6562a1b04cfc676d51c7e65919772cc0fb7d6690319b8d0cb5">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -163,10 +163,11 @@ use defaults). Permanent errors hold without retry.</td>
 <td>Review boundary or intentional stage handoff</td>
 <td>Expected with <code>--no-merge</code>, from shepherd at manual
 Merge, and for a disabled stage under <code>--respect-config</code>.
-Those handoffs are quiet. Stale merge approval and dispatcher base
-refresh use <code>refreshed</code> metadata to return to Build Review
-without a human hold; it never reports merge success. Other stage-result
-20 exits can alert in standalone shepherd</td>
+Those handoffs are quiet. Stale merge approval, including a target
+mismatch at the final base read, and dispatcher base refresh use
+<code>refreshed</code> metadata to return to Build Review without a
+merge or human hold. Other stage-result 20 exits can alert in standalone
+shepherd</td>
 </tr>
 <tr>
 <td><code>21</code></td>
@@ -346,6 +347,11 @@ troubleshooting guide</td>
 </tr>
 </tbody>
 </table>
+<p>For ordinary merge gate refusals, a definitive blocker such as
+failing CI gives <code>25</code> even if a gate read also failed in that
+pass. Only undecided blockers give <code>2</code>. A failed final base
+read after both passes clear gives <code>2</code> on either merge
+route.</p>
 <p>The shepherd's post-Build restart check and code review share the
 open-PR lookup and the bounded GitHub retry policy used by implement
 (<code>BUREAU_IMPL_PR_RETRIES</code> /

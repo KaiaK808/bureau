@@ -172,7 +172,7 @@ case "${1:-}" in
         ;;
       view)
         # The gate's own reads can be made to fail one at a time (v3.0.1).
-        if [ "$JSON_FIELDS" = "state,mergeStateStatus,labels,baseRefName" ] && [ -f "$STUB_DIR/fail_pr_gate_read" ]; then
+        if [ "$JSON_FIELDS" = "state,mergeStateStatus,labels,baseRefName,baseRefOid" ] && [ -f "$STUB_DIR/fail_pr_gate_read" ]; then
           echo "HTTP 502" >&2; exit 1
         fi
         if [ "$JSON_FIELDS" = "comments" ] && [ -f "$STUB_DIR/fail_comments_read" ]; then
