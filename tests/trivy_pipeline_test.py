@@ -215,9 +215,15 @@ if case not in ('off','no-harness-off'):
 (repo/'.gitignore').write_text('.bureau.json\n.env\n.fake-origin.git/\n.specify/\nscripts/\nlogs/\n*.log\n__pycache__/\nfake_claude_counter\n')
 (repo/'requirements.txt').write_text('safe==1.0\n' if case.startswith('parsing-') else 'badpkg==1.0\n')
 if case.startswith('parsing-yarn-'):
-    (repo/'yarn.lock').write_text('"locked@npm:^1":\n  version: 1.0.0\n  unsupported body text\n')
+    body='unsupported body text'
+    if 'nested-mapping' in case:body='dependencies: missing: 2.0.0'
+    if 'nested-sequence' in case:body='dependencies: - missing'
+    (repo/'yarn.lock').write_text('"locked@npm:^1":\n  version: 1.0.0\n  '+body+'\n')
 if case.startswith('parsing-inline-'):
-    (repo/'infra.tf').write_text('endpoint = "https://example.invalid # trivy:ignore:AVD-FIXTURE\n')
+    data='endpoint = "https://example.invalid # trivy:ignore:AVD-FIXTURE\n'
+    if 'interpolation' in case:data='value = "${join("", ["https://example.invalid"])}" # trivy:ignore:X\n'
+    if 'docker' in case:data='FROM scratch\nRUN echo secret # trivy:ignore:X\n'
+    (repo/('Dockerfile' if 'docker' in case else 'infra.tf')).write_text(data)
 provider=repo/'logs/provider.sh'
 provider.write_text('#!/bin/bash\nset -euo pipefail\nprintf "%s\\n" "$*" > "$SANDBOX/logs/prompt.txt"\n'+
     ('printf "# QA added test\\n" > qa_added_test.py\n' if case=='postcommit' else '')+
@@ -225,7 +231,7 @@ provider.write_text('#!/bin/bash\nset -euo pipefail\nprintf "%s\\n" "$*" > "$SAN
 provider.chmod(0o700)
 def git(*args):return subprocess.check_output(['git','-C',str(repo),*args],text=True).strip()
 git('add','.gitignore','requirements.txt','specs')
-if case.startswith('parsing-'):git('add','yarn.lock' if 'yarn' in case else 'infra.tf')
+if case.startswith('parsing-'):git('add','yarn.lock' if 'yarn' in case else 'Dockerfile' if 'docker' in case else 'infra.tf')
 git('commit','-qm','test: QA source');git('push','-q','origin','test-branch')
 (repo/'logs/before-head').write_text(git('rev-parse','HEAD'))
 e=f.load('evidence',repo/'scripts/bureau-evidence.py');store=e.Store(repo/'.git/bureau');run=uuid.uuid4().hex
@@ -301,8 +307,17 @@ class QATests(unittest.TestCase):
                 else:self.assertIn('move_issue\tTEAM-1\tstate-build-review',value['snapshot']['calls'])
 
     def test_parsing_gaps_keep_existing_advisory_and_blocking_routes(self):
-        for parser,name,reason in (('yarn','yarn.lock','lockfile format not recognised'),
-                                   ('inline','infra.tf','inline ignore format not recognised')):
+        self.parsing_gaps((('yarn','yarn.lock','lockfile format not recognised'),
+                           ('inline','infra.tf','inline ignore format not recognised')))
+
+    def test_per_type_and_nested_scalar_gaps_keep_existing_routes(self):
+        self.parsing_gaps((('yarn-nested-mapping','yarn.lock','lockfile format not recognised'),
+                           ('yarn-nested-sequence','yarn.lock','lockfile format not recognised'),
+                           ('inline-interpolation','infra.tf','inline ignore format not recognised'),
+                           ('inline-docker','Dockerfile','inline ignore format not recognised')))
+
+    def parsing_gaps(self,cases):
+        for parser,name,reason in cases:
             for mode in ('advisory','blocking'):
                 with self.subTest(parser=parser,mode=mode):
                     value=self.run_case('parsing-'+parser+'-'+mode);blocked=mode=='blocking'

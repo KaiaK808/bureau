@@ -225,57 +225,172 @@ def iac(name):
             or path.suffix.lower() in ('.tf', '.yaml', '.yml', '.json', '.hcl', '.bicep', '.template'))
 
 
-def inline_ignore_bounds(line):
-    """Locate a trailing ignore comment without interpreting quoted bytes.
+def iac_language(name, data):
+    path = PurePosixPath(name); lower = path.name.lower()
+    if lower.startswith('dockerfile') or lower.endswith('.dockerfile'): return 'dockerfile'
+    suffix = path.suffix.lower()
+    if suffix == '.json' or (suffix == '.template' and data.lstrip().startswith(b'{')): return 'json'
+    if suffix in ('.yaml', '.yml', '.template'): return 'yaml'
+    return 'bicep' if suffix == '.bicep' else 'hcl'
 
-    Ambiguous lines must reach Trivy unchanged and be reported by inventory.
-    Only same-line, trailing block comments can be removed safely.
+
+def inline_ignore_bounds(raw, language, state):
+    """Classify one original line, carrying unsupported/multiline state forward.
+
+    This is a conservative lexer, not a configuration parser. An uncertain
+    line is never edited, even if a later part looks like a trailing comment.
     """
-    quote, escaped, index = None, False, 0
+    line = raw[:-1] if raw.endswith(b'\r') else raw
+    if language == 'json': return None, False
+    if state.get('opaque'): return None, True
+    if language == 'dockerfile':
+        if state.get('docker_heredocs'):
+            delimiter, indented = state['docker_heredocs'][0]
+            if (line.lstrip(b'\t') if indented else line) == delimiter: state['docker_heredocs'].pop(0)
+            return None, True
+        start = len(line) - len(line.lstrip(b' \t'))
+        if line[start:].startswith(b'#'):
+            return ((start, len(line)) if b'trivy:ignore:' in line[start:] else None), False
+        if b'<<' in line:
+            # A Docker heredoc's body is instruction data, including lines
+            # beginning with '#'. Unknown delimiters retain the rest of file.
+            delimiters = list(re.finditer(rb'''<<(-?)(["']?)([A-Za-z_][A-Za-z0-9_-]*)\2''', line))
+            if len(delimiters) != line.count(b'<<'): state['opaque'] = True
+            else: state['docker_heredocs'] = [(match[3], bool(match[1])) for match in delimiters]
+            return None, True
+        return None, False
+    if state.get('heredoc'):
+        delimiter, indented = state['heredoc']
+        if (line.lstrip(b' \t') if indented else line) == delimiter: state['heredoc'] = None
+        return None, True
+    indent = len(line) - len(line.lstrip(b' '))
+    if state.get('yaml_block'):
+        block = state['yaml_block']
+        if not line.strip(): return None, True
+        if indent > block[0] and (block[1] is None or indent >= block[1]):
+            if block[1] is None: block[1] = indent
+            return None, True
+        state['yaml_block'] = None
+    contexts = state.setdefault('contexts', [])
+    flow = state.setdefault('flow', [])
+    uncertain = bool(contexts or flow or state.get('block_comment') or state.get('triple'))
+    bounds, index, scalar_start = None, 0, True
     while index < len(line):
         char = line[index:index + 1]
-        if quote:
-            if escaped: escaped = False
-            elif char == b'\\': escaped = True
-            elif char == quote: quote = None
-        elif char in (b'"', b"'"):
-            quote = char
-        elif char == b'#' or line.startswith(b'//', index):
-            end = len(line) - (1 if line.endswith(b'\r') else 0)
-            return (index, end) if b'trivy:ignore:' in line[index:] else None
-        elif line.startswith((b'/*', b'<!--'), index):
-            opening, closing = (b'/*', b'*/') if line.startswith(b'/*', index) else (b'<!--', b'-->')
-            end = line.find(closing, index + len(opening))
-            if end < 0: raise ValueError('unterminated inline ignore comment')
-            end += len(closing)
+        if state.get('block_comment') or state.get('triple'):
+            key, closing = ('block_comment', b'*/') if state.get('block_comment') else ('triple', b"'''")
+            end = line.find(closing, index)
+            if end < 0: break
+            state[key] = False
+            index = end + len(closing)
+            continue
+        if contexts and contexts[-1][0] == 'string':
+            quote = contexts[-1][1]
+            if language == 'yaml' and quote == b"'" and line.startswith(b"''", index):
+                index += 2; continue
+            if char == b'\\' and (language != 'yaml' or quote == b'"'):
+                index += 2; continue
+            if language != 'yaml':
+                # Escaped template openers are literal string data.
+                if language == 'hcl' and line.startswith((b'$${', b'%%{'), index): index += 3; continue
+                if line.startswith(b'${', index) or (language == 'hcl' and line.startswith(b'%{', index)):
+                    uncertain = True; contexts.append(['expression', 1]); index += 2; continue
+            if char == quote: contexts.pop(); scalar_start = False
+            index += 1
+            continue
+        if contexts and contexts[-1][0] == 'expression' and char in (b'{', b'}'):
+            contexts[-1][1] += 1 if char == b'{' else -1
+            if contexts[-1][1] == 0: contexts.pop()
+            index += 1
+            continue
+        hash_comment = char == b'#' and (language == 'hcl' or
+                         (language == 'yaml' and (index == 0 or line[index - 1:index].isspace())))
+        if hash_comment or (language != 'yaml' and line.startswith(b'//', index)):
+            if b'trivy:ignore:' in line[index:]: bounds = index, len(line)
+            break
+        if language != 'yaml' and line.startswith(b'/*', index):
+            end = line.find(b'*/', index + 2)
+            if end < 0:
+                state['block_comment'] = True; uncertain = True
+                break
+            end += 2
             if b'trivy:ignore:' in line[index:end]:
-                if line[end:].strip(): raise ValueError('inline ignore comment is not trailing')
-                return index, end
+                if line[end:].strip(): uncertain = True
+                else: bounds = index, end
             index = end
             continue
+        if language == 'bicep' and line.startswith(b"'''", index):
+            state['triple'] = True; uncertain = True; index += 3
+            continue
+        if language == 'hcl' and line.startswith(b'<<', index):
+            match = re.match(rb'<<(-?)([A-Za-z_][A-Za-z0-9_-]*)', line[index:])
+            if match: state['heredoc'] = match[2], bool(match[1])
+            else: state['opaque'] = True
+            uncertain = True
+            break
+        if char in (b'"', b"'") and (language != 'yaml' or scalar_start):
+            # HCL's double quotes and Bicep's single quotes are the recognised
+            # strings. Track invalid quote forms too, without editing the line.
+            if (language == 'hcl' and char != b'"') or (language == 'bicep' and char != b"'"):
+                uncertain = True
+            contexts.append(['string', char]); index += 1
+            continue
+        if language == 'yaml':
+            if scalar_start:
+                # Tags and anchors precede a scalar; neither turns its quotes
+                # or block indicator into plain-scalar text.
+                property_token = re.match(rb'(?:&[A-Za-z0-9_-]+|!<[^> \t]+>|!!?[^ \t\[\]{},]+)(?=[ \t]|$)', line[index:])
+                if property_token:
+                    index += property_token.end(); continue
+                block = re.match(rb'[|>](?:[1-9][+-]?|[+-][1-9]?)?(?=[ \t]|$)', line[index:])
+                if block:
+                    explicit = re.search(rb'[1-9]', block[0])
+                    state['yaml_block'] = [indent, indent + int(explicit[0]) if explicit else None]
+                    uncertain = True
+                    break
+            if char in (b'[', b'{') and (scalar_start or flow):
+                flow.append(b']' if char == b'[' else b'}'); scalar_start = True
+            elif char in (b']', b'}') and flow:
+                if flow.pop() != char: state['opaque'] = True; uncertain = True
+                scalar_start = False
+            elif (char == b':' and (flow or not line[index + 1:index + 2] or line[index + 1:index + 2].isspace())) or (char == b',' and flow):
+                scalar_start = True
+            elif scalar_start and char in (b'-', b'?') and line[index + 1:index + 2].isspace():
+                pass
+            elif not char.isspace(): scalar_start = False
         index += 1
-    if quote: raise ValueError('unterminated inline ignore quote')
-    return None
+    uncertain = uncertain or bool(contexts or flow or state.get('heredoc') or state.get('yaml_block'))
+    return bounds, uncertain
 
 
-def remove_inline_ignores(data):
-    lines, removed = data.split(b'\n'), []
+def classify_inline_ignores(data, name):
+    """One original-byte classification drives both editing and coverage.
+
+    Retained markers, including known string/data literals, fail coverage
+    closed: they might still be interpreted as ignores by the scanner.
+    """
+    language, state = iac_language(name, data), {}
+    lines, removed, ambiguous = data.split(b'\n'), [], False
     for index, line in enumerate(lines):
+        bounds, uncertain = inline_ignore_bounds(line, language, state)
         if b'trivy:ignore:' not in line: continue
-        try: bounds = inline_ignore_bounds(line)
-        except ValueError: continue  # Inventory records the unchanged ambiguity.
-        if bounds is not None:
-            # Keep all bytes outside the comment, including the LF/CRLF slot.
+        if bounds is not None and not uncertain:
             start, end = bounds
             lines[index] = line[:start] + line[end:]
             removed.append(index + 1)
-    return b'\n'.join(lines), removed
+        if uncertain or b'trivy:ignore:' in lines[index]: ambiguous = True
+    return b'\n'.join(lines), removed, ambiguous
 
 
-def snapshots(repo, trees, root):
+def remove_inline_ignores(data, name='infra.tf'):
+    return classify_inline_ignores(data, name)[:2]
+
+
+def snapshots(repo, trees, root, inline_issues=None):
     sides, manifests = {}, {}
     for side in ('base', 'head'):
         directory = root / side; directory.mkdir(mode=0o700)
+        if inline_issues is not None: inline_issues[side] = set()
         manifest = dict(files=[], removed_native_config=[], removed_inline_ignores=[], skipped_nonregular=[])
         for name, entry in sorted(trees[side].items()):
             if native(name): manifest['removed_native_config'].append(name); continue
@@ -284,7 +399,8 @@ def snapshots(repo, trees, root):
                 manifest['skipped_nonregular'].append(name); continue
             data = source.blob(repo, trees[side], name, limit=32 * 1024 * 1024)
             if iac(name):
-                data, removed = remove_inline_ignores(data)
+                data, removed, ambiguous = classify_inline_ignores(data, name)
+                if ambiguous and inline_issues is not None: inline_issues[side].add(name)
                 manifest['removed_inline_ignores'] += [dict(file=name, line=line) for line in removed]
             target = directory / name; target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             target.write_bytes(data)
@@ -517,7 +633,9 @@ def yarn_names(text):
     quoted = r'''"(?:[^"\\]|\\.)*"|'(?:[^']|'')*' '''.strip()
     key = r'(?:' + quoted + r'|[A-Za-z0-9_@./+-]+)'
     atom = r'''[^\s"'#{}\[\]&*!|>]+'''
-    scalar = r'(?:' + quoted + r'''|[^\s"'#{}\[\]&*!|>][^"'#{}\[\]]*|\{\}|\[\])'''
+    # A plain value cannot introduce a nested mapping or sequence inline.
+    plain = r'''(?!-(?: |$))(?![^\r\n]*: )[^\s"'#{}\[\]&*!|>][^"'#{}\[\]]*'''
+    scalar = r'(?:' + quoted + r'|' + plain + r'|\{\}|\[\])'
     body = re.compile(r'(' + key + r')(?::(?: (' + scalar + r'))?| (' + quoted + r'|' + atom + r'))')
     integrity = re.compile(r'integrity ' + atom + r'(?: ' + atom + r')+')
     # Each entry is whether that parent opens a map. Both Yarn generations
@@ -600,7 +718,7 @@ def inventory_name(name):
             or bool(re.fullmatch(r'(?:docker-)?compose(?:[.-].+)?\.ya?ml', lower)) or path.suffix == '.tf')
 
 
-def inventory(directory, skipped=()):
+def inventory(directory, skipped=(), inline_issues=None):
     names = {p.relative_to(directory).as_posix() for p in directory.rglob('*') if p.is_file()}
     all_names = names | set(skipped)
     targets, issues, unchecked = set(), [], []
@@ -611,8 +729,9 @@ def inventory(directory, skipped=()):
     for name in sorted(names - set(skipped)):
         if iac(name):
             try:
-                for line in (directory / name).read_bytes().split(b'\n'):
-                    if b'trivy:ignore:' in line: inline_ignore_bounds(line)
+                ambiguous = (name in inline_issues if inline_issues is not None else
+                             classify_inline_ignores((directory / name).read_bytes(), name)[2])
+                if ambiguous: issue(name, 'inline ignore format not recognised')
             except (OSError, ValueError):
                 issue(name, 'inline ignore format not recognised')
         if PurePosixPath(name).name not in LOCKS - {'go.sum'}: continue
@@ -807,11 +926,12 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
         trees = dict(base=source.tree(repo, base), head=source.tree(repo, head))
         policy_bytes = source.blob(repo, trees['base'], EXCEPTIONS)
         policy_digest = scan.digest(dict(exceptions=None if policy_bytes is None else scan.sha(policy_bytes),
-                                         checks='embedded', inventory='canonical-v3', flags=FLAGS))
+                                         checks='embedded', inventory='canonical-v4', neutralization='per-type-v1', flags=FLAGS))
         with tempfile.TemporaryDirectory(prefix='bureau-trivy-') as temporary:
             root = Path(temporary).resolve()
+            inline_issues = dict(base=set(), head=set())
             if any(inventory_name(name) and not native(name) for entries in trees.values() for name in entries):
-                sides, manifests = snapshots(repo, trees, root)
+                sides, manifests = snapshots(repo, trees, root, inline_issues)
             else:
                 # An unrelated large or non-regular source file must not turn
                 # an empty eligible inventory into a scanner prerequisite error.
@@ -821,7 +941,7 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
                     manifests[side] = dict(files=[], removed_native_config=sorted(n for n in trees[side] if native(n)),
                                            removed_inline_ignores=[], skipped_nonregular=[])
             report['snapshots'] = manifests
-            inventories = {side:inventory(path, manifests[side]['skipped_nonregular']) for side, path in sides.items()}
+            inventories = {side:inventory(path, manifests[side]['skipped_nonregular'], inline_issues[side]) for side, path in sides.items()}
             report['inventory'] = inventories
             for key in ('removed_native_config', 'removed_inline_ignores'):
                 extra[key] = {side:manifests[side][key] for side in sides}

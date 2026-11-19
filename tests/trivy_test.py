@@ -50,7 +50,7 @@ else:
     directory=pathlib.Path(args[-1]);side=pathlib.Path(args[args.index('--output')+1]).stem
     record['side']=side
     rows=[]
-    record['files']={str(p.relative_to(directory)):p.read_text(errors='replace') for p in directory.rglob('*') if p.is_file()}
+    record['files']={str(p.relative_to(directory)):p.read_bytes().decode(errors='replace') for p in directory.rglob('*') if p.is_file()}
     for name,text in record['files'].items():
         leaf=pathlib.Path(name).name
         if leaf in ('package-lock.json','npm-shrinkwrap.json','pnpm-lock.yaml','yarn.lock','uv.lock','poetry.lock','go.mod','go.sum') or leaf.startswith('requirements') or leaf.lower().startswith('dockerfile') or leaf.endswith(('.tf','.dockerfile')) or 'compose' in leaf:
@@ -301,9 +301,8 @@ class TrivyTests(unittest.TestCase):
 
     def test_inline_ignore_preserves_quoted_comment_tokens_and_prefix_bytes(self):
         comments=(b'# trivy:ignore:AVD-FIXTURE',b'// trivy:ignore:AVD-FIXTURE',
-                  b'/* trivy:ignore:AVD-FIXTURE */',b'<!-- trivy:ignore:AVD-FIXTURE -->')
-        prefixes=(b'  endpoint = "https://example.invalid/#part/*text<!--"  \t',
-                  b"  endpoint = 'https://example.invalid/#part/*text<!--'  \t")
+                  b'/* trivy:ignore:AVD-FIXTURE */')
+        prefixes=(b'  endpoint = "https://example.invalid/#part/*text<!--"  \t',)
         for prefix in prefixes:
             for comment in comments:
                 with self.subTest(prefix=prefix,comment=comment):
@@ -312,18 +311,17 @@ class TrivyTests(unittest.TestCase):
 
     def test_inline_ignore_preserves_escaped_quotes_and_backslashes(self):
         prefixes=(br'endpoint = "escaped \" // # /* <!-- still quoted"  ',
-                  br"endpoint = 'escaped \' // # /* <!-- still quoted'  ",
                   br'endpoint = "escaped backslash \\"  ')
         for prefix in prefixes:
-            for comment in (b'#',b'//',b'/*',b'<!--'):
-                ending={b'/*':b' */',b'<!--':b' -->'}.get(comment,b'')
+            for comment in (b'#',b'//',b'/*'):
+                ending=b' */' if comment==b'/*' else b''
                 with self.subTest(prefix=prefix,comment=comment):
                     data=prefix+comment+b' trivy:ignore:AVD-FIXTURE'+ending+b'\n'
                     self.assertEqual(self.m.remove_inline_ignores(data),(prefix+b'\n',[1]))
 
     def test_inline_ignore_ordinary_comments_and_literal_markers(self):
         for comment in (b'# trivy:ignore:AVD-FIXTURE',b'// trivy:ignore:AVD-FIXTURE',
-                        b'/* trivy:ignore:AVD-FIXTURE */',b'<!-- trivy:ignore:AVD-FIXTURE -->'):
+                        b'/* trivy:ignore:AVD-FIXTURE */'):
             with self.subTest(comment=comment):
                 self.assertEqual(self.m.remove_inline_ignores(comment+b'\n'),(b'\n',[1]))
                 self.assertEqual(self.m.remove_inline_ignores(b'value = 1'+comment+b'\n'),(b'value = 1\n',[1]))
@@ -331,14 +329,14 @@ class TrivyTests(unittest.TestCase):
         self.assertEqual(self.m.remove_inline_ignores(literal),(literal,[]))
         crlf=b'endpoint = "https://example.invalid"\t# trivy:ignore:AVD-FIXTURE\r\n'
         self.assertEqual(self.m.remove_inline_ignores(crlf),(b'endpoint = "https://example.invalid"\t\r\n',[1]))
-        for comment in (b'/* trivy:ignore:AVD-FIXTURE */',b'<!-- trivy:ignore:AVD-FIXTURE -->'):
+        for comment in (b'/* trivy:ignore:AVD-FIXTURE */',):
             prefix=b'value = 1 /* ordinary comment */ \t'
             self.assertEqual(self.m.remove_inline_ignores(prefix+comment+b' \t\r\n'),(prefix+b' \t\r\n',[1]))
 
     def test_inline_ignore_quoted_configuration_reaches_scanner_with_exact_prefix(self):
         prefix=br'  endpoint = "https://example.invalid/#part and \"quoted\""  '+b'\t'
         comments=(b'# trivy:ignore:AVD-FIXTURE',b'// trivy:ignore:AVD-FIXTURE',
-                  b'/* trivy:ignore:AVD-FIXTURE */',b'<!-- trivy:ignore:AVD-FIXTURE -->')
+                  b'/* trivy:ignore:AVD-FIXTURE */')
         self.write('infra.tf',b'\n'.join(prefix+comment for comment in comments)+b'\n');self.commit()
         value=self.measure();expected=(prefix+b'\n')*len(comments)
         self.assertEqual(self.calls()[-1]['files']['infra.tf'].encode(),expected)
@@ -372,6 +370,128 @@ class TrivyTests(unittest.TestCase):
                 self.write('infra.tf',data);self.commit();value=self.measure()
                 self.assertEqual(value['receipt']['status'],'reduced_coverage')
                 self.assertIn('inline ignore format not recognised: infra.tf',value['receipt']['reason'])
+
+    def test_per_type_ignore_comments_preserve_review_values(self):
+        fixtures={
+            'compose.yaml':(b'ENDPOINT: https://example.invalid/path # trivy:ignore:X\n',
+                            b'ENDPOINT: https://example.invalid/path \n'),
+            'cloudformation.yaml':(b'  Value: "https://example.invalid/#part" # trivy:ignore:X\r\n',
+                                   b'  Value: "https://example.invalid/#part" \r\n'),
+            'cloudformation.template':(b'\nValue: plain # trivy:ignore:X\n',b'\nValue: plain \n'),
+            'single.yaml':(b"path: 'C:\\' # trivy:ignore:X user's note\n",b"path: 'C:\\' \n"),
+            'doubled.yml':(b"value: 'it''s C:\\' # trivy:ignore:X\n",b"value: 'it''s C:\\' \n"),
+            'double.yaml':(br'value: "escaped \" # still quoted" # trivy:ignore:X'+b'\n',
+                           br'value: "escaped \" # still quoted" '+b'\n'),
+            'plain.yaml':(b'value: user\'s "plain scalar # trivy:ignore:X\n',
+                          b'value: user\'s "plain scalar \n'),
+            'Dockerfile':(b'FROM scratch\n \t# trivy:ignore:X\r\n',b'FROM scratch\n \t\r\n'),
+            'infra.tf':(b'value = "https://example.invalid/#part" # trivy:ignore:X\n'
+                        b'value = 1 // trivy:ignore:X\nvalue = 2 /* trivy:ignore:X */ \t\n',
+                        b'value = "https://example.invalid/#part" \nvalue = 1 \nvalue = 2  \t\n'),
+            'config.hcl':(b'# trivy:ignore:X\n// trivy:ignore:X\n/* trivy:ignore:X */\n',b'\n\n\n'),
+            'infra.bicep':(br"var value = 'escaped \' // # still quoted' // trivy:ignore:X"+b'\n'
+                           b'var other = 1 /* trivy:ignore:X */\r\n',
+                           br"var value = 'escaped \' // # still quoted' "+b'\nvar other = 1 \r\n'),
+        }
+        self.blocking();self.write('requirements.txt','safe==1.0\n');self.commit();self.base=self.head
+        for name,(original,_) in fixtures.items():self.write(name,original)
+        self.commit();value=self.measure();files=self.calls()[-1]['files']
+        for name,(original,expected) in fixtures.items():
+            with self.subTest(file=name):
+                self.assertEqual(files[name].encode(),expected)
+                self.assertEqual([row['line'] for row in value['projection']['removed_inline_ignores']['head'] if row['file']==name],
+                                 [i for i,line in enumerate(original.split(b'\n'),1) if b'trivy:ignore:' in line])
+        self.assertEqual(value['receipt']['status'],'measured',value['projection'])
+        self.assertFalse(value['receipt']['blocking']);self.assertEqual(value['projection']['coverage'],[])
+
+    def test_noncomment_ignore_markers_are_preserved_and_reduce_coverage(self):
+        fixtures={
+            'compose.yaml':b'password: secret#trivy:ignore:X\n',
+            'slash.yaml':b'value: https://example.invalid/path // trivy:ignore:X\n',
+            'block.yml':b'value: plain /* trivy:ignore:X */\n',
+            'literal.yaml':b'value: "# trivy:ignore:X"\n',
+            'cloudformation.json':b'{"Value": "literal # trivy:ignore:X"}\n',
+            'cloudformation.template':b' \r\n {"Value": "literal // trivy:ignore:X"}\r\n',
+            'comments.json':b'{"Value": 1} # trivy:ignore:X\n',
+            'Dockerfile':b'FROM scratch\nRUN echo secret # trivy:ignore:X\n',
+            'hash.bicep':b'var value = 1 # trivy:ignore:X\n',
+            'literal.tf':b'value = "# trivy:ignore:X"\n',
+        }
+        for suffix in ('yaml','json','tf','hcl','bicep','dockerfile','template'):
+            fixtures['html.'+suffix]=b'<!-- trivy:ignore:X -->\n'
+        self.blocking();self.write('requirements.txt','safe==1.0\n');self.commit();self.base=self.head
+        for name,original in fixtures.items():self.write(name,original)
+        self.commit()
+        for mode in ('advisory','blocking'):
+            with self.subTest(mode=mode):
+                self.config['qa']['trivy']['mode']=mode;value=self.measure();files=self.calls()[-1]['files']
+                report=json.loads(Path(value['receipt']['report_path']).read_text())
+                for name,original in fixtures.items():
+                    with self.subTest(file=name):
+                        self.assertEqual(files[name].encode(),original)
+                        self.assertIn(dict(file=name,reason='inline ignore format not recognised'),report['inventory']['head']['issues'])
+                self.assertEqual(value['receipt']['status'],'reduced_coverage',value['projection'])
+                self.assertEqual(value['receipt']['blocking'],mode=='blocking')
+                self.assertEqual(report['inventory']['head']['issues'],
+                                 [dict(file=name,reason='inline ignore format not recognised') for name in sorted(fixtures)])
+                self.assertEqual(value['projection']['removed_inline_ignores']['head'],[])
+
+    def test_multiline_ignore_states_preserve_original_bytes_and_reduce_coverage(self):
+        fixtures={
+            'interpolation.tf':b'value = "${join("", ["https://example.invalid"])}" # trivy:ignore:X\n',
+            'interpolation.bicep':b"var value = '$${replace('', '', 'https://example.invalid')}' // trivy:ignore:X\n",
+            'literal.yaml':b'value: |\n  # trivy:ignore:X\n  text\n',
+            'folded.yml':b'value: >-\n  # trivy:ignore:X\n  text\n',
+            'header.yaml':b'value: |2 # trivy:ignore:X\n  text\n',
+            'explicit.yaml':b'value: |2\n    more indented\n  # trivy:ignore:X\n',
+            'tagged.yaml':b'value: &body !Sub |\n  # trivy:ignore:X\n',
+            'flow.yaml':b'value: [\n  plain, # trivy:ignore:X\n  "quoted"\n]\n',
+            'flow-header.yml':b'value: { # trivy:ignore:X\n  key: value\n}\n',
+            'heredoc.tf':b'value = <<EOF\n# trivy:ignore:X\nEOF\n',
+            'indented.hcl':b'value = <<-EOF\n  // trivy:ignore:X\n  EOF\n',
+            'heredoc.dockerfile':b'FROM scratch\nRUN <<EOF\n# trivy:ignore:X\nEOF\n',
+            'triple.bicep':b"var value = '''\n// trivy:ignore:X\n'''\n",
+            'multiline.yaml':b'value: "first\n# trivy:ignore:X\nlast"\n',
+            'multiline.tf':b'value = "first\n# trivy:ignore:X\nlast"\n',
+            'multiline.bicep':b"var value = 'first\n// trivy:ignore:X\nlast'\n",
+            'block.hcl':b'/* ordinary\n# trivy:ignore:X\n*/\n',
+            'block.bicep':b'/* ordinary\n// trivy:ignore:X\n*/\n',
+        }
+        originals={}
+        for name,original in fixtures.items():
+            comment=b'// trivy:ignore:after' if name.endswith('.bicep') else b'# trivy:ignore:after'
+            originals[name]=original+comment+b'\r\n'
+        # Unterminated strings must carry state into all subsequent lines.
+        originals['unterminated.yaml']=b'value: "first\n# trivy:ignore:X\n'
+        originals['unterminated.hcl']=b'value = "first\n# trivy:ignore:X\n'
+        originals['unterminated.bicep']=b"var value = 'first\n// trivy:ignore:X\n"
+        self.blocking();self.write('requirements.txt','safe==1.0\n');self.commit();self.base=self.head
+        for name,original in originals.items():self.write(name,original)
+        self.commit();value=self.measure();files=self.calls()[-1]['files']
+        report=json.loads(Path(value['receipt']['report_path']).read_text())
+        for name,original in originals.items():
+            with self.subTest(file=name):
+                expected=fixtures[name]+b'\r\n' if name in fixtures else original
+                self.assertEqual(files[name].encode(),expected)
+                self.assertIn(dict(file=name,reason='inline ignore format not recognised'),report['inventory']['head']['issues'])
+                self.assertEqual([row['line'] for row in value['projection']['removed_inline_ignores']['head'] if row['file']==name],
+                                 [len(fixtures[name].split(b'\n'))] if name in fixtures else [])
+        self.assertEqual(value['receipt']['status'],'reduced_coverage',value['projection'])
+        self.assertTrue(value['receipt']['blocking'])
+        self.assertEqual(report['inventory']['head']['issues'],
+                         [dict(file=name,reason='inline ignore format not recognised') for name in sorted(originals)])
+
+    def test_original_inline_ambiguity_is_reported_on_both_snapshot_sides(self):
+        original=b'value = "${join("", ["https://example.invalid"])}" # trivy:ignore:X\n'
+        self.blocking();self.write('requirements.txt','safe==1.0\n');self.write('infra.tf',original)
+        self.commit();self.base=self.head;value=self.measure()
+        report=json.loads(Path(value['receipt']['report_path']).read_text())
+        for side in ('base','head'):
+            with self.subTest(side=side):
+                self.assertIn(dict(file='infra.tf',reason='inline ignore format not recognised'),report['inventory'][side]['issues'])
+                self.assertEqual(next(row for row in self.calls() if row['side']==side)['files']['infra.tf'].encode(),original)
+                self.assertEqual(value['projection']['removed_inline_ignores'][side],[])
+        self.assertEqual(value['receipt']['status'],'reduced_coverage');self.assertTrue(value['receipt']['blocking'])
 
     def test_file_level_misconfiguration_without_cause_lines_is_measured(self):
         # Shape seen from the real pinned 0.76.1: DS-0026 has only Provider and Service.
@@ -599,6 +719,33 @@ class TrivyTests(unittest.TestCase):
         self.assertEqual(len(self.calls()),4)
         self.assert_format_coverage(current,'yarn.lock')
 
+    def test_parser_and_neutralization_policy_remeasure_previous_clean_receipts(self):
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        self.write('yarn.lock','"locked@npm:^1":\n  version: 1.0.0\n  unsupported body text\n')
+        self.commit();self.base=self.head
+        inventory,digest=self.m.inventory,self.s.digest
+        def legacy_inventory(*args):
+            value=inventory(*args);value['issues']=[]
+            return value
+        for identity in ('previous-parser','missing-neutralization','previous-neutralization'):
+            with self.subTest(identity=identity):
+                shutil.rmtree(self.root/'state',ignore_errors=True)
+                def legacy_digest(value):
+                    if isinstance(value,dict) and 'inventory' in value:
+                        value=dict(value)
+                        if identity=='previous-parser':value['inventory']='canonical-v3'
+                        if identity=='previous-neutralization':value['neutralization']='previous'
+                        else:value.pop('neutralization',None)
+                    return digest(value)
+                before=len(self.calls())
+                with patch.object(self.m,'inventory',side_effect=legacy_inventory),patch.object(self.s,'digest',side_effect=legacy_digest):
+                    old=self.measure()
+                self.assertEqual(old['receipt']['status'],'measured');self.assertFalse(old['receipt']['blocking'])
+                current=self.measure(reuse=True)
+                self.assertNotEqual(old['receipt_path'],current['receipt_path'])
+                self.assertEqual(len(self.calls())-before,4,'both snapshots must be remeasured')
+                self.assert_format_coverage(current,'yarn.lock')
+
     def test_pnpm_canonical_keys_and_unrecognised_file_syntax(self):
         canonical="lockfileVersion: '9.0'\nimporters:\n  '.':\n    \"dependencies\":\n      locked:\n        specifier: ^1\n        version: 1.0.0\n"
         self.check_parser_formats({'package.json':json.dumps(dict(dependencies=dict(locked='^1'))),
@@ -635,6 +782,16 @@ class TrivyTests(unittest.TestCase):
             canonical+'\tversion: 2.0.0\n',
             canonical+'      missing: 2.0.0\n'])
 
+    def test_yarn_plain_scalars_reject_inline_nested_mapping_and_sequence(self):
+        canonical='"locked@npm:^1":\n  version: 1.0.0\n'
+        self.check_parser_formats({'package.json':json.dumps(dict(dependencies=dict(locked='^1'))),
+                                   'yarn.lock':canonical},'yarn.lock',[
+            canonical+'  dependencies: missing: 2.0.0\n',
+            canonical+'  dependencies: - missing\n'])
+        for line in ('  dependencies: missing: 2.0.0','  dependencies: - missing'):
+            with self.subTest(line=line):
+                with self.assertRaises(ValueError):self.m.yarn_names(canonical+line+'\n')
+
     def test_yarn_v1_and_berry_body_forms_keep_full_coverage(self):
         v1='''# yarn lockfile v1
 "@scope/a@^1", "@scope/a@^2":
@@ -660,6 +817,8 @@ __metadata:
   dependencies:
     locked: "npm:^1"
     "@scope/optional": 'npm:~2'
+  optionalDependencies:
+    "@scope/optional": "npm:~2"
   peerDependencies:
     peer: ">=1"
   dependenciesMeta:
@@ -683,10 +842,10 @@ __metadata:
 '''
         self.write('requirements.txt','safe==1.0\n')
         self.write('package.json',json.dumps(dict(dependencies={'@scope/a':'^1','locked':'^1'})))
-        for text in (v1,berry):
+        for text in (v1,berry,v1.replace('\n','\r\n'),berry.replace('\n','\r\n')):
             with self.subTest(text=text):
                 self.write('yarn.lock',text);self.commit();self.base=self.head
-                self.assertEqual(self.m.yarn_names(text),{'@scope/a','locked'})
+                self.assertEqual(self.m.lock_names(self.repo/'yarn.lock'),{'@scope/a','locked'})
                 value=self.measure();self.assertEqual(value['receipt']['status'],'measured',value['projection'])
                 self.assertFalse(value['receipt']['blocking']);self.assertEqual(value['projection']['coverage'],[])
 
