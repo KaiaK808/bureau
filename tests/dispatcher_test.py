@@ -119,6 +119,12 @@ with (root/'service.guard').open('a') as lock:
         print('https://github.com/test/repo/pull/'+str(num))
     elif args[:2]==['pr','view']:
         p=pr_for(); value=pr_value(p); field=args[args.index('--json')+1]
+        if 'comments' in field.split(','):
+            value['comments']=[dict(id=c['id'], author=dict(login='fixture',id='fixture-user',name=''),
+                authorAssociation='NONE', body=c['body'], createdAt=c['createdAt'],
+                includesCreatedEdit=c['lastEditedAt'] is not None, isMinimized=False, minimizedReason='',
+                reactionGroups=[], url=value['url']+'#issuecomment-'+c['id'], viewerDidAuthor=True)
+                for c in value['comments']]
         if '--jq' in args:
             query=args[args.index('--jq')+1]
             if field=='comments':
@@ -986,7 +992,22 @@ signal.signal(signal.SIGTERM,exited)
                            env={**self.env,'BUREAU_DISPATCH_LANE':'1','BUREAU_HELD_BY_SHEPHERD':'1','BUREAU_INLINE_MERGE':'1','BUREAU_MERGE_GATE_REPORT':str(report)},timeout=70)
         self.assertEqual(result.returncode,20,result.stdout+result.stderr)
         self.assertEqual(report.read_text().splitlines()[0],'refreshed')
+        self.assertTrue(report.read_text().splitlines()[1].startswith('base_refresh: '))
         self.assertFalse(self.events('merge')); self.assertEqual(self.events('move')[-1]['state'],'build_review')
+
+    def test_edited_approval_requires_fresh_review(self):
+        issue,branch=self.ticket(1,state='merge')
+        comment=self.approval_comment(branch)
+        comment['lastEditedAt']='2026-10-26T01:00:00Z'
+        self.change(lambda d:d['prs'].append(dict(number=1,branch=branch,issue=issue,comments=[comment])))
+        report=self.root/'edited.report'
+        result=self.invoke(['bash',str(self.repo/'scripts/bureau-worker.sh'),issue,'merge-pipeline.sh',str(self.root/'edited'),branch],
+                           env={**self.env,'BUREAU_MERGE_GATE_REPORT':str(report)},timeout=70)
+        self.assertEqual(result.returncode,20,result.stdout+result.stderr)
+        self.assertEqual(report.read_text().splitlines()[0],'refreshed')
+        self.assertIn('approval_binding: selected approval comment was edited',report.read_text())
+        self.assertFalse(self.events('merge'))
+        self.assertEqual([v['state'] for v in self.events('move')],['build_review'])
 
     def test_dirty_merge_lane_refreshes_through_existing_transaction(self):
         issue,branch=self.stale_pr()

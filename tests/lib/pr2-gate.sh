@@ -198,11 +198,11 @@ pr2_revert_approval_binding() {
 from pathlib import Path
 import sys
 p = Path(sys.argv[1]); source = p.read_text()
-start = '  elif [ -n "$head" ] && [ "$_pr_read" = ok ]; then\n'
+start = '  elif [ -n "$head" ] && [ -n "$_base_ref" ]; then\n'
 end = '\n  fi\n  if [ "$_threads_read" = failed ]; then'
 assert source.count(start) == 1
 i = source.index(start); j = source.index(end, i)
-p.write_text(source[:i] + '  elif [ "$_pr_read" = ok ]; then\n    _approved_base="$_base_ref"' + source[j:])
+p.write_text(source[:i] + '  elif [ -n "$_base_ref" ]; then\n    _approved_base="$_base_ref"' + source[j:])
 PY
 }
 

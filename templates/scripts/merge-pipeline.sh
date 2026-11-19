@@ -239,10 +239,12 @@ evaluate_merge_gates() {
   # which merge_gate_outcome counts as "not yet", never as "PR not open" or
   # "no APPROVE".
   if ! _pr_data=$(gh pr view "$pr" --json state,mergeStateStatus,labels,baseRefName,baseRefOid 2>/dev/null) \
-     || ! _pr_state=$(printf '%s' "$_pr_data" | jq -er '.state | strings') \
-     || ! _base_ref=$(printf '%s' "$_pr_data" | jq -er '.baseRefName | strings | select(length > 0)'); then
+     || ! _pr_state=$(printf '%s' "$_pr_data" | jq -er '.state | strings'); then
     _pr_read=failed; _pr_data='{}'; _pr_state=""
   fi
+  # A missing base name prevents binding and freshness checks. Keep the state,
+  # merge status and labels so the gate can still report their blockers.
+  _base_ref=$(printf '%s' "$_pr_data" | jq -er '.baseRefName | strings | select(length > 0)') || _base_ref=""
   _merge_state=$(printf '%s' "$_pr_data" | jq -r '.mergeStateStatus // ""' 2>/dev/null || true)
   _labels_csv=$(printf '%s' "$_pr_data" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null || true)
 
@@ -291,8 +293,9 @@ evaluate_merge_gates() {
   local _blockers=()
   [ -n "$head" ] || _blockers+=("head_read: the PR's head commit could not be read")
   if [ "$_pr_read" = failed ]; then
-    _blockers+=("pr_read: the PR's state, mergeStateStatus, labels and base branch could not be read")
+    _blockers+=("pr_read: the PR's state, mergeStateStatus and labels could not be read")
   else
+    [ -n "$_base_ref" ] || _blockers+=("pr_read: the PR's base branch could not be read")
     [ "$_pr_state" = "OPEN" ]      || _blockers+=("pr_state: PR state=$_pr_state (need OPEN)")
     if [ "$_merge_state" = "DIRTY" ] && merge_dirty_is_rebasable; then
       _blockers+=("merge_state: mergeStateStatus=DIRTY (need CLEAN; bureau-only divergence, the rebase stage resolves it)")
@@ -305,7 +308,7 @@ evaluate_merge_gates() {
     _blockers+=("verdict_read: the PR's review comments could not be read")
   elif ! [[ "$verdict" =~ ^(APPROVE|AUTO_APPROVE)$ ]]; then
     _blockers+=("verdict: latest Code Review v2 verdict=${verdict:-none}")
-  elif [ -n "$head" ] && [ "$_pr_read" = ok ]; then
+  elif [ -n "$head" ] && [ -n "$_base_ref" ]; then
     local _head_line _target_line _approved_head _binding_error=""
     local _head_pattern='^\*\*Reviewed head\*\*: `([0-9a-f]{40})`$'
     # Git branch names exclude ASCII spaces but can contain backticks. The
@@ -360,7 +363,7 @@ evaluate_merge_gates() {
     _err=$(pr_ci_is_green "$pr" "$head" 2>&1 >/dev/null) \
       || _blockers+=("ci_green: $_err")
   fi
-  if [ "$_require_uptodate" != "false" ] && [ "$_pr_read" = ok ]; then
+  if [ "$_require_uptodate" != "false" ] && [ -n "$_base_ref" ]; then
     _base_oid=$(printf '%s' "$_pr_data" | jq -er '.baseRefOid | strings | select(length > 0)') || _base_oid=""
     _err=$(pr_base_is_current "$pr" "$_base_ref" "$_base_oid" 2>&1 >/dev/null) \
       || _blockers+=("base_current: $_err")

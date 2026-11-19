@@ -794,6 +794,7 @@ MERGE_WAIT_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_WAIT_SECONDS 1800 0
 MERGE_POLL_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_POLL_SECONDS 60 1 3600)
 MERGE_WAITED=0
 MERGE_WAIT_FOR=""
+STALE_APPROVALS=0
 
 # _shepherd_no_state_halt — Linear answered MAX_NO_STATE times in a row, without
 # an error and without a state. Nothing tells which stage runs next; the same
@@ -1005,11 +1006,19 @@ while true; do
   echo "[shepherd] $PIPELINE exit=$RC ($CLASS)"
   if [ "${BUREAU_DISPATCH_LANE:-0}" = 1 ] && [ "$RC" = 23 ]; then exit 23; fi
 
-  # A merge-forward changed the PR head and routed it to fresh Build Review.
-  # This is a handoff, never merge success and never an approval of that head.
+  # Both refresh paths return to Build Review. Only a merge-forward spends a
+  # base refresh. The review round cap handles requests for changes, so bound
+  # repeated stale approvals in this run too.
   if [ "$RC" = 20 ] && [ "$(head -n 1 "$MERGE_GATE_FILE" 2>/dev/null || true)" = refreshed ]; then
-    BUREAU_LANE_BASE_REFRESHES=$(bureau_number merge.refreshes "${BUREAU_LANE_BASE_REFRESHES:-0}" 2 0 2)
-    export BUREAU_LANE_BASE_REFRESHES=$((BUREAU_LANE_BASE_REFRESHES + 1))
+    if grep -q '^base_refresh: ' "$MERGE_GATE_FILE"; then
+      BUREAU_LANE_BASE_REFRESHES=$(bureau_number merge.refreshes "${BUREAU_LANE_BASE_REFRESHES:-0}" 2 0 2)
+      export BUREAU_LANE_BASE_REFRESHES=$((BUREAU_LANE_BASE_REFRESHES + 1))
+    elif grep -q '^approval_binding: ' "$MERGE_GATE_FILE"; then
+      if [ "$STALE_APPROVALS" -ge "$BUREAU_MAX_REVIEW_ROUNDS" ]; then
+        _shepherd_merge_blocked "kept receiving stale approvals after $STALE_APPROVALS fresh-review handoffs"
+      fi
+      STALE_APPROVALS=$((STALE_APPROVALS + 1))
+    fi
     LAST_STATE=""; STUCK_COUNT=0
     continue
   fi

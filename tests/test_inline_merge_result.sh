@@ -374,4 +374,167 @@ review
 [ "$(pr2_model_calls)" -gt 0 ] || fail 'negative control: the v3.0.2 retry should pay the model again'
 echo 'PASS negative control: v3.0.2 reports Done for an unmerged PR and pays again on the next run'
 
+# Exercise the real worker lease, reset and EXIT cleanup. The only doubles are
+# the service transports and the reviewer. All pushes go to a private bare origin.
+source "$LIB_DIR/pr5-interrupt.sh"
+review_worker_fixture() {
+  pr5_setup
+  trap 'rm -rf "$SB"' EXIT
+  export GIT_CEILING_DIRECTORIES="$SB"
+  pr5_new_repo
+  export SANDBOX="$REPO" BUREAU_STUB_BRANCH=test-branch
+  SCRIPTS_DIR="$REPO/scripts"
+  git -C "$REPO" checkout -qb test-branch
+  printf 'feature\n' > "$REPO/feature.txt"
+  git -C "$REPO" add feature.txt
+  git -C "$REPO" commit -qm 'review fixture feature'
+  git -C "$REPO" push -q origin test-branch
+  git -C "$REPO" checkout -q main
+  jq --argjson merge "$1" --argjson rounds "$2" '
+    .agents += {code_review:true, merge:$merge, max_review_rounds:$rounds}
+    | .repo.test_command = "touch leftover.txt"' "$REPO/.bureau.json" > "$SB/config"
+  mv "$SB/config" "$REPO/.bureau.json"
+  printf s6 > "$SB/state"
+  jq -nc --arg number "${ISSUE##*-}" '{issue:$number, body:"<!-- bureau-branch: test-branch -->"}' > "$SB/comments.jsonl"
+  pr2_gate_setup
+
+  cat > "$SB/bin/claude" <<'PROVIDER'
+#!/bin/bash
+case "$1" in
+  auth) echo '{"loggedIn":true}'; exit 0 ;;
+  --help) echo '--json-schema --disallowedTools'; exit 0 ;;
+  --version) echo '2.0.0'; exit 0 ;;
+esac
+case "$BUREAU_PROVIDER_PHASE" in
+  correctness|security|performance)
+    jq -nc --arg role "$BUREAU_PROVIDER_PHASE" '{specialist:$role, counts:{critical:0,bug:0,minor:0,skip:0}, findings:[], summary:"Clean."}' ;;
+  verdict) echo '{"verdict":"APPROVE","bugs":0,"security_issues":0,"missing_acceptance":[],"fixes_needed":[],"findings":[],"comment":"Clean.","summary":"Clean."}' ;;
+  *) exit 1 ;;
+esac | jq -c '{structured_output:.,result:tojson}'
+PROVIDER
+  chmod +x "$SB/bin/claude"
+
+  cat > "$SB/on-review" <<'HOOK'
+set -euo pipefail
+cd "$SANDBOX"
+origin=$(git remote get-url origin)
+ref=refs/heads/test-branch
+head=$(git --git-dir "$origin" rev-parse "$ref")
+base=$(git --git-dir "$origin" rev-parse refs/heads/main)
+if [ -f "$PR2_GH/force-push" ]; then
+  head=$(git commit-tree "$head^{tree}" -p "$base" -m 'rewrite after approval')
+  git push -q --force origin "$head:$ref"
+else
+  reviews=$(jq '[.[] | select(.body | startswith("## Code Review v2"))] | length' "$PR2_GH/comments.json")
+  case "$reviews" in
+    1|2)
+      head=$(git commit-tree "$head^{tree}" -p "$head" -m 'advance after approval')
+      git push -q origin "$head:$ref" ;;
+    3)
+      base=$(git commit-tree "$base^{tree}" -p "$base" -m 'sibling lands after approval')
+      git push -q origin "$base:refs/heads/main" ;;
+  esac
+  [ "$reviews" -gt 3 ] || printf '%s\n' "$0" > "$PR2_GH/on_review_comment"
+fi
+pr_base=$(git --git-dir "$origin" merge-base "$base" "$head")
+jq --arg h "$head" --arg b "$pr_base" '.headRefOid = $h | .baseRefOid = $b' "$PR2_GH/pr.json" > "$PR2_GH/pr.tmp"
+mv "$PR2_GH/pr.tmp" "$PR2_GH/pr.json"
+jq -n --arg base "$base" '{commit:{sha:$base}}' > "$PR2_GH/branch.json"
+HOOK
+  printf '%s\n' "$SB/on-review" > "$PR2_GH/on_review_comment"
+}
+
+review_worker_run() {
+  LAST_RC=0
+  (cd "$REPO" && _pr5_env "$@") > "$SB/out" 2> "$SB/err" || LAST_RC=$?
+  LAST_STDOUT=$(cat "$SB/out"); LAST_STDERR=$(cat "$SB/err")
+}
+
+force_push_worker_case() (
+  review_worker_fixture false 4
+  touch "$PR2_GH/force-push"
+  local approved replacement first_rc status branch newest registered=false
+  approved=$(jq -r .headRefOid "$PR2_GH/pr.json")
+  if [ "$1" = reverted ]; then
+    sed 's/_review_release_worktree stale-approval/_review_release_worktree/' "$SCRIPTS_DIR/code-review-pipeline.sh" > "$SB/review"
+    cp "$SB/review" "$SCRIPTS_DIR/code-review-pipeline.sh"
+  fi
+  review_worker_run env BUREAU_MERGE_GATE_REPORT="$SB/gate.report" bash scripts/bureau-worker.sh "$ISSUE" code-review-pipeline.sh "$WT" test-branch
+  first_rc=$LAST_RC
+  replacement=$(jq -r .headRefOid "$PR2_GH/pr.json")
+  git -C "$REPO" merge-base --is-ancestor "$approved" "$replacement" && fail 'force-push fixture did not rewrite the approved commit'
+  grep -qF "approved head $approved differs from current head $replacement" "$SB/gate.report" \
+    && [ "$(head -n 1 "$SB/gate.report")" = refreshed ] && [ "$(cat "$SB/state")" = s6 ] \
+    && ! pr2_merged || fail "force-push did not reach stale approval (rc $first_rc)"
+  status=$(git -C "$WT" status --porcelain)
+  branch=$(git -C "$WT" branch --show-current)
+  [ ! -f "$COMMON/bureau/workers/$(printf '%s' "$WT" | shasum -a 256 | cut -d' ' -f1)" ] || registered=true
+  review_worker_run bash scripts/bureau-worker.sh "$ISSUE" code-review-pipeline.sh "$WT" test-branch
+  if [ "$1" = reverted ]; then
+    [ "$first_rc" = 1 ] && [ "$LAST_RC" = 21 ] && [ "$registered" = false ] \
+      && grep -q 'needs-human' "$SB/linear.log" && [ "$(pr2_review_comments)" = 1 ] \
+      || fail "force-push control: expected checkpoint failure then ownership halt, got $first_rc then $LAST_RC"
+  else
+    [ "$first_rc" = 20 ] && [ -z "$status" ] && [ -z "$branch" ] && [ "$registered" = true ] \
+      && [ "$LAST_RC" = 0 ] && [ "$(pr2_review_comments)" = 2 ] && pr2_merged \
+      && ! grep -q 'needs-human' "$SB/linear.log" || fail "force-push handoff: worker returned $first_rc then $LAST_RC"
+    newest=$(jq -er '[.[] | select(.body | startswith("## Code Review v2"))] | last | .body' "$PR2_GH/comments.json")
+    grep -qxF "**Reviewed head**: \`$replacement\`" <<< "$newest" || fail 'the next worker did not review the replacement commit'
+  fi
+)
+force_push_worker_case current
+force_push_worker_case reverted
+echo 'PASS force-pushed inline approval: worker returns 20, detaches cleanly, then reviews the new head; old reset returns 1 then 21'
+
+shepherd_refresh_case() (
+  review_worker_fixture true "$2"
+  # Supply approvals at the review-stage boundary. The real shepherd, worker,
+  # merge gate and merge-forward transaction process every handoff below.
+  cat > "$SCRIPTS_DIR/code-review-pipeline.sh" <<'REVIEW'
+#!/bin/bash
+set -euo pipefail
+source "$(dirname "$0")/bureau-config.sh"
+bureau_load_env --export "$BUREAU_ENV_FILE"
+head=$(git rev-parse HEAD)
+base=$(git rev-parse origin/main)
+gh pr comment 99 --body "$(printf '## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `%s`\n**Target**: `main` at `%s`\n' "$head" "$base")"
+move_issue "$1" "$BUREAU_STATE_MERGE"
+REVIEW
+  case "$1" in
+    reverted)
+      sed 's/if grep -q .\^base_refresh: .*"\$MERGE_GATE_FILE"; then/if true; then/' "$SCRIPTS_DIR/shepherd.sh" > "$SB/shepherd"
+      cp "$SB/shepherd" "$SCRIPTS_DIR/shepherd.sh" ;;
+    unbounded)
+      sed 's/_shepherd_merge_blocked "kept receiving stale approvals .*"/:/' "$SCRIPTS_DIR/shepherd.sh" > "$SB/shepherd"
+      cp "$SB/shepherd" "$SCRIPTS_DIR/shepherd.sh" ;;
+  esac
+  review_worker_run env BUREAU_DISPATCH_LANE=1 bash scripts/shepherd.sh --no-tmux --respect-config --worktree "$WT" "$ISSUE"
+  [ "$(grep -c '^  Stale approval — fresh Build Review required' <<< "$LAST_STDOUT")" = 2 ] \
+    || fail "shepherd refresh: expected two stale approvals (rc $LAST_RC)"
+  local origin head base
+  origin=$(git -C "$REPO" remote get-url origin)
+  head=$(git --git-dir "$origin" rev-parse test-branch)
+  base=$(git --git-dir "$origin" rev-parse main)
+  case "$1" in
+    reverted)
+      [ "$LAST_RC" = 25 ] && [ "$(pr2_review_comments)" = 3 ] && ! pr2_merged \
+        && grep -q 'needs-human' "$SB/linear.log" && ! git -C "$REPO" merge-base --is-ancestor "$base" "$head" \
+        || fail 'shepherd refresh control: expected a hold with base advancement still missing from the head' ;;
+    capped)
+      [ "$LAST_RC" = 25 ] && [ "$(pr2_review_comments)" = 2 ] && ! pr2_merged \
+        && grep -q 'kept receiving stale approvals after 1 fresh-review handoffs' <<< "$LAST_STDERR" \
+        && grep -q 'needs-human' "$SB/linear.log" || fail 'shepherd stale-approval limit did not stop the next handoff' ;;
+    *)
+      [ "$LAST_RC" = 0 ] && [ "$(pr2_review_comments)" = 4 ] && pr2_merged \
+        && grep -q '^  Base refreshed — fresh Build Review required' <<< "$LAST_STDOUT" \
+        && ! grep -q 'needs-human' "$SB/linear.log" && git -C "$REPO" merge-base --is-ancestor "$base" "$head" \
+        || fail 'shepherd did not merge-forward after two stale approvals' ;;
+  esac
+)
+shepherd_refresh_case current 4
+shepherd_refresh_case reverted 4
+shepherd_refresh_case capped 1
+shepherd_refresh_case unbounded 1
+echo 'PASS shepherd: two stale approvals leave a base refresh available; the separate stale handoff limit stops repeated approvals'
+
 echo 'OK test_inline_merge_result'

@@ -183,7 +183,16 @@ case "${1:-}" in
           echo "HTTP 502" >&2
           exit 1
         fi
-        cat "$STUB_DIR/pr_view.json" | project_and_filter
+        if [[ ",$JSON_FIELDS," == *,comments,* ]]; then
+          jq '.comments |= ((. // []) | map({
+            id, author: {login: "fixture", id: "fixture-user", name: ""}, authorAssociation: "NONE",
+            body, createdAt, includesCreatedEdit: (.lastEditedAt != null),
+            isMinimized: false, minimizedReason: "", reactionGroups: [],
+            url: ("https://github.com/test-owner/test-repo/pull/42#issuecomment-" + .id), viewerDidAuthor: true
+          }))' "$STUB_DIR/pr_view.json" | project_and_filter
+        else
+          project_and_filter < "$STUB_DIR/pr_view.json"
+        fi
         ;;
       merge)
         echo "gh pr merge ${3:-?}" >> "$STUB_DIR/merge_calls.log"
@@ -815,6 +824,62 @@ NEG_EOF
   return 0
 }
 
+test_gate_conflict_without_base_name() {
+  local sb
+  sb=$(make_sandbox gate_missing_base); populate_happy_fixtures "$sb"
+  set_pr_field "$sb" '.baseRefName = ""'
+  run_gate "$sb"; gate_case "$sb" missing-base 2 not-yet 'base branch could not be read' || return 1
+  set_pr_field "$sb" '.mergeStateStatus = "DIRTY"'
+  run_gate "$sb"; gate_case "$sb" dirty-missing-base 25 blocked 'DIRTY (need CLEAN)' || return 1
+  grep -qxF "pr_read: the PR's base branch could not be read" <<< "$GREP" || return 1
+  ! grep -qE '^(approval_binding|base_current):' <<< "$GREP" || return 1
+  [ ! -s "$sb/stub_data/merge_calls.log" ] || return 1
+
+  # Restore the combined read so the empty base name discards the conflict.
+  python3 - "$sb/scripts/merge-pipeline.sh" <<'PY' || return 1
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+check = """| jq -er '.state | strings'); then"""
+combined = r"""| jq -er '.state | strings') \
+     || ! _base_ref=$(printf '%s' "$_pr_data" | jq -er '.baseRefName | strings | select(length > 0)'); then"""
+assert source.count(check) == 1
+path.write_text(source.replace(check, combined))
+PY
+  run_gate "$sb"; gate_case "$sb" discarded-conflict-control 2 not-yet 'pr_read: ' || return 1
+  ! grep -q '^merge_state:' <<< "$GREP"
+}
+
+test_gate_edited_approval() (
+  local sb
+  export GIT_CEILING_DIRECTORIES="$(cd "$SANDBOX_ROOT" && pwd -P)"
+  sb=$(make_sandbox gate_edited); populate_happy_fixtures "$sb"
+  cp "$REPO_ROOT/templates/scripts/bureau-ticket.py" "$sb/scripts/" || return 1
+  git -C "$sb" init -q || return 1
+  cd "$sb" || return 1
+  set_pr_field "$sb" '.comments[0].lastEditedAt = "2026-05-13T01:00:00Z"'
+  STUB_DIR="$sb/stub_data" "$sb/bin/gh" pr view 42 --json comments | jq -e '
+    .comments[0] | .includesCreatedEdit and (keys == ["author", "authorAssociation", "body", "createdAt", "id",
+      "includesCreatedEdit", "isMinimized", "minimizedReason", "reactionGroups", "url", "viewerDidAuthor"])' >/dev/null || return 1
+  run_gate "$sb"; gate_case "$sb" edited 20 refreshed 'selected approval comment was edited' || return 1
+  [ ! -s "$sb/stub_data/merge_calls.log" ] || return 1
+  grep -q -- '-f id=approval' "$sb/gh_invocations.log" || return 1
+
+  # Read the edit timestamp from the projection instead of the selected node.
+  python3 - "$sb/scripts/merge-pipeline.sh" <<'PY' || return 1
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+original = """"$_review_edit" | jq -r '.lastEditedAt'"""
+assert source.count(original) == 1
+path.write_text(source.replace(original, original.replace('$_review_edit', '$_review_comment')))
+PY
+  run_gate "$sb"; gate_case "$sb" projected-edit-control 0 - || return 1
+  [ -s "$sb/stub_data/merge_calls.log" ]
+)
+
 # The gate comment is posted again only when the outcome or a blocker changes: one
 # check more or less still running is no change, pending → failing is, and so is an
 # old-format comment (no "Outcome:" line).
@@ -1014,7 +1079,7 @@ test_gate_codes_in_queue_loop() {
 
 # ── Run all ───────────────────────────────────────────────────────
 FAILS=0
-for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_evidence_failure test_gate_outcome test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop; do
+for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_evidence_failure test_gate_outcome test_gate_conflict_without_base_name test_gate_edited_approval test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

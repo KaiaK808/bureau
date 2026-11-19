@@ -724,7 +724,7 @@ preselect_issue() { pipeline_pick_next "$1"; }
         review=self.repo/'scripts/code-review-pipeline.sh'
         source=review.read_text()
         cleanup='''          if [ "$INLINE_RC:$GATE_OUTCOME" = 20:refreshed ] && grep -q '^approval_binding: ' "$GATE_REPORT"; then
-            _review_release_worktree
+            _review_release_worktree stale-approval
           fi
 '''
         self.assertEqual(1,source.count(cleanup))

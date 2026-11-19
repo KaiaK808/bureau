@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="687d08dc8ae81b25ce8c62c3657861a02bb4c2f61c6deb10272715e3c541cc3c">
+<meta name="bureau-source-sha256" content="f5a779b47b6980ea9f624787a7385d0a7a739ba666ae2a2fd33ee0b66384e588">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -3538,18 +3538,27 @@ remains an accepted limit.</p>
 line, or a binding that names a different head or target requires fresh
 Build Review. Bureau queries the selected comment's body and
 <code>lastEditedAt</code> by ID to detect edits, including changes
-between the two reads. Bureau moves the ticket to Build Review and
-returns <code>20</code> with a <code>refreshed</code> report, without
-setting <code>needs-human</code> or saving a merge wait. The inline
-caller forwards the report and cleans the disposable review worktree for
-the next pick. Bureau deduplicates the gate comment when it can read
-earlier comments. If that lookup fails, it still hands back the ticket
-and posts the reason, which may repeat an earlier comment.</p>
+between the two reads. The gate moves the ticket to Build Review and
+returns <code>20</code> with a <code>refreshed</code> report containing
+an <code>approval_binding</code> line. The inline caller forwards the
+report, fetches the PR branch in a disposable review worktree, and
+discards local review output so the worker can release the checkout.
+Bureau deduplicates the gate comment when it can read earlier comments.
+If that lookup fails, it still hands back the ticket and posts the
+reason, which may repeat an earlier comment.</p>
+<p>Only a merge-forward reported with <code>base_refresh</code> uses one
+of the dispatcher's two base refreshes per lane. A shepherd run allows
+<code>agents.max_review_rounds</code> stale-approval handoffs. If
+another approval goes stale during the run, the gate returns the ticket
+to Build Review and the shepherd sets <code>needs-human</code> and exits
+<code>25</code>.</p>
 <p>For ordinary gate refusals, a definitive blocker such as a failing CI
-check takes precedence over failed reads in the same pass and returns
-<code>25</code>. A pass with only undecided blockers returns
-<code>2</code>, as does a failed final base read after both passes
-cleared.</p>
+check or a conflict the rebase agent cannot resolve takes precedence
+over failed reads in the same pass and returns <code>25</code>. If the
+snapshot lacks a base branch name, the gate still checks the PR state,
+merge status and labels. Binding and merge-forward require a readable
+base branch. A pass with only undecided blockers returns <code>2</code>,
+as does a failed final base read after both passes cleared.</p>
 <p><strong>Upgrade</strong> by comparing installed script drift,
 resyncing the complete scripts scope and restarting drivers. A PR
 approved before the upgrade whose verdict comment lacks these lines gets

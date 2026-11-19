@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="51ffe66af70b35078c2503c6f68a12479761a6c96819caf7d7f56e420bf4605a">
+<meta name="bureau-source-sha256" content="2bddc5f3cb87daf36f7001d9ae244906cc149832702f680cbe3e818379240e84">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1065,16 +1065,19 @@ binding line, or an edited approval returns the ticket to Build Review
 with exit <code>20</code> and a <code>refreshed</code> gate report. The
 gate comment names the differing heads or branches or describes the
 invalid line. If the lookup of prior gate comments fails, the handoff
-still completes and the comment may repeat. The inline review discards
-local build output from the disposable worktree, so the ticket gets
-fresh review without <code>needs-human</code> or a merge wait. For
-ordinary refusals, a failed verdict, edit-metadata, head or base read
-gives <code>2</code> when there are only undecided blockers. A
-definitive blocker in the same pass, such as a failing CI check, takes
-precedence and gives <code>25</code>. After comparing installed drift
-and resyncing the complete scripts scope, a PR approved before the
-upgrade whose comment lacks the binding lines needs one fresh
-review.</p>
+still completes and the comment may repeat. Inline review resets its
+disposable worktree to the fetched PR branch and discards local build
+output for the next pick, including after a force-push. A shepherd run
+that exceeds <code>agents.max_review_rounds</code> stale-approval
+handoffs stops with <code>25</code> and <code>needs-human</code> at
+Build Review. For ordinary refusals, a failed verdict, edit-metadata,
+head or base read gives <code>2</code> when there are only undecided
+blockers. A definitive blocker in the same pass, such as a failing CI
+check or a conflict the rebase agent cannot resolve, takes precedence
+and gives <code>25</code> even when the base branch name could not be
+read. After comparing installed drift and resyncing the complete scripts
+scope, a PR approved before the upgrade whose comment lacks the binding
+lines needs one fresh review.</p>
 <p>The stage tells its caller which kind of refusal it was: exit
 <code>2</code> when the gate is not yet decided (a check still running
 or not started, GitHub still computing <code>mergeStateStatus</code>, a

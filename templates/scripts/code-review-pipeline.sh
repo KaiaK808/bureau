@@ -162,16 +162,19 @@ post_review_comment() {
   fi
 }
 
-# _review_release_worktree: after an APPROVE whose inline merge did not go through, put
-# the disposable worktree back to the reviewed head. The stage ends with a nonzero code,
-# and bureau-worker.sh keeps a worktree that is ahead of origin (the local validation
-# merge) or dirty (build-check output) as unfinished work and refuses to reset it, so
-# the next run of the gate could not start. Review work is never unpublished: the
-# verdict is on the PR and the ticket.
+# Discard local validation and build output so the worker can release the checkout.
+# A stale approval can follow a force-push, so reset to the fetched PR branch in that
+# case. For a blocked or undecided gate, keep the reviewed head for approval reuse.
 _review_release_worktree() {
   [ "${BUREAU_WORKSPACE_MODE:-}" = disposable ] || return 0
-  git reset --hard --quiet "$REVIEW_HEAD" && git clean -fd --quiet \
-    || echo "  WARN: could not reset the review worktree to $REVIEW_HEAD; the worker may keep it" >&2
+  local target="$REVIEW_HEAD"
+  if [ "${1:-}" = stale-approval ]; then
+    target="refs/remotes/origin/$BRANCH"
+    git fetch --quiet origin "+refs/heads/$BRANCH:$target" \
+      || echo "  WARN: could not fetch $BRANCH before releasing the review worktree" >&2
+  fi
+  git reset --hard --quiet "$target" && git clean -fd --quiet \
+    || echo "  WARN: could not reset the review worktree to $target; the worker may keep it" >&2
 }
 
 precondition_linear
@@ -1142,7 +1145,7 @@ $REVIEW_ROUND_MARKER"
           # A base refresh already left a clean, pushed head. A stale approval
           # must also hand back a clean worker, after discarding local review output.
           if [ "$INLINE_RC:$GATE_OUTCOME" = 20:refreshed ] && grep -q '^approval_binding: ' "$GATE_REPORT"; then
-            _review_release_worktree
+            _review_release_worktree stale-approval
           fi
           echo "  The inline merge ended with $INLINE_RC${GATE_OUTCOME:+ ($GATE_OUTCOME)}; nothing was merged by this review." >&2
           exit "$INLINE_RC"
