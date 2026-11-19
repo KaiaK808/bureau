@@ -16,6 +16,7 @@
 #   move_head_on_merge  a SHA: a push lands just before the merge call (the head moves)
 #   move_head_after_reads  "<n> <sha>": a push lands right after the n-th read of the head
 #   fail_head_read  present: reading the PR's head commit (--json headRefOid) fails
+#   fail_gate_comment_read  present: only the lookup of prior merge gate comments fails
 #   retarget_after_read  "<gate-snapshot|base-tip|merge-message> <n> <base> <sha>": retarget after that response
 #   branch-<base>.json  overrides branch.json for the named branch
 #   fail_live_base_read  present: the final standalone base name read fails
@@ -42,7 +43,16 @@ for a in "$@"; do
   prev="$a"
 done
 out() { if [ -n "$JQ" ]; then jq -r "$JQ"; else cat; fi; }
-pr_doc() { jq --slurpfile c "$D/comments.json" '. + {comments: $c[0]}' "$D/pr.json"; }
+pr_doc() {
+  # Match the CLI's PR comments projection. lastEditedAt is available only
+  # through the separate IssueComment node lookup below.
+  jq --slurpfile c "$D/comments.json" '. + {comments: ($c[0] | map({
+    id, author: {login: "fixture", id: "fixture-user", name: ""}, authorAssociation: "NONE",
+    body, createdAt, includesCreatedEdit: (.lastEditedAt != null),
+    isMinimized: false, minimizedReason: "", reactionGroups: [],
+    url: ("https://github.com/test-owner/test-repo/pull/99#issuecomment-" + .id), viewerDidAuthor: true
+  }))}' "$D/pr.json"
+}
 retarget_after_read() {
   local kind after base sha reads
   [ -s "$D/retarget_after_read" ] || return 0
@@ -64,6 +74,9 @@ case "${1:-}:${2:-}" in
   pr:view)
     if [ "$JSON" = headRefOid ] && [ -e "$D/fail_head_read" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ "$JSON" = comments ] && [ -e "$D/fail_comments_read" ]; then echo "HTTP 502" >&2; exit 1; fi
+    if [ "$JSON" = comments ] && [ -e "$D/fail_gate_comment_read" ] && [[ "$JQ" == *'Bureau merge gate'* ]]; then
+      echo "HTTP 502 (gate comment lookup)" >&2; exit 1
+    fi
     if [ "$JSON" = baseRefName ] && [ -e "$D/fail_live_base_read" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ -n "$JSON" ]; then
       pr_doc | jq --arg f "$JSON" '. as $pr | reduce ($f | split(",")[]) as $k ({}; .[$k] = $pr[$k])' | out

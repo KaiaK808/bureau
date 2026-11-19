@@ -451,9 +451,43 @@ if live_base_read_failure; then fail 'final base read failure: negative control 
 [ "$LAST_RC" = 0 ] && pr2_merged || fail 'final base read failure: reverted copy did not merge'
 echo 'PASS failed final base read: 2/not-yet; private reverted copy merges'
 
+# A failed cosmetic read cannot hide a confirmed stale approval or its handoff.
+dedup_read_failure() {
+  new_sandbox
+  pr2_push_head
+  pr2_checks red
+  touch "$PR2_GH/fail_gate_comment_read"
+  if [ "$1" = reverted ]; then
+    python3 - "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+start = source.index('  last_body=$(gh pr view', source.index('refresh_stale_approval() {'))
+end = source.index('\n', source.index(' || last_body=""', start))
+read = source[start:end].removesuffix(' || last_body=""')
+assert source[start:end] != read
+path.write_text(source[:start] + '  if ! ' + read.lstrip() + '''; then
+    merge_gate_exit not-yet "verdict_read: the PR's review comments could not be read"
+  fi''' + source[end:])
+PY
+  fi
+  gate
+  binding_refreshed && grep -q '^ci_green: ci: failing check' <<< "$LINES" \
+    && grep -q 'HTTP 502 (gate comment lookup)' <<< "$LAST_STDERR" \
+    && [ "$(binding_gate_comments)" = 1 ]
+}
+dedup_read_failure current || fail "failed gate comment lookup: rc $LAST_RC outcome $OUTCOME: $LINES"
+if dedup_read_failure reverted; then fail 'failed gate comment lookup: negative control stayed green'; fi
+[ "$LAST_RC" = 2 ] && [ "$OUTCOME" = not-yet ] && ! pr2_merged \
+  && grep -q '^verdict_read:' <<< "$LINES" && grep -q 'ci_green: ci: failing check' <<< "$LAST_STDOUT" \
+  && ! grep -q '^move_issue' "$SANDBOX/calls.log" \
+  || fail 'failed gate comment lookup: the old code did not mask a confirmed stale approval'
+echo 'PASS stale approval with red CI and failed dedup read still hands back to Build Review and posts; reverted code exits 2'
+
 # Exact writer syntax and unedited identity are required even when all hashes
 # happen to name the current commit. No ambiguous comment can supply a binding.
-for malformed in duplicate-head duplicate-target malformed-extra-target missing-target short-head bad-target-sha whitespace edited; do
+for malformed in duplicate-head duplicate-target malformed-extra-target missing-target short-head bad-target-sha whitespace; do
   new_sandbox
   python3 - "$PR2_GH/comments.json" "$malformed" <<'PY'
 import json, sys
@@ -468,7 +502,6 @@ elif kind=='missing-target': lines.remove(target)
 elif kind=='short-head': lines[lines.index(head)]=head[:-2]+'`'
 elif kind=='bad-target-sha': lines[lines.index(target)]=target[:-2]+'z`'
 elif kind=='whitespace': lines[lines.index(head)]=head+' '
-elif kind=='edited': row['lastEditedAt']='2026-09-29T09:01:00Z'
 row['body']='\n'.join(lines); p.write_text(json.dumps(rows))
 PY
   gate; binding_refreshed || fail "strict binding $malformed: rc $LAST_RC: $LINES"
@@ -477,5 +510,30 @@ PY
   [ "$LAST_RC" = 0 ] && pr2_merged || fail "strict binding $malformed: negative control did not merge"
   echo "PASS strict binding $malformed; private reverted copy merges it"
 done
+
+# Only the separate node lookup exposes the edit timestamp. The approval's
+# body and binding are unchanged, so reading it from the CLI projection fails.
+new_sandbox
+jq '.[0].lastEditedAt = "2026-09-29T09:01:00Z"' "$PR2_GH/comments.json" > "$PR2_GH/comments.tmp"
+mv "$PR2_GH/comments.tmp" "$PR2_GH/comments.json"
+gh pr view 99 --json comments | jq -e '.comments[0] | .includesCreatedEdit and (has("lastEditedAt") | not)' >/dev/null \
+  || fail 'edited approval: fake gh exposed the wrong projection'
+edited_approval_refreshed() {
+  gate
+  binding_refreshed && grep -q 'selected approval comment was edited' <<< "$LINES"
+}
+edited_approval_refreshed || fail "edited approval: rc $LAST_RC outcome $OUTCOME: $LINES"
+python3 - "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+old = '''"$_review_edit" | jq -r '.lastEditedAt' '''.rstrip()
+assert source.count(old) == 1
+path.write_text(source.replace(old, old.replace('$_review_edit', '$_review_comment')))
+PY
+if edited_approval_refreshed; then fail 'edited approval: the projected timestamp mutation stayed green'; fi
+[ "$LAST_RC" = 0 ] && pr2_merged || fail 'edited approval: projected timestamp mutation did not reach the unsafe merge'
+echo 'PASS edited approval requires fresh review; reading lastEditedAt from the projection lets it merge in the private copy'
 
 echo 'OK test_merge_gate_switches'

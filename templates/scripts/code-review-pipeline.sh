@@ -163,7 +163,7 @@ post_review_comment() {
 }
 
 # _review_release_worktree: after an APPROVE whose inline merge did not go through, put
-# the disposable worktree back to the reviewed head. The stage then ends with 2 or 25,
+# the disposable worktree back to the reviewed head. The stage ends with a nonzero code,
 # and bureau-worker.sh keeps a worktree that is ahead of origin (the local validation
 # merge) or dirty (build-check output) as unfinished work and refuses to reset it, so
 # the next run of the gate could not start. Review work is never unpublished: the
@@ -989,6 +989,8 @@ if [ "$CURRENT_HEAD" != "$REVIEW_HEAD" ] || [ "$CURRENT_BASE" != "$REVIEW_BASE" 
   exit 18
 fi
 
+# Keep the branch verbatim in the Target line. The merge gate uses the fixed
+# base SHA suffix to delimit it, including when the branch contains backticks.
 REVIEW_COMMENT="## Code Review v2 — $ISSUE
 
 **Verdict**: $VERDICT
@@ -1066,7 +1068,8 @@ $REVIEW_ROUND_MARKER"
       #       (merge_gate_waits); the stage ends with 2 and the shepherd waits as at Merge.
       #   25  the gate is decided against the merge: needs-human, the gate lines on the
       #       ticket, the stage ends with 25.
-      # Any other code passes through (15 no PR, 18 the merge call failed, 20 a stop).
+      #   20  refreshed: the ticket is back in Build Review for a fresh review.
+      # Other exits pass through (15 no PR, 18 the merge call failed, 20 a stop).
       GATE_REPORT="$REVIEW_TMP/merge-gate.report"
       INLINE_RC=0
       BUREAU_INLINE_MERGE=1 BUREAU_MERGE_GATE_REPORT="$GATE_REPORT" \
@@ -1136,6 +1139,11 @@ $REVIEW_ROUND_MARKER"
           STAGE_EXIT=25
           ;;
         *)
+          # A base refresh already left a clean, pushed head. A stale approval
+          # must also hand back a clean worker, after discarding local review output.
+          if [ "$INLINE_RC:$GATE_OUTCOME" = 20:refreshed ] && grep -q '^approval_binding: ' "$GATE_REPORT"; then
+            _review_release_worktree
+          fi
           echo "  The inline merge ended with $INLINE_RC${GATE_OUTCOME:+ ($GATE_OUTCOME)}; nothing was merged by this review." >&2
           exit "$INLINE_RC"
           ;;

@@ -318,6 +318,38 @@ if inline_retarget_case reverted; then fail 'inline retarget after final gate: n
   || fail 'inline retarget after final gate: negative control failed before the unsafe merge'
 echo 'PASS inline retarget after final gate: 20/refreshed, one gate comment, no needs-human; private reverted copy merges into release'
 
+# The real writer and gate must agree even when the target contains a backtick.
+target_round_trip() {
+  local target="$1" base body
+  new_sandbox
+  git -C "$SANDBOX" push -q origin "origin/main:refs/heads/$target" || fail "invalid fixture target $target"
+  jq --arg ref "$target" '.baseRefName = $ref' "$PR2_GH/pr.json" > "$PR2_GH/pr.tmp" && mv "$PR2_GH/pr.tmp" "$PR2_GH/pr.json"
+  if [ "${2:-}" = reverted ]; then
+    python3 - "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+pattern = '([^ ]+)` at'
+assert source.count(pattern) == 1
+path.write_text(source.replace(pattern, '([^`]+)` at'))
+PY
+  fi
+  review
+  base=$(git -C "$SANDBOX" rev-parse origin/main)
+  body=$(jq -er '.[0].body' "$PR2_GH/comments.json") || fail "writer did not publish a review for $target"
+  grep -qxF "**Target**: \`$target\` at \`$base\`" <<< "$body" \
+    || fail "writer did not publish the exact target $target"
+  [ "$LAST_RC" = 0 ] && pr2_merged
+}
+for target in 'release`qa' 'release/v2.1'; do
+  target_round_trip "$target" || fail "target $target did not round-trip (rc $LAST_RC)"
+done
+if target_round_trip 'release`qa' reverted; then fail 'backtick target: negative control stayed green'; fi
+[ "$LAST_RC" = 20 ] && ! pr2_merged && grep -q 'Target line missing, malformed or duplicated' <<< "$LAST_STDOUT" \
+  || fail 'backtick target: the old parser did not reject the real writer output as malformed'
+echo 'PASS real Target lines with a backtick, slash and dot merge; private reverted parser rejects the backtick branch'
+
 # ── Negative control: the v3.0.2 inline call ───────────────────────────────
 new_sandbox
 python3 - "$SCRIPTS_DIR/code-review-pipeline.sh" "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'

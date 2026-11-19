@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f61bd9d35e6421e9cef1526253abf2f97621b5bc7c597efd4f833ff5cc277466">
+<meta name="bureau-source-sha256" content="51ffe66af70b35078c2503c6f68a12479761a6c96819caf7d7f56e420bf4605a">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1064,14 +1064,17 @@ separate base freshness and CI gates.</p>
 binding line, or an edited approval returns the ticket to Build Review
 with exit <code>20</code> and a <code>refreshed</code> gate report. The
 gate comment names the differing heads or branches or describes the
-invalid line, once per unchanged blocker. The ticket gets fresh review
-without <code>needs-human</code> or a merge wait. A failed comment,
-edit-metadata, head or base read gives <code>2</code> when there are
-only undecided blockers. A definitive blocker in the same pass, such as
-a failing CI check, takes precedence and gives <code>25</code>. After
-comparing installed drift and resyncing the complete scripts scope, a PR
-approved before the upgrade whose comment lacks the binding lines needs
-one fresh review.</p>
+invalid line. If the lookup of prior gate comments fails, the handoff
+still completes and the comment may repeat. The inline review discards
+local build output from the disposable worktree, so the ticket gets
+fresh review without <code>needs-human</code> or a merge wait. For
+ordinary refusals, a failed verdict, edit-metadata, head or base read
+gives <code>2</code> when there are only undecided blockers. A
+definitive blocker in the same pass, such as a failing CI check, takes
+precedence and gives <code>25</code>. After comparing installed drift
+and resyncing the complete scripts scope, a PR approved before the
+upgrade whose comment lacks the binding lines needs one fresh
+review.</p>
 <p>The stage tells its caller which kind of refusal it was: exit
 <code>2</code> when the gate is not yet decided (a check still running
 or not started, GitHub still computing <code>mergeStateStatus</code>, a

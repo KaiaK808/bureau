@@ -308,7 +308,9 @@ evaluate_merge_gates() {
   elif [ -n "$head" ] && [ "$_pr_read" = ok ]; then
     local _head_line _target_line _approved_head _binding_error=""
     local _head_pattern='^\*\*Reviewed head\*\*: `([0-9a-f]{40})`$'
-    local _target_pattern='^\*\*Target\*\*: `([^`]+)` at `([0-9a-f]{40})`$'
+    # Git branch names exclude ASCII spaces but can contain backticks. The
+    # fixed SHA suffix identifies the closing backtick of the branch name.
+    local _target_pattern='^\*\*Target\*\*: `([^ ]+)` at `([0-9a-f]{40})`$'
     # Whole-line matching rejects missing, malformed and duplicate lines,
     # including one valid line next to a second malformed candidate.
     _head_line=$(printf '%s\n' "$_review_body" | sed -n '/^\*\*Reviewed head\*\*/p')
@@ -318,7 +320,7 @@ evaluate_merge_gates() {
     else
       _binding_error="Reviewed head line missing, malformed or duplicated (current head $head)"
     fi
-    if [[ "$_target_line" =~ $_target_pattern ]]; then
+    if [[ "$_target_line" != *$'\n'* && "$_target_line" =~ $_target_pattern ]]; then
       _approved_base="${BASH_REMATCH[1]}"
     else
       _binding_error="${_binding_error:+$_binding_error; }Target line missing, malformed or duplicated (current head $head, base $_base_ref)"
@@ -505,10 +507,9 @@ Outcome: refreshed — fresh Build Review required
 $lines
 
 The approval does not bind the current PR head and target. Nothing was merged; a fresh review is needed."
-  if ! last_body=$(gh pr view "$PR_NUMBER" --json comments \
-      --jq '[.comments[] | select(.body | test("Bureau merge gate"))] | sort_by(.createdAt) | last | .body // ""'); then
-    merge_gate_exit not-yet "verdict_read: the PR's review comments could not be read"
-  fi
+  # A failed deduplication read can repeat the notice, but the handoff still runs.
+  last_body=$(gh pr view "$PR_NUMBER" --json comments \
+    --jq '[.comments[] | select(.body | test("Bureau merge gate"))] | sort_by(.createdAt) | last | .body // ""') || last_body=""
   last_key=$(merge_gate_key "$(sed -n 's/^Outcome: \([a-z-]*\).*/\1/p' <<< "$last_body" | sed -n 1p)" "$last_body") || exit $?
   current_key=$(merge_gate_key refreshed "$lines") || exit $?
   bureau_ticket_checkpoint "$ISSUE" strict
