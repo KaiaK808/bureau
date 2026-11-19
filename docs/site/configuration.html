@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="553c73538ffa3d701e055587cecf0236256275abd48c7816d85d920caabd6ee7">
+<meta name="bureau-source-sha256" content="7d8a604305f39e6a15c2481a94ecf1c89608c4e06f8ba265dc8e5c50d99f8a65">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -667,16 +667,18 @@ match protects against a subsequent head push. Disabled and advisory
 merge behaviour and GitHub/git call logs remain unchanged. The older
 Code Review v2 verdict reader's head binding is unchanged by this
 scanner integration.</p>
-<p><strong>Upgrade:</strong> compare installed script drift, resync the
-entire scripts scope (including the shared helper, sandbox profile,
-rules, lock and platform manifests), and restart drivers together.
-Existing repositories stay off. Install the reviewed pinned venv and
-ensure network isolation works before opting into advisory mode;
-blocking is a separate project choice. Offline fake scanner tests cover
-the boundary and pipelines. The optional real-binary test runs only with
-<code>BUREAU_SEMGREP_VENV</code> set on GitHub-hosted Ubuntu; real pin,
-flag/rule compatibility and adopting-repository qualification require
-that separate validation.</p>
+<p><strong>Upgrade:</strong> compare installed script drift and resync
+the entire scripts scope (including the shared helper, sandbox profile,
+rules, lock and platform manifests). Existing repositories stay off.
+Complete any Semgrep setup before restarting drivers together: install
+the reviewed pinned venv and set <code>BUREAU_SEMGREP_VENV</code> in the
+environment the drivers start with, unless you use the shared-state
+fallback. Ensure network isolation works before opting into advisory
+mode; blocking is a separate project choice. Offline fake scanner tests
+cover the boundary and pipelines. The optional real-binary test runs
+only with <code>BUREAU_SEMGREP_VENV</code> set on GitHub-hosted Ubuntu;
+real pin, flag/rule compatibility and adopting-repository qualification
+require that separate validation.</p>
 <h3 id="qatrivy"><code>qa.trivy</code></h3>
 <div class="sourceCode" id="cb6"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>

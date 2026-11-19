@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="dd3f180a8d0c890ddd56c3d81c160beef92108e6866d697ca60dd6a15ee29692">
+<meta name="bureau-source-sha256" content="29e723b6ed59d2f3f3a4d6e7fb0e9fddcb4b8451b9e2a6c12a314299e1284120">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -167,10 +167,10 @@ source-update steps</a> and refresh skill discovery.</p></li>
 <li><p>Follow the <a
 href="#before-changing-an-adopting-repository">pre-upgrade inventory and
 backup steps</a> and use this preview for the <strong>complete scripts
-scope</strong>. Run it from the root of each adopting repository with
-the target already installed, <code>claude</code>, <code>codex</code> or
-<code>both</code>.</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude <span class="co"># set to your existing target</span></span>
+scope</strong>. Run it from the root of each adopting repository, with
+<code>BUREAU_TARGET</code> set to the target already installed:
+<code>claude</code>, <code>codex</code> or <code>both</code>.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Include <code>.bureau-install.json</code> and <code>.gitignore</code>

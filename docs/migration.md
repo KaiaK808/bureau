@@ -43,10 +43,10 @@ Apply these steps once v3.9.0 is published. All release changes are merged.
 
 1. Stop all shepherds, queue loops, dispatchers and supervisors. Preserve unfinished work, local commits, customized assets, user instructions, Spec Kit assets and constitution, and shared runtime records.
 2. Compare installed script drift, reconcile local incident fixes and record the previous source commit for rollback. Select the published `v3.9.0` tag using [the source-update steps](#select-the-source-release) and refresh skill discovery.
-3. Follow the [pre-upgrade inventory and backup steps](#before-changing-an-adopting-repository) and use this preview for the **complete scripts scope**. Run it from the root of each adopting repository with the target already installed, `claude`, `codex` or `both`.
+3. Follow the [pre-upgrade inventory and backup steps](#before-changing-an-adopting-repository) and use this preview for the **complete scripts scope**. Run it from the root of each adopting repository, with `BUREAU_TARGET` set to the target already installed: `claude`, `codex` or `both`.
 
    ```sh
-   BUREAU_TARGET=claude # set to your existing target
+   BUREAU_TARGET=claude
    python3 "$BUREAU_SOURCE/scripts/bureau_install.py" assets \
      --repo "$PWD" --target "$BUREAU_TARGET" --scope scripts
    ```
