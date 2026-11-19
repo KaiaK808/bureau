@@ -43,24 +43,34 @@ Apply these steps once v3.9.0 is published. All release changes are merged.
 
 1. Stop all shepherds, queue loops, dispatchers and supervisors. Preserve unfinished work, local commits, customized assets, user instructions, Spec Kit assets and constitution, and shared runtime records.
 2. Compare installed script drift, reconcile local incident fixes and record the previous source commit for rollback. Select the published `v3.9.0` tag using [the source-update steps](#select-the-source-release) and refresh skill discovery.
-3. Preview the resync. Follow the [pre-upgrade inventory and backup steps](#before-changing-an-adopting-repository), including `.bureau-install.json` and `.gitignore` in the private backup. Resolve conflicts, then resync the **complete scripts scope** in each adopting repository. Keep the existing target selection. In Claude use the command below. In Codex use `$bureau-init` with the same arguments. `--update` edits configuration only.
+3. Follow the [pre-upgrade inventory and backup steps](#before-changing-an-adopting-repository) and use this preview for the **complete scripts scope**. Run it from the root of each adopting repository with the target already installed, `claude`, `codex` or `both`.
+
+   ```sh
+   BUREAU_TARGET=claude # set to your existing target
+   python3 "$BUREAU_SOURCE/scripts/bureau_install.py" assets \
+     --repo "$PWD" --target "$BUREAU_TARGET" --scope scripts
+   ```
+
+   Include `.bureau-install.json` and `.gitignore` in the private backup. Review each conflict and preserve customizations. For each approved replacement, add a path-specific option such as `--overwrite scripts/qa-pipeline.sh` and review the scripts-only preview again. Apply once the preview has no unresolved conflicts. Include the same `--overwrite` options on apply.
+
+   ```sh
+   python3 "$BUREAU_SOURCE/scripts/bureau_install.py" assets \
+     --repo "$PWD" --target "$BUREAU_TARGET" --scope scripts --apply
+   ```
+
 4. Remove `qa.trivy.image_archive_command` from existing configurations, including entries set to `null`. Runtime and doctor reject the key even when Trivy is disabled. Semgrep and Trivy stay off until enabled.
-5. Run `python3 scripts/bureau-doctor.py --mode background` for a background installation or `python3 scripts/bureau-doctor.py --mode app` for an app-only installation. Reconcile holds. If doctor reports a tracked `scripts/__pycache__/`, run its cleanup command for the matched literal directories once and commit that removal. A stage refuses a pre-staged Bureau cache with exit 24 and leaves the index untouched. See [tracked Python bytecode](troubleshooting.md#tracked-python-bytecode).
-6. Restart all drivers together so they load the resynced scripts. Qualify a representative ticket before unattended dispatch.
+5. Complete any optional scanner setup before restarting drivers. Semgrep runs in the background review pipeline and Trivy runs in the background QA pipeline. The app's `prepare`/`finish` flow runs neither scanner.
 
-```text
-/bureau-init --resync-scripts --target both
-```
+   **Optional Semgrep CE.** Install **1.183.0** from the shipped wheel-only hash lock in a standard-library venv. The manifests cover macOS arm64 with CPython 3.14 and Linux x86_64 with CPython 3.12. Set `BUREAU_SEMGREP_VENV` or use the shared-state fallback. Qualify host network isolation, then set `review.semgrep.enabled` to `true` and `review.semgrep.mode` to `advisory`. Opt into blocking separately. See [Semgrep configuration](configuration.md#reviewsemgrep).
 
-Semgrep runs in the background review pipeline and Trivy runs in the background QA pipeline. The app's `prepare`/`finish` flow runs neither scanner, so enabling either in advisory or blocking mode has no effect there.
+   **Optional Trivy.** Supply the verified **0.76.1** binary for Linux x86_64 or macOS arm64. For a custom location, export `BUREAU_TRIVY_BIN` with the verified binary's absolute path in the refresh shell and in the stage launcher's environment before restarting drivers. Bureau's `.env` loader ignores this key. With the variable unset, Bureau uses the shared-state fallback. Set `qa.trivy.cache_dir` to an absolute path outside the repository. Set `BUREAU_TRIVY_CACHE` in your shell to that same path and pass `--cache-dir "$BUREAU_TRIVY_CACHE"` when refreshing the empty or Bureau-managed cache separately. Qualify host network isolation, then set `qa.trivy.enabled` to `true` and `qa.trivy.mode` to `advisory`. Opt into blocking separately. This release covers dependencies and configuration and excludes image scanning. See [Trivy configuration and refresh](configuration.md#qatrivy).
 
-**Optional Semgrep CE.** Install **1.183.0** from the shipped wheel-only hash lock in a standard-library venv. The manifests cover macOS arm64 with CPython 3.14 and Linux x86_64 with CPython 3.12. Set `BUREAU_SEMGREP_VENV` or use the shared-state fallback. Qualify host network isolation, then set `review.semgrep.enabled` to `true` and `review.semgrep.mode` to `advisory`. Opt into blocking separately. See [Semgrep configuration](configuration.md#reviewsemgrep).
-
-**Optional Trivy.** Supply the verified **0.76.1** binary for Linux x86_64 or macOS arm64 through `BUREAU_TRIVY_BIN` or the shared-state fallback. Set `qa.trivy.cache_dir` to an absolute path outside the repository. Set `BUREAU_TRIVY_CACHE` in your shell to that same path and pass `--cache-dir "$BUREAU_TRIVY_CACHE"` when refreshing the empty or Bureau-managed cache separately. Qualify host network isolation, then set `qa.trivy.enabled` to `true` and `qa.trivy.mode` to `advisory`. Opt into blocking separately. This release covers dependencies and configuration and excludes image scanning. See [Trivy configuration and refresh](configuration.md#qatrivy).
+6. Run `python3 scripts/bureau-doctor.py --mode background` for a background installation or `python3 scripts/bureau-doctor.py --mode app` for an app-only installation. Reconcile holds. If doctor reports a tracked `scripts/__pycache__/`, run its cleanup command for the matched literal directories once and commit that removal. A stage refuses a pre-staged Bureau cache with exit 24 and leaves the index untouched. See [tracked Python bytecode](troubleshooting.md#tracked-python-bytecode).
+7. Restart all drivers together so they load the resynced scripts. If you paused dispatch for the upgrade, run `python3 scripts/bureau-runtime.py unpause` in the adopting repository after the restart. Qualify a representative ticket before leaving dispatch unattended.
 
 **From earlier versions.** Apply [Upgrade to v3.8](#upgrade-to-v38) and the cumulative steps it references first, then apply this upgrade.
 
-**Rollback to v3.8.0.** Stop drivers and reconcile unfinished writers, local commits and holds. Follow the [full rollback procedure](#rollback) to restore the complete v3.8.0 asset set and compatible configuration. Use the saved pre-upgrade inventory to identify v3.9.0 scanner additions absent from the old baseline. Remove only those that contain no later work. Restore `.bureau-install.json` and `.gitignore` from the private backup. Keep the runtime and scan records for inspection. Prior commits, pushes, comments, labels and state moves persist through rollback.
+**Rollback to v3.8.0.** Stop drivers and reconcile unfinished writers, local commits and holds. Follow the [restore procedure](#restore-the-pre-upgrade-installation) to restore the complete v3.8.0 asset set and compatible configuration. Use the saved pre-upgrade inventory to identify v3.9.0 scanner additions absent from the old baseline. Remove only those that contain no later work. Restore `.bureau-install.json` and `.gitignore` from the private backup. Keep the runtime and scan records for inspection. Prior commits, pushes, comments, labels and state moves persist through rollback.
 
 ## Upgrade to v3.8
 
@@ -544,6 +554,8 @@ Qualify a representative ticket through the intended app/background path with th
 For acceptance briefs and stage insights, preview and resync both the `scripts` and `interfaces` scopes from the updated source, resolving local prompt/command conflicts before applying, then restart background drivers. Include `bureau-acceptance.py`, `bureau-evidence.py`, `bureau-provider.py`, all three result schemas and boundary pipelines as one set. Existing merge modes, exit codes and app records remain compatible; the evidence packet adds optional `agents.risk_tier` settings, without history backfill. Resync `bureau-acceptance.py` and `bureau-config.sh` together for the new packet fields; existing frozen PR/HEAD briefs retain their bodies and delivery states. Legacy results without `insights` remain valid, while strict provider output uses `insights: []`. `bureau-learnings` now drafts optional `BUREAU-BACKLOG.proposed.md` candidates from the shared Git store's `evidence/v1/insights.jsonl`; observations are advisory free text and must exclude secrets/logs. Keep the shared evidence store when retrying a pending ticket/PR delivery so successful destinations remain deduplicated. See [stage protocol](stage-protocol.md#acceptance-briefs-at-human-merge-boundaries) for storage, privacy and remote delivery limits; representative live adopter validation remains pending.
 
 Resync `bureau-config.sh` and all comment-producing pipelines together for local-only insights: admitted observations stay local and never enter GitHub/Linear comments or the acceptance brief. Inspect/remove already published pre-fix comments and previously stored unsafe insights; resync does not scrub history. Quoted credential names, split opaque tokens and additional log/stack/prompt shapes are now filtered with advisory warnings. This remains best-effort, may drop benign observations and adds no stage failure or configuration migration; validation uses fake transports and both real provider adapters with fake CLIs.
+
+### Restore the pre-upgrade installation
 
 Stop new dispatch and inspect active owners before restoring anything. Preserve work created since the upgrade. Restore the recorded previous source commit/tag in a clean source checkout; for example, `git -C "$BUREAU_SOURCE" switch --detach PREVIOUS_COMMIT`, replacing the placeholder with the recorded commit. Restore the coherent pre-upgrade project asset set, instruction files and installer bookkeeping from the private backup, then reconcile subsequent local changes. Identify files newly installed by the upgrade and remove only confirmed upgrade additions that are absent from the old baseline and contain no later work.
 

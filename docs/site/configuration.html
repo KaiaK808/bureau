@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="977aaa729bad0096d1b28968a22a1a977a675f34ad02759ea39040fcddd00fdb">
+<meta name="bureau-source-sha256" content="553c73538ffa3d701e055587cecf0236256275abd48c7816d85d920caabd6ee7">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -486,8 +486,9 @@ some dependencies are compiled, every CPython minor needs its own
 manifest. This release ships <code>darwin-arm64-cp314</code> and
 <code>linux-x86_64-cp312</code>. With any other interpreter, an enabled
 scan with eligible files reports <strong>unavailable</strong> and names
-the missing manifest. Missing venvs and missing/mismatched manifests
-never abort advisory review. There is no configurable version or
+the missing manifest. Advisory review treats unavailable scanner
+results, including those caused by a missing venv or a missing or
+mismatched manifest, as evidence. There is no configurable version or
 manifest override.</p>
 <p>Maintainers generate a universal wheel-only lock for
 <code>semgrep==1.183.0</code> with
@@ -501,12 +502,11 @@ wheels, maps purelib/platlib payloads to site-packages and refuses
 unsupported installation schemes or path collisions. Review the lock,
 manifest and tool compatibility together before shipping them. The
 maintainer script is not installed in adopting repositories.</p>
-<p>Once per measurement, after selecting the manifest, Bureau copies
-site-packages into a private runtime under the run's
-<code>mkdtemp</code> directory (mode 0700). Every component from the
-operator venv root through
+<p>Once per measurement, Bureau copies site-packages into a private
+runtime under the run's <code>mkdtemp</code> directory (mode 0700).
+Every component from the operator venv root through
 <code>lib/python3.&lt;minor&gt;/site-packages</code> must be a real
-directory, checked with <code>lstat</code>; all entries inside must be
+directory, checked with <code>lstat</code>. All entries inside must be
 regular files or real directories, including excluded entries. Bureau
 anchors traversal to directory descriptors, opens source files with
 <code>O_NOFOLLOW</code> and hashes the same reads it writes into the
@@ -514,33 +514,35 @@ copy, preserving only the executable bit (files 0700 or 0600,
 directories 0700). It compares the copied file set, including
 <code>semgrep-core</code>, with the manifest before the interpreter
 probe, then re-hashes the private copy before each scan side. Changed,
-missing or additional files make the tool unavailable; changes to the
-operator tree after copying cannot affect execution. Install metadata
-inside <code>*.dist-info</code> (<code>RECORD</code>,
-<code>INSTALLER</code>, <code>direct_url.json</code>,
-<code>REQUESTED</code> and uv's <code>uv_cache.json</code>) and adjacent
-<code>__pycache__</code> directories are excluded from copied files and
-manifest comparison. The operator venv must contain exactly one
-<code>lib/python3.&lt;minor&gt;/site-packages</code> directory; its
+missing or additional files in the copy make the tool unavailable. Later
+changes to the original site-packages tree leave the copied package
+bytes intact. Install metadata inside <code>*.dist-info</code>
+(<code>RECORD</code>, <code>INSTALLER</code>,
+<code>direct_url.json</code>, <code>REQUESTED</code> and uv's
+<code>uv_cache.json</code>) and adjacent <code>__pycache__</code>
+directories are excluded from copied files and manifest comparison. The
+operator venv must contain exactly one
+<code>lib/python3.&lt;minor&gt;/site-packages</code> directory. Its
 minor and the selected manifest's platform must match the interpreter
-probe. The operator's system Python itself is trusted, outside the
-package manifest.</p>
+probe. The resolved interpreter is a trusted dependency outside the
+package snapshot and manifest.</p>
 <p>The <code>-I -S</code> interpreter probe and both scan sides share
-one private shadow venv per measurement. Bureau writes exactly two
-<code>pyvenv.cfg</code> lines:
+one private shadow venv per measurement. Bureau writes
 <code>home = &lt;base interpreter directory&gt;</code> and
-<code>include-system-site-packages = false</code>. The shadow's
-<code>bin</code> contains only <code>python</code>, a symlink to the
-resolved real path of the operator venv's <code>bin/python</code>; that
-base must be an absolute regular executable file. The shadow's
-<code>lib/python3.&lt;minor&gt;/site-packages</code> is the verified
-private copy, a real directory preserving the package layout, including
-<code>semgrep/bin/libs</code> for resource-based core discovery. Bureau
-never executes the operator venv's own Python path or uses its
-<code>pyvenv.cfg</code> settings, including duplicate system-package
-settings. Each call uses
-<code>-I -B -X pycache_prefix=&lt;fresh directory&gt;</code>; the probe
-additionally uses <code>-S</code>. Operator launchers,
+<code>include-system-site-packages = false</code> as the two lines of
+the shadow's <code>pyvenv.cfg</code>. The shadow's <code>bin</code>
+contains only <code>python</code>, a symlink to the resolved real path
+of the operator venv's <code>bin/python</code>. The resolved path must
+be an absolute regular executable file. In a venv created with
+<code>--copies</code>, it can reside inside the operator venv, where
+replacing the executable after the package copy can affect the scan. The
+shadow's <code>lib/python3.&lt;minor&gt;/site-packages</code> is the
+verified private copy, a real directory preserving the package layout,
+including <code>semgrep/bin/libs</code> for resource-based core
+discovery. Bureau invokes Python through the shadow symlink and uses the
+shadow's generated settings. Each call uses
+<code>-I -B -X pycache_prefix=&lt;fresh directory&gt;</code>. The probe
+additionally uses <code>-S</code>. Operator Semgrep launchers,
 executable-adjacent fallback helpers, system site-packages and adjacent
 bytecode are excluded from execution.</p>
 <p>Every scan and interpreter probe receives exactly
@@ -592,23 +594,28 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb5-1"><a href="
 reasonless suppressions fail measurement. The receipt distinguishes
 <code>findings_new</code>, <code>findings_existing</code> and
 <code>findings_suppressed</code>.</p>
-<p>Statuses are <code>measured</code>, <code>not_measured</code>,
-<code>unavailable</code>, <code>not_applicable</code> and
-<code>reduced_coverage</code>; every non-measured status names a reason.
+<p>Semgrep emits <code>measured</code>, <code>not_measured</code>,
+<code>unavailable</code> and <code>not_applicable</code>. The shared
+receipt format also defines <code>reduced_coverage</code> for other
+scanners. Every status other than <code>measured</code> names a reason.
 A measured result requires exit 0, valid JSON, no errors and coverage of
-every explicit target. Timeouts, skipped targets and tool/parse errors
-are not measured. Bureau builds the snapshots and decides applicability
-first: if neither side has eligible files, the result is
-<code>not_applicable</code> and passes blocking mode without checking
-the venv, isolation, interpreter or runtime manifest, or starting any
-scanner or probe. Its receipt still binds the version, lock hash and
-hashes of the shipped manifest files without executing them. Semgrep
-does not emit reduced coverage: incomplete coverage is not measured.
-None of these statuses is rendered as clean.</p>
-<p>In advisory mode the scan reports evidence and review continues.
-Specialists finish their independent first pass before receiving the
-projection in the existing late step, for all three roles, even with
-Impeccable disabled. In blocking mode, new findings at the configured
+every explicit target. Scan timeouts, scanner execution or output
+errors, and incomplete target coverage yield <code>not_measured</code>.
+Bureau loads the rules and validates the base suppressions before
+building the snapshots. A configured <code>extra_rules</code> file
+missing from the pinned base yields <code>not_measured</code> even when
+neither side has eligible files. After the policy checks succeed, an
+empty eligible set on both sides yields <code>not_applicable</code> and
+passes blocking mode without checking the venv, isolation, interpreter
+or runtime manifest, or starting any scanner or probe. Its receipt still
+binds the version, lock hash and hashes of the shipped manifest files.
+The projection shows the actual status.</p>
+<p>In advisory mode, Bureau reports Semgrep evidence and skips the
+scanner's verdict floor. On a fresh review, any Semgrep projection,
+including <code>not_applicable</code>, triggers one late provider call
+per specialist after the three independent passes complete, even with
+Impeccable disabled. Malformed supplemental output stops the review
+stage with exit 22. In blocking mode, new findings at the configured
 severity or higher, not-measured results and unavailable tooling lower
 APPROVE to REQUEST_CHANGES after the build fold and before the existing
 cycle/round caps. BLOCK stays BLOCK. The caps still escalate unresolved
@@ -698,10 +705,13 @@ GitHub and Git call logs, are unchanged.</p>
 <p>Bureau ships metadata for <strong>Trivy 0.76.1</strong>, released
 <strong>2026-10-21</strong>, in
 <code>scripts/bureau-trivy-pins.json</code>. Only Linux x86_64 and macOS
-arm64 have reviewed archive and extracted-binary pins; other platforms
+arm64 have reviewed archive and extracted-binary pins. Other platforms
 report <strong>unavailable</strong> with the missing platform pin named.
-The operator supplies a regular executable with
-<code>BUREAU_TRIVY_BIN</code>; the fallback is
+The operator supplies a regular executable. For a custom location,
+export the absolute binary path as <code>BUREAU_TRIVY_BIN</code> in both
+the refresh shell and the stage launcher's environment. Bureau's
+<code>.env</code> loader ignores this key. With the variable unset,
+Bureau uses
 <code>&lt;shared Git directory&gt;/bureau/tools/trivy/trivy</code>.
 Bureau does not install or download a scanner. There is no version,
 digest or executable override in repository configuration. Never use the
@@ -911,24 +921,31 @@ a failed base scan. <strong>not_applicable</strong> passes as explicitly
 not applicable. No unavailable, unmeasured or reduced result is
 described as clean. A blocking QA result keeps the ticket in QA with
 <code>needs-human</code> and exit 25.</p>
-<p>QA measures immediately before routing, after its commit/push and
-local checks, including the no-harness path; the enabled no-harness path
-first publishes any QA merge. Its receipt binds the head actually handed
-onward. If a repository has no QA state, blocking mode still guarantees
-measurement through merge: the merge pipeline requires a valid
-final-head receipt and measures when absent or changed. Before the
-existing just-in-time gates, the shared Semgrep/Trivy merge code reads
-head and current base ref/commit, measures with reuse, prepares the
-merge message and fetches the base again. Before applying a blocking or
-failed result it re-checks head, base ref name and base commit; changed
-inputs retry with exit 2, with the gate mark bound to the scanned head.
-Both enabled scanners must measure the same inputs. After the final
-gates, one GraphQL read binds the current PR base ref name and live
-<code>baseRef.target.oid</code> branch tip to the scanned base, retrying
-with exit 2 on changed inputs or a failed read; there is no additional
-fetch. The live branch target is used because the PR's stored base OID
-can lag the branch tip. The ticket kill-switch checkpoint remains the
-last operation before the head-pinned merge in every merge strategy.</p>
+<p>QA measures immediately before routing, after its commit, push and
+local checks. With Trivy enabled, live QA without a test harness runs
+<code>git push origin HEAD</code> even when there is no QA merge to
+publish. A rejected push exits 18 before Trivy evidence or ticket
+routing, including in advisory mode. The receipt binds the head actually
+handed onward.</p>
+<p>With Trivy enabled in blocking mode, Bureau's automatic merge
+pipeline requires a valid, non-blocking receipt for the final PR head
+and pinned base, including when no QA state exists. It measures those
+inputs when it cannot reuse a matching receipt. With no QA state and
+<code>agents.merge_mode: "manual"</code>, a human can merge without a
+Trivy receipt. Before the existing just-in-time gates, the shared
+Semgrep/Trivy merge code reads the PR head and the current base ref and
+commit, measures with receipt reuse, prepares the message for squash or
+merge strategy, and fetches the base again. Before applying a blocking
+or failed result, it re-checks head, base ref name and base commit.
+Changed inputs retry with exit 2, with the gate mark bound to the
+scanned head. When both scanners are enabled in blocking mode, their
+measurements must use the same inputs. After the final gates, Bureau
+checks the current PR base ref name and live
+<code>baseRef.target.oid</code> branch tip against the scanned base with
+a single GraphQL read. Changed inputs or a failed read retry with exit
+2. The live branch target is used because the PR's stored base OID can
+lag the branch tip. The ticket kill-switch checkpoint remains the last
+operation before the head-pinned merge in every merge strategy.</p>
 <p>Image scanning is outside this release, and every projection carries
 that fixed qualification. The Trivy stage executes no builds or
 repository-controlled commands. Remove
@@ -950,23 +967,24 @@ and checks exception expiry; each consuming PR adds its own exclusive
 <code>refs/pr-N</code> retention reference. Retention keeps the newest
 20 attempts plus those referenced by open PRs; unknown open-PR
 inventories keep referenced evidence conservatively.</p>
-<p><strong>Upgrade:</strong> compare installed script drift, resync the
-full scripts scope including <code>bureau-trivy.py</code>,
+<p><strong>Upgrade.</strong> Compare installed script drift and resync
+the full scripts scope including <code>bureau-trivy.py</code>,
 <code>bureau-trivy.sh</code>, <code>bureau-trivy-pins.json</code>,
-<code>bureau-scan.py</code> and the sandbox profile, then restart
-drivers together. Existing configurations stay disabled. Supply the
-verified pinned binary, refresh an external cache and qualify isolation
-on the target host before enabling advisory mode; enable blocking
-separately. Fake-binary tests run without downloads in the full test
-matrix. The separate real-binary job uses only GitHub-hosted
-<code>ubuntu-latest</code>, downloads the exact pinned release archive,
-checks archive and extracted-binary hashes before execution, refreshes a
-job-local cache and qualifies lockfile and Dockerfile filesystem flags
-under <code>unshare -rn</code>. The job configures user namespaces only
-on that ephemeral hosted VM; it never selects a self-hosted fallback.
-Real-binary flag compatibility, embedded-check behavior, engine resource
-metadata and adopting-repository validation remain separate
-qualification steps until that job or a maintainer run succeeds.</p>
+<code>bureau-scan.py</code> and the sandbox profile. Trivy defaults to
+disabled. Supply the verified pinned binary, refresh an external cache
+and qualify isolation on the target host before enabling advisory mode.
+Enable blocking separately. Restart drivers together after configuration
+and any optional scanner setup. Fake-binary tests run without downloads
+in the full test matrix. The separate real-binary job uses only
+GitHub-hosted <code>ubuntu-latest</code>, downloads the exact pinned
+release archive, checks archive and extracted-binary hashes before
+execution, refreshes a job-local cache and qualifies lockfile and
+Dockerfile filesystem flags under <code>unshare -rn</code>. The job
+configures user namespaces only on that ephemeral hosted VM and never
+selects a self-hosted fallback. Real-binary flag compatibility,
+embedded-check behavior, engine resource metadata and
+adopting-repository validation remain separate qualification steps until
+that job or a maintainer run succeeds.</p>
 <h3 id="agents"><code>agents</code></h3>
 <p>Which pipelines run, how often they poll, how aggressive they
 are.</p>

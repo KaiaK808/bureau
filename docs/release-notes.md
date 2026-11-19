@@ -8,21 +8,21 @@ The release includes [#158](https://github.com/KaiaK808/bureau/pull/158), [#159]
 
 ### Optional Semgrep CE evidence in code review
 
-Independent specialists finish their first pass before all review roles receive the bounded Semgrep projection in the late step. Semgrep scans offline under network denial. Bureau loads the bundled `bureau-semgrep-rules.yml` from the installed runtime and reads any configured extra rules and `.bureau/semgrep-ignore.json` suppressions from the pinned PR base. Bureau verifies a private copy of the Semgrep packages against a shipped manifest before probing the interpreter and re-hashes the copy before each scan side. An empty set of eligible files passes as `not_applicable` before scanner prerequisites are checked.
+Independent specialists finish their first pass before all review roles receive the bounded Semgrep projection in the late step. Semgrep scans offline under network denial. Bureau loads the bundled `bureau-semgrep-rules.yml` from the installed runtime and reads any configured extra rules and `.bureau/semgrep-ignore.json` suppressions from the pinned PR base. Bureau verifies a private copy of the Semgrep packages against a shipped manifest before probing the interpreter and re-hashes the copy before each scan side. Once Bureau has loaded the rules and validated the base suppressions, an empty set of eligible files on both sides passes as `not_applicable` without checking scanner prerequisites. A configured `extra_rules` file missing from the pinned base yields `not_measured` even with an empty eligible set.
 
-Advisory mode reports and continues. Blocking mode holds approval on new findings at or above the configured severity and on unavailable or incomplete measurements. Existing BLOCK verdicts and review caps still apply. The blocking merge path rechecks the scan receipt against the head and base.
+In advisory mode, Bureau reports the evidence and skips the scanner's verdict floor. On a fresh review, any Semgrep projection, including `not_applicable`, triggers one late provider call per specialist after the independent passes. Malformed supplemental output ends the stage with exit 22. Blocking mode holds approval on new findings at or above the configured severity and on unavailable or incomplete measurements. Existing BLOCK verdicts and review caps still apply. With blocking enabled, Bureau's automatic merge pipeline rechecks the receipt against the head and base.
 
 ### Optional Trivy evidence in QA
 
 Trivy scans dependencies and configuration on the final QA head, including repositories without a test harness. This release excludes image scanning. The stage runs a verified private copy of the binary offline under network denial, checks the external database cache for integrity and freshness, and uses Trivy's embedded configuration checks. Database downloads occur in a separate operator refresh. Expiring exceptions come from the pinned base and the scan ignores head-native suppressions.
 
-Once the scan step runs, advisory mode reports the result and QA continues. If PR lookup or base fetch fails while pinning the scan base, QA exits 18 before scanning, including in repositories without a test harness. Blocking mode holds for a human on qualifying new findings, measurement gaps or coverage gaps without an active exception. After a failed base scan, unclassified head findings still count toward the severity floor, even if every coverage gap has a file exception. Blocking merge also requires a final-head receipt in repositories without a QA state.
+With Trivy enabled, live QA without a test harness runs `git push origin HEAD` even when there is no QA merge to publish. A rejected push exits 18 before Trivy evidence or ticket routing, including in advisory mode. A failed PR lookup or base fetch while pinning the scan base also exits 18 before scanning. Once the scan step runs, advisory mode reports the result and QA continues. Blocking mode holds for a human on qualifying new findings, measurement gaps or coverage gaps without an active exception. After a failed base scan, unclassified head findings still count toward the severity floor, even if every coverage gap has a file exception. With Trivy enabled in blocking mode, Bureau's automatic merge pipeline requires a valid final-head receipt even without a QA state. With `agents.merge_mode: "manual"` and no QA state, a human can merge without a Trivy receipt.
 
 ### Scanner receipts and merge freshness
 
 Both scanners write immutable evidence attempts and add a retention reference for each PR that produces or reuses one. Open consuming PRs keep referenced attempts beyond the newest 20. An unknown PR inventory keeps all referenced attempts.
 
-In blocking mode, the receipt check and last base fetch precede the existing just-in-time merge gates. A final read checks the PR base name and live branch tip before the head-pinned merge. If either changes, the merge retries with exit 2 even when the final gates pass. The ticket checkpoint remains the last step before merge.
+For scanners enabled in blocking mode, Bureau's automatic merge pipeline checks the receipts and fetches the base again before the existing just-in-time merge gates. A final read checks the PR base name and live branch tip before the head-pinned merge. If either changes, the merge retries with exit 2 even when the final gates pass. The ticket checkpoint remains the last step before merge.
 
 ### Python bytecode in stage commits
 
@@ -59,19 +59,13 @@ A shell stage that reaches its commit step with a staged Bureau cache change, in
 
 ## Upgrade an existing installation
 
-**From v3.8.0, once v3.9.0 is published.** Stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work, local commits, customized assets, instructions, the Spec Kit constitution and shared runtime records. Compare installed script drift and reconcile local incident fixes before replacing assets. Select the published `v3.9.0` tag, refresh discovery and preview the resync. Save the [pre-upgrade inventory and private backup](migration.md#before-changing-an-adopting-repository), including `.bureau-install.json` and `.gitignore` in the backup. Resolve conflicts, then resync the **complete scripts scope** in every adopting repository.
-
-```text
-/bureau-init --resync-scripts --target both
-```
-
-Use `$bureau-init` in Codex and retain the installation's existing target selection. `--update` edits configuration only.
+**From v3.8.0, once v3.9.0 is published.** Stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work, local commits, customized assets, instructions, the Spec Kit constitution and shared runtime records. Compare installed script drift and reconcile local incident fixes before replacing assets. Select the published `v3.9.0` tag and refresh discovery. Save the [pre-upgrade inventory and private backup](migration.md#before-changing-an-adopting-repository), including `.bureau-install.json` and `.gitignore` in the backup. Use the [v3.9.0 scripts-only preview and apply commands](migration.md#from-v380) in every adopting repository with its existing target selection. Resolve conflicts before applying. `--update` edits configuration only.
 
 To set up Semgrep for background review, create a standard-library venv with the supported CPython and install Semgrep CE **1.183.0** from the shipped wheel-only hash lock. Set `BUREAU_SEMGREP_VENV` or use the shared-state fallback. Qualify network isolation on the deployment host, then enable `review.semgrep.enabled` with `review.semgrep.mode` set to `advisory`. See [Semgrep installation](configuration.md#reviewsemgrep).
 
-To set up Trivy for background QA, provide the verified **0.76.1** binary through `BUREAU_TRIVY_BIN` or the shared-state fallback. Select an absolute `qa.trivy.cache_dir` outside the repository and refresh it separately while it is empty or already Bureau-managed. Qualify host network isolation, then enable `qa.trivy.enabled` with `qa.trivy.mode` set to `advisory`. See [Trivy installation and refresh](configuration.md#qatrivy).
+To set up Trivy for background QA, provide the verified **0.76.1** binary. Use the shared-state fallback or export the absolute binary path as `BUREAU_TRIVY_BIN` in the refresh shell and the stage launcher's environment before restarting drivers. Bureau's `.env` loader ignores this key. Select an absolute `qa.trivy.cache_dir` outside the repository and refresh it separately while it is empty or already Bureau-managed. Qualify host network isolation, then enable `qa.trivy.enabled` with `qa.trivy.mode` set to `advisory`. See [Trivy installation and refresh](configuration.md#qatrivy).
 
-In the resynced repository, run `python3 scripts/bureau-doctor.py --mode background` for a background installation or `python3 scripts/bureau-doctor.py --mode app` for an app-only installation. Reconcile holds. If doctor reports a tracked `scripts/__pycache__/`, run its printed cleanup command for the matched literal directories once and commit the removal. The ignore entry takes effect for untracked files. Restart all drivers together so they load the new scripts. See [From v3.8.0](migration.md#from-v380) and [tracked Python bytecode](troubleshooting.md#tracked-python-bytecode).
+In the resynced repository, run `python3 scripts/bureau-doctor.py --mode background` for a background installation or `python3 scripts/bureau-doctor.py --mode app` for an app-only installation. Reconcile holds. If doctor reports a tracked `scripts/__pycache__/`, run its printed cleanup command for the matched literal directories once and commit the removal. The ignore entry takes effect for untracked files. After any scanner setup, restart all drivers together so they load the new scripts. If you paused dispatch for the upgrade, run `python3 scripts/bureau-runtime.py unpause` after the restart. See [From v3.8.0](migration.md#from-v380) and [tracked Python bytecode](troubleshooting.md#tracked-python-bytecode).
 
 **From earlier versions.** Apply the migration guide's cumulative steps through [v3.8](migration.md#upgrade-to-v38) first. The v3.8.0 publication record itself needs only a source checkout update.
 
@@ -84,7 +78,7 @@ Configuration schema versions 1 and 2, the v3 exit vocabulary, Bash 3.2+, Python
 | Semgrep CE 1.183.0 | macOS arm64 with CPython 3.14 and Linux x86_64 with CPython 3.12. An eligible scan with another interpreter reports unavailable. |
 | Trivy 0.76.1 | Linux x86_64 and macOS arm64 binary pins. |
 
-For rollback, stop drivers and reconcile unfinished writers, local commits and holds. Follow the [full rollback procedure](migration.md#rollback) to restore the complete v3.8.0 asset set, compatible configuration and installer records, and remove confirmed scanner additions as described there. Retain runtime and scanner records for inspection. Prior commits, pushes, comments, labels and state moves persist through rollback.
+For rollback, stop drivers and reconcile unfinished writers, local commits and holds. Follow the [restore procedure](migration.md#restore-the-pre-upgrade-installation) to restore the complete v3.8.0 asset set, compatible configuration and installer records, and remove confirmed scanner additions as described there. Retain runtime and scanner records for inspection. Prior commits, pushes, comments, labels and state moves persist through rollback.
 
 ## Validation
 

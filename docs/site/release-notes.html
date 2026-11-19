@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3e9faf76a83a5524ab140ceb4ea57eb4978b7ab3ae3921a87c6413736b6c0248">
+<meta name="bureau-source-sha256" content="16edaab5dfcbb9a16fac22b3014ab5b8012e3a6a909c593851c9f961e3b806ee">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -41,14 +41,21 @@ reads any configured extra rules and
 <code>.bureau/semgrep-ignore.json</code> suppressions from the pinned PR
 base. Bureau verifies a private copy of the Semgrep packages against a
 shipped manifest before probing the interpreter and re-hashes the copy
-before each scan side. An empty set of eligible files passes as
-<code>not_applicable</code> before scanner prerequisites are
-checked.</p>
-<p>Advisory mode reports and continues. Blocking mode holds approval on
-new findings at or above the configured severity and on unavailable or
+before each scan side. Once Bureau has loaded the rules and validated
+the base suppressions, an empty set of eligible files on both sides
+passes as <code>not_applicable</code> without checking scanner
+prerequisites. A configured <code>extra_rules</code> file missing from
+the pinned base yields <code>not_measured</code> even with an empty
+eligible set.</p>
+<p>In advisory mode, Bureau reports the evidence and skips the scanner's
+verdict floor. On a fresh review, any Semgrep projection, including
+<code>not_applicable</code>, triggers one late provider call per
+specialist after the independent passes. Malformed supplemental output
+ends the stage with exit 22. Blocking mode holds approval on new
+findings at or above the configured severity and on unavailable or
 incomplete measurements. Existing BLOCK verdicts and review caps still
-apply. The blocking merge path rechecks the scan receipt against the
-head and base.</p>
+apply. With blocking enabled, Bureau's automatic merge pipeline rechecks
+the receipt against the head and base.</p>
 <h3 id="optional-trivy-evidence-in-qa">Optional Trivy evidence in
 QA</h3>
 <p>Trivy scans dependencies and configuration on the final QA head,
@@ -59,22 +66,28 @@ integrity and freshness, and uses Trivy's embedded configuration checks.
 Database downloads occur in a separate operator refresh. Expiring
 exceptions come from the pinned base and the scan ignores head-native
 suppressions.</p>
-<p>Once the scan step runs, advisory mode reports the result and QA
-continues. If PR lookup or base fetch fails while pinning the scan base,
-QA exits 18 before scanning, including in repositories without a test
-harness. Blocking mode holds for a human on qualifying new findings,
-measurement gaps or coverage gaps without an active exception. After a
-failed base scan, unclassified head findings still count toward the
-severity floor, even if every coverage gap has a file exception.
-Blocking merge also requires a final-head receipt in repositories
-without a QA state.</p>
+<p>With Trivy enabled, live QA without a test harness runs
+<code>git push origin HEAD</code> even when there is no QA merge to
+publish. A rejected push exits 18 before Trivy evidence or ticket
+routing, including in advisory mode. A failed PR lookup or base fetch
+while pinning the scan base also exits 18 before scanning. Once the scan
+step runs, advisory mode reports the result and QA continues. Blocking
+mode holds for a human on qualifying new findings, measurement gaps or
+coverage gaps without an active exception. After a failed base scan,
+unclassified head findings still count toward the severity floor, even
+if every coverage gap has a file exception. With Trivy enabled in
+blocking mode, Bureau's automatic merge pipeline requires a valid
+final-head receipt even without a QA state. With
+<code>agents.merge_mode: "manual"</code> and no QA state, a human can
+merge without a Trivy receipt.</p>
 <h3 id="scanner-receipts-and-merge-freshness">Scanner receipts and merge
 freshness</h3>
 <p>Both scanners write immutable evidence attempts and add a retention
 reference for each PR that produces or reuses one. Open consuming PRs
 keep referenced attempts beyond the newest 20. An unknown PR inventory
 keeps all referenced attempts.</p>
-<p>In blocking mode, the receipt check and last base fetch precede the
+<p>For scanners enabled in blocking mode, Bureau's automatic merge
+pipeline checks the receipts and fetches the base again before the
 existing just-in-time merge gates. A final read checks the PR base name
 and live branch tip before the head-pinned merge. If either changes, the
 merge retries with exit 2 even when the final gates pass. The ticket
@@ -203,17 +216,14 @@ shepherd, queue loop, dispatcher and supervisor. Preserve unfinished
 work, local commits, customized assets, instructions, the Spec Kit
 constitution and shared runtime records. Compare installed script drift
 and reconcile local incident fixes before replacing assets. Select the
-published <code>v3.9.0</code> tag, refresh discovery and preview the
-resync. Save the <a
+published <code>v3.9.0</code> tag and refresh discovery. Save the <a
 href="migration.html#before-changing-an-adopting-repository">pre-upgrade
 inventory and private backup</a>, including
 <code>.bureau-install.json</code> and <code>.gitignore</code> in the
-backup. Resolve conflicts, then resync the <strong>complete scripts
-scope</strong> in every adopting repository.</p>
-<pre class="text"><code>/bureau-init --resync-scripts --target both</code></pre>
-<p>Use <code>$bureau-init</code> in Codex and retain the installation's
-existing target selection. <code>--update</code> edits configuration
-only.</p>
+backup. Use the <a href="migration.html#from-v380">v3.9.0 scripts-only
+preview and apply commands</a> in every adopting repository with its
+existing target selection. Resolve conflicts before applying.
+<code>--update</code> edits configuration only.</p>
 <p>To set up Semgrep for background review, create a standard-library
 venv with the supported CPython and install Semgrep CE
 <strong>1.183.0</strong> from the shipped wheel-only hash lock. Set
@@ -223,8 +233,10 @@ Qualify network isolation on the deployment host, then enable
 <code>review.semgrep.mode</code> set to <code>advisory</code>. See <a
 href="configuration.html#reviewsemgrep">Semgrep installation</a>.</p>
 <p>To set up Trivy for background QA, provide the verified
-<strong>0.76.1</strong> binary through <code>BUREAU_TRIVY_BIN</code> or
-the shared-state fallback. Select an absolute
+<strong>0.76.1</strong> binary. Use the shared-state fallback or export
+the absolute binary path as <code>BUREAU_TRIVY_BIN</code> in the refresh
+shell and the stage launcher's environment before restarting drivers.
+Bureau's <code>.env</code> loader ignores this key. Select an absolute
 <code>qa.trivy.cache_dir</code> outside the repository and refresh it
 separately while it is empty or already Bureau-managed. Qualify host
 network isolation, then enable <code>qa.trivy.enabled</code> with
@@ -237,9 +249,11 @@ background installation or
 installation. Reconcile holds. If doctor reports a tracked
 <code>scripts/__pycache__/</code>, run its printed cleanup command for
 the matched literal directories once and commit the removal. The ignore
-entry takes effect for untracked files. Restart all drivers together so
-they load the new scripts. See <a href="migration.html#from-v380">From
-v3.8.0</a> and <a
+entry takes effect for untracked files. After any scanner setup, restart
+all drivers together so they load the new scripts. If you paused
+dispatch for the upgrade, run
+<code>python3 scripts/bureau-runtime.py unpause</code> after the
+restart. See <a href="migration.html#from-v380">From v3.8.0</a> and <a
 href="troubleshooting.html#tracked-python-bytecode">tracked Python
 bytecode</a>.</p>
 <p><strong>From earlier versions.</strong> Apply the migration guide's
@@ -271,11 +285,12 @@ eligible scan with another interpreter reports unavailable.</td>
 </tbody>
 </table>
 <p>For rollback, stop drivers and reconcile unfinished writers, local
-commits and holds. Follow the <a href="migration.html#rollback">full
-rollback procedure</a> to restore the complete v3.8.0 asset set,
-compatible configuration and installer records, and remove confirmed
-scanner additions as described there. Retain runtime and scanner records
-for inspection. Prior commits, pushes, comments, labels and state moves
+commits and holds. Follow the <a
+href="migration.html#restore-the-pre-upgrade-installation">restore
+procedure</a> to restore the complete v3.8.0 asset set, compatible
+configuration and installer records, and remove confirmed scanner
+additions as described there. Retain runtime and scanner records for
+inspection. Prior commits, pushes, comments, labels and state moves
 persist through rollback.</p>
 <h2 id="validation">Validation</h2>
 <p>The merged content baseline is main <code>b65f8cf</code>. The merged
