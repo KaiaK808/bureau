@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9e3373a3d087ac4f671a6e76e95bdaf572858dad18552ad01ba87c7c27effcb2">
+<meta name="bureau-source-sha256" content="018076bec2a487ac39e06335a70e7fe987842df2de1816ea7b2f54c4ae830b80">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -902,13 +902,14 @@ with exit 2 on changed inputs or a failed read; there is no additional
 fetch. The live branch target is used because the PR's stored base OID
 can lag the branch tip. The ticket kill-switch checkpoint remains the
 last operation before the head-pinned merge in every merge strategy.</p>
-<p>Image scanning is not part of this release, and every projection
-carries that fixed qualification. The Trivy stage executes no builds or
-repository-controlled commands. The removed
-<code>qa.trivy.image_archive_command</code> key is unknown and causes a
-configuration error, including with <code>null</code> or while disabled;
-remove it from existing configurations. A follow-up will design an
-isolated, source-bound image build.</p>
+<p>Image scanning is outside this release, and every projection carries
+that fixed qualification. The Trivy stage executes no builds or
+repository-controlled commands. Remove
+<code>qa.trivy.image_archive_command</code> from existing
+configurations. Runtime and doctor reject this key, including with
+<code>null</code> or while Trivy is disabled. A follow-up will design an
+isolated, source-bound image build. See the <a
+href="migration.html#from-v380">v3.9.0 upgrade steps</a>.</p>
 <p>The shared receipt store writes immutable <code>report.json</code>,
 <code>projection.json</code> and <code>receipt.json</code> attempts
 under
