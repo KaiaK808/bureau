@@ -135,7 +135,8 @@ class TrivyTests(unittest.TestCase):
         self.root=Path(temporary.name).resolve();self.repo=self.root/'repo';self.repo.mkdir()
         self.m=load('trivy');self.s=self.m.scan;self.install=fake_install(self.root)
         self.config=dict(qa=dict(trivy=dict(enabled=True,cache_dir=str(self.install['cache']))))
-        self.env={**os.environ,**git_maintenance.OFF_ENV,'GIT_CONFIG_GLOBAL':os.devnull,'GIT_CONFIG_NOSYSTEM':'1',
+        self.env={**os.environ,**git_maintenance.OFF_ENV,'GIT_CEILING_DIRECTORIES':str(self.root),
+                  'GIT_CONFIG_GLOBAL':os.devnull,'GIT_CONFIG_NOSYSTEM':'1',
                   'GIT_AUTHOR_NAME':'Test','GIT_COMMITTER_NAME':'Test','GIT_AUTHOR_EMAIL':'test@example.invalid',
                   'GIT_COMMITTER_EMAIL':'test@example.invalid','PYTHONDONTWRITEBYTECODE':'1'}
         self.git('init','-qb','main')
@@ -297,6 +298,80 @@ class TrivyTests(unittest.TestCase):
         for name in ('trivy.yaml','nested/.trivyignore','nested/.trivyignore.yaml','nested/trivy.yml'):self.assertNotIn(name,head['files'])
         self.assertNotIn('trivy:ignore:',head['files']['Dockerfile']);self.assertIn(dict(file='Dockerfile',line=1),value['projection']['removed_inline_ignores']['head'])
         self.assertEqual(value['receipt']['findings_new'],2)
+
+    def test_inline_ignore_preserves_quoted_comment_tokens_and_prefix_bytes(self):
+        comments=(b'# trivy:ignore:AVD-FIXTURE',b'// trivy:ignore:AVD-FIXTURE',
+                  b'/* trivy:ignore:AVD-FIXTURE */',b'<!-- trivy:ignore:AVD-FIXTURE -->')
+        prefixes=(b'  endpoint = "https://example.invalid/#part/*text<!--"  \t',
+                  b"  endpoint = 'https://example.invalid/#part/*text<!--'  \t")
+        for prefix in prefixes:
+            for comment in comments:
+                with self.subTest(prefix=prefix,comment=comment):
+                    data=b'first\n'+prefix+comment+b'\nlast\n'
+                    self.assertEqual(self.m.remove_inline_ignores(data),(b'first\n'+prefix+b'\nlast\n',[2]))
+
+    def test_inline_ignore_preserves_escaped_quotes_and_backslashes(self):
+        prefixes=(br'endpoint = "escaped \" // # /* <!-- still quoted"  ',
+                  br"endpoint = 'escaped \' // # /* <!-- still quoted'  ",
+                  br'endpoint = "escaped backslash \\"  ')
+        for prefix in prefixes:
+            for comment in (b'#',b'//',b'/*',b'<!--'):
+                ending={b'/*':b' */',b'<!--':b' -->'}.get(comment,b'')
+                with self.subTest(prefix=prefix,comment=comment):
+                    data=prefix+comment+b' trivy:ignore:AVD-FIXTURE'+ending+b'\n'
+                    self.assertEqual(self.m.remove_inline_ignores(data),(prefix+b'\n',[1]))
+
+    def test_inline_ignore_ordinary_comments_and_literal_markers(self):
+        for comment in (b'# trivy:ignore:AVD-FIXTURE',b'// trivy:ignore:AVD-FIXTURE',
+                        b'/* trivy:ignore:AVD-FIXTURE */',b'<!-- trivy:ignore:AVD-FIXTURE -->'):
+            with self.subTest(comment=comment):
+                self.assertEqual(self.m.remove_inline_ignores(comment+b'\n'),(b'\n',[1]))
+                self.assertEqual(self.m.remove_inline_ignores(b'value = 1'+comment+b'\n'),(b'value = 1\n',[1]))
+        literal=b'endpoint = "https://example.invalid/#trivy:ignore:literal"\n'
+        self.assertEqual(self.m.remove_inline_ignores(literal),(literal,[]))
+        crlf=b'endpoint = "https://example.invalid"\t# trivy:ignore:AVD-FIXTURE\r\n'
+        self.assertEqual(self.m.remove_inline_ignores(crlf),(b'endpoint = "https://example.invalid"\t\r\n',[1]))
+        for comment in (b'/* trivy:ignore:AVD-FIXTURE */',b'<!-- trivy:ignore:AVD-FIXTURE -->'):
+            prefix=b'value = 1 /* ordinary comment */ \t'
+            self.assertEqual(self.m.remove_inline_ignores(prefix+comment+b' \t\r\n'),(prefix+b' \t\r\n',[1]))
+
+    def test_inline_ignore_quoted_configuration_reaches_scanner_with_exact_prefix(self):
+        prefix=br'  endpoint = "https://example.invalid/#part and \"quoted\""  '+b'\t'
+        comments=(b'# trivy:ignore:AVD-FIXTURE',b'// trivy:ignore:AVD-FIXTURE',
+                  b'/* trivy:ignore:AVD-FIXTURE */',b'<!-- trivy:ignore:AVD-FIXTURE -->')
+        self.write('infra.tf',b'\n'.join(prefix+comment for comment in comments)+b'\n');self.commit()
+        value=self.measure();expected=(prefix+b'\n')*len(comments)
+        self.assertEqual(self.calls()[-1]['files']['infra.tf'].encode(),expected)
+        self.assertEqual(value['receipt']['status'],'measured',value['projection'])
+        self.assertEqual(value['projection']['removed_inline_ignores']['head'],
+                         [dict(file='infra.tf',line=line) for line in range(1,len(comments)+1)])
+
+    def test_inline_ignore_unterminated_quote_is_unchanged_and_reduces_coverage(self):
+        self.write('requirements.txt','safe==1.0\n');self.commit();self.base=self.head
+        for quote in (b'"',b"'"):
+            for comment in (b'#',b'//',b'/*',b'<!--'):
+                with self.subTest(quote=quote,comment=comment):
+                    data=b'endpoint = '+quote+b'https://example.invalid '+comment+b' trivy:ignore:AVD-FIXTURE\n'
+                    self.assertEqual(self.m.remove_inline_ignores(data),(data,[]))
+                    self.write('infra.tf',data);self.commit()
+                    for mode in ('advisory','blocking'):
+                        self.config['qa']['trivy']['mode']=mode
+                        value=self.measure();self.assertEqual(self.calls()[-1]['files']['infra.tf'],data.decode())
+                        self.assertEqual(value['receipt']['status'],'reduced_coverage',value['projection'])
+                        self.assertEqual(value['receipt']['blocking'],mode=='blocking')
+                        self.assertIn('inline ignore format not recognised: infra.tf',value['receipt']['reason'])
+                        self.assertNotIn(dict(file='infra.tf',line=1),value['projection']['removed_inline_ignores']['head'])
+
+    def test_inline_ignore_unterminated_or_nontrailing_block_is_unchanged(self):
+        for data in (b'value = 1 /* trivy:ignore:AVD-FIXTURE\n',
+                     b'value = 1 <!-- trivy:ignore:AVD-FIXTURE\n',
+                     b'value = 1 /* trivy:ignore:AVD-FIXTURE */ + 2\n',
+                     b'value = 1 <!-- trivy:ignore:AVD-FIXTURE --> + 2\n'):
+            with self.subTest(data=data):
+                self.assertEqual(self.m.remove_inline_ignores(data),(data,[]))
+                self.write('infra.tf',data);self.commit();value=self.measure()
+                self.assertEqual(value['receipt']['status'],'reduced_coverage')
+                self.assertIn('inline ignore format not recognised: infra.tf',value['receipt']['reason'])
 
     def test_file_level_misconfiguration_without_cause_lines_is_measured(self):
         # Shape seen from the real pinned 0.76.1: DS-0026 has only Provider and Service.
@@ -545,6 +620,76 @@ class TrivyTests(unittest.TestCase):
             canonical+'"missing@^2#fragment":\n',canonical+'  # indented comment\n',
             canonical+'unexpected-top-level-text\n',canonical+'missing@^2, :\n'])
 
+    def test_yarn_unrecognised_indented_body_reduces_coverage(self):
+        canonical='"locked@npm:^1":\n  version: 1.0.0\n'
+        self.check_parser_formats({'package.json':json.dumps(dict(dependencies=dict(locked='^1'))),
+                                   'yarn.lock':canonical},'yarn.lock',[
+            canonical+'  unsupported body text\n',
+            canonical+'  version = "2.0.0"\n',
+            canonical+'  version: "unterminated\n',
+            canonical+'  version: "1.0.0" trailing\n',
+            canonical+'  dependencies: &alias\n',
+            canonical+'  dependencies:\n    - missing\n',
+            canonical+'  dependencies:\n    missing: {version: 2}\n',
+            canonical+'   version: 2.0.0\n',
+            canonical+'\tversion: 2.0.0\n',
+            canonical+'      missing: 2.0.0\n'])
+
+    def test_yarn_v1_and_berry_body_forms_keep_full_coverage(self):
+        v1='''# yarn lockfile v1
+"@scope/a@^1", "@scope/a@^2":
+  version "1.0.0"
+  resolved "https://registry.example.invalid/a/-/a-1.0.0.tgz#abc"
+  integrity sha512-abc== sha1-def==
+  dependencies:
+    locked "^1"
+  optionalDependencies:
+    "@scope/optional" "~2"
+
+locked@^1:
+  version "1.0.0"
+'''
+        berry='''# This file is generated by running "yarn install" inside your project.
+__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"@scope/a@npm:^1, @scope/a@npm:^2":
+  version: 1.0.0
+  resolution: "@scope/a@npm:1.0.0"
+  dependencies:
+    locked: "npm:^1"
+    "@scope/optional": 'npm:~2'
+  peerDependencies:
+    peer: ">=1"
+  dependenciesMeta:
+    "@scope/optional":
+      optional: true
+  peerDependenciesMeta:
+    peer:
+      optional: true
+  bin:
+    scope-tool: cli.js
+  checksum: 10c0/abc
+  conditions: os=linux & cpu=x64
+  languageName: node
+  linkType: hard
+
+"locked@npm:^1":
+  version: 1.0.0
+  resolution: "locked@npm:1.0.0"
+  languageName: node
+  linkType: hard
+'''
+        self.write('requirements.txt','safe==1.0\n')
+        self.write('package.json',json.dumps(dict(dependencies={'@scope/a':'^1','locked':'^1'})))
+        for text in (v1,berry):
+            with self.subTest(text=text):
+                self.write('yarn.lock',text);self.commit();self.base=self.head
+                self.assertEqual(self.m.yarn_names(text),{'@scope/a','locked'})
+                value=self.measure();self.assertEqual(value['receipt']['status'],'measured',value['projection'])
+                self.assertFalse(value['receipt']['blocking']);self.assertEqual(value['projection']['coverage'],[])
+
     def test_json_manifest_and_lock_canonical_roots_and_unrecognised_forms(self):
         manifest=json.dumps(dict(dependencies=dict(locked='^1'),devDependencies=dict(dev='^2'),optionalDependencies=dict(opt='^3')))
         lock=json.dumps(dict(packages={'':dict(dependencies=dict(locked='^1'),devDependencies=dict(dev='^2'),optionalDependencies=dict(opt='^3'))}))
@@ -686,7 +831,7 @@ class TrivyTests(unittest.TestCase):
         self.write('infra.tf','resource "example" "a" { # trivy:ignore:AVD-FIXTURE\n# UNSAFE resource\n}\n');self.commit()
         self.mode(no_resource=True);value=self.measure()
         head=self.calls()[-1]['files']['infra.tf']
-        self.assertEqual(head.split('\n')[0],'resource "example" "a" {');self.assertNotIn('trivy:ignore:',head)
+        self.assertEqual(head.split('\n')[0],'resource "example" "a" { ');self.assertNotIn('trivy:ignore:',head)
         self.assertIn(dict(file='infra.tf',line=1),value['projection']['removed_inline_ignores']['head'])
         self.assertIn(dict(file='infra.tf',rule_id='AVD-FIXTURE'),value['projection']['missing_resources']['head'])
 

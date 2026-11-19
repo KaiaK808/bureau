@@ -225,15 +225,49 @@ def iac(name):
             or path.suffix.lower() in ('.tf', '.yaml', '.yml', '.json', '.hcl', '.bicep', '.template'))
 
 
+def inline_ignore_bounds(line):
+    """Locate a trailing ignore comment without interpreting quoted bytes.
+
+    Ambiguous lines must reach Trivy unchanged and be reported by inventory.
+    Only same-line, trailing block comments can be removed safely.
+    """
+    quote, escaped, index = None, False, 0
+    while index < len(line):
+        char = line[index:index + 1]
+        if quote:
+            if escaped: escaped = False
+            elif char == b'\\': escaped = True
+            elif char == quote: quote = None
+        elif char in (b'"', b"'"):
+            quote = char
+        elif char == b'#' or line.startswith(b'//', index):
+            end = len(line) - (1 if line.endswith(b'\r') else 0)
+            return (index, end) if b'trivy:ignore:' in line[index:] else None
+        elif line.startswith((b'/*', b'<!--'), index):
+            opening, closing = (b'/*', b'*/') if line.startswith(b'/*', index) else (b'<!--', b'-->')
+            end = line.find(closing, index + len(opening))
+            if end < 0: raise ValueError('unterminated inline ignore comment')
+            end += len(closing)
+            if b'trivy:ignore:' in line[index:end]:
+                if line[end:].strip(): raise ValueError('inline ignore comment is not trailing')
+                return index, end
+            index = end
+            continue
+        index += 1
+    if quote: raise ValueError('unterminated inline ignore quote')
+    return None
+
+
 def remove_inline_ignores(data):
     lines, removed = data.split(b'\n'), []
     for index, line in enumerate(lines):
         if b'trivy:ignore:' not in line: continue
-        # Ignore markers are comments, including trailing IaC comments. Keep
-        # code before a comment and retain its LF slot so cause lines stay exact.
-        match = re.search(rb'#|//|/\*|<!--', line)
-        if match and b'trivy:ignore:' in line[match.start():]:
-            lines[index] = line[:match.start()].rstrip()
+        try: bounds = inline_ignore_bounds(line)
+        except ValueError: continue  # Inventory records the unchanged ambiguity.
+        if bounds is not None:
+            # Keep all bytes outside the comment, including the LF/CRLF slot.
+            start, end = bounds
+            lines[index] = line[:start] + line[end:]
             removed.append(index + 1)
     return b'\n'.join(lines), removed
 
@@ -480,14 +514,37 @@ def pnpm_names(text):
 def yarn_names(text):
     result = set()
     selector = re.compile(r'''"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s,\[\]{}"']+''')
+    quoted = r'''"(?:[^"\\]|\\.)*"|'(?:[^']|'')*' '''.strip()
+    key = r'(?:' + quoted + r'|[A-Za-z0-9_@./+-]+)'
+    atom = r'''[^\s"'#{}\[\]&*!|>]+'''
+    scalar = r'(?:' + quoted + r'''|[^\s"'#{}\[\]&*!|>][^"'#{}\[\]]*|\{\}|\[\])'''
+    body = re.compile(r'(' + key + r')(?::(?: (' + scalar + r'))?| (' + quoted + r'|' + atom + r'))')
+    integrity = re.compile(r'integrity ' + atom + r'(?: ' + atom + r')+')
+    # Each entry is whether that parent opens a map. Both Yarn generations
+    # write two-space nesting; body metadata never contributes selector names.
+    parents = []
     for line in text.split('\n'):
-        if not line or line.startswith('#'): continue
+        if not line.strip() or line.startswith('#'): continue
         if line[0].isspace():
-            if line.lstrip().startswith('#'): raise ValueError('unsupported indented Yarn comment')
+            indent = len(line) - len(line.lstrip(' '))
+            if '\t' in line or indent % 2: raise ValueError('unsupported Yarn indentation')
+            level = indent // 2
+            if not level or level > len(parents): raise ValueError('unsupported Yarn indentation jump')
+            del parents[level:]
+            if not parents or not parents[-1]: raise ValueError('unsupported Yarn scalar nesting')
+            value = line[indent:].rstrip(' ')
+            if value.startswith('- '): raise ValueError('unsupported Yarn sequence')
+            match = body.fullmatch(value)
+            if not match and not integrity.fullmatch(value): raise ValueError('unsupported Yarn body')
+            if match:
+                for token in (match[1], match[2], match[3]):
+                    if token and token.startswith('"'): json.loads(token)
+            parents.append(bool(match and match[2] is None and match[3] is None))
             continue
         # In particular, never strip a trailing comment before validating the
         # complete header: it could otherwise contribute a fake selector.
         if '#' in line or not line.endswith(':'): raise ValueError('unsupported Yarn header')
+        parents = [True]
         if line == '__metadata:': continue  # Berry's tool-written metadata map.
         tail = line[:-1]
         if not tail: raise ValueError('empty Yarn header')
@@ -552,6 +609,12 @@ def inventory(directory, skipped=()):
     # Validate locks independently of manifests, once per file. Never let one
     # unreadable lock hide a second lock's stale names or report a clean orphan.
     for name in sorted(names - set(skipped)):
+        if iac(name):
+            try:
+                for line in (directory / name).read_bytes().split(b'\n'):
+                    if b'trivy:ignore:' in line: inline_ignore_bounds(line)
+            except (OSError, ValueError):
+                issue(name, 'inline ignore format not recognised')
         if PurePosixPath(name).name not in LOCKS - {'go.sum'}: continue
         try: parsed_locks[name] = lock_names(directory / name)
         except (OSError, ValueError, KeyError, TypeError, UnicodeError):
