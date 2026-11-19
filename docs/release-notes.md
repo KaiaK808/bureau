@@ -16,7 +16,7 @@ Advisory mode reports and continues. Blocking mode holds approval on new finding
 
 Trivy scans dependencies and configuration on the final QA head, including repositories without a test harness. This release excludes image scanning. The stage runs a verified private copy of the binary offline under network denial, checks the external database cache for integrity and freshness, and uses Trivy's embedded configuration checks. Database downloads occur in a separate operator refresh. Expiring exceptions come from the pinned base and the scan ignores head-native suppressions.
 
-Advisory mode reports and continues. Blocking mode holds for a human on qualifying new findings, measurement gaps or coverage gaps without an active exception. After a failed base scan, unclassified head findings still count toward the severity floor, even if every coverage gap has a file exception. Blocking merge also requires a final-head receipt in repositories without a QA state.
+Once the scan step runs, advisory mode reports the result and QA continues. If PR lookup or base fetch fails while pinning the scan base, QA exits 18 before scanning, including in repositories without a test harness. Blocking mode holds for a human on qualifying new findings, measurement gaps or coverage gaps without an active exception. After a failed base scan, unclassified head findings still count toward the severity floor, even if every coverage gap has a file exception. Blocking merge also requires a final-head receipt in repositories without a QA state.
 
 ### Scanner receipts and merge freshness
 
@@ -45,21 +45,21 @@ The source-only record captures the published tag and merge commit, GitHub Relea
 
 ## Configuration and exit-code changes
 
-Semgrep and Trivy are off until enabled. Set the appropriate `enabled` key to boolean `true` and select `advisory` for the first adoption. Blocking is a separate opt-in through `mode`. See [Semgrep configuration](configuration.md#reviewsemgrep) and [Trivy configuration](configuration.md#qatrivy).
+Semgrep runs in the background review pipeline and Trivy runs in the background QA pipeline. The app's `prepare`/`finish` flow runs neither scanner, so enabling either in advisory or blocking mode has no effect there. Semgrep and Trivy are off until enabled. Set the appropriate `enabled` key to boolean `true` and select `advisory` for the first adoption. Blocking is a separate opt-in through `mode`. See [Semgrep configuration](configuration.md#reviewsemgrep) and [Trivy configuration](configuration.md#qatrivy).
 
 | Key | Default / action | Effect |
 |---|---|---|
-| `review.semgrep.enabled`, `review.semgrep.mode` | `false`, `advisory` | Enables offline Semgrep CE in code review. Blocking also rechecks before merge. |
+| `review.semgrep.enabled`, `review.semgrep.mode` | `false`, `advisory` | Enables offline Semgrep CE in background review. Blocking also rechecks before merge. |
 | `BUREAU_SEMGREP_VENV` | Operator-supplied venv or shared-state fallback | Selects the pinned Semgrep environment for the matching platform and interpreter. |
-| `qa.trivy.enabled`, `qa.trivy.mode` | `false`, `advisory` | Enables offline Trivy in QA. Blocking also rechecks before merge. |
+| `qa.trivy.enabled`, `qa.trivy.mode` | `false`, `advisory` | Enables offline Trivy in background QA. Blocking also rechecks before merge. |
 | `BUREAU_TRIVY_BIN`, `qa.trivy.cache_dir` | Operator-supplied binary or shared-state fallback, plus an external cache directory | Supplies the pinned executable and its separately refreshed databases. |
 | `qa.trivy.image_archive_command` | Remove from existing configurations | Runtime and doctor reject this key, including with `null` or with Trivy disabled. |
 
-A pre-staged Bureau cache refuses with the existing exit 24 and leaves the index untouched. See [exit codes](exit-codes.md).
+A shell stage that reaches its commit step with a staged Bureau cache change, including the cleanup deletion, stops with exit 24 and leaves the index untouched. See [exit codes](exit-codes.md).
 
 ## Upgrade an existing installation
 
-**From v3.8.0, once v3.9.0 is published.** Stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work, local commits, customized assets, instructions, the Spec Kit constitution and shared runtime records. Compare installed script drift and reconcile local incident fixes before replacing assets. Select the published `v3.9.0` tag, refresh discovery, preview and resolve conflicts, then resync the **complete scripts scope** in every adopting repository.
+**From v3.8.0, once v3.9.0 is published.** Stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work, local commits, customized assets, instructions, the Spec Kit constitution and shared runtime records. Compare installed script drift and reconcile local incident fixes before replacing assets. Select the published `v3.9.0` tag, refresh discovery and preview the resync. Save the [pre-upgrade inventory and private backup](migration.md#before-changing-an-adopting-repository), including `.bureau-install.json` and `.gitignore` in the backup. Resolve conflicts, then resync the **complete scripts scope** in every adopting repository.
 
 ```text
 /bureau-init --resync-scripts --target both
@@ -67,9 +67,9 @@ A pre-staged Bureau cache refuses with the existing exit 24 and leaves the index
 
 Use `$bureau-init` in Codex and retain the installation's existing target selection. `--update` edits configuration only.
 
-For Semgrep, create a standard-library venv with the supported CPython and install Semgrep CE **1.183.0** from the shipped wheel-only hash lock. Set `BUREAU_SEMGREP_VENV` or use the shared-state fallback. Qualify network isolation on the deployment host, then enable `review.semgrep.enabled` with `review.semgrep.mode` set to `advisory`. See [Semgrep installation](configuration.md#reviewsemgrep).
+To set up Semgrep for background review, create a standard-library venv with the supported CPython and install Semgrep CE **1.183.0** from the shipped wheel-only hash lock. Set `BUREAU_SEMGREP_VENV` or use the shared-state fallback. Qualify network isolation on the deployment host, then enable `review.semgrep.enabled` with `review.semgrep.mode` set to `advisory`. See [Semgrep installation](configuration.md#reviewsemgrep).
 
-For Trivy, provide the verified **0.76.1** binary through `BUREAU_TRIVY_BIN` or the shared-state fallback. Select an absolute `qa.trivy.cache_dir` outside the repository and refresh it separately while it is empty or already Bureau-managed. Qualify host network isolation, then enable `qa.trivy.enabled` with `qa.trivy.mode` set to `advisory`. See [Trivy installation and refresh](configuration.md#qatrivy).
+To set up Trivy for background QA, provide the verified **0.76.1** binary through `BUREAU_TRIVY_BIN` or the shared-state fallback. Select an absolute `qa.trivy.cache_dir` outside the repository and refresh it separately while it is empty or already Bureau-managed. Qualify host network isolation, then enable `qa.trivy.enabled` with `qa.trivy.mode` set to `advisory`. See [Trivy installation and refresh](configuration.md#qatrivy).
 
 In the resynced repository, run `python3 scripts/bureau-doctor.py --mode background` for a background installation or `python3 scripts/bureau-doctor.py --mode app` for an app-only installation. Reconcile holds. If doctor reports a tracked `scripts/__pycache__/`, run its printed cleanup command for the matched literal directories once and commit the removal. The ignore entry takes effect for untracked files. Restart all drivers together so they load the new scripts. See [From v3.8.0](migration.md#from-v380) and [tracked Python bytecode](troubleshooting.md#tracked-python-bytecode).
 
@@ -118,6 +118,8 @@ Before publication, record the exact tested refs and results and run [release tr
 
 - Real-engine validation of Semgrep's private-copy boundary, Linux isolation on deployment hosts and adopting-repository qualification remain pending.
 - The separate GitHub-hosted Ubuntu Trivy job remains pending after offline implementation. It needs network access to download the pinned archive and refresh a cache. It verifies the archive and extracted-binary hashes before refresh and qualifies filesystem flags under `unshare`. Pinned-engine flag behavior, platform isolation and adopter compatibility still need a networked CI or maintainer run.
-- Trivy reports reduced coverage for unrecognised lockfile forms or non-canonical manifest and lockfile names. In blocking mode, each affected file needs an active base coverage exception to waive its gap.
+- Trivy reports reduced coverage for lockfile forms its consistency parsers reject or for non-canonical manifest and lockfile names. In blocking mode, each affected file needs an active base coverage exception to waive its gap.
+- Inline-ignore stripping can truncate an IaC line at `//` inside a quoted string before a trailing `trivy:ignore:` comment, so Trivy can receive altered configuration text.
+- Bureau's Yarn consistency parser rejects indented comments and skips other indented body lines, so unsupported syntax in those lines can pass without a Bureau coverage warning.
 - The writer of the historical adopter cache remains unknown.
 - The release branch's own macOS and remote suites, CI, tested refs and final tree comparisons remain `TBD` until the maintainer runs them.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="62e206a511b2dbb38334cda559fe688e898058c290ffb66e5f0ec9c6f0835f8d">
+<meta name="bureau-source-sha256" content="27841bd9586414db38581effd21eb08b35e881be9e76b3839d9e58973cccd294">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -401,12 +401,14 @@ application content. Shell stages refuse a pre-staged Bureau cache with
 exit 24 and leave the index untouched. Spec checkpoint commits select
 only their reserved feature directory.</p>
 <p><strong>Upgrade.</strong> Compare installation drift, resync the
-scripts scope and restart stage drivers. If doctor reports a tracked
-Bureau cache, run its cleanup command for the matched literal
-directories once and commit the removal. The ignore rule applies to
-untracked files. The fixture regression tests exercise entry points,
-review evidence and provider gates without a model or network. The
-writer of the historical adopter cache remains unknown. See <a
+scripts scope and run doctor. If doctor reports a tracked Bureau cache,
+run its cleanup command for the matched literal directories once and
+commit the removal. Restart stage drivers after the doctor check and any
+cleanup commit. A shell stage that reaches its commit step with the
+deletion staged stops with exit 24. The ignore rule applies to untracked
+files. The fixture regression tests exercise entry points, review
+evidence and provider gates without a model or network. The writer of
+the historical adopter cache remains unknown. See <a
 href="troubleshooting.html#tracked-python-bytecode">tracked Python
 bytecode</a>.</p>
 <h2 id="ticket-accounting">Ticket accounting</h2>

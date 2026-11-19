@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0315ddc9cf6bd635a4404f5925a1f0f1dae79acec8aacf86d37d5feaea8d2b0f">
+<meta name="bureau-source-sha256" content="3e9faf76a83a5524ab140ceb4ea57eb4978b7ab3ae3921a87c6413736b6c0248">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -59,12 +59,15 @@ integrity and freshness, and uses Trivy's embedded configuration checks.
 Database downloads occur in a separate operator refresh. Expiring
 exceptions come from the pinned base and the scan ignores head-native
 suppressions.</p>
-<p>Advisory mode reports and continues. Blocking mode holds for a human
-on qualifying new findings, measurement gaps or coverage gaps without an
-active exception. After a failed base scan, unclassified head findings
-still count toward the severity floor, even if every coverage gap has a
-file exception. Blocking merge also requires a final-head receipt in
-repositories without a QA state.</p>
+<p>Once the scan step runs, advisory mode reports the result and QA
+continues. If PR lookup or base fetch fails while pinning the scan base,
+QA exits 18 before scanning, including in repositories without a test
+harness. Blocking mode holds for a human on qualifying new findings,
+measurement gaps or coverage gaps without an active exception. After a
+failed base scan, unclassified head findings still count toward the
+severity floor, even if every coverage gap has a file exception.
+Blocking merge also requires a final-head receipt in repositories
+without a QA state.</p>
 <h3 id="scanner-receipts-and-merge-freshness">Scanner receipts and merge
 freshness</h3>
 <p>Both scanners write immutable evidence attempts and add a retention
@@ -137,7 +140,11 @@ profile.</td>
 </table>
 <h2 id="configuration-and-exit-code-changes">Configuration and exit-code
 changes</h2>
-<p>Semgrep and Trivy are off until enabled. Set the appropriate
+<p>Semgrep runs in the background review pipeline and Trivy runs in the
+background QA pipeline. The app's
+<code>prepare</code>/<code>finish</code> flow runs neither scanner, so
+enabling either in advisory or blocking mode has no effect there.
+Semgrep and Trivy are off until enabled. Set the appropriate
 <code>enabled</code> key to boolean <code>true</code> and select
 <code>advisory</code> for the first adoption. Blocking is a separate
 opt-in through <code>mode</code>. See <a
@@ -156,8 +163,8 @@ href="configuration.html#qatrivy">Trivy configuration</a>.</p>
 <td><code>review.semgrep.enabled</code>,
 <code>review.semgrep.mode</code></td>
 <td><code>false</code>, <code>advisory</code></td>
-<td>Enables offline Semgrep CE in code review. Blocking also rechecks
-before merge.</td>
+<td>Enables offline Semgrep CE in background review. Blocking also
+rechecks before merge.</td>
 </tr>
 <tr>
 <td><code>BUREAU_SEMGREP_VENV</code></td>
@@ -168,8 +175,8 @@ interpreter.</td>
 <tr>
 <td><code>qa.trivy.enabled</code>, <code>qa.trivy.mode</code></td>
 <td><code>false</code>, <code>advisory</code></td>
-<td>Enables offline Trivy in QA. Blocking also rechecks before
-merge.</td>
+<td>Enables offline Trivy in background QA. Blocking also rechecks
+before merge.</td>
 </tr>
 <tr>
 <td><code>BUREAU_TRIVY_BIN</code>, <code>qa.trivy.cache_dir</code></td>
@@ -186,9 +193,9 @@ or with Trivy disabled.</td>
 </tr>
 </tbody>
 </table>
-<p>A pre-staged Bureau cache refuses with the existing exit 24 and
-leaves the index untouched. See <a href="exit-codes.html">exit
-codes</a>.</p>
+<p>A shell stage that reaches its commit step with a staged Bureau cache
+change, including the cleanup deletion, stops with exit 24 and leaves
+the index untouched. See <a href="exit-codes.html">exit codes</a>.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
 <p><strong>From v3.8.0, once v3.9.0 is published.</strong> Stop every
@@ -196,28 +203,33 @@ shepherd, queue loop, dispatcher and supervisor. Preserve unfinished
 work, local commits, customized assets, instructions, the Spec Kit
 constitution and shared runtime records. Compare installed script drift
 and reconcile local incident fixes before replacing assets. Select the
-published <code>v3.9.0</code> tag, refresh discovery, preview and
-resolve conflicts, then resync the <strong>complete scripts
+published <code>v3.9.0</code> tag, refresh discovery and preview the
+resync. Save the <a
+href="migration.html#before-changing-an-adopting-repository">pre-upgrade
+inventory and private backup</a>, including
+<code>.bureau-install.json</code> and <code>.gitignore</code> in the
+backup. Resolve conflicts, then resync the <strong>complete scripts
 scope</strong> in every adopting repository.</p>
 <pre class="text"><code>/bureau-init --resync-scripts --target both</code></pre>
 <p>Use <code>$bureau-init</code> in Codex and retain the installation's
 existing target selection. <code>--update</code> edits configuration
 only.</p>
-<p>For Semgrep, create a standard-library venv with the supported
-CPython and install Semgrep CE <strong>1.183.0</strong> from the shipped
-wheel-only hash lock. Set <code>BUREAU_SEMGREP_VENV</code> or use the
-shared-state fallback. Qualify network isolation on the deployment host,
-then enable <code>review.semgrep.enabled</code> with
+<p>To set up Semgrep for background review, create a standard-library
+venv with the supported CPython and install Semgrep CE
+<strong>1.183.0</strong> from the shipped wheel-only hash lock. Set
+<code>BUREAU_SEMGREP_VENV</code> or use the shared-state fallback.
+Qualify network isolation on the deployment host, then enable
+<code>review.semgrep.enabled</code> with
 <code>review.semgrep.mode</code> set to <code>advisory</code>. See <a
 href="configuration.html#reviewsemgrep">Semgrep installation</a>.</p>
-<p>For Trivy, provide the verified <strong>0.76.1</strong> binary
-through <code>BUREAU_TRIVY_BIN</code> or the shared-state fallback.
-Select an absolute <code>qa.trivy.cache_dir</code> outside the
-repository and refresh it separately while it is empty or already
-Bureau-managed. Qualify host network isolation, then enable
-<code>qa.trivy.enabled</code> with <code>qa.trivy.mode</code> set to
-<code>advisory</code>. See <a href="configuration.html#qatrivy">Trivy
-installation and refresh</a>.</p>
+<p>To set up Trivy for background QA, provide the verified
+<strong>0.76.1</strong> binary through <code>BUREAU_TRIVY_BIN</code> or
+the shared-state fallback. Select an absolute
+<code>qa.trivy.cache_dir</code> outside the repository and refresh it
+separately while it is empty or already Bureau-managed. Qualify host
+network isolation, then enable <code>qa.trivy.enabled</code> with
+<code>qa.trivy.mode</code> set to <code>advisory</code>. See <a
+href="configuration.html#qatrivy">Trivy installation and refresh</a>.</p>
 <p>In the resynced repository, run
 <code>python3 scripts/bureau-doctor.py --mode background</code> for a
 background installation or
@@ -363,10 +375,16 @@ extracted-binary hashes before refresh and qualifies filesystem flags
 under <code>unshare</code>. Pinned-engine flag behavior, platform
 isolation and adopter compatibility still need a networked CI or
 maintainer run.</li>
-<li>Trivy reports reduced coverage for unrecognised lockfile forms or
-non-canonical manifest and lockfile names. In blocking mode, each
-affected file needs an active base coverage exception to waive its
-gap.</li>
+<li>Trivy reports reduced coverage for lockfile forms its consistency
+parsers reject or for non-canonical manifest and lockfile names. In
+blocking mode, each affected file needs an active base coverage
+exception to waive its gap.</li>
+<li>Inline-ignore stripping can truncate an IaC line at <code>//</code>
+inside a quoted string before a trailing <code>trivy:ignore:</code>
+comment, so Trivy can receive altered configuration text.</li>
+<li>Bureau's Yarn consistency parser rejects indented comments and skips
+other indented body lines, so unsupported syntax in those lines can pass
+without a Bureau coverage warning.</li>
 <li>The writer of the historical adopter cache remains unknown.</li>
 <li>The release branch's own macOS and remote suites, CI, tested refs
 and final tree comparisons remain <code>TBD</code> until the maintainer

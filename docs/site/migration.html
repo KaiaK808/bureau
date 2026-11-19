@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="bdc0e54433e5aa46075569ef5e71178d61ff074d04ad51fbde5def7795d7819c">
+<meta name="bureau-source-sha256" content="d8352879a521d30222e06a5981e85f05b2a4dca4549eb2ab9cf38378be633d6b">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -161,15 +161,17 @@ Preserve unfinished work, local commits, customized assets, user
 instructions, Spec Kit assets and constitution, and shared runtime
 records.</li>
 <li>Compare installed script drift, reconcile local incident fixes and
-keep a private backup with the previous source commit for rollback.
-Select the published <code>v3.9.0</code> tag using <a
-href="#select-the-source-release">the source-update steps</a> and
-refresh skill discovery.</li>
-<li>Preview and resolve conflicts, then resync the <strong>complete
-scripts scope</strong> in each adopting repository. Keep the existing
-target selection. In Claude use the command below. In Codex use
-<code>$bureau-init</code> with the same arguments. <code>--update</code>
-edits configuration only.</li>
+record the previous source commit for rollback. Select the published
+<code>v3.9.0</code> tag using <a href="#select-the-source-release">the
+source-update steps</a> and refresh skill discovery.</li>
+<li>Preview the resync. Follow the <a
+href="#before-changing-an-adopting-repository">pre-upgrade inventory and
+backup steps</a>, including <code>.bureau-install.json</code> and
+<code>.gitignore</code> in the private backup. Resolve conflicts, then
+resync the <strong>complete scripts scope</strong> in each adopting
+repository. Keep the existing target selection. In Claude use the
+command below. In Codex use <code>$bureau-init</code> with the same
+arguments. <code>--update</code> edits configuration only.</li>
 <li>Remove <code>qa.trivy.image_archive_command</code> from existing
 configurations, including entries set to <code>null</code>. Runtime and
 doctor reject the key even when Trivy is disabled. Semgrep and Trivy
@@ -188,6 +190,10 @@ bytecode</a>.</li>
 Qualify a representative ticket before unattended dispatch.</li>
 </ol>
 <pre class="text"><code>/bureau-init --resync-scripts --target both</code></pre>
+<p>Semgrep runs in the background review pipeline and Trivy runs in the
+background QA pipeline. The app's
+<code>prepare</code>/<code>finish</code> flow runs neither scanner, so
+enabling either in advisory or blocking mode has no effect there.</p>
 <p><strong>Optional Semgrep CE.</strong> Install
 <strong>1.183.0</strong> from the shipped wheel-only hash lock in a
 standard-library venv. The manifests cover macOS arm64 with CPython 3.14
@@ -215,9 +221,10 @@ references first, then apply this upgrade.</p>
 <p><strong>Rollback to v3.8.0.</strong> Stop drivers and reconcile
 unfinished writers, local commits and holds. Follow the <a
 href="#rollback">full rollback procedure</a> to restore the complete
-v3.8.0 asset set and compatible configuration. Remove confirmed v3.9.0
-scanner additions that are absent from the old baseline and contain no
-later work, and restore the pre-upgrade installer bookkeeping from the
+v3.8.0 asset set and compatible configuration. Use the saved pre-upgrade
+inventory to identify v3.9.0 scanner additions absent from the old
+baseline. Remove only those that contain no later work. Restore
+<code>.bureau-install.json</code> and <code>.gitignore</code> from the
 private backup. Keep the runtime and scan records for inspection. Prior
 commits, pushes, comments, labels and state moves persist through
 rollback.</p>
@@ -2299,12 +2306,14 @@ changes. Identify files newly installed by the upgrade and remove only
 confirmed upgrade additions that are absent from the old baseline and
 contain no later work.</p>
 <p>If the selected older source supports deterministic previews, use a
-scoped preview to verify its baseline and review every conflict. An
-older helper does not record its source and carries the existing record
-along. Doctor reports that record as <code>stale</code> only once the
-older helper has changed a file hash; an apply that changed nothing
-leaves it <code>recorded</code>, which is still true of the files. After
-a restore of the pre-upgrade manifest from the backup it reports
+scoped preview to verify its baseline and review every conflict. A
+helper that predates source recording carries the existing source record
+along. If its apply changes the recorded file hashes, doctor reports the
+record as <code>stale</code>. A valid source record stays
+<code>recorded</code> if the hashes stay the same. After restoring a
+v3.8.0 manifest with valid recorded sources, doctor reports
+<code>template_source.status</code> as <code>recorded</code> and shows
+those sources per scope. A backup without recorded sources yields
 <code>source not recorded</code>. The next asset <code>--apply</code> by
 a recording helper drops a stale record and records only the scopes that
 apply wrote. A legacy source may have no installer helper or manifest
