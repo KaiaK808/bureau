@@ -8,7 +8,7 @@ The release includes [#158](https://github.com/KaiaK808/bureau/pull/158), [#159]
 
 ### Optional Semgrep CE evidence in code review
 
-Independent specialists finish their first pass before all review roles receive the bounded Semgrep projection in the late step. Semgrep scans offline under network denial, with rules, suppressions and extra rules selected from the pinned PR base. Bureau verifies a private copy of the Semgrep packages against a shipped manifest before probing the interpreter and re-hashes the copy before each scan side. An empty set of eligible files passes as `not_applicable` before scanner prerequisites are checked.
+Independent specialists finish their first pass before all review roles receive the bounded Semgrep projection in the late step. Semgrep scans offline under network denial. Bureau loads the bundled `bureau-semgrep-rules.yml` from the installed runtime and reads any configured extra rules and `.bureau/semgrep-ignore.json` suppressions from the pinned PR base. Bureau verifies a private copy of the Semgrep packages against a shipped manifest before probing the interpreter and re-hashes the copy before each scan side. An empty set of eligible files passes as `not_applicable` before scanner prerequisites are checked.
 
 Advisory mode reports and continues. Blocking mode holds approval on new findings at or above the configured severity and on unavailable or incomplete measurements. Existing BLOCK verdicts and review caps still apply. The blocking merge path rechecks the scan receipt against the head and base.
 
@@ -71,7 +71,7 @@ For Semgrep, create a standard-library venv with the supported CPython and insta
 
 For Trivy, provide the verified **0.76.1** binary through `BUREAU_TRIVY_BIN` or the shared-state fallback. Select an absolute `qa.trivy.cache_dir` outside the repository and refresh it separately while it is empty or already Bureau-managed. Qualify host network isolation, then enable `qa.trivy.enabled` with `qa.trivy.mode` set to `advisory`. See [Trivy installation and refresh](configuration.md#qatrivy).
 
-Run `python3 scripts/bureau-doctor.py --mode background` in the resynced repository and reconcile holds. If doctor reports a tracked `scripts/__pycache__/`, run its printed cleanup command for the matched literal directories once and commit the removal. The ignore entry takes effect for untracked files. Restart all drivers together so they load the new scripts. See [From v3.8.0](migration.md#from-v380) and [tracked Python bytecode](troubleshooting.md#tracked-python-bytecode).
+In the resynced repository, run `python3 scripts/bureau-doctor.py --mode background` for a background installation or `python3 scripts/bureau-doctor.py --mode app` for an app-only installation. Reconcile holds. If doctor reports a tracked `scripts/__pycache__/`, run its printed cleanup command for the matched literal directories once and commit the removal. The ignore entry takes effect for untracked files. Restart all drivers together so they load the new scripts. See [From v3.8.0](migration.md#from-v380) and [tracked Python bytecode](troubleshooting.md#tracked-python-bytecode).
 
 **From earlier versions.** Apply the migration guide's cumulative steps through [v3.8](migration.md#upgrade-to-v38) first. The v3.8.0 publication record itself needs only a source checkout update.
 
@@ -84,7 +84,7 @@ Configuration schema versions 1 and 2, the v3 exit vocabulary, Bash 3.2+, Python
 | Semgrep CE 1.183.0 | macOS arm64 with CPython 3.14 and Linux x86_64 with CPython 3.12. An eligible scan with another interpreter reports unavailable. |
 | Trivy 0.76.1 | Linux x86_64 and macOS arm64 binary pins. |
 
-For rollback, stop drivers and reconcile unfinished writers, local commits and holds. Select `v3.8.0` and restore the complete scripts scope with the matching configuration or restore the private backup. Retain runtime and scanner records for inspection. Prior commits, pushes, comments, labels and state moves persist through rollback.
+For rollback, stop drivers and reconcile unfinished writers, local commits and holds. Follow the [full rollback procedure](migration.md#rollback) to restore the complete v3.8.0 asset set, compatible configuration and installer records, and remove confirmed scanner additions as described there. Retain runtime and scanner records for inspection. Prior commits, pushes, comments, labels and state moves persist through rollback.
 
 ## Validation
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="018076bec2a487ac39e06335a70e7fe987842df2de1816ea7b2f54c4ae830b80">
+<meta name="bureau-source-sha256" content="2655e8a7c33e3e9fd526a0cf5f404be20af0d8334d5eb6dda080c94af0cfe4f3">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -451,17 +451,25 @@ repository-relative <code>.yml</code>/<code>.yaml</code> path; unknown
 keys and values are configuration errors. Extra rules and
 <code>.bureau/semgrep-ignore.json</code> are read only from the pinned
 PR base.</p>
-<p>The operator supplies a dedicated venv for <strong>Semgrep
-1.183.0</strong>, selected by the process environment variable
-<code>BUREAU_SEMGREP_VENV</code>. The default is
-<code>&lt;shared Git directory&gt;/bureau/tools/semgrep/venv</code>,
-using the same state root as runtime ownership. Bureau installs or
-downloads nothing. Prepare the environment separately with the standard
-library <code>venv</code> module and install the locked wheels:</p>
+<p>The operator prepares a dedicated venv for <strong>Semgrep
+1.183.0</strong>. To use a custom path, set
+<code>BUREAU_SEMGREP_VENV</code> in the setup shell and in the
+environment that starts Bureau's drivers. For example,
+<code>export BUREAU_SEMGREP_VENV="$HOME/.local/share/bureau/semgrep/venv"</code>.
+With the variable unset, Bureau uses
+<code>&lt;shared Git directory&gt;/bureau/tools/semgrep/venv</code>. Run
+these commands from the adopting repository root and choose the
+interpreter assignment for your platform.</p>
 <div class="sourceCode" id="cb4"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-m</span> venv <span class="at">--without-pip</span> <span class="st">&quot;</span><span class="va">$BUREAU_SEMGREP_VENV</span><span class="st">&quot;</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install <span class="at">--python</span> <span class="st">&quot;</span><span class="va">$BUREAU_SEMGREP_VENV</span><span class="st">/bin/python&quot;</span> <span class="dt">\</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--require-hashes</span> <span class="at">--only-binary</span> :all: <span class="at">-r</span> scripts/bureau-semgrep-lock.txt</span></code></pre></div>
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">semgrep_venv</span><span class="op">=</span><span class="st">&quot;</span><span class="va">${BUREAU_SEMGREP_VENV</span><span class="op">:-</span><span class="va">$(</span><span class="fu">git</span> rev-parse <span class="at">--path-format</span><span class="op">=</span>absolute <span class="at">--git-common-dir</span><span class="va">)</span>/bureau/tools/semgrep/venv<span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="va">semgrep_python</span><span class="op">=</span>python3.14  <span class="co"># macOS arm64</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="co"># semgrep_python=python3.12  # Linux x86_64</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span><span class="va">$semgrep_python</span><span class="st">&quot;</span> <span class="at">-m</span> venv <span class="at">--without-pip</span> <span class="st">&quot;</span><span class="va">$semgrep_venv</span><span class="st">&quot;</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span><span class="va">$semgrep_venv</span><span class="st">/bin/python&quot;</span> <span class="at">-B</span> <span class="at">-c</span> <span class="st">&#39;import platform; print(platform.python_implementation(), platform.python_version(), platform.machine())&#39;</span></span></code></pre></div>
+<p>Confirm <code>CPython 3.14.x arm64</code> on macOS or
+<code>CPython 3.12.x x86_64</code> on Linux. Install the locked wheels
+with
+<code>uv pip install --python "$semgrep_venv/bin/python" --require-hashes --only-binary :all: -r scripts/bureau-semgrep-lock.txt</code>.</p>
 <p>Do not create it with <code>uv venv</code> or
 <code>virtualenv</code>: both add <code>_virtualenv.pth</code> and
 <code>_virtualenv.py</code> to <code>site-packages</code>, and
@@ -530,19 +538,20 @@ settings. Each call uses
 additionally uses <code>-S</code>. Operator launchers,
 executable-adjacent fallback helpers, system site-packages and adjacent
 bytecode are excluded from execution.</p>
-<p>Every scan and interpreter probe receives an allowlist environment:
-exactly <code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
-<code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code>,
-<code>TMPDIR</code>, <code>LANG=C.UTF-8</code>, <code>TZ=UTC</code>,
+<p>Every scan and interpreter probe receives exactly
+<code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
+<code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code> and
+<code>TMPDIR</code>, plus <code>LANG=C.UTF-8</code>,
+<code>TZ=UTC</code>, <code>PYTHONDONTWRITEBYTECODE=1</code>,
 <code>SEMGREP_SEND_METRICS=off</code>,
 <code>SEMGREP_ENABLE_VERSION_CHECK=0</code> and
 <code>DO_NOT_TRACK=1</code>. The operator venv's <code>bin</code>
 directory is excluded from PATH, and helpers resolving beside
-<code>sys.executable</code> see only the shadow's <code>python</code>;
-the interpreter is always invoked by its absolute shadow path. Provider
+<code>sys.executable</code> see only the shadow's <code>python</code>.
+Bureau invokes the interpreter by its absolute shadow path. Provider
 keys, Bureau secrets, GitHub tokens and other Semgrep settings do not
-pass through. Runtime network denial is required for eligible scans:
-Linux uses a probed <code>unshare -rn</code> user/network namespace;
+pass through. Runtime network denial is required for eligible scans.
+Linux uses a probed <code>unshare -rn</code> user/network namespace and
 macOS uses <code>sandbox-exec</code> with the shipped
 <code>bureau-scan-nonet.sb</code> profile denying <code>network*</code>.
 If isolation cannot run, the status is <strong>not_measured</strong>,
@@ -729,11 +738,16 @@ can resolve there. Bureau re-hashes the private binary before each
 execution. Changes to the operator path after the copy have no
 effect.</p>
 <p>The operator refreshes the database separately, with network access,
-outside every stage:</p>
+outside every stage. Set <code>BUREAU_TRIVY_CACHE</code> in your shell
+to the same absolute path outside the repository as
+<code>qa.trivy.cache_dir</code>. The refresh command takes its
+destination from <code>--cache-dir</code>.</p>
 <div class="sourceCode" id="cb8"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-trivy.py refresh <span class="at">--cache-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_TRIVY_CACHE</span><span class="st">&quot;</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Include Java&#39;s DB when Java analysis needs it:</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-trivy.py refresh <span class="at">--cache-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_TRIVY_CACHE</span><span class="st">&quot;</span> <span class="at">--java</span></span></code></pre></div>
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Replace the example path with the absolute path from qa.trivy.cache_dir.</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TRIVY_CACHE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.cache/bureau/trivy&quot;</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-trivy.py refresh <span class="at">--cache-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_TRIVY_CACHE</span><span class="st">&quot;</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Use this command when Java analysis needs its DB as well.</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="co"># python3 -I -B scripts/bureau-trivy.py refresh --cache-dir &quot;$BUREAU_TRIVY_CACHE&quot; --java</span></span></code></pre></div>
 <p>The refresh destination must be empty or a Bureau-managed cache,
 outside the repository. Refresh first verifies and privately copies the
 pinned binary, downloads into a fresh private directory using
@@ -759,20 +773,20 @@ pinned binary's embedded bundle, whose identity is the binary digest.
 The snapshot manifest records removals. Before each filesystem scan,
 Bureau re-checks the private database bytes and discards non-database
 cache content again.</p>
-<p>Every scanner execution, including refresh, receives only
+<p>Every scanner execution, including refresh, receives exactly
 <code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
-<code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code>,
-<code>TMPDIR</code>, <code>LANG=C.UTF-8</code> and <code>TZ=UTC</code>.
-No caller <code>TRIVY_*</code>, provider secret, GitHub token or Docker
-connection setting passes through. Every scan runs under runtime network
-denial: probed <code>unshare -rn</code> on Linux or
+<code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code> and
+<code>TMPDIR</code>, plus <code>LANG=C.UTF-8</code>, <code>TZ=UTC</code>
+and <code>PYTHONDONTWRITEBYTECODE=1</code>. No caller
+<code>TRIVY_*</code>, provider secret, GitHub token or Docker connection
+setting passes through. Every scan runs under runtime network denial
+using probed <code>unshare -rn</code> on Linux or
 <code>sandbox-exec</code> with <code>bureau-scan-nonet.sb</code> denying
-<code>network*</code> on macOS. Isolation failure is
-<strong>not_measured</strong>, reason
-<code>network isolation unavailable</code>; scans never fall back to
-online execution. The refresh CLI is the sole networked scanner
-operation and is absent from the shell stage helper's allowed
-commands.</p>
+<code>network*</code> on macOS. If isolation fails, scans report
+<strong>not_measured</strong> with reason
+<code>network isolation unavailable</code>. The refresh CLI is the sole
+networked scanner operation and is absent from the shell stage helper's
+allowed commands.</p>
 <p>All release-dependent flags live in <code>bureau-trivy.py</code>'s
 <code>FLAGS</code> table. Filesystem scans use
 <code>--offline-scan --skip-db-update --skip-java-db-update --skip-check-update --skip-vex-repo-update --skip-version-check --disable-telemetry</code>,

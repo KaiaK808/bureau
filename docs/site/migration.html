@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="95384cc42ea242961f4eb43e7940428d261936945e5d9ff798f9e96647482419">
+<meta name="bureau-source-sha256" content="bdc0e54433e5aa46075569ef5e71178d61ff074d04ad51fbde5def7795d7819c">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -175,7 +175,9 @@ configurations, including entries set to <code>null</code>. Runtime and
 doctor reject the key even when Trivy is disabled. Semgrep and Trivy
 stay off until enabled.</li>
 <li>Run <code>python3 scripts/bureau-doctor.py --mode background</code>
-and reconcile holds. If doctor reports a tracked
+for a background installation or
+<code>python3 scripts/bureau-doctor.py --mode app</code> for an app-only
+installation. Reconcile holds. If doctor reports a tracked
 <code>scripts/__pycache__/</code>, run its cleanup command for the
 matched literal directories once and commit that removal. A stage
 refuses a pre-staged Bureau cache with exit 24 and leaves the index
@@ -199,18 +201,23 @@ href="configuration.html#reviewsemgrep">Semgrep configuration</a>.</p>
 <strong>0.76.1</strong> binary for Linux x86_64 or macOS arm64 through
 <code>BUREAU_TRIVY_BIN</code> or the shared-state fallback. Set
 <code>qa.trivy.cache_dir</code> to an absolute path outside the
-repository and refresh an empty or Bureau-managed cache separately.
-Qualify host network isolation, then set <code>qa.trivy.enabled</code>
-to <code>true</code> and <code>qa.trivy.mode</code> to
+repository. Set <code>BUREAU_TRIVY_CACHE</code> in your shell to that
+same path and pass <code>--cache-dir "$BUREAU_TRIVY_CACHE"</code> when
+refreshing the empty or Bureau-managed cache separately. Qualify host
+network isolation, then set <code>qa.trivy.enabled</code> to
+<code>true</code> and <code>qa.trivy.mode</code> to
 <code>advisory</code>. Opt into blocking separately. This release covers
 dependencies and configuration and excludes image scanning. See <a
 href="configuration.html#qatrivy">Trivy configuration and refresh</a>.</p>
 <p><strong>From earlier versions.</strong> Apply <a
 href="#upgrade-to-v38">Upgrade to v3.8</a> and the cumulative steps it
 references first, then apply this upgrade.</p>
-<p><strong>Rollback to v3.8.0.</strong> Stop drivers, reconcile
-unfinished writers, local commits and holds, select the previous tag and
-restore its complete scripts scope and compatible configuration or the
+<p><strong>Rollback to v3.8.0.</strong> Stop drivers and reconcile
+unfinished writers, local commits and holds. Follow the <a
+href="#rollback">full rollback procedure</a> to restore the complete
+v3.8.0 asset set and compatible configuration. Remove confirmed v3.9.0
+scanner additions that are absent from the old baseline and contain no
+later work, and restore the pre-upgrade installer bookkeeping from the
 private backup. Keep the runtime and scan records for inspection. Prior
 commits, pushes, comments, labels and state moves persist through
 rollback.</p>
@@ -358,8 +365,9 @@ Invalid <code>repo.env_file</code> settings or missing selected files
 are errors (stages exit 24), with no fallback to the checkout's
 <code>.env</code>.</li>
 </ol>
-<p>The stored <code>gh</code> login exposure remains separate; see the
-<a href="release-notes.html#known-limitations">untested caveat</a>.</p>
+<p>The v3.8.0 notes record the untested stored <code>gh</code> login
+caveat. See <a href="release-notes-v3.8.0.html#known-limitations">Known
+limitations</a>.</p>
 <h2 id="upgrade-to-v37">Upgrade to v3.7</h2>
 <p><strong>v3.7.0</strong>, dated <strong>2026-11-09</strong>, is a
 minor release on v3.6.0, published as the latest <a

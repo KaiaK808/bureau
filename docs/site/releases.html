@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="dade53e6a055aebbcfc93c757b4be954820673cdbefb3cdd58e1a7d292bc5495">
+<meta name="bureau-source-sha256" content="d69f518fa4545981dc4a081eefa97cf10372befdc7c38cb01a30dd850808bf9c">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -47,7 +47,7 @@ and resync the complete scripts scope. Remove
 and use doctor's one-time cleanup and commit for a tracked Bureau cache.
 See the scanner setup and rollback steps in <a
 href="migration.html#from-v380">From v3.8.0</a>.</p>
-<h3 id="validation-record">Validation record</h3>
+<h3 id="v390-validation-record">v3.9.0 validation record</h3>
 <p>The merged release content is on main <code>b65f8cf</code>. The
 fragments record local fixture validation and an earlier pinned Semgrep
 rule run on macOS arm64. The release branch's own suites and CI remain
@@ -147,7 +147,8 @@ Approval needs its separate workflow scope, default-branch policy and
 required branch-protection status, and remains an accident guard with
 deliberate bypass possible. Review configuration and rollback actions in
 <a href="migration.html#from-v370">From v3.7.0</a> before restarting.</p>
-<h3 id="validation-record-1">Validation record</h3>
+<p><a id="validation-record"></a></p>
+<h3 id="v380-validation-record">v3.8.0 validation record</h3>
 <p>The maintainer's validation record states that each change was merged
 with a macOS gate suite and passing PR CI on its own head. The remote
 suite on <code>openclaw-01</code> became a gate on
@@ -268,7 +269,8 @@ update exit consumers, run doctor and restart drivers together. From
 v3.5.1 first apply the cumulative v3.6 requirements. Configuration
 schema versions and Spec Kit 1.2.2 remain; see <a
 href="migration.html#upgrade-to-v37">Upgrade to v3.7</a>.</p>
-<h3 id="validation-record-2">Validation record</h3>
+<p><a id="validation-record-1"></a></p>
+<h3 id="v370-validation-record">v3.7.0 validation record</h3>
 <p>The maintainer's validation record states that every v3.7 pull
 request was built by Codex in its own worktree, independently reviewed
 read-only by Codex (at most three rounds unless the maintainer approved

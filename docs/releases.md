@@ -10,7 +10,7 @@ The release adds opt-in offline Semgrep CE evidence in code review, opt-in offli
 
 From v3.8.0, once published, stop drivers, preserve unfinished work and runtime records, compare installed script drift, update the source and resync the complete scripts scope. Remove `qa.trivy.image_archive_command` from existing configurations and use doctor's one-time cleanup and commit for a tracked Bureau cache. See the scanner setup and rollback steps in [From v3.8.0](migration.md#from-v380).
 
-### Validation record
+### v3.9.0 validation record
 
 The merged release content is on main `b65f8cf`. The fragments record local fixture validation and an earlier pinned Semgrep rule run on macOS arm64. The release branch's own suites and CI remain to be run by the maintainer.
 
@@ -35,7 +35,9 @@ The release adds opt-in advisory fail-before-pass, test integrity and task compl
 
 From v3.7.0, stop drivers, preserve unfinished work and runtime records, compare installed drift, update the source and resync complete scripts and interfaces together. Enabled Impeccable installations separately install 4.9.0 / 0.1.23 and update or remove both version keys in `.bureau.json`. Existing secrets files keep working and can move outside the checkout; new installations use the external file. Approval needs its separate workflow scope, default-branch policy and required branch-protection status, and remains an accident guard with deliberate bypass possible. Review configuration and rollback actions in [From v3.7.0](migration.md#from-v370) before restarting.
 
-### Validation record
+<a id="validation-record"></a>
+
+### v3.8.0 validation record
 
 The maintainer's validation record states that each change was merged with a macOS gate suite and passing PR CI on its own head. The remote suite on `openclaw-01` became a gate on **2026-11-14**, after a first-pass **191 of 191** on main `6205c6d`. The merged release content is on main `8af867d`. Release candidate `45335d7` passed both gate suites; release CI and the tag comparison are recorded below.
 
@@ -58,7 +60,9 @@ Default changes preserve local-only commits before resets (exit 30), refuse post
 
 From v3.6.0, stop all drivers, preserve unfinished work/local commits and customizations, compare installed drift, select tag `v3.7.0`, resync complete scripts and interfaces together, update exit consumers, run doctor and restart drivers together. From v3.5.1 first apply the cumulative v3.6 requirements. Configuration schema versions and Spec Kit 1.2.2 remain; see [Upgrade to v3.7](migration.md#upgrade-to-v37).
 
-### Validation record
+<a id="validation-record-1"></a>
+
+### v3.7.0 validation record
 
 The maintainer's validation record states that every v3.7 pull request was built by Codex in its own worktree, independently reviewed read-only by Codex (at most three rounds unless the maintainer approved an exception), and had every touched test run outside the sandbox. The full local suite ran in two shards on macOS, followed by CI on the pull request; each was merged with a merge commit. Earlier waves (#114–#126) were each Codex-reviewed, suite-tested and CI-green before merge; their individual records remain in the pull request descriptions.
 

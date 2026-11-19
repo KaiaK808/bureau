@@ -45,7 +45,7 @@ Apply these steps once v3.9.0 is published. All release changes are merged.
 2. Compare installed script drift, reconcile local incident fixes and keep a private backup with the previous source commit for rollback. Select the published `v3.9.0` tag using [the source-update steps](#select-the-source-release) and refresh skill discovery.
 3. Preview and resolve conflicts, then resync the **complete scripts scope** in each adopting repository. Keep the existing target selection. In Claude use the command below. In Codex use `$bureau-init` with the same arguments. `--update` edits configuration only.
 4. Remove `qa.trivy.image_archive_command` from existing configurations, including entries set to `null`. Runtime and doctor reject the key even when Trivy is disabled. Semgrep and Trivy stay off until enabled.
-5. Run `python3 scripts/bureau-doctor.py --mode background` and reconcile holds. If doctor reports a tracked `scripts/__pycache__/`, run its cleanup command for the matched literal directories once and commit that removal. A stage refuses a pre-staged Bureau cache with exit 24 and leaves the index untouched. See [tracked Python bytecode](troubleshooting.md#tracked-python-bytecode).
+5. Run `python3 scripts/bureau-doctor.py --mode background` for a background installation or `python3 scripts/bureau-doctor.py --mode app` for an app-only installation. Reconcile holds. If doctor reports a tracked `scripts/__pycache__/`, run its cleanup command for the matched literal directories once and commit that removal. A stage refuses a pre-staged Bureau cache with exit 24 and leaves the index untouched. See [tracked Python bytecode](troubleshooting.md#tracked-python-bytecode).
 6. Restart all drivers together so they load the resynced scripts. Qualify a representative ticket before unattended dispatch.
 
 ```text
@@ -54,11 +54,11 @@ Apply these steps once v3.9.0 is published. All release changes are merged.
 
 **Optional Semgrep CE.** Install **1.183.0** from the shipped wheel-only hash lock in a standard-library venv. The manifests cover macOS arm64 with CPython 3.14 and Linux x86_64 with CPython 3.12. Set `BUREAU_SEMGREP_VENV` or use the shared-state fallback. Qualify host network isolation, then set `review.semgrep.enabled` to `true` and `review.semgrep.mode` to `advisory`. Opt into blocking separately. See [Semgrep configuration](configuration.md#reviewsemgrep).
 
-**Optional Trivy.** Supply the verified **0.76.1** binary for Linux x86_64 or macOS arm64 through `BUREAU_TRIVY_BIN` or the shared-state fallback. Set `qa.trivy.cache_dir` to an absolute path outside the repository and refresh an empty or Bureau-managed cache separately. Qualify host network isolation, then set `qa.trivy.enabled` to `true` and `qa.trivy.mode` to `advisory`. Opt into blocking separately. This release covers dependencies and configuration and excludes image scanning. See [Trivy configuration and refresh](configuration.md#qatrivy).
+**Optional Trivy.** Supply the verified **0.76.1** binary for Linux x86_64 or macOS arm64 through `BUREAU_TRIVY_BIN` or the shared-state fallback. Set `qa.trivy.cache_dir` to an absolute path outside the repository. Set `BUREAU_TRIVY_CACHE` in your shell to that same path and pass `--cache-dir "$BUREAU_TRIVY_CACHE"` when refreshing the empty or Bureau-managed cache separately. Qualify host network isolation, then set `qa.trivy.enabled` to `true` and `qa.trivy.mode` to `advisory`. Opt into blocking separately. This release covers dependencies and configuration and excludes image scanning. See [Trivy configuration and refresh](configuration.md#qatrivy).
 
 **From earlier versions.** Apply [Upgrade to v3.8](#upgrade-to-v38) and the cumulative steps it references first, then apply this upgrade.
 
-**Rollback to v3.8.0.** Stop drivers, reconcile unfinished writers, local commits and holds, select the previous tag and restore its complete scripts scope and compatible configuration or the private backup. Keep the runtime and scan records for inspection. Prior commits, pushes, comments, labels and state moves persist through rollback.
+**Rollback to v3.8.0.** Stop drivers and reconcile unfinished writers, local commits and holds. Follow the [full rollback procedure](#rollback) to restore the complete v3.8.0 asset set and compatible configuration. Remove confirmed v3.9.0 scanner additions that are absent from the old baseline and contain no later work, and restore the pre-upgrade installer bookkeeping from the private backup. Keep the runtime and scan records for inspection. Prior commits, pushes, comments, labels and state moves persist through rollback.
 
 ## Upgrade to v3.8
 
@@ -106,7 +106,7 @@ Existing installations keep working with `.env` next to `.bureau.json`; nothing 
 3. Set `repo.env_file` in `.bureau.json` to the chosen `~/.config/bureau/<repository directory name>.env` path. Absolute paths also work. Remove or update any launch-time `BUREAU_ENV_FILE` override: a non-empty override wins; a relative override still counts from `.bureau.json`'s directory.
 4. Restart loops and supervisors with the new configuration, then run `python3 scripts/bureau-doctor.py --mode background`. Doctor warns about a secrets file inside the main checkout or readable by group or others; an outside file with mode 0600 triggers neither warning. Invalid `repo.env_file` settings or missing selected files are errors (stages exit 24), with no fallback to the checkout's `.env`.
 
-The stored `gh` login exposure remains separate; see the [untested caveat](release-notes.md#known-limitations).
+The v3.8.0 notes record the untested stored `gh` login caveat. See [Known limitations](release-notes-v3.8.0.md#known-limitations).
 
 ## Upgrade to v3.7
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4dbf84be0a60e390b9329cb70a86775f204acc54a3c60c39672245f999bffaee">
+<meta name="bureau-source-sha256" content="0315ddc9cf6bd635a4404f5925a1f0f1dae79acec8aacf86d37d5feaea8d2b0f">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -35,12 +35,15 @@ release fragments.</p>
 evidence in code review</h3>
 <p>Independent specialists finish their first pass before all review
 roles receive the bounded Semgrep projection in the late step. Semgrep
-scans offline under network denial, with rules, suppressions and extra
-rules selected from the pinned PR base. Bureau verifies a private copy
-of the Semgrep packages against a shipped manifest before probing the
-interpreter and re-hashes the copy before each scan side. An empty set
-of eligible files passes as <code>not_applicable</code> before scanner
-prerequisites are checked.</p>
+scans offline under network denial. Bureau loads the bundled
+<code>bureau-semgrep-rules.yml</code> from the installed runtime and
+reads any configured extra rules and
+<code>.bureau/semgrep-ignore.json</code> suppressions from the pinned PR
+base. Bureau verifies a private copy of the Semgrep packages against a
+shipped manifest before probing the interpreter and re-hashes the copy
+before each scan side. An empty set of eligible files passes as
+<code>not_applicable</code> before scanner prerequisites are
+checked.</p>
 <p>Advisory mode reports and continues. Blocking mode holds approval on
 new findings at or above the configured severity and on unavailable or
 incomplete measurements. Existing BLOCK verdicts and review caps still
@@ -215,13 +218,16 @@ Bureau-managed. Qualify host network isolation, then enable
 <code>qa.trivy.enabled</code> with <code>qa.trivy.mode</code> set to
 <code>advisory</code>. See <a href="configuration.html#qatrivy">Trivy
 installation and refresh</a>.</p>
-<p>Run <code>python3 scripts/bureau-doctor.py --mode background</code>
-in the resynced repository and reconcile holds. If doctor reports a
-tracked <code>scripts/__pycache__/</code>, run its printed cleanup
-command for the matched literal directories once and commit the removal.
-The ignore entry takes effect for untracked files. Restart all drivers
-together so they load the new scripts. See <a
-href="migration.html#from-v380">From v3.8.0</a> and <a
+<p>In the resynced repository, run
+<code>python3 scripts/bureau-doctor.py --mode background</code> for a
+background installation or
+<code>python3 scripts/bureau-doctor.py --mode app</code> for an app-only
+installation. Reconcile holds. If doctor reports a tracked
+<code>scripts/__pycache__/</code>, run its printed cleanup command for
+the matched literal directories once and commit the removal. The ignore
+entry takes effect for untracked files. Restart all drivers together so
+they load the new scripts. See <a href="migration.html#from-v380">From
+v3.8.0</a> and <a
 href="troubleshooting.html#tracked-python-bytecode">tracked Python
 bytecode</a>.</p>
 <p><strong>From earlier versions.</strong> Apply the migration guide's
@@ -253,11 +259,12 @@ eligible scan with another interpreter reports unavailable.</td>
 </tbody>
 </table>
 <p>For rollback, stop drivers and reconcile unfinished writers, local
-commits and holds. Select <code>v3.8.0</code> and restore the complete
-scripts scope with the matching configuration or restore the private
-backup. Retain runtime and scanner records for inspection. Prior
-commits, pushes, comments, labels and state moves persist through
-rollback.</p>
+commits and holds. Follow the <a href="migration.html#rollback">full
+rollback procedure</a> to restore the complete v3.8.0 asset set,
+compatible configuration and installer records, and remove confirmed
+scanner additions as described there. Retain runtime and scanner records
+for inspection. Prior commits, pushes, comments, labels and state moves
+persist through rollback.</p>
 <h2 id="validation">Validation</h2>
 <p>The merged content baseline is main <code>b65f8cf</code>. The merged
 changes follow first-parent merge order.</p>
