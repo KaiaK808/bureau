@@ -2,7 +2,7 @@
 
 **Release preparation · 2026-11-20 · source tag `v3.9.0`.** v3.9.0 is a minor release on [v3.8.0](release-notes-v3.8.0.md). Tagging and GitHub Release publication remain separate maintainer operations.
 
-The release includes [#158](https://github.com/KaiaK808/bureau/pull/158), [#159](https://github.com/KaiaK808/bureau/pull/159), [#160](https://github.com/KaiaK808/bureau/pull/160) and [#161](https://github.com/KaiaK808/bureau/pull/161) in first-parent merge order. All changes are merged. The [changelog](../CHANGELOG.md#390---2026-11-20) collects the four release fragments.
+The release includes [#158](https://github.com/KaiaK808/bureau/pull/158), [#159](https://github.com/KaiaK808/bureau/pull/159), [#160](https://github.com/KaiaK808/bureau/pull/160), [#161](https://github.com/KaiaK808/bureau/pull/161) and [#163](https://github.com/KaiaK808/bureau/pull/163) in first-parent merge order. All changes are merged. The [changelog](../CHANGELOG.md#390---2026-11-20) collects the five release fragments.
 
 ## What changed since v3.8.0
 
@@ -27,6 +27,10 @@ For scanners enabled in blocking mode, Bureau's automatic merge pipeline checks 
 ### Python bytecode in stage commits
 
 Stages suppress installed Bureau helper bytecode and exclude the Bureau cache from shell stage commits. The installer adds the literal `scripts/__pycache__/` ignore rule and preserves existing rules. Staging and doctor match the exact path components and existing aliases of the same directory. A separate application's `Scripts/__pycache__/` remains eligible for ordinary staging on a case-sensitive filesystem.
+
+### Merge gate holds on an unreadable commit-status read
+
+When `agents.merge_require_green_ci` is on, Bureau's CI merge gate reads check runs and legacy commit statuses for the PR head. Before this release, a failed status read counted as an empty status list, so green check runs could pass the gate while statuses, possibly a failing required context, were never read. A failed status read now holds the gate as not yet decided with a line naming the head SHA, for every combination of check runs and every `agents.merge_min_required_checks` value. The dedicated merge stage, the inline merge after review and the just-in-time recheck end with `2` and retry later. Decided check-run blockers keep their precedence, and `merge_require_green_ci: false` still switches the check off. This behaviour had been present since v3.1.0.
 
 ### v3.8.0 publication record
 
@@ -57,6 +61,8 @@ Semgrep runs in the background review pipeline and Trivy runs in the background 
 
 A shell stage that reaches its commit step with a staged Bureau cache change, including the cleanup deletion, stops with exit 24 and leaves the index untouched. See [exit codes](exit-codes.md).
 
+The CI merge gate no longer passes when the commit-status read fails: the merge ends with `2` (not yet decided) and retries, where it could merge before. No configuration key changes.
+
 ## Upgrade an existing installation
 
 **From v3.8.0, once v3.9.0 is published.** Stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work, local commits, customized assets, instructions, the Spec Kit constitution and shared runtime records. Compare installed script drift and reconcile local incident fixes before replacing assets. Select the published `v3.9.0` tag and refresh discovery. Save the [pre-upgrade inventory and private backup](migration.md#before-changing-an-adopting-repository), including `.bureau-install.json` and `.gitignore` in the backup. Use the [v3.9.0 scripts-only preview and apply commands](migration.md#from-v380) in every adopting repository with its existing target selection. Resolve conflicts before applying. `--update` edits configuration only.
@@ -82,7 +88,7 @@ For rollback, stop drivers and reconcile unfinished writers, local commits and h
 
 ## Validation
 
-The merged content baseline is main `b65f8cf`. The merged changes follow first-parent merge order.
+The merged content baseline is main `31d14b7`. The merged changes follow first-parent merge order.
 
 | PR | Merge commit | Change |
 |---|---|---|
@@ -90,8 +96,9 @@ The merged content baseline is main `b65f8cf`. The merged changes follow first-p
 | [#159](https://github.com/KaiaK808/bureau/pull/159) | `0e1dce2` | Optional Semgrep CE review evidence and blocking merge recheck |
 | [#160](https://github.com/KaiaK808/bureau/pull/160) | `10d4c60` | Optional Trivy QA evidence from a verified pinned binary |
 | [#161](https://github.com/KaiaK808/bureau/pull/161) | `b65f8cf` | Keep installed Bureau bytecode out of shell stage commits |
+| [#163](https://github.com/KaiaK808/bureau/pull/163) | `31d14b7` | Hold the CI merge gate when the commit-status read fails |
 
-The fragments record offline Semgrep fixtures and negative controls for the private runtime, review, receipt reuse and merge freshness. An earlier maintainer run of Semgrep 1.183.0 on macOS arm64 under network denial covered every rule fixture, a hostile `.semgrepignore` and inline `nosemgrep`.
+The merge gate fix has CI helper and merge-stage tests, including fail-before controls against the previous runtime. The fragments record offline Semgrep fixtures and negative controls for the private runtime, review, receipt reuse and merge freshness. An earlier maintainer run of Semgrep 1.183.0 on macOS arm64 under network denial covered every rule fixture, a hostile `.semgrepignore` and inline `nosemgrep`.
 
 Offline Trivy tests used a fake binary to cover the scanner boundary, cache, coverage and parser controls, QA placement, the disabled baseline and merge races. The bytecode fix used local fixtures for stage entry points, review evidence, provider gates, filesystem-specific directory cases and a tracked Latin-1 shell POST, without a model or network. See the [fragment validation in the changelog](../CHANGELOG.md#390---2026-11-20).
 

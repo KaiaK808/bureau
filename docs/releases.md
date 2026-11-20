@@ -6,13 +6,13 @@ Bureau ships a source skill and templates that are copied into adopting reposito
 
 This source tree prepares **Bureau v3.9.0**, dated **2026-11-20**, a minor release on v3.8.0 with source tag `v3.9.0`. Tagging and publication remain separate maintainer operations. The [release notes](release-notes.md) and [changelog](../CHANGELOG.md#390---2026-11-20) cover [#158](https://github.com/KaiaK808/bureau/pull/158), [#159](https://github.com/KaiaK808/bureau/pull/159), [#160](https://github.com/KaiaK808/bureau/pull/160) and [#161](https://github.com/KaiaK808/bureau/pull/161) in first-parent merge order.
 
-The release adds opt-in offline Semgrep CE evidence in code review, opt-in offline Trivy dependency and configuration evidence in QA, and a fix for installed helper bytecode in shell stage commits. Both scanners start off, run under network denial when scanning, and offer advisory and blocking modes. Image scanning is outside this release. The v3.8.0 publication record is also included.
+The release adds opt-in offline Semgrep CE evidence in code review, opt-in offline Trivy dependency and configuration evidence in QA, a fix for installed helper bytecode in shell stage commits, and a merge gate that holds instead of passing when the commit-status read fails. Both scanners start off, run under network denial when scanning, and offer advisory and blocking modes. Image scanning is outside this release. The v3.8.0 publication record is also included.
 
 From v3.8.0, once published, stop drivers, preserve unfinished work and runtime records, compare installed script drift, update the source and resync the complete scripts scope. Remove `qa.trivy.image_archive_command` from existing configurations and use doctor's one-time cleanup and commit for a tracked Bureau cache. See the scanner setup and rollback steps in [From v3.8.0](migration.md#from-v380).
 
 ### v3.9.0 validation record
 
-The merged release content is on main `b65f8cf`. The fragments record local fixture validation and an earlier pinned Semgrep rule run on macOS arm64. The release branch's own suites and CI remain to be run by the maintainer.
+The merged release content is on main `31d14b7`. The fragments record local fixture validation and an earlier pinned Semgrep rule run on macOS arm64. The release branch's own suites and CI remain to be run by the maintainer.
 
 | Release check | Result / reference |
 |---|---|

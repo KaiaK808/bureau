@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c89c742436a8318cfb3dface7a80289838fd00e6be53f6e04ba90c37d4ff39c0">
+<meta name="bureau-source-sha256" content="25655191a19ec8af79247a91312b0ecded7c579e959c335b183d439723acbf46">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -35,11 +35,12 @@ href="https://github.com/KaiaK808/bureau/pull/160">#160</a> and <a
 href="https://github.com/KaiaK808/bureau/pull/161">#161</a> in
 first-parent merge order.</p>
 <p>The release adds opt-in offline Semgrep CE evidence in code review,
-opt-in offline Trivy dependency and configuration evidence in QA, and a
-fix for installed helper bytecode in shell stage commits. Both scanners
-start off, run under network denial when scanning, and offer advisory
-and blocking modes. Image scanning is outside this release. The v3.8.0
-publication record is also included.</p>
+opt-in offline Trivy dependency and configuration evidence in QA, a fix
+for installed helper bytecode in shell stage commits, and a merge gate
+that holds instead of passing when the commit-status read fails. Both
+scanners start off, run under network denial when scanning, and offer
+advisory and blocking modes. Image scanning is outside this release. The
+v3.8.0 publication record is also included.</p>
 <p>From v3.8.0, once published, stop drivers, preserve unfinished work
 and runtime records, compare installed script drift, update the source
 and resync the complete scripts scope. Remove
@@ -48,7 +49,7 @@ and use doctor's one-time cleanup and commit for a tracked Bureau cache.
 See the scanner setup and rollback steps in <a
 href="migration.html#from-v380">From v3.8.0</a>.</p>
 <h3 id="v390-validation-record">v3.9.0 validation record</h3>
-<p>The merged release content is on main <code>b65f8cf</code>. The
+<p>The merged release content is on main <code>31d14b7</code>. The
 fragments record local fixture validation and an earlier pinned Semgrep
 rule run on macOS arm64. The release branch's own suites and CI remain
 to be run by the maintainer.</p>

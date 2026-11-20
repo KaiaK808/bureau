@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="16edaab5dfcbb9a16fac22b3014ab5b8012e3a6a909c593851c9f961e3b806ee">
+<meta name="bureau-source-sha256" content="6ed5a0f0ea36ec7e3145a5c7419ae11c81e32b9676175263c25fa86ff9acce02">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -25,10 +25,11 @@ publication remain separate maintainer operations.</p>
 <p>The release includes <a
 href="https://github.com/KaiaK808/bureau/pull/158">#158</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/159">#159</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/160">#160</a> and <a
-href="https://github.com/KaiaK808/bureau/pull/161">#161</a> in
+href="https://github.com/KaiaK808/bureau/pull/160">#160</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/161">#161</a> and <a
+href="https://github.com/KaiaK808/bureau/pull/163">#163</a> in
 first-parent merge order. All changes are merged. The <a
-href="../../CHANGELOG.md#390---2026-11-20">changelog</a> collects the four
+href="../../CHANGELOG.md#390---2026-11-20">changelog</a> collects the five
 release fragments.</p>
 <h2 id="what-changed-since-v380">What changed since v3.8.0</h2>
 <h3 id="optional-semgrep-ce-evidence-in-code-review">Optional Semgrep CE
@@ -101,6 +102,21 @@ rules. Staging and doctor match the exact path components and existing
 aliases of the same directory. A separate application's
 <code>Scripts/__pycache__/</code> remains eligible for ordinary staging
 on a case-sensitive filesystem.</p>
+<h3 id="merge-gate-holds-on-an-unreadable-commit-status-read">Merge gate
+holds on an unreadable commit-status read</h3>
+<p>When <code>agents.merge_require_green_ci</code> is on, Bureau's CI
+merge gate reads check runs and legacy commit statuses for the PR head.
+Before this release, a failed status read counted as an empty status
+list, so green check runs could pass the gate while statuses, possibly a
+failing required context, were never read. A failed status read now
+holds the gate as not yet decided with a line naming the head SHA, for
+every combination of check runs and every
+<code>agents.merge_min_required_checks</code> value. The dedicated merge
+stage, the inline merge after review and the just-in-time recheck end
+with <code>2</code> and retry later. Decided check-run blockers keep
+their precedence, and <code>merge_require_green_ci: false</code> still
+switches the check off. This behaviour had been present since
+v3.1.0.</p>
 <h3 id="v380-publication-record">v3.8.0 publication record</h3>
 <p>The source-only record captures the published tag and merge commit,
 GitHub Release, CI results including one tag rerun, tested-tree
@@ -209,6 +225,9 @@ or with Trivy disabled.</td>
 <p>A shell stage that reaches its commit step with a staged Bureau cache
 change, including the cleanup deletion, stops with exit 24 and leaves
 the index untouched. See <a href="exit-codes.html">exit codes</a>.</p>
+<p>The CI merge gate no longer passes when the commit-status read fails:
+the merge ends with <code>2</code> (not yet decided) and retries, where
+it could merge before. No configuration key changes.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
 <p><strong>From v3.8.0, once v3.9.0 is published.</strong> Stop every
@@ -293,7 +312,7 @@ additions as described there. Retain runtime and scanner records for
 inspection. Prior commits, pushes, comments, labels and state moves
 persist through rollback.</p>
 <h2 id="validation">Validation</h2>
-<p>The merged content baseline is main <code>b65f8cf</code>. The merged
+<p>The merged content baseline is main <code>31d14b7</code>. The merged
 changes follow first-parent merge order.</p>
 <table>
 <thead>
@@ -324,13 +343,20 @@ changes follow first-parent merge order.</p>
 <td><code>b65f8cf</code></td>
 <td>Keep installed Bureau bytecode out of shell stage commits</td>
 </tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/163">#163</a></td>
+<td><code>31d14b7</code></td>
+<td>Hold the CI merge gate when the commit-status read fails</td>
+</tr>
 </tbody>
 </table>
-<p>The fragments record offline Semgrep fixtures and negative controls
-for the private runtime, review, receipt reuse and merge freshness. An
-earlier maintainer run of Semgrep 1.183.0 on macOS arm64 under network
-denial covered every rule fixture, a hostile <code>.semgrepignore</code>
-and inline <code>nosemgrep</code>.</p>
+<p>The merge gate fix has CI helper and merge-stage tests, including
+fail-before controls against the previous runtime. The fragments record
+offline Semgrep fixtures and negative controls for the private runtime,
+review, receipt reuse and merge freshness. An earlier maintainer run of
+Semgrep 1.183.0 on macOS arm64 under network denial covered every rule
+fixture, a hostile <code>.semgrepignore</code> and inline
+<code>nosemgrep</code>.</p>
 <p>Offline Trivy tests used a fake binary to cover the scanner boundary,
 cache, coverage and parser controls, QA placement, the disabled baseline
 and merge races. The bytecode fix used local fixtures for stage entry
