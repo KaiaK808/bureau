@@ -96,6 +96,38 @@ gate_comments() { jq '[.[] | select(.body | test("Bureau merge gate"))] | length
 # ── merge: the merge stage on its own ─────────────────────────────────────
 if want merge; then
 merge_sandbox
+# A failed legacy status read holds the merge even when check runs are green.
+# An old head with no runs must wait for that read, rather than claim no CI started.
+pr2_head_age 86400
+touch "$PR2_GH/fail_status"
+for run_state in green pending none; do
+  pr2_checks "$run_state"
+  gate; case_is "status read failure with $run_state runs" 2 not-yet "^ci_green: ci: gh commit-status query failed for $HEAD_SHA$"
+done
+pr2_checks red
+gate; case_is 'failing check keeps precedence over status read failure' 25 blocked "^ci_green: ci: failing check\\(s\\) on $HEAD_SHA: ci$"
+checks queued:3700
+gate; case_is 'queued-past-grace keeps precedence over status read failure' 25 blocked "$(queued_line ci 3700 3600)"
+rm -f "$PR2_GH/fail_status"
+pr2_checks green
+echo '{"statuses":[{"context":"legacy","state":"failure"}]}' > "$PR2_GH/status.json"
+gate; case_is 'readable failing status still blocks green runs' 25 blocked "^ci_green: ci: failing check\\(s\\) on $HEAD_SHA: legacy$"
+echo '{"statuses":[]}' > "$PR2_GH/status.json"
+gate
+[ "$LAST_RC" = 0 ] && pr2_merged || fail "merge: green runs with readable empty statuses did not merge (rc $LAST_RC)"
+# The explicit CI opt-out still skips both CI reads, including a failing status API.
+merge_sandbox
+touch "$PR2_GH/fail_status"
+pr2_checks red
+pr2_config '.agents.merge_require_green_ci = false'
+: > "$SANDBOX/gh_calls.log"
+gate
+[ "$LAST_RC" = 0 ] && pr2_merged || fail "merge: CI disabled with unreadable statuses did not merge (rc $LAST_RC)"
+if grep -qE '/(check-runs|status)([[:space:]]|$)' "$SANDBOX/gh_calls.log"; then
+  fail 'merge: CI disabled still queried check runs or statuses'
+fi
+echo 'PASS merge: unreadable statuses wait (2), decided CI blockers keep precedence, readable statuses and the CI opt-out retain their outcomes'
+merge_sandbox
 checks queued:3700
 gate; case_is 'queued 3700 s' 25 blocked "$(queued_line ci 3700 3600)"
 [ "$(printf '%s\n' "$LINES" | grep -c .)" = 1 ] || fail "merge: the queued check should be the only gate line: $LINES"
