@@ -225,23 +225,118 @@ def iac(name):
             or path.suffix.lower() in ('.tf', '.yaml', '.yml', '.json', '.hcl', '.bicep', '.template'))
 
 
-def remove_inline_ignores(data):
-    lines, removed = data.split(b'\n'), []
+def iac_language(name, data):
+    path = PurePosixPath(name); lower = path.name.lower()
+    if lower.startswith('dockerfile') or lower.endswith('.dockerfile'): return 'dockerfile'
+    suffix = path.suffix.lower()
+    if suffix == '.json' or (suffix == '.template' and data.lstrip().startswith(b'{')): return 'json'
+    if suffix in ('.yaml', '.yml', '.template'): return 'yaml'
+    return 'bicep' if suffix == '.bicep' else 'hcl'
+
+
+def inline_ignore_bounds(raw, language, state):
+    """Strip only complete, allow-listed single-line shapes.
+
+    Once a line is outside these shapes, subsequent context is unclassified.
+    Retain all later markers rather than trying to parse back out of it.
+    """
+    line = raw[:-1] if raw.endswith(b'\r') else raw
+    if language == 'json': return None, False
+    if state.get('opaque'): return None, True
+    if language == 'dockerfile':
+        # No delimiter grammar: even a quoted or dashed heredoc makes every
+        # subsequent marker uncertain, including those after an apparent end.
+        if b'<<' in line:
+            state['opaque'] = True
+            return None, True
+        start = len(line) - len(line.lstrip(b' \t'))
+        if line[start:].startswith(b'#'):
+            return ((start, len(line)) if b'trivy:ignore:' in line[start:] else None), False
+        return None, False
+    double = rb'"(?:[^"\\\r\n]|\\[^\r\n])*"'
+    identifier = rb'[A-Za-z_][A-Za-z0-9_-]*'
+    number = rb'-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?'
+    literal = rb'(?:' + number + rb'|true|false|null)'
+    if language == 'yaml':
+        single = rb"'(?:[^'\r\n]|'')*'"
+        # Plain scalars have a deliberately small character set. Node
+        # properties, block indicators and flow collections never match.
+        plain = rb'''(?![^#\r\n]*:[ \t])[A-Za-z0-9_./-][A-Za-z0-9_./:@%+?=~^$()'"\\ -]*'''
+        scalar = rb'(?:' + double + rb'|' + single + rb'|' + plain + rb')'
+        key = rb'(?:[A-Za-z0-9_./-]+|' + double + rb'|' + single + rb')'
+        code = rb'(?:- +)?(?:' + key + rb':[ \t]*(?:' + scalar + rb')?|' + scalar + rb')'
+    elif language == 'hcl':
+        scalar = rb'(?:' + double + rb'|' + literal + rb')'
+        assignment = identifier + rb'[ \t]*=[ \t]*' + scalar
+        block = identifier + rb'(?:[ \t]+' + double + rb'){0,2}[ \t]*\{'
+        code = rb'(?:' + assignment + rb'|' + block + rb'|[{}])'
+    else:  # Bicep: literal declarations and literal object properties only.
+        single = rb"'(?:[^'\\\r\n]|\\[^\r\n])*'"
+        scalar = rb'(?:' + single + rb'|' + literal + rb')'
+        declaration = rb'(?:var|param|output)[ \t]+' + identifier + rb'(?:[ \t]+(?:string|int|bool))?[ \t]*=[ \t]*' + scalar
+        code = rb'(?:' + declaration + rb'|' + identifier + rb':[ \t]*' + scalar + rb'|[{}])'
+    start = len(line) - len(line.lstrip(b' \t'))
+    # Comment-only lines have an empty, fully classified code prefix.
+    comment_start = (b'#',) if language == 'yaml' else ((b'#', b'//', b'/*') if language == 'hcl' else (b'//', b'/*'))
+    if not line[start:] or line[start:].startswith(comment_start):
+        index = start
+    else:
+        match = re.match(code, line[start:])
+        if not match or (language != 'yaml' and any(token in match[0] for token in (b'${', b'%{'))):
+            state['opaque'] = True
+            return None, True
+        index = start + match.end()
+    # The entire suffix must consist of whitespace and supported comments.
+    # A marker block must be the final comment, without trailing code.
+    while index < len(line):
+        if line[index:index + 1] in (b' ', b'\t'):
+            index += 1
+            continue
+        hash_comment = line[index:index + 1] == b'#' and (language == 'hcl' or
+                         (language == 'yaml' and (index == 0 or line[index - 1:index] in (b' ', b'\t'))))
+        if hash_comment or (language != 'yaml' and line.startswith(b'//', index)):
+            return ((index, len(line)) if b'trivy:ignore:' in line[index:] else None), False
+        if language != 'yaml' and line.startswith(b'/*', index):
+            end = line.find(b'*/', index + 2)
+            if end >= 0:
+                end += 2
+                if b'trivy:ignore:' not in line[index:end]:
+                    index = end
+                    continue
+                if not line[end:].strip(b' \t'): return (index, end), False
+        state['opaque'] = True
+        return None, True
+    return None, False
+
+
+def classify_inline_ignores(data, name):
+    """One original-byte classification drives both editing and coverage.
+
+    Retained markers, including known string/data literals, fail coverage
+    closed: they might still be interpreted as ignores by the scanner.
+    """
+    language, state = iac_language(name, data), {}
+    lines, removed, ambiguous = data.split(b'\n'), [], False
     for index, line in enumerate(lines):
+        bounds, uncertain = inline_ignore_bounds(line, language, state)
         if b'trivy:ignore:' not in line: continue
-        # Ignore markers are comments, including trailing IaC comments. Keep
-        # code before a comment and retain its LF slot so cause lines stay exact.
-        match = re.search(rb'#|//|/\*|<!--', line)
-        if match and b'trivy:ignore:' in line[match.start():]:
-            lines[index] = line[:match.start()].rstrip()
+        if bounds is not None and not uncertain:
+            start, end = bounds
+            lines[index] = line[:start] + line[end:]
             removed.append(index + 1)
-    return b'\n'.join(lines), removed
+        if uncertain or b'trivy:ignore:' in lines[index]: ambiguous = True
+    return b'\n'.join(lines), removed, ambiguous
 
 
-def snapshots(repo, trees, root):
+def remove_inline_ignores(data, name='infra.tf'):
+    return classify_inline_ignores(data, name)[:2]
+
+
+def snapshots(repo, trees, root, inline_issues=None):
     sides, manifests = {}, {}
     for side in ('base', 'head'):
         directory = root / side; directory.mkdir(mode=0o700)
+        if inline_issues is not None: inline_issues[side] = set()
         manifest = dict(files=[], removed_native_config=[], removed_inline_ignores=[], skipped_nonregular=[])
         for name, entry in sorted(trees[side].items()):
             if native(name): manifest['removed_native_config'].append(name); continue
@@ -250,7 +345,8 @@ def snapshots(repo, trees, root):
                 manifest['skipped_nonregular'].append(name); continue
             data = source.blob(repo, trees[side], name, limit=32 * 1024 * 1024)
             if iac(name):
-                data, removed = remove_inline_ignores(data)
+                data, removed, ambiguous = classify_inline_ignores(data, name)
+                if ambiguous and inline_issues is not None: inline_issues[side].add(name)
                 manifest['removed_inline_ignores'] += [dict(file=name, line=line) for line in removed]
             target = directory / name; target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             target.write_bytes(data)
@@ -480,14 +576,48 @@ def pnpm_names(text):
 def yarn_names(text):
     result = set()
     selector = re.compile(r'''"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s,\[\]{}"']+''')
+    quoted = r'''"(?:[^"\\]|\\.)*"|'(?:[^']|'')*' '''.strip()
+    key = r'(?:' + quoted + r'|[A-Za-z0-9_@./+-]+)'
+    # Only tool-written plain tokens, compact ranges and platform conditions.
+    # Reserved YAML leading forms and arbitrary spaced text never match.
+    # A trailing colon would make the value a nested mapping key, so a plain
+    # token never ends with one.
+    token = r'[A-Za-z0-9_./](?:[A-Za-z0-9_@./:+~^<>=?%&*!$(),;|-]*[A-Za-z0-9_@./+~^<>=?%&*!$(),;|-])?'
+    compact_range = r'(?:[~^=]|<=?)[0-9][A-Za-z0-9.*+_-]*'
+    condition = r'(?:os|cpu|libc)=[A-Za-z0-9_-]+'
+    conditions = condition + r'(?: [|&] ' + condition + r')*'
+    plain = r'(?:' + token + r'|' + compact_range + r'|' + conditions + r')'
+    # Classic's unquoted atoms had a narrower punctuation set already.
+    atom = r'(?:[A-Za-z0-9_./]|(?:[~^=]|<=?)(?=[0-9]))(?:[A-Za-z0-9_@./:+~^<=?%$(),;-]*[A-Za-z0-9_@./+~^<=?%$(),;-])?'
+    scalar = r'(?:' + quoted + r'|' + plain + r'|\{\}|\[\])'
+    body = re.compile(r'(' + key + r')(?::(?: (' + scalar + r'))?| (' + quoted + r'|' + atom + r'))')
+    integrity_hash = r'sha(?:1|256|384|512)-[A-Za-z0-9+/]+={0,2}'
+    integrity = re.compile(r'integrity ' + integrity_hash + r'(?: ' + integrity_hash + r')+')
+    # Each entry is whether that parent opens a map. Both Yarn generations
+    # write two-space nesting; body metadata never contributes selector names.
+    parents = []
     for line in text.split('\n'):
-        if not line or line.startswith('#'): continue
+        if not line.strip() or line.startswith('#'): continue
         if line[0].isspace():
-            if line.lstrip().startswith('#'): raise ValueError('unsupported indented Yarn comment')
+            indent = len(line) - len(line.lstrip(' '))
+            if '\t' in line or indent % 2: raise ValueError('unsupported Yarn indentation')
+            level = indent // 2
+            if not level or level > len(parents): raise ValueError('unsupported Yarn indentation jump')
+            del parents[level:]
+            if not parents or not parents[-1]: raise ValueError('unsupported Yarn scalar nesting')
+            value = line[indent:].rstrip(' ')
+            if value.startswith('- '): raise ValueError('unsupported Yarn sequence')
+            match = body.fullmatch(value)
+            if not match and not integrity.fullmatch(value): raise ValueError('unsupported Yarn body')
+            if match:
+                for token in (match[1], match[2], match[3]):
+                    if token and token.startswith('"'): json.loads(token)
+            parents.append(bool(match and match[2] is None and match[3] is None))
             continue
         # In particular, never strip a trailing comment before validating the
         # complete header: it could otherwise contribute a fake selector.
         if '#' in line or not line.endswith(':'): raise ValueError('unsupported Yarn header')
+        parents = [True]
         if line == '__metadata:': continue  # Berry's tool-written metadata map.
         tail = line[:-1]
         if not tail: raise ValueError('empty Yarn header')
@@ -543,7 +673,7 @@ def inventory_name(name):
             or bool(re.fullmatch(r'(?:docker-)?compose(?:[.-].+)?\.ya?ml', lower)) or path.suffix == '.tf')
 
 
-def inventory(directory, skipped=()):
+def inventory(directory, skipped=(), inline_issues=None):
     names = {p.relative_to(directory).as_posix() for p in directory.rglob('*') if p.is_file()}
     all_names = names | set(skipped)
     targets, issues, unchecked = set(), [], []
@@ -552,6 +682,13 @@ def inventory(directory, skipped=()):
     # Validate locks independently of manifests, once per file. Never let one
     # unreadable lock hide a second lock's stale names or report a clean orphan.
     for name in sorted(names - set(skipped)):
+        if iac(name):
+            try:
+                ambiguous = (name in inline_issues if inline_issues is not None else
+                             classify_inline_ignores((directory / name).read_bytes(), name)[2])
+                if ambiguous: issue(name, 'inline ignore format not recognised')
+            except (OSError, ValueError):
+                issue(name, 'inline ignore format not recognised')
         if PurePosixPath(name).name not in LOCKS - {'go.sum'}: continue
         try: parsed_locks[name] = lock_names(directory / name)
         except (OSError, ValueError, KeyError, TypeError, UnicodeError):
@@ -744,11 +881,12 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
         trees = dict(base=source.tree(repo, base), head=source.tree(repo, head))
         policy_bytes = source.blob(repo, trees['base'], EXCEPTIONS)
         policy_digest = scan.digest(dict(exceptions=None if policy_bytes is None else scan.sha(policy_bytes),
-                                         checks='embedded', inventory='canonical-v3', flags=FLAGS))
+                                         checks='embedded', inventory='canonical-v5', neutralization='recognised-shapes-v2', flags=FLAGS))
         with tempfile.TemporaryDirectory(prefix='bureau-trivy-') as temporary:
             root = Path(temporary).resolve()
+            inline_issues = dict(base=set(), head=set())
             if any(inventory_name(name) and not native(name) for entries in trees.values() for name in entries):
-                sides, manifests = snapshots(repo, trees, root)
+                sides, manifests = snapshots(repo, trees, root, inline_issues)
             else:
                 # An unrelated large or non-regular source file must not turn
                 # an empty eligible inventory into a scanner prerequisite error.
@@ -758,7 +896,7 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
                     manifests[side] = dict(files=[], removed_native_config=sorted(n for n in trees[side] if native(n)),
                                            removed_inline_ignores=[], skipped_nonregular=[])
             report['snapshots'] = manifests
-            inventories = {side:inventory(path, manifests[side]['skipped_nonregular']) for side, path in sides.items()}
+            inventories = {side:inventory(path, manifests[side]['skipped_nonregular'], inline_issues[side]) for side, path in sides.items()}
             report['inventory'] = inventories
             for key in ('removed_native_config', 'removed_inline_ignores'):
                 extra[key] = {side:manifests[side][key] for side in sides}

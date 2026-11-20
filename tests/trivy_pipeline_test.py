@@ -213,14 +213,32 @@ if case not in ('off','no-harness-off'):
                                mode='blocking' if 'blocking' in case or 'negative' in case else 'advisory'))
 (repo/'.bureau.json').write_text(json.dumps(config))
 (repo/'.gitignore').write_text('.bureau.json\n.env\n.fake-origin.git/\n.specify/\nscripts/\nlogs/\n*.log\n__pycache__/\nfake_claude_counter\n')
-(repo/'requirements.txt').write_text('badpkg==1.0\n')
+(repo/'requirements.txt').write_text('safe==1.0\n' if case.startswith('parsing-') else 'badpkg==1.0\n')
+if case.startswith('parsing-yarn-'):
+    body='unsupported body text'
+    if 'nested-mapping' in case:body='dependencies: missing: 2.0.0'
+    if 'nested-sequence' in case:body='dependencies: - missing'
+    if 'reserved-question' in case:body='dependencies: ? missing'
+    if 'reserved-at' in case:body='dependencies: @missing'
+    if 'reserved-percent' in case:body='dependencies: %TAG'
+    (repo/'yarn.lock').write_text('"locked@npm:^1":\n  version: 1.0.0\n  '+body+'\n')
+if case.startswith('parsing-inline-'):
+    data='endpoint = "https://example.invalid # trivy:ignore:AVD-FIXTURE\n'
+    if 'interpolation' in case:data='value = "${join("", ["https://example.invalid"])}" # trivy:ignore:X\n'
+    if 'docker' in case:data='FROM scratch\nRUN echo secret # trivy:ignore:X\n'
+    if 'docker-heredoc' in case:data='FROM alpine\nRUN cat <<EOF.txt\nEOF\n# trivy:ignore:X\nEOF.txt\n'
+    if 'yaml-anchor-quote' in case:data='value: &anchor.v1 "keep # literal" # trivy:ignore:X\n'
+    if 'yaml-anchor-block' in case:data='value: &anchor.v1 |\n  # trivy:ignore:X\n'
+    (repo/('Dockerfile' if 'docker' in case else 'compose.yaml' if 'yaml' in case else 'infra.tf')).write_text(data)
 provider=repo/'logs/provider.sh'
 provider.write_text('#!/bin/bash\nset -euo pipefail\nprintf "%s\\n" "$*" > "$SANDBOX/logs/prompt.txt"\n'+
     ('printf "# QA added test\\n" > qa_added_test.py\n' if case=='postcommit' else '')+
     "printf '%s\\n' '{\"status\":\"GREEN\",\"tests_added\":0,\"tests_failing\":0,\"coverage_notes\":\"Coverage checked.\"}'\n")
 provider.chmod(0o700)
 def git(*args):return subprocess.check_output(['git','-C',str(repo),*args],text=True).strip()
-git('add','.gitignore','requirements.txt','specs');git('commit','-qm','test: QA source');git('push','-q','origin','test-branch')
+git('add','.gitignore','requirements.txt','specs')
+if case.startswith('parsing-'):git('add','yarn.lock' if 'yarn' in case else 'Dockerfile' if 'docker' in case else 'compose.yaml' if 'yaml' in case else 'infra.tf')
+git('commit','-qm','test: QA source');git('push','-q','origin','test-branch')
 (repo/'logs/before-head').write_text(git('rev-parse','HEAD'))
 e=f.load('evidence',repo/'scripts/bureau-evidence.py');store=e.Store(repo/'.git/bureau');run=uuid.uuid4().hex
 store.begin_run(run,'TEAM-1',repo,git('rev-parse','HEAD'));attempt=store.begin_attempt(run,'TEAM-1','qa','stage',repo,git('rev-parse','HEAD'))
@@ -293,6 +311,39 @@ class QATests(unittest.TestCase):
                 if blocked:
                     self.assertNotIn('move_issue\tTEAM-1\tstate-build-review',value['snapshot']['calls']);self.assertIn('needs-human',value['snapshot']['calls'])
                 else:self.assertIn('move_issue\tTEAM-1\tstate-build-review',value['snapshot']['calls'])
+
+    def test_parsing_gaps_keep_existing_advisory_and_blocking_routes(self):
+        self.parsing_gaps((('yarn','yarn.lock','lockfile format not recognised'),
+                           ('inline','infra.tf','inline ignore format not recognised')))
+
+    def test_per_type_and_nested_scalar_gaps_keep_existing_routes(self):
+        self.parsing_gaps((('yarn-nested-mapping','yarn.lock','lockfile format not recognised'),
+                           ('yarn-nested-sequence','yarn.lock','lockfile format not recognised'),
+                           ('inline-interpolation','infra.tf','inline ignore format not recognised'),
+                           ('inline-docker','Dockerfile','inline ignore format not recognised')))
+
+    def test_narrowed_shapes_keep_existing_advisory_and_blocking_routes(self):
+        self.parsing_gaps((('yarn-reserved-question','yarn.lock','lockfile format not recognised'),
+                           ('yarn-reserved-at','yarn.lock','lockfile format not recognised'),
+                           ('yarn-reserved-percent','yarn.lock','lockfile format not recognised'),
+                           ('inline-yaml-anchor-quote','compose.yaml','inline ignore format not recognised'),
+                           ('inline-yaml-anchor-block','compose.yaml','inline ignore format not recognised'),
+                           ('inline-docker-heredoc','Dockerfile','inline ignore format not recognised')))
+
+    def parsing_gaps(self,cases):
+        for parser,name,reason in cases:
+            for mode in ('advisory','blocking'):
+                with self.subTest(parser=parser,mode=mode):
+                    value=self.run_case('parsing-'+parser+'-'+mode);blocked=mode=='blocking'
+                    self.assertEqual(value['code'],'25' if blocked else '0',value['stdout']+value['stderr'])
+                    self.assertEqual(len(value['receipts']),1);receipt=value['receipts'][0]
+                    self.assertEqual(receipt['status'],'reduced_coverage')
+                    self.assertEqual(receipt['findings_new'],0);self.assertEqual(receipt['blocking'],blocked)
+                    self.assertIn(reason+': '+name,receipt['reason'])
+                    if blocked:
+                        self.assertIn('needs-human',value['snapshot']['calls'])
+                        self.assertNotIn('move_issue\tTEAM-1\tstate-build-review',value['snapshot']['calls'])
+                    else:self.assertIn('move_issue\tTEAM-1\tstate-build-review',value['snapshot']['calls'])
 
     def test_negative_control_removed_qa_scan_routes_unsafe_head(self):
         value=self.run_case('negative-blocking');self.assertEqual(value['code'],'0');self.assertEqual(value['receipts'],[])
