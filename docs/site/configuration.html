@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d56d19a9ce5f34e804c796a92853731ee7df5f1128e5bbb072c98ac5c0775fee">
+<meta name="bureau-source-sha256" content="2927a343839cba92af80429c919a15d583562ec742a061b3273bddd8a569e9db">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -451,17 +451,30 @@ repository-relative <code>.yml</code>/<code>.yaml</code> path; unknown
 keys and values are configuration errors. Extra rules and
 <code>.bureau/semgrep-ignore.json</code> are read only from the pinned
 PR base.</p>
-<p>The operator supplies a dedicated venv for <strong>Semgrep
-1.183.0</strong>, selected by the process environment variable
-<code>BUREAU_SEMGREP_VENV</code>. The default is
-<code>&lt;shared Git directory&gt;/bureau/tools/semgrep/venv</code>,
-using the same state root as runtime ownership. Bureau installs or
-downloads nothing. Prepare the environment separately with the standard
-library <code>venv</code> module and install the locked wheels:</p>
+<p>The operator prepares a dedicated venv for <strong>Semgrep
+1.183.0</strong>. To use a custom path, set
+<code>BUREAU_SEMGREP_VENV</code> in the setup shell and in the
+environment that starts Bureau's drivers. For example,
+<code>export BUREAU_SEMGREP_VENV="$HOME/.local/share/bureau/semgrep/venv"</code>.
+With the variable unset, Bureau uses
+<code>&lt;shared Git directory&gt;/bureau/tools/semgrep/venv</code>. Run
+these commands from the adopting repository root and choose the
+interpreter assignment for your platform.</p>
 <div class="sourceCode" id="cb4"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-m</span> venv <span class="at">--without-pip</span> <span class="st">&quot;</span><span class="va">$BUREAU_SEMGREP_VENV</span><span class="st">&quot;</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install <span class="at">--python</span> <span class="st">&quot;</span><span class="va">$BUREAU_SEMGREP_VENV</span><span class="st">/bin/python&quot;</span> <span class="dt">\</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--require-hashes</span> <span class="at">--only-binary</span> :all: <span class="at">-r</span> scripts/bureau-semgrep-lock.txt</span></code></pre></div>
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">semgrep_python</span><span class="op">=</span>python3.14  <span class="co"># macOS arm64</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="co"># semgrep_python=python3.12  # Linux x86_64</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="va">semgrep_venv</span><span class="op">=</span><span class="st">&quot;</span><span class="va">${BUREAU_SEMGREP_VENV</span><span class="op">:-</span><span class="va">}</span><span class="st">&quot;</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="bu">[</span> <span class="ot">-z</span> <span class="st">&quot;</span><span class="va">$semgrep_venv</span><span class="st">&quot;</span> <span class="bu">]</span><span class="kw">;</span> <span class="cf">then</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="va">semgrep_common_dir</span><span class="op">=</span><span class="va">$(</span><span class="fu">git</span> rev-parse <span class="at">--git-common-dir</span><span class="va">)</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="va">semgrep_common_dir</span><span class="op">=</span><span class="va">$(CDPATH</span><span class="op">=</span> <span class="bu">cd</span> <span class="at">--</span> <span class="st">&quot;</span><span class="va">$semgrep_common_dir</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span> <span class="bu">pwd</span> <span class="at">-P</span><span class="va">)</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    <span class="va">semgrep_venv</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$semgrep_common_dir</span><span class="st">/bureau/tools/semgrep/venv&quot;</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="cf">fi</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;</span><span class="va">$semgrep_python</span><span class="st">&quot;</span> <span class="at">-m</span> venv <span class="at">--without-pip</span> <span class="st">&quot;</span><span class="va">$semgrep_venv</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;</span><span class="va">$semgrep_venv</span><span class="st">/bin/python&quot;</span> <span class="at">-B</span> <span class="at">-c</span> <span class="st">&#39;import platform; print(platform.python_implementation(), platform.python_version(), platform.machine())&#39;</span></span></code></pre></div>
+<p>Confirm <code>CPython 3.14.x arm64</code> on macOS or
+<code>CPython 3.12.x x86_64</code> on Linux. Install the locked wheels
+with
+<code>uv pip install --python "$semgrep_venv/bin/python" --require-hashes --only-binary :all: -r scripts/bureau-semgrep-lock.txt</code>.</p>
 <p>Do not create it with <code>uv venv</code> or
 <code>virtualenv</code>: both add <code>_virtualenv.pth</code> and
 <code>_virtualenv.py</code> to <code>site-packages</code>, and
@@ -473,8 +486,9 @@ some dependencies are compiled, every CPython minor needs its own
 manifest. This release ships <code>darwin-arm64-cp314</code> and
 <code>linux-x86_64-cp312</code>. With any other interpreter, an enabled
 scan with eligible files reports <strong>unavailable</strong> and names
-the missing manifest. Missing venvs and missing/mismatched manifests
-never abort advisory review. There is no configurable version or
+the missing manifest. Advisory review treats unavailable scanner
+results, including those caused by a missing venv or a missing or
+mismatched manifest, as evidence. There is no configurable version or
 manifest override.</p>
 <p>Maintainers generate a universal wheel-only lock for
 <code>semgrep==1.183.0</code> with
@@ -488,12 +502,11 @@ wheels, maps purelib/platlib payloads to site-packages and refuses
 unsupported installation schemes or path collisions. Review the lock,
 manifest and tool compatibility together before shipping them. The
 maintainer script is not installed in adopting repositories.</p>
-<p>Once per measurement, after selecting the manifest, Bureau copies
-site-packages into a private runtime under the run's
-<code>mkdtemp</code> directory (mode 0700). Every component from the
-operator venv root through
+<p>Once per measurement, Bureau copies site-packages into a private
+runtime under the run's <code>mkdtemp</code> directory (mode 0700).
+Every component from the operator venv root through
 <code>lib/python3.&lt;minor&gt;/site-packages</code> must be a real
-directory, checked with <code>lstat</code>; all entries inside must be
+directory, checked with <code>lstat</code>. All entries inside must be
 regular files or real directories, including excluded entries. Bureau
 anchors traversal to directory descriptors, opens source files with
 <code>O_NOFOLLOW</code> and hashes the same reads it writes into the
@@ -501,48 +514,51 @@ copy, preserving only the executable bit (files 0700 or 0600,
 directories 0700). It compares the copied file set, including
 <code>semgrep-core</code>, with the manifest before the interpreter
 probe, then re-hashes the private copy before each scan side. Changed,
-missing or additional files make the tool unavailable; changes to the
-operator tree after copying cannot affect execution. Install metadata
-inside <code>*.dist-info</code> (<code>RECORD</code>,
-<code>INSTALLER</code>, <code>direct_url.json</code>,
-<code>REQUESTED</code> and uv's <code>uv_cache.json</code>) and adjacent
-<code>__pycache__</code> directories are excluded from copied files and
-manifest comparison. The operator venv must contain exactly one
-<code>lib/python3.&lt;minor&gt;/site-packages</code> directory; its
+missing or additional files in the copy make the tool unavailable. Later
+changes to the original site-packages tree leave the copied package
+bytes intact. Install metadata inside <code>*.dist-info</code>
+(<code>RECORD</code>, <code>INSTALLER</code>,
+<code>direct_url.json</code>, <code>REQUESTED</code> and uv's
+<code>uv_cache.json</code>) and adjacent <code>__pycache__</code>
+directories are excluded from copied files and manifest comparison. The
+operator venv must contain exactly one
+<code>lib/python3.&lt;minor&gt;/site-packages</code> directory. Its
 minor and the selected manifest's platform must match the interpreter
-probe. The operator's system Python itself is trusted, outside the
-package manifest.</p>
+probe. The resolved interpreter is a trusted dependency outside the
+package snapshot and manifest.</p>
 <p>The <code>-I -S</code> interpreter probe and both scan sides share
-one private shadow venv per measurement. Bureau writes exactly two
-<code>pyvenv.cfg</code> lines:
+one private shadow venv per measurement. Bureau writes
 <code>home = &lt;base interpreter directory&gt;</code> and
-<code>include-system-site-packages = false</code>. The shadow's
-<code>bin</code> contains only <code>python</code>, a symlink to the
-resolved real path of the operator venv's <code>bin/python</code>; that
-base must be an absolute regular executable file. The shadow's
-<code>lib/python3.&lt;minor&gt;/site-packages</code> is the verified
-private copy, a real directory preserving the package layout, including
-<code>semgrep/bin/libs</code> for resource-based core discovery. Bureau
-never executes the operator venv's own Python path or uses its
-<code>pyvenv.cfg</code> settings, including duplicate system-package
-settings. Each call uses
-<code>-I -B -X pycache_prefix=&lt;fresh directory&gt;</code>; the probe
-additionally uses <code>-S</code>. Operator launchers,
+<code>include-system-site-packages = false</code> as the two lines of
+the shadow's <code>pyvenv.cfg</code>. The shadow's <code>bin</code>
+contains only <code>python</code>, a symlink to the resolved real path
+of the operator venv's <code>bin/python</code>. The resolved path must
+be an absolute regular executable file. In a venv created with
+<code>--copies</code>, it can reside inside the operator venv, where
+replacing the executable after the package copy can affect the scan. The
+shadow's <code>lib/python3.&lt;minor&gt;/site-packages</code> is the
+verified private copy, a real directory preserving the package layout,
+including <code>semgrep/bin/libs</code> for resource-based core
+discovery. Bureau invokes Python through the shadow symlink and uses the
+shadow's generated settings. Each call uses
+<code>-I -B -X pycache_prefix=&lt;fresh directory&gt;</code>. The probe
+additionally uses <code>-S</code>. Operator Semgrep launchers,
 executable-adjacent fallback helpers, system site-packages and adjacent
 bytecode are excluded from execution.</p>
-<p>Every scan and interpreter probe receives an allowlist environment:
-exactly <code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
-<code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code>,
-<code>TMPDIR</code>, <code>LANG=C.UTF-8</code>, <code>TZ=UTC</code>,
+<p>Every scan and interpreter probe receives exactly
+<code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
+<code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code> and
+<code>TMPDIR</code>, plus <code>LANG=C.UTF-8</code>,
+<code>TZ=UTC</code>, <code>PYTHONDONTWRITEBYTECODE=1</code>,
 <code>SEMGREP_SEND_METRICS=off</code>,
 <code>SEMGREP_ENABLE_VERSION_CHECK=0</code> and
 <code>DO_NOT_TRACK=1</code>. The operator venv's <code>bin</code>
 directory is excluded from PATH, and helpers resolving beside
-<code>sys.executable</code> see only the shadow's <code>python</code>;
-the interpreter is always invoked by its absolute shadow path. Provider
+<code>sys.executable</code> see only the shadow's <code>python</code>.
+Bureau invokes the interpreter by its absolute shadow path. Provider
 keys, Bureau secrets, GitHub tokens and other Semgrep settings do not
-pass through. Runtime network denial is required for eligible scans:
-Linux uses a probed <code>unshare -rn</code> user/network namespace;
+pass through. Runtime network denial is required for eligible scans.
+Linux uses a probed <code>unshare -rn</code> user/network namespace and
 macOS uses <code>sandbox-exec</code> with the shipped
 <code>bureau-scan-nonet.sb</code> profile denying <code>network*</code>.
 If isolation cannot run, the status is <strong>not_measured</strong>,
@@ -578,23 +594,28 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb5-1"><a href="
 reasonless suppressions fail measurement. The receipt distinguishes
 <code>findings_new</code>, <code>findings_existing</code> and
 <code>findings_suppressed</code>.</p>
-<p>Statuses are <code>measured</code>, <code>not_measured</code>,
-<code>unavailable</code>, <code>not_applicable</code> and
-<code>reduced_coverage</code>; every non-measured status names a reason.
+<p>Semgrep emits <code>measured</code>, <code>not_measured</code>,
+<code>unavailable</code> and <code>not_applicable</code>. The shared
+receipt format also defines <code>reduced_coverage</code> for other
+scanners. Every status other than <code>measured</code> names a reason.
 A measured result requires exit 0, valid JSON, no errors and coverage of
-every explicit target. Timeouts, skipped targets and tool/parse errors
-are not measured. Bureau builds the snapshots and decides applicability
-first: if neither side has eligible files, the result is
-<code>not_applicable</code> and passes blocking mode without checking
-the venv, isolation, interpreter or runtime manifest, or starting any
-scanner or probe. Its receipt still binds the version, lock hash and
-hashes of the shipped manifest files without executing them. Semgrep
-does not emit reduced coverage: incomplete coverage is not measured.
-None of these statuses is rendered as clean.</p>
-<p>In advisory mode the scan reports evidence and review continues.
-Specialists finish their independent first pass before receiving the
-projection in the existing late step, for all three roles, even with
-Impeccable disabled. In blocking mode, new findings at the configured
+every explicit target. Scan timeouts, scanner execution or output
+errors, and incomplete target coverage yield <code>not_measured</code>.
+Bureau loads the rules and validates the base suppressions before
+building the snapshots. A configured <code>extra_rules</code> file
+missing from the pinned base yields <code>not_measured</code> even when
+neither side has eligible files. After the policy checks succeed, an
+empty eligible set on both sides yields <code>not_applicable</code> and
+passes blocking mode without checking the venv, isolation, interpreter
+or runtime manifest, or starting any scanner or probe. Its receipt still
+binds the version, lock hash and hashes of the shipped manifest files.
+The projection shows the actual status.</p>
+<p>In advisory mode, Bureau reports Semgrep evidence and skips the
+scanner's verdict floor. On a fresh review, any Semgrep projection,
+including <code>not_applicable</code>, triggers one late provider call
+per specialist after the three independent passes complete, even with
+Impeccable disabled. Malformed supplemental output stops the review
+stage with exit 22. In blocking mode, new findings at the configured
 severity or higher, not-measured results and unavailable tooling lower
 APPROVE to REQUEST_CHANGES after the build fold and before the existing
 cycle/round caps. BLOCK stays BLOCK. The caps still escalate unresolved
@@ -646,16 +667,18 @@ match protects against a subsequent head push. Disabled and advisory
 merge behaviour and GitHub/git call logs remain unchanged. The older
 Code Review v2 verdict reader's head binding is unchanged by this
 scanner integration.</p>
-<p><strong>Upgrade:</strong> compare installed script drift, resync the
-entire scripts scope (including the shared helper, sandbox profile,
-rules, lock and platform manifests), and restart drivers together.
-Existing repositories stay off. Install the reviewed pinned venv and
-ensure network isolation works before opting into advisory mode;
-blocking is a separate project choice. Offline fake scanner tests cover
-the boundary and pipelines. The optional real-binary test runs only with
-<code>BUREAU_SEMGREP_VENV</code> set on GitHub-hosted Ubuntu; real pin,
-flag/rule compatibility and adopting-repository qualification require
-that separate validation.</p>
+<p><strong>Upgrade:</strong> compare installed script drift and resync
+the entire scripts scope (including the shared helper, sandbox profile,
+rules, lock and platform manifests). Existing repositories stay off.
+Complete any Semgrep setup before restarting drivers together: install
+the reviewed pinned venv and set <code>BUREAU_SEMGREP_VENV</code> in the
+environment the drivers start with, unless you use the shared-state
+fallback. Ensure network isolation works before opting into advisory
+mode; blocking is a separate project choice. Offline fake scanner tests
+cover the boundary and pipelines. The optional real-binary test runs
+only with <code>BUREAU_SEMGREP_VENV</code> set on GitHub-hosted Ubuntu;
+real pin, flag/rule compatibility and adopting-repository qualification
+require that separate validation.</p>
 <h3 id="qatrivy"><code>qa.trivy</code></h3>
 <div class="sourceCode" id="cb6"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
@@ -684,10 +707,13 @@ GitHub and Git call logs, are unchanged.</p>
 <p>Bureau ships metadata for <strong>Trivy 0.76.1</strong>, released
 <strong>2026-10-21</strong>, in
 <code>scripts/bureau-trivy-pins.json</code>. Only Linux x86_64 and macOS
-arm64 have reviewed archive and extracted-binary pins; other platforms
+arm64 have reviewed archive and extracted-binary pins. Other platforms
 report <strong>unavailable</strong> with the missing platform pin named.
-The operator supplies a regular executable with
-<code>BUREAU_TRIVY_BIN</code>; the fallback is
+The operator supplies a regular executable. For a custom location,
+export the absolute binary path as <code>BUREAU_TRIVY_BIN</code> in both
+the refresh shell and the stage launcher's environment. Bureau's
+<code>.env</code> loader ignores this key. With the variable unset,
+Bureau uses
 <code>&lt;shared Git directory&gt;/bureau/tools/trivy/trivy</code>.
 Bureau does not install or download a scanner. There is no version,
 digest or executable override in repository configuration. Never use the
@@ -729,11 +755,16 @@ can resolve there. Bureau re-hashes the private binary before each
 execution. Changes to the operator path after the copy have no
 effect.</p>
 <p>The operator refreshes the database separately, with network access,
-outside every stage:</p>
+outside every stage. Set <code>BUREAU_TRIVY_CACHE</code> in your shell
+to the same absolute path outside the repository as
+<code>qa.trivy.cache_dir</code>. The refresh command takes its
+destination from <code>--cache-dir</code>.</p>
 <div class="sourceCode" id="cb8"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-trivy.py refresh <span class="at">--cache-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_TRIVY_CACHE</span><span class="st">&quot;</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Include Java&#39;s DB when Java analysis needs it:</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-trivy.py refresh <span class="at">--cache-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_TRIVY_CACHE</span><span class="st">&quot;</span> <span class="at">--java</span></span></code></pre></div>
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Replace the example path with the absolute path from qa.trivy.cache_dir.</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TRIVY_CACHE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.cache/bureau/trivy&quot;</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-trivy.py refresh <span class="at">--cache-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_TRIVY_CACHE</span><span class="st">&quot;</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Use this command when Java analysis needs its DB as well.</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="co"># python3 -I -B scripts/bureau-trivy.py refresh --cache-dir &quot;$BUREAU_TRIVY_CACHE&quot; --java</span></span></code></pre></div>
 <p>The refresh destination must be empty or a Bureau-managed cache,
 outside the repository. Refresh first verifies and privately copies the
 pinned binary, downloads into a fresh private directory using
@@ -746,12 +777,13 @@ download leaves the previous cache intact.
 <code>UpdatedAt</code>, <code>NextUpdate</code> and
 <code>DownloadedAt</code> per database, every cache file's hash, and the
 digest of that complete file inventory, including any external checks
-bundle. Scans copy and hash the same reads, require agreement with the
-record and database metadata, and judge freshness using
-<strong>UpdatedAt</strong>, never DownloadedAt. A changed cache is
-<strong>not_measured</strong>; downloading old data again cannot make it
-fresh. Future timestamps and unreadable/non-regular cache inputs also
-fail measurement.</p>
+bundle. Scans copy and hash the same reads and require agreement with
+the record and database metadata. The freshness check uses each
+database's <strong>UpdatedAt</strong>. Measurement fails if that
+timestamp is more than <code>max_db_age_hours</code> old or more than
+one hour ahead of the current time. A changed cache is
+<strong>not_measured</strong>. Downloading old data again cannot make it
+fresh. Unreadable or non-regular cache inputs also fail measurement.</p>
 <p>The scan cache retains only <code>db/</code> and optional
 <code>java-db/</code>; all external checks bundles and other cache
 content are removed. Misconfiguration checks therefore come from the
@@ -759,20 +791,20 @@ pinned binary's embedded bundle, whose identity is the binary digest.
 The snapshot manifest records removals. Before each filesystem scan,
 Bureau re-checks the private database bytes and discards non-database
 cache content again.</p>
-<p>Every scanner execution, including refresh, receives only
+<p>Every scanner execution, including refresh, receives exactly
 <code>PATH=/usr/bin:/bin</code>, private <code>HOME</code>,
-<code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code>,
-<code>TMPDIR</code>, <code>LANG=C.UTF-8</code> and <code>TZ=UTC</code>.
-No caller <code>TRIVY_*</code>, provider secret, GitHub token or Docker
-connection setting passes through. Every scan runs under runtime network
-denial: probed <code>unshare -rn</code> on Linux or
+<code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code> and
+<code>TMPDIR</code>, plus <code>LANG=C.UTF-8</code>, <code>TZ=UTC</code>
+and <code>PYTHONDONTWRITEBYTECODE=1</code>. No caller
+<code>TRIVY_*</code>, provider secret, GitHub token or Docker connection
+setting passes through. Every scan runs under runtime network denial
+using probed <code>unshare -rn</code> on Linux or
 <code>sandbox-exec</code> with <code>bureau-scan-nonet.sb</code> denying
-<code>network*</code> on macOS. Isolation failure is
-<strong>not_measured</strong>, reason
-<code>network isolation unavailable</code>; scans never fall back to
-online execution. The refresh CLI is the sole networked scanner
-operation and is absent from the shell stage helper's allowed
-commands.</p>
+<code>network*</code> on macOS. If isolation fails, scans report
+<strong>not_measured</strong> with reason
+<code>network isolation unavailable</code>. The refresh CLI is the sole
+networked scanner operation and is absent from the shell stage helper's
+allowed commands.</p>
 <p>All release-dependent flags live in <code>bureau-trivy.py</code>'s
 <code>FLAGS</code> table. Filesystem scans use
 <code>--offline-scan --skip-db-update --skip-java-db-update --skip-check-update --skip-vex-repo-update --skip-version-check --disable-telemetry</code>,
@@ -785,10 +817,14 @@ snapshots of the pinned base and final head. Native
 <code>trivy.yaml</code>, <code>trivy.yml</code>,
 <code>.trivyignore</code>, <code>.trivyignore.yaml</code> and
 <code>.trivyignore.yml</code> files are removed throughout both
-snapshots. IaC <code>trivy:ignore:</code> comment lines are blanked, and
-trailing ignore comments are stripped while preserving code and LF
-coordinates; paths and line numbers are projected. This neutralization
-does not depend on an engine flag.</p>
+snapshots. For IaC lines with <code>trivy:ignore:</code>, Bureau strips
+from the first <code>#</code>, <code>//</code>, <code>/*</code> or
+<code>&lt;!--</code> when the ignore marker appears in that suffix,
+preserving LF line breaks. Inline-ignore stripping can truncate an IaC
+line at <code>//</code> inside a quoted string before a trailing
+<code>trivy:ignore:</code> comment, so Trivy can receive altered
+configuration text. Paths and line numbers are projected. This
+neutralization does not depend on an engine flag.</p>
 <p>Before checking the binary, cache or isolation, Bureau inventories
 both snapshots. If neither has eligible inputs, the result is
 <strong>not_applicable</strong>, with no scanner or probe execution. V1
@@ -817,34 +853,35 @@ failure produces <strong>reduced_coverage</strong>, reason
 rather than being counted as new; their severities still enforce the
 blocking floor as new findings would, even when coverage exceptions
 waive every file's coverage gap.</p>
-<p>Lockfile consistency fails closed: the handwritten parsers accept
-only recognised tool-written forms, and unsupported syntax anywhere in a
-parsed file produces <strong>reduced_coverage</strong>, with the file
-named and reason <code>lockfile format not recognised</code>, never a
-clean measurement. This also holds in blocking mode, where an unexcepted
-coverage gap blocks. Locks are validated even without a matching
-manifest. The parser policy is part of receipt identity, so receipts
-from before this hardening are remeasured. pnpm requires two-space
-indentation steps, no tabs or level jumps, plain or quoted mapping keys
-and no flow syntax in importers; only direct keys in the root importer's
-<code>dependencies</code>, <code>devDependencies</code> and
-<code>optionalDependencies</code> maps count. Apart from its reserved
-<code>__metadata</code> map, Yarn requires complete comma-separated
-selector headers ending at their final colon, without <code>#</code> or
-trailing text; comments must be whole top-level lines. JSON manifests
-and npm locks use the JSON parser, and npm lock root names come only
-from those three dependency maps in <code>packages['']</code>. Python
-3.11+ uses <code>tomllib</code>; the conservative Python 3.9/3.10
-fallback requires bare table components such as
-<code>[project.optional-dependencies]</code> and bare assignment keys,
-rejecting spaces inside table names, quoted keys and dotted inline keys.
-Only <code>[project]</code> treats <code>dynamic</code> as metadata; an
-optional-dependency group named <code>dynamic</code> contributes
-declared dependency names. Requirements accept exact pins, extras and
-whole-line or whitespace-prefixed inline comments; environment markers,
-line continuations and options such as <code>-r</code>, <code>-c</code>,
-<code>-e</code> and <code>--hash</code> are not recognised and reduce
-coverage rather than supplying or hiding names.</p>
+<p>When a handwritten lockfile parser detects unsupported syntax, Bureau
+reports <strong>reduced_coverage</strong> and names the file with reason
+<code>lockfile format not recognised</code>. This also holds in blocking
+mode, where an unexcepted coverage gap blocks. Locks are validated even
+without a matching manifest. The parser policy is part of receipt
+identity, so receipts from before this hardening are remeasured. pnpm
+requires two-space indentation steps, no tabs or level jumps, plain or
+quoted mapping keys and no flow syntax in importers; only direct keys in
+the root importer's <code>dependencies</code>,
+<code>devDependencies</code> and <code>optionalDependencies</code> maps
+count. Apart from its reserved <code>__metadata</code> map, Bureau's
+Yarn parser requires complete comma-separated selector headers ending at
+their final colon, without <code>#</code> or trailing text. The parser
+rejects indented comments and skips other indented body lines, so
+unsupported syntax in those lines can pass without a Bureau coverage
+warning. JSON manifests and npm locks use the JSON parser, and npm lock
+root names come only from those three dependency maps in
+<code>packages['']</code>. Python 3.11+ uses <code>tomllib</code>; the
+conservative Python 3.9/3.10 fallback requires bare table components
+such as <code>[project.optional-dependencies]</code> and bare assignment
+keys, rejecting spaces inside table names, quoted keys and dotted inline
+keys. Only <code>[project]</code> treats <code>dynamic</code> as
+metadata; an optional-dependency group named <code>dynamic</code>
+contributes declared dependency names. Requirements accept exact pins,
+extras and whole-line or whitespace-prefixed inline comments;
+environment markers, line continuations and options such as
+<code>-r</code>, <code>-c</code>, <code>-e</code> and
+<code>--hash</code> are not recognised and reduce coverage rather than
+supplying or hiding names.</p>
 <p>Vulnerability identity is
 <code>(Target, VulnerabilityID, PkgName, InstalledVersion)</code>.
 Misconfiguration identity is
@@ -873,42 +910,52 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb9-1"><a href="
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">&quot;id&quot;</span><span class="fu">:</span><span class="st">&quot;CVE-EXAMPLE&quot;</span><span class="fu">,</span><span class="dt">&quot;package&quot;</span><span class="fu">:</span><span class="st">&quot;legacy-package&quot;</span><span class="fu">,</span><span class="dt">&quot;file&quot;</span><span class="fu">:</span><span class="st">&quot;requirements.txt&quot;</span><span class="fu">,</span><span class="dt">&quot;owner&quot;</span><span class="fu">:</span><span class="st">&quot;security-team&quot;</span><span class="fu">,</span><span class="dt">&quot;reason&quot;</span><span class="fu">:</span><span class="st">&quot;Accepted temporarily&quot;</span><span class="fu">,</span><span class="dt">&quot;expires&quot;</span><span class="fu">:</span><span class="st">&quot;2027-01-01&quot;</span><span class="fu">}</span><span class="ot">,</span></span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">&quot;kind&quot;</span><span class="fu">:</span><span class="st">&quot;coverage&quot;</span><span class="fu">,</span><span class="dt">&quot;file&quot;</span><span class="fu">:</span><span class="st">&quot;legacy/package.json&quot;</span><span class="fu">,</span><span class="dt">&quot;owner&quot;</span><span class="fu">:</span><span class="st">&quot;platform-team&quot;</span><span class="fu">,</span><span class="dt">&quot;reason&quot;</span><span class="fu">:</span><span class="st">&quot;Lockfile migration scheduled&quot;</span><span class="fu">,</span><span class="dt">&quot;expires&quot;</span><span class="fu">:</span><span class="st">&quot;2027-01-01&quot;</span><span class="fu">}</span></span>
 <span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="ot">]</span></span></code></pre></div>
-<p>Advisory mode reports every status and continues. Blocking mode holds
-on new findings at or above <code>block_severity</code>,
-<strong>not_measured</strong>, <strong>unavailable</strong>, or
-<strong>reduced_coverage</strong> without an active base coverage
-exception for every affected file. Coverage exceptions waive only the
-named file's coverage gap and never suppress qualifying findings,
-including unclassified head findings after a failed base scan.
-<strong>not_applicable</strong> passes as explicitly not applicable. No
-unavailable, unmeasured or reduced result is described as clean. A
-blocking QA result keeps the ticket in QA with <code>needs-human</code>
-and exit 25.</p>
-<p>QA measures immediately before routing, after its commit/push and
-local checks, including the no-harness path; the enabled no-harness path
-first publishes any QA merge. Its receipt binds the head actually handed
-onward. If a repository has no QA state, blocking mode still guarantees
-measurement through merge: the merge pipeline requires a valid
-final-head receipt and measures when absent or changed. Before the
-existing just-in-time gates, the shared Semgrep/Trivy merge code reads
-head and current base ref/commit, measures with reuse, prepares the
-merge message and fetches the base again. Before applying a blocking or
-failed result it re-checks head, base ref name and base commit; changed
-inputs retry with exit 2, with the gate mark bound to the scanned head.
-Both enabled scanners must measure the same inputs. After the final
-gates, one GraphQL read binds the current PR base ref name and live
-<code>baseRef.target.oid</code> branch tip to the scanned base, retrying
-with exit 2 on changed inputs or a failed read; there is no additional
-fetch. The live branch target is used because the PR's stored base OID
-can lag the branch tip. The ticket kill-switch checkpoint remains the
-last operation before the head-pinned merge in every merge strategy.</p>
-<p>Image scanning is not part of this release, and every projection
-carries that fixed qualification. The Trivy stage executes no builds or
-repository-controlled commands. The removed
-<code>qa.trivy.image_archive_command</code> key is unknown and causes a
-configuration error, including with <code>null</code> or while disabled;
-remove it from existing configurations. A follow-up will design an
-isolated, source-bound image build.</p>
+<p>Once the scan step runs, advisory mode reports the result and QA
+continues. If PR lookup or base fetch fails while pinning the scan base,
+QA exits 18 before scanning, including in repositories without a test
+harness. Blocking mode holds on new findings at or above
+<code>block_severity</code>, <strong>not_measured</strong>,
+<strong>unavailable</strong>, or <strong>reduced_coverage</strong>
+without an active base coverage exception for every affected file.
+Coverage exceptions waive only the named file's coverage gap and never
+suppress qualifying findings, including unclassified head findings after
+a failed base scan. <strong>not_applicable</strong> passes as explicitly
+not applicable. No unavailable, unmeasured or reduced result is
+described as clean. A blocking QA result keeps the ticket in QA with
+<code>needs-human</code> and exit 25.</p>
+<p>QA measures immediately before routing, after its commit, push and
+local checks. With Trivy enabled, live QA without a test harness runs
+<code>git push origin HEAD</code> even when there is no QA merge to
+publish. A rejected push exits 18 before Trivy evidence or ticket
+routing, including in advisory mode. The receipt binds the head actually
+handed onward.</p>
+<p>With Trivy enabled in blocking mode, Bureau's automatic merge
+pipeline requires a valid, non-blocking receipt for the final PR head
+and pinned base, including when no QA state exists. It measures those
+inputs when it cannot reuse a matching receipt. With no QA state and
+<code>agents.merge_mode: "manual"</code>, a human can merge without a
+Trivy receipt. Before the existing just-in-time gates, the shared
+Semgrep/Trivy merge code reads the PR head and the current base ref and
+commit, measures with receipt reuse, prepares the message for squash or
+merge strategy, and fetches the base again. Before applying a blocking
+or failed result, it re-checks head, base ref name and base commit.
+Changed inputs retry with exit 2, with the gate mark bound to the
+scanned head. When both scanners are enabled in blocking mode, their
+measurements must use the same inputs. After the final gates, Bureau
+checks the current PR base ref name and live
+<code>baseRef.target.oid</code> branch tip against the scanned base with
+a single GraphQL read. Changed inputs or a failed read retry with exit
+2. The live branch target is used because the PR's stored base OID can
+lag the branch tip. The ticket kill-switch checkpoint remains the last
+operation before the head-pinned merge in every merge strategy.</p>
+<p>Image scanning is outside this release, and every projection carries
+that fixed qualification. The Trivy stage executes no builds or
+repository-controlled commands. Remove
+<code>qa.trivy.image_archive_command</code> from existing
+configurations. Runtime and doctor reject this key, including with
+<code>null</code> or while Trivy is disabled. A follow-up will design an
+isolated, source-bound image build. See the <a
+href="migration.html#from-v380">v3.9.0 upgrade steps</a>.</p>
 <p>The shared receipt store writes immutable <code>report.json</code>,
 <code>projection.json</code> and <code>receipt.json</code> attempts
 under
@@ -922,23 +969,24 @@ and checks exception expiry; each consuming PR adds its own exclusive
 <code>refs/pr-N</code> retention reference. Retention keeps the newest
 20 attempts plus those referenced by open PRs; unknown open-PR
 inventories keep referenced evidence conservatively.</p>
-<p><strong>Upgrade:</strong> compare installed script drift, resync the
-full scripts scope including <code>bureau-trivy.py</code>,
+<p><strong>Upgrade.</strong> Compare installed script drift and resync
+the full scripts scope including <code>bureau-trivy.py</code>,
 <code>bureau-trivy.sh</code>, <code>bureau-trivy-pins.json</code>,
-<code>bureau-scan.py</code> and the sandbox profile, then restart
-drivers together. Existing configurations stay disabled. Supply the
-verified pinned binary, refresh an external cache and qualify isolation
-on the target host before enabling advisory mode; enable blocking
-separately. Fake-binary tests run without downloads in the full test
-matrix. The separate real-binary job uses only GitHub-hosted
-<code>ubuntu-latest</code>, downloads the exact pinned release archive,
-checks archive and extracted-binary hashes before execution, refreshes a
-job-local cache and qualifies lockfile and Dockerfile filesystem flags
-under <code>unshare -rn</code>. The job configures user namespaces only
-on that ephemeral hosted VM; it never selects a self-hosted fallback.
-Real-binary flag compatibility, embedded-check behavior, engine resource
-metadata and adopting-repository validation remain separate
-qualification steps until that job or a maintainer run succeeds.</p>
+<code>bureau-scan.py</code> and the sandbox profile. Trivy defaults to
+disabled. Supply the verified pinned binary, refresh an external cache
+and qualify isolation on the target host before enabling advisory mode.
+Enable blocking separately. Restart drivers together after configuration
+and any optional scanner setup. Fake-binary tests run without downloads
+in the full test matrix. The separate real-binary job uses only
+GitHub-hosted <code>ubuntu-latest</code>, downloads the exact pinned
+release archive, checks archive and extracted-binary hashes before
+execution, refreshes a job-local cache and qualifies lockfile and
+Dockerfile filesystem flags under <code>unshare -rn</code>. The job
+configures user namespaces only on that ephemeral hosted VM and never
+selects a self-hosted fallback. Real-binary flag compatibility,
+embedded-check behavior, engine resource metadata and
+adopting-repository validation remain separate qualification steps until
+that job or a maintainer run succeeds.</p>
 <h3 id="agents"><code>agents</code></h3>
 <p>Which pipelines run, how often they poll, how aggressive they
 are.</p>

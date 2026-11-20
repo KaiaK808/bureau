@@ -1,180 +1,126 @@
-# Bureau v3.8.0 — QA evidence, approval status and runtime fixes
+# Bureau v3.9.0 — Semgrep and Trivy evidence, Python bytecode fix
 
-**Published release · 2026-11-14 · source tag `v3.8.0`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.8.0) is published as latest. Annotated tag `v3.8.0` (tag object `1324764`) points at merge commit `74bc6b2` of [#157](https://github.com/KaiaK808/bureau/pull/157), merged on 2026-11-14. v3.8.0 is a minor release on [v3.7.0](release-notes-v3.7.0.md).
+**Release preparation · 2026-11-20 · source tag `v3.9.0`.** v3.9.0 is a minor release on [v3.8.0](release-notes-v3.8.0.md). Tagging and GitHub Release publication remain separate maintainer operations.
 
-The release includes, in first-parent merge order: [#133](https://github.com/KaiaK808/bureau/pull/133), [#134](https://github.com/KaiaK808/bureau/pull/134), [#139](https://github.com/KaiaK808/bureau/pull/139), [#140](https://github.com/KaiaK808/bureau/pull/140), [#136](https://github.com/KaiaK808/bureau/pull/136), [#138](https://github.com/KaiaK808/bureau/pull/138), [#141](https://github.com/KaiaK808/bureau/pull/141), [#142](https://github.com/KaiaK808/bureau/pull/142), [#137](https://github.com/KaiaK808/bureau/pull/137), [#143](https://github.com/KaiaK808/bureau/pull/143), [#144](https://github.com/KaiaK808/bureau/pull/144), [#145](https://github.com/KaiaK808/bureau/pull/145), [#146](https://github.com/KaiaK808/bureau/pull/146), [#147](https://github.com/KaiaK808/bureau/pull/147), [#148](https://github.com/KaiaK808/bureau/pull/148), [#149](https://github.com/KaiaK808/bureau/pull/149), [#150](https://github.com/KaiaK808/bureau/pull/150), [#151](https://github.com/KaiaK808/bureau/pull/151), [#152](https://github.com/KaiaK808/bureau/pull/152), [#153](https://github.com/KaiaK808/bureau/pull/153), [#154](https://github.com/KaiaK808/bureau/pull/154), [#155](https://github.com/KaiaK808/bureau/pull/155), [#156](https://github.com/KaiaK808/bureau/pull/156). All changes are merged. The [changelog](../CHANGELOG.md#380---2026-11-14) collects the 22 release fragments; the CI dependency update in #137 is also included.
+The release includes [#158](https://github.com/KaiaK808/bureau/pull/158), [#159](https://github.com/KaiaK808/bureau/pull/159), [#160](https://github.com/KaiaK808/bureau/pull/160), [#161](https://github.com/KaiaK808/bureau/pull/161) and [#163](https://github.com/KaiaK808/bureau/pull/163) in first-parent merge order. All changes are merged. The [changelog](../CHANGELOG.md#390---2026-11-20) collects the five release fragments.
 
-## What changed since v3.7.0
+## What changed since v3.8.0
 
-### Optional advisory QA evidence
+### Optional Semgrep CE evidence in code review
 
-Three new QA checks are **opt-in and advisory and never change QA's result**: fail-before-pass, test integrity and task completion. They read settings from QA's trusted pinned base and add bounded evidence to the acceptance brief. Existing mandatory cancellation, timeout and process-ownership holds still apply independently of their findings. Resync scripts together before enabling any check.
+Independent specialists finish their first pass before all review roles receive the bounded Semgrep projection in the late step. Semgrep scans offline under network denial. Bureau loads the bundled `bureau-semgrep-rules.yml` from the installed runtime and reads any configured extra rules and `.bureau/semgrep-ignore.json` suppressions from the pinned PR base. Bureau verifies a private copy of the Semgrep packages against a shipped manifest before probing the interpreter and re-hashes the copy before each scan side. Once Bureau has loaded the rules and validated the base suppressions, an empty set of eligible files on both sides passes as `not_applicable` without checking scanner prerequisites. A configured `extra_rules` file missing from the pinned base yields `not_measured` even with an empty eligible set.
 
-`repo.changed_test_command` enables fail-before-pass measurement after the final QA gate passes. Changed tests run in isolated head/base trees without inherited Git context. The configured command uses one unquoted `{file}` placeholder, for example `python3 -m pytest -q {file}`. Repositories with worktree links are not measured. Cleanup timeouts or errors preserve completed results and report leftovers for the next sweep; retained execution ownership keeps QA held. See [configuration](configuration.md#repo) and [#146](https://github.com/KaiaK808/bureau/pull/146).
+In advisory mode, Bureau reports the evidence and skips the scanner's verdict floor. On a fresh review, any Semgrep projection, including `not_applicable`, triggers one late provider call per specialist after the independent passes. Malformed supplemental output ends the stage with exit 22. Blocking mode holds approval on new findings at or above the configured severity and on unavailable or incomplete measurements. Existing BLOCK verdicts and review caps still apply. With blocking enabled, Bureau's automatic merge pipeline rechecks the receipt against the head and base.
 
-`repo.test_integrity_check: true` adds static checks after green QA for removed assertions, new skip/disabled markers and unresolved first-party imports. Verdicts are `pass`, `flagged` or `unverifiable`. Python uses syntax trees; other supported languages use symmetric lexical counts, including tokens in literals and comments, so their findings say "assertion-like sites went down". Relative imports can resolve root packages or JavaScript index files; imports outside the tree and escaped JavaScript specifiers are not checked. These checks cannot establish whether an assertion became weaker in meaning. See [#147](https://github.com/KaiaK808/bureau/pull/147).
+### Optional Trivy evidence in QA
 
-`repo.task_completion_check: true` compares completed tasks' named paths with the pinned ticket diff and flags test tasks without added or modified test files. Counts and bounded per-task rules appear in the acceptance brief. This proves only that a named file changed; correctness still requires review. The default is off. See [#152](https://github.com/KaiaK808/bureau/pull/152).
+Trivy scans dependencies and configuration on the final QA head, including repositories without a test harness. This release excludes image scanning. The stage runs a verified private copy of the binary offline under network denial, checks the external database cache for integrity and freshness, and uses Trivy's embedded configuration checks. Database downloads occur in a separate operator refresh. Expiring exceptions come from the pinned base and the scan ignores head-native suppressions.
 
-### Exact-commit human approval accident guard
+With Trivy enabled, live QA without a test harness runs `git push origin HEAD` even when there is no QA merge to publish. A rejected push exits 18 before Trivy evidence or ticket routing, including in advisory mode. A failed PR lookup or base fetch while pinning the scan base also exits 18 before scanning. Once the scan step runs, advisory mode reports the result and QA continues. Blocking mode holds for a human on qualifying new findings, measurement gaps or coverage gaps without an active exception. After a failed base scan, unclassified head findings still count toward the severity floor, even if every coverage gap has a file exception. With Trivy enabled in blocking mode, Bureau's automatic merge pipeline requires a valid final-head receipt even without a QA state. With `agents.merge_mode: "manual"` and no QA state, a human can merge without a Trivy receipt.
 
-An opt-in `bureau/human-approval` commit status records approval of the exact current PR head. The decision script reads `agents.merge_approvers` from the default branch. An allowed person creates a comment whose first line is `/bureau approve <40-hex-sha>`. Only newly created comments trigger the workflow; edited comments do not count. A new push leaves its new commit without the status, and refused commands leave statuses untouched.
+### Scanner receipts and merge freshness
 
-Install the separate `approval` workflow scope as well as the scripts scope, and commit the script, workflow and approval policy to the default branch. Require `bureau/human-approval` in branch protection for it to bind merges. Doctor reports configuration and installation problems and warns about a shared approver login; it does not read or change branch protection. Existing merge checks gain no context-specific approval gate.
+Both scanners write immutable evidence attempts and add a retention reference for each PR that produces or reuses one. Open consuming PRs keep referenced attempts beyond the newest 20. An unknown PR inventory keeps all referenced attempts.
 
-This is an **accident guard**. Deliberate bypass remains possible: PR workflows can write the same status, and agents using an allowed person's login can approve themselves. Use a separate account or token when Bureau shares an approver's login. An unforgeable form needs a separate Bureau identity and remains future work. Absent or empty policy leaves the feature off; invalid or unreadable policy refuses approval. See [#151](https://github.com/KaiaK808/bureau/pull/151).
+For scanners enabled in blocking mode, Bureau's automatic merge pipeline checks the receipts and fetches the base again before the existing just-in-time merge gates. A final read checks the PR base name and live branch tip before the head-pinned merge. If either changes, the merge retries with exit 2 even when the final gates pass. The ticket checkpoint remains the last step before merge.
 
-### Secrets file outside the checkout
+### Python bytecode in stage commits
 
-New installations put their secrets file in `~/.config/bureau/<repository directory name>.env`, with file mode 0600 and directory mode 0700. `repo.env_file` selects the file. Existing installations keep working with their current file and can move it using the [migration steps](migration.md#move-the-secrets-file-outside-the-checkout).
+Stages suppress installed Bureau helper bytecode and exclude the Bureau cache from shell stage commits. The installer adds the literal `scripts/__pycache__/` ignore rule and preserves existing rules. Staging and doctor match the exact path components and existing aliases of the same directory. A separate application's `Scripts/__pycache__/` remains eligible for ordinary staging on a case-sensitive filesystem.
 
-Doctor warns about checkout-local or group/other-readable secrets. Moving the file blocks the conventional checkout path only: a process running with the user's permissions can still discover and read the external file. Update any `BUREAU_ENV_FILE` process override and restart loops and supervisors after moving it. See [#155](https://github.com/KaiaK808/bureau/pull/155).
+### Merge gate holds on an unreadable commit-status read
 
-### Stored Git credentials
+When `agents.merge_require_green_ci` is on, Bureau's CI merge gate reads check runs and legacy commit statuses for the PR head. Before this release, a failed status read counted as an empty status list, so green check runs could pass the gate while statuses, possibly a failing required context, were never read. A failed status read now prevents green CI regardless of `agents.merge_min_required_checks`, and the gate line names the failed read and the head SHA. If no decided blocker takes precedence, the dedicated merge stage, the inline merge after review and the just-in-time recheck end with `2` and retry later. Decided check-run blockers, such as a failed check or an overdue queued check, keep `25`, and `merge_require_green_ci: false` still switches the check off. This behaviour had been present since v3.1.0.
 
-Branch-controlled code no longer gets stored Git credential helpers by default: agents, test gates, the post-implement command, the review build check, conflict commands and changed-test measurements all receive the reset in both environment modes. Terminal prompting is disabled. Bureau's own git and gh calls retain their credential behavior.
+### v3.8.0 publication record
 
-In default environment mode, the reset preserves valid inherited counted Git configuration and appends an empty `credential.helper` entry; clean mode inherits no counted pairs. Both modes drop inherited `GIT_CONFIG_PARAMETERS` so an included file cannot restore helpers after the reset. Malformed inherited counts discard the inherited counted pairs and start the reset at entry 0. Invalid settings refuse with exit 24 before a gate creates a process hold. The reset switches off helper lookup; code can still supply its own helper or invoke one directly. **Askpass limit:** `GIT_ASKPASS`, `SSH_ASKPASS` and configured `core.askPass` are unchanged and can still supply a password.
-
-Installations whose test gates or post-implement commands fetch private dependencies using a stored credential are affected. Set `repo.untrusted_git_credentials: "keep"` to restore the old behavior, or supply another authentication method before restarting. Resync the scripts together. On rollback, remove this setting for the older runtime; restoring that runtime restores its credential behavior. See [#154](https://github.com/KaiaK808/bureau/pull/154).
-
-### Impeccable pins
-
-Supported Impeccable versions are now skill **4.9.0** and engine **0.1.23**. Installations with `design.impeccable.enabled: true` must separately install those versions and update `design.impeccable.skill_version` to `"4.9.0"` and `design.impeccable.engine_version` to `"0.1.23"` in `.bureau.json`, or remove both version keys to follow the pins, together with the scripts resync. Until tooling and configuration match, Bureau reports Impeccable as unavailable and stages continue without it. With Impeccable disabled, only the resync is needed; old version values are harmless while it stays off.
-
-Follow [the installation guidance](configuration.md#designimpeccable): `--no-hooks` is required, and separately installed agents must be removed or disabled. Bureau installs none of this tooling. Upstream skill **4.9.1** and engine **0.1.24** are unsupported by this release. See [#156](https://github.com/KaiaK808/bureau/pull/156).
-
-### QA retries, review questions and implementation searches
-
-QA's final test gate allows one bounded rerun for complete, named unittest/pytest assertion failures. Crashes, timeouts, zero tests, cleanup failures and environment denials stay on the failure path. Only failure diagnostics are classified; test names and traceback file/function names do not decide eligibility. Simple native commands select failed cases; other commands rerun the gate and must show complete case identities and passing coverage of every original case. Counts alone cannot establish recovery. Phase 1 retains its existing whole-gate retry on any nonzero exit. See [#140](https://github.com/KaiaK808/bureau/pull/140).
-
-A recovered final gate records a bounded `flaky` marker, retains both logs and reports the flake in the QA comment and acceptance packet. Implementation receives no-change guidance only for a QA bounce carrying that recorded flake; ordinary QA and human feedback retain their prompts. Final QA gates default to 900 seconds per attempt through `BUREAU_QA_TEST_TIMEOUT` (1–86400). Older evidence readers must be upgraded together.
-
-Review specialists separate optional human questions from acceptance-criteria holds. Questions never change verdicts; every hold still blocks. Independent and late reports retain their complete question union, rendering shows at most 32 with an omitted count, and fallback receives unchanged reports while validated, escaped questions are appended. The model-written comment may still repeat specialist text. See [#149](https://github.com/KaiaK808/bureau/pull/149).
-
-Implementation's bounded-loop and `/goal` briefs ask for a repository search for the same defect after each review fix. Optional bounded `sibling_searches` reports record the finding, search, other-site count and fixed/out-of-scope paths. Legacy results remain valid; `/goal` retains reports across turns within the same bounds. Receipts filter paths individually and preserve safe out-of-scope sites as advisory open points without expanding accepted scope or overlap claims. Frozen briefs receive no backfill. See [#138](https://github.com/KaiaK808/bureau/pull/138).
-
-### Runtime waits, login checks and path inventories
-
-Evidence lock acquisition has one fixed 10-second wait budget and reports elapsed wait on timeout. Review artifact cleanup shares one 10-second budget and reports skipped artifacts. Exclusive locking and file/directory fsync remain. See [#144](https://github.com/KaiaK808/bureau/pull/144).
-
-Provider login checks retry a timeout once, with limits of 20 seconds then 60 seconds. Two timeouts return existing retryable exit 16 with `login-check-timeout`; doctor warns that login is unconfirmed. See [#145](https://github.com/KaiaK808/bureau/pull/145).
-
-Doctor warns when the latest matching recorded gate duration exceeds the 600-second tool command limit for an enabled Codex implementation or QA stage without delegation. The warning names `agents.providers.codex.gate_outside_sandbox` and [ADR 0013](adr/0013-codex-gate-delegation.md). Non-delegated briefs require the configured command verbatim, without wrappers, prefixes, redirects or environment changes, so execution proof can match. Missing or invalid evidence supplies no estimate. See [#136](https://github.com/KaiaK808/bureau/pull/136).
-
-File-overlap inventories ignore code spans without a slash, backslash, period or known path name. Dotted names with spaces and unresolved paths retain their existing extraction, and an optional count records ignored spans. Task-generation guidance names repository-relative paths explicitly. See [#148](https://github.com/KaiaK808/bureau/pull/148).
-
-### Contributor checks and release records
-
-A hostile-input corpus uses deterministic obedient agents, stage assertions, guard-removal controls and strict expected-failure cases. Sandboxes use resolved system temporary space outside Git checkouts, isolate Git discovery/configuration and stop after failed setup. Review annotates root `LESSONS.md` and installed inline stage prompt changes as advisory `AGENT_CONFIG` findings for human inspection; ordinary spec artifacts remain excluded. The release checklist includes a manual live sample. See [#150](https://github.com/KaiaK808/bureau/pull/150).
-
-Test runners suppress Python bytecode, including isolated imports, while the public-reference guard still scans tracked files and non-ignored new files. Test files and direct cancellation fixtures reset inherited ignored signals without changing the runner's Ctrl-C behavior. Mutation cleanup retries Ctrl-C interruptions before propagating cancellation, records completion after fixture shutdown and pipe closure, and attempts stderr closure even when stdout closure fails. Fixture repositories disable `receive.autogc` as well as automatic maintenance so older Git does not start background collection after pushes. These changes concern contributor tests and need no asset resync. See [#133](https://github.com/KaiaK808/bureau/pull/133), [#134](https://github.com/KaiaK808/bureau/pull/134), [#142](https://github.com/KaiaK808/bureau/pull/142) and [#143](https://github.com/KaiaK808/bureau/pull/143).
-
-The untrusted-environment test removes `SSH_CLIENT`, `SSH2_CLIENT` and `SSH_CONNECTION` before its probes. Debian and Ubuntu Bash can otherwise read bashrc files instead of `BASH_ENV`, causing check D's negative control to fail when a suite starts over SSH. This is a repository-test fix with no adopting-repository action. See [#153](https://github.com/KaiaK808/bureau/pull/153). CI also updates `actions/upload-artifact` to 7.0.2 in [#137](https://github.com/KaiaK808/bureau/pull/137).
-
-Contributors add one validated changelog fragment per change and run `python3 scripts/changelog.py check` or `render`. Maintainers collect fragments with `release VERSION DATE`; originals are staged by rename before atomic changelog replacement. Interrupted recovery or cleanup reports retained staging files; reconcile every `changes/.release-*` directory before retrying. The v3.7.0 publication record preserves its tag, merge, CI and tested-tree facts, and its notes are [archived unchanged](release-notes-v3.7.0.md). See [#141](https://github.com/KaiaK808/bureau/pull/141) and [#139](https://github.com/KaiaK808/bureau/pull/139).
+The source-only record captures the published tag and merge commit, GitHub Release, CI results including one tag rerun, tested-tree comparison and decision to skip the manual live injection sample. See the [v3.8.0 release notes](release-notes-v3.8.0.md).
 
 ## New files
 
 | File | Installation and purpose |
 |---|---|
-| `templates/scripts/bureau-changed-tests.py`, `bureau-test-integrity.py` | Complete scripts resync; optional fail-before-pass and static test integrity evidence. |
-| `templates/scripts/bureau-task-completion.py` | Complete scripts resync for optional task-path evidence. |
-| `templates/scripts/bureau-approval-status.py`, `templates/.github/workflows/bureau-approval.yml` | Decision script in scripts scope, workflow in the separate `approval` scope. |
-| `scripts/changelog.py`, `changes/README.md` | Source-only fragment validation, preview and release collection. |
-| `tests/fixtures/injection/`, `tests/injection_set_test.py`, QA/retry, approval and task-completion test files | Repository-only regression fixtures. |
-| `docs/release-notes-v3.7.0.md` | Unchanged archive of the previous release notes. |
+| `templates/scripts/bureau-semgrep.py`, `bureau-semgrep.sh`, `bureau-semgrep-rules.yml`, `bureau-semgrep-lock.txt`, `bureau-semgrep-manifest-*.json` | Complete scripts resync for code review, the blocking merge recheck, and the locked scanner packages and platform manifests. |
+| `templates/scripts/bureau-trivy.py`, `bureau-trivy.sh`, `bureau-trivy-pins.json` | Complete scripts resync for QA, the blocking merge recheck and binary pins. |
+| `templates/scripts/bureau-scan.py`, `bureau-scan-nonet.sb` | Shared scan and receipt support and the macOS network-denial profile. |
+| `scripts/semgrep_pin.py` | Source-only generator for Semgrep wheel manifests. |
+| `tests/test_semgrep*.sh`, `tests/test_trivy*.sh`, `tests/test_python_bytecode.sh` | Repository-only regression entry points. |
+| `docs/release-notes-v3.8.0.md` | Unchanged archive of the previous release notes. |
 
 ## Configuration and exit-code changes
 
-No configuration schema migration, Spec Kit pin change or new exit code is introduced. The v3 vocabulary, including holds 30/31, remains. Optional QA and approval settings are off until selected. Impeccable pins change to skill 4.9.0 and engine 0.1.23. See [configuration](configuration.md#repo) and [exit codes](exit-codes.md).
+Semgrep runs in the background review pipeline and Trivy runs in the background QA pipeline. The app's `prepare`/`finish` flow runs neither scanner, so enabling either in advisory or blocking mode has no effect there. Semgrep and Trivy are off until enabled. Set the appropriate `enabled` key to boolean `true` and select `advisory` for the first adoption. Blocking is a separate opt-in through `mode`. See [Semgrep configuration](configuration.md#reviewsemgrep) and [Trivy configuration](configuration.md#qatrivy).
 
 | Key | Default / action | Effect |
 |---|---|---|
-| `repo.changed_test_command` | Absent (off) | Enables advisory isolated fail-before-pass measurement with one unquoted `{file}` placeholder. |
-| `repo.test_integrity_check` | `false` | Boolean `true` enables advisory static checks after green QA. |
-| `repo.task_completion_check` | `false` | Boolean `true` on the trusted base enables advisory task-path checks. |
-| `agents.merge_approvers` | Absent/empty (off) | Default-branch approval policy; install the separate workflow and require its status in branch protection. |
-| `repo.env_file` | Existing installations retain their current selection | New setup uses `~/.config/bureau/<repository directory name>.env`; update overrides and restart after moving. |
-| `repo.untrusted_git_credentials` | `"off"`; `"keep"` restores old behavior | Private-dependency commands may need `"keep"` or another authentication method; askpass remains available; invalid settings exit 24. |
-| `design.impeccable.skill_version`, `design.impeccable.engine_version` | `"4.9.0"`, `"0.1.23"` | Enabled installations install matching tooling and update or remove both keys; 4.9.1 / 0.1.24 are unsupported. |
-| `BUREAU_QA_TEST_TIMEOUT` | `900`; range 1–86400 | Seconds per final QA gate attempt and the existing override for changed-test measurement. |
-| `agents.providers.codex.gate_outside_sandbox` | Existing opt-in, unchanged | Doctor now points to it when recorded gate duration exceeds the tool command limit. |
+| `review.semgrep.enabled`, `review.semgrep.mode` | `false`, `advisory` | Enables offline Semgrep CE in background review. Blocking also rechecks before merge. |
+| `BUREAU_SEMGREP_VENV` | Operator-supplied venv or shared-state fallback | Selects the pinned Semgrep environment for the matching platform and interpreter. |
+| `qa.trivy.enabled`, `qa.trivy.mode` | `false`, `advisory` | Enables offline Trivy in background QA. Blocking also rechecks before merge. |
+| `BUREAU_TRIVY_BIN`, `qa.trivy.cache_dir` | Operator-supplied binary or shared-state fallback, plus an external cache directory | Supplies the pinned executable and its separately refreshed databases. |
+| `qa.trivy.image_archive_command` | Remove from existing configurations | Runtime and doctor reject this key, including with `null` or with Trivy disabled. |
 
-Provider login timeouts retain retryable exit 16. Advisory QA findings introduce no verdict, routing or exit changes; existing process-safety holds remain mandatory.
+A shell stage that reaches its commit step with a staged Bureau cache change, including the cleanup deletion, stops with exit 24 and leaves the index untouched. See [exit codes](exit-codes.md).
+
+The CI merge gate no longer passes when the commit-status read fails, where it could merge before. If no decided blocker takes precedence, the merge ends with `2` (not yet decided) and retries; decided blockers keep `25`. No configuration key changes.
 
 ## Upgrade an existing installation
 
-**From v3.7.0:** stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work/local commits, custom scripts/interfaces, instructions, Spec Kit assets/constitution and shared ownership, checkpoint, evidence, accounting, witness and process-hold records. Compare installed drift and reconcile incident fixes before replacing assets. Select the published `v3.8.0` tag, refresh discovery, preview and resolve conflicts, then resync the **complete scripts and interfaces scopes together** in every adopting repository:
+**From v3.8.0, once v3.9.0 is published.** Stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work, local commits, customized assets, instructions, the Spec Kit constitution and shared runtime records. Compare installed script drift and reconcile local incident fixes before replacing assets. Select the published `v3.9.0` tag and refresh discovery. Save the [pre-upgrade inventory and private backup](migration.md#before-changing-an-adopting-repository), including `.bureau-install.json` and `.gitignore` in the backup. Use the [v3.9.0 scripts-only preview and apply commands](migration.md#from-v380) in every adopting repository with its existing target selection. Resolve conflicts before applying. `--update` edits configuration only.
 
-```text
-/bureau-init --resync-interfaces --resync-scripts --target both
-```
+To set up Semgrep for background review, create a standard-library venv with the supported CPython and install Semgrep CE **1.183.0** from the shipped wheel-only hash lock. Set `BUREAU_SEMGREP_VENV` or use the shared-state fallback. Qualify network isolation on the deployment host, then enable `review.semgrep.enabled` with `review.semgrep.mode` set to `advisory`. See [Semgrep installation](configuration.md#reviewsemgrep).
 
-Use `$bureau-init` in Codex and retain the installation's existing target selection. `--update` changes configuration only; partial helper/pipeline updates are incompatible, and running shells keep loaded code. Upgrade evidence readers with the pipelines for flake metadata. The three advisory QA checks remain off unless enabled on the trusted base.
+To set up Trivy for background QA, provide the verified **0.76.1** binary. Use the shared-state fallback or export the absolute binary path as `BUREAU_TRIVY_BIN` in the refresh shell and the stage launcher's environment before restarting drivers. Bureau's `.env` loader ignores this key. Select an absolute `qa.trivy.cache_dir` outside the repository and refresh it separately while it is empty or already Bureau-managed. Qualify host network isolation, then enable `qa.trivy.enabled` with `qa.trivy.mode` set to `advisory`. See [Trivy installation and refresh](configuration.md#qatrivy).
 
-Existing secrets files keep working; to move one outside the checkout, follow [the migration steps](migration.md#move-the-secrets-file-outside-the-checkout), set `repo.env_file`, update process overrides and restart. If opting into human approval, install the separate `approval` scope and configure the default branch and required status before relying on it. If private-dependency commands rely on stored Git credentials, set `repo.untrusted_git_credentials: "keep"` or arrange another authentication method. For enabled Impeccable installations, install skill 4.9.0 / engine 0.1.23 and update or remove both version keys. Review the configuration table before restarting. Run `python3 scripts/bureau-doctor.py --mode background`, reconcile holds, restart drivers together and qualify a representative ticket before unattended use. See [From v3.7.0](migration.md#from-v370).
+In the resynced repository, run `python3 scripts/bureau-doctor.py --mode background` for a background installation or `python3 scripts/bureau-doctor.py --mode app` for an app-only installation. Reconcile holds. If doctor reports a tracked `scripts/__pycache__/`, run its printed cleanup command for the matched literal directories once and commit the removal. The ignore entry takes effect for untracked files. After any scanner setup, restart all drivers together so they load the new scripts. If you paused dispatch for the upgrade, run `python3 scripts/bureau-runtime.py unpause` after the restart. See [From v3.8.0](migration.md#from-v380) and [tracked Python bytecode](troubleshooting.md#tracked-python-bytecode).
 
-**From earlier versions:** apply the migration guide's cumulative sections through [v3.7](migration.md#upgrade-to-v37) first, including exits 30/31, helper/schema resync, Spec Kit repairs and runtime-record preservation. Contributor-only test tools, changelog fragments and release records need only a source checkout update.
+**From earlier versions.** Apply the migration guide's cumulative steps through [v3.8](migration.md#upgrade-to-v38) first. The v3.8.0 publication record itself needs only a source checkout update.
 
 ## Compatibility and rollback
 
-Configuration versions 1 and 2, Bash 3.2+, Python 3.9+, Node 18+ for the shared scheduler, Spec Kit 1.2.2 and the current-workspace prepare/finish protocol remain. Legacy implementation results without sibling-search reports remain valid. Older evidence readers must be upgraded together to consume QA flake metadata. The Impeccable integration now requires skill 4.9.0 and engine 0.1.23 when enabled; upstream 4.9.1 / 0.1.24 are unsupported.
+Configuration schema versions 1 and 2, the v3 exit vocabulary, Bash 3.2+, Python 3.9+, Node 18+ for the shared scheduler, Spec Kit 1.2.2 and the current-workspace prepare/finish protocol apply. The scanners have their own platform prerequisites when enabled.
 
-For rollback, stop all drivers and reconcile unfinished writers, local commits and holds. Select `v3.7.0` and restore scripts and interfaces together or restore the private backup and compatible configuration. Remove the new advisory QA, approval and Git credential settings for the older runtime. If Impeccable is enabled, restore v3.7.0's skill 4.8.0 / engine 0.1.18 and matching configuration, or disable it. An older runtime does not resolve `repo.env_file`: preserve the external file and explicitly select it with a supported `BUREAU_ENV_FILE` override, or restore the prior secrets-file arrangement without exposing credentials. Reconcile any required approval status and installed workflow separately. Retain runtime records for inspection. Rollback cannot undo commits, pushes, comments, labels or state moves.
+| Scanner | Shipped platform pins |
+|---|---|
+| Semgrep CE 1.183.0 | macOS arm64 with CPython 3.14 and Linux x86_64 with CPython 3.12. An eligible scan with another interpreter reports unavailable. |
+| Trivy 0.76.1 | Linux x86_64 and macOS arm64 binary pins. |
+
+For rollback, stop drivers and reconcile unfinished writers, local commits and holds. Follow the [restore procedure](migration.md#restore-the-pre-upgrade-installation) to restore the complete v3.8.0 asset set, compatible configuration and installer records, and remove confirmed scanner additions as described there. Retain runtime and scanner records for inspection. Prior commits, pushes, comments, labels and state moves persist through rollback.
 
 ## Validation
 
-The maintainer's validation record states that each change was merged with a macOS gate suite and passing PR CI on its own head. The merged content baseline is main `8af867d`. The remote suite on `openclaw-01` became a gate on **2026-11-14**, after a first-pass **191 of 191** on main `6205c6d`. That earlier run does not validate the final release branch.
-
-The merged changes follow first-parent merge order:
+The merged content baseline is main `31d14b7`. The merged changes follow first-parent merge order.
 
 | PR | Merge commit | Change |
 |---|---|---|
-| [#133](https://github.com/KaiaK808/bureau/pull/133) | `b06d407` | Test-runner bytecode suppression and public-reference inventory |
-| [#134](https://github.com/KaiaK808/bureau/pull/134) | `499af47` | Interrupt-safe mutation cleanup |
-| [#139](https://github.com/KaiaK808/bureau/pull/139) | `9fa1073` | v3.7.0 publication record |
-| [#140](https://github.com/KaiaK808/bureau/pull/140) | `4e01763` | Bounded QA assertion rerun and flake evidence |
-| [#136](https://github.com/KaiaK808/bureau/pull/136) | `d401b62` | Codex gate-duration warning |
-| [#138](https://github.com/KaiaK808/bureau/pull/138) | `9e182d6` | Implementation sibling-defect search |
-| [#141](https://github.com/KaiaK808/bureau/pull/141) | `8d6827f` | Changelog fragments and release collection |
-| [#142](https://github.com/KaiaK808/bureau/pull/142) | `68f0142` | Disable receive-time Git collection in fixtures |
-| [#137](https://github.com/KaiaK808/bureau/pull/137) | `fb6430f` | CI artifact action 7.0.2 |
-| [#143](https://github.com/KaiaK808/bureau/pull/143) | `fa91be3` | Inherited signal dispositions in tests |
-| [#144](https://github.com/KaiaK808/bureau/pull/144) | `7c6d8c3` | Evidence-lock and artifact-cleanup wait budgets |
-| [#145](https://github.com/KaiaK808/bureau/pull/145) | `55a5ad7` | Provider login timeout retry |
-| [#146](https://github.com/KaiaK808/bureau/pull/146) | `afee181` | Advisory fail-before-pass evidence |
-| [#147](https://github.com/KaiaK808/bureau/pull/147) | `ce0815f` | Advisory test integrity evidence |
-| [#148](https://github.com/KaiaK808/bureau/pull/148) | `ecce3e2` | Overlap inventory code-span filtering |
-| [#149](https://github.com/KaiaK808/bureau/pull/149) | `9d7dad1` | Nonblocking review questions |
-| [#150](https://github.com/KaiaK808/bureau/pull/150) | `bd2be2b` | Hostile-input corpus and agent-configuration annotations |
-| [#151](https://github.com/KaiaK808/bureau/pull/151) | `a718287` | Exact-commit approval accident guard |
-| [#152](https://github.com/KaiaK808/bureau/pull/152) | `e3d355d` | Advisory task completion evidence |
-| [#153](https://github.com/KaiaK808/bureau/pull/153) | `a8e09dc` | Remote-suite check D SSH-startup test fix |
-| [#154](https://github.com/KaiaK808/bureau/pull/154) | `6205c6d` | Stored Git credential helpers off by default |
-| [#155](https://github.com/KaiaK808/bureau/pull/155) | `92b449e` | Secrets file outside the checkout |
-| [#156](https://github.com/KaiaK808/bureau/pull/156) | `8af867d` | Impeccable skill 4.9.0 / engine 0.1.23 pins |
+| [#158](https://github.com/KaiaK808/bureau/pull/158) | `917214e` | v3.8.0 publication record |
+| [#159](https://github.com/KaiaK808/bureau/pull/159) | `0e1dce2` | Optional Semgrep CE review evidence and blocking merge recheck |
+| [#160](https://github.com/KaiaK808/bureau/pull/160) | `10d4c60` | Optional Trivy QA evidence from a verified pinned binary |
+| [#161](https://github.com/KaiaK808/bureau/pull/161) | `b65f8cf` | Keep installed Bureau bytecode out of shell stage commits |
+| [#163](https://github.com/KaiaK808/bureau/pull/163) | `31d14b7` | Hold the CI merge gate when the commit-status read fails |
 
-The release branch's own validation, on release candidate `45335d7`:
+The merge gate fix has CI helper and merge-stage tests, including fail-before controls against the previous runtime. The fragments record offline Semgrep fixtures and negative controls for the private runtime, review, receipt reuse and merge freshness. An earlier maintainer run of Semgrep 1.183.0 on macOS arm64 under network denial covered every rule fixture, a hostile `.semgrepignore` and inline `nosemgrep`.
+
+Offline Trivy tests used a fake binary to cover the scanner boundary, cache, coverage and parser controls, QA placement, the disabled baseline and merge races. The bytecode fix used local fixtures for stage entry points, review evidence, provider gates, filesystem-specific directory cases and a tracked Latin-1 shell POST, without a model or network. See the [fragment validation in the changelog](../CHANGELOG.md#390---2026-11-20).
+
+The release branch's own validation remains to be run by the maintainer:
 
 | Release check | Result / reference |
 |---|---|
-| Independent release review | Codex, read-only. Round 1 requested changes (an undefined variable in the migration commands; a stale mutation-test caveat in the changelog); both are fixed in `45335d7`. Round 2 approved. |
-| macOS gate suite and tested ref | `45335d7`, two shards: 191 of 191 on the first pass (2026-11-14). |
-| Remote gate suite and tested ref | `openclaw-01`, a bundle of exactly `45335d7`, two shards: 191 of 191 on the first pass, no reruns (2026-11-14). |
-| Release CI jobs, runs and results | [#157](https://github.com/KaiaK808/bureau/pull/157) at `789c134`: the pull-request run passed 6 of 6 jobs (focused macOS, full Ubuntu) and the push run 10 of 10 (full macOS and Ubuntu). Main at `74bc6b2`: push run 10 of 10. Tag `v3.8.0`: the first push run passed 9 of 10; the full macOS shard 1 failed one load-sensitive dispatcher shutdown fixture (`test_shutdown_joins_writers_retains_leases_and_spares_unrelated_sentinel`), which the same tree passed on main, on #157 and in both gate suites. The rerun of that job passed, 10 of 10. |
-| Final candidate/tag tested-tree comparison | `python3 scripts/release_verify.py 45335d7 v3.8.0` passed: `templates/`, `tests/` and `scripts/` are tree-identical between the tested candidate and the tag. The PR head `789c134` changed documentation only and has the same tree as the tag. |
-| Manual live injection sample and adopter qualification | The manual live injection sample was not run for v3.8.0, by the maintainer's decision. One adopting installation resynced its complete scripts and interfaces scopes to the tag with no conflicts; doctor reported no errors and no drift. Representative ticket runs are not recorded. |
+| Independent release review | TBD |
+| macOS gate suite and tested ref | TBD |
+| Remote gate suite and tested ref | TBD |
+| Release CI jobs, runs and results | TBD |
+| Final candidate/tag tested-tree comparison | TBD |
+| Manual live injection sample and adopter qualification | TBD |
 
-See [release tree verification](releases.md#verify-the-tested-release-trees) for the comparison procedure. The hostile-input corpus uses deterministic fakes; its manual live release-checklist sample was not run for this release.
+Before publication, record the exact tested refs and results and run [release tree verification](releases.md#verify-the-tested-release-trees). The manual live injection sample remains a separate release-checklist item.
 
 ## Known limitations
 
-- A stored `gh` login remains available to branch-controlled code through `gh auth token`, `~/.config/gh/hosts.yml` or the keychain. No change in this release covers it. This conclusion was argued from the code and was not tested.
-- Moving the secrets file outside the checkout blocks only the conventional path. Processes with the user's permissions can still discover and read it.
-- Human approval depends on default-branch installation and branch protection requiring the status. Deliberate status forgery and self-approval with a shared login remain possible; the feature is an accident guard.
-- Advisory QA evidence has bounded coverage. Worktree-linked repositories are not measured for fail-before-pass; static integrity checks have lexical/import limits; task-path changes do not prove correct completion.
-- Pytest long tracebacks showing a test class instance named after a timeout, sandbox or teardown can suppress the assertion rerun. This fails safe: no rerun, QA stays red. Unfamiliar output also follows the ordinary failure path.
-- Several inherited tests remain load-sensitive. The signal-reset change addresses inherited ignored signals; it does not establish that every timing race is resolved.
-- Live provider behavior, adopter drift comparisons and representative adoption of the new checks remain unverified. Impeccable adopting-repository pilots have not run. Fragment-level tests and hostile-input fakes cannot establish live resistance to every prompt injection.
-- The manual live injection sample was not run for v3.8.0, so resistance to hostile input rests on the deterministic corpus and fakes. The dispatcher shutdown fixture that failed once on the tag's CI remains load-sensitive.
+- Real-engine validation of Semgrep's private-copy boundary, Linux isolation on deployment hosts and adopting-repository qualification remain pending.
+- The separate GitHub-hosted Ubuntu Trivy job remains pending after offline implementation. It needs network access to download the pinned archive and refresh a cache. It verifies the archive and extracted-binary hashes before refresh and qualifies filesystem flags under `unshare`. Pinned-engine flag behavior, platform isolation and adopter compatibility still need a networked CI or maintainer run.
+- Trivy reports reduced coverage for lockfile forms its consistency parsers reject or for non-canonical manifest and lockfile names. In blocking mode, each affected file needs an active base coverage exception to waive its gap.
+- Inline-ignore stripping can truncate an IaC line at `//` inside a quoted string before a trailing `trivy:ignore:` comment, so Trivy can receive altered configuration text.
+- Bureau's Yarn consistency parser rejects indented comments and skips other indented body lines, so unsupported syntax in those lines can pass without a Bureau coverage warning.
+- The writer of the historical adopter cache remains unknown.
+- The release branch's own macOS and remote suites, CI, tested refs and final tree comparisons remain `TBD` until the maintainer runs them.
