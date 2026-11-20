@@ -4,7 +4,7 @@ Bureau ships a source skill and templates that are copied into adopting reposito
 
 ## Current release status
 
-This source tree prepares **Bureau v3.9.0**, dated **2026-11-20**, a minor release on v3.8.0 with source tag `v3.9.0`. Tagging and publication remain separate maintainer operations. The [release notes](release-notes.md) and [changelog](../CHANGELOG.md#390---2026-11-20) cover [#158](https://github.com/KaiaK808/bureau/pull/158), [#159](https://github.com/KaiaK808/bureau/pull/159), [#160](https://github.com/KaiaK808/bureau/pull/160) and [#161](https://github.com/KaiaK808/bureau/pull/161) in first-parent merge order.
+This source tree prepares **Bureau v3.9.0**, dated **2026-11-20**, a minor release on v3.8.0 with source tag `v3.9.0`. Tagging and publication remain separate maintainer operations. The [release notes](release-notes.md) and [changelog](../CHANGELOG.md#390---2026-11-20) cover [#158](https://github.com/KaiaK808/bureau/pull/158), [#159](https://github.com/KaiaK808/bureau/pull/159), [#160](https://github.com/KaiaK808/bureau/pull/160), [#161](https://github.com/KaiaK808/bureau/pull/161) and [#163](https://github.com/KaiaK808/bureau/pull/163) in first-parent merge order.
 
 The release adds opt-in offline Semgrep CE evidence in code review, opt-in offline Trivy dependency and configuration evidence in QA, a fix for installed helper bytecode in shell stage commits, and a merge gate that holds instead of passing when the commit-status read fails. Both scanners start off, run under network denial when scanning, and offer advisory and blocking modes. Image scanning is outside this release. The v3.8.0 publication record is also included.
 

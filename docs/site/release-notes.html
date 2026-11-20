@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="6ed5a0f0ea36ec7e3145a5c7419ae11c81e32b9676175263c25fa86ff9acce02">
+<meta name="bureau-source-sha256" content="3c5ebe6162056a3afa6e8a18079ab6731c2ef77c9015b04adcf49d6c616d311f">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -109,14 +109,15 @@ merge gate reads check runs and legacy commit statuses for the PR head.
 Before this release, a failed status read counted as an empty status
 list, so green check runs could pass the gate while statuses, possibly a
 failing required context, were never read. A failed status read now
-holds the gate as not yet decided with a line naming the head SHA, for
-every combination of check runs and every
-<code>agents.merge_min_required_checks</code> value. The dedicated merge
-stage, the inline merge after review and the just-in-time recheck end
-with <code>2</code> and retry later. Decided check-run blockers keep
-their precedence, and <code>merge_require_green_ci: false</code> still
-switches the check off. This behaviour had been present since
-v3.1.0.</p>
+prevents green CI regardless of
+<code>agents.merge_min_required_checks</code>, and the gate line names
+the failed read and the head SHA. If no decided blocker takes
+precedence, the dedicated merge stage, the inline merge after review and
+the just-in-time recheck end with <code>2</code> and retry later.
+Decided check-run blockers, such as a failed check or an overdue queued
+check, keep <code>25</code>, and
+<code>merge_require_green_ci: false</code> still switches the check off.
+This behaviour had been present since v3.1.0.</p>
 <h3 id="v380-publication-record">v3.8.0 publication record</h3>
 <p>The source-only record captures the published tag and merge commit,
 GitHub Release, CI results including one tag rerun, tested-tree
@@ -225,9 +226,10 @@ or with Trivy disabled.</td>
 <p>A shell stage that reaches its commit step with a staged Bureau cache
 change, including the cleanup deletion, stops with exit 24 and leaves
 the index untouched. See <a href="exit-codes.html">exit codes</a>.</p>
-<p>The CI merge gate no longer passes when the commit-status read fails:
-the merge ends with <code>2</code> (not yet decided) and retries, where
-it could merge before. No configuration key changes.</p>
+<p>The CI merge gate no longer passes when the commit-status read fails,
+where it could merge before. If no decided blocker takes precedence, the
+merge ends with <code>2</code> (not yet decided) and retries; decided
+blockers keep <code>25</code>. No configuration key changes.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
 <p><strong>From v3.8.0, once v3.9.0 is published.</strong> Stop every

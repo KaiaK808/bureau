@@ -30,7 +30,7 @@ Stages suppress installed Bureau helper bytecode and exclude the Bureau cache fr
 
 ### Merge gate holds on an unreadable commit-status read
 
-When `agents.merge_require_green_ci` is on, Bureau's CI merge gate reads check runs and legacy commit statuses for the PR head. Before this release, a failed status read counted as an empty status list, so green check runs could pass the gate while statuses, possibly a failing required context, were never read. A failed status read now holds the gate as not yet decided with a line naming the head SHA, for every combination of check runs and every `agents.merge_min_required_checks` value. The dedicated merge stage, the inline merge after review and the just-in-time recheck end with `2` and retry later. Decided check-run blockers keep their precedence, and `merge_require_green_ci: false` still switches the check off. This behaviour had been present since v3.1.0.
+When `agents.merge_require_green_ci` is on, Bureau's CI merge gate reads check runs and legacy commit statuses for the PR head. Before this release, a failed status read counted as an empty status list, so green check runs could pass the gate while statuses, possibly a failing required context, were never read. A failed status read now prevents green CI regardless of `agents.merge_min_required_checks`, and the gate line names the failed read and the head SHA. If no decided blocker takes precedence, the dedicated merge stage, the inline merge after review and the just-in-time recheck end with `2` and retry later. Decided check-run blockers, such as a failed check or an overdue queued check, keep `25`, and `merge_require_green_ci: false` still switches the check off. This behaviour had been present since v3.1.0.
 
 ### v3.8.0 publication record
 
@@ -61,7 +61,7 @@ Semgrep runs in the background review pipeline and Trivy runs in the background 
 
 A shell stage that reaches its commit step with a staged Bureau cache change, including the cleanup deletion, stops with exit 24 and leaves the index untouched. See [exit codes](exit-codes.md).
 
-The CI merge gate no longer passes when the commit-status read fails: the merge ends with `2` (not yet decided) and retries, where it could merge before. No configuration key changes.
+The CI merge gate no longer passes when the commit-status read fails, where it could merge before. If no decided blocker takes precedence, the merge ends with `2` (not yet decided) and retries; decided blockers keep `25`. No configuration key changes.
 
 ## Upgrade an existing installation
 
