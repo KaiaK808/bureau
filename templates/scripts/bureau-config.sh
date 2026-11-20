@@ -2341,7 +2341,11 @@ pr_ci_is_green() {
       echo "ci: check $queued_name queued for $queued_age s on $head_sha, past the CI queue grace (agents.merge_ci_queued_grace_seconds: $queued_grace)$queued_count — runner offline?" >&2
       return 1
     fi
-    echo "ci: $((pending + pending_legacy)) check(s) still pending on $head_sha" >&2
+    if [ "$statuses_read" = failed ]; then
+      echo "ci: gh commit-status query failed for $head_sha" >&2
+    else
+      echo "ci: $((pending + pending_legacy)) check(s) still pending on $head_sha" >&2
+    fi
     return 1
   fi
   if [ "$failed" -gt 0 ] || [ "$failed_legacy" -gt 0 ]; then
@@ -2356,6 +2360,12 @@ pr_ci_is_green() {
     [ -n "$fail_names"   ] && all="$fail_names"
     [ -n "$legacy_names" ] && all="${all:+$all, }$legacy_names"
     echo "ci: failing check(s) on $head_sha: $all" >&2
+    return 1
+  fi
+  # An unreadable status list cannot establish green CI, even at minimum 0.
+  # Keep the decided check-run blockers above ahead of this unknown result.
+  if [ "$statuses_read" = failed ]; then
+    echo "ci: gh commit-status query failed for $head_sha" >&2
     return 1
   fi
   # A value the test below cannot compare ("abc", 1.5) used to make the test fail and

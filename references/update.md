@@ -4,6 +4,8 @@ When the user requests `--update`:
 
 Resolve the secrets file as the stages do: non-empty process `BUREAU_ENV_FILE`, otherwise `repo.env_file`, otherwise `.env` next to `.bureau.json`. A relative process override counts from that JSON file's directory; `repo.env_file` must be absolute or start with `~/`. Do not create a checkout `.env` when the installation uses an external file. Moving outside blocks the conventional checkout path only; it does not stop a process with the user's permissions from discovering and reading the file. See [migration](../docs/migration.md#move-the-secrets-file-outside-the-checkout).
 
+For a v3.9.0 upgrade, remove `qa.trivy.image_archive_command` if present. See the [v3.9.0 upgrade steps](../docs/migration.md#from-v380) for the source tag, scripts resync and tracked-cache cleanup.
+
 1. **Show current effective config first.** Run `bash scripts/bureau-status.sh --config` and display the output. This surfaces both `.bureau.json` values and the env-only knobs (`BUREAU_IMPL_*`, `BUREAU_SUPERVISOR_*`, `LINEAR_API_KEY` set/unset, etc.) the user might want to change.
 
 2. Ask: "What would you like to change?" Present these option groups:
