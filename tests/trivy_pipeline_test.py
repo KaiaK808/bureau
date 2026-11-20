@@ -218,12 +218,18 @@ if case.startswith('parsing-yarn-'):
     body='unsupported body text'
     if 'nested-mapping' in case:body='dependencies: missing: 2.0.0'
     if 'nested-sequence' in case:body='dependencies: - missing'
+    if 'reserved-question' in case:body='dependencies: ? missing'
+    if 'reserved-at' in case:body='dependencies: @missing'
+    if 'reserved-percent' in case:body='dependencies: %TAG'
     (repo/'yarn.lock').write_text('"locked@npm:^1":\n  version: 1.0.0\n  '+body+'\n')
 if case.startswith('parsing-inline-'):
     data='endpoint = "https://example.invalid # trivy:ignore:AVD-FIXTURE\n'
     if 'interpolation' in case:data='value = "${join("", ["https://example.invalid"])}" # trivy:ignore:X\n'
     if 'docker' in case:data='FROM scratch\nRUN echo secret # trivy:ignore:X\n'
-    (repo/('Dockerfile' if 'docker' in case else 'infra.tf')).write_text(data)
+    if 'docker-heredoc' in case:data='FROM alpine\nRUN cat <<EOF.txt\nEOF\n# trivy:ignore:X\nEOF.txt\n'
+    if 'yaml-anchor-quote' in case:data='value: &anchor.v1 "keep # literal" # trivy:ignore:X\n'
+    if 'yaml-anchor-block' in case:data='value: &anchor.v1 |\n  # trivy:ignore:X\n'
+    (repo/('Dockerfile' if 'docker' in case else 'compose.yaml' if 'yaml' in case else 'infra.tf')).write_text(data)
 provider=repo/'logs/provider.sh'
 provider.write_text('#!/bin/bash\nset -euo pipefail\nprintf "%s\\n" "$*" > "$SANDBOX/logs/prompt.txt"\n'+
     ('printf "# QA added test\\n" > qa_added_test.py\n' if case=='postcommit' else '')+
@@ -231,7 +237,7 @@ provider.write_text('#!/bin/bash\nset -euo pipefail\nprintf "%s\\n" "$*" > "$SAN
 provider.chmod(0o700)
 def git(*args):return subprocess.check_output(['git','-C',str(repo),*args],text=True).strip()
 git('add','.gitignore','requirements.txt','specs')
-if case.startswith('parsing-'):git('add','yarn.lock' if 'yarn' in case else 'Dockerfile' if 'docker' in case else 'infra.tf')
+if case.startswith('parsing-'):git('add','yarn.lock' if 'yarn' in case else 'Dockerfile' if 'docker' in case else 'compose.yaml' if 'yaml' in case else 'infra.tf')
 git('commit','-qm','test: QA source');git('push','-q','origin','test-branch')
 (repo/'logs/before-head').write_text(git('rev-parse','HEAD'))
 e=f.load('evidence',repo/'scripts/bureau-evidence.py');store=e.Store(repo/'.git/bureau');run=uuid.uuid4().hex
@@ -315,6 +321,14 @@ class QATests(unittest.TestCase):
                            ('yarn-nested-sequence','yarn.lock','lockfile format not recognised'),
                            ('inline-interpolation','infra.tf','inline ignore format not recognised'),
                            ('inline-docker','Dockerfile','inline ignore format not recognised')))
+
+    def test_narrowed_shapes_keep_existing_advisory_and_blocking_routes(self):
+        self.parsing_gaps((('yarn-reserved-question','yarn.lock','lockfile format not recognised'),
+                           ('yarn-reserved-at','yarn.lock','lockfile format not recognised'),
+                           ('yarn-reserved-percent','yarn.lock','lockfile format not recognised'),
+                           ('inline-yaml-anchor-quote','compose.yaml','inline ignore format not recognised'),
+                           ('inline-yaml-anchor-block','compose.yaml','inline ignore format not recognised'),
+                           ('inline-docker-heredoc','Dockerfile','inline ignore format not recognised')))
 
     def parsing_gaps(self,cases):
         for parser,name,reason in cases:

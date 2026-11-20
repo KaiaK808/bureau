@@ -306,8 +306,8 @@ class TrivyTests(unittest.TestCase):
         for prefix in prefixes:
             for comment in comments:
                 with self.subTest(prefix=prefix,comment=comment):
-                    data=b'first\n'+prefix+comment+b'\nlast\n'
-                    self.assertEqual(self.m.remove_inline_ignores(data),(b'first\n'+prefix+b'\nlast\n',[2]))
+                    data=b'first = 1\n'+prefix+comment+b'\nlast = 2\n'
+                    self.assertEqual(self.m.remove_inline_ignores(data),(b'first = 1\n'+prefix+b'\nlast = 2\n',[2]))
 
     def test_inline_ignore_preserves_escaped_quotes_and_backslashes(self):
         prefixes=(br'endpoint = "escaped \" // # /* <!-- still quoted"  ',
@@ -471,11 +471,10 @@ class TrivyTests(unittest.TestCase):
         report=json.loads(Path(value['receipt']['report_path']).read_text())
         for name,original in originals.items():
             with self.subTest(file=name):
-                expected=fixtures[name]+b'\r\n' if name in fixtures else original
-                self.assertEqual(files[name].encode(),expected)
+                self.assertEqual(files[name].encode(),original)
                 self.assertIn(dict(file=name,reason='inline ignore format not recognised'),report['inventory']['head']['issues'])
                 self.assertEqual([row['line'] for row in value['projection']['removed_inline_ignores']['head'] if row['file']==name],
-                                 [len(fixtures[name].split(b'\n'))] if name in fixtures else [])
+                                 [])
         self.assertEqual(value['receipt']['status'],'reduced_coverage',value['projection'])
         self.assertTrue(value['receipt']['blocking'])
         self.assertEqual(report['inventory']['head']['issues'],
@@ -492,6 +491,51 @@ class TrivyTests(unittest.TestCase):
                 self.assertEqual(next(row for row in self.calls() if row['side']==side)['files']['infra.tf'].encode(),original)
                 self.assertEqual(value['projection']['removed_inline_ignores'][side],[])
         self.assertEqual(value['receipt']['status'],'reduced_coverage');self.assertTrue(value['receipt']['blocking'])
+
+    def check_retained_inline_formats(self, fixtures):
+        self.write('requirements.txt','safe==1.0\n');self.commit();self.base=self.head
+        for name,data in fixtures.items():self.write(name,data)
+        self.commit()
+        for mode in ('advisory','blocking'):
+            with self.subTest(mode=mode):
+                self.config['qa']['trivy']['mode']=mode;value=self.measure()
+                files=self.calls()[-1]['files']
+                report=json.loads(Path(value['receipt']['report_path']).read_text())
+                for name,data in fixtures.items():
+                    with self.subTest(file=name):
+                        self.assertEqual(files[name].encode(),data)
+                        self.assertIn(dict(file=name,reason='inline ignore format not recognised'),report['inventory']['head']['issues'])
+                self.assertEqual(value['projection']['removed_inline_ignores']['head'],[])
+                self.assertEqual(value['receipt']['status'],'reduced_coverage',value['projection'])
+                self.assertEqual(value['receipt']['blocking'],mode=='blocking')
+
+    def test_yaml_dotted_anchor_before_quoted_scalar_is_retained(self):
+        self.check_retained_inline_formats({
+            'quoted.yaml':b'value: &anchor.v1 "keep # literal" # trivy:ignore:X\n',
+        })
+
+    def test_yaml_dotted_anchor_before_block_scalar_is_retained(self):
+        self.check_retained_inline_formats({
+            'block.yaml':b'value: &anchor.v1 |\n  # trivy:ignore:X\n  keep literal\n',
+        })
+
+    def test_unrecognised_inline_shapes_are_retained(self):
+        self.check_retained_inline_formats({
+            'anchor.yaml':b'value: &anchor "literal" # trivy:ignore:X\n',
+            'alias.yaml':b'value: *anchor # trivy:ignore:X\n',
+            'tag.yaml':b'value: !custom "literal" # trivy:ignore:X\n',
+            'flow.yaml':b'value: [one, two] # trivy:ignore:X\n',
+            'flow.yml':b'value: {key: literal} # trivy:ignore:X\n',
+            'unknown.tf':b'value = some_function(1) # trivy:ignore:X\n',
+            'unknown.bicep':b'var value = 1 + 2 // trivy:ignore:X\n',
+        })
+
+    def test_docker_heredoc_delimiters_keep_all_later_markers(self):
+        fixtures={}
+        for index,delimiter in enumerate((b'EOF.txt',b'"EOF.txt"',b"'EOF.txt'",b'-EOF.txt',b'-"EOF.txt"',b"-'EOF.txt'")):
+            fixtures['heredoc-'+str(index)+'.dockerfile']=(b'FROM alpine\nRUN cat <<'+delimiter+
+                b'\nEOF\n# trivy:ignore:X\nEOF.txt\n# trivy:ignore:after\r\n')
+        self.check_retained_inline_formats(fixtures)
 
     def test_file_level_misconfiguration_without_cause_lines_is_measured(self):
         # Shape seen from the real pinned 0.76.1: DS-0026 has only Provider and Service.
@@ -746,6 +790,31 @@ class TrivyTests(unittest.TestCase):
                 self.assertEqual(len(self.calls())-before,4,'both snapshots must be remeasured')
                 self.assert_format_coverage(current,'yarn.lock')
 
+    def test_narrowed_policies_remeasure_previously_accepted_shapes(self):
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        self.write('yarn.lock','"locked@npm:^1":\n  version: 1.0.0\n  dependencies: ? missing\n')
+        self.write('compose.yaml','value: &anchor.v1 "keep # literal" # trivy:ignore:X\n')
+        self.commit();self.base=self.head
+        inventory,digest=self.m.inventory,self.s.digest
+        def legacy_inventory(*args):
+            value=inventory(*args);value['issues']=[]
+            return value
+        for policy,previous in (('inventory','canonical-v4'),('neutralization','per-type-v1')):
+            with self.subTest(policy=policy):
+                shutil.rmtree(self.root/'state',ignore_errors=True)
+                def legacy_digest(value):
+                    if isinstance(value,dict) and value.get('checks')=='embedded':value={**value,policy:previous}
+                    return digest(value)
+                before=len(self.calls())
+                with patch.object(self.m,'inventory',side_effect=legacy_inventory),patch.object(self.s,'digest',side_effect=legacy_digest):
+                    old=self.measure()
+                self.assertEqual(old['receipt']['status'],'measured');self.assertFalse(old['receipt']['blocking'])
+                current=self.measure(reuse=True)
+                self.assertNotEqual(old['receipt_path'],current['receipt_path'])
+                self.assertEqual(len(self.calls())-before,4,'each changed policy must invalidate reuse independently')
+                self.assert_format_coverage(current,'yarn.lock')
+                self.assertIn('inline ignore format not recognised: compose.yaml',current['receipt']['reason'])
+
     def test_pnpm_canonical_keys_and_unrecognised_file_syntax(self):
         canonical="lockfileVersion: '9.0'\nimporters:\n  '.':\n    \"dependencies\":\n      locked:\n        specifier: ^1\n        version: 1.0.0\n"
         self.check_parser_formats({'package.json':json.dumps(dict(dependencies=dict(locked='^1'))),
@@ -791,6 +860,107 @@ class TrivyTests(unittest.TestCase):
         for line in ('  dependencies: missing: 2.0.0','  dependencies: - missing'):
             with self.subTest(line=line):
                 with self.assertRaises(ValueError):self.m.yarn_names(canonical+line+'\n')
+
+    def test_yarn_plain_scalar_reserved_prefixes_reduce_coverage(self):
+        canonical='"locked@npm:^1":\n  version: 1.0.0\n'
+        invalid=('? missing','@missing','%TAG','&anchor','*alias','!tag','|','>','`text`')
+        self.check_parser_formats({'package.json':json.dumps(dict(dependencies=dict(locked='^1'))),
+                                   'yarn.lock':canonical},'yarn.lock',[
+            canonical+'  dependencies: '+value+'\n' for value in invalid]+[
+            canonical+'  integrity missing: 2\n',canonical+'  integrity arbitrary text\n'])
+        for separator in (': ',' '):
+            for value in (*invalid,'missing: 2','value # comment','unrecognised body text'):
+                with self.subTest(separator=separator,value=value):
+                    with self.assertRaises(ValueError):self.m.yarn_names(canonical+'  value'+separator+value+'\n')
+
+    def test_yarn_plain_scalar_allowlist_keeps_tool_written_values(self):
+        values=('1.2.3','^1.2.3','~2.0','<3','npm:^1','npm:@scope/pkg@~2','file:../local',
+                'link:../local','patch:pkg@npm%3A1.0.0','workspace:.','git+ssh://git@example.invalid/pkg.git',
+                'https://registry.example.invalid/pkg.tgz','sha512-AbC+def/123==','10c0/012345abcdef',
+                'true','false','10c0','node','hard','cli.js','os=linux & cpu=x64')
+        for value in values:
+            for separator in ((': ',) if ' ' in value else (': ',' ')):
+                with self.subTest(separator=separator,value=value):
+                    text='"locked@npm:^1":\n  value'+separator+value+'\n'
+                    self.assertEqual(self.m.yarn_names(text),{'locked'})
+
+    def test_realistic_yarn_lockfiles_keep_full_coverage(self):
+        v1='''# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+"@babel/code-frame@^7.24.7":
+  version "7.24.7"
+  resolved "https://registry.yarnpkg.com/@babel/code-frame/-/code-frame-7.24.7.tgz#d1f1c3f1"
+  integrity sha512-0ApjOAT1N2mPW3BKzGKC04iOT4y3N8WAW7STmA==
+  dependencies:
+    "@babel/highlight" "^7.24.7"
+    picocolors "^1.0.0"
+
+"@babel/highlight@^7.24.7":
+  version "7.24.7"
+  resolved "https://registry.yarnpkg.com/@babel/highlight/-/highlight-7.24.7.tgz#a1b2c3d4"
+  integrity sha512-EHPjHeYvJK0P7qLKaQh3bQ== sha1-ABCdef123==
+  dependencies:
+    picocolors "^1.0.0"
+
+picocolors@^1.0.0:
+  version "1.1.0"
+  resolved "https://registry.yarnpkg.com/picocolors/-/picocolors-1.1.0.tgz#fe387f5c"
+  integrity sha512-oCLfiwoDPqeQlbb9HdRmCG==
+'''
+        berry='''# This file is generated by running "yarn install" inside your project.
+# Manual changes might be lost - proceed with caution!
+
+__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"@babel/code-frame@npm:^7.24.7":
+  version: 7.24.7
+  resolution: "@babel/code-frame@npm:7.24.7"
+  dependencies:
+    "@babel/highlight": "npm:^7.24.7"
+    picocolors: "npm:^1.0.0"
+  peerDependencies:
+    supports-color: ">=7"
+  peerDependenciesMeta:
+    supports-color:
+      optional: true
+  checksum: 10c0/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  languageName: node
+  linkType: hard
+
+"@babel/highlight@npm:^7.24.7":
+  version: 7.24.7
+  resolution: "@babel/highlight@npm:7.24.7"
+  dependencies:
+    picocolors: "npm:^1.0.0"
+  checksum: 10c0/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+  languageName: node
+  linkType: hard
+
+"picocolors@npm:^1.0.0":
+  version: 1.1.0
+  resolution: "picocolors@npm:1.1.0"
+  bin:
+    colors: bin/colors.js
+  conditions: os=linux & cpu=x64
+  dependenciesMeta:
+    optional-helper:
+      optional: true
+  checksum: 10c0/123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0
+  languageName: node
+  linkType: hard
+'''
+        names={'@babel/code-frame','@babel/highlight','picocolors'}
+        self.blocking();self.write('requirements.txt','safe==1.0\n')
+        self.write('package.json',json.dumps(dict(dependencies={'@babel/code-frame':'^7.24.7','picocolors':'^1.0.0'})))
+        for text in (v1,berry,v1.replace('\n','\r\n'),berry.replace('\n','\r\n')):
+            with self.subTest(text=text):
+                self.write('yarn.lock',text);self.commit();self.base=self.head
+                self.assertEqual(self.m.lock_names(self.repo/'yarn.lock'),names)
+                value=self.measure();self.assertEqual(value['receipt']['status'],'measured',value['projection'])
+                self.assertFalse(value['receipt']['blocking']);self.assertEqual(value['projection']['coverage'],[])
 
     def test_yarn_v1_and_berry_body_forms_keep_full_coverage(self):
         v1='''# yarn lockfile v1

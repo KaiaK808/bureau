@@ -235,132 +235,78 @@ def iac_language(name, data):
 
 
 def inline_ignore_bounds(raw, language, state):
-    """Classify one original line, carrying unsupported/multiline state forward.
+    """Strip only complete, allow-listed single-line shapes.
 
-    This is a conservative lexer, not a configuration parser. An uncertain
-    line is never edited, even if a later part looks like a trailing comment.
+    Once a line is outside these shapes, subsequent context is unclassified.
+    Retain all later markers rather than trying to parse back out of it.
     """
     line = raw[:-1] if raw.endswith(b'\r') else raw
     if language == 'json': return None, False
     if state.get('opaque'): return None, True
     if language == 'dockerfile':
-        if state.get('docker_heredocs'):
-            delimiter, indented = state['docker_heredocs'][0]
-            if (line.lstrip(b'\t') if indented else line) == delimiter: state['docker_heredocs'].pop(0)
+        # No delimiter grammar: even a quoted or dashed heredoc makes every
+        # subsequent marker uncertain, including those after an apparent end.
+        if b'<<' in line:
+            state['opaque'] = True
             return None, True
         start = len(line) - len(line.lstrip(b' \t'))
         if line[start:].startswith(b'#'):
             return ((start, len(line)) if b'trivy:ignore:' in line[start:] else None), False
-        if b'<<' in line:
-            # A Docker heredoc's body is instruction data, including lines
-            # beginning with '#'. Unknown delimiters retain the rest of file.
-            delimiters = list(re.finditer(rb'''<<(-?)(["']?)([A-Za-z_][A-Za-z0-9_-]*)\2''', line))
-            if len(delimiters) != line.count(b'<<'): state['opaque'] = True
-            else: state['docker_heredocs'] = [(match[3], bool(match[1])) for match in delimiters]
-            return None, True
         return None, False
-    if state.get('heredoc'):
-        delimiter, indented = state['heredoc']
-        if (line.lstrip(b' \t') if indented else line) == delimiter: state['heredoc'] = None
-        return None, True
-    indent = len(line) - len(line.lstrip(b' '))
-    if state.get('yaml_block'):
-        block = state['yaml_block']
-        if not line.strip(): return None, True
-        if indent > block[0] and (block[1] is None or indent >= block[1]):
-            if block[1] is None: block[1] = indent
+    double = rb'"(?:[^"\\\r\n]|\\[^\r\n])*"'
+    identifier = rb'[A-Za-z_][A-Za-z0-9_-]*'
+    number = rb'-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?'
+    literal = rb'(?:' + number + rb'|true|false|null)'
+    if language == 'yaml':
+        single = rb"'(?:[^'\r\n]|'')*'"
+        # Plain scalars have a deliberately small character set. Node
+        # properties, block indicators and flow collections never match.
+        plain = rb'''(?![^#\r\n]*:[ \t])[A-Za-z0-9_./-][A-Za-z0-9_./:@%+?=~^$()'"\\ -]*'''
+        scalar = rb'(?:' + double + rb'|' + single + rb'|' + plain + rb')'
+        key = rb'(?:[A-Za-z0-9_./-]+|' + double + rb'|' + single + rb')'
+        code = rb'(?:- +)?(?:' + key + rb':[ \t]*(?:' + scalar + rb')?|' + scalar + rb')'
+    elif language == 'hcl':
+        scalar = rb'(?:' + double + rb'|' + literal + rb')'
+        assignment = identifier + rb'[ \t]*=[ \t]*' + scalar
+        block = identifier + rb'(?:[ \t]+' + double + rb'){0,2}[ \t]*\{'
+        code = rb'(?:' + assignment + rb'|' + block + rb'|[{}])'
+    else:  # Bicep: literal declarations and literal object properties only.
+        single = rb"'(?:[^'\\\r\n]|\\[^\r\n])*'"
+        scalar = rb'(?:' + single + rb'|' + literal + rb')'
+        declaration = rb'(?:var|param|output)[ \t]+' + identifier + rb'(?:[ \t]+(?:string|int|bool))?[ \t]*=[ \t]*' + scalar
+        code = rb'(?:' + declaration + rb'|' + identifier + rb':[ \t]*' + scalar + rb'|[{}])'
+    start = len(line) - len(line.lstrip(b' \t'))
+    # Comment-only lines have an empty, fully classified code prefix.
+    comment_start = (b'#',) if language == 'yaml' else ((b'#', b'//', b'/*') if language == 'hcl' else (b'//', b'/*'))
+    if not line[start:] or line[start:].startswith(comment_start):
+        index = start
+    else:
+        match = re.match(code, line[start:])
+        if not match or (language != 'yaml' and any(token in match[0] for token in (b'${', b'%{'))):
+            state['opaque'] = True
             return None, True
-        state['yaml_block'] = None
-    contexts = state.setdefault('contexts', [])
-    flow = state.setdefault('flow', [])
-    uncertain = bool(contexts or flow or state.get('block_comment') or state.get('triple'))
-    bounds, index, scalar_start = None, 0, True
+        index = start + match.end()
+    # The entire suffix must consist of whitespace and supported comments.
+    # A marker block must be the final comment, without trailing code.
     while index < len(line):
-        char = line[index:index + 1]
-        if state.get('block_comment') or state.get('triple'):
-            key, closing = ('block_comment', b'*/') if state.get('block_comment') else ('triple', b"'''")
-            end = line.find(closing, index)
-            if end < 0: break
-            state[key] = False
-            index = end + len(closing)
-            continue
-        if contexts and contexts[-1][0] == 'string':
-            quote = contexts[-1][1]
-            if language == 'yaml' and quote == b"'" and line.startswith(b"''", index):
-                index += 2; continue
-            if char == b'\\' and (language != 'yaml' or quote == b'"'):
-                index += 2; continue
-            if language != 'yaml':
-                # Escaped template openers are literal string data.
-                if language == 'hcl' and line.startswith((b'$${', b'%%{'), index): index += 3; continue
-                if line.startswith(b'${', index) or (language == 'hcl' and line.startswith(b'%{', index)):
-                    uncertain = True; contexts.append(['expression', 1]); index += 2; continue
-            if char == quote: contexts.pop(); scalar_start = False
+        if line[index:index + 1] in (b' ', b'\t'):
             index += 1
             continue
-        if contexts and contexts[-1][0] == 'expression' and char in (b'{', b'}'):
-            contexts[-1][1] += 1 if char == b'{' else -1
-            if contexts[-1][1] == 0: contexts.pop()
-            index += 1
-            continue
-        hash_comment = char == b'#' and (language == 'hcl' or
-                         (language == 'yaml' and (index == 0 or line[index - 1:index].isspace())))
+        hash_comment = line[index:index + 1] == b'#' and (language == 'hcl' or
+                         (language == 'yaml' and (index == 0 or line[index - 1:index] in (b' ', b'\t'))))
         if hash_comment or (language != 'yaml' and line.startswith(b'//', index)):
-            if b'trivy:ignore:' in line[index:]: bounds = index, len(line)
-            break
+            return ((index, len(line)) if b'trivy:ignore:' in line[index:] else None), False
         if language != 'yaml' and line.startswith(b'/*', index):
             end = line.find(b'*/', index + 2)
-            if end < 0:
-                state['block_comment'] = True; uncertain = True
-                break
-            end += 2
-            if b'trivy:ignore:' in line[index:end]:
-                if line[end:].strip(): uncertain = True
-                else: bounds = index, end
-            index = end
-            continue
-        if language == 'bicep' and line.startswith(b"'''", index):
-            state['triple'] = True; uncertain = True; index += 3
-            continue
-        if language == 'hcl' and line.startswith(b'<<', index):
-            match = re.match(rb'<<(-?)([A-Za-z_][A-Za-z0-9_-]*)', line[index:])
-            if match: state['heredoc'] = match[2], bool(match[1])
-            else: state['opaque'] = True
-            uncertain = True
-            break
-        if char in (b'"', b"'") and (language != 'yaml' or scalar_start):
-            # HCL's double quotes and Bicep's single quotes are the recognised
-            # strings. Track invalid quote forms too, without editing the line.
-            if (language == 'hcl' and char != b'"') or (language == 'bicep' and char != b"'"):
-                uncertain = True
-            contexts.append(['string', char]); index += 1
-            continue
-        if language == 'yaml':
-            if scalar_start:
-                # Tags and anchors precede a scalar; neither turns its quotes
-                # or block indicator into plain-scalar text.
-                property_token = re.match(rb'(?:&[A-Za-z0-9_-]+|!<[^> \t]+>|!!?[^ \t\[\]{},]+)(?=[ \t]|$)', line[index:])
-                if property_token:
-                    index += property_token.end(); continue
-                block = re.match(rb'[|>](?:[1-9][+-]?|[+-][1-9]?)?(?=[ \t]|$)', line[index:])
-                if block:
-                    explicit = re.search(rb'[1-9]', block[0])
-                    state['yaml_block'] = [indent, indent + int(explicit[0]) if explicit else None]
-                    uncertain = True
-                    break
-            if char in (b'[', b'{') and (scalar_start or flow):
-                flow.append(b']' if char == b'[' else b'}'); scalar_start = True
-            elif char in (b']', b'}') and flow:
-                if flow.pop() != char: state['opaque'] = True; uncertain = True
-                scalar_start = False
-            elif (char == b':' and (flow or not line[index + 1:index + 2] or line[index + 1:index + 2].isspace())) or (char == b',' and flow):
-                scalar_start = True
-            elif scalar_start and char in (b'-', b'?') and line[index + 1:index + 2].isspace():
-                pass
-            elif not char.isspace(): scalar_start = False
-        index += 1
-    uncertain = uncertain or bool(contexts or flow or state.get('heredoc') or state.get('yaml_block'))
-    return bounds, uncertain
+            if end >= 0:
+                end += 2
+                if b'trivy:ignore:' not in line[index:end]:
+                    index = end
+                    continue
+                if not line[end:].strip(b' \t'): return (index, end), False
+        state['opaque'] = True
+        return None, True
+    return None, False
 
 
 def classify_inline_ignores(data, name):
@@ -632,12 +578,19 @@ def yarn_names(text):
     selector = re.compile(r'''"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s,\[\]{}"']+''')
     quoted = r'''"(?:[^"\\]|\\.)*"|'(?:[^']|'')*' '''.strip()
     key = r'(?:' + quoted + r'|[A-Za-z0-9_@./+-]+)'
-    atom = r'''[^\s"'#{}\[\]&*!|>]+'''
-    # A plain value cannot introduce a nested mapping or sequence inline.
-    plain = r'''(?!-(?: |$))(?![^\r\n]*: )[^\s"'#{}\[\]&*!|>][^"'#{}\[\]]*'''
+    # Only tool-written plain tokens, compact ranges and platform conditions.
+    # Reserved YAML leading forms and arbitrary spaced text never match.
+    token = r'[A-Za-z0-9_./][A-Za-z0-9_@./:+~^<>=?%&*!$(),;|-]*'
+    compact_range = r'(?:[~^=]|<=?)[0-9][A-Za-z0-9.*+_-]*'
+    condition = r'(?:os|cpu|libc)=[A-Za-z0-9_-]+'
+    conditions = condition + r'(?: [|&] ' + condition + r')*'
+    plain = r'(?:' + token + r'|' + compact_range + r'|' + conditions + r')'
+    # Classic's unquoted atoms had a narrower punctuation set already.
+    atom = r'(?:[A-Za-z0-9_./]|(?:[~^=]|<=?)(?=[0-9]))[A-Za-z0-9_@./:+~^<=?%$(),;-]*'
     scalar = r'(?:' + quoted + r'|' + plain + r'|\{\}|\[\])'
     body = re.compile(r'(' + key + r')(?::(?: (' + scalar + r'))?| (' + quoted + r'|' + atom + r'))')
-    integrity = re.compile(r'integrity ' + atom + r'(?: ' + atom + r')+')
+    integrity_hash = r'sha(?:1|256|384|512)-[A-Za-z0-9+/]+={0,2}'
+    integrity = re.compile(r'integrity ' + integrity_hash + r'(?: ' + integrity_hash + r')+')
     # Each entry is whether that parent opens a map. Both Yarn generations
     # write two-space nesting; body metadata never contributes selector names.
     parents = []
@@ -926,7 +879,7 @@ def measure(repo, config, base, head, *, reuse=False, pr=None, open_prs=None,
         trees = dict(base=source.tree(repo, base), head=source.tree(repo, head))
         policy_bytes = source.blob(repo, trees['base'], EXCEPTIONS)
         policy_digest = scan.digest(dict(exceptions=None if policy_bytes is None else scan.sha(policy_bytes),
-                                         checks='embedded', inventory='canonical-v4', neutralization='per-type-v1', flags=FLAGS))
+                                         checks='embedded', inventory='canonical-v5', neutralization='recognised-shapes-v2', flags=FLAGS))
         with tempfile.TemporaryDirectory(prefix='bureau-trivy-') as temporary:
             root = Path(temporary).resolve()
             inline_issues = dict(base=set(), head=set())
