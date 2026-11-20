@@ -117,7 +117,7 @@ for row in '"600":600:blocked' '1.5:2:blocked' '-5:1800:blocked' 'true:1800:bloc
     || fail "2: no warning naming $used for the grace $value: $LAST_STDERR"
 done
 pr2_config 'del(.agents.merge_ci_start_grace_seconds)'
-touch "$PR2_GH/fail_status"; grace_case 'status read failed' 2 not-yet 'only 0 completed'; rm -f "$PR2_GH/fail_status"
+touch "$PR2_GH/fail_status"; grace_case 'status read failed' 2 not-yet 'gh commit-status query failed for'; rm -f "$PR2_GH/fail_status"
 echo '{"statuses":[{"context":"ext","state":"pending"}]}' > "$PR2_GH/status.json"
 grace_case 'a pending status' 2 not-yet 'still pending'
 echo '{"statuses":[]}' > "$PR2_GH/status.json"

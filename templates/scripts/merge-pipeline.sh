@@ -367,6 +367,7 @@ merge_gate_outcome() {
       "ci_green: ci: "*" still pending on "*) ;;
       "ci_green: ci: only "*" completed check(s) on "*) ;;
       "ci_green: ci: cannot resolve "*|"ci_green: ci: gh check-runs query failed"*) ;;
+      "ci_green: ci: gh commit-status query failed for "*) ;;
       "merge_state: mergeStateStatus= "*|"merge_state: mergeStateStatus=UNKNOWN "*) ;;
       "merge_state: mergeStateStatus=BLOCKED "*|"merge_state: mergeStateStatus=UNSTABLE "*) ;;
       "merge_state: mergeStateStatus=DIRTY (need CLEAN; bureau-only divergence, the rebase stage resolves it)") ;;

@@ -5,6 +5,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T=$(mktemp -d -t bureau-test.ci-newest.XXXXXXXX)
 trap 'rm -rf "$T"' EXIT
+export GIT_CEILING_DIRECTORIES="$T"
 CI_FIXTURES="$T"
 export CI_FIXTURES
 mkdir -p "$T/bin"
@@ -213,13 +214,43 @@ for state in failure error; do
   check "legacy $state still fails at minimum 0" line_is 'ci: failing check(s) on HEAD_SHA: legacy'
 done
 
+# A failed status read is unknown even when check runs meet the success minimum.
+for run_state in green pending none; do
+  reset_case
+  case "$run_state" in
+    green) runs '[{"name":"ci","status":"completed","conclusion":"success"}]' ;;
+    pending) runs '[{"name":"ci","status":"in_progress","conclusion":null}]' ;;
+    none) runs '[]' ;;
+  esac
+  touch "$T/no_status"
+  for min in 1 0; do
+    minimum "$min"; gate
+    check "status read failure with $run_state runs, minimum $min: names the failed read" line_is 'ci: gh commit-status query failed for HEAD_SHA'
+    check "status read failure with $run_state runs, minimum $min: stays not-yet" outcome_is not-yet
+    check "status read failure with $run_state runs, minimum $min: cannot claim no CI started" no_age_read
+  done
+done
+reset_case
+runs '[{"name":"ci","status":"completed","conclusion":"failure"}]'
+touch "$T/no_status"; gate
+check 'failing check keeps precedence over status read failure' line_is 'ci: failing check(s) on HEAD_SHA: ci'
+check 'failing check with unreadable statuses stays blocked' outcome_is blocked
+reset_case
+runs '[{"name":"ci","status":"completed","conclusion":"success"}]'
+gate
+check 'readable empty statuses with green check runs still pass' green
+echo '[{"context":"legacy","state":"failure"}]' > "$T/statuses.json"
+gate
+check 'readable failing status beside green check runs still blocks' line_is 'ci: failing check(s) on HEAD_SHA: legacy'
+check 'readable failing status stays blocked' outcome_is blocked
+
 # Classify the remaining diagnostic families directly from the real helper.
 reset_case
 runs '[]'; gate
 check 'empty raw lists past grace keep the no-CI-started line' line_is 'ci: no check run and no status on HEAD_SHA, and its commit is older than the CI start grace (agents.merge_ci_start_grace_seconds: 1800) — no CI started for this head'
 check 'no-CI-started stays blocked' outcome_is blocked
 touch "$T/no_status"; gate
-check 'unreadable statuses cannot claim no CI started' line_is 'ci: only 0 completed check(s) on HEAD_SHA (require >= 1)'
+check 'unreadable statuses cannot claim no CI started' line_is 'ci: gh commit-status query failed for HEAD_SHA'
 reset_case
 runs '[{"name":"ci","id":10,"started_at":"2020-01-01T00:00:00Z","status":"queued","conclusion":null}]'
 gate
@@ -228,6 +259,9 @@ check 'queued-past-grace stays blocked' outcome_is blocked
 key_old=$(merge_gate_key blocked "- ci_green: $LINE")
 key_later=$(merge_gate_key blocked "- ci_green: $(printf '%s' "$LINE" | sed -E 's/queued for [0-9]+ s/queued for 999999999 s/')")
 check 'merge comment key still normalizes queue age' test "$key_old" = "$key_later"
+touch "$T/no_status"; gate
+check 'queued-past-grace keeps precedence over status read failure' grep -Eq '^ci: check ci queued for [0-9]+ s on HEAD_SHA, past the CI queue grace ' <<< "$LINE"
+check 'queued-past-grace with unreadable statuses stays blocked' outcome_is blocked
 touch "$T/no_checks"; gate
 check 'check-runs read failure keeps its diagnostic' line_is 'ci: gh check-runs query failed for HEAD_SHA'
 check 'check-runs read failure stays not-yet' outcome_is not-yet
