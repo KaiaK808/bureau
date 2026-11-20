@@ -580,13 +580,15 @@ def yarn_names(text):
     key = r'(?:' + quoted + r'|[A-Za-z0-9_@./+-]+)'
     # Only tool-written plain tokens, compact ranges and platform conditions.
     # Reserved YAML leading forms and arbitrary spaced text never match.
-    token = r'[A-Za-z0-9_./][A-Za-z0-9_@./:+~^<>=?%&*!$(),;|-]*'
+    # A trailing colon would make the value a nested mapping key, so a plain
+    # token never ends with one.
+    token = r'[A-Za-z0-9_./](?:[A-Za-z0-9_@./:+~^<>=?%&*!$(),;|-]*[A-Za-z0-9_@./+~^<>=?%&*!$(),;|-])?'
     compact_range = r'(?:[~^=]|<=?)[0-9][A-Za-z0-9.*+_-]*'
     condition = r'(?:os|cpu|libc)=[A-Za-z0-9_-]+'
     conditions = condition + r'(?: [|&] ' + condition + r')*'
     plain = r'(?:' + token + r'|' + compact_range + r'|' + conditions + r')'
     # Classic's unquoted atoms had a narrower punctuation set already.
-    atom = r'(?:[A-Za-z0-9_./]|(?:[~^=]|<=?)(?=[0-9]))[A-Za-z0-9_@./:+~^<=?%$(),;-]*'
+    atom = r'(?:[A-Za-z0-9_./]|(?:[~^=]|<=?)(?=[0-9]))(?:[A-Za-z0-9_@./:+~^<=?%$(),;-]*[A-Za-z0-9_@./+~^<=?%$(),;-])?'
     scalar = r'(?:' + quoted + r'|' + plain + r'|\{\}|\[\])'
     body = re.compile(r'(' + key + r')(?::(?: (' + scalar + r'))?| (' + quoted + r'|' + atom + r'))')
     integrity_hash = r'sha(?:1|256|384|512)-[A-Za-z0-9+/]+={0,2}'

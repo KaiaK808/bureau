@@ -861,6 +861,18 @@ class TrivyTests(unittest.TestCase):
             with self.subTest(line=line):
                 with self.assertRaises(ValueError):self.m.yarn_names(canonical+line+'\n')
 
+    def test_yarn_plain_scalar_with_trailing_colon_reduces_coverage(self):
+        # A trailing colon would turn the value into a nested mapping key.
+        canonical='"locked@npm:^1":\n  version: 1.0.0\n'
+        self.check_parser_formats({'package.json':json.dumps(dict(dependencies=dict(locked='^1'))),
+                                   'yarn.lock':canonical},'yarn.lock',[
+            canonical+'  dependencies: missing:\n',canonical+'  resolved missing:\n'])
+        for line in ('  dependencies: missing:','  resolution: npm:','  resolved missing:'):
+            with self.subTest(line=line):
+                with self.assertRaises(ValueError):self.m.yarn_names(canonical+line+'\n')
+        # Colons inside a value stay accepted, as tool-written protocols use them.
+        self.assertEqual(self.m.yarn_names(canonical+'  resolution: locked@npm:1.0.0\n'),{'locked'})
+
     def test_yarn_plain_scalar_reserved_prefixes_reduce_coverage(self):
         canonical='"locked@npm:^1":\n  version: 1.0.0\n'
         invalid=('? missing','@missing','%TAG','&anchor','*alias','!tag','|','>','`text`')
