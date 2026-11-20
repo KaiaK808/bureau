@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2927a343839cba92af80429c919a15d583562ec742a061b3273bddd8a569e9db">
+<meta name="bureau-source-sha256" content="178a19e4ace12f029b9cfdc58d8bed794f5cf9862f9ed9f92bda9df4b3e6e009">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -817,14 +817,47 @@ snapshots of the pinned base and final head. Native
 <code>trivy.yaml</code>, <code>trivy.yml</code>,
 <code>.trivyignore</code>, <code>.trivyignore.yaml</code> and
 <code>.trivyignore.yml</code> files are removed throughout both
-snapshots. For IaC lines with <code>trivy:ignore:</code>, Bureau strips
-from the first <code>#</code>, <code>//</code>, <code>/*</code> or
-<code>&lt;!--</code> when the ignore marker appears in that suffix,
-preserving LF line breaks. Inline-ignore stripping can truncate an IaC
-line at <code>//</code> inside a quoted string before a trailing
-<code>trivy:ignore:</code> comment, so Trivy can receive altered
-configuration text. Paths and line numbers are projected. This
-neutralization does not depend on an engine flag.</p>
+snapshots.</p>
+<p>IaC <code>trivy:ignore:</code> neutralization strips trailing ignore
+comments only from small, explicitly recognised shapes whose preceding
+bytes are fully classified. YAML accepts comment-only lines and simple
+scalar mappings or sequence entries, using boundary <code>#</code>
+outside single-line quoted or allow-listed plain scalars; double quotes
+use backslash escapes and single quotes escape a quote by doubling it.
+HCL and Terraform accept literal assignments and simple block delimiters
+with <code>#</code>, <code>//</code> or same-line trailing
+<code>/* ... */</code>; Bicep accepts literal declarations and object
+properties with <code>//</code> or same-line trailing
+<code>/* ... */</code>. Dockerfiles accept only whole-line
+<code>#</code> comments with optional leading whitespace before any
+heredoc. JSON has no comments and is never stripped. A
+<code>.template</code> file selects JSON when its first non-whitespace
+byte is <code>{</code>, otherwise YAML. Every other shape is kept and
+reduces coverage when it contains a marker; HTML-style comments are
+unsupported. Every byte outside a removed comment, including whitespace
+and LF/CRLF line endings, is preserved; paths and removed-comment line
+numbers are projected. This neutralization does not depend on an engine
+flag.</p>
+<p>Stripping and inventory share one classification of the original,
+unstripped snapshot bytes. Unrecognised marker lines stay byte-identical
+and produce <strong>reduced_coverage</strong>, naming the file with
+reason <code>inline ignore format not recognised</code>. This includes
+YAML anchors, aliases or tags (<code>&amp;</code>, <code>*</code>,
+<code>!</code> in node position), block scalar indicators, flow
+collections, HCL interpolation or heredocs, Bicep multi-line strings,
+and every construct outside the recognised shapes. For YAML, HCL and
+Bicep, the classifier does not try to recover context after a line falls
+outside the recognised shapes: all later marker lines in that file are
+retained too. In Dockerfiles, any <code>&lt;&lt;</code> makes that line
+and every later marker line uncertain, including after an apparent
+closing delimiter; quoted, dashed and dotted delimiter syntax is
+deliberately not parsed. Lines without markers still establish this
+conservative context. Markers known to be data also stay unchanged and
+reduce coverage: for example a JSON string,
+<code>password: secret#trivy:ignore:X</code> in YAML, a quoted literal,
+an unsupported comment form, or <code># trivy:ignore:X</code> inside a
+Dockerfile instruction. Any retained marker could still be interpreted
+as an ignore by Trivy.</p>
 <p>Before checking the binary, cache or isolation, Bureau inventories
 both snapshots. If neither has eligible inputs, the result is
 <strong>not_applicable</strong>, with no scanner or probe execution. V1
@@ -853,35 +886,54 @@ failure produces <strong>reduced_coverage</strong>, reason
 rather than being counted as new; their severities still enforce the
 blocking floor as new findings would, even when coverage exceptions
 waive every file's coverage gap.</p>
-<p>When a handwritten lockfile parser detects unsupported syntax, Bureau
-reports <strong>reduced_coverage</strong> and names the file with reason
-<code>lockfile format not recognised</code>. This also holds in blocking
-mode, where an unexcepted coverage gap blocks. Locks are validated even
-without a matching manifest. The parser policy is part of receipt
-identity, so receipts from before this hardening are remeasured. pnpm
-requires two-space indentation steps, no tabs or level jumps, plain or
-quoted mapping keys and no flow syntax in importers; only direct keys in
-the root importer's <code>dependencies</code>,
+<p>Lockfile consistency fails closed: the handwritten parsers accept
+only recognised tool-written forms, and unsupported syntax anywhere in a
+parsed file produces <strong>reduced_coverage</strong>, with the file
+named and reason <code>lockfile format not recognised</code>, never a
+clean measurement. This also holds in blocking mode, where an unexcepted
+coverage gap blocks. Locks are validated even without a matching
+manifest. Both the parser policy and the neutralization version are part
+of receipt identity. Earlier receipts are remeasured once under the new
+identity; subsequent eligible clean receipts can be reused normally.
+pnpm requires two-space indentation steps, no tabs or level jumps, plain
+or quoted mapping keys and no flow syntax in importers; only direct keys
+in the root importer's <code>dependencies</code>,
 <code>devDependencies</code> and <code>optionalDependencies</code> maps
-count. Apart from its reserved <code>__metadata</code> map, Bureau's
-Yarn parser requires complete comma-separated selector headers ending at
-their final colon, without <code>#</code> or trailing text. The parser
-rejects indented comments and skips other indented body lines, so
-unsupported syntax in those lines can pass without a Bureau coverage
-warning. JSON manifests and npm locks use the JSON parser, and npm lock
-root names come only from those three dependency maps in
-<code>packages['']</code>. Python 3.11+ uses <code>tomllib</code>; the
-conservative Python 3.9/3.10 fallback requires bare table components
-such as <code>[project.optional-dependencies]</code> and bare assignment
-keys, rejecting spaces inside table names, quoted keys and dotted inline
-keys. Only <code>[project]</code> treats <code>dynamic</code> as
-metadata; an optional-dependency group named <code>dynamic</code>
-contributes declared dependency names. Requirements accept exact pins,
-extras and whole-line or whitespace-prefixed inline comments;
-environment markers, line continuations and options such as
-<code>-r</code>, <code>-c</code>, <code>-e</code> and
-<code>--hash</code> are not recognised and reduce coverage rather than
-supplying or hiding names.</p>
+count. Apart from its reserved <code>__metadata</code> map, Yarn
+requires complete comma-separated selector headers ending at their final
+colon, without <code>#</code> or trailing text; comments must be whole
+top-level lines. Indented Yarn bodies are validated too: recognised Yarn
+v1 key/value lines and Berry mappings, scalar values and nested metadata
+retain full coverage, using two-space indentation without tabs, level
+jumps or children beneath scalars. Plain values use an explicit
+character and leading-form allow-list for tool-written versions and
+compact ranges, protocol references such as <code>npm:</code>,
+<code>file:</code>, <code>link:</code>, <code>patch:</code> and
+<code>workspace:</code>, Git/HTTPS URLs, hashes/checksums, booleans,
+cache keys, bin paths and platform conditions. Everything outside that
+allow-list reduces coverage, including values starting with
+<code>?</code>, <code>@</code>, <code>%</code>, <code>&amp;</code>,
+<code>*</code>, <code>!</code>, <code>|</code>, <code>&gt;</code> or a
+backtick, and values containing <code>: </code> or <code> #</code>.
+Quoted scalars retain their existing handling. Recognised resolved URLs,
+integrity hashes, dependencies and optionalDependencies, checksum,
+languageName, linkType, dependenciesMeta, peerDependenciesMeta,
+conditions, bin maps, quoted scoped keys and CRLF files retain full
+coverage. Unsupported body syntax reduces coverage just like an
+unsupported header; body dependency names never count as selectors. JSON
+manifests and npm locks use the JSON parser, and npm lock root names
+come only from those three dependency maps in <code>packages['']</code>.
+Python 3.11+ uses <code>tomllib</code>; the conservative Python 3.9/3.10
+fallback requires bare table components such as
+<code>[project.optional-dependencies]</code> and bare assignment keys,
+rejecting spaces inside table names, quoted keys and dotted inline keys.
+Only <code>[project]</code> treats <code>dynamic</code> as metadata; an
+optional-dependency group named <code>dynamic</code> contributes
+declared dependency names. Requirements accept exact pins, extras and
+whole-line or whitespace-prefixed inline comments; environment markers,
+line continuations and options such as <code>-r</code>, <code>-c</code>,
+<code>-e</code> and <code>--hash</code> are not recognised and reduce
+coverage rather than supplying or hiding names.</p>
 <p>Vulnerability identity is
 <code>(Target, VulnerabilityID, PkgName, InstalledVersion)</code>.
 Misconfiguration identity is
