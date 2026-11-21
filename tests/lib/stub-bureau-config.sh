@@ -237,10 +237,15 @@ log_escalation() {
 }
 
 # Use the production parser extracted by the harness; do not mirror it.
-source "$(dirname "$0")/parse-result.sh"
+source "$_BUREAU_SCRIPTS_DIR/parse-result.sh"
 
 # Ownership is exercised separately against the production runtime.
 bureau_stage_enter() { :; }
+post_implementation_hold() {
+  local key="${4:-${BUREAU_STAGE_ATTEMPT_ID:-${BUREAU_RUN_ID:-}}}"
+  [ -n "$key" ] || key=$(python3 -I -B -c 'import uuid; print(uuid.uuid4().hex)')
+  _harness_post_implementation_hold "$1" "$2" "$3" "$key"
+}
 
 run_stage_for() {
   shift
