@@ -244,7 +244,7 @@ if fix in ('target', 'both'):
     merge = scripts / 'merge-pipeline.sh'
     source = merge.read_text()
     start = '  # GitHub pins the head, but offers no expected-base option.\n'
-    end = '  bureau_ticket_checkpoint "$ISSUE"\n  gh pr merge "$PR_NUMBER" '
+    end = '  bureau_ticket_checkpoint "$ISSUE"\n'
     assert source.count(start) == 1
     first = source.index(start)
     last = source.index(end, first)

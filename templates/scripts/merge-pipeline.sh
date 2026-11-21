@@ -891,7 +891,7 @@ fi
 # `${…%x}`) so its trailing newlines survive command substitution while the
 # producer's exit code still propagates.
 _merge_pr() {
-  local _merge_base_json _merge_base_ref _merge_base_oid
+  local _merge_base_json _merge_base_ref _merge_base_oid _merge_output
   local message_args=()
   case "$BUREAU_MERGE_STRATEGY" in
     squash|merge)
@@ -926,7 +926,17 @@ _merge_pr() {
       || scanner_merge_retry "$_scan_tool: PR base commit changed during scan or gate recheck"
   fi
   bureau_ticket_checkpoint "$ISSUE"
-  gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" ${message_args[@]+"${message_args[@]}"}
+  if _merge_output=$(gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" ${message_args[@]+"${message_args[@]}"} 2>&1); then
+    [ -z "$_merge_output" ] || printf '%s\n' "$_merge_output"
+    return 0
+  fi
+  [ -z "$_merge_output" ] || printf '%s\n' "$_merge_output" >&2
+  # Only GitHub's own expected-head refusal proves this call did not merge.
+  # A transport failure followed by a moved head can still be an accepted merge.
+  case "$_merge_output" in
+    'GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)') MERGE_HEAD_REFUSED=true ;;
+  esac
+  return 1
 }
 
 # This is observational, not an atomic destination precondition. A retarget
@@ -956,6 +966,7 @@ bureau_stop_requested && exit 20
 # the gates passed and GitHub was asked to merge (v3.1.0-rc.2).
 echo "  Merging PR #$PR_NUMBER ($BUREAU_MERGE_STRATEGY) at $MERGE_HEAD..."
 MERGE_CALL_OK=false
+MERGE_HEAD_REFUSED=false
 if _merge_pr; then MERGE_CALL_OK=true; fi
 MERGE_RESULT=""
 if ! read_merge_result || [ "$(printf '%s' "$MERGE_RESULT" | jq -r .state)" != MERGED ]; then
@@ -974,18 +985,17 @@ if [ "$(printf '%s' "$MERGE_RESULT" | jq -r .state)" = MERGED ]; then
 else
   [ "$MERGE_CALL_OK" != true ] \
     || merge_result_hold "Merge call succeeded but PR is not confirmed merged into approved Target \`$APPROVED_BASE\`."
-  # A head that moved since the gate checked it: GitHub refused the pinned merge. The
-  # new head has not been through the gate: not yet (2), never merged, never blocked.
-  NOW_HEAD=$(pr_head_sha "$PR_NUMBER")
-  if [ -n "$NOW_HEAD" ] && [ "$NOW_HEAD" != "$MERGE_HEAD" ]; then
-    echo "  The PR head moved from $MERGE_HEAD to $NOW_HEAD during the merge — nothing was merged."
+  if [ "$MERGE_HEAD_REFUSED" = true ]; then
+    # This read is diagnostic only: the merge call's refusal determines exit 2,
+    # even when the later head read is stale or unavailable.
+    NOW_HEAD=$(pr_head_sha "$PR_NUMBER") || NOW_HEAD=""
     GATE_HEAD=""   # the new head has not been judged: no mark, the next poll takes it
-    merge_gate_exit not-yet "merge_head: the PR head moved from $MERGE_HEAD to $NOW_HEAD after the gate checked it; nothing was merged"
+    if [ -n "$NOW_HEAD" ] && [ "$NOW_HEAD" != "$MERGE_HEAD" ]; then
+      merge_gate_exit not-yet "merge_head: the PR head moved from $MERGE_HEAD to $NOW_HEAD after the gate checked it; GitHub refused --match-head-commit; nothing was merged"
+    fi
+    merge_gate_exit not-yet "merge_head: GitHub refused --match-head-commit $MERGE_HEAD because the PR head changed; nothing was merged"
   fi
-  echo "  Merge call failed."
-  post_comment "$ISSUE" "❌ Merge attempted but \`gh pr merge\` (or its title/body read) failed despite gates passing. PR #$PR_NUMBER. Needs human."
-  mark_needs_human "$ISSUE" merge 18 || true
-  exit 18
+  merge_result_hold "Merge call failed without a confirmed head-mismatch refusal, and PR is not confirmed merged into approved Target \`$APPROVED_BASE\`. The merge may already have happened."
 fi
 
 echo ""

@@ -172,7 +172,7 @@ class MergeTests(unittest.TestCase):
         source=(ROOT/'templates/scripts/merge-pipeline.sh').read_text()
         merge=source.split('\n_merge_pr() {\n',1)[1].split('\n}',1)[0]
         self.assertLess(merge.index('baseRefName baseRef{target{oid}}'),merge.index('  bureau_ticket_checkpoint "$ISSUE"\n'))
-        self.assertIn('  bureau_ticket_checkpoint "$ISSUE"\n  gh pr merge ',merge)
+        self.assertIn('  bureau_ticket_checkpoint "$ISSUE"\n  if _merge_output=$(gh pr merge ',merge)
 
     def test_base_commit_advancing_with_green_final_gates_retries(self):
         self.cases(('base-during-gates','base-after-gates'))

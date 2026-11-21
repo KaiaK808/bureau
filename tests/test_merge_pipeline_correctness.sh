@@ -172,6 +172,13 @@ case "${1:-}" in
         ;;
       view)
         if [ "$JSON_FIELDS" = state,mergeCommit,baseRefName ]; then
+          if [ -f "$STUB_DIR/merge_in_flight.json" ]; then
+            reads=$(( $(cat "$STUB_DIR/merge_result_reads" 2>/dev/null || echo 0) + 1 ))
+            echo "$reads" > "$STUB_DIR/merge_result_reads"
+            if [ "$reads" -gt 2 ]; then
+              mv "$STUB_DIR/merge_in_flight.json" "$STUB_DIR/pr_view.json"
+            fi
+          fi
           if [ -s "$STUB_DIR/post_merge_reads_fail" ]; then
             failures=$(cat "$STUB_DIR/post_merge_reads_fail")
             if [ "$failures" -gt 0 ]; then echo "$((failures - 1))" > "$STUB_DIR/post_merge_reads_fail"; exit 1; fi
@@ -189,6 +196,10 @@ case "${1:-}" in
         if [ "$JSON_FIELDS" = "title,body" ] && [ -f "$STUB_DIR/fail_title_body" ]; then
           echo "HTTP 502" >&2
           exit 1
+        fi
+        if [ "$JSON_FIELDS" = headRefOid ] && [ -f "$STUB_DIR/refused_head_read" ]; then
+          jq --arg h "$(cat "$STUB_DIR/refused_head_read")" '.headRefOid = $h' "$STUB_DIR/pr_view.json" | project_and_filter
+          exit 0
         fi
         if [[ ",$JSON_FIELDS," == *,comments,* ]]; then
           jq '.comments |= ((. // []) | map({
@@ -208,6 +219,21 @@ case "${1:-}" in
         echo "gh pr merge ${3:-?}" >> "$STUB_DIR/merge_calls.log"
         # Full argv, NUL-separated: the body is multi-line.
         printf '%s\0' "$@" > "$STUB_DIR/merge_argv"
+        if [ -f "$STUB_DIR/merge_call_mode" ]; then
+          mode=$(cat "$STUB_DIR/merge_call_mode")
+          if [ "$mode" = transport ]; then
+            # GitHub accepted A, but neither result read can see its merge yet.
+            jq '.state = "MERGED" | .mergeCommit = {oid: .headRefOid} | .headRefOid = ("c" * 40)' \
+              "$STUB_DIR/pr_view.json" > "$STUB_DIR/merge_in_flight.json"
+          fi
+          jq '.headRefOid = ("c" * 40) | .mergeCommit = null' "$STUB_DIR/pr_view.json" > "$STUB_DIR/pr_view.json.tmp" \
+            && mv "$STUB_DIR/pr_view.json.tmp" "$STUB_DIR/pr_view.json"
+          case "$mode" in
+            transport) echo 'read: connection reset by peer' >&2 ;;
+            refused) echo 'GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)' >&2 ;;
+          esac
+          exit 1
+        fi
         # Flip PR state to MERGED so any further view sees the new world.
         if [ -f "$STUB_DIR/pr_view.json" ]; then
           jq '.state = "MERGED" | .mergeCommit = {oid: .headRefOid}' "$STUB_DIR/pr_view.json" > "$STUB_DIR/pr_view.json.tmp" \
@@ -1121,6 +1147,51 @@ test_post_merge_uncertain() { post_merge_case uncertain; }
 test_post_merge_unreadable() { post_merge_case unreadable; }
 test_post_merge_malformed() { post_merge_case malformed; }
 test_post_merge_lost_ack() { post_merge_case lost-ack; }
+
+merge_call_result_case() {
+  local mode="$1" sb expected=0
+  sb=$(make_sandbox "merge_call_$mode"); populate_happy_fixtures "$sb"
+  case "$mode" in
+    transport) echo transport > "$sb/stub_data/merge_call_mode"; expected=25 ;;
+    refused|refused-stale-read)
+      echo refused > "$sb/stub_data/merge_call_mode"; expected=2
+      [ "$mode" != refused-stale-read ] || printf '%040d\n' 0 | tr 0 a > "$sb/stub_data/refused_head_read"
+      ;;
+  esac
+  run_gate "$sb"
+  [ "$GRC" = "$expected" ] || { echo "FAIL merge call $mode: exit $GRC wanted $expected" >&2; return 1; }
+  [ "$(wc -l < "$sb/stub_data/merge_calls.log" | tr -d ' ')" = 1 ] || return 1
+  case "$mode" in
+    transport)
+      [ "$(sed -n 1p <<< "$GREP")" = blocked ] && grep -q '^merge_result: ' <<< "$GREP" || return 1
+      grep -q 'ERROR: merge_result:' "$sb/pipeline.err" || return 1
+      grep -q '^+[^ ]* needs-human$' "$sb/stub_data/labels.log" || return 1
+      grep -q 'merge outcome needs human reconciliation.*No rollback or automatic merge retry' "$sb/stub_data/comments_posted.log" || return 1
+      ! grep -qi 'nothing was merged' "$sb/pipeline.out" "$sb/pipeline.err" "$sb/gate.report" "$sb/stub_data/comments_posted.log" || return 1
+      [ ! -s "$sb/stub_data/state_changes.log" ] || return 1
+      [ "$(cat "$sb/stub_data/merge_result_reads")" = 2 ] || return 1
+      jq -e '.state == "OPEN" and .mergeCommit == null and .headRefOid == ("c" * 40)' "$sb/stub_data/pr_view.json" >/dev/null || return 1
+      # The operation completes later, after Bureau has already held the ticket.
+      STUB_DIR="$sb/stub_data" "$sb/bin/gh" pr view 42 --json state,mergeCommit,baseRefName \
+        | jq -e '.state == "MERGED" and .mergeCommit.oid == ("a" * 40) and .baseRefName == "main"' >/dev/null || return 1
+      [ "$(wc -l < "$sb/stub_data/merge_calls.log" | tr -d ' ')" = 1 ] || return 1
+      ;;
+    refused|refused-stale-read)
+      [ "$(sed -n 1p <<< "$GREP")" = not-yet ] && grep -q '^merge_head: ' <<< "$GREP" || return 1
+      [ ! -s "$sb/stub_data/labels.log" ] || ! grep -q 'needs-human' "$sb/stub_data/labels.log" || return 1
+      [ ! -s "$sb/stub_data/comments_posted.log" ] && [ ! -s "$sb/stub_data/state_changes.log" ] || return 1
+      jq -e '.state == "OPEN" and .mergeCommit == null' "$sb/stub_data/pr_view.json" >/dev/null || return 1
+      ;;
+    confirmed)
+      [ -z "$GREP" ] && grep -q '^move_issue [^ ]* -> s8$' "$sb/stub_data/state_changes.log" || return 1
+      [ ! -s "$sb/stub_data/labels.log" ] || ! grep -q 'needs-human' "$sb/stub_data/labels.log" || return 1
+      ;;
+  esac
+}
+test_merge_call_transport_head_move() { merge_call_result_case transport; }
+test_merge_call_head_refusal() { merge_call_result_case refused; }
+test_merge_call_head_refusal_stale_read() { merge_call_result_case refused-stale-read; }
+test_merge_call_confirmed() { merge_call_result_case confirmed; }
 test_merge_message_before_jit() {
   local sb; sb=$(make_sandbox early_message); populate_happy_fixtures "$sb"
   run_gate "$sb"
@@ -1136,7 +1207,7 @@ PY
 
 FAILS=0
 if [ "$#" = 0 ]; then
-  set -- test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_evidence_failure test_gate_outcome test_gate_conflict_without_base_name test_gate_edited_approval test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop test_post_merge_target test_post_merge_uncertain test_post_merge_unreadable test_post_merge_malformed test_post_merge_lost_ack test_merge_message_before_jit
+  set -- test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_evidence_failure test_gate_outcome test_gate_conflict_without_base_name test_gate_edited_approval test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop test_post_merge_target test_post_merge_uncertain test_post_merge_unreadable test_post_merge_malformed test_post_merge_lost_ack test_merge_call_transport_head_move test_merge_call_head_refusal test_merge_call_head_refusal_stale_read test_merge_call_confirmed test_merge_message_before_jit
 fi
 for scenario in "$@"; do
   if "$scenario"; then

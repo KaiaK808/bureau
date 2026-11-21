@@ -688,9 +688,9 @@ preselect_issue() { pipeline_pick_next "$1"; }
     def test_removed_merge_checkpoint_allows_both_routes_to_merge_after_withdrawal(self):
         merge=self.repo/'scripts/merge-pipeline.sh'
         source=merge.read_text()
-        checkpoint='  bureau_ticket_checkpoint "$ISSUE"\n  gh pr merge '
+        checkpoint='  bureau_ticket_checkpoint "$ISSUE"\n  if _merge_output=$(gh pr merge '
         self.assertEqual(1,source.count(checkpoint))
-        merge.write_text(source.replace(checkpoint,'  gh pr merge '))
+        merge.write_text(source.replace(checkpoint,'  if _merge_output=$(gh pr merge '))
         for stage in ('merge','code-review'):
             with self.subTest(stage=stage):
                 self.wt=self.repo/'.worktrees'/stage
