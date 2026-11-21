@@ -859,15 +859,14 @@ def execute(repo, args, store):
             implementation_route = issue_snapshot(repo, args.issue)['state']['id'] == config['linear']['teams'][0]['states'].get('build')
             if implementation_route and '--respect-config' in command and not enabled(config, 'implement'):
                 raise AdmissionStop(20)
-        if args.issue and implementation_route:
-            implementation_context(repo, args.issue)
+        decision = implementation_context(repo, args.issue) if args.issue and implementation_route else None
         overlap_enabled = read(config_for(repo)).get('agents', {}).get('file_overlap_gate', False)
         if overlap_enabled is not False and args.issue:
             preflight = stage in ('implement', 'copy', 'qa')
             if entry == 'shepherd.sh':
                 preflight = issue_snapshot(repo, args.issue)['state']['id'] == read(config_for(repo))['linear']['teams'][0]['states'].get('build')
             if preflight:
-                branch = shell(repo, 'get_issue_branch', args.issue)
+                branch = decision['branch'] if decision is not None else shell(repo, 'get_issue_branch', args.issue)
                 try:
                     overlap(repo, 'admit', args.issue, branch, run=run)
                 except AdmissionStop as exc:

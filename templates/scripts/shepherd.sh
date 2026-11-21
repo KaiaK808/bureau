@@ -458,7 +458,18 @@ WORKTREE="${WORKTREE_OVERRIDE:-$REPO_DIR/.worktrees/shepherd}"
 # Check actual Build routes before even the runtime's ownership claim. An
 # intentional disabled-stage handoff retains exit 20 without reading answers.
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
-  if [ "${TARGET_NAME:-}" = Build ] || { [ -z "$FROM_STAGE" ] && [ "$(get_issue_state "$ISSUE")" = Build ]; }; then
+  ROUTE_STATE="${TARGET_NAME:-}"
+  if [ -z "$FROM_STAGE" ]; then
+    # An incomplete route read cannot waive Build admission.
+    ROUTE_RC=0
+    ROUTE_STATE=$(get_issue_state "$ISSUE") || ROUTE_RC=$?
+    if [ "$ROUTE_RC" != 0 ]; then
+      [ "$ROUTE_RC" -le 128 ] || exit 130
+      echo '[shepherd] startup route incomplete (exit 24); nothing claimed or moved' >&2
+      exit 24
+    fi
+  fi
+  if [ "$ROUTE_STATE" = Build ]; then
     if [ "$RESPECT_CONFIG" = 1 ] && ! agent_enabled implement; then exit 20; fi
     bureau_implementation_context "$ISSUE" >/dev/null || exit $?
   fi

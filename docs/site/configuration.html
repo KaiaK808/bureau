@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="20636bf6fe513a225ade44aa155ad88f7d2780e016baf5141be30d3b8a781cc2">
+<meta name="bureau-source-sha256" content="afc5868997cbf0bdd568eba3f4674af6fd28f5a7dec3c18064e79a274570b2ce">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -3173,10 +3173,14 @@ instructions before capping its public question body and keeps failed
 publication pending for retry. A failed PR mirror returns
 <code>18</code>. These read-only checks precede ownership, Linear
 mutations, worker reset and direct-stage Git preparation, with the
-overlap gate on or off. An otherwise eligible disabled-implementation
-<code>--respect-config</code> hand-off still returns <code>20</code>. No
-configuration keys or defaults change. See the <a
-href="migration.html#implementation-decision-holds">coordinated
+overlap gate on or off. A failed initial Shepherd route read returns
+<code>24</code> before ownership or label changes. Admission, overlap
+preflight and preparation use complete, paginated canonical-branch
+resolution on Shepherd, dispatcher, queue and direct-worker paths;
+branch lookup has no comment-count limit. An otherwise eligible
+disabled-implementation <code>--respect-config</code> hand-off still
+returns <code>20</code>. No configuration keys or defaults change. See
+the <a href="migration.html#implementation-decision-holds">coordinated
 upgrade</a>.</p>
 <table>
 <thead>

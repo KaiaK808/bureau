@@ -264,6 +264,13 @@ for mode in normal gated; do
   ticket s5 '["lane-2"]'
   : > "$SB/state-broken"; : > "$SB/viewer-broken"
   if [ "$mode" = gated ]; then run --from-stage spec TEAM-7; else run TEAM-7; fi
+  if [ "$mode" = normal ]; then
+    [ "$RC" = 24 ] || fail "startup route outage: exit $RC, wanted 24"
+    [ "$LIN" = "state " ] || fail "startup route outage: continued after the incomplete read"
+    nothing_written "startup route outage"
+    [ ! -e "$REPO/.git/bureau" ] || fail "startup route outage: runtime ownership was touched"
+    continue
+  fi
   [ "$RC" = 10 ] || fail "$mode startup outage: exit $RC, wanted 10"
   [ -z "$STAGES" ] || fail "$mode startup outage: a stage ran"
   case " $LIN" in *" add-label"*|*" remove-label"*|*" move-"*|*" comment"*) fail "$mode startup outage: a Linear write went out" ;; esac
@@ -275,7 +282,7 @@ for mode in normal gated; do
     [ ! -e "$tmp" ] || fail "$mode startup outage: a temporary fault or gate file was left behind"
   done
 done
-echo "PASS normal and gated Spec startup outages keep exit 10, one alert and no ticket writes or stage runs"
+echo "PASS incomplete startup routes stop with 24 before ownership; gated Spec startup outages keep exit 10 and one alert"
 
 new_repo "needs-human"; start_control startup
 jq '.agents.max_concurrent_issues = 2 | .agents.file_overlap_gate = false' "$REPO/.bureau.json" > "$SB/config.json"
@@ -653,10 +660,15 @@ ticket s8 '["needs-human"]'
 run --from-stage build EXP-7
 [ "$RC" = 25 ] && [ "$LIN" = "viewer labels " ] || fail "Done + needs-human, --from-stage: wanted 25 without a state read"
 nothing_written "Done + needs-human, --from-stage"
-# The state read on the hold path fails like the label read: nothing written, 27 and an alert.
+# A failed initial route read stops before even the label check.
 ticket s5 '["needs-human"]'; : > "$SB/state-broken"
 run EXP-7
-[ "$RC" = 27 ] && [ "$LIN" = "state viewer labels state " ] || fail "held, state read unusable: wanted 27"
+[ "$RC" = 24 ] && [ "$LIN" = "state " ] || fail "held, startup route unreadable: wanted 24"
+nothing_written "held, startup route unreadable"
+# A re-entered Shepherd has already checked its route. Its later held-ticket
+# state read retains the established 27 and alert.
+BUREAU_ACTIVE_ENTRY=scripts/shepherd.sh run EXP-7
+[ "$RC" = 27 ] && [ "$LIN" = "viewer labels state " ] || fail "held, state read unusable: wanted 27"
 case " $LIN" in *" add-label"*|*" move-"*|*" comment"*) fail "held, state read unusable: a Linear write went out" ;; esac
 grep -q "could not read the state of EXP-7 — Linear stayed unusable after every retry (fault: not-json); EXP-7 not claimed, nothing written" "$SB/err" \
   || fail "held, state read unusable: the line does not name the state read"

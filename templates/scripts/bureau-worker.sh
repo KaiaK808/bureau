@@ -21,7 +21,8 @@ fi
 if [ "$PIPELINE" = implement-pipeline.sh ]; then
   if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"; fi
   bureau_secret_copy --optional API_KEY LINEAR_API_KEY
-  bureau_implementation_context "$ISSUE" >/dev/null || exit $?
+  ANSWER_CONTEXT=$(bureau_implementation_context "$ISSUE") || exit $?
+  BRANCH=$(printf '%s' "$ANSWER_CONTEXT" | jq -r '.branch') || exit 24
 fi
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
   bureau_exec_runtime python3 -I -B "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" "$@"

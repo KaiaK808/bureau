@@ -1763,34 +1763,12 @@ comment_on_branch_pr() {
 #      empty).
 # Output: branch name on stdout, empty if nothing found.
 get_issue_branch() {
-  local ref="$1"
-  local team_key="${ref%%-*}"
-  local number="${ref##*-}"
   local data
-  # first: 200 — covers virtually every long-running issue (REQUEST_CHANGES
-  # cycles + bot pings rarely exceed this). The marker is posted once by the
-  # spec pipeline near the top of the comment list; if it falls off the page,
-  # downstream pipelines silently fall back to Linear's branchName which never
-  # matches the sequential spec branch numbers.
-  data=$(linear_issue_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }" "$_BUREAU_SHAPE_ISSUE_COMMENTS") || return $?
-  local marker
-  marker=$(printf '%s' "$data" \
-    | jq -r '
-      (.data.issues.nodes[0].comments.nodes // [])
-      | sort_by(.createdAt) | reverse
-      | map((.body // "") | split("\n")[0] // "")
-      | map(select(test("^<!-- bureau-branch: [^ ]+ -->[[:space:]]*$")))
-      | .[0] // ""
-    ' \
-    | sed -E 's/^<!-- bureau-branch: //; s/ -->[[:space:]]*$//')
-  if [ -n "$marker" ]; then
-    printf '%s' "$marker"
-    return 0
-  fi
-  printf '%s' "$data" | jq -r '.data.issues.nodes[0].branchName // empty'
+  data=$(get_issue_branch_and_comments "$1" preserve-transport) || return $?
+  printf '%s' "$data" | jq -r '.branch'
 }
 
-# Combined fetch: returns { branch, comments } in one GraphQL roundtrip.
+# Complete paginated fetch: returns { branch, comments }.
 # Use when a caller needs both pieces close together (e.g. implement-pipeline
 # resolves the branch then scans for review feedback). The branch is resolved
 # the same way get_issue_branch resolves it (marker comment, newest wins,
@@ -1798,14 +1776,19 @@ get_issue_branch() {
 # get_issue_comments.
 #
 # Output: { "branch": "<resolved>", "comments": [{body, createdAt}, ...] }
-# Both fields populated even if the issue has no comments.
+# Both fields populated even if the issue has no comments. Standalone branch
+# and comment readers preserve transport exits; incomplete pagination is 24.
 get_issue_branch_and_comments() {
-  local ref="$1" answer payload cursor=null seen='[]' comments='[]' branch='' next
+  local ref="$1" answer payload cursor=null seen='[]' comments='[]' branch='' next fetch_rc
   while true; do
     payload=$(jq -nc --arg id "$ref" --argjson after "$cursor" '{query:
       "query($id:String!, $after:String) { issue(id:$id) { branchName comments(first:100, after:$after) { nodes { body createdAt } pageInfo { hasNextPage endCursor } } } }",
       variables:{id:$id,after:$after}}') || return 24
-    answer=$(linear_raw "$payload") || return 24
+    answer=$(linear_raw "$payload") || {
+      fetch_rc=$?
+      [ "${2:-}" != preserve-transport ] || return "$fetch_rc"
+      return 24
+    }
     if ! printf '%s' "$answer" | jq -e '
       (.errors // [] | length) == 0 and (.data.issue | type == "object") and
       (.data.issue.comments | (.nodes | type == "array") and (.pageInfo | type == "object") and
@@ -1870,13 +1853,9 @@ post_implementation_hold() {
 
 # Return issue comments newest-first as a JSON array of objects {body, createdAt}.
 get_issue_comments() {
-  local ref="$1"
-  local team_key="${ref%%-*}"
-  local number="${ref##*-}"
-  local answer
-  answer=$(linear_issue_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { comments(first: 200) { nodes { body createdAt } } } } }" "$_BUREAU_SHAPE_ISSUE_COMMENTS") || return $?
-  printf '%s' "$answer" \
-    | jq '(.data.issues.nodes[0].comments.nodes // []) | sort_by(.createdAt) | reverse'
+  local data
+  data=$(get_issue_branch_and_comments "$1" preserve-transport) || return $?
+  printf '%s' "$data" | jq '.comments'
 }
 
 # Return full issue detail as JSON: {identifier, title, description, project:{name,description}, labels:[names]}.

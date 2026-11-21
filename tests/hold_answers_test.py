@@ -60,7 +60,7 @@ def fake_linear(path):
             if state['pagination'] == 'missing': del connection['pageInfo']
             else: connection['pageInfo'] = state['pagination']
         issue = dict(id='uuid', identifier='T-1', title='Fixture', description='Fixture', project=None,
-                     branchName=state.get('branchName', BRANCH), state=dict(id=state.get('state', 's3'), name='Build'),
+                     branchName=state.get('branchName', BRANCH), state=dict(id=state.get('state', 's3'), name='Build', type='started'),
                      labels=dict(nodes=[], pageInfo=dict(hasNextPage=False, endCursor=None)), comments=connection)
         result = dict(issue=issue, issues=dict(nodes=[issue], pageInfo=dict(hasNextPage=False, endCursor=None)))
     print(json.dumps(dict(data=result)))
@@ -324,6 +324,153 @@ pipeline_pick_next() { echo T-1; }
         self.shell(setup + functions + '\nrun_script implement-pipeline.sh Build "$TMPDIR/worker"', 2)
         self.assertEqual(Path(str(self.fixture) + '.prepared-branch').read_text(), BRANCH)
         self.assertFalse(Path(str(self.fixture) + '.forbidden').exists())
+
+    def answered_history_after_200_comments(self):
+        ordinary = [comment('ordinary', 0) for _ in range(200)]
+        tail = [comment(f'<!-- bureau-branch: {BRANCH} -->', 1), comment(hold(), 2),
+                comment(f'Answer: {A}\nUse primary.', 3)]
+        self.history(ordinary + tail, pages=[ordinary[:100], ordinary[100:], tail], branchName='linear-generated')
+
+    def record_preparation(self, code=2):
+        with (self.scripts / 'bureau-config.sh').open('a') as out:
+            out.write('''
+reset_worktree() {
+  printf '%s' "$3" > "$BUREAU_HOLD_FIXTURE.prepared-branch"
+  [ "$3" = feat/issue ] || return 12
+  return ''' + str(code) + '''
+}
+''')
+
+    def test_shepherd_failed_first_route_read_stops_before_claim_or_labels(self):
+        with (self.scripts / 'bureau-config.sh').open('a') as out:
+            out.write('''
+eval "$(declare -f get_issue_state | sed '1s/get_issue_state/_fixture_issue_state/')"
+get_issue_state() {
+  if [ -e "$BUREAU_HOLD_FIXTURE.fail-state-once" ]; then
+    rm "$BUREAU_HOLD_FIXTURE.fail-state-once"
+    return 27
+  fi
+  _fixture_issue_state "$@"
+}
+bureau_exec_runtime() {
+  if [ "$4" = "$BUREAU_RUNTIME" ]; then
+    shift 3
+    exec python3 -I -B "$BUREAU_HOLD_TEST_DRIVER" --runtime-probe "$@"
+  fi
+  exec "$@"
+}
+''')
+        for failed in (False, True):
+            for incomplete in (False, True):
+                with self.subTest(first_read_failed=failed, incomplete_history=incomplete):
+                    self.history([comment(hold(), 1)], **({'pagination': None} if incomplete else {}))
+                    Path(str(self.fixture) + '.claims').unlink(missing_ok=True)
+                    if failed: Path(str(self.fixture) + '.fail-state-once').touch()
+                    result = self.run_command(['bash', 'scripts/shepherd.sh', '--no-tmux', 'T-1'])
+                    # A failed route is incomplete admission, never "not Build".
+                    with self.subTest(invariant='no ownership claim'):
+                        self.assert_no_work()
+                    with self.subTest(invariant='no Linear mutation'):
+                        self.assertFalse(json.loads(self.fixture.read_text()).get('mutations'))
+                    self.assertEqual(result.returncode, 24 if failed or incomplete else 25,
+                                     result.stdout + result.stderr)
+                    if failed:
+                        self.assertEqual(json.loads(self.fixture.read_text()).get('context_reads', 0), 0)
+
+    def test_branch_only_reader_uses_complete_history_and_requires_pagination(self):
+        self.answered_history_after_200_comments()
+        self.assertEqual(self.shell('get_issue_branch T-1', 0).stdout.strip(), BRANCH)
+        bodies = json.loads(self.shell('get_issue_comments T-1', 0).stdout)
+        self.assertEqual(len(bodies), 203)
+        self.assertIn(hold(), [row['body'] for row in bodies])
+        self.history([], pagination=None)
+        self.shell('get_issue_branch T-1', 24)
+        self.shell('get_issue_comments T-1', 24)
+        self.shell('linear_raw() { return 27; }; get_issue_branch T-1', 27)
+        self.shell('linear_raw() { return 130; }; get_issue_branch T-1', 130)
+        self.shell('linear_raw() { return 27; }; get_issue_branch_and_comments T-1', 24)
+
+    def test_shepherd_prepares_canonical_branch_after_200_comments(self):
+        self.answered_history_after_200_comments()
+        self.record_preparation(24)
+        self.run_command(['bash', 'scripts/shepherd.sh', '--no-tmux', 'T-1'], 24)
+        self.assertEqual(Path(str(self.fixture) + '.prepared-branch').read_text(), BRANCH)
+        self.assertFalse(Path(str(self.fixture) + '.forbidden').exists())
+
+    def offline_overlap_origin(self):
+        origin = self.base / 'origin.git'
+        self.run_command(['git', 'init', '-q', '--bare', str(origin)], 0)
+        self.run_command(['git', 'remote', 'add', 'origin', str(origin)], 0)
+        self.run_command(['git', 'push', '-q', 'origin', 'main', BRANCH], 0)
+        gh = self.base / 'bin/gh'
+        gh.write_text('''#!/bin/bash
+if [ "$*" = 'api --paginate --slurp repos/{owner}/{repo}/pulls?state=open&per_page=100' ]; then
+  echo '[[]]'
+else
+  echo unexpected-github-command >> "$BUREAU_HOLD_FIXTURE.forbidden"
+  exit 88
+fi
+''')
+
+    def test_queue_prepares_canonical_branch_after_200_comments_with_overlap(self):
+        self.answered_history_after_200_comments()
+        self.record_preparation()
+        self.offline_overlap_origin()
+        self.config['agents']['file_overlap_gate'] = True
+        self.write_config()
+        source = (self.scripts / 'queue-loop.sh').read_text()
+        functions = source[source.index('preselect_issue() {'):source.index('\nwhile true; do\n  if bureau_is_paused')]
+        setup = '''REPO_DIR="$PWD"; LOG_FILE="$TMPDIR/queue.log"; MODE=implement
+pipeline_pick_next() { echo T-1; }
+'''
+        self.shell(setup + functions + '\nrun_script implement-pipeline.sh Build "$TMPDIR/worker"', 2)
+        self.assertEqual(Path(str(self.fixture) + '.prepared-branch').read_text(), BRANCH)
+        self.assertFalse(Path(str(self.fixture) + '.forbidden').exists())
+
+    def test_runtime_worker_preflight_uses_canonical_branch_with_overlap_on_and_off(self):
+        self.answered_history_after_200_comments()
+        self.record_preparation()
+        self.offline_overlap_origin()
+        for overlap in (False, True):
+            with self.subTest(overlap=overlap):
+                self.config['agents']['file_overlap_gate'] = overlap
+                self.write_config()
+                prepared = Path(str(self.fixture) + '.prepared-branch')
+                prepared.unlink(missing_ok=True)
+                worker = str(self.scripts / 'bureau-worker.sh')
+                workspace = str(self.base / 'worker')
+                self.run_command([sys.executable, '-I', '-B', 'scripts/bureau-runtime.py',
+                    'exec', '--issue', 'T-1', '--workspace', workspace, '--entry', worker,
+                    '--', 'bash', worker, 'T-1', 'implement-pipeline.sh', workspace, BRANCH], 2)
+                self.assertEqual(prepared.read_text(), BRANCH)
+                if overlap:
+                    store = json.loads((self.repo / '.git/bureau/admission/v1.json').read_text())
+                    self.assertEqual(store['reservations']['T-1']['branch'], BRANCH)
+                self.assertFalse(Path(str(self.fixture) + '.forbidden').exists())
+
+    def test_direct_worker_prepares_admitted_branch_instead_of_supplied_branch(self):
+        self.answered_history_after_200_comments()
+        self.record_preparation()
+        for supplied in ('', 'linear-generated'):
+            with self.subTest(supplied=supplied):
+                self.run_command(['bash', 'scripts/bureau-worker.sh', 'T-1', 'implement-pipeline.sh',
+                                  str(self.base / 'worker'), supplied], 2)
+                self.assertEqual(Path(str(self.fixture) + '.prepared-branch').read_text(), BRANCH)
+                self.assertFalse(Path(str(self.fixture) + '.forbidden').exists())
+
+    def test_dispatcher_shepherd_prepares_canonical_branch_after_200_comments(self):
+        self.answered_history_after_200_comments()
+        self.record_preparation(24)
+        self.offline_overlap_origin()
+        for overlap in (False, True):
+            with self.subTest(overlap=overlap):
+                self.config['agents']['file_overlap_gate'] = overlap
+                self.write_config()
+                prepared = Path(str(self.fixture) + '.prepared-branch')
+                prepared.unlink(missing_ok=True)
+                self.assertEqual(self.dispatch_lane(24)['code'], 24)
+                self.assertEqual(prepared.read_text(), BRANCH)
+                self.assertFalse(Path(str(self.fixture) + '.forbidden').exists())
 
     def dispatch_lane(self, code, command=None):
         attempt = uuid.uuid4().hex
