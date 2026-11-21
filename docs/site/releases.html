@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9dad213ecfc657136020e8a65a05f102b0473016234bb97a449e061afe29f33b">
+<meta name="bureau-source-sha256" content="52ffb1868c8e40db7244366a6cdec59fb568ebf139eb4d41a07f86baf1d9a991">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,10 +24,16 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree prepares <strong>Bureau v3.9.0</strong>, dated
-<strong>2026-11-20</strong>, a minor release on v3.8.0 with source tag
-<code>v3.9.0</code>. Tagging and publication remain separate maintainer
-operations. The <a href="release-notes.html">release notes</a> and <a
+<p>This source tree contains <strong>Bureau v3.9.0</strong>, published
+<strong>2026-11-21</strong>, a minor release on v3.8.0. Annotated tag
+<code>v3.9.0</code> (tag object <code>f6a0d79</code>) points at merge
+commit <code>96f47ce</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/162">#162</a>, merged on
+2026-11-20. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.0">GitHub
+Release</a>, "Bureau v3.9.0 — Semgrep and Trivy evidence, Python
+bytecode fix", is published as latest. The <a
+href="release-notes.html">release notes</a> and <a
 href="../../CHANGELOG.md#390---2026-11-20">changelog</a> cover <a
 href="https://github.com/KaiaK808/bureau/pull/158">#158</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/159">#159</a>, <a
@@ -38,13 +44,15 @@ first-parent merge order.</p>
 <p>The release adds opt-in offline Semgrep CE evidence in code review,
 opt-in offline Trivy dependency and configuration evidence in QA, a fix
 for installed helper bytecode in shell stage commits, and a merge gate
-that holds instead of passing when the commit-status read fails. Both
-scanners start off, run under network denial when scanning, and offer
-advisory and blocking modes. Image scanning is outside this release. The
-v3.8.0 publication record is also included.</p>
-<p>From v3.8.0, once published, stop drivers, preserve unfinished work
-and runtime records, compare installed script drift, update the source
-and resync the complete scripts scope. Remove
+that holds instead of passing when the commit-status read fails (<a
+href="https://github.com/KaiaK808/bureau/pull/163">#163</a>, merge
+commit <code>31d14b7</code>). Both scanners start off, run under network
+denial when scanning, and offer advisory and blocking modes. Image
+scanning is outside this release. The v3.8.0 publication record is also
+included.</p>
+<p>From v3.8.0, stop drivers, preserve unfinished work and runtime
+records, compare installed script drift, update the source and resync
+the complete scripts scope. Remove
 <code>qa.trivy.image_archive_command</code> from existing configurations
 and use doctor's one-time cleanup and commit for a tracked Bureau cache.
 See the scanner setup and rollback steps in <a
@@ -52,8 +60,10 @@ href="migration.html#from-v380">From v3.8.0</a>.</p>
 <h3 id="v390-validation-record">v3.9.0 validation record</h3>
 <p>The merged release content is on main <code>31d14b7</code>. The
 fragments record local fixture validation and an earlier pinned Semgrep
-rule run on macOS arm64. The release branch's own suites and CI remain
-to be run by the maintainer.</p>
+rule run on macOS arm64. The release review, both gate suites, the
+release CI and the final candidate/tag tree comparison are recorded
+below; no manual live injection sample or adopter qualification is
+recorded.</p>
 <table>
 <thead>
 <tr>
@@ -64,27 +74,61 @@ to be run by the maintainer.</p>
 <tbody>
 <tr>
 <td>Independent release review</td>
-<td>TBD</td>
+<td>Codex, read-only, five rounds. Rounds 1 to 3 requested documentation
+changes (9, 11 and 9 findings), each fixed. Round 2 also found two Trivy
+parsing defects in merged scanner code; they are listed as known
+limitations below. A maintainer-approved fourth round, limited to the
+round 3 fixes, found two P3s, fixed by hand in <code>d8eaf20</code>. A
+fifth review, limited to the added commit-status read entry, requested
+two wording corrections (the exit <code>2</code> statement now keeps
+decided blockers at <code>25</code>; the PR list gained <a
+href="https://github.com/KaiaK808/bureau/pull/163">#163</a>), fixed by
+hand in <code>764fd9a</code> without a further round.</td>
 </tr>
 <tr>
 <td>macOS gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>764fd9a</code>, two shards: 196 of 196 on the first pass, no
+reruns (2026-11-20). An earlier run on the superseded candidate
+<code>d8eaf20</code> timed out once in
+<code>test_semgrep_pipeline.sh</code> at the 600-second floor under host
+load.</td>
 </tr>
 <tr>
 <td>Remote gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>openclaw-01</code>, exactly <code>764fd9a</code>, two shards:
+196 of 196 on the first pass, no reruns (2026-11-20).</td>
 </tr>
 <tr>
 <td>Release CI jobs, runs and results</td>
-<td>TBD</td>
+<td>All <code>test</code> workflow runs passed on the first attempt,
+with no reruns. <a
+href="https://github.com/KaiaK808/bureau/pull/162">#162</a> at
+<code>764fd9a</code>: pull-request <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44734275670">run
+44734275670</a> and release-branch push <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44734267517">run
+44734267517</a>. Main at <code>96f47ce</code>: <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44758796565">run
+44758796565</a>. Tag <code>v3.9.0</code> at <code>96f47ce</code>: <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44776516076">run
+44776516076</a>. Earlier candidate <code>d8eaf20</code>: pull-request <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44475835038">run
+44475835038</a> and push <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44475801193">run
+44475801193</a>, both green.</td>
 </tr>
 <tr>
 <td>Final candidate/tag tested-tree comparison</td>
-<td>TBD</td>
+<td><code>python3 scripts/release_verify.py 764fd9a v3.9.0</code>
+passed: <code>templates/</code>, <code>tests/</code> and
+<code>scripts/</code> are tree-identical between the tested candidate
+and the tag. Candidate <code>764fd9a</code> and the tag's commit
+<code>96f47ce</code> have the identical tree
+(<code>ae6310256d09</code>).</td>
 </tr>
 <tr>
 <td>Manual live injection sample and adopter qualification</td>
-<td>TBD</td>
+<td>No result recorded for v3.9.0.</td>
 </tr>
 </tbody>
 </table>
@@ -102,9 +146,9 @@ commit <code>74bc6b2</code> of <a
 href="https://github.com/KaiaK808/bureau/pull/157">#157</a>, merged on
 2026-11-14. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.8.0">GitHub
-Release</a> remains the latest published release until v3.9.0 is
-published. The <a href="release-notes-v3.8.0.html">release notes</a> and
-<a href="../../CHANGELOG.md#380---2026-11-14">changelog</a> cover, in
+Release</a> is now the previous release. The <a
+href="release-notes-v3.8.0.html">release notes</a> and <a
+href="../../CHANGELOG.md#380---2026-11-14">changelog</a> cover, in
 first-parent merge order: <a
 href="https://github.com/KaiaK808/bureau/pull/133">#133</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/134">#134</a>, <a
