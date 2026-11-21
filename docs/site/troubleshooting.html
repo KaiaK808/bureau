@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="2bddc5f3cb87daf36f7001d9ae244906cc149832702f680cbe3e818379240e84">
+<meta name="bureau-source-sha256" content="fff32979ed3a647a81c59f9dda60dbbe5338c3458347838c0d7980694bc6620b">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1060,24 +1060,47 @@ to <code>--match-head-commit</code>. The target branch must equal the
 PR's base in each gate pass and in the final read just before the merge.
 The recorded target SHA may differ from today's base SHA, subject to the
 separate base freshness and CI gates.</p>
+<p>Bureau authenticates the newest visible review in complete gate
+snapshots, checks its target immediately before merging, atomically pins
+the head, and checks the target after the merge. The merge message is
+prepared before the final checks; the unconditional final base read is
+followed by the ticket checkpoint immediately before
+<code>gh pr merge</code>. Target validation is observational: GitHub has
+no expected-base option, and a retarget after the final read can still
+change the destination. A post-merge <code>merge_result</code> target
+mismatch logs an error, posts a Linear comment and holds the ticket with
+<code>needs-human</code> and exit <code>25</code>. Inspect the reported
+merge commit, actual base and approved Target before acting; Bureau
+never rolls back or automatically retries that merge. An unreadable or
+incomplete result triggers one fresh read, including after a lost merge
+acknowledgement. If it remains uncertain, the same human hold applies.
+This check detects a wrong destination; it does not make destination
+selection atomic.</p>
 <p>An approval for a previous head or target, a missing or ambiguous
 binding line, or an edited approval returns the ticket to Build Review
 with exit <code>20</code> and a <code>refreshed</code> gate report. The
 gate comment names the differing heads or branches or describes the
 invalid line. If the lookup of prior gate comments fails, the handoff
-still completes and the comment may repeat. Inline review resets its
-disposable worktree to the fetched PR branch and discards local build
-output for the next pick, including after a force-push. A shepherd run
-that exceeds <code>agents.max_review_rounds</code> stale-approval
-handoffs stops with <code>25</code> and <code>needs-human</code> at
-Build Review. For ordinary refusals, a failed verdict, edit-metadata,
-head or base read gives <code>2</code> when there are only undecided
-blockers. A definitive blocker in the same pass, such as a failing CI
-check or a conflict the rebase agent cannot resolve, takes precedence
-and gives <code>25</code> even when the base branch name could not be
-read. After comparing installed drift and resyncing the complete scripts
-scope, a PR approved before the upgrade whose comment lacks the binding
-lines needs one fresh review.</p>
+still completes and the comment may repeat. Inline review fetches the
+PR's advertised head commit, including for a same-named fork branch.
+Stale cleanup discards disposable review output at a freshly fetched PR
+head, even if the branch and its tracking ref were deleted. A failed
+cleanup fetch returns quiet retry <code>2</code> without
+<code>needs-human</code>, cleans at the pinned review base and never
+uses a cached tracking head. The acceptance brief keeps the reviewed
+head separate from the checkout after cleanup. Shepherd confirms the
+move to Build Review before counting a stale handoff; a delayed Linear
+response cannot spend that allowance twice. A shepherd run that exceeds
+<code>agents.max_review_rounds</code> stale-approval handoffs stops with
+<code>25</code> and <code>needs-human</code> at Build Review. For
+ordinary refusals, a failed verdict, edit-metadata, head or base read
+gives <code>2</code> when there are only undecided blockers. A
+definitive blocker in the same pass, such as a failing CI check or a
+conflict the rebase agent cannot resolve, takes precedence and gives
+<code>25</code> even when the base branch name could not be read. After
+comparing installed drift and resyncing the complete scripts scope, a PR
+approved before the upgrade whose comment lacks the binding lines needs
+one fresh review.</p>
 <p>The stage tells its caller which kind of refusal it was: exit
 <code>2</code> when the gate is not yet decided (a check still running
 or not started, GitHub still computing <code>mergeStateStatus</code>, a

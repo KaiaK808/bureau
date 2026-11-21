@@ -60,6 +60,7 @@ record() { jq -c --arg i "$ISSUE" '.[$i] // empty' "$STOPS" 2>/dev/null || true;
 ticket_comments() { grep -c $'^post_comment\t' "$SANDBOX/calls.log" 2>/dev/null || true; }
 
 # ── 1. not yet ─────────────────────────────────────────────────────────────
+if [ "${1:-}" != regressions ]; then
 new_sandbox
 pr2_checks none; pr2_head_age 60
 review
@@ -300,7 +301,7 @@ inline_retarget_case() {
   local control="$1"
   new_sandbox
   [ "$control" = current ] || pr2_revert_merge_base_fix target
-  pr2_retarget_after_read merge-message 1
+  pr2_retarget_after_read gate-snapshot 2
   export BUREAU_MERGE_GATE_REPORT="$SANDBOX/caller-gate.report"
   review
   unset BUREAU_MERGE_GATE_REPORT
@@ -373,6 +374,8 @@ review
 review
 [ "$(pr2_model_calls)" -gt 0 ] || fail 'negative control: the v3.0.2 retry should pay the model again'
 echo 'PASS negative control: v3.0.2 reports Done for an unmerged PR and pays again on the next run'
+fi
+teardown || true
 
 # Exercise the real worker lease, reset and EXIT cleanup. The only doubles are
 # the service transports and the reviewer. All pushes go to a private bare origin.
@@ -422,6 +425,7 @@ ref=refs/heads/test-branch
 head=$(git --git-dir "$origin" rev-parse "$ref")
 base=$(git --git-dir "$origin" rev-parse refs/heads/main)
 if [ -f "$PR2_GH/force-push" ]; then
+  old_head="$head"
   head=$(git commit-tree "$head^{tree}" -p "$base" -m 'rewrite after approval')
   git push -q --force origin "$head:$ref"
 else
@@ -435,6 +439,16 @@ else
       git push -q origin "$base:refs/heads/main" ;;
   esac
   [ "$reviews" -gt 3 ] || printf '%s\n' "$0" > "$PR2_GH/on_review_comment"
+fi
+# GitHub keeps fork/deleted branch commits reachable through its PR ref.
+git push -q --force origin "$head:refs/pull/99/head"
+if [ -f "$PR2_GH/inject-fetch-failure" ]; then
+  git update-ref refs/remotes/origin/test-branch "$old_head"
+  touch "$PR2_GH/fail-cleanup-fetch"
+fi
+if [ -f "$PR2_GH/delete-after-review" ]; then
+  git push -q origin :refs/heads/test-branch
+  git update-ref -d refs/remotes/origin/test-branch
 fi
 pr_base=$(git --git-dir "$origin" merge-base "$base" "$head")
 jq --arg h "$head" --arg b "$pr_base" '.headRefOid = $h | .baseRefOid = $b' "$PR2_GH/pr.json" > "$PR2_GH/pr.tmp"
@@ -456,8 +470,13 @@ force_push_worker_case() (
   local approved replacement first_rc status branch newest registered=false
   approved=$(jq -r .headRefOid "$PR2_GH/pr.json")
   if [ "$1" = reverted ]; then
-    sed 's/_review_release_worktree stale-approval/_review_release_worktree/' "$SCRIPTS_DIR/code-review-pipeline.sh" > "$SB/review"
-    cp "$SB/review" "$SCRIPTS_DIR/code-review-pipeline.sh"
+    python3 - "$SCRIPTS_DIR/code-review-pipeline.sh" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); source=p.read_text()
+start=source.index('_review_release_worktree() {\n'); end=source.index('\n}',start)+2
+p.write_text(source[:start]+'_review_release_worktree() { return 0; }'+source[end:])
+PY
   fi
   review_worker_run env BUREAU_MERGE_GATE_REPORT="$SB/gate.report" bash scripts/bureau-worker.sh "$ISSUE" code-review-pipeline.sh "$WT" test-branch
   first_rc=$LAST_RC
@@ -471,7 +490,7 @@ force_push_worker_case() (
   [ ! -f "$COMMON/bureau/workers/$(printf '%s' "$WT" | shasum -a 256 | cut -d' ' -f1)" ] || registered=true
   review_worker_run bash scripts/bureau-worker.sh "$ISSUE" code-review-pipeline.sh "$WT" test-branch
   if [ "$1" = reverted ]; then
-    [ "$first_rc" = 1 ] && [ "$LAST_RC" = 21 ] && [ "$registered" = false ] \
+    [ "$first_rc" = 20 ] && [ "$LAST_RC" = 21 ] && [ "$registered" = false ] \
       && grep -q 'needs-human' "$SB/linear.log" && [ "$(pr2_review_comments)" = 1 ] \
       || fail "force-push control: expected checkpoint failure then ownership halt, got $first_rc then $LAST_RC"
   else
@@ -482,9 +501,11 @@ force_push_worker_case() (
     grep -qxF "**Reviewed head**: \`$replacement\`" <<< "$newest" || fail 'the next worker did not review the replacement commit'
   fi
 )
-force_push_worker_case current
-force_push_worker_case reverted
-echo 'PASS force-pushed inline approval: worker returns 20, detaches cleanly, then reviews the new head; old reset returns 1 then 21'
+if [ "${1:-}" != regressions ]; then
+  force_push_worker_case current
+  force_push_worker_case reverted
+  echo 'PASS force-pushed inline approval: worker returns 20, detaches cleanly, then reviews the new head; missing cleanup returns 20 then 21'
+fi
 
 shepherd_refresh_case() (
   review_worker_fixture true "$2"
@@ -531,10 +552,187 @@ REVIEW
         || fail 'shepherd did not merge-forward after two stale approvals' ;;
   esac
 )
-shepherd_refresh_case current 4
-shepherd_refresh_case reverted 4
-shepherd_refresh_case capped 1
-shepherd_refresh_case unbounded 1
-echo 'PASS shepherd: two stale approvals leave a base refresh available; the separate stale handoff limit stops repeated approvals'
+if [ "${1:-}" != regressions ]; then
+  shepherd_refresh_case current 4
+  shepherd_refresh_case reverted 4
+  shepherd_refresh_case capped 1
+  shepherd_refresh_case unbounded 1
+  echo 'PASS shepherd: two stale approvals leave a base refresh available; the separate stale handoff limit stops repeated approvals'
+fi
+
+cleanup_retry_case() (
+  review_worker_fixture false 4
+  touch "$PR2_GH/force-push"
+  if [ "$1" = fetch ]; then
+    touch "$PR2_GH/inject-fetch-failure"
+    local real_git; real_git=$(command -v git)
+    cat > "$SB/bin/git" <<'GIT'
+#!/bin/bash
+if [[ " $* " == *' fetch '* ]] && [ -e "$PR2_GH/fail-cleanup-fetch" ]; then
+  rm "$PR2_GH/fail-cleanup-fetch"
+  echo 'fixture: transient cleanup fetch failure' >&2
+  exit 1
+fi
+exec "$FIXTURE_REAL_GIT" "$@"
+GIT
+    chmod +x "$SB/bin/git"
+    export FIXTURE_REAL_GIT="$real_git"
+  else
+    touch "$PR2_GH/delete-after-review"
+  fi
+  review_worker_run env BUREAU_MERGE_GATE_REPORT="$SB/gate.report" bash scripts/bureau-worker.sh "$ISSUE" code-review-pipeline.sh "$WT" test-branch
+  local first_rc="$LAST_RC" first_err="$LAST_STDERR" first_head first_gate
+  first_head=$(git -C "$WT" rev-parse HEAD)
+  first_gate=$(head -n 1 "$SB/gate.report")
+  [ -z "$(git -C "$WT" status --porcelain)" ] && [ -z "$(git -C "$WT" branch --show-current)" ] \
+    || fail "cleanup $1 did not release a clean detached worker"
+  ! grep -q 'needs-human' "$SB/linear.log" || fail "cleanup $1 set needs-human"
+  [ ! -d "$COMMON/bureau/preserved" ] || [ -z "$(ls -A "$COMMON/bureau/preserved")" ] || fail "cleanup $1 preserved a failed worker"
+  if [ "$1" = fetch ]; then
+    grep -q 'transient cleanup fetch failure' <<< "$first_err" || fail 'fetch failure injection did not run'
+    review_worker_run bash scripts/bureau-worker.sh "$ISSUE" code-review-pipeline.sh "$WT" test-branch
+    [ "$first_rc:$LAST_RC" = 2:0 ] && pr2_merged && [ "$(pr2_review_comments)" = 2 ] \
+      && ! grep -q 'needs-human' "$SB/linear.log" || fail "cleanup fetch retry stranded the worker ($first_rc then $LAST_RC)"
+    [ "$first_gate" = not-yet ] || fail 'failed cleanup did not stay retryable'
+    [ "$first_head" = "$(git -C "$REPO" rev-parse origin/main)" ] || fail 'failed cleanup used a cached head'
+  else
+    [ "$first_rc" = 20 ] || fail "deleted branch cleanup exit $first_rc wanted 20"
+    ! git -C "$REPO" show-ref --verify --quiet refs/remotes/origin/test-branch || fail 'deleted-branch tracking ref was not pruned'
+    [ "$(git -C "$WT" rev-parse HEAD)" = "$(jq -r .headRefOid "$PR2_GH/pr.json")" ] || fail 'deleted branch cleanup missed the PR head'
+  fi
+)
+
+fork_head_case() (
+  review_worker_fixture false 4
+  rm "$PR2_GH/on_review_comment"
+  local fork_head latest first_rc
+  fork_head=$(git -C "$REPO" commit-tree "origin/test-branch^{tree}" -p origin/main -m 'fork contribution')
+  git -C "$REPO" push -q origin "$fork_head:refs/pull/99/head"
+  jq --arg head "$fork_head" '.headRefOid=$head | .isCrossRepository=true | .headRepository={nameWithOwner:"fork-owner/test-repo"}' \
+    "$PR2_GH/pr.json" > "$SB/pr"
+  mv "$SB/pr" "$PR2_GH/pr.json"
+  pr2_checks pending
+  review_worker_run bash scripts/bureau-worker.sh "$ISSUE" code-review-pipeline.sh "$WT" test-branch
+  first_rc="$LAST_RC"
+  latest=$(jq -r '.[0].body' "$PR2_GH/comments.json")
+  pr2_checks green
+  review_worker_run bash scripts/bureau-worker.sh "$ISSUE" code-review-pipeline.sh "$WT" test-branch
+  [ "$first_rc:$LAST_RC" = 2:0 ] && pr2_merged && [ "$(pr2_review_comments)" = 1 ] \
+    && ! grep -q 'needs-human' "$SB/linear.log" || fail "fork approval was stale or worker held ($first_rc then $LAST_RC; $(pr2_review_comments) reviews)"
+  grep -qxF "**Reviewed head**: \`$fork_head\`" <<< "$latest" || fail 'same-named origin branch was reviewed instead of the fork head'
+)
+
+delayed_state_case() (
+  review_worker_fixture true 1
+  # These probes replace only the paid reviewer and one Linear state response.
+  # One stale handoff is followed by a fresh review that does not move the head.
+  cat > "$SCRIPTS_DIR/code-review-pipeline.sh" <<'REVIEW'
+#!/bin/bash
+set -euo pipefail
+source "$(dirname "$0")/bureau-config.sh"
+bureau_load_env --export "$BUREAU_ENV_FILE"
+head=$(git rev-parse HEAD); base=$(git rev-parse origin/main)
+gh pr comment 99 --body "$(printf '## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `%s`\n**Target**: `main` at `%s`\n' "$head" "$base")"
+rm -f "$PR2_GH/on_review_comment"
+move_issue "$1" "$BUREAU_STATE_MERGE"
+REVIEW
+  python3 - "$SCRIPTS_DIR/shepherd.sh" <<'PY'
+from pathlib import Path
+import sys
+path=Path(sys.argv[1]); source=path.read_text()
+needle='_shepherd_state() {\n'
+assert source.count(needle)==1
+source=source.replace(needle,needle+'''  if [ "$(cat "$PR2_DELAY_STATE")" = s6 ] && [ "$(jq '[.[] | select(.body | startswith("## Code Review v2"))] | length' "$PR2_GH/comments.json")" = 1 ] && grep -q 'Bureau merge gate' "$PR2_GH/comments.json" && [ ! -f "$PR2_GH/replayed" ]; then
+    touch "$PR2_GH/replayed"; echo Merge; return 0
+  fi
+''')
+path.write_text(source)
+PY
+  review_worker_run env PR2_DELAY_STATE="$SB/state" bash scripts/shepherd.sh --no-tmux --respect-config --worktree "$WT" "$ISSUE"
+  [ -f "$PR2_GH/replayed" ] || fail 'delayed Linear replay did not run'
+  [ "$LAST_RC" = 0 ] && pr2_merged && [ "$(pr2_review_comments)" = 2 ] \
+    && ! grep -q 'needs-human' "$SB/linear.log" || fail "one delayed state exhausted the stale allowance (rc $LAST_RC)"
+  [ "$(grep -c '^  Stale approval —' <<< "$LAST_STDOUT")" = 1 ] || fail 'same approval ran through the merge gate twice'
+  grep -q "still reads 'Merge' after the move" <<< "$LAST_STDOUT" || fail 'stale move was not confirmed'
+)
+
+verdict_head_case() (
+  review_worker_fixture false 4
+  touch "$PR2_GH/force-push"
+  local approved replacement
+  approved=$(jq -r .headRefOid "$PR2_GH/pr.json")
+  review_worker_run bash scripts/bureau-worker.sh "$ISSUE" code-review-pipeline.sh "$WT" test-branch
+  [ "$LAST_RC" = 20 ] || fail "verdict head did not reach stale cleanup: $LAST_RC"
+  replacement=$(jq -r .headRefOid "$PR2_GH/pr.json")
+  python3 -I -B - "$SCRIPTS_DIR" "$WT" "$ISSUE" "$approved" "$replacement" <<'PY'
+import importlib.util, json, sys
+from pathlib import Path
+scripts,workspace,issue,approved,replacement=sys.argv[1:]
+spec=importlib.util.spec_from_file_location('acceptance',Path(scripts)/'bureau-acceptance.py')
+a=importlib.util.module_from_spec(spec); spec.loader.exec_module(a)
+repo=Path(workspace); store=a.e.Store(Path(a.git(repo,'rev-parse','--git-common-dir')).resolve()/'bureau')
+attempts=[attempt for manifest in store.root.glob('runs/*/manifest.json') for attempt in json.loads(manifest.read_text())['attempts'] if attempt.get('review_round',{}).get('final_verdict')=='APPROVE']
+assert len(attempts)==1, attempts
+assert attempts[0]['final_head']==replacement, attempts
+assert attempts[0]['review_round'].get('reviewed_head')==approved, attempts
+base=a.git(repo,'rev-parse','origin/main')
+for head,expected in ((replacement,False),(approved,True)):
+    brief=a.render(store,repo,issue,99,head,'https://github.com/test-owner/test-repo/pull/99',base=base)
+    section=brief.split('**Stage verdicts**')[1].split('**Test evidence**')[0]
+    assert ('code_review: APPROVE' in section)==expected, section
+PY
+)
+
+inline_merge_result_case() (
+  review_worker_fixture false 4
+  rm "$PR2_GH/on_review_comment"
+  local expected=0
+  case "$1" in
+    target) pr2_retarget_after_read final-base 1; expected=25 ;;
+    uncertain) echo 1 > "$PR2_GH/post_merge_reads_fail" ;;
+    unreadable) echo 2 > "$PR2_GH/post_merge_reads_fail"; expected=25 ;;
+  esac
+  review_worker_run env BUREAU_MERGE_GATE_REPORT="$SB/gate.report" bash scripts/bureau-worker.sh "$ISSUE" code-review-pipeline.sh "$WT" test-branch
+  [ "$LAST_RC" = "$expected" ] && pr2_merged || fail "inline post-merge $1 returned $LAST_RC, expected $expected"
+  [ "$(wc -l < "$PR2_GH/merge_calls.log" | tr -d ' ')" = 1 ] || fail 'inline reconciliation retried the merge'
+  if [ "$expected" = 25 ]; then
+    grep -q 'needs-human' "$SB/linear.log" && [ "$(cat "$SB/state")" = s6 ] || fail 'inline merge-result failure was not held'
+    grep -q '^merge_result: ' "$SB/gate.report" || fail 'inline merge-result report was not forwarded'
+    jq -se 'any(.[]; .body | contains("No rollback or automatic merge retry"))' "$SB/comments.jsonl" >/dev/null \
+      || fail 'inline post-merge hold did not comment on Linear'
+    ! grep -q 'was not merged' "$SB/comments.jsonl" || fail 'inline hold falsely reported an unmerged PR'
+    [ ! -f "$COMMON/bureau/review-stops.json" ] || fail 'inline merge-result failure saved a reusable approval'
+  else
+    [ "$(cat "$SB/state")" = s8 ] && [ "$(cat "$PR2_GH/post_merge_reads_fail")" = 0 ] || fail 'inline uncertain result was not reconciled'
+  fi
+)
+
+release_failure_case() (
+  # A blocked gate must retain its human-hold exit even if Git cannot clean
+  # the checkout. Only stale cleanup turns a failure into quiet retry 2.
+  local directory rc=0
+  directory=$(mktemp -d)
+  trap 'rm -rf "$directory"' EXIT
+  export GIT_CEILING_DIRECTORIES="$directory"
+  sed -n '/^_review_release_worktree() {/,/^}/p' "$REPO_ROOT/templates/scripts/code-review-pipeline.sh" > "$directory/release.sh"
+  BUREAU_WORKSPACE_MODE=disposable REVIEW_HEAD=fixture REVIEW_BASE=fixture \
+    bash -euc 'source "$1"; git() { return 1; }; _review_release_worktree; exit 25' _ "$directory/release.sh" \
+      > "$directory/out" 2> "$directory/err" || rc=$?
+  [ "$rc" = 25 ] && grep -q 'could not release the review worktree' "$directory/err" \
+    || fail "a failed blocked-gate cleanup changed exit 25 to $rc"
+)
+
+for regression in ${2:-fetch deleted fork delayed verdict target uncertain unreadable release-failure}; do
+  case "$regression" in
+    fetch|deleted) cleanup_retry_case "$regression" ;;
+    fork) fork_head_case ;;
+    delayed) delayed_state_case ;;
+    verdict) verdict_head_case ;;
+    target|uncertain|unreadable) inline_merge_result_case "$regression" ;;
+    release-failure) release_failure_case ;;
+    *) fail "unknown inline regression: $regression" ;;
+  esac
+  echo "PASS inline regression $regression"
+done
 
 echo 'OK test_inline_merge_result'

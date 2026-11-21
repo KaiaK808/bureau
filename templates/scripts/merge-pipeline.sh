@@ -737,8 +737,7 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
-# Prepare the merge message early for blocking scans. The other modes still
-# read it at the merge call.
+# Prepare the merge message before the final gates, including with scanners off.
 MERGE_MESSAGE_READY=false
 prepare_merge_message() {
   [ "$MERGE_MESSAGE_READY" != true ] || return 0
@@ -752,6 +751,15 @@ prepare_merge_message() {
   MERGE_BODY=${MERGE_BODY%x}
   MERGE_MESSAGE_READY=true
 }
+case "$BUREAU_MERGE_STRATEGY" in
+  squash|merge)
+    if ! prepare_merge_message; then
+      post_comment "$ISSUE" "❌ PR #$PR_NUMBER merge message could not be read. Needs human."
+      mark_needs_human "$ISSUE" merge 18 || true
+      exit 18
+    fi
+    ;;
+esac
 
 # Scan, finish network preparation, then run the just-in-time gates. Only one
 # cheap base-name/tip read is allowed between those gates and the pinned merge.
@@ -891,9 +899,7 @@ _merge_pr() {
       message_args=(--subject "$MERGE_SUBJECT" --body "$MERGE_BODY")
       ;;
   esac
-  # Finish message preparation and the ticket checkpoint before the final base
-  # re-read. GitHub pins the head, but offers no expected-base option.
-  bureau_ticket_checkpoint "$ISSUE"
+  # GitHub pins the head, but offers no expected-base option.
   if [ "$SCAN_RECHECK" = true ]; then
     # baseRef.target is the live branch tip; the PR's stored baseRefOid can lag.
     _merge_base_json=$(gh api graphql \
@@ -919,19 +925,55 @@ _merge_pr() {
     [ "$_merge_base_oid" = "$SCANNED_BASE" ] \
       || scanner_merge_retry "$_scan_tool: PR base commit changed during scan or gate recheck"
   fi
+  bureau_ticket_checkpoint "$ISSUE"
   gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" ${message_args[@]+"${message_args[@]}"}
+}
+
+# This is observational, not an atomic destination precondition. A retarget
+# after the final read can still change the merge's destination. Read the full
+# result twice if uncertain, including after a lost merge acknowledgement;
+# never issue a second merge to reconcile it.
+read_merge_result() {
+  local result
+  result=$(gh pr view "$PR_NUMBER" --json state,mergeCommit,baseRefName) || return 1
+  printf '%s' "$result" | jq -e '
+    (.state == "OPEN" or .state == "CLOSED" or .state == "MERGED") and
+    (.baseRefName | type == "string" and length > 0) and
+    (if .state == "MERGED" then (.mergeCommit.oid | strings | test("^[0-9a-f]{40,64}$")) else .mergeCommit == null end)
+  ' >/dev/null || return 1
+  MERGE_RESULT="$result"
+}
+merge_result_hold() {
+  local message="merge_result: $1"
+  echo "  ERROR: $message" >&2
+  post_comment "$ISSUE" "🛑 PR #$PR_NUMBER merge outcome needs human reconciliation. $1 No rollback or automatic merge retry will run." || true
+  mark_needs_human "$ISSUE" merge 25 || true
+  merge_gate_exit blocked "$message"
 }
 
 bureau_stop_requested && exit 20
 # The line names the head the merge is pinned to, so the log shows which commit
 # the gates passed and GitHub was asked to merge (v3.1.0-rc.2).
 echo "  Merging PR #$PR_NUMBER ($BUREAU_MERGE_STRATEGY) at $MERGE_HEAD..."
-if _merge_pr; then
+MERGE_CALL_OK=false
+if _merge_pr; then MERGE_CALL_OK=true; fi
+MERGE_RESULT=""
+if ! read_merge_result || [ "$(printf '%s' "$MERGE_RESULT" | jq -r .state)" != MERGED ]; then
+  echo '  WARN: merge result uncertain; reconciling with a fresh PR read' >&2
+  read_merge_result || merge_result_hold "Merged state, merge commit and target could not be confirmed for approved Target \`$APPROVED_BASE\`. The merge may already have happened."
+fi
+if [ "$(printf '%s' "$MERGE_RESULT" | jq -r .state)" = MERGED ]; then
+  MERGED_TARGET=$(printf '%s' "$MERGE_RESULT" | jq -r .baseRefName)
+  MERGED_COMMIT=$(printf '%s' "$MERGE_RESULT" | jq -r .mergeCommit.oid)
+  [ "$MERGED_TARGET" = "$APPROVED_BASE" ] \
+    || merge_result_hold "PR merged as \`$MERGED_COMMIT\` into \`$MERGED_TARGET\`, differing from approved Target \`$APPROVED_BASE\`."
   merge_gate_mark clear
   post_comment "$ISSUE" "✅ Merge gates passed. PR #$PR_NUMBER merged (\`--$BUREAU_MERGE_STRATEGY\`). Moving to Done."
   move_issue "$ISSUE" "$BUREAU_STATE_DONE"
   echo "  Merged. Issue moved to Done."
 else
+  [ "$MERGE_CALL_OK" != true ] \
+    || merge_result_hold "Merge call succeeded but PR is not confirmed merged into approved Target \`$APPROVED_BASE\`."
   # A head that moved since the gate checked it: GitHub refused the pinned merge. The
   # new head has not been through the gate: not yet (2), never merged, never blocked.
   NOW_HEAD=$(pr_head_sha "$PR_NUMBER")

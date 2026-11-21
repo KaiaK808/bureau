@@ -108,7 +108,8 @@ def usage_metadata(metadata):
 
 
 def review_round_shape(value):
-    shape({k:v for k,v in value.items() if k != 'merge'}, 'number min_severity provider_verdict final_verdict provider_attempt_ids calls usage')
+    shape({k:v for k,v in value.items() if k not in ('merge', 'reviewed_head')}, 'number min_severity provider_verdict final_verdict provider_attempt_ids calls usage')
+    if 'reviewed_head' in value and not head(value['reviewed_head']): raise ValueError('invalid reviewed head')
     if 'merge' in value: review_merge_shape(value['merge'])
     if type(value['number']) is not int or not 1 <= value['number'] <= 999999: raise ValueError('invalid review round')
     if value['min_severity'] not in ('BUG', 'MINOR'): raise ValueError('invalid review floor')
@@ -1165,7 +1166,7 @@ class Store:
             if relative not in attempt['receipts']: attempt['receipts'].append(relative)
             self._save_manifest(value)
 
-    def review_round(self, run, stage_attempt, number, min_severity, provider_verdict=None, final_verdict=None, merge=None):
+    def review_round(self, run, stage_attempt, number, min_severity, provider_verdict=None, final_verdict=None, merge=None, reviewed_head=None):
         """One round per stage attempt, with deduplicated provider-call measurements.
 
         A partial set of phases or any unknown measurement makes that aggregate
@@ -1198,6 +1199,7 @@ class Store:
                      else None for key in USAGE_FIELDS}
             record = dict(number=number, min_severity=min_severity, provider_verdict=provider_verdict,
                           final_verdict=final_verdict, provider_attempt_ids=sorted(calls), calls=len(calls), usage=usage)
+            if reviewed_head is not None: record['reviewed_head'] = reviewed_head
             if merge is not None: record['merge'] = merge
             review_round_shape(record)
             attempt['review_round'] = record
@@ -1553,7 +1555,7 @@ def review_round_main():
         run, attempt, args.round, args.min_severity,
         args.provider_verdict if args.provider_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None,
         args.final_verdict if args.final_verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else None,
-        merge)
+        merge, reviewed_head=head(os.environ.get('BUREAU_REVIEW_INPUT_HEAD')))
     if args.merge_result and merge:
         store.collect_merged_dispositions(run, attempt, json.loads(args.merge_result.read_text()), merge)
 

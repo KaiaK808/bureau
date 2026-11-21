@@ -28,6 +28,8 @@ def append_observation(args):
 class AcceptanceInsightsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-pr7-fixture-'); self.addCleanup(self.temp.cleanup)
+        self.environ = patch.dict(os.environ, GIT_CEILING_DIRECTORIES=str(Path(self.temp.name).resolve()))
+        self.environ.start(); self.addCleanup(self.environ.stop)
         self.home = Path(self.temp.name).resolve() / 'Users/canary-private-operator'
         self.repo = self.home / 'canary-private-client-repository'; self.spec = self.repo / 'specs/001-brief/spec.md'
         self.spec.parent.mkdir(parents=True); self.spec.write_text('# Intent\nPRIVATE_SPEC_SENTINEL\n')
@@ -247,6 +249,25 @@ post_comment() { printf '%s\\n' "$2" >> "$PR7_ROOT/ticket-comment"; }
         for attempt in ids[3:]: self.assertNotIn(attempt, stage_section)
         for expected in ('implement: ok; exit=0', 'qa: failed; exit=14', 'qa: ok; exit=0', 'code_review: BLOCK;', 'spec: missing.'):
             self.assertIn(expected, stage_section)
+
+    def test_stale_cleanup_does_not_credit_verdict_to_replacement_head(self):
+        self.completed_round(1, 'deterministic', 'APPROVE')
+        approved = self.head
+        # The provider receipts and review remain on A; cleanup lands on B.
+        self.git('commit', '-qm', 'replacement', '--allow-empty')
+        self.head = self.git('rev-parse', 'HEAD')
+        self.store.end_attempt(self.run, self.attempt, 20, self.head)
+        for retained in (False, True):
+            with self.subTest(retained_review_head=retained):
+                if retained:
+                    self.store.review_round(self.run, self.attempt, 1, 'BUG', 'APPROVE', 'APPROVE',
+                                            reviewed_head=approved)
+                brief = self.render()
+                section = brief.split('**Stage verdicts**')[1].split('**Test evidence**')[0]
+                self.assertNotIn('code_review: APPROVE', section)
+                self.assertIn('Review receipt/verdict for this HEAD: missing.', brief)
+                previous = a.render(self.store, self.repo, self.issue, self.pr, approved, self.url, base=self.base)
+                self.assertIn('code_review: APPROVE', previous)
 
     def test_review_round_count_is_for_pr_across_heads_and_uses_cap(self):
         self.completed_round(1, 'deterministic', 'REQUEST_CHANGES')

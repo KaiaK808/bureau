@@ -153,13 +153,15 @@ elif a[:2]==['pr','view']:
     target=base_ref.read_text() if base_ref.exists() else 'main'
     control=json.loads((root/'control').read_text())
     comment=review_comment()
-    data=dict(url='https://github.com/test/repo/pull/9',number=9,state='OPEN',headRefName='009-ticket-switch',
+    merged=(root/'merged').exists()
+    data=dict(url='https://github.com/test/repo/pull/9',number=9,state='MERGED' if merged else 'OPEN',headRefName='009-ticket-switch',
+              mergeCommit=dict(oid=git_ref('009-ticket-switch')) if merged else None,
               baseRefName=target,headRefOid=git_ref('009-ticket-switch'),baseRefOid=git_ref(target),
               isDraft=False,mergeStateStatus='CLEAN',labels=[],comments=[comment] if comment else [],
               title='EXP-9 feature',body='feature')
     if field=='title,body' and control.get('retarget_at_merge'):
         base_ref.write_text(control['retarget_at_merge'])
-    if field=='title,body' and control.get('withdraw_at_merge'):
+    if field==control.get('withdraw_at_field', 'title,body') and control.get('withdraw_at_merge'):
         (root/'state').write_text('custom-id-backlog')
         with (root/'events').open('a') as f: f.write('{"kind":"withdrawal"}\n')
     if field=='comments' and control.get('withdraw_at_acceptance'):
@@ -172,6 +174,8 @@ elif a[:2]==['pr','view']:
                                input=json.dumps(dict(comments=data['comments'])),text=True).returncode)
     print(data[field] if '--jq' in a and field in data and not isinstance(data[field],(dict,list))
           else json.dumps({k:data[k] for k in field.split(',') if k in data}))
+elif a[:2]==['pr','merge']:
+    (root/'merged').touch()
 elif a[:2]==['repo','view']: print('test/repo')
 elif a[:1]==['api']:
     if 'graphql' in a:
@@ -642,7 +646,8 @@ preselect_issue() { pipeline_pick_next "$1"; }
                     self.git('-C',str(self.wt),'checkout','--detach','-q')
 
 
-    def merge_with_withdrawal(self, stage):
+    def merge_with_withdrawal(self, stage, field='title,body'):
+        (self.root/'merged').unlink(missing_ok=True)
         if stage == 'merge':
             head=self.git('rev-parse','origin/'+self.branch)
             base=self.git('rev-parse','origin/main')
@@ -651,7 +656,7 @@ preselect_issue() { pipeline_pick_next "$1"; }
             self.state('merge')
         else:
             self.config['agents']['merge']=False; self.save_config(); self.state('build_review')
-        self.control(withdraw_at_merge=True)
+        self.control(withdraw_at_merge=True,withdraw_at_field=field)
         return self.worker(stage)
 
     def assert_merge_withdrawn(self, stage, result):
@@ -673,12 +678,19 @@ preselect_issue() { pipeline_pick_next "$1"; }
     def test_inline_merge_withdrawal_is_not_a_blocked_gate(self):
         self.assert_merge_withdrawn('code-review',self.merge_with_withdrawal('code-review'))
 
+    def test_withdrawal_during_final_base_read_stops_both_routes(self):
+        for stage in ('merge','code-review'):
+            with self.subTest(stage=stage):
+                (self.root/'events').write_text('')
+                self.wt=self.repo/'.worktrees'/stage
+                self.assert_merge_withdrawn(stage,self.merge_with_withdrawal(stage,'baseRefName'))
+
     def test_removed_merge_checkpoint_allows_both_routes_to_merge_after_withdrawal(self):
         merge=self.repo/'scripts/merge-pipeline.sh'
         source=merge.read_text()
-        checkpoint='  bureau_ticket_checkpoint "$ISSUE"\n  if [ "$SCAN_RECHECK" = true ]; then\n'
+        checkpoint='  bureau_ticket_checkpoint "$ISSUE"\n  gh pr merge '
         self.assertEqual(1,source.count(checkpoint))
-        merge.write_text(source.replace(checkpoint,'  if [ "$SCAN_RECHECK" = true ]; then\n'))
+        merge.write_text(source.replace(checkpoint,'  gh pr merge '))
         for stage in ('merge','code-review'):
             with self.subTest(stage=stage):
                 self.wt=self.repo/'.worktrees'/stage
@@ -724,11 +736,11 @@ preselect_issue() { pipeline_pick_next "$1"; }
         review=self.repo/'scripts/code-review-pipeline.sh'
         source=review.read_text()
         cleanup='''          if [ "$INLINE_RC:$GATE_OUTCOME" = 20:refreshed ] && grep -q '^approval_binding: ' "$GATE_REPORT"; then
-            _review_release_worktree stale-approval
-          fi
 '''
         self.assertEqual(1,source.count(cleanup))
-        review.write_text(source.replace(cleanup,''))
+        start=source.index(cleanup)
+        end=source.index('          echo "  The inline merge ended with ',start)
+        review.write_text(source[:start]+source[end:])
         handoff_status,result=self.review_again_after_stale_approval()
         with self.assertRaises(AssertionError):
             self.assert_fresh_review_after_stale_approval(handoff_status,result)

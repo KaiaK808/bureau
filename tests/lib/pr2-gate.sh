@@ -72,6 +72,10 @@ case "${1:-}:${2:-}" in
       *) jq 'if .state == "OPEN" then [{number: .number}] else [] end' "$D/pr.json" | out ;;
     esac ;;
   pr:view)
+    if [ "$JSON" = state,mergeCommit,baseRefName ] && [ -s "$D/post_merge_reads_fail" ]; then
+      failures=$(cat "$D/post_merge_reads_fail")
+      if [ "$failures" -gt 0 ]; then echo "$((failures - 1))" > "$D/post_merge_reads_fail"; echo 'HTTP 502' >&2; exit 1; fi
+    fi
     if [ "$JSON" = headRefOid ] && [ -e "$D/fail_head_read" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ "$JSON" = comments ] && [ -e "$D/fail_comments_read" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ "$JSON" = comments ] && [ -e "$D/fail_gate_comment_read" ] && [[ "$JQ" == *'Bureau merge gate'* ]]; then
@@ -97,6 +101,7 @@ case "${1:-}:${2:-}" in
       state,mergeStateStatus,labels,baseRefName|state,mergeStateStatus,labels,baseRefName,baseRefOid)
         retarget_after_read gate-snapshot ;;
       title,body) retarget_after_read merge-message ;;
+      baseRefName) retarget_after_read final-base ;;
     esac ;;
   pr:comment)
     jq --arg b "$BODY" --arg t "2026-09-29T10:$(printf '%02d' "$(jq length "$D/comments.json")"):00Z" \
@@ -113,7 +118,8 @@ case "${1:-}:${2:-}" in
       echo "GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)" >&2; exit 1
     fi
     echo "gh pr merge ${3:-?}" >> "$D/merge_calls.log"
-    jq '.state = "MERGED"' "$D/pr.json" > "$D/pr.json.tmp" && mv "$D/pr.json.tmp" "$D/pr.json" ;;
+    jq '.state = "MERGED" | .mergeCommit = {oid: .headRefOid}' "$D/pr.json" > "$D/pr.json.tmp" && mv "$D/pr.json.tmp" "$D/pr.json"
+    [ ! -e "$D/lost_merge_ack" ] || exit 1 ;;
   api:*)
     case "$2" in
       graphql)
@@ -237,11 +243,15 @@ if fix in ('snapshot', 'both'):
 if fix in ('target', 'both'):
     merge = scripts / 'merge-pipeline.sh'
     source = merge.read_text()
-    start = '  bureau_ticket_checkpoint "$ISSUE"\n  if [ "$SCAN_RECHECK" = true ]; then\n'
-    end = '\n  gh pr merge "$PR_NUMBER" '
+    start = '  # GitHub pins the head, but offers no expected-base option.\n'
+    end = '  bureau_ticket_checkpoint "$ISSUE"\n  gh pr merge "$PR_NUMBER" '
     assert source.count(start) == 1
-    first = source.index(start) + len(start.splitlines(keepends=True)[0])
-    last = source.index(end, first) + 1
+    first = source.index(start)
+    last = source.index(end, first)
+    source = source[:first] + source[last:]
+    # Remove the observational target check too in this private unsafe copy.
+    start = '  [ "$MERGED_TARGET" = "$APPROVED_BASE" ] \\\n'
+    first = source.index(start); last = source.index('\n', source.index('|| merge_result_hold ', first))
     merge.write_text(source[:first] + source[last:])
 PY
 }

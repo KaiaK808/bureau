@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f5a779b47b6980ea9f624787a7385d0a7a739ba666ae2a2fd33ee0b66384e588">
+<meta name="bureau-source-sha256" content="acee344dffd14aeb140ddeef47b522c6845ca50b19318f71074cc884e1019e2d">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -3527,31 +3527,46 @@ tip of the same branch. The fixed SHA suffix delimits the Target branch,
 so the branch can contain backticks. The recorded SHA must have the
 format shown above and may differ from the current base SHA. The CI and
 base freshness gates still apply.</p>
-<p>Both routes read the live base branch again immediately before
-<code>gh pr merge</code>, after preparing the message and checking the
-ticket. A mismatch with the approved Target follows the stale-approval
-path. GitHub enforces the expected head through
-<code>--match-head-commit</code> and offers no expected-base option. A
-retarget after the final read and before GitHub applies the merge
-remains an accepted limit.</p>
+<p>Bureau authenticates the newest visible review in complete gate
+snapshots, checks its target immediately before merging, atomically pins
+the head with <code>--match-head-commit</code>, and checks the target
+after the merge. Both routes prepare the merge message before the final
+gates and unconditionally read the live base again, including with
+scanners off; the ticket checkpoint follows that read immediately before
+<code>gh pr merge</code>. A visible mismatch with the approved Target
+follows the stale-approval path. Target validation is observational:
+GitHub offers no expected-base option, so a retarget after the final
+read can still change the destination. The post-merge check reads merged
+state, merge commit and base branch together. A wrong target logs an
+error, posts a Linear comment and holds the ticket for a human with
+<code>needs-human</code> and exit <code>25</code>; it never rolls back
+or automatically retries the merge. An uncertain result, including a
+failed merge acknowledgement, is reconciled with one fresh read; a
+still-uncertain result gets the same human hold.</p>
 <p>An edited approval comment, a missing, malformed or duplicate binding
 line, or a binding that names a different head or target requires fresh
 Build Review. Bureau queries the selected comment's body and
 <code>lastEditedAt</code> by ID to detect edits, including changes
 between the two reads. The gate moves the ticket to Build Review and
 returns <code>20</code> with a <code>refreshed</code> report containing
-an <code>approval_binding</code> line. The inline caller forwards the
-report, fetches the PR branch in a disposable review worktree, and
-discards local review output so the worker can release the checkout.
-Bureau deduplicates the gate comment when it can read earlier comments.
-If that lookup fails, it still hands back the ticket and posts the
-reason, which may repeat an earlier comment.</p>
+an <code>approval_binding</code> line. Inline review fetches the PR's
+advertised head commit, including a fork's same-named branch, and
+retains that reviewed head separately from the checkout after cleanup
+for the acceptance brief. Stale cleanup fetches the current PR head and
+discards local review output in the disposable worker, even if the
+branch and its tracking ref were deleted. If the fetch fails, cleanup
+uses the pinned review base and returns quiet retry <code>2</code>
+without <code>needs-human</code>, never a cached tracking head. Bureau
+deduplicates the gate comment when it can read earlier comments. If that
+lookup fails, it still hands back the ticket and posts the reason, which
+may repeat an earlier comment.</p>
 <p>Only a merge-forward reported with <code>base_refresh</code> uses one
 of the dispatcher's two base refreshes per lane. A shepherd run allows
-<code>agents.max_review_rounds</code> stale-approval handoffs. If
-another approval goes stale during the run, the gate returns the ticket
-to Build Review and the shepherd sets <code>needs-human</code> and exits
-<code>25</code>.</p>
+<code>agents.max_review_rounds</code> stale-approval handoffs, counted
+after confirming the move to Build Review so a delayed Linear response
+cannot spend the allowance twice. If another approval goes stale during
+the run, the gate returns the ticket to Build Review and the shepherd
+sets <code>needs-human</code> and exits <code>25</code>.</p>
 <p>For ordinary gate refusals, a definitive blocker such as a failing CI
 check or a conflict the rebase agent cannot resolve takes precedence
 over failed reads in the same pass and returns <code>25</code>. If the

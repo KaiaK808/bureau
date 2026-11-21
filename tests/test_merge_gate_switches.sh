@@ -393,12 +393,21 @@ retarget_case() {
   pr2_retarget_after_read "$read_kind" "$read_count"
   gate
   retarget_refreshed || return 1
-  [ "$(grep -c '/branches/main' "$SANDBOX/gh_calls.log")" = 2 ] || return 1
-  ! grep -q '/branches/release' "$SANDBOX/gh_calls.log" || return 1
+  if [ "$read_kind" = merge-message ]; then
+    [ "$(grep -c '/branches/main' "$SANDBOX/gh_calls.log")" = 1 ] || return 1
+    [ "$(grep -c '/branches/release' "$SANDBOX/gh_calls.log")" = 1 ] || return 1
+  else
+    [ "$(grep -c '/branches/main' "$SANDBOX/gh_calls.log")" = 2 ] || return 1
+    ! grep -q '/branches/release' "$SANDBOX/gh_calls.log" || return 1
+  fi
   gate; retarget_refreshed
 }
 for scenario in gate-snapshot merge-message; do
   retarget_case "$scenario" current || fail "retarget after $scenario: rc $LAST_RC outcome $OUTCOME: $LINES"
+  if [ "$scenario" = merge-message ]; then
+    echo 'PASS retarget during message preparation is seen by the final gate snapshot'
+    continue
+  fi
   control=target
   [ "$scenario" != gate-snapshot ] || control=both
   if retarget_case "$scenario" "$control"; then fail "retarget after $scenario: negative control stayed green"; fi
@@ -416,7 +425,7 @@ echo 'PASS retarget during the final gate: freshness uses the same base as appro
 late_transition_failure() {
   local control="$1"
   new_sandbox
-  pr2_retarget_after_read merge-message 1
+  pr2_retarget_after_read gate-snapshot 2
   printf '\nmove_issue() { return 27; }\n' >> "$SCRIPTS_DIR/bureau-config.sh"
   if [ "$control" = reverted ]; then
     python3 - "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'

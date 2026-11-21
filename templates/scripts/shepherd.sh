@@ -795,6 +795,7 @@ MERGE_POLL_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_POLL_SECONDS 60 1 3
 MERGE_WAITED=0
 MERGE_WAIT_FOR=""
 STALE_APPROVALS=0
+STALE_HANDOFF_PENDING=0
 
 # _shepherd_no_state_halt — Linear answered MAX_NO_STATE times in a row, without
 # an error and without a state. Nothing tells which stage runs next; the same
@@ -864,6 +865,16 @@ while true; do
     bureau_ticket_checkpoint "$ISSUE" latched
   done
   bureau_ticket_checkpoint "$ISSUE"
+  if [ "$STALE_HANDOFF_PENDING" = 1 ]; then
+    # Do not spend a handoff or run the same approval again while its move is
+    # still invisible. Keep the confirmation latch across delayed responses.
+    if _shepherd_unconfirmed; then continue; fi
+    if [ "$STALE_APPROVALS" -ge "$BUREAU_MAX_REVIEW_ROUNDS" ]; then
+      _shepherd_merge_blocked "kept receiving stale approvals after $STALE_APPROVALS fresh-review handoffs"
+    fi
+    STALE_APPROVALS=$((STALE_APPROVALS + 1))
+    STALE_HANDOFF_PENDING=0
+  fi
   MOVED_FROM=""; MOVED_TO=""; MOVED_VIA=""
   # An answer without a state while confirming goes through the check above.
   [ -z "$STATE" ] && continue
@@ -1010,14 +1021,15 @@ while true; do
   # base refresh. The review round cap handles requests for changes, so bound
   # repeated stale approvals in this run too.
   if [ "$RC" = 20 ] && [ "$(head -n 1 "$MERGE_GATE_FILE" 2>/dev/null || true)" = refreshed ]; then
+    # Confirm the move before another dispatch or stale-handoff count. Linear
+    # can replay Merge once after the gate has moved the ticket to Build Review.
+    MOVED_TO="Build Review"
+    MOVED_FROM=""
     if grep -q '^base_refresh: ' "$MERGE_GATE_FILE"; then
       BUREAU_LANE_BASE_REFRESHES=$(bureau_number merge.refreshes "${BUREAU_LANE_BASE_REFRESHES:-0}" 2 0 2)
       export BUREAU_LANE_BASE_REFRESHES=$((BUREAU_LANE_BASE_REFRESHES + 1))
     elif grep -q '^approval_binding: ' "$MERGE_GATE_FILE"; then
-      if [ "$STALE_APPROVALS" -ge "$BUREAU_MAX_REVIEW_ROUNDS" ]; then
-        _shepherd_merge_blocked "kept receiving stale approvals after $STALE_APPROVALS fresh-review handoffs"
-      fi
-      STALE_APPROVALS=$((STALE_APPROVALS + 1))
+      STALE_HANDOFF_PENDING=1
     fi
     LAST_STATE=""; STUCK_COUNT=0
     continue

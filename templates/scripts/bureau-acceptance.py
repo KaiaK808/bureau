@@ -318,11 +318,19 @@ def stage_results(repo, attempts, receipts, head, base):
         stage = attempt['stage']
         if stage not in e.STAGES or attempt['phase'] != 'stage': continue
         linked = [r for _, r in receipts if r.get('run_id') == run and r.get('stage_attempt_id') == attempt['attempt_id'] and r.get('stage') == stage]
-        matching = (attempt.get('final_head') == head or any(
+        matching = (attempt.get('final_head') == head or
+                    (stage == 'code_review' and attempt.get('review_round', {}).get('reviewed_head') == head) or any(
             review_matches(repo, r, head, base) if stage == 'code_review' else r.get('end_head') == head for r in linked))
         if not matching: continue
         code = attempt.get('normalized_exit')
         verdict = attempt.get('review_round', {}).get('final_verdict')
+        # final_head describes the checkout after cleanup, not what was judged.
+        # Legacy rounds need independently matching receipts; new rounds retain
+        # the immutable reviewed input even after a stale-approval reset.
+        if stage == 'code_review':
+            reviewed = attempt.get('review_round', {}).get('reviewed_head')
+            judged = reviewed == head if reviewed else any(review_matches(repo, r, head, base) for r in linked)
+            if not judged: verdict = None
         result = verdict if verdict in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK') else 'missing'
         if type(code) is int: result += f'; exit={code}'
         # Exit 0 is a final stage status, not an inferred provider approval.

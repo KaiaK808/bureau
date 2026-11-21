@@ -171,6 +171,13 @@ case "${1:-}" in
         fi
         ;;
       view)
+        if [ "$JSON_FIELDS" = state,mergeCommit,baseRefName ]; then
+          if [ -s "$STUB_DIR/post_merge_reads_fail" ]; then
+            failures=$(cat "$STUB_DIR/post_merge_reads_fail")
+            if [ "$failures" -gt 0 ]; then echo "$((failures - 1))" > "$STUB_DIR/post_merge_reads_fail"; exit 1; fi
+          fi
+          if [ -f "$STUB_DIR/invalid_merge_commit" ]; then echo '{"state":"MERGED","mergeCommit":{},"baseRefName":"main"}'; exit 0; fi
+        fi
         # The gate's own reads can be made to fail one at a time (v3.0.1).
         if [ "$JSON_FIELDS" = "state,mergeStateStatus,labels,baseRefName,baseRefOid" ] && [ -f "$STUB_DIR/fail_pr_gate_read" ]; then
           echo "HTTP 502" >&2; exit 1
@@ -193,6 +200,9 @@ case "${1:-}" in
         else
           project_and_filter < "$STUB_DIR/pr_view.json"
         fi
+        if [ "$JSON_FIELDS" = baseRefName ] && [ -f "$STUB_DIR/retarget_final_base" ]; then
+          jq '.baseRefName = "release"' "$STUB_DIR/pr_view.json" > "$STUB_DIR/pr_view.tmp" && mv "$STUB_DIR/pr_view.tmp" "$STUB_DIR/pr_view.json"
+        fi
         ;;
       merge)
         echo "gh pr merge ${3:-?}" >> "$STUB_DIR/merge_calls.log"
@@ -200,9 +210,10 @@ case "${1:-}" in
         printf '%s\0' "$@" > "$STUB_DIR/merge_argv"
         # Flip PR state to MERGED so any further view sees the new world.
         if [ -f "$STUB_DIR/pr_view.json" ]; then
-          jq '.state = "MERGED"' "$STUB_DIR/pr_view.json" > "$STUB_DIR/pr_view.json.tmp" \
+          jq '.state = "MERGED" | .mergeCommit = {oid: .headRefOid}' "$STUB_DIR/pr_view.json" > "$STUB_DIR/pr_view.json.tmp" \
             && mv "$STUB_DIR/pr_view.json.tmp" "$STUB_DIR/pr_view.json"
         fi
+        [ ! -f "$STUB_DIR/lost_merge_ack" ] || exit 1
         exit 0
         ;;
       comment)
@@ -1078,8 +1089,56 @@ test_gate_codes_in_queue_loop() {
 }
 
 # ── Run all ───────────────────────────────────────────────────────
+post_merge_case() {
+  local mode="$1" sb expected=0
+  sb=$(make_sandbox "post_$mode"); populate_happy_fixtures "$sb"
+  case "$mode" in
+    target) touch "$sb/stub_data/retarget_final_base"; expected=25 ;;
+    uncertain) echo 1 > "$sb/stub_data/post_merge_reads_fail" ;;
+    unreadable) echo 2 > "$sb/stub_data/post_merge_reads_fail"; expected=25 ;;
+    malformed) touch "$sb/stub_data/invalid_merge_commit"; expected=25 ;;
+    lost-ack) touch "$sb/stub_data/lost_merge_ack"; echo 1 > "$sb/stub_data/post_merge_reads_fail" ;;
+  esac
+  run_gate "$sb"
+  [ "$GRC" = "$expected" ] || { echo "FAIL post-merge $mode: exit $GRC wanted $expected" >&2; return 1; }
+  [ "$(wc -l < "$sb/stub_data/merge_calls.log" | tr -d ' ')" = 1 ] || return 1
+  if [ "$expected" = 25 ]; then
+    grep -q '^merge_result: ' <<< "$GREP" && grep -q 'ERROR: merge_result:' "$sb/pipeline.err" || return 1
+    grep -q '+EXP-1 needs-human' "$sb/stub_data/labels.log" || return 1
+    grep -q 'No rollback or automatic merge retry' "$sb/stub_data/comments_posted.log" || return 1
+    [ ! -s "$sb/stub_data/state_changes.log" ] || return 1
+    if [ "$mode" = target ]; then
+      grep -q 'differing from approved Target' <<< "$GREP" && grep -q 'release' <<< "$GREP" || return 1
+    fi
+  else
+    grep -q 'move_issue EXP-1 -> s8' "$sb/stub_data/state_changes.log" || return 1
+    [ ! -e "$sb/stub_data/post_merge_reads_fail" ] || [ "$(cat "$sb/stub_data/post_merge_reads_fail")" = 0 ] \
+      || { echo "FAIL post-merge $mode: uncertain result did not get a fresh read" >&2; return 1; }
+  fi
+}
+test_post_merge_target() { post_merge_case target; }
+test_post_merge_uncertain() { post_merge_case uncertain; }
+test_post_merge_unreadable() { post_merge_case unreadable; }
+test_post_merge_malformed() { post_merge_case malformed; }
+test_post_merge_lost_ack() { post_merge_case lost-ack; }
+test_merge_message_before_jit() {
+  local sb; sb=$(make_sandbox early_message); populate_happy_fixtures "$sb"
+  run_gate "$sb"
+  [ "$GRC" = 0 ] || return 1
+  python3 - "$sb/gh_invocations.log" <<'PY'
+import sys
+calls = open(sys.argv[1]).read().splitlines()
+message = next(i for i, c in enumerate(calls) if 'title\\,body' in c)
+gates = [i for i, c in enumerate(calls) if 'state\\,mergeStateStatus\\,labels\\,baseRefName\\,baseRefOid' in c]
+assert len(gates) == 2 and gates[0] < message < gates[1], 'message must precede final gate snapshot'
+PY
+}
+
 FAILS=0
-for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_evidence_failure test_gate_outcome test_gate_conflict_without_base_name test_gate_edited_approval test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop; do
+if [ "$#" = 0 ]; then
+  set -- test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_evidence_failure test_gate_outcome test_gate_conflict_without_base_name test_gate_edited_approval test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop test_post_merge_target test_post_merge_uncertain test_post_merge_unreadable test_post_merge_malformed test_post_merge_lost_ack test_merge_message_before_jit
+fi
+for scenario in "$@"; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else
