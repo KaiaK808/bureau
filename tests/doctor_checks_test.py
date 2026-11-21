@@ -31,7 +31,7 @@ GIT_ENV = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM':
            'GIT_COMMITTER_NAME': 'Bureau Test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
 BASE = {'version': 2,
         'linear': {'teams': [{'id': 'team-id', 'key': 'TEAM', 'states': {'build': 'state-id', 'merge': 'merge-id'}}]},
-        'agents': {'runner': 'claude', 'spec': True, 'implement': True, 'code_review': True},
+        'agents': {'merge_publishers': ['app:bureau-reviewer'], 'runner': 'claude', 'spec': True, 'implement': True, 'code_review': True},
         'repo': {'test_command': 'python3 test.py'}}
 LONG = ('spec', 'spec_review', 'ux', 'qa', 'code_review')
 
@@ -567,7 +567,7 @@ class TestCommandWarningTests(Repo):
 
     def check(self, agents, env=None, test_command=None, env_file=None, at=None):
         """Doctor warns exactly where the stage's gate stops it. Returns the stage's runner."""
-        config = copy.deepcopy(BASE); config['agents'] = {'spec': True, 'code_review': True, **agents}
+        config = copy.deepcopy(BASE); config['agents'] = {'merge_publishers': ['app:bureau-reviewer'], 'spec': True, 'code_review': True, **agents}
         if test_command is None: del config['repo']['test_command']
         else: config['repo']['test_command'] = test_command
         self.write_config(config)

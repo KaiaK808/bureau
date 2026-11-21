@@ -2300,7 +2300,7 @@ pr_ci_is_green() {
   # e.g. some third-party CI integrations). The endpoint returns a flat
   # `statuses` array per-context with state ∈ {success,pending,failure,error}.
   local statuses statuses_read=ok raw_status_count
-  statuses=$(gh api "repos/$owner_repo/commits/$head_sha/status" --jq '.statuses // []' 2>/dev/null) \
+  statuses=$(python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-merge-review.py" statuses "$owner_repo" "$head_sha" 2>/dev/null) \
     || { statuses='[]'; statuses_read=failed; }
   raw_status_count=$(printf '%s' "$statuses" | jq 'length')
 

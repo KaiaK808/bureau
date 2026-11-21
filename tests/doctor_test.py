@@ -25,7 +25,7 @@ class DoctorTests(unittest.TestCase):
         git_maintenance.disable(self.repo)
         self.config={'version':1,'linear':{'teams':[{'id':'team-id','key':'TEAM','states':{'build':'state-id'}}],
                      'labels':{'lane2':{'id':'label-id','name':'custom-name'}}},
-                     'agents':{'spec':'true','spec_review':'false','model':'legacy-model','implement':True,'qa':False,'custom_extension':{'keep':3}},
+                     'agents':{'merge_publishers':['app:bureau-reviewer'],'spec':'true','spec_review':'false','model':'legacy-model','implement':True,'qa':False,'custom_extension':{'keep':3}},
                      'repo':{'test_command':'python3 test.py'},'extension':['preserve']}
         self.path=self.repo/'.bureau.json';self.path.write_text(json.dumps(self.config))
         self.env=patch.dict(os.environ,{'BUREAU_CONFIG':str(self.path)});self.env.start();self.addCleanup(self.env.stop)
@@ -178,12 +178,12 @@ class DoctorTests(unittest.TestCase):
         with patch.object(d.shutil,'which',side_effect=lambda name: None if name == 'gh' else '/bin/'+name):
             for stage in ('implement','code_review','merge','rebase'):
                 for setting in (True, 'true', {'enabled':True,'runner':'codex'}):
-                    self.config['agents']={stage:setting};self.path.write_text(json.dumps(self.config))
+                    self.config['agents']={stage:setting,'merge_publishers':['app:bureau-reviewer']};self.path.write_text(json.dumps(self.config))
                     result=d.diagnose(self.repo,'background')
                     self.assertFalse(result['ok'],(stage,setting,result))
                     self.assertIn('Missing executable: gh',result['errors'])
                     self.assertTrue(d.diagnose(self.repo,'app')['ok'])
-            self.config['agents']={'qa':True,'implement':{'enabled':False}}
+            self.config['agents']={'merge_publishers':['app:bureau-reviewer'],'qa':True,'implement':{'enabled':False}}
             self.path.write_text(json.dumps(self.config))
             self.assertTrue(d.diagnose(self.repo,'background')['ok'])
 
@@ -280,7 +280,7 @@ class DoctorTests(unittest.TestCase):
                     config=copy.deepcopy(self.config)
                     if version is None: config.pop('version',None)
                     else: config['version']=version
-                    config['agents']={'model':'claude-default','implement':{'model':'opus'}}
+                    config['agents']={'merge_publishers':['app:bureau-reviewer'],'model':'claude-default','implement':{'model':'opus'}}
                     env={'BUREAU_MODEL_IMPLEMENT':'sonnet','BUREAU_CODEX_MODEL_DEFAULT':'codex-default'}
                     if route=='environment': env['BUREAU_RUNNER_IMPLEMENT']='codex'
                     elif route=='stage': config['agents']['implement']['runner']='codex'
@@ -298,7 +298,7 @@ class DoctorTests(unittest.TestCase):
         provider=d.module('provider')
         for version in (1, 2):
             config=copy.deepcopy(self.config);config['version']=version
-            config['agents']={'runner':'codex','model_compatibility':'v2','implement':{'model':'codex-stage'}}
+            config['agents']={'merge_publishers':['app:bureau-reviewer'],'runner':'codex','model_compatibility':'v2','implement':{'model':'codex-stage'}}
             migrated=d.migrate(config)
             self.assertEqual(migrated['agents']['model_compatibility'],'v2')
             self.assertEqual(provider.configuration('implement',migrated,{})['model'],'codex-stage')

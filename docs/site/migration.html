@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="29e723b6ed59d2f3f3a4d6e7fb0e9fddcb4b8451b9e2a6c12a314299e1284120">
+<meta name="bureau-source-sha256" content="e72828a4235a6ea880fded6a0212f6a2aec2f47a39fffa7fdf4bd206be5e2eb4">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -17,6 +17,28 @@
 </nav></aside>
 <main class="bhb-main"><h1 id="upgrade-migration-and-rollback">Upgrade,
 migration and rollback</h1>
+<h2 id="trusted-merge-publishers">Trusted merge publishers</h2>
+<p>Before resyncing scripts and restarting drivers, set
+<code>agents.merge_publishers</code> on the repository's default branch,
+preferably <code>["app:bureau-reviewer"]</code> for a dedicated Bureau
+App. Personal publishers use <code>["user:review-publisher"]</code>;
+Actions uses <code>["app:github-actions"]</code> and trusts all suitably
+permitted workflows acting as that bot. Compare installed script drift,
+then resync the complete scripts scope. Missing, invalid or empty policy
+now holds merges with <code>25</code>; doctor reports missing or invalid
+configuration. There is no environment or runtime-login fallback. The
+policy is pinned once per merge-stage run, so stop the merger for
+emergency revocation.</p>
+<p>Review comments must carry the exact issue heading and an unambiguous
+reserved header. Edited reviews require fresh Build Review
+(<code>20</code>); incomplete or unreadable snapshots retry with
+<code>2</code>. Publication failures are explicit and stop review with
+<code>18</code>. Existing head/target binding remains in force. The
+guarantee authenticates the newest visible review in complete snapshots:
+deletion without trace is undetectable, and everyone acting as a shared
+human login is trusted. See <a
+href="configuration.html#merge-approval-binding">merge approval
+binding</a>.</p>
 <p>An upgrade that refreshes installed assets has two steps: update the
 <strong>Bureau source skill</strong>, then resync its assets into
 <strong>each adopting repository</strong>. Updating the source clone

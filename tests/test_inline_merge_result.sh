@@ -50,6 +50,12 @@ EOF
   export BUREAU_STUB_ISSUE_STATE='Build Review' BUREAU_STUB_STATE_MERGE='' BUREAU_STUB_AGENT_ENABLED=''
   export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0
   pr2_gate_setup
+  if [ -n "${BUREAU_TEST_RUNTIME_REF:-}" ]; then
+    local script
+    for script in code-review-pipeline.sh merge-pipeline.sh; do
+      git -C "$REPO_ROOT" show "$BUREAU_TEST_RUNTIME_REF:templates/scripts/$script" > "$SCRIPTS_DIR/$script"
+    done
+  fi
   STOPS="$(git -C "$SANDBOX" rev-parse --path-format=absolute --git-common-dir)/bureau/review-stops.json"
 }
 review() { rm -f "$SANDBOX/fake_claude_counter"; : > "$SANDBOX/gh_calls.log"; run_pipeline code-review-pipeline.sh "$ISSUE"; }
@@ -518,7 +524,7 @@ source "$(dirname "$0")/bureau-config.sh"
 bureau_load_env --export "$BUREAU_ENV_FILE"
 head=$(git rev-parse HEAD)
 base=$(git rev-parse origin/main)
-gh pr comment 99 --body "$(printf '## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `%s`\n**Target**: `main` at `%s`\n' "$head" "$base")"
+gh pr comment 99 --body "$(printf '## Code Review v2 — %s\n\n**Verdict**: APPROVE\n**Reviewed head**: `%s`\n**Target**: `main` at `%s`\n' "$1" "$head" "$base")"
 move_issue "$1" "$BUREAU_STATE_MERGE"
 REVIEW
   case "$1" in
@@ -632,7 +638,7 @@ set -euo pipefail
 source "$(dirname "$0")/bureau-config.sh"
 bureau_load_env --export "$BUREAU_ENV_FILE"
 head=$(git rev-parse HEAD); base=$(git rev-parse origin/main)
-gh pr comment 99 --body "$(printf '## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `%s`\n**Target**: `main` at `%s`\n' "$head" "$base")"
+gh pr comment 99 --body "$(printf '## Code Review v2 — %s\n\n**Verdict**: APPROVE\n**Reviewed head**: `%s`\n**Target**: `main` at `%s`\n' "$1" "$head" "$base")"
 rm -f "$PR2_GH/on_review_comment"
 move_issue "$1" "$BUREAU_STATE_MERGE"
 REVIEW
@@ -804,7 +810,51 @@ release_failure_case() (
     || fail "a failed blocked-gate cleanup changed exit 25 to $rc"
 )
 
-for regression in ${2:-fetch deleted fork delayed handoff-held handoff-held-late handoff-unconfirmed reconcile-target reconcile-unreadable reconcile-inline-target reconcile-inline-unreadable verdict target uncertain unreadable release-failure}; do
+publisher_inline_case() {
+  local mode="$1" expected=25
+  new_sandbox
+  pr2_checks green
+  case "$mode" in
+    policy) echo '{"agents":{}}' > "$PR2_GH/default-policy.json" ;;
+    forgery|jit)
+      jq -nc --argjson jit "$([ "$mode" = jit ] && echo true || echo false)" \
+        '{author_override:{__typename:"User",login:"outsider"},jit_only:$jit}' > "$PR2_GH/publisher-case.json" ;;
+    edited-block)
+      expected=20
+      cat > "$PR2_GH/edit-hook" <<'HOOK'
+python3 -I -B - <<'PYHOOK'
+import json, os
+from pathlib import Path
+root=Path(os.environ['PR2_GH'])
+comments=json.loads((root/'comments.json').read_text())
+node=comments[-1]
+node['body']=node['body'].replace('**Verdict**: APPROVE','**Verdict**: BLOCK')
+(root/'comments.json').write_text(json.dumps(comments))
+node=dict(node,author=dict(__typename='User',login='fixture'))
+node['body']=node['body'].replace('**Verdict**: BLOCK','**Verdict**: APPROVE')
+(root/'publisher-case.json').write_text(json.dumps(dict(reread=node)))
+PYHOOK
+HOOK
+      printf '%s' "$PR2_GH/edit-hook" > "$PR2_GH/on_review_comment" ;;
+    publication) expected=18; touch "$PR2_GH/fail_review_publication" ;;
+  esac
+  review
+  [ "$LAST_RC" = "$expected" ] || fail "publisher $mode: exit $LAST_RC wanted $expected"
+  pr2_merged && fail "publisher $mode merged"
+  if [ "$mode" = publication ]; then
+    grep -q 'review publication.*failed' <<< "$LAST_STDERR" || fail 'publication error was swallowed'
+    ! grep -q 'Posted review to PR' <<< "$LAST_STDOUT" || fail 'publication failure claimed success'
+    ! grep -q 'Next: Done' <<< "$LAST_STDOUT" || fail 'publication failure claimed Done'
+  elif [ "$mode" = edited-block ]; then
+    labeled_human && fail 'edited BLOCK became an authenticated human hold'
+    grep -q $'move_issue\t'"$ISSUE"$'\tstate-build-review' "$SANDBOX/calls.log" || fail 'edited BLOCK did not request fresh review'
+  else
+    labeled_human || fail "publisher $mode did not hold for a human"
+    grep -q 'agents.merge_publishers' <<< "$LAST_STDOUT $LAST_STDERR $(calls)" || fail 'publisher hold omitted policy name'
+  fi
+}
+
+for regression in ${2:-fetch deleted fork delayed handoff-held handoff-held-late handoff-unconfirmed reconcile-target reconcile-unreadable reconcile-inline-target reconcile-inline-unreadable verdict target uncertain unreadable release-failure publisher-policy publisher-forgery publisher-jit publisher-edited-block publisher-publication}; do
   case "$regression" in
     fetch|deleted) cleanup_retry_case "$regression" ;;
     fork) fork_head_case ;;
@@ -815,6 +865,7 @@ for regression in ${2:-fetch deleted fork delayed handoff-held handoff-held-late
     verdict) verdict_head_case ;;
     target|uncertain|unreadable) inline_merge_result_case "$regression" ;;
     release-failure) release_failure_case ;;
+    publisher-*) publisher_inline_case "${regression#publisher-}" ;;
     *) fail "unknown inline regression: $regression" ;;
   esac
   echo "PASS inline regression $regression"

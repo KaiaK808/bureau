@@ -24,6 +24,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")" && cd .. && pwd)"
 REAL_BUREAU_CONFIG="$REPO_ROOT/templates/scripts/bureau-config.sh"
 REAL_MERGE_PIPELINE="$REPO_ROOT/templates/scripts/merge-pipeline.sh"
+export MERGE_REVIEW_FAKE="$REPO_ROOT/tests/lib/merge-review-fake.py"
 SANDBOX_ROOT=$(mktemp -d -t bureau-test.merge-corr.XXXXXXXX)
 trap 'rm -rf "$SANDBOX_ROOT"' EXIT
 
@@ -68,6 +69,7 @@ EOF
   cp "$REPO_ROOT/templates/scripts/bureau-env.sh" "$sb/scripts/"
   # merge-pipeline.sh sources merge-body.sh next to itself for the merge message.
   cp "$REPO_ROOT/templates/scripts/merge-body.sh" "$sb/scripts/"
+  cp "$REPO_ROOT/templates/scripts/bureau-merge-review.py" "$sb/scripts/"
   cp "$REAL_BUREAU_CONFIG"  "$sb/scripts/bureau-config.sh"
   cp "$REAL_MERGE_PIPELINE" "$sb/scripts/merge-pipeline.sh"
 
@@ -86,6 +88,7 @@ bureau_issue_snapshot() {
   jq -nc --arg issue "$1" --arg id "$state_id" '{identifier:$issue,state:{id:$id}}'
 }
 precondition_claude_auth() { return 0; }
+bureau_ticket_checkpoint() { :; }
 post_comment()             { echo "post_comment $1 :: $2" >> "$STUB_DIR/comments_posted.log"; }
 move_issue()               { echo "move_issue $1 -> $2"   >> "$STUB_DIR/state_changes.log"; }
 add_issue_label()          { echo "+$1 $2" >> "$STUB_DIR/labels.log"; }
@@ -137,6 +140,10 @@ project_and_filter() {
   proj+="}"
   jq "$proj" | apply_jq
 }
+
+python3 -I -B "$MERGE_REVIEW_FAKE" "$@"
+transport_rc=$?
+[ "$transport_rc" = 3 ] || exit "$transport_rc"
 
 case "${1:-}" in
   repo)
@@ -286,6 +293,11 @@ case "${1:-}" in
 esac
 GHEOF
   chmod +x "$sb/bin/gh"
+  local transport
+  for transport in curl wget ssh linear; do
+    printf '#!/bin/sh\necho "DENIED real transport" >&2\nexit 97\n' > "$sb/bin/$transport"
+    chmod +x "$sb/bin/$transport"
+  done
   echo "$sb"
 }
 
@@ -305,7 +317,7 @@ populate_happy_fixtures() {
   "baseRefName":"main",
   "baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "comments":[
-    {"id":"approval","createdAt":"2026-05-13T00:00:00Z","lastEditedAt":null,"body":"## Code Review v2 — EXP-1\n**Verdict**: APPROVE\n**Reviewed head**: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n**Target**: `main` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`"}
+    {"id":"approval","createdAt":"2026-05-13T00:00:00Z","lastEditedAt":null,"body":"## Code Review v2 — EXP-1\n\n**Verdict**: APPROVE\n**Reviewed head**: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n**Target**: `main` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`"}
   ]
 }
 EOF
@@ -320,6 +332,7 @@ EOF
 
 run_pipeline() {
   local sb="$1"; shift
+  MERGE_REVIEW_FAKE="$REPO_ROOT/tests/lib/merge-review-fake.py" \
   STUB_DIR="$sb/stub_data" \
     INVOCATIONS_LOG="$sb/gh_invocations.log" \
     PATH="$sb/bin:$PATH" \
@@ -808,7 +821,7 @@ test_gate_outcome() {
   echo '{"commit":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}' > "$sb/stub_data/branch_main.json"; echo '{"ahead_by":3}' > "$sb/stub_data/compare.json"
   run_gate "$sb"; gate_case "$sb" behind 25 blocked 'behind main' || return 1
   sb=$(make_sandbox gate_noverdict); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.comments=[]'
-  run_gate "$sb"; gate_case "$sb" no-verdict 25 blocked 'verdict=none' || return 1
+  run_gate "$sb"; gate_case "$sb" no-verdict 25 blocked 'no authorised review' || return 1
   # Pending CI next to a missing APPROVE is blocked: waiting cannot bring the APPROVE.
   sb=$(make_sandbox gate_mixed); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.comments=[]'
   echo '{"check_runs":[{"name":"ci","status":"queued","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
@@ -899,19 +912,19 @@ test_gate_edited_approval() (
   STUB_DIR="$sb/stub_data" "$sb/bin/gh" pr view 42 --json comments | jq -e '
     .comments[0] | .includesCreatedEdit and (keys == ["author", "authorAssociation", "body", "createdAt", "id",
       "includesCreatedEdit", "isMinimized", "minimizedReason", "reactionGroups", "url", "viewerDidAuthor"])' >/dev/null || return 1
-  run_gate "$sb"; gate_case "$sb" edited 20 refreshed 'selected approval comment was edited' || return 1
+  run_gate "$sb"; gate_case "$sb" edited 20 refreshed 'selected review was edited' || return 1
   [ ! -s "$sb/stub_data/merge_calls.log" ] || return 1
   grep -q -- '-f id=approval' "$sb/gh_invocations.log" || return 1
 
-  # Read the edit timestamp from the projection instead of the selected node.
-  python3 - "$sb/scripts/merge-pipeline.sh" <<'PY' || return 1
+  # Ignore edit timestamps while keeping the same-node body comparison.
+  python3 - "$sb/scripts/bureau-merge-review.py" <<'PY' || return 1
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 source = path.read_text()
-original = """"$_review_edit" | jq -r '.lastEditedAt'"""
+original = "selected['lastEditedAt'] is not None or reread['lastEditedAt'] is not None or reread != selected"
 assert source.count(original) == 1
-path.write_text(source.replace(original, original.replace('$_review_edit', '$_review_comment')))
+path.write_text(source.replace(original, 'reread != selected'))
 PY
   run_gate "$sb"; gate_case "$sb" projected-edit-control 0 - || return 1
   [ -s "$sb/stub_data/merge_calls.log" ]
@@ -921,7 +934,7 @@ PY
 # check more or less still running is no change, pending → failing is, and so is an
 # old-format comment (no "Outcome:" line).
 post_back() {  # <sb> — the text in stub_data/last_body becomes the PR's latest bot comment
-  jq --rawfile b "$1/stub_data/last_body" '.comments += [{"createdAt":"2026-09-29T09:00:00Z","body":$b}]' \
+  jq --rawfile b "$1/stub_data/last_body" '.comments += [{"id":("gate-" + (.comments | length | tostring)),"lastEditedAt":null,"createdAt":"2026-09-29T09:00:00Z","body":$b}]' \
     "$1/stub_data/pr_view.json" > "$1/stub_data/pr_view.json.tmp" && mv "$1/stub_data/pr_view.json.tmp" "$1/stub_data/pr_view.json"
 }
 test_gate_comment_key() {
@@ -1204,6 +1217,8 @@ gates = [i for i, c in enumerate(calls) if 'state\\,mergeStateStatus\\,labels\\,
 assert len(gates) == 2 and gates[0] < message < gates[1], 'message must precede final gate snapshot'
 PY
 }
+
+[ "${BUREAU_MERGE_TEST_LIBRARY_ONLY:-0}" != 1 ] || return 0
 
 FAILS=0
 if [ "$#" = 0 ]; then

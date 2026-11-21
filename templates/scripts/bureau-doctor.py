@@ -57,6 +57,9 @@ def validate(config):
             if not isinstance(states, dict) or not states or any(not isinstance(v, str) for v in states.values()):
                 errors.append('Team states must map names to string IDs')
     agents = config['agents']
+    try: module('merge-review').merge_publishers(config)
+    except ValueError as exc: errors.append(str(exc))
+    except FileNotFoundError: errors.append('Missing runtime asset: scripts/bureau-merge-review.py; resync scripts')
     if 'merge_approvers' in agents:
         try: module('approval-status').merge_approvers(config)
         except ValueError as exc: errors.append(str(exc))

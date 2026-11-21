@@ -4,6 +4,8 @@ Every pipeline script exits with a code that classifies its outcome. `queue-loop
 
 This page is the complete table + how the alerter behaves.
 
+Publisher authentication keeps the existing exit meanings: incomplete, unreadable or inconsistent snapshots and unknown review authors return `2`; missing or invalid `agents.merge_publishers`, no authorised verdict and valid BLOCK/REQUEST_CHANGES return `25`. An edited selected review returns `20` with the existing fresh-review handoff. A decided ordinary blocker takes precedence over read uncertainty. Review publication failure is explicit and returns `18`.
+
 ---
 
 ## Exit code table

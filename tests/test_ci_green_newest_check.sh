@@ -9,6 +9,8 @@ export GIT_CEILING_DIRECTORIES="$T"
 CI_FIXTURES="$T"
 export CI_FIXTURES
 mkdir -p "$T/bin"
+cp "$ROOT/templates/scripts/bureau-merge-review.py" "$T/"
+_BUREAU_SCRIPTS_DIR="$T"
 cat > "$T/bin/gh" <<'GH'
 #!/bin/bash
 set -uo pipefail
@@ -17,7 +19,8 @@ case "$*" in
   'repo view '*) [ ! -e "$CI_FIXTURES/no_repo" ] || exit 1; echo test-owner/test-repo ;;
   'pr view '*) [ ! -e "$CI_FIXTURES/no_head" ] || exit 1; echo HEAD_SHA ;;
   *'/check-runs '*) [ ! -e "$CI_FIXTURES/no_checks" ] || exit 1; cat "$CI_FIXTURES/checks.json" ;;
-  *'/status '*) [ ! -e "$CI_FIXTURES/no_status" ] || exit 1; cat "$CI_FIXTURES/statuses.json" ;;
+  *'/status '*) [ ! -e "$CI_FIXTURES/no_status" ] || exit 1
+    jq '{total_count:length,statuses:(to_entries | map(.value + {id:.key}))}' "$CI_FIXTURES/statuses.json" ;;
   *'/git/commits/'*) echo 2020-01-01T00:00:00Z ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac

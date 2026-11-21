@@ -344,6 +344,10 @@ Sometimes the test command passes locally but not inside the worktree — usuall
 
 ### Merge gate refuses to merge a PR that looks green
 
+First check `agents.merge_publishers` on the repository's default branch. It must be an array of typed `user:<login>` or `app:<slug>` entries (at most 20). Set it before resyncing scripts and restarting drivers. Missing, invalid or empty policy holds merges with `25`; doctor reports missing or invalid policy. A policy added only in the PR checkout has no effect. The merge stage pins policy once per run; changes apply on the next run.
+
+Only the newest authorised exact issue-heading review supplies the verdict. A valid BLOCK or REQUEST_CHANGES, or a complete history with no authorised verdict, holds with `25`. Edited selected reviews require fresh Build Review (`20`), including edits to a BLOCK. Failed reads, partial GraphQL data, hidden/unreadable entries or incomplete pagination hold with `2`; an older approval is never substituted. Review publication failure stops with `18` and reports that retained output needs reconciliation. Check the configured publisher against the comment's GraphQL actor type; `/user` is not consulted. Shared logins trust everyone acting as that login, and deleting a newer verdict without trace cannot be detected. Prefer a dedicated Bureau App.
+
 `merge-pipeline.sh` independently checks CI on the current PR head, the current PR base, GitHub's `mergeStateStatus`, the latest Code Review v2 approval and its head/target binding, hold labels and unresolved threads. Every gate must pass.
 
 To diagnose:

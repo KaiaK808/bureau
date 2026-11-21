@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="71b7508e3e2e0ae4e08c90288d70f9b4718c1027d098c24fc364a969b79706c9">
+<meta name="bureau-source-sha256" content="37b2423779be991716632ddac2ee49951e9efc3d93aac737d4ed19674b2fb258">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1421,6 +1421,17 @@ href="recipes.html#merge-by-hand">recipes</a></td>
 <td>One of <code>squash</code>, <code>merge</code>, <code>rebase</code>.
 Validated at config-load — invalid values fall back to
 <code>squash</code> with a warning</td>
+</tr>
+<tr>
+<td><code>agents.merge_publishers</code></td>
+<td>array of typed strings</td>
+<td>required for automatic merging</td>
+<td>At most 20 <code>user:&lt;login&gt;</code> or
+<code>app:&lt;slug&gt;</code> entries from the default branch, pinned
+once per merge run. Missing, invalid or empty policy holds with
+<code>25</code>; doctor reports missing or invalid values. See <a
+href="#merge-approval-binding">merge approval binding</a> for actor
+types, selection and limits.</td>
 </tr>
 <tr>
 <td><code>agents.merge_approvers</code></td>
@@ -3512,12 +3523,37 @@ repo whose defaults don't match.</p>
 </tbody>
 </table>
 <h3 id="merge-approval-binding">Merge approval binding</h3>
-<p>Both automatic merge routes use
-<code>gh pr view --json comments</code> to select the newest PR comment
-containing the <code>Code Review v2</code> heading, as before. The gate
-now binds an <code>APPROVE</code> or <code>AUTO_APPROVE</code> verdict
-in that comment to the head and target named in these two lines. Each
-line must appear exactly once.</p>
+<p><code>agents.merge_publishers</code> is an explicit array of at most
+20 typed entries, for example <code>["app:bureau-reviewer"]</code> or
+<code>["user:review-publisher"]</code>. Each login or App slug has 1–39
+ASCII letters, digits or single internal hyphens; prefixes are exactly
+<code>user:</code> or <code>app:</code>. Matching ignores login case;
+duplicate entries are invalid. An absent, invalid or empty policy holds
+automatic merges with <code>25</code>. Doctor reports a missing or
+invalid policy.</p>
+<p>Both automatic merge routes resolve the repository's default branch
+to a commit and read <code>.bureau.json</code> at that commit once per
+merge-stage run. Policy changes apply next run; stop the merger for
+emergency revocation. Policy in the PR checkout or the environment has
+no authority. The gate checks authoritative GraphQL actor types before
+login: <code>user:</code> matches <code>User</code>, and
+<code>app:</code> matches <code>Bot</code>, with <code>app/</code> and
+<code>[bot]</code> spellings normalized only for Bots. Personal,
+installation and Actions tokens need no <code>/user</code> lookup. A
+dedicated Bureau App is recommended. A shared human login trusts
+everyone and every token acting as that login; allowing
+<code>app:github-actions</code> trusts every suitably permitted workflow
+using that principal.</p>
+<p>The gate selects the newest authorised comment with the exact first
+line <code>## Code Review v2 — TEAM-123</code> for the current issue,
+before reading its verdict. Fenced, quoted, prefixed and other-issue
+copies cannot publish. After the heading and a blank line, only
+contiguous reserved <code>Verdict</code>, <code>Build</code>,
+<code>Reviewed head</code> and <code>Target</code> fields form the
+header; each may occur once. Provider prose cannot inject a verdict or
+binding. An <code>APPROVE</code> or <code>AUTO_APPROVE</code> must bind
+the head and target with these two lines. Each binding line must appear
+exactly once.</p>
 <pre class="text"><code>**Reviewed head**: `&lt;full 40-character lowercase hex SHA&gt;`
 **Target**: `&lt;base branch&gt;` at `&lt;full 40-character lowercase hex SHA&gt;`</code></pre>
 <p>On both gate passes, the reviewed head must equal the head used for
@@ -3544,13 +3580,15 @@ error, posts a Linear comment and holds the ticket for a human with
 or automatically retries the merge. An uncertain result, including a
 failed merge acknowledgement, is reconciled with one fresh read; a
 still-uncertain result gets the same human hold.</p>
-<p>An edited approval comment, a missing, malformed or duplicate binding
-line, or a binding that names a different head or target requires fresh
-Build Review. Bureau queries the selected comment's body and
-<code>lastEditedAt</code> by ID to detect edits, including changes
-between the two reads. The gate moves the ticket to Build Review and
-returns <code>20</code> with a <code>refreshed</code> report containing
-an <code>approval_binding</code> line. Inline review fetches the PR's
+<p>An edited selected review of any verdict, a missing, malformed or
+duplicate binding line, or a binding that names a different head or
+target requires fresh Build Review. Bureau rereads that same node's
+identity, author, body, creation time and <code>lastEditedAt</code> for
+every verdict, including BLOCK, to detect changes between reads. An
+unreadable or deleted selected node never falls back to an older
+approval. The gate moves the ticket to Build Review and returns
+<code>20</code> with a <code>refreshed</code> report containing an
+<code>approval_binding</code> line. Inline review fetches the PR's
 advertised head commit, including a fork's same-named branch, and
 retains that reviewed head separately from the checkout after cleanup
 for the acceptance brief. Stale cleanup fetches the current PR head and
@@ -3568,6 +3606,18 @@ after confirming the move to Build Review so a delayed Linear response
 cannot spend the allowance twice. If another approval goes stale during
 the run, the gate returns the ticket to Build Review and the shepherd
 sets <code>needs-human</code> and exits <code>25</code>.</p>
+<p>Comment and thread snapshots require complete pagination, stable
+counts, unique IDs and advancing cursors, bounded to 100 pages and a
+90-second deadline per snapshot (each API call at most 30 seconds).
+Legacy status snapshots also require complete, count-consistent pages.
+API/GraphQL errors, partial data, null slots, unreadable bodies and
+review-shaped entries with unknown authors hold with <code>2</code>;
+unrelated readable discussion with a null author is ignored. A complete
+history without an authorised verdict, or a valid BLOCK or
+REQUEST_CHANGES, holds with <code>25</code> and names
+<code>agents.merge_publishers</code>. Bureau authenticates the newest
+visible review in complete gate snapshots. Deleting a newer verdict
+without trace cannot be detected and may expose an older approval.</p>
 <p>For ordinary gate refusals, a definitive blocker such as a failing CI
 check or a conflict the rebase agent cannot resolve takes precedence
 over failed reads in the same pass and returns <code>25</code>. If the
@@ -3575,10 +3625,12 @@ snapshot lacks a base branch name, the gate still checks the PR state,
 merge status and labels. Binding and merge-forward require a readable
 base branch. A pass with only undecided blockers returns <code>2</code>,
 as does a failed final base read after both passes cleared.</p>
-<p><strong>Upgrade</strong> by comparing installed script drift,
-resyncing the complete scripts scope and restarting drivers. A PR
-approved before the upgrade whose verdict comment lacks these lines gets
-one fresh review. See <a
+<p><strong>Upgrade:</strong> set <code>agents.merge_publishers</code> on
+the default branch before resyncing scripts and restarting drivers.
+Compare installed script drift and resync the complete scripts scope.
+Missing policy now holds merges with <code>25</code>. A PR approved
+before the upgrade whose verdict comment lacks these lines gets one
+fresh review. See <a
 href="troubleshooting.html#merge-gate-refuses-to-merge-a-pr-that-looks-green">troubleshooting</a>.</p>
 <h3 id="code-review-internals">Code-review internals</h3>
 <table>
