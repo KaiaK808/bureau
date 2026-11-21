@@ -184,3 +184,6 @@ test_worktree_deps.sh	3	6
 test_worktree_links.sh	2	4
 test_worktree_links_env.sh	2	4
 test_worktree_package_managers.sh	8	26
+test_semgrep_pipeline.sh	286	595
+test_trivy.sh	19	81
+test_trivy_pipeline.sh	92	265
