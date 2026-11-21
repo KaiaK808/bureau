@@ -146,9 +146,10 @@ class MergeTests(unittest.TestCase):
                     elif name=='exact':
                         self.assertEqual(len(value['receipts']),1,'unchanged QA receipt must be reused')
                         logged=value['gh_calls'].splitlines();last=max(i for i,row in enumerate(logged) if row.startswith('gh\tapi\t') and '/branches/' in row)
-                        self.assertEqual(len(logged[last+1:]),2)
+                        self.assertEqual(len(logged[last+1:]),3)
                         self.assertTrue(logged[last+1].startswith('gh\tapi\tgraphql\t'))
-                        self.assertIn('baseRefName baseRef{target{oid}}',logged[last+1]);self.assertIn('--match-head-commit',logged[-1])
+                        self.assertIn('baseRefName baseRef{target{oid}}',logged[last+1]);self.assertIn('--match-head-commit',logged[last+2])
+                        self.assertEqual(logged[last+3],'gh\tpr\tview\t99\t--json\tstate,mergeCommit,baseRefName')
                         fetches=[row for row in value['git_calls'].splitlines() if '\tfetch\t--no-tags\torigin\t' in row];self.assertEqual(len(fetches),2)
                     elif name in ('changed','unavailable','isolation','cache-digest','stale'):
                         self.assertEqual(len(value['receipts']),2)
@@ -170,7 +171,8 @@ class MergeTests(unittest.TestCase):
         self.cases(('retarget-after-gates','ci-during-final-fetch','base-during-final-fetch','retarget-during-final-fetch'))
         source=(ROOT/'templates/scripts/merge-pipeline.sh').read_text()
         merge=source.split('\n_merge_pr() {\n',1)[1].split('\n}',1)[0]
-        self.assertIn('  bureau_ticket_checkpoint "$ISSUE"\n  if [ "$SCAN_RECHECK" = true ]; then\n',merge)
+        self.assertLess(merge.index('baseRefName baseRef{target{oid}}'),merge.index('  bureau_ticket_checkpoint "$ISSUE"\n'))
+        self.assertIn('  bureau_ticket_checkpoint "$ISSUE"\n  gh pr merge ',merge)
 
     def test_base_commit_advancing_with_green_final_gates_retries(self):
         self.cases(('base-during-gates','base-after-gates'))

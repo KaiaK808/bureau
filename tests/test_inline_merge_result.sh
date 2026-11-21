@@ -656,6 +656,88 @@ PY
   grep -q "still reads 'Merge' after the move" <<< "$LAST_STDOUT" || fail 'stale move was not confirmed'
 )
 
+handoff_confirmation_case() (
+  review_worker_fixture true 1
+  printf '%s' "$1" > "$PR2_GH/handoff-mode"
+  # After a real stale-approval handoff, replay either a human moving the
+  # ticket to Build with needs-human, or a move that stays invisible. Bound
+  # the double too, so an unbounded confirmation loop fails promptly.
+  python3 - "$SCRIPTS_DIR/shepherd.sh" <<'PY'
+from pathlib import Path
+import sys
+path=Path(sys.argv[1]); source=path.read_text()
+needle='_shepherd_state() {\n'
+assert source.count(needle)==1
+source=source.replace(needle,needle+'''  if [ -f "$PR2_GH/handoff-reads" ] || { [ "$(cat "$PR2_HANDOFF_ROOT/state")" = s6 ] && grep -q 'Bureau merge gate' "$PR2_GH/comments.json"; }; then
+    local reads mode
+    reads=$(( $(cat "$PR2_GH/handoff-reads" 2>/dev/null || echo 0) + 1 ))
+    echo "$reads" > "$PR2_GH/handoff-reads"
+    [ "$reads" -le 4 ] || return 97
+    mode=$(cat "$PR2_GH/handoff-mode")
+    if [ "$mode" = held ] || { [ "$mode" = held-late ] && [ "$reads" -gt 1 ]; }; then
+      printf s5 > "$PR2_HANDOFF_ROOT/state"
+      printf '["lane-2","needs-human"]' > "$PR2_HANDOFF_ROOT/labels/${ISSUE##*-}.json"
+      echo Build
+    else
+      echo Merge
+    fi
+    return 0
+  fi
+''')
+path.write_text(source)
+PY
+  review_worker_run env PR2_HANDOFF_ROOT="$SB" bash scripts/shepherd.sh --no-tmux --respect-config --worktree "$WT" "$ISSUE"
+  local reads expected_reads expected_rc
+  reads=$(cat "$PR2_GH/handoff-reads")
+  case "$1" in
+    held) expected_reads=1; expected_rc=25 ;;
+    held-late) expected_reads=2; expected_rc=25 ;;
+    unconfirmed) expected_reads=4; expected_rc=2 ;;
+  esac
+  [ "$LAST_RC" = "$expected_rc" ] && [ "$reads" = "$expected_reads" ] \
+    || fail "handoff $1: expected exit $expected_rc after $expected_reads reads, got $LAST_RC after $reads"
+  [ "$(pr2_review_comments)" = 1 ] && ! pr2_merged \
+    && [ "$(grep -c '^  Stale approval —' <<< "$LAST_STDOUT")" = 1 ] \
+    || fail 'unconfirmed handoff dispatched another stage or reused the stale approval'
+  if [ "$1" = unconfirmed ]; then
+    ! grep -q needs-human "$SB/linear.log" && [ ! -s "$SB/alerts.log" ] \
+      || fail 'unconfirmed handoff was not a quiet retry'
+  else
+    grep -q "'needs-human' label present" <<< "$LAST_STDOUT" \
+      || fail 'human hold was not honored during handoff confirmation'
+    ! grep -q '^move .* s5$' "$SB/linear.log" || fail 'shepherd moved the held ticket'
+  fi
+)
+
+shepherd_merge_result_case() (
+  local mode="$1" inline="${2:-false}"
+  review_worker_fixture "$([ "$inline" = true ] && echo false || echo true)" 4
+  rm "$PR2_GH/on_review_comment"
+  if [ "$inline" = false ]; then pr2_approval; printf s7 > "$SB/state"; fi
+  case "$mode" in
+    target) pr2_retarget_after_read final-base 1 ;;
+    unreadable) echo 2 > "$PR2_GH/post_merge_reads_fail" ;;
+  esac
+  review_worker_run bash scripts/shepherd.sh --no-tmux --respect-config --worktree "$WT" "$ISSUE"
+  [ "$LAST_RC" = 25 ] && pr2_merged && grep -q needs-human "$SB/linear.log" \
+    || fail "shepherd reconciliation $mode (inline=$inline) did not hold a merged PR: $LAST_RC"
+  [ "$(wc -l < "$PR2_GH/merge_calls.log" | tr -d ' ')" = 1 ] \
+    || fail 'shepherd reconciliation retried the merge'
+  jq -se 'any(.[]; .body | contains("No rollback or automatic merge retry"))' "$SB/comments.jsonl" >/dev/null \
+    || fail 'shepherd lost the merge reconciliation message'
+  ! grep -qiE 'nothing was merged|re-run the checks|re-shepherd|clear the blocker' "$SB/comments.jsonl" \
+    || fail 'shepherd contradicted reconciliation with an ordinary gate retry'
+  if [ "$mode" = target ]; then
+    jq -e '.state == "MERGED" and .baseRefName == "release"' "$PR2_GH/pr.json" >/dev/null \
+      || fail 'target replay did not merge into release'
+    grep -q 'into `release`, differing from approved Target `main`' "$SB/comments.jsonl" \
+      || fail 'shepherd lost the confirmed target mismatch'
+  else
+    grep -q 'merge may already have happened' "$SB/comments.jsonl" \
+      || fail 'shepherd lost the uncertain merge outcome'
+  fi
+)
+
 verdict_head_case() (
   review_worker_fixture false 4
   touch "$PR2_GH/force-push"
@@ -722,11 +804,14 @@ release_failure_case() (
     || fail "a failed blocked-gate cleanup changed exit 25 to $rc"
 )
 
-for regression in ${2:-fetch deleted fork delayed verdict target uncertain unreadable release-failure}; do
+for regression in ${2:-fetch deleted fork delayed handoff-held handoff-held-late handoff-unconfirmed reconcile-target reconcile-unreadable reconcile-inline-target reconcile-inline-unreadable verdict target uncertain unreadable release-failure}; do
   case "$regression" in
     fetch|deleted) cleanup_retry_case "$regression" ;;
     fork) fork_head_case ;;
     delayed) delayed_state_case ;;
+    handoff-*) handoff_confirmation_case "${regression#handoff-}" ;;
+    reconcile-inline-*) shepherd_merge_result_case "${regression#reconcile-inline-}" true ;;
+    reconcile-*) shepherd_merge_result_case "${regression#reconcile-}" ;;
     verdict) verdict_head_case ;;
     target|uncertain|unreadable) inline_merge_result_case "$regression" ;;
     release-failure) release_failure_case ;;

@@ -436,15 +436,16 @@ pathlib.Path(os.environ['SEMGREP_RESULT']).write_text(json.dumps(value))
                         self.assertEqual(len(fetches),2)
                         self.assertEqual([arg for arg in fetches[-1] if arg.startswith('+refs/heads/')],
                                          ['+refs/heads/main:refs/remotes/origin/main'])
-                        # After the final gate's API read, only the one live
-                        # base name/OID query and pinned merge touch GitHub.
+                        # After the final gate's API read, GitHub sees the live
+                        # base query, pinned merge and post-merge result read.
                         logged=value['gh_calls'].splitlines()
                         last_gate=max(i for i,line in enumerate(logged) if line.startswith('gh\tapi\t') and '/branches/' in line)
                         after_gates=logged[last_gate+1:]
-                        self.assertEqual(len(after_gates), 2, after_gates)
+                        self.assertEqual(len(after_gates), 3, after_gates)
                         self.assertTrue(after_gates[0].startswith('gh\tapi\tgraphql\t'))
                         self.assertIn('baseRefName baseRef{target{oid}}',after_gates[0])
                         self.assertTrue(after_gates[1].startswith('gh\tpr\tmerge\t'))
+                        self.assertEqual(after_gates[2],'gh\tpr\tview\t99\t--json\tstate,mergeCommit,baseRefName')
         return values
 
 

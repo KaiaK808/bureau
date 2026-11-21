@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="acee344dffd14aeb140ddeef47b522c6845ca50b19318f71074cc884e1019e2d">
+<meta name="bureau-source-sha256" content="71b7508e3e2e0ae4e08c90288d70f9b4718c1027d098c24fc364a969b79706c9">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -639,30 +639,31 @@ reference.</p>
 <p>Pin, settings and policy digests join approval reuse identity,
 independently of build-check reuse. The pin identity includes the
 private-copy execution boundary, so receipts and approvals from earlier
-operator-linked runtimes are not reused. Before the existing
-just-in-time merge gate recheck, blocking mode reads the PR head and
-current base ref/commit and runs Semgrep with receipt reuse for those
-inputs. After the scan, Bureau prepares the merge message, fetches the
-scanned base ref once more, requires its commit to equal the scanned
-base, and checks the current PR head and base ref name. This freshness
-check runs before applying blocking findings, unavailable tooling,
-failed measurements or receipt failures: changed inputs abort with the
-gate-regression report and retryable outcome (2), so the next tick
-measures the current inputs. An unchanged blocking result refuses merge
-with the existing blocked outcome (25). Semgrep gate marks bind to the
-scanned head, including when it differs from the initial gate's
+operator-linked runtimes are not reused. Bureau prepares the merge
+message before scanning. Before the existing just-in-time merge gate
+recheck, blocking mode reads the PR head and current base ref/commit and
+runs Semgrep with receipt reuse for those inputs. After the scan, Bureau
+fetches the scanned base ref once more, requires its commit to equal the
+scanned base, and checks the current PR head and base ref name. This
+freshness check runs before applying blocking findings, unavailable
+tooling, failed measurements or receipt failures: changed inputs abort
+with the gate-regression report and retryable outcome (2), so the next
+tick measures the current inputs. An unchanged blocking result refuses
+merge with the existing blocked outcome (25). Semgrep gate marks bind to
+the scanned head, including when it differs from the initial gate's
 head.</p>
-<p>After the just-in-time gates pass, Bureau checks the ticket kill
-switch and makes one GraphQL read of the PR's base branch and its live
-<code>baseRef.target.oid</code> tip. If the branch differs from the
-approved Target, Bureau returns to Build Review with exit
-<code>20</code>. A failed read or a difference from the scanned head,
-base branch or base commit retries with exit <code>2</code>. Bureau
-merges with <code>--match-head-commit</code> set to the scanned head.
-The live tip catches base advancement after the last fetch even when the
-final gates passed against a newer base. Blocking mode completes all
-fetches and merge-message preparation before the final gates. The
-approval binding and final target check apply in every scanner mode.</p>
+<p>After the just-in-time gates pass, Bureau makes one GraphQL read of
+the PR's base branch and its live <code>baseRef.target.oid</code> tip.
+If the branch differs from the approved Target, Bureau returns to Build
+Review with exit <code>20</code>. A failed read or a difference from the
+scanned head, base branch or base commit retries with exit
+<code>2</code>. Bureau then checks the ticket kill switch immediately
+before merging with <code>--match-head-commit</code> set to the scanned
+head, followed by the post-merge result read. The live tip catches base
+advancement after the last fetch even when the final gates passed
+against a newer base. Blocking mode completes all fetches and
+merge-message preparation before the final gates. The approval binding
+and final target check apply in every scanner mode.</p>
 <p><strong>Upgrade:</strong> compare installed script drift and resync
 the entire scripts scope (including the shared helper, sandbox profile,
 rules, lock and platform manifests). Existing repositories stay off.
