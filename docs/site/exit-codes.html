@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="edff06e89d294ac11572e23792d3b1843fb85343ba79cd4a405e1d4edcb9ed81">
+<meta name="bureau-source-sha256" content="1dc897a672c874b502767303451e8ea6004da038ed0b7d031f621fbf404d96f4">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -552,12 +552,15 @@ checkpoint refresh can fail open.</p>
 <p>The continuous dispatcher adds no numeric exit. Lanes yield on 28/29
 (quiet admission waits), 23 (one-shot usage throttle), 10/16 (transient
 retry) and merge-gate 2, with deadlines in
-<code>bureau/dispatch-skips.json</code>. Other 25 outcomes, including
-silence escalation without a label, remain held across restart; a
-repository pause defers instead. Terminal 0/26, intentional handoff 20
-and unknown failures stay skipped until reconciliation; unknown failures
-also alert and attempt a human hold. <code>--respect-config</code> uses
-20 for a disabled stage. Owned base refresh uses 20 plus gate-report
+<code>bureau/dispatch-skips.json</code>. An unanswered implementation
+decision uses 25 with a distinct lane outcome: the ticket is skipped for
+the rest of the poll and reconsidered on the next poll or after a
+dispatcher restart. Other 25 outcomes, including silence escalation
+without a label, remain held across restart; a repository pause defers
+instead. Terminal 0/26, intentional handoff 20 and unknown failures stay
+skipped until reconciliation; unknown failures also alert and attempt a
+human hold. <code>--respect-config</code> uses 20 for a disabled stage.
+Owned base refresh uses 20 plus gate-report
 <code>refreshed</code>/<code>base_refresh</code> metadata to continue to
 fresh Build Review, never to report merge success. Dispatcher/poller
 lock conflicts return 21, invalid dispatcher configuration returns 24,

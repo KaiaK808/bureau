@@ -851,7 +851,15 @@ def execute(repo, args, store):
         attempt = attempt or uuid.uuid4().hex
         # Admission precedes ownership/reset so legacy unstarted Build tickets
         # cannot manufacture mutual writer holds merely by being picked.
-        if args.issue and stage == 'implement':
+        implementation_route = stage == 'implement'
+        # Dispatcher lanes enter here directly; the re-entered Shepherd skips
+        # its shell startup gate. Ordinary Shepherd starts already checked it.
+        if args.issue and entry == 'shepherd.sh' and not inherited and os.environ.get('BUREAU_DISPATCH_LANE') == '1':
+            config = read(config_for(repo))
+            implementation_route = issue_snapshot(repo, args.issue)['state']['id'] == config['linear']['teams'][0]['states'].get('build')
+            if implementation_route and '--respect-config' in command and not enabled(config, 'implement'):
+                raise AdmissionStop(20)
+        if args.issue and implementation_route:
             implementation_context(repo, args.issue)
         overlap_enabled = read(config_for(repo)).get('agents', {}).get('file_overlap_gate', False)
         if overlap_enabled is not False and args.issue:
@@ -975,7 +983,8 @@ def execute(repo, args, store):
             if dispatch_record is not None:
                 ready = os.environ.get('BUREAU_DISPATCH_READY_FILE')
                 dispatch_record.update(code=130 if interrupted or code < 0 else code,
-                                       paused=bool(code == 25 and ready and Path(ready + '.paused').exists()))
+                                       paused=bool(code == 25 and ready and Path(ready + '.paused').exists()),
+                                       decision_wait=bool(code == 25 and ready and Path(ready + '.decision-wait').exists()))
                 dispatch_record['terminal_reason'] = terminal_reason
                 # This coordination record is mandatory, outside prunable
                 # evidence, and written before the inherited dispatch FD closes.

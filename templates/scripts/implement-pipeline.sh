@@ -896,6 +896,7 @@ echo "  Found tasks: $TASKS_FILE"
 START_TS=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
 RESULT=""
 STATUS=""
+IMPLEMENT_EXPECTED=""
 TASKS_DONE_TOTAL=0
 COMMITS_TOTAL=0
 ITER_LOG=""
@@ -1664,7 +1665,9 @@ fi
 PR_URL=""
 NEEDS_HUMAN_UNMARKED=0
 # A pass may only hand off against the hold snapshot included in its prompt.
-bureau_implementation_context "$ISSUE" "$IMPLEMENT_EXPECTED" >/dev/null
+if [ -n "$IMPLEMENT_EXPECTED" ]; then
+  bureau_implementation_context "$ISSUE" "$IMPLEMENT_EXPECTED" >/dev/null
+fi
 case "$STATUS" in
   COMPLETE)
     # When QA is configured (opt-in), the implement pipeline routes through QA

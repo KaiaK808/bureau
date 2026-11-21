@@ -125,16 +125,20 @@ run_script() {
   fi
   if [ -n "$picked" ]; then
     echo "[$TIMESTAMP] $label — candidate: $picked" | tee -a "$LOG_FILE"
-    target_branch=$(get_issue_branch "$picked" 2>/dev/null || true)
+    if [ "$script" != implement-pipeline.sh ]; then
+      target_branch=$(get_issue_branch "$picked" 2>/dev/null || true)
+    fi
   fi
   [ -n "$picked" ] || return 2
   if [ "$script" = implement-pipeline.sh ]; then
-    local answer_rc=0
-    bureau_implementation_context "$picked" >/dev/null || answer_rc=$?
+    local answer_rc=0 answer_context=""
+    answer_context=$(bureau_implementation_context "$picked") || answer_rc=$?
     if [ "$answer_rc" != 0 ]; then
       [ "$answer_rc" != 25 ] || OVERLAP_SKIPPED_ISSUE="$picked"
       return "$answer_rc"
     fi
+    # Preparation uses the same fully paginated branch as answer admission.
+    target_branch=$(printf '%s' "$answer_context" | jq -r '.branch') || return 24
   fi
   if [ "${BUREAU_DRY_RUN:-0}" = 1 ]; then
     echo "[DRY_RUN] candidate $picked stage=$script workspace=$wt"

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="70d67003a0e7e3a7695f0efafd688dd71c4b03551a628fb064ced26045da511a">
+<meta name="bureau-source-sha256" content="20636bf6fe513a225ade44aa155ad88f7d2780e016baf5141be30d3b8a781cc2">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -3153,12 +3153,14 @@ summaries use that boundary too.</p>
 <p>Every matching reply later than that hold is forwarded oldest first
 with its timestamp and source questions, with the marker line stripped,
 as bounded untrusted JSON ticket data in both implementation loops and
-app prepare. Answers remain context through retries and QA rework until
-a new hold supersedes them or the canonical branch changes. They are
-excluded from the separate QA/review feedback selection. Completion and
-QA/review hand-backs do not resolve a hold. The prompt's hold identity
-is checked again before hand-off; a pass that saw an older hold cannot
-advance on a newer one it did not read.</p>
+app prepare. LF, CRLF and CR line endings after the exact marker are
+accepted; the answer body is preserved unchanged. Answers remain context
+through retries and QA rework until a new hold supersedes them or the
+canonical branch changes. They are excluded from the separate QA/review
+feedback selection. Completion and QA/review hand-backs do not resolve a
+hold. The prompt's hold identity is checked again before hand-off; a
+pass that saw an older hold cannot advance on a newer one it did not
+read.</p>
 <p>Clearing the label without a marked reply returns <code>25</code>;
 the queue skips that ticket for the rest of the poll. Missing or invalid
 pagination (even on a short page), pending hold publication, a changed
@@ -3231,12 +3233,14 @@ group is ended and the stage halts with <code>14</code></td>
 stage whose passes time out can use all of it: a timed-out pass no
 longer ends the stage while another pass fits (see <a
 href="troubleshooting.html#exit-124-timeout--a-provider-pass-hit-its-time-limit">Exit
-124</a>). An unproductive first <code>PARTIAL</code> iteration can
-become <code>STUCK</code>; a timed-out pass never does; prior productive
-iterations and legitimate <code>COMPLETE</code> results have separate
-handling. The executor checks Git evidence and, for Codex completion,
-the configured project tests. A provider's success text alone cannot
-complete the stage.</p>
+124</a>). If the budget leaves no room for the first pass,
+<code>CAP_TIME</code> still publishes the summary and sets
+<code>needs-human</code>. An unproductive first <code>PARTIAL</code>
+iteration can become <code>STUCK</code>; a timed-out pass never does;
+prior productive iterations and legitimate <code>COMPLETE</code> results
+have separate handling. The executor checks Git evidence and, for Codex
+completion, the configured project tests. A provider's success text
+alone cannot complete the stage.</p>
 <p>Terminal states map to PR state + Linear:</p>
 <table>
 <thead>

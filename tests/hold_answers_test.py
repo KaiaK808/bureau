@@ -1,4 +1,6 @@
 """Real paginated Linear reader, posting boundary and admission; offline fixtures."""
+import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -7,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = Path(os.environ.get('BUREAU_TEST_HOLD_SCRIPTS', ROOT / 'templates/scripts'))
@@ -29,6 +33,9 @@ def fake_linear(path):
     state = json.loads(path.read_text())
     query = request['query']
     variables = request.get('variables', {})
+    if 'branchName comments(first:100' in query:
+        state['context_reads'] = state.get('context_reads', 0) + 1
+        path.write_text(json.dumps(state))
     if 'mutation' in query:
         state.setdefault('mutations', []).append(request)
         if 'commentCreate' in query:
@@ -45,15 +52,17 @@ def fake_linear(path):
     else:
         index = int(variables.get('after') or 0)
         pages = state.get('pages', [state['comments']])
+        if 'comments(first: 200)' in query:
+            pages = [state['comments'][:200]]
         connection = dict(nodes=pages[index], pageInfo=dict(hasNextPage=index + 1 < len(pages),
                                                           endCursor=str(index + 1)))
         if 'pagination' in state:
             if state['pagination'] == 'missing': del connection['pageInfo']
             else: connection['pageInfo'] = state['pagination']
         issue = dict(id='uuid', identifier='T-1', title='Fixture', description='Fixture', project=None,
-                     branchName=BRANCH, state=dict(id=state.get('state', 's3'), name='Build'),
-                     labels=dict(nodes=[]), comments=connection)
-        result = dict(issue=issue, issues=dict(nodes=[issue]))
+                     branchName=state.get('branchName', BRANCH), state=dict(id=state.get('state', 's3'), name='Build'),
+                     labels=dict(nodes=[], pageInfo=dict(hasNextPage=False, endCursor=None)), comments=connection)
+        result = dict(issue=issue, issues=dict(nodes=[issue], pageInfo=dict(hasNextPage=False, endCursor=None)))
     print(json.dumps(dict(data=result)))
 
 
@@ -96,7 +105,7 @@ class HoldAnswersTests(unittest.TestCase):
         (self.repo / '.env').write_text('LINEAR_API_KEY=fixture\n')
         binary = self.base / 'bin'
         binary.mkdir()
-        for name in ('curl', 'gh', 'claude', 'codex'):
+        for name in ('curl', 'wget', 'gh', 'claude', 'codex', 'ssh'):
             path = binary / name
             path.write_text('#!/bin/bash\necho unexpected-external-command >> "$BUREAU_HOLD_FIXTURE.forbidden"\nexit 88\n')
             path.chmod(0o755)
@@ -104,6 +113,7 @@ class HoldAnswersTests(unittest.TestCase):
                     'BUREAU_ENV_FILE': str(self.repo / '.env'), 'BUREAU_HOLD_FIXTURE': str(self.fixture),
                     'BUREAU_HOLD_TEST_DRIVER': str(Path(__file__).resolve()),
                     'GIT_CEILING_DIRECTORIES': str(self.base), 'TMPDIR': str(self.base),
+                    'GIT_ALLOW_PROTOCOL': 'file',
                     'PATH': str(binary) + os.pathsep + os.environ['PATH'],
                     'PYTHONDONTWRITEBYTECODE': '1', 'BUREAU_DISABLE_THROTTLE': '1'}
         for name in list(self.env):
@@ -143,6 +153,7 @@ reset_worktree() { echo reset >> "$BUREAU_HOLD_FIXTURE.forbidden"; return 88; }
 
     def assert_no_work(self):
         self.assertFalse(Path(str(self.fixture) + '.forbidden').exists())
+        self.assertFalse(Path(str(self.fixture) + '.claims').exists(), 'runtime claimed ownership')
         self.assertFalse(json.loads(self.fixture.read_text()).get('mutations'))
         leases = self.repo / '.git/bureau/leases.json'
         self.assertFalse(leases.exists() and json.loads(leases.read_text()))
@@ -174,6 +185,17 @@ reset_worktree() { echo reset >> "$BUREAU_HOLD_FIXTURE.forbidden"; return 88; }
         self.history([comment(hold(A, 'other-branch'), 1), comment(hold(B), 2),
                       comment(f'Answer: {A}\nOld branch.', 3)])
         self.context(25)
+
+    def test_crlf_and_cr_answers_preserve_body_and_exact_marker(self):
+        body = 'Use primary.\r\nKeep fallback.\nLast line.\r'
+        for ending in ('\r\n', '\r'):
+            with self.subTest(ending=repr(ending)):
+                self.history([comment(hold(), 1), comment(f'Answer: {A}' + ending + body, 2)])
+                rows = [json.loads(line) for line in self.context()['text'].splitlines() if line.startswith('{')]
+                self.assertEqual(rows[-1]['body'], body)
+        for marker in (f' Answer: {A}', f'Answer: {A} ', f'Answer: {A}\t'):
+            self.history([comment(hold(), 1), comment(marker + '\r\n' + body, 2)])
+            self.context(25)
 
     def test_full_problem_bodies_only_markers_release(self):
         for body in problem_bodies():
@@ -278,6 +300,161 @@ get_issue_branch() { echo feat/issue; }
         self.assertEqual(result.stdout.count('candidate: T-1'), 1)
         self.assert_no_work()
 
+    def test_queue_prepares_branch_from_complete_admission_history(self):
+        ordinary = [comment('ordinary', 0) for _ in range(200)]
+        tail = [comment(f'<!-- bureau-branch: {BRANCH} -->', 1), comment(hold(), 2),
+                comment(f'Answer: {A}\nUse primary.', 3)]
+        self.history(ordinary + tail, pages=[ordinary[:100], ordinary[100:], tail], branchName='linear-generated')
+        self.assertEqual(self.context()['branch'], BRANCH)
+        # Keep the real worker up to the preparation boundary; the fake reset
+        # models an absent generated branch and stops before doing Git work.
+        with (self.scripts / 'bureau-config.sh').open('a') as out:
+            out.write('''
+reset_worktree() {
+  printf '%s' "$3" > "$BUREAU_HOLD_FIXTURE.prepared-branch"
+  [ "$3" = feat/issue ] || return 12
+  return 2
+}
+''')
+        source = (self.scripts / 'queue-loop.sh').read_text()
+        functions = source[source.index('preselect_issue() {'):source.index('\nwhile true; do\n  if bureau_is_paused')]
+        setup = '''REPO_DIR="$PWD"; LOG_FILE="$TMPDIR/queue.log"; MODE=implement
+pipeline_pick_next() { echo T-1; }
+'''
+        self.shell(setup + functions + '\nrun_script implement-pipeline.sh Build "$TMPDIR/worker"', 2)
+        self.assertEqual(Path(str(self.fixture) + '.prepared-branch').read_text(), BRANCH)
+        self.assertFalse(Path(str(self.fixture) + '.forbidden').exists())
+
+    def dispatch_lane(self, code, command=None):
+        attempt = uuid.uuid4().hex
+        workspace = self.repo / '.worktrees' / ('dispatch-T-1-' + attempt)
+        root = self.repo / '.git/bureau'
+        journal = root / 'dispatch-lanes' / (attempt + '.json')
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text(json.dumps(dict(attempt=attempt, issue='T-1', stage='implement',
+                                           workspace=str(workspace), code=None)))
+        shepherd = str(self.scripts / 'shepherd.sh')
+        ready = root / 'dispatch-ready' / attempt
+        ready.parent.mkdir(parents=True, exist_ok=True)
+        command = command if command is not None else ['bash', shepherd, '--no-tmux', '--respect-config',
+                                                       '--worktree', str(workspace), 'T-1']
+        with patch.dict(self.env, BUREAU_DISPATCH_LANE='1', BUREAU_DISPATCH_ATTEMPT_ID=attempt,
+                        BUREAU_DISPATCH_READY_FILE=str(ready)):
+            self.run_command([sys.executable, '-I', '-B', str(Path(__file__).resolve()), '--runtime-probe',
+                              str(self.scripts / 'bureau-runtime.py'), '--repo', str(self.repo),
+                              'exec', '--issue', 'T-1', '--workspace', str(workspace), '--entry', shepherd,
+                              '--', *command], code)
+        return json.loads(journal.read_text())
+
+    def test_dispatcher_shepherd_checks_hold_before_claim_or_labels(self):
+        for overlap in (False, True):
+            self.config['agents']['file_overlap_gate'] = overlap
+            self.write_config()
+            for bad, code in ((False, 25), (True, 24)):
+                with self.subTest(overlap=overlap, code=code):
+                    self.history([comment(hold(), 1)], **({'pagination': None} if bad else {}))
+                    Path(str(self.fixture) + '.claims').unlink(missing_ok=True)
+                    result = self.dispatch_lane(code)
+                    state = json.loads(self.fixture.read_text())
+                    with self.subTest(invariant='no Linear mutation'):
+                        self.assertFalse(state.get('mutations'))
+                    with self.subTest(invariant='no ownership claim'):
+                        self.assert_no_work()
+                    self.assertEqual(result.get('decision_wait'), code == 25)
+                    self.assertEqual(state['context_reads'], 1, 'startup admission ran twice')
+
+    def test_dispatcher_shepherd_disabled_implementation_keeps_handoff(self):
+        self.config['agents']['implement'] = False
+        self.write_config()
+        self.history([comment(hold(), 1)], pagination=None)
+        self.dispatch_lane(20)
+        self.assert_no_work()
+        self.assertEqual(json.loads(self.fixture.read_text()).get('context_reads', 0), 0)
+
+    def test_dispatcher_shepherd_does_not_gate_unrelated_stage(self):
+        self.history([comment(hold(), 1)], state='s4', pagination=None)
+        self.dispatch_lane(20)  # QA is disabled; its ordinary handoff still runs.
+        self.assertEqual(json.loads(self.fixture.read_text()).get('context_reads', 0), 0)
+        self.assertFalse(Path(str(self.fixture) + '.forbidden').exists())
+
+    def test_dispatcher_distinguishes_child_decision_wait_from_other_25(self):
+        # Start outside Build, then exercise the real reader inside the child.
+        self.history([comment(hold(), 1)], state='s4')
+        result = self.dispatch_lane(25, ['bash', '-ec', 'source "$1"; bureau_implementation_context T-1',
+                                         'fixture', str(self.scripts / 'bureau-config.sh')])
+        self.assertTrue(result.get('decision_wait'))
+        self.assertTrue(Path(str(self.fixture) + '.claims').exists())
+        _, dispatcher = self.dispatcher()
+        path = dispatcher.journal / (result['attempt'] + '.json')
+        ready = dispatcher.store.root / 'dispatch-ready' / result['attempt']
+        self.assertTrue(ready.with_suffix('.decision-wait').exists())
+        dispatcher.reconcile_lane(path)
+        self.assertFalse(ready.with_suffix('.decision-wait').exists())
+        # Matching prose is not authority for another permanent 25.
+        result = self.dispatch_lane(25, ['bash', '-c', 'echo "Implementation held: post Answer: current"; exit 25'])
+        self.assertFalse(result.get('decision_wait'))
+
+    def dispatcher(self):
+        spec = importlib.util.spec_from_file_location('hold_dispatch', self.scripts / 'bureau-dispatch.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        dispatcher = module.Dispatcher(self.repo, argparse.Namespace(poll_seconds=.05, max_concurrent=1, dry_run=False), -1)
+        dispatcher.recheck = 1
+        return module, dispatcher
+
+    def defer_answer_wait(self, dispatcher):
+        attempt = uuid.uuid4().hex
+        path = dispatcher.journal / (attempt + '.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(dict(attempt=attempt, issue='T-1', stage='implement', code=25,
+            workspace=str(self.repo / '.worktrees' / ('dispatch-T-1-' + attempt)), decision_wait=True)))
+        dispatcher.reconcile_lane(path)
+
+    def test_dispatcher_answer_wait_releases_on_next_poll(self):
+        module, dispatcher = self.dispatcher()
+        dispatcher.defer('T-2', 25)  # A different, permanent human hold.
+        picks = []
+
+        def helper(body, *args):
+            if body != module.PICK: return '1 1 1 0'
+            excluded = set(args[0].split(','))
+            picks.append(excluded)
+            self.assertIn('T-2', excluded)
+            if len(picks) == 1:
+                self.context(25)
+                self.assertNotIn('T-1', excluded)
+                return 'T-1 implement'
+            if len(picks) == 2:
+                self.assertIn('T-1', excluded)  # Still the same poll.
+                self.assertIn('T-1', dispatcher.exclusions())
+                self.history([comment(hold(), 1), comment(f'Answer: {A}\nUse primary.', 2)])
+                return ''
+            self.assertEqual(len(picks), 3)
+            self.assertIn('Use primary.', self.context()['text'])
+            self.assertNotIn('T-1', excluded, 'decision wait persisted into the next poll')
+            dispatcher.stopping = True
+            return ''
+
+        with patch.object(dispatcher.helpers, 'call', side_effect=helper), \
+                patch.object(dispatcher, 'launch', side_effect=lambda *_: self.defer_answer_wait(dispatcher)), \
+                patch.object(module.signal, 'signal'):
+            dispatcher.run()
+        self.assertEqual(len(picks), 3)
+        self.assert_no_work()
+
+    def test_dispatcher_answer_wait_releases_after_restart(self):
+        _, dispatcher = self.dispatcher()
+        self.context(25)
+        self.defer_answer_wait(dispatcher)
+        dispatcher.defer('T-2', 25)
+        self.assertTrue({'T-1', 'T-2'} <= dispatcher.exclusions())
+        self.history([comment(hold(), 1), comment(f'Answer: {A}\nUse primary.', 2)])
+        _, restarted = self.dispatcher()
+        self.assertIn('Use primary.', self.context()['text'])
+        self.assertNotIn('T-1', restarted.exclusions())
+        self.assertIn('T-2', restarted.exclusions())
+        self.assert_no_work()
+
     def test_required_pr_mirror_retains_exit_18(self):
         self.shell('''gh() { if [ "$2" = list ]; then echo 42; else return 1; fi; }
 comment_on_branch_pr feat/issue report required''', 18)
@@ -291,4 +468,16 @@ comment_on_branch_pr feat/issue report required''', 18)
 
 if __name__ == '__main__':
     if sys.argv[1:2] == ['--linear']: fake_linear(Path(sys.argv[2]))
+    elif sys.argv[1:2] == ['--runtime-probe']:
+        # Observe real ownership even if an erroneous claim is later released.
+        spec = importlib.util.spec_from_file_location('hold_runtime', sys.argv[2])
+        runtime = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runtime)
+        claim = runtime.Store.claim
+        def observed_claim(self, *args, **kwargs):
+            Path(os.environ['BUREAU_HOLD_FIXTURE'] + '.claims').touch()
+            return claim(self, *args, **kwargs)
+        runtime.Store.claim = observed_claim
+        sys.argv = sys.argv[2:]
+        sys.exit(runtime.main())
     else: unittest.main(verbosity=2)

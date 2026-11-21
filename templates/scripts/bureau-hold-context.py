@@ -44,9 +44,10 @@ def select(blob, limit, expected, ignore_id=None):
     hold = holds.get(hold_id)
     answers = []
     for comment in ordered:
-        first, separator, body = comment['body'].partition('\n')
+        lines = re.split(r'\r\n|\r|\n', comment['body'], maxsplit=1)
+        first, body = lines if len(lines) == 2 else (lines[0], '')
         if (hold and stamp(comment) > stamp(hold) and first == 'Answer: ' + hold_id
-                and separator and body.strip()):
+                and body.strip()):
             answers.append(dict(kind='answer', createdAt=comment['createdAt'], body=body))
     if hold and not answers:
         print('Implementation held (exit 25): post Answer: ' + hold_id + '\n' + INSTRUCTIONS,

@@ -1840,11 +1840,17 @@ get_issue_branch_and_comments() {
 
 # Read-only admission and bounded prompt data, independent of the overlap gate.
 bureau_implementation_context() {
-  local record blob
+  local record blob rc=0
   record="$(bureau_common_dir)/bureau/implementation-holds/$1.json" || return 24
   blob=$(get_issue_branch_and_comments "$1") || return 24
   printf '%s' "$blob" | python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-hold-context.py" select \
-    --record "$record" --expect "${2:-}" --key "${3:-}" --max-bytes "${BUREAU_COMMENT_MAX_BYTES:-60000}"
+    --record "$record" --expect "${2:-}" --key "${3:-}" --max-bytes "${BUREAU_COMMENT_MAX_BYTES:-60000}" || rc=$?
+  # This launch-scoped outcome survives nested shell/runtime boundaries. Other
+  # exits with 25 never acquire it, even if their prose mentions a decision.
+  if [ "$rc" = 25 ] && [ "${BUREAU_DISPATCH_LANE:-0}" = 1 ] && [ -n "${BUREAU_DISPATCH_READY_FILE:-}" ]; then
+    : > "${BUREAU_DISPATCH_READY_FILE}.decision-wait" || return 24
+  fi
+  return "$rc"
 }
 
 # Only this path publishes reserved hold syntax. Save before posting so a

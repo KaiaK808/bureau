@@ -154,6 +154,10 @@ class ImplementReviewContextTests(unittest.TestCase):
             out.write('\n' + function + '\n' + commits + '\nget_issue_branch_and_comments() { cat "$SANDBOX/comments.json"; }\n')
         self.bin = self.repo / 'fake-bin'
         self.bin.mkdir()
+        for name in ('curl', 'wget', 'ssh'):
+            path = self.bin / name
+            path.write_text('#!/bin/sh\necho unexpected-external-command >&2\nexit 88\n')
+            path.chmod(0o755)
         for name in ('claude', 'codex'):
             path = self.bin / name
             path.write_text(CLI)
@@ -560,6 +564,23 @@ bureau_without_secrets() { "$@"; }
         self.assertIn('Choose how to restore the harness.', published)
         self.assertIn('Then remove `needs-human` and restart Build.', published)
         self.assertIn('Answer: ', published)
+
+    def test_zero_pass_time_cap_keeps_label_and_summary(self):
+        self.comments([])
+        with (self.scripts / 'bureau-config.sh').open('a') as out:
+            out.write('\npost_comment() { _record post_comment "$@"; printf "%s" "$2" > "$SANDBOX/cap-summary.txt"; }\n')
+        env = {**self.env, 'BUREAU_IMPL_TOTAL_TIMEOUT': '60', 'BUREAU_USE_GOAL_LOOP': '0',
+               'GIT_ALLOW_PROTOCOL': 'file'}
+        result = subprocess.run(['bash', str(self.scripts / 'implement-pipeline.sh'), 'T-1'], cwd=self.repo,
+                                env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.repo / 'cli-counter').exists(), 'a provider pass ran')
+        self.assertNotIn('unbound variable', result.stderr)
+        calls = (self.repo / 'calls.log').read_text()
+        self.assertIn('add_issue_label\tT-1\tneeds-human', calls)
+        self.assertNotIn('move_issue', calls)
+        self.assertIn('Implementation hit total time cap (60s)', (self.repo / 'cap-summary.txt').read_text())
+        self.assertIn('(CAP_TIME)', result.stdout)
 
     def test_human_declines_review_finding_and_wins_alone(self):
         self.published_review()
