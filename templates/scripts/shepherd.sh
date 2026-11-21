@@ -455,7 +455,13 @@ fi
 
 [ "$NO_MERGE" = 1 ] && export BUREAU_NO_MERGE=1 BUREAU_STOP_REQUESTED=1
 WORKTREE="${WORKTREE_OVERRIDE:-$REPO_DIR/.worktrees/shepherd}"
+# Check actual Build routes before even the runtime's ownership claim. An
+# intentional disabled-stage handoff retains exit 20 without reading answers.
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
+  if [ "${TARGET_NAME:-}" = Build ] || { [ -z "$FROM_STAGE" ] && [ "$(get_issue_state "$ISSUE")" = Build ]; }; then
+    if [ "$RESPECT_CONFIG" = 1 ] && ! agent_enabled implement; then exit 20; fi
+    bureau_implementation_context "$ISSUE" >/dev/null || exit $?
+  fi
   bureau_exec_runtime python3 -I -B "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" --no-tmux "${ORIG_ARGS[@]}"
 fi
 
@@ -965,6 +971,8 @@ while true; do
     echo "[shepherd] $STAGE is disabled — handing off (exit 20)"
     exit 20
   fi
+
+  if [ "$PIPELINE" = implement-pipeline.sh ]; then bureau_implementation_context "$ISSUE" >/dev/null || exit $?; fi
 
   BRANCH=$(_shepherd_branch) || _shepherd_read_failed branch $?
   echo "[shepherd] → $PIPELINE  (branch: ${BRANCH:-<none yet>})"

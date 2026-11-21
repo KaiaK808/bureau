@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="24173b0884a018805618ce55f5cb282ab3321293ad75934d881ddbb7631cc478">
+<meta name="bureau-source-sha256" content="edff06e89d294ac11572e23792d3b1843fb85343ba79cd4a405e1d4edcb9ed81">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -141,7 +141,8 @@ after bounded transient retries (ready and draft paths); a failed lookup
 never counts as no PR. Also: implement's final <code>git push</code>
 failed twice while origin (fetched again) lacks commits of the branch or
 cannot be read; the spec stage could not fetch origin, verify its base
-or read/reserve a spec number</td>
+or read/reserve a spec number; A failed implementation-hold PR mirror
+also returns <code>18</code>; the Linear hold remains active.</td>
 <td>API rate limit, missing permissions, branch protection, origin
 rejecting or unreachable. For a post-push PR failure, the hold message
 confirms the branch is pushed and only the PR step is incomplete: rerun
@@ -206,7 +207,10 @@ for availability; do not switch providers silently</td>
 <tr>
 <td><code>24</code></td>
 <td>environment-blocked</td>
-<td>Permissions or required execution capability missing</td>
+<td>Permissions or required execution capability missing; Implementation
+answer history or pagination incomplete, publication pending, prompt
+hold identity changed, or decision plus questions cannot fit the context
+cap; request a shorter marked reply or reissue shorter questions.</td>
 <td>Inspect denied operation separately from code/test failures. Also: a
 Node project's dependencies could not be restored after the worktree
 reset; the last install log lines appear in stage output and full logs
@@ -232,7 +236,10 @@ configuration before retrying</td>
 <td><code>25</code></td>
 <td>needs-human-or-paused</td>
 <td>Halt requiring attention, paused dispatch, or ticket parked outside
-its configured active states</td>
+its configured active states; A verified implementation decision hold
+has no later nonblank reply beginning with its exact
+<code>Answer: &lt;hold-id&gt;</code> line, even after label removal; the
+queue skips it for the rest of the poll.</td>
 <td>Resolve the blocker or unpause explicitly.
 <code>merge-pipeline.sh</code> ends with 25 when its gate is decided
 against the merge (a failing check, a head without any check run or

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="178a19e4ace12f029b9cfdc58d8bed794f5cf9862f9ed9f92bda9df4b3e6e009">
+<meta name="bureau-source-sha256" content="70d67003a0e7e3a7695f0efafd688dd71c4b03551a628fb064ced26045da511a">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -3139,6 +3139,43 @@ loop</h3>
 <code>implement-pipeline.sh</code> invokes the selected provider inside
 a bounded retry loop and parks the issue with <code>needs-human</code>
 if it doesn't reach <code>status: COMPLETE</code> within the budget.</p>
+<p>An implementation <code>NEEDS_HUMAN</code> (including a gate-only
+halt) or app implementation <code>blocked</code> result publishes a
+runtime decision hold with a fresh ID bound to the canonical branch.
+Copy its exact <code>Answer: &lt;hold-id&gt;</code> line onto the first
+line of a new Linear comment and write a nonblank decision below it.
+Write your decision below this line on the Linear ticket. Then remove
+<code>needs-human</code> and restart Build. Retries of the same
+publication reuse the ID; the earliest copy starts the answer window.
+The newest distinct hold governs. Ordinary Bureau comments use a safe
+heading if they would begin with reserved answer or hold syntax; app
+summaries use that boundary too.</p>
+<p>Every matching reply later than that hold is forwarded oldest first
+with its timestamp and source questions, with the marker line stripped,
+as bounded untrusted JSON ticket data in both implementation loops and
+app prepare. Answers remain context through retries and QA rework until
+a new hold supersedes them or the canonical branch changes. They are
+excluded from the separate QA/review feedback selection. Completion and
+QA/review hand-backs do not resolve a hold. The prompt's hold identity
+is checked again before hand-off; a pass that saw an older hold cannot
+advance on a newer one it did not read.</p>
+<p>Clearing the label without a marked reply returns <code>25</code>;
+the queue skips that ticket for the rest of the poll. Missing or invalid
+pagination (even on a short page), pending hold publication, a changed
+prompt snapshot, or decisions and question context that cannot fit
+within <code>BUREAU_COMMENT_MAX_BYTES</code> return <code>24</code>. For
+an oversized context, edit or replace oversized marked replies with
+shorter ones, or reissue shorter questions; no decision is silently
+truncated for the provider. Hold publication reserves the ID and
+instructions before capping its public question body and keeps failed
+publication pending for retry. A failed PR mirror returns
+<code>18</code>. These read-only checks precede ownership, Linear
+mutations, worker reset and direct-stage Git preparation, with the
+overlap gate on or off. An otherwise eligible disabled-implementation
+<code>--respect-config</code> hand-off still returns <code>20</code>. No
+configuration keys or defaults change. See the <a
+href="migration.html#implementation-decision-holds">coordinated
+upgrade</a>.</p>
 <table>
 <thead>
 <tr>

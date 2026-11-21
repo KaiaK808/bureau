@@ -1,0 +1,3 @@
+section: Changed
+
+- Implementation decision holds require a later nonblank Linear reply beginning with the exact `Answer: <hold-id>` line; every matching decision and its questions reach implementation through retries and QA rework. **Upgrade:** drain old drivers, compare installed drift, and resync the complete scripts scope together with interfaces. Before re-enabling dispatch, reissue each open implementation hold with a fresh ID, keep it held, and ask humans to repost earlier decisions with the new marker, including tickets whose label was already removed. Completed holds stay as they are. Validation: local fixtures with fake Linear and providers; no live adopter qualification.

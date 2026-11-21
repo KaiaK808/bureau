@@ -154,8 +154,10 @@ get_issue_branch_and_comments() {
   fi
   local branch="${BUREAU_STUB_BRANCH:-test-branch}"
   jq -n --arg b "$branch" --arg c "${BUREAU_STUB_REVIEW_COMMENT:-}" \
-    '{branch:$b, comments:(if $c == "" then [] else [{body:$c}] end)}'
+    '{branch:$b, comments_complete:true, comments:(if $c == "" then [] else [{body:$c,createdAt:"2026-10-01T00:00:00Z"}] end)}'
 }
+
+_bureau_post_comment() { post_comment "$@"; }
 
 get_issue_branch() {
   _record "get_issue_branch" "$1"

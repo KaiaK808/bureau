@@ -109,6 +109,7 @@ PY
     -e '/^_bureau_gh_pr_retry() {/,/^}/p' -e '/^bureau_open_pr_number() {/,/^}/p' \
     -e '/^bureau_guard_branch_reset() {/,/^}/p' \
     -e '/^check_squash_range() {/,/^}/p' -e '/^comment_on_branch_pr() {/,/^}/p' \
+    -e '/^bureau_implementation_context() {/,/^}/p' -e '/^post_implementation_hold() {/,/^}/p' \
     -e '/^restore_worktree_deps() {/,/^}/p' \
     -e '/^apply_build_failure() {/,/^}/p' -e '/^decide_review_verdict() {/,/^}/p' \
     -e '/^review_convergence() {/,/^}/p' -e '/^review_counts() {/,/^}/p' -e '/^bureau_review_evidence() {/,/^}/p' \

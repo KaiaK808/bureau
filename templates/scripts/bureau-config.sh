@@ -1505,15 +1505,23 @@ sys.stdout.buffer.write(head + note(len(data) - len(head) - len(tail)) + tail)
 # Usage: post_comment <issue-id-or-key> <body>
 post_comment() {
   local ref="$1" body="$2" capped
-  bureau_ticket_checkpoint "$ref"
-  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
-    echo "[DRY_RUN] post_comment $ref ($(printf '%s' "$body" | head -c 80 | tr '\n' ' ')...)" >&2
-    return 0
-  fi
+  # Ordinary automation cannot impersonate a decision or a runtime hold.
+  case "$body" in 'Answer:'*|'<!-- bureau-implement-hold:'*) body="## Bureau update"$'\n\n'"$body" ;; esac
   if capped=$(bureau_cap_comment "$body"); then
     body="$capped"
   else
     echo "post_comment: could not fit the comment for $ref to the size limit; posting it unchanged" >&2
+  fi
+  _bureau_post_comment "$ref" "$body"
+}
+
+# Transport shared by ordinary comments and the dedicated hold publisher.
+_bureau_post_comment() {
+  local ref="$1" body="$2"
+  bureau_ticket_checkpoint "$ref"
+  if [ "${BUREAU_DRY_RUN:-0}" = "1" ]; then
+    echo "[DRY_RUN] post_comment $ref ($(printf '%s' "$body" | head -c 80 | tr '\n' ' ')...)" >&2
+    return 0
   fi
   local uuid
   uuid=$(_resolve_issue_uuid "$ref") || return $?
@@ -1725,6 +1733,7 @@ comment_on_branch_pr() {
   fi
   if [ -z "$pr" ] || [ "$pr" = "null" ]; then
     echo "  no open PR for $branch — the finding stands in Linear and in logs/escalations.log"
+    [ "${3:-}" != required ] || return 18
     return 0
   fi
   if out=$(printf '%s\n' "$text" | gh pr comment "$pr" --body-file - 2>&1); then
@@ -1733,6 +1742,7 @@ comment_on_branch_pr() {
     rc=$?
     echo "  ✗ could not comment on PR #$pr (gh exit code $rc) — the finding stands in Linear and in logs/escalations.log" >&2
     echo "$out" | sed 's/^/       gh: /' >&2
+    [ "${3:-}" != required ] || return 18
   fi
   return 0
 }
@@ -1790,12 +1800,28 @@ get_issue_branch() {
 # Output: { "branch": "<resolved>", "comments": [{body, createdAt}, ...] }
 # Both fields populated even if the issue has no comments.
 get_issue_branch_and_comments() {
-  local ref="$1"
-  local team_key="${ref%%-*}"
-  local number="${ref##*-}"
-  local answer
-  answer=$(linear_issue_query "{ issues(filter: { team: { key: { eq: \\\"$team_key\\\" } }, number: { eq: $number } }) { nodes { branchName comments(first: 200) { nodes { body createdAt } } } } }" "$_BUREAU_SHAPE_ISSUE_COMMENTS") || return $?
-  printf '%s' "$answer" \
+  local ref="$1" answer payload cursor=null seen='[]' comments='[]' branch='' next
+  while true; do
+    payload=$(jq -nc --arg id "$ref" --argjson after "$cursor" '{query:
+      "query($id:String!, $after:String) { issue(id:$id) { branchName comments(first:100, after:$after) { nodes { body createdAt } pageInfo { hasNextPage endCursor } } } }",
+      variables:{id:$id,after:$after}}') || return 24
+    answer=$(linear_raw "$payload") || return 24
+    if ! printf '%s' "$answer" | jq -e '
+      (.errors // [] | length) == 0 and (.data.issue | type == "object") and
+      (.data.issue.comments | (.nodes | type == "array") and (.pageInfo | type == "object") and
+        (.pageInfo.hasNextPage | type == "boolean") and
+        (if .pageInfo.hasNextPage then (.pageInfo.endCursor | type == "string" and length > 0) else true end))' >/dev/null; then
+      echo 'Implementation comment history/pagination incomplete (exit 24).' >&2; return 24
+    fi
+    next=$(printf '%s' "$answer" | jq -c '.data.issue.comments.pageInfo.endCursor')
+    comments=$(printf '%s\n%s' "$comments" "$answer" | jq -sc '.[0] + .[1].data.issue.comments.nodes') || return 24
+    branch=$(printf '%s' "$answer" | jq -r '.data.issue.branchName // ""')
+    [ "$(printf '%s' "$answer" | jq -r '.data.issue.comments.pageInfo.hasNextPage')" = true ] || break
+    if printf '%s' "$seen" | jq -e --argjson cursor "$next" 'index($cursor) != null' >/dev/null; then return 24; fi
+    seen=$(printf '%s' "$seen" | jq -c --argjson cursor "$next" '. + [$cursor]')
+    cursor="$next"
+  done
+  printf '%s' "$comments" | jq --arg branch "$branch" '{data:{issues:{nodes:[{branchName:$branch,comments:{nodes:.}}]}}}' \
     | jq '
       (.data.issues.nodes[0] // {}) as $issue
       | (($issue.comments.nodes // []) | sort_by(.createdAt) | reverse) as $comments
@@ -1808,8 +1834,32 @@ get_issue_branch_and_comments() {
           | sub(" -->[[:space:]]*$"; "")
         ) as $marker
       | { branch: (if $marker != "" then $marker else ($issue.branchName // "") end),
-          comments: $comments }
+          comments: $comments, comments_complete: true }
     '
+}
+
+# Read-only admission and bounded prompt data, independent of the overlap gate.
+bureau_implementation_context() {
+  local record blob
+  record="$(bureau_common_dir)/bureau/implementation-holds/$1.json" || return 24
+  blob=$(get_issue_branch_and_comments "$1") || return 24
+  printf '%s' "$blob" | python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-hold-context.py" select \
+    --record "$record" --expect "${2:-}" --key "${3:-}" --max-bytes "${BUREAU_COMMENT_MAX_BYTES:-60000}"
+}
+
+# Only this path publishes reserved hold syntax. Save before posting so a
+# rejected/uncertain create is retried with identical ID, questions and window.
+post_implementation_hold() {
+  local issue="$1" branch="$2" body="$3" key="${4:-${BUREAU_STAGE_ATTEMPT_ID:-${BUREAU_RUN_ID:-}}}" record prepared
+  if [ "${BUREAU_DRY_RUN:-0}" = 1 ]; then echo "[DRY_RUN] publish implementation hold for $issue" >&2; return 0; fi
+  record="$(bureau_common_dir)/bureau/implementation-holds/$issue.json" || return 24
+  prepared=$(printf '%s' "$body" | python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-hold-context.py" reserve \
+    --record "$record" --branch "$branch" --key "$key" --max-bytes "${BUREAU_COMMENT_MAX_BYTES:-60000}") || return 24
+  _bureau_post_comment "$issue" "$prepared" || return 24
+  if [ "${BUREAU_DRY_RUN:-0}" != 1 ]; then
+    python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-hold-context.py" posted --record "$record" || return 24
+  fi
+  printf '%s' "$prepared"
 }
 
 # Return issue comments newest-first as a JSON array of objects {body, createdAt}.
