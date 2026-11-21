@@ -101,7 +101,8 @@ with (root/'service.guard').open('a') as lock:
         head=git('rev-parse','refs/heads/'+p['branch']); base=git('rev-parse','refs/heads/main')
         return dict(number=p['number'],url='https://github.com/test/repo/pull/'+str(p['number']),state=p.get('state','OPEN'),
                     mergeStateStatus=p.get('merge_state','CLEAN'),labels=[],headRefName=p['branch'],headRefOid=head,
-                    baseRefName='main',baseRefOid=git('merge-base',head,base),isDraft=False,title=p['issue']+' feature',body='Local fixture',comments=p.get('comments',[]))
+                    baseRefName='main',baseRefOid=git('merge-base',head,base),isDraft=False,title=p['issue']+' feature',body='Local fixture',comments=p.get('comments',[]),
+                    mergeCommit=dict(oid=p['merge_commit']) if p.get('state')=='MERGED' and p.get('merge_commit') else None)
     if args[:2]==['repo','view']: print('test/repo')
     elif args[:2]==['pr','list']:
         branch=args[args.index('--head')+1] if '--head' in args else None
@@ -139,7 +140,7 @@ with (root/'service.guard').open('a') as lock:
                                               body=body,lastEditedAt=None,createdAt='2026-10-26T00:00:00Z')); save()
         event('pr-comment',issue=p['issue'],body=body)
     elif args[:2]==['pr','merge']:
-        p=pr_for(); p['state']='MERGED'; save(); event('merge',issue=p['issue'])
+        p=pr_for(); p['state']='MERGED'; p['merge_commit']=git('rev-parse','refs/heads/'+p['branch']); save(); event('merge',issue=p['issue'])
     elif args[:1]==['api']:
         endpoint=next((a for a in args if a.startswith('repos/')),'')
         if 'graphql' in args:
