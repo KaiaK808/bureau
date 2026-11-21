@@ -1720,7 +1720,7 @@ case "$STATUS" in
     fi
     SUMMARY=$(bureau_comment_projection "$(build_summary_comment "$STATUS" "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")")
     if [ "$STATUS" = NEEDS_HUMAN ]; then
-      QUESTIONS=$(parse_claude_json "$RESULT" '.notes.needs_human // []')
+      QUESTIONS=$(bureau_comment_projection "$(parse_claude_json "$RESULT" '.notes.needs_human // []')")
       HOLD_COMMENT=$(post_implementation_hold "$ISSUE" "$BRANCH" "Questions for human (provider notes.needs_human):
 $QUESTIONS
 

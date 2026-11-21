@@ -1705,7 +1705,8 @@ $out"
 }
 
 # comment_on_branch_pr: post <text> as a comment on the open PR of <branch>,
-# if there is one. Loud on failure, never fatal; always returns 0.
+# if there is one. Loud on failure; returns 0 by default. In required mode,
+# returns 18 when no PR exists, lookup fails, or posting fails.
 #
 # Carried over from an installation. A halt for a CI suppressor has
 # to show where the merge happens, not only in Linear. It is a comment and not
@@ -1718,7 +1719,7 @@ $out"
 #
 # Dry-run: BUREAU_DRY_RUN=1 logs the intent and returns 0 without calling gh.
 #
-# Usage: comment_on_branch_pr <branch> <text>
+# Usage: comment_on_branch_pr <branch> <text> [required]
 comment_on_branch_pr() {
   bureau_ticket_checkpoint "${BUREAU_CURRENT_ISSUE:-${ISSUE:-}}"
   local branch="$1" text="$2" pr out rc
@@ -1836,11 +1837,14 @@ bureau_implementation_context() {
   return "$rc"
 }
 
-# Only this path publishes reserved hold syntax. Save before posting so a
+# Only this path publishes reserved hold syntax. Project before reserving the
+# envelope so app summaries also lose private metadata without losing the ID
+# or copyable instructions. Save before posting so a
 # rejected/uncertain create is retried with identical ID, questions and window.
 post_implementation_hold() {
   local issue="$1" branch="$2" body="$3" key="${4:-${BUREAU_STAGE_ATTEMPT_ID:-${BUREAU_RUN_ID:-}}}" record prepared
   if [ "${BUREAU_DRY_RUN:-0}" = 1 ]; then echo "[DRY_RUN] publish implementation hold for $issue" >&2; return 0; fi
+  body=$(bureau_comment_projection "$body")
   record="$(bureau_common_dir)/bureau/implementation-holds/$issue.json" || return 24
   prepared=$(printf '%s' "$body" | python3 -I -B "$_BUREAU_SCRIPTS_DIR/bureau-hold-context.py" reserve \
     --record "$record" --branch "$branch" --key "$key" --max-bytes "${BUREAU_COMMENT_MAX_BYTES:-60000}") || return 24

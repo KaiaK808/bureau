@@ -226,10 +226,13 @@ class Dispatcher:
                 try: child.send_signal(signal.SIGTERM)
                 except ProcessLookupError: pass
 
-    def defer(self, issue, code, paused=False, attempt=None, terminal_reason=None, decision_wait=False):
+    def defer(self, issue, code, paused=False, attempt=None, terminal_reason=None, decision_wait=False,
+              admission_incomplete=False):
         prior = self.skips.get(issue, {})
         count = min(prior.get('attempts', 0) + 1, 16)
-        quiet = code in (2, 10, 16, 23, 28, 29)
+        # A read-only admission refusal stays read-only through reconciliation.
+        read_wait = code == 24 and admission_incomplete
+        quiet = code in (2, 10, 16, 23, 28, 29) or read_wait
         due = time.time() + min(self.poll * 2 ** (count - 1), self.recheck) if quiet or paused else None
         self.skips[issue] = dict(code=code, attempts=count, until=due)
         if code == 25 and decision_wait:
@@ -243,7 +246,7 @@ class Dispatcher:
         self.skips[issue]['terminal_reason'] = terminal_reason
         if attempt is not None: self.skips[issue]['attempt'] = attempt
         r.save(self.path, self.skips)
-        if code not in (0, 2, 10, 16, 20, 23, 25, 26, 28, 29, 30, 31, 130):
+        if not read_wait and code not in (0, 2, 10, 16, 20, 23, 25, 26, 28, 29, 30, 31, 130):
             try:
                 self.helpers.call('alert_telegram "$1" bureau-dispatch.py "$2" "dispatcher lane halted" || true\n'
                                   'if [ "$2" != 21 ]; then mark_needs_human "$1" dispatcher "$2" || true; fi', issue, str(code))
@@ -265,7 +268,8 @@ class Dispatcher:
         if type(code) is not int or not 0 <= code <= 255: raise ValueError('invalid dispatch outcome: ' + str(path))
         if self.skips.get(issue, {}).get('attempt') != attempt:
             self.defer(issue, code, paused=code == 25 and row.get('paused') is True, attempt=attempt,
-                       terminal_reason=row.get('terminal_reason'), decision_wait=row.get('decision_wait') is True)
+                       terminal_reason=row.get('terminal_reason'), decision_wait=row.get('decision_wait') is True,
+                       admission_incomplete=row.get('admission_incomplete') is True)
         ready = self.store.root / 'dispatch-ready' / attempt
         ready.unlink(missing_ok=True)
         ready.with_suffix('.paused').unlink(missing_ok=True)
@@ -410,7 +414,8 @@ printf "%s %s %s %s" "$BUREAU_PARALLEL_LANES" "$BUREAU_POLL_INTERVAL" '''
                         self.launch(issue, stage)
                     except Stop as exc:
                         if exc.code == 130: raise
-                        self.defer(issue, exc.code, paused=exc.code == 25 and exc.output == 'paused')
+                        self.defer(issue, exc.code, paused=exc.code == 25 and exc.output == 'paused',
+                                   admission_incomplete=exc.code == 24)
                 # Reap and refill as soon as a lane ends, independently of the
                 # idle poll interval. Idle arrivals are discovered next poll.
                 deadline = time.monotonic() + self.poll

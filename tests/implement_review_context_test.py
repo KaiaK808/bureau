@@ -100,6 +100,8 @@ if os.environ.get('FIXTURE_GATE_HOLD') == '1':
                  notes=dict(needs_human=[dict(task_id='T001', kind='gate', command='test -f feature.txt',
                                             reason='Choose how to restore the harness.')], skipped=[], deviations=[]),
                  prose_notes='review_dispositions: []')
+    if os.environ.get('FIXTURE_PRIVATE_QUESTION') == '1':
+        value['notes']['needs_human'][0]['reason'] = 'Choose a backend. insights: [{"observation":"PRIVATE_QUESTION_SENTINEL"}]'
 if os.environ.get('FIXTURE_SIBLING_SWEEP') == '1':
     value['fixed_review_items'] = ['review-fix']
     if searches is not None: value['sibling_searches'] = searches
@@ -565,6 +567,35 @@ bureau_without_secrets() { "$@"; }
         self.assertIn('Then remove `needs-human` and restart Build.', published)
         self.assertIn('Answer: ', published)
 
+    def test_hold_projects_provider_questions_before_linear_and_pr_publication(self):
+        self.comments([])
+        self.env.update(FIXTURE_GATE_HOLD='1', FIXTURE_PRIVATE_QUESTION='1',
+                        BUREAU_STAGE_ATTEMPT_ID=uuid.uuid4().hex, GH_STUB_EXISTING_PR='99')
+        with (self.scripts / 'bureau-config.sh').open('a') as out:
+            out.write('''
+_bureau_post_comment() { printf '%s' "$2" > "$SANDBOX/hold-published.txt"; }
+gh() {
+  if [ "$1 $2" = 'pr comment' ]; then
+    cat > "$SANDBOX/hold-mirror.txt"
+  else
+    command gh "$@"
+  fi
+}
+''')
+        self.implement()
+        published = (self.repo / 'hold-published.txt').read_text()
+        mirrored = (self.repo / 'hold-mirror.txt').read_text().rstrip('\n')
+        self.assertEqual(published, mirrored)
+        identity = re.fullmatch(r'<!-- bureau-implement-hold: id=([a-f0-9]{32}) branch=[a-f0-9]+ -->',
+                                published.splitlines()[0])[1]
+        for destination, body in (('Linear', published), ('PR', mirrored)):
+            with self.subTest(destination=destination):
+                self.assertNotIn('PRIVATE_QUESTION_SENTINEL', body)
+                self.assertNotIn('insights:', body)
+                self.assertIn('Answer: ' + identity, body)
+                self.assertIn('Write your decision below this line on the Linear ticket. '
+                              'Then remove `needs-human` and restart Build.', body)
+
     def test_zero_pass_time_cap_keeps_label_and_summary(self):
         self.comments([])
         with (self.scripts / 'bureau-config.sh').open('a') as out:
@@ -859,7 +890,7 @@ class SiblingSearchContractTests(unittest.TestCase):
                 self.assertIsNone(self.e.sibling_out_of_scope_paths(result))
 
     def packet(self, result):
-        with tempfile.TemporaryDirectory(prefix='bureau-sibling-', dir=ROOT) as directory:
+        with tempfile.TemporaryDirectory(prefix='bureau-sibling-') as directory:
             repo = Path(directory); store = self.e.Store(repo / 'bureau'); head = 'a' * 40
             run = uuid.uuid4().hex
             store.begin_run(run, None, repo, head)
@@ -891,7 +922,7 @@ class SiblingSearchContractTests(unittest.TestCase):
         self.assertEqual(self.e.sibling_out_of_scope_paths(self.result), [])
 
     def goal_result(self, prompt):
-        with tempfile.TemporaryDirectory(prefix='bureau-sibling-goal-', dir=ROOT) as directory:
+        with tempfile.TemporaryDirectory(prefix='bureau-sibling-goal-') as directory:
             repo = Path(directory); spec = repo / 'specs/fixture'; spec.mkdir(parents=True)
             (spec / 'tasks.md').write_text('- [ ] Guard `first.py`\n- [ ] Finish remaining task\n')
             for name in ('first.py', 'second.py'):

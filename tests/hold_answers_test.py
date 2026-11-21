@@ -49,6 +49,10 @@ def fake_linear(path):
         result = dict(viewer=dict(id='viewer'))
     elif 'issueLabels' in query:
         result = dict(issueLabels=dict(nodes=[dict(id='label', team=None)]))
+    elif state.get('empty_route_once') and 'state { id name }' in query:
+        del state['empty_route_once']
+        path.write_text(json.dumps(state))
+        result = dict(issues=dict(nodes=[]))
     else:
         index = int(variables.get('after') or 0)
         pages = state.get('pages', [state['comments']])
@@ -61,6 +65,7 @@ def fake_linear(path):
             else: connection['pageInfo'] = state['pagination']
         issue = dict(id='uuid', identifier='T-1', title='Fixture', description='Fixture', project=None,
                      branchName=state.get('branchName', BRANCH), state=dict(id=state.get('state', 's3'), name='Build', type='started'),
+                     inverseRelations=dict(nodes=[]),
                      labels=dict(nodes=[], pageInfo=dict(hasNextPage=False, endCursor=None)), comments=connection)
         result = dict(issue=issue, issues=dict(nodes=[issue], pageInfo=dict(hasNextPage=False, endCursor=None)))
     print(json.dumps(dict(data=result)))
@@ -377,6 +382,48 @@ bureau_exec_runtime() {
                     if failed:
                         self.assertEqual(json.loads(self.fixture.read_text()).get('context_reads', 0), 0)
 
+    def test_shepherd_empty_first_route_stops_before_claim_or_labels(self):
+        with (self.scripts / 'bureau-config.sh').open('a') as out:
+            out.write('''
+bureau_exec_runtime() {
+  if [ "$4" = "$BUREAU_RUNTIME" ]; then
+    shift 3
+    exec python3 -I -B "$BUREAU_HOLD_TEST_DRIVER" --runtime-probe "$@"
+  fi
+  exec "$@"
+}
+''')
+        self.history([comment(hold(), 1)], empty_route_once=True)
+        result = self.run_command(['bash', 'scripts/shepherd.sh', '--no-tmux', 'T-1'])
+        with self.subTest(invariant='no claim or Linear mutation'):
+            self.assert_no_work()
+        with self.subTest(invariant='no label mutation'):
+            self.assertFalse(json.loads(self.fixture.read_text()).get('mutations'))
+        self.assertEqual(result.returncode, 24, result.stdout + result.stderr)
+        self.assertEqual(json.loads(self.fixture.read_text()).get('context_reads', 0), 0)
+
+    def test_tick_incomplete_history_preserves_exit_and_result_24(self):
+        self.history([], pagination=None)
+        result_file = self.base / 'tick-result.json'
+        result = self.run_command(['bash', 'scripts/bureau-tick.sh', '--stage', 'implement',
+                                   '--result-file', str(result_file)])
+        self.assert_no_work()
+        with self.subTest(invariant='process exit'):
+            self.assertEqual(result.returncode, 24, result.stdout + result.stderr)
+        with self.subTest(invariant='result exit_code'):
+            self.assertEqual(json.loads(result_file.read_text())['exit_code'], 24)
+
+    def test_tick_empty_startup_route_is_incomplete_before_work(self):
+        self.history([], empty_route_once=True)
+        result_file = self.base / 'tick-result.json'
+        result = self.run_command(['bash', 'scripts/bureau-tick.sh', '--stage', 'implement',
+                                   '--result-file', str(result_file)])
+        with self.subTest(invariant='no claim or mutation'):
+            self.assert_no_work()
+        self.assertEqual(result.returncode, 24, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result_file.read_text())['exit_code'], 24)
+        self.assertEqual(json.loads(self.fixture.read_text()).get('context_reads', 0), 0)
+
     def test_branch_only_reader_uses_complete_history_and_requires_pagination(self):
         self.answered_history_after_200_comments()
         self.assertEqual(self.shell('get_issue_branch T-1', 0).stdout.strip(), BRANCH)
@@ -510,6 +557,72 @@ pipeline_pick_next() { echo T-1; }
                     self.assertEqual(result.get('decision_wait'), code == 25)
                     self.assertEqual(state['context_reads'], 1, 'startup admission ran twice')
 
+    def test_dispatcher_incomplete_admission_reconciliation_is_read_only_and_retried(self):
+        self.history([], pagination=None)
+        result = self.dispatch_lane(24)
+        self.assert_no_work()
+        _, dispatcher = self.dispatcher()
+        # Use real helpers and fake Linear during reconciliation, including a restart.
+        with patch.dict(os.environ, self.env, clear=True):
+            dispatcher.reconcile_lane(dispatcher.journal / (result['attempt'] + '.json'))
+        self.assert_no_work()
+        skip = dispatcher.skips['T-1']
+        self.assertEqual(skip['code'], 24)
+        self.assertIsNotNone(skip['until'], 'incomplete admission became a permanent hold')
+        _, restarted = self.dispatcher()
+        with patch('time.time', return_value=skip['until'] + 1):
+            self.assertNotIn('T-1', restarted.exclusions())
+
+    def test_dispatcher_post_claim_24_keeps_existing_human_escalation(self):
+        self.history([], state='s4')
+        result = self.dispatch_lane(24, ['bash', '-c', 'exit 24'])
+        self.assertTrue(Path(str(self.fixture) + '.claims').exists())
+        _, dispatcher = self.dispatcher()
+        with patch.dict(os.environ, self.env, clear=True):
+            dispatcher.reconcile_lane(dispatcher.journal / (result['attempt'] + '.json'))
+        self.assertIsNone(dispatcher.skips['T-1']['until'])
+        self.assertTrue(any('issueAddLabel' in row['query']
+                            for row in json.loads(self.fixture.read_text())['mutations']))
+
+    def test_dispatcher_preflight_incomplete_read_is_retried_without_labels(self):
+        module, dispatcher = self.dispatcher()
+        calls = []
+        def helper(body, *args):
+            if body == module.PICK:
+                if not calls:
+                    calls.append('pick')
+                    return 'T-1 implement'
+                dispatcher.stopping = True
+                return ''
+            if body == module.PREFLIGHT:
+                raise module.Stop(24)
+            if 'mark_needs_human' in body:
+                self.fail('preflight read failure triggered label escalation')
+            return '1 1 1 0'
+        with patch.object(dispatcher.helpers, 'call', side_effect=helper), patch.object(module.signal, 'signal'):
+            dispatcher.run()
+        self.assertIsNotNone(dispatcher.skips['T-1']['until'])
+        self.assert_no_work()
+
+    def test_app_hold_projects_summary_before_reserved_envelope(self):
+        self.history([])
+        prepared = self.run_command([sys.executable, '-I', '-B', 'scripts/bureau-runtime.py',
+                                     'prepare', 'T-1', 'implement'], 0)
+        run = json.loads(prepared.stdout)
+        head = self.run_command(['git', 'rev-parse', 'HEAD'], 0).stdout.strip()
+        result = self.base / 'result.json'
+        result.write_text(json.dumps(dict(run_id=run['run_id'], stage='implement', outcome='blocked',
+            head=head, summary='Choose a backend. insights: [{"observation":"PRIVATE_APP_SENTINEL"}]')))
+        self.run_command([sys.executable, '-I', '-B', 'scripts/bureau-runtime.py', 'finish',
+                          run['run_id'], '--result', str(result)], 0)
+        posted = json.loads(self.fixture.read_text())['comments'][-1]['body']
+        self.assertNotIn('PRIVATE_APP_SENTINEL', posted)
+        self.assertRegex(posted.splitlines()[0], r'^<!-- bureau-implement-hold: id=[a-f0-9]{32} branch=[a-f0-9]+ -->$')
+        identity = posted.split('id=', 1)[1].split(' ', 1)[0]
+        self.assertIn('Answer: ' + identity, posted)
+        self.assertIn('Write your decision below this line on the Linear ticket. '
+                      'Then remove `needs-human` and restart Build.', posted)
+
     def test_dispatcher_shepherd_disabled_implementation_keeps_handoff(self):
         self.config['agents']['implement'] = False
         self.write_config()
@@ -605,6 +718,24 @@ pipeline_pick_next() { echo T-1; }
     def test_required_pr_mirror_retains_exit_18(self):
         self.shell('''gh() { if [ "$2" = list ]; then echo 42; else return 1; fi; }
 comment_on_branch_pr feat/issue report required''', 18)
+
+    def test_shepherd_read_and_move_handlers_preserve_incomplete_history_24(self):
+        source = (self.scripts / 'shepherd.sh').read_text()
+        functions = source[source.index('_shepherd_read_failed() {'):source.index('\n# Start check.')]
+        for call in ('_shepherd_read_failed branch 24', '_shepherd_move_failed Build 24'):
+            with self.subTest(call=call):
+                self.history([])
+                result = self.shell('ISSUE=T-1\n' + functions + '\n' + call)
+                with self.subTest(invariant='no mutation'):
+                    self.assert_no_work()
+                self.assertEqual(result.returncode, 24, result.stdout + result.stderr)
+
+    def test_review_comment_count_preserves_incomplete_history_24(self):
+        self.history([], pagination=None)
+        source = (self.scripts / 'code-review-pipeline.sh').read_text()
+        reader = source[source.index('_comments_rc=0'):source.index('\n_review_counts=')]
+        self.shell('ISSUE=T-1\n' + reader, 24)
+        self.assert_no_work()
 
     def test_ordinary_posting_guard(self):
         for body in (f'Answer: {A}\nApp summary.', hold()):

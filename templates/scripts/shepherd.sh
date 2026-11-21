@@ -463,7 +463,7 @@ if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
     # An incomplete route read cannot waive Build admission.
     ROUTE_RC=0
     ROUTE_STATE=$(get_issue_state "$ISSUE") || ROUTE_RC=$?
-    if [ "$ROUTE_RC" != 0 ]; then
+    if [ "$ROUTE_RC" != 0 ] || [ -z "$ROUTE_STATE" ]; then
       [ "$ROUTE_RC" -le 128 ] || exit 130
       echo '[shepherd] startup route incomplete (exit 24); nothing claimed or moved' >&2
       exit 24
@@ -560,7 +560,8 @@ _shepherd_linear_halt() {
 # ticket. A read that ended by a signal only its own process saw (a code above
 # 128) is a cancelled run like _shepherd_cancelled: exit 130, nothing written —
 # the operator stopped it, the ticket is not at fault. 27 takes the Linear halt
-# above. Any other code (a usable answer the helper could not parse, a helper
+# above. Incomplete history keeps 24 without adding a label or comment.
+# Any other code (a usable answer the helper could not parse, a helper
 # missing from an older config) says nothing about the ticket either: halt with
 # 1, label needs-human and say which read failed — walking on or waiting would
 # decide on an answer nobody read.
@@ -573,6 +574,10 @@ _shepherd_read_failed() {
   # A successful mandatory snapshot can exit its capture with 25/26. That
   # shared withdrawal is not a failed read and must not add needs-human.
   bureau_ticket_checkpoint "$ISSUE" latched
+  if [ "$rc" = 24 ]; then
+    echo "[shepherd] incomplete $what read (exit 24); retry after history is readable" >&2
+    exit 24
+  fi
   [ "$rc" = "$BUREAU_EXIT_LINEAR_UNUSABLE" ] && _shepherd_linear_halt shepherd.sh "$rc" "reading the $what"
   echo "[shepherd] could not read the $what of $ISSUE (exit $rc) — labeling needs-human and aborting shepherd" >&2
   alert_telegram "$ISSUE" shepherd.sh "$rc" "shepherd halt (could not read the $what, exit $rc)" 2>/dev/null || true
@@ -588,12 +593,17 @@ _shepherd_read_failed() {
 # Called bare under `set -e`, a failed move used to end the shepherd with the
 # move's code before any halt handling: no alert, no label, no comment.
 # A signal only the move saw → cancelled (130, nothing written);
+# 24 → incomplete admission returned unchanged without another mutation;
 # 29 → quiet admission wait returned to the caller; 27 → the Linear halt;
 # any other code → halt with 1,
 # needs-human and a comment — the ticket may or may not have moved, and the
 # next stage must not start on a guess.
 _shepherd_move_failed() {
   local target="$1" rc="$2"
+  if [ "$rc" = 24 ]; then
+    echo "[shepherd] incomplete admission before moving $ISSUE to $target (exit 24)" >&2
+    exit 24
+  fi
   if [ "$rc" = 29 ]; then
     echo "[shepherd] waiting for file overlap holders before moving $ISSUE to $target (exit 29)" >&2
     exit 29

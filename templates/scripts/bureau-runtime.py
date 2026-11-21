@@ -981,7 +981,10 @@ def execute(repo, args, store):
                 terminal_error = True
             if dispatch_record is not None:
                 ready = os.environ.get('BUREAU_DISPATCH_READY_FILE')
+                # Reconciliation must distinguish a read-only refusal from a
+                # stage's environment failure after ownership/work began.
                 dispatch_record.update(code=130 if interrupted or code < 0 else code,
+                                       admission_incomplete=bool(code == 24 and not resources and child is None),
                                        paused=bool(code == 25 and ready and Path(ready + '.paused').exists()),
                                        decision_wait=bool(code == 25 and ready and Path(ready + '.decision-wait').exists()))
                 dispatch_record['terminal_reason'] = terminal_reason

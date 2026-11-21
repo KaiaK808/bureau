@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="1dc897a672c874b502767303451e8ea6004da038ed0b7d031f621fbf404d96f4">
+<meta name="bureau-source-sha256" content="3437b60aa386ef47769dc7c0fc52535199ebbf83c8ca10410c3de485c5d53d4a">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -208,9 +208,12 @@ for availability; do not switch providers silently</td>
 <td><code>24</code></td>
 <td>environment-blocked</td>
 <td>Permissions or required execution capability missing; Implementation
-answer history or pagination incomplete, publication pending, prompt
-hold identity changed, or decision plus questions cannot fit the context
-cap; request a shorter marked reply or reissue shorter questions.</td>
+startup route missing or unreadable, answer history or pagination
+incomplete, publication pending, prompt hold identity changed, or
+decision plus questions cannot fit the context cap; request a shorter
+marked reply or reissue shorter questions. Read-only admission failures
+retry on later dispatcher polls without Linear mutations; bounded ticks
+preserve process exit and JSON <code>exit_code: 24</code>.</td>
 <td>Inspect denied operation separately from code/test failures. Also: a
 Node project's dependencies could not be restored after the worktree
 reset; the last install log lines appear in stage output and full logs
@@ -412,7 +415,7 @@ not start as though the first had completed.</p>
 treatment as capacity waiting (<code>28</code>), including the shepherd
 exception and bounded tick JSON described below. Reservations and the
 migration rules are documented in <a
-href="stage-protocol.html#file-overlap-admission">file admission</a>.</p>
+href="../stage-protocol.md#file-overlap-admission">file admission</a>.</p>
 <p>Exit codes outside this table (e.g. <code>1</code>) classify as
 <code>error-1</code> — usually a bug in the pipeline script or an
 unhandled bash error.</p>
@@ -613,7 +616,7 @@ cancelled/duplicate 26, other inactive state 25), and
 <code>stalled</code> (25). Successful completion, handoffs, waits,
 infrastructure failures and cancellation 130 have no invented stop
 reason. See the <a
-href="stage-protocol.html#ticket-budget-and-progress-stops">stage
+href="../stage-protocol.md#ticket-budget-and-progress-stops">stage
 protocol</a> for safe-point handling, precedence and persistence. These
 reasons are separate from learning cause classes.</p>
 <h2 id="telegram-alerts">Telegram alerts</h2>
@@ -739,7 +742,7 @@ dispatcher lane outcome or routing. Silence retains 25 with
 <code>timeout_kind: silence</code>; wall-clock timeout retains 124.
 Latched withdrawal 0/25/26 wins over earlier provider failures; quiet
 overlap exit 29 stays distinct and quiet (<code>other</code> cause). See
-<a href="stage-protocol.html#failure-learning-records">failure learning
+<a href="../stage-protocol.md#failure-learning-records">failure learning
 records</a> for the exact mapping, local-only ledgers and retention.
 Resync all scripts including <code>bureau-insights.sh</code> and restart
 drivers; no configuration or backfill.</p></main>

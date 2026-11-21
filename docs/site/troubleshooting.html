@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="ef1199b10fb2afbed82d8582d1a6013742810eb2d8eb98d72e8ca9e3350590ee">
+<meta name="bureau-source-sha256" content="c4bf02ac778881bb47c6512bfa05cae8ddad3bd19c5dd6f6ead4ba9fb093466b">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -56,8 +56,8 @@ id="this-repo-already-has-a-bureau-pipeline-configured"><code>This repo already 
 / agents</li>
 <li>Update the installed Bureau source first, then request scoped
 interface/script resync in each target repository; see <a
-href="migration.html">migration</a></li>
-<li>Preview the <a href="migration.html">additive migration</a>; preserve
+href="../migration.md">migration</a></li>
+<li>Preview the <a href="../migration.md">additive migration</a>; preserve
 existing IDs and settings</li>
 </ul>
 <h3 id="linear-mcp-not-available-during-setup">Linear MCP not available
@@ -110,8 +110,8 @@ owner choice where applicable, then regenerate the result with the
 evidence before finishing it. Release does not discard the files or move
 the issue. Do not reuse the old result, manually edit the saved config
 hash or release a live worker. See <a
-href="stage-protocol.html#app-stages">app stages</a> and the <a
-href="recipes.html#documentation-only-tickets">documentation
+href="../stage-protocol.md#app-stages">app stages</a> and the <a
+href="../recipes.md#documentation-only-tickets">documentation
 recipe</a>.</p>
 <h3
 id="pnpm-or-yarn-dependencies-are-missing-after-a-worktree-reset">pnpm
@@ -154,7 +154,7 @@ ticket waiting on its merge gate is picked after the others</a>)</li>
 exits 2 every tick despite eligible issues</h3>
 <p>Check whether <code>agents.max_concurrent_issues</code> is set. If
 yes, an in-flight issue (or several) is occupying the cap. See <a
-href="recipes.html#single-flight-pipeline">recipes → single-flight</a>.
+href="../recipes.md#single-flight-pipeline">recipes → single-flight</a>.
 Find them with:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;in-flight cap reached&quot;</span> logs/queue-spec.log</span></code></pre></div>
 <h3
@@ -166,7 +166,7 @@ Run:</p>
 <p>Inspect the deterministic preview. Unknown/customized files stop the
 selected asset batch; resolve each named conflict while preserving local
 changes, then reapply the coherent batch. <code>--update</code> changes
-configuration only. See <a href="migration.html">migration</a> for source
+configuration only. See <a href="../migration.md">migration</a> for source
 update and per-target resync steps.</p>
 <h3 id="issue-stranded-between-states">Issue stranded between
 states</h3>
@@ -307,7 +307,7 @@ preserved from an interruption.</p>
 Existing unregistered workers and app checkouts cannot be made
 disposable by clearing files. Do not reset, clean, forcibly remove or
 detach another task's checkout. See <a
-href="stage-protocol.html">ownership and resume</a>.</p>
+href="../stage-protocol.md">ownership and resume</a>.</p>
 <p><strong>From the spec stage: <code>.specify/feature.json</code> after
 speckit-specify.</strong> Bureau reserves the feature number and runs
 the pinned 1.2.2 helper before specify, then tells the model to populate
@@ -360,7 +360,7 @@ and matches the issue's canonical branch. Do not infer a
 <code>codex/*</code> branch from Linear's generated branch name. For
 retained Spec Kit helpers, pass both <code>SPECIFY_FEATURE</code> and
 <code>SPECIFY_FEATURE_DIRECTORY</code> for that exact feature; see <a
-href="migration.html">legacy migration</a>. Inspect ambiguous numeric
+href="../migration.md">legacy migration</a>. Inspect ambiguous numeric
 prefixes instead of guessing another feature.</p>
 <p>Every stage finds the spec directory with
 <code>bureau_spec_dir_for_branch</code> (<code>bureau-config.sh</code>).
@@ -524,7 +524,7 @@ base's ordinary commits, verifies both parents and each clean merge
 tree, and skips both resetting checkouts. Reuse the <strong>same
 worktree path</strong>; a new path still finds its branch held. See the
 <a
-href="stage-protocol.html#implement-retries-with-clean-base-merges">exact
+href="../stage-protocol.md#implement-retries-with-clean-base-merges">exact
 acceptance rule</a>. Tracked/untracked dirt, ordinary own commits,
 conflict resolutions, extra changes, missing
 <code>merge-tree --write-tree</code>, unreadable refs/fetches or changed
@@ -620,7 +620,7 @@ recover before pruning or garbage collection.</p>
 <p>A provider call that runs past its limit is stopped: the adapter ends
 its process group, and the stage gets 124. A shell the agent started
 detached (Claude's Bash tool does so) is outside that group and can keep
-running for a while; see <a href="provider-runtime.html">provider
+running for a while; see <a href="../provider-runtime.md">provider
 runtime</a>. Before v3.2 the implement stage ended on the first such
 pass, although in the field the agent had usually finished, committed
 and pushed every task and was only polling CI until the limit killed
@@ -713,7 +713,7 @@ and <code>result.json</code> says
 streams its events, so <code>stdout.log</code> holds the run up to the
 timeout) and <code>transcript</code> its rollout file under
 <code>~/.codex/sessions/</code> (<code>CODEX_HOME</code>), when it is
-there. See <a href="provider-runtime.html">provider runtime</a>.</p>
+there. See <a href="../provider-runtime.md">provider runtime</a>.</p>
 <p><strong>Why a pass polls CI at all:</strong> a project instruction
 such as "a missing CI run means do not merge, wait for it or trigger it"
 in the repository's <code>CLAUDE.md</code> reads to the agent as its own
@@ -978,6 +978,13 @@ Shepherd restart regardless of the overlap setting. The queue skips a
 prematurely unlabelled ticket for the rest of that poll. An otherwise
 eligible disabled implementation stage under
 <code>--respect-config</code> returns <code>20</code>.</p>
+<p>A failed or empty startup route also returns <code>24</code> before
+ownership or label changes. Dispatcher reconciliation retries read-only
+admission failures on later polls without adding
+<code>needs-human</code>; failures after work starts retain their
+existing escalation. Bounded ticks report both process exit
+<code>24</code> and JSON <code>exit_code: 24</code> for incomplete
+history.</p>
 <p>Exit <code>24</code> means the answer context cannot be established:
 repair incomplete comment pagination/history, retry a pending
 publication with its saved ID and body, or prepare a fresh pass after
@@ -988,10 +995,12 @@ that record's branch, body and key before restarting, preserving the ID.
 If decision and source questions exceed
 <code>BUREAU_COMMENT_MAX_BYTES</code>, ask for a shorter marked reply by
 editing or replacing the oversized reply, or reissue shorter questions.
-No provider receives a partial decision. A failed PR mirror retains
+No provider receives a partial decision. Provider questions and app hold
+summaries pass through the public-text projector before the runtime adds
+the hold ID and copyable instructions. A failed PR mirror retains
 <code>18</code>; the published Linear hold still governs. After
 upgrading, follow the <a
-href="migration.html#implementation-decision-holds">hold reissue
+href="../migration.md#implementation-decision-holds">hold reissue
 procedure</a> before re-enabling dispatch.</p>
 <p>Before it claims a ticket (the <code>shepherd-focused</code> label)
 or moves it (<code>--from-stage</code>), the shepherd checks whether a
@@ -1425,7 +1434,7 @@ temporary directory survives only a non-zero stage exit; a red check
 under APPROVE ends in REQUEST_CHANGES with exit 0 and removes that
 directory. Background runs retain only the full-stream SHA-256 and size,
 command ID and command digest, exit and checked/end HEADs in the <a
-href="stage-protocol.html#versioned-background-evidence">shared run
+href="../stage-protocol.md#versioned-background-evidence">shared run
 evidence</a>, independently of temporary/worktree cleanup.</p>
 <p>The check runs in the review worktree. Files it leaves or changes are
 named on stderr, split in two. New files git does not ignore (test
@@ -1845,14 +1854,14 @@ constitution, including on a failed Spec Kit invocation; it does not
 promise a persistent <code>.bak</code> file. Stop further resync,
 inspect the installer error and your pre-upgrade backup, and restore the
 actual constitution rather than generating a replacement. See <a
-href="migration.html">migration and rollback</a>.</p>
+href="../migration.md">migration and rollback</a>.</p>
 <h2 id="see-also">See also</h2>
 <ul>
 <li><a href="configuration.html">Configuration</a> — config keys + env
 vars</li>
 <li><a href="exit-codes.html">Exit codes</a> — what each failure code
 means</li>
-<li><a href="recipes.html">Recipes</a> — common config patterns</li>
+<li><a href="../recipes.md">Recipes</a> — common config patterns</li>
 </ul>
 <h2 id="app-ownership-and-permissions">App ownership and
 permissions</h2>
