@@ -196,7 +196,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-test-shards. ') as directory:
             "'tests/macos-manifest.txt' || '' }}") in workflow
     for event in ('pull_request', 'push', 'schedule', 'workflow_dispatch'):
         rows = pr_matrix if event == 'pull_request' else full_matrix
-        assert len(rows) == (6 if event == 'pull_request' else 10), rows
+        assert len(rows) == (6 if event == 'pull_request' else 11), rows
         for os_name, total, mode in (('ubuntu-latest', 4, 'full'),
                                      ('macos-latest', 2 if event == 'pull_request' else 7,
                                       'focused' if event == 'pull_request' else 'full')):
