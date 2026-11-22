@@ -213,7 +213,15 @@ check_runtime() {  # <label>
 check_runtime "D bureau_stage_enter"
 (cd "$R" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" bash scripts/bureau-worker.sh EXP-1 qa-pipeline.sh "$R/.wt" feat) >/dev/null 2>&1
 check_runtime "D bureau-worker.sh"
-(cd "$R" && env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" bash scripts/shepherd.sh --no-tmux EXP-1) >/dev/null 2>&1
+# The shepherd reads the ticket's route before it starts the runtime; that read stays on a fake.
+ROUTEBIN="$TMP/routebin"; mkdir -p "$ROUTEBIN"
+cat > "$ROUTEBIN/curl" <<'ROUTE'
+#!/bin/sh
+[ -t 0 ] || cat >/dev/null
+printf '%s' '{"data":{"issues":{"nodes":[{"id":"id-1","identifier":"EXP-1","title":"T","description":"D","project":null,"branchName":"","state":{"id":"route-not-build","name":"QA"},"labels":{"nodes":[]},"comments":{"nodes":[]}}]}}}'
+ROUTE
+chmod +x "$ROUTEBIN/curl"
+(cd "$R" && PATH="$ROUTEBIN:$PATH" env "${PROBES[@]}" BUREAU_CONFIG="$R/.bureau.json" bash scripts/shepherd.sh --no-tmux EXP-1) >/dev/null 2>&1
 check_runtime "D shepherd.sh"
 # A key that exists only in the environment (no .env line for it) passes on: the stages need it.
 printf 'TELEGRAM_BOT_TOKEN=%s\n' "$PR1_TG_TOKEN" > "$R/.env"

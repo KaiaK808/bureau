@@ -7,7 +7,7 @@
 #
 # Behaviour:
 #   GH_STUB_EXISTING_PR=<num>  → pr list returns this number; pr view returns URL
-#   (unset)                    → pr list returns empty; pr create returns a URL
+#   (unset)                    → pr list stays empty until pr create persists a PR
 #   GH_STUB_CALLS=<file>       → append each invocation as a tab-separated line
 set -uo pipefail
 
@@ -29,6 +29,8 @@ if [ "${1:-}" = "pr" ]; then
     list)
       if [ -n "${GH_STUB_EXISTING_PR:-}" ]; then
         echo "${GH_STUB_EXISTING_PR}"
+      elif [ -n "${SANDBOX:-}" ] && [ -f "$SANDBOX/logs/gh-created-pr" ]; then
+        cat "$SANDBOX/logs/gh-created-pr"
       else
         echo ""
       fi
@@ -59,7 +61,11 @@ if [ "${1:-}" = "pr" ]; then
       esac
       ;;
     create)
-      # Print URL on stdout (what the pipeline captures).
+      # A later required hold mirror must find the PR this create just opened.
+      if [ -n "${SANDBOX:-}" ]; then
+        mkdir -p "$SANDBOX/logs"
+        printf '%s\n' "${GH_STUB_NEW_PR:-99}" > "$SANDBOX/logs/gh-created-pr"
+      fi
       echo "https://github.com/test/repo/pull/${GH_STUB_NEW_PR:-99}"
       ;;
     ready)

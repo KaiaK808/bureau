@@ -18,6 +18,12 @@ if [ "${BUREAU_DRY_RUN:-0}" = 1 ]; then
   echo "[DRY_RUN] $ISSUE $PIPELINE workspace=$WORKTREE branch=$BRANCH"
   exit 0
 fi
+if [ "$PIPELINE" = implement-pipeline.sh ]; then
+  if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"; fi
+  bureau_secret_copy --optional API_KEY LINEAR_API_KEY
+  ANSWER_CONTEXT=$(bureau_implementation_context "$ISSUE") || exit $?
+  BRANCH=$(printf '%s' "$ANSWER_CONTEXT" | jq -r '.branch') || exit 24
+fi
 if [ "${BUREAU_ACTIVE_ENTRY:-}" != "$0" ]; then
   bureau_exec_runtime python3 -I -B "$BUREAU_RUNTIME" --repo "$REPO_DIR" exec --issue "$ISSUE" --workspace "$WORKTREE" --entry "$0" -- bash "$0" "$@"
 fi

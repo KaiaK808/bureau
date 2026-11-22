@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="fff32979ed3a647a81c59f9dda60dbbe5338c3458347838c0d7980694bc6620b">
+<meta name="bureau-source-sha256" content="4e585907f3d0d6297c609baddd3c2837e9adf7b8bd5c7e80fbb7d4b1a1fd39c9">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -964,6 +964,44 @@ left nothing on the ticket.</p>
 <h3
 id="shepherdsh-refuses-a-held-ticket--exit-25-before-the-claim"><code>shepherd.sh</code>
 refuses a held ticket — exit 25 before the claim</h3>
+<p>For an implementation decision hold, label removal alone does not
+release Build. Copy the exact <code>Answer: &lt;hold-id&gt;</code> line
+from the newest hold for the canonical branch to line one of a new
+Linear comment, write a nonblank decision below it, then remove
+<code>needs-human</code> and restart Build. Older, blank, wrong-ID,
+wrong-branch and unmarked replies do not answer it. Every matching
+answer is forwarded oldest first with its timestamp and source
+questions, through retries and QA rework; completion and hand-back
+comments have no hold effect. An unanswered hold returns <code>25</code>
+before any claim, move, reset or provider work, including a QA-to-Build
+Shepherd restart regardless of the overlap setting. The queue skips a
+prematurely unlabelled ticket for the rest of that poll. An otherwise
+eligible disabled implementation stage under
+<code>--respect-config</code> returns <code>20</code>.</p>
+<p>A failed or empty startup route also returns <code>24</code> before
+ownership or label changes. Dispatcher reconciliation retries read-only
+admission failures on later polls without adding
+<code>needs-human</code>; failures after work starts retain their
+existing escalation. Bounded ticks report both process exit
+<code>24</code> and JSON <code>exit_code: 24</code> for incomplete
+history.</p>
+<p>Exit <code>24</code> means the answer context cannot be established:
+repair incomplete comment pagination/history, retry a pending
+publication with its saved ID and body, or prepare a fresh pass after
+the hold/branch changed. Pending publication is saved under
+<code>&lt;git common dir&gt;/bureau/implementation-holds/&lt;ISSUE&gt;.json</code>;
+retry the dedicated <code>post_implementation_hold</code> helper with
+that record's branch, body and key before restarting, preserving the ID.
+If decision and source questions exceed
+<code>BUREAU_COMMENT_MAX_BYTES</code>, ask for a shorter marked reply by
+editing or replacing the oversized reply, or reissue shorter questions.
+No provider receives a partial decision. Provider questions and app hold
+summaries pass through the public-text projector before the runtime adds
+the hold ID and copyable instructions. A failed PR mirror retains
+<code>18</code>; the published Linear hold still governs. After
+upgrading, follow the <a
+href="migration.html#implementation-decision-holds">hold reissue
+procedure</a> before re-enabling dispatch.</p>
 <p>Before it claims a ticket (the <code>shepherd-focused</code> label)
 or moves it (<code>--from-stage</code>), the shepherd checks whether a
 human holds it, and a held ticket ends the run with 25 and nothing

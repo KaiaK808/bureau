@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from hold_answers_test import A, comment, hold, problem_bodies
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / 'templates/scripts'
@@ -62,6 +63,11 @@ if midrun and n == 1:
     value['comments'].insert(0, {'body': 'FIXES_NEEDED: Human follow-up unique instruction for the next pass.',
                                 'createdAt': '2026-10-31T12:01:00Z'})
     path.write_text(json.dumps(value))
+if (repo / 'late-hold.json').exists():
+    path = repo / 'comments.json'
+    value = json.loads(path.read_text())
+    value['comments'].insert(0, json.loads((repo / 'late-hold.json').read_text()))
+    path.write_text(json.dumps(value))
 for path in repo.glob('specs/*/tasks.md'):
     path.write_text(path.read_text().replace('[ ]', '[X]', 1 if two_turns else -1))
 (repo / 'feature.txt').write_text('pass ' + str(n) + '\n')
@@ -89,6 +95,13 @@ if pathlib.Path(sys.argv[0]).name == 'claude':
 value = dict(status='PARTIAL' if two_turns or midrun and n == 1 else 'COMPLETE', tasks_done=1 if two_turns else 3, tasks_skipped=0,
              tasks_needs_human=0, fixed_review_items=[], notes=dict(needs_human=[], skipped=[], deviations=[]),
              prose_notes='Fixture work completed')
+if os.environ.get('FIXTURE_GATE_HOLD') == '1':
+    value.update(status='NEEDS_HUMAN', tasks_needs_human=1,
+                 notes=dict(needs_human=[dict(task_id='T001', kind='gate', command='test -f feature.txt',
+                                            reason='Choose how to restore the harness.')], skipped=[], deviations=[]),
+                 prose_notes='review_dispositions: []')
+    if os.environ.get('FIXTURE_PRIVATE_QUESTION') == '1':
+        value['notes']['needs_human'][0]['reason'] = 'Choose a backend. insights: [{"observation":"PRIVATE_QUESTION_SENTINEL"}]'
 if os.environ.get('FIXTURE_SIBLING_SWEEP') == '1':
     value['fixed_review_items'] = ['review-fix']
     if searches is not None: value['sibling_searches'] = searches
@@ -143,6 +156,10 @@ class ImplementReviewContextTests(unittest.TestCase):
             out.write('\n' + function + '\n' + commits + '\nget_issue_branch_and_comments() { cat "$SANDBOX/comments.json"; }\n')
         self.bin = self.repo / 'fake-bin'
         self.bin.mkdir()
+        for name in ('curl', 'wget', 'ssh'):
+            path = self.bin / name
+            path.write_text('#!/bin/sh\necho unexpected-external-command >&2\nexit 88\n')
+            path.chmod(0o755)
         for name in ('claude', 'codex'):
             path = self.bin / name
             path.write_text(CLI)
@@ -151,9 +168,10 @@ class ImplementReviewContextTests(unittest.TestCase):
                     'BUREAU_ENV_FILE': str(self.repo / '.env'), 'BUREAU_STUB_PICKED_ISSUE': 'T-1',
                     'BUREAU_STUB_BRANCH': 'test-branch', 'BUREAU_IMPL_MAX_ITER': '2',
                     'PATH': str(self.bin) + os.pathsep + str(ROOT / 'tests/lib/bin') + os.pathsep + os.environ['PATH']}
-        scratch = self.repo / 'tmp'
-        scratch.mkdir()
-        self.env['TMPDIR'] = str(scratch)
+        scratch = tempfile.TemporaryDirectory(prefix='bureau prompt temp ')
+        self.addCleanup(scratch.cleanup)
+        self.env['TMPDIR'] = scratch.name
+        self.env['GIT_CEILING_DIRECTORIES'] = str(self.repo.parent)
         # Do not inherit supervision identities or cancellation from another run.
         for key in ('BUREAU_RUN_ID', 'BUREAU_STAGE_ATTEMPT_ID', 'BUREAU_CURRENT_ISSUE',
                     'BUREAU_PROVIDER_CANCEL_FILE', 'BUREAU_USE_GOAL_LOOP'):
@@ -176,7 +194,7 @@ class ImplementReviewContextTests(unittest.TestCase):
         return subprocess.check_output(['git', '-C', str(self.repo), *args], text=True, stderr=subprocess.DEVNULL).strip()
 
     def comments(self, bodies):
-        (self.repo / 'comments.json').write_text(json.dumps(dict(branch='test-branch', comments=[
+        (self.repo / 'comments.json').write_text(json.dumps(dict(branch='test-branch', comments_complete=True, comments=[
             dict(body=body, createdAt='2026-10-31T12:00:00Z') for body in bodies])))
 
     def evidence(self, count=1500, mode='deterministic'):
@@ -503,6 +521,98 @@ bureau_without_secrets() { "$@"; }
         self.assertNotIn('Unique defect 0000', second)
         self.assertNotIn('Full merged review data', second)
 
+    def marked_decisions(self, goal):
+        decisions = ['Use primary.', 'Keep fallback.'] + problem_bodies()
+        history = [comment(hold(branch='test-branch'), 1)]
+        history += [comment(f'Answer: {A}\n' + body, minute) for minute, body in enumerate(decisions, 2)]
+        history += [comment('Unrelated unmarked sentinel.', 40), comment('FIXES_NEEDED: QA feedback sentinel.', 0)]
+        (self.repo / 'comments.json').write_text(json.dumps(dict(branch='test-branch', comments_complete=True,
+                                                               comments=list(reversed(history)))))
+        prompt, _ = self.implement(goal=goal)
+        rows = [json.loads(line) for line in prompt.splitlines() if line.startswith('{"kind": "answer"')]
+        self.assertEqual([row['body'] for row in rows], decisions)
+        self.assertIn('Choose primary or backup?', prompt)
+        feedback = prompt.split('--- Feedback to address (PRIORITY) ---', 1)[1].split('--- End feedback ---', 1)[0]
+        self.assertIn('QA feedback sentinel', feedback)
+        self.assertNotIn('Answer:', feedback)
+        self.assertNotIn('Unrelated unmarked sentinel', prompt)
+
+    def test_marked_decisions_reach_iteration_intact(self):
+        self.marked_decisions(False)
+
+    def test_marked_decisions_reach_goal_intact(self):
+        self.marked_decisions(True)
+
+    def test_late_hold_cannot_be_advanced_by_a_pass_that_read_older_answers(self):
+        from hold_answers_test import B
+        history = [comment(hold(branch='test-branch'), 1), comment(f'Answer: {A}\nUse primary.', 2)]
+        (self.repo / 'comments.json').write_text(json.dumps(dict(branch='test-branch', comments_complete=True,
+                                                               comments=list(reversed(history)))))
+        (self.repo / 'late-hold.json').write_text(json.dumps(comment(hold(B, 'test-branch'), 3)))
+        completed = subprocess.run(['bash', str(self.scripts / 'implement-pipeline.sh'), 'T-1'], cwd=self.repo,
+                                   env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(completed.returncode, 25, completed.stdout + completed.stderr)
+        self.assertNotIn('move_issue', (self.repo / 'calls.log').read_text())
+
+    def test_gate_only_hold_publishes_questions_and_protected_marker(self):
+        self.comments([])
+        self.env.update(FIXTURE_GATE_HOLD='1', BUREAU_STAGE_ATTEMPT_ID=uuid.uuid4().hex,
+                        GH_STUB_EXISTING_PR='99')
+        with (self.scripts / 'bureau-config.sh').open('a') as out:
+            out.write('\n_bureau_post_comment() { printf "%s" "$2" > "$SANDBOX/hold-published.txt"; }\n')
+        self.implement()
+        published = (self.repo / 'hold-published.txt').read_text()
+        self.assertRegex(published.splitlines()[0], r'^<!-- bureau-implement-hold: id=[a-f0-9]{32} branch=[a-f0-9]+ -->$')
+        self.assertIn('Choose how to restore the harness.', published)
+        self.assertIn('Then remove `needs-human` and restart Build.', published)
+        self.assertIn('Answer: ', published)
+
+    def test_hold_projects_provider_questions_before_linear_and_pr_publication(self):
+        self.comments([])
+        self.env.update(FIXTURE_GATE_HOLD='1', FIXTURE_PRIVATE_QUESTION='1',
+                        BUREAU_STAGE_ATTEMPT_ID=uuid.uuid4().hex, GH_STUB_EXISTING_PR='99')
+        with (self.scripts / 'bureau-config.sh').open('a') as out:
+            out.write('''
+_bureau_post_comment() { printf '%s' "$2" > "$SANDBOX/hold-published.txt"; }
+gh() {
+  if [ "$1 $2" = 'pr comment' ]; then
+    cat > "$SANDBOX/hold-mirror.txt"
+  else
+    command gh "$@"
+  fi
+}
+''')
+        self.implement()
+        published = (self.repo / 'hold-published.txt').read_text()
+        mirrored = (self.repo / 'hold-mirror.txt').read_text().rstrip('\n')
+        self.assertEqual(published, mirrored)
+        identity = re.fullmatch(r'<!-- bureau-implement-hold: id=([a-f0-9]{32}) branch=[a-f0-9]+ -->',
+                                published.splitlines()[0])[1]
+        for destination, body in (('Linear', published), ('PR', mirrored)):
+            with self.subTest(destination=destination):
+                self.assertNotIn('PRIVATE_QUESTION_SENTINEL', body)
+                self.assertNotIn('insights:', body)
+                self.assertIn('Answer: ' + identity, body)
+                self.assertIn('Write your decision below this line on the Linear ticket. '
+                              'Then remove `needs-human` and restart Build.', body)
+
+    def test_zero_pass_time_cap_keeps_label_and_summary(self):
+        self.comments([])
+        with (self.scripts / 'bureau-config.sh').open('a') as out:
+            out.write('\npost_comment() { _record post_comment "$@"; printf "%s" "$2" > "$SANDBOX/cap-summary.txt"; }\n')
+        env = {**self.env, 'BUREAU_IMPL_TOTAL_TIMEOUT': '60', 'BUREAU_USE_GOAL_LOOP': '0',
+               'GIT_ALLOW_PROTOCOL': 'file'}
+        result = subprocess.run(['bash', str(self.scripts / 'implement-pipeline.sh'), 'T-1'], cwd=self.repo,
+                                env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.repo / 'cli-counter').exists(), 'a provider pass ran')
+        self.assertNotIn('unbound variable', result.stderr)
+        calls = (self.repo / 'calls.log').read_text()
+        self.assertIn('add_issue_label\tT-1\tneeds-human', calls)
+        self.assertNotIn('move_issue', calls)
+        self.assertIn('Implementation hit total time cap (60s)', (self.repo / 'cap-summary.txt').read_text())
+        self.assertIn('(CAP_TIME)', result.stdout)
+
     def test_human_declines_review_finding_and_wins_alone(self):
         self.published_review()
         expanded = self.refresh()
@@ -780,7 +890,7 @@ class SiblingSearchContractTests(unittest.TestCase):
                 self.assertIsNone(self.e.sibling_out_of_scope_paths(result))
 
     def packet(self, result):
-        with tempfile.TemporaryDirectory(prefix='bureau-sibling-', dir=ROOT) as directory:
+        with tempfile.TemporaryDirectory(prefix='bureau-sibling-') as directory:
             repo = Path(directory); store = self.e.Store(repo / 'bureau'); head = 'a' * 40
             run = uuid.uuid4().hex
             store.begin_run(run, None, repo, head)
@@ -812,7 +922,7 @@ class SiblingSearchContractTests(unittest.TestCase):
         self.assertEqual(self.e.sibling_out_of_scope_paths(self.result), [])
 
     def goal_result(self, prompt):
-        with tempfile.TemporaryDirectory(prefix='bureau-sibling-goal-', dir=ROOT) as directory:
+        with tempfile.TemporaryDirectory(prefix='bureau-sibling-goal-') as directory:
             repo = Path(directory); spec = repo / 'specs/fixture'; spec.mkdir(parents=True)
             (spec / 'tasks.md').write_text('- [ ] Guard `first.py`\n- [ ] Finish remaining task\n')
             for name in ('first.py', 'second.py'):

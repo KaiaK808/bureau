@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e21b8dc91a92b681aaeefa294e96724677f464d9982d98e2881e111a75a681d1">
+<meta name="bureau-source-sha256" content="0ece258ef82fc96447243ae12d5bdc811bbe21d68982ab8b55aca07fd0904c0c">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -141,7 +141,8 @@ after bounded transient retries (ready and draft paths); a failed lookup
 never counts as no PR. Also: implement's final <code>git push</code>
 failed twice while origin (fetched again) lacks commits of the branch or
 cannot be read; the spec stage could not fetch origin, verify its base
-or read/reserve a spec number</td>
+or read/reserve a spec number; A failed implementation-hold PR mirror
+also returns <code>18</code>; the Linear hold remains active.</td>
 <td>API rate limit, missing permissions, branch protection, origin
 rejecting or unreachable. For a post-push PR failure, the hold message
 confirms the branch is pushed and only the PR step is incomplete: rerun
@@ -207,7 +208,13 @@ for availability; do not switch providers silently</td>
 <tr>
 <td><code>24</code></td>
 <td>environment-blocked</td>
-<td>Permissions or required execution capability missing</td>
+<td>Permissions or required execution capability missing; Implementation
+startup route missing or unreadable, answer history or pagination
+incomplete, publication pending, prompt hold identity changed, or
+decision plus questions cannot fit the context cap; request a shorter
+marked reply or reissue shorter questions. Read-only admission failures
+retry on later dispatcher polls without Linear mutations; bounded ticks
+preserve process exit and JSON <code>exit_code: 24</code>.</td>
 <td>Inspect denied operation separately from code/test failures. Also: a
 Node project's dependencies could not be restored after the worktree
 reset; the last install log lines appear in stage output and full logs
@@ -233,7 +240,10 @@ configuration before retrying</td>
 <td><code>25</code></td>
 <td>needs-human-or-paused</td>
 <td>Halt requiring attention, paused dispatch, or ticket parked outside
-its configured active states</td>
+its configured active states; A verified implementation decision hold
+has no later nonblank reply beginning with its exact
+<code>Answer: &lt;hold-id&gt;</code> line, even after label removal; the
+queue skips it for the rest of the poll.</td>
 <td>Resolve the blocker or unpause explicitly.
 <code>merge-pipeline.sh</code> ends with 25 when its gate is decided
 against the merge (a failing check, a head without any check run or
@@ -551,16 +561,19 @@ checkpoint refresh can fail open.</p>
 <p>The continuous dispatcher adds no numeric exit. Lanes yield on 28/29
 (quiet admission waits), 23 (one-shot usage throttle), 10/16 (transient
 retry) and merge-gate 2, with deadlines in
-<code>bureau/dispatch-skips.json</code>. Other 25 outcomes, including
-silence escalation without a label, remain held across restart; a
-repository pause defers instead. Terminal 0/26, intentional handoff 20
-and unknown failures stay skipped until reconciliation; unknown failures
-also alert and attempt a human hold. <code>--respect-config</code> uses
-20 for a disabled stage. A gate report with <code>refreshed</code> and
-exit 20 continues to fresh Build Review. Only <code>base_refresh</code>
-rows spend the lane's base-refresh allowance. A shepherd run that
-exceeds its separate <code>approval_binding</code> handoff limit returns
-25. Dispatcher/poller lock conflicts return 21, invalid dispatcher
+<code>bureau/dispatch-skips.json</code>. An unanswered implementation
+decision uses 25 with a distinct lane outcome: the ticket is skipped for
+the rest of the poll and reconsidered on the next poll or after a
+dispatcher restart. Other 25 outcomes, including silence escalation
+without a label, remain held across restart; a repository pause defers
+instead. Terminal 0/26, intentional handoff 20 and unknown failures stay
+skipped until reconciliation; unknown failures also alert and attempt a
+human hold. <code>--respect-config</code> uses 20 for a disabled stage.
+A gate report with <code>refreshed</code> and exit 20 continues to fresh
+Build Review. Only <code>base_refresh</code> rows spend the lane's
+base-refresh allowance. A shepherd run that exceeds its separate
+<code>approval_binding</code> handoff limit returns 25.
+Dispatcher/poller lock conflicts return 21, invalid dispatcher
 configuration returns 24, and interrupted dispatcher/supervisor shutdown
 returns 130 after cleanup. Standalone shepherd retains its cancellable
 admission and merge waits.</p>

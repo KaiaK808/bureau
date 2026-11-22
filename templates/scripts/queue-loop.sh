@@ -125,9 +125,21 @@ run_script() {
   fi
   if [ -n "$picked" ]; then
     echo "[$TIMESTAMP] $label — candidate: $picked" | tee -a "$LOG_FILE"
-    target_branch=$(get_issue_branch "$picked" 2>/dev/null || true)
+    if [ "$script" != implement-pipeline.sh ]; then
+      target_branch=$(get_issue_branch "$picked" 2>/dev/null || true)
+    fi
   fi
   [ -n "$picked" ] || return 2
+  if [ "$script" = implement-pipeline.sh ]; then
+    local answer_rc=0 answer_context=""
+    answer_context=$(bureau_implementation_context "$picked") || answer_rc=$?
+    if [ "$answer_rc" != 0 ]; then
+      [ "$answer_rc" != 25 ] || OVERLAP_SKIPPED_ISSUE="$picked"
+      return "$answer_rc"
+    fi
+    # Preparation uses the same fully paginated branch as answer admission.
+    target_branch=$(printf '%s' "$answer_context" | jq -r '.branch') || return 24
+  fi
   if [ "${BUREAU_DRY_RUN:-0}" = 1 ]; then
     echo "[DRY_RUN] candidate $picked stage=$script workspace=$wt"
     return 0
@@ -199,17 +211,18 @@ run_one() {
   # A waiting first candidate must not hide disjoint work in this stage.
   # The skip list is local to this poll/stage, so every waiter regains its
   # normal priority on the next poll, including after its holder clears.
-  local OVERLAP_SKIP="" OVERLAP_SKIPPED_ISSUE="" rc=0
+  local OVERLAP_SKIP="" OVERLAP_SKIPPED_ISSUE="" rc=0 wait_rc=29
   while true; do
     OVERLAP_SKIPPED_ISSUE=""
     rc=0
     run_script "$script" "$label" "$wt" || rc=$?
-    if [ "$rc" = 29 ] && [ -n "$OVERLAP_SKIPPED_ISSUE" ]; then
+    if { [ "$rc" = 29 ] || [ "$rc" = 25 ]; } && [ -n "$OVERLAP_SKIPPED_ISSUE" ]; then
+      [ "$rc" != 25 ] || wait_rc=25
       OVERLAP_SKIP="${OVERLAP_SKIP:+$OVERLAP_SKIP,}$OVERLAP_SKIPPED_ISSUE"
       continue
     fi
     # Exhausting candidates after waits is still waiting, not an empty queue.
-    if [ "$rc" = 2 ] && [ -n "$OVERLAP_SKIP" ]; then return 29; fi
+    if [ "$rc" = 2 ] && [ -n "$OVERLAP_SKIP" ]; then return "$wait_rc"; fi
     return "$rc"
   done
 }

@@ -36,6 +36,8 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau stage ')
         self.addCleanup(self.temp.cleanup)
+        self.addCleanup(patch.stopall)
+        patch.dict(os.environ, {'GIT_CEILING_DIRECTORIES': self.temp.name}).start()
         self.repo = self.make_repo(Path(self.temp.name).resolve() / 'repo')
         self.config = {'linear': {'teams': [{'key':'TEAM','id':'team','states': {
             'triage':'s1','spec_review':'s2','build':'s3','qa':'s4','build_review':'s5','merge':'s6','done':'s7'}}]},
@@ -43,7 +45,6 @@ class RuntimeTests(unittest.TestCase):
         r.save(self.repo / '.bureau.json', self.config)
         self.store = r.Store(self.repo)
         self.state = 's3'; self.comments = []; self.moves = []; self.labels = []; self.label_adds = []
-        self.addCleanup(patch.stopall)
         patch.dict(os.environ, {'BUREAU_CONFIG':str(self.repo / '.bureau.json')}).start()
         self.real_shell = r.shell
         patch.object(r, 'shell', self.shell).start()
@@ -79,6 +80,9 @@ class RuntimeTests(unittest.TestCase):
         if function == 'bureau_issue_snapshot':
             return json.dumps({'id':'uuid','identifier':'TEAM-1','title':'Test','state':{'id':self.state,'name':'Custom state'}, 'labels':{'nodes':[{'name':name} for name in self.labels]}})
         if function == 'get_issue_comments': return json.dumps(self.comments)
+        if function == 'bureau_implementation_context':
+            return json.dumps(dict(branch=r.canonical_branch(self.comments) or r.git(repo, 'branch', '--show-current'), hold_id=None, text=''))
+        if function == 'post_implementation_hold': self.comments.append({'body':args[2]}); return ''
         if function == 'bureau_spec_dir_for_branch': return self.real_shell(repo, function, *args)
         if function == 'post_comment': self.comments.append({'body':args[1]}); return ''
         if function == 'add_issue_label': self.labels.append(args[1]); self.label_adds.append(args[1]); return ''
@@ -736,7 +740,8 @@ sys.exit(runtime['main']())
         # This cancellation fixture has no Linear transport. The new worker
         # checkpoint shares the stage's fixed-state double below.
         with (scripts/'bureau-config.sh').open('a') as config:
-            config.write('\nbureau_ticket_checkpoint() { BUREAU_TICKET_STATE_ID=s3; }\n')
+            config.write('\nbureau_ticket_checkpoint() { BUREAU_TICKET_STATE_ID=s3; }\n'
+                         'get_issue_branch_and_comments() { printf \'%s\' \'{"branch":"feat/issue","comments_complete":true,"comments":[]}\'; }\n')
         worker=Path(self.temp.name).resolve()/'worker'
         ready=Path(self.temp.name)/'child.pid'
         stage=scripts/'implement-pipeline.sh'

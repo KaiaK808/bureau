@@ -61,14 +61,19 @@ def connection(rows):
 if data.get('linear_fail'):
     result = dict(errors=[dict(message='fixture unavailable')])
 elif 'comments(first:100' in q:
+    withdrawal = data.pop('withdraw_on_branch_lookup', None) if 'branchName' in q else None
+    if withdrawal:
+        row = next(i for i in items if i['identifier'] == withdrawal['issue'])
+        row['state'] = withdrawal['state']
+        path.write_text(json.dumps(data))
     size = data.get('comment_page_size', 100)
-    row = next(i for i in items if i['id'] == v['id'])
-    rows = row.get('comments', [dict(body='<!-- bureau-branch: '+row['branch']+' -->', createdAt='2026-01-01')])
+    row = next(i for i in items if v['id'] in (i['id'], i['identifier']))
+    rows = row.get('comments', [dict(body='<!-- bureau-branch: '+row['branch']+' -->', createdAt='2026-01-01T00:00:00Z')])
     if data.get('bad_comments'): rows = ['malformed']
-    result = dict(data=dict(issue=dict(comments=connection(rows))))
+    result = dict(data=dict(issue=dict(branchName=row.get('branchName', row['branch']), comments=connection(rows))))
 elif 'labels(first:100' in q:
     size = data.get('label_page_size', 100)
-    row = next(i for i in items if i['id'] == v['id'])
+    row = next(i for i in items if v['id'] in (i['id'], i['identifier']))
     result = dict(data=dict(issue=dict(labels=connection(row['labels']['nodes']))))
 elif 'first:100, after:$after' in q:
     if data.get('track_snapshots') and v.get('after') is None:
@@ -79,7 +84,7 @@ elif 'first:100, after:$after' in q:
         path.write_text(json.dumps(data))
     result = dict(data=dict(issues=connection(items)))
 elif 'issueUpdate' in q:
-    row = next(i for i in items if i['id'] == v['id'])
+    row = next(i for i in items if v['id'] in (i['id'], i['identifier']))
     row['state'] = dict(id=v['sid'], name=v['sid'], type='started')
     path.write_text(json.dumps(data)); result = dict(data=dict(issueUpdate=dict(success=True)))
 elif 'viewer' in q:
@@ -94,7 +99,7 @@ elif 'issues(' in q:
     rows = [i for i in items if not number or i['identifier'].endswith('-'+number[1])]
     state = re.search(r'state:\s*\{\s*id:\s*\{\s*eq:\s*"([^"]+)"', q)
     if state: rows = [i for i in rows if i['state']['id'] == state[1]]
-    rows = [{**i, 'comments':dict(nodes=i.get('comments', [dict(body='<!-- bureau-branch: '+i['branch']+' -->', createdAt='2026-01-01')]))} for i in rows]
+    rows = [{**i, 'comments':dict(nodes=i.get('comments', [dict(body='<!-- bureau-branch: '+i['branch']+' -->', createdAt='2026-01-01T00:00:00Z')]))} for i in rows]
     result = dict(data=dict(issues=dict(nodes=rows)))
 elif 'commentCreate' in q:
     result = dict(data=dict(commentCreate=dict(success=True)))
@@ -640,8 +645,8 @@ touch "$BUREAU_TEST_STOP/UNEXPECTED"
         self.data['issues'][1]['state'] = dict(id='build_review', name='Build Review', type='started')
         self.data['comment_page_size'] = 1
         self.data['issues'][0]['comments'] = [
-            dict(body='Earlier comment', createdAt='2025-01-01'),
-            dict(body='<!-- bureau-branch: ' + candidate[1] + ' -->', createdAt='2026-01-01')]
+            dict(body='Earlier comment', createdAt='2025-01-01T00:00:00Z'),
+            dict(body='<!-- bureau-branch: ' + candidate[1] + ' -->', createdAt='2026-01-01T00:00:00Z')]
         self.save()
         helper = load('bureau-admission.py')
         admission = helper.Admission(self.repo, self.config)
@@ -828,7 +833,7 @@ touch "$BUREAU_TEST_STOP/UNEXPECTED"
 
     def test_paginated_linear_comments_and_101_prs(self):
         a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/b.py']); self.data['linear_page_size']=1
-        self.data['issues'][0]['comments']=[dict(body='irrelevant',createdAt='2025-01-01')]*101+[dict(body='<!-- bureau-branch: '+a[1]+' -->',createdAt='2026-01-01')]
+        self.data['issues'][0]['comments']=[dict(body='irrelevant',createdAt='2025-01-01T00:00:00Z')]*101+[dict(body='<!-- bureau-branch: '+a[1]+' -->',createdAt='2026-01-01T00:00:00Z')]
         pr=self.pull(b,change='pkg/a.py'); self.data['prs']=[dict(pr,number=n,body='Bureau') for n in range(1,102)]; self.save()
         result=self.expect(29,self.cli('admit',a)); self.assertIn('PR #101',result.stderr)
         calls=[json.loads(line) for line in self.state.with_suffix('.calls').read_text().splitlines()]
@@ -1140,7 +1145,7 @@ run_stage_for() {
         a=self.ticket(1,['pkg/a.py']); b=self.ticket(2,['pkg/b.py'])
         self.expect(0,self.cli('admit',holder))
         for row in self.data['issues']:
-            row.update(priority=int(row['identifier'].split('-')[1]),createdAt='2026-01-01')
+            row.update(priority=int(row['identifier'].split('-')[1]),createdAt='2026-01-01T00:00:00Z')
         self.save()
         scripts=self.repo/'scripts'; shutil.copytree(SCRIPTS,scripts)
         with (self.repo/'.git/info/exclude').open('a') as out: out.write('\nscripts/\n')
